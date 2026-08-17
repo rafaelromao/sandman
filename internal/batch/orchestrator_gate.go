@@ -251,14 +251,14 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 		return "", nil, false
 	}
 	if refreshUnavailable {
-		return s.blockExternalGateWithDiagnostics(ctx, workDir, logPath, runID, "pending", nil)
+		return s.awaitExternalGateWithDiagnostics(ctx, "pending", nil)
 	}
 	var diagnostics map[string]any
 	if gate != "resolved" && pr != nil {
 		diagnostics = s.retainedReviewDiagnostics(ctx, workDir, branch, pr, headSHA)
 	}
 	if gate == gateReadyToMerge {
-		return s.blockExternalGateWithDiagnostics(ctx, workDir, logPath, runID, gateReadyToMerge, diagnostics)
+		return s.awaitExternalGateWithDiagnostics(ctx, gateReadyToMerge, diagnostics)
 	}
 	if gate == "resolved" {
 		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
@@ -275,7 +275,7 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 		return s.confirmExternalGateWithDiagnostics(ctx, workDir, branch, logPath, runID, diagnostics)
 	}
 	if polled == gatePollReadyToMerge {
-		return s.blockExternalGateWithDiagnostics(ctx, workDir, logPath, runID, gateReadyToMerge, diagnostics)
+		return s.awaitExternalGateWithDiagnostics(ctx, gateReadyToMerge, diagnostics)
 	}
 	if polled == gateFailed {
 		return s.blockExternalGateWithDiagnostics(ctx, workDir, logPath, runID, "failed", diagnostics)
@@ -283,7 +283,7 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 	if polled == gatePollUnavailable || polled == gatePollPRMissing {
 		return s.blockExternalGateWithDiagnostics(ctx, workDir, logPath, runID, "unavailable", diagnostics)
 	}
-	return s.blockExternalGateWithDiagnostics(ctx, workDir, logPath, runID, "pending", diagnostics)
+	return s.awaitExternalGateWithDiagnostics(ctx, "pending", diagnostics)
 }
 
 func withExternalGateDiagnostics(result string, extras map[string]any, handled bool, diagnostics map[string]any) (string, map[string]any, bool) {
@@ -295,6 +295,11 @@ func withExternalGateDiagnostics(result string, extras map[string]any, handled b
 
 func (s *runSession) blockExternalGateWithDiagnostics(ctx context.Context, workDir, logPath, runID, reason string, diagnostics map[string]any) (string, map[string]any, bool) {
 	result, extras, handled := s.blockExternalGate(ctx, workDir, logPath, runID, reason)
+	return withExternalGateDiagnostics(result, extras, handled, diagnostics)
+}
+
+func (s *runSession) awaitExternalGateWithDiagnostics(ctx context.Context, reason string, diagnostics map[string]any) (string, map[string]any, bool) {
+	result, extras, handled := s.awaitExternalGate(ctx, reason)
 	return withExternalGateDiagnostics(result, extras, handled, diagnostics)
 }
 
@@ -432,11 +437,11 @@ func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branc
 		return s.blockExternalGate(ctx, workDir, logPath, runID, "failed")
 	}
 	if handoff.hasActionableFeedback() {
-		s.recordReviewOutcomeBlocker(workDir, logPath, runID, handoff, gateActionableFeedback, actionableFeedbackReason, actionableFeedbackNextAction)
 		extras := handoff.payloadFor(gateActionableFeedback, actionableFeedbackReason, actionableFeedbackNextAction)
 		extras["blocker"] = "external-gate"
 		extras["gate"] = gateActionableFeedback
-		return "blocked", extras, true
+		extras["await"] = true
+		return "await", extras, true
 	}
 	if handoff.Outcome == retainedReviewApproval {
 		return s.handleRetainedReviewApproval(ctx, workDir, branch, logPath, runID, pr, currentHead, handoff)
@@ -444,11 +449,11 @@ func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branc
 	if handoff.Outcome != retainedReviewTimeout {
 		return s.handleRetainedReviewPending(ctx, workDir, branch, logPath, runID, pr, currentHead, handoff)
 	}
-	s.recordReviewOutcomeBlocker(workDir, logPath, runID, handoff, gateReviewTimeout, reviewTimeoutReason, reviewTimeoutNextAction)
 	extras := handoff.payloadFor(gateReviewTimeout, reviewTimeoutReason, reviewTimeoutNextAction)
 	extras["blocker"] = "external-gate"
 	extras["gate"] = gateReviewTimeout
-	return "blocked", extras, true
+	extras["await"] = true
+	return "await", extras, true
 }
 
 func retainedReviewPRGateFailed(pr *github.PR) bool {
@@ -472,6 +477,7 @@ func (s *runSession) handleRetainedReviewApproval(ctx context.Context, workDir, 
 		extras["gate"] = gateReadyToMerge
 		extras["reason"] = "REVIEW_APPROVED"
 		extras["next_action"] = nextAction
+		extras["await"] = true
 		if request, ok := extras["review_request"].(map[string]any); ok {
 			request["outcome"] = "approved"
 			request["reason"] = "REVIEW_APPROVED"
@@ -480,8 +486,7 @@ func (s *runSession) handleRetainedReviewApproval(ctx context.Context, workDir, 
 		if ctx.Err() != nil {
 			return "aborted", nil, true
 		}
-		s.recordExternalGateBlocker(workDir, logPath, runID, gateReadyToMerge)
-		return "blocked", extras, true
+		return "await", extras, true
 	case "resolved":
 		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
 	case "failed":
@@ -489,7 +494,7 @@ func (s *runSession) handleRetainedReviewApproval(ctx context.Context, workDir, 
 	case "unavailable":
 		return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
 	default:
-		return s.blockExternalGate(ctx, workDir, logPath, runID, "pending")
+		return s.awaitExternalGate(ctx, "pending")
 	}
 }
 
@@ -510,8 +515,8 @@ func (s *runSession) handleRetainedReviewPending(ctx context.Context, workDir, b
 	extras := handoff.payload()
 	extras["blocker"] = "external-gate"
 	extras["gate"] = gate
-	s.recordExternalGateBlocker(workDir, logPath, runID, gate)
-	return "blocked", extras, true
+	extras["await"] = true
+	return "await", extras, true
 }
 
 func (s *runSession) blockReviewTimeoutStateError(ctx context.Context, workDir, logPath, runID string) (string, map[string]any, bool) {
@@ -558,6 +563,17 @@ func (s *runSession) blockExternalGate(ctx context.Context, workDir, logPath, ru
 	}
 	s.recordExternalGateBlocker(workDir, logPath, runID, reason)
 	return "blocked", map[string]any{"blocker": "external-gate", "gate": reason}, true
+}
+
+// awaitExternalGate returns a non-terminal await result for recoverable
+// external gate states. Unlike blockExternalGate, it does not write
+// blocker text to task.md or run.log, does not consume retries, and
+// does not hold execution capacity.
+func (s *runSession) awaitExternalGate(ctx context.Context, reason string) (string, map[string]any, bool) {
+	if ctx.Err() != nil {
+		return "aborted", nil, true
+	}
+	return "await", map[string]any{"blocker": "external-gate", "gate": reason, "await": true}, true
 }
 
 func (s *runSession) recordExternalGateBlocker(workDir, logPath, runID, reason string) {

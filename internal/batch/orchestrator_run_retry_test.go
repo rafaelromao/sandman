@@ -84,8 +84,8 @@ func TestRunSingle_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 	if !started {
 		t.Fatalf("expected run to start, result.Status=%q, created=%d", result.Status, len(resultFactory.created))
 	}
-	if result.Status != "blocked" {
-		t.Fatalf("status = %q, want blocked (pending external gate must not become agent failure)", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want await (pending external gate must not become agent failure)", result.Status)
 	}
 	if result.RetriesTotal != 3 {
 		t.Fatalf("RetriesTotal = %d, want 3 (3 attempts: fail, fail, succeed)", result.RetriesTotal)
@@ -1301,8 +1301,8 @@ func TestRunSingle_InitialAttemptOnlyHasNoBanner(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "blocked" {
-		t.Fatalf("status = %q, want blocked (pending external gate must not be reported as agent failure)", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want await (pending external gate must not be reported as agent failure)", result.Status)
 	}
 
 	logPath := filepath.Join(workDir, ".sandman", "batches", "260622105532-68cb", "runs", "260622105532-68cb-42", "run.log")

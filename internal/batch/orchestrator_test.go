@@ -1453,8 +1453,8 @@ func TestRunSingle_WaitsForExternalGateAfterCleanExit(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "blocked" {
-		t.Fatalf("status = %q, want blocked while external gate is pending", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want await while external gate is pending", result.Status)
 	}
 	if len(resultFactory.created) != 1 {
 		t.Fatalf("created runnables = %d, want 1 while external gate is pending", len(resultFactory.created))
@@ -1472,8 +1472,8 @@ func TestRunSingle_WaitsForExternalGateAfterCleanExit(t *testing.T) {
 	if events[1].Type != "run.finished" {
 		t.Fatalf("expected terminal event run.finished, got %q", events[1].Type)
 	}
-	if status, _ := events[1].Payload["status"].(string); status != "blocked" {
-		t.Fatalf("expected terminal status blocked, got %q", status)
+	if status, _ := events[1].Payload["status"].(string); status != "await" {
+		t.Fatalf("expected terminal status await, got %q", status)
 	}
 	if blocker, _ := events[1].Payload["blocker"].(string); blocker != "external-gate" {
 		t.Fatalf("expected external-gate blocker, got %q", blocker)
@@ -1543,8 +1543,8 @@ func TestRunSingle_UnmergedPROpenGateIsNotAgentFailure(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "blocked" {
-		t.Fatalf("status = %q, want blocked (pending external gate must not be agent failure)", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want await (pending external gate must not be agent failure)", result.Status)
 	}
 }
 
@@ -1590,8 +1590,8 @@ func TestRunSingle_ModeContinueUnmergedPROpenGateIsBlocked(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "blocked" {
-		t.Fatalf("status = %q, want blocked (continuation must preserve external-gate state)", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want await (continuation must preserve external-gate state)", result.Status)
 	}
 	if result.RetriesTotal != 1 {
 		t.Fatalf("retries total = %d, want 1", result.RetriesTotal)
@@ -6591,8 +6591,8 @@ func TestRunBatch_ModeContinueAgentSuccessUnmergedPROpenGate(t *testing.T) {
 	if events[1].Type != "run.finished" {
 		t.Fatalf("expected second event run.finished, got %q", events[1].Type)
 	}
-	if status, _ := events[1].Payload["status"].(string); status != "blocked" {
-		t.Fatalf("expected terminal status blocked (external gate pending), got %q", status)
+	if status, _ := events[1].Payload["status"].(string); status != "await" {
+		t.Fatalf("expected terminal status await (external gate pending), got %q", status)
 	}
 }
 
