@@ -419,3 +419,40 @@ func TestReviewStateStore_PendingEntryAllowsRehydration(t *testing.T) {
 		t.Errorf("ReadFailureAttempts after rehydrate = %d, want 0", got)
 	}
 }
+
+// TestReviewStateStore_CancellationReleasesClaimForRetry pins the
+// contract that when a reviewer dies or is interrupted while holding a
+// claim with a pending entry, the claim is released via Release() and
+// the comment becomes re-claimable on the next tick. This is the
+// cancellation-via-release path that the daemon's ctx-cancel handler
+// uses.
+func TestReviewStateStore_CancellationReleasesClaimForRetry(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "review-state.json")
+	fake := &recordingSeenCacheInvalidator{}
+	store, err := NewReviewStateStore(path, 42, fake)
+	if err != nil {
+		t.Fatalf("NewReviewStateStore: %v", err)
+	}
+
+	if !store.TryClaim("cancel-me") {
+		t.Fatal("TryClaim should succeed")
+	}
+	if !store.IsClaimed("cancel-me") {
+		t.Fatal("comment should be claimed")
+	}
+
+	// Simulate cancellation: release the claim without marking terminal
+	store.Release("cancel-me")
+	if store.IsClaimed("cancel-me") {
+		t.Fatal("Release should clear claimed state")
+	}
+	if len(fake.forgetCalls) != 1 {
+		t.Fatalf("Forget calls = %d, want 1", len(fake.forgetCalls))
+	}
+
+	// Verify re-claimable: the next tick's processPR can re-launch
+	if !store.TryClaim("cancel-me") {
+		t.Fatal("TryClaim should succeed after cancellation release")
+	}
+}

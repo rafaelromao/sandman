@@ -29,40 +29,23 @@ type noopInvalidator struct{}
 func (noopInvalidator) MarkTerminalSeen(int, string) {}
 func (noopInvalidator) Forget(int, string)           {}
 
-// ErrInvalidTransition is returned when a MarkSeen call attempts to
-// transition a comment from one terminal status to another. Terminal
-// statuses (success, superseded) are immutable — once a review
-// reaches one of these states, no further transitions are allowed.
-// This enforces the centralized lifecycle: retryable statuses
-// (failure, pending, aborted) can transition freely, but terminal
-// statuses are sink states.
 var ErrInvalidTransition = errors.New("invalid review state transition")
 
-// isTerminalStatus reports whether status is a terminal-seen status.
-// Terminal statuses are immutable: once a comment reaches one of
-// these states, no further transitions are allowed.
 func isTerminalStatus(status string) bool {
 	return status == "success" || status == "superseded"
 }
 
-// validateTransition checks whether a transition from currentStatus
-// to newStatus is allowed. Returns nil if the transition is valid,
-// ErrInvalidTransition if it is not. A transition is invalid when
-// the current status is terminal (success or superseded) and the
-// new status is different from the current status. Unknown current
-// statuses (e.g. empty string for a fresh comment) allow any
-// transition.
 func validateTransition(currentStatus, newStatus string) error {
 	if currentStatus == "" {
-		return nil // fresh comment, any transition allowed
+		return nil
 	}
 	if currentStatus == newStatus {
-		return nil // idempotent re-write is allowed
+		return nil
 	}
 	if isTerminalStatus(currentStatus) {
 		return fmt.Errorf("%w: %s → %s", ErrInvalidTransition, currentStatus, newStatus)
 	}
-	return nil // retryable → any status is allowed
+	return nil
 }
 
 // ReviewStateStore manages the (prNumber, commentID) dedup state for a
@@ -160,8 +143,6 @@ func (s *ReviewStateStore) isSeenLocked(commentID string) bool {
 	return false
 }
 
-// currentStatusLocked returns the current status of commentID, or ""
-// if the comment has not been seen. The caller must hold s.mu.
 func (s *ReviewStateStore) currentStatusLocked(commentID string) string {
 	for _, sc := range s.state.SeenComments {
 		if sc.CommentID == commentID {
@@ -259,9 +240,6 @@ func (s *ReviewStateStore) MarkSeen(commentID, status string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Centralized transition validation: reject invalid transitions
-	// from terminal statuses. Retryable → any and idempotent re-writes
-	// are allowed.
 	if currentStatus := s.currentStatusLocked(commentID); currentStatus != "" {
 		if err := validateTransition(currentStatus, status); err != nil {
 			return err
