@@ -780,7 +780,10 @@ func TestExternalGate_LiveFailedStatePrecedesActionableEvidence(t *testing.T) {
 
 	sb := &retrySandbox{workDir: worktreePath}
 	sbFactory := &retrySandboxFactory{sandbox: sb}
-	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success", Branch: branch}}}
+	factory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
+	}}
 	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}},
@@ -795,6 +798,8 @@ func TestExternalGate_LiveFailedStatePrecedesActionableEvidence(t *testing.T) {
 			MergeStateStatus:  "CLEAN",
 		}},
 	}
+	runOpts := gateTestRunOptions()
+	runOpts.awaitResumeMax = 1
 	o := NewOrchestrator(
 		client,
 		&retryRenderer{result: "rendered prompt"},
@@ -803,7 +808,7 @@ func TestExternalGate_LiveFailedStatePrecedesActionableEvidence(t *testing.T) {
 		WithErrorLog(io.Discard),
 		WithSandboxFactory(sbFactory),
 		WithRunnableFactory(factory),
-		WithRunSessionOpts(gateTestRunOptions()),
+		WithRunSessionOpts(runOpts),
 	)
 
 	bc := BatchConfig{
@@ -820,11 +825,11 @@ func TestExternalGate_LiveFailedStatePrecedesActionableEvidence(t *testing.T) {
 		PreviousRunIDs: map[int]string{42: "prior-run"},
 		BaseBranch:     "main",
 	})
-	if !started || result.Status != "blocked" {
-		t.Fatalf("late feedback result = (%t, %q), want started blocked", started, result.Status)
+	if !started || result.Status != "await" {
+		t.Fatalf("late feedback result = (%t, %q), want started await", started, result.Status)
 	}
-	if len(factory.created) != 1 {
-		t.Fatalf("agent launches = %d, want 1", len(factory.created))
+	if len(factory.created) != 2 {
+		t.Fatalf("agent launches = %d, want 2 (entry resume + in-session resume)", len(factory.created))
 	}
 	if client.editPRBodyCalls != 0 {
 		t.Fatalf("PR body mutations = %d, want 0", client.editPRBodyCalls)
@@ -839,13 +844,20 @@ func TestExternalGate_LiveFailedStatePrecedesActionableEvidence(t *testing.T) {
 	if findEvent(logs, "run.continued") == nil {
 		t.Fatal("late formal requested changes did not preserve continuation mode")
 	}
-	finished := findEvent(logs, "run.finished")
-	if finished == nil || finished.Payload["gate"] != "failed" {
-		t.Fatalf("late feedback terminal event = %#v, want live failed gate", finished)
+	resumedEvt := findEvent(logs, "run.resumed")
+	if resumedEvt == nil || resumedEvt.Payload["gate"] != gateActionableFeedback {
+		t.Fatalf("resumed event = %#v, want actionable-feedback gate", resumedEvt)
 	}
-	requestPayload, ok := finished.Payload["review_request"].(map[string]any)
+	if got := resumedEvt.Payload["reason"]; got != "feedback" {
+		t.Fatalf("resumed reason = %v, want feedback", got)
+	}
+	awaitEvt := findEvent(logs, "run.await")
+	if awaitEvt == nil || awaitEvt.Payload["gate"] != gateActionableFeedback {
+		t.Fatalf("late feedback await event = %#v, want actionable-feedback gate", awaitEvt)
+	}
+	requestPayload, ok := awaitEvt.Payload["review_request"].(map[string]any)
 	if !ok {
-		t.Fatalf("review request payload = %#v, want retained request", finished.Payload["review_request"])
+		t.Fatalf("review request payload = %#v, want retained request", awaitEvt.Payload["review_request"])
 	}
 	classificationPayload, ok := requestPayload["classification"].(map[string]any)
 	if !ok || classificationPayload["decision"] != "changes_requested" {
@@ -855,9 +867,12 @@ func TestExternalGate_LiveFailedStatePrecedesActionableEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read actionable task: %v", err)
 	}
-	for _, want := range []string{"pull request external gate is failed", "inspect the failed CI or requested review changes"} {
-		if !strings.Contains(string(task), want) {
-			t.Fatalf("task missing %q: %s", want, task)
+	if !strings.Contains(string(task), "# Task") {
+		t.Fatalf("task lost original content: %s", task)
+	}
+	for _, cfg := range factory.configs {
+		if !strings.Contains(cfg.TaskPrompt, "REVIEW_CHANGES_REQUESTED") {
+			t.Fatalf("resumed prompt missing requested-changes evidence")
 		}
 	}
 }

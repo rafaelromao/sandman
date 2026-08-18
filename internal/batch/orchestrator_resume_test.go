@@ -3,6 +3,7 @@ package batch
 import (
 	"context"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -540,5 +541,170 @@ func TestRunSingle_PendingGateBudgetExhaustionAwaitsWithoutResume(t *testing.T) 
 	awaitEvt := findEvent(logs, "run.await")
 	if awaitEvt == nil || awaitEvt.Payload["gate"] != "pending" {
 		t.Fatalf("run.await gate = %v, want pending", awaitEvt.Payload["gate"])
+	}
+}
+
+// Live CHANGES_REQUESTED with retained actionable evidence resumes the agent
+// (await + actionable-feedback) instead of blocking; the poll can drive the
+// transition too, and a resumed session carries the requested-changes
+// evidence in its prompt.
+func TestRunSingle_PendingGatePollFailureWithActionableFeedbackResumesAgent(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(workDir)
+
+	branch := "42-fix-bug"
+	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0o755); err != nil {
+		t.Fatalf("create worktree task directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("# Task\n"), 0o644); err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+	writeTimedOutReviewRequest(t, worktreePath)
+	writeFormalChangesRequestedClassification(t, worktreePath, "current")
+
+	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
+	}}
+	spyLog := &spyEventLog{}
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+		prs: map[string]*github.PR{branch: {
+			Number:            17,
+			State:             "open",
+			HeadRefName:       branch,
+			HeadRefOid:        "current-sha",
+			StatusCheckRollup: "pending",
+			ReviewDecision:    "CHANGES_REQUESTED",
+			MergeStateStatus:  "BLOCKED",
+		}},
+	}
+	lookups := 0
+	client.findPRHook = func() {
+		lookups++
+		if lookups >= 2 {
+			client.prs[branch].StatusCheckRollup = "success"
+			client.prs[branch].MergeStateStatus = "CLEAN"
+		}
+	}
+
+	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
+	o := &Orchestrator{
+		githubClient:    client,
+		renderer:        &retryRenderer{result: "rendered prompt"},
+		sandboxFactory:  sbFactory,
+		eventLog:        spyLog,
+		errorLog:        io.Discard,
+		runnableFactory: resultFactory,
+		runSessionOpts: runSessionOptions{
+			currentHead:      func(string) (string, error) { return "current-sha", nil },
+			gatePollInitial:  time.Millisecond,
+			gatePollMaxSleep: time.Millisecond,
+			gatePollBudget:   time.Second,
+			awaitResumeMax:   1,
+		},
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false, "", "")
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want await after polled actionable-feedback transition", result.Status)
+	}
+	if got := len(resultFactory.created); got != 2 {
+		t.Fatalf("agent launches = %d, want 2 (initial + actionable-feedback resume)", got)
+	}
+	if got := len(resultFactory.configs); got != 2 {
+		t.Fatalf("captured configs = %d, want 2", got)
+	}
+	if !strings.Contains(resultFactory.configs[1].TaskPrompt, "REVIEW_CHANGES_REQUESTED") {
+		t.Fatalf("resumed prompt missing requested-changes evidence:\n%s", resultFactory.configs[1].TaskPrompt)
+	}
+	logs, err := spyLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if got := countEventsByType(logs, "run.retry"); got != 0 {
+		t.Fatalf("run.retry events = %d, want 0", got)
+	}
+	awaitEvt := findEvent(logs, "run.await")
+	if awaitEvt == nil || awaitEvt.Payload["gate"] != gateActionableFeedback {
+		t.Fatalf("run.await gate = %v, want actionable-feedback", awaitEvt.Payload["gate"])
+	}
+}
+
+// CI failure keeps the hard blocked gate even when actionable review
+// evidence is retained: the agent cannot repair CI from the working tree.
+func TestRunSingle_CIFailurePrecedesActionableEvidenceStaysBlocked(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(workDir)
+
+	branch := "42-fix-bug"
+	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0o755); err != nil {
+		t.Fatalf("create worktree task directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("# Task\n"), 0o644); err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+	writeTimedOutReviewRequest(t, worktreePath)
+	writeFormalChangesRequestedClassification(t, worktreePath, "current")
+
+	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "success", Branch: branch},
+	}}
+	spyLog := &spyEventLog{}
+	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs: map[string]*github.PR{branch: {
+				Number:            17,
+				State:             "open",
+				HeadRefName:       branch,
+				HeadRefOid:        "current-sha",
+				StatusCheckRollup: "failure",
+				ReviewDecision:    "CHANGES_REQUESTED",
+				MergeStateStatus:  "CLEAN",
+			}},
+		},
+		renderer:        &retryRenderer{result: "rendered prompt"},
+		sandboxFactory:  sbFactory,
+		eventLog:        spyLog,
+		errorLog:        io.Discard,
+		runnableFactory: resultFactory,
+		runSessionOpts: runSessionOptions{
+			currentHead:      func(string) (string, error) { return "current-sha", nil },
+			gatePollInitial:  time.Millisecond,
+			gatePollMaxSleep: time.Millisecond,
+			gatePollBudget:   time.Second,
+			awaitResumeMax:   1,
+		},
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false, "", "")
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked (CI failure precedes actionable evidence)", result.Status)
+	}
+	if got := len(resultFactory.created); got != 1 {
+		t.Fatalf("agent launches = %d, want 1", got)
+	}
+	logs, err := spyLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if got := countEventsByType(logs, "run.resumed"); got != 0 {
+		t.Fatalf("run.resumed events = %d, want 0", got)
+	}
+	finished := findEvent(logs, "run.finished")
+	if finished == nil || finished.Payload["gate"] != "failed" {
+		t.Fatalf("terminal event = %#v, want failed gate", finished)
 	}
 }
