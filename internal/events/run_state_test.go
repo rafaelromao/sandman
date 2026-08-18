@@ -952,11 +952,11 @@ func TestProjectRunStates_AwaitPayloadCarriesReasonAndReviewRequest(t *testing.T
 	awaitAt := startedAt.Add(5 * time.Minute)
 
 	reviewReq := map[string]any{
-		"repository":    "owner/repo",
-		"pull_request":  42,
-		"head_sha":      "abc123",
-		"trigger_id":    "12345",
-		"deadline_at":   "2025-01-01T13:00:00Z",
+		"repository":   "owner/repo",
+		"pull_request": 42,
+		"head_sha":     "abc123",
+		"trigger_id":   "12345",
+		"deadline_at":  "2025-01-01T13:00:00Z",
 	}
 
 	runs := ProjectRunStates([]Event{
@@ -1026,10 +1026,10 @@ func TestProjectRunStates_LegacyFinishedBlockedWithExternalGateRemainsTerminal(t
 	runs := ProjectRunStates([]Event{
 		{Type: "run.started", Timestamp: startedAt, RunID: "run-legacy-gate", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-legacy-gate", Issue: 42, Payload: map[string]any{
-			"status":   "blocked",
-			"blocker":  "external-gate",
-			"gate":     "pending",
-			"branch":   "42-fix",
+			"status":  "blocked",
+			"blocker": "external-gate",
+			"gate":    "pending",
+			"branch":  "42-fix",
 		}},
 	})
 

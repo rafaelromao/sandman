@@ -2255,7 +2255,7 @@ func assertExternalGateTerminal(t *testing.T, logs []events.Event, wantStatus, g
 		awaitEvt := findEvent(logs, "run.await")
 		if awaitEvt == nil {
 			t.Fatalf("run.await event not found: %v", logs)
-	}
+		}
 		if got := awaitEvt.Payload["await"]; got != true {
 			t.Fatalf("await flag = %v, want true", got)
 		}

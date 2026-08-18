@@ -2303,9 +2303,9 @@ func (s *runSession) emitAwait(ctx context.Context, runID string, result AgentRu
 		RunID:     runID,
 		Issue:     s.issueNumber,
 		Payload: map[string]any{
-			"await":        true,
-			"branch":       result.Branch,
-			"base_branch":  s.baseBranch,
+			"await":         true,
+			"branch":        result.Branch,
+			"base_branch":   s.baseBranch,
 			"retries_total": s.retries,
 		},
 	}
