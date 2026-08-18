@@ -3,10 +3,16 @@ package batch
 import (
 	"context"
 	"path/filepath"
+	"time"
 
+	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
+
+// defaultAwaitResumeMax bounds in-session agent relaunches per session when
+// runSessionOptions.awaitResumeMax is zero (the production default).
+const defaultAwaitResumeMax = 3
 
 // Entry re-evaluation machinery for resuming agent work on PR lifecycle
 // transitions (issue #2595). A session that re-enters a run whose PR gate is
@@ -99,4 +105,72 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 	taskContent, _, _ := ReadTaskContent(filepath.Join(wt.WorkDir(), ".sandman", "task.md"))
 	s.renderCfg.TaskPrompt = s.resumePromptFor(taskContent, evidence, s.renderCfg.ReviewTimeout)
 	return AgentRunResult{}, false, false
+}
+
+// resumeCapFor returns the per-session in-session resume cap, defaulting to
+// defaultAwaitResumeMax when the session option is unset.
+func (s *runSession) resumeCapFor() int {
+	if s.opts.awaitResumeMax > 0 {
+		return s.opts.awaitResumeMax
+	}
+	return defaultAwaitResumeMax
+}
+
+// resumePromptFromGate is the in-session counterpart of tryEntryResume: after
+// the agent completes cleanly and the external gate turns resume-worthy
+// (ready-to-merge or actionable-feedback), it emits run.resumed and returns
+// the continuation prompt carrying the request-scoped review evidence. The
+// returned bool reports whether a relaunch should happen; callers leave the
+// gate-handling (await / terminal) untouched when it is false — in
+// particular, when the per-session resume cap is exhausted the gate falls
+// back to run.await.
+func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbox, branch, runID string, extras map[string]any) (string, bool) {
+	if s.deps.githubClient == nil || s.resumeCount >= s.resumeCapFor() {
+		return "", false
+	}
+	gate, _ := extras["gate"].(string)
+	switch gate {
+	case gateReadyToMerge, gateActionableFeedback:
+	default:
+		return "", false
+	}
+	evidence := s.resumeEvidenceFor(ctx, branch, extras)
+	taskContent, _, _ := ReadTaskContent(filepath.Join(wt.WorkDir(), ".sandman", "task.md"))
+	s.resumeCount++
+	s.emitResume(ctx, runID, branch, gate, evidence)
+	return s.resumePromptFor(taskContent, evidence, s.renderCfg.ReviewTimeout), true
+}
+
+// emitResume writes the run.resumed event (issue #2595). It records the
+// resume trigger (reason + gate), the run coordinates, and the retained
+// review_request so the projection and operators can attribute the relaunch.
+func (s *runSession) emitResume(ctx context.Context, runID, branch, gate string, evidence map[string]any) {
+	if s.deps.eventLog == nil {
+		return
+	}
+	reason := "feedback"
+	if gate == gateReadyToMerge {
+		reason = "approval"
+	}
+	event := events.Event{
+		Type:      "run.resumed",
+		Timestamp: time.Now(),
+		RunID:     runID,
+		Issue:     s.issueNumber,
+		Payload: map[string]any{
+			"reason":          reason,
+			"gate":            gate,
+			"branch":          branch,
+			"base_branch":     s.baseBranch,
+			"retries_total":   s.retries,
+			"previous_run_id": runID,
+		},
+	}
+	if s.issueNumber > 0 {
+		event.IssueRef = issueRef(s.issueNumber)
+	}
+	if reviewRequest, ok := evidence["review_request"]; ok {
+		event.Payload["review_request"] = reviewRequest
+	}
+	_ = s.deps.eventLog.Log(event)
 }

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
@@ -233,6 +234,7 @@ func TestEntryReevaluation_ModeContinueReadyToMergeResumesAgentWithEvidence(t *t
 	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
 	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
 		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
 	}}
 	spyLog := &spyEventLog{}
 	o := &Orchestrator{
@@ -254,7 +256,11 @@ func TestEntryReevaluation_ModeContinueReadyToMergeResumesAgentWithEvidence(t *t
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
-			currentHead: func(string) (string, error) { return "current-sha", nil },
+			currentHead:      func(string) (string, error) { return "current-sha", nil },
+			gatePollInitial:  time.Millisecond,
+			gatePollMaxSleep: time.Millisecond,
+			gatePollBudget:   time.Second,
+			awaitResumeMax:   1,
 		},
 	}
 
@@ -264,20 +270,201 @@ func TestEntryReevaluation_ModeContinueReadyToMergeResumesAgentWithEvidence(t *t
 		t.Fatal("expected run to start")
 	}
 	if result.Status != "await" {
-		t.Fatalf("status = %q, want await (post-agent gate still ready-to-merge in this slice)", result.Status)
+		t.Fatalf("status = %q, want await (post-resume gate still ready-to-merge, covered by resume cap fallback)", result.Status)
 	}
-	if got := len(resultFactory.created); got != 1 {
-		t.Fatalf("agent launches = %d, want 1 (the resumed launch)", got)
+	if got := len(resultFactory.created); got != 2 {
+		t.Fatalf("agent launches = %d, want 2 (entry resume + in-session resume)", got)
 	}
-	if got := len(resultFactory.configs); got != 1 {
-		t.Fatalf("captured configs = %d, want 1", got)
+	if got := len(resultFactory.configs); got != 2 {
+		t.Fatalf("captured configs = %d, want 2", got)
 	}
-	promptText := resultFactory.configs[0].TaskPrompt
-	if !strings.Contains(promptText, "## Review Evidence") {
-		t.Fatalf("resumed prompt missing ## Review Evidence section:\n%s", promptText)
+	for i, cfg := range resultFactory.configs {
+		if !strings.Contains(cfg.TaskPrompt, "## Review Evidence") {
+			t.Fatalf("config %d prompt missing ## Review Evidence section:\n%s", i, cfg.TaskPrompt)
+		}
+		if !strings.Contains(cfg.TaskPrompt, "ready-to-merge") {
+			t.Fatalf("config %d prompt missing merge evidence:\n%s", i, cfg.TaskPrompt)
+		}
 	}
-	if !strings.Contains(promptText, "ready-to-merge") {
-		t.Fatalf("resumed prompt missing merge evidence:\n%s", promptText)
+	logs, err := spyLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if got := countEventsByType(logs, "run.retry"); got != 0 {
+		t.Fatalf("run.retry events = %d, want 0", got)
+	}
+	resumedEvt := findEvent(logs, "run.resumed")
+	if resumedEvt == nil || resumedEvt.Payload["gate"] != gateReadyToMerge {
+		t.Fatalf("run.resumed gate = %v, want ready-to-merge", resumedEvt.Payload["gate"])
+	}
+	awaitEvt := findEvent(logs, "run.await")
+	if awaitEvt == nil || awaitEvt.Payload["gate"] != "ready-to-merge" {
+		t.Fatalf("run.await gate = %v, want ready-to-merge", awaitEvt.Payload["gate"])
+	}
+}
+
+// In-session resume: after the agent completes cleanly and the gate is
+// ready-to-merge, the run relaunches the agent in the same attempt (no
+// run.retry) with the merge evidence attached, bounded by the resume cap;
+// the final same-gate observation falls back to run.await.
+func TestRunSingle_ReadyToMergeResumesWithinSameAttempt(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(workDir)
+
+	branch := "42-fix-bug"
+	worktreePath := filepath.Join(workDir, "worktree")
+
+	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
+	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
+	}}
+	spyLog := &spyEventLog{}
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs: map[string]*github.PR{branch: {
+				Number:            17,
+				State:             "open",
+				HeadRefName:       branch,
+				HeadRefOid:        "current-sha",
+				StatusCheckRollup: "success",
+				ReviewDecision:    "APPROVED",
+				MergeStateStatus:  "CLEAN",
+			}},
+		},
+		renderer:        &retryRenderer{result: "rendered prompt"},
+		sandboxFactory:  sbFactory,
+		eventLog:        spyLog,
+		errorLog:        io.Discard,
+		runnableFactory: resultFactory,
+		runSessionOpts: runSessionOptions{
+			currentHead:      func(string) (string, error) { return "current-sha", nil },
+			gatePollInitial:  time.Millisecond,
+			gatePollMaxSleep: time.Millisecond,
+			gatePollBudget:   time.Second,
+			awaitResumeMax:   1,
+		},
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false, "", "")
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want await (resume cap exhausted on steady ready-to-merge gate)", result.Status)
+	}
+	if got := len(resultFactory.created); got != 2 {
+		t.Fatalf("agent launches = %d, want 2 (initial + one resumed relaunch)", got)
+	}
+	if got := len(resultFactory.configs); got != 2 {
+		t.Fatalf("captured configs = %d, want 2", got)
+	}
+	if strings.Contains(resultFactory.configs[0].TaskPrompt, "## Review Evidence") {
+		t.Fatalf("initial launch must not carry evidence:\n%s", resultFactory.configs[0].TaskPrompt)
+	}
+	if !strings.Contains(resultFactory.configs[1].TaskPrompt, "## Review Evidence") {
+		t.Fatalf("resumed relaunch must carry evidence:\n%s", resultFactory.configs[1].TaskPrompt)
+	}
+	logs, err := spyLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if got := countEventsByType(logs, "run.retry"); got != 0 {
+		t.Fatalf("run.retry events = %d, want 0 (resume must not consume retry budget)", got)
+	}
+	if got := countEventsByType(logs, "run.resumed"); got != 1 {
+		t.Fatalf("run.resumed events = %d, want 1", got)
+	}
+	resumedEvt := findEvent(logs, "run.resumed")
+	if resumedEvt == nil || resumedEvt.Payload["reason"] != "approval" {
+		t.Fatalf("run.resumed reason = %v, want approval", resumedEvt.Payload["reason"])
+	}
+	awaitEvt := findEvent(logs, "run.await")
+	if awaitEvt == nil || awaitEvt.Payload["gate"] != "ready-to-merge" {
+		t.Fatalf("run.await gate = %v, want ready-to-merge", awaitEvt.Payload["gate"])
+	}
+}
+
+// In-session resume via the poll: the gate starts pending and flips to
+// ready-to-merge between poll iterations; the run resumes the agent with the
+// merge evidence instead of awaiting on the polled gate.
+func TestRunSingle_GatePollTransitionToReadyResumesAgent(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(workDir)
+
+	branch := "42-fix-bug"
+	worktreePath := filepath.Join(workDir, "worktree")
+
+	readyPR := &github.PR{
+		Number:            17,
+		State:             "open",
+		HeadRefName:       branch,
+		HeadRefOid:        "current-sha",
+		StatusCheckRollup: "success",
+		ReviewDecision:    "APPROVED",
+		MergeStateStatus:  "CLEAN",
+	}
+	pendingPR := &github.PR{
+		Number:            17,
+		State:             "open",
+		HeadRefName:       branch,
+		HeadRefOid:        "current-sha",
+		StatusCheckRollup: "pending",
+		ReviewDecision:    "REVIEW_REQUIRED",
+		MergeStateStatus:  "BLOCKED",
+	}
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+		prs:    map[string]*github.PR{branch: pendingPR},
+	}
+	lookups := 0
+	client.findPRHook = func() {
+		lookups++
+		if lookups >= 2 {
+			client.prs[branch] = readyPR
+		}
+	}
+
+	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
+	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
+	}}
+	spyLog := &spyEventLog{}
+	o := &Orchestrator{
+		githubClient:    client,
+		renderer:        &retryRenderer{result: "rendered prompt"},
+		sandboxFactory:  sbFactory,
+		eventLog:        spyLog,
+		errorLog:        io.Discard,
+		runnableFactory: resultFactory,
+		runSessionOpts: runSessionOptions{
+			currentHead:      func(string) (string, error) { return "current-sha", nil },
+			gatePollInitial:  time.Millisecond,
+			gatePollMaxSleep: time.Millisecond,
+			gatePollBudget:   time.Second,
+			awaitResumeMax:   1,
+		},
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false, "", "")
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want await after resumed relaunch on steady ready gate", result.Status)
+	}
+	if got := len(resultFactory.created); got != 2 {
+		t.Fatalf("agent launches = %d, want 2 (initial + poll-transition resume)", got)
+	}
+	if got := len(resultFactory.configs); got != 2 {
+		t.Fatalf("captured configs = %d, want 2", got)
+	}
+	if !strings.Contains(resultFactory.configs[1].TaskPrompt, "## Review Evidence") {
+		t.Fatalf("poll-resumed relaunch must carry evidence:\n%s", resultFactory.configs[1].TaskPrompt)
 	}
 	logs, err := spyLog.Read()
 	if err != nil {
@@ -289,5 +476,69 @@ func TestEntryReevaluation_ModeContinueReadyToMergeResumesAgentWithEvidence(t *t
 	awaitEvt := findEvent(logs, "run.await")
 	if awaitEvt == nil || awaitEvt.Payload["gate"] != "ready-to-merge" {
 		t.Fatalf("run.await gate = %v, want ready-to-merge", awaitEvt.Payload["gate"])
+	}
+}
+
+// Pending gates keep the agent serialized with review waiting: budget
+// exhaustion awaits without launching the agent again.
+func TestRunSingle_PendingGateBudgetExhaustionAwaitsWithoutResume(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(workDir)
+
+	branch := "42-fix-bug"
+	worktreePath := filepath.Join(workDir, "worktree")
+
+	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
+	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "success", Branch: branch},
+	}}
+	spyLog := &spyEventLog{}
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs: map[string]*github.PR{branch: {
+				Number:            17,
+				State:             "open",
+				HeadRefName:       branch,
+				HeadRefOid:        "current-sha",
+				StatusCheckRollup: "pending",
+				ReviewDecision:    "REVIEW_REQUIRED",
+				MergeStateStatus:  "BLOCKED",
+			}},
+		},
+		renderer:        &retryRenderer{result: "rendered prompt"},
+		sandboxFactory:  sbFactory,
+		eventLog:        spyLog,
+		errorLog:        io.Discard,
+		runnableFactory: resultFactory,
+		runSessionOpts: runSessionOptions{
+			currentHead:      func(string) (string, error) { return "current-sha", nil },
+			gatePollInitial:  time.Millisecond,
+			gatePollMaxSleep: time.Millisecond,
+			gatePollBudget:   5 * time.Millisecond,
+		},
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false, "", "")
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want await after poll budget exhaustion", result.Status)
+	}
+	if got := len(resultFactory.created); got != 1 {
+		t.Fatalf("agent launches = %d, want 1 (pending gate must not relaunch)", got)
+	}
+	logs, err := spyLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if got := countEventsByType(logs, "run.resumed"); got != 0 {
+		t.Fatalf("run.resumed events = %d, want 0", got)
+	}
+	awaitEvt := findEvent(logs, "run.await")
+	if awaitEvt == nil || awaitEvt.Payload["gate"] != "pending" {
+		t.Fatalf("run.await gate = %v, want pending", awaitEvt.Payload["gate"])
 	}
 }
