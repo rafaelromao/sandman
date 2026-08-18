@@ -1,0 +1,102 @@
+package batch
+
+import (
+	"context"
+	"path/filepath"
+
+	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/sandbox"
+)
+
+// Entry re-evaluation machinery for resuming agent work on PR lifecycle
+// transitions (issue #2595). A session that re-enters a run whose PR gate is
+// already resolvable must not launch the agent blindly: a merely pending gate
+// emits run.await and ends without launching, while a ready-to-merge or
+// actionable-feedback gate relaunches the agent with the request-scoped
+// evidence (the entry launch IS the resume).
+
+// isEntryResumeCandidate reports whether the session should re-evaluate the
+// external gate before its first agent launch. Continuation sessions always
+// qualify; fresh sessions qualify when the worktree still carries retained
+// review artifacts from an earlier run.
+func (s *runSession) isEntryResumeCandidate(workDir string) bool {
+	if s.mode == ModeContinue {
+		return true
+	}
+	return reviewTimeoutArtifactsPresent(workDir)
+}
+
+// resumeEvidenceFor builds the request-scoped evidence envelope handed to a
+// resumed agent session. extras carries the gate outcome (gate, reason,
+// next_action, and any retained review_request); the live PR supplies the
+// current pull-request facts when the gate outcome did not already carry
+// them.
+func (s *runSession) resumeEvidenceFor(ctx context.Context, branch string, extras map[string]any) map[string]any {
+	evidence := map[string]any{}
+	if extras != nil {
+		for k, v := range extras {
+			evidence[k] = v
+		}
+	}
+	switch gate := evidence["gate"]; gate {
+	case gateReadyToMerge:
+		setDefaultEvidence(evidence, "outcome", gateReadyToMerge)
+		setDefaultEvidence(evidence, "reason", "REVIEW_APPROVED")
+		setDefaultEvidence(evidence, "next_action", "revalidate current-head approval, CI, and mergeability, then execute the normal pull-request merge gate")
+	case gateActionableFeedback:
+		setDefaultEvidence(evidence, "outcome", gateActionableFeedback)
+		setDefaultEvidence(evidence, "reason", actionableFeedbackReason)
+		setDefaultEvidence(evidence, "next_action", actionableFeedbackNextAction)
+	}
+	if s.deps.githubClient != nil {
+		if pr, err := s.deps.githubClient.FindPRByBranch(ctx, branch); err == nil && pr != nil {
+			if _, ok := evidence["pull_request"]; !ok {
+				evidence["pull_request"] = pr.Number
+			}
+			if _, ok := evidence["head_sha"]; !ok {
+				evidence["head_sha"] = pr.HeadRefOid
+			}
+		}
+	}
+	return evidence
+}
+
+func setDefaultEvidence(evidence map[string]any, key string, value any) {
+	if _, ok := evidence[key]; !ok {
+		evidence[key] = value
+	}
+}
+
+// resumePromptFor composes the attempt prompt for a resumed session: the
+// preserved task content with the request-scoped evidence attached, wrapped
+// in the canonical continuation prompt. Without evidence the output is
+// byte-identical to today's continuation.
+func (s *runSession) resumePromptFor(taskContent string, evidence map[string]any, reviewTimeout int) string {
+	return prompt.ContinuationTaskPromptWithReviewTimeout(prompt.TaskWithReviewEvidence(taskContent, evidence), reviewTimeout)
+}
+
+// tryEntryResume re-evaluates the external gate at session entry for resume
+// candidates. It returns (result, started, handled): handled is true only
+// when the session ended at entry (immediate run.await without launching);
+// when the gate is resume-worthy, the entry launch prompt is prepared and
+// handled is false so the caller proceeds with the normal launch flow.
+func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandbox.Sandbox, logPath, runID string) (AgentRunResult, bool, bool) {
+	if !s.isEntryResumeCandidate(wt.WorkDir()) || s.deps.githubClient == nil {
+		return AgentRunResult{}, false, false
+	}
+	hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
+	gateStatus, extras, handled := s.handleExternalGateWithHostPaths(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady)
+	if !handled || gateStatus != "await" {
+		return AgentRunResult{}, false, false
+	}
+	gate, _ := extras["gate"].(string)
+	if gate != gateReadyToMerge && gate != gateActionableFeedback {
+		result := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "await", Branch: branch, RetriesTotal: 1}
+		result.Status = s.emitAwait(ctx, runID, result, extras)
+		return result, true, true
+	}
+	evidence := s.resumeEvidenceFor(ctx, branch, extras)
+	taskContent, _, _ := ReadTaskContent(filepath.Join(wt.WorkDir(), ".sandman", "task.md"))
+	s.renderCfg.TaskPrompt = s.resumePromptFor(taskContent, evidence, s.renderCfg.ReviewTimeout)
+	return AgentRunResult{}, false, false
+}

@@ -321,6 +321,7 @@ type fakeRunnable struct {
 	activeCount *int
 	maxActive   *int
 	mu          *sync.Mutex
+	configs     *[]prompt.RenderConfig
 }
 
 func (f *fakeRunnable) Run(ctx context.Context, renderer prompt.IssueRenderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
@@ -340,6 +341,9 @@ func (f *fakeRunnable) Run(ctx context.Context, renderer prompt.IssueRenderer, c
 	if f.mu != nil {
 		f.mu.Lock()
 		*f.activeCount--
+		if f.configs != nil {
+			*f.configs = append(*f.configs, renderCfg)
+		}
 		f.mu.Unlock()
 	}
 	return f.result
@@ -352,6 +356,7 @@ type fakeRunnableFactory struct {
 	active  int
 	max     int
 	mu      sync.Mutex
+	configs []prompt.RenderConfig
 }
 
 func (f *fakeRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
@@ -362,7 +367,7 @@ func (f *fakeRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb
 	if idx < len(f.delays) {
 		delay = f.delays[idx]
 	}
-	r := &fakeRunnable{result: res, delay: delay, activeCount: &f.active, maxActive: &f.max, mu: &f.mu}
+	r := &fakeRunnable{result: res, delay: delay, activeCount: &f.active, maxActive: &f.max, mu: &f.mu, configs: &f.configs}
 	f.created = append(f.created, r)
 	f.mu.Unlock()
 	return r

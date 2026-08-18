@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -96,6 +97,52 @@ func continuationTaskPrompt(content string, reviewTimeout int) string {
 		guard += fmt.Sprintf("\n\nCurrent AgentRun delegated review response timeout is `%d` seconds; it supersedes any persisted timeout wording above.", effective)
 	}
 	return trimTrailingNewlines(content) + "\n\n" + guard + "\n"
+}
+
+const reviewEvidenceHeading = "## Review Evidence"
+
+// TaskWithReviewEvidence appends a canonical "## Review Evidence" section to
+// preserved task content when the runtime resumes an agent session with
+// request-scoped review evidence (actionable feedback or a ready-to-merge
+// approval). When no evidence is present (nil or empty map) the content is
+// returned byte-identical so continuation replay without evidence stays
+// unchanged. An earlier evidence section from a previous resume is replaced
+// so the agent always sees the latest request-scoped evidence.
+func TaskWithReviewEvidence(content string, evidence map[string]any) string {
+	if len(evidence) == 0 {
+		return content
+	}
+	content = removeReviewEvidenceSection(content)
+	var b strings.Builder
+	b.WriteString(trimTrailingNewlines(content))
+	b.WriteString("\n\n## Review Evidence\n\n")
+	b.WriteString("The pull request gate resumed this session with request-scoped evidence. Revalidate the evidence against the live pull request and the worktree head before acting; stale evidence must never drive merge work on its own.\n\n")
+	for _, key := range []string{"outcome", "reason", "next_action", "pull_request", "head_sha", "repository"} {
+		v, ok := evidence[key]
+		if !ok || v == nil {
+			continue
+		}
+		if s, ok := v.(string); ok && s == "" {
+			continue
+		}
+		fmt.Fprintf(&b, "- %s: %v\n", key, v)
+	}
+	if req, ok := evidence["review_request"].(map[string]any); ok && len(req) > 0 {
+		if enc, err := json.Marshal(req); err == nil {
+			fmt.Fprintf(&b, "- review_request: %s\n", enc)
+		}
+	}
+	return trimTrailingNewlines(b.String()) + "\n"
+}
+
+func removeReviewEvidenceSection(content string) string {
+	for {
+		idx := strings.Index(content, reviewEvidenceHeading)
+		if idx < 0 {
+			return content
+		}
+		content = content[:idx] + content[guardSectionEnd(content, idx):]
+	}
 }
 
 // EnsureReviewTimeoutContext keeps the effective delegated review budget in

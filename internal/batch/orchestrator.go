@@ -3109,6 +3109,16 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	}
 
 	logPath := s.runLogPathFor(runID)
+	// Entry re-evaluation (issue #2595): a resume candidate (continuation,
+	// or preserved review artifacts) re-entering while the PR gate is
+	// already resolvable must not launch the agent blindly. A merely
+	// pending gate emits run.await and ends the session without launching;
+	// a ready-to-merge / actionable-feedback gate attaches the
+	// request-scoped evidence to the entry launch prompt (the entry launch
+	// IS the resume).
+	if entryResult, entryStarted, entryHandled := s.tryEntryResume(ctx, branch, wt, logPath, runID); entryHandled {
+		return entryResult, entryStarted
+	}
 	result, terminalExtras, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, s.mode != ModeContinue, func(attempt int, previous AgentRunResult) (prompt.RenderConfig, *AgentRunResult) {
 		attemptRenderCfg := s.renderCfg
 		if attempt > 0 {
