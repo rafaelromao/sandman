@@ -2315,6 +2315,14 @@ func (s *runSession) emitAwait(ctx context.Context, runID string, result AgentRu
 	for k, v := range extras {
 		event.Payload[k] = v
 	}
+	// The await reason mirrors the gate reason when the caller did not
+	// provide an explicit await_reason, so RunState.AwaitReason() and
+	// the run.await payload always agree.
+	if _, ok := event.Payload["await_reason"]; !ok {
+		if gate, ok := event.Payload["gate"].(string); ok && gate != "" {
+			event.Payload["await_reason"] = gate
+		}
+	}
 	_ = s.deps.eventLog.Log(event)
 	return "await"
 }

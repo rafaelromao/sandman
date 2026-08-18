@@ -1092,3 +1092,92 @@ func TestProjectRunStates_Retries_AreAppendOnlyAcrossRunContinued(t *testing.T) 
 		t.Fatalf("Retries[1].Timestamp = %s, want %s", run.Retries[1].Timestamp, secondRetryAt)
 	}
 }
+
+func TestProjectRunStates_ResumeEventKeepsRunActive(t *testing.T) {
+	t.Parallel()
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	awaitAt := startedAt.Add(5 * time.Minute)
+	resumeAt := awaitAt.Add(2 * time.Minute)
+
+	reviewReq := map[string]any{
+		"repository":   "owner/repo",
+		"pull_request": 42,
+		"head_sha":     "abc123",
+		"trigger_id":   "12345",
+		"outcome":      "changes_requested",
+		"reason":       "REVIEW_CHANGES_REQUESTED",
+	}
+
+	runs := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-resumed", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
+		{Type: "run.await", Timestamp: awaitAt, RunID: "run-resumed", Issue: 42, Payload: map[string]any{
+			"await_reason":   "pending",
+			"branch":         "42-fix",
+			"base_branch":    "main",
+			"review_request": reviewReq,
+		}},
+		{Type: "run.resumed", Timestamp: resumeAt, RunID: "run-resumed", Issue: 42, Payload: map[string]any{
+			"reason":          "feedback",
+			"gate":            "actionable-feedback",
+			"branch":          "42-fix",
+			"base_branch":     "main",
+			"retries_total":   1,
+			"previous_run_id": "run-resumed",
+			"review_request":  reviewReq,
+		}},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+
+	run := runs[0]
+	if !run.IsActive() {
+		t.Fatal("expected run with run.resumed to be active (not terminal)")
+	}
+	if run.Finished != nil {
+		t.Fatal("expected Finished to be nil after run.resumed")
+	}
+	if run.ResumedEvent == nil {
+		t.Fatal("expected ResumedEvent to be set after run.resumed")
+	}
+	if got := run.ResumeReason(); got != "feedback" {
+		t.Fatalf("ResumeReason = %q, want %q", got, "feedback")
+	}
+	if got := run.ResumedEvent.Payload["gate"]; got != "actionable-feedback" {
+		t.Fatalf("resumed gate = %v, want %q", got, "actionable-feedback")
+	}
+	if run.AwaitEvent == nil {
+		t.Fatal("expected AwaitEvent to survive run.resumed")
+	}
+	if got := run.AwaitReason(); got != "pending" {
+		t.Fatalf("AwaitReason = %q, want %q after resume", got, "pending")
+	}
+	if got := run.ResumedEvent.Payload["previous_run_id"]; got != "run-resumed" {
+		t.Fatalf("resumed previous_run_id = %v, want %q", got, "run-resumed")
+	}
+	if got := run.Status(); got != "" {
+		t.Fatalf("expected empty status for active run, got %q", got)
+	}
+}
+
+func TestProjectRunStates_ResumeReasonReturnsEmptyWhenNotResumed(t *testing.T) {
+	t.Parallel()
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	runs := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-plain", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+
+	run := runs[0]
+	if run.ResumedEvent != nil {
+		t.Fatal("expected ResumedEvent to be nil for a run without run.resumed")
+	}
+	if got := run.ResumeReason(); got != "" {
+		t.Fatalf("ResumeReason = %q, want empty", got)
+	}
+}

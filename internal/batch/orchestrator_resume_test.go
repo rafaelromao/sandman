@@ -69,3 +69,77 @@ func TestRunSingle_ModeContinueCIFailureReEvaluatesToBlocked(t *testing.T) {
 		t.Fatalf("blocker = %v, want external-gate", finished.Payload["blocker"])
 	}
 }
+
+func TestEmitAwait_CarriesAwaitReasonFromGate(t *testing.T) {
+	spyLog := &spyEventLog{}
+	s := &runSession{
+		deps:        runDeps{eventLog: spyLog},
+		issueNumber: 42,
+		baseBranch:  "main",
+		retries:     2,
+	}
+	status := s.emitAwait(context.Background(), "run-await-reason", AgentRunResult{Branch: "42-fix"}, map[string]any{
+		"blocker": "external-gate",
+		"gate":    "pending",
+	})
+	if status != "await" {
+		t.Fatalf("status = %q, want await", status)
+	}
+	events := spyLog.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	evt := events[0]
+	if evt.Type != "run.await" {
+		t.Fatalf("event type = %q, want run.await", evt.Type)
+	}
+	if got := evt.Payload["await_reason"]; got != "pending" {
+		t.Fatalf("await_reason = %v, want %q", got, "pending")
+	}
+	if got := evt.Payload["branch"]; got != "42-fix" {
+		t.Fatalf("branch = %v, want %q", got, "42-fix")
+	}
+	if got := evt.Payload["base_branch"]; got != "main" {
+		t.Fatalf("base_branch = %v, want %q", got, "main")
+	}
+	if got := evt.Payload["retries_total"]; got != 2 {
+		t.Fatalf("retries_total = %v, want 2", got)
+	}
+}
+
+func TestEmitAwait_ExplicitAwaitReasonOverridesGate(t *testing.T) {
+	spyLog := &spyEventLog{}
+	s := &runSession{
+		deps:        runDeps{eventLog: spyLog},
+		issueNumber: 42,
+		baseBranch:  "main",
+	}
+	s.emitAwait(context.Background(), "run-await-explicit", AgentRunResult{Branch: "42-fix"}, map[string]any{
+		"gate":         "pending",
+		"await_reason": "review-timeout",
+	})
+	events := spyLog.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if got := events[0].Payload["await_reason"]; got != "review-timeout" {
+		t.Fatalf("await_reason = %v, want %q", got, "review-timeout")
+	}
+}
+
+func TestEmitAwait_NoGateLeavesAwaitReasonAbsent(t *testing.T) {
+	spyLog := &spyEventLog{}
+	s := &runSession{
+		deps:        runDeps{eventLog: spyLog},
+		issueNumber: 42,
+		baseBranch:  "main",
+	}
+	s.emitAwait(context.Background(), "run-await-no-gate", AgentRunResult{Branch: "42-fix"}, nil)
+	events := spyLog.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if _, ok := events[0].Payload["await_reason"]; ok {
+		t.Fatalf("await_reason = %v, want absent when no gate is present", events[0].Payload["await_reason"])
+	}
+}
