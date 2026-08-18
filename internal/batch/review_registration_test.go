@@ -335,8 +335,8 @@ func TestReviewRegistration_StaleCanonicalHeadRefreshesLiveGate(t *testing.T) {
 	}
 
 	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
-	if !handled || status != "blocked" || extras["gate"] != "pending" {
-		t.Fatalf("stale canonical gate = (%q, %#v, %t), want blocked/pending", status, extras, handled)
+	if !handled || status != "await" || extras["gate"] != "pending" {
+		t.Fatalf("stale canonical gate = (%q, %#v, %t), want await/pending", status, extras, handled)
 	}
 	if client.calls < 2 {
 		t.Fatalf("PR lookups = %d, want initial and refreshed live snapshots", client.calls)
@@ -592,8 +592,8 @@ func TestReviewRegistration_ProductionGateRegistersBeforeLivePendingHandoff(t *t
 	}
 
 	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
-	if !handled || status != "blocked" || extras["gate"] != "pending" {
-		t.Fatalf("live pending handoff = (%q, %#v, %t), want blocked/pending", status, extras, handled)
+	if !handled || status != "await" || extras["gate"] != "pending" {
+		t.Fatalf("live pending handoff = (%q, %#v, %t), want await/pending", status, extras, handled)
 	}
 	request, ok := extras["review_request"].(map[string]any)
 	if !ok || request["trigger_id"] != "trigger-3001" || request["state"] != "pending" {
@@ -612,8 +612,8 @@ func TestReviewRegistration_ProductionGateRegistersBeforeLivePendingHandoff(t *t
 		t.Fatalf("read first production registration bytes: %v", err)
 	}
 	status, extras, handled = session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
-	if !handled || status != "blocked" || extras["gate"] != "pending" {
-		t.Fatalf("repeat live pending handoff = (%q, %#v, %t), want blocked/pending", status, extras, handled)
+	if !handled || status != "await" || extras["gate"] != "pending" {
+		t.Fatalf("repeat live pending handoff = (%q, %#v, %t), want await/pending", status, extras, handled)
 	}
 	after, err := os.ReadFile(registrationPath)
 	if err != nil {
@@ -663,8 +663,8 @@ func TestReviewRegistration_WriteFailureFallsThroughToLivePendingGate(t *testing
 	}
 
 	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
-	if !handled || status != "blocked" || extras["gate"] != "pending" {
-		t.Fatalf("write failure gate = (%q, %#v, %t), want blocked/pending", status, extras, handled)
+	if !handled || status != "await" || extras["gate"] != "pending" {
+		t.Fatalf("write failure gate = (%q, %#v, %t), want await/pending", status, extras, handled)
 	}
 	if store.writes != 1 {
 		t.Fatalf("registration writes = %d, want one attempted atomic commit", store.writes)
@@ -710,8 +710,8 @@ func TestReviewRegistration_WriteFailureDoesNotChangeLiveReadyGate(t *testing.T)
 	}
 
 	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
-	if !handled || status != "blocked" || extras["gate"] != gateReadyToMerge {
-		t.Fatalf("write failure ready gate = (%q, %#v, %t), want blocked/ready-to-merge", status, extras, handled)
+	if !handled || status != "await" || extras["gate"] != gateReadyToMerge {
+		t.Fatalf("write failure ready gate = (%q, %#v, %t), want await/ready-to-merge", status, extras, handled)
 	}
 }
 
@@ -775,8 +775,8 @@ func TestReviewRegistration_OrphanTempFileFallsThroughToLiveState(t *testing.T) 
 	session := &runSession{deps: runDeps{githubClient: client, errorLog: io.Discard}, opts: gateTestRunOptions()}
 
 	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
-	if !handled || status != "blocked" || extras["gate"] != "pending" {
-		t.Fatalf("orphan temp gate = (%q, %#v, %t), want blocked/pending", status, extras, handled)
+	if !handled || status != "await" || extras["gate"] != "pending" {
+		t.Fatalf("orphan temp gate = (%q, %#v, %t), want await/pending", status, extras, handled)
 	}
 	if _, err := os.Stat(tmpPath); err != nil {
 		t.Fatalf("orphan temp record disappeared unexpectedly: %v", err)
@@ -802,8 +802,8 @@ func TestReviewRegistration_CorruptCanonicalRecordCannotOverrideLivePendingState
 	session := &runSession{deps: runDeps{githubClient: client, errorLog: io.Discard}, opts: gateTestRunOptions()}
 
 	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
-	if !handled || status != "blocked" || extras["gate"] != "pending" {
-		t.Fatalf("corrupt canonical gate = (%q, %#v, %t), want blocked/pending", status, extras, handled)
+	if !handled || status != "await" || extras["gate"] != "pending" {
+		t.Fatalf("corrupt canonical gate = (%q, %#v, %t), want await/pending", status, extras, handled)
 	}
 	diagnostic, ok := extras["review_diagnostic"].(map[string]any)
 	if !ok || diagnostic["status"] != "invalid" {
@@ -1110,8 +1110,8 @@ func TestReviewRegistration_GateRefreshesAfterHeadRevalidationFailure(t *testing
 	}
 
 	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
-	if !handled || status != "blocked" || extras["gate"] != "pending" {
-		t.Fatalf("refreshed live gate = (%q, %#v, %t), want blocked/pending", status, extras, handled)
+	if !handled || status != "await" || extras["gate"] != "pending" {
+		t.Fatalf("refreshed live gate = (%q, %#v, %t), want await/pending", status, extras, handled)
 	}
 }
 
@@ -1160,8 +1160,8 @@ func TestReviewRegistration_HeadRefreshFailureDoesNotReuseReadySnapshot(t *testi
 	}
 
 	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
-	if !handled || status != "blocked" || extras["gate"] != "pending" {
-		t.Fatalf("head refresh failure gate = (%q, %#v, %t), want blocked/pending", status, extras, handled)
+	if !handled || status != "await" || extras["gate"] != "pending" {
+		t.Fatalf("head refresh failure gate = (%q, %#v, %t), want await/pending", status, extras, handled)
 	}
 }
 
@@ -1211,8 +1211,8 @@ func TestReviewRegistration_GateUsesLiveSnapshotAfterSuccessfulRegistration(t *t
 	}
 
 	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
-	if !handled || status != "blocked" || extras["gate"] != "pending" {
-		t.Fatalf("live gate after registration = (%q, %#v, %t), want blocked/pending", status, extras, handled)
+	if !handled || status != "await" || extras["gate"] != "pending" {
+		t.Fatalf("live gate after registration = (%q, %#v, %t), want await/pending", status, extras, handled)
 	}
 	if client.calls < 3 {
 		t.Fatalf("PR lookups = %d, want initial, registration validation, and refreshed snapshots", client.calls)
