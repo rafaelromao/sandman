@@ -908,3 +908,66 @@ func TestRunSingle_FullLifecycleRequestsFeedbackThenApprovalThenMergeSuccess(t *
 		t.Fatalf("task.md lost original content: %s", task)
 	}
 }
+
+// Evidence construction slice: the two resume variants carry distinct
+// defaults (merge evidence for ready-to-merge, review evidence for
+// actionable-feedback), both enriched with the live PR coordinates.
+func TestResumeEvidenceFor_ReadyToMergeVariantDefaults(t *testing.T) {
+	s := &runSession{
+		deps: runDeps{githubClient: &fakeGitHubClient{
+			prs: map[string]*github.PR{"42-fix": {Number: 42, HeadRefOid: "abc123"}},
+		}},
+	}
+	evidence := s.resumeEvidenceFor(context.Background(), "42-fix", map[string]any{
+		"gate": "ready-to-merge",
+	})
+	if evidence["reason"] != "REVIEW_APPROVED" {
+		t.Fatalf("reason = %v, want REVIEW_APPROVED", evidence["reason"])
+	}
+	if evidence["outcome"] != "ready-to-merge" {
+		t.Fatalf("outcome = %v, want ready-to-merge", evidence["outcome"])
+	}
+	if _, ok := evidence["next_action"].(string); !ok || !strings.Contains(evidence["next_action"].(string), "merge gate") {
+		t.Fatalf("next_action = %v, want merge-gate instruction", evidence["next_action"])
+	}
+	if evidence["pull_request"] != 42 || evidence["head_sha"] != "abc123" {
+		t.Fatalf("live PR coordinates not enriched: %v", evidence)
+	}
+}
+
+func TestResumeEvidenceFor_ActionableFeedbackVariantDefaults(t *testing.T) {
+	s := &runSession{
+		deps: runDeps{githubClient: &fakeGitHubClient{
+			prs: map[string]*github.PR{"42-fix": {Number: 42, HeadRefOid: "abc123"}},
+		}},
+	}
+	evidence := s.resumeEvidenceFor(context.Background(), "42-fix", map[string]any{
+		"gate": "actionable-feedback",
+		"review_request": map[string]any{
+			"repository":   "owner/repo",
+			"pull_request": float64(42),
+			"head_sha":     "abc123",
+		},
+	})
+	if evidence["reason"] != "REVIEW_CHANGES_REQUESTED" {
+		t.Fatalf("reason = %v, want REVIEW_CHANGES_REQUESTED", evidence["reason"])
+	}
+	if evidence["outcome"] != "actionable-feedback" {
+		t.Fatalf("outcome = %v, want actionable-feedback", evidence["outcome"])
+	}
+	if reviewRequest, ok := evidence["review_request"].(map[string]any); !ok || reviewRequest["pull_request"] != float64(42) {
+		t.Fatalf("review_request not preserved: %v", evidence["review_request"])
+	}
+}
+
+// The no-evidence resume prompt is byte-identical to the plain continuation
+// prompt, keeping the continuation baseline (continue flow) unchanged.
+func TestResumePromptFor_NoEvidenceIsByteIdenticalContinuation(t *testing.T) {
+	s := &runSession{}
+	task := "# Task\n\nDo the work.\n"
+	got := s.resumePromptFor(task, nil, 0)
+	want := prompt.ContinuationTaskPromptWithReviewTimeout(task, 0)
+	if got != want {
+		t.Fatalf("no-evidence resume prompt diverges from continuation prompt:\ngot:  %s\nwant: %s", got, want)
+	}
+}
