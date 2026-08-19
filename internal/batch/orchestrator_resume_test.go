@@ -711,6 +711,271 @@ func TestRunSingle_CIFailurePrecedesActionableEvidenceStaysBlocked(t *testing.T)
 	}
 }
 
+// Retained concrete informal feedback resumes a continuation session at entry
+// (gate actionable-feedback, REVIEW_INFORMAL_FEEDBACK): the entry launch is the
+// resume, and the in-session loop relaunches once on the steady gate before
+// exhausting the resume cap.
+func TestEntryReevaluation_ModeContinueInformalFeedbackResumesAgentWithEvidence(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(workDir)
+
+	branch := "42-fix-bug"
+	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0o755); err != nil {
+		t.Fatalf("create worktree task directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("# Task\n"), 0o644); err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+	writeInformalRespondedClassification(t, worktreePath, "Please fix the race in internal/socketpath/socketpath.go.")
+
+	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
+	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
+	}}
+	spyLog := &spyEventLog{}
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs: map[string]*github.PR{branch: {
+				Number:            17,
+				State:             "open",
+				HeadRefName:       branch,
+				HeadRefOid:        "current-sha",
+				StatusCheckRollup: "pending",
+				ReviewDecision:    "REVIEW_REQUIRED",
+				MergeStateStatus:  "BLOCKED",
+			}},
+		},
+		renderer:        &retryRenderer{result: "rendered prompt"},
+		sandboxFactory:  sbFactory,
+		eventLog:        spyLog,
+		errorLog:        io.Discard,
+		runnableFactory: resultFactory,
+		runSessionOpts: runSessionOptions{
+			currentHead:      func(string) (string, error) { return "current-sha", nil },
+			gatePollInitial:  time.Millisecond,
+			gatePollMaxSleep: time.Millisecond,
+			gatePollBudget:   time.Second,
+			awaitResumeMax:   1,
+		},
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, true, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false, "", "")
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want await (post-resume steady gate covered by resume cap fallback)", result.Status)
+	}
+	if got := len(resultFactory.created); got != 2 {
+		t.Fatalf("agent launches = %d, want 2 (entry resume + one in-session relaunch)", got)
+	}
+	if got := len(resultFactory.configs); got != 2 {
+		t.Fatalf("captured configs = %d, want 2", got)
+	}
+	for i, cfg := range resultFactory.configs {
+		if !strings.Contains(cfg.TaskPrompt, "REVIEW_INFORMAL_FEEDBACK") {
+			t.Fatalf("config %d prompt missing informal-feedback reason:\n%s", i, cfg.TaskPrompt)
+		}
+		if !strings.Contains(cfg.TaskPrompt, "socketpath.go") {
+			t.Fatalf("config %d prompt missing informal feedback body:\n%s", i, cfg.TaskPrompt)
+		}
+	}
+	logs, err := spyLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if got := countEventsByType(logs, "run.retry"); got != 0 {
+		t.Fatalf("run.retry events = %d, want 0 (resume must not consume retry budget)", got)
+	}
+	resumedEvt := findEvent(logs, "run.resumed")
+	if resumedEvt == nil || resumedEvt.Payload["gate"] != gateActionableFeedback {
+		t.Fatalf("run.resumed gate = %v, want actionable-feedback", resumedEvt.Payload["gate"])
+	}
+	awaitEvt := findEvent(logs, "run.await")
+	if awaitEvt == nil || awaitEvt.Payload["gate"] != gateActionableFeedback {
+		t.Fatalf("run.await gate = %v, want actionable-feedback", awaitEvt.Payload["gate"])
+	}
+	if request, ok := awaitEvt.Payload["review_request"].(map[string]any); !ok || request["informal_feedback"] == nil {
+		t.Fatalf("run.await review request missing informal feedback: %#v", awaitEvt.Payload["review_request"])
+	}
+}
+
+// Boilerplate-only retained feedback stays a pending gate: the continuation
+// session ends at entry with run.await and must not launch the agent.
+func TestEntryReevaluation_ModeContinueBoilerplateInformalAwaitsImmediately(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(workDir)
+
+	branch := "42-fix-bug"
+	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0o755); err != nil {
+		t.Fatalf("create worktree task directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("# Task\n"), 0o644); err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+	writeInformalRespondedClassification(t, worktreePath, "looks good to me, thanks!")
+
+	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
+	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "success", Branch: branch},
+	}}
+	spyLog := &spyEventLog{}
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs: map[string]*github.PR{branch: {
+				Number:            17,
+				State:             "open",
+				HeadRefName:       branch,
+				HeadRefOid:        "current-sha",
+				StatusCheckRollup: "pending",
+				ReviewDecision:    "REVIEW_REQUIRED",
+				MergeStateStatus:  "BLOCKED",
+			}},
+		},
+		renderer:        &retryRenderer{result: "rendered prompt"},
+		sandboxFactory:  sbFactory,
+		eventLog:        spyLog,
+		errorLog:        io.Discard,
+		runnableFactory: resultFactory,
+		runSessionOpts: runSessionOptions{
+			currentHead:      func(string) (string, error) { return "current-sha", nil },
+			gatePollInitial:  time.Millisecond,
+			gatePollMaxSleep: time.Millisecond,
+			gatePollBudget:   time.Second,
+			awaitResumeMax:   1,
+		},
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, true, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false, "", "")
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want await (boilerplate evidence must not launch)", result.Status)
+	}
+	if got := len(resultFactory.created); got != 0 {
+		t.Fatalf("agent launches = %d, want 0 at pending gate", got)
+	}
+	logs, err := spyLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if got := countEventsByType(logs, "run.resumed"); got != 0 {
+		t.Fatalf("run.resumed events = %d, want 0", got)
+	}
+	if got := countEventsByType(logs, "run.retry"); got != 0 {
+		t.Fatalf("run.retry events = %d, want 0", got)
+	}
+	awaitEvt := findEvent(logs, "run.await")
+	if awaitEvt == nil || awaitEvt.Payload["gate"] != "pending" {
+		t.Fatalf("run.await gate = %v, want pending", awaitEvt.Payload["gate"])
+	}
+	if request, ok := awaitEvt.Payload["review_request"].(map[string]any); ok && request["informal_feedback"] != nil {
+		t.Fatalf("informal_feedback = %#v, want none for boilerplate feedback", request["informal_feedback"])
+	}
+}
+
+// In-session resume driven by retained informal feedback: the agent completes
+// cleanly, the pending gate resolves through the informal hook, and the run
+// relaunches the agent exactly once (bounded by the resume cap) with the
+// informal evidence in the prompt and zero run.retry.
+func TestRunSingle_InformalFeedbackResumesWithinSameAttempt(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(workDir)
+
+	branch := "42-fix-bug"
+	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0o755); err != nil {
+		t.Fatalf("create worktree task directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("# Task\n"), 0o644); err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+	writeInformalRespondedClassification(t, worktreePath, "Please fix the race in internal/socketpath/socketpath.go.")
+
+	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
+	}}
+	spyLog := &spyEventLog{}
+	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs: map[string]*github.PR{branch: {
+				Number:            17,
+				State:             "open",
+				HeadRefName:       branch,
+				HeadRefOid:        "current-sha",
+				StatusCheckRollup: "pending",
+				ReviewDecision:    "REVIEW_REQUIRED",
+				MergeStateStatus:  "BLOCKED",
+			}},
+		},
+		renderer:        &retryRenderer{result: "rendered prompt"},
+		sandboxFactory:  sbFactory,
+		eventLog:        spyLog,
+		errorLog:        io.Discard,
+		runnableFactory: resultFactory,
+		runSessionOpts: runSessionOptions{
+			currentHead:      func(string) (string, error) { return "current-sha", nil },
+			gatePollInitial:  time.Millisecond,
+			gatePollMaxSleep: time.Millisecond,
+			gatePollBudget:   time.Second,
+			awaitResumeMax:   1,
+		},
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false, "", "")
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want await after resumed relaunch on steady informal gate", result.Status)
+	}
+	if got := len(resultFactory.created); got != 2 {
+		t.Fatalf("agent launches = %d, want 2 (entry resume + informal-feedback resume)", got)
+	}
+	if got := len(resultFactory.configs); got != 2 {
+		t.Fatalf("captured configs = %d, want 2", got)
+	}
+	if !strings.Contains(resultFactory.configs[1].TaskPrompt, "REVIEW_INFORMAL_FEEDBACK") {
+		t.Fatalf("resumed prompt missing informal-feedback evidence:\n%s", resultFactory.configs[1].TaskPrompt)
+	}
+	if !strings.Contains(resultFactory.configs[1].TaskPrompt, "socketpath.go") {
+		t.Fatalf("resumed prompt missing informal feedback body:\n%s", resultFactory.configs[1].TaskPrompt)
+	}
+	logs, err := spyLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if got := countEventsByType(logs, "run.retry"); got != 0 {
+		t.Fatalf("run.retry events = %d, want 0 (resume must not consume retry budget)", got)
+	}
+	resumedEvt := findEvent(logs, "run.resumed")
+	if resumedEvt == nil || resumedEvt.Payload["gate"] != gateActionableFeedback {
+		t.Fatalf("run.resumed gate = %v, want actionable-feedback", resumedEvt.Payload["gate"])
+	}
+	if got, _ := resumedEvt.Payload["reason"].(string); got != "feedback" {
+		t.Fatalf("run.resumed reason = %v, want feedback", resumedEvt.Payload["reason"])
+	}
+	if request, ok := resumedEvt.Payload["review_request"].(map[string]any); !ok || request["informal_feedback"] == nil {
+		t.Fatalf("run.resumed review request missing informal feedback: %#v", resumedEvt.Payload["review_request"])
+	}
+	awaitEvt := findEvent(logs, "run.await")
+	if awaitEvt == nil || awaitEvt.Payload["gate"] != gateActionableFeedback {
+		t.Fatalf("run.await gate = %v, want actionable-feedback", awaitEvt.Payload["gate"])
+	}
+}
+
 // Vertical lifecycle (issue #2595 demo): a fresh run exits to the delegated
 // review gate (run.await pending), a CHANGES_REQUESTED review resumes the
 // agent with actionable evidence, the pushed head lands back on a pending
