@@ -1841,6 +1841,12 @@ type runSessionOptions struct {
 	gatePollInitial            time.Duration
 	gatePollMaxSleep           time.Duration
 	gatePollBudget             time.Duration
+	// awaitResumeMax bounds in-session agent relaunches triggered by a
+	// resume-worthy PR gate (ready-to-merge / actionable-feedback) within
+	// one session. Zero uses the default (3); when the cap is exhausted the
+	// gate falls back to run.await so a non-progressing gate cannot loop.
+	// Re-invocation starts a fresh session, so the cap resets per session.
+	awaitResumeMax int
 	// Review registration seams keep the completion boundary deterministic in
 	// batch tests while production uses the file-backed store and wall clock.
 	reviewRegistrationStore reviewRegistrationStore
@@ -1951,6 +1957,12 @@ type runSession struct {
 	reviewAttemptStartedAt      time.Time
 	reviewRegistrationAttempted bool
 	reviewRegistrationObserved  bool
+
+	// resumeCount counts in-session agent relaunches triggered by a
+	// resume-worthy PR gate within this session (bounded by
+	// runSessionOptions.awaitResumeMax). It is the per-session cap state;
+	// re-invocation starts a fresh session and a fresh counter.
+	resumeCount int
 }
 
 func (s *runSession) worktreeDir() string {
@@ -2314,6 +2326,14 @@ func (s *runSession) emitAwait(ctx context.Context, runID string, result AgentRu
 	}
 	for k, v := range extras {
 		event.Payload[k] = v
+	}
+	// The await reason mirrors the gate reason when the caller did not
+	// provide an explicit await_reason, so RunState.AwaitReason() and
+	// the run.await payload always agree.
+	if _, ok := event.Payload["await_reason"]; !ok {
+		if gate, ok := event.Payload["gate"].(string); ok && gate != "" {
+			event.Payload["await_reason"] = gate
+		}
 	}
 	_ = s.deps.eventLog.Log(event)
 	return "await"
@@ -2691,7 +2711,7 @@ loop:
 			logRetry(s.deps.eventLog, runID, branch, attempt+1, attempts, result.Status, reason, logPath, s.issueNumber)
 		}
 
-		runnable := factory.NewRunnable(issue, branch, wt)
+		var runnable Runnable
 		// When launching a continuation, copy the original
 		// task.md that lives in the worktree into the new per-row run
 		// folder as a sibling of run.json / run.log. The worktree file
@@ -2713,53 +2733,71 @@ loop:
 				}
 			}
 		}
-		if agentRun, ok := runnable.(*AgentRun); ok {
-			agentRun.env = s.agentCfg.Env
-			agentRun.preset = s.agentCfg.Preset
-			agentRun.contextRolloverLiterals = append([]string(nil), s.opts.contextRolloverLiterals...)
-			if s.opts.taskWriter != nil {
-				agentRun.taskWriter = s.opts.taskWriter
+		var alreadyResolved bool
+	relaunch:
+		// In-session resume loop (issue #2595): the agent may be relaunched
+		// within the same attempt when the PR gate turns resume-worthy
+		// (ready-to-merge / actionable-feedback) after a clean completion.
+		// A resume relaunch reuses the attempt index — no run.retry, no
+		// retry branch reset, no snapshot — and carries the request-scoped
+		// review evidence in the prompt. The per-session resume cap
+		// (awaitResumeMax) bounds the loop; exhaustion falls back to
+		// run.await on the same gate.
+		for {
+			runnable = factory.NewRunnable(issue, branch, wt)
+			if agentRun, ok := runnable.(*AgentRun); ok {
+				agentRun.env = s.agentCfg.Env
+				agentRun.preset = s.agentCfg.Preset
+				agentRun.contextRolloverLiterals = append([]string(nil), s.opts.contextRolloverLiterals...)
+				if s.opts.taskWriter != nil {
+					agentRun.taskWriter = s.opts.taskWriter
+				}
+				agentRun.model = s.agentCfg.Model
+				agentRun.modelProvider = s.agentCfg.ModelProvider
+				agentRun.modelName = s.agentCfg.ModelName
+				agentRun.variant = s.variant
+				agentRun.opencodePermissionMode = s.agentCfg.OpencodePermissionMode
+				agentRun.baseBranch = s.baseBranch
+				agentRun.runID = runID
+				agentRun.review = s.review
+				agentRun.outputWriter = s.outputWriter
+				agentRun.dangerouslySkipPermissions = &s.dangerouslySkipPermissions
+				agentRun.sessionName = "Sandman " + runID + ": "
+				agentRun.runFolder = s.runFolderFor(runID)
 			}
-			agentRun.model = s.agentCfg.Model
-			agentRun.modelProvider = s.agentCfg.ModelProvider
-			agentRun.modelName = s.agentCfg.ModelName
-			agentRun.variant = s.variant
-			agentRun.opencodePermissionMode = s.agentCfg.OpencodePermissionMode
-			agentRun.baseBranch = s.baseBranch
-			agentRun.runID = runID
-			agentRun.review = s.review
-			agentRun.outputWriter = s.outputWriter
-			agentRun.dangerouslySkipPermissions = &s.dangerouslySkipPermissions
-			agentRun.sessionName = "Sandman " + runID + ": "
-			agentRun.runFolder = s.runFolderFor(runID)
-		}
 
-		s.reviewRegistrationAttempted = false
-		s.reviewRegistrationObserved = false
-		s.reviewAttemptStartedAt = s.reviewNow()
-		result, abortedByHeartbeat = s.withHeartbeat(ctx, runID, attempt, logPath, wt, func() AgentRunResult {
-			return s.withClosingReferenceGuard(ctx, branch, func() AgentRunResult {
-				return runnable.Run(ctx, s.deps.renderer, s.agentCfg.Command, attemptRenderCfg)
+			s.reviewRegistrationAttempted = false
+			s.reviewRegistrationObserved = false
+			s.reviewAttemptStartedAt = s.reviewNow()
+			result, abortedByHeartbeat = s.withHeartbeat(ctx, runID, attempt, logPath, wt, func() AgentRunResult {
+				return s.withClosingReferenceGuard(ctx, branch, func() AgentRunResult {
+					return runnable.Run(ctx, s.deps.renderer, s.agentCfg.Command, attemptRenderCfg)
+				})
 			})
-		})
-		if result.Issue == nil && s.issueNumber > 0 {
-			result.Issue = issueRef(s.issueNumber)
-		}
-		if result.IssueNumber == 0 && s.issueNumber > 0 {
-			result.IssueNumber = s.issueNumber
-		}
-		result.RetriesTotal = attempt + 1
-
-		taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
-		taskContent, _, _ := ReadTaskContent(taskPath)
-		alreadyResolved := hasExactTaskStatus(taskContent, "## Status: already resolved")
-		if s.issueNumber > 0 && events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
-			hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
-			if gateStatus, extras, handled := s.handleExternalGateWithHostPaths(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled && gateStatus != "success" {
-				result.Status = gateStatus
-				terminalExtras = mergeBlockerExtras(terminalExtras, extras)
-				break loop
+			if result.Issue == nil && s.issueNumber > 0 {
+				result.Issue = issueRef(s.issueNumber)
 			}
+			if result.IssueNumber == 0 && s.issueNumber > 0 {
+				result.IssueNumber = s.issueNumber
+			}
+			result.RetriesTotal = attempt + 1
+
+			taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
+			taskContent, _, _ := ReadTaskContent(taskPath)
+			alreadyResolved = hasExactTaskStatus(taskContent, "## Status: already resolved")
+			if s.issueNumber > 0 && events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
+				hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
+				if gateStatus, extras, handled := s.handleExternalGateWithHostPaths(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled && gateStatus != "success" {
+					if resumePrompt, resume := s.resumePromptFromGate(ctx, wt, branch, runID, extras); resume {
+						attemptRenderCfg.TaskPrompt = resumePrompt
+						continue relaunch
+					}
+					result.Status = gateStatus
+					terminalExtras = mergeBlockerExtras(terminalExtras, extras)
+					break loop
+				}
+			}
+			break relaunch
 		}
 		if mergeRequired {
 			prMerged := checkPRMergedForIssue(ctx, s.deps.githubClient, branch, s.issueNumber)
@@ -3101,6 +3139,16 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	}
 
 	logPath := s.runLogPathFor(runID)
+	// Entry re-evaluation (issue #2595): a resume candidate (continuation,
+	// or preserved review artifacts) re-entering while the PR gate is
+	// already resolvable must not launch the agent blindly. A merely
+	// pending gate emits run.await and ends the session without launching;
+	// a ready-to-merge / actionable-feedback gate attaches the
+	// request-scoped evidence to the entry launch prompt (the entry launch
+	// IS the resume).
+	if entryResult, entryStarted, entryHandled := s.tryEntryResume(ctx, branch, wt, logPath, runID); entryHandled {
+		return entryResult, entryStarted
+	}
 	result, terminalExtras, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, s.mode != ModeContinue, func(attempt int, previous AgentRunResult) (prompt.RenderConfig, *AgentRunResult) {
 		attemptRenderCfg := s.renderCfg
 		if attempt > 0 {

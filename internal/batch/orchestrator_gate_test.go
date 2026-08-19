@@ -208,6 +208,10 @@ func TestExternalGate_LiveReadyStatePrecedesReviewTimeout(t *testing.T) {
 		IssueNumber: 42,
 		Status:      "success",
 		Branch:      branch,
+	}, {
+		IssueNumber: 42,
+		Status:      "success",
+		Branch:      branch,
 	}}}
 	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
 	client := &fakeGitHubClient{
@@ -222,6 +226,8 @@ func TestExternalGate_LiveReadyStatePrecedesReviewTimeout(t *testing.T) {
 			MergeStateStatus:  "CLEAN",
 		}},
 	}
+	runOpts := gateTestRunOptions()
+	runOpts.awaitResumeMax = 1
 	o := NewOrchestrator(
 		client,
 		&retryRenderer{result: "rendered prompt"},
@@ -230,7 +236,7 @@ func TestExternalGate_LiveReadyStatePrecedesReviewTimeout(t *testing.T) {
 		WithErrorLog(io.Discard),
 		WithSandboxFactory(sbFactory),
 		WithRunnableFactory(factory),
-		WithRunSessionOpts(gateTestRunOptions()),
+		WithRunSessionOpts(runOpts),
 	)
 
 	bc := BatchConfig{
@@ -251,8 +257,8 @@ func TestExternalGate_LiveReadyStatePrecedesReviewTimeout(t *testing.T) {
 	if result.Status != "await" {
 		t.Fatalf("status = %q, want await", result.Status)
 	}
-	if len(factory.created) != 1 {
-		t.Fatalf("agent launches = %d, want 1", len(factory.created))
+	if len(factory.created) != 2 {
+		t.Fatalf("agent launches = %d, want 2 (initial + in-session resume)", len(factory.created))
 	}
 
 	logs, err := eventLog.Read()
@@ -261,6 +267,16 @@ func TestExternalGate_LiveReadyStatePrecedesReviewTimeout(t *testing.T) {
 	}
 	if got := countEventsByType(logs, "run.retry"); got != 0 {
 		t.Fatalf("run.retry events = %d, want 0", got)
+	}
+	resumedEvt := findEvent(logs, "run.resumed")
+	if resumedEvt == nil {
+		t.Fatalf("run.resumed event not found: %v", logs)
+	}
+	if got := resumedEvt.Payload["gate"]; got != gateReadyToMerge {
+		t.Fatalf("resumed gate = %v, want live ready-to-merge", got)
+	}
+	if got := resumedEvt.Payload["reason"]; got != "approval" {
+		t.Fatalf("resumed reason = %v, want approval", got)
 	}
 	awaitEvt := findEvent(logs, "run.await")
 	if awaitEvt == nil {
@@ -764,7 +780,10 @@ func TestExternalGate_LiveFailedStatePrecedesActionableEvidence(t *testing.T) {
 
 	sb := &retrySandbox{workDir: worktreePath}
 	sbFactory := &retrySandboxFactory{sandbox: sb}
-	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success", Branch: branch}}}
+	factory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
+	}}
 	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}},
@@ -779,6 +798,8 @@ func TestExternalGate_LiveFailedStatePrecedesActionableEvidence(t *testing.T) {
 			MergeStateStatus:  "CLEAN",
 		}},
 	}
+	runOpts := gateTestRunOptions()
+	runOpts.awaitResumeMax = 1
 	o := NewOrchestrator(
 		client,
 		&retryRenderer{result: "rendered prompt"},
@@ -787,7 +808,7 @@ func TestExternalGate_LiveFailedStatePrecedesActionableEvidence(t *testing.T) {
 		WithErrorLog(io.Discard),
 		WithSandboxFactory(sbFactory),
 		WithRunnableFactory(factory),
-		WithRunSessionOpts(gateTestRunOptions()),
+		WithRunSessionOpts(runOpts),
 	)
 
 	bc := BatchConfig{
@@ -804,11 +825,11 @@ func TestExternalGate_LiveFailedStatePrecedesActionableEvidence(t *testing.T) {
 		PreviousRunIDs: map[int]string{42: "prior-run"},
 		BaseBranch:     "main",
 	})
-	if !started || result.Status != "blocked" {
-		t.Fatalf("late feedback result = (%t, %q), want started blocked", started, result.Status)
+	if !started || result.Status != "await" {
+		t.Fatalf("late feedback result = (%t, %q), want started await", started, result.Status)
 	}
-	if len(factory.created) != 1 {
-		t.Fatalf("agent launches = %d, want 1", len(factory.created))
+	if len(factory.created) != 2 {
+		t.Fatalf("agent launches = %d, want 2 (entry resume + in-session resume)", len(factory.created))
 	}
 	if client.editPRBodyCalls != 0 {
 		t.Fatalf("PR body mutations = %d, want 0", client.editPRBodyCalls)
@@ -823,13 +844,20 @@ func TestExternalGate_LiveFailedStatePrecedesActionableEvidence(t *testing.T) {
 	if findEvent(logs, "run.continued") == nil {
 		t.Fatal("late formal requested changes did not preserve continuation mode")
 	}
-	finished := findEvent(logs, "run.finished")
-	if finished == nil || finished.Payload["gate"] != "failed" {
-		t.Fatalf("late feedback terminal event = %#v, want live failed gate", finished)
+	resumedEvt := findEvent(logs, "run.resumed")
+	if resumedEvt == nil || resumedEvt.Payload["gate"] != gateActionableFeedback {
+		t.Fatalf("resumed event = %#v, want actionable-feedback gate", resumedEvt)
 	}
-	requestPayload, ok := finished.Payload["review_request"].(map[string]any)
+	if got := resumedEvt.Payload["reason"]; got != "feedback" {
+		t.Fatalf("resumed reason = %v, want feedback", got)
+	}
+	awaitEvt := findEvent(logs, "run.await")
+	if awaitEvt == nil || awaitEvt.Payload["gate"] != gateActionableFeedback {
+		t.Fatalf("late feedback await event = %#v, want actionable-feedback gate", awaitEvt)
+	}
+	requestPayload, ok := awaitEvt.Payload["review_request"].(map[string]any)
 	if !ok {
-		t.Fatalf("review request payload = %#v, want retained request", finished.Payload["review_request"])
+		t.Fatalf("review request payload = %#v, want retained request", awaitEvt.Payload["review_request"])
 	}
 	classificationPayload, ok := requestPayload["classification"].(map[string]any)
 	if !ok || classificationPayload["decision"] != "changes_requested" {
@@ -839,9 +867,12 @@ func TestExternalGate_LiveFailedStatePrecedesActionableEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read actionable task: %v", err)
 	}
-	for _, want := range []string{"pull request external gate is failed", "inspect the failed CI or requested review changes"} {
-		if !strings.Contains(string(task), want) {
-			t.Fatalf("task missing %q: %s", want, task)
+	if !strings.Contains(string(task), "# Task") {
+		t.Fatalf("task lost original content: %s", task)
+	}
+	for _, cfg := range factory.configs {
+		if !strings.Contains(cfg.TaskPrompt, "REVIEW_CHANGES_REQUESTED") {
+			t.Fatalf("resumed prompt missing requested-changes evidence")
 		}
 	}
 }
@@ -1195,6 +1226,7 @@ func TestExternalGate_AgentFailureRetryPrecedesLiveReadyGate(t *testing.T) {
 	factory := &fakeRunnableFactory{results: []AgentRunResult{
 		{IssueNumber: 42, Status: "failure", Branch: branch},
 		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
 	}}
 	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
 	client := &fakeGitHubClient{
@@ -1204,8 +1236,10 @@ func TestExternalGate_AgentFailureRetryPrecedesLiveReadyGate(t *testing.T) {
 			StatusCheckRollup: "success", ReviewDecision: "APPROVED", MergeStateStatus: "CLEAN",
 		}},
 	}
+	runOpts := gateTestRunOptions()
+	runOpts.awaitResumeMax = 1
 	o := NewOrchestrator(client, &retryRenderer{result: "rendered prompt"}, nil, eventLog,
-		WithErrorLog(io.Discard), WithSandboxFactory(sbFactory), WithRunnableFactory(factory), WithRunSessionOpts(gateTestRunOptions()))
+		WithErrorLog(io.Discard), WithSandboxFactory(sbFactory), WithRunnableFactory(factory), WithRunSessionOpts(runOpts))
 	bc := BatchConfig{
 		Cfg: &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}, AgentName: "opencode",
 		AgentCfg: config.Agent{Command: "echo hi"}, IdentityResolver: noopIdentityResolver(), Retries: 1,
@@ -1216,8 +1250,8 @@ func TestExternalGate_AgentFailureRetryPrecedesLiveReadyGate(t *testing.T) {
 	if !started || result.Status != "await" {
 		t.Fatalf("timeout after retry = (%t, %q), want started await", started, result.Status)
 	}
-	if len(factory.created) != 2 {
-		t.Fatalf("agent launches = %d, want 2 (failure retry followed by clean timeout handoff)", len(factory.created))
+	if len(factory.created) != 3 {
+		t.Fatalf("agent launches = %d, want 3 (failure retry, success, in-session resume)", len(factory.created))
 	}
 	logs, err := eventLog.Read()
 	if err != nil {
@@ -1226,9 +1260,13 @@ func TestExternalGate_AgentFailureRetryPrecedesLiveReadyGate(t *testing.T) {
 	if countEventsByType(logs, "run.retry") != 1 {
 		t.Fatal("agent failure did not consume its configured retry before the timeout handoff")
 	}
+	resumedEvt := findEvent(logs, "run.resumed")
+	if resumedEvt == nil || resumedEvt.Payload["gate"] != gateReadyToMerge {
+		t.Fatalf("resumed event = %#v, want live ready-to-merge gate", resumedEvt)
+	}
 	awaitEvt := findEvent(logs, "run.await")
 	if awaitEvt == nil || awaitEvt.Payload["gate"] != gateReadyToMerge {
-		t.Fatalf("terminal event = %#v, want live ready-to-merge gate", awaitEvt)
+		t.Fatalf("await event = %#v, want live ready-to-merge gate", awaitEvt)
 	}
 }
 
@@ -1534,7 +1572,10 @@ func TestExternalGate_ReviewTimeoutIgnoresHeadSidecarWithoutRequest(t *testing.T
 
 	sb := &retrySandbox{workDir: worktreePath}
 	sbFactory := &retrySandboxFactory{sandbox: sb}
-	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success", Branch: gateTestBranch}}}
+	factory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "success", Branch: gateTestBranch},
+		{IssueNumber: 42, Status: "success", Branch: gateTestBranch},
+	}}
 	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}},
@@ -1548,8 +1589,10 @@ func TestExternalGate_ReviewTimeoutIgnoresHeadSidecarWithoutRequest(t *testing.T
 			MergeStateStatus:  "CLEAN",
 		}},
 	}
+	runOpts := gateTestRunOptions()
+	runOpts.awaitResumeMax = 1
 	o := NewOrchestrator(client, &retryRenderer{result: "rendered prompt"}, nil, eventLog,
-		WithErrorLog(io.Discard), WithSandboxFactory(sbFactory), WithRunnableFactory(factory), WithRunSessionOpts(gateTestRunOptions()))
+		WithErrorLog(io.Discard), WithSandboxFactory(sbFactory), WithRunnableFactory(factory), WithRunSessionOpts(runOpts))
 	bc := BatchConfig{
 		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
 		AgentName:        "opencode",
@@ -1563,8 +1606,8 @@ func TestExternalGate_ReviewTimeoutIgnoresHeadSidecarWithoutRequest(t *testing.T
 	if !started || result.Status != "await" {
 		t.Fatalf("head-only state result = (%t, %q), want started await", started, result.Status)
 	}
-	if len(factory.created) != 1 {
-		t.Fatalf("agent launches = %d, want 1", len(factory.created))
+	if len(factory.created) != 2 {
+		t.Fatalf("agent launches = %d, want 2 (initial + in-session resume)", len(factory.created))
 	}
 	logs, err := eventLog.Read()
 	if err != nil {
@@ -1572,6 +1615,9 @@ func TestExternalGate_ReviewTimeoutIgnoresHeadSidecarWithoutRequest(t *testing.T
 	}
 	if countEventsByType(logs, "run.retry") != 0 {
 		t.Fatal("head-only review state consumed a retry")
+	}
+	if findEvent(logs, "run.resumed") == nil {
+		t.Fatal("live ready-to-merge gate did not resume the agent in-session")
 	}
 	awaitEvt := findEvent(logs, "run.await")
 	if awaitEvt == nil || awaitEvt.Payload["gate"] != gateReadyToMerge {
@@ -1810,7 +1856,10 @@ func TestExternalGate_LateCurrentHeadApprovalIsReadyToMergeWithoutRetry(t *testi
 	branch := gateTestBranch
 	sb := &retrySandbox{workDir: worktreePath}
 	sbFactory := &retrySandboxFactory{sandbox: sb}
-	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success", Branch: branch}}}
+	factory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
+	}}
 	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}},
@@ -1825,6 +1874,8 @@ func TestExternalGate_LateCurrentHeadApprovalIsReadyToMergeWithoutRetry(t *testi
 			MergeStateStatus:  "CLEAN",
 		}},
 	}
+	runOpts := gateTestRunOptions()
+	runOpts.awaitResumeMax = 1
 	o := NewOrchestrator(
 		client,
 		&retryRenderer{result: "rendered prompt"},
@@ -1833,7 +1884,7 @@ func TestExternalGate_LateCurrentHeadApprovalIsReadyToMergeWithoutRetry(t *testi
 		WithErrorLog(io.Discard),
 		WithSandboxFactory(sbFactory),
 		WithRunnableFactory(factory),
-		WithRunSessionOpts(gateTestRunOptions()),
+		WithRunSessionOpts(runOpts),
 	)
 	bc := BatchConfig{
 		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
@@ -1852,8 +1903,8 @@ func TestExternalGate_LateCurrentHeadApprovalIsReadyToMergeWithoutRetry(t *testi
 	if !started || result.Status != "await" {
 		t.Fatalf("late approval result = (%t, %q), want started await", started, result.Status)
 	}
-	if len(factory.created) != 1 {
-		t.Fatalf("agent launches = %d, want 1", len(factory.created))
+	if len(factory.created) != 2 {
+		t.Fatalf("agent launches = %d, want 2 (entry resume + in-session resume)", len(factory.created))
 	}
 	if client.editPRBodyCalls != 0 || client.closeIssueCalls != 0 {
 		t.Fatalf("GitHub mutations = edit body %d, close issue %d, want none", client.editPRBodyCalls, client.closeIssueCalls)
@@ -1867,6 +1918,10 @@ func TestExternalGate_LateCurrentHeadApprovalIsReadyToMergeWithoutRetry(t *testi
 	}
 	if countEventsByType(logs, "run.retry") != 0 {
 		t.Fatalf("run.retry events = %d, want 0", countEventsByType(logs, "run.retry"))
+	}
+	resumedEvt := findEvent(logs, "run.resumed")
+	if resumedEvt == nil || resumedEvt.Payload["gate"] != gateReadyToMerge {
+		t.Fatalf("resumed event = %#v, want %q gate", resumedEvt, gateReadyToMerge)
 	}
 	awaitEvt := findEvent(logs, "run.await")
 	if awaitEvt == nil || awaitEvt.Payload["gate"] != gateReadyToMerge {
@@ -2203,15 +2258,24 @@ func runCleanGateCaseForIssue(t *testing.T, issueState string, pr *github.PR) (A
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
 
 	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
-	factory := &fakeRunnableFactory{results: []AgentRunResult{{
-		IssueNumber: 42,
-		Status:      "success",
-		Branch:      gateTestBranch,
-	}}}
+	factory := &fakeRunnableFactory{results: []AgentRunResult{
+		{
+			IssueNumber: 42,
+			Status:      "success",
+			Branch:      gateTestBranch,
+		},
+		{
+			IssueNumber: 42,
+			Status:      "success",
+			Branch:      gateTestBranch,
+		},
+	}}
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, State: issueState, Title: "Fix bug"}},
 		prs:    map[string]*github.PR{gateTestBranch: pr},
 	}
+	runOpts := gateTestRunOptions()
+	runOpts.awaitResumeMax = 1
 	o := NewOrchestrator(
 		client,
 		&retryRenderer{result: "rendered prompt"},
@@ -2220,7 +2284,7 @@ func runCleanGateCaseForIssue(t *testing.T, issueState string, pr *github.PR) (A
 		WithErrorLog(io.Discard),
 		WithSandboxFactory(&retrySandboxFactory{sandbox: sb}),
 		WithRunnableFactory(factory),
-		WithRunSessionOpts(gateTestRunOptions()),
+		WithRunSessionOpts(runOpts),
 	)
 
 	bc := BatchConfig{
@@ -2379,8 +2443,8 @@ func TestRunSingle_ApprovedCleanOpenPRIsReadyToMergeWithoutRetry(t *testing.T) {
 	if result.RetriesTotal != 1 {
 		t.Fatalf("retries total = %d, want 1", result.RetriesTotal)
 	}
-	if launches != 1 {
-		t.Fatalf("agent launches = %d, want 1", launches)
+	if launches != 2 {
+		t.Fatalf("agent launches = %d, want 2 (resumed for ready-to-merge, then await)", launches)
 	}
 	assertExternalGateTerminal(t, logs, "await", "ready-to-merge")
 }
@@ -2397,8 +2461,8 @@ func TestRunSingle_ApprovedCleanOpenPRWithoutChecksIsReadyToMerge(t *testing.T) 
 	if result.Status != "await" {
 		t.Fatalf("status = %q, want await", result.Status)
 	}
-	if launches != 1 {
-		t.Fatalf("agent launches = %d, want 1", launches)
+	if launches != 2 {
+		t.Fatalf("agent launches = %d, want 2 (resumed for ready-to-merge, then await)", launches)
 	}
 	assertExternalGateTerminal(t, logs, "await", gateReadyToMerge)
 }
@@ -2411,6 +2475,10 @@ func TestRunSingle_RestoresHostPathsBeforeExternalGateHeadCheck(t *testing.T) {
 	sb := &retrySandbox{workDir: filepath.Join(workDir, "worktree")}
 	sbFactory := &retrySandboxFactory{sandbox: sb}
 	factory := &fakeRunnableFactory{results: []AgentRunResult{{
+		IssueNumber: 42,
+		Status:      "success",
+		Branch:      branch,
+	}, {
 		IssueNumber: 42,
 		Status:      "success",
 		Branch:      branch,
@@ -2446,6 +2514,7 @@ func TestRunSingle_RestoresHostPathsBeforeExternalGateHeadCheck(t *testing.T) {
 			gatePollInitial:  time.Millisecond,
 			gatePollMaxSleep: time.Millisecond,
 			gatePollBudget:   5 * time.Millisecond,
+			awaitResumeMax:   1,
 		}),
 	)
 
@@ -2494,7 +2563,10 @@ func TestRunSingle_PendingGateTransitionToReadyToMergeIsTerminal(t *testing.T) {
 	branch := gateTestBranch
 	sb := &retrySandbox{workDir: filepath.Join(workDir, "worktree")}
 	sbFactory := &retrySandboxFactory{sandbox: sb}
-	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success", Branch: branch}}}
+	factory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
+	}}
 	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
 	client := &perRunGateSequenceClient{
 		fakeGitHubClient: fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}}},
@@ -2503,6 +2575,8 @@ func TestRunSingle_PendingGateTransitionToReadyToMergeIsTerminal(t *testing.T) {
 			{Number: 17, State: "open", HeadRefName: branch, HeadRefOid: "current-sha", StatusCheckRollup: "success", ReviewDecision: "APPROVED", MergeStateStatus: "CLEAN"},
 		},
 	}
+	runOpts := gateTestRunOptions()
+	runOpts.awaitResumeMax = 1
 	o := NewOrchestrator(
 		client,
 		&retryRenderer{result: "rendered prompt"},
@@ -2511,7 +2585,7 @@ func TestRunSingle_PendingGateTransitionToReadyToMergeIsTerminal(t *testing.T) {
 		WithErrorLog(io.Discard),
 		WithSandboxFactory(sbFactory),
 		WithRunnableFactory(factory),
-		WithRunSessionOpts(gateTestRunOptions()),
+		WithRunSessionOpts(runOpts),
 	)
 	bc := BatchConfig{
 		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
@@ -2531,16 +2605,19 @@ func TestRunSingle_PendingGateTransitionToReadyToMergeIsTerminal(t *testing.T) {
 	if result.Status != "await" {
 		t.Fatalf("status = %q, want await", result.Status)
 	}
-	if client.calls != 3 {
-		t.Fatalf("PR lookups = %d, want pending lookup, ready poll, and terminal conflict check", client.calls)
+	if client.calls < 4 {
+		t.Fatalf("PR lookups = %d, want >= 4 (pending lookup, ready poll, resume evidence, post-resume re-check)", client.calls)
 	}
 	logs, err := eventLog.Read()
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
 	assertExternalGateTerminal(t, logs, "await", gateReadyToMerge)
-	if launches := len(factory.created); launches != 1 {
-		t.Fatalf("agent launches = %d, want 1", launches)
+	if findEvent(logs, "run.resumed") == nil {
+		t.Fatalf("ready poll transition did not resume the agent in-session")
+	}
+	if launches := len(factory.created); launches != 2 {
+		t.Fatalf("agent launches = %d, want 2", launches)
 	}
 }
 
@@ -2845,6 +2922,7 @@ func TestHandleExternalGateFailsClosedWhenHeadCannotBeValidated(t *testing.T) {
 					gatePollInitial:  time.Millisecond,
 					gatePollMaxSleep: time.Millisecond,
 					gatePollBudget:   5 * time.Millisecond,
+					awaitResumeMax:   1,
 				},
 			}
 

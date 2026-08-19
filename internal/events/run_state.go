@@ -19,6 +19,13 @@ type RunState struct {
 	// review_request. Consumers read AwaitReason() and
 	// AwaitReviewRequest() for the structured fields.
 	AwaitEvent *Event
+	// ResumedEvent records the most recent run.resumed event for a run
+	// whose agent session was relaunched in-session with request-scoped
+	// review evidence (actionable feedback or a ready-to-merge
+	// approval). When set, the run stays active (Finished is nil);
+	// Started and AwaitEvent are preserved. Consumers read
+	// ResumeReason() for the structured reason.
+	ResumedEvent *Event
 	// Retries holds every run.retry event emitted against this run, in
 	// input (events.jsonl) order. It is the projection's view of the
 	// retry timeline; state-level helpers (LiveAttempt,
@@ -70,6 +77,14 @@ func ProjectRunStates(events []Event) []RunState {
 			// The run stays active (Finished is not set).
 			awaitEvent := event
 			state.AwaitEvent = &awaitEvent
+		case "run.resumed":
+			// run.resumed is a non-terminal event: it records that the
+			// run relaunched its agent session in-session with
+			// request-scoped review evidence (actionable feedback or a
+			// ready-to-merge approval). The run stays active (Finished
+			// is not set); Started and AwaitEvent are preserved.
+			resumeEvent := event
+			state.ResumedEvent = &resumeEvent
 		case "run.finished", "run.aborted", "run.cancelled":
 			finished := event
 			state.Finished = &finished
@@ -329,6 +344,17 @@ func (r RunState) AwaitReviewRequest() map[string]any {
 	}
 	m, _ := v.(map[string]any)
 	return m
+}
+
+// ResumeReason returns the reason from the most recent run.resumed
+// event payload ("feedback" or "approval"), or "" if the run has no
+// resume event.
+func (r RunState) ResumeReason() string {
+	if r.ResumedEvent == nil {
+		return ""
+	}
+	v, _ := payloadString(r.ResumedEvent.Payload, "reason")
+	return v
 }
 
 // ContextExhausted reports terminal context exhaustion from the finished

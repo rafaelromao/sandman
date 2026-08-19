@@ -264,6 +264,16 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
 	}
 	if gate == "failed" {
+		// Decompose the live failure (issue #2595): a rejected review is
+		// resume-worthy when retained evidence proves the feedback is
+		// actionable at the current head, while CI / mergeability failures
+		// keep the hard blocked gate (the agent cannot act on them without
+		// operator work anyway). The actionable-feedback await hands the
+		// agent the retained review_request so a resumed session can
+		// address the exact requested changes.
+		if result, extras, handled := s.resumeWorthyActionableFeedback(ctx, workDir, pr, headSHA, diagnostics); result != "" {
+			return result, extras, handled
+		}
 		return s.blockExternalGateWithDiagnostics(ctx, workDir, logPath, runID, "failed", diagnostics)
 	}
 	if gate == "unavailable" && !initialUnavailable {
@@ -278,6 +288,9 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 		return s.awaitExternalGateWithDiagnostics(ctx, gateReadyToMerge, diagnostics)
 	}
 	if polled == gateFailed {
+		if result, extras, handled := s.resumeWorthyActionableFeedback(ctx, workDir, pr, headSHA, diagnostics); result != "" {
+			return result, extras, handled
+		}
 		return s.blockExternalGateWithDiagnostics(ctx, workDir, logPath, runID, "failed", diagnostics)
 	}
 	if polled == gatePollUnavailable || polled == gatePollPRMissing {
@@ -306,6 +319,49 @@ func (s *runSession) awaitExternalGateWithDiagnostics(ctx context.Context, reaso
 func (s *runSession) confirmExternalGateWithDiagnostics(ctx context.Context, workDir, branch, logPath, runID string, diagnostics map[string]any) (string, map[string]any, bool) {
 	result, extras, handled := s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
 	return withExternalGateDiagnostics(result, extras, handled, diagnostics)
+}
+
+// resumeWorthyActionableFeedback decomposes a live failed gate into the
+// await+actionable-feedback resume path when retained evidence proves the
+// requested changes are actionable at the current head. It returns a zero
+// result when the failure keeps the hard blocked gate (CI / mergeability
+// precedence or no actionable evidence).
+func (s *runSession) resumeWorthyActionableFeedback(ctx context.Context, workDir string, pr *github.PR, headSHA string, diagnostics map[string]any) (string, map[string]any, bool) {
+	if pr == nil || retainedReviewPRGateFailed(pr) {
+		return "", nil, false
+	}
+	extras := s.actionableFeedbackExtras(ctx, workDir, pr, headSHA)
+	if extras == nil {
+		return "", nil, false
+	}
+	if ctx.Err() != nil {
+		return "aborted", nil, true
+	}
+	return withExternalGateDiagnostics("await", extras, true, diagnostics)
+}
+
+// actionableFeedbackExtras returns the retained actionable-feedback gate
+// payload when the live PR was rejected for requested changes and the
+// retained review evidence is still actionable at the current head. It
+// returns nil when the evidence is absent, stale, or unreadable — the caller
+// keeps the hard failed gate in that case.
+func (s *runSession) actionableFeedbackExtras(ctx context.Context, workDir string, pr *github.PR, currentHead string) map[string]any {
+	if pr == nil || !reviewTimeoutArtifactsPresent(workDir) {
+		return nil
+	}
+	repository, err := s.deps.githubClient.RepoName(ctx)
+	if err != nil {
+		return nil
+	}
+	handoff, err := readReviewTimeoutHandoff(workDir, repository, pr, currentHead)
+	if err != nil || handoff == nil || !handoff.hasActionableFeedback() {
+		return nil
+	}
+	extras := handoff.payloadFor(gateActionableFeedback, actionableFeedbackReason, actionableFeedbackNextAction)
+	extras["blocker"] = "external-gate"
+	extras["gate"] = gateActionableFeedback
+	extras["await"] = true
+	return extras
 }
 
 func (s *runSession) retainedReviewDiagnostics(ctx context.Context, workDir, branch string, pr *github.PR, currentHead string) map[string]any {

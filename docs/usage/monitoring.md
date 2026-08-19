@@ -32,7 +32,7 @@ Sandman writes structured events to `.sandman/events.jsonl` in newline-delimited
 
 | Field | Description |
 |-------|-------------|
-| `type` | Event type (`run.started`, `run.continued`, `run.queued`, `run.blocked`, `run.retry`, `run.idle_timeout`, `run.warning`, `run.finished`, `run.aborted`) |
+| `type` | Event type (`run.started`, `run.continued`, `run.queued`, `run.blocked`, `run.retry`, `run.idle_timeout`, `run.warning`, `run.await`, `run.resumed`, `run.finished`, `run.aborted`) |
 | `timestamp` | ISO 8601 timestamp |
 | `run_id` | Per-row RunID. For review runs the shape is `<ts>-<sid>-<linkedIssue?>-PR<pr>`. This is the row-level identifier; the batch-level identifier (public BatchId) is the `batch_id` field on the `run.started` / `run.finished` payloads, not this row. |
 | `batch_id` | Public BatchId (batch-level identifier). Always present on `run.started` and `run.continued` payloads; mirrors the batch folder basename. |
@@ -119,6 +119,35 @@ Emitted when an agent run completes.
 | `blocker` | Optional terminal blocker classification. `"external-gate"` identifies CI/review waiting or intervention, rather than an agent failure. |
 | `gate` | Optional external-gate state: `"pending"`, `"failed"`, `"unavailable"`, `"unverified"`, `"ready-to-merge"`, `"review-timeout"`, `"review-timeout-state-error"`, or `"actionable-feedback"`. |
 | `review_request` | Present for retained delegated-review outcomes; retains the confirmed request identity, current head, deadline, budget, elapsed time, response counters, validated request-scoped classification, outcome, and next action. |
+
+#### `run.await`
+Emitted when an issue-driven run ends its agent session while the run stays active on the external gate (CI, review, decision publication pending). Non-terminal: the run does not finish, does not consume a retry, and releases sandbox capacity.
+
+| Field | Description |
+|-------|-------------|
+| `await` | Always `true` |
+| `await_reason` | Mirror of `gate`: `"pending"`, `"review-timeout"`, `"ready-to-merge"`, or `"actionable-feedback"` |
+| `gate` | External-gate state at await time (see the external-gate row of `run.finished`) |
+| `branch` | Branch name |
+| `base_branch` | Base branch name |
+| `retries_total` | Total retry attempts configured |
+| `blocker` | Present as `"external-gate"` when the await came from the PR gate path |
+| `review_request` | Present for retained delegated-review outcomes; retains the confirmed request identity, current head, deadline, validated request-scoped classification, outcome, and next action |
+
+#### `run.resumed`
+Emitted when the runtime relaunches the agent session in-session with request-scoped review evidence — actionable review feedback (`reason: "feedback"`) or a current-head approval with green CI and clean mergeability (`reason: "approval"`). Non-terminal: the run stays active, keeps its RunID, and does not consume a retry.
+
+Entry re-evaluation (session start) relaunches with the same evidence but is recorded as `run.continued` by the existing continuation flow — `run.resumed` marks only in-session relaunches.
+
+| Field | Description |
+|-------|-------------|
+| `reason` | Resume cause: `"feedback"` or `"approval"` |
+| `gate` | External-gate state that triggered the resume: `"actionable-feedback"` or `"ready-to-merge"` |
+| `branch` | Branch name |
+| `base_branch` | Base branch name |
+| `retries_total` | Total retry attempts configured |
+| `run_id` | RunID continuity marker (equals the event's own `run_id`; the resume keeps the RunID) |
+| `review_request` | Present for retained delegated-review outcomes; request-scoped review evidence attached to the resumed session |
 
 #### External-gate lifecycle
 When an issue-driven agent exits successfully while its open PR is waiting on CI

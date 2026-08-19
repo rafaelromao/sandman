@@ -303,3 +303,65 @@ func firstLines(s string, n int) string {
 	}
 	return strings.Join(lines[:n], "\n") + "\n... (truncated)"
 }
+
+func TestTaskWithReviewEvidence_NoEvidenceReturnsContentVerbatim(t *testing.T) {
+	content := "# Task\n\n## Next Step\n\nDo the work.\n"
+	got := TaskWithReviewEvidence(content, nil)
+	if got != content {
+		t.Fatalf("expected byte-identical content without evidence, got:\n%s", got)
+	}
+	got = TaskWithReviewEvidence(content, map[string]any{})
+	if got != content {
+		t.Fatalf("expected byte-identical content with empty evidence, got:\n%s", got)
+	}
+}
+
+func TestTaskWithReviewEvidence_AppendsCanonicalSection(t *testing.T) {
+	content := "# Task\n\n## Next Step\n\nDo the work.\n"
+	got := TaskWithReviewEvidence(content, map[string]any{
+		"outcome":      "ready-to-merge",
+		"reason":       "REVIEW_APPROVED",
+		"next_action":  "merge the pull request",
+		"pull_request": 17,
+		"head_sha":     "abc123",
+	})
+	for _, want := range []string{"## Review Evidence", "- outcome: ready-to-merge", "- reason: REVIEW_APPROVED", "- pull_request: 17", "- head_sha: abc123"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in evidence prompt:\n%s", want, got)
+		}
+	}
+	if !strings.Contains(got, "## Next Step") {
+		t.Fatalf("expected preserved task content to survive evidence attachment:\n%s", got)
+	}
+}
+
+func TestTaskWithReviewEvidence_ReplacesPreviousSection(t *testing.T) {
+	content := "# Task\n\n## Review Evidence\n\n- outcome: pending\n\n## Next Step\n\nDo the work.\n"
+	got := TaskWithReviewEvidence(content, map[string]any{"outcome": "actionable-feedback", "reason": "REVIEW_CHANGES_REQUESTED"})
+	if strings.Contains(got, "- outcome: pending") {
+		t.Fatalf("expected stale evidence section to be replaced:\n%s", got)
+	}
+	if !strings.Contains(got, "- outcome: actionable-feedback") {
+		t.Fatalf("expected latest evidence to be attached:\n%s", got)
+	}
+	if !strings.Contains(got, "## Next Step") {
+		t.Fatalf("expected preserved task content to survive evidence replacement:\n%s", got)
+	}
+}
+
+func TestTaskWithReviewEvidence_EmbedsReviewRequest(t *testing.T) {
+	content := "# Task\n"
+	got := TaskWithReviewEvidence(content, map[string]any{
+		"outcome": "actionable-feedback",
+		"reason":  "REVIEW_CHANGES_REQUESTED",
+		"review_request": map[string]any{
+			"repository":   "owner/repo",
+			"pull_request": float64(17),
+			"head_sha":     "abc123",
+			"outcome":      "changes_requested",
+		},
+	})
+	if !strings.Contains(got, "review_request: {") {
+		t.Fatalf("expected embedded review_request JSON in evidence prompt:\n%s", got)
+	}
+}
