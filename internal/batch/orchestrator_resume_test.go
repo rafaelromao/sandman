@@ -848,8 +848,8 @@ func TestRunSingle_FullLifecycleRequestsFeedbackThenApprovalThenMergeSuccess(t *
 	if resumedEvt == nil || resumedEvt.Payload["reason"] != "feedback" {
 		t.Fatalf("run.resumed = %#v, want feedback reason", resumedEvt)
 	}
-	if resumedEvt.Payload["previous_run_id"] != resumedEvt.RunID {
-		t.Fatalf("run.resumed previous_run_id = %v, want own RunID %s", resumedEvt.Payload["previous_run_id"], resumedEvt.RunID)
+	if resumedEvt.Payload["run_id"] != resumedEvt.RunID {
+		t.Fatalf("run.resumed run_id = %v, want own RunID %s", resumedEvt.Payload["run_id"], resumedEvt.RunID)
 	}
 	var awaits []events.Event
 	for _, e := range logs {

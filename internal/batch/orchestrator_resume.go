@@ -158,12 +158,12 @@ func (s *runSession) emitResume(ctx context.Context, runID, branch, gate string,
 		RunID:     runID,
 		Issue:     s.issueNumber,
 		Payload: map[string]any{
-			"reason":          reason,
-			"gate":            gate,
-			"branch":          branch,
-			"base_branch":     s.baseBranch,
-			"retries_total":   s.retries,
-			"previous_run_id": runID,
+			"reason":        reason,
+			"gate":          gate,
+			"branch":        branch,
+			"base_branch":   s.baseBranch,
+			"retries_total": s.retries,
+			"run_id":        runID,
 		},
 	}
 	if s.issueNumber > 0 {

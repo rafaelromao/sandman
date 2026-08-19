@@ -1117,13 +1117,13 @@ func TestProjectRunStates_ResumeEventKeepsRunActive(t *testing.T) {
 			"review_request": reviewReq,
 		}},
 		{Type: "run.resumed", Timestamp: resumeAt, RunID: "run-resumed", Issue: 42, Payload: map[string]any{
-			"reason":          "feedback",
-			"gate":            "actionable-feedback",
-			"branch":          "42-fix",
-			"base_branch":     "main",
-			"retries_total":   1,
-			"previous_run_id": "run-resumed",
-			"review_request":  reviewReq,
+			"reason":         "feedback",
+			"gate":           "actionable-feedback",
+			"branch":         "42-fix",
+			"base_branch":    "main",
+			"retries_total":  1,
+			"run_id":         "run-resumed",
+			"review_request": reviewReq,
 		}},
 	})
 
@@ -1153,8 +1153,8 @@ func TestProjectRunStates_ResumeEventKeepsRunActive(t *testing.T) {
 	if got := run.AwaitReason(); got != "pending" {
 		t.Fatalf("AwaitReason = %q, want %q after resume", got, "pending")
 	}
-	if got := run.ResumedEvent.Payload["previous_run_id"]; got != "run-resumed" {
-		t.Fatalf("resumed previous_run_id = %v, want %q", got, "run-resumed")
+	if got := run.ResumedEvent.Payload["run_id"]; got != "run-resumed" {
+		t.Fatalf("resumed run_id = %v, want %q", got, "run-resumed")
 	}
 	if got := run.Status(); got != "" {
 		t.Fatalf("expected empty status for active run, got %q", got)

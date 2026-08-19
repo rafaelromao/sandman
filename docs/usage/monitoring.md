@@ -146,7 +146,7 @@ Entry re-evaluation (session start) relaunches with the same evidence but is rec
 | `branch` | Branch name |
 | `base_branch` | Base branch name |
 | `retries_total` | Total retry attempts configured |
-| `previous_run_id` | RunID continuity link (equals the run's own `run_id`; the resume keeps the RunID) |
+| `run_id` | RunID continuity marker (equals the event's own `run_id`; the resume keeps the RunID) |
 | `review_request` | Present for retained delegated-review outcomes; request-scoped review evidence attached to the resumed session |
 
 #### External-gate lifecycle
