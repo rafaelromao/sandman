@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/events"
+
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
@@ -706,5 +708,203 @@ func TestRunSingle_CIFailurePrecedesActionableEvidenceStaysBlocked(t *testing.T)
 	finished := findEvent(logs, "run.finished")
 	if finished == nil || finished.Payload["gate"] != "failed" {
 		t.Fatalf("terminal event = %#v, want failed gate", finished)
+	}
+}
+
+// Vertical lifecycle (issue #2595 demo): a fresh run exits to the delegated
+// review gate (run.await pending), a CHANGES_REQUESTED review resumes the
+// agent with actionable evidence, the pushed head lands back on a pending
+// gate, and the APPROVED+CLEAN transition resumes the agent again before the
+// PR merges into verified success. Across the whole lifecycle there is zero
+// run.retry, at most three launches per session, and the worktree task.md is
+// preserved.
+func TestRunSingle_FullLifecycleRequestsFeedbackThenApprovalThenMergeSuccess(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(workDir)
+
+	branch := "42-fix-bug"
+	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0o755); err != nil {
+		t.Fatalf("create worktree task directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("# Task\n"), 0o644); err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+
+	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
+	}}
+	spyLog := &spyEventLog{}
+	pr := &github.PR{
+		Number:            17,
+		State:             "open",
+		HeadRefName:       branch,
+		HeadRefOid:        "current-sha",
+		StatusCheckRollup: "pending",
+		ReviewDecision:    "REVIEW_REQUIRED",
+		MergeStateStatus:  "BLOCKED",
+	}
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+		prs:    map[string]*github.PR{branch: pr},
+	}
+	headForGate := "current-sha"
+	phase := 0
+	lookups := 0
+	client.findPRHook = func() {
+		lookups++
+		switch phase {
+		case 1:
+			if lookups >= 8 {
+				pr.HeadRefOid = "new-sha"
+				pr.StatusCheckRollup = "pending"
+				pr.ReviewDecision = "REVIEW_REQUIRED"
+				pr.MergeStateStatus = "BLOCKED"
+			}
+		case 2:
+			if lookups >= 6 {
+				pr.State = "merged"
+				pr.Merged = true
+				pr.Body = "Closes #42"
+			}
+		}
+	}
+
+	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
+	runSession := func(continuation bool, previousRunID string) (AgentRunResult, bool) {
+		o := &Orchestrator{
+			githubClient:    client,
+			renderer:        &retryRenderer{result: "rendered prompt"},
+			sandboxFactory:  sbFactory,
+			eventLog:        spyLog,
+			errorLog:        io.Discard,
+			runnableFactory: resultFactory,
+			runSessionOpts: runSessionOptions{
+				currentHead:      func(string) (string, error) { return headForGate, nil },
+				gatePollInitial:  time.Millisecond,
+				gatePollMaxSleep: time.Millisecond,
+				gatePollBudget:   5 * time.Millisecond,
+			},
+		}
+		cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+		return o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, continuation, map[int]string{42: previousRunID}, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false, "", "")
+	}
+
+	phase = 0
+	result, started := runSession(false, "")
+	if !started {
+		t.Fatalf("session 1 not started: %q", result.Status)
+	}
+	if result.Status != "await" || len(resultFactory.created) != 1 {
+		t.Fatalf("session 1 = (%q, %d launches), want await after 1 launch", result.Status, len(resultFactory.created))
+	}
+
+	pr.ReviewDecision = "CHANGES_REQUESTED"
+	pr.StatusCheckRollup = "success"
+	pr.MergeStateStatus = "CLEAN"
+	writeTimedOutReviewRequest(t, worktreePath)
+	writeFormalChangesRequestedClassification(t, worktreePath, "current")
+
+	phase = 1
+	headForGate = "current-sha"
+	lookups = 0
+	result, started = runSession(true, "run-a")
+	if !started {
+		t.Fatalf("session 2 not started: %q", result.Status)
+	}
+	if result.Status != "await" || len(resultFactory.created) != 3 {
+		t.Fatalf("session 2 = (%q, %d launches), want await after entry resume + in-session resume", result.Status, len(resultFactory.created))
+	}
+
+	pr.ReviewDecision = "APPROVED"
+	pr.StatusCheckRollup = "success"
+	pr.MergeStateStatus = "CLEAN"
+	phase = 2
+	headForGate = "new-sha"
+	lookups = 0
+	result, started = runSession(true, "run-b")
+	if !started {
+		t.Fatalf("session 3 not started: %q", result.Status)
+	}
+	if result.Status != "success" || len(resultFactory.created) != 5 {
+		t.Fatalf("session 3 = (%q, %d launches), want success after merged PR (entry resume + merge resume)", result.Status, len(resultFactory.created))
+	}
+
+	logs, err := spyLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if got := countEventsByType(logs, "run.retry"); got != 0 {
+		t.Fatalf("run.retry events = %d, want 0", got)
+	}
+	if got := countEventsByType(logs, "run.resumed"); got != 2 {
+		t.Fatalf("run.resumed events = %d, want 1", got)
+	}
+	resumedEvt := findEvent(logs, "run.resumed")
+	if resumedEvt == nil || resumedEvt.Payload["reason"] != "feedback" {
+		t.Fatalf("run.resumed = %#v, want feedback reason", resumedEvt)
+	}
+	if resumedEvt.Payload["previous_run_id"] != resumedEvt.RunID {
+		t.Fatalf("run.resumed previous_run_id = %v, want own RunID %s", resumedEvt.Payload["previous_run_id"], resumedEvt.RunID)
+	}
+	var awaits []events.Event
+	for _, e := range logs {
+		if e.Type == "run.await" {
+			awaits = append(awaits, e)
+		}
+	}
+	if len(awaits) != 2 {
+		t.Fatalf("run.await events = %d, want 2", len(awaits))
+	}
+	if awaits[0].Payload["gate"] != "pending" || awaits[1].Payload["gate"] != "pending" {
+		t.Fatalf("await gates = %v, %v, want pending, pending", awaits[0].Payload["gate"], awaits[1].Payload["gate"])
+	}
+	finished := findEvent(logs, "run.finished")
+	if finished == nil {
+		t.Fatalf("run.finished event not found: %v", logs)
+	}
+	if status, _ := finished.Payload["status"].(string); !events.RunStatusFromPayload(status).IsSuccess() {
+		t.Fatalf("run.finished = %#v, want success", finished)
+	}
+	if countEventsByType(logs, "run.started") != 1 || countEventsByType(logs, "run.continued") != 2 {
+		t.Fatalf("run.started = %d, run.continued = %d, want 1 and 2", countEventsByType(logs, "run.started"), countEventsByType(logs, "run.continued"))
+	}
+	var seq []string
+	for _, e := range logs {
+		switch e.Type {
+		case "run.started", "run.continued", "run.resumed", "run.await":
+			seq = append(seq, e.Type)
+		}
+	}
+	wantSeq := []string{"run.started", "run.await", "run.continued", "run.resumed", "run.await", "run.continued", "run.resumed"}
+	if len(seq) != len(wantSeq) {
+		t.Fatalf("lifecycle sequence = %v, want %v", seq, wantSeq)
+	}
+	for i, want := range wantSeq {
+		if seq[i] != want {
+			t.Fatalf("lifecycle event %d = %s, want %s (sequence %v)", i, seq[i], want, seq)
+		}
+	}
+	if len(resultFactory.configs) != 5 {
+		t.Fatalf("captured configs = %d, want 5", len(resultFactory.configs))
+	}
+	if strings.Contains(resultFactory.configs[0].TaskPrompt, "## Review Evidence") {
+		t.Fatalf("initial launch must not carry evidence")
+	}
+	for i, evi := range []string{"REVIEW_CHANGES_REQUESTED", "REVIEW_CHANGES_REQUESTED", "REVIEW_APPROVED", "REVIEW_APPROVED"} {
+		if !strings.Contains(resultFactory.configs[i+1].TaskPrompt, evi) {
+			t.Fatalf("launch %d prompt missing %s evidence:\n%s", i+1, evi, resultFactory.configs[i+1].TaskPrompt)
+		}
+	}
+	task, err := os.ReadFile(filepath.Join(worktreePath, ".sandman", "task.md"))
+	if err != nil {
+		t.Fatalf("read final task: %v", err)
+	}
+	if !strings.Contains(string(task), "# Task") {
+		t.Fatalf("task.md lost original content: %s", task)
 	}
 }
