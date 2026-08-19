@@ -842,7 +842,7 @@ func TestRunSingle_FullLifecycleRequestsFeedbackThenApprovalThenMergeSuccess(t *
 		t.Fatalf("run.retry events = %d, want 0", got)
 	}
 	if got := countEventsByType(logs, "run.resumed"); got != 2 {
-		t.Fatalf("run.resumed events = %d, want 1", got)
+		t.Fatalf("run.resumed events = %d, want 2", got)
 	}
 	resumedEvt := findEvent(logs, "run.resumed")
 	if resumedEvt == nil || resumedEvt.Payload["reason"] != "feedback" {

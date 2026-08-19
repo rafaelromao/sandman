@@ -137,6 +137,8 @@ Emitted when an issue-driven run ends its agent session while the run stays acti
 #### `run.resumed`
 Emitted when the runtime relaunches the agent session in-session with request-scoped review evidence — actionable review feedback (`reason: "feedback"`) or a current-head approval with green CI and clean mergeability (`reason: "approval"`). Non-terminal: the run stays active, keeps its RunID, and does not consume a retry.
 
+Entry re-evaluation (session start) relaunches with the same evidence but is recorded as `run.continued` by the existing continuation flow — `run.resumed` marks only in-session relaunches.
+
 | Field | Description |
 |-------|-------------|
 | `reason` | Resume cause: `"feedback"` or `"approval"` |
@@ -145,7 +147,7 @@ Emitted when the runtime relaunches the agent session in-session with request-sc
 | `base_branch` | Base branch name |
 | `retries_total` | Total retry attempts configured |
 | `previous_run_id` | RunID continuity link (equals the run's own `run_id`; the resume keeps the RunID) |
-| `review_request` | Request-scoped review evidence attached to the resumed session |
+| `review_request` | Present for retained delegated-review outcomes; request-scoped review evidence attached to the resumed session |
 
 #### External-gate lifecycle
 When an issue-driven agent exits successfully while its open PR is waiting on CI
