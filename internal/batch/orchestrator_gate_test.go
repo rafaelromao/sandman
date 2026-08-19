@@ -1189,6 +1189,32 @@ func TestExternalGate_CIFailureWithInformalFeedbackStaysBlocked(t *testing.T) {
 	}
 }
 
+func TestExternalGate_DirtyWithInformalFeedbackStaysBlocked(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeInformalRespondedClassification(t, workDir, "Please fix the race in internal/socketpath/socketpath.go.")
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha",
+				StatusCheckRollup: "success", ReviewDecision: "REVIEW_REQUIRED", MergeStateStatus: "DIRTY",
+			}}},
+			errorLog: io.Discard,
+		},
+		opts: gateTestRunOptions(),
+	}
+	status, extras, handled := session.handleExternalGateWithHostPaths(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	if !handled || status != "blocked" {
+		t.Fatalf("DIRTY with informal evidence = (%q, %#v, %t), want blocked", status, extras, handled)
+	}
+	if got, _ := extras["gate"].(string); got != "failed" {
+		t.Fatalf("gate = %q, want failed", got)
+	}
+	if request, ok := extras["review_request"].(map[string]any); ok && request["informal_feedback"] != nil {
+		t.Fatalf("informal_feedback = %#v, want none past the DIRTY precedence branch", request["informal_feedback"])
+	}
+}
+
 func TestExternalGate_RespondedCurrentHeadApprovalRemainsReadyToMerge(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	writeCurrentHeadApprovalClassification(t, workDir)

@@ -112,11 +112,12 @@ func informalFeedbackLine(record map[string]any) int {
 }
 
 var (
-	informalFeedbackBacktickAnchor = regexp.MustCompile("`[^`\n]+`")
-	informalFeedbackCodeAnchor     = regexp.MustCompile(`[A-Za-z0-9_./-]+\.(go|ts|js|py|rs|rb|sh|bash|json|yaml|yml|toml|md|c|h|cpp|hpp|sql|java|kt|tf|lock)(:\d{1,5})?\b`)
-	informalFeedbackLineAnchor     = regexp.MustCompile(`(?i)\b(?:line\s?\d{1,5}|l\s?\d{1,5})\b`)
-	informalFeedbackDiffAnchor     = regexp.MustCompile(`(?m)^[ \t]*[+-] ?[a-zA-Z_][^\r\n]*`) // diff hunk content lines ("- keep := true"); "+1" praise is not a hunk
-	informalFeedbackToken          = regexp.MustCompile(`[a-z0-9]+`)
+	informalFeedbackBacktickAnchor   = regexp.MustCompile("`[^`\n]+`")
+	informalFeedbackCodeAnchor       = regexp.MustCompile(`[A-Za-z0-9_./-]+\.(go|ts|js|py|rs|rb|sh|bash|json|yaml|yml|toml|md|c|h|cpp|hpp|sql|java|kt|tf|lock)(:\d{1,5})?\b`)
+	informalFeedbackLineAnchor       = regexp.MustCompile(`(?i)\b(?:line\s?\d{1,5}|l\s?\d{1,5})\b`)
+	informalFeedbackDiffAddAnchor    = regexp.MustCompile(`(?m)^[ \t]*\+ ?[a-zA-Z_][^\r\n]*`)
+	informalFeedbackDiffRemoveAnchor = regexp.MustCompile(`(?m)^[ \t]*- ?[a-zA-Z_][^\r\n]*`)
+	informalFeedbackToken            = regexp.MustCompile(`[a-z0-9]+`)
 )
 
 // informalFeedbackBoilerplateTokens are the tokens of approval, praise, and
@@ -172,11 +173,15 @@ func informalFeedbackConcrete(body string) bool {
 	return informalFeedbackHasCodeAnchor(text)
 }
 
+// informalFeedbackHasCodeAnchor reports whether the body carries a mechanical
+// code anchor. A diff anchor requires both a removed and an added content line
+// ("- keep := true\n+ keep := false"): a lone dash-prefixed line is markdown
+// bullet prose, not a hunk, and "+1" praise is not a hunk.
 func informalFeedbackHasCodeAnchor(body string) bool {
 	return informalFeedbackBacktickAnchor.MatchString(body) ||
 		informalFeedbackCodeAnchor.MatchString(body) ||
 		informalFeedbackLineAnchor.MatchString(body) ||
-		informalFeedbackDiffAnchor.MatchString(body)
+		(informalFeedbackDiffAddAnchor.MatchString(body) && informalFeedbackDiffRemoveAnchor.MatchString(body))
 }
 
 // informalFeedbackStripped removes markdown decoration so the remaining prose

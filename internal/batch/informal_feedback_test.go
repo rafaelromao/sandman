@@ -123,6 +123,8 @@ func TestInformalFeedbackConcrete(t *testing.T) {
 		{"file path with line", "Look at internal/batch/orchestrator.go:3142 and fix the await loop.", true},
 		{"line number", "Please fix the issue on line 42.", true},
 		{"diff marker", "- keep := true\n+ keep := false", true},
+		{"single dash bullet is not a hunk", "- please check the docs", false},
+		{"single plus bullet is not a hunk", "+ nice try", false},
 		{"function call span", "`applyFixes()` never waits for the reviewer.", true},
 		{"blank body", "   \n\t ", false},
 		{"emoji only", "😃🎉", false},
@@ -311,6 +313,29 @@ func TestInformalFeedbackEvidenceFor(t *testing.T) {
 		request.TriggerCreatedAt = "1970-01-01T00:46:40Z" // unix 2800 == deadline, so the record at 00:20 is before the deadline but before the start
 		if evidence := classification.informalFeedbackEvidenceFor(request, classification.WindowEnd); len(evidence) != 0 {
 			t.Fatalf("informal evidence = %+v, want none for out-of-window records", evidence)
+		}
+	})
+
+	t.Run("next-trigger boundary truncates the window for an active request", func(t *testing.T) {
+		classification := informalClassificationForTest(t, func(raw map[string]any) {
+			// Defensive window-end handling: the boundary is passed in
+			// explicitly, so an active request whose classification carries
+			// a window end (a later trigger) must drop records after it.
+			raw["window"].(map[string]any)["end"] = "1970-01-01T00:25:00Z"
+		})
+		classification.WindowEnd = "1970-01-01T00:25:00Z" // unix 1500: record at 00:20 (1200) is inside, a hypothetical later record is not
+		request := informalRequestForTest()
+		request.TriggerCreatedAt = "1970-01-01T00:10:00Z"
+		request.DeadlineUnixSeconds = 3600 // unix 4000: the end boundary, not the deadline, truncates the window
+		evidence := classification.informalFeedbackEvidenceFor(request, classification.WindowEnd)
+		if len(evidence) != 1 {
+			t.Fatalf("informal evidence = %+v, want the in-boundary record", evidence)
+		}
+		raw := informalClassificationForTest(t, func(informal map[string]any) {
+			informal["sources"].(map[string]any)["top_level"].([]any)[0].(map[string]any)["response_timestamp"] = "1970-01-01T00:30:00Z"
+		})
+		if evidence := raw.informalFeedbackEvidenceFor(request, "1970-01-01T00:25:00Z"); len(evidence) != 0 {
+			t.Fatalf("informal evidence = %+v, want none for records after the window end", evidence)
 		}
 	})
 

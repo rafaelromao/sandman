@@ -795,6 +795,9 @@ func TestEntryReevaluation_ModeContinueInformalFeedbackResumesAgentWithEvidence(
 	if resumedEvt == nil || resumedEvt.Payload["gate"] != gateActionableFeedback {
 		t.Fatalf("run.resumed gate = %v, want actionable-feedback", resumedEvt.Payload["gate"])
 	}
+	if got := countEventsByType(logs, "run.resumed"); got != 1 {
+		t.Fatalf("run.resumed events = %d, want exactly 1 (entry relaunch emits no run.resumed; one in-session relaunch does)", got)
+	}
 	awaitEvt := findEvent(logs, "run.await")
 	if awaitEvt == nil || awaitEvt.Payload["gate"] != gateActionableFeedback {
 		t.Fatalf("run.await gate = %v, want actionable-feedback", awaitEvt.Payload["gate"])
@@ -963,6 +966,9 @@ func TestRunSingle_InformalFeedbackResumesWithinSameAttempt(t *testing.T) {
 	resumedEvt := findEvent(logs, "run.resumed")
 	if resumedEvt == nil || resumedEvt.Payload["gate"] != gateActionableFeedback {
 		t.Fatalf("run.resumed gate = %v, want actionable-feedback", resumedEvt.Payload["gate"])
+	}
+	if got := countEventsByType(logs, "run.resumed"); got != 1 {
+		t.Fatalf("run.resumed events = %d, want exactly 1", got)
 	}
 	if got, _ := resumedEvt.Payload["reason"].(string); got != "feedback" {
 		t.Fatalf("run.resumed reason = %v, want feedback", resumedEvt.Payload["reason"])
