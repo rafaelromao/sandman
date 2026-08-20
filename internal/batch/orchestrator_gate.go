@@ -240,6 +240,101 @@ func (s *runSession) retainedReviewDiagnostics(ctx context.Context, workDir, bra
 	return diagnostics
 }
 
+// retainedLifecycleEvidence decodes the latest retained review record without
+// deciding what the live pull request means. Retained records enrich a
+// lifecycle decision; they never outrank the live merged or closed state.
+func (s *runSession) retainedLifecycleEvidence(ctx context.Context, workDir string, pr *github.PR, currentHead string) retainedReviewEvidence {
+	if pr == nil || s.deps.githubClient == nil {
+		return retainedReviewEvidence{}
+	}
+	injectedStore := s.reviewRegistrationStore != nil || s.opts.reviewRegistrationStore != nil
+	if !reviewTimeoutArtifactsPresentForPR(workDir, pr.Number) && !injectedStore {
+		return retainedReviewEvidence{}
+	}
+	repository, err := s.deps.githubClient.RepoName(ctx)
+	if err != nil {
+		return retainedReviewEvidence{present: true, stateError: true}
+	}
+	canonicalPath := paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number)
+	registration, err := readReviewRegistrationWithStore(s.reviewRegistrationStoreForRead(), canonicalPath, repository, pr, currentHead)
+	if err == nil {
+		diagnostic := reviewRegistrationDiagnostic(registration)
+		return retainedReviewEvidence{
+			present: true,
+			payload: map[string]any{"review_request": diagnostic["review_request"]},
+		}
+	}
+	if !isReviewRegistrationNotExist(err) {
+		if retainedEvidenceIsStale(err) {
+			return retainedReviewEvidence{present: true}
+		}
+		return retainedReviewEvidence{present: true, stateError: true}
+	}
+	if injectedStore && !reviewTimeoutArtifactsPresentForPR(workDir, pr.Number) {
+		return retainedReviewEvidence{}
+	}
+	artifacts, err := readReviewTimeoutArtifacts(workDir, repository, pr, currentHead)
+	if err != nil {
+		if retainedEvidenceIsStale(err) {
+			return retainedReviewEvidence{present: true}
+		}
+		return retainedReviewEvidence{present: true, stateError: true}
+	}
+	handoff, err := reviewTimeoutHandoffFromArtifacts(artifacts, currentHead)
+	if err != nil {
+		if retainedEvidenceIsStale(err) {
+			return retainedReviewEvidence{present: true}
+		}
+		return retainedReviewEvidence{present: true, stateError: true}
+	}
+	if handoff == nil {
+		return retainedReviewEvidence{present: true, outcome: retainedReviewPending}
+	}
+	evidence := retainedReviewEvidence{
+		present:    true,
+		outcome:    handoff.Outcome,
+		actionable: handoff.hasActionableFeedback(),
+	}
+	evidenceGate := gateReviewTimeout
+	switch {
+	case evidence.actionable:
+		evidence.payload = handoff.payloadFor(gateActionableFeedback, actionableFeedbackReason, actionableFeedbackNextAction)
+		evidenceGate = gateActionableFeedback
+	case handoff.Classification != nil:
+		evidence.informalFeedback = handoff.Classification.informalFeedbackEvidenceFor(handoff.Request, handoff.Classification.WindowEnd)
+		if len(evidence.informalFeedback) > 0 {
+			evidence.payload = handoff.payloadFor(gateActionableFeedback, informalFeedbackReason, informalFeedbackNextAction)
+			evidenceGate = gateActionableFeedback
+			if request, ok := evidence.payload["review_request"].(map[string]any); ok {
+				request["informal_feedback"] = evidence.informalFeedback
+			}
+		}
+	case handoff.Outcome == retainedReviewApproval:
+		evidence.payload = handoff.payloadFor(gateReadyToMerge, "REVIEW_APPROVED", "revalidate current-head approval, CI, and mergeability, then execute the normal pull-request merge gate")
+		evidenceGate = gateReadyToMerge
+		if request, ok := evidence.payload["review_request"].(map[string]any); ok {
+			request["outcome"] = "approved"
+			request["reason"] = "REVIEW_APPROVED"
+			request["next_action"] = "revalidate current-head approval, CI, and mergeability, then execute the normal pull-request merge gate"
+		}
+	default:
+		evidence.payload = handoff.payload()
+	}
+	if evidence.payload != nil {
+		evidence.payload["gate"] = evidenceGate
+		evidence.payload["await"] = true
+	}
+	return evidence
+}
+
+func retainedEvidenceIsStale(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "head") || strings.Contains(message, "superseded") || strings.Contains(message, "includes a trigger") || strings.Contains(message, "does not match")
+}
+
 func (s *runSession) invalidRetainedReviewDiagnostic(branch string, err error) map[string]any {
 	if s.deps.errorLog != nil {
 		fmt.Fprintf(s.deps.errorLog, "warning: retained review artifacts ignored for live gate on branch %q: %v\n", branch, err)

@@ -1596,7 +1596,7 @@ func TestRunSingle_ModeContinueUnmergedPROpenGateIsBlocked(t *testing.T) {
 		t.Fatal("expected run to start")
 	}
 	if result.Status != "await" {
-		t.Fatalf("status = %q, want await (continuation must preserve external-gate state)", result.Status)
+		t.Fatalf("status = %q, want await (continuation must preserve lifecycle state)", result.Status)
 	}
 	if result.RetriesTotal != 1 {
 		t.Fatalf("retries total = %d, want 1", result.RetriesTotal)

@@ -83,7 +83,7 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 | `state/.prompt-version` | runtime, atomic-rename | prompt materializer | prompt materializer (cache check) | `sandman clean` (optional) | per prompt template change |
 | `state/.built_with_sandman` | runtime, empty control file | badge sidecar (post-batch) | portal / status badge | `sandman clean` (optional) | per post-batch badge |
 | `state/<N>.head_sha` | legacy compatibility evidence | existing implementor review path (legacy only) | runtime diagnostics / stale-approval compatibility | implementor review lifecycle | per confirmed request |
-| `state/<N>.review_registration.json` | runtime, atomic-rename | orchestrator (after confirmed implementation review trigger) | orchestrator external-gate handoff | implementor review lifecycle | per confirmed request |
+| `state/<N>.review_registration.json` | runtime, atomic-rename | orchestrator (after confirmed implementation review trigger) | implementation pull-request lifecycle evidence | implementor review lifecycle | per confirmed request |
 | `state/<N>.review_registration.json.lock` | runtime coordination | registration writer | registration writer | never (permanent advisory-lock inode) | continuous per PR |
 | `state/<N>.addressed_comments` | runtime, atomic-rename | review daemon (per-PR addressed-comment list) | review daemon (dedup gate) | review daemon (rotates on PR close) | per PR |
 | `state/<N>.review_request.json` | legacy compatibility evidence | existing implementor review path (legacy only) | runtime diagnostics / versioned wait compatibility | implementor review lifecycle | per confirmed request |

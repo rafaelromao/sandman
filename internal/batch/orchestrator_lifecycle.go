@@ -12,7 +12,8 @@ import (
 // lifecycleAction is the terminal or non-terminal action an implementation-PR
 // lifecycle state maps to. The merged-terminal outcomes landed in slice 1; the
 // recoverable live-gate states (failed / pending / ready-to-merge) gained their
-// await action in slice 2 as the terminal external-gate arms were removed.
+// await action in slice 2 as recoverable pull-request states moved into the
+// runtime-owned lifecycle decision.
 type lifecycleAction int
 
 const (
@@ -20,6 +21,7 @@ const (
 	lifecycleSuccess
 	lifecycleFailure
 	lifecycleAwait
+	lifecycleResume
 )
 
 // lifecycleGate mirrors the string gates that checkPRExternalGateForPR emits
@@ -41,7 +43,12 @@ const (
 // from local retained review artifacts. The adapter currently uses the shape
 // to preserve evidence while the live PR state remains authoritative.
 type retainedReviewEvidence struct {
-	present bool
+	present          bool
+	outcome          retainedReviewOutcome
+	actionable       bool
+	informalFeedback []informalFeedbackEvidence
+	payload          map[string]any
+	stateError       bool
 }
 
 // mergedMergeFacts holds the merge-intent facts the adapter gathers from the
@@ -79,6 +86,7 @@ type lifecycleDecision struct {
 	handled           bool
 	completionFailure bool
 	needMergeFacts    bool
+	extras            map[string]any
 }
 
 // unhandled is the zero-ish decision returned when the lifecycle state still
@@ -99,16 +107,8 @@ func decidedAwait(gate lifecycleGate) lifecycleDecision {
 }
 
 // decideImplementationPRLifecycle folds the current implementation-PR
-// lifecycle state into a single decision. It is the pure core of the gate
-// consolidation (issue #2596): slices fold each external-gate arm into this
-// point so handleExternalGate/handleReviewTimeoutGate become thin adapters.
-//
-// Slice 1 owned the merged (resolved) outcomes. Slice 2 extended the decision
-// point to be total over the live open-PR gates: failed / pending /
-// ready-to-merge await (recoverable), and a closed-without-merge PR is a
-// terminal policy failure. Retained-review decomposition (actionable and
-// informal feedback) stays in the adapter for now and folds into the decision
-// point in slice 4 (B4.1).
+// lifecycle state and retained review evidence into one decision. It is pure:
+// callers gather live PR facts and decode local evidence before invoking it.
 func decideImplementationPRLifecycle(in implementationPRFacts) lifecycleDecision {
 	if in.pr == nil {
 		return unhandled(lifecycleGateNone)
@@ -145,9 +145,7 @@ func decideImplementationPRLifecycle(in implementationPRFacts) lifecycleDecision
 		// it to a terminal policy failure rather than guessing here.
 		return unhandled(lifecycleGateResolved)
 	case lifecycleGateFailed, lifecycleGatePending, lifecycleGateReady:
-		// Recoverable live-gate states (B2.1, B2.2, B2.6): the run stays
-		// non-terminal and can be resumed when the PR state changes.
-		return decidedAwait(gate)
+		return decideRecoverableLifecycle(gate, in.pr, in.retainedEvidence)
 	case lifecycleGateUnavailable:
 		// A non-open, non-merged PR is closed without a merge (B2.4): an
 		// irrecoverable policy outcome that can never await.
@@ -161,6 +159,52 @@ func decideImplementationPRLifecycle(in implementationPRFacts) lifecycleDecision
 	}
 }
 
+func decideRecoverableLifecycle(gate lifecycleGate, pr *github.PR, evidence retainedReviewEvidence) lifecycleDecision {
+	if evidence.stateError {
+		return lifecycleDecision{
+			action:  lifecycleAwait,
+			gate:    lifecycleGate(gateReviewTimeoutError),
+			handled: true,
+			extras:  map[string]any{"gate": gateReviewTimeoutError, "await": true},
+		}
+	}
+	reviewChangesRequested := pr != nil && strings.EqualFold(strings.TrimSpace(pr.ReviewDecision), "CHANGES_REQUESTED")
+	hardFailure := pr != nil && (strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "failure") || strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "DIRTY") || strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "CONFLICTING"))
+	if evidence.actionable && (gate != lifecycleGateFailed || (reviewChangesRequested && !hardFailure)) {
+		return lifecycleDecision{
+			action:  lifecycleResume,
+			gate:    lifecycleGate(gateActionableFeedback),
+			handled: true,
+			extras:  evidence.payload,
+		}
+	}
+	if gate != lifecycleGateFailed && len(evidence.informalFeedback) > 0 {
+		return lifecycleDecision{
+			action:  lifecycleResume,
+			gate:    lifecycleGate(gateActionableFeedback),
+			handled: true,
+			extras:  evidence.payload,
+		}
+	}
+	if gate == lifecycleGateReady && evidence.outcome == retainedReviewApproval {
+		return lifecycleDecision{
+			action:  lifecycleResume,
+			gate:    lifecycleGate(gateReadyToMerge),
+			handled: true,
+			extras:  evidence.payload,
+		}
+	}
+	if evidence.outcome == retainedReviewTimeout && gate == lifecycleGatePending {
+		return lifecycleDecision{
+			action:  lifecycleAwait,
+			gate:    lifecycleGate(gateReviewTimeout),
+			handled: true,
+			extras:  evidence.payload,
+		}
+	}
+	return decidedAwait(gate)
+}
+
 // lifecycleStatusRepr maps a decided action to the status string the run
 // session records, keeping the decision point independent of runSession.
 func lifecycleStatusRepr(d lifecycleDecision) string {
@@ -171,6 +215,8 @@ func lifecycleStatusRepr(d lifecycleDecision) string {
 		return "failure"
 	case lifecycleAwait:
 		return "await"
+	case lifecycleResume:
+		return "resume"
 	default:
 		return ""
 	}
@@ -186,13 +232,9 @@ func lifecycleFailureExtras(d lifecycleDecision, issueNumber int) map[string]any
 	return nil
 }
 
-// handleLifecycleDecision turns an AgentRun exit into a terminal or awatable
-// lifecycle result. It is the direct-call adapter for the decision point: it
-// gathers the host-path facts the pure decision is intentionally blind to, and
-// routes every PR state through decideImplementationPRLifecycle. The retained
-// review evidence (actionable / informal feedback) enriches the recoverable
-// awaits below; the merged-but-unverifiable defensive arm resolves through
-// confirmExternalGate as a terminal policy failure (B2.5).
+// handleLifecycleDecision turns an AgentRun exit into the result selected by
+// the lifecycle decision point. It gathers live PR facts and retained review
+// evidence, while event and prompt writing remain adapter concerns.
 func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool) (string, map[string]any, bool) {
 	if s.deps.githubClient == nil {
 		return "", nil, false
@@ -246,72 +288,87 @@ func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branc
 		// gate instead of terminalizing.
 		return s.awaitExternalGateWithDiagnostics(ctx, string(lifecycleGatePending), nil)
 	}
+	if err != nil {
+		return s.awaitExternalGateWithDiagnostics(ctx, string(lifecycleGatePending), nil)
+	}
 
-	// The single lifecycle decision point owns every PR state. Merged PRs
-	// resolve success/failure (asking for the merge-intent facts when they are
-	// missing); the recoverable open-PR gates await below with retained
-	// evidence enrichment.
+	// Merged PRs resolve before retained evidence is consulted, so stale or
+	// malformed review records cannot override verified completion.
+	var mergeFacts *mergedMergeFacts
 	decision := decideImplementationPRLifecycle(implementationPRFacts{
 		pr:      pr,
 		headSHA: headSHA,
 	})
 	if decision.needMergeFacts {
+		mergeFacts = &mergedMergeFacts{
+			mergedWithClosingIntent: checkPRMergedForIssue(ctx, s.deps.githubClient, branch, s.issueNumber),
+			mergedWithoutClosingRef: mergedPRMissingClosingReference(ctx, s.deps.githubClient, branch, s.issueNumber),
+		}
 		decision = decideImplementationPRLifecycle(implementationPRFacts{
-			pr:      pr,
-			headSHA: headSHA,
-			mergeFacts: &mergedMergeFacts{
-				mergedWithClosingIntent: checkPRMergedForIssue(ctx, s.deps.githubClient, branch, s.issueNumber),
-				mergedWithoutClosingRef: mergedPRMissingClosingReference(ctx, s.deps.githubClient, branch, s.issueNumber),
-			},
+			pr:         pr,
+			headSHA:    headSHA,
+			mergeFacts: mergeFacts,
 		})
 	}
 	if decision.action == lifecycleSuccess || decision.action == lifecycleFailure {
 		return lifecycleStatusRepr(decision), lifecycleFailureExtras(decision, s.issueNumber), true
 	}
-	if decision.gate == lifecycleGateResolved {
-		// Merged-but-unverifiable (B2.5): confirmExternalGate resolves the
-		// defensive arm to a terminal failure with completion extras — never
-		// blocked/unverified.
-		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
+	if ctx.Err() != nil {
+		return "aborted", nil, true
 	}
+	evidence := s.retainedLifecycleEvidence(ctx, workDir, pr, headSHA)
+	decision = decideImplementationPRLifecycle(implementationPRFacts{
+		pr:               pr,
+		headSHA:          headSHA,
+		mergeFacts:       mergeFacts,
+		retainedEvidence: evidence,
+	})
+	if decision.action == lifecycleSuccess || decision.action == lifecycleFailure {
+		return lifecycleStatusRepr(decision), lifecycleFailureExtras(decision, s.issueNumber), true
+	}
+	if !decision.handled {
+		return "", nil, false
+	}
+	extras := decision.extras
+	if diagnostics := s.retainedReviewDiagnostics(ctx, workDir, branch, pr, headSHA); len(diagnostics) > 0 {
+		extras = mergeLifecycleDiagnostics(extras, diagnostics)
+	}
+	if extras == nil {
+		extras = map[string]any{"gate": string(decision.gate), "await": true}
+	}
+	if _, ok := extras["gate"]; !ok {
+		extras["gate"] = string(decision.gate)
+	}
+	extras["await"] = true
+	return "await", extras, true
+}
 
-	var diagnostics map[string]any
-	if gate != lifecycleGateResolved && pr != nil {
-		diagnostics = s.retainedReviewDiagnostics(ctx, workDir, branch, pr, headSHA)
+func mergeLifecycleDiagnostics(extras, diagnostics map[string]any) map[string]any {
+	if len(diagnostics) == 0 {
+		return extras
 	}
-	switch decision.gate {
-	case lifecycleGateFailed:
-		// Decompose the live failure (issue #2595): a rejected review is
-		// resume-worthy when retained evidence proves the feedback is
-		// actionable at the current head; CI / mergeability failures await
-		// (B2.1, B2.2) — the run stays non-terminal and releases capacity.
-		if result, extras, handled := s.resumeWorthyActionableFeedback(ctx, workDir, pr, headSHA, diagnostics); result != "" {
-			return result, extras, handled
-		}
-		return s.awaitExternalGateWithDiagnostics(ctx, string(lifecycleGateFailed), diagnostics)
-	case lifecycleGateReady:
-		// B2.6: a clean exit with a ready-to-merge PR awaits; the in-session
-		// resume loop relaunches the agent on this gate.
-		return s.awaitExternalGateWithDiagnostics(ctx, string(lifecycleGateReady), diagnostics)
+	if extras == nil {
+		extras = map[string]any{}
 	}
-	// Pending (B2.2) and transient lookups (B2.3): retained informal evidence
-	// first, then the plain recoverable await.
-	if evidence, informalExtras := s.informalActionableFeedback(ctx, workDir, pr, headSHA); informalExtras != nil {
-		if ctx.Err() != nil {
-			return "aborted", nil, true
+	for key, value := range diagnostics {
+		if key != "review_request" {
+			extras[key] = value
+			continue
 		}
-		result, extras, handled := withExternalGateDiagnostics("await", informalExtras, true, diagnostics)
-		if handled {
-			// The diagnostics merge folds the retained review_request over the
-			// extras payload, and the diagnostic copy never carries the
-			// informal classification result. Re-inject the evidence into the
-			// surviving envelope so resumeEvidenceFor, run.resumed, and the
-			// resume prompt all see it.
-			if request, ok := extras["review_request"].(map[string]any); ok {
-				request["informal_feedback"] = evidence
-			}
+		diagnosticRequest, diagnosticOK := value.(map[string]any)
+		evidenceRequest, evidenceOK := extras[key].(map[string]any)
+		if !diagnosticOK || !evidenceOK {
+			extras[key] = value
+			continue
 		}
-		return result, extras, handled
+		merged := make(map[string]any, len(diagnosticRequest)+len(evidenceRequest))
+		for requestKey, requestValue := range diagnosticRequest {
+			merged[requestKey] = requestValue
+		}
+		for requestKey, requestValue := range evidenceRequest {
+			merged[requestKey] = requestValue
+		}
+		extras[key] = merged
 	}
-	return s.awaitExternalGateWithDiagnostics(ctx, string(lifecycleGatePending), diagnostics)
+	return extras
 }

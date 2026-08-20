@@ -445,7 +445,7 @@ func TestPRReviewSkill_UsesFailClosedTriggerGuardBeforeEveryCommandPost(t *testi
 		"This includes the Step 5 reviewer clarification/follow-up",
 		"unanswered-trigger",
 		"ambiguously ordered remote evidence also refuses",
-		"external-gate state",
+		"terminal lifecycle state",
 		"The guard is read-only",
 	} {
 		if !strings.Contains(text, phrase) {

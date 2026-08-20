@@ -799,8 +799,8 @@ func TestReviewRegistration_CorruptCanonicalRecordCannotOverrideLivePendingState
 	session := &runSession{deps: runDeps{githubClient: client, errorLog: io.Discard}, opts: gateTestRunOptions()}
 
 	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
-	if !handled || status != "await" || extras["gate"] != "pending" {
-		t.Fatalf("corrupt canonical gate = (%q, %#v, %t), want await/pending", status, extras, handled)
+	if !handled || status != "await" || extras["gate"] != gateReviewTimeoutError {
+		t.Fatalf("corrupt canonical gate = (%q, %#v, %t), want await/review-timeout-state-error", status, extras, handled)
 	}
 	diagnostic, ok := extras["review_diagnostic"].(map[string]any)
 	if !ok || diagnostic["status"] != "invalid" {

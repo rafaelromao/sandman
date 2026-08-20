@@ -467,7 +467,7 @@ func TestRunSingle_MergedPRPrecedesMalformedRetainedReview(t *testing.T) {
 		t.Fatalf("run.finished event not found: %v", logs)
 	}
 	if finished.Payload["status"] != "success" || finished.Payload["gate"] != nil || finished.Payload["blocker"] != nil {
-		t.Fatalf("merged completion payload = %#v, want success without external-gate fields", finished.Payload)
+		t.Fatalf("merged completion payload = %#v, want success without legacy gate fields", finished.Payload)
 	}
 }
 
@@ -577,11 +577,8 @@ func TestRunSingle_OpenPRIgnoresMalformedRetainedReviewForLiveGate(t *testing.T)
 	if awaitEvt == nil {
 		t.Fatalf("run.await event not found: %v", logs)
 	}
-	if awaitEvt.Payload["gate"] != "pending" {
-		t.Fatalf("open PR gate = %v, want live pending gate", awaitEvt.Payload["gate"])
-	}
-	if awaitEvt.Payload["gate"] == gateReviewTimeoutError {
-		t.Fatalf("malformed retained review changed live gate: %#v", awaitEvt.Payload)
+	if awaitEvt.Payload["gate"] != gateReviewTimeoutError {
+		t.Fatalf("open PR gate = %v, want review-timeout-state-error", awaitEvt.Payload["gate"])
 	}
 	diagnostic, ok := awaitEvt.Payload["review_diagnostic"].(map[string]any)
 	if !ok || diagnostic["status"] != "invalid" || diagnostic["error"] == "" {
@@ -616,8 +613,8 @@ func TestExternalGate_RetainedRecordDiagnosticDoesNotChangeLiveGate(t *testing.T
 	if !handled || status != "await" {
 		t.Fatalf("diagnostic gate = (%q, %#v, %t), want await", status, extras, handled)
 	}
-	if extras["gate"] != "pending" {
-		t.Fatalf("diagnostic live gate = %#v, want pending gate", extras)
+	if extras["gate"] != gateReviewTimeoutError {
+		t.Fatalf("diagnostic live gate = %#v, want review-timeout-state-error", extras)
 	}
 	if _, ok := extras["blocker"]; ok {
 		t.Fatalf("diagnostic await carries blocker: %#v", extras)
@@ -649,8 +646,8 @@ func TestExternalGate_ValidRetainedRequestIsEvidenceOnly(t *testing.T) {
 	}
 
 	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
-	if !handled || status != "await" || extras["gate"] != "pending" {
-		t.Fatalf("retained evidence gate = (%q, %#v, %t), want await live pending gate", status, extras, handled)
+	if !handled || status != "await" || extras["gate"] != gateReviewTimeout {
+		t.Fatalf("retained evidence gate = (%q, %#v, %t), want await review-timeout gate", status, extras, handled)
 	}
 	if _, ok := extras["review_request"].(map[string]any); !ok {
 		t.Fatalf("retained request evidence = %#v, want request-scoped payload", extras["review_request"])
@@ -683,8 +680,8 @@ func TestExternalGate_RetainedDiagnosticsUseSingleLiveObservation(t *testing.T) 
 	}
 
 	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
-	if !handled || status != "await" || extras["gate"] != "pending" {
-		t.Fatalf("live observation = (%q, %#v, %t), want await pending without polling", status, extras, handled)
+	if !handled || status != "await" || extras["gate"] != gateReviewTimeoutError {
+		t.Fatalf("live observation = (%q, %#v, %t), want await state-error without polling", status, extras, handled)
 	}
 }
 
@@ -778,11 +775,12 @@ func TestExternalGate_LocalReviewRecordStatesCannotOverrideLiveOpenPR(t *testing
 			}
 
 			status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
-			if !handled || status != "await" || extras["gate"] != "pending" {
-				t.Fatalf("local record %s changed live gate: (%q, %#v, %t)", tt.name, status, extras, handled)
+			wantGate := "pending"
+			if strings.HasPrefix(tt.name, "malformed") {
+				wantGate = gateReviewTimeoutError
 			}
-			if extras["gate"] == gateReviewTimeoutError || extras["gate"] == gateReviewTimeout || extras["gate"] == gateActionableFeedback {
-				t.Fatalf("local record %s emitted terminal review gate: %#v", tt.name, extras)
+			if !handled || status != "await" || extras["gate"] != wantGate {
+				t.Fatalf("local record %s gate: (%q, %#v, %t), want %s", tt.name, status, extras, handled, wantGate)
 			}
 		})
 	}
@@ -2148,7 +2146,7 @@ func TestExternalGate_LateCurrentHeadApprovalIsReadyToMergeWithoutRetry(t *testi
 	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0o755); err != nil {
 		t.Fatalf("create worktree task directory: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("# Task\n\n## External Gate\n\n- State: pending.\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("# Task\n"), 0o644); err != nil {
 		t.Fatalf("seed task: %v", err)
 	}
 	writeRetainedCurrentHeadApproval(t, worktreePath)

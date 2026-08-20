@@ -170,7 +170,7 @@ Use this list when an OpenCode provider introduces new context-exhaustion wordin
 |-----|---------|-------------|
 | `review_timeout` | `1800` | Absolute wall-clock seconds allowed for one confirmed delegated PR review request. Values below `240` are rejected |
 
-`review_timeout` governs only the implementor-side delegated review response budget. The deadline starts after a trigger is posted and confirmed; every later command, API call, sleep, and scheduling delay consumes that one absolute budget. A later confirmed trigger receives a fresh full budget, while retries and continuations of the same trigger reuse its original deadline. It does not change the review daemon's reviewer AgentRun lifetime, external-gate polling, idle timeout, or review-pass limit. `--review-timeout` overrides the project value for one run or continuation. The effective value is rendered into the current Task and recorded in `run.started` / `run.continued` payloads.
+`review_timeout` governs only the implementor-side delegated review response budget. The deadline starts after a trigger is posted and confirmed; every later command, API call, sleep, and scheduling delay consumes that one absolute budget. A later confirmed trigger receives a fresh full budget, while retries and continuations of the same trigger reuse its original deadline. It does not change the review daemon's reviewer AgentRun lifetime, lifecycle re-evaluation, idle timeout, or review-pass limit. `--review-timeout` overrides the project value for one run or continuation. The effective value is rendered into the current Task and recorded in `run.started` / `run.continued` payloads.
 
 ## CLI config commands
 

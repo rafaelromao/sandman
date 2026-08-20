@@ -412,7 +412,7 @@ func TestLifecycle_MergedDeterministicAcrossFreshAndContinue(t *testing.T) {
 	}
 }
 
-// Terminal merged-policy arms must not write an ## External Gate task section
+// Terminal merged-policy arms must not write a legacy gate task section
 // into the worktree task.md (B1.4). The terminal tests above already pin the
 // payload cleanliness; this pins the filesystem side for both merged arms.
 func TestLifecycle_MergedTerminalWritesNoExternalGateTaskSection(t *testing.T) {
@@ -477,7 +477,7 @@ func TestLifecycle_MergedTerminalWritesNoExternalGateTaskSection(t *testing.T) {
 				t.Fatalf("read task: %v", err)
 			}
 			if strings.Contains(string(task), "External Gate") || strings.Contains(string(task), "external gate") {
-				t.Fatalf("task.md gained an external-gate section:\n%s", task)
+				t.Fatalf("task.md gained a legacy gate section:\n%s", task)
 			}
 			logs, err := eventLog.Read()
 			if err != nil {
