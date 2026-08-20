@@ -150,10 +150,6 @@ func TestContextRolloverConfiguredPhrase(t *testing.T) {
 
 	result, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Parallel: 1, Retries: -1})
 	if err != nil {
-		t.Logf("result before RunBatch error: %+v", result.Runs)
-		if logs, readErr := eventLog.Read(); readErr == nil {
-			t.Logf("events before RunBatch error: %+v", logs)
-		}
 		t.Fatalf("RunBatch: %v", err)
 	}
 	if len(result.Runs) != 1 {

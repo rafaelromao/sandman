@@ -139,11 +139,15 @@ func decideImplementationPRLifecycle(in implementationPRFacts) lifecycleDecision
 				completionFailure: true,
 			}
 		}
-		// Both merge checks came back false on a resolved PR (e.g. the live
-		// lookups failed) — the merged-but-unverifiable defensive arm (B2.5).
-		// Leave the state to the adapter's confirmExternalGate, which resolves
-		// it to a terminal policy failure rather than guessing here.
-		return unhandled(lifecycleGateResolved)
+		// Both merge checks came back false on a resolved PR. A merged PR
+		// whose completion evidence cannot be verified is a terminal policy
+		// failure; it must not fall through to the ordinary success path.
+		return lifecycleDecision{
+			action:            lifecycleFailure,
+			gate:              lifecycleGateResolved,
+			handled:           true,
+			completionFailure: true,
+		}
 	case lifecycleGateFailed, lifecycleGatePending, lifecycleGateReady:
 		return decideRecoverableLifecycle(gate, in.pr, in.retainedEvidence)
 	case lifecycleGateUnavailable:

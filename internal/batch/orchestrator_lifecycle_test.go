@@ -41,10 +41,6 @@ func runLifecycleCaseForIssue(t *testing.T, pr *github.PR, mode IssueMode, prevR
 	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("# Task\n"), 0o644); err != nil {
 		t.Fatalf("seed task: %v", err)
 	}
-	oldHeadFn := currentBranchHeadFn
-	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
-	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
-
 	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
 	factory := &fakeRunnableFactory{results: []AgentRunResult{
 		{IssueNumber: 42, Status: "success", Branch: gateTestBranch},
@@ -177,7 +173,7 @@ func TestDecideImplementationPRLifecycle_MergedMissingClosingRefRequestsFacts(t 
 	}
 }
 
-func TestDecideImplementationPRLifecycle_UnverifiableMergedStaysUnhandled(t *testing.T) {
+func TestDecideImplementationPRLifecycle_UnverifiableMergedFails(t *testing.T) {
 	d := decideImplementationPRLifecycle(implementationPRFacts{
 		pr:      &github.PR{Number: 42, State: "merged", Merged: true, Body: "Refs #42"},
 		headSHA: "current-sha",
@@ -186,11 +182,11 @@ func TestDecideImplementationPRLifecycle_UnverifiableMergedStaysUnhandled(t *tes
 			mergedWithoutClosingRef: false,
 		},
 	})
-	if d.handled || d.needMergeFacts || d.action != lifecycleNone {
-		t.Fatalf("decision = %+v, want unhandled legacy fallback for unverifiable merge", d)
+	if !d.handled || d.needMergeFacts || d.action != lifecycleFailure || !d.completionFailure {
+		t.Fatalf("decision = %+v, want handled completion failure for unverifiable merge", d)
 	}
 	if d.gate != lifecycleGateResolved {
-		t.Fatalf("gate = %q, want resolved for legacy fallback", d.gate)
+		t.Fatalf("gate = %q, want resolved failure", d.gate)
 	}
 }
 
