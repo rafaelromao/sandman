@@ -64,7 +64,7 @@ func TestRunSingle_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 		// loop with a failure errResult).
 		WithRunSessionOpts(runSessionOptions{retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
 			return nil
-		}, gatePollInitial: time.Millisecond, gatePollMaxSleep: time.Millisecond, gatePollBudget: 5 * time.Millisecond}),
+		}}),
 	)
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}

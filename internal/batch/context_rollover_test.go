@@ -136,7 +136,10 @@ func TestContextRolloverConfiguredPhrase(t *testing.T) {
 	factory := &contextRolloverRunnableFactory{sandbox: sb}
 	eventLog := &events.JSONLLogger{Path: filepath.Join(workDir, "events.jsonl")}
 	o := NewOrchestrator(
-		&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Configured context", State: "closed"}}},
+		&fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Configured context", State: "closed"}},
+			prs:    map[string]*github.PR{"42-configured-context": mergedPR("42-configured-context", "Closes #42")},
+		},
 		&retryRenderer{result: "# Task\n\nInitial task."},
 		&config.FileStore{Path: configPath},
 		eventLog,
@@ -147,13 +150,17 @@ func TestContextRolloverConfiguredPhrase(t *testing.T) {
 
 	result, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Parallel: 1, Retries: -1})
 	if err != nil {
+		t.Logf("result before RunBatch error: %+v", result.Runs)
+		if logs, readErr := eventLog.Read(); readErr == nil {
+			t.Logf("events before RunBatch error: %+v", logs)
+		}
 		t.Fatalf("RunBatch: %v", err)
 	}
 	if len(result.Runs) != 1 {
 		t.Fatalf("runs = %+v, want one configured-phrase AgentRun", result.Runs)
 	}
-	if factory.created != 2 {
-		t.Fatalf("runnable launches = %d, want 2", factory.created)
+	if factory.created != 1 {
+		t.Fatalf("runnable launches = %d, want 1 before verified merge completes recovery", factory.created)
 	}
 
 	logs, err := eventLog.Read()
@@ -161,11 +168,11 @@ func TestContextRolloverConfiguredPhrase(t *testing.T) {
 		t.Fatalf("read events: %v", err)
 	}
 	for _, event := range logs {
-		if event.Type == "run.retry" && event.Payload["reason"] == contextExhaustedRetryReason {
+		if event.Type == "run.finished" && event.Payload["context_exhausted"] == true {
 			return
 		}
 	}
-	t.Fatalf("events = %+v, want context-exhausted retry", logs)
+	t.Fatalf("events = %+v, want context-exhausted terminal evidence", logs)
 }
 
 func TestContextRolloverConfiguredPhrasePromptOnly(t *testing.T) {

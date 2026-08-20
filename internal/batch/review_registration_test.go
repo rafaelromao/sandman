@@ -325,10 +325,7 @@ func TestReviewRegistration_StaleCanonicalHeadRefreshesLiveGate(t *testing.T) {
 			ReviewTimeout: 600,
 		},
 		opts: runSessionOptions{
-			currentHead:      func(string) (string, error) { return "current-sha", nil },
-			gatePollInitial:  time.Millisecond,
-			gatePollMaxSleep: time.Millisecond,
-			gatePollBudget:   5 * time.Millisecond,
+			currentHead: func(string) (string, error) { return "current-sha", nil },
 		},
 		reviewRegistrationNow:  func() time.Time { return now },
 		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
@@ -1097,7 +1094,6 @@ func TestReviewRegistration_GateRefreshesAfterHeadRevalidationFailure(t *testing
 	}
 	opts := gateTestRunOptions()
 	opts.currentHead = func(string) (string, error) { return "old-sha", nil }
-	opts.gatePollBudget = 10 * time.Millisecond
 	session := &runSession{
 		deps: runDeps{githubClient: client, errorLog: io.Discard},
 		renderCfg: prompt.RenderConfig{
@@ -1201,10 +1197,7 @@ func TestReviewRegistration_GateUsesLiveSnapshotAfterSuccessfulRegistration(t *t
 			ReviewTimeout: 600,
 		},
 		opts: runSessionOptions{
-			currentHead:      func(string) (string, error) { return "current-sha", nil },
-			gatePollInitial:  time.Millisecond,
-			gatePollMaxSleep: time.Millisecond,
-			gatePollBudget:   5 * time.Millisecond,
+			currentHead: func(string) (string, error) { return "current-sha", nil },
 		},
 		reviewRegistrationNow:  func() time.Time { return now },
 		reviewAttemptStartedAt: now.Add(-2 * time.Minute),

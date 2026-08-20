@@ -3,107 +3,13 @@ package batch
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
-	"time"
 
-	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
 )
 
-type gateResult int
-
-const (
-	gateResolved gateResult = iota
-	gateFailed
-	gatePollBudgetExhausted
-	gatePollUnavailable
-	gatePollPRMissing
-	gatePollReadyToMerge
-)
-
 const gateReadyToMerge = "ready-to-merge"
-
-var (
-	defaultGatePollInitial  = time.Millisecond
-	defaultGatePollMaxSleep = time.Millisecond
-	defaultGatePollBudget   = 5 * time.Millisecond
-)
-
-func pollPRGate(ctx context.Context, client github.Client, branch string, opts runSessionOptions) gateResult {
-	return pollPRGateWithHead(ctx, client, branch, "", false, opts)
-}
-
-func pollPRGateAtHead(ctx context.Context, client github.Client, branch, headSHA string, opts runSessionOptions) gateResult {
-	return pollPRGateWithHead(ctx, client, branch, headSHA, true, opts)
-}
-
-func pollPRGateWithHead(ctx context.Context, client github.Client, branch, headSHA string, requireHead bool, opts runSessionOptions) gateResult {
-	initial := opts.gatePollInitial
-	if initial <= 0 {
-		initial = defaultGatePollInitial
-	}
-	maxSleep := opts.gatePollMaxSleep
-	if maxSleep <= 0 {
-		maxSleep = defaultGatePollMaxSleep
-	}
-	budget := opts.gatePollBudget
-	if budget <= 0 {
-		budget = defaultGatePollBudget
-	}
-
-	pollCtx, cancel := context.WithTimeout(ctx, budget)
-	defer cancel()
-	deadline := time.Now().Add(budget)
-	delay := initial
-	lastLookupUnavailable := false
-
-	for {
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			if lastLookupUnavailable {
-				return gatePollUnavailable
-			}
-			return gatePollBudgetExhausted
-		}
-		if delay > remaining {
-			delay = remaining
-		}
-		select {
-		case <-pollCtx.Done():
-			if lastLookupUnavailable {
-				return gatePollUnavailable
-			}
-			return gatePollBudgetExhausted
-		case <-time.After(delay):
-		}
-
-		gate, err := checkPRExternalGateWithHead(pollCtx, client, branch, headSHA, requireHead)
-		switch gate {
-		case "resolved":
-			return gateResolved
-		case "failed":
-			return gateFailed
-		case "unavailable":
-			if err == nil {
-				return gatePollUnavailable
-			}
-			lastLookupUnavailable = true
-		case "none":
-			return gatePollPRMissing
-		case gateReadyToMerge:
-			return gatePollReadyToMerge
-		default:
-			lastLookupUnavailable = false
-			delay = delay * 2
-			if delay > maxSleep {
-				delay = maxSleep
-			}
-		}
-	}
-}
 
 func checkPRExternalGate(ctx context.Context, client github.Client, branch string) (string, error) {
 	return checkPRExternalGateWithHead(ctx, client, branch, "", false)
@@ -190,10 +96,8 @@ func checkPRExternalGateForPR(pr *github.PR, headSHA string, requireHead bool) s
 	return "pending"
 }
 
-// handleExternalGate turns an AgentRun exit into a terminal external-gate
-// result when the branch has a PR waiting on CI or review. It is shared by
-// fresh and continuation runs so an explicit intervention cannot re-enter the
-// old failure/retry path while the same PR gate is still unresolved.
+// handleExternalGate adapts a clean AgentRun exit to the implementation-PR
+// lifecycle decision. It is shared by fresh and continuation runs.
 func (s *runSession) handleExternalGate(ctx context.Context, workDir, branch, logPath, runID string) (string, map[string]any, bool) {
 	return s.handleExternalGateWithHostPaths(ctx, workDir, branch, logPath, runID, true)
 }
@@ -209,26 +113,15 @@ func withExternalGateDiagnostics(result string, extras map[string]any, handled b
 	return result, mergeBlockerExtras(extras, diagnostics), handled
 }
 
-func (s *runSession) blockExternalGateWithDiagnostics(ctx context.Context, workDir, logPath, runID, reason string, diagnostics map[string]any) (string, map[string]any, bool) {
-	result, extras, handled := s.blockExternalGate(ctx, workDir, logPath, runID, reason)
-	return withExternalGateDiagnostics(result, extras, handled, diagnostics)
-}
-
 func (s *runSession) awaitExternalGateWithDiagnostics(ctx context.Context, reason string, diagnostics map[string]any) (string, map[string]any, bool) {
 	result, extras, handled := s.awaitExternalGate(ctx, reason)
-	return withExternalGateDiagnostics(result, extras, handled, diagnostics)
-}
-
-func (s *runSession) confirmExternalGateWithDiagnostics(ctx context.Context, workDir, branch, logPath, runID string, diagnostics map[string]any) (string, map[string]any, bool) {
-	result, extras, handled := s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
 	return withExternalGateDiagnostics(result, extras, handled, diagnostics)
 }
 
 // resumeWorthyActionableFeedback decomposes a live failed gate into the
 // await+actionable-feedback resume path when retained evidence proves the
 // requested changes are actionable at the current head. It returns a zero
-// result when the failure keeps the hard blocked gate (CI / mergeability
-// precedence or no actionable evidence).
+// result when no actionable evidence is available.
 func (s *runSession) resumeWorthyActionableFeedback(ctx context.Context, workDir string, pr *github.PR, headSHA string, diagnostics map[string]any) (string, map[string]any, bool) {
 	if pr == nil || retainedReviewPRGateFailed(pr) {
 		return "", nil, false
@@ -261,7 +154,6 @@ func (s *runSession) actionableFeedbackExtras(ctx context.Context, workDir strin
 		return nil
 	}
 	extras := handoff.payloadFor(gateActionableFeedback, actionableFeedbackReason, actionableFeedbackNextAction)
-	extras["blocker"] = "external-gate"
 	extras["gate"] = gateActionableFeedback
 	extras["await"] = true
 	return extras
@@ -293,7 +185,6 @@ func (s *runSession) informalActionableFeedback(ctx context.Context, workDir str
 		return nil, nil
 	}
 	extras := handoff.payloadFor(gateActionableFeedback, informalFeedbackReason, informalFeedbackNextAction)
-	extras["blocker"] = "external-gate"
 	extras["gate"] = gateActionableFeedback
 	extras["await"] = true
 	return evidence, extras
@@ -371,7 +262,8 @@ func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branc
 	}
 	pr, err := s.deps.githubClient.FindPRByBranch(ctx, branch)
 	if err != nil {
-		return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
+		// B2.3: a transient lookup error awaits the recoverable pending gate.
+		return s.awaitExternalGate(ctx, "pending")
 	}
 	if pr == nil {
 		return "", nil, false
@@ -380,11 +272,14 @@ func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branc
 		return "", nil, false
 	}
 	if strings.EqualFold(pr.State, "open") && retainedReviewPRGateFailed(pr) {
-		return s.blockExternalGate(ctx, workDir, logPath, runID, "failed")
+		// B2.1/B2.2: CI-failure / dirty / conflicting on an open PR awaits.
+		return s.awaitExternalGate(ctx, "failed")
 	}
 	repository, err := s.deps.githubClient.RepoName(ctx)
 	if err != nil {
-		return s.blockReviewTimeoutStateError(ctx, workDir, logPath, runID)
+		// B2.7: review-timeout-state-error is operator-repairable local state
+		// and awaits instead of terminalizing as blocked.
+		return s.awaitExternalGate(ctx, gateReviewTimeoutError)
 	}
 	canonicalPath := paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number)
 	if _, err := readReviewRegistrationWithStore(s.reviewRegistrationStoreForRead(), canonicalPath, repository, pr, currentHead); err == nil || !isReviewRegistrationNotExist(err) {
@@ -401,16 +296,19 @@ func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branc
 	handoff, err := reviewTimeoutHandoffFromArtifacts(artifacts, currentHead)
 	if err != nil {
 		if !reviewClassificationPresent(artifacts.State.Evidence) && strings.EqualFold(strings.TrimSpace(pr.ReviewDecision), "CHANGES_REQUESTED") {
-			return s.blockExternalGate(ctx, workDir, logPath, runID, "failed")
+			// B2.2: requested changes without retained evidence awaits.
+			return s.awaitExternalGate(ctx, "failed")
 		}
-		return s.blockReviewTimeoutStateError(ctx, workDir, logPath, runID)
+		// B2.7: invalid retained local state awaits for operator repair.
+		return s.awaitExternalGate(ctx, gateReviewTimeoutError)
 	}
 	if handoff == nil {
 		if pr.Merged || strings.EqualFold(pr.State, "merged") {
 			return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
 		}
 		if !strings.EqualFold(pr.State, "open") {
-			return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
+			// B2.4: a PR closed without a merge is a terminal policy failure.
+			return "failure", nil, true
 		}
 		return "", nil, false
 	}
@@ -421,15 +319,16 @@ func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branc
 		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
 	}
 	if !strings.EqualFold(pr.State, "open") {
-		return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
+		// B2.4: a PR closed without a merge is a terminal policy failure.
+		return "failure", nil, true
 	}
 	reviewDecision := strings.ToUpper(strings.TrimSpace(pr.ReviewDecision))
 	if reviewDecision == "CHANGES_REQUESTED" && !handoff.hasActionableFeedback() {
-		return s.blockExternalGate(ctx, workDir, logPath, runID, "failed")
+		// B2.2: requested changes without retained actionable evidence awaits.
+		return s.awaitExternalGate(ctx, "failed")
 	}
 	if handoff.hasActionableFeedback() {
 		extras := handoff.payloadFor(gateActionableFeedback, actionableFeedbackReason, actionableFeedbackNextAction)
-		extras["blocker"] = "external-gate"
 		extras["gate"] = gateActionableFeedback
 		extras["await"] = true
 		return "await", extras, true
@@ -440,7 +339,6 @@ func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branc
 			if request, ok := extras["review_request"].(map[string]any); ok {
 				request["informal_feedback"] = evidence
 			}
-			extras["blocker"] = "external-gate"
 			extras["gate"] = gateActionableFeedback
 			extras["await"] = true
 			return "await", extras, true
@@ -453,7 +351,6 @@ func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branc
 		return s.handleRetainedReviewPending(ctx, workDir, branch, logPath, runID, pr, currentHead, handoff)
 	}
 	extras := handoff.payloadFor(gateReviewTimeout, reviewTimeoutReason, reviewTimeoutNextAction)
-	extras["blocker"] = "external-gate"
 	extras["gate"] = gateReviewTimeout
 	extras["await"] = true
 	return "await", extras, true
@@ -476,7 +373,6 @@ func (s *runSession) handleRetainedReviewApproval(ctx context.Context, workDir, 
 	case gateReadyToMerge:
 		nextAction := "revalidate current-head approval, CI, and mergeability, then execute the normal pull-request merge gate"
 		extras := handoff.payload()
-		extras["blocker"] = "external-gate"
 		extras["gate"] = gateReadyToMerge
 		extras["reason"] = "REVIEW_APPROVED"
 		extras["next_action"] = nextAction
@@ -493,9 +389,11 @@ func (s *runSession) handleRetainedReviewApproval(ctx context.Context, workDir, 
 	case "resolved":
 		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
 	case "failed":
-		return s.blockExternalGate(ctx, workDir, logPath, runID, "failed")
+		// B2.1/B2.2: a failed open PR gate awaits.
+		return s.awaitExternalGate(ctx, "failed")
 	case "unavailable":
-		return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
+		// B2.4: a PR closed without a merge is a terminal policy failure.
+		return "failure", nil, true
 	default:
 		return s.awaitExternalGate(ctx, "pending")
 	}
@@ -510,29 +408,17 @@ func (s *runSession) handleRetainedReviewPending(ctx context.Context, workDir, b
 		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
 	}
 	if gate == "failed" {
-		return s.blockExternalGate(ctx, workDir, logPath, runID, "failed")
+		// B2.1/B2.2: a failed open PR gate awaits.
+		return s.awaitExternalGate(ctx, "failed")
 	}
 	if gate == "unavailable" {
-		return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
+		// B2.4: a PR closed without a merge is a terminal policy failure.
+		return "failure", nil, true
 	}
 	extras := handoff.payload()
-	extras["blocker"] = "external-gate"
 	extras["gate"] = gate
 	extras["await"] = true
 	return "await", extras, true
-}
-
-func (s *runSession) blockReviewTimeoutStateError(ctx context.Context, workDir, logPath, runID string) (string, map[string]any, bool) {
-	if ctx.Err() != nil {
-		return "aborted", nil, true
-	}
-	s.recordExternalGateBlocker(workDir, logPath, runID, gateReviewTimeoutError)
-	return "blocked", map[string]any{
-		"blocker":     "external-gate",
-		"gate":        gateReviewTimeoutError,
-		"reason":      "REVIEW_TIMEOUT_STATE_ERROR",
-		"next_action": "repair or remove the invalid retained review request, then continue only after confirming a new review trigger",
-	}, true
 }
 
 func (s *runSession) currentGateHead(workDir string) string {
@@ -557,175 +443,17 @@ func (s *runSession) confirmExternalGate(ctx context.Context, workDir, branch, l
 	if mergedPRMissingClosingReference(ctx, s.deps.githubClient, branch, s.issueNumber) {
 		return "failure", mergeCompletionFailureExtras(nil, s.issueNumber), true
 	}
-	return s.blockExternalGate(ctx, workDir, logPath, runID, "unverified")
+	// The merged-but-unverifiable defensive arm (B2.5): the PR resolved but
+	// no closing reference can be verified, so the run ends in a terminal
+	// policy failure with the completion diagnostic — never blocked/unverified.
+	return "failure", mergeCompletionFailureExtras(nil, s.issueNumber), true
 }
 
-func (s *runSession) blockExternalGate(ctx context.Context, workDir, logPath, runID, reason string) (string, map[string]any, bool) {
-	if ctx.Err() != nil {
-		return "aborted", nil, true
-	}
-	s.recordExternalGateBlocker(workDir, logPath, runID, reason)
-	return "blocked", map[string]any{"blocker": "external-gate", "gate": reason}, true
-}
-
-// awaitExternalGate returns a non-terminal await result for recoverable
-// external gate states. Unlike blockExternalGate, it does not write
-// blocker text to task.md or run.log, does not consume retries, and
-// does not hold execution capacity.
+// awaitExternalGate returns a non-terminal await result for recoverable PR
+// lifecycle states. It does not consume retries or hold execution capacity.
 func (s *runSession) awaitExternalGate(ctx context.Context, reason string) (string, map[string]any, bool) {
 	if ctx.Err() != nil {
 		return "aborted", nil, true
 	}
-	return "await", map[string]any{"blocker": "external-gate", "gate": reason, "await": true}, true
-}
-
-func (s *runSession) recordExternalGateBlocker(workDir, logPath, runID, reason string) {
-	failure := fmt.Sprintf("pull request external gate is %s", reason)
-	nextAction := "recheck CI and delegated review, then continue the run when intervention is required"
-	if reason == "failed" {
-		nextAction = "inspect the failed CI or requested review changes, then continue the run to address them"
-	}
-	if reason == gateReviewTimeoutError {
-		nextAction = "repair or remove the invalid retained review request, then continue only after confirming a new review trigger"
-	}
-	blocker := fmt.Sprintf("\n\n## External Gate\n\n- Failure: %s.\n- Next action: %s.\n", failure, nextAction)
-	logSummary := failure
-	if reason == gateReadyToMerge {
-		nextAction = "revalidate current-head approval, CI, and mergeability, then execute the normal pull-request merge gate"
-		blocker = fmt.Sprintf("\n\n## External Gate\n\n- State: pull request external gate is ready-to-merge.\n- Next action: %s.\n", nextAction)
-		logSummary = "pull request is ready to merge"
-	}
-
-	if strings.TrimSpace(workDir) != "" {
-		taskPath := filepath.Join(workDir, ".sandman", "task.md")
-		content, err := os.ReadFile(taskPath)
-		if err != nil && !os.IsNotExist(err) {
-			s.logExternalGateWriteError("read task.md", err)
-		} else {
-			updated := replaceExternalGateBlocker(content, blocker)
-			if err := atomicfs.WriteAtomic(taskPath, updated, 0o644); err != nil {
-				s.logExternalGateWriteError("write task.md", err)
-			}
-		}
-	}
-
-	if strings.TrimSpace(logPath) != "" {
-		if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
-			s.logExternalGateWriteError("create run.log directory", err)
-			return
-		}
-		file, err := atomicfs.OpenAppend(logPath, 0o644)
-		if err != nil {
-			s.logExternalGateWriteError("open run.log", err)
-			return
-		}
-		prefixed := NewLinePrefixWriter(runID, file)
-		_, writeErr := fmt.Fprintf(prefixed, "external gate %s: %s; next action: %s\n", reason, logSummary, nextAction)
-		flushErr := prefixed.Flush()
-		closeErr := file.Close()
-		if writeErr != nil {
-			s.logExternalGateWriteError("write run.log", writeErr)
-		}
-		if flushErr != nil {
-			s.logExternalGateWriteError("flush run.log", flushErr)
-		}
-		if closeErr != nil {
-			s.logExternalGateWriteError("close run.log", closeErr)
-		}
-	}
-}
-
-func (s *runSession) recordReviewTimeoutGateBlocker(workDir, logPath, runID string, handoff *reviewTimeoutHandoff) {
-	s.recordReviewOutcomeBlocker(workDir, logPath, runID, handoff, gateReviewTimeout, reviewTimeoutReason, reviewTimeoutNextAction)
-}
-
-func (s *runSession) recordReviewOutcomeBlocker(workDir, logPath, runID string, handoff *reviewTimeoutHandoff, gate, reason, nextAction string) {
-	request := handoff.Request
-	counts := handoff.ResponseCounts
-	state := "delegated review request exhausted its deadline"
-	if gate == gateActionableFeedback {
-		state = "delegated review request has actionable requested changes"
-	}
-	blocker := fmt.Sprintf(
-		"\n\n## External Gate\n\n- State: %s.\n- Reason: %s.\n- Repository: %s.\n- Pull request: #%d.\n- Current head: %s.\n- Trigger: %s.\n- Trigger created: %s.\n- Confirmed: %s.\n- Started: %s.\n- Deadline: %s (%d).\n- Budget: %d seconds.\n- Elapsed: %d seconds.\n- Response counts: top-level=%d, formal=%d, inline=%d.\n- Next action: %s.\n",
-		state,
-		reason,
-		request.Repository,
-		request.PullRequest,
-		request.HeadSHA,
-		request.TriggerID,
-		request.TriggerCreatedAt,
-		request.ConfirmedAt,
-		request.StartedAt,
-		request.DeadlineAt,
-		request.DeadlineUnixSeconds,
-		request.EffectiveTimeout,
-		*handoff.State.ElapsedSeconds,
-		counts.TopLevel,
-		counts.FormalReviews,
-		counts.Inline,
-		nextAction,
-	)
-
-	if strings.TrimSpace(workDir) != "" {
-		taskPath := filepath.Join(workDir, ".sandman", "task.md")
-		content, err := os.ReadFile(taskPath)
-		if err != nil && !os.IsNotExist(err) {
-			s.logExternalGateWriteError("read task.md", err)
-		} else {
-			updated := replaceExternalGateBlocker(content, blocker)
-			if err := atomicfs.WriteAtomic(taskPath, updated, 0o644); err != nil {
-				s.logExternalGateWriteError("write task.md", err)
-			}
-		}
-	}
-
-	if strings.TrimSpace(logPath) == "" {
-		return
-	}
-	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
-		s.logExternalGateWriteError("create run.log directory", err)
-		return
-	}
-	file, err := atomicfs.OpenAppend(logPath, 0o644)
-	if err != nil {
-		s.logExternalGateWriteError("open run.log", err)
-		return
-	}
-	prefixed := NewLinePrefixWriter(runID, file)
-	_, writeErr := fmt.Fprintf(prefixed, "external gate %s: %s; repository %s pull request #%d head %s trigger %s created %s confirmed %s started %s deadline %s budget %d elapsed %d counters top-level=%d formal=%d inline=%d; next action: %s\n", gate, reason, request.Repository, request.PullRequest, request.HeadSHA, request.TriggerID, request.TriggerCreatedAt, request.ConfirmedAt, request.StartedAt, request.DeadlineAt, request.EffectiveTimeout, *handoff.State.ElapsedSeconds, counts.TopLevel, counts.FormalReviews, counts.Inline, nextAction)
-	flushErr := prefixed.Flush()
-	closeErr := file.Close()
-	if writeErr != nil {
-		s.logExternalGateWriteError("write run.log", writeErr)
-	}
-	if flushErr != nil {
-		s.logExternalGateWriteError("flush run.log", flushErr)
-	}
-	if closeErr != nil {
-		s.logExternalGateWriteError("close run.log", closeErr)
-	}
-}
-
-func replaceExternalGateBlocker(content []byte, blocker string) []byte {
-	text := string(content)
-	const heading = "## External Gate"
-	start := strings.Index(text, heading)
-	if start < 0 {
-		return append(append([]byte(nil), content...), []byte(blocker)...)
-	}
-
-	end := len(text)
-	rest := text[start+len(heading):]
-	if next := strings.Index(rest, "\n## "); next >= 0 {
-		end = start + len(heading) + next + 1
-	}
-	updated := text[:start] + strings.TrimSpace(blocker) + "\n\n" + text[end:]
-	return []byte(updated)
-}
-
-func (s *runSession) logExternalGateWriteError(operation string, err error) {
-	if s.deps.errorLog != nil {
-		fmt.Fprintf(s.deps.errorLog, "warning: %s for external gate blocker: %v\n", operation, err)
-	}
+	return "await", map[string]any{"gate": reason, "await": true}, true
 }

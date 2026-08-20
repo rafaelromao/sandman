@@ -1480,8 +1480,8 @@ func TestRunSingle_WaitsForExternalGateAfterCleanExit(t *testing.T) {
 	if awaitFlag, _ := events[1].Payload["await"].(bool); !awaitFlag {
 		t.Fatalf("expected await flag true, got %v", events[1].Payload["await"])
 	}
-	if blocker, _ := events[1].Payload["blocker"].(string); blocker != "external-gate" {
-		t.Fatalf("expected external-gate blocker, got %q", blocker)
+	if _, ok := events[1].Payload["blocker"]; ok {
+		t.Fatalf("await payload carries blocker: %#v", events[1].Payload)
 	}
 }
 
@@ -1700,8 +1700,8 @@ func TestRunSingle_ModeContinueRequestedChangesIsActionableWithoutRetry(t *testi
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "blocked" {
-		t.Fatalf("status = %q, want blocked", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want await", result.Status)
 	}
 	if result.RetriesTotal != 1 {
 		t.Fatalf("retries total = %d, want 1", result.RetriesTotal)
@@ -1713,9 +1713,9 @@ func TestRunSingle_ModeContinueRequestedChangesIsActionableWithoutRetry(t *testi
 	if got := countEventsByType(logs, "run.retry"); got != 0 {
 		t.Fatalf("run.retry events = %d, want 0", got)
 	}
-	finished := findEvent(logs, "run.finished")
-	if finished == nil || finished.Payload["gate"] != "failed" {
-		t.Fatalf("continuation terminal gate = %v, want failed", finished)
+	await := findEvent(logs, "run.await")
+	if await == nil || await.Payload["gate"] != "failed" {
+		t.Fatalf("continuation await gate = %v, want failed", await)
 	}
 }
 

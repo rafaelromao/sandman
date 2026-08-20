@@ -194,46 +194,47 @@ func TestDecideImplementationPRLifecycle_UnverifiableMergedStaysUnhandled(t *tes
 	}
 }
 
-func TestDecideImplementationPRLifecycle_NonResolvedGatesUnhandled(t *testing.T) {
+func TestDecideImplementationPRLifecycle_NonResolvedGates(t *testing.T) {
 	cases := []struct {
-		name     string
-		pr       *github.PR
-		wantGate lifecycleGate
+		name       string
+		pr         *github.PR
+		wantGate   lifecycleGate
+		wantAction lifecycleAction
 	}{
 		{
 			name: "pending ci",
 			pr: &github.PR{Number: 42, State: "open", StatusCheckRollup: "pending",
 				ReviewDecision: "APPROVED", MergeStateStatus: "BLOCKED", HeadRefOid: "current-sha"},
-			wantGate: lifecycleGatePending,
+			wantGate: lifecycleGatePending, wantAction: lifecycleAwait,
 		},
 		{
 			name: "ci failure",
 			pr: &github.PR{Number: 42, State: "open", StatusCheckRollup: "failure",
 				ReviewDecision: "APPROVED", MergeStateStatus: "CLEAN", HeadRefOid: "current-sha"},
-			wantGate: lifecycleGateFailed,
+			wantGate: lifecycleGateFailed, wantAction: lifecycleAwait,
 		},
 		{
 			name: "changes requested",
 			pr: &github.PR{Number: 42, State: "open", StatusCheckRollup: "success",
 				ReviewDecision: "CHANGES_REQUESTED", MergeStateStatus: "CLEAN", HeadRefOid: "current-sha"},
-			wantGate: lifecycleGateFailed,
+			wantGate: lifecycleGateFailed, wantAction: lifecycleAwait,
 		},
 		{
 			name: "ready to merge",
 			pr: &github.PR{Number: 42, State: "open", MergeStateStatus: "CLEAN",
 				HeadRefOid: "current-sha"},
-			wantGate: lifecycleGateReady,
+			wantGate: lifecycleGateReady, wantAction: lifecycleAwait,
 		},
 		{
 			name: "head drifted",
 			pr: &github.PR{Number: 42, State: "open", MergeStateStatus: "CLEAN",
 				HeadRefOid: "other-sha"},
-			wantGate: lifecycleGatePending,
+			wantGate: lifecycleGatePending, wantAction: lifecycleAwait,
 		},
 		{
 			name:     "unavailable state",
 			pr:       &github.PR{Number: 42, State: "closed", Merged: false},
-			wantGate: lifecycleGateUnavailable,
+			wantGate: lifecycleGateUnavailable, wantAction: lifecycleFailure,
 		},
 	}
 	for _, tc := range cases {
@@ -242,8 +243,8 @@ func TestDecideImplementationPRLifecycle_NonResolvedGatesUnhandled(t *testing.T)
 				pr:      tc.pr,
 				headSHA: "current-sha",
 			})
-			if d.handled || d.needMergeFacts || d.action != lifecycleNone {
-				t.Fatalf("decision = %+v, want fully unhandled legacy arm", d)
+			if !d.handled || d.needMergeFacts || d.action != tc.wantAction {
+				t.Fatalf("decision = %+v, want handled %v", d, tc.wantAction)
 			}
 			if d.gate != tc.wantGate {
 				t.Fatalf("gate = %q, want %q", d.gate, tc.wantGate)
@@ -252,13 +253,13 @@ func TestDecideImplementationPRLifecycle_NonResolvedGatesUnhandled(t *testing.T)
 	}
 }
 
-func TestDecideImplementationPRLifecycle_EmptyPRHeadUnhandled(t *testing.T) {
+func TestDecideImplementationPRLifecycle_EmptyPRHeadAwaits(t *testing.T) {
 	d := decideImplementationPRLifecycle(implementationPRFacts{
 		pr:      &github.PR{Number: 42, State: "open", MergeStateStatus: "CLEAN"},
 		headSHA: "",
 	})
-	if d.handled || d.gate != lifecycleGatePending {
-		t.Fatalf("empty head decision = %+v, want unhandled pending", d)
+	if !d.handled || d.action != lifecycleAwait || d.gate != lifecycleGatePending {
+		t.Fatalf("empty head decision = %+v, want handled pending await", d)
 	}
 }
 

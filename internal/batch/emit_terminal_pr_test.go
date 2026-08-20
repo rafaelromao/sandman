@@ -62,7 +62,7 @@ func TestEmitTerminal_PROpenConflictingOverridesStatus(t *testing.T) {
 	}
 }
 
-func TestEmitTerminal_PROpenConflictingPreservesExternalGate(t *testing.T) {
+func TestEmitTerminal_PROpenConflictingBecomesFailure(t *testing.T) {
 	s := &runSession{
 		deps: runDeps{
 			githubClient: &fakeGitHubClient{},
@@ -85,11 +85,11 @@ func TestEmitTerminal_PROpenConflictingPreservesExternalGate(t *testing.T) {
 		"blocker": "external-gate",
 		"gate":    "failed",
 	})
-	if got != "blocked" {
-		t.Fatalf("emitTerminal returned %q, want blocked for external-gate conflict", got)
+	if got != "failure" {
+		t.Fatalf("emitTerminal returned %q, want failure for conflicting PR", got)
 	}
-	if events.RunStatusFromPayload(got).IsFailure() {
-		t.Fatalf("external-gate status %q would count as a batch failure", got)
+	if !events.RunStatusFromPayload(got).IsFailure() {
+		t.Fatalf("conflicting PR status %q should count as a batch failure", got)
 	}
 
 	logs, err := s.deps.eventLog.Read()
@@ -105,8 +105,11 @@ func TestEmitTerminal_PROpenConflictingPreservesExternalGate(t *testing.T) {
 	if terminal.Type == "" {
 		t.Fatalf("run.finished event not found in logs: %v", logs)
 	}
-	if terminal.Payload["status"] != "blocked" || terminal.Payload["blocker"] != "external-gate" {
-		t.Fatalf("external-gate terminal payload = %v, want blocked external-gate", terminal.Payload)
+	if terminal.Payload["status"] != "failure" {
+		t.Fatalf("conflicting terminal payload = %v, want failure", terminal.Payload)
+	}
+	if _, ok := terminal.Payload["blocker"]; ok {
+		t.Fatalf("conflicting terminal payload carries blocker: %v", terminal.Payload)
 	}
 	if conflict, _ := terminal.Payload["merge_conflict"].(bool); !conflict {
 		t.Fatalf("run.finished payload merge_conflict = %v, want true", terminal.Payload["merge_conflict"])
