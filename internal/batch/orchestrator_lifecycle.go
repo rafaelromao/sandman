@@ -208,7 +208,7 @@ func decideRecoverableLifecycle(gate lifecycleGate, pr *github.PR, evidence reta
 	}
 	decision := decidedAwait(gate)
 	if evidence.payload != nil && (gate != lifecycleGateFailed || evidence.actionable && reviewChangesRequested && !hardFailure) {
-		decision.extras = evidence.payload
+		decision.extras = cloneLifecycleExtras(evidence.payload)
 		decision.extras["gate"] = string(gate)
 		decision.extras["await"] = true
 	}
@@ -256,8 +256,10 @@ func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branc
 	pr, err := lookupPRForExternalGate(ctx, s.deps.githubClient, branch)
 	gate := lifecycleGateNone
 	refreshUnavailable := false
-	if err != nil && s.deps.errorLog != nil {
-		fmt.Fprintf(s.deps.errorLog, "warning: external gate lookup for branch %q: %v\n", branch, err)
+	if err != nil {
+		if s.deps.errorLog != nil {
+			fmt.Fprintf(s.deps.errorLog, "warning: external gate lookup for branch %q: %v\n", branch, err)
+		}
 		gate = lifecycleGatePending
 	}
 	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.State), "open") {
@@ -366,6 +368,14 @@ func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branc
 	}
 	extras["await"] = true
 	return "await", extras, true
+}
+
+func cloneLifecycleExtras(extras map[string]any) map[string]any {
+	clone := make(map[string]any, len(extras))
+	for key, value := range extras {
+		clone[key] = value
+	}
+	return clone
 }
 
 func mergeLifecycleDiagnostics(extras, diagnostics map[string]any) map[string]any {
