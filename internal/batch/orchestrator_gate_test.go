@@ -1645,8 +1645,8 @@ func TestExternalGate_MergedCompletionIgnoresStaleOrMalformedState(t *testing.T)
 	if !started || result.Status != "success" {
 		t.Fatalf("stale state result = (%t, %q), want live merged success", started, result.Status)
 	}
-	if len(factory.created) != 1 {
-		t.Fatalf("agent launches = %d, want 1", len(factory.created))
+	if len(factory.created) != 0 {
+		t.Fatalf("agent launches = %d, want 0", len(factory.created))
 	}
 	logs, err := eventLog.Read()
 	if err != nil {

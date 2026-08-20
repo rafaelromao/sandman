@@ -41,11 +41,12 @@ func TestRunBatch_ModeContinueCopiesOriginalTaskToRunFolder(t *testing.T) {
 	// Reuse fakeRunnableFactory with one success result per RunBatch
 	// call (initial run + continuation) so the Runnable does not
 	// overwrite the worktree's task.md before the snapshot block captures it.
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+		prs:    map[string]*github.PR{branch: {Merged: true, HeadRefName: branch}},
+	}
 	o := NewOrchestrator(
-		&fakeGitHubClient{
-			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
-			prs:    map[string]*github.PR{branch: {Merged: true, HeadRefName: branch}},
-		},
+		client,
 		&noopRenderer{},
 		&fakeConfigStore{
 			config: &config.Config{
@@ -61,7 +62,7 @@ func TestRunBatch_ModeContinueCopiesOriginalTaskToRunFolder(t *testing.T) {
 		WithRunnableFactory(&fakeRunnableFactory{
 			results: []AgentRunResult{
 				{IssueNumber: 42, Status: "success", Branch: branch, WorktreePath: worktreePath},
-				{IssueNumber: 42, Status: "success", Branch: branch, WorktreePath: worktreePath},
+				{IssueNumber: 42, Status: "await", Branch: branch, WorktreePath: worktreePath},
 			},
 		}),
 	)
@@ -69,6 +70,9 @@ func TestRunBatch_ModeContinueCopiesOriginalTaskToRunFolder(t *testing.T) {
 	if _, err := o.RunBatch(context.Background(), Request{Issues: []int{42}}); err != nil {
 		t.Fatalf("initial run failed: %v", err)
 	}
+	// The initial run uses the merged PR to complete normally. The
+	// continuation snapshot path is independent of PR lifecycle handling.
+	client.prs = map[string]*github.PR{}
 
 	// Run the continuation with a fresh (ts, shortid) so the new per-row
 	// RunID is distinct from the prior run and lands in a fresh batch folder.

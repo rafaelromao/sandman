@@ -362,8 +362,11 @@ func TestLifecycle_MergedDeterministicAcrossFreshAndContinue(t *testing.T) {
 
 	// Arm 1: merged with closing intent terminalizes success, identically for
 	// a fresh run and a continuation.
-	freshResult, freshLogs, _ := runLifecycleCaseForIssue(t, pr("Closes #42"), ModeFresh, "")
-	continueResult, continueLogs, _ := runLifecycleCaseForIssue(t, pr("Closes #42"), ModeContinue, "prior-run")
+	freshResult, freshLogs, freshLaunches := runLifecycleCaseForIssue(t, pr("Closes #42"), ModeFresh, "")
+	continueResult, continueLogs, continueLaunches := runLifecycleCaseForIssue(t, pr("Closes #42"), ModeContinue, "prior-run")
+	if freshLaunches != 1 || continueLaunches != 0 {
+		t.Fatalf("merged-with-closing launches = fresh %d, continue %d; want 1, 0", freshLaunches, continueLaunches)
+	}
 	if s := finishedStatus(t, freshLogs); s != "success" {
 		t.Fatalf("fresh merged-with-closing status = %q, want success", s)
 	}
@@ -383,8 +386,11 @@ func TestLifecycle_MergedDeterministicAcrossFreshAndContinue(t *testing.T) {
 
 	// Arm 2: merged without closing reference terminalizes failure with the
 	// completion diagnostic, identically for a fresh run and a continuation.
-	freshResult2, freshLogs2, _ := runLifecycleCaseForIssue(t, pr("Refs #42"), ModeFresh, "")
-	continueResult2, continueLogs2, _ := runLifecycleCaseForIssue(t, pr("Refs #42"), ModeContinue, "prior-run")
+	freshResult2, freshLogs2, freshLaunches2 := runLifecycleCaseForIssue(t, pr("Refs #42"), ModeFresh, "")
+	continueResult2, continueLogs2, continueLaunches2 := runLifecycleCaseForIssue(t, pr("Refs #42"), ModeContinue, "prior-run")
+	if freshLaunches2 != 1 || continueLaunches2 != 0 {
+		t.Fatalf("merged-without-closing launches = fresh %d, continue %d; want 1, 0", freshLaunches2, continueLaunches2)
+	}
 	if s := finishedStatus(t, freshLogs2); s != "failure" {
 		t.Fatalf("fresh merged-without-closing status = %q, want failure", s)
 	}

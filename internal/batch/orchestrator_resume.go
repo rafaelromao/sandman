@@ -92,7 +92,21 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 	}
 	hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
 	gateStatus, extras, handled := s.handleLifecycleDecision(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady)
-	if !handled || gateStatus != "await" {
+	if !handled {
+		return AgentRunResult{}, false, false
+	}
+	if gateStatus == "success" || gateStatus == "failure" || gateStatus == "aborted" {
+		result := AgentRunResult{
+			IssueNumber:  s.issueNumber,
+			Issue:        issueRef(s.issueNumber),
+			Status:       gateStatus,
+			Branch:       branch,
+			RetriesTotal: 1,
+		}
+		result.Status = s.emitTerminal(ctx, runID, result, extras)
+		return result, true, true
+	}
+	if gateStatus != "await" {
 		return AgentRunResult{}, false, false
 	}
 	gate, _ := extras["gate"].(string)
