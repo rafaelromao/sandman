@@ -2,7 +2,6 @@ package batch
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -200,120 +199,7 @@ func (s *runSession) handleExternalGate(ctx context.Context, workDir, branch, lo
 }
 
 func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool) (string, map[string]any, bool) {
-	if s.deps.githubClient == nil {
-		return "", nil, false
-	}
-	// The live pull request is authoritative. Local review records can enrich
-	// the result, but they must not decide whether the run is terminal.
-	headSHA := s.currentGateHead(workDir)
-	if !hostPathsReady {
-		headSHA = ""
-	}
-	pr, err := lookupPRForExternalGate(ctx, s.deps.githubClient, branch)
-	initialUnavailable := err != nil
-	refreshUnavailable := false
-	gate := "none"
-	if err != nil && s.deps.errorLog != nil {
-		fmt.Fprintf(s.deps.errorLog, "warning: external gate lookup for branch %q: %v\n", branch, err)
-		gate = "pending"
-	}
-	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.State), "open") {
-		registrationErr := s.ensureReviewRegistrationForPR(ctx, workDir, pr, headSHA)
-		headChanged := errors.Is(registrationErr, errReviewRegistrationHeadChanged)
-		refreshLivePR := headChanged ||
-			(registrationErr == nil && s.reviewRegistrationObserved)
-		if refreshLivePR {
-			// Registration may observe comments and persist while the live PR
-			// changes. Refresh after a confirmed head change or successful
-			// observation before allowing the gate to terminalize.
-			refreshedPR, refreshErr := lookupPRForExternalGate(ctx, s.deps.githubClient, branch)
-			if refreshErr != nil {
-				if s.deps.errorLog != nil {
-					fmt.Fprintf(s.deps.errorLog, "warning: external gate refresh for branch %q: %v\n", branch, refreshErr)
-				}
-				// A requested refresh has no safe fallback. Do not reuse a
-				// pre-registration snapshot or poll until it can be replaced.
-				pr = nil
-				gate = "pending"
-				refreshUnavailable = true
-				err = nil
-			} else {
-				pr = refreshedPR
-				err = nil
-			}
-		}
-	}
-	if err == nil && pr != nil {
-		gate = checkPRExternalGateForPR(pr, headSHA, true)
-	}
-
-	if gate == "none" {
-		return "", nil, false
-	}
-	if refreshUnavailable {
-		return s.awaitExternalGateWithDiagnostics(ctx, "pending", nil)
-	}
-	var diagnostics map[string]any
-	if gate != "resolved" && pr != nil {
-		diagnostics = s.retainedReviewDiagnostics(ctx, workDir, branch, pr, headSHA)
-	}
-	if gate == gateReadyToMerge {
-		return s.awaitExternalGateWithDiagnostics(ctx, gateReadyToMerge, diagnostics)
-	}
-	if gate == "resolved" {
-		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
-	}
-	if gate == "failed" {
-		// Decompose the live failure (issue #2595): a rejected review is
-		// resume-worthy when retained evidence proves the feedback is
-		// actionable at the current head, while CI / mergeability failures
-		// keep the hard blocked gate (the agent cannot act on them without
-		// operator work anyway). The actionable-feedback await hands the
-		// agent the retained review_request so a resumed session can
-		// address the exact requested changes.
-		if result, extras, handled := s.resumeWorthyActionableFeedback(ctx, workDir, pr, headSHA, diagnostics); result != "" {
-			return result, extras, handled
-		}
-		return s.blockExternalGateWithDiagnostics(ctx, workDir, logPath, runID, "failed", diagnostics)
-	}
-	if gate == "unavailable" && !initialUnavailable {
-		return s.blockExternalGateWithDiagnostics(ctx, workDir, logPath, runID, "unavailable", diagnostics)
-	}
-
-	polled := pollPRGateWithHead(ctx, s.deps.githubClient, branch, headSHA, true, s.opts)
-	if polled == gateResolved {
-		return s.confirmExternalGateWithDiagnostics(ctx, workDir, branch, logPath, runID, diagnostics)
-	}
-	if polled == gatePollReadyToMerge {
-		return s.awaitExternalGateWithDiagnostics(ctx, gateReadyToMerge, diagnostics)
-	}
-	if polled == gateFailed {
-		if result, extras, handled := s.resumeWorthyActionableFeedback(ctx, workDir, pr, headSHA, diagnostics); result != "" {
-			return result, extras, handled
-		}
-		return s.blockExternalGateWithDiagnostics(ctx, workDir, logPath, runID, "failed", diagnostics)
-	}
-	if polled == gatePollUnavailable || polled == gatePollPRMissing {
-		return s.blockExternalGateWithDiagnostics(ctx, workDir, logPath, runID, "unavailable", diagnostics)
-	}
-	if evidence, informalExtras := s.informalActionableFeedback(ctx, workDir, pr, headSHA); informalExtras != nil {
-		if ctx.Err() != nil {
-			return "aborted", nil, true
-		}
-		result, extras, handled := withExternalGateDiagnostics("await", informalExtras, true, diagnostics)
-		if handled {
-			// The diagnostics merge folds the retained review_request over the
-			// extras payload, and the diagnostic copy never carries the
-			// informal classification result. Re-inject the evidence into the
-			// surviving envelope so resumeEvidenceFor, run.resumed, and the
-			// resume prompt all see it.
-			if request, ok := extras["review_request"].(map[string]any); ok {
-				request["informal_feedback"] = evidence
-			}
-		}
-		return result, extras, handled
-	}
-	return s.awaitExternalGateWithDiagnostics(ctx, "pending", diagnostics)
+	return s.handleLifecycleDecision(ctx, workDir, branch, logPath, runID, hostPathsReady)
 }
 
 func withExternalGateDiagnostics(result string, extras map[string]any, handled bool, diagnostics map[string]any) (string, map[string]any, bool) {

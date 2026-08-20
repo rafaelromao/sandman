@@ -91,7 +91,7 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 		return AgentRunResult{}, false, false
 	}
 	hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
-	gateStatus, extras, handled := s.handleExternalGateWithHostPaths(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady)
+	gateStatus, extras, handled := s.handleLifecycleDecision(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady)
 	if !handled || gateStatus != "await" {
 		return AgentRunResult{}, false, false
 	}

@@ -2787,7 +2787,7 @@ loop:
 			alreadyResolved = hasExactTaskStatus(taskContent, "## Status: already resolved")
 			if s.issueNumber > 0 && events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
 				hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
-				if gateStatus, extras, handled := s.handleExternalGateWithHostPaths(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled && gateStatus != "success" {
+				if gateStatus, extras, handled := s.handleLifecycleDecision(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled && gateStatus != "success" {
 					if resumePrompt, resume := s.resumePromptFromGate(ctx, wt, branch, runID, extras); resume {
 						attemptRenderCfg.TaskPrompt = resumePrompt
 						continue relaunch
@@ -2901,7 +2901,7 @@ loop:
 					}
 					if events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
 						hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
-						if gateStatus, extras, handled := s.handleExternalGateWithHostPaths(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled {
+						if gateStatus, extras, handled := s.handleLifecycleDecision(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled {
 							result.Status = gateStatus
 							terminalExtras = mergeBlockerExtras(terminalExtras, extras)
 							break loop
