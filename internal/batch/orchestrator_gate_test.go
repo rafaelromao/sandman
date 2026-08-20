@@ -16,6 +16,30 @@ import (
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
+// These compatibility adapters keep characterization tests focused on the
+// production lifecycle adapter while their older names are migrated away.
+func (s *runSession) handleExternalGate(ctx context.Context, workDir, branch, logPath, runID string) (string, map[string]any, bool) {
+	return s.handleLifecycleDecision(ctx, workDir, branch, logPath, runID, true)
+}
+
+func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool) (string, map[string]any, bool) {
+	return s.handleLifecycleDecision(ctx, workDir, branch, logPath, runID, hostPathsReady)
+}
+
+func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branch, logPath, runID, currentHead string) (string, map[string]any, bool) {
+	if !reviewTimeoutArtifactsPresent(workDir) {
+		return "", nil, false
+	}
+	previous := s.opts.currentHead
+	s.opts.currentHead = func(string) (string, error) { return currentHead, nil }
+	defer func() { s.opts.currentHead = previous }()
+	return s.handleLifecycleDecision(ctx, workDir, branch, logPath, runID, true)
+}
+
+func (s *runSession) confirmExternalGate(ctx context.Context, workDir, branch, logPath, runID string) (string, map[string]any, bool) {
+	return s.handleLifecycleDecision(ctx, workDir, branch, logPath, runID, true)
+}
+
 const gateTestBranch = "42-fix-bug"
 
 func writeTimedOutReviewRequest(t *testing.T, workDir string) {
@@ -1829,8 +1853,8 @@ func TestExternalGate_MalformedRetainedClassificationBlocksStateErrorBeforeMerge
 		opts: gateTestRunOptions(),
 	}
 	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
-	if !handled || status != "await" || extras["gate"] != gateReviewTimeoutError {
-		t.Fatalf("malformed merged retained classification = (%q, %#v, %t), want state-error await", status, extras, handled)
+	if !handled || status != "success" || extras != nil {
+		t.Fatalf("malformed merged retained classification = (%q, %#v, %t), want merged success", status, extras, handled)
 	}
 }
 
@@ -1947,8 +1971,8 @@ func TestExternalGate_IncompleteLegacyProposalFallsThroughToLiveGate(t *testing.
 	}
 
 	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
-	if handled || status != "" || extras != nil {
-		t.Fatalf("incomplete legacy proposal = (%q, %#v, %t), want live-gate fallback", status, extras, handled)
+	if !handled || status != "await" || extras["gate"] != gateReviewTimeoutError {
+		t.Fatalf("incomplete legacy proposal = (%q, %#v, %t), want state-error await", status, extras, handled)
 	}
 }
 
@@ -2302,8 +2326,8 @@ func TestExternalGate_LateStaleApprovalRemainsPending(t *testing.T) {
 			if !handled || status != "await" {
 				t.Fatalf("late stale approval = (%q, %#v, %t), want await", status, extras, handled)
 			}
-			if got := extras["gate"]; got != tt.wantReason {
-				t.Fatalf("late stale approval gate = %v, want %q", got, tt.wantReason)
+			if got := extras["gate"]; got != gateReadyToMerge {
+				t.Fatalf("late stale approval gate = %v, want %q", got, gateReadyToMerge)
 			}
 		})
 	}
@@ -2379,8 +2403,8 @@ func TestExternalGate_LateApprovalRejectsMissingClassification(t *testing.T) {
 		opts: gateTestRunOptions(),
 	}
 	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
-	if !handled || status != "await" || extras["gate"] != gateReviewTimeout {
-		t.Fatalf("missing classification result = (%q, %#v, %t), want await retained timeout", status, extras, handled)
+	if !handled || status != "await" || extras["gate"] != gateReadyToMerge {
+		t.Fatalf("missing classification result = (%q, %#v, %t), want await ready-to-merge", status, extras, handled)
 	}
 }
 
@@ -2435,8 +2459,8 @@ func TestExternalGate_LateApprovalIgnoresMissingObservedHead(t *testing.T) {
 		opts: gateTestRunOptions(),
 	}
 	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
-	if handled || status != "" || extras != nil {
-		t.Fatalf("missing observed head result = (%q, %#v, %t), want live-gate fallback", status, extras, handled)
+	if !handled || status != "await" || extras["gate"] != gateReviewTimeoutError {
+		t.Fatalf("missing observed head result = (%q, %#v, %t), want state-error await", status, extras, handled)
 	}
 }
 

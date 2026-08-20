@@ -164,7 +164,7 @@ func decideImplementationPRLifecycle(in implementationPRFacts) lifecycleDecision
 }
 
 func decideRecoverableLifecycle(gate lifecycleGate, pr *github.PR, evidence retainedReviewEvidence) lifecycleDecision {
-	if evidence.stateError {
+	if evidence.stateError && gate != lifecycleGateFailed {
 		return lifecycleDecision{
 			action:  lifecycleAwait,
 			gate:    lifecycleGate(gateReviewTimeoutError),
@@ -206,7 +206,13 @@ func decideRecoverableLifecycle(gate lifecycleGate, pr *github.PR, evidence reta
 			extras:  evidence.payload,
 		}
 	}
-	return decidedAwait(gate)
+	decision := decidedAwait(gate)
+	if evidence.payload != nil && (gate != lifecycleGateFailed || evidence.actionable && reviewChangesRequested && !hardFailure) {
+		decision.extras = evidence.payload
+		decision.extras["gate"] = string(gate)
+		decision.extras["await"] = true
+	}
+	return decision
 }
 
 // lifecycleStatusRepr maps a decided action to the status string the run
@@ -290,10 +296,16 @@ func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branc
 	if refreshUnavailable {
 		// B2.3: a transient refresh failure awaits the recoverable pending
 		// gate instead of terminalizing.
-		return s.awaitExternalGateWithDiagnostics(ctx, string(lifecycleGatePending), nil)
+		if ctx.Err() != nil {
+			return "aborted", nil, true
+		}
+		return "await", map[string]any{"gate": string(lifecycleGatePending), "await": true}, true
 	}
 	if err != nil {
-		return s.awaitExternalGateWithDiagnostics(ctx, string(lifecycleGatePending), nil)
+		if ctx.Err() != nil {
+			return "aborted", nil, true
+		}
+		return "await", map[string]any{"gate": string(lifecycleGatePending), "await": true}, true
 	}
 
 	// Merged PRs resolve before retained evidence is consulted, so stale or
@@ -304,6 +316,9 @@ func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branc
 		headSHA: headSHA,
 	})
 	if decision.needMergeFacts {
+		if ctx.Err() != nil {
+			return "aborted", nil, true
+		}
 		mergeFacts = &mergedMergeFacts{
 			mergedWithClosingIntent: checkPRMergedForIssue(ctx, s.deps.githubClient, branch, s.issueNumber),
 			mergedWithoutClosingRef: mergedPRMissingClosingReference(ctx, s.deps.githubClient, branch, s.issueNumber),
@@ -313,6 +328,9 @@ func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branc
 			headSHA:    headSHA,
 			mergeFacts: mergeFacts,
 		})
+		if ctx.Err() != nil {
+			return "aborted", nil, true
+		}
 	}
 	if decision.action == lifecycleSuccess || decision.action == lifecycleFailure {
 		return lifecycleStatusRepr(decision), lifecycleFailureExtras(decision, s.issueNumber), true
@@ -321,6 +339,9 @@ func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branc
 		return "aborted", nil, true
 	}
 	evidence := s.retainedLifecycleEvidence(ctx, workDir, pr, headSHA)
+	if ctx.Err() != nil {
+		return "aborted", nil, true
+	}
 	decision = decideImplementationPRLifecycle(implementationPRFacts{
 		pr:               pr,
 		headSHA:          headSHA,

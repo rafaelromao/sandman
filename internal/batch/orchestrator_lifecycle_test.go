@@ -269,7 +269,7 @@ func TestDecideImplementationPRLifecycle_NilPRUnhandled(t *testing.T) {
 // Characterization: terminal merged outcomes must not write an ## External
 // Gate task section, a gate log line, or a blocker key on their finished
 // event. These are the invariants the lifecycle adapter preserves when the
-// merged arm stops consulting confirmExternalGate's blocked/unverified tail.
+// merged arm no longer has a separate retained-evidence terminal fallback.
 func TestLifecycle_MergedWithClosingIntentTerminalizesWithoutBlocker(t *testing.T) {
 	result, logs, launches := runCleanGateCaseForIssue(t, "open", &github.PR{
 		Number:      42,
