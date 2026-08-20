@@ -81,10 +81,7 @@ func TestEmitTerminal_PROpenConflictingBecomesFailure(t *testing.T) {
 	s.deps.eventLog = &events.JSONLLogger{Path: eventsPath}
 
 	result := AgentRunResult{IssueNumber: 42, Branch: "42-fix-bug", Status: "blocked", RetriesTotal: 1}
-	got := s.emitTerminal(context.Background(), "run-id", result, map[string]any{
-		"blocker": "external-gate",
-		"gate":    "failed",
-	})
+	got := s.emitTerminal(context.Background(), "run-id", result, nil)
 	if got != "failure" {
 		t.Fatalf("emitTerminal returned %q, want failure for conflicting PR", got)
 	}

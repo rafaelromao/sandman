@@ -2350,13 +2350,6 @@ func (s *runSession) emitAwait(ctx context.Context, runID string, result AgentRu
 // `CONFLICTING`, the terminal event payload carries `merge_conflict: true`
 // and the PR number. The result is reclassified as a lifecycle failure.
 func (s *runSession) emitTerminal(ctx context.Context, runID string, result AgentRunResult, extras map[string]any) string {
-	if blocker, _ := extras["blocker"].(string); blocker == "external-gate" {
-		// Legacy callers must not recreate the removed terminal lifecycle. The
-		// recoverable decision is represented by run.await; any terminal path
-		// receiving this stale envelope is an ordinary policy outcome.
-		delete(extras, "blocker")
-		delete(extras, "gate")
-	}
 	if conflictExtras, ok := s.detectConflictingPR(result.Branch); ok {
 		result.Status = "failure"
 		if extras == nil {
