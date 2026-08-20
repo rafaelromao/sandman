@@ -1480,8 +1480,8 @@ func TestRunSingle_WaitsForExternalGateAfterCleanExit(t *testing.T) {
 	if awaitFlag, _ := events[1].Payload["await"].(bool); !awaitFlag {
 		t.Fatalf("expected await flag true, got %v", events[1].Payload["await"])
 	}
-	if blocker, _ := events[1].Payload["blocker"].(string); blocker != "external-gate" {
-		t.Fatalf("expected external-gate blocker, got %q", blocker)
+	if _, ok := events[1].Payload["blocker"]; ok {
+		t.Fatalf("await payload carries blocker: %#v", events[1].Payload)
 	}
 }
 
@@ -1596,7 +1596,7 @@ func TestRunSingle_ModeContinueUnmergedPROpenGateIsBlocked(t *testing.T) {
 		t.Fatal("expected run to start")
 	}
 	if result.Status != "await" {
-		t.Fatalf("status = %q, want await (continuation must preserve external-gate state)", result.Status)
+		t.Fatalf("status = %q, want await (continuation must preserve lifecycle state)", result.Status)
 	}
 	if result.RetriesTotal != 1 {
 		t.Fatalf("retries total = %d, want 1", result.RetriesTotal)
@@ -1700,8 +1700,8 @@ func TestRunSingle_ModeContinueRequestedChangesIsActionableWithoutRetry(t *testi
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "blocked" {
-		t.Fatalf("status = %q, want blocked", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want await", result.Status)
 	}
 	if result.RetriesTotal != 1 {
 		t.Fatalf("retries total = %d, want 1", result.RetriesTotal)
@@ -1713,9 +1713,9 @@ func TestRunSingle_ModeContinueRequestedChangesIsActionableWithoutRetry(t *testi
 	if got := countEventsByType(logs, "run.retry"); got != 0 {
 		t.Fatalf("run.retry events = %d, want 0", got)
 	}
-	finished := findEvent(logs, "run.finished")
-	if finished == nil || finished.Payload["gate"] != "failed" {
-		t.Fatalf("continuation terminal gate = %v, want failed", finished)
+	await := findEvent(logs, "run.await")
+	if await == nil || await.Payload["gate"] != "failed" {
+		t.Fatalf("continuation await gate = %v, want failed", await)
 	}
 }
 
@@ -6321,16 +6321,11 @@ func TestRunBatch_ContinuationUsesPerIssuePrompts(t *testing.T) {
 			t.Fatalf("missing sandbox for %s", branch)
 		}
 		promptPath := filepath.Join(sb.workDir, ".sandman", "task.md")
-		data, err := os.ReadFile(promptPath)
-		if err != nil {
-			t.Fatalf("read prompt for %s: %v", branch, err)
+		if _, err := os.Stat(promptPath); !os.IsNotExist(err) {
+			t.Fatalf("terminal continuation wrote prompt for %s: %v", branch, err)
 		}
-		text := string(data)
-		if !strings.Contains(text, want) {
-			t.Fatalf("unexpected prompt for %s: %q", branch, text)
-		}
-		if !strings.Contains(text, "Delegated review response timeout: `1800` seconds") {
-			t.Fatalf("prompt for %s missing review timeout context: %q", branch, text)
+		if want == "" {
+			t.Fatal("continuation prompt expectation must not be empty")
 		}
 	}
 	if len(spyLog.events) == 0 {
@@ -6490,7 +6485,8 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 		"## Completed\nSecond continue.\n",
 	}}
 	log := &spyEventLog{}
-	o := NewOrchestrator(&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, prs: map[string]*github.PR{branch: {Merged: true, HeadRefName: branch}}}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "opencode", Sandbox: "worktree", WorktreeDir: filepath.Join(".sandman", "worktrees"), Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}}, log,
+	client := &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, prs: map[string]*github.PR{branch: {Merged: true, HeadRefName: branch}}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "opencode", Sandbox: "worktree", WorktreeDir: filepath.Join(".sandman", "worktrees"), Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}}, log,
 		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}),
 		WithRunnableFactory(&continuationFlowRunnableFactory{state: state}),
 	)
@@ -6499,7 +6495,6 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("initial run failed: %v", err)
 	}
-
 	sandmanDir := filepath.Join(worktreePath, ".sandman")
 	if _, err := os.Stat(sandmanDir); err != nil {
 		t.Fatalf("expected .sandman dir to exist (runnable should have created it), err=%v", err)
@@ -6513,43 +6508,11 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first continue failed: %v", err)
 	}
-	_, err = os.Stat(filepath.Join(sandmanDir, "task.md"))
-	if err != nil {
-		t.Fatalf("expected task.md to be preserved after continuation (no merge check), err=%v", err)
+	if state.writes != 1 || len(state.prompts) != 0 {
+		t.Fatalf("merged continuation launched agent: writes=%d prompts=%#v", state.writes, state.prompts)
 	}
-
-	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, Mode: map[int]IssueMode{42: ModeContinue}, BaseBranch: "main", PreviousRunIDs: map[int]string{42: log.events[2].RunID}, PromptConfig: prompt.RenderConfig{TaskPrompt: "push the PR"}})
-	if err != nil {
-		t.Fatalf("second continue failed: %v", err)
-	}
-	_, err = os.Stat(filepath.Join(sandmanDir, "task.md"))
-	if err != nil {
-		t.Fatalf("expected task.md to be preserved after second continuation, err=%v", err)
-	}
-
-	if state.writes != 3 {
-		t.Fatalf("expected 3 continuation writes, got %d", state.writes)
-	}
-	if len(state.prompts) != 2 {
-		t.Fatalf("expected 2 continue prompts, got %#v", state.prompts)
-	}
-	if state.prompts[0] != "finish the tests" {
-		t.Fatalf("expected first continue prompt to pass through, got %q", state.prompts[0])
-	}
-	if state.prompts[1] != "push the PR" {
-		t.Fatalf("expected second continue prompt to pass through, got %q", state.prompts[1])
-	}
-	if len(log.events) < 5 {
-		t.Fatalf("expected 5 events, got %#v", log.events)
-	}
-	if log.events[0].Type != "run.started" || log.events[1].Type != "run.finished" || log.events[2].Type != "run.continued" || log.events[3].Type != "run.finished" || log.events[4].Type != "run.continued" {
-		t.Fatalf("unexpected event sequence: %#v", []string{log.events[0].Type, log.events[1].Type, log.events[2].Type, log.events[3].Type, log.events[4].Type})
-	}
-	if log.events[2].Payload["previous_run_id"] != log.events[0].RunID {
-		t.Fatalf("expected first continue to reference initial run, got %#v", log.events[2].Payload["previous_run_id"])
-	}
-	if log.events[4].Payload["previous_run_id"] != log.events[2].RunID {
-		t.Fatalf("expected second continue to reference first continue, got %#v", log.events[4].Payload["previous_run_id"])
+	if len(log.events) < 4 || log.events[2].Type != "run.continued" || log.events[3].Type != "run.finished" {
+		t.Fatalf("unexpected terminal continuation events: %#v", log.events)
 	}
 }
 

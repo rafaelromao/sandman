@@ -107,7 +107,7 @@ Emitted when an agent run completes.
 
 | Field | Description |
 |-------|-------------|
-| `status` | Terminal status (`success`, `failure`, or `blocked`; `blocked` with `blocker: "external-gate"` means the agent finished cleanly and the PR gate remains unresolved) |
+| `status` | Terminal status (`success`, `failure`, or `blocked`; `blocked` is reserved for dependency outcomes) |
 | `branch` | Branch name |
 | `base_branch` | Base branch name |
 | `worktree_state` | Always `preserved` |
@@ -116,22 +116,21 @@ Emitted when an agent run completes.
 | `context_exhausted` | Present as `true` when the final attempt exhausted the OpenCode context and no clean retry remained |
 | `run_kind` | Mirrors the `run.started` payload so projection sees a consistent kind on both events. |
 | `reason` | Short string built from the error returned by the selection phase. |
-| `blocker` | Optional terminal blocker classification. `"external-gate"` identifies CI/review waiting or intervention, rather than an agent failure. |
-| `gate` | Optional external-gate state: `"pending"`, `"failed"`, `"unavailable"`, `"unverified"`, `"ready-to-merge"`, `"review-timeout"`, `"review-timeout-state-error"`, or `"actionable-feedback"`. |
+| `blocker` | Optional dependency blocker classification and upstream issue list. |
+| `completion` | Completion diagnostic used when a merged pull request needs closing-reference repair. |
 | `review_request` | Present for retained delegated-review outcomes; retains the confirmed request identity, current head, deadline, budget, elapsed time, response counters, validated request-scoped classification, outcome, and next action. |
 
 #### `run.await`
-Emitted when an issue-driven run ends its agent session while the run stays active on the external gate (CI, review, decision publication pending). Non-terminal: the run does not finish, does not consume a retry, and releases sandbox capacity.
+Emitted when an issue-driven run ends its agent session while recoverable pull-request work remains (CI, review, mergeability, or decision publication). Non-terminal: the run does not finish, does not consume a retry, and releases sandbox capacity.
 
 | Field | Description |
 |-------|-------------|
 | `await` | Always `true` |
-| `await_reason` | Mirror of `gate`: `"pending"`, `"review-timeout"`, `"ready-to-merge"`, or `"actionable-feedback"` |
-| `gate` | External-gate state at await time (see the external-gate row of `run.finished`) |
+| `await_reason` | Lifecycle reason such as `"pending"`, `"failed"`, `"review-timeout"`, `"ready-to-merge"`, or `"actionable-feedback"` |
+| `gate` | Lifecycle state at await time |
 | `branch` | Branch name |
 | `base_branch` | Base branch name |
 | `retries_total` | Total retry attempts configured |
-| `blocker` | Present as `"external-gate"` when the await came from the PR gate path |
 | `review_request` | Present for retained delegated-review outcomes; retains the confirmed request identity, current head, deadline, validated request-scoped classification, outcome, and next action |
 
 #### `run.resumed`
@@ -149,44 +148,20 @@ Entry re-evaluation (session start) relaunches with the same evidence but is rec
 | `run_id` | RunID continuity marker (equals the event's own `run_id`; the resume keeps the RunID) |
 | `review_request` | Present for retained delegated-review outcomes; request-scoped review evidence attached to the resumed session |
 
-#### External-gate lifecycle
-When an issue-driven agent exits successfully while its open PR is waiting on CI
-or delegated review, Sandman keeps the run in the same attempt and polls the
-PR gate with bounded exponential backoff. The production poll starts at 120
-seconds, caps individual waits at 600 seconds, and stops after 1800 seconds.
-The wait does not emit `run.retry` or consume the configured agent retry
-budget. A merge is accepted only when the PR still carries closing intent for
-the issue. A failed CI or rejected review ends as an actionable `blocked` run
-with `blocker: "external-gate"`; an operator can continue the run to address
-the intervention.
+#### Implementation pull-request lifecycle
+At a clean agent exit, the runtime consults the pull request once and applies one
+lifecycle decision. Verified merged completion wins over retained review
+evidence: a closing reference produces `success`, while an unverifiable or
+missing closing reference produces `failure` with completion diagnostics.
 
-External-gate terminal blockers are also appended to the run log and persisted
-under `## External Gate` in the worktree's `.sandman/task.md`, including the
-next executable action.
+Recoverable open-pull-request states produce `run.await` without consuming an
+agent retry or holding sandbox capacity. A continuation or in-session relaunch
+re-evaluates the same facts. Retained review records and daemon decisions are
+evidence only: they can supply the await reason and request-scoped prompt
+evidence, but cannot terminalize a run or override merged completion.
 
-When a confirmed delegated-review request reaches its absolute deadline without
-eligible response evidence, the same run is handed to the external gate with
-`gate: "review-timeout"` and `reason: "REVIEW_TIMEOUT"`. The retained request
-is checked against the current pull-request head before it is accepted; a
-malformed or stale request becomes an actionable external-gate state error
-rather than an AgentRun retry. Re-entering with the same trigger preserves its
-deadline, while a later confirmed trigger owns a fresh budget.
-
-If the retained request artifacts are missing, malformed, or mismatched, the
-gate is `"review-timeout-state-error"`; repair or remove the invalid state and
-confirm a new review trigger before continuing.
-
-When the retained classification contains matching current-head formal
-`CHANGES_REQUESTED` evidence in the request window, the gate is
-`"actionable-feedback"` with reason `"REVIEW_CHANGES_REQUESTED"`. The run stays
-blocked without consuming an AgentRun retry or merging the pull request; inspect
-the retained evidence, address the feedback, and continue after pushing a new
-current head.
-
-A later continuation may project a retained request-scoped current-head formal
-approval as `gate: "ready-to-merge"` when the pull request is still open, green,
-and clean. The event retains the validated classification evidence; the
-continuation does not retry the AgentRun or merge the pull request.
+Closed pull requests without a merge are terminal `failure`. Terminal
+`blocked` remains exclusively the dependency outcome emitted by `run.blocked`.
 
 #### `run.aborted`
 Emitted when a run is aborted via context cancellation (e.g. SIGINT/SIGTERM). Also emitted for runs that were still queued (waiting on the turn gate or the start gate) when the batch was cancelled, and cascaded to dependents whose in-batch blocker finished with status `aborted` (instead of `run.blocked`). For queued/cascaded runs, the `RunID` matches the prior `run.queued` event so projection collapses to a single `RunState`.
@@ -245,12 +220,9 @@ Set `run_idle_timeout: 0` in `.sandman/config.yaml` or pass `--run-idle-timeout 
 
 ### Blocked runs
 
-There are two blocked lifecycles:
-
 - A dependency-blocked run has one or more `BlockedBy` issues that failed in the same batch with a non-aborted status. It does not execute and emits `run.blocked`, including the upstream blockers.
-- An external-gate run executes successfully, then finds its pull request awaiting CI, delegated review, or intervention. It emits `run.finished` with `status: "blocked"`, `blocker: "external-gate"`, and a `gate` reason. Continue it according to the external-gate next action rather than treating it as an unstarted dependency.
 
-Both appear in the blocked bucket of the batch summary:
+Only dependency-blocked runs appear in the blocked bucket of the batch summary:
 
 ```
 Summary: 3 succeeded, 0 failed, 1 blocked

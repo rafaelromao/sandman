@@ -112,6 +112,11 @@ SANDMAN_RUN_SMOKE_E2E=1 SANDMAN_SMOKE_PREFETCH=1 SANDMAN_TEST_PROVIDERS=opencode
 
 E2E tests exercise multi-session behavior such as continuing a previous run, batch orchestration, and subagent permission boundaries. They require the `e2e` build tag and are slower than smoke tests.
 
+Implementation pull-request lifecycle changes must keep the production-path
+regression slice green with `go test ./internal/batch ./internal/cmd`. This
+slice covers merged completion precedence, recoverable awaits, continuation
+re-evaluation, retained review evidence, and portal projection.
+
 ```bash
 SANDMAN_TEST_PROVIDERS=opencode \
   go test -tags e2e -timeout 30m ./internal/cmd -run PRFlow

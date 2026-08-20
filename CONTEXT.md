@@ -93,20 +93,18 @@ The orchestrator writes a `run.retry` event to `.sandman/events.jsonl` at the to
 _Avoid_: retry event (the schema lives here), retry marker (the on-disk log marker is a different concept — see `internal/batch/completion.go::LogRetryMarker`).
 _See_: Event, Run, Branch.
 
-**External gate**:
-The CI and delegated-review state of an open pull request that an agent has
-already prepared. A clean agent exit while this gate is pending is not an
-agent failure and does not consume a retry. Sandman polls it with a bounded
-backoff; if it fails or remains unresolved, the run is terminal `blocked` with
-an `external-gate` blocker, and the run log plus `.sandman/task.md` carry the
-next action for a later continuation. A merge is accepted only when the pull
-request retains closing intent for the work item. References ADR-0048.
-_Avoid_: external blocker, review wait, CI retry.
+**Implementation pull-request lifecycle**:
+The runtime-owned decision over a prepared pull request. Verified merged
+completion wins over retained review evidence; recoverable open-pull-request
+states await or resume without consuming an agent retry, while closed without
+merge and unverifiable completion are terminal failures. Terminal `blocked` is
+reserved for dependency outcomes. References ADR-0048.
+_Avoid_: external blocker, terminal review wait, CI retry.
 
 **Informal feedback**:
-A retained top-level or inline review response with concrete code feedback that is classified mechanically (code anchor: backtick span, file path, file+line, line reference, or diff hunk line, after boilerplate-only phrasing is excluded) as request-scoped lifecycle evidence. Informal feedback is request-scoped: only current-head responses inside the active request window, without the trigger prefix, produce it; stale, unknown, superseded, trigger, and formal-precedence-bearing responses do not. It is handed to a resumed run as `informal_feedback` inside the retained `review_request` and can only turn a merely pending external gate into the shared `actionable-feedback` await (bounded by the per-session resume cap) — it never authorizes a merge, approves a request, overrides formal review decisions, or consumes retry budget. References ADR-0052.
+A retained top-level or inline review response with concrete code feedback that is classified mechanically (code anchor: backtick span, file path, file+line, line reference, or diff hunk line, after boilerplate-only phrasing is excluded) as request-scoped lifecycle evidence. Informal feedback is request-scoped: only current-head responses inside the active request window, without the trigger prefix, produce it; stale, unknown, superseded, trigger, and formal-precedence-bearing responses do not. It is handed to a resumed run as `informal_feedback` inside the retained `review_request` and can only turn a recoverable pending lifecycle into the shared `actionable-feedback` await (bounded by the per-session resume cap) — it never authorizes a merge, approves a request, overrides formal review decisions, or consumes retry budget. References ADR-0052.
 _Avoid_: informal approval, comment classification.
-_See_: External gate, Review decision.
+_See_: Implementation pull-request lifecycle, Review decision.
 
 **Review run**:
 A review run is an ordinary AgentRun that the review daemon launches in response to a `/sandman` comment on an open PR. It is **not** a special kind of run: it carries an ordinary per-row **RunID** minted per [ADR-0030](docs/adr/0030-standardize-run-id-and-run-dir.md) §Per-row RunID templates and lives at `.sandman/batches/<batch-id>/runs/<runID>/` like every other run kind. The two canonical review per-row RunID templates are:

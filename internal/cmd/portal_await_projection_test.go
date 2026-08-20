@@ -50,7 +50,6 @@ func TestPortal_AwaitEventShowsInProgress(t *testing.T) {
 			"branch":        "42-fix-bug",
 			"base_branch":   "main",
 			"gate":          "pending",
-			"blocker":       "external-gate",
 			"retries_total": float64(0),
 		}},
 	})

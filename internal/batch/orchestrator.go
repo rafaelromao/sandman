@@ -877,9 +877,6 @@ func NewOrchestrator(githubClient github.Client, renderer prompt.IssueRenderer, 
 		runSessionOpts: runSessionOptions{
 			baseBranchSyncMu: &sync.Mutex{},
 			taskWriter:       atomicfs.WriteAtomic,
-			gatePollInitial:  120 * time.Second,
-			gatePollMaxSleep: 600 * time.Second,
-			gatePollBudget:   1800 * time.Second,
 		},
 		badgeHooker:  nopBadgeHooker{},
 		coordinators: make(map[*batchCoordinator]struct{}),
@@ -1818,11 +1815,10 @@ func expandPath(path string) (string, error) {
 }
 
 // runSessionOptions bundles the test-injection hooks consumed by runSession
-// (including the context detector literals and Task writer), the gate-poll
-// policy, and the test-tunable killTimeout together with the shared
-// baseBranchSyncMu mutex that gates syncBaseBranch. The function and timeout
-// fields exist so tests in this package can override behaviour that would
-// otherwise touch the network, run real git, or sleep for the production
+// (including the context detector literals and Task writer), together with the
+// shared baseBranchSyncMu mutex that gates syncBaseBranch. The function and
+// timeout fields exist so tests in this package can override behaviour that
+// would otherwise touch the network, run real git, or sleep for the production
 // timeout. The baseBranchSyncMu pointer is initialised once per Orchestrator
 // in NewOrchestrator and shared across all sessions via this struct's value
 // copy at construction time, so that concurrent calls to syncBaseBranch
@@ -1838,9 +1834,6 @@ type runSessionOptions struct {
 	retryReset                 func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error
 	killTimeout                time.Duration
 	currentHead                func(workDir string) (string, error)
-	gatePollInitial            time.Duration
-	gatePollMaxSleep           time.Duration
-	gatePollBudget             time.Duration
 	// awaitResumeMax bounds in-session agent relaunches triggered by a
 	// resume-worthy PR gate (ready-to-merge / actionable-feedback) within
 	// one session. Zero uses the default (3); when the cap is exhausted the
@@ -2355,15 +2348,10 @@ func (s *runSession) emitAwait(ctx context.Context, runID string, result AgentRu
 // Before normalising the terminal event, emitTerminal performs a defensive
 // post-check: if the agent's branch has an open PR whose mergeable state is
 // `CONFLICTING`, the terminal event payload carries `merge_conflict: true`
-// and the PR number. Ordinary terminal results are reclassified as
-// `failure`, but an external-gate blocker remains `blocked` so the gate does
-// not become an ordinary agent failure; see issue #1684.
+// and the PR number. The result is reclassified as a lifecycle failure.
 func (s *runSession) emitTerminal(ctx context.Context, runID string, result AgentRunResult, extras map[string]any) string {
 	if conflictExtras, ok := s.detectConflictingPR(result.Branch); ok {
-		blocker, _ := extras["blocker"].(string)
-		if !(result.Status == "blocked" && blocker == "external-gate") {
-			result.Status = "failure"
-		}
+		result.Status = "failure"
 		if extras == nil {
 			extras = map[string]any{}
 		}
@@ -2787,7 +2775,7 @@ loop:
 			alreadyResolved = hasExactTaskStatus(taskContent, "## Status: already resolved")
 			if s.issueNumber > 0 && events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
 				hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
-				if gateStatus, extras, handled := s.handleExternalGateWithHostPaths(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled && gateStatus != "success" {
+				if gateStatus, extras, handled := s.handleLifecycleDecision(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled && gateStatus != "success" {
 					if resumePrompt, resume := s.resumePromptFromGate(ctx, wt, branch, runID, extras); resume {
 						attemptRenderCfg.TaskPrompt = resumePrompt
 						continue relaunch
@@ -2901,7 +2889,7 @@ loop:
 					}
 					if events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
 						hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
-						if gateStatus, extras, handled := s.handleExternalGateWithHostPaths(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled {
+						if gateStatus, extras, handled := s.handleLifecycleDecision(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled {
 							result.Status = gateStatus
 							terminalExtras = mergeBlockerExtras(terminalExtras, extras)
 							break loop

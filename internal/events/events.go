@@ -16,7 +16,7 @@ import (
 //	run.retry         — orchestrator about to start the next attempt of a retry loop
 //	run.idle_timeout  — heartbeat watchdog detected inactivity (fire-and-forget; terminal status is set on run.aborted)
 //	run.warning       — non-fatal issue during sandbox cleanup
-//	run.await         — run stayed active awaiting the external gate (CI, review, decision publication)
+//	run.await         — run stayed active awaiting recoverable lifecycle work (CI, review, mergeability, or decision publication)
 //	run.resumed       — run relaunched its agent session in-session with review evidence
 //	run.finished      — agent run completed successfully
 //	run.aborted       — run interrupted by context cancellation

@@ -325,16 +325,13 @@ func TestReviewRegistration_StaleCanonicalHeadRefreshesLiveGate(t *testing.T) {
 			ReviewTimeout: 600,
 		},
 		opts: runSessionOptions{
-			currentHead:      func(string) (string, error) { return "current-sha", nil },
-			gatePollInitial:  time.Millisecond,
-			gatePollMaxSleep: time.Millisecond,
-			gatePollBudget:   5 * time.Millisecond,
+			currentHead: func(string) (string, error) { return "current-sha", nil },
 		},
 		reviewRegistrationNow:  func() time.Time { return now },
 		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
 	}
 
-	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
 	if !handled || status != "await" || extras["gate"] != "pending" {
 		t.Fatalf("stale canonical gate = (%q, %#v, %t), want await/pending", status, extras, handled)
 	}
@@ -591,7 +588,7 @@ func TestReviewRegistration_ProductionGateRegistersBeforeLivePendingHandoff(t *t
 		reviewAttemptStartedAt: now.Add(-time.Minute),
 	}
 
-	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
 	if !handled || status != "await" || extras["gate"] != "pending" {
 		t.Fatalf("live pending handoff = (%q, %#v, %t), want await/pending", status, extras, handled)
 	}
@@ -611,7 +608,7 @@ func TestReviewRegistration_ProductionGateRegistersBeforeLivePendingHandoff(t *t
 	if err != nil {
 		t.Fatalf("read first production registration bytes: %v", err)
 	}
-	status, extras, handled = session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled = session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
 	if !handled || status != "await" || extras["gate"] != "pending" {
 		t.Fatalf("repeat live pending handoff = (%q, %#v, %t), want await/pending", status, extras, handled)
 	}
@@ -662,7 +659,7 @@ func TestReviewRegistration_WriteFailureFallsThroughToLivePendingGate(t *testing
 		opts:                    gateTestRunOptions(),
 	}
 
-	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
 	if !handled || status != "await" || extras["gate"] != "pending" {
 		t.Fatalf("write failure gate = (%q, %#v, %t), want await/pending", status, extras, handled)
 	}
@@ -709,7 +706,7 @@ func TestReviewRegistration_WriteFailureDoesNotChangeLiveReadyGate(t *testing.T)
 		opts:                    gateTestRunOptions(),
 	}
 
-	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
 	if !handled || status != "await" || extras["gate"] != gateReadyToMerge {
 		t.Fatalf("write failure ready gate = (%q, %#v, %t), want await/ready-to-merge", status, extras, handled)
 	}
@@ -774,7 +771,7 @@ func TestReviewRegistration_OrphanTempFileFallsThroughToLiveState(t *testing.T) 
 	}
 	session := &runSession{deps: runDeps{githubClient: client, errorLog: io.Discard}, opts: gateTestRunOptions()}
 
-	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
 	if !handled || status != "await" || extras["gate"] != "pending" {
 		t.Fatalf("orphan temp gate = (%q, %#v, %t), want await/pending", status, extras, handled)
 	}
@@ -801,9 +798,9 @@ func TestReviewRegistration_CorruptCanonicalRecordCannotOverrideLivePendingState
 	}
 	session := &runSession{deps: runDeps{githubClient: client, errorLog: io.Discard}, opts: gateTestRunOptions()}
 
-	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
-	if !handled || status != "await" || extras["gate"] != "pending" {
-		t.Fatalf("corrupt canonical gate = (%q, %#v, %t), want await/pending", status, extras, handled)
+	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	if !handled || status != "await" || extras["gate"] != gateReviewTimeoutError {
+		t.Fatalf("corrupt canonical gate = (%q, %#v, %t), want await/review-timeout-state-error", status, extras, handled)
 	}
 	diagnostic, ok := extras["review_diagnostic"].(map[string]any)
 	if !ok || diagnostic["status"] != "invalid" {
@@ -1097,7 +1094,6 @@ func TestReviewRegistration_GateRefreshesAfterHeadRevalidationFailure(t *testing
 	}
 	opts := gateTestRunOptions()
 	opts.currentHead = func(string) (string, error) { return "old-sha", nil }
-	opts.gatePollBudget = 10 * time.Millisecond
 	session := &runSession{
 		deps: runDeps{githubClient: client, errorLog: io.Discard},
 		renderCfg: prompt.RenderConfig{
@@ -1109,7 +1105,7 @@ func TestReviewRegistration_GateRefreshesAfterHeadRevalidationFailure(t *testing
 		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
 	}
 
-	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
 	if !handled || status != "await" || extras["gate"] != "pending" {
 		t.Fatalf("refreshed live gate = (%q, %#v, %t), want await/pending", status, extras, handled)
 	}
@@ -1159,7 +1155,7 @@ func TestReviewRegistration_HeadRefreshFailureDoesNotReuseReadySnapshot(t *testi
 		opts:                   gateTestRunOptions(),
 	}
 
-	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
 	if !handled || status != "await" || extras["gate"] != "pending" {
 		t.Fatalf("head refresh failure gate = (%q, %#v, %t), want await/pending", status, extras, handled)
 	}
@@ -1201,16 +1197,13 @@ func TestReviewRegistration_GateUsesLiveSnapshotAfterSuccessfulRegistration(t *t
 			ReviewTimeout: 600,
 		},
 		opts: runSessionOptions{
-			currentHead:      func(string) (string, error) { return "current-sha", nil },
-			gatePollInitial:  time.Millisecond,
-			gatePollMaxSleep: time.Millisecond,
-			gatePollBudget:   5 * time.Millisecond,
+			currentHead: func(string) (string, error) { return "current-sha", nil },
 		},
 		reviewRegistrationNow:  func() time.Time { return now },
 		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
 	}
 
-	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
 	if !handled || status != "await" || extras["gate"] != "pending" {
 		t.Fatalf("live gate after registration = (%q, %#v, %t), want await/pending", status, extras, handled)
 	}

@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/rafaelromao/sandman/internal/events"
 
@@ -17,8 +16,9 @@ import (
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
-// B20: When re-evaluation shows CI failure after resume from await, emit run.finished with blocked status and gate: failed.
-func TestRunSingle_ModeContinueCIFailureReEvaluatesToBlocked(t *testing.T) {
+// B20: When re-evaluation shows CI failure after resume from await, emit a
+// recoverable run.await event with gate: failed.
+func TestRunSingle_ModeContinueCIFailureReEvaluatesToAwait(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 
@@ -56,22 +56,22 @@ func TestRunSingle_ModeContinueCIFailureReEvaluatesToBlocked(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "blocked" {
-		t.Fatalf("status = %q, want blocked (CI failure after resume from await)", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want await (CI failure after resume from await)", result.Status)
 	}
 	logs, err := spyLog.Read()
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
-	finished := findEvent(logs, "run.finished")
-	if finished == nil {
-		t.Fatalf("run.finished event not found: %v", logs)
+	await := findEvent(logs, "run.await")
+	if await == nil {
+		t.Fatalf("run.await event not found: %v", logs)
 	}
-	if finished.Payload["gate"] != "failed" {
-		t.Fatalf("gate = %v, want failed", finished.Payload["gate"])
+	if await.Payload["gate"] != "failed" {
+		t.Fatalf("gate = %v, want failed", await.Payload["gate"])
 	}
-	if finished.Payload["blocker"] != "external-gate" {
-		t.Fatalf("blocker = %v, want external-gate", finished.Payload["blocker"])
+	if _, ok := await.Payload["blocker"]; ok {
+		t.Fatalf("await blocker = %v, want absent", await.Payload["blocker"])
 	}
 }
 
@@ -84,8 +84,7 @@ func TestEmitAwait_CarriesAwaitReasonFromGate(t *testing.T) {
 		retries:     2,
 	}
 	status := s.emitAwait(context.Background(), "run-await-reason", AgentRunResult{Branch: "42-fix"}, map[string]any{
-		"blocker": "external-gate",
-		"gate":    "pending",
+		"gate": "pending",
 	})
 	if status != "await" {
 		t.Fatalf("status = %q, want await", status)
@@ -259,11 +258,8 @@ func TestEntryReevaluation_ModeContinueReadyToMergeResumesAgentWithEvidence(t *t
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
-			currentHead:      func(string) (string, error) { return "current-sha", nil },
-			gatePollInitial:  time.Millisecond,
-			gatePollMaxSleep: time.Millisecond,
-			gatePollBudget:   time.Second,
-			awaitResumeMax:   1,
+			currentHead:    func(string) (string, error) { return "current-sha", nil },
+			awaitResumeMax: 1,
 		},
 	}
 
@@ -342,11 +338,8 @@ func TestRunSingle_ReadyToMergeResumesWithinSameAttempt(t *testing.T) {
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
-			currentHead:      func(string) (string, error) { return "current-sha", nil },
-			gatePollInitial:  time.Millisecond,
-			gatePollMaxSleep: time.Millisecond,
-			gatePollBudget:   time.Second,
-			awaitResumeMax:   1,
+			currentHead:    func(string) (string, error) { return "current-sha", nil },
+			awaitResumeMax: 1,
 		},
 	}
 
@@ -444,11 +437,8 @@ func TestRunSingle_GatePollTransitionToReadyResumesAgent(t *testing.T) {
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
-			currentHead:      func(string) (string, error) { return "current-sha", nil },
-			gatePollInitial:  time.Millisecond,
-			gatePollMaxSleep: time.Millisecond,
-			gatePollBudget:   time.Second,
-			awaitResumeMax:   1,
+			currentHead:    func(string) (string, error) { return "current-sha", nil },
+			awaitResumeMax: 1,
 		},
 	}
 
@@ -515,10 +505,7 @@ func TestRunSingle_PendingGateBudgetExhaustionAwaitsWithoutResume(t *testing.T) 
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
-			currentHead:      func(string) (string, error) { return "current-sha", nil },
-			gatePollInitial:  time.Millisecond,
-			gatePollMaxSleep: time.Millisecond,
-			gatePollBudget:   5 * time.Millisecond,
+			currentHead: func(string) (string, error) { return "current-sha", nil },
 		},
 	}
 
@@ -600,11 +587,8 @@ func TestRunSingle_PendingGatePollFailureWithActionableFeedbackResumesAgent(t *t
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
-			currentHead:      func(string) (string, error) { return "current-sha", nil },
-			gatePollInitial:  time.Millisecond,
-			gatePollMaxSleep: time.Millisecond,
-			gatePollBudget:   time.Second,
-			awaitResumeMax:   1,
+			currentHead:    func(string) (string, error) { return "current-sha", nil },
+			awaitResumeMax: 1,
 		},
 	}
 
@@ -638,9 +622,9 @@ func TestRunSingle_PendingGatePollFailureWithActionableFeedbackResumesAgent(t *t
 	}
 }
 
-// CI failure keeps the hard blocked gate even when actionable review
-// evidence is retained: the agent cannot repair CI from the working tree.
-func TestRunSingle_CIFailurePrecedesActionableEvidenceStaysBlocked(t *testing.T) {
+// CI failure with retained actionable evidence awaits at entry without
+// launching an agent: the live PR state is recoverable but not resume-worthy.
+func TestRunSingle_CIFailurePrecedesActionableEvidenceAwaitsAtEntry(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 
@@ -679,11 +663,8 @@ func TestRunSingle_CIFailurePrecedesActionableEvidenceStaysBlocked(t *testing.T)
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
-			currentHead:      func(string) (string, error) { return "current-sha", nil },
-			gatePollInitial:  time.Millisecond,
-			gatePollMaxSleep: time.Millisecond,
-			gatePollBudget:   time.Second,
-			awaitResumeMax:   1,
+			currentHead:    func(string) (string, error) { return "current-sha", nil },
+			awaitResumeMax: 1,
 		},
 	}
 
@@ -692,11 +673,11 @@ func TestRunSingle_CIFailurePrecedesActionableEvidenceStaysBlocked(t *testing.T)
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "blocked" {
-		t.Fatalf("status = %q, want blocked (CI failure precedes actionable evidence)", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want await (CI failure precedes actionable evidence)", result.Status)
 	}
-	if got := len(resultFactory.created); got != 1 {
-		t.Fatalf("agent launches = %d, want 1", got)
+	if got := len(resultFactory.created); got != 0 {
+		t.Fatalf("agent launches = %d, want none before recoverable await", got)
 	}
 	logs, err := spyLog.Read()
 	if err != nil {
@@ -705,9 +686,9 @@ func TestRunSingle_CIFailurePrecedesActionableEvidenceStaysBlocked(t *testing.T)
 	if got := countEventsByType(logs, "run.resumed"); got != 0 {
 		t.Fatalf("run.resumed events = %d, want 0", got)
 	}
-	finished := findEvent(logs, "run.finished")
-	if finished == nil || finished.Payload["gate"] != "failed" {
-		t.Fatalf("terminal event = %#v, want failed gate", finished)
+	await := findEvent(logs, "run.await")
+	if await == nil || await.Payload["gate"] != "failed" {
+		t.Fatalf("await event = %#v, want failed gate", await)
 	}
 }
 
@@ -754,11 +735,8 @@ func TestEntryReevaluation_ModeContinueInformalFeedbackResumesAgentWithEvidence(
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
-			currentHead:      func(string) (string, error) { return "current-sha", nil },
-			gatePollInitial:  time.Millisecond,
-			gatePollMaxSleep: time.Millisecond,
-			gatePollBudget:   time.Second,
-			awaitResumeMax:   1,
+			currentHead:    func(string) (string, error) { return "current-sha", nil },
+			awaitResumeMax: 1,
 		},
 	}
 
@@ -847,11 +825,8 @@ func TestEntryReevaluation_ModeContinueBoilerplateInformalAwaitsImmediately(t *t
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
-			currentHead:      func(string) (string, error) { return "current-sha", nil },
-			gatePollInitial:  time.Millisecond,
-			gatePollMaxSleep: time.Millisecond,
-			gatePollBudget:   time.Second,
-			awaitResumeMax:   1,
+			currentHead:    func(string) (string, error) { return "current-sha", nil },
+			awaitResumeMax: 1,
 		},
 	}
 
@@ -928,11 +903,8 @@ func TestRunSingle_InformalFeedbackResumesWithinSameAttempt(t *testing.T) {
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
-			currentHead:      func(string) (string, error) { return "current-sha", nil },
-			gatePollInitial:  time.Millisecond,
-			gatePollMaxSleep: time.Millisecond,
-			gatePollBudget:   time.Second,
-			awaitResumeMax:   1,
+			currentHead:    func(string) (string, error) { return "current-sha", nil },
+			awaitResumeMax: 1,
 		},
 	}
 
@@ -1055,10 +1027,7 @@ func TestRunSingle_FullLifecycleRequestsFeedbackThenApprovalThenMergeSuccess(t *
 			errorLog:        io.Discard,
 			runnableFactory: resultFactory,
 			runSessionOpts: runSessionOptions{
-				currentHead:      func(string) (string, error) { return headForGate, nil },
-				gatePollInitial:  time.Millisecond,
-				gatePollMaxSleep: time.Millisecond,
-				gatePollBudget:   5 * time.Millisecond,
+				currentHead: func(string) (string, error) { return headForGate, nil },
 			},
 		}
 		cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}

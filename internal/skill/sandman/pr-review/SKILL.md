@@ -239,7 +239,7 @@ require_review_trigger_delivery() {
     end
   ') || return 1
   guard_reason=$(printf '%s' "$guard_result" | jq -er '.reason | strings | select(length > 0)') || return 1
-  # "unanswered-trigger" and uncertainty are delivery refusals; do not write terminal external-gate state.
+  # "unanswered-trigger" and uncertainty are delivery refusals; do not write terminal lifecycle state.
   case "$guard_decision" in
     allow) return 0 ;;
     block|uncertain) return 1 ;;
