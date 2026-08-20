@@ -39,6 +39,18 @@ not add free-form language inference or an author-based response filter.
    returning a response. Missing or inconsistent classification fails closed as
    unavailable. A later trigger is surfaced as a superseded response boundary,
    including when no response exists between the triggers.
+6. Retained informal top-level and inline response records with concrete code
+   feedback are classified into request-scoped `informal_feedback` evidence for
+   lifecycle resumption. Classification is mechanical and bounded: a response is
+   concrete only when it carries a code anchor (backtick span, file path,
+   file+line, line reference, or diff hunk line) after boilerplate-only phrasing
+   is excluded, must be current-head and inside the request window, and must not
+   begin with the configured trigger prefix. It never overrides formal
+   precedence, live CI failures, or merge conflicts: the failed gate and the
+   formal `CHANGES_REQUESTED`/`APPROVED` classifications are evaluated first and
+   block or resume on their own terms, and the informal branch can only turn a
+   merely pending gate into the shared `actionable-feedback` await with the
+   dedicated `REVIEW_INFORMAL_FEEDBACK` reason.
 
 ## Consequences
 
@@ -61,3 +73,7 @@ not add free-form language inference or an author-based response filter.
 
 - Natural-language approval and concrete-feedback interpretation remain in the
   existing review skill step; this protocol does not infer new prose meanings.
+- The informal-concreteness heuristic is a best-effort mechanical anchor scan
+  and remains non-authoritative: it can only relaunch agent work on the shared
+  `actionable-feedback` await (bounded by the per-session resume cap), never
+  authorize a merge, approve a request, or consume retry budget.

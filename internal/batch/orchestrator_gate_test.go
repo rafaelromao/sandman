@@ -84,6 +84,49 @@ func writeTimedOutReviewRequest(t *testing.T, workDir string) {
 	}
 }
 
+// writeInformalRespondedClassification converts the timed-out review request
+// into a responded review-wait state whose retained classification carries a
+// single current-head top-level informal response with the given body. The
+// fixture matches the full review-classification/v1 validation matrix:
+// protocol, 8-field request block, observed head, window (with a null next
+// trigger), all three sources arrays, formal decision "none", DeepEqual
+// boundary evidence, and collated response counts in both the state evidence
+// and the classification.
+func writeInformalRespondedClassification(t *testing.T, workDir, body string) {
+	t.Helper()
+	writeTimedOutReviewRequest(t, workDir)
+	requestPath := filepath.Join(workDir, ".sandman", "state", "17.review_request.json")
+	statePath := filepath.Join(workDir, ".sandman", "state", "17.review_request.json.state")
+	request, err := os.ReadFile(requestPath)
+	if err != nil {
+		t.Fatalf("read review request: %v", err)
+	}
+	requestText := strings.ReplaceAll(string(request), "2026-08-13T10:00:00Z", "1970-01-01T00:16:40Z")
+	if err := os.WriteFile(requestPath, []byte(requestText), 0o600); err != nil {
+		t.Fatalf("write classified review request: %v", err)
+	}
+	rawBody, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("encode informal feedback body: %v", err)
+	}
+	topLevel := `[{"id":"issuecomment-2001","source":"top_level","response_timestamp":"1970-01-01T00:20:00Z","head_status":"current","url":"https://github.com/owner/repo/pull/17#issuecomment-2001","body":` + string(rawBody) + `}]`
+	classification := `{"protocol":"review-classification/v1","request":{"repository":"owner/repo","pull_request":17,"head_sha":"current-sha","trigger_id":"https://github.com/owner/repo/pull/17#issuecomment-1001","trigger_prefix":"/sandman review","trigger_created_at":"1970-01-01T00:16:40Z","deadline_at":"unix:2800","deadline_unix_seconds":2800},"observed_head_sha":"current-sha","request_state":"active","decision":"responded","window":{"start":"1970-01-01T00:16:40Z","end":null,"deadline_at":"unix:2800","deadline_unix_seconds":2800,"next_trigger":null},"response_counts":{"top_level":1,"formal_reviews":0,"inline_comments":0},"sources":{"top_level":` + topLevel + `,"formal_reviews":[],"inline_comments":[]},"formal":{"decision":"none","approval_evidence":[],"ambiguous_approval_evidence":[],"requested_changes":[]},"boundary_evidence":{"request":{"repository":"owner/repo","pull_request":17,"head_sha":"current-sha","trigger_id":"https://github.com/owner/repo/pull/17#issuecomment-1001","trigger_prefix":"/sandman review","trigger_created_at":"1970-01-01T00:16:40Z","deadline_at":"unix:2800","deadline_unix_seconds":2800},"sources":{"top_level":` + topLevel + `,"formal_reviews":[],"inline_comments":[]}}}`
+	state, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read review state: %v", err)
+	}
+	stateText := strings.ReplaceAll(string(state), "2026-08-13T10:00:00Z", "1970-01-01T00:16:40Z")
+	stateText = strings.Replace(stateText, `"state": "timed_out"`, `"state": "responded"`, 1)
+	stateText = strings.Replace(stateText, `"reason": "request-deadline-exhausted"`, `"reason": "responded"`, 1)
+	stateText = strings.Replace(stateText, `"elapsed_seconds": 1800`, `"elapsed_seconds": 30`, 1)
+	stateText = strings.Replace(stateText, `"top_level": 0`, `"top_level": 1`, 1)
+	stateText = strings.Replace(stateText, `    "response_counts": {`, `    "classification": `+classification+`,
+    "response_counts": {`, 1)
+	if err := os.WriteFile(statePath, []byte(stateText), 0o600); err != nil {
+		t.Fatalf("write classified review state: %v", err)
+	}
+}
+
 func writeFormalChangesRequestedClassification(t *testing.T, workDir, headStatus string) {
 	t.Helper()
 	stateDir := filepath.Join(workDir, ".sandman", "state")
@@ -907,6 +950,268 @@ func TestExternalGate_RespondedFormalChangesRequestedIsActionable(t *testing.T) 
 	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
 	if !handled || status != "await" || extras["gate"] != gateActionableFeedback {
 		t.Fatalf("responded formal requested changes = (%q, %#v, %t), want await/actionable-feedback", status, extras, handled)
+	}
+}
+
+func TestExternalGate_RespondedInformalFeedbackIsActionable(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeInformalRespondedClassification(t, workDir, "Please fix the race in internal/socketpath/socketpath.go.")
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha",
+				StatusCheckRollup: "pending", ReviewDecision: "REVIEW_REQUIRED", MergeStateStatus: "BLOCKED",
+			}}},
+			errorLog: io.Discard,
+		},
+		opts: gateTestRunOptions(),
+	}
+	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	if !handled || status != "await" || extras["gate"] != gateActionableFeedback {
+		t.Fatalf("responded informal feedback = (%q, %#v, %t), want await/actionable-feedback", status, extras, handled)
+	}
+	if got, _ := extras["reason"].(string); got != "REVIEW_INFORMAL_FEEDBACK" {
+		t.Fatalf("reason = %q, want REVIEW_INFORMAL_FEEDBACK", got)
+	}
+	requestPayload, ok := extras["review_request"].(map[string]any)
+	if !ok || requestPayload["informal_feedback"] == nil {
+		t.Fatalf("review request payload missing informal feedback: %#v", extras)
+	}
+	encoded, err := json.Marshal(requestPayload["informal_feedback"])
+	if err != nil {
+		t.Fatalf("encode informal feedback: %v", err)
+	}
+	var informal []map[string]any
+	if err := json.Unmarshal(encoded, &informal); err != nil {
+		t.Fatalf("decode informal feedback: %v", err)
+	}
+	if len(informal) != 1 || informal[0]["id"] != "issuecomment-2001" {
+		t.Fatalf("informal_feedback = %#v, want the retained top-level comment", requestPayload["informal_feedback"])
+	}
+}
+
+func TestExternalGate_PendingWithConcreteInformalFeedbackIsActionable(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeInformalRespondedClassification(t, workDir, "Please fix the race in `internal/socketpath/socketpath.go`: the listener close is not synchronized.")
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha",
+				StatusCheckRollup: "pending", ReviewDecision: "REVIEW_REQUIRED", MergeStateStatus: "BLOCKED",
+			}}},
+			errorLog: io.Discard,
+		},
+		opts: gateTestRunOptions(),
+	}
+	status, extras, handled := session.handleExternalGateWithHostPaths(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	if !handled || status != "await" {
+		t.Fatalf("pending gate with concrete informal feedback = (%q, %#v, %t), want await", status, extras, handled)
+	}
+	if got, _ := extras["gate"].(string); got != gateActionableFeedback {
+		t.Fatalf("gate = %q, want actionable-feedback", got)
+	}
+	if got, _ := extras["reason"].(string); got != "REVIEW_INFORMAL_FEEDBACK" {
+		t.Fatalf("reason = %q, want REVIEW_INFORMAL_FEEDBACK", got)
+	}
+	requestPayload, ok := extras["review_request"].(map[string]any)
+	if !ok || requestPayload["informal_feedback"] == nil {
+		t.Fatalf("review request payload missing informal feedback: %#v", extras)
+	}
+	encoded, err := json.Marshal(requestPayload["informal_feedback"])
+	if err != nil {
+		t.Fatalf("encode informal feedback: %v", err)
+	}
+	var informal []map[string]any
+	if err := json.Unmarshal(encoded, &informal); err != nil {
+		t.Fatalf("decode informal feedback: %v", err)
+	}
+	if len(informal) != 1 {
+		t.Fatalf("informal_feedback = %#v, want a single evidence record", requestPayload["informal_feedback"])
+	}
+	record := informal[0]
+	for key, want := range map[string]string{
+		"source":             "top_level",
+		"id":                 "issuecomment-2001",
+		"response_timestamp": "1970-01-01T00:20:00Z",
+		"head_status":        "current",
+		"locator":            "https://github.com/owner/repo/pull/17#issuecomment-2001",
+	} {
+		if got, _ := record[key].(string); got != want {
+			t.Fatalf("informal feedback %s = %q, want %q", key, got, want)
+		}
+	}
+	if got, _ := record["body"].(string); !strings.Contains(got, "socketpath.go") {
+		t.Fatalf("informal feedback body = %q, want the concrete retained body", got)
+	}
+}
+
+// mutateReviewStateCounts rewrites the persisted review-wait state's
+// evidence.response_counts so the retained classification and the state agree
+// after a classification mutation (the responded-state read path compares
+// them for equality).
+func mutateReviewStateCounts(t *testing.T, workDir string, counts map[string]any) {
+	t.Helper()
+	statePath := filepath.Join(workDir, ".sandman", "state", "17.review_request.json.state")
+	state, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read review state: %v", err)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal(state, &envelope); err != nil {
+		t.Fatalf("decode review state: %v", err)
+	}
+	evidence, ok := envelope["evidence"].(map[string]any)
+	if !ok {
+		t.Fatal("review state evidence is not an object")
+	}
+	evidence["response_counts"] = counts
+	updated, err := json.MarshalIndent(envelope, "", "  ")
+	if err != nil {
+		t.Fatalf("encode review state: %v", err)
+	}
+	if err := os.WriteFile(statePath, updated, 0o600); err != nil {
+		t.Fatalf("write review state: %v", err)
+	}
+}
+
+func pendingInformalGateSession() *runSession {
+	return &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha",
+				StatusCheckRollup: "pending", ReviewDecision: "REVIEW_REQUIRED", MergeStateStatus: "BLOCKED",
+			}}},
+			errorLog: io.Discard,
+		},
+		opts: gateTestRunOptions(),
+	}
+}
+
+func assertPendingGateAwait(t *testing.T, status string, extras map[string]any, handled bool) {
+	t.Helper()
+	if !handled || status != "await" {
+		t.Fatalf("gate = (%q, %#v, %t), want await", status, extras, handled)
+	}
+	if got, _ := extras["gate"].(string); got != "pending" {
+		t.Fatalf("gate = %q, want pending (no actionable evidence)", got)
+	}
+	if request, ok := extras["review_request"].(map[string]any); ok {
+		if request["informal_feedback"] != nil {
+			t.Fatalf("informal_feedback = %#v, want none", request["informal_feedback"])
+		}
+	}
+}
+
+func TestExternalGate_PendingWithBoilerplateInformalStaysPending(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeInformalRespondedClassification(t, workDir, "looks good to me, thanks!")
+	session := pendingInformalGateSession()
+	status, extras, handled := session.handleExternalGateWithHostPaths(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	assertPendingGateAwait(t, status, extras, handled)
+}
+
+func TestExternalGate_PendingWithStaleInlineInformalStaysPending(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeInformalRespondedClassification(t, workDir, "Please fix the race in internal/socketpath/socketpath.go.")
+	mutateReviewClassification(t, workDir, func(classification map[string]any) {
+		sources := classification["sources"].(map[string]any)
+		stale := map[string]any{
+			"id": "discussion_r3", "source": "inline_comment",
+			"response_timestamp": "1970-01-01T00:20:00Z", "head_status": "stale",
+			"commit_id": "old-sha", "path": "a.go", "line": 1,
+			"body": "Please fix this `emitAwait` call.",
+		}
+		sources["top_level"] = []any{}
+		sources["inline_comments"] = []any{stale}
+		counts := classification["response_counts"].(map[string]any)
+		counts["top_level"] = 0.0
+		counts["inline_comments"] = 1.0
+		boundary := classification["boundary_evidence"].(map[string]any)
+		boundarySources := boundary["sources"].(map[string]any)
+		boundarySources["top_level"] = []any{}
+		boundarySources["inline_comments"] = []any{stale}
+	})
+	mutateReviewStateCounts(t, workDir, map[string]any{"top_level": 0.0, "formal_reviews": 0.0, "inline_comments": 1.0})
+	session := pendingInformalGateSession()
+	status, extras, handled := session.handleExternalGateWithHostPaths(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	assertPendingGateAwait(t, status, extras, handled)
+}
+
+func TestExternalGate_SupersededInformalClassificationStaysPending(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeInformalRespondedClassification(t, workDir, "Please fix the race in internal/socketpath/socketpath.go.")
+	mutateReviewClassification(t, workDir, func(classification map[string]any) {
+		classification["request_state"] = "superseded"
+		classification["decision"] = "pending"
+		window := classification["window"].(map[string]any)
+		window["end"] = "1970-01-01T00:30:00Z"
+		window["next_trigger"] = map[string]any{
+			"id": "issuecomment-3001", "url": "https://github.com/owner/repo/pull/17#issuecomment-3001",
+			"body": "/sandman review please re-review", "created_at": "1970-01-01T00:30:00Z",
+		}
+	})
+	session := pendingInformalGateSession()
+	status, extras, handled := session.handleExternalGateWithHostPaths(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	assertPendingGateAwait(t, status, extras, handled)
+}
+
+func TestExternalGate_TriggerPrefixedInformalBodyStaysPending(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeInformalRespondedClassification(t, workDir, "/sandman review please check this")
+	session := pendingInformalGateSession()
+	status, extras, handled := session.handleExternalGateWithHostPaths(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	assertPendingGateAwait(t, status, extras, handled)
+}
+
+func TestExternalGate_CIFailureWithInformalFeedbackStaysBlocked(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeInformalRespondedClassification(t, workDir, "Please fix the race in internal/socketpath/socketpath.go.")
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha",
+				StatusCheckRollup: "failure", ReviewDecision: "REVIEW_REQUIRED", MergeStateStatus: "BLOCKED",
+			}}},
+			errorLog: io.Discard,
+		},
+		opts: gateTestRunOptions(),
+	}
+	status, extras, handled := session.handleExternalGateWithHostPaths(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	if !handled || status != "blocked" {
+		t.Fatalf("CI failure with informal evidence = (%q, %#v, %t), want blocked", status, extras, handled)
+	}
+	if got, _ := extras["gate"].(string); got != "failed" {
+		t.Fatalf("gate = %q, want failed", got)
+	}
+}
+
+func TestExternalGate_DirtyWithInformalFeedbackStaysBlocked(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeInformalRespondedClassification(t, workDir, "Please fix the race in internal/socketpath/socketpath.go.")
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha",
+				StatusCheckRollup: "success", ReviewDecision: "REVIEW_REQUIRED", MergeStateStatus: "DIRTY",
+			}}},
+			errorLog: io.Discard,
+		},
+		opts: gateTestRunOptions(),
+	}
+	status, extras, handled := session.handleExternalGateWithHostPaths(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	if !handled || status != "blocked" {
+		t.Fatalf("DIRTY with informal evidence = (%q, %#v, %t), want blocked", status, extras, handled)
+	}
+	if got, _ := extras["gate"].(string); got != "failed" {
+		t.Fatalf("gate = %q, want failed", got)
+	}
+	if request, ok := extras["review_request"].(map[string]any); ok && request["informal_feedback"] != nil {
+		t.Fatalf("informal_feedback = %#v, want none past the DIRTY precedence branch", request["informal_feedback"])
 	}
 }
 

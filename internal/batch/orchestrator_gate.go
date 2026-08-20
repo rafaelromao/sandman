@@ -296,6 +296,23 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 	if polled == gatePollUnavailable || polled == gatePollPRMissing {
 		return s.blockExternalGateWithDiagnostics(ctx, workDir, logPath, runID, "unavailable", diagnostics)
 	}
+	if evidence, informalExtras := s.informalActionableFeedback(ctx, workDir, pr, headSHA); informalExtras != nil {
+		if ctx.Err() != nil {
+			return "aborted", nil, true
+		}
+		result, extras, handled := withExternalGateDiagnostics("await", informalExtras, true, diagnostics)
+		if handled {
+			// The diagnostics merge folds the retained review_request over the
+			// extras payload, and the diagnostic copy never carries the
+			// informal classification result. Re-inject the evidence into the
+			// surviving envelope so resumeEvidenceFor, run.resumed, and the
+			// resume prompt all see it.
+			if request, ok := extras["review_request"].(map[string]any); ok {
+				request["informal_feedback"] = evidence
+			}
+		}
+		return result, extras, handled
+	}
 	return s.awaitExternalGateWithDiagnostics(ctx, "pending", diagnostics)
 }
 
@@ -362,6 +379,38 @@ func (s *runSession) actionableFeedbackExtras(ctx context.Context, workDir strin
 	extras["gate"] = gateActionableFeedback
 	extras["await"] = true
 	return extras
+}
+
+// informalActionableFeedback classifies the retained informal sources of the
+// active review request into request-scoped evidence for the pending-gate
+// resume path. It returns the evidence list alongside the actionable-feedback
+// extras so the caller can re-inject the list after folding the retained
+// review diagnostics over the payload. It returns nil when the retained
+// evidence is absent, stale, unreadable, superseded, formal-precedence-bearing,
+// or lacks concrete informal feedback — the caller keeps the plain pending
+// await in that case. The classifier itself is pure; this helper only reads
+// the retained artifacts and builds the gate payload.
+func (s *runSession) informalActionableFeedback(ctx context.Context, workDir string, pr *github.PR, currentHead string) ([]informalFeedbackEvidence, map[string]any) {
+	if pr == nil || s.deps.githubClient == nil || !reviewTimeoutArtifactsPresent(workDir) {
+		return nil, nil
+	}
+	repository, err := s.deps.githubClient.RepoName(ctx)
+	if err != nil {
+		return nil, nil
+	}
+	handoff, err := readReviewTimeoutHandoff(workDir, repository, pr, currentHead)
+	if err != nil || handoff == nil || handoff.Classification == nil {
+		return nil, nil
+	}
+	evidence := handoff.Classification.informalFeedbackEvidenceFor(handoff.Request, handoff.Classification.WindowEnd)
+	if len(evidence) == 0 {
+		return nil, nil
+	}
+	extras := handoff.payloadFor(gateActionableFeedback, informalFeedbackReason, informalFeedbackNextAction)
+	extras["blocker"] = "external-gate"
+	extras["gate"] = gateActionableFeedback
+	extras["await"] = true
+	return evidence, extras
 }
 
 func (s *runSession) retainedReviewDiagnostics(ctx context.Context, workDir, branch string, pr *github.PR, currentHead string) map[string]any {
@@ -498,6 +547,18 @@ func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branc
 		extras["gate"] = gateActionableFeedback
 		extras["await"] = true
 		return "await", extras, true
+	}
+	if classification := handoff.Classification; classification != nil {
+		if evidence := classification.informalFeedbackEvidenceFor(handoff.Request, classification.WindowEnd); len(evidence) > 0 {
+			extras := handoff.payloadFor(gateActionableFeedback, informalFeedbackReason, informalFeedbackNextAction)
+			if request, ok := extras["review_request"].(map[string]any); ok {
+				request["informal_feedback"] = evidence
+			}
+			extras["blocker"] = "external-gate"
+			extras["gate"] = gateActionableFeedback
+			extras["await"] = true
+			return "await", extras, true
+		}
 	}
 	if handoff.Outcome == retainedReviewApproval {
 		return s.handleRetainedReviewApproval(ctx, workDir, branch, logPath, runID, pr, currentHead, handoff)
