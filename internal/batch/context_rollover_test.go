@@ -207,6 +207,33 @@ func TestContextRolloverConfiguredPhrasePromptOnly(t *testing.T) {
 	}
 }
 
+func TestContextRolloverIgnoresForwardedFixtureOutput(t *testing.T) {
+	workDir := t.TempDir()
+
+	sb := &contextRolloverSandbox{
+		workDir:              filepath.Join(workDir, "worktree"),
+		nestedContextFixture: true,
+	}
+	if err := sb.Start(sandbox.SandboxStart{}); err != nil {
+		t.Fatalf("start sandbox: %v", err)
+	}
+	factory := &contextRolloverRunnableFactory{sandbox: sb}
+	runnable := factory.NewRunnable(&github.Issue{Number: 42, Title: "Forwarded fixture"}, "42-forwarded-fixture", sb)
+	run, ok := runnable.(*AgentRun)
+	if !ok {
+		t.Fatalf("runnable = %T, want *AgentRun", runnable)
+	}
+	run.preset = "opencode"
+	run.runFolder = workDir
+	result := run.Run(context.Background(), &retryRenderer{result: "# Task\n\nInitial task."}, "opencode run {{.PromptFile}}", prompt.RenderConfig{})
+	if result.Status != "success" || result.ContextExhausted {
+		t.Fatalf("result = %+v, want successful non-context-exhausted AgentRun", result)
+	}
+	if factory.created != 1 {
+		t.Fatalf("runnable launches = %d, want 1", factory.created)
+	}
+}
+
 func TestContextRolloverDetector(t *testing.T) {
 	base := time.Date(2026, time.August, 14, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
@@ -231,6 +258,15 @@ func TestContextRolloverDetector(t *testing.T) {
 				"[run-1] 12:00:00 Error: prompt is too long\n",
 			},
 			times:      []time.Duration{0},
+			wantSignal: false,
+		},
+		{
+			name: "nested forwarded errors excluded",
+			lines: []string{
+				"[run-1] 12:00:00 [--42] 14:37:10 Error: prompt is too long\n",
+				"[run-1] 12:00:01 [--42] 14:37:10 Error: prompt is too long\n",
+			},
+			times:      []time.Duration{0, time.Second},
 			wantSignal: false,
 		},
 		{
@@ -769,6 +805,7 @@ type contextRolloverSandbox struct {
 	onFirstContext         func()
 	onRestoreHostPaths     func()
 	errorPhrase            string
+	nestedContextFixture   bool
 }
 
 func (s *contextRolloverSandbox) Start(sandbox.SandboxStart) error {
@@ -790,6 +827,10 @@ func (s *contextRolloverSandbox) Exec(ctx context.Context, command string, stdou
 		s.secondTask = string(data)
 	}
 	s.mu.Unlock()
+	if s.nestedContextFixture {
+		_, _ = io.WriteString(stderr, "[--42] 14:37:10 Error: prompt is too long\n[--42] 14:37:10 Error: prompt is too long\n")
+		return nil
+	}
 
 	if attempt == 1 || s.alwaysContextExhausted {
 		phrase := s.errorPhrase

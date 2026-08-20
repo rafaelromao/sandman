@@ -196,17 +196,16 @@ func qualifyingContextRolloverLine(line string, rules []contextRolloverLiteralRu
 func normalizeContextRolloverLine(line string) string {
 	line = stripContextRolloverANSI(line)
 	line = strings.TrimSpace(line)
-	for strings.HasPrefix(line, "[") {
+	if strings.HasPrefix(line, "[") {
 		end := strings.IndexByte(line, ']')
-		if end < 0 {
-			break
-		}
-		line = strings.TrimSpace(line[end+1:])
-		if len(line) >= 8 && line[2] == ':' && line[5] == ':' &&
-			isContextRolloverDigit(line[0]) && isContextRolloverDigit(line[1]) &&
-			isContextRolloverDigit(line[3]) && isContextRolloverDigit(line[4]) &&
-			isContextRolloverDigit(line[6]) && isContextRolloverDigit(line[7]) {
-			line = strings.TrimSpace(line[8:])
+		if end >= 0 {
+			line = strings.TrimSpace(line[end+1:])
+			if len(line) >= 8 && line[2] == ':' && line[5] == ':' &&
+				isContextRolloverDigit(line[0]) && isContextRolloverDigit(line[1]) &&
+				isContextRolloverDigit(line[3]) && isContextRolloverDigit(line[4]) &&
+				isContextRolloverDigit(line[6]) && isContextRolloverDigit(line[7]) {
+				line = strings.TrimSpace(line[8:])
+			}
 		}
 	}
 	return line
