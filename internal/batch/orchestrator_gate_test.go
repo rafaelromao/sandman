@@ -18,15 +18,15 @@ import (
 
 // These compatibility adapters keep characterization tests focused on the
 // production lifecycle adapter while their older names are migrated away.
-func (s *runSession) handleExternalGate(ctx context.Context, workDir, branch, logPath, runID string) (string, map[string]any, bool) {
+func (s *runSession) lifecycleDecisionForTest(ctx context.Context, workDir, branch, logPath, runID string) (string, map[string]any, bool) {
 	return s.handleLifecycleDecision(ctx, workDir, branch, logPath, runID, true)
 }
 
-func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool) (string, map[string]any, bool) {
+func (s *runSession) lifecycleDecisionWithHostPathsForTest(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool) (string, map[string]any, bool) {
 	return s.handleLifecycleDecision(ctx, workDir, branch, logPath, runID, hostPathsReady)
 }
 
-func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branch, logPath, runID, currentHead string) (string, map[string]any, bool) {
+func (s *runSession) lifecycleDecisionAtHeadForTest(ctx context.Context, workDir, branch, logPath, runID, currentHead string) (string, map[string]any, bool) {
 	if !reviewTimeoutArtifactsPresent(workDir) {
 		return "", nil, false
 	}
@@ -36,7 +36,7 @@ func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branc
 	return s.handleLifecycleDecision(ctx, workDir, branch, logPath, runID, true)
 }
 
-func (s *runSession) confirmExternalGate(ctx context.Context, workDir, branch, logPath, runID string) (string, map[string]any, bool) {
+func (s *runSession) mergedLifecycleDecisionForTest(ctx context.Context, workDir, branch, logPath, runID string) (string, map[string]any, bool) {
 	return s.handleLifecycleDecision(ctx, workDir, branch, logPath, runID, true)
 }
 
@@ -515,7 +515,7 @@ func TestExternalGate_MergedPRWithoutClosingReferenceStillFailsVerification(t *t
 		opts:        gateTestRunOptions(),
 	}
 
-	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
 	if !handled || status != "failure" {
 		t.Fatalf("merged missing-closing result = (%q, %#v, %t), want handled failure", status, extras, handled)
 	}
@@ -633,7 +633,7 @@ func TestExternalGate_RetainedRecordDiagnosticDoesNotChangeLiveGate(t *testing.T
 		opts: opts,
 	}
 
-	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
 	if !handled || status != "await" {
 		t.Fatalf("diagnostic gate = (%q, %#v, %t), want await", status, extras, handled)
 	}
@@ -669,7 +669,7 @@ func TestExternalGate_ValidRetainedRequestIsEvidenceOnly(t *testing.T) {
 		opts: opts,
 	}
 
-	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
 	if !handled || status != "await" || extras["gate"] != gateReviewTimeout {
 		t.Fatalf("retained evidence gate = (%q, %#v, %t), want await review-timeout gate", status, extras, handled)
 	}
@@ -703,7 +703,7 @@ func TestExternalGate_RetainedDiagnosticsUseSingleLiveObservation(t *testing.T) 
 		opts: opts,
 	}
 
-	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
 	if !handled || status != "await" || extras["gate"] != gateReviewTimeoutError {
 		t.Fatalf("live observation = (%q, %#v, %t), want await state-error without polling", status, extras, handled)
 	}
@@ -798,7 +798,7 @@ func TestExternalGate_LocalReviewRecordStatesCannotOverrideLiveOpenPR(t *testing
 				opts: opts,
 			}
 
-			status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
+			status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
 			wantGate := "pending"
 			if strings.HasPrefix(tt.name, "malformed") {
 				wantGate = gateReviewTimeoutError
@@ -958,7 +958,7 @@ func TestExternalGate_RespondedFormalChangesRequestedIsActionable(t *testing.T) 
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
 	if !handled || status != "await" || extras["gate"] != gateActionableFeedback {
 		t.Fatalf("responded formal requested changes = (%q, %#v, %t), want await/actionable-feedback", status, extras, handled)
 	}
@@ -978,7 +978,7 @@ func TestExternalGate_RespondedInformalFeedbackIsActionable(t *testing.T) {
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
 	if !handled || status != "await" || extras["gate"] != gateActionableFeedback {
 		t.Fatalf("responded informal feedback = (%q, %#v, %t), want await/actionable-feedback", status, extras, handled)
 	}
@@ -1016,7 +1016,7 @@ func TestExternalGate_PendingWithConcreteInformalFeedbackIsActionable(t *testing
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.handleExternalGateWithHostPaths(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	status, extras, handled := session.lifecycleDecisionWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
 	if !handled || status != "await" {
 		t.Fatalf("pending gate with concrete informal feedback = (%q, %#v, %t), want await", status, extras, handled)
 	}
@@ -1120,7 +1120,7 @@ func TestExternalGate_PendingWithBoilerplateInformalStaysPending(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	writeInformalRespondedClassification(t, workDir, "looks good to me, thanks!")
 	session := pendingInformalGateSession()
-	status, extras, handled := session.handleExternalGateWithHostPaths(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	status, extras, handled := session.lifecycleDecisionWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
 	assertPendingGateAwait(t, status, extras, handled)
 }
 
@@ -1147,7 +1147,7 @@ func TestExternalGate_PendingWithStaleInlineInformalStaysPending(t *testing.T) {
 	})
 	mutateReviewStateCounts(t, workDir, map[string]any{"top_level": 0.0, "formal_reviews": 0.0, "inline_comments": 1.0})
 	session := pendingInformalGateSession()
-	status, extras, handled := session.handleExternalGateWithHostPaths(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	status, extras, handled := session.lifecycleDecisionWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
 	assertPendingGateAwait(t, status, extras, handled)
 }
 
@@ -1165,7 +1165,7 @@ func TestExternalGate_SupersededInformalClassificationStaysPending(t *testing.T)
 		}
 	})
 	session := pendingInformalGateSession()
-	status, extras, handled := session.handleExternalGateWithHostPaths(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	status, extras, handled := session.lifecycleDecisionWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
 	assertPendingGateAwait(t, status, extras, handled)
 }
 
@@ -1173,7 +1173,7 @@ func TestExternalGate_TriggerPrefixedInformalBodyStaysPending(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	writeInformalRespondedClassification(t, workDir, "/sandman review please check this")
 	session := pendingInformalGateSession()
-	status, extras, handled := session.handleExternalGateWithHostPaths(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	status, extras, handled := session.lifecycleDecisionWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
 	assertPendingGateAwait(t, status, extras, handled)
 }
 
@@ -1191,7 +1191,7 @@ func TestExternalGate_CIFailureWithInformalFeedbackAwaits(t *testing.T) {
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.handleExternalGateWithHostPaths(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	status, extras, handled := session.lifecycleDecisionWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
 	if !handled || status != "await" {
 		t.Fatalf("CI failure with informal evidence = (%q, %#v, %t), want await", status, extras, handled)
 	}
@@ -1217,7 +1217,7 @@ func TestExternalGate_DirtyWithInformalFeedbackAwaits(t *testing.T) {
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.handleExternalGateWithHostPaths(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	status, extras, handled := session.lifecycleDecisionWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
 	if !handled || status != "await" {
 		t.Fatalf("DIRTY with informal evidence = (%q, %#v, %t), want await", status, extras, handled)
 	}
@@ -1257,7 +1257,7 @@ func TestExternalGate_RespondedCurrentHeadApprovalRemainsReadyToMerge(t *testing
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
 	if !handled || status != "await" || extras["gate"] != gateReadyToMerge {
 		t.Fatalf("responded current-head approval = (%q, %#v, %t), want await ready-to-merge", status, extras, handled)
 	}
@@ -1450,7 +1450,7 @@ func TestExternalGate_MalformedRetainedClassificationDoesNotMaskFailedCI(t *test
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
 	if !handled || status != "await" || extras["gate"] != "failed" {
 		t.Fatalf("malformed classification failed-CI result = (%q, %#v, %t), want failed await", status, extras, handled)
 	}
@@ -1507,7 +1507,7 @@ func TestExternalGate_LateFeedbackPreservesExistingFailedGatePrecedence(t *testi
 				},
 				opts: gateTestRunOptions(),
 			}
-			status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
+			status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
 			if !handled || status != "await" {
 				t.Fatalf("late feedback precedence = (%q, %#v, %t), want await", status, extras, handled)
 			}
@@ -1852,7 +1852,7 @@ func TestExternalGate_MalformedRetainedClassificationBlocksStateErrorBeforeMerge
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
 	if !handled || status != "success" || extras != nil {
 		t.Fatalf("malformed merged retained classification = (%q, %#v, %t), want merged success", status, extras, handled)
 	}
@@ -1872,7 +1872,7 @@ func TestExternalGate_MergedRetainedRequestTakesPrecedenceOverFailedMetadata(t *
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
 	if !handled || status != "success" || extras != nil {
 		t.Fatalf("merged retained request = (%q, %#v, %t), want successful confirmation", status, extras, handled)
 	}
@@ -1970,7 +1970,7 @@ func TestExternalGate_IncompleteLegacyProposalFallsThroughToLiveGate(t *testing.
 		opts: gateTestRunOptions(),
 	}
 
-	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
 	if !handled || status != "await" || extras["gate"] != gateReviewTimeoutError {
 		t.Fatalf("incomplete legacy proposal = (%q, %#v, %t), want state-error await", status, extras, handled)
 	}
@@ -1987,7 +1987,7 @@ func TestExternalGate_ReviewTimeoutIgnoresRetainedArtifactsWithoutCurrentPR(t *t
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, "missing-pr-branch", "", "run-test", "current-sha")
+	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, "missing-pr-branch", "", "run-test", "current-sha")
 	if handled || status != "" || extras != nil {
 		t.Fatalf("retained timeout without current PR = (%q, %#v, %t), want ordinary no-PR path", status, extras, handled)
 	}
@@ -2322,7 +2322,7 @@ func TestExternalGate_LateStaleApprovalRemainsPending(t *testing.T) {
 				},
 				opts: gateTestRunOptions(),
 			}
-			status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+			status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
 			if !handled || status != "await" {
 				t.Fatalf("late stale approval = (%q, %#v, %t), want await", status, extras, handled)
 			}
@@ -2370,7 +2370,7 @@ func TestExternalGate_LateApprovalPreservesHardGatePrecedence(t *testing.T) {
 				deps:        runDeps{githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: tt.pr}}, errorLog: io.Discard},
 				opts:        gateTestRunOptions(),
 			}
-			status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+			status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
 			wantStatus := "await"
 			if !handled || status != wantStatus {
 				t.Fatalf("hard-gate result = (%q, %#v, %t), want %s", status, extras, handled, wantStatus)
@@ -2402,7 +2402,7 @@ func TestExternalGate_LateApprovalRejectsMissingClassification(t *testing.T) {
 		}}}, errorLog: io.Discard},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
 	if !handled || status != "await" || extras["gate"] != gateReadyToMerge {
 		t.Fatalf("missing classification result = (%q, %#v, %t), want await ready-to-merge", status, extras, handled)
 	}
@@ -2430,7 +2430,7 @@ func TestExternalGate_LateApprovalRejectsConflictingFormalEvidence(t *testing.T)
 		}}}, errorLog: io.Discard},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
 	if !handled || status != "await" || extras["gate"] != gateReviewTimeoutError {
 		t.Fatalf("conflicting formal evidence result = (%q, %#v, %t), want state-error await", status, extras, handled)
 	}
@@ -2458,7 +2458,7 @@ func TestExternalGate_LateApprovalIgnoresMissingObservedHead(t *testing.T) {
 		}}}, errorLog: io.Discard},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
 	if !handled || status != "await" || extras["gate"] != gateReviewTimeoutError {
 		t.Fatalf("missing observed head result = (%q, %#v, %t), want state-error await", status, extras, handled)
 	}
@@ -2478,7 +2478,7 @@ func TestExternalGate_LateApprovalLookupFailureCannotFallThroughToAggregateAppro
 		deps:        runDeps{githubClient: client, errorLog: io.Discard},
 		opts:        gateTestRunOptions(),
 	}
-	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
 	if !handled || status != "await" || extras["gate"] != "pending" {
 		t.Fatalf("lookup failure result = (%q, %#v, %t), want pending await", status, extras, handled)
 	}
@@ -3047,7 +3047,7 @@ func TestHandleExternalGateKeepsPersistentStaleApprovalPending(t *testing.T) {
 		},
 	}
 
-	status, extras, handled := session.handleExternalGate(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
+	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
 	if !handled || status != "await" {
 		t.Fatalf("stale gate = (%q, %#v, %t), want await", status, extras, handled)
 	}
@@ -3075,7 +3075,7 @@ func TestHandleExternalGateHostPathRestoreFailureRemainsPending(t *testing.T) {
 		opts: gateTestRunOptions(),
 	}
 
-	status, extras, handled := session.handleExternalGateWithHostPaths(context.Background(), t.TempDir(), gateTestBranch, "", "run-test", false)
+	status, extras, handled := session.lifecycleDecisionWithHostPathsForTest(context.Background(), t.TempDir(), gateTestBranch, "", "run-test", false)
 	if !handled || status != "await" {
 		t.Fatalf("restore failure gate = (%q, %#v, %t), want await", status, extras, handled)
 	}
@@ -3120,7 +3120,7 @@ func TestHandleExternalGateFailsClosedWhenHeadCannotBeValidated(t *testing.T) {
 				},
 			}
 
-			status, extras, handled := session.handleExternalGate(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
+			status, extras, handled := session.lifecycleDecisionForTest(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
 			if !handled || status != "await" {
 				t.Fatalf("head validation gate = (%q, %#v, %t), want await", status, extras, handled)
 			}
@@ -3151,7 +3151,7 @@ func TestHandleExternalGateInitialLookupErrorRecoversToPending(t *testing.T) {
 		opts: gateTestRunOptions(),
 	}
 
-	status, extras, handled := session.handleExternalGate(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
+	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
 	if !handled || status != "await" {
 		t.Fatalf("recovered gate = (%q, %#v, %t), want await", status, extras, handled)
 	}
@@ -3295,7 +3295,7 @@ func TestHandleExternalGateHeadLookupFailureRemainsPending(t *testing.T) {
 		},
 	}
 
-	status, extras, handled := session.handleExternalGate(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
+	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
 	if !handled || status != "await" {
 		t.Fatalf("fallback gate = (%q, %#v, %t), want await", status, extras, handled)
 	}
@@ -3338,7 +3338,7 @@ func TestConfirmExternalGateRejectsMergedPRWithoutClosingReference(t *testing.T)
 		},
 	}
 
-	status, extras, handled := session.confirmExternalGate(context.Background(), t.TempDir(), branch, "", "run-test")
+	status, extras, handled := session.mergedLifecycleDecisionForTest(context.Background(), t.TempDir(), branch, "", "run-test")
 	if !handled {
 		t.Fatal("expected merged gate to be handled")
 	}
@@ -3373,7 +3373,7 @@ func TestHandleExternalGateCancellationDoesNotPersistBlocker(t *testing.T) {
 		opts: gateTestRunOptions(),
 	}
 
-	status, extras, handled := session.handleExternalGate(ctx, workDir, gateTestBranch, logPath, "run-test")
+	status, extras, handled := session.lifecycleDecisionForTest(ctx, workDir, gateTestBranch, logPath, "run-test")
 	if !handled || status != "aborted" || extras != nil {
 		t.Fatalf("canceled gate = (%q, %#v, %t), want (aborted, nil, true)", status, extras, handled)
 	}

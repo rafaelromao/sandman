@@ -37,9 +37,13 @@ The replacement is a runtime-owned implementation pull-request lifecycle:
   resumption, and terminal policy outcomes have distinct event and portal
   projections.
 
-This replacement is planned by the implementation pull-request lifecycle
-initiative. A follow-up ADR will record its final event schema and lifecycle
-boundary when implemented.
+The implemented replacement has one runtime-owned decision boundary in the
+batch lifecycle. Its pure decision consumes live pull-request facts and
+retained review evidence, then the adapter projects exactly one of await,
+resume, success, or failure into events, task/log state, portal rows, and
+dependency scheduling. `run.await` and `run.resumed` are non-terminal;
+`run.finished` carries only terminal success or policy failure, and
+`run.blocked` remains dependency-only.
 
 ## Consequences
 
