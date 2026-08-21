@@ -2783,7 +2783,7 @@ loop:
 			alreadyResolved = hasExactTaskStatus(taskContent, "## Status: already resolved")
 			if s.issueNumber > 0 && events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
 				hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
-				if gateStatus, extras, handled := s.handleLifecycleDecision(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled && gateStatus != "success" {
+				if gateStatus, extras, handled := s.handleLifecycleDecisionAfterAgent(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled && gateStatus != "success" {
 					gate, _ := extras["gate"].(string)
 					if gateStatus == "await" && (gate != gateReadyToMerge && gate != gateActionableFeedback || s.resumeCount >= s.resumeCapFor()) {
 						if !s.opts.foregroundLifecycle {
@@ -2911,7 +2911,7 @@ loop:
 					}
 					if events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
 						hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
-						if gateStatus, extras, handled := s.handleLifecycleDecision(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled {
+						if gateStatus, extras, handled := s.handleLifecycleDecisionAfterAgent(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled {
 							if gateStatus == "resume" {
 								gateStatus = "await"
 							}

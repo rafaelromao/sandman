@@ -366,3 +366,52 @@ func TestRunExecutor_ForegroundWaitCoversPullRequestPublication(t *testing.T) {
 		t.Fatalf("agent launches = %d, want 1", len(factory.created))
 	}
 }
+
+func TestRunExecutor_ContinuationForegroundWaitCoversPullRequestPublication(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(workDir)
+
+	branch := "42-fix-bug"
+	sb := &retrySandbox{workDir: filepath.Join(workDir, "worktree")}
+	sbFactory := &retrySandboxFactory{sandbox: sb}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
+	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success", Branch: branch}}}
+	pending := &github.PR{Number: 17, State: "open", Body: "Closes #42", HeadRefName: branch, HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"}
+	merged := &github.PR{Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: branch, HeadRefOid: "current-sha"}
+	client := &perRunGateSequenceClient{
+		fakeGitHubClient: fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}}},
+		responses:        []*github.PR{nil, nil, pending, pending, merged},
+	}
+	var waits []time.Duration
+	options := gateTestRunOptions()
+	options.lifecyclePollPlan = []time.Duration{time.Second, 2 * time.Second}
+	options.lifecycleWait = func(ctx context.Context, interval time.Duration) error {
+		waits = append(waits, interval)
+		return nil
+	}
+	o := NewOrchestrator(client, &retryRenderer{result: "rendered prompt"}, nil, eventLog,
+		WithErrorLog(io.Discard), WithSandboxFactory(sbFactory), WithRunnableFactory(factory), WithRunSessionOpts(options))
+	bc := BatchConfig{
+		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          3,
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
+		IssueNumber:    42,
+		Mode:           ModeContinue,
+		Branches:       map[int]string{42: branch},
+		PreviousRunIDs: map[int]string{42: "prior-run"},
+		BaseBranch:     "main",
+	})
+	if !started || result.Status != "success" {
+		t.Fatalf("run = (%t, %q), want started success", started, result.Status)
+	}
+	if len(waits) != 2 || waits[0] != time.Second || waits[1] != 2*time.Second {
+		t.Fatalf("publication waits = %v, want [1s 2s]", waits)
+	}
+	if len(factory.created) != 1 {
+		t.Fatalf("agent launches = %d, want 1", len(factory.created))
+	}
+}

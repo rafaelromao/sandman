@@ -252,6 +252,14 @@ func lifecycleFailureExtras(d lifecycleDecision, issueNumber int) map[string]any
 // the lifecycle decision point. It gathers live PR facts and retained review
 // evidence, while event and prompt writing remain adapter concerns.
 func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool) (string, map[string]any, bool) {
+	return s.handleLifecycleDecisionWithPublication(ctx, workDir, branch, logPath, runID, hostPathsReady, s.mode != ModeContinue)
+}
+
+func (s *runSession) handleLifecycleDecisionAfterAgent(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool) (string, map[string]any, bool) {
+	return s.handleLifecycleDecisionWithPublication(ctx, workDir, branch, logPath, runID, hostPathsReady, true)
+}
+
+func (s *runSession) handleLifecycleDecisionWithPublication(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady, awaitPublication bool) (string, map[string]any, bool) {
 	if s.deps.githubClient == nil {
 		return "", nil, false
 	}
@@ -299,7 +307,7 @@ func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branc
 	}
 
 	if gate == lifecycleGateNone {
-		if err == nil && pr == nil && s.mode != ModeContinue && strings.TrimSpace(s.issueState) != "" && !strings.EqualFold(strings.TrimSpace(s.issueState), "closed") {
+		if err == nil && pr == nil && awaitPublication && strings.TrimSpace(s.issueState) != "" && !strings.EqualFold(strings.TrimSpace(s.issueState), "closed") {
 			// PR publication can lag behind a clean agent exit. Keep the
 			// session foreground until the pull request becomes observable.
 			return "await", map[string]any{"gate": string(lifecycleGatePending), "await": true}, true
@@ -508,7 +516,7 @@ func (s *runSession) observeLifecycle(ctx context.Context, workDir, branch, logP
 			}
 			return "aborted", nil, true
 		}
-		status, nextExtras, handled := s.handleLifecycleDecision(ctx, workDir, branch, logPath, runID, hostPathsReady)
+		status, nextExtras, handled := s.handleLifecycleDecisionAfterAgent(ctx, workDir, branch, logPath, runID, hostPathsReady)
 		if !handled {
 			status = "await"
 			nextExtras = map[string]any{"gate": string(lifecycleGatePending), "await": true}
