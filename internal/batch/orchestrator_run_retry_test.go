@@ -514,7 +514,7 @@ func TestRunSingle_AlreadyResolvedMergedPRStillSuccess(t *testing.T) {
 	}
 }
 
-func TestRunSingle_AlreadyResolvedMergedPRStillRunsFailingVerification(t *testing.T) {
+func TestRunSingle_AlreadyResolvedMergedCompletionPrecedesFailingVerification(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 	branch := "42-fix-bug"
@@ -557,8 +557,8 @@ func TestRunSingle_AlreadyResolvedMergedPRStillRunsFailingVerification(t *testin
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure when merged already-resolved verification fails", result.Status)
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success when verified merged completion precedes legacy verification", result.Status)
 	}
 }
 
