@@ -2799,6 +2799,7 @@ loop:
 						continue relaunch
 					}
 					if gateStatus == "resume" {
+						s.emitAwait(ctx, runID, result, extras)
 						gateStatus = "await"
 					}
 					result.Status = gateStatus
