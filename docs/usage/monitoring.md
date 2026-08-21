@@ -121,7 +121,7 @@ Emitted when an agent run completes.
 | `review_request` | Present for retained delegated-review outcomes; retains the confirmed request identity, current head, deadline, budget, elapsed time, response counters, validated request-scoped classification, outcome, and next action. |
 
 #### `run.await`
-Emitted when an issue-driven run ends its agent session while recoverable pull-request work remains (CI, review, mergeability, or decision publication). Non-terminal: the run does not finish, does not consume a retry, and releases sandbox capacity.
+Emitted when an issue-driven run ends its agent session while recoverable pull-request work remains (CI, review, mergeability, or decision publication). Non-terminal: the run does not finish or consume a retry; foreground observation retains the active agent and sandbox capacity until lifecycle completion or cancellation.
 
 | Field | Description |
 |-------|-------------|
@@ -155,7 +155,7 @@ evidence: a closing reference produces `success`, while an unverifiable or
 missing closing reference produces `failure` with completion diagnostics.
 
 Recoverable open-pull-request states produce `run.await` without consuming an
-agent retry or holding sandbox capacity. A continuation or in-session relaunch
+agent retry while foreground observation retains sandbox capacity. A continuation or in-session relaunch
 re-evaluates the same facts. Retained review records and daemon decisions are
 evidence only: they can supply the await reason and request-scoped prompt
 evidence, but cannot terminalize a run or override merged completion.
