@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -66,7 +67,6 @@ func writeTimedOutReviewRequest(t *testing.T, workDir string) {
   "effective_timeout_seconds": 1800,
   "poll_plan": [120, 60, 60, 30]
 }
-
 `
 	if err := os.WriteFile(filepath.Join(stateDir, "17.review_request.json"), []byte(request), 0o600); err != nil {
 		t.Fatalf("write review request: %v", err)
@@ -103,7 +103,6 @@ func writeTimedOutReviewRequest(t *testing.T, workDir string) {
     }
   }
 }
-
 `
 	if err := os.WriteFile(filepath.Join(stateDir, "17.review_request.json.state"), []byte(state), 0o600); err != nil {
 		t.Fatalf("write review state: %v", err)
@@ -149,6 +148,28 @@ func writeCanonicalRegistrationForTest(t *testing.T, workDir string) {
 	}
 	if err := atomicfs.WriteAtomicJSON(layout.PRReviewRegistrationPath(17), registration, 0o600); err != nil {
 		t.Fatalf("write canonical registration: %v", err)
+	}
+}
+
+func setCanonicalRegistrationDeadlineForTest(t *testing.T, workDir string, deadline int) {
+	t.Helper()
+	path := paths.NewLayout(nil, workDir).PRReviewRegistrationPath(17)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read canonical registration: %v", err)
+	}
+	var registration reviewRequestRegistration
+	if err := json.Unmarshal(data, &registration); err != nil {
+		t.Fatalf("decode canonical registration: %v", err)
+	}
+	registration.Request.EffectiveTimeout = deadline - registration.Request.StartedUnixSeconds
+	registration.Request.DeadlineUnixSeconds = deadline
+	registration.Request.DeadlineAt = fmt.Sprintf("unix:%d", deadline)
+	registration.State.EffectiveTimeout = registration.Request.EffectiveTimeout
+	registration.State.DeadlineUnixSeconds = deadline
+	registration.State.DeadlineAt = registration.Request.DeadlineAt
+	if err := atomicfs.WriteAtomicJSON(path, registration, 0o600); err != nil {
+		t.Fatalf("write canonical registration deadline: %v", err)
 	}
 }
 
@@ -1140,6 +1161,33 @@ func TestExternalGate_CanonicalRegistrationRejectsDifferentTriggerEvidence(t *te
 	}
 }
 
+func TestExternalGate_CanonicalRegistrationRejectsEvidenceAfterTrustedDeadline(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeTimedOutReviewRequest(t, workDir)
+	writeFormalChangesRequestedClassification(t, workDir, "current")
+	writeCanonicalRegistrationForTest(t, workDir)
+	setCanonicalRegistrationDeadlineForTest(t, workDir, 1100)
+
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha",
+				StatusCheckRollup: "success", ReviewDecision: "CHANGES_REQUESTED", MergeStateStatus: "CLEAN",
+			}}},
+			errorLog: io.Discard,
+		},
+		opts: gateTestRunOptions(),
+	}
+	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	if !handled || status != "await" || extras["gate"] != "failed" {
+		t.Fatalf("post-deadline feedback = (%q, %#v, %t), want await/failed", status, extras, handled)
+	}
+	if _, ok := extras["reason"]; ok {
+		t.Fatalf("post-deadline feedback unexpectedly authorized resume: %#v", extras)
+	}
+}
+
 func TestExternalGate_CanonicalRegistrationTreatsMissingSidecarsAsPendingDiagnostics(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	writeCurrentHeadApprovalClassification(t, workDir)
@@ -1259,7 +1307,7 @@ func TestExternalGate_PendingWithConcreteInformalFeedbackIsActionable(t *testing
 	}
 	status, extras, handled := session.lifecycleDecisionWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
 	if !handled || status != "resume" {
-		t.Fatalf("pending gate with concrete informal feedback = (%q, %#v, %t), want await", status, extras, handled)
+		t.Fatalf("pending gate with concrete informal feedback = (%q, %#v, %t), want resume", status, extras, handled)
 	}
 	if got, _ := extras["gate"].(string); got != gateActionableFeedback {
 		t.Fatalf("gate = %q, want actionable-feedback", got)

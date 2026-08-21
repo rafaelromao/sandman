@@ -177,6 +177,9 @@ func (s *runSession) retainedLifecycleEvidence(ctx context.Context, workDir stri
 		if handoffErr != nil || handoff == nil {
 			return evidence
 		}
+		if !reviewEvidenceWithinCanonicalDeadline(handoff, registration.Request) {
+			return evidence
+		}
 		evidence.actionable = handoff.hasActionableFeedback()
 		switch {
 		case evidence.actionable:
