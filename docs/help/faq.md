@@ -54,7 +54,7 @@ No. Sandman is the *delivery loop*; the agent does the implementation work. The 
 
 ## What workflow works well with Sandman?
 
-The recommended path is `wayfinder -> to-spec -> to-tickets -> Sandman -> Validation`. It resolves uncertainty, publishes the Specification, slices clear GitHub issues, and hands the ready ticket frontier to Sandman. This path is recommended, not required: Sandman can start from any sufficiently clear GitHub issue.
+The recommended path is `wayfinder -> to-spec -> to-tickets -> Sandman -> Validation`. It resolves uncertainty, publishes the Specification, slices clear GitHub issues, and hands the ready issue frontier to Sandman. This path is recommended, not required: Sandman can start from any sufficiently clear GitHub issue.
 
 ## Is Sandman production-ready?
 

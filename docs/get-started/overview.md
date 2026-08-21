@@ -34,7 +34,7 @@ The recommended path for preparing work for Sandman is:
 wayfinder -> to-spec -> to-tickets -> Sandman -> Validation
 ```
 
-This workflow resolves uncertainty, publishes the Specification, slices clear GitHub issues, and then hands the ready ticket frontier to Sandman. It is recommended, not required: Sandman can start from any sufficiently clear GitHub issue.
+This workflow resolves uncertainty, publishes the Specification, slices clear GitHub issues, and then hands the ready issue frontier to Sandman. It is recommended, not required: Sandman can start from any sufficiently clear GitHub issue.
 
 ## What Sandman is not
 
