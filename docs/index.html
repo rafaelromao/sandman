@@ -42,7 +42,7 @@
       a { color: inherit; }
 
       code, pre, .mono,
-      .topline, .slogan, .kicker, .cli-shot, .methods-table code {
+      .topline, .slogan, .kicker, .cli-shot {
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
       }
 
@@ -311,15 +311,7 @@
       .receipt p { margin: 0; color: var(--muted); font-size: 14px; }
       .receipt code { color: var(--gold-strong); }
 
-      .methods-table { width: 100%; border-collapse: separate; border-spacing: 0; margin-top: 28px; border: 1px solid var(--line); border-radius: 20px; overflow: hidden; table-layout: fixed; }
-      .methods-table th, .methods-table td { padding: 14px 16px; text-align: left; vertical-align: top; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); overflow-wrap: normal; word-break: normal; }
-      .methods-table th { background: var(--canvas-2); color: var(--ink-strong); font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; }
-      .methods-table td { color: var(--muted); font-size: 15px; }
-      .methods-table tr:last-child td { border-bottom: 0; }
-      .methods-table th:last-child, .methods-table td:last-child { border-right: 0; }
-      .methods-table th:first-child, .methods-table td:first-child { width: 18%; }
-      .methods-table th:nth-child(2), .methods-table td:nth-child(2) { width: 42%; }
-      .methods-table code { color: var(--gold-strong); font-size: 14px; }
+      .method-card { margin-top: 28px; }
       .skill-chain { display: inline-flex; flex-wrap: wrap; gap: 0 6px; color: inherit; font-family: inherit; font-size: inherit; }
       .skill-chain span { white-space: nowrap; }
 
@@ -360,8 +352,6 @@
         .smart-grid, .cli-reasons { grid-template-columns: 1fr; }
         .portal-shot { max-width: 420px; margin: 0 auto; }
         .topline { grid-template-columns: auto 1fr auto; }
-        .methods-table { table-layout: auto; }
-        .methods-table th:first-child, .methods-table td:first-child { width: auto; }
         .handoff-line code { white-space: normal; }
       }
 
@@ -375,61 +365,6 @@
         .brand img.mark { width: 30px; height: 30px; }
         .brand strong { font-size: 16px; letter-spacing: 0.14em; }
         .slogan { font-size: 12px; letter-spacing: 0.06em; white-space: nowrap; }
-        .methods-table {
-          display: block;
-          border: 0;
-          border-radius: 0;
-          overflow: visible;
-        }
-        .methods-table thead {
-          position: absolute;
-          width: 1px;
-          height: 1px;
-          padding: 0;
-          margin: -1px;
-          overflow: hidden;
-          clip: rect(0 0 0 0);
-          white-space: nowrap;
-          border: 0;
-        }
-        .methods-table tbody {
-          display: grid;
-          gap: 12px;
-        }
-        .methods-table tr {
-          display: block;
-          width: 100%;
-          border: 1px solid var(--line);
-          border-radius: 18px;
-          overflow: hidden;
-          background: var(--paper);
-        }
-        .methods-table td {
-          display: block;
-          width: 100% !important;
-          padding: 13px 14px;
-          border-right: 0;
-          border-bottom: 1px solid var(--line);
-          overflow-wrap: anywhere;
-        }
-        .methods-table td:last-child { border-bottom: 0; }
-        .methods-table td::before {
-          content: attr(data-label);
-          display: block;
-          margin-bottom: 5px;
-          color: var(--gold-strong);
-          font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-          font-size: 11px;
-          font-weight: 900;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
-        }
-        .methods-table .skill-chain { max-width: 100%; }
-        .methods-table .skill-chain span {
-          min-width: 0;
-          white-space: normal;
-          overflow-wrap: anywhere;
-        }
       }
     </style>
   </head>
@@ -462,7 +397,7 @@
             <article class="stage">
               <div class="kicker" style="margin-bottom: 6px;">Specification</div>
               <h3>Clear intent and checks</h3>
-              <p>A spec, SDD flow, or bug brief produces a well-described GitHub issue. Sandman only needs the work to be precise enough to run.</p>
+              <p>A clear Specification or bug brief produces a well-described GitHub issue. Sandman only needs the work to be precise enough to run.</p>
             </article>
 
             <article class="sandman-box" aria-label="Sandman-owned loop">
@@ -566,16 +501,14 @@ expanded specification #2102 to 3 accepted children
         </section>
 
         <section id="methods">
-          <div class="kicker">Methodology, correctly placed</div>
-          <h2>Sandman owns the delivery loop.</h2>
-          <p class="lead">Use the upstream method that produces the clearest issues. Sandman should lead the story because it owns the autonomous path from selected issue to reviewed, merged PR.</p>
-          <table class="methods-table">
-            <thead><tr><th scope="col">Layer</th><th scope="col">Precise role</th><th scope="col">Relationship to Sandman</th></tr></thead>
-            <tbody>
-              <tr><td data-label="Layer">Matt Pocock workflow</td><td data-label="Precise role"><span class="skill-chain"><span>wayfinder</span><span>-&gt;</span><span>to-spec</span><span>-&gt;</span><span>to-tickets</span><span>-&gt;</span><span>Sandman</span><span>-&gt;</span><span>Validation.</span><span>Plus diagnosing-bugs, improve-codebase-architecture and others.</span></span></td><td data-label="Relationship to Sandman">Use the skills to resolve uncertainty, publish the spec, and slice GitHub tickets. Sandman runs the ready ticket frontier AFK.</td></tr>
-              <tr><td data-label="Layer">Spec-Driven Development</td><td data-label="Precise role">Executable specifications become the source of truth that tasks are derived from, for example GitHub Spec Kit or OpenSpec.</td><td data-label="Relationship to Sandman">SDD turns specifications into plans and task sets. Sandman turns the resulting agent-ready issue into an isolated, governed path to a merged PR.</td></tr>
-            </tbody>
-          </table>
+          <div class="kicker">Recommended workflow</div>
+          <h2>Prepare work clearly, then let Sandman run it.</h2>
+          <p class="lead">The recommended path resolves uncertainty before Sandman takes over the autonomous delivery loop.</p>
+          <div class="note-card method-card">
+            <h3>Matt Pocock workflow</h3>
+            <p><span class="skill-chain"><span>wayfinder</span><span>-&gt;</span><span>to-spec</span><span>-&gt;</span><span>to-tickets</span><span>-&gt;</span><span>Sandman</span><span>-&gt;</span><span>Validation</span></span></p>
+            <p>Use the skills to resolve uncertainty, publish the Specification, and slice clear GitHub issues. Sandman runs the ready issue frontier AFK. This is recommended, not required: Sandman can start from any sufficiently clear GitHub issue.</p>
+          </div>
         </section>
 
         <section id="opencode-integration">
@@ -606,24 +539,6 @@ expanded specification #2102 to 3 accepted children
             <div class="note-card">
               <h3>Not an afterthought.</h3>
               <p>The implementation agent builds and self-reviews first. Sandman Review then handles feedback, repair, green checks, and merge readiness as part of the gate.</p>
-            </div>
-          </div>
-        </section>
-
-        <section id="comparison-session">
-          <div class="kicker">Comparison</div>
-          <h2>Sandman, SDD, and Loop Engineering solve different problems.</h2>
-          <p class="lead">SDD makes intent explicit through a specification, plan, and tasks. Sandman turns the resulting agent-ready GitHub issue into isolated AFK execution, review, and merge. GitHub's <a class="text-link" href="https://github.blog/ai-and-ml/generative-ai/spec-driven-development-with-ai-get-started-with-a-new-open-source-toolkit/">Spec Kit article</a> is the clearest SDD reference. Loop Engineering is the broader discipline of designing agent loops; Addy Osmani's <a class="text-link" href="https://addyosmani.com/blog/loop-engineering/">Loop Engineering article</a> is the reference.</p>
-          <div class="grid-2">
-            <div class="note-card">
-              <h3>SDD structures intent. Sandman operationalizes delivery.</h3>
-              <p>SDD makes the specification the source of truth, then refines it into a plan and task set with clear acceptance criteria.</p>
-              <p>Sandman turns that agent-ready GitHub issue into the AFK delivery loop: isolated execution, durable progress, tests, review gates, and merge.</p>
-            </div>
-            <div class="note-card">
-              <h3>Sandman applies Loop Engineering.</h3>
-              <p>Loop Engineering frames the management system around agentic work. Sandman applies those principles to one concrete loop: CLI-owned AFK delivery from GitHub issue to merged PR.</p>
-              <p>Careful wording matters. Sandman is not all of Loop Engineering; it is a concrete loop inside that discipline.</p>
             </div>
           </div>
         </section>

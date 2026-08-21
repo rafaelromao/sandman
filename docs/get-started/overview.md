@@ -26,11 +26,21 @@ You choose the issue. Sandman owns the implementation path:
 5. Self-review and open a PR
 6. Drive review to merge
 
+## Recommended workflow
+
+The recommended path for preparing work for Sandman is:
+
+```
+wayfinder -> to-spec -> to-tickets -> Sandman -> Validation
+```
+
+This workflow resolves uncertainty, publishes the Specification, slices clear GitHub issues, and then hands the ready issue frontier to Sandman. It is recommended, not required: Sandman can start from any sufficiently clear GitHub issue.
+
 ## What Sandman is not
 
 - **Not a SaaS.** State is local under `.sandman/`.
 - **Not a code generator.** Output is reviewed, merged PRs.
-- **Not a spec tool.** The spec layer is upstream — use whatever planning process produces clear GitHub issues.
+- **Not a Specification authoring tool.** Use whatever planning process produces clear GitHub issues.
 - **Not a replacement for validation.** Treat agent output the way you treat fast human output: as input to validation, not a release confidence signal.
 
 ## See also
@@ -38,4 +48,3 @@ You choose the issue. Sandman owns the implementation path:
 - [Quick Start](quickstart.md) — the 5-minute path from install to first merged PR
 - [Installation](install.md) — full prerequisites and setup
 - [Concepts](concepts.md) — the Batch / AgentRun / Sandbox model in prose
-- [Positioning](../help/positioning.md) — how Sandman relates to SDD and Loop Engineering
