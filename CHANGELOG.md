@@ -5,6 +5,75 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-rc.2](https://github.com/rafaelromao/sandman/compare/v1.0.0-rc.1...v1.0.0-rc.2) (2026-08-21)
+
+
+### Features
+
+* **batch:** emit run.await event for non-terminal external gate states ([40c2641](https://github.com/rafaelromao/sandman/commit/40c26411efec02e87c5b2f9e3612771ff0794a29)), closes [#2594](https://github.com/rafaelromao/sandman/issues/2594)
+* **batch:** replace terminal external-gate handling with non-terminal bounded await state ([b43f901](https://github.com/rafaelromao/sandman/commit/b43f901881702ccfef212eb911d6632201803c5b))
+* **batch:** retain Specification as in-memory-blocked parent row ([#2490](https://github.com/rafaelromao/sandman/issues/2490)) ([ab6b5f4](https://github.com/rafaelromao/sandman/commit/ab6b5f4e7fcda52c536c4b54327ee79dc6ee7fb5))
+* **batch:** return await for recoverable external gate states ([48a8b5b](https://github.com/rafaelromao/sandman/commit/48a8b5bf90566d2ce478ee883b808815819e3a37)), closes [#2594](https://github.com/rafaelromao/sandman/issues/2594)
+* **config:** make delegated review timeout configurable ([a76e025](https://github.com/rafaelromao/sandman/commit/a76e025153849ec110da273a6087ede1055f6e7d))
+* **config:** raise new-run idle timeout default to 3600 ([bcd7344](https://github.com/rafaelromao/sandman/commit/bcd7344a5157d764ae61321d2ba436480646ce4e)), closes [#2571](https://github.com/rafaelromao/sandman/issues/2571)
+* **events:** add run.await event type and AwaitEvent projection ([75f41ec](https://github.com/rafaelromao/sandman/commit/75f41ec3ae94bf78a6f51c225c9bc6cb92b4af2c)), closes [#2594](https://github.com/rafaelromao/sandman/issues/2594)
+* **run:** configure OpenCode context error phrases ([#2590](https://github.com/rafaelromao/sandman/issues/2590)) ([64d3d0a](https://github.com/rafaelromao/sandman/commit/64d3d0a9cbf880889dad11e8f9ed0db1d3a2194e))
+* **run:** roll over repeated OpenCode context errors ([#2588](https://github.com/rafaelromao/sandman/issues/2588)) ([eae465e](https://github.com/rafaelromao/sandman/commit/eae465e8240fc59bbdc2d4e7e45317fe9f331954))
+* **spec:** open-issue scan as last-resort child harvest ([#2480](https://github.com/rafaelromao/sandman/issues/2480)) ([f9ad024](https://github.com/rafaelromao/sandman/commit/f9ad02407d0511ef7b09537e91b488fcfa8598de))
+* **spec:** robust specification detection and generalised parent-section matching ([#2477](https://github.com/rafaelromao/sandman/issues/2477)) ([8423c04](https://github.com/rafaelromao/sandman/commit/8423c04edc4b4c980f124f89fa04790d839b96f8))
+
+
+### Bug Fixes
+
+* apply gofmt formatting fixes ([a440868](https://github.com/rafaelromao/sandman/commit/a440868ae0514fb1c86110057a4fb0a088f2127e))
+* **badge:** drop the sandman/ branch prefix everywhere ([#2507](https://github.com/rafaelromao/sandman/issues/2507)) ([36c6a14](https://github.com/rafaelromao/sandman/commit/36c6a14307272bdc5206c3889e253c394f8d2b95)), closes [#2506](https://github.com/rafaelromao/sandman/issues/2506)
+* **badge:** recognize issue-driven branches as badge trigger and follow bare-slug branch convention ([#2505](https://github.com/rafaelromao/sandman/issues/2505)) ([63f6f4c](https://github.com/rafaelromao/sandman/commit/63f6f4cd9bdd1e1bee97aae4e2d6fe51af377b60))
+* **batch:** harden gate polling test budget ([#2554](https://github.com/rafaelromao/sandman/issues/2554)) ([05dc73e](https://github.com/rafaelromao/sandman/commit/05dc73eb0bbab8d284b33238cd67c05eff058af4))
+* **batch:** keep pending external gates out of retries ([#2513](https://github.com/rafaelromao/sandman/issues/2513)) ([818ddf2](https://github.com/rafaelromao/sandman/commit/818ddf2cf1485c9ce4ebd1a6a9432a641a53b664))
+* **batch:** omit retry markers from retry log context ([#2552](https://github.com/rafaelromao/sandman/issues/2552)) ([ffd0499](https://github.com/rafaelromao/sandman/commit/ffd049973b6b0755033b0f019975ddec3e2e5da4))
+* **batch:** preserve ready-to-merge external gates ([#2522](https://github.com/rafaelromao/sandman/issues/2522)) ([4704438](https://github.com/rafaelromao/sandman/commit/4704438729b761f88def9cc0fb40df3e082bed1d))
+* **batch:** start full-capacity containers concurrently ([#2523](https://github.com/rafaelromao/sandman/issues/2523)) ([9d45990](https://github.com/rafaelromao/sandman/commit/9d45990b4e836913af1bafaab04443e765048c00))
+* **ci:** stop full-regression suite from skipping real-agent tests ([#2511](https://github.com/rafaelromao/sandman/issues/2511)) ([560d7ef](https://github.com/rafaelromao/sandman/commit/560d7efecb8344c4eba07f4393c04ef9baeba3cc))
+* **clean:** reclaim worktrees of completed active batches in --all ([#2512](https://github.com/rafaelromao/sandman/issues/2512)) ([c220b27](https://github.com/rafaelromao/sandman/commit/c220b27ac4c254fc1c827d330464dbae94732316))
+* **github:** read native blockers from /dependencies/blocked_by endpoint ([#2482](https://github.com/rafaelromao/sandman/issues/2482)) ([9c3ea41](https://github.com/rafaelromao/sandman/commit/9c3ea419896d88fb3557583513ab4fbd8ed020de))
+* **github:** reduce request-heavy polling ([#2494](https://github.com/rafaelromao/sandman/issues/2494)) ([09ef515](https://github.com/rafaelromao/sandman/commit/09ef515669c5c4e34e7a2472be33ce9908352060))
+* **install:** apply install fixes to README ([#2510](https://github.com/rafaelromao/sandman/issues/2510)) ([377e949](https://github.com/rafaelromao/sandman/commit/377e949009826492b35244c2837d9206f89a9f77)), closes [#2508](https://github.com/rafaelromao/sandman/issues/2508)
+* **install:** resolve prerelease-only install failures and gate prereleases behind --include-prerelease ([#2509](https://github.com/rafaelromao/sandman/issues/2509)) ([f92dd93](https://github.com/rafaelromao/sandman/commit/f92dd93680dfe9c9dee29aef428bb1e553c4f188)), closes [#2508](https://github.com/rafaelromao/sandman/issues/2508)
+* **lifecycle:** keep recoverable pull requests foreground ([#2643](https://github.com/rafaelromao/sandman/issues/2643)) ([cd11f4c](https://github.com/rafaelromao/sandman/commit/cd11f4ca971f3d2b662fd5d9e5fdc2c8840bb856))
+* **lifecycle:** preserve verified merged completion ([#2646](https://github.com/rafaelromao/sandman/issues/2646)) ([9fbffba](https://github.com/rafaelromao/sandman/commit/9fbffba6334ff64239a145a8e8fa26bb6869883b))
+* **portal:** distinguish pending review publication from approval ([#2601](https://github.com/rafaelromao/sandman/issues/2601)) ([f4f9013](https://github.com/rafaelromao/sandman/commit/f4f9013cbbad8769a00480f3db85e2a0c5e3d9db))
+* **pr-review:** fail closed before duplicate review triggers ([#2604](https://github.com/rafaelromao/sandman/issues/2604)) ([9a2acff](https://github.com/rafaelromao/sandman/commit/9a2acfff55fc60382b6b0239d628aeab3d678b7c))
+* **release:** accept any generated 1.0.0-rc.N manifest version ([#2483](https://github.com/rafaelromao/sandman/issues/2483)) ([7a2f43f](https://github.com/rafaelromao/sandman/commit/7a2f43f581c2c3191d379e5dee749dd7f25b89ce))
+* **review:** classify retained informal feedback as lifecycle evidence ([#2613](https://github.com/rafaelromao/sandman/issues/2613)) ([7d0c5bd](https://github.com/rafaelromao/sandman/commit/7d0c5bdd0c5ec0216267dee41293e6b77fd956dc))
+* **review:** enforce one deadline per confirmed request ([#2553](https://github.com/rafaelromao/sandman/issues/2553)) ([2500acc](https://github.com/rafaelromao/sandman/commit/2500accb2a96c5b1f7141182aba0b59a038b5c37))
+* **review:** finalize waits at the request deadline ([abcfc9a](https://github.com/rafaelromao/sandman/commit/abcfc9a992a807297ea55c2560018002f107f065))
+* **review:** hand exhausted requests to external gates ([9b05641](https://github.com/rafaelromao/sandman/commit/9b056411a13e3b805434e1fa3ed5cd237dc44469))
+* **review:** preserve accepted response classification per request ([#2555](https://github.com/rafaelromao/sandman/issues/2555)) ([94d798a](https://github.com/rafaelromao/sandman/commit/94d798a36c98f3713696eb946e636c3b924b7ddc))
+* **review:** recover pending posts from durable decisions ([#2599](https://github.com/rafaelromao/sandman/issues/2599)) ([7e44ff9](https://github.com/rafaelromao/sandman/commit/7e44ff94547a85590c5cfccc0544e06d6069ba57))
+* **review:** rehydrate decisions after cancellation ([#2640](https://github.com/rafaelromao/sandman/issues/2640)) ([2234535](https://github.com/rafaelromao/sandman/commit/223453507d92763aad85f926136dda774f5d8a1c))
+* **review:** render the project review prompt ([#2503](https://github.com/rafaelromao/sandman/issues/2503)) ([88de75a](https://github.com/rafaelromao/sandman/commit/88de75a634041e61e0232188518112c1e8771bba))
+* **review:** resolve retained current-head approvals ([02632cf](https://github.com/rafaelromao/sandman/commit/02632cfd2d09c10c63f4954c77595ce24c722eed))
+* **review:** resume only matching request feedback ([#2642](https://github.com/rafaelromao/sandman/issues/2642)) ([333bd34](https://github.com/rafaelromao/sandman/commit/333bd345f0deb0a4bc1cffc5f74c33fbb2580059))
+* **review:** surface retained requested changes ([#2570](https://github.com/rafaelromao/sandman/issues/2570)) ([f187e8b](https://github.com/rafaelromao/sandman/commit/f187e8bf26fa8233eb22ad3e1e100461e78427d5))
+* **run:** atomically register implementation review requests ([#2603](https://github.com/rafaelromao/sandman/issues/2603)) ([df3b94b](https://github.com/rafaelromao/sandman/commit/df3b94b6855cb553bcea15e28997f443c2cf8cf3))
+* **run:** harden context rollover recovery ([#2589](https://github.com/rafaelromao/sandman/issues/2589)) ([c182316](https://github.com/rafaelromao/sandman/commit/c182316a316969e193ce608f77fc7ec56962ff13))
+* **run:** ignore incomplete legacy review-state evidence ([6278b9f](https://github.com/rafaelromao/sandman/commit/6278b9f8fa3f75b2bfe23609df5e0de049bd70f7)), closes [#2593](https://github.com/rafaelromao/sandman/issues/2593)
+* **run:** prefer live PR state over retained review artifacts ([#2600](https://github.com/rafaelromao/sandman/issues/2600)) ([4d387f9](https://github.com/rafaelromao/sandman/commit/4d387f9f438bf63f24748aa3808e83d802cc560b))
+* **run:** propagate cleanup errors and verify process termination ([#2609](https://github.com/rafaelromao/sandman/issues/2609)) ([322eeb6](https://github.com/rafaelromao/sandman/commit/322eeb6e325e23bec867b819380bd300e2b04449))
+* **run:** reject nested context error prefixes ([#2615](https://github.com/rafaelromao/sandman/issues/2615)) ([f9bc8d0](https://github.com/rafaelromao/sandman/commit/f9bc8d0baf41da70b8bf8049876b0539d02f32f9))
+* **run:** resume agent work on PR lifecycle transitions ([#2612](https://github.com/rafaelromao/sandman/issues/2612)) ([0bd6c93](https://github.com/rafaelromao/sandman/commit/0bd6c93bcdd20a715c39d62d3eb166a96688b5ed))
+* **sandbox:** fall back when process-group kill fails ([#2602](https://github.com/rafaelromao/sandman/issues/2602)) ([a910626](https://github.com/rafaelromao/sandman/commit/a910626b3902fad5d9124e28ee9e3fa1080e4af7))
+* **sandbox:** use runtime-aware binary in KillAgentFn ([3d0bdce](https://github.com/rafaelromao/sandman/commit/3d0bdceb573fbafd54071690c847274da8137bf8))
+* **sandbox:** use runtime-aware binary in KillAgentFn ([c4b1467](https://github.com/rafaelromao/sandman/commit/c4b146786756175374f8e27355a919ed7211c0ef)), closes [#2605](https://github.com/rafaelromao/sandman/issues/2605)
+* **scaffold:** generate usable pinned Rust toolchains ([#2497](https://github.com/rafaelromao/sandman/issues/2497)) ([a8e56b1](https://github.com/rafaelromao/sandman/commit/a8e56b1a2908553fa4011de23620b252c0494ee7))
+* **skill:** recognize same-credential review decisions ([#2493](https://github.com/rafaelromao/sandman/issues/2493)) ([c7f0bc5](https://github.com/rafaelromao/sandman/commit/c7f0bc5a551ded44deafb4590faba2ba44133181))
+* **spec:** accept parent-style 'Part of' headings on the candidate side ([#2488](https://github.com/rafaelromao/sandman/issues/2488)) ([145019e](https://github.com/rafaelromao/sandman/commit/145019ea90333d085bccfc1a50592583d6cf7357))
+* **spec:** authorize explicit child declarations ([#2548](https://github.com/rafaelromao/sandman/issues/2548)) ([b986872](https://github.com/rafaelromao/sandman/commit/b98687297ad95728453188723f1d468cf3a11df5))
+* **spec:** ignore parent backlinks during child harvest ([#2563](https://github.com/rafaelromao/sandman/issues/2563)) ([3c87519](https://github.com/rafaelromao/sandman/commit/3c875190b48b667aa6ea9641642d09b567847d57))
+* **spec:** recognise any H2 containing child or children as a children section ([#2485](https://github.com/rafaelromao/sandman/issues/2485)) ([f9e8855](https://github.com/rafaelromao/sandman/commit/f9e88553e4fe7195903a3cd5f5a02cfd2d404276))
+* **spec:** restrict comment child discovery to structured declarations ([#2561](https://github.com/rafaelromao/sandman/issues/2561)) ([1cf5817](https://github.com/rafaelromao/sandman/commit/1cf5817e17d5843b2b747d6eaa83ebf367b70c3b))
+* **test:** bound node scripts with a deadline in runNodeScript ([#2487](https://github.com/rafaelromao/sandman/issues/2487)) ([6323312](https://github.com/rafaelromao/sandman/commit/6323312b7bec33aaee4593197bdc9e50d830fea8))
+
 ## [1.0.0-rc.1](https://github.com/rafaelromao/sandman/compare/v1.0.0-rc.1...v1.0.0-rc.1) (2026-07-29)
 
 
