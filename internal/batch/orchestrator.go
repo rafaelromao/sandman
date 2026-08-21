@@ -2785,7 +2785,12 @@ loop:
 				hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
 				if gateStatus, extras, handled := s.handleLifecycleDecisionAfterAgent(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled && gateStatus != "success" {
 					gate, _ := extras["gate"].(string)
-					if gateStatus == "await" && (gate != gateReadyToMerge && gate != gateActionableFeedback || s.resumeCount >= s.resumeCapFor()) {
+					observe := gateStatus == "await" && (gate != gateReadyToMerge && gate != gateActionableFeedback || s.resumeCount >= s.resumeCapFor())
+					observe = observe || gateStatus == "resume" && s.resumeCount >= s.resumeCapFor()
+					if observe {
+						if gateStatus == "resume" {
+							gateStatus = "await"
+						}
 						if !s.opts.foregroundLifecycle {
 							s.emitAwait(ctx, runID, result, extras)
 							result.Status = gateStatus

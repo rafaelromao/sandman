@@ -521,6 +521,9 @@ func (s *runSession) observeLifecycle(ctx context.Context, workDir, branch, logP
 			status = "await"
 			nextExtras = map[string]any{"gate": string(lifecycleGatePending), "await": true}
 		}
+		if status == "resume" {
+			status = "await"
+		}
 		if status == "await" {
 			gate, _ := nextExtras["gate"].(string)
 			if (gate == gateReadyToMerge || gate == gateActionableFeedback) && s.resumeCount < s.resumeCapFor() {

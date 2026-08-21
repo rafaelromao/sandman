@@ -121,7 +121,7 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 		if !handled {
 			return AgentRunResult{}, false, false
 		}
-		if gateStatus == "await" {
+		if gateStatus == "await" || gateStatus == "resume" {
 			gate, _ = nextExtras["gate"].(string)
 			if gate == gateReadyToMerge || gate == gateActionableFeedback {
 				evidence := s.resumeEvidenceFor(ctx, branch, nextExtras)
