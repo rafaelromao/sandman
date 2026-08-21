@@ -819,6 +819,62 @@ func validateReviewRequest(request reviewRequestEnvelope, state reviewWaitState,
 	return nil
 }
 
+// reviewRequestIdentityMatches confirms that a compatibility wait belongs to
+// the canonical registration. Timing may differ because the two records are
+// written by different processes, but the confirmed trigger identity and the
+// pull-request generation must be identical.
+func reviewRequestIdentityMatches(canonical, candidate reviewRequestEnvelope) bool {
+	return strings.TrimSpace(canonical.Protocol) != "" &&
+		strings.TrimSpace(canonical.Repository) != "" &&
+		canonical.PullRequest > 0 &&
+		strings.TrimSpace(canonical.HeadSHA) != "" &&
+		strings.TrimSpace(canonical.TriggerID) != "" &&
+		strings.TrimSpace(canonical.TriggerPrefix) != "" &&
+		strings.TrimSpace(canonical.TriggerCreatedAt) != "" &&
+		strings.TrimSpace(candidate.Protocol) != "" &&
+		strings.TrimSpace(candidate.Repository) != "" &&
+		candidate.PullRequest > 0 &&
+		strings.TrimSpace(candidate.HeadSHA) != "" &&
+		strings.TrimSpace(candidate.TriggerID) != "" &&
+		strings.TrimSpace(candidate.TriggerPrefix) != "" &&
+		strings.TrimSpace(candidate.TriggerCreatedAt) != "" &&
+		canonical.Protocol == candidate.Protocol &&
+		canonical.Repository == candidate.Repository &&
+		canonical.PullRequest == candidate.PullRequest &&
+		strings.EqualFold(strings.TrimSpace(canonical.HeadSHA), strings.TrimSpace(candidate.HeadSHA)) &&
+		canonical.TriggerID == candidate.TriggerID &&
+		canonical.TriggerPrefix == candidate.TriggerPrefix &&
+		canonical.TriggerCreatedAt == candidate.TriggerCreatedAt
+}
+
+// reviewEvidenceWithinCanonicalDeadline prevents a compatibility request with
+// a later process-owned deadline from extending the trusted request window.
+// The request boundary is inclusive: evidence observed exactly at the
+// canonical deadline remains eligible.
+func reviewEvidenceWithinCanonicalDeadline(handoff *reviewTimeoutHandoff, request reviewRequestEnvelope) bool {
+	if handoff == nil || handoff.Classification == nil {
+		return true
+	}
+	deadline := time.Unix(int64(request.DeadlineUnixSeconds), 0).UTC()
+	sources, ok := objectValue(handoff.Classification.Raw, "sources")
+	if !ok {
+		return false
+	}
+	for _, sourceName := range []string{"top_level", "formal_reviews", "inline_comments"} {
+		records, ok := mapArray(sources[sourceName])
+		if !ok {
+			return false
+		}
+		for _, record := range records {
+			timestamp, err := time.Parse(time.RFC3339Nano, stringValue(record, "response_timestamp"))
+			if err != nil || timestamp.After(deadline) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func (h *reviewTimeoutHandoff) payload() map[string]any {
 	return h.payloadFor(gateReviewTimeout, reviewTimeoutReason, reviewTimeoutNextAction)
 }

@@ -171,10 +171,9 @@ func TestDaemon_NextTickIsNoOpAfterSuccess(t *testing.T) {
 // TestDaemon_PendingNotTerminalInSeenCache pins the dedup consequence
 // from issue #1482 §Notes: shouldSkipDedupStatus("pending") must be
 // false (pending is retryable). Post-#1849 the seen-cache does NOT
-// short-circuit pending comments because no daemon code path writes
-// "pending" to review-state.json anymore; the S4 rehydrate walker
-// (issue #1847) is the only mechanism that observes pending rows from
-// disk and processes them at tick time.
+// short-circuit pending comments because pending is retryable; the S4
+// rehydrate walker (issue #1847) observes pending rows from disk and
+// processes them at tick time.
 func TestDaemon_PendingNotTerminalInSeenCache(t *testing.T) {
 	if shouldSkipDedupStatus("pending") {
 		t.Error("shouldSkipDedupStatus(pending) must be false; pending comments must remain retryable")

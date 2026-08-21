@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,9 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
@@ -104,6 +107,70 @@ func writeTimedOutReviewRequest(t *testing.T, workDir string) {
 `
 	if err := os.WriteFile(filepath.Join(stateDir, "17.review_request.json.state"), []byte(state), 0o600); err != nil {
 		t.Fatalf("write review state: %v", err)
+	}
+}
+
+func writeCanonicalRegistrationForTest(t *testing.T, workDir string) {
+	t.Helper()
+	layout := paths.NewLayout(nil, workDir)
+	requestData, err := os.ReadFile(layout.PRReviewRequestPath(17))
+	if err != nil {
+		t.Fatalf("read review request for canonical registration: %v", err)
+	}
+	var request reviewRequestEnvelope
+	if err := json.Unmarshal(requestData, &request); err != nil {
+		t.Fatalf("decode review request for canonical registration: %v", err)
+	}
+	elapsed := 0
+	registration := reviewRequestRegistration{
+		Protocol: reviewRegistrationProtocol,
+		Request:  request,
+		State: reviewWaitState{
+			Protocol:            request.Protocol,
+			Repository:          request.Repository,
+			PullRequest:         request.PullRequest,
+			HeadSHA:             request.HeadSHA,
+			TriggerID:           request.TriggerID,
+			TriggerPrefix:       request.TriggerPrefix,
+			TriggerCreatedAt:    request.TriggerCreatedAt,
+			ConfirmedAt:         request.ConfirmedAt,
+			StartedAt:           request.StartedAt,
+			DeadlineAt:          request.DeadlineAt,
+			StartedUnixSeconds:  request.StartedUnixSeconds,
+			EffectiveTimeout:    request.EffectiveTimeout,
+			DeadlineUnixSeconds: request.DeadlineUnixSeconds,
+			PollPlan:            append([]int(nil), request.PollPlan...),
+			State:               "pending",
+			Lifecycle:           "started",
+			ObservedHeadSHA:     request.HeadSHA,
+			ElapsedSeconds:      &elapsed,
+			Reason:              "pending",
+		},
+	}
+	if err := atomicfs.WriteAtomicJSON(layout.PRReviewRegistrationPath(17), registration, 0o600); err != nil {
+		t.Fatalf("write canonical registration: %v", err)
+	}
+}
+
+func setCanonicalRegistrationDeadlineForTest(t *testing.T, workDir string, deadline int) {
+	t.Helper()
+	path := paths.NewLayout(nil, workDir).PRReviewRegistrationPath(17)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read canonical registration: %v", err)
+	}
+	var registration reviewRequestRegistration
+	if err := json.Unmarshal(data, &registration); err != nil {
+		t.Fatalf("decode canonical registration: %v", err)
+	}
+	registration.Request.EffectiveTimeout = deadline - registration.Request.StartedUnixSeconds
+	registration.Request.DeadlineUnixSeconds = deadline
+	registration.Request.DeadlineAt = fmt.Sprintf("unix:%d", deadline)
+	registration.State.EffectiveTimeout = registration.Request.EffectiveTimeout
+	registration.State.DeadlineUnixSeconds = deadline
+	registration.State.DeadlineAt = registration.Request.DeadlineAt
+	if err := atomicfs.WriteAtomicJSON(path, registration, 0o600); err != nil {
+		t.Fatalf("write canonical registration deadline: %v", err)
 	}
 }
 
@@ -825,6 +892,7 @@ func TestExternalGate_LiveFailedStatePrecedesActionableEvidence(t *testing.T) {
 	}
 	writeTimedOutReviewRequest(t, worktreePath)
 	writeFormalChangesRequestedClassification(t, worktreePath, "current")
+	writeCanonicalRegistrationForTest(t, worktreePath)
 	handoff, err := readReviewTimeoutHandoff(worktreePath, "owner/repo", &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}, "current-sha")
 	if err != nil {
 		t.Fatalf("read classified review handoff: %v", err)
@@ -960,8 +1028,229 @@ func TestExternalGate_RespondedFormalChangesRequestedIsActionable(t *testing.T) 
 		opts: gateTestRunOptions(),
 	}
 	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
-	if !handled || status != "await" || extras["gate"] != gateActionableFeedback {
-		t.Fatalf("responded formal requested changes = (%q, %#v, %t), want await/actionable-feedback", status, extras, handled)
+	if !handled || status != "resume" || extras["gate"] != gateActionableFeedback {
+		t.Fatalf("responded formal requested changes = (%q, %#v, %t), want resume/actionable-feedback", status, extras, handled)
+	}
+}
+
+func TestExternalGate_CanonicalRegistrationPreservesMatchingFormalFeedback(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeTimedOutReviewRequest(t, workDir)
+	writeFormalChangesRequestedClassification(t, workDir, "current")
+	writeCanonicalRegistrationForTest(t, workDir)
+	statePath := filepath.Join(workDir, ".sandman", "state", "17.review_request.json.state")
+	state, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read review state: %v", err)
+	}
+	stateText := strings.Replace(string(state), `"state": "timed_out"`, `"state": "responded"`, 1)
+	stateText = strings.Replace(stateText, `"reason": "request-deadline-exhausted"`, `"reason": "responded"`, 1)
+	stateText = strings.Replace(stateText, `"elapsed_seconds": 1800`, `"elapsed_seconds": 30`, 1)
+	if err := os.WriteFile(statePath, []byte(stateText), 0o600); err != nil {
+		t.Fatalf("write responded review state: %v", err)
+	}
+
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha",
+				StatusCheckRollup: "success", ReviewDecision: "CHANGES_REQUESTED", MergeStateStatus: "CLEAN",
+			}}},
+			errorLog: io.Discard,
+		},
+		opts: gateTestRunOptions(),
+	}
+	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	if !handled || status != "resume" || extras["gate"] != gateActionableFeedback {
+		t.Fatalf("canonical matching formal feedback = (%q, %#v, %t), want resume/actionable-feedback", status, extras, handled)
+	}
+	request, ok := extras["review_request"].(map[string]any)
+	if !ok || request["classification"] == nil {
+		t.Fatalf("canonical matching formal feedback omitted classification: %#v", extras)
+	}
+}
+
+func TestExternalGate_CanonicalRegistrationPreservesMatchingInformalFeedback(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeInformalRespondedClassification(t, workDir, "Please fix the race in internal/socketpath/socketpath.go.")
+	writeCanonicalRegistrationForTest(t, workDir)
+
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha",
+				StatusCheckRollup: "pending", ReviewDecision: "REVIEW_REQUIRED", MergeStateStatus: "BLOCKED",
+			}}},
+			errorLog: io.Discard,
+		},
+		opts: gateTestRunOptions(),
+	}
+	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	if !handled || status != "resume" || extras["gate"] != gateActionableFeedback {
+		t.Fatalf("canonical matching informal feedback = (%q, %#v, %t), want resume/actionable-feedback", status, extras, handled)
+	}
+	request, ok := extras["review_request"].(map[string]any)
+	if !ok || request["informal_feedback"] == nil {
+		t.Fatalf("canonical matching informal feedback omitted evidence: %#v", extras)
+	}
+}
+
+func TestExternalGate_CanonicalRegistrationDoesNotResumeAggregateApproval(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeCurrentHeadApprovalClassification(t, workDir)
+	writeCanonicalRegistrationForTest(t, workDir)
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha",
+				StatusCheckRollup: "success", ReviewDecision: "APPROVED", MergeStateStatus: "CLEAN",
+			}}},
+			errorLog: io.Discard,
+		},
+		opts: gateTestRunOptions(),
+	}
+	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	if !handled || status != "await" || extras["gate"] != gateReadyToMerge {
+		t.Fatalf("canonical aggregate approval = (%q, %#v, %t), want await/ready-to-merge", status, extras, handled)
+	}
+	if _, ok := extras["reason"]; ok {
+		t.Fatalf("aggregate approval unexpectedly carried resume reason: %#v", extras)
+	}
+}
+
+func TestExternalGate_CanonicalRegistrationRejectsDifferentTriggerEvidence(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeTimedOutReviewRequest(t, workDir)
+	writeFormalChangesRequestedClassification(t, workDir, "current")
+	writeCanonicalRegistrationForTest(t, workDir)
+	for _, name := range []string{"17.review_request.json", "17.review_request.json.state"} {
+		path := filepath.Join(workDir, ".sandman", "state", name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		data = []byte(strings.ReplaceAll(string(data), "issuecomment-1001", "issuecomment-other"))
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha",
+				StatusCheckRollup: "success", ReviewDecision: "CHANGES_REQUESTED", MergeStateStatus: "CLEAN",
+			}}},
+			errorLog: io.Discard,
+		},
+		opts: gateTestRunOptions(),
+	}
+	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	if !handled || status != "await" || extras["gate"] != "failed" {
+		t.Fatalf("different-trigger evidence = (%q, %#v, %t), want await/failed", status, extras, handled)
+	}
+	diagnostic, ok := extras["review_diagnostic"].(map[string]any)
+	if !ok || diagnostic["status"] != "valid" {
+		t.Fatalf("different-trigger diagnostics = %#v, want canonical valid diagnostic", extras["review_diagnostic"])
+	}
+	if _, ok := extras["reason"]; ok {
+		t.Fatalf("different-trigger evidence unexpectedly authorized resume: %#v", extras)
+	}
+}
+
+func TestExternalGate_CanonicalRegistrationRejectsEvidenceAfterTrustedDeadline(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeTimedOutReviewRequest(t, workDir)
+	writeFormalChangesRequestedClassification(t, workDir, "current")
+	writeCanonicalRegistrationForTest(t, workDir)
+	setCanonicalRegistrationDeadlineForTest(t, workDir, 1100)
+
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha",
+				StatusCheckRollup: "success", ReviewDecision: "CHANGES_REQUESTED", MergeStateStatus: "CLEAN",
+			}}},
+			errorLog: io.Discard,
+		},
+		opts: gateTestRunOptions(),
+	}
+	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	if !handled || status != "await" || extras["gate"] != "failed" {
+		t.Fatalf("post-deadline feedback = (%q, %#v, %t), want await/failed", status, extras, handled)
+	}
+	if _, ok := extras["reason"]; ok {
+		t.Fatalf("post-deadline feedback unexpectedly authorized resume: %#v", extras)
+	}
+}
+
+func TestExternalGate_CanonicalRegistrationTreatsMissingSidecarsAsPendingDiagnostics(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeCurrentHeadApprovalClassification(t, workDir)
+	writeCanonicalRegistrationForTest(t, workDir)
+	layout := paths.NewLayout(nil, workDir)
+	for _, path := range []string{layout.PRReviewRequestPath(17), layout.PRReviewRequestStatePath(17), layout.PRHeadShaPath(17)} {
+		if err := os.Remove(path); err != nil {
+			t.Fatalf("remove compatibility sidecar %s: %v", path, err)
+		}
+	}
+
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha",
+				StatusCheckRollup: "pending", ReviewDecision: "REVIEW_REQUIRED", MergeStateStatus: "BLOCKED",
+			}}},
+			errorLog: io.Discard,
+		},
+		opts: gateTestRunOptions(),
+	}
+	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	if !handled || status != "await" || extras["gate"] != "pending" {
+		t.Fatalf("missing compatibility sidecars = (%q, %#v, %t), want await/pending", status, extras, handled)
+	}
+	diagnostic, ok := extras["review_diagnostic"].(map[string]any)
+	if !ok || diagnostic["status"] != "valid" {
+		t.Fatalf("missing-sidecar diagnostics = %#v, want canonical valid diagnostic", extras["review_diagnostic"])
+	}
+	if diagnostic["reason"] == gateReviewTimeoutError {
+		t.Fatalf("missing sidecars became a state error: %#v", diagnostic)
+	}
+}
+
+func TestExternalGate_CanonicalRegistrationTreatsMalformedSidecarAsDiagnostics(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeCurrentHeadApprovalClassification(t, workDir)
+	writeCanonicalRegistrationForTest(t, workDir)
+	statePath := paths.NewLayout(nil, workDir).PRReviewRequestStatePath(17)
+	if err := os.WriteFile(statePath, []byte("not-json"), 0o600); err != nil {
+		t.Fatalf("corrupt compatibility state: %v", err)
+	}
+
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha",
+				StatusCheckRollup: "pending", ReviewDecision: "REVIEW_REQUIRED", MergeStateStatus: "BLOCKED",
+			}}},
+			errorLog: io.Discard,
+		},
+		opts: gateTestRunOptions(),
+	}
+	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	if !handled || status != "await" || extras["gate"] != "pending" {
+		t.Fatalf("malformed compatibility sidecar = (%q, %#v, %t), want await/pending", status, extras, handled)
+	}
+	diagnostic, ok := extras["review_diagnostic"].(map[string]any)
+	if !ok || diagnostic["status"] != "valid" {
+		t.Fatalf("malformed-sidecar diagnostics = %#v, want canonical valid diagnostic", extras["review_diagnostic"])
 	}
 }
 
@@ -980,8 +1269,8 @@ func TestExternalGate_RespondedInformalFeedbackIsActionable(t *testing.T) {
 		opts: gateTestRunOptions(),
 	}
 	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
-	if !handled || status != "await" || extras["gate"] != gateActionableFeedback {
-		t.Fatalf("responded informal feedback = (%q, %#v, %t), want await/actionable-feedback", status, extras, handled)
+	if !handled || status != "resume" || extras["gate"] != gateActionableFeedback {
+		t.Fatalf("responded informal feedback = (%q, %#v, %t), want resume/actionable-feedback", status, extras, handled)
 	}
 	if got, _ := extras["reason"].(string); got != "REVIEW_INFORMAL_FEEDBACK" {
 		t.Fatalf("reason = %q, want REVIEW_INFORMAL_FEEDBACK", got)
@@ -1018,8 +1307,8 @@ func TestExternalGate_PendingWithConcreteInformalFeedbackIsActionable(t *testing
 		opts: gateTestRunOptions(),
 	}
 	status, extras, handled := session.lifecycleDecisionWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
-	if !handled || status != "await" {
-		t.Fatalf("pending gate with concrete informal feedback = (%q, %#v, %t), want await", status, extras, handled)
+	if !handled || status != "resume" {
+		t.Fatalf("pending gate with concrete informal feedback = (%q, %#v, %t), want resume", status, extras, handled)
 	}
 	if got, _ := extras["gate"].(string); got != gateActionableFeedback {
 		t.Fatalf("gate = %q, want actionable-feedback", got)
