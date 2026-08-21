@@ -287,6 +287,65 @@ func TestDaemon_CancelAfterDecisionPersistenceFailure_PreservesWorktree(t *testi
 	}
 }
 
+func TestDaemon_PendingStateWriteFailure_RehydratesAfterRestart(t *testing.T) {
+	const (
+		prNumber  = 2478
+		commentID = "c-pending-state-write-failure"
+		body      = "## Decision\n**APPROVED**\nmarker recovery\n"
+	)
+	updatedAt := mustParseTime(t, "2026-07-06T13:00:07Z")
+	gh := &fakeGH{
+		prs:      []github.PR{{Number: prNumber, State: "open"}},
+		comments: map[int][]github.PRComment{prNumber: {{ID: commentID, Body: "/sandman review", CreatedAt: updatedAt, UpdatedAt: updatedAt}}},
+		prFetch:  map[int]*github.PR{prNumber: {Number: prNumber, Title: "state write failure", Body: "body"}},
+	}
+	runner := &decisionCapturingRunner{capturedRequest: &capturedRequest{}, body: body}
+	poster := &fakeCommentPoster{}
+	d1, dir, worktreeDir := newReviewLaunchTestDaemon(t, gh, runner, newReviewLaunchTestConfig())
+	d1.CommentPoster = poster
+	triggerKey := reviewTriggerKey(gh.comments[prNumber][0])
+	branch := reviewBranchName(prNumber, triggerKey)
+	stageReviewWorktree(t, worktreeDir, branch)
+
+	previousSave := reviewStateSave
+	reviewStateSave = func(*ReviewStateStore) error { return errors.New("review state unavailable") }
+	t.Cleanup(func() { reviewStateSave = previousSave })
+	ctx, cancel := context.WithCancel(context.Background())
+	d1.persistDecision = func(path string, decision []byte) error {
+		err := atomicfs.WriteAtomic(path, decision, 0644)
+		cancel()
+		return err
+	}
+	tickAndWait(t, d1, ctx)
+
+	if runner.Calls() != 1 || poster.Calls() != 0 {
+		t.Fatalf("cancelled run calls = (runner %d, poster %d), want (1, 0)", runner.Calls(), poster.Calls())
+	}
+	if _, ok := d1.peekPendingPost(prNumber, triggerKey); !ok {
+		t.Fatalf("same-process pending entry missing after state write failure")
+	}
+
+	// The marker is the restart-discoverable index when review-state.json
+	// could not be written. Restore normal state persistence before the
+	// recovery daemon starts so it can complete the transition to success.
+	reviewStateSave = previousSave
+	d2 := New(dir, gh, d1.Prompts, runner, d1.Config, &lockedBuffer{}, 0, false, poster)
+	d2.PollInterval = 0
+	d2.postBackoffs = []time.Duration{0, 0, 0, 0, 0}
+	d2.launchBackoff = func(int) time.Duration { return 0 }
+	if _, ok := d2.peekPendingPost(prNumber, triggerKey); !ok {
+		t.Fatalf("restart should discover marker-backed pending publication")
+	}
+
+	tickAndWait(t, d2, context.Background())
+	if runner.Calls() != 1 {
+		t.Fatalf("marker recovery RunBatch calls = %d, want 1", runner.Calls())
+	}
+	if poster.Calls() != 1 {
+		t.Fatalf("marker recovery PostComment calls = %d, want 1", poster.Calls())
+	}
+}
+
 func TestDaemon_RestartRehydratesDurableDecisionAfterCleanup(t *testing.T) {
 	const (
 		prNumber  = 2472

@@ -156,6 +156,14 @@ type pendingPostEntry struct {
 	since       time.Time // when the trigger entered `pending` on disk
 }
 
+const pendingPublicationMarkerName = "pending-publication.json"
+
+type pendingPublicationMarker struct {
+	PR        int       `json:"pr"`
+	CommentID string    `json:"comment_id"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
 // Daemon polls the repo for /sandman review comments and launches review
 // agents up to the configured parallel_reviews limit.
 type Daemon struct {
@@ -605,6 +613,19 @@ func readReviewRowID(runsDir string) (string, error) {
 	return manifest.RunID, nil
 }
 
+func (d *Daemon) decisionSourceDir(prNumber int, commentID, runDir string) (string, bool) {
+	decisionDir := runDir
+	if info, statErr := os.Stat(filepath.Join(decisionDir, "decision.md")); statErr == nil && info.Mode().IsRegular() {
+		return decisionDir, true
+	}
+	worktreePath := d.reviewWorktreePath(prNumber, commentID)
+	info, err := os.Stat(filepath.Join(worktreePath, "decision.md"))
+	if err != nil || !info.Mode().IsRegular() {
+		return "", false
+	}
+	return worktreePath, true
+}
+
 // InvalidateSeenCache forces a rebuild of the seen cache by re-running
 // the on-disk scan. Callers use this when an out-of-band change to
 // .sandman/batches.json or a review-state.json is observed (e.g. via
@@ -682,15 +703,39 @@ func (d *Daemon) loadPendingPosts() error {
 			continue
 		}
 		runDir := filepath.Join(entry.Path, "runs", rowID)
-		state, err := seenStateReader(runDir)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
+		reviewState := filepath.Join(runDir, "review-state.json")
+		state, stateErr := seenStateReader(runDir)
+		marker, markerErr := readPendingPublicationMarker(runDir)
+		if markerErr == nil && marker.PR == entry.PR {
+			terminal := false
+			if stateErr == nil {
+				for _, sc := range state.SeenComments {
+					if sc.CommentID == marker.CommentID && shouldSkipDedupStatus(sc.Status) {
+						terminal = true
+						break
+					}
+				}
 			}
-			d.logf("read review state %s: %v", runDir, err)
+			if !terminal {
+				if decisionDir, ok := d.decisionSourceDir(entry.PR, marker.CommentID, runDir); ok {
+					if _, ok := d.pendingPost[entry.PR]; !ok {
+						d.pendingPost[entry.PR] = map[string]pendingPostEntry{}
+					}
+					d.pendingPost[entry.PR][marker.CommentID] = pendingPostEntry{
+						commentID:   marker.CommentID,
+						runDir:      decisionDir,
+						reviewState: reviewState,
+						since:       marker.Timestamp,
+					}
+				}
+			}
+		}
+		if stateErr != nil {
+			if !os.IsNotExist(stateErr) && markerErr != nil {
+				d.logf("read review state %s: %v", runDir, stateErr)
+			}
 			continue
 		}
-		reviewState := filepath.Join(runDir, "review-state.json")
 		for _, sc := range state.SeenComments {
 			if sc.Status != "pending" {
 				continue
@@ -699,20 +744,9 @@ func (d *Daemon) loadPendingPosts() error {
 			// cleaned after launchReview returns. Fall back to the
 			// worktree for older pending rows and for rows whose durable
 			// copy could not be written.
-			worktreePath := d.reviewWorktreePath(entry.PR, sc.CommentID)
-			decisionDir := runDir
-			if info, statErr := os.Stat(filepath.Join(decisionDir, "decision.md")); statErr != nil || !info.Mode().IsRegular() {
-				info, worktreeErr := os.Stat(filepath.Join(worktreePath, "decision.md"))
-				if worktreeErr != nil {
-					if !os.IsNotExist(worktreeErr) {
-						d.logf("stat %s: %v", filepath.Join(worktreePath, "decision.md"), worktreeErr)
-					}
-					continue
-				}
-				if !info.Mode().IsRegular() {
-					continue
-				}
-				decisionDir = worktreePath
+			decisionDir, ok := d.decisionSourceDir(entry.PR, sc.CommentID, runDir)
+			if !ok {
+				continue
 			}
 			if _, ok := d.pendingPost[entry.PR]; !ok {
 				d.pendingPost[entry.PR] = map[string]pendingPostEntry{}
@@ -2071,12 +2105,56 @@ func (d *Daemon) persistDecisionFile(path string, body []byte) error {
 	return atomicfs.WriteAtomic(path, body, 0644)
 }
 
+func pendingPublicationMarkerPath(reviewRunFolder string) string {
+	return filepath.Join(reviewRunFolder, pendingPublicationMarkerName)
+}
+
+func writePendingPublicationMarker(reviewRunFolder string, marker pendingPublicationMarker) error {
+	if strings.TrimSpace(reviewRunFolder) == "" {
+		return errors.New("empty review run folder")
+	}
+	return atomicfs.WriteAtomicJSON(pendingPublicationMarkerPath(reviewRunFolder), marker, 0644)
+}
+
+func readPendingPublicationMarker(reviewRunFolder string) (pendingPublicationMarker, error) {
+	data, err := os.ReadFile(pendingPublicationMarkerPath(reviewRunFolder))
+	if err != nil {
+		return pendingPublicationMarker{}, err
+	}
+	var marker pendingPublicationMarker
+	if err := json.Unmarshal(data, &marker); err != nil {
+		return pendingPublicationMarker{}, fmt.Errorf("decode pending publication marker: %w", err)
+	}
+	if marker.PR <= 0 || strings.TrimSpace(marker.CommentID) == "" {
+		return pendingPublicationMarker{}, errors.New("invalid pending publication marker")
+	}
+	return marker, nil
+}
+
+func removePendingPublicationMarker(reviewRunFolder string) error {
+	err := os.Remove(pendingPublicationMarkerPath(reviewRunFolder))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
 // recordPendingPublication persists the retryable review-state transition
 // and registers the source for same-process rehydration. The caller invokes
 // it only after decisionDir contains a durable decision. If state persistence
 // fails, retain the worktree as an additional recovery source rather than
 // allowing cleanup to remove it.
 func (d *Daemon) recordPendingPublication(prNumber int, commentID, decisionDir, reviewRunFolder string, state *ReviewStateStore, preserveWorktree *bool) {
+	if err := writePendingPublicationMarker(reviewRunFolder, pendingPublicationMarker{
+		PR:        prNumber,
+		CommentID: commentID,
+		Timestamp: d.now(),
+	}); err != nil {
+		d.logf("PR #%d: write pending publication marker: %v", prNumber, err)
+		if preserveWorktree != nil {
+			*preserveWorktree = true
+		}
+	}
 	if state != nil {
 		if err := state.MarkSeen(commentID, "pending"); err != nil {
 			d.logf("PR #%d: mark %s pending: %v", prNumber, commentID, err)
@@ -2248,6 +2326,9 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 	if err := store.MarkSeen(triggerKey, "success"); err != nil {
 		d.logf("PR #%d comment %s: MarkSeen(success) failed in rehydrate branch: %v; keeping entry (issue #1847)", prNumber, comment.ID, err)
 		return true
+	}
+	if err := removePendingPublicationMarker(filepath.Dir(entry.reviewState)); err != nil {
+		d.logf("PR #%d comment %s: remove pending publication marker: %v", prNumber, comment.ID, err)
 	}
 
 	// Drop the entry from pendingPost under the dedicated mutex.
