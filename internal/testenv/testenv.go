@@ -51,6 +51,7 @@ const (
 	E2EScenarioBaseBranchFeature = "base_branch_feature"
 	E2EScenarioReviewDaemon      = "review_daemon"
 	E2EScenarioLifecycleCommands = "lifecycle_commands"
+	E2EScenarioReviewWait        = "review_wait"
 )
 
 // Canonical env var names.
@@ -86,7 +87,7 @@ func ResolveTestModel(agent, defaultModel string) string {
 // allE2EScenarios is the canonical list of stable scenario identifiers
 // accepted by SANDMAN_E2E_GATES. Adding a new scenario requires editing
 // this list and exporting a new E2EScenario* constant.
-var allE2EScenarios = []string{E2EScenarioBatch, E2EScenarioContinueMulti, E2EScenarioOpencodeSubagent, E2EScenarioBadge, E2EScenarioPathlen, E2EScenarioBatchIDRules, E2EScenarioPresetMatrix, E2EScenarioBaseBranchFeature, E2EScenarioReviewDaemon, E2EScenarioLifecycleCommands}
+var allE2EScenarios = []string{E2EScenarioBatch, E2EScenarioContinueMulti, E2EScenarioOpencodeSubagent, E2EScenarioBadge, E2EScenarioPathlen, E2EScenarioBatchIDRules, E2EScenarioPresetMatrix, E2EScenarioBaseBranchFeature, E2EScenarioReviewDaemon, E2EScenarioLifecycleCommands, E2EScenarioReviewWait}
 
 // ParseList parses a comma-separated allowlist. Semantics:
 //   - empty/whitespace raw returns nil (no filter)

@@ -2781,9 +2781,16 @@ loop:
 			taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
 			taskContent, _, _ := ReadTaskContent(taskPath)
 			alreadyResolved = hasExactTaskStatus(taskContent, "## Status: already resolved")
-			if s.issueNumber > 0 && events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
+			if s.issueNumber > 0 && !(alreadyResolved && s.mode != ModeContinue) && events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
 				hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
-				if gateStatus, extras, handled := s.handleLifecycleDecisionAfterAgent(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled && gateStatus != "success" {
+				if gateStatus, extras, handled := s.handleLifecycleDecisionAfterAgent(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled {
+					if gateStatus == "success" || gateStatus == "failure" || gateStatus == "aborted" {
+						// A terminal lifecycle decision is authoritative. Do not
+						// let the legacy post-decision PR arbitration replace it.
+						result.Status = gateStatus
+						terminalExtras = mergeBlockerExtras(terminalExtras, extras)
+						break loop
+					}
 					gate, _ := extras["gate"].(string)
 					observe := gateStatus == "await" && (gate != gateReadyToMerge && gate != gateActionableFeedback || s.resumeCount >= s.resumeCapFor())
 					observe = observe || gateStatus == "resume" && s.resumeCount >= s.resumeCapFor()
