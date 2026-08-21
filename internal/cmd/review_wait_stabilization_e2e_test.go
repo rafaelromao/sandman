@@ -100,6 +100,7 @@ func runReviewWaitScenario(t *testing.T, binPath string, cancelPending bool) {
 		t.Fatalf("sandman run exited during foreground wait: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 	default:
 	}
+	assertReviewWaitRemainsPending(t, eventsPath, repoDir, portalURL, done)
 
 	if cancelPending {
 		status, body := writeAbortRequest(t, portalURL, pendingRun.Key, 42)
@@ -113,6 +114,12 @@ func runReviewWaitScenario(t *testing.T, binPath string, cancelPending bool) {
 			}
 		case <-time.After(20 * time.Second):
 			t.Fatal("canceled sandman run did not exit")
+		}
+		terminalRun := waitForPortalRun(t, portalURL, 42, func(run portalRun) bool {
+			return run.Status == "aborted" && run.FinishedAt != nil
+		})
+		if terminalRun.FinishedAt == nil {
+			t.Fatal("canceled portal row has no terminal timestamp")
 		}
 		logs = readReviewWaitEvents(t, eventsPath)
 		if countReviewWaitEvents(logs, 42, "run.aborted") != 1 {
@@ -140,6 +147,12 @@ func runReviewWaitScenario(t *testing.T, binPath string, cancelPending bool) {
 	case <-time.After(150 * time.Second):
 		t.Fatal("sandman run did not finish after pull-request resolution")
 	}
+	terminalRun := waitForPortalRun(t, portalURL, 42, func(run portalRun) bool {
+		return run.Status == "success" && run.FinishedAt != nil
+	})
+	if terminalRun.FinishedAt == nil {
+		t.Fatal("merged portal row has no terminal timestamp")
+	}
 	logs = readReviewWaitEvents(t, eventsPath)
 	if countReviewWaitEvents(logs, 42, "run.finished") != 1 {
 		t.Fatalf("merged parent finished events = %d, want 1", countReviewWaitEvents(logs, 42, "run.finished"))
@@ -149,6 +162,35 @@ func runReviewWaitScenario(t *testing.T, binPath string, cancelPending bool) {
 	}
 	if countReviewWaitEvents(logs, 43, "run.started") != 1 {
 		t.Fatalf("dependent started events = %d, want 1 after parent completion", countReviewWaitEvents(logs, 43, "run.started"))
+	}
+}
+
+func assertReviewWaitRemainsPending(t *testing.T, eventsPath, repoDir, portalURL string, done <-chan error) {
+	t.Helper()
+	deadline := time.Now().Add(1500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-done:
+			t.Fatalf("sandman run exited before idle-timeout observation completed: %v", err)
+		default:
+		}
+		logs := readReviewWaitEvents(t, eventsPath)
+		for _, eventType := range []string{"run.idle_timeout", "run.retry", "run.finished", "run.aborted"} {
+			if got := countReviewWaitEvents(logs, 42, eventType); got != 0 {
+				t.Fatalf("pending parent %s events = %d during idle-timeout observation, want 0", eventType, got)
+			}
+		}
+		sockets, _ := filepath.Glob(filepath.Join(repoDir, ".sandman", "batches", "*", "batch.sock"))
+		if len(sockets) == 0 {
+			t.Fatal("batch socket disappeared during foreground observation")
+		}
+		run := waitForPortalRun(t, portalURL, 42, func(run portalRun) bool {
+			return run.Status == "running" && run.FinishedAt == nil
+		})
+		if run.LastOutputAt == nil || time.Since(*run.LastOutputAt) > 5*time.Second {
+			t.Fatalf("portal marked foreground wait stale: lastOutputAt=%v", run.LastOutputAt)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 

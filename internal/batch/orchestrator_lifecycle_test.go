@@ -18,15 +18,22 @@ import (
 type immutableMergedLookupClient struct {
 	*fakeGitHubClient
 	merged      *github.PR
+	legacy      *github.PR
 	legacyErr   error
 	mergedCalls int
 	calls       int
+	legacyCalls int
 }
 
 func (c *immutableMergedLookupClient) FindPRByBranch(context.Context, string) (*github.PR, error) {
 	c.calls++
 	if c.calls <= c.mergedCalls {
 		copy := *c.merged
+		return &copy, nil
+	}
+	c.legacyCalls++
+	if c.legacy != nil {
+		copy := *c.legacy
 		return &copy, nil
 	}
 	return nil, c.legacyErr
@@ -560,7 +567,7 @@ func TestLifecycle_FreshRunKeepsVerifiedMergeBeforeLegacyArbitration(t *testing.
 		fakeGitHubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}}},
 		merged:           &github.PR{Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha"},
 		mergedCalls:      2,
-		legacyErr:        errors.New("legacy lookup unavailable"),
+		legacy:           &github.PR{Number: 17, State: "open", Body: "Refs #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
 	}
 	o := NewOrchestrator(client, &retryRenderer{result: "rendered prompt"}, nil, eventLog,
 		WithErrorLog(io.Discard), WithSandboxFactory(sbFactory), WithRunnableFactory(factory), WithRunSessionOpts(gateTestRunOptions()))
@@ -579,6 +586,9 @@ func TestLifecycle_FreshRunKeepsVerifiedMergeBeforeLegacyArbitration(t *testing.
 	}
 	if client.calls != 2 {
 		t.Fatalf("PR lookups = %d, want closing guard plus lifecycle authority only", client.calls)
+	}
+	if client.legacyCalls != 0 {
+		t.Fatalf("legacy PR observations = %d, want 0", client.legacyCalls)
 	}
 	if len(factory.created) != 1 {
 		t.Fatalf("agent launches = %d, want 1", len(factory.created))
@@ -625,7 +635,7 @@ func TestLifecycle_FreshRunKeepsMergedFailureBeforeLegacyArbitration(t *testing.
 		fakeGitHubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}}},
 		merged:           &github.PR{Number: 17, State: "merged", Merged: true, Body: "Refs #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha"},
 		mergedCalls:      2,
-		legacyErr:        errors.New("legacy lookup unavailable"),
+		legacy:           &github.PR{Number: 17, State: "open", Body: "Closes #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
 	}
 	o := NewOrchestrator(client, &retryRenderer{result: "rendered prompt"}, nil, eventLog,
 		WithErrorLog(io.Discard), WithSandboxFactory(sbFactory), WithRunnableFactory(factory), WithRunSessionOpts(gateTestRunOptions()))
@@ -644,6 +654,9 @@ func TestLifecycle_FreshRunKeepsMergedFailureBeforeLegacyArbitration(t *testing.
 	}
 	if client.calls != 2 {
 		t.Fatalf("PR lookups = %d, want closing guard plus lifecycle authority only", client.calls)
+	}
+	if client.legacyCalls != 0 {
+		t.Fatalf("legacy PR observations = %d, want 0", client.legacyCalls)
 	}
 	if len(factory.created) != 1 {
 		t.Fatalf("agent launches = %d, want 1", len(factory.created))
