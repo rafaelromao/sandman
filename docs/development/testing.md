@@ -146,6 +146,7 @@ Some expensive scenarios run without a build tag and are selected with `SANDMAN_
 | `base_branch_feature` | `internal/batch` | `TestRunBatch_BaseBranchFeature_CutsWorktreeFromFeatureBranch` |
 | `review_daemon` | `internal/cmd` | `TestReviewDaemonE2E_RealAgentInContainer` |
 | `lifecycle_commands` | `internal/cmd` | `TestLifecycle_*` |
+| `review_wait` | `internal/cmd` | `TestReviewWaitStabilization_*` |
 
 ```bash
 # Single scenario
