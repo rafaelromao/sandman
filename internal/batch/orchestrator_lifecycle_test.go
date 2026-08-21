@@ -17,14 +17,15 @@ import (
 
 type immutableMergedLookupClient struct {
 	*fakeGitHubClient
-	merged    *github.PR
-	legacyErr error
-	calls     int
+	merged      *github.PR
+	legacyErr   error
+	mergedCalls int
+	calls       int
 }
 
 func (c *immutableMergedLookupClient) FindPRByBranch(context.Context, string) (*github.PR, error) {
 	c.calls++
-	if c.calls == 1 {
+	if c.calls <= c.mergedCalls {
 		copy := *c.merged
 		return &copy, nil
 	}
@@ -523,6 +524,7 @@ func TestLifecycle_VerifiedMergedCompletionSurvivesLaterLegacyLookup(t *testing.
 	client := &immutableMergedLookupClient{
 		fakeGitHubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}}},
 		merged:           &github.PR{Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha"},
+		mergedCalls:      1,
 		legacyErr:        errors.New("legacy lookup unavailable"),
 	}
 	session := &runSession{
@@ -536,5 +538,131 @@ func TestLifecycle_VerifiedMergedCompletionSurvivesLaterLegacyLookup(t *testing.
 	}
 	if client.calls != 1 {
 		t.Fatalf("PR lookups = %d, want only the authoritative lifecycle snapshot", client.calls)
+	}
+}
+
+func TestLifecycle_FreshRunKeepsVerifiedMergeBeforeLegacyArbitration(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(workDir)
+	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0o755); err != nil {
+		t.Fatalf("create worktree task directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("# Task\n"), 0o644); err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+
+	sb := &retrySandbox{workDir: worktreePath}
+	sbFactory := &retrySandboxFactory{sandbox: sb}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
+	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success", Branch: gateTestBranch}}}
+	client := &immutableMergedLookupClient{
+		fakeGitHubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}}},
+		merged:           &github.PR{Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha"},
+		mergedCalls:      2,
+		legacyErr:        errors.New("legacy lookup unavailable"),
+	}
+	o := NewOrchestrator(client, &retryRenderer{result: "rendered prompt"}, nil, eventLog,
+		WithErrorLog(io.Discard), WithSandboxFactory(sbFactory), WithRunnableFactory(factory), WithRunSessionOpts(gateTestRunOptions()))
+	bc := BatchConfig{
+		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          0,
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
+		IssueNumber: 42, Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main",
+	})
+	if !started || result.Status != "success" {
+		t.Fatalf("result = (%t, %q), want started success", started, result.Status)
+	}
+	if client.calls != 2 {
+		t.Fatalf("PR lookups = %d, want closing guard plus lifecycle authority only", client.calls)
+	}
+	if len(factory.created) != 1 {
+		t.Fatalf("agent launches = %d, want 1", len(factory.created))
+	}
+	logs, err := eventLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if countEventsByType(logs, "run.finished") != 1 {
+		t.Fatalf("run.finished events = %d, want 1", countEventsByType(logs, "run.finished"))
+	}
+	for _, eventType := range []string{"run.await", "run.retry", "run.blocked"} {
+		if got := countEventsByType(logs, eventType); got != 0 {
+			t.Fatalf("%s events = %d, want 0", eventType, got)
+		}
+	}
+	finished := findEvent(logs, "run.finished")
+	if finished.Payload["status"] != "success" {
+		t.Fatalf("finished status = %v, want success", finished.Payload["status"])
+	}
+	for _, key := range []string{"completion", "gate", "blocker"} {
+		if _, ok := finished.Payload[key]; ok {
+			t.Fatalf("success payload carries %q: %#v", key, finished.Payload)
+		}
+	}
+}
+
+func TestLifecycle_FreshRunKeepsMergedFailureBeforeLegacyArbitration(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(workDir)
+	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0o755); err != nil {
+		t.Fatalf("create worktree task directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("# Task\n"), 0o644); err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+
+	sb := &retrySandbox{workDir: worktreePath}
+	sbFactory := &retrySandboxFactory{sandbox: sb}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
+	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success", Branch: gateTestBranch}}}
+	client := &immutableMergedLookupClient{
+		fakeGitHubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}}},
+		merged:           &github.PR{Number: 17, State: "merged", Merged: true, Body: "Refs #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha"},
+		mergedCalls:      2,
+		legacyErr:        errors.New("legacy lookup unavailable"),
+	}
+	o := NewOrchestrator(client, &retryRenderer{result: "rendered prompt"}, nil, eventLog,
+		WithErrorLog(io.Discard), WithSandboxFactory(sbFactory), WithRunnableFactory(factory), WithRunSessionOpts(gateTestRunOptions()))
+	bc := BatchConfig{
+		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          0,
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
+		IssueNumber: 42, Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main",
+	})
+	if !started || result.Status != "failure" {
+		t.Fatalf("result = (%t, %q), want started failure", started, result.Status)
+	}
+	if client.calls != 2 {
+		t.Fatalf("PR lookups = %d, want closing guard plus lifecycle authority only", client.calls)
+	}
+	if len(factory.created) != 1 {
+		t.Fatalf("agent launches = %d, want 1", len(factory.created))
+	}
+	logs, err := eventLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if countEventsByType(logs, "run.finished") != 1 {
+		t.Fatalf("run.finished events = %d, want 1", countEventsByType(logs, "run.finished"))
+	}
+	finished := findEvent(logs, "run.finished")
+	completion, ok := finished.Payload["completion"].(map[string]any)
+	if !ok || completion["reason"] != "merged-pr-missing-closing-reference" {
+		t.Fatalf("completion diagnostic = %#v, want merged-pr-missing-closing-reference", finished.Payload["completion"])
+	}
+	for _, eventType := range []string{"run.await", "run.retry", "run.blocked"} {
+		if got := countEventsByType(logs, eventType); got != 0 {
+			t.Fatalf("%s events = %d, want 0", eventType, got)
+		}
 	}
 }
