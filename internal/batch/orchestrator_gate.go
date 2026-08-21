@@ -165,10 +165,48 @@ func (s *runSession) retainedLifecycleEvidence(ctx context.Context, workDir stri
 	registration, err := readReviewRegistrationWithStore(s.reviewRegistrationStoreForRead(), canonicalPath, repository, pr, currentHead)
 	if err == nil {
 		diagnostic := reviewRegistrationDiagnostic(registration)
-		return retainedReviewEvidence{
+		evidence := retainedReviewEvidence{
 			present: true,
 			payload: map[string]any{"review_request": diagnostic["review_request"]},
 		}
+		artifacts, artifactErr := readReviewTimeoutArtifacts(workDir, repository, pr, currentHead)
+		if artifactErr != nil || artifacts == nil || !reviewRequestIdentityMatches(registration.Request, artifacts.Request) {
+			return evidence
+		}
+		handoff, handoffErr := reviewTimeoutHandoffFromArtifacts(artifacts, currentHead)
+		if handoffErr != nil || handoff == nil {
+			return evidence
+		}
+		if !reviewEvidenceWithinCanonicalDeadline(handoff, registration.Request) {
+			return evidence
+		}
+		evidence.actionable = handoff.hasActionableFeedback()
+		switch {
+		case evidence.actionable:
+			evidence.payload = handoff.payloadFor(gateActionableFeedback, actionableFeedbackReason, actionableFeedbackNextAction)
+		case handoff.Classification != nil:
+			evidence.informalFeedback = handoff.Classification.informalFeedbackEvidenceFor(handoff.Request, handoff.Classification.WindowEnd)
+			if len(evidence.informalFeedback) > 0 {
+				evidence.payload = handoff.payloadFor(gateActionableFeedback, informalFeedbackReason, informalFeedbackNextAction)
+				if request, ok := evidence.payload["review_request"].(map[string]any); ok {
+					request["informal_feedback"] = evidence.informalFeedback
+				}
+			} else {
+				return evidence
+			}
+		case handoff.Outcome == retainedReviewApproval:
+			// Canonical registration must not turn aggregate approval into a
+			// feedback resume. The live ready-to-merge gate remains the only
+			// approval path.
+			return evidence
+		default:
+			return evidence
+		}
+		if evidence.payload != nil {
+			evidence.payload["gate"] = gateActionableFeedback
+			evidence.payload["await"] = true
+		}
+		return evidence
 	}
 	if !isReviewRegistrationNotExist(err) {
 		if retainedEvidenceIsStale(err) {

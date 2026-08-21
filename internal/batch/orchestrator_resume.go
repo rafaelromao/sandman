@@ -106,7 +106,7 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 		result.Status = s.emitTerminal(ctx, runID, result, extras)
 		return result, true, true
 	}
-	if gateStatus != "await" {
+	if gateStatus != "await" && gateStatus != "resume" {
 		return AgentRunResult{}, false, false
 	}
 	gate, _ := extras["gate"].(string)
