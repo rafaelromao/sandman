@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/github"
 )
@@ -38,6 +39,11 @@ const (
 	lifecycleGateOther        lifecycleGate = "other"
 	lifecycleGateRetainedOnly lifecycleGate = "retained-only"
 )
+
+// errLifecycleObservationTestStop lets package tests bound a foreground wait
+// without turning it into cancellation. Production wait implementations never
+// return this sentinel.
+var errLifecycleObservationTestStop = errors.New("stop lifecycle observation for test")
 
 // retainedReviewEvidence is the set of facts the decision point can derive
 // from local retained review artifacts. The adapter currently uses the shape
@@ -246,6 +252,14 @@ func lifecycleFailureExtras(d lifecycleDecision, issueNumber int) map[string]any
 // the lifecycle decision point. It gathers live PR facts and retained review
 // evidence, while event and prompt writing remain adapter concerns.
 func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool) (string, map[string]any, bool) {
+	return s.handleLifecycleDecisionWithPublication(ctx, workDir, branch, logPath, runID, hostPathsReady, s.mode != ModeContinue)
+}
+
+func (s *runSession) handleLifecycleDecisionAfterAgent(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool) (string, map[string]any, bool) {
+	return s.handleLifecycleDecisionWithPublication(ctx, workDir, branch, logPath, runID, hostPathsReady, true)
+}
+
+func (s *runSession) handleLifecycleDecisionWithPublication(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady, awaitPublication bool) (string, map[string]any, bool) {
 	if s.deps.githubClient == nil {
 		return "", nil, false
 	}
@@ -293,6 +307,11 @@ func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branc
 	}
 
 	if gate == lifecycleGateNone {
+		if err == nil && pr == nil && awaitPublication && strings.TrimSpace(s.issueState) != "" && !strings.EqualFold(strings.TrimSpace(s.issueState), "closed") {
+			// PR publication can lag behind a clean agent exit. Keep the
+			// session foreground until the pull request becomes observable.
+			return "await", map[string]any{"gate": string(lifecycleGatePending), "await": true}, true
+		}
 		return "", nil, false
 	}
 	if refreshUnavailable {
@@ -413,4 +432,106 @@ func mergeLifecycleDiagnostics(extras, diagnostics map[string]any) map[string]an
 		extras[key] = merged
 	}
 	return extras
+}
+
+func (s *runSession) lifecyclePollIntervals(extras map[string]any) []time.Duration {
+	if len(s.opts.lifecyclePollPlan) > 0 {
+		valid := true
+		for _, interval := range s.opts.lifecyclePollPlan {
+			if interval < 0 {
+				valid = false
+				break
+			}
+		}
+		if valid {
+			return append([]time.Duration(nil), s.opts.lifecyclePollPlan...)
+		}
+	}
+	if request, ok := extras["review_request"].(map[string]any); ok {
+		if raw, ok := request["poll_plan"].([]int); ok && len(raw) > 0 {
+			plan := make([]time.Duration, 0, len(raw))
+			valid := true
+			for _, seconds := range raw {
+				if seconds < 0 {
+					valid = false
+					break
+				}
+				plan = append(plan, time.Duration(seconds)*time.Second)
+			}
+			if valid && len(plan) > 0 {
+				return plan
+			}
+		}
+		if raw, ok := request["poll_plan"].([]any); ok && len(raw) > 0 {
+			plan := make([]time.Duration, 0, len(raw))
+			valid := true
+			for _, value := range raw {
+				seconds, ok := value.(float64)
+				if !ok || seconds < 0 || seconds != float64(int(seconds)) {
+					valid = false
+					break
+				}
+				plan = append(plan, time.Duration(int(seconds))*time.Second)
+			}
+			if valid && len(plan) > 0 {
+				return plan
+			}
+		}
+	}
+	plan := make([]time.Duration, 0, len(implementationReviewPollPlan))
+	for _, seconds := range implementationReviewPollPlan {
+		plan = append(plan, time.Duration(seconds)*time.Second)
+	}
+	return plan
+}
+
+func (s *runSession) waitForLifecyclePoll(ctx context.Context, interval time.Duration) error {
+	if s.opts.lifecycleWait != nil {
+		return s.opts.lifecycleWait(ctx, interval)
+	}
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// observeLifecycle keeps a recoverable lifecycle decision in the foreground.
+// The final configured interval repeats after the initial plan. A resume-worthy
+// transition is returned to the caller so the existing bounded resume path can
+// relaunch without consuming an agent retry.
+func (s *runSession) observeLifecycle(ctx context.Context, workDir, branch, logPath, runID string, result AgentRunResult, extras map[string]any, hostPathsReady bool) (string, map[string]any, bool) {
+	plan := s.lifecyclePollIntervals(extras)
+	for index := 0; ; index++ {
+		interval := plan[len(plan)-1]
+		if index < len(plan) {
+			interval = plan[index]
+		}
+		if err := s.waitForLifecyclePoll(ctx, interval); err != nil {
+			if errors.Is(err, errLifecycleObservationTestStop) {
+				return "await", extras, true
+			}
+			return "aborted", nil, true
+		}
+		status, nextExtras, handled := s.handleLifecycleDecisionAfterAgent(ctx, workDir, branch, logPath, runID, hostPathsReady)
+		if !handled {
+			status = "await"
+			nextExtras = map[string]any{"gate": string(lifecycleGatePending), "await": true}
+		}
+		if status == "resume" {
+			status = "await"
+		}
+		if status == "await" {
+			gate, _ := nextExtras["gate"].(string)
+			if (gate == gateReadyToMerge || gate == gateActionableFeedback) && s.resumeCount < s.resumeCapFor() {
+				return status, nextExtras, true
+			}
+			s.emitAwait(ctx, runID, result, nextExtras)
+			continue
+		}
+		return status, nextExtras, true
+	}
 }

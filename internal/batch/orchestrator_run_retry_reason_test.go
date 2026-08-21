@@ -196,7 +196,13 @@ func TestRunSingle_EmitsRunRetryWithAgentStalledReason(t *testing.T) {
 		WithRunnableFactory(runFactory),
 		WithHeartbeatTickInterval(heartbeatTestTick),
 		WithErrorLog(io.Discard),
-		WithRunSessionOpts(runSessionOptions{killTimeout: 50 * time.Millisecond}),
+		WithRunSessionOpts(runSessionOptions{
+			killTimeout:       50 * time.Millisecond,
+			lifecyclePollPlan: []time.Duration{0},
+			lifecycleWait: func(context.Context, time.Duration) error {
+				return errLifecycleObservationTestStop
+			},
+		}),
 	)
 
 	bc := BatchConfig{

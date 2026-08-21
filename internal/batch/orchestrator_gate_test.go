@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/config"
@@ -2833,7 +2834,12 @@ func moveApprovalToAmbiguous(classification map[string]any, commit, headStatus s
 
 func gateTestRunOptions() runSessionOptions {
 	return runSessionOptions{
-		currentHead: func(string) (string, error) { return "current-sha", nil },
+		currentHead:         func(string) (string, error) { return "current-sha", nil },
+		lifecyclePollPlan:   []time.Duration{0},
+		foregroundLifecycle: true,
+		lifecycleWait: func(context.Context, time.Duration) error {
+			return errLifecycleObservationTestStop
+		},
 		// Leave ample room for race-enabled CI scheduling between scripted polls.
 	}
 }
@@ -3116,7 +3122,11 @@ func TestRunSingle_RestoresHostPathsBeforeExternalGateHeadCheck(t *testing.T) {
 				}
 				return "current-sha", nil
 			},
-			awaitResumeMax: 1,
+			awaitResumeMax:    1,
+			lifecyclePollPlan: []time.Duration{0},
+			lifecycleWait: func(context.Context, time.Duration) error {
+				return errLifecycleObservationTestStop
+			},
 		}),
 	)
 

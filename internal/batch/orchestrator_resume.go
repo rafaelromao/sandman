@@ -112,7 +112,29 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 	gate, _ := extras["gate"].(string)
 	if gate != gateReadyToMerge && gate != gateActionableFeedback {
 		result := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "await", Branch: branch, RetriesTotal: 1}
-		result.Status = s.emitAwait(ctx, runID, result, extras)
+		if !s.opts.foregroundLifecycle {
+			result.Status = s.emitAwait(ctx, runID, result, extras)
+			return result, true, true
+		}
+		s.emitAwait(ctx, runID, result, extras)
+		gateStatus, nextExtras, handled := s.observeLifecycle(ctx, wt.WorkDir(), branch, logPath, runID, result, extras, hostPathsReady)
+		if !handled {
+			return AgentRunResult{}, false, false
+		}
+		if gateStatus == "await" || gateStatus == "resume" {
+			gate, _ = nextExtras["gate"].(string)
+			if gate == gateReadyToMerge || gate == gateActionableFeedback {
+				evidence := s.resumeEvidenceFor(ctx, branch, nextExtras)
+				taskContent, _, _ := ReadTaskContent(filepath.Join(wt.WorkDir(), ".sandman", "task.md"))
+				s.renderCfg.TaskPrompt = s.resumePromptFor(taskContent, evidence, s.renderCfg.ReviewTimeout)
+				return AgentRunResult{}, false, false
+			}
+		}
+		result.Status = gateStatus
+		if gateStatus == "await" {
+			return result, true, true
+		}
+		result.Status = s.emitTerminal(ctx, runID, result, nextExtras)
 		return result, true, true
 	}
 	evidence := s.resumeEvidenceFor(ctx, branch, extras)
