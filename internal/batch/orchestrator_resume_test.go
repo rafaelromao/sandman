@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/events"
 
@@ -49,6 +50,12 @@ func TestRunSingle_ModeContinueCIFailureReEvaluatesToAwait(t *testing.T) {
 		eventLog:        spyLog,
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
+		runSessionOpts: runSessionOptions{
+			lifecyclePollPlan: []time.Duration{0},
+			lifecycleWait: func(context.Context, time.Duration) error {
+				return errLifecycleObservationTestStop
+			},
+		},
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
@@ -182,7 +189,11 @@ func TestEntryReevaluation_ModeContinuePendingGateAwaitsImmediately(t *testing.T
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
-			currentHead: func(string) (string, error) { return "current-sha", nil },
+			currentHead:       func(string) (string, error) { return "current-sha", nil },
+			lifecyclePollPlan: []time.Duration{0},
+			lifecycleWait: func(context.Context, time.Duration) error {
+				return errLifecycleObservationTestStop
+			},
 		},
 	}
 
@@ -258,8 +269,12 @@ func TestEntryReevaluation_ModeContinueReadyToMergeResumesAgentWithEvidence(t *t
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
-			currentHead:    func(string) (string, error) { return "current-sha", nil },
-			awaitResumeMax: 1,
+			currentHead:       func(string) (string, error) { return "current-sha", nil },
+			awaitResumeMax:    1,
+			lifecyclePollPlan: []time.Duration{0},
+			lifecycleWait: func(context.Context, time.Duration) error {
+				return errLifecycleObservationTestStop
+			},
 		},
 	}
 
@@ -338,8 +353,12 @@ func TestRunSingle_ReadyToMergeResumesWithinSameAttempt(t *testing.T) {
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
-			currentHead:    func(string) (string, error) { return "current-sha", nil },
-			awaitResumeMax: 1,
+			currentHead:       func(string) (string, error) { return "current-sha", nil },
+			awaitResumeMax:    1,
+			lifecyclePollPlan: []time.Duration{0},
+			lifecycleWait: func(context.Context, time.Duration) error {
+				return errLifecycleObservationTestStop
+			},
 		},
 	}
 
@@ -416,6 +435,7 @@ func TestRunSingle_GatePollTransitionToReadyResumesAgent(t *testing.T) {
 		prs:    map[string]*github.PR{branch: pendingPR},
 	}
 	lookups := 0
+	waits := 0
 	client.findPRHook = func() {
 		lookups++
 		if lookups >= 2 {
@@ -437,8 +457,16 @@ func TestRunSingle_GatePollTransitionToReadyResumesAgent(t *testing.T) {
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
-			currentHead:    func(string) (string, error) { return "current-sha", nil },
-			awaitResumeMax: 1,
+			currentHead:       func(string) (string, error) { return "current-sha", nil },
+			awaitResumeMax:    1,
+			lifecyclePollPlan: []time.Duration{0},
+			lifecycleWait: func(context.Context, time.Duration) error {
+				waits++
+				if waits == 1 {
+					return nil
+				}
+				return errLifecycleObservationTestStop
+			},
 		},
 	}
 
@@ -505,7 +533,11 @@ func TestRunSingle_PendingGateBudgetExhaustionAwaitsWithoutResume(t *testing.T) 
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
-			currentHead: func(string) (string, error) { return "current-sha", nil },
+			currentHead:       func(string) (string, error) { return "current-sha", nil },
+			lifecyclePollPlan: []time.Duration{0},
+			lifecycleWait: func(context.Context, time.Duration) error {
+				return errLifecycleObservationTestStop
+			},
 		},
 	}
 
@@ -587,8 +619,12 @@ func TestRunSingle_PendingGatePollFailureWithActionableFeedbackResumesAgent(t *t
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
-			currentHead:    func(string) (string, error) { return "current-sha", nil },
-			awaitResumeMax: 1,
+			currentHead:       func(string) (string, error) { return "current-sha", nil },
+			awaitResumeMax:    1,
+			lifecyclePollPlan: []time.Duration{0},
+			lifecycleWait: func(context.Context, time.Duration) error {
+				return errLifecycleObservationTestStop
+			},
 		},
 	}
 
@@ -663,8 +699,12 @@ func TestRunSingle_CIFailurePrecedesActionableEvidenceAwaitsAtEntry(t *testing.T
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
-			currentHead:    func(string) (string, error) { return "current-sha", nil },
-			awaitResumeMax: 1,
+			currentHead:       func(string) (string, error) { return "current-sha", nil },
+			awaitResumeMax:    1,
+			lifecyclePollPlan: []time.Duration{0},
+			lifecycleWait: func(context.Context, time.Duration) error {
+				return errLifecycleObservationTestStop
+			},
 		},
 	}
 
@@ -735,8 +775,12 @@ func TestEntryReevaluation_ModeContinueInformalFeedbackResumesAgentWithEvidence(
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
-			currentHead:    func(string) (string, error) { return "current-sha", nil },
-			awaitResumeMax: 1,
+			currentHead:       func(string) (string, error) { return "current-sha", nil },
+			awaitResumeMax:    1,
+			lifecyclePollPlan: []time.Duration{0},
+			lifecycleWait: func(context.Context, time.Duration) error {
+				return errLifecycleObservationTestStop
+			},
 		},
 	}
 
@@ -825,8 +869,12 @@ func TestEntryReevaluation_ModeContinueBoilerplateInformalAwaitsImmediately(t *t
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
-			currentHead:    func(string) (string, error) { return "current-sha", nil },
-			awaitResumeMax: 1,
+			currentHead:       func(string) (string, error) { return "current-sha", nil },
+			awaitResumeMax:    1,
+			lifecyclePollPlan: []time.Duration{0},
+			lifecycleWait: func(context.Context, time.Duration) error {
+				return errLifecycleObservationTestStop
+			},
 		},
 	}
 
@@ -903,8 +951,12 @@ func TestRunSingle_InformalFeedbackResumesWithinSameAttempt(t *testing.T) {
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
-			currentHead:    func(string) (string, error) { return "current-sha", nil },
-			awaitResumeMax: 1,
+			currentHead:       func(string) (string, error) { return "current-sha", nil },
+			awaitResumeMax:    1,
+			lifecyclePollPlan: []time.Duration{0},
+			lifecycleWait: func(context.Context, time.Duration) error {
+				return errLifecycleObservationTestStop
+			},
 		},
 	}
 
@@ -1027,7 +1079,11 @@ func TestRunSingle_FullLifecycleRequestsFeedbackThenApprovalThenMergeSuccess(t *
 			errorLog:        io.Discard,
 			runnableFactory: resultFactory,
 			runSessionOpts: runSessionOptions{
-				currentHead: func(string) (string, error) { return headForGate, nil },
+				currentHead:       func(string) (string, error) { return headForGate, nil },
+				lifecyclePollPlan: []time.Duration{0},
+				lifecycleWait: func(context.Context, time.Duration) error {
+					return errLifecycleObservationTestStop
+				},
 			},
 		}
 		cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}

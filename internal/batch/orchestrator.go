@@ -875,8 +875,9 @@ func NewOrchestrator(githubClient github.Client, renderer prompt.IssueRenderer, 
 		layout:        paths.NewLayout(&config.Config{}, root),
 		lookupGHToken: defaultLookupGHToken,
 		runSessionOpts: runSessionOptions{
-			baseBranchSyncMu: &sync.Mutex{},
-			taskWriter:       atomicfs.WriteAtomic,
+			baseBranchSyncMu:    &sync.Mutex{},
+			taskWriter:          atomicfs.WriteAtomic,
+			foregroundLifecycle: true,
 		},
 		badgeHooker:  nopBadgeHooker{},
 		coordinators: make(map[*batchCoordinator]struct{}),
@@ -1834,6 +1835,12 @@ type runSessionOptions struct {
 	retryReset                 func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error
 	killTimeout                time.Duration
 	currentHead                func(workDir string) (string, error)
+	// lifecyclePollPlan and lifecycleWait keep foreground lifecycle observation
+	// deterministic in tests. Production uses the implementation review plan
+	// and a context-aware timer when these hooks are unset.
+	lifecyclePollPlan   []time.Duration
+	lifecycleWait       func(context.Context, time.Duration) error
+	foregroundLifecycle bool
 	// awaitResumeMax bounds in-session agent relaunches triggered by a
 	// resume-worthy PR gate (ready-to-merge / actionable-feedback) within
 	// one session. Zero uses the default (3); when the cap is exhausted the
@@ -1857,6 +1864,7 @@ type runSession struct {
 
 	// Inputs captured from the runSingle / runPromptOnlySingle call site.
 	issueNumber                int
+	issueState                 string
 	cfg                        *config.Config
 	agentName                  string
 	agentCfg                   config.Agent
@@ -2776,6 +2784,16 @@ loop:
 			if s.issueNumber > 0 && events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
 				hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
 				if gateStatus, extras, handled := s.handleLifecycleDecision(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled && gateStatus != "success" {
+					gate, _ := extras["gate"].(string)
+					if gateStatus == "await" && (gate != gateReadyToMerge && gate != gateActionableFeedback || s.resumeCount >= s.resumeCapFor()) {
+						if !s.opts.foregroundLifecycle {
+							s.emitAwait(ctx, runID, result, extras)
+							result.Status = gateStatus
+							break loop
+						}
+						s.emitAwait(ctx, runID, result, extras)
+						gateStatus, extras, handled = s.observeLifecycle(ctx, wt.WorkDir(), branch, logPath, runID, result, extras, hostPathsReady)
+					}
 					if resumePrompt, resume := s.resumePromptFromGate(ctx, wt, branch, runID, extras); resume {
 						attemptRenderCfg.TaskPrompt = resumePrompt
 						continue relaunch
@@ -2941,6 +2959,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		s.emitEarlyFailure("fetch issue", s.branches[s.issueNumber], err)
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure"}, false
 	}
+	s.issueState = issue.State
 
 	branch := s.branches[s.issueNumber]
 	if branch == "" {
@@ -3205,10 +3224,10 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	}
 
 	// Await is a non-terminal state: emit run.await (not run.finished)
-	// and skip terminal cleanup. The run stays active and can be
-	// resumed later when the external gate resolves.
+	// and skip terminal cleanup. The observation loop emitted the initial
+	// await before waiting; the run stays active until the external gate
+	// resolves or the context is canceled.
 	if result.Status == "await" {
-		result.Status = s.emitAwait(ctx, runID, result, terminalExtras)
 		return result, true
 	}
 

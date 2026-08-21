@@ -292,6 +292,8 @@ func charNetIssueRetrySuccess(t *testing.T) (context.Context, Request, *Orchestr
 		}}),
 		WithRunSessionOpts(runSessionOptions{retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
 			return nil
+		}, lifecyclePollPlan: []time.Duration{0}, lifecycleWait: func(context.Context, time.Duration) error {
+			return errLifecycleObservationTestStop
 		}}),
 	)
 	req := Request{Issues: []int{42}, Retries: 2, RunTS: orchTestRunTS, RunShortID: orchTestRunShortID}
