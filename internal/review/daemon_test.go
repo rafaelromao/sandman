@@ -2210,6 +2210,9 @@ func TestDaemon_ContextCancellationPropagates(t *testing.T) {
 	cancel() // cancel ctx while RunBatch is blocking
 
 	waitIdle(t, d) // wait for goroutine to finish and release the slot
+	if d.hasPendingPost(1) {
+		t.Fatal("implementation-run cancellation before decision.md must not create publication recovery")
+	}
 }
 
 func TestDaemon_ClaimFailureSkipsComment(t *testing.T) {

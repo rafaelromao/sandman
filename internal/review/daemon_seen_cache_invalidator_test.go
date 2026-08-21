@@ -376,7 +376,7 @@ func TestDaemon_S3_FailedPost_FallsBackToPending(t *testing.T) {
 
 // TestDaemon_S3_CtxCancelDuringPost_StaysPending asserts the
 // ctx-cancel branch: when ctx is cancelled while PostComment is
-// in flight, the daemon does NOT call MarkSeen for the trigger.
+// in flight, the durable decision remains pending for rehydration.
 func TestDaemon_S3_CtxCancelDuringPost_StaysPending(t *testing.T) {
 	const prNumber = 4245
 
@@ -437,23 +437,15 @@ func TestDaemon_S3_CtxCancelDuringPost_StaysPending(t *testing.T) {
 
 	cancel()
 	close(release)
-	if err := d.WaitForIdle(tickCtx); err != nil && !errors.Is(err, context.Canceled) {
+	idleCtx, idleCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer idleCancel()
+	if err := d.WaitForIdle(idleCtx); err != nil {
 		t.Fatalf("WaitForIdle: %v", err)
 	}
 
 	statePath := locateReviewStatePath(t, dir)
 	if statePath == "" {
-		// AC-8 ("status stays pending") reads: no MarkSeen is
-		// recorded for the trigger when ctx is cancelled between
-		// RunBatch returning and the post step. Under S3 the
-		// launch goroutine does not pre-register a pending
-		// entry; absent a MarkSeen call, no row exists for
-		// c-s3-4 in review-state.json. The bounded-retry escape
-		// on the next tick picks the trigger up because the
-		// seen-cache has no terminal-seen record either. The
-		// file absence is the canonical "status stays pending"
-		// surface for the S3 architecture.
-		return
+		t.Fatal("review-state.json should persist pending publication after cancellation")
 	}
 	data, err := os.ReadFile(statePath)
 	if err != nil {
@@ -463,10 +455,26 @@ func TestDaemon_S3_CtxCancelDuringPost_StaysPending(t *testing.T) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		t.Fatalf("unmarshal review-state.json: %v", err)
 	}
+	foundPending := false
 	for _, sc := range state.SeenComments {
-		if sc.CommentID == "c-s3-4" {
-			t.Errorf("review-state.json must NOT record MarkSeen on ctx-cancel; got %s for c-s3-4", sc.Status)
+		if sc.CommentID == "c-s3-4" && sc.Status == "pending" {
+			foundPending = true
+			break
 		}
+	}
+	if !foundPending {
+		t.Fatalf("review-state.json missing pending status after ctx-cancel: %s", data)
+	}
+	if _, ok := d.peekPendingPost(prNumber, "c-s3-4"); !ok {
+		t.Fatal("pendingPost should retain the durable decision after ctx-cancel")
+	}
+
+	tickAndWait(t, d, context.Background())
+	if runner.Calls() != 1 {
+		t.Fatalf("rehydration should not relaunch reviewer, got %d RunBatch calls", runner.Calls())
+	}
+	if poster.Calls() != 2 {
+		t.Fatalf("rehydration should make one additional publication attempt, got %d calls", poster.Calls())
 	}
 }
 

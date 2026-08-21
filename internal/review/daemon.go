@@ -1368,16 +1368,12 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	// persists terminal-seen state on disk — this lets the slot pool
 	// fill across ticks as ADR-0034 §Per-PR slot table intended.
 	//
-	// Issue #1846 (S3) and #1849 (S6): launchReview is the SOLE
-	// writer to MarkSeen on the launch path, and the lazy-verify
-	// multi-cycle walker is gone. The goroutine's only failure
-	// surface is ctx-cancel between RunBatch returning and the post
-	// step recording terminal-seen state; in that case no MarkSeen
-	// was recorded, so the goroutine releases the claim and the
-	// next tick's processPR re-launches the trigger. All other
-	// errors (post-step failures, pre-batch errors) are already
-	// terminal-seen by the time the goroutine sees them, so the
-	// seen-cache short-circuit keeps the trigger from re-launching.
+	// Issue #1846 (S3) and #1849 (S6): launchReview owns the state
+	// transition on the launch path, and the lazy-verify multi-cycle
+	// walker is gone. Cancellation before a decision exists releases
+	// the claim so the next tick can launch again. Cancellation after
+	// durable decision persistence records pending publication, which
+	// keeps the trigger on the rehydrate path.
 	d.inFlight.Add(1)
 	go func() {
 		defer d.inFlight.Done()
@@ -1386,9 +1382,8 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		launchErr := d.launchReviewRevision(ctx, prNumber, focus, newest.key, comment.ID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs, state, priorReviewExists, priorReviewContext)
 		if launchErr != nil {
 			d.logf("launch review for PR #%d comment %s: %v", prNumber, comment.ID, launchErr)
-			// Ctx-cancel between RunBatch and the post step:
-			// no MarkSeen was recorded; release the claim so
-			// the next tick's processPR can re-launch.
+			// Ctx-cancel before a decision exists: no publication recovery is
+			// recorded, so release the claim and let the next tick re-launch.
 			if errors.Is(launchErr, context.Canceled) || errors.Is(launchErr, context.DeadlineExceeded) {
 				if persisted == nil {
 					state.Release(newest.key)
@@ -1508,9 +1503,8 @@ func (d *Daemon) reconcileCommentRevisionCache(prNumber int, commentID, key stri
 //     review, so the trigger should be retried)
 //   - superseded is treated as terminal (obsolete trigger, not in the terminal-status set PRD #1218 specified)
 //   - success is terminal (the review comment was published)
-//   - pending is retryable: the S4 rehydrate walker (issue #1847) is
-//     the only mechanism that observes pending entries from disk;
-//     no daemon code path writes "pending" anymore.
+//   - pending is retryable: the S4 rehydrate walker (issue #1847)
+//     observes pending entries from disk after interrupted publication.
 func shouldSkipDedupStatus(status string) bool {
 	return status == "success" || status == "superseded"
 }
@@ -1893,8 +1887,8 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 //     d.CommentPoster.PostComment(ctx, prNumber, redacted).
 //   - On successful post: MarkSeen("success"). The SeenCacheInvalidator
 //     hook fires MarkTerminalSeen, short-circuiting subsequent ticks.
-//   - On context cancellation while preparing/posting: leave status
-//     untouched and return the error so the next tick can retry.
+//   - On context cancellation before or during posting: record pending
+//     publication and return the error so rehydration can retry.
 //   - On a non-context post error after the transient retry budget:
 //     persist `pending` and register the decision source for the next
 //     tick or daemon restart without launching another reviewer.
@@ -1974,11 +1968,12 @@ func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, comm
 	}
 
 	// Honour ctx cancellation observed between RunBatch returning
-	// and the post step: do NOT call MarkSeen so the trigger
-	// stays in the prior on-disk state (the bounded-retry escape
-	// engages on a subsequent tick).
+	// and the post step. The decision is already durable, so retain
+	// it as a pending publication instead of allowing cleanup to
+	// make the trigger eligible for a second reviewer run.
 	if cerr := ctx.Err(); cerr != nil {
-		d.logf("PR #%d: ctx cancelled before post; leaving status untouched (issue #1846)", prNumber)
+		d.logf("PR #%d: ctx cancelled before post; retaining durable decision for publication recovery", prNumber)
+		d.recordPendingPublication(prNumber, commentID, decisionDir, reviewRunFolder, state, preserveWorktree)
 		return cerr
 	}
 
@@ -1986,7 +1981,8 @@ func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, comm
 	postErr := postWithRetry(ctx, d, prNumber, redacted)
 	if postErr != nil {
 		if cerr := ctx.Err(); cerr != nil {
-			d.logf("PR #%d: ctx cancelled during post; leaving status untouched (issue #1846)", prNumber)
+			d.logf("PR #%d: ctx cancelled during post; retaining durable decision for publication recovery", prNumber)
+			d.recordPendingPublication(prNumber, commentID, decisionDir, reviewRunFolder, state, preserveWorktree)
 			return cerr
 		}
 		// Post failed after the retry budget. Fall back to the
@@ -2002,12 +1998,7 @@ func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, comm
 		// MarkTerminalSeen because those represent "the agent did
 		// not produce a review", not "the post could not land".
 		d.logf("PR #%d: post failed after %d attempts (last err: %v); registering as pending for rehydrate (issue #1891)", prNumber, PostStepMaxAttempts, postErr)
-		if state != nil {
-			if markErr := state.MarkSeen(commentID, "pending"); markErr != nil {
-				d.logf("PR #%d: mark %s pending: %v", prNumber, commentID, markErr)
-			}
-		}
-		d.registerPendingPost(prNumber, commentID, decisionDir, reviewRunFolder)
+		d.recordPendingPublication(prNumber, commentID, decisionDir, reviewRunFolder, state, preserveWorktree)
 		return fmt.Errorf("post decision: %w", postErr)
 	}
 
@@ -2078,6 +2069,23 @@ func (d *Daemon) persistDecisionFile(path string, body []byte) error {
 		return d.persistDecision(path, body)
 	}
 	return atomicfs.WriteAtomic(path, body, 0644)
+}
+
+// recordPendingPublication persists the retryable review-state transition
+// and registers the source for same-process rehydration. The caller invokes
+// it only after decisionDir contains a durable decision. If state persistence
+// fails, retain the worktree as an additional recovery source rather than
+// allowing cleanup to remove it.
+func (d *Daemon) recordPendingPublication(prNumber int, commentID, decisionDir, reviewRunFolder string, state *ReviewStateStore, preserveWorktree *bool) {
+	if state != nil {
+		if err := state.MarkSeen(commentID, "pending"); err != nil {
+			d.logf("PR #%d: mark %s pending: %v", prNumber, commentID, err)
+			if preserveWorktree != nil {
+				*preserveWorktree = true
+			}
+		}
+	}
+	d.registerPendingPost(prNumber, commentID, decisionDir, reviewRunFolder)
 }
 
 // registerPendingPost registers (prNumber, commentID) in the

@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -9,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/atomicfs"
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/github"
 )
 
@@ -93,6 +96,194 @@ func TestDaemon_PostFailure_RehydratesDurableDecisionAfterCleanup(t *testing.T) 
 	}
 	if string(eventsAfter) != string(eventsBefore) {
 		t.Fatalf("publication recovery changed events.jsonl: before=%q after=%q", string(eventsBefore), string(eventsAfter))
+	}
+}
+
+func TestDaemon_CancelAfterDurableDecision_RehydratesSameProcess(t *testing.T) {
+	const (
+		prNumber  = 2475
+		commentID = "c-cancel-after-persist"
+		body      = "## Decision\n**APPROVED**\ncancelled publication\n"
+	)
+	updatedAt := mustParseTime(t, "2026-07-06T13:00:05Z")
+	gh := &fakeGH{
+		prs:      []github.PR{{Number: prNumber, State: "open"}},
+		comments: map[int][]github.PRComment{prNumber: {{ID: commentID, Body: "/sandman review", CreatedAt: updatedAt, UpdatedAt: updatedAt}}},
+		prFetch:  map[int]*github.PR{prNumber: {Number: prNumber, Title: "cancelled publication", Body: "body"}},
+	}
+	runner := &decisionCapturingRunner{capturedRequest: &capturedRequest{}, body: body}
+	poster := &fakeCommentPoster{}
+	d, dir, worktreeDir := newReviewLaunchTestDaemon(t, gh, runner, newReviewLaunchTestConfig())
+	d.CommentPoster = poster
+	triggerKey := reviewTriggerKey(gh.comments[prNumber][0])
+	branch := reviewBranchName(prNumber, triggerKey)
+	stageReviewWorktree(t, worktreeDir, branch)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d.persistDecision = func(path string, decision []byte) error {
+		err := atomicfs.WriteAtomic(path, decision, 0644)
+		cancel()
+		return err
+	}
+
+	tickAndWait(t, d, ctx)
+
+	statePath := locateReviewStatePath(t, dir)
+	stateBytes, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read pending review state: %v", err)
+	}
+	var state batchindex.ReviewState
+	if err := json.Unmarshal(stateBytes, &state); err != nil {
+		t.Fatalf("unmarshal pending review state: %v", err)
+	}
+	foundPending := false
+	for _, seen := range state.SeenComments {
+		if seen.CommentID == triggerKey && seen.Status == "pending" {
+			foundPending = true
+			break
+		}
+	}
+	if !foundPending {
+		t.Fatalf("review-state.json missing pending status for %s: %s", triggerKey, stateBytes)
+	}
+
+	batchID := findReviewBatchID(t, dir)
+	runID := findReviewRunID(t, dir)
+	runDecisionPath := filepath.Join(dir, "batches", batchID, "runs", runID, "decision.md")
+	if got, err := os.ReadFile(runDecisionPath); err != nil || string(got) != body {
+		t.Fatalf("durable decision = %q, err=%v; want %q", got, err, body)
+	}
+	entry, ok := d.peekPendingPost(prNumber, triggerKey)
+	if !ok {
+		t.Fatalf("pending publication entry missing for %s", triggerKey)
+	}
+	if entry.runDir != filepath.Dir(runDecisionPath) {
+		t.Fatalf("pending source = %q, want %q", entry.runDir, filepath.Dir(runDecisionPath))
+	}
+	if poster.Calls() != 0 {
+		t.Fatalf("cancelled publication should not post, got %d calls", poster.Calls())
+	}
+
+	tickAndWait(t, d, context.Background())
+	if runner.Calls() != 1 {
+		t.Fatalf("same-process recovery RunBatch calls = %d, want 1", runner.Calls())
+	}
+	if poster.Calls() != 1 {
+		t.Fatalf("same-process recovery PostComment calls = %d, want 1", poster.Calls())
+	}
+	if !d.IsTerminalSeen(prNumber, triggerKey) {
+		t.Fatal("same-process recovery should mark the trigger successful")
+	}
+}
+
+func TestDaemon_CancelAfterDurableDecision_RehydratesAfterRestart(t *testing.T) {
+	const (
+		prNumber  = 2476
+		commentID = "c-cancel-restart"
+		body      = "## Decision\n**CHANGES_REQUESTED**\nrestart cancellation\n"
+	)
+	updatedAt := mustParseTime(t, "2026-07-06T13:00:06Z")
+	gh := &fakeGH{
+		prs:      []github.PR{{Number: prNumber, State: "open"}},
+		comments: map[int][]github.PRComment{prNumber: {{ID: commentID, Body: "/sandman review", CreatedAt: updatedAt, UpdatedAt: updatedAt}}},
+		prFetch:  map[int]*github.PR{prNumber: {Number: prNumber, Title: "restart cancellation", Body: "body"}},
+	}
+	runner := &decisionCapturingRunner{capturedRequest: &capturedRequest{}, body: body}
+	poster := &fakeCommentPoster{}
+	d1, dir, worktreeDir := newReviewLaunchTestDaemon(t, gh, runner, newReviewLaunchTestConfig())
+	d1.CommentPoster = poster
+	triggerKey := reviewTriggerKey(gh.comments[prNumber][0])
+	stageReviewWorktree(t, worktreeDir, reviewBranchName(prNumber, triggerKey))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	d1.persistDecision = func(path string, decision []byte) error {
+		err := atomicfs.WriteAtomic(path, decision, 0644)
+		cancel()
+		return err
+	}
+	tickAndWait(t, d1, ctx)
+	cancel()
+
+	if runner.Calls() != 1 {
+		t.Fatalf("initial RunBatch calls = %d, want 1", runner.Calls())
+	}
+	if poster.Calls() != 0 {
+		t.Fatalf("cancelled publication should not post, got %d calls", poster.Calls())
+	}
+
+	d2 := New(dir, gh, d1.Prompts, runner, d1.Config, &lockedBuffer{}, 0, false, poster)
+	d2.PollInterval = 0
+	d2.postBackoffs = []time.Duration{0, 0, 0, 0, 0}
+	d2.launchBackoff = func(int) time.Duration { return 0 }
+	if entry, ok := d2.peekPendingPost(prNumber, triggerKey); !ok {
+		t.Fatalf("restart should rehydrate trigger %s", triggerKey)
+	} else if !strings.HasSuffix(entry.runDir, filepath.Join("runs", findReviewRunID(t, dir))) {
+		t.Fatalf("restart recovery source = %q, want durable run folder", entry.runDir)
+	}
+
+	tickAndWait(t, d2, context.Background())
+	if runner.Calls() != 1 {
+		t.Fatalf("restart recovery RunBatch calls = %d, want 1", runner.Calls())
+	}
+	if poster.Calls() != 1 {
+		t.Fatalf("restart recovery PostComment calls = %d, want 1", poster.Calls())
+	}
+	if !d2.IsTerminalSeen(prNumber, triggerKey) {
+		t.Fatal("restart recovery should mark the trigger successful")
+	}
+}
+
+func TestDaemon_CancelAfterDecisionPersistenceFailure_PreservesWorktree(t *testing.T) {
+	const (
+		prNumber  = 2477
+		commentID = "c-cancel-worktree-fallback"
+		body      = "## Decision\n**APPROVED**\nworktree fallback\n"
+	)
+	gh := &fakeGH{
+		prs:      []github.PR{{Number: prNumber, State: "open"}},
+		comments: map[int][]github.PRComment{prNumber: {{ID: commentID, Body: "/sandman review"}}},
+		prFetch:  map[int]*github.PR{prNumber: {Number: prNumber, Title: "worktree fallback", Body: "body"}},
+	}
+	runner := &decisionCapturingRunner{capturedRequest: &capturedRequest{}, body: body}
+	poster := &fakeCommentPoster{}
+	d1, dir, worktreeDir := newReviewLaunchTestDaemon(t, gh, runner, newReviewLaunchTestConfig())
+	d1.CommentPoster = poster
+	triggerKey := reviewTriggerKey(gh.comments[prNumber][0])
+	branch := reviewBranchName(prNumber, triggerKey)
+	stageReviewWorktree(t, worktreeDir, branch)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	d1.persistDecision = func(string, []byte) error {
+		cancel()
+		return errors.New("run folder unavailable")
+	}
+	tickAndWait(t, d1, ctx)
+
+	if !gitWorktreeHasBranch(t, worktreeDir, branch) {
+		t.Fatal("cancelled publication must preserve the worktree fallback")
+	}
+	if !gitBranchExists(t, branch) {
+		t.Fatal("cancelled publication must preserve the review branch fallback")
+	}
+	if entry, ok := d1.peekPendingPost(prNumber, triggerKey); !ok {
+		t.Fatalf("pending fallback entry missing for %s", triggerKey)
+	} else if entry.runDir != filepath.Join(worktreeDir, branch) {
+		t.Fatalf("fallback source = %q, want %q", entry.runDir, filepath.Join(worktreeDir, branch))
+	}
+
+	d2 := New(dir, gh, d1.Prompts, runner, d1.Config, &lockedBuffer{}, 0, false, poster)
+	d2.PollInterval = 0
+	d2.postBackoffs = []time.Duration{0, 0, 0, 0, 0}
+	d2.launchBackoff = func(int) time.Duration { return 0 }
+	tickAndWait(t, d2, context.Background())
+
+	if runner.Calls() != 1 {
+		t.Fatalf("fallback recovery RunBatch calls = %d, want 1", runner.Calls())
+	}
+	if poster.Calls() != 1 {
+		t.Fatalf("fallback recovery PostComment calls = %d, want 1", poster.Calls())
 	}
 }
 
