@@ -340,9 +340,10 @@ func (s *runSession) handleLifecycleDecisionWithPublication(ctx context.Context,
 		if ctx.Err() != nil {
 			return "aborted", nil, true
 		}
+		merged := pr != nil && (pr.Merged || strings.EqualFold(strings.TrimSpace(pr.State), "merged"))
 		mergeFacts = &mergedMergeFacts{
-			mergedWithClosingIntent: checkPRMergedForIssue(ctx, s.deps.githubClient, branch, s.issueNumber),
-			mergedWithoutClosingRef: mergedPRMissingClosingReference(ctx, s.deps.githubClient, branch, s.issueNumber),
+			mergedWithClosingIntent: merged && pr.ClosesIssue(s.issueNumber),
+			mergedWithoutClosingRef: merged && !pr.ClosesIssue(s.issueNumber),
 		}
 		decision = decideImplementationPRLifecycle(implementationPRFacts{
 			pr:         pr,

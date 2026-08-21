@@ -254,6 +254,54 @@ func TestSkillsDocumentation_DescribesAFKWorkflow(t *testing.T) {
 	}
 }
 
+func TestReviewLifecycleDocumentationDescribesForegroundV1(t *testing.T) {
+	docs := map[string][]string{
+		"monitoring.md": {
+			"foreground observation",
+			"capacity held",
+			"dependents remain queued",
+			"Explicit cancellation emits `run.aborted`",
+		},
+		"reviews.md": {
+			"foreground-active",
+			"current-request",
+			"diagnostics-only",
+		},
+		"configuration.md": {
+			"foreground lifecycle observation",
+			"final interval repeats",
+			"Dependents remain held",
+		},
+		"skills.md": {
+			"AFK foreground workflow",
+			"matching current-request evidence",
+			"durable publication state",
+		},
+	}
+	for name, required := range docs {
+		data, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "usage", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		text := string(data)
+		for _, phrase := range required {
+			if !strings.Contains(text, phrase) {
+				t.Errorf("%s must describe foreground v1 behavior with %q", name, phrase)
+			}
+		}
+		if strings.Contains(strings.ToLower(text), "external-gate") {
+			t.Errorf("%s must not describe the rejected terminal gate", name)
+		}
+	}
+
+	prReview := readSkillMarkdown(t)["pr-review/SKILL.md"]
+	for _, phrase := range []string{"foreground-active", "final interval repeats", "diagnostics-only", "aborted outcome"} {
+		if !strings.Contains(prReview, phrase) {
+			t.Errorf("pr-review skill must describe foreground v1 behavior with %q", phrase)
+		}
+	}
+}
+
 func TestSkills_AutonomousRecoveryLaddersRemainExplicit(t *testing.T) {
 	files := readSkillMarkdown(t)
 	checks := map[string][]string{

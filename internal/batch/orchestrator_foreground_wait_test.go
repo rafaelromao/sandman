@@ -251,6 +251,121 @@ func TestRunBatch_ExplicitAbortDuringForegroundWaitBlocksDependent(t *testing.T)
 	}
 }
 
+func TestRunBatch_ForegroundWaitRetainsCapacityForIndependentSibling(t *testing.T) {
+	parentWaiting := make(chan struct{})
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, State: "open", Title: "Parent"},
+			43: {Number: 43, State: "open", Title: "Dependent"},
+			44: {Number: 44, State: "open", Title: "Sibling"},
+		},
+		prs: map[string]*github.PR{
+			"42-parent":  {Number: 17, State: "open", Body: "Closes #42", HeadRefName: "42-parent", HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
+			"44-sibling": {Number: 18, State: "merged", Merged: true, Body: "Closes #44", HeadRefName: "44-sibling", HeadRefOid: "current-sha"},
+		},
+	}
+	results := &byIssueRunnableFactory{results: map[int]AgentRunResult{
+		42: {IssueNumber: 42, Status: "success", Branch: "42-parent"},
+		43: {IssueNumber: 43, Status: "success", Branch: "43-dependent"},
+		44: {IssueNumber: 44, Status: "success", Branch: "44-sibling"},
+	}}
+	log := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+		Agent:          "test-agent",
+		Sandbox:        "worktree",
+		WorktreeDir:    ".sandman/worktrees",
+		Git:            config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}},
+	}}, log,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+		WithRunnableFactory(results),
+		WithRunSessionOpts(runSessionOptions{
+			currentHead:         func(string) (string, error) { return "current-sha", nil },
+			lifecyclePollPlan:   []time.Duration{time.Hour},
+			foregroundLifecycle: true,
+			lifecycleWait: func(ctx context.Context, interval time.Duration) error {
+				select {
+				case <-parentWaiting:
+				default:
+					close(parentWaiting)
+				}
+				<-ctx.Done()
+				return ctx.Err()
+			},
+		}),
+	)
+
+	done := make(chan struct{})
+	var batchResult *Result
+	var batchErr error
+	go func() {
+		defer close(done)
+		batchResult, batchErr = o.RunBatch(context.Background(), Request{
+			Issues:       []int{42, 43, 44},
+			Dependencies: map[int][]int{43: {42}},
+			Parallel:     1,
+		})
+	}()
+	select {
+	case <-parentWaiting:
+	case <-time.After(2 * time.Second):
+		t.Fatal("parent did not enter foreground lifecycle wait")
+	}
+	logs := log.snapshot()
+	if got := countEventsByType(logs, "run.started"); got != 1 {
+		t.Fatalf("agent launches while parent waits = %d, want 1 occupied slot", got)
+	}
+	for _, issue := range []int{43, 44} {
+		queued := false
+		for _, event := range logs {
+			if event.Type == "run.queued" && event.Issue == issue {
+				queued = true
+				break
+			}
+		}
+		if !queued {
+			t.Fatalf("issue %d was not queued while the parent retained capacity", issue)
+		}
+	}
+	if err := o.AbortIssue(42); err != nil {
+		t.Fatalf("abort parent: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("batch did not finish after explicit abort")
+	}
+	if batchErr == nil || !errors.Is(batchErr, ErrAborted) {
+		t.Fatalf("batch error = %v, want ErrAborted", batchErr)
+	}
+	if batchResult == nil || len(batchResult.Runs) != 3 {
+		t.Fatalf("batch result = %#v, want three outcomes", batchResult)
+	}
+	for _, run := range batchResult.Runs {
+		want := "success"
+		if run.IssueNumber != 44 {
+			want = "aborted"
+		}
+		if run.Status != want {
+			t.Fatalf("issue %d status = %q, want %s", run.IssueNumber, run.Status, want)
+		}
+	}
+	logs = log.snapshot()
+	if countEventsByType(logs, "run.started") != 2 {
+		t.Fatalf("run.started events = %d, want parent then released sibling", countEventsByType(logs, "run.started"))
+	}
+	if countEventsByType(logs, "run.retry") != 0 {
+		t.Fatalf("run.retry events = %d, want 0", countEventsByType(logs, "run.retry"))
+	}
+	if countEventsByType(logs, "run.blocked") != 0 {
+		t.Fatalf("run.blocked events = %d, want 0", countEventsByType(logs, "run.blocked"))
+	}
+	if countEventsByType(logs, "run.aborted") != 2 {
+		t.Fatalf("run.aborted events = %d, want parent and dependent", countEventsByType(logs, "run.aborted"))
+	}
+}
+
 func TestRunExecutor_ResumeCapFallsBackToForegroundObservation(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
