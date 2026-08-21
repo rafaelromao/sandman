@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +14,22 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
+
+type immutableMergedLookupClient struct {
+	*fakeGitHubClient
+	merged    *github.PR
+	legacyErr error
+	calls     int
+}
+
+func (c *immutableMergedLookupClient) FindPRByBranch(context.Context, string) (*github.PR, error) {
+	c.calls++
+	if c.calls == 1 {
+		copy := *c.merged
+		return &copy, nil
+	}
+	return nil, c.legacyErr
+}
 
 // runLifecycleCaseForIssue runs one issue-driven session through the
 // production RunExecutor path with the given mode, mirroring
@@ -498,5 +515,26 @@ func TestLifecycle_MergedTerminalWritesNoExternalGateTaskSection(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLifecycle_VerifiedMergedCompletionSurvivesLaterLegacyLookup(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	client := &immutableMergedLookupClient{
+		fakeGitHubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}}},
+		merged:           &github.PR{Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha"},
+		legacyErr:        errors.New("legacy lookup unavailable"),
+	}
+	session := &runSession{
+		issueNumber: 42,
+		deps:        runDeps{githubClient: client, errorLog: io.Discard},
+		opts:        gateTestRunOptions(),
+	}
+	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	if !handled || status != "success" || extras != nil {
+		t.Fatalf("lifecycle result = (%q, %#v, %t), want immutable success", status, extras, handled)
+	}
+	if client.calls != 1 {
+		t.Fatalf("PR lookups = %d, want only the authoritative lifecycle snapshot", client.calls)
 	}
 }

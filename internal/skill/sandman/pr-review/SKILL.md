@@ -391,6 +391,15 @@ approval, and concrete-feedback rules remain owned by Step 6. The bundled
 `review-observe-v1.sh` observer returns a response whose body does not begin with `{{REVIEW_COMMAND}}` regardless of author; it excludes a top-level response only when that body begins with the configured prefix. Do not filter by author. Preserve observed response counts, and use only the active request's window in the classification.
 An envelope with `state:"unavailable"` is structured failure, never approval.
 
+The implementation run remains foreground-active while this request is
+pending. Its configured observation plan is followed through the absolute
+deadline, the final interval repeats, and the active run keeps its sandbox
+capacity while dependent work remains held. Only matching current-request
+evidence can select a resume. Stale, mismatched, malformed, or otherwise
+invalid evidence is diagnostics-only and leaves the wait active. Explicit
+cancellation selects the normal aborted outcome; it does not spend an agent
+retry or launch held dependent work.
+
 Before Step 6, retain the existing self-check: when `top > 0`, `reviews == 0`,
 and `inline == 0`, and no previous `{{REVIEW_COMMAND}}` request is already
 pending, run the same delivery check again immediately before you

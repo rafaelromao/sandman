@@ -35,6 +35,15 @@ reviewer AgentRun lifetime and lifecycle re-evaluation. Use
 `sandman config set review_timeout <seconds>` for repository policy or
 `sandman run --review-timeout <seconds>` for one run or continuation.
 
+While this request is active, the implementation AgentRun remains
+foreground-active through the absolute deadline. Sandman repeats the final
+observation interval, retains the AgentRun and sandbox capacity, and holds
+dependents rather than starting another attempt. Matching current-request
+feedback may resume the AgentRun; stale, mismatched, malformed, or invalid
+evidence is diagnostics-only and leaves observation active. Explicit
+cancellation produces the normal aborted outcome and does not launch a
+dependent.
+
 After a configured trigger is posted and confirmed for the current head, the
 implementor skill writes one request envelope under `.sandman/state/` and calls
 the versioned `review-wait-v1.sh` entry point. Re-entering with the same

@@ -141,7 +141,7 @@ Entry re-evaluation (session start) relaunches with the same evidence but is rec
 | Field | Description |
 |-------|-------------|
 | `reason` | Resume cause: `"feedback"` or `"approval"` |
-| `gate` | External-gate state that triggered the resume: `"actionable-feedback"` or `"ready-to-merge"` |
+| `gate` | Lifecycle gate that triggered the resume: `"actionable-feedback"` or `"ready-to-merge"` |
 | `branch` | Branch name |
 | `base_branch` | Base branch name |
 | `retries_total` | Total retry attempts configured |
@@ -155,10 +155,15 @@ evidence: a closing reference produces `success`, while an unverifiable or
 missing closing reference produces `failure` with completion diagnostics.
 
 Recoverable open-pull-request states produce `run.await` without consuming an
-agent retry while foreground observation retains sandbox capacity. A continuation or in-session relaunch
-re-evaluates the same facts. Retained review records and daemon decisions are
-evidence only: they can supply the await reason and request-scoped prompt
-evidence, but cannot terminalize a run or override merged completion.
+agent retry. Foreground observation keeps the active AgentRun and its sandbox
+capacity held through the configured deadline, and dependents remain queued
+until the prerequisite reaches a terminal outcome. The final poll interval
+repeats until completion or explicit cancellation. A continuation or
+in-session relaunch re-evaluates the same facts. Retained review records and
+daemon decisions are evidence only: they can supply the await reason and
+request-scoped prompt evidence, but cannot terminalize a run or override
+verified merged completion. Explicit cancellation emits `run.aborted` and
+prevents the held dependent from launching.
 
 Closed pull requests without a merge are terminal `failure`. Terminal
 `blocked` remains exclusively the dependency outcome emitted by `run.blocked`.
