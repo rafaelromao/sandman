@@ -2780,6 +2780,9 @@ loop:
 						attemptRenderCfg.TaskPrompt = resumePrompt
 						continue relaunch
 					}
+					if gateStatus == "resume" {
+						gateStatus = "await"
+					}
 					result.Status = gateStatus
 					terminalExtras = mergeBlockerExtras(terminalExtras, extras)
 					break loop
@@ -2890,6 +2893,9 @@ loop:
 					if events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
 						hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
 						if gateStatus, extras, handled := s.handleLifecycleDecision(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled {
+							if gateStatus == "resume" {
+								gateStatus = "await"
+							}
 							result.Status = gateStatus
 							terminalExtras = mergeBlockerExtras(terminalExtras, extras)
 							break loop

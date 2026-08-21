@@ -819,6 +819,20 @@ func validateReviewRequest(request reviewRequestEnvelope, state reviewWaitState,
 	return nil
 }
 
+// reviewRequestIdentityMatches confirms that a compatibility wait belongs to
+// the canonical registration. Timing may differ because the two records are
+// written by different processes, but the confirmed trigger identity and the
+// pull-request generation must be identical.
+func reviewRequestIdentityMatches(canonical, candidate reviewRequestEnvelope) bool {
+	return canonical.Protocol == candidate.Protocol &&
+		canonical.Repository == candidate.Repository &&
+		canonical.PullRequest == candidate.PullRequest &&
+		strings.EqualFold(strings.TrimSpace(canonical.HeadSHA), strings.TrimSpace(candidate.HeadSHA)) &&
+		canonical.TriggerID == candidate.TriggerID &&
+		canonical.TriggerPrefix == candidate.TriggerPrefix &&
+		canonical.TriggerCreatedAt == candidate.TriggerCreatedAt
+}
+
 func (h *reviewTimeoutHandoff) payload() map[string]any {
 	return h.payloadFor(gateReviewTimeout, reviewTimeoutReason, reviewTimeoutNextAction)
 }
