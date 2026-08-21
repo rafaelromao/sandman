@@ -52,9 +52,9 @@ The daemon process and any in-flight AgentRun are paused by the OS. They resume 
 
 No. Sandman is the *delivery loop*; the agent does the implementation work. The agent is one of the things Sandman shells out to, configured via `.sandman/config.yaml` (`agent: opencode` by default).
 
-## What's the relationship to Spec-Driven Development and Loop Engineering?
+## What workflow works well with Sandman?
 
-SDD structures intent through a specification, plan, and tasks. Sandman turns the resulting clear, agent-ready GitHub issue into isolated AFK execution, review, and merge. The clearest reference for SDD is GitHub's [Spec-driven development with AI](https://github.blog/ai-and-ml/generative-ai/spec-driven-development-with-ai-get-started-with-a-new-open-source-toolkit/) article. Loop Engineering describes the broader operating model; Addy Osmani's [Loop Engineering](https://addyosmani.com/blog/loop-engineering/) article frames agent systems as prompt, state, verify, judge loops. Sandman is one concrete loop inside that discipline — CLI-owned AFK delivery from GitHub issue to reviewed, merged PR. See [Positioning](positioning.md) for the canonical framing.
+The recommended path is `wayfinder -> to-spec -> to-tickets -> Sandman -> Validation`. It resolves uncertainty, publishes the Specification, slices clear GitHub issues, and hands the ready ticket frontier to Sandman. This path is recommended, not required: Sandman can start from any sufficiently clear GitHub issue.
 
 ## Is Sandman production-ready?
 

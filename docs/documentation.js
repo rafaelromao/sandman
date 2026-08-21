@@ -48,7 +48,6 @@
     "help/README.md",
     "help/troubleshooting.md",
     "help/faq.md",
-    "help/positioning.md",
     "development/README.md",
     "development/local-development-setup.md",
     "development/project-structure.md",

@@ -73,7 +73,7 @@ Sandman manages the lifecycle of automated coding workflows:
 Other:
 
 - [Architecture Overview](docs/architecture/overview.md) and [Disk Layout](docs/architecture/disk-layout.md)
-- [Positioning](docs/help/positioning.md) — what Sandman is and isn't, in plain language
+- [Overview](docs/get-started/overview.md) — what Sandman is, the delivery loop, and the recommended workflow
 - [Development docs](docs/development/README.md) — contributor setup, project structure, architecture guidance, testing, and the [Documentation page](docs/development/documentation.md) covering docs and embedded-skill rules
 
 ## Development

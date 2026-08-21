@@ -84,5 +84,4 @@ internal/
 
 - [Disk Layout](disk-layout.md) — canonical on-disk tree and per-artifact table
 - [Concepts](../get-started/concepts.md) — the Batch / AgentRun / Sandbox model in prose
-- [Positioning](../help/positioning.md) — what Sandman is and isn't
 - [CONTRIBUTING](../../CONTRIBUTING.md) — project structure and key interfaces
