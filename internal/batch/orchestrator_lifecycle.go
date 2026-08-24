@@ -434,7 +434,7 @@ func (s *runSession) handleLifecycleDecisionWithPublication(ctx context.Context,
 	}
 	extras["await"] = true
 	status := lifecycleStatusRepr(decision)
-	if status == "await" {
+	if status == "await" && decision.gate == lifecycleGatePending {
 		if deadline, deadlineGate, ok := lifecycleDeadline(extras); ok && !time.Now().Before(deadline) {
 			resume := cloneLifecycleExtras(extras)
 			resume["gate"] = deadlineGate

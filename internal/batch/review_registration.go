@@ -218,7 +218,7 @@ func reviewRegistrationDiagnostic(registration *reviewRequestRegistration) map[s
 			"trigger_id":            request.TriggerID,
 			"head_sha":              request.HeadSHA,
 			"deadline_at":           request.DeadlineAt,
-			"deadline_unix_seconds": request.DeadlineUnixSeconds,
+			"deadline_unix_seconds": float64(request.DeadlineUnixSeconds),
 		},
 		"review_request": map[string]any{
 			"protocol":                  request.Protocol,
@@ -232,7 +232,7 @@ func reviewRegistrationDiagnostic(registration *reviewRequestRegistration) map[s
 			"started_at":                request.StartedAt,
 			"deadline_at":               request.DeadlineAt,
 			"started_unix_seconds":      request.StartedUnixSeconds,
-			"deadline_unix_seconds":     request.DeadlineUnixSeconds,
+			"deadline_unix_seconds":     float64(request.DeadlineUnixSeconds),
 			"effective_timeout_seconds": request.EffectiveTimeout,
 			"poll_plan":                 append([]int(nil), request.PollPlan...),
 			"state":                     registration.State.State,

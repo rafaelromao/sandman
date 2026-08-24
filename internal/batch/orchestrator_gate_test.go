@@ -174,6 +174,41 @@ func setCanonicalRegistrationDeadlineForTest(t *testing.T, workDir string, deadl
 	}
 }
 
+func setCanonicalRegistrationFutureDeadlineForTest(t *testing.T, workDir string) {
+	t.Helper()
+	path := paths.NewLayout(nil, workDir).PRReviewRegistrationPath(17)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read canonical registration: %v", err)
+	}
+	var registration reviewRequestRegistration
+	if err := json.Unmarshal(data, &registration); err != nil {
+		t.Fatalf("decode canonical registration: %v", err)
+	}
+	started := time.Now().UTC().Truncate(time.Second)
+	deadline := started.Add(30 * time.Minute)
+	for _, request := range []*reviewRequestEnvelope{&registration.Request} {
+		request.TriggerCreatedAt = started.Format(time.RFC3339)
+		request.ConfirmedAt = started.Format(time.RFC3339)
+		request.StartedAt = started.Format(time.RFC3339)
+		request.StartedUnixSeconds = int(started.Unix())
+		request.DeadlineAt = fmt.Sprintf("unix:%d", deadline.Unix())
+		request.DeadlineUnixSeconds = int(deadline.Unix())
+		request.EffectiveTimeout = int((30 * time.Minute).Seconds())
+	}
+	state := &registration.State
+	state.TriggerCreatedAt = registration.Request.TriggerCreatedAt
+	state.ConfirmedAt = registration.Request.ConfirmedAt
+	state.StartedAt = registration.Request.StartedAt
+	state.StartedUnixSeconds = registration.Request.StartedUnixSeconds
+	state.DeadlineAt = registration.Request.DeadlineAt
+	state.DeadlineUnixSeconds = registration.Request.DeadlineUnixSeconds
+	state.EffectiveTimeout = registration.Request.EffectiveTimeout
+	if err := atomicfs.WriteAtomicJSON(path, registration, 0o600); err != nil {
+		t.Fatalf("write canonical registration deadline: %v", err)
+	}
+}
+
 // writeInformalRespondedClassification converts the timed-out review request
 // into a responded review-wait state whose retained classification carries a
 // single current-head top-level informal response with the given body. The
@@ -1193,6 +1228,7 @@ func TestExternalGate_CanonicalRegistrationTreatsMissingSidecarsAsPendingDiagnos
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	writeCurrentHeadApprovalClassification(t, workDir)
 	writeCanonicalRegistrationForTest(t, workDir)
+	setCanonicalRegistrationFutureDeadlineForTest(t, workDir)
 	layout := paths.NewLayout(nil, workDir)
 	for _, path := range []string{layout.PRReviewRequestPath(17), layout.PRReviewRequestStatePath(17), layout.PRHeadShaPath(17)} {
 		if err := os.Remove(path); err != nil {
@@ -1228,6 +1264,7 @@ func TestExternalGate_CanonicalRegistrationTreatsMalformedSidecarAsDiagnostics(t
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	writeCurrentHeadApprovalClassification(t, workDir)
 	writeCanonicalRegistrationForTest(t, workDir)
+	setCanonicalRegistrationFutureDeadlineForTest(t, workDir)
 	statePath := paths.NewLayout(nil, workDir).PRReviewRequestStatePath(17)
 	if err := os.WriteFile(statePath, []byte("not-json"), 0o600); err != nil {
 		t.Fatalf("corrupt compatibility state: %v", err)
@@ -1813,7 +1850,7 @@ func TestExternalGate_GreenCIWithPendingReviewKeepsReviewDeadline(t *testing.T) 
 	if !ok {
 		t.Fatalf("review request evidence = %#v, want retained deadline", extras["review_request"])
 	}
-	if requestPayload["deadline_unix_seconds"] != int(deadline.Unix()) {
+	if requestPayload["deadline_unix_seconds"] != float64(deadline.Unix()) {
 		t.Fatalf("review deadline = %#v, want %d", requestPayload["deadline_unix_seconds"], deadline.Unix())
 	}
 }

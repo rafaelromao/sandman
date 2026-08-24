@@ -555,7 +555,7 @@ func TestReviewRegistration_DoesNotRebindLegacyTriggerToNewHead(t *testing.T) {
 
 func TestReviewRegistration_ProductionGateRegistersBeforeLivePendingHandoff(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-review-registration-")
-	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	client := &registrationGitHubClient{
 		fakeGitHubClient: fakeGitHubClient{prs: map[string]*github.PR{
 			gateTestBranch: {
@@ -1163,7 +1163,7 @@ func TestReviewRegistration_HeadRefreshFailureDoesNotReuseReadySnapshot(t *testi
 
 func TestReviewRegistration_GateUsesLiveSnapshotAfterSuccessfulRegistration(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-review-registration-")
-	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	client := &registrationGateSnapshotClient{
 		comments: []github.PRComment{{
 			ID:        "trigger-live-snapshot",

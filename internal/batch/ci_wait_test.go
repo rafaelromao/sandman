@@ -66,3 +66,14 @@ func TestLifecycleDeadlineUsesEarlierCIWaitAlongsideReview(t *testing.T) {
 		t.Fatalf("deadline = (%v, %q, %t), want earlier CI deadline", got, gate, ok)
 	}
 }
+
+func TestLifecycleDeadlineUsesConfirmedReviewRegistration(t *testing.T) {
+	deadline := time.Now().Add(time.Minute).Truncate(time.Second)
+	diagnostic := reviewRegistrationDiagnostic(&reviewRequestRegistration{
+		Request: reviewRequestEnvelope{DeadlineUnixSeconds: int(deadline.Unix())},
+	})
+	got, gate, ok := lifecycleDeadline(diagnostic)
+	if !ok || gate != gateReviewTimeout || !got.Equal(deadline) {
+		t.Fatalf("registration deadline = (%v, %q, %t), want (%v, %q, true)", got, gate, ok, deadline, gateReviewTimeout)
+	}
+}
