@@ -425,11 +425,11 @@ func (s *runSession) handleLifecycleDecisionWithPublication(ctx context.Context,
 	status := lifecycleStatusRepr(decision)
 	if status == "await" {
 		if deadline, deadlineGate, ok := lifecycleDeadline(extras); ok && !time.Now().Before(deadline) {
-			return "resume", map[string]any{
-				"gate":        deadlineGate,
-				"reason":      lifecycleDeadlineReason(deadlineGate),
-				"next_action": lifecycleDeadlineNextAction(deadlineGate),
-			}, true
+			resume := cloneLifecycleExtras(extras)
+			resume["gate"] = deadlineGate
+			resume["reason"] = lifecycleDeadlineReason(deadlineGate)
+			resume["next_action"] = lifecycleDeadlineNextAction(deadlineGate)
+			return "resume", resume, true
 		}
 	}
 	if status == "resume" && decision.gate == lifecycleGateReady {
@@ -552,11 +552,11 @@ func (s *runSession) observeLifecycle(ctx context.Context, workDir, branch, logP
 	plan := s.lifecyclePollIntervals(extras)
 	for index := 0; ; index++ {
 		if deadline, gate, ok := lifecycleDeadline(extras); ok && !time.Now().Before(deadline) {
-			return "resume", map[string]any{
-				"gate":        gate,
-				"reason":      lifecycleDeadlineReason(gate),
-				"next_action": lifecycleDeadlineNextAction(gate),
-			}, true
+			resume := cloneLifecycleExtras(extras)
+			resume["gate"] = gate
+			resume["reason"] = lifecycleDeadlineReason(gate)
+			resume["next_action"] = lifecycleDeadlineNextAction(gate)
+			return "resume", resume, true
 		}
 		interval := plan[len(plan)-1]
 		if index < len(plan) {
@@ -597,22 +597,26 @@ func (s *runSession) observeLifecycle(ctx context.Context, workDir, branch, logP
 }
 
 func lifecycleDeadline(extras map[string]any) (time.Time, string, bool) {
+	var deadline time.Time
+	var gate string
 	request, ok := extras["review_request"].(map[string]any)
 	if ok {
 		seconds, ok := request["deadline_unix_seconds"].(float64)
 		if ok && seconds > 0 && seconds == float64(int64(seconds)) {
-			return time.Unix(int64(seconds), 0), gateReviewTimeout, true
+			deadline, gate = time.Unix(int64(seconds), 0), gateReviewTimeout
 		}
 	}
 	ciWait, ok := extras["ci_wait"].(map[string]any)
-	if !ok {
-		return time.Time{}, "", false
+	if ok {
+		seconds, ok := ciWait["deadline_unix_seconds"].(int64)
+		if ok && seconds > 0 {
+			ciDeadline := time.Unix(seconds, 0)
+			if deadline.IsZero() || ciDeadline.Before(deadline) {
+				deadline, gate = ciDeadline, gateCIWaitTimeout
+			}
+		}
 	}
-	seconds, ok := ciWait["deadline_unix_seconds"].(int64)
-	if !ok || seconds <= 0 {
-		return time.Time{}, "", false
-	}
-	return time.Unix(seconds, 0), gateCIWaitTimeout, true
+	return deadline, gate, !deadline.IsZero()
 }
 
 func lifecycleDeadlineReason(gate string) string {

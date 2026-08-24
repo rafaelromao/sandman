@@ -877,7 +877,7 @@ func NewOrchestrator(githubClient github.Client, renderer prompt.IssueRenderer, 
 		runSessionOpts: runSessionOptions{
 			baseBranchSyncMu:     &sync.Mutex{},
 			taskWriter:           atomicfs.WriteAtomic,
-			foregroundLifecycle:  true,
+			foregroundLifecycle:  false,
 			releaseAwaitCapacity: true,
 		},
 		badgeHooker:  nopBadgeHooker{},

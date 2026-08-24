@@ -55,3 +55,14 @@ func TestLifecycleDeadlineUsesCIWaitWhenNoReviewRequest(t *testing.T) {
 		t.Fatalf("CI deadline = (%v, %q, %t), want (%v, %q, true)", got, gate, ok, deadline, gateCIWaitTimeout)
 	}
 }
+
+func TestLifecycleDeadlineUsesEarlierCIWaitAlongsideReview(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	got, gate, ok := lifecycleDeadline(map[string]any{
+		"review_request": map[string]any{"deadline_unix_seconds": float64(now.Add(2 * time.Minute).Unix())},
+		"ci_wait":        map[string]any{"deadline_unix_seconds": now.Add(time.Minute).Unix()},
+	})
+	if !ok || gate != gateCIWaitTimeout || !got.Equal(now.Add(time.Minute)) {
+		t.Fatalf("deadline = (%v, %q, %t), want earlier CI deadline", got, gate, ok)
+	}
+}
