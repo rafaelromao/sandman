@@ -25,14 +25,19 @@ import (
 // request reached the right per-run socket and carried the expected
 // Issue number for the row's shape.
 type abortSpy struct {
-	mu     sync.Mutex
-	issues []int
+	mu      sync.Mutex
+	issues  []int
+	onAbort func(int) error
 }
 
 func (s *abortSpy) AbortIssue(issueNumber int) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.issues = append(s.issues, issueNumber)
+	onAbort := s.onAbort
+	s.mu.Unlock()
+	if onAbort != nil {
+		return onAbort(issueNumber)
+	}
 	return nil
 }
 
@@ -194,7 +199,7 @@ func portalAbortBatchKindsFixture(t *testing.T, opts portalAbortBatchKindsOpts) 
 		}
 	}
 
-	createUnixRunSocket(t, filepath.Join(batchDir, "batch.sock"))
+	createUnixRunSocket(t, daemon.BatchSocketPath(batchDir))
 	idx := &batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 		{ID: opts.batchKey, Path: batchDir, Kind: opts.idxKind, Status: batchindex.StatusActive, CreatedAt: time.Now(), Issues: opts.issues, PR: opts.pr},
 	}}
@@ -456,7 +461,7 @@ func TestPortal_AbortEndpoint_NonCanonicalIssueRunRow_ResolvesOwnPerRunSocket(t 
 	}
 	ts := "260618113825"
 	shortid := "abcd"
-	batchDirName := runid.NewBatchID(runid.KindIssue, 2, "42", ts, shortid)
+	batchDirName := runid.NewBatchID(runid.KindIssue, 2, "42", ts, shortid) + "-" + strings.Repeat("long-path-segment-", 6)
 	canonicalRunID := runid.NewRunID(runid.KindIssue, "42", ts, shortid)
 	targetRunID := runid.NewRunID(runid.KindIssue, "43", ts, shortid)
 	batchManifest := daemon.BatchManifest{
@@ -490,8 +495,21 @@ func TestPortal_AbortEndpoint_NonCanonicalIssueRunRow_ResolvesOwnPerRunSocket(t 
 		t.Fatal(err)
 	}
 
-	perRunSock := filepath.Join(repoRoot, ".sandman", "batches", batchDirName, "runs", targetRunID, "run.sock")
-	spy := &abortSpy{}
+	perRunDir := filepath.Join(repoRoot, ".sandman", "batches", batchDirName, "runs", targetRunID)
+	perRunSock := daemon.CommandSocketPath(perRunDir)
+	if !strings.HasPrefix(perRunSock, "/tmp/sandman-") {
+		t.Fatalf("long command socket = %q, want short mapped path", perRunSock)
+	}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")}
+	spy := &abortSpy{onAbort: func(issueNumber int) error {
+		return eventLog.Log(events.Event{
+			Type:      "run.aborted",
+			Timestamp: time.Now(),
+			RunID:     targetRunID,
+			Issue:     issueNumber,
+			Payload:   map[string]any{"status": "aborted"},
+		})
+	}}
 	startAbortCommandServer(t, perRunSock, spy)
 	stubPortalPeerPIDForAbort(t, perRunSock)
 
@@ -518,6 +536,19 @@ func TestPortal_AbortEndpoint_NonCanonicalIssueRunRow_ResolvesOwnPerRunSocket(t 
 	calls := spy.Snapshot()
 	if len(calls) != 1 || calls[0] != 43 {
 		t.Fatalf("abort calls = %v, want [43]", calls)
+	}
+	logs, err := eventLog.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	aborted := 0
+	for _, event := range logs {
+		if event.Type == "run.aborted" {
+			aborted++
+		}
+	}
+	if got := aborted; got != 1 {
+		t.Fatalf("run.aborted events = %d, want 1", got)
 	}
 }
 
