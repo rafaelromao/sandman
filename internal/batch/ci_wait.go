@@ -60,24 +60,6 @@ func (s *runSession) ciWaitEvidence(workDir string, pr *github.PR, headSHA strin
 	return ciWaitEvidenceFromRegistration(registration, pr.Number)
 }
 
-func existingCIWaitEvidence(workDir string, pr *github.PR, headSHA string) (map[string]any, error) {
-	if pr == nil || pr.Number <= 0 || strings.TrimSpace(headSHA) == "" || !strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) {
-		return nil, nil
-	}
-	path := filepath.Join(paths.NewLayout(nil, workDir).StateDir, fmt.Sprintf("%d.ci_wait.json", pr.Number))
-	registration, err := readCIWaitRegistration(path)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read CI wait state: %w", err)
-	}
-	if !strings.EqualFold(registration.HeadSHA, headSHA) {
-		return nil, nil
-	}
-	return ciWaitEvidenceFromRegistration(registration, pr.Number)
-}
-
 func ciWaitEvidenceFromRegistration(registration ciWaitRegistration, prNumber int) (map[string]any, error) {
 	if registration.Protocol != ciWaitProtocol || registration.PullRequest != prNumber || registration.DeadlineUnixSeconds <= registration.StartedUnixSeconds || registration.EffectiveTimeoutSecs <= 0 || registration.DeadlineUnixSeconds-registration.StartedUnixSeconds != registration.EffectiveTimeoutSecs {
 		return nil, fmt.Errorf("CI wait state is invalid")

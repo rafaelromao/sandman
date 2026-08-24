@@ -390,10 +390,13 @@ func (s *runSession) handleLifecycleDecisionWithPublication(ctx context.Context,
 		var ciEvidence map[string]any
 		var ciErr error
 		switch strings.ToLower(strings.TrimSpace(pr.StatusCheckRollup)) {
-		case "pending":
+		case "pending", "failure":
 			ciEvidence, ciErr = s.ciWaitEvidence(workDir, pr, headSHA)
-		case "failure":
-			ciEvidence, ciErr = existingCIWaitEvidence(workDir, pr, headSHA)
+		default:
+			if strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "DIRTY") ||
+				strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "CONFLICTING") {
+				ciEvidence, ciErr = s.ciWaitEvidence(workDir, pr, headSHA)
+			}
 		}
 		if ciErr != nil {
 			return "resume", map[string]any{
