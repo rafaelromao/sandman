@@ -177,7 +177,7 @@ func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbo
 
 func isResumeGate(gate string) bool {
 	switch gate {
-	case gateReadyToMerge, gateActionableFeedback, gateReviewTimeout, "ci-failure", "merge-conflict":
+	case gateReadyToMerge, gateActionableFeedback, gateReviewTimeout, gateCIWaitTimeout, "ci-failure", "merge-conflict":
 		return true
 	default:
 		return false

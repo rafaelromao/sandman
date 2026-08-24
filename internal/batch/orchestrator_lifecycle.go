@@ -385,6 +385,17 @@ func (s *runSession) handleLifecycleDecisionWithPublication(ctx context.Context,
 	if ctx.Err() != nil {
 		return "aborted", nil, true
 	}
+	if strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "pending") {
+		ciEvidence, ciErr := s.ciWaitEvidence(workDir, pr, headSHA)
+		if ciErr != nil {
+			return "resume", map[string]any{
+				"gate":        gateCIWaitTimeout,
+				"reason":      "CI_WAIT_STATE_ERROR",
+				"next_action": "inspect the persisted CI wait state and repair the current pull-request checks",
+			}, true
+		}
+		evidence.payload = mergeLifecycleDiagnostics(evidence.payload, ciEvidence)
+	}
 	decision = decideImplementationPRLifecycle(implementationPRFacts{
 		pr:               pr,
 		headSHA:          headSHA,
@@ -412,6 +423,15 @@ func (s *runSession) handleLifecycleDecisionWithPublication(ctx context.Context,
 	}
 	extras["await"] = true
 	status := lifecycleStatusRepr(decision)
+	if status == "await" {
+		if deadline, deadlineGate, ok := lifecycleDeadline(extras); ok && !time.Now().Before(deadline) {
+			return "resume", map[string]any{
+				"gate":        deadlineGate,
+				"reason":      lifecycleDeadlineReason(deadlineGate),
+				"next_action": lifecycleDeadlineNextAction(deadlineGate),
+			}, true
+		}
+	}
 	if status == "resume" && decision.gate == lifecycleGateReady {
 		// Ready-to-merge remains an await until the normal merge lifecycle
 		// consumes its live approval gate; only actionable feedback is an
@@ -531,11 +551,11 @@ func (s *runSession) waitForLifecyclePoll(ctx context.Context, interval time.Dur
 func (s *runSession) observeLifecycle(ctx context.Context, workDir, branch, logPath, runID string, result AgentRunResult, extras map[string]any, hostPathsReady bool) (string, map[string]any, bool) {
 	plan := s.lifecyclePollIntervals(extras)
 	for index := 0; ; index++ {
-		if deadline, ok := lifecycleDeadline(extras); ok && !time.Now().Before(deadline) {
+		if deadline, gate, ok := lifecycleDeadline(extras); ok && !time.Now().Before(deadline) {
 			return "resume", map[string]any{
-				"gate":        gateReviewTimeout,
-				"reason":      reviewTimeoutReason,
-				"next_action": reviewTimeoutNextAction,
+				"gate":        gate,
+				"reason":      lifecycleDeadlineReason(gate),
+				"next_action": lifecycleDeadlineNextAction(gate),
 			}, true
 		}
 		interval := plan[len(plan)-1]
@@ -554,7 +574,15 @@ func (s *runSession) observeLifecycle(ctx context.Context, workDir, branch, logP
 			nextExtras = map[string]any{"gate": string(lifecycleGatePending), "await": true}
 		}
 		if status == "resume" {
-			status = "await"
+			gate, _ := nextExtras["gate"].(string)
+			if isResumeGate(gate) && s.resumeCount < s.resumeCapFor() {
+				return status, nextExtras, true
+			}
+			return "failure", map[string]any{
+				"gate":        gate,
+				"reason":      "REMEDIATION_BUDGET_EXHAUSTED",
+				"next_action": "inspect the current pull-request remediation evidence and start a new run after advancing the pull-request head",
+			}, true
 		}
 		if status == "await" {
 			gate, _ := nextExtras["gate"].(string)
@@ -568,14 +596,35 @@ func (s *runSession) observeLifecycle(ctx context.Context, workDir, branch, logP
 	}
 }
 
-func lifecycleDeadline(extras map[string]any) (time.Time, bool) {
+func lifecycleDeadline(extras map[string]any) (time.Time, string, bool) {
 	request, ok := extras["review_request"].(map[string]any)
+	if ok {
+		seconds, ok := request["deadline_unix_seconds"].(float64)
+		if ok && seconds > 0 && seconds == float64(int64(seconds)) {
+			return time.Unix(int64(seconds), 0), gateReviewTimeout, true
+		}
+	}
+	ciWait, ok := extras["ci_wait"].(map[string]any)
 	if !ok {
-		return time.Time{}, false
+		return time.Time{}, "", false
 	}
-	seconds, ok := request["deadline_unix_seconds"].(float64)
-	if !ok || seconds <= 0 || seconds != float64(int64(seconds)) {
-		return time.Time{}, false
+	seconds, ok := ciWait["deadline_unix_seconds"].(int64)
+	if !ok || seconds <= 0 {
+		return time.Time{}, "", false
 	}
-	return time.Unix(int64(seconds), 0), true
+	return time.Unix(seconds, 0), gateCIWaitTimeout, true
+}
+
+func lifecycleDeadlineReason(gate string) string {
+	if gate == gateCIWaitTimeout {
+		return "CI_WAIT_TIMEOUT"
+	}
+	return reviewTimeoutReason
+}
+
+func lifecycleDeadlineNextAction(gate string) string {
+	if gate == gateCIWaitTimeout {
+		return "inspect current-head CI, repair any failing checks, and push a new pull-request head"
+	}
+	return reviewTimeoutNextAction
 }
