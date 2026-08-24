@@ -385,7 +385,9 @@ func (s *runSession) handleLifecycleDecisionWithPublication(ctx context.Context,
 	if ctx.Err() != nil {
 		return "aborted", nil, true
 	}
-	if strings.EqualFold(strings.TrimSpace(pr.State), "open") && strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) {
+	if strings.EqualFold(strings.TrimSpace(pr.State), "open") &&
+		strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) &&
+		strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "pending") {
 		ciEvidence, ciErr := s.ciWaitEvidence(workDir, pr, headSHA)
 		if ciErr != nil {
 			return "resume", map[string]any{
@@ -601,15 +603,13 @@ func lifecycleDeadline(extras map[string]any) (time.Time, string, bool) {
 	var gate string
 	request, ok := extras["review_request"].(map[string]any)
 	if ok {
-		seconds, ok := request["deadline_unix_seconds"].(float64)
-		if ok && seconds > 0 && seconds == float64(int64(seconds)) {
-			deadline, gate = time.Unix(int64(seconds), 0), gateReviewTimeout
+		if seconds, ok := lifecycleDeadlineSeconds(request["deadline_unix_seconds"]); ok {
+			deadline, gate = time.Unix(seconds, 0), gateReviewTimeout
 		}
 	}
 	ciWait, ok := extras["ci_wait"].(map[string]any)
 	if ok {
-		seconds, ok := ciWait["deadline_unix_seconds"].(int64)
-		if ok && seconds > 0 {
+		if seconds, ok := lifecycleDeadlineSeconds(ciWait["deadline_unix_seconds"]); ok {
 			ciDeadline := time.Unix(seconds, 0)
 			if deadline.IsZero() || ciDeadline.Before(deadline) {
 				deadline, gate = ciDeadline, gateCIWaitTimeout
@@ -617,6 +617,18 @@ func lifecycleDeadline(extras map[string]any) (time.Time, string, bool) {
 		}
 	}
 	return deadline, gate, !deadline.IsZero()
+}
+
+func lifecycleDeadlineSeconds(value any) (int64, bool) {
+	switch typed := value.(type) {
+	case int64:
+		return typed, typed > 0
+	case float64:
+		if typed > 0 && typed == float64(int64(typed)) {
+			return int64(typed), true
+		}
+	}
+	return 0, false
 }
 
 func lifecycleDeadlineReason(gate string) string {

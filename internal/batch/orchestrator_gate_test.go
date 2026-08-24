@@ -1743,6 +1743,81 @@ func TestExternalGate_MalformedRetainedClassificationDoesNotMaskFailedCI(t *test
 	}
 }
 
+func TestExternalGate_GreenCIWithPendingReviewKeepsReviewDeadline(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	deadline := time.Now().Add(2 * time.Minute).Truncate(time.Second)
+	elapsed := 0
+	request := reviewRequestEnvelope{
+		Protocol:            "review-wait/v1",
+		Repository:          "owner/repo",
+		PullRequest:         17,
+		HeadSHA:             "current-sha",
+		TriggerID:           "https://github.com/owner/repo/pull/17#issuecomment-1001",
+		TriggerPrefix:       "/sandman review",
+		TriggerCreatedAt:    deadline.Add(-30 * time.Minute).Format(time.RFC3339),
+		ConfirmedAt:         deadline.Add(-30 * time.Minute).Format(time.RFC3339),
+		StartedAt:           deadline.Add(-30 * time.Minute).Format(time.RFC3339),
+		DeadlineAt:          fmt.Sprintf("unix:%d", deadline.Unix()),
+		StartedUnixSeconds:  int(deadline.Add(-30 * time.Minute).Unix()),
+		DeadlineUnixSeconds: int(deadline.Unix()),
+		EffectiveTimeout:    int((30 * time.Minute).Seconds()),
+		PollPlan:            []int{120, 60, 60, 30},
+	}
+	registration := reviewRequestRegistration{
+		Protocol: reviewRegistrationProtocol,
+		Request:  request,
+		State: reviewWaitState{
+			Protocol:            "review-wait/v1",
+			Repository:          request.Repository,
+			PullRequest:         request.PullRequest,
+			HeadSHA:             request.HeadSHA,
+			TriggerID:           request.TriggerID,
+			TriggerPrefix:       request.TriggerPrefix,
+			TriggerCreatedAt:    request.TriggerCreatedAt,
+			ConfirmedAt:         request.ConfirmedAt,
+			StartedAt:           request.StartedAt,
+			DeadlineAt:          request.DeadlineAt,
+			StartedUnixSeconds:  request.StartedUnixSeconds,
+			DeadlineUnixSeconds: request.DeadlineUnixSeconds,
+			EffectiveTimeout:    request.EffectiveTimeout,
+			PollPlan:            request.PollPlan,
+			State:               "pending",
+			Lifecycle:           "started",
+			Reason:              "pending",
+			ObservedHeadSHA:     request.HeadSHA,
+			ElapsedSeconds:      &elapsed,
+		},
+	}
+	if err := (fileReviewRegistrationStore{}).Write(paths.NewLayout(nil, workDir).PRReviewRegistrationPath(17), registration); err != nil {
+		t.Fatalf("write review registration: %v", err)
+	}
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha",
+				StatusCheckRollup: "success", ReviewDecision: "REVIEW_REQUIRED", MergeStateStatus: "BLOCKED",
+			}}},
+			errorLog: io.Discard,
+		},
+		opts: gateTestRunOptions(),
+	}
+	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	if !handled || status != "await" || extras["gate"] != "pending" {
+		t.Fatalf("green-CI pending review result = (%q, %#v, %t), want pending await", status, extras, handled)
+	}
+	if _, ok := extras["ci_wait"]; ok {
+		t.Fatalf("green CI attached CI wait evidence: %#v", extras["ci_wait"])
+	}
+	requestPayload, ok := extras["review_request"].(map[string]any)
+	if !ok {
+		t.Fatalf("review request evidence = %#v, want retained deadline", extras["review_request"])
+	}
+	if requestPayload["deadline_unix_seconds"] != int(deadline.Unix()) {
+		t.Fatalf("review deadline = %#v, want %d", requestPayload["deadline_unix_seconds"], deadline.Unix())
+	}
+}
+
 func TestExternalGate_LateFeedbackPreservesExistingFailedGatePrecedence(t *testing.T) {
 	tests := []struct {
 		name       string
