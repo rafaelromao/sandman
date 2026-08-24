@@ -25,14 +25,19 @@ import (
 // request reached the right per-run socket and carried the expected
 // Issue number for the row's shape.
 type abortSpy struct {
-	mu     sync.Mutex
-	issues []int
+	mu      sync.Mutex
+	issues  []int
+	onAbort func(int) error
 }
 
 func (s *abortSpy) AbortIssue(issueNumber int) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.issues = append(s.issues, issueNumber)
+	onAbort := s.onAbort
+	s.mu.Unlock()
+	if onAbort != nil {
+		return onAbort(issueNumber)
+	}
 	return nil
 }
 
@@ -194,7 +199,7 @@ func portalAbortBatchKindsFixture(t *testing.T, opts portalAbortBatchKindsOpts) 
 		}
 	}
 
-	createUnixRunSocket(t, filepath.Join(batchDir, "batch.sock"))
+	createUnixRunSocket(t, daemon.BatchSocketPath(batchDir))
 	idx := &batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 		{ID: opts.batchKey, Path: batchDir, Kind: opts.idxKind, Status: batchindex.StatusActive, CreatedAt: time.Now(), Issues: opts.issues, PR: opts.pr},
 	}}
@@ -443,6 +448,107 @@ func TestPortal_AbortEndpoint_ContinueIssueRunRow_ResolvesPerRunSocket(t *testin
 	}
 	if calls[0] != 42 {
 		t.Fatalf("expected orchestrator to receive Issue=42, got %d", calls[0])
+	}
+}
+
+// TestPortal_AbortEndpoint_NonCanonicalIssueRunRow_ResolvesOwnPerRunSocket
+// verifies that an active batch's canonical row does not leak into a sibling
+// row's RunDir. Foreground awaits remain active long enough for this portal
+// path to be exercised after the initial agent session has ended.
+func TestPortal_AbortEndpoint_NonCanonicalIssueRunRow_ResolvesOwnPerRunSocket(t *testing.T) {
+	if !portalAbortSupported() {
+		t.Skip("abort unsupported on this platform")
+	}
+	ts := "260618113825"
+	shortid := "abcd"
+	batchDirName := runid.NewBatchID(runid.KindIssue, 2, "42", ts, shortid) + "-" + strings.Repeat("long-path-segment-", 6)
+	canonicalRunID := runid.NewRunID(runid.KindIssue, "42", ts, shortid)
+	targetRunID := runid.NewRunID(runid.KindIssue, "43", ts, shortid)
+	batchManifest := daemon.BatchManifest{
+		BatchId:    batchDirName,
+		Issues:     []int{42, 43},
+		RunKind:    "issue",
+		CreatedAt:  time.Now().Add(-10 * time.Minute),
+		RunTS:      ts,
+		RunShortID: shortid,
+	}
+
+	repoRoot, _ := portalAbortBatchKindsFixture(t, portalAbortBatchKindsOpts{
+		batchKey:      canonicalRunID,
+		batchDirName:  batchDirName,
+		perRowID:      targetRunID,
+		idxKind:       batchindex.KindIssue,
+		issues:        []int{42, 43},
+		issueNumber:   43,
+		branch:        "43",
+		batchManifest: &batchManifest,
+	})
+	if err := daemon.WriteRunManifest(filepath.Join(repoRoot, ".sandman", "batches", batchDirName), canonicalRunID, batchindex.RunManifest{
+		RunID:     canonicalRunID,
+		BatchID:   batchDirName,
+		Issue:     42,
+		Kind:      batchindex.KindIssue,
+		Branch:    "42-fix",
+		CreatedAt: time.Now().Add(-10 * time.Minute),
+		Status:    batchindex.RunManifestStatusActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	perRunDir := filepath.Join(repoRoot, ".sandman", "batches", batchDirName, "runs", targetRunID)
+	perRunSock := daemon.CommandSocketPath(perRunDir)
+	if !strings.HasPrefix(perRunSock, "/tmp/sandman-") {
+		t.Fatalf("long command socket = %q, want short mapped path", perRunSock)
+	}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")}
+	spy := &abortSpy{onAbort: func(issueNumber int) error {
+		return eventLog.Log(events.Event{
+			Type:      "run.aborted",
+			Timestamp: time.Now(),
+			RunID:     targetRunID,
+			Issue:     issueNumber,
+			Payload:   map[string]any{"status": "aborted"},
+		})
+	}}
+	startAbortCommandServer(t, perRunSock, spy)
+	stubPortalPeerPIDForAbort(t, perRunSock)
+
+	prevStale := portalStaleCleaner
+	portalStaleCleaner = func(string) error { return nil }
+	t.Cleanup(func() { portalStaleCleaner = prevStale })
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/runs/abort", strings.NewReader(`{"runKey":"`+targetRunID+`","issue":43}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, body)
+	}
+
+	calls := spy.Snapshot()
+	if len(calls) != 1 || calls[0] != 43 {
+		t.Fatalf("abort calls = %v, want [43]", calls)
+	}
+	logs, err := eventLog.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	aborted := 0
+	for _, event := range logs {
+		if event.Type == "run.aborted" {
+			aborted++
+		}
+	}
+	if got := aborted; got != 1 {
+		t.Fatalf("run.aborted events = %d, want 1", got)
 	}
 }
 
