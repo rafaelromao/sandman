@@ -875,9 +875,10 @@ func NewOrchestrator(githubClient github.Client, renderer prompt.IssueRenderer, 
 		layout:        paths.NewLayout(&config.Config{}, root),
 		lookupGHToken: defaultLookupGHToken,
 		runSessionOpts: runSessionOptions{
-			baseBranchSyncMu:    &sync.Mutex{},
-			taskWriter:          atomicfs.WriteAtomic,
-			foregroundLifecycle: true,
+			baseBranchSyncMu:     &sync.Mutex{},
+			taskWriter:           atomicfs.WriteAtomic,
+			foregroundLifecycle:  true,
+			releaseAwaitCapacity: true,
 		},
 		badgeHooker:  nopBadgeHooker{},
 		coordinators: make(map[*batchCoordinator]struct{}),
@@ -2841,8 +2842,12 @@ loop:
 						continue relaunch
 					}
 					if gateStatus == "resume" {
-						s.emitAwait(ctx, runID, result, extras)
-						gateStatus = "await"
+						gateStatus = "failure"
+						extras = map[string]any{
+							"gate":        extras["gate"],
+							"reason":      "REMEDIATION_BUDGET_EXHAUSTED",
+							"next_action": "advance the pull-request head before requesting another remediation run",
+						}
 					}
 					result.Status = gateStatus
 					terminalExtras = mergeBlockerExtras(terminalExtras, extras)

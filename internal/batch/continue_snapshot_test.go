@@ -65,6 +65,7 @@ func TestRunBatch_ModeContinueCopiesOriginalTaskToRunFolder(t *testing.T) {
 				{IssueNumber: 42, Status: "await", Branch: branch, WorktreePath: worktreePath},
 			},
 		}),
+		WithRunSessionOpts(runSessionOptions{foregroundLifecycle: true}),
 	)
 
 	if _, err := o.RunBatch(context.Background(), Request{Issues: []int{42}}); err != nil {

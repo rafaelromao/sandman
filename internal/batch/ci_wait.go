@@ -28,6 +28,7 @@ type ciWaitRegistration struct {
 	StartedUnixSeconds   int64  `json:"started_unix_seconds"`
 	DeadlineUnixSeconds  int64  `json:"deadline_unix_seconds"`
 	EffectiveTimeoutSecs int64  `json:"effective_timeout_seconds"`
+	RemediationAttempts  int    `json:"remediation_attempts"`
 }
 
 func (s *runSession) ciWaitEvidence(workDir string, pr *github.PR, headSHA string) (map[string]any, error) {
@@ -67,8 +68,32 @@ func (s *runSession) ciWaitEvidence(workDir string, pr *github.PR, headSHA strin
 			"started_unix_seconds":      registration.StartedUnixSeconds,
 			"deadline_unix_seconds":     registration.DeadlineUnixSeconds,
 			"effective_timeout_seconds": registration.EffectiveTimeoutSecs,
+			"remediation_attempts":      registration.RemediationAttempts,
 		},
 	}, nil
+}
+
+func consumeCIWaitRemediation(workDir string, evidence map[string]any) bool {
+	ciWait, ok := evidence["ci_wait"].(map[string]any)
+	if !ok {
+		return true
+	}
+	pullRequest, ok := ciWait["pull_request"].(int)
+	headSHA, headOK := ciWait["head_sha"].(string)
+	if !ok || !headOK || pullRequest <= 0 || strings.TrimSpace(headSHA) == "" {
+		return false
+	}
+	path := filepath.Join(paths.NewLayout(nil, workDir).StateDir, fmt.Sprintf("%d.ci_wait.json", pullRequest))
+	registration, err := readCIWaitRegistration(path)
+	if err != nil || !strings.EqualFold(registration.HeadSHA, headSHA) || registration.RemediationAttempts >= defaultAwaitResumeMax {
+		return false
+	}
+	registration.RemediationAttempts++
+	if err := atomicfs.WriteAtomicJSON(path, registration, 0o600); err != nil {
+		return false
+	}
+	ciWait["remediation_attempts"] = registration.RemediationAttempts
+	return true
 }
 
 func readCIWaitRegistration(path string) (ciWaitRegistration, error) {
