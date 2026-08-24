@@ -124,6 +124,35 @@ func TestEmitAwait_CarriesAwaitReasonFromGate(t *testing.T) {
 	}
 }
 
+func TestEmitResume_CarriesCIRemediationEvidence(t *testing.T) {
+	spyLog := &spyEventLog{}
+	s := &runSession{
+		deps:        runDeps{eventLog: spyLog},
+		issueNumber: 42,
+		baseBranch:  "main",
+	}
+	ciWait := map[string]any{
+		"pull_request":          17,
+		"head_sha":              "current-sha",
+		"deadline_unix_seconds": int64(1234),
+	}
+	s.emitResume(context.Background(), "run-ci", "42-fix", "ci-failure", map[string]any{
+		"ci_wait": ciWait,
+	})
+	events := spyLog.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
+	}
+	event := events[0]
+	if event.Payload["reason"] != "CI_FAILURE" || event.Payload["gate"] != "ci-failure" {
+		t.Fatalf("resume cause = %#v, want CI failure", event.Payload)
+	}
+	gotCIWait, ok := event.Payload["ci_wait"].(map[string]any)
+	if !ok || gotCIWait["head_sha"] != "current-sha" || gotCIWait["pull_request"] != 17 {
+		t.Fatalf("resume ci_wait = %#v, want %#v", event.Payload["ci_wait"], ciWait)
+	}
+}
+
 func TestEmitAwait_ExplicitAwaitReasonOverridesGate(t *testing.T) {
 	spyLog := &spyEventLog{}
 	s := &runSession{

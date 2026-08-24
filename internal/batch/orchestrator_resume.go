@@ -213,8 +213,15 @@ func (s *runSession) emitResume(ctx context.Context, runID, branch, gate string,
 		return
 	}
 	reason := "feedback"
-	if gate == gateReadyToMerge {
+	switch gate {
+	case gateReadyToMerge:
 		reason = "approval"
+	case gateCIWaitTimeout:
+		reason = "CI_WAIT_TIMEOUT"
+	case "ci-failure":
+		reason = "CI_FAILURE"
+	case "merge-conflict":
+		reason = "MERGE_CONFLICT"
 	}
 	event := events.Event{
 		Type:      "run.resumed",
@@ -235,6 +242,9 @@ func (s *runSession) emitResume(ctx context.Context, runID, branch, gate string,
 	}
 	if reviewRequest, ok := evidence["review_request"]; ok {
 		event.Payload["review_request"] = reviewRequest
+	}
+	if ciWait, ok := evidence["ci_wait"]; ok {
+		event.Payload["ci_wait"] = ciWait
 	}
 	_ = s.deps.eventLog.Log(event)
 }
