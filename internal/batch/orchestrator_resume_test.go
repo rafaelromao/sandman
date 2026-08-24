@@ -74,8 +74,8 @@ func TestRunSingle_ModeContinueCIFailureReEvaluatesToAwait(t *testing.T) {
 	if await == nil {
 		t.Fatalf("run.await event not found: %v", logs)
 	}
-	if await.Payload["gate"] != "failed" {
-		t.Fatalf("gate = %v, want failed", await.Payload["gate"])
+	if await.Payload["gate"] != "ci-failure" {
+		t.Fatalf("gate = %v, want ci-failure", await.Payload["gate"])
 	}
 	if _, ok := await.Payload["blocker"]; ok {
 		t.Fatalf("await blocker = %v, want absent", await.Payload["blocker"])
@@ -167,6 +167,7 @@ func TestEntryReevaluation_ModeContinuePendingGateAwaitsImmediately(t *testing.T
 
 	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
 	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "success", Branch: branch},
 		{IssueNumber: 42, Status: "success", Branch: branch},
 	}}
 	spyLog := &spyEventLog{}
@@ -727,8 +728,8 @@ func TestRunSingle_CIFailurePrecedesActionableEvidenceAwaitsAtEntry(t *testing.T
 		t.Fatalf("run.resumed events = %d, want 0", got)
 	}
 	await := findEvent(logs, "run.await")
-	if await == nil || await.Payload["gate"] != "failed" {
-		t.Fatalf("await event = %#v, want failed gate", await)
+	if await == nil || await.Payload["gate"] != "ci-failure" {
+		t.Fatalf("await event = %#v, want ci-failure gate", await)
 	}
 }
 
@@ -1253,6 +1254,42 @@ func TestResumeEvidenceFor_ActionableFeedbackVariantDefaults(t *testing.T) {
 	}
 	if reviewRequest, ok := evidence["review_request"].(map[string]any); !ok || reviewRequest["pull_request"] != float64(42) {
 		t.Fatalf("review_request not preserved: %v", evidence["review_request"])
+	}
+}
+
+func TestResumePromptFromGate_CIFailureAndConflictRelaunchWithoutRetry(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-resume-")
+	if err := os.MkdirAll(filepath.Join(workDir, ".sandman"), 0o755); err != nil {
+		t.Fatalf("create task directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workDir, ".sandman", "task.md"), []byte("# Task\n"), 0o644); err != nil {
+		t.Fatalf("write task: %v", err)
+	}
+	for _, tc := range []struct {
+		gate   string
+		reason string
+	}{
+		{gate: "ci-failure", reason: "CI_FAILURE"},
+		{gate: "merge-conflict", reason: "MERGE_CONFLICT"},
+	} {
+		t.Run(tc.gate, func(t *testing.T) {
+			log := &spyEventLog{}
+			s := &runSession{
+				deps:        runDeps{githubClient: &fakeGitHubClient{}, eventLog: log},
+				issueNumber: 42,
+				baseBranch:  "main",
+				opts:        runSessionOptions{awaitResumeMax: 1},
+			}
+			promptText, resume := s.resumePromptFromGate(context.Background(), &fakeSandbox{workDir: workDir}, "42-fix", "run-1", map[string]any{
+				"gate": tc.gate, "reason": tc.reason,
+			})
+			if !resume || !strings.Contains(promptText, tc.reason) {
+				t.Fatalf("resume = (%q, %t), want prompt with %s", promptText, resume, tc.reason)
+			}
+			if s.resumeCount != 1 || countEventsByType(log.snapshot(), "run.resumed") != 1 {
+				t.Fatalf("resume was not recorded: count=%d events=%v", s.resumeCount, log.snapshot())
+			}
+		})
 	}
 }
 

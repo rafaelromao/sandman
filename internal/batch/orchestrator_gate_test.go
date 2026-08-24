@@ -1467,7 +1467,7 @@ func TestExternalGate_TriggerPrefixedInformalBodyStaysPending(t *testing.T) {
 	assertPendingGateAwait(t, status, extras, handled)
 }
 
-func TestExternalGate_CIFailureWithInformalFeedbackAwaits(t *testing.T) {
+func TestExternalGate_CIFailureWithInformalFeedbackResumes(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	writeInformalRespondedClassification(t, workDir, "Please fix the race in internal/socketpath/socketpath.go.")
 	session := &runSession{
@@ -1482,18 +1482,18 @@ func TestExternalGate_CIFailureWithInformalFeedbackAwaits(t *testing.T) {
 		opts: gateTestRunOptions(),
 	}
 	status, extras, handled := session.lifecycleDecisionWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
-	if !handled || status != "await" {
-		t.Fatalf("CI failure with informal evidence = (%q, %#v, %t), want await", status, extras, handled)
+	if !handled || status != "resume" {
+		t.Fatalf("CI failure with informal evidence = (%q, %#v, %t), want resume", status, extras, handled)
 	}
-	if got, _ := extras["gate"].(string); got != "failed" {
-		t.Fatalf("gate = %q, want failed", got)
+	if got, _ := extras["reason"].(string); got != "CI_FAILURE" {
+		t.Fatalf("reason = %q, want CI_FAILURE", got)
 	}
 	if _, ok := extras["blocker"]; ok {
 		t.Fatalf("await carries blocker: %#v", extras)
 	}
 }
 
-func TestExternalGate_DirtyWithInformalFeedbackAwaits(t *testing.T) {
+func TestExternalGate_DirtyWithInformalFeedbackResumes(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	writeInformalRespondedClassification(t, workDir, "Please fix the race in internal/socketpath/socketpath.go.")
 	session := &runSession{
@@ -1508,17 +1508,14 @@ func TestExternalGate_DirtyWithInformalFeedbackAwaits(t *testing.T) {
 		opts: gateTestRunOptions(),
 	}
 	status, extras, handled := session.lifecycleDecisionWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
-	if !handled || status != "await" {
-		t.Fatalf("DIRTY with informal evidence = (%q, %#v, %t), want await", status, extras, handled)
+	if !handled || status != "resume" {
+		t.Fatalf("DIRTY with informal evidence = (%q, %#v, %t), want resume", status, extras, handled)
 	}
-	if got, _ := extras["gate"].(string); got != "failed" {
-		t.Fatalf("gate = %q, want failed", got)
+	if got, _ := extras["reason"].(string); got != "MERGE_CONFLICT" {
+		t.Fatalf("reason = %q, want MERGE_CONFLICT", got)
 	}
 	if _, ok := extras["blocker"]; ok {
 		t.Fatalf("await carries blocker: %#v", extras)
-	}
-	if request, ok := extras["review_request"].(map[string]any); ok && request["informal_feedback"] != nil {
-		t.Fatalf("informal_feedback = %#v, want none past the DIRTY precedence branch", request["informal_feedback"])
 	}
 }
 
@@ -1741,37 +1738,38 @@ func TestExternalGate_MalformedRetainedClassificationDoesNotMaskFailedCI(t *test
 		opts: gateTestRunOptions(),
 	}
 	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
-	if !handled || status != "await" || extras["gate"] != "failed" {
-		t.Fatalf("malformed classification failed-CI result = (%q, %#v, %t), want failed await", status, extras, handled)
+	if !handled || status != "resume" || extras["gate"] != "ci-failure" {
+		t.Fatalf("malformed classification failed-CI result = (%q, %#v, %t), want CI resume", status, extras, handled)
 	}
 }
 
 func TestExternalGate_LateFeedbackPreservesExistingFailedGatePrecedence(t *testing.T) {
 	tests := []struct {
-		name     string
-		mutatePR func(*github.PR)
-		wantGate string
+		name       string
+		mutatePR   func(*github.PR)
+		wantGate   string
+		wantStatus string
 	}{
 		{
 			name: "failed CI",
 			mutatePR: func(pr *github.PR) {
 				pr.StatusCheckRollup = "failure"
 			},
-			wantGate: "failed",
+			wantGate: "ci-failure", wantStatus: "resume",
 		},
 		{
 			name: "conflict",
 			mutatePR: func(pr *github.PR) {
 				pr.MergeStateStatus = "CONFLICTING"
 			},
-			wantGate: "failed",
+			wantGate: "merge-conflict", wantStatus: "resume",
 		},
 		{
 			name: "stale head",
 			mutatePR: func(pr *github.PR) {
 				pr.HeadRefOid = "stale-sha"
 			},
-			wantGate: "failed",
+			wantGate: "failed", wantStatus: "await",
 		},
 	}
 	for _, tt := range tests {
@@ -1798,8 +1796,8 @@ func TestExternalGate_LateFeedbackPreservesExistingFailedGatePrecedence(t *testi
 				opts: gateTestRunOptions(),
 			}
 			status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
-			if !handled || status != "await" {
-				t.Fatalf("late feedback precedence = (%q, %#v, %t), want await", status, extras, handled)
+			if !handled || status != tt.wantStatus {
+				t.Fatalf("late feedback precedence = (%q, %#v, %t), want %s", status, extras, handled, tt.wantStatus)
 			}
 			if got := extras["gate"]; got != tt.wantGate {
 				t.Fatalf("late feedback gate = %v, want %q", got, tt.wantGate)
@@ -2625,30 +2623,31 @@ func TestExternalGate_LateStaleApprovalRemainsPending(t *testing.T) {
 
 func TestExternalGate_LateApprovalPreservesHardGatePrecedence(t *testing.T) {
 	tests := []struct {
-		name string
-		pr   *github.PR
-		want string
+		name       string
+		pr         *github.PR
+		want       string
+		wantStatus string
 	}{
 		{
 			name: "failed CI",
 			pr: &github.PR{
 				Number: 17, State: "open", HeadRefOid: "current-sha", StatusCheckRollup: "failure", ReviewDecision: "APPROVED", MergeStateStatus: "CLEAN",
 			},
-			want: "failed",
+			want: "ci-failure", wantStatus: "resume",
 		},
 		{
 			name: "conflicting merge",
 			pr: &github.PR{
 				Number: 17, State: "open", HeadRefOid: "current-sha", StatusCheckRollup: "success", ReviewDecision: "APPROVED", MergeStateStatus: "CONFLICTING",
 			},
-			want: "failed",
+			want: "merge-conflict", wantStatus: "resume",
 		},
 		{
 			name: "pending checks",
 			pr: &github.PR{
 				Number: 17, State: "open", HeadRefOid: "current-sha", StatusCheckRollup: "pending", ReviewDecision: "APPROVED", MergeStateStatus: "BLOCKED",
 			},
-			want: "pending",
+			want: "pending", wantStatus: "await",
 		},
 	}
 	for _, tt := range tests {
@@ -2661,9 +2660,8 @@ func TestExternalGate_LateApprovalPreservesHardGatePrecedence(t *testing.T) {
 				opts:        gateTestRunOptions(),
 			}
 			status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
-			wantStatus := "await"
-			if !handled || status != wantStatus {
-				t.Fatalf("hard-gate result = (%q, %#v, %t), want %s", status, extras, handled, wantStatus)
+			if !handled || status != tt.wantStatus {
+				t.Fatalf("hard-gate result = (%q, %#v, %t), want %s", status, extras, handled, tt.wantStatus)
 			}
 			if got := extras["gate"]; got != tt.want {
 				t.Fatalf("hard-gate reason = %v, want %q", got, tt.want)
@@ -3309,10 +3307,16 @@ func TestRunSingle_FailedExternalGateAwaitsWithoutRetry(t *testing.T) {
 			if result.RetriesTotal != 1 {
 				t.Fatalf("retries total = %d, want 1", result.RetriesTotal)
 			}
-			if launches != 1 {
-				t.Fatalf("agent launches = %d, want 1", launches)
+			wantLaunches := 1
+			wantGate := "failed"
+			if tt.name == "failed CI" {
+				wantLaunches = 2
+				wantGate = "ci-failure"
 			}
-			assertExternalGateTerminal(t, logs, "await", "failed")
+			if launches != wantLaunches {
+				t.Fatalf("agent launches = %d, want %d", launches, wantLaunches)
+			}
+			assertExternalGateTerminal(t, logs, "await", wantGate)
 		})
 	}
 }

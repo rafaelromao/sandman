@@ -166,7 +166,7 @@ func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbo
 	}
 	gate, _ := extras["gate"].(string)
 	switch gate {
-	case gateReadyToMerge, gateActionableFeedback:
+	case gateReadyToMerge, gateActionableFeedback, "ci-failure", "merge-conflict":
 	default:
 		return "", false
 	}

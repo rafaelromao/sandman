@@ -170,6 +170,15 @@ func decideImplementationPRLifecycle(in implementationPRFacts) lifecycleDecision
 }
 
 func decideRecoverableLifecycle(gate lifecycleGate, pr *github.PR, evidence retainedReviewEvidence) lifecycleDecision {
+	// CI failures and merge conflicts are branch-owned work, not external work
+	// that can make progress while the agent waits. Handle these typed facts
+	// before the legacy gate/evidence compatibility rules below.
+	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "failure") {
+		return lifecycleRemediationDecision("ci-failure", "CI_FAILURE", "inspect current-head CI with gh pr checks and repair the failing checks", pr, evidence.payload)
+	}
+	if pr != nil && (strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "DIRTY") || strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "CONFLICTING")) {
+		return lifecycleRemediationDecision("merge-conflict", "MERGE_CONFLICT", "rebase or merge the base branch, resolve conflicts, and push a new head", pr, evidence.payload)
+	}
 	if evidence.stateError && gate != lifecycleGateFailed {
 		return lifecycleDecision{
 			action:  lifecycleAwait,
@@ -219,6 +228,18 @@ func decideRecoverableLifecycle(gate lifecycleGate, pr *github.PR, evidence reta
 		decision.extras["await"] = true
 	}
 	return decision
+}
+
+func lifecycleRemediationDecision(gate, reason, nextAction string, pr *github.PR, retained map[string]any) lifecycleDecision {
+	extras := cloneLifecycleExtras(retained)
+	if extras == nil {
+		extras = map[string]any{}
+	}
+	extras["pull_request"] = pr.Number
+	extras["head_sha"] = pr.HeadRefOid
+	extras["reason"] = reason
+	extras["next_action"] = nextAction
+	return lifecycleDecision{action: lifecycleResume, gate: lifecycleGate(gate), handled: true, extras: extras}
 }
 
 // lifecycleStatusRepr maps a decided action to the status string the run
@@ -383,7 +404,10 @@ func (s *runSession) handleLifecycleDecisionWithPublication(ctx context.Context,
 	if extras == nil {
 		extras = map[string]any{"gate": string(decision.gate), "await": true}
 	}
-	if _, ok := extras["gate"]; !ok {
+	if decision.action == lifecycleResume {
+		// Live typed remediation outranks retained review labels.
+		extras["gate"] = string(decision.gate)
+	} else if _, ok := extras["gate"]; !ok {
 		extras["gate"] = string(decision.gate)
 	}
 	extras["await"] = true
