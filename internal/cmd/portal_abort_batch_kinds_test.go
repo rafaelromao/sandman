@@ -446,6 +446,81 @@ func TestPortal_AbortEndpoint_ContinueIssueRunRow_ResolvesPerRunSocket(t *testin
 	}
 }
 
+// TestPortal_AbortEndpoint_NonCanonicalIssueRunRow_ResolvesOwnPerRunSocket
+// verifies that an active batch's canonical row does not leak into a sibling
+// row's RunDir. Foreground awaits remain active long enough for this portal
+// path to be exercised after the initial agent session has ended.
+func TestPortal_AbortEndpoint_NonCanonicalIssueRunRow_ResolvesOwnPerRunSocket(t *testing.T) {
+	if !portalAbortSupported() {
+		t.Skip("abort unsupported on this platform")
+	}
+	ts := "260618113825"
+	shortid := "abcd"
+	batchDirName := runid.NewBatchID(runid.KindIssue, 2, "42", ts, shortid)
+	canonicalRunID := runid.NewRunID(runid.KindIssue, "42", ts, shortid)
+	targetRunID := runid.NewRunID(runid.KindIssue, "43", ts, shortid)
+	batchManifest := daemon.BatchManifest{
+		BatchId:    batchDirName,
+		Issues:     []int{42, 43},
+		RunKind:    "issue",
+		CreatedAt:  time.Now().Add(-10 * time.Minute),
+		RunTS:      ts,
+		RunShortID: shortid,
+	}
+
+	repoRoot, _ := portalAbortBatchKindsFixture(t, portalAbortBatchKindsOpts{
+		batchKey:      canonicalRunID,
+		batchDirName:  batchDirName,
+		perRowID:      targetRunID,
+		idxKind:       batchindex.KindIssue,
+		issues:        []int{42, 43},
+		issueNumber:   43,
+		branch:        "43",
+		batchManifest: &batchManifest,
+	})
+	if err := daemon.WriteRunManifest(filepath.Join(repoRoot, ".sandman", "batches", batchDirName), canonicalRunID, batchindex.RunManifest{
+		RunID:     canonicalRunID,
+		BatchID:   batchDirName,
+		Issue:     42,
+		Kind:      batchindex.KindIssue,
+		Branch:    "42-fix",
+		CreatedAt: time.Now().Add(-10 * time.Minute),
+		Status:    batchindex.RunManifestStatusActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	perRunSock := filepath.Join(repoRoot, ".sandman", "batches", batchDirName, "runs", targetRunID, "run.sock")
+	spy := &abortSpy{}
+	startAbortCommandServer(t, perRunSock, spy)
+	stubPortalPeerPIDForAbort(t, perRunSock)
+
+	prevStale := portalStaleCleaner
+	portalStaleCleaner = func(string) error { return nil }
+	t.Cleanup(func() { portalStaleCleaner = prevStale })
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/runs/abort", strings.NewReader(`{"runKey":"`+targetRunID+`","issue":43}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, body)
+	}
+
+	calls := spy.Snapshot()
+	if len(calls) != 1 || calls[0] != 43 {
+		t.Fatalf("abort calls = %v, want [43]", calls)
+	}
+}
+
 // TestAbortPortalRun_OrphanReviewRow_ResolvesPerRunSocket covers an
 // orphan review row (PR with no linked issue): the per-row id is
 // `PR<n>` and equals the batch entry id, so the abort handler takes

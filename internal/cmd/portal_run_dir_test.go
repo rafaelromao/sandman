@@ -53,9 +53,9 @@ func TestPortal_RunDir_ActiveRowStampsPerRowFolder(t *testing.T) {
 		t.Fatalf("expected 1 row, got %d: %#v", len(runs), runs)
 	}
 
-	want := filepath.Join(batchDir, "runs", "live-rundir")
+	want := filepath.Join(batchDir, "runs", "abcd-260101120000-42")
 	if got := runs[0].RunDir; got != want {
-		t.Errorf("active row RunDir = %q, want %q (per-row folder under batchDir/runs/<active.RunID>)", got, want)
+		t.Errorf("active row RunDir = %q, want %q (per-row folder under batchDir/runs/<runID>)", got, want)
 	}
 }
 

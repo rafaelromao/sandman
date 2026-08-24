@@ -1712,6 +1712,9 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 	}
 	if state != nil {
 		activeWithOutput := active
+		// The active batch entry carries its canonical row ID. Projecting a
+		// sibling state must use that state's per-row directory for commands.
+		activeWithOutput.RunID = state.RunID
 		activeWithOutput.LiveOutput = liveOutput
 		run = v.runFromState(repoRoot, *state, &activeWithOutput, eventsByRun, deadBatches, nil)
 		run.BatchKey = batchKey
