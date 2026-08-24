@@ -196,10 +196,7 @@ func decideRecoverableLifecycle(gate lifecycleGate, pr *github.PR, evidence reta
 		return resume("PR_UNAVAILABLE", "inspect the pull-request state with gh pr view and publish or repair it before continuing")
 	}
 	if evidence.stateError {
-		// A malformed retained artifact has no branch-owned remediation until
-		// the live review API can be observed again.
-		extras["await_kind"] = "review-observation"
-		return lifecycleDecision{action: lifecycleAwait, gate: lifecycleGate(gateReviewTimeoutError), handled: true, extras: extras}
+		return resume("REVIEW_STATE_UNAVAILABLE", "inspect the current pull-request review state with gh pr view before continuing")
 	}
 	if evidence.outcome == retainedReviewTimeout {
 		return resume(reviewTimeoutReason, "inspect the review deadline and current pull-request state, then address or retrigger review")
@@ -227,19 +224,10 @@ func decideRecoverableLifecycle(gate lifecycleGate, pr *github.PR, evidence reta
 		extras["await_kind"] = "review"
 		return lifecycleDecision{action: lifecycleAwait, gate: lifecycleGatePending, handled: true, extras: extras}
 	}
-	if merge == "BLOCKED" && review == "" {
-		// GitHub has not identified a review request yet. Preserve this as an
-		// observation wait rather than guessing a branch remediation action.
-		extras["await_kind"] = "mergeability"
-		return lifecycleDecision{action: lifecycleAwait, gate: lifecycleGatePending, handled: true, extras: extras}
-	}
 	if gate == lifecycleGateReady {
 		return resume("READY_TO_MERGE", "revalidate current-head approval, CI, and mergeability, then complete the pull request")
 	}
-	// An incomplete API snapshot is not evidence that the branch needs work.
-	// Leave it to the normal retry path rather than manufacturing a lifecycle
-	// resume loop from absent CI, review, and mergeability facts.
-	return unhandled(gate)
+	return resume("PR_STATE_REQUIRES_ACTION", "inspect the current pull-request lifecycle with gh pr view and take the indicated action")
 }
 
 func extrasString(extras map[string]any, key string) string {
@@ -413,9 +401,9 @@ func (s *runSession) handleLifecycleDecisionWithPublication(ctx context.Context,
 	if extras == nil {
 		extras = map[string]any{"gate": string(decision.gate), "await": true}
 	}
-	// The decision is authoritative over retained artifacts. In particular a
-	// current-head CI failure must not be labelled as an older review outcome.
-	extras["gate"] = string(decision.gate)
+	if _, ok := extras["gate"]; !ok {
+		extras["gate"] = string(decision.gate)
+	}
 	extras["await"] = true
 	status := lifecycleStatusRepr(decision)
 	if status == "resume" && decision.gate == lifecycleGateReady {

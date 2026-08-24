@@ -362,10 +362,7 @@ type fakeRunnableFactory struct {
 func (f *fakeRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
 	f.mu.Lock()
 	idx := len(f.created)
-	res := AgentRunResult{Status: "failure", Branch: branch}
-	if idx < len(f.results) {
-		res = f.results[idx]
-	}
+	res := f.results[idx]
 	delay := time.Duration(0)
 	if idx < len(f.delays) {
 		delay = f.delays[idx]

@@ -888,11 +888,9 @@ func NewOrchestrator(githubClient github.Client, renderer prompt.IssueRenderer, 
 		layout:        paths.NewLayout(&config.Config{}, root),
 		lookupGHToken: defaultLookupGHToken,
 		runSessionOpts: runSessionOptions{
-			baseBranchSyncMu: &sync.Mutex{},
-			taskWriter:       atomicfs.WriteAtomic,
-			// Await is persisted and returned to the batch scheduler rather than
-			// holding an agent/container lease in a foreground poll loop.
-			foregroundLifecycle: false,
+			baseBranchSyncMu:    &sync.Mutex{},
+			taskWriter:          atomicfs.WriteAtomic,
+			foregroundLifecycle: true,
 		},
 		badgeHooker:  nopBadgeHooker{},
 		coordinators: make(map[*batchCoordinator]struct{}),
@@ -2830,16 +2828,9 @@ loop:
 						s.emitAwait(ctx, runID, result, extras)
 						gateStatus, extras, handled = s.observeLifecycle(ctx, wt.WorkDir(), branch, logPath, runID, result, extras, hostPathsReady)
 					}
-					if gateStatus == "await" {
-						result.Status = gateStatus
-						terminalExtras = mergeBlockerExtras(terminalExtras, extras)
-						break loop
-					}
-					if gateStatus == "resume" {
-						if resumePrompt, resume := s.resumePromptFromGate(ctx, wt, branch, runID, extras); resume {
-							attemptRenderCfg.TaskPrompt = resumePrompt
-							continue relaunch
-						}
+					if resumePrompt, resume := s.resumePromptFromGate(ctx, wt, branch, runID, extras); resume {
+						attemptRenderCfg.TaskPrompt = resumePrompt
+						continue relaunch
 					}
 					if gateStatus == "resume" {
 						// A same-head remediation loop cannot make external progress.

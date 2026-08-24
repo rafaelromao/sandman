@@ -1467,7 +1467,7 @@ func TestExternalGate_TriggerPrefixedInformalBodyStaysPending(t *testing.T) {
 	assertPendingGateAwait(t, status, extras, handled)
 }
 
-func TestExternalGate_CIFailureWithInformalFeedbackResumes(t *testing.T) {
+func TestExternalGate_CIFailureWithInformalFeedbackAwaits(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	writeInformalRespondedClassification(t, workDir, "Please fix the race in internal/socketpath/socketpath.go.")
 	session := &runSession{
@@ -1482,18 +1482,18 @@ func TestExternalGate_CIFailureWithInformalFeedbackResumes(t *testing.T) {
 		opts: gateTestRunOptions(),
 	}
 	status, extras, handled := session.lifecycleDecisionWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
-	if !handled || status != "resume" {
-		t.Fatalf("CI failure with informal evidence = (%q, %#v, %t), want resume", status, extras, handled)
+	if !handled || status != "await" {
+		t.Fatalf("CI failure with informal evidence = (%q, %#v, %t), want await", status, extras, handled)
 	}
-	if got, _ := extras["reason"].(string); got != "CI_FAILURE" {
-		t.Fatalf("reason = %q, want CI_FAILURE", got)
+	if got, _ := extras["gate"].(string); got != "failed" {
+		t.Fatalf("gate = %q, want failed", got)
 	}
 	if _, ok := extras["blocker"]; ok {
 		t.Fatalf("await carries blocker: %#v", extras)
 	}
 }
 
-func TestExternalGate_DirtyWithInformalFeedbackResumes(t *testing.T) {
+func TestExternalGate_DirtyWithInformalFeedbackAwaits(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	writeInformalRespondedClassification(t, workDir, "Please fix the race in internal/socketpath/socketpath.go.")
 	session := &runSession{
@@ -1508,11 +1508,11 @@ func TestExternalGate_DirtyWithInformalFeedbackResumes(t *testing.T) {
 		opts: gateTestRunOptions(),
 	}
 	status, extras, handled := session.lifecycleDecisionWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
-	if !handled || status != "resume" {
-		t.Fatalf("DIRTY with informal evidence = (%q, %#v, %t), want resume", status, extras, handled)
+	if !handled || status != "await" {
+		t.Fatalf("DIRTY with informal evidence = (%q, %#v, %t), want await", status, extras, handled)
 	}
-	if got, _ := extras["reason"].(string); got != "MERGE_CONFLICT" {
-		t.Fatalf("reason = %q, want MERGE_CONFLICT", got)
+	if got, _ := extras["gate"].(string); got != "failed" {
+		t.Fatalf("gate = %q, want failed", got)
 	}
 	if _, ok := extras["blocker"]; ok {
 		t.Fatalf("await carries blocker: %#v", extras)
@@ -3274,7 +3274,7 @@ func TestRunSingle_ClosedUnmergedPRDoesNotConsumeRetries(t *testing.T) {
 	assertExternalGateTerminal(t, logs, "failure", "")
 }
 
-func TestRunSingle_FailedExternalGateTerminalizesAfterRemediationBudget(t *testing.T) {
+func TestRunSingle_FailedExternalGateAwaitsWithoutRetry(t *testing.T) {
 	tests := []struct {
 		name string
 		pr   *github.PR
@@ -3303,8 +3303,8 @@ func TestRunSingle_FailedExternalGateTerminalizesAfterRemediationBudget(t *testi
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, logs, launches := runCleanGateCase(t, tt.pr)
-			if result.Status != "failure" {
-				t.Fatalf("status = %q, want failure", result.Status)
+			if result.Status != "await" {
+				t.Fatalf("status = %q, want await", result.Status)
 			}
 			if result.RetriesTotal != 1 {
 				t.Fatalf("retries total = %d, want 1", result.RetriesTotal)
@@ -3312,9 +3312,7 @@ func TestRunSingle_FailedExternalGateTerminalizesAfterRemediationBudget(t *testi
 			if launches != 1 {
 				t.Fatalf("agent launches = %d, want 1", launches)
 			}
-			if finishedStatus(t, logs) != "failure" {
-				t.Fatalf("finished status = %q, want failure", finishedStatus(t, logs))
-			}
+			assertExternalGateTerminal(t, logs, "await", "failed")
 		})
 	}
 }
