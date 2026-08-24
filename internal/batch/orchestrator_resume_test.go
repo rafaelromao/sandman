@@ -658,9 +658,9 @@ func TestRunSingle_PendingGatePollFailureWithActionableFeedbackResumesAgent(t *t
 	}
 }
 
-// CI failure is branch-owned remediation, not external progress. A continuation
-// relaunches the agent with the current PR evidence and does not consume a retry.
-func TestRunSingle_CIFailurePrecedesActionableEvidenceResumesAtEntry(t *testing.T) {
+// CI failure with retained actionable evidence awaits at entry without
+// launching an agent: the live PR state is recoverable but not resume-worthy.
+func TestRunSingle_CIFailurePrecedesActionableEvidenceAwaitsAtEntry(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 
@@ -676,7 +676,6 @@ func TestRunSingle_CIFailurePrecedesActionableEvidenceResumesAtEntry(t *testing.
 	writeFormalChangesRequestedClassification(t, worktreePath, "current")
 
 	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
-		{IssueNumber: 42, Status: "success", Branch: branch},
 		{IssueNumber: 42, Status: "success", Branch: branch},
 	}}
 	spyLog := &spyEventLog{}
@@ -714,21 +713,22 @@ func TestRunSingle_CIFailurePrecedesActionableEvidenceResumesAtEntry(t *testing.
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure after bounded same-head remediation", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want await (CI failure precedes actionable evidence)", result.Status)
 	}
-	if got := len(resultFactory.created); got != 2 {
-		t.Fatalf("agent launches = %d, want initial remediation plus bounded relaunch", got)
+	if got := len(resultFactory.created); got != 0 {
+		t.Fatalf("agent launches = %d, want none before recoverable await", got)
 	}
 	logs, err := spyLog.Read()
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
-	if got := countEventsByType(logs, "run.resumed"); got != 1 {
-		t.Fatalf("run.resumed events = %d, want 1", got)
+	if got := countEventsByType(logs, "run.resumed"); got != 0 {
+		t.Fatalf("run.resumed events = %d, want 0", got)
 	}
-	if got := countEventsByType(logs, "run.retry"); got != 0 {
-		t.Fatalf("run.retry events = %d, want 0", got)
+	await := findEvent(logs, "run.await")
+	if await == nil || await.Payload["gate"] != "failed" {
+		t.Fatalf("await event = %#v, want failed gate", await)
 	}
 }
 

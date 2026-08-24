@@ -12,25 +12,23 @@ import (
 
 // Defaults for optional config fields.
 const (
-	DefaultAgent                = "opencode"
-	DefaultModel                = "opencode/big-pickle"
-	DefaultReviewAgent          = "opencode"
-	DefaultReviewModel          = "opencode/big-pickle"
-	DefaultBuildToolsPreset     = "generic"
-	DefaultReviewCommand        = "/sandman review"
-	DefaultParallel             = 1
-	DefaultReviewParallel       = 1
-	DefaultStartDelay           = 0
-	DefaultRunIdleTimeout       = 3600
-	DefaultReviewTimeout        = 1800
-	MinReviewTimeout            = 240
-	DefaultCIObservationTimeout = 3600
-	MinCIObservationTimeout     = 240
-	DefaultRetries              = 3
-	DefaultContainerCapacity    = 4
-	DefaultMaxContainers        = 0
-	DefaultWorktreeDir          = ".sandman/worktrees"
-	DefaultSandbox              = "podman"
+	DefaultAgent             = "opencode"
+	DefaultModel             = "opencode/big-pickle"
+	DefaultReviewAgent       = "opencode"
+	DefaultReviewModel       = "opencode/big-pickle"
+	DefaultBuildToolsPreset  = "generic"
+	DefaultReviewCommand     = "/sandman review"
+	DefaultParallel          = 1
+	DefaultReviewParallel    = 1
+	DefaultStartDelay        = 0
+	DefaultRunIdleTimeout    = 3600
+	DefaultReviewTimeout     = 1800
+	MinReviewTimeout         = 240
+	DefaultRetries           = 3
+	DefaultContainerCapacity = 4
+	DefaultMaxContainers     = 0
+	DefaultWorktreeDir       = ".sandman/worktrees"
+	DefaultSandbox           = "podman"
 )
 
 // Config holds the loaded Sandman configuration.
@@ -48,7 +46,6 @@ type Config struct {
 	StartDelay            int              `yaml:"start_delay"`
 	RunIdleTimeout        int              `yaml:"run_idle_timeout"`
 	ReviewTimeout         int              `yaml:"review_timeout,omitempty"`
-	CIObservationTimeout  int              `yaml:"ci_observation_timeout,omitempty"`
 	ContextErrorPhrases   []string         `yaml:"context_error_phrases,omitempty"`
 	Retries               int              `yaml:"retries"`
 	ContainerCapacity     int              `yaml:"container_capacity"`
@@ -166,7 +163,6 @@ func SupportedKeys() []string {
 		"start_delay",
 		"run_idle_timeout",
 		"review_timeout",
-		"ci_observation_timeout",
 		"retries",
 		"container_capacity",
 		"max_containers",
@@ -197,7 +193,6 @@ func Load(path string) (*Config, error) {
 		StartDelay            int              `yaml:"start_delay"`
 		RunIdleTimeout        *int             `yaml:"run_idle_timeout"`
 		ReviewTimeout         yaml.Node        `yaml:"review_timeout"`
-		CIObservationTimeout  yaml.Node        `yaml:"ci_observation_timeout"`
 		ContextErrorPhrases   []string         `yaml:"context_error_phrases"`
 		Retries               *int             `yaml:"retries"`
 		ContainerCapacity     *int             `yaml:"container_capacity"`
@@ -260,11 +255,6 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("validate config: %w", err)
 	}
 	cfg.ReviewTimeout = reviewTimeout
-	ciObservationTimeout, err := parseCIObservationTimeout(&raw.CIObservationTimeout)
-	if err != nil {
-		return nil, fmt.Errorf("validate config: %w", err)
-	}
-	cfg.CIObservationTimeout = ciObservationTimeout
 	if cfg.ContextErrorPhrases, err = normalizeContextErrorPhrases(cfg.ContextErrorPhrases); err != nil {
 		return nil, fmt.Errorf("validate config: %w", err)
 	}
@@ -352,27 +342,6 @@ func parseReviewTimeout(node *yaml.Node) (int, error) {
 		return 0, err
 	}
 	return value, nil
-}
-
-func ValidateCIObservationTimeout(value int) error {
-	if value < MinCIObservationTimeout {
-		return fmt.Errorf("ci_observation_timeout must be at least %d seconds", MinCIObservationTimeout)
-	}
-	return nil
-}
-
-func parseCIObservationTimeout(node *yaml.Node) (int, error) {
-	if node == nil || node.Kind == 0 {
-		return DefaultCIObservationTimeout, nil
-	}
-	if node.Kind != yaml.ScalarNode || node.Tag != "!!int" {
-		return 0, fmt.Errorf("ci_observation_timeout must be an integer number of seconds (minimum %d)", MinCIObservationTimeout)
-	}
-	value, err := strconv.Atoi(node.Value)
-	if err != nil {
-		return 0, fmt.Errorf("ci_observation_timeout must be an integer number of seconds (minimum %d)", MinCIObservationTimeout)
-	}
-	return value, ValidateCIObservationTimeout(value)
 }
 
 func normalizeContextErrorPhrases(phrases []string) ([]string, error) {
@@ -539,8 +508,6 @@ func (c *Config) GetValue(key string) (string, error) {
 		return fmt.Sprintf("%d", c.RunIdleTimeout), nil
 	case "review_timeout":
 		return fmt.Sprintf("%d", c.EffectiveReviewTimeout()), nil
-	case "ci_observation_timeout":
-		return fmt.Sprintf("%d", c.EffectiveCIObservationTimeout()), nil
 	case "retries":
 		return fmt.Sprintf("%d", c.Retries), nil
 	case "container_capacity":
@@ -573,7 +540,6 @@ var intSetFields = []intSetField{
 	{name: "start_delay", allowZero: true, target: func(c *Config) *int { return &c.StartDelay }},
 	{name: "run_idle_timeout", allowZero: true, target: func(c *Config) *int { return &c.RunIdleTimeout }},
 	{name: "review_timeout", minimum: MinReviewTimeout, target: func(c *Config) *int { return &c.ReviewTimeout }},
-	{name: "ci_observation_timeout", minimum: MinCIObservationTimeout, target: func(c *Config) *int { return &c.CIObservationTimeout }},
 	{name: "retries", allowZero: true, target: func(c *Config) *int { return &c.Retries }},
 	{name: "container_capacity", allowZero: true, target: func(c *Config) *int { return &c.ContainerCapacity }},
 	{name: "max_containers", allowZero: true, target: func(c *Config) *int { return &c.MaxContainers }},
@@ -690,14 +656,6 @@ func (c *Config) EffectiveReviewTimeout() int {
 		return DefaultReviewTimeout
 	}
 	return c.ReviewTimeout
-}
-
-// EffectiveCIObservationTimeout returns the bounded current-head CI wait.
-func (c *Config) EffectiveCIObservationTimeout() int {
-	if c == nil || c.CIObservationTimeout < MinCIObservationTimeout {
-		return DefaultCIObservationTimeout
-	}
-	return c.CIObservationTimeout
 }
 
 // EffectiveReviewModel returns the configured review model, falling back to
