@@ -137,7 +137,7 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 		result.Status = s.emitTerminal(ctx, runID, result, nextExtras)
 		return result, true, true
 	}
-	if !consumeCIWaitRemediation(wt.WorkDir(), extras) {
+	if isCIRemediationGate(gate) && !consumeCIWaitRemediation(wt.WorkDir(), extras) {
 		result := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: 1}
 		result.Status = s.emitTerminal(ctx, runID, result, map[string]any{
 			"gate":        extras["gate"],
@@ -177,7 +177,7 @@ func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbo
 	if !isResumeGate(gate) {
 		return "", false
 	}
-	if !consumeCIWaitRemediation(wt.WorkDir(), extras) {
+	if isCIRemediationGate(gate) && !consumeCIWaitRemediation(wt.WorkDir(), extras) {
 		return "", false
 	}
 	evidence := s.resumeEvidenceFor(ctx, branch, extras)
@@ -190,6 +190,15 @@ func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbo
 func isResumeGate(gate string) bool {
 	switch gate {
 	case gateReadyToMerge, gateActionableFeedback, gateReviewTimeout, gateCIWaitTimeout, "ci-failure", "merge-conflict":
+		return true
+	default:
+		return false
+	}
+}
+
+func isCIRemediationGate(gate string) bool {
+	switch gate {
+	case gateCIWaitTimeout, "ci-failure", "merge-conflict":
 		return true
 	default:
 		return false
