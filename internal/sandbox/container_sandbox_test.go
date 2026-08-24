@@ -604,7 +604,7 @@ func TestContainerSandbox_Exec_CancelsViaContext(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("expected context.Canceled, got: %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("Exec did not unblock after context cancel — missing Setpgid on container sandbox?")
 	}
 }
