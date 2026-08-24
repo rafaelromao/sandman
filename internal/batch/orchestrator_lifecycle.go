@@ -531,6 +531,13 @@ func (s *runSession) waitForLifecyclePoll(ctx context.Context, interval time.Dur
 func (s *runSession) observeLifecycle(ctx context.Context, workDir, branch, logPath, runID string, result AgentRunResult, extras map[string]any, hostPathsReady bool) (string, map[string]any, bool) {
 	plan := s.lifecyclePollIntervals(extras)
 	for index := 0; ; index++ {
+		if deadline, ok := lifecycleDeadline(extras); ok && !time.Now().Before(deadline) {
+			return "resume", map[string]any{
+				"gate":        gateReviewTimeout,
+				"reason":      reviewTimeoutReason,
+				"next_action": reviewTimeoutNextAction,
+			}, true
+		}
 		interval := plan[len(plan)-1]
 		if index < len(plan) {
 			interval = plan[index]
@@ -559,4 +566,16 @@ func (s *runSession) observeLifecycle(ctx context.Context, workDir, branch, logP
 		}
 		return status, nextExtras, true
 	}
+}
+
+func lifecycleDeadline(extras map[string]any) (time.Time, bool) {
+	request, ok := extras["review_request"].(map[string]any)
+	if !ok {
+		return time.Time{}, false
+	}
+	seconds, ok := request["deadline_unix_seconds"].(float64)
+	if !ok || seconds <= 0 || seconds != float64(int64(seconds)) {
+		return time.Time{}, false
+	}
+	return time.Unix(int64(seconds), 0), true
 }

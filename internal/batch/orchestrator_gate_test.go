@@ -1974,7 +1974,12 @@ func TestExternalGate_ReviewTimeoutRetainsResponseCounters(t *testing.T) {
 
 	sb := &retrySandbox{workDir: worktreePath}
 	sbFactory := &retrySandboxFactory{sandbox: sb}
-	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success", Branch: gateTestBranch}}}
+	factory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "success", Branch: gateTestBranch},
+		{IssueNumber: 42, Status: "success", Branch: gateTestBranch},
+		{IssueNumber: 42, Status: "success", Branch: gateTestBranch},
+		{IssueNumber: 42, Status: "success", Branch: gateTestBranch},
+	}}
 	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}},
