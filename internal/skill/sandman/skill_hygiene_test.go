@@ -254,12 +254,12 @@ func TestSkillsDocumentation_DescribesAFKWorkflow(t *testing.T) {
 	}
 }
 
-func TestReviewLifecycleDocumentationDescribesForegroundV1(t *testing.T) {
+func TestReviewLifecycleDocumentationDescribesBoundedWait(t *testing.T) {
 	docs := map[string][]string{
 		"monitoring.md": {
-			"foreground observation",
-			"capacity held",
-			"dependents remain queued",
+			"durable per-head",
+			"execution capacity",
+			"dependents queued",
 			"Explicit cancellation emits `run.aborted`",
 		},
 		"reviews.md": {
@@ -286,7 +286,7 @@ func TestReviewLifecycleDocumentationDescribesForegroundV1(t *testing.T) {
 		text := string(data)
 		for _, phrase := range required {
 			if !strings.Contains(text, phrase) {
-				t.Errorf("%s must describe foreground v1 behavior with %q", name, phrase)
+				t.Errorf("%s must describe the bounded lifecycle with %q", name, phrase)
 			}
 		}
 		if strings.Contains(strings.ToLower(text), "external-gate") {
