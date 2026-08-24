@@ -29,6 +29,9 @@ func TestRunSingle_ModeContinueCIFailureReEvaluatesToAwait(t *testing.T) {
 	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
 	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
 		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
 	}}
 	spyLog := &spyEventLog{}
 	o := &Orchestrator{
@@ -64,7 +67,10 @@ func TestRunSingle_ModeContinueCIFailureReEvaluatesToAwait(t *testing.T) {
 		t.Fatal("expected run to start")
 	}
 	if result.Status != "await" {
-		t.Fatalf("status = %q, want await (CI failure after resume from await)", result.Status)
+		t.Fatalf("status = %q, want await after bounded CI remediation resumes", result.Status)
+	}
+	if got := len(resultFactory.created); got != 4 {
+		t.Fatalf("agent launches = %d, want entry launch plus three remediation resumes", got)
 	}
 	logs, err := spyLog.Read()
 	if err != nil {
@@ -678,6 +684,7 @@ func TestRunSingle_CIFailurePrecedesActionableEvidenceAwaitsAtEntry(t *testing.T
 
 	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
 		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
 	}}
 	spyLog := &spyEventLog{}
 	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
@@ -717,15 +724,15 @@ func TestRunSingle_CIFailurePrecedesActionableEvidenceAwaitsAtEntry(t *testing.T
 	if result.Status != "await" {
 		t.Fatalf("status = %q, want await (CI failure precedes actionable evidence)", result.Status)
 	}
-	if got := len(resultFactory.created); got != 0 {
-		t.Fatalf("agent launches = %d, want none before recoverable await", got)
+	if got := len(resultFactory.created); got != 2 {
+		t.Fatalf("agent launches = %d, want entry launch plus remediation resume", got)
 	}
 	logs, err := spyLog.Read()
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
-	if got := countEventsByType(logs, "run.resumed"); got != 0 {
-		t.Fatalf("run.resumed events = %d, want 0", got)
+	if got := countEventsByType(logs, "run.resumed"); got != 1 {
+		t.Fatalf("run.resumed events = %d, want 1 remediation relaunch", got)
 	}
 	await := findEvent(logs, "run.await")
 	if await == nil || await.Payload["gate"] != "ci-failure" {

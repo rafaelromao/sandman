@@ -110,7 +110,7 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 		return AgentRunResult{}, false, false
 	}
 	gate, _ := extras["gate"].(string)
-	if gate != gateReadyToMerge && gate != gateActionableFeedback {
+	if !isResumeGate(gate) {
 		result := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "await", Branch: branch, RetriesTotal: 1}
 		if !s.opts.foregroundLifecycle {
 			result.Status = s.emitAwait(ctx, runID, result, extras)
@@ -123,7 +123,7 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 		}
 		if gateStatus == "await" || gateStatus == "resume" {
 			gate, _ = nextExtras["gate"].(string)
-			if gate == gateReadyToMerge || gate == gateActionableFeedback {
+			if isResumeGate(gate) {
 				evidence := s.resumeEvidenceFor(ctx, branch, nextExtras)
 				taskContent, _, _ := ReadTaskContent(filepath.Join(wt.WorkDir(), ".sandman", "task.md"))
 				s.renderCfg.TaskPrompt = s.resumePromptFor(taskContent, evidence, s.renderCfg.ReviewTimeout)
@@ -165,9 +165,7 @@ func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbo
 		return "", false
 	}
 	gate, _ := extras["gate"].(string)
-	switch gate {
-	case gateReadyToMerge, gateActionableFeedback, "ci-failure", "merge-conflict":
-	default:
+	if !isResumeGate(gate) {
 		return "", false
 	}
 	evidence := s.resumeEvidenceFor(ctx, branch, extras)
@@ -175,6 +173,15 @@ func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbo
 	s.resumeCount++
 	s.emitResume(ctx, runID, branch, gate, evidence)
 	return s.resumePromptFor(taskContent, evidence, s.renderCfg.ReviewTimeout), true
+}
+
+func isResumeGate(gate string) bool {
+	switch gate {
+	case gateReadyToMerge, gateActionableFeedback, "ci-failure", "merge-conflict":
+		return true
+	default:
+		return false
+	}
 }
 
 // emitResume writes the run.resumed event (issue #2595). It records the
