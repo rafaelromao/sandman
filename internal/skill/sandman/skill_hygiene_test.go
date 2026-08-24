@@ -268,8 +268,8 @@ func TestReviewLifecycleDocumentationDescribesBoundedWait(t *testing.T) {
 			"diagnostics-only",
 		},
 		"configuration.md": {
-			"foreground lifecycle observation",
-			"final interval repeats",
+			"independent durable 30-minute deadline",
+			"release the execution slot",
 			"Dependents remain held",
 		},
 		"skills.md": {
