@@ -312,7 +312,24 @@ func TestRunBatch_ForegroundWaitRetainsCapacityForIndependentSibling(t *testing.
 	case <-time.After(2 * time.Second):
 		t.Fatal("parent did not enter foreground lifecycle wait")
 	}
-	logs := log.snapshot()
+	var logs []events.Event
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		logs = log.snapshot()
+		queued := map[int]bool{}
+		for _, event := range logs {
+			if event.Type == "run.queued" {
+				queued[event.Issue] = true
+			}
+		}
+		if queued[43] && queued[44] {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("dependent and sibling were not queued while the parent retained capacity")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if got := countEventsByType(logs, "run.started"); got != 1 {
 		t.Fatalf("agent launches while parent waits = %d, want 1 occupied slot", got)
 	}
