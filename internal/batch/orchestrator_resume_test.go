@@ -17,9 +17,9 @@ import (
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
-// B20: When re-evaluation shows CI failure after resume from await, emit a
-// recoverable run.await event with gate: failed.
-func TestRunSingle_ModeContinueCIFailureReEvaluatesToAwait(t *testing.T) {
+// A CI failure belongs to the branch owner. Continuation relaunches the agent
+// without consuming a retry and terminalizes once the same-head budget is used.
+func TestRunSingle_ModeContinueCIFailureResumesThenExhausts(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 
@@ -28,6 +28,9 @@ func TestRunSingle_ModeContinueCIFailureReEvaluatesToAwait(t *testing.T) {
 
 	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
 	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
 		{IssueNumber: 42, Status: "success", Branch: branch},
 	}}
 	spyLog := &spyEventLog{}
@@ -63,22 +66,18 @@ func TestRunSingle_ModeContinueCIFailureReEvaluatesToAwait(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "await" {
-		t.Fatalf("status = %q, want await (CI failure after resume from await)", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure after same-head remediation is exhausted", result.Status)
 	}
 	logs, err := spyLog.Read()
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
-	await := findEvent(logs, "run.await")
-	if await == nil {
-		t.Fatalf("run.await event not found: %v", logs)
+	if got := countEventsByType(logs, "run.resumed"); got != 1 {
+		t.Fatalf("run.resumed events = %d, want 1", got)
 	}
-	if await.Payload["gate"] != "failed" {
-		t.Fatalf("gate = %v, want failed", await.Payload["gate"])
-	}
-	if _, ok := await.Payload["blocker"]; ok {
-		t.Fatalf("await blocker = %v, want absent", await.Payload["blocker"])
+	if got := countEventsByType(logs, "run.retry"); got != 0 {
+		t.Fatalf("run.retry events = %d, want 0", got)
 	}
 }
 

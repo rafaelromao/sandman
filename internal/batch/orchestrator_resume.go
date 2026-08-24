@@ -12,7 +12,7 @@ import (
 
 // defaultAwaitResumeMax bounds in-session agent relaunches per session when
 // runSessionOptions.awaitResumeMax is zero (the production default).
-const defaultAwaitResumeMax = 3
+const defaultAwaitResumeMax = 1
 
 // Entry re-evaluation machinery for resuming agent work on PR lifecycle
 // transitions (issue #2595). A session that re-enters a run whose PR gate is
