@@ -68,6 +68,7 @@ type BatchConfig struct {
 	StartDelay                 time.Duration
 	Retries                    int
 	RunIdleTimeout             int
+	CIObservationTimeout       int
 	ContextRolloverLiterals    []string
 	SandboxMode                string
 	ContainerCapacity          int
@@ -221,6 +222,7 @@ func newRunSession(e *runExecutor, row RowSpec) *runSession {
 		startDelay:                 bc.StartDelay,
 		retries:                    bc.Retries,
 		runIdleTimeout:             bc.RunIdleTimeout,
+		ciObservationTimeout:       bc.CIObservationTimeout,
 		sandboxMode:                bc.SandboxMode,
 		containerCapacity:          bc.ContainerCapacity,
 		containerCapacitySet:       bc.ContainerCapacitySet,

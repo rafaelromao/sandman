@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
 )
 
@@ -155,6 +156,10 @@ func decideImplementationPRLifecycle(in implementationPRFacts) lifecycleDecision
 			completionFailure: true,
 		}
 	case lifecycleGateFailed, lifecycleGatePending, lifecycleGateReady:
+		if in.retainedEvidence.payload == nil {
+			in.retainedEvidence.payload = map[string]any{}
+		}
+		in.retainedEvidence.payload["current_head"] = in.headSHA
 		return decideRecoverableLifecycle(gate, in.pr, in.retainedEvidence)
 	case lifecycleGateUnavailable:
 		// A non-open, non-merged PR is closed without a merge (B2.4): an
@@ -170,55 +175,64 @@ func decideImplementationPRLifecycle(in implementationPRFacts) lifecycleDecision
 }
 
 func decideRecoverableLifecycle(gate lifecycleGate, pr *github.PR, evidence retainedReviewEvidence) lifecycleDecision {
-	if evidence.stateError && gate != lifecycleGateFailed {
-		return lifecycleDecision{
-			action:  lifecycleAwait,
-			gate:    lifecycleGate(gateReviewTimeoutError),
-			handled: true,
-			extras:  map[string]any{"gate": gateReviewTimeoutError, "await": true},
-		}
+	// The old gate is deliberately not the policy input. It conflates CI,
+	// review, mergeability, and head identity, which made failed work look like
+	// external progress. Await is reserved for current-head work that another
+	// system can actually finish.
+	extras := cloneLifecycleExtras(evidence.payload)
+	if extras == nil {
+		extras = map[string]any{}
 	}
-	reviewChangesRequested := pr != nil && strings.EqualFold(strings.TrimSpace(pr.ReviewDecision), "CHANGES_REQUESTED")
-	hardFailure := pr != nil && (strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "failure") || strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "DIRTY") || strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "CONFLICTING"))
-	if evidence.actionable && (gate != lifecycleGateFailed || (reviewChangesRequested && !hardFailure)) {
-		return lifecycleDecision{
-			action:  lifecycleResume,
-			gate:    lifecycleGate(gateActionableFeedback),
-			handled: true,
-			extras:  evidence.payload,
-		}
+	if pr != nil {
+		extras["pull_request"] = pr.Number
+		extras["head_sha"] = pr.HeadRefOid
 	}
-	if gate != lifecycleGateFailed && len(evidence.informalFeedback) > 0 {
-		return lifecycleDecision{
-			action:  lifecycleResume,
-			gate:    lifecycleGate(gateActionableFeedback),
-			handled: true,
-			extras:  evidence.payload,
-		}
+	resume := func(reason, nextAction string) lifecycleDecision {
+		extras["reason"] = reason
+		extras["next_action"] = nextAction
+		return lifecycleDecision{action: lifecycleResume, gate: lifecycleGate(reason), handled: true, extras: extras}
 	}
-	if gate == lifecycleGateReady && evidence.outcome == retainedReviewApproval {
-		return lifecycleDecision{
-			action:  lifecycleResume,
-			gate:    lifecycleGate(gateReadyToMerge),
-			handled: true,
-			extras:  evidence.payload,
-		}
+	if pr == nil {
+		return resume("PR_UNAVAILABLE", "inspect the pull-request state with gh pr view and publish or repair it before continuing")
 	}
-	if evidence.outcome == retainedReviewTimeout && gate == lifecycleGatePending {
-		return lifecycleDecision{
-			action:  lifecycleAwait,
-			gate:    lifecycleGate(gateReviewTimeout),
-			handled: true,
-			extras:  evidence.payload,
-		}
+	if evidence.stateError {
+		return resume("REVIEW_STATE_UNAVAILABLE", "inspect the current pull-request review state with gh pr view before continuing")
 	}
-	decision := decidedAwait(gate)
-	if evidence.payload != nil && (gate != lifecycleGateFailed || evidence.actionable && reviewChangesRequested && !hardFailure) {
-		decision.extras = cloneLifecycleExtras(evidence.payload)
-		decision.extras["gate"] = string(gate)
-		decision.extras["await"] = true
+	if evidence.outcome == retainedReviewTimeout {
+		return resume(reviewTimeoutReason, "inspect the review deadline and current pull-request state, then address or retrigger review")
 	}
-	return decision
+	if !strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(extrasString(extras, "current_head"))) && extrasString(extras, "current_head") != "" {
+		return resume("STALE_PR_HEAD", "refresh the pull request against the current branch head and inspect stale CI or review evidence")
+	}
+	ci := strings.ToLower(strings.TrimSpace(pr.StatusCheckRollup))
+	merge := strings.ToUpper(strings.TrimSpace(pr.MergeStateStatus))
+	review := strings.ToUpper(strings.TrimSpace(pr.ReviewDecision))
+	if ci == "failure" {
+		return resume("CI_FAILURE", "inspect current-head CI with gh pr checks and repair the failing checks")
+	}
+	if merge == "DIRTY" || merge == "CONFLICTING" {
+		return resume("MERGE_CONFLICT", "rebase or merge the base branch, resolve conflicts, and push a new head")
+	}
+	if review == "CHANGES_REQUESTED" || evidence.actionable || len(evidence.informalFeedback) > 0 {
+		return resume(actionableFeedbackReason, actionableFeedbackNextAction)
+	}
+	if ci == "pending" {
+		extras["await_kind"] = "ci"
+		return lifecycleDecision{action: lifecycleAwait, gate: lifecycleGatePending, handled: true, extras: extras}
+	}
+	if review == "REVIEW_REQUIRED" && evidence.outcome == retainedReviewPending {
+		extras["await_kind"] = "review"
+		return lifecycleDecision{action: lifecycleAwait, gate: lifecycleGatePending, handled: true, extras: extras}
+	}
+	if gate == lifecycleGateReady {
+		return resume("READY_TO_MERGE", "revalidate current-head approval, CI, and mergeability, then complete the pull request")
+	}
+	return resume("PR_STATE_REQUIRES_ACTION", "inspect the current pull-request lifecycle with gh pr view and take the indicated action")
+}
+
+func extrasString(extras map[string]any, key string) string {
+	v, _ := extras[key].(string)
+	return strings.TrimSpace(v)
 }
 
 // lifecycleStatusRepr maps a decided action to the status string the run
@@ -361,6 +375,10 @@ func (s *runSession) handleLifecycleDecisionWithPublication(ctx context.Context,
 		return "aborted", nil, true
 	}
 	evidence := s.retainedLifecycleEvidence(ctx, workDir, pr, headSHA)
+	if evidence.payload == nil {
+		evidence.payload = map[string]any{}
+	}
+	evidence.payload["current_head"] = headSHA
 	if ctx.Err() != nil {
 		return "aborted", nil, true
 	}
@@ -500,13 +518,44 @@ func (s *runSession) waitForLifecyclePoll(ctx context.Context, interval time.Dur
 	}
 }
 
+func (s *runSession) lifecycleNow() time.Time {
+	if s.opts.now != nil {
+		return s.opts.now()
+	}
+	return time.Now()
+}
+
+func (s *runSession) lifecycleDeadline(extras map[string]any) time.Time {
+	if raw, ok := extras["await_deadline_unix"].(int64); ok {
+		return time.Unix(raw, 0)
+	}
+	if raw, ok := extras["await_deadline_unix"].(float64); ok {
+		return time.Unix(int64(raw), 0)
+	}
+	budget := s.ciObservationTimeout
+	if budget < config.MinCIObservationTimeout {
+		budget = config.DefaultCIObservationTimeout
+	}
+	deadline := s.lifecycleNow().Add(time.Duration(budget) * time.Second)
+	extras["await_deadline_unix"] = deadline.Unix()
+	extras["await_deadline_at"] = deadline.UTC().Format(time.RFC3339)
+	return deadline
+}
+
 // observeLifecycle keeps a recoverable lifecycle decision in the foreground.
 // The final configured interval repeats after the initial plan. A resume-worthy
 // transition is returned to the caller so the existing bounded resume path can
 // relaunch without consuming an agent retry.
 func (s *runSession) observeLifecycle(ctx context.Context, workDir, branch, logPath, runID string, result AgentRunResult, extras map[string]any, hostPathsReady bool) (string, map[string]any, bool) {
+	deadline := s.lifecycleDeadline(extras)
 	plan := s.lifecyclePollIntervals(extras)
 	for index := 0; ; index++ {
+		if !s.lifecycleNow().Before(deadline) {
+			extras["reason"] = "CI_TIMEOUT"
+			extras["next_action"] = "inspect current-head CI with gh pr checks and repair or rerun it"
+			extras["gate"] = "ci-timeout"
+			return "resume", extras, true
+		}
 		interval := plan[len(plan)-1]
 		if index < len(plan) {
 			interval = plan[index]

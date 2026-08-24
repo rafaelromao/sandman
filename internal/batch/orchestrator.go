@@ -154,6 +154,19 @@ func resolveReviewTimeout(req Request, cfg *config.Config) (int, error) {
 	return value, nil
 }
 
+func resolveCIObservationTimeout(req Request, cfg *config.Config) (int, error) {
+	value := config.DefaultCIObservationTimeout
+	if req.CIObservationTimeoutSet {
+		value = req.CIObservationTimeout
+	} else if cfg != nil {
+		value = cfg.EffectiveCIObservationTimeout()
+	}
+	if err := config.ValidateCIObservationTimeout(value); err != nil {
+		return 0, err
+	}
+	return value, nil
+}
+
 func readTailLines(path string, n int) []string {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -1060,6 +1073,10 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		return nil, err
 	}
 	req.PromptConfig.ReviewTimeout = reviewTimeout
+	ciObservationTimeout, err := resolveCIObservationTimeout(req, cfg)
+	if err != nil {
+		return nil, err
+	}
 
 	sandboxMode := req.Sandbox
 	if sandboxMode == "" {
@@ -1478,6 +1495,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				StartDelay:                 startDelay,
 				Retries:                    retries,
 				RunIdleTimeout:             runIdleTimeout,
+				CIObservationTimeout:       ciObservationTimeout,
 				ContextRolloverLiterals:    cfg.ContextErrorPhrases,
 				SandboxMode:                sandboxMode,
 				ContainerCapacity:          containerCapacityForLog,
@@ -1841,6 +1859,8 @@ type runSessionOptions struct {
 	lifecyclePollPlan   []time.Duration
 	lifecycleWait       func(context.Context, time.Duration) error
 	foregroundLifecycle bool
+	// now makes lifecycle deadlines deterministic in tests.
+	now func() time.Time
 	// awaitResumeMax bounds in-session agent relaunches triggered by a
 	// resume-worthy PR gate (ready-to-merge / actionable-feedback) within
 	// one session. Zero uses the default (3); when the cap is exhausted the
@@ -1883,6 +1903,7 @@ type runSession struct {
 	startDelay                 time.Duration
 	retries                    int
 	runIdleTimeout             int
+	ciObservationTimeout       int
 	sandboxMode                string
 	containerCapacity          int
 	containerCapacitySet       bool
@@ -2791,9 +2812,10 @@ loop:
 						terminalExtras = mergeBlockerExtras(terminalExtras, extras)
 						break loop
 					}
-					gate, _ := extras["gate"].(string)
-					observe := gateStatus == "await" && (gate != gateReadyToMerge && gate != gateActionableFeedback || s.resumeCount >= s.resumeCapFor())
-					observe = observe || gateStatus == "resume" && s.resumeCount >= s.resumeCapFor()
+					// Resume states are agent-owned remediation. They must not be
+					// converted into a wait merely because the bounded remediation
+					// budget is exhausted.
+					observe := gateStatus == "await"
 					if observe {
 						if gateStatus == "resume" {
 							gateStatus = "await"
@@ -2811,8 +2833,12 @@ loop:
 						continue relaunch
 					}
 					if gateStatus == "resume" {
-						s.emitAwait(ctx, runID, result, extras)
-						gateStatus = "await"
+						// A same-head remediation loop cannot make external progress.
+						// Terminalize rather than turning an actionable failure into an
+						// unbounded await.
+						extras["reason"] = "REMEDIATION_EXHAUSTED"
+						extras["next_action"] = "inspect the durable PR lifecycle evidence before starting a new remediation run"
+						gateStatus = "failure"
 					}
 					result.Status = gateStatus
 					terminalExtras = mergeBlockerExtras(terminalExtras, extras)

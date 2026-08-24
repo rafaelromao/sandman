@@ -452,6 +452,14 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					return MarkUsage(err)
 				}
 			}
+			ciObservationTimeoutFlag := cmd.Flags().Lookup("ci-observation-timeout")
+			ciObservationTimeoutSet := ciObservationTimeoutFlag != nil && ciObservationTimeoutFlag.Changed
+			ciObservationTimeout, _ := cmd.Flags().GetInt("ci-observation-timeout")
+			if ciObservationTimeoutSet {
+				if err := config.ValidateCIObservationTimeout(ciObservationTimeout); err != nil {
+					return MarkUsage(err)
+				}
+			}
 
 			sandboxMode, _ := cmd.Flags().GetString("sandbox")
 			containerCapacityFlag := cmd.Flags().Lookup("container-capacity")
@@ -614,6 +622,8 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				RunIdleTimeoutSet:          runIdleTimeoutSet,
 				ReviewTimeout:              reviewTimeout,
 				ReviewTimeoutSet:           reviewTimeoutSet,
+				CIObservationTimeout:       ciObservationTimeout,
+				CIObservationTimeoutSet:    ciObservationTimeoutSet,
 				Sandbox:                    sandboxMode,
 				RequireDockerfile:          true,
 				ContainerCapacity:          containerCapacity,
@@ -797,6 +807,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Int("start-delay", 0, "Wait N seconds after any AgentRun finishes before starting the next one; 0 disables the delay")
 	cmd.Flags().Int("run-idle-timeout", 0, "Treat an AgentRun as stuck if it produces no output for N seconds; 0 disables the timeout")
 	cmd.Flags().Int("review-timeout", 0, fmt.Sprintf("Delegated review response budget in seconds; omit for config/default (%d), minimum %d", config.DefaultReviewTimeout, config.MinReviewTimeout))
+	cmd.Flags().Int("ci-observation-timeout", 0, fmt.Sprintf("Current-head CI observation budget in seconds; omit for config/default (%d), minimum %d", config.DefaultCIObservationTimeout, config.MinCIObservationTimeout))
 	cmd.Flags().String("sandbox", "", "Sandbox mode: podman (default), docker, or worktree")
 	cmd.Flags().Int("container-capacity", 0, "Maximum concurrent agent runs per container; 0 means unlimited")
 	cmd.Flags().Int("max-containers", 0, "Maximum number of containers to run at once; 0 means no cap")

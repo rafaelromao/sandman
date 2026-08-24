@@ -30,6 +30,10 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 	if err != nil {
 		return batch.Request{}, err
 	}
+	ciObservationTimeout, ciObservationTimeoutSet, err := continuationCIObservationTimeout(cmd, cfg)
+	if err != nil {
+		return batch.Request{}, err
+	}
 
 	lastRuns := lastRunPerIssue(eventsList, issues)
 	previousRunIDs := make(map[int]string, len(issues))
@@ -278,6 +282,8 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 		RunIdleTimeoutSet:          runIdleTimeoutSet,
 		ReviewTimeout:              reviewTimeout,
 		ReviewTimeoutSet:           reviewTimeoutSet,
+		CIObservationTimeout:       ciObservationTimeout,
+		CIObservationTimeoutSet:    ciObservationTimeoutSet,
 		Branches:                   branches,
 		Sandbox:                    sandboxMode,
 		RequireDockerfile:          true,
@@ -364,6 +370,22 @@ func continuationReviewTimeout(cmd *cobra.Command, cfg *config.Config) (int, boo
 	}
 	value, _ := cmd.Flags().GetInt("review-timeout")
 	if err := config.ValidateReviewTimeout(value); err != nil {
+		return 0, false, MarkUsage(err)
+	}
+	return value, true, nil
+}
+
+func continuationCIObservationTimeout(cmd *cobra.Command, cfg *config.Config) (int, bool, error) {
+	effective := config.DefaultCIObservationTimeout
+	if cfg != nil {
+		effective = cfg.EffectiveCIObservationTimeout()
+	}
+	flag := cmd.Flags().Lookup("ci-observation-timeout")
+	if flag == nil || !flag.Changed {
+		return effective, false, nil
+	}
+	value, _ := cmd.Flags().GetInt("ci-observation-timeout")
+	if err := config.ValidateCIObservationTimeout(value); err != nil {
 		return 0, false, MarkUsage(err)
 	}
 	return value, true, nil

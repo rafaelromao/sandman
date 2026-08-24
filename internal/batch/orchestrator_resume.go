@@ -54,6 +54,9 @@ func (s *runSession) resumeEvidenceFor(ctx context.Context, branch string, extra
 		setDefaultEvidence(evidence, "reason", actionableFeedbackReason)
 		setDefaultEvidence(evidence, "next_action", actionableFeedbackNextAction)
 	}
+	if reason, _ := evidence["reason"].(string); reason != "" {
+		setDefaultEvidence(evidence, "outcome", "pr-lifecycle-remediation")
+	}
 	if s.deps.githubClient != nil {
 		if pr, err := s.deps.githubClient.FindPRByBranch(ctx, branch); err == nil && pr != nil {
 			if _, ok := evidence["pull_request"]; !ok {
@@ -109,8 +112,7 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 	if gateStatus != "await" && gateStatus != "resume" {
 		return AgentRunResult{}, false, false
 	}
-	gate, _ := extras["gate"].(string)
-	if gate != gateReadyToMerge && gate != gateActionableFeedback {
+	if gateStatus == "await" {
 		result := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "await", Branch: branch, RetriesTotal: 1}
 		if !s.opts.foregroundLifecycle {
 			result.Status = s.emitAwait(ctx, runID, result, extras)
@@ -122,8 +124,7 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 			return AgentRunResult{}, false, false
 		}
 		if gateStatus == "await" || gateStatus == "resume" {
-			gate, _ = nextExtras["gate"].(string)
-			if gate == gateReadyToMerge || gate == gateActionableFeedback {
+			if gateStatus == "resume" {
 				evidence := s.resumeEvidenceFor(ctx, branch, nextExtras)
 				taskContent, _, _ := ReadTaskContent(filepath.Join(wt.WorkDir(), ".sandman", "task.md"))
 				s.renderCfg.TaskPrompt = s.resumePromptFor(taskContent, evidence, s.renderCfg.ReviewTimeout)
@@ -165,9 +166,7 @@ func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbo
 		return "", false
 	}
 	gate, _ := extras["gate"].(string)
-	switch gate {
-	case gateReadyToMerge, gateActionableFeedback:
-	default:
+	if gate == "" {
 		return "", false
 	}
 	evidence := s.resumeEvidenceFor(ctx, branch, extras)
