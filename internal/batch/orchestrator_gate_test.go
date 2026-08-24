@@ -1818,6 +1818,46 @@ func TestExternalGate_GreenCIWithPendingReviewKeepsReviewDeadline(t *testing.T) 
 	}
 }
 
+func TestExternalGate_PendingCIToFailureConsumesPersistedBudget(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	pr := &github.PR{
+		Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha",
+		StatusCheckRollup: "pending", ReviewDecision: "REVIEW_REQUIRED", MergeStateStatus: "BLOCKED",
+	}
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: pr}},
+			errorLog:     io.Discard,
+		},
+		opts: gateTestRunOptions(),
+	}
+	if _, err := session.ciWaitEvidence(workDir, pr, "current-sha"); err != nil {
+		t.Fatalf("seed pending CI wait: %v", err)
+	}
+
+	pr.StatusCheckRollup = "failure"
+	for attempt := 1; attempt <= defaultAwaitResumeMax; attempt++ {
+		status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+		if !handled || status != "resume" || extras["gate"] != "ci-failure" {
+			t.Fatalf("attempt %d lifecycle result = (%q, %#v, %t), want CI failure resume", attempt, status, extras, handled)
+		}
+		if _, ok := extras["ci_wait"]; !ok {
+			t.Fatalf("attempt %d missing persisted ci_wait evidence: %#v", attempt, extras)
+		}
+		if !consumeCIWaitRemediation(workDir, extras) {
+			t.Fatalf("attempt %d unexpectedly exhausted persisted CI budget", attempt)
+		}
+	}
+	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	if !handled || status != "resume" || extras["gate"] != "ci-failure" {
+		t.Fatalf("exhaustion lifecycle result = (%q, %#v, %t), want CI failure resume", status, extras, handled)
+	}
+	if consumeCIWaitRemediation(workDir, extras) {
+		t.Fatal("persisted same-head CI remediation budget did not reach terminal exhaustion")
+	}
+}
+
 func TestExternalGate_LateFeedbackPreservesExistingFailedGatePrecedence(t *testing.T) {
 	tests := []struct {
 		name       string

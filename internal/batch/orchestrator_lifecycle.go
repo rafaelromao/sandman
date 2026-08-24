@@ -386,9 +386,15 @@ func (s *runSession) handleLifecycleDecisionWithPublication(ctx context.Context,
 		return "aborted", nil, true
 	}
 	if strings.EqualFold(strings.TrimSpace(pr.State), "open") &&
-		strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) &&
-		strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "pending") {
-		ciEvidence, ciErr := s.ciWaitEvidence(workDir, pr, headSHA)
+		strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) {
+		var ciEvidence map[string]any
+		var ciErr error
+		switch strings.ToLower(strings.TrimSpace(pr.StatusCheckRollup)) {
+		case "pending":
+			ciEvidence, ciErr = s.ciWaitEvidence(workDir, pr, headSHA)
+		case "failure":
+			ciEvidence, ciErr = existingCIWaitEvidence(workDir, pr, headSHA)
+		}
 		if ciErr != nil {
 			return "resume", map[string]any{
 				"gate":        gateCIWaitTimeout,
