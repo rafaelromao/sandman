@@ -19,7 +19,6 @@ type fakeEventLog struct {
 
 func (f *fakeEventLog) Log(event events.Event) error  { return nil }
 func (f *fakeEventLog) Read() ([]events.Event, error) { return f.events, f.err }
-func (f *fakeEventLog) RemoveEventsByIssue(int) error { return nil }
 
 func writeBatchManifest(t *testing.T, batchDir string) {
 	t.Helper()
