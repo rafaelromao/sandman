@@ -3886,7 +3886,7 @@ func TestRunBatch_OverrideFailedClosePreventsDeletion(t *testing.T) {
 	}
 	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success"}}}
 	var logBuf bytes.Buffer
-	eventLog := &spyEventLog{}
+	eventLog := &spyEventLog{events: []events.Event{{Type: "prior", Issue: 42}}}
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, eventLog,
 		WithRunnableFactory(factory),
 		WithErrorLog(&logBuf),
@@ -3911,8 +3911,8 @@ func TestRunBatch_OverrideFailedClosePreventsDeletion(t *testing.T) {
 	if !strings.Contains(logBuf.String(), "worktree and branch preserved") {
 		t.Fatalf("expected log to mention preserved, got %q", logBuf.String())
 	}
-	if eventLog.removeEventsByIssueCalls != 0 {
-		t.Fatalf("expected failed override to preserve event log, got %d removals", eventLog.removeEventsByIssueCalls)
+	if got := eventLog.snapshot(); len(got) != 1 || got[0].Type != "prior" {
+		t.Fatalf("expected failed override to preserve event log, got %#v", got)
 	}
 }
 
