@@ -69,7 +69,7 @@ Emitted when one or more `BlockedBy` issues are not satisfied at the dependent s
 | Field | Description |
 |-------|-------------|
 | `blocked_by` | List of issue numbers that caused the block (includes open-on-GitHub successful in-batch blockers) |
-| `batch_id` | Public BatchId for the batch that evaluated the dependency gate |
+| `batch_id` | Public BatchId for the batch that evaluated the dependency gate, when available |
 
 #### `run.retry`
 Emitted at the top of each retry iteration in the orchestrator's `for attempt` loop, between two attempts that are both actually about to run. The first attempt and the final attempt do not emit `run.retry`; the terminal `run.finished` (or `run.aborted`) covers those cases. Symmetric across the issue-driven and prompt-only retry loops; prompt-only runs use `issue: null` to match the existing prompt-only convention.
