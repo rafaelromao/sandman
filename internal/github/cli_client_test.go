@@ -2109,6 +2109,75 @@ func TestCLIClient_CloseIssue_Error(t *testing.T) {
 	}
 }
 
+func TestCLIClient_ClosePR_Success(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: ""},
+	}}
+	client := &CLIClient{runner: runner}
+
+	err := client.ClosePR(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("expected 2 commands, got %d", len(runner.calls))
+	}
+	expectedArgs := []string{"pr", "close", "42", "--repo", "rafaelromao/sandman"}
+	if len(runner.calls[1].args) != len(expectedArgs) {
+		t.Fatalf("expected args %v, got %v", expectedArgs, runner.calls[1].args)
+	}
+	for i, arg := range expectedArgs {
+		if runner.calls[1].args[i] != arg {
+			t.Errorf("expected arg[%d] = %q, got %q", i, arg, runner.calls[1].args[i])
+		}
+	}
+}
+
+func TestCLIClient_ClosePR_Error(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{err: exec.ErrNotFound},
+	}}
+	client := &CLIClient{runner: runner}
+
+	err := client.ClosePR(context.Background(), 42)
+	if err == nil {
+		t.Fatal("expected error when gh pr close fails")
+	}
+}
+
+func TestCLIClient_ClosePR_UsesCachedRepo(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: ""},
+		{output: ""},
+	}}
+	client := &CLIClient{runner: runner}
+
+	for _, number := range []int{42, 43} {
+		if err := client.ClosePR(context.Background(), number); err != nil {
+			t.Fatalf("ClosePR(%d): unexpected error: %v", number, err)
+		}
+	}
+	if len(runner.calls) != 3 {
+		t.Fatalf("expected one repo lookup and two close commands, got %d calls", len(runner.calls))
+	}
+	if got := runner.calls[2].args; !reflect.DeepEqual(got, []string{"pr", "close", "43", "--repo", "rafaelromao/sandman"}) {
+		t.Fatalf("unexpected cached-repo close args: %v", got)
+	}
+}
+
+func TestCLIClient_ClosePR_InvalidNumber(t *testing.T) {
+	client := &CLIClient{runner: &fakeRunner{}}
+	if err := client.ClosePR(context.Background(), 0); err == nil {
+		t.Fatal("expected error for zero pr number")
+	}
+	if err := client.ClosePR(context.Background(), -1); err == nil {
+		t.Fatal("expected error for negative pr number")
+	}
+}
+
 // ctx threading — recorded ctx must equal the caller's ctx so
 // downstream layers can plumb it through unchanged.
 func TestFakeRunner_RecordsCallerContext(t *testing.T) {

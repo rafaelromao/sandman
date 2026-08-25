@@ -211,6 +211,7 @@ type Client interface {
 	RemoveCommentReaction(ctx context.Context, commentID, reactionID string) error
 	RemoveIssueReaction(ctx context.Context, issueNumber int, reactionID string) error
 	CloseIssue(ctx context.Context, issueNumber int, comment string) error
+	ClosePR(ctx context.Context, prNumber int) error
 }
 
 // IssueContentFetcher optionally provides a fresh issue payload without
