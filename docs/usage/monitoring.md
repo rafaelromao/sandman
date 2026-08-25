@@ -41,6 +41,8 @@ Sandman writes structured events to `.sandman/events.jsonl` in newline-delimited
 
 The `run_id` (per-row RunID) and the `payload.batch_id` (public BatchId) identify different things. For multi-issue batches the two diverge — the public BatchId carries the `+N` additional count suffix and the per-row RunID does not. For every other kind (single-issue, prompt-only, review) the two are identical.
 
+`--override` is append-only: it replaces the worktree and branch for the new attempt while retaining prior events, batch artifacts, and logs. Earlier blocked or failed events remain inspectable and Portal's historical projection prefers the retained event-backed row over synthetic fallback.
+
 ## Canonical identifiers
 
 `batch_id` (public BatchId) and `run_id` (per-row RunID) are the canonical identifiers throughout the event log.

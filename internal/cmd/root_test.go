@@ -107,7 +107,6 @@ func (f *fakeEventLog) Log(event events.Event) error {
 func (f *fakeEventLog) Read() ([]events.Event, error) {
 	return f.events, f.err
 }
-func (f *fakeEventLog) RemoveEventsByIssue(issueNumber int) error { return f.err }
 
 // fakeBatchRunner is a test double for batch.Runner.
 type fakeBatchRunner struct {

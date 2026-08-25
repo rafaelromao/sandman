@@ -308,7 +308,7 @@ An AgentRun or Batch request mode behind the `sandman run --continue` flag that 
 _Avoid_: Replay mode.
 
 **Override**:
-The `--override` flag on `sandman run`. Clears prior run artifacts before starting by deleting the existing worktree, logs, and events, then force-checks out the expected branch when the current checkout is mismatched or detached. Use it to reconcile stranded worktrees before a fresh run.
+The `--override` flag on `sandman run`. Replaces the worktree and branch for a new attempt while retaining prior AgentRun events, batch artifacts (`.sandman/batches/<batch-id>/batch.json`, `.sandman/batches.json` index entry), and run logs (`runs/<runID>/run.log`). Events are append-only; the earlier blocked or failed event remains inspectable and Portal's historical projection prefers the retained event-backed row over synthetic fallback fabrication. Stranded-worktree reconciliation is still performed before the worktree is recreated.
 _Avoid_: Clean reset, manual checkout.
 
 **Handoff**:

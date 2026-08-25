@@ -509,12 +509,10 @@ func (f *freshSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceB
 }
 
 type spyEventLog struct {
-	mu                       sync.Mutex
-	events                   []events.Event
-	removedIssueNumber       int
-	removeEventsByIssueCalls int
-	readCalls                int
-	err                      error
+	mu        sync.Mutex
+	events    []events.Event
+	readCalls int
+	err       error
 }
 
 func (s *spyEventLog) Log(e events.Event) error {
@@ -545,25 +543,6 @@ func (s *spyEventLog) snapshot() []events.Event {
 	return out
 }
 
-func (s *spyEventLog) RemoveEventsByIssue(issueNumber int) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.removeEventsByIssueCalls++
-	s.removedIssueNumber = issueNumber
-	var kept []events.Event
-	for _, e := range s.events {
-		if e.Issue == issueNumber {
-			continue
-		}
-		if e.IssueRef != nil && *e.IssueRef == issueNumber {
-			continue
-		}
-		kept = append(kept, e)
-	}
-	s.events = kept
-	return nil
-}
-
 type threadSafeSpyEventLog struct {
 	mu     sync.Mutex
 	events []events.Event
@@ -582,23 +561,6 @@ func (s *threadSafeSpyEventLog) Read() ([]events.Event, error) {
 	out := make([]events.Event, len(s.events))
 	copy(out, s.events)
 	return out, nil
-}
-
-func (s *threadSafeSpyEventLog) RemoveEventsByIssue(issueNumber int) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var kept []events.Event
-	for _, e := range s.events {
-		if e.Issue == issueNumber {
-			continue
-		}
-		if e.IssueRef != nil && *e.IssueRef == issueNumber {
-			continue
-		}
-		kept = append(kept, e)
-	}
-	s.events = kept
-	return nil
 }
 
 func (s *threadSafeSpyEventLog) Snapshot() []events.Event {
@@ -9175,10 +9137,14 @@ func TestClearIssueArtifacts_RemovesWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
+	found42 := false
 	for _, e := range events {
 		if e.Issue == 42 || (e.IssueRef != nil && *e.IssueRef == 42) {
-			t.Errorf("expected no events for issue 42, found: %+v", e)
+			found42 = true
 		}
+	}
+	if !found42 {
+		t.Errorf("expected events for issue 42 to be retained after override")
 	}
 }
 
@@ -9328,19 +9294,22 @@ func TestClearIssueArtifacts_OnlyRemovesTargetIssue(t *testing.T) {
 		t.Errorf("expected issue 99 branch to remain, err: %v: %s", err, out)
 	}
 
-	// Issue 99 events should still exist
+	// Override retains prior AgentRun history: both issues' events remain
 	events, err := el.Read()
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
-	var found99 bool
+	var found42, found99 bool
 	for _, e := range events {
+		if e.Issue == 42 || (e.IssueRef != nil && *e.IssueRef == 42) {
+			found42 = true
+		}
 		if e.Issue == 99 || (e.IssueRef != nil && *e.IssueRef == 99) {
 			found99 = true
 		}
-		if e.Issue == 42 || (e.IssueRef != nil && *e.IssueRef == 42) {
-			t.Errorf("expected no events for issue 42, found: %+v", e)
-		}
+	}
+	if !found42 {
+		t.Error("expected events for issue 42 to be retained after override")
 	}
 	if !found99 {
 		t.Error("expected events for issue 99 to remain")
