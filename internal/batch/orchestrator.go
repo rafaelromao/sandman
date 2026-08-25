@@ -1202,6 +1202,10 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 
 	var overridePRCloseErrors []string
+	var overrideBranches []struct {
+		issueNumber int
+		branch      string
+	}
 	for _, num := range req.Issues {
 		if req.IssueMode(num) != ModeOverride {
 			continue
@@ -1214,16 +1218,21 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 		branches := collectIssueBranchesFromIndex(num, issue.Title, req.Branches[num], baseBranch, overrideIndex)
 		for _, branch := range branches {
+			overrideBranches = append(overrideBranches, struct {
+				issueNumber int
+				branch      string
+			}{issueNumber: num, branch: branch})
 			if err := closeOpenPRForBranch(ctx, branch, o.githubClient); err != nil {
 				fmt.Fprintf(o.errorLog, "error: override: failed to retire open PR for branch %s (issue %d): %v; worktree and branch preserved\n", branch, num, err)
 				overridePRCloseErrors = append(overridePRCloseErrors, fmt.Sprintf("branch %s (issue %d): %v", branch, num, err))
-				continue
 			}
-			ClearIssueArtifacts(num, branch, layout.WorktreeDir, o.eventLog, o.errorLog, baseBranch, req.StrandedReconcile, layout.BatchesIndexPath)
 		}
 	}
 	if len(overridePRCloseErrors) > 0 {
 		return nil, fmt.Errorf("override: failed to close open PR(s) before replacing branch(es): %s; worktree and branch preserved", strings.Join(overridePRCloseErrors, "; "))
+	}
+	for _, entry := range overrideBranches {
+		ClearIssueArtifacts(entry.issueNumber, entry.branch, layout.WorktreeDir, o.eventLog, o.errorLog, baseBranch, req.StrandedReconcile, layout.BatchesIndexPath)
 	}
 
 	eventIndex := eventLogIndex{priorRunByIssue: map[int]bool{}, branchesByIssue: map[int][]string{}}

@@ -178,6 +178,7 @@ type fakeGitHubClient struct {
 	closeIssueCalls        int
 	closePRCalls           []int
 	closePRErr             error
+	closePRErrByNumber     map[int]error
 	findPRSequence         map[string][]*github.PR
 	findPRSeqIdx           map[string]int
 	findPRVerifyErr        error
@@ -336,6 +337,9 @@ func (f *fakeGitHubClient) ClosePR(ctx context.Context, prNumber int) error {
 	f.closePRCalls = append(f.closePRCalls, prNumber)
 	if f.closePRErr != nil {
 		return f.closePRErr
+	}
+	if err := f.closePRErrByNumber[prNumber]; err != nil {
+		return err
 	}
 	if f.findPRVerifyErr != nil {
 		f.verifyAfterClose = true
@@ -3871,22 +3875,28 @@ func TestRunBatch_OverrideFailedClosePreventsDeletion(t *testing.T) {
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
-	branch := BranchName(42, "Fix bug", "")
-	runGit(t, dir, "checkout", "-b", branch)
+	firstBranch := BranchName(42, "Fix bug", "")
+	secondBranch := firstBranch + "-old"
+	runGit(t, dir, "checkout", "-b", firstBranch)
 	runGit(t, dir, "checkout", "main")
-	wtPath := filepath.Join(dir, ".sandman", "worktrees", branch)
-	runGit(t, dir, "worktree", "add", filepath.Join(".sandman", "worktrees", branch), branch)
+	runGit(t, dir, "checkout", "-b", secondBranch)
+	runGit(t, dir, "checkout", "main")
+	firstWTPath := filepath.Join(dir, ".sandman", "worktrees", firstBranch)
+	secondWTPath := filepath.Join(dir, ".sandman", "worktrees", secondBranch)
+	runGit(t, dir, "worktree", "add", firstWTPath, firstBranch)
+	runGit(t, dir, "worktree", "add", secondWTPath, secondBranch)
 
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
 		findPRSequence: map[string][]*github.PR{
-			branch: {{Number: 100, State: "open", HeadRefName: branch}},
+			firstBranch:  {{Number: 100, State: "open", HeadRefName: firstBranch}, nil},
+			secondBranch: {{Number: 101, State: "open", HeadRefName: secondBranch}},
 		},
-		closePRErr: errors.New("gh pr close: permission denied"),
+		closePRErrByNumber: map[int]error{101: errors.New("gh pr close: permission denied")},
 	}
 	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success"}}}
 	var logBuf bytes.Buffer
-	eventLog := &spyEventLog{events: []events.Event{{Type: "prior", Issue: 42}}}
+	eventLog := &spyEventLog{events: []events.Event{{Type: "prior", Issue: 42, Payload: map[string]any{"branch": firstBranch}}}}
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, eventLog,
 		WithRunnableFactory(factory),
 		WithErrorLog(&logBuf),
@@ -3895,18 +3905,22 @@ func TestRunBatch_OverrideFailedClosePreventsDeletion(t *testing.T) {
 	branchExists = sandbox.BranchExists
 	t.Cleanup(func() { branchExists = oldBranchExists })
 
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Mode: map[int]IssueMode{42: ModeOverride}})
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Branches: map[int]string{42: secondBranch}, Mode: map[int]IssueMode{42: ModeOverride}})
 	if err == nil {
 		t.Fatal("expected error when close fails")
 	}
 	if !strings.Contains(err.Error(), "failed to close") {
 		t.Fatalf("expected close error, got %v", err)
 	}
-	if _, err := os.Stat(wtPath); err != nil {
-		t.Fatalf("expected worktree preserved, got %v", err)
+	for _, wtPath := range []string{firstWTPath, secondWTPath} {
+		if _, err := os.Stat(wtPath); err != nil {
+			t.Fatalf("expected worktree preserved at %s, got %v", wtPath, err)
+		}
 	}
-	if out := strings.TrimSpace(runGit(t, dir, "branch", "--list", branch)); out == "" {
-		t.Fatalf("expected branch preserved, got empty list")
+	for _, branch := range []string{firstBranch, secondBranch} {
+		if out := strings.TrimSpace(runGit(t, dir, "branch", "--list", branch)); out == "" {
+			t.Fatalf("expected branch %s preserved, got empty list", branch)
+		}
 	}
 	if !strings.Contains(logBuf.String(), "worktree and branch preserved") {
 		t.Fatalf("expected log to mention preserved, got %q", logBuf.String())
