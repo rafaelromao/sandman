@@ -1208,7 +1208,8 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 		issue, err := o.githubClient.FetchIssue(ctx, num)
 		if err != nil {
-			fmt.Fprintf(o.errorLog, "error: fetch issue %d for force-clean: %v\n", num, err)
+			fmt.Fprintf(o.errorLog, "error: override: failed to inspect issue %d before retiring pull requests: %v; worktree and branch preserved\n", num, err)
+			overridePRCloseErrors = append(overridePRCloseErrors, fmt.Sprintf("issue %d: %v", num, err))
 			continue
 		}
 		branches := collectIssueBranchesFromIndex(num, issue.Title, req.Branches[num], baseBranch, overrideIndex)

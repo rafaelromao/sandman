@@ -2147,6 +2147,27 @@ func TestCLIClient_ClosePR_Error(t *testing.T) {
 	}
 }
 
+func TestCLIClient_ClosePR_UsesCachedRepo(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: ""},
+		{output: ""},
+	}}
+	client := &CLIClient{runner: runner}
+
+	for _, number := range []int{42, 43} {
+		if err := client.ClosePR(context.Background(), number); err != nil {
+			t.Fatalf("ClosePR(%d): unexpected error: %v", number, err)
+		}
+	}
+	if len(runner.calls) != 3 {
+		t.Fatalf("expected one repo lookup and two close commands, got %d calls", len(runner.calls))
+	}
+	if got := runner.calls[2].args; !reflect.DeepEqual(got, []string{"pr", "close", "43", "--repo", "rafaelromao/sandman"}) {
+		t.Fatalf("unexpected cached-repo close args: %v", got)
+	}
+}
+
 func TestCLIClient_ClosePR_InvalidNumber(t *testing.T) {
 	client := &CLIClient{runner: &fakeRunner{}}
 	if err := client.ClosePR(context.Background(), 0); err == nil {
