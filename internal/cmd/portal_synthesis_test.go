@@ -651,3 +651,53 @@ func TestPortal_CrossBatchSynthesisKeepsReviewRunDistinct(t *testing.T) {
 		t.Fatal("expected ghost-batch synthesized aborted row for issue 42 (review run must not suppress synthesis)")
 	}
 }
+
+// TestPortal_OverrideRetainsBlockedHistoryPrefersEventBackedRow verifies
+// that when --override retains a prior blocked event, portal suppresses
+// the synthetic 0s aborted ghost for the same issue/batch.
+func TestPortal_OverrideRetainsBlockedHistoryPrefersEventBackedRow(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	batchAt := time.Now().Add(-30 * time.Minute)
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", "batch-blocked")
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: batchAt}); err != nil {
+		t.Fatal(err)
+	}
+	addBatchToIndex(t, repoRoot, "batch-blocked", batchDir, []int{42})
+	runID := "batch-blocked-42"
+	if err := daemon.WriteRunManifest(batchDir, runID, batchindex.RunManifest{Issue: 42, BatchID: "batch-blocked", CreatedAt: batchAt.Add(1 * time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	// Prior attempt left a blocked event with evidence.
+	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
+	writePortalLog(t, logPath, []events.Event{
+		{Type: "run.blocked", Timestamp: batchAt.Add(2 * time.Minute), RunID: runID, Issue: 42, Payload: map[string]any{"branch": "42-fix", "blocked_by": []int{7}, "status": "blocked"}},
+	})
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: logPath})
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+	byIssue := map[int][]portalRun{}
+	for _, run := range runs {
+		byIssue[run.IssueNumber] = append(byIssue[run.IssueNumber], run)
+	}
+	rows := byIssue[42]
+	if len(rows) != 1 {
+		t.Fatalf("expected exactly 1 row for issue 42 (event-backed blocked, ghost suppressed), got %d: %#v", len(rows), rows)
+	}
+	row := rows[0]
+	if len(row.Events) == 0 {
+		t.Fatalf("expected event-backed row, got synthetic (no events): %#v", row)
+	}
+	if row.Status != "blocked" {
+		t.Fatalf("expected blocked status from retained event, got %q", row.Status)
+	}
+	if isSyntheticDeadBatchRow(row) {
+		t.Fatalf("retained blocked row incorrectly classified as synthetic: %#v", row)
+	}
+}
