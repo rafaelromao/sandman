@@ -107,6 +107,7 @@ func charNetBase(t *testing.T, opts ...OrchestratorOpt) (*Orchestrator, *events.
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, el,
 		append([]OrchestratorOpt{
 			WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(dir, "wt", "42")}}),
+			WithRunSessionOpts(runSessionOptions{foregroundLifecycle: true}),
 		}, opts...)...,
 	)
 	return o, el, dir

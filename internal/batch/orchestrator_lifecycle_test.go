@@ -232,7 +232,13 @@ func TestDecideImplementationPRLifecycle_NonResolvedGates(t *testing.T) {
 			name: "ci failure",
 			pr: &github.PR{Number: 42, State: "open", StatusCheckRollup: "failure",
 				ReviewDecision: "APPROVED", MergeStateStatus: "CLEAN", HeadRefOid: "current-sha"},
-			wantGate: lifecycleGateFailed, wantAction: lifecycleAwait,
+			wantGate: lifecycleGate("ci-failure"), wantAction: lifecycleResume,
+		},
+		{
+			name: "merge conflict",
+			pr: &github.PR{Number: 42, State: "open", StatusCheckRollup: "success",
+				ReviewDecision: "APPROVED", MergeStateStatus: "CONFLICTING", HeadRefOid: "current-sha"},
+			wantGate: lifecycleGate("merge-conflict"), wantAction: lifecycleResume,
 		},
 		{
 			name: "changes requested",

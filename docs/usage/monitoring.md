@@ -121,7 +121,7 @@ Emitted when an agent run completes.
 | `review_request` | Present for retained delegated-review outcomes; retains the confirmed request identity, current head, deadline, budget, elapsed time, response counters, validated request-scoped classification, outcome, and next action. |
 
 #### `run.await`
-Emitted when an issue-driven run ends its agent session while recoverable pull-request work remains (CI, review, mergeability, or decision publication). Non-terminal: the run does not finish or consume a retry; foreground observation retains the active agent and sandbox capacity until lifecycle completion or cancellation.
+Emitted when an issue-driven run ends its agent session while recoverable pull-request work remains (CI, review, mergeability, or decision publication). Non-terminal: the run does not finish or consume a retry. Pending current-head CI carries a durable, non-renewing 30-minute per-head deadline in `ci_wait`; the row keeps dependency ownership while the scheduler releases execution capacity between observations.
 
 | Field | Description |
 |-------|-------------|
@@ -132,21 +132,23 @@ Emitted when an issue-driven run ends its agent session while recoverable pull-r
 | `base_branch` | Base branch name |
 | `retries_total` | Total retry attempts configured |
 | `review_request` | Present for retained delegated-review outcomes; retains the confirmed request identity, current head, deadline, validated request-scoped classification, outcome, and next action |
+| `ci_wait` | Present for current-head CI waits; records the PR/head identity, durable deadline, and same-head remediation attempts |
 
 #### `run.resumed`
-Emitted when the runtime relaunches the agent session in-session with request-scoped review evidence — actionable review feedback (`reason: "feedback"`) or a current-head approval with green CI and clean mergeability (`reason: "approval"`). Non-terminal: the run stays active, keeps its RunID, and does not consume a retry.
+Emitted when the runtime relaunches the agent session in-session. Review feedback uses `reason: "feedback"`; a current-head approval with green CI and clean mergeability uses `reason: "approval"`; bounded external remediation uses `reason: "CI_WAIT_TIMEOUT"`, `"CI_FAILURE"`, or `"MERGE_CONFLICT"`. Non-terminal: the run stays active, keeps its RunID, and does not consume a retry.
 
 Entry re-evaluation (session start) relaunches with the same evidence but is recorded as `run.continued` by the existing continuation flow — `run.resumed` marks only in-session relaunches.
 
 | Field | Description |
 |-------|-------------|
-| `reason` | Resume cause: `"feedback"` or `"approval"` |
-| `gate` | Lifecycle gate that triggered the resume: `"actionable-feedback"` or `"ready-to-merge"` |
+| `reason` | Resume cause: `"feedback"`, `"approval"`, `"CI_WAIT_TIMEOUT"`, `"CI_FAILURE"`, or `"MERGE_CONFLICT"` |
+| `gate` | Lifecycle gate that triggered the resume: `"actionable-feedback"`, `"ready-to-merge"`, `"ci-wait-timeout"`, `"ci-failure"`, or `"merge-conflict"` |
 | `branch` | Branch name |
 | `base_branch` | Base branch name |
 | `retries_total` | Total retry attempts configured |
 | `run_id` | RunID continuity marker (equals the event's own `run_id`; the resume keeps the RunID) |
 | `review_request` | Present for retained delegated-review outcomes; request-scoped review evidence attached to the resumed session |
+| `ci_wait` | Present for CI deadline, CI failure, and merge-conflict remediation; records the current PR/head identity, durable deadline, and same-head remediation attempts |
 
 #### Implementation pull-request lifecycle
 At a clean agent exit, the runtime consults the pull request once and applies one
@@ -155,11 +157,12 @@ evidence: a closing reference produces `success`, while an unverifiable or
 missing closing reference produces `failure` with completion diagnostics.
 
 Recoverable open-pull-request states produce `run.await` without consuming an
-agent retry. Foreground observation keeps the active AgentRun and its sandbox
-capacity held through the configured deadline, and dependents remain queued
-until the prerequisite reaches a terminal outcome. The final poll interval
-repeats until completion or explicit cancellation. A continuation or
-in-session relaunch re-evaluates the same facts. Retained review records and
+agent retry. Pending current-head CI is bounded by its durable per-head
+deadline; a new head is the only reset boundary. The logical row keeps its
+dependents queued while execution capacity is released between observations.
+Deadline expiry, CI failure, and merge conflicts relaunch remediation work;
+exhausted same-head remediation budget terminalizes as failure. A continuation
+or in-session relaunch re-evaluates the same facts. Retained review records and
 daemon decisions are evidence only: they can supply the await reason and
 request-scoped prompt evidence, but cannot terminalize a run or override
 verified merged completion. Explicit cancellation emits `run.aborted` and

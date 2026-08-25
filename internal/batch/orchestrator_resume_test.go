@@ -29,6 +29,9 @@ func TestRunSingle_ModeContinueCIFailureReEvaluatesToAwait(t *testing.T) {
 	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
 	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
 		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
 	}}
 	spyLog := &spyEventLog{}
 	o := &Orchestrator{
@@ -64,7 +67,10 @@ func TestRunSingle_ModeContinueCIFailureReEvaluatesToAwait(t *testing.T) {
 		t.Fatal("expected run to start")
 	}
 	if result.Status != "await" {
-		t.Fatalf("status = %q, want await (CI failure after resume from await)", result.Status)
+		t.Fatalf("status = %q, want await after bounded CI remediation resumes", result.Status)
+	}
+	if got := len(resultFactory.created); got != 4 {
+		t.Fatalf("agent launches = %d, want entry launch plus three remediation resumes", got)
 	}
 	logs, err := spyLog.Read()
 	if err != nil {
@@ -74,8 +80,8 @@ func TestRunSingle_ModeContinueCIFailureReEvaluatesToAwait(t *testing.T) {
 	if await == nil {
 		t.Fatalf("run.await event not found: %v", logs)
 	}
-	if await.Payload["gate"] != "failed" {
-		t.Fatalf("gate = %v, want failed", await.Payload["gate"])
+	if await.Payload["gate"] != "ci-failure" {
+		t.Fatalf("gate = %v, want ci-failure", await.Payload["gate"])
 	}
 	if _, ok := await.Payload["blocker"]; ok {
 		t.Fatalf("await blocker = %v, want absent", await.Payload["blocker"])
@@ -115,6 +121,35 @@ func TestEmitAwait_CarriesAwaitReasonFromGate(t *testing.T) {
 	}
 	if got := evt.Payload["retries_total"]; got != 2 {
 		t.Fatalf("retries_total = %v, want 2", got)
+	}
+}
+
+func TestEmitResume_CarriesCIRemediationEvidence(t *testing.T) {
+	spyLog := &spyEventLog{}
+	s := &runSession{
+		deps:        runDeps{eventLog: spyLog},
+		issueNumber: 42,
+		baseBranch:  "main",
+	}
+	ciWait := map[string]any{
+		"pull_request":          17,
+		"head_sha":              "current-sha",
+		"deadline_unix_seconds": int64(1234),
+	}
+	s.emitResume(context.Background(), "run-ci", "42-fix", "ci-failure", map[string]any{
+		"ci_wait": ciWait,
+	})
+	events := spyLog.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
+	}
+	event := events[0]
+	if event.Payload["reason"] != "CI_FAILURE" || event.Payload["gate"] != "ci-failure" {
+		t.Fatalf("resume cause = %#v, want CI failure", event.Payload)
+	}
+	gotCIWait, ok := event.Payload["ci_wait"].(map[string]any)
+	if !ok || gotCIWait["head_sha"] != "current-sha" || gotCIWait["pull_request"] != 17 {
+		t.Fatalf("resume ci_wait = %#v, want %#v", event.Payload["ci_wait"], ciWait)
 	}
 }
 
@@ -167,6 +202,7 @@ func TestEntryReevaluation_ModeContinuePendingGateAwaitsImmediately(t *testing.T
 
 	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
 	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "success", Branch: branch},
 		{IssueNumber: 42, Status: "success", Branch: branch},
 	}}
 	spyLog := &spyEventLog{}
@@ -677,6 +713,7 @@ func TestRunSingle_CIFailurePrecedesActionableEvidenceAwaitsAtEntry(t *testing.T
 
 	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
 		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
 	}}
 	spyLog := &spyEventLog{}
 	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
@@ -716,19 +753,19 @@ func TestRunSingle_CIFailurePrecedesActionableEvidenceAwaitsAtEntry(t *testing.T
 	if result.Status != "await" {
 		t.Fatalf("status = %q, want await (CI failure precedes actionable evidence)", result.Status)
 	}
-	if got := len(resultFactory.created); got != 0 {
-		t.Fatalf("agent launches = %d, want none before recoverable await", got)
+	if got := len(resultFactory.created); got != 2 {
+		t.Fatalf("agent launches = %d, want entry launch plus remediation resume", got)
 	}
 	logs, err := spyLog.Read()
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
-	if got := countEventsByType(logs, "run.resumed"); got != 0 {
-		t.Fatalf("run.resumed events = %d, want 0", got)
+	if got := countEventsByType(logs, "run.resumed"); got != 1 {
+		t.Fatalf("run.resumed events = %d, want 1 remediation relaunch", got)
 	}
 	await := findEvent(logs, "run.await")
-	if await == nil || await.Payload["gate"] != "failed" {
-		t.Fatalf("await event = %#v, want failed gate", await)
+	if await == nil || await.Payload["gate"] != "ci-failure" {
+		t.Fatalf("await event = %#v, want ci-failure gate", await)
 	}
 }
 
@@ -1253,6 +1290,42 @@ func TestResumeEvidenceFor_ActionableFeedbackVariantDefaults(t *testing.T) {
 	}
 	if reviewRequest, ok := evidence["review_request"].(map[string]any); !ok || reviewRequest["pull_request"] != float64(42) {
 		t.Fatalf("review_request not preserved: %v", evidence["review_request"])
+	}
+}
+
+func TestResumePromptFromGate_CIFailureAndConflictRelaunchWithoutRetry(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-resume-")
+	if err := os.MkdirAll(filepath.Join(workDir, ".sandman"), 0o755); err != nil {
+		t.Fatalf("create task directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workDir, ".sandman", "task.md"), []byte("# Task\n"), 0o644); err != nil {
+		t.Fatalf("write task: %v", err)
+	}
+	for _, tc := range []struct {
+		gate   string
+		reason string
+	}{
+		{gate: "ci-failure", reason: "CI_FAILURE"},
+		{gate: "merge-conflict", reason: "MERGE_CONFLICT"},
+	} {
+		t.Run(tc.gate, func(t *testing.T) {
+			log := &spyEventLog{}
+			s := &runSession{
+				deps:        runDeps{githubClient: &fakeGitHubClient{}, eventLog: log},
+				issueNumber: 42,
+				baseBranch:  "main",
+				opts:        runSessionOptions{awaitResumeMax: 1},
+			}
+			promptText, resume := s.resumePromptFromGate(context.Background(), &fakeSandbox{workDir: workDir}, "42-fix", "run-1", map[string]any{
+				"gate": tc.gate, "reason": tc.reason,
+			})
+			if !resume || !strings.Contains(promptText, tc.reason) {
+				t.Fatalf("resume = (%q, %t), want prompt with %s", promptText, resume, tc.reason)
+			}
+			if s.resumeCount != 1 || countEventsByType(log.snapshot(), "run.resumed") != 1 {
+				t.Fatalf("resume was not recorded: count=%d events=%v", s.resumeCount, log.snapshot())
+			}
+		})
 	}
 }
 

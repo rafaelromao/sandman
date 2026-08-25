@@ -875,9 +875,10 @@ func NewOrchestrator(githubClient github.Client, renderer prompt.IssueRenderer, 
 		layout:        paths.NewLayout(&config.Config{}, root),
 		lookupGHToken: defaultLookupGHToken,
 		runSessionOpts: runSessionOptions{
-			baseBranchSyncMu:    &sync.Mutex{},
-			taskWriter:          atomicfs.WriteAtomic,
-			foregroundLifecycle: true,
+			baseBranchSyncMu:     &sync.Mutex{},
+			taskWriter:           atomicfs.WriteAtomic,
+			foregroundLifecycle:  false,
+			releaseAwaitCapacity: true,
 		},
 		badgeHooker:  nopBadgeHooker{},
 		coordinators: make(map[*batchCoordinator]struct{}),
@@ -1328,11 +1329,17 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			// leaves the process alone.
 			parentCtx := ctx
 
+			turnAdvanced := false
 			advanceTurn := func() {
 				if effectiveParallel != 1 {
 					return
 				}
 				turnMu.Lock()
+				if turnAdvanced {
+					turnMu.Unlock()
+					return
+				}
+				turnAdvanced = true
 				completedTurns[turn] = struct{}{}
 				for {
 					if _, ok := completedTurns[servingTurn]; !ok {
@@ -1430,16 +1437,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				turnMu.Unlock()
 			}
 
-			if err := startGate.Acquire(issueCtx); err != nil {
-				o.logAborted(issueNum, runID, nil)
-				mu.Lock()
-				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
-				statuses[issueNum] = "aborted"
-				abortedCount++
-				mu.Unlock()
-				return
-			}
-
 			mode := req.IssueMode(issueNum)
 			renderCfg := req.PromptConfig
 			if mode == ModeContinue {
@@ -1487,11 +1484,44 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				DangerouslySkipPermissions: *dangerouslySkipPermissions,
 				StrandedReconcile:          strandedReconcile,
 			}
-			res, started := o.newRunExecutorWith(parentCtx, bc, policy.sandboxFactory, policy.containerAlloc, coord, coord, layout).Execute(issueCtx, row)
-			if started {
-				defer startGate.Release()
-			} else {
-				defer startGate.ReleaseWithoutDelay()
+			var res AgentRunResult
+			var started bool
+			awaitPoll := 0
+			for {
+				if err := startGate.Acquire(issueCtx); err != nil {
+					o.logAborted(issueNum, runID, nil)
+					res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
+					break
+				}
+				res, started = o.newRunExecutorWith(parentCtx, bc, policy.sandboxFactory, policy.containerAlloc, coord, coord, layout).Execute(issueCtx, row)
+				if started {
+					startGate.Release()
+				} else {
+					startGate.ReleaseWithoutDelay()
+				}
+				if res.Status != "await" || !o.runSessionOpts.releaseAwaitCapacity {
+					break
+				}
+				advanceTurn()
+				interval := time.Duration(implementationReviewPollPlan[len(implementationReviewPollPlan)-1]) * time.Second
+				if len(o.runSessionOpts.lifecyclePollPlan) > 0 {
+					interval = o.runSessionOpts.lifecyclePollPlan[min(awaitPoll, len(o.runSessionOpts.lifecyclePollPlan)-1)]
+				} else if awaitPoll < len(implementationReviewPollPlan) {
+					interval = time.Duration(implementationReviewPollPlan[awaitPoll]) * time.Second
+				}
+				awaitPoll++
+				timer := time.NewTimer(interval)
+				select {
+				case <-issueCtx.Done():
+					timer.Stop()
+					o.logAborted(issueNum, runID, nil)
+					res.Status = "aborted"
+				case <-timer.C:
+					row.Mode = ModeContinue
+					row.PreviousRunIDs = map[int]string{issueNum: runID}
+					continue
+				}
+				break
 			}
 			mu.Lock()
 			results[idx] = res
@@ -1838,9 +1868,10 @@ type runSessionOptions struct {
 	// lifecyclePollPlan and lifecycleWait keep foreground lifecycle observation
 	// deterministic in tests. Production uses the implementation review plan
 	// and a context-aware timer when these hooks are unset.
-	lifecyclePollPlan   []time.Duration
-	lifecycleWait       func(context.Context, time.Duration) error
-	foregroundLifecycle bool
+	lifecyclePollPlan    []time.Duration
+	lifecycleWait        func(context.Context, time.Duration) error
+	foregroundLifecycle  bool
+	releaseAwaitCapacity bool
 	// awaitResumeMax bounds in-session agent relaunches triggered by a
 	// resume-worthy PR gate (ready-to-merge / actionable-feedback) within
 	// one session. Zero uses the default (3); when the cap is exhausted the
@@ -2811,8 +2842,12 @@ loop:
 						continue relaunch
 					}
 					if gateStatus == "resume" {
-						s.emitAwait(ctx, runID, result, extras)
-						gateStatus = "await"
+						gateStatus = "failure"
+						extras = map[string]any{
+							"gate":        extras["gate"],
+							"reason":      "REMEDIATION_BUDGET_EXHAUSTED",
+							"next_action": "advance the pull-request head before requesting another remediation run",
+						}
 					}
 					result.Status = gateStatus
 					terminalExtras = mergeBlockerExtras(terminalExtras, extras)

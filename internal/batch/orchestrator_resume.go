@@ -110,7 +110,7 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 		return AgentRunResult{}, false, false
 	}
 	gate, _ := extras["gate"].(string)
-	if gate != gateReadyToMerge && gate != gateActionableFeedback {
+	if !isResumeGate(gate) {
 		result := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "await", Branch: branch, RetriesTotal: 1}
 		if !s.opts.foregroundLifecycle {
 			result.Status = s.emitAwait(ctx, runID, result, extras)
@@ -123,7 +123,7 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 		}
 		if gateStatus == "await" || gateStatus == "resume" {
 			gate, _ = nextExtras["gate"].(string)
-			if gate == gateReadyToMerge || gate == gateActionableFeedback {
+			if isResumeGate(gate) {
 				evidence := s.resumeEvidenceFor(ctx, branch, nextExtras)
 				taskContent, _, _ := ReadTaskContent(filepath.Join(wt.WorkDir(), ".sandman", "task.md"))
 				s.renderCfg.TaskPrompt = s.resumePromptFor(taskContent, evidence, s.renderCfg.ReviewTimeout)
@@ -135,6 +135,15 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 			return result, true, true
 		}
 		result.Status = s.emitTerminal(ctx, runID, result, nextExtras)
+		return result, true, true
+	}
+	if isCIRemediationGate(gate) && !consumeCIWaitRemediation(wt.WorkDir(), extras) {
+		result := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: 1}
+		result.Status = s.emitTerminal(ctx, runID, result, map[string]any{
+			"gate":        extras["gate"],
+			"reason":      "REMEDIATION_BUDGET_EXHAUSTED",
+			"next_action": "advance the pull-request head before requesting another remediation run",
+		})
 		return result, true, true
 	}
 	evidence := s.resumeEvidenceFor(ctx, branch, extras)
@@ -165,9 +174,10 @@ func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbo
 		return "", false
 	}
 	gate, _ := extras["gate"].(string)
-	switch gate {
-	case gateReadyToMerge, gateActionableFeedback:
-	default:
+	if !isResumeGate(gate) {
+		return "", false
+	}
+	if isCIRemediationGate(gate) && !consumeCIWaitRemediation(wt.WorkDir(), extras) {
 		return "", false
 	}
 	evidence := s.resumeEvidenceFor(ctx, branch, extras)
@@ -175,6 +185,24 @@ func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbo
 	s.resumeCount++
 	s.emitResume(ctx, runID, branch, gate, evidence)
 	return s.resumePromptFor(taskContent, evidence, s.renderCfg.ReviewTimeout), true
+}
+
+func isResumeGate(gate string) bool {
+	switch gate {
+	case gateReadyToMerge, gateActionableFeedback, gateReviewTimeout, gateCIWaitTimeout, "ci-failure", "merge-conflict":
+		return true
+	default:
+		return false
+	}
+}
+
+func isCIRemediationGate(gate string) bool {
+	switch gate {
+	case gateCIWaitTimeout, "ci-failure", "merge-conflict":
+		return true
+	default:
+		return false
+	}
 }
 
 // emitResume writes the run.resumed event (issue #2595). It records the
@@ -185,8 +213,15 @@ func (s *runSession) emitResume(ctx context.Context, runID, branch, gate string,
 		return
 	}
 	reason := "feedback"
-	if gate == gateReadyToMerge {
+	switch gate {
+	case gateReadyToMerge:
 		reason = "approval"
+	case gateCIWaitTimeout:
+		reason = "CI_WAIT_TIMEOUT"
+	case "ci-failure":
+		reason = "CI_FAILURE"
+	case "merge-conflict":
+		reason = "MERGE_CONFLICT"
 	}
 	event := events.Event{
 		Type:      "run.resumed",
@@ -207,6 +242,9 @@ func (s *runSession) emitResume(ctx context.Context, runID, branch, gate string,
 	}
 	if reviewRequest, ok := evidence["review_request"]; ok {
 		event.Payload["review_request"] = reviewRequest
+	}
+	if ciWait, ok := evidence["ci_wait"]; ok {
+		event.Payload["ci_wait"] = ciWait
 	}
 	_ = s.deps.eventLog.Log(event)
 }

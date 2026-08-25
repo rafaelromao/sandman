@@ -170,6 +170,15 @@ func decideImplementationPRLifecycle(in implementationPRFacts) lifecycleDecision
 }
 
 func decideRecoverableLifecycle(gate lifecycleGate, pr *github.PR, evidence retainedReviewEvidence) lifecycleDecision {
+	// CI failures and merge conflicts are branch-owned work, not external work
+	// that can make progress while the agent waits. Handle these typed facts
+	// before the legacy gate/evidence compatibility rules below.
+	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "failure") {
+		return lifecycleRemediationDecision("ci-failure", "CI_FAILURE", "inspect current-head CI with gh pr checks and repair the failing checks", pr, evidence.payload)
+	}
+	if pr != nil && (strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "DIRTY") || strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "CONFLICTING")) {
+		return lifecycleRemediationDecision("merge-conflict", "MERGE_CONFLICT", "rebase or merge the base branch, resolve conflicts, and push a new head", pr, evidence.payload)
+	}
 	if evidence.stateError && gate != lifecycleGateFailed {
 		return lifecycleDecision{
 			action:  lifecycleAwait,
@@ -219,6 +228,18 @@ func decideRecoverableLifecycle(gate lifecycleGate, pr *github.PR, evidence reta
 		decision.extras["await"] = true
 	}
 	return decision
+}
+
+func lifecycleRemediationDecision(gate, reason, nextAction string, pr *github.PR, retained map[string]any) lifecycleDecision {
+	extras := cloneLifecycleExtras(retained)
+	if extras == nil {
+		extras = map[string]any{}
+	}
+	extras["pull_request"] = pr.Number
+	extras["head_sha"] = pr.HeadRefOid
+	extras["reason"] = reason
+	extras["next_action"] = nextAction
+	return lifecycleDecision{action: lifecycleResume, gate: lifecycleGate(gate), handled: true, extras: extras}
 }
 
 // lifecycleStatusRepr maps a decided action to the status string the run
@@ -364,6 +385,28 @@ func (s *runSession) handleLifecycleDecisionWithPublication(ctx context.Context,
 	if ctx.Err() != nil {
 		return "aborted", nil, true
 	}
+	if strings.EqualFold(strings.TrimSpace(pr.State), "open") &&
+		strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) {
+		var ciEvidence map[string]any
+		var ciErr error
+		switch strings.ToLower(strings.TrimSpace(pr.StatusCheckRollup)) {
+		case "pending", "failure":
+			ciEvidence, ciErr = s.ciWaitEvidence(workDir, pr, headSHA)
+		default:
+			if strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "DIRTY") ||
+				strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "CONFLICTING") {
+				ciEvidence, ciErr = s.ciWaitEvidence(workDir, pr, headSHA)
+			}
+		}
+		if ciErr != nil {
+			return "resume", map[string]any{
+				"gate":        gateCIWaitTimeout,
+				"reason":      "CI_WAIT_STATE_ERROR",
+				"next_action": "inspect the persisted CI wait state and repair the current pull-request checks",
+			}, true
+		}
+		evidence.payload = mergeLifecycleDiagnostics(evidence.payload, ciEvidence)
+	}
 	decision = decideImplementationPRLifecycle(implementationPRFacts{
 		pr:               pr,
 		headSHA:          headSHA,
@@ -383,11 +426,23 @@ func (s *runSession) handleLifecycleDecisionWithPublication(ctx context.Context,
 	if extras == nil {
 		extras = map[string]any{"gate": string(decision.gate), "await": true}
 	}
-	if _, ok := extras["gate"]; !ok {
+	if decision.action == lifecycleResume {
+		// Live typed remediation outranks retained review labels.
+		extras["gate"] = string(decision.gate)
+	} else if _, ok := extras["gate"]; !ok {
 		extras["gate"] = string(decision.gate)
 	}
 	extras["await"] = true
 	status := lifecycleStatusRepr(decision)
+	if status == "await" && decision.gate == lifecycleGatePending {
+		if deadline, deadlineGate, ok := lifecycleDeadline(extras); ok && !time.Now().Before(deadline) {
+			resume := cloneLifecycleExtras(extras)
+			resume["gate"] = deadlineGate
+			resume["reason"] = lifecycleDeadlineReason(deadlineGate)
+			resume["next_action"] = lifecycleDeadlineNextAction(deadlineGate)
+			return "resume", resume, true
+		}
+	}
 	if status == "resume" && decision.gate == lifecycleGateReady {
 		// Ready-to-merge remains an await until the normal merge lifecycle
 		// consumes its live approval gate; only actionable feedback is an
@@ -507,6 +562,13 @@ func (s *runSession) waitForLifecyclePoll(ctx context.Context, interval time.Dur
 func (s *runSession) observeLifecycle(ctx context.Context, workDir, branch, logPath, runID string, result AgentRunResult, extras map[string]any, hostPathsReady bool) (string, map[string]any, bool) {
 	plan := s.lifecyclePollIntervals(extras)
 	for index := 0; ; index++ {
+		if deadline, gate, ok := lifecycleDeadline(extras); ok && !time.Now().Before(deadline) {
+			resume := cloneLifecycleExtras(extras)
+			resume["gate"] = gate
+			resume["reason"] = lifecycleDeadlineReason(gate)
+			resume["next_action"] = lifecycleDeadlineNextAction(gate)
+			return "resume", resume, true
+		}
 		interval := plan[len(plan)-1]
 		if index < len(plan) {
 			interval = plan[index]
@@ -523,7 +585,15 @@ func (s *runSession) observeLifecycle(ctx context.Context, workDir, branch, logP
 			nextExtras = map[string]any{"gate": string(lifecycleGatePending), "await": true}
 		}
 		if status == "resume" {
-			status = "await"
+			gate, _ := nextExtras["gate"].(string)
+			if isResumeGate(gate) && s.resumeCount < s.resumeCapFor() {
+				return status, nextExtras, true
+			}
+			return "failure", map[string]any{
+				"gate":        gate,
+				"reason":      "REMEDIATION_BUDGET_EXHAUSTED",
+				"next_action": "inspect the current pull-request remediation evidence and start a new run after advancing the pull-request head",
+			}, true
 		}
 		if status == "await" {
 			gate, _ := nextExtras["gate"].(string)
@@ -535,4 +605,51 @@ func (s *runSession) observeLifecycle(ctx context.Context, workDir, branch, logP
 		}
 		return status, nextExtras, true
 	}
+}
+
+func lifecycleDeadline(extras map[string]any) (time.Time, string, bool) {
+	var deadline time.Time
+	var gate string
+	request, ok := extras["review_request"].(map[string]any)
+	if ok {
+		if seconds, ok := lifecycleDeadlineSeconds(request["deadline_unix_seconds"]); ok {
+			deadline, gate = time.Unix(seconds, 0), gateReviewTimeout
+		}
+	}
+	ciWait, ok := extras["ci_wait"].(map[string]any)
+	if ok {
+		if seconds, ok := lifecycleDeadlineSeconds(ciWait["deadline_unix_seconds"]); ok {
+			ciDeadline := time.Unix(seconds, 0)
+			if deadline.IsZero() || ciDeadline.Before(deadline) {
+				deadline, gate = ciDeadline, gateCIWaitTimeout
+			}
+		}
+	}
+	return deadline, gate, !deadline.IsZero()
+}
+
+func lifecycleDeadlineSeconds(value any) (int64, bool) {
+	switch typed := value.(type) {
+	case int64:
+		return typed, typed > 0
+	case float64:
+		if typed > 0 && typed == float64(int64(typed)) {
+			return int64(typed), true
+		}
+	}
+	return 0, false
+}
+
+func lifecycleDeadlineReason(gate string) string {
+	if gate == gateCIWaitTimeout {
+		return "CI_WAIT_TIMEOUT"
+	}
+	return reviewTimeoutReason
+}
+
+func lifecycleDeadlineNextAction(gate string) string {
+	if gate == gateCIWaitTimeout {
+		return "inspect current-head CI, repair any failing checks, and push a new pull-request head"
+	}
+	return reviewTimeoutNextAction
 }

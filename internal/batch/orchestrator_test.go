@@ -1608,9 +1608,8 @@ func TestRunSingle_ModeContinueUnmergedPROpenGateIsBlocked(t *testing.T) {
 	if got := countEventsByType(logs, "run.retry"); got != 0 {
 		t.Fatalf("run.retry events = %d, want 0", got)
 	}
-	awaitEvt := findEvent(logs, "run.await")
-	if awaitEvt == nil || awaitEvt.Payload["gate"] != "ready-to-merge" {
-		t.Fatalf("continuation terminal gate = %v, want ready-to-merge", awaitEvt)
+	if got := countEventsByType(logs, "run.finished"); got != 0 {
+		t.Fatalf("run.finished events = %d, want 0 for non-terminal continuation state", got)
 	}
 }
 

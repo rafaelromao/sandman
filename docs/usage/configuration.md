@@ -172,12 +172,13 @@ Use this list when an OpenCode provider introduces new context-exhaustion wordin
 
 `review_timeout` governs only the implementor-side delegated review response budget. The deadline starts after a trigger is posted and confirmed; every later command, API call, sleep, and scheduling delay consumes that one absolute budget. A later confirmed trigger receives a fresh full budget, while retries and continuations of the same trigger reuse its original deadline. It does not change the review daemon's reviewer AgentRun lifetime, lifecycle re-evaluation, idle timeout, or review-pass limit. `--review-timeout` overrides the project value for one run or continuation. The effective value is rendered into the current Task and recorded in `run.started` / `run.continued` payloads.
 
-During that budget, foreground lifecycle observation keeps the implementation
-AgentRun and sandbox capacity active. The configured poll plan is observed in
-order and its final interval repeats until the pull request reaches a terminal
-outcome or the operator explicitly cancels the run. Dependents remain held
-while the prerequisite is awaiting review; invalid review evidence is retained
-for diagnostics and cannot authorize a resume.
+Delegated review and current-head CI waits retain logical row ownership but
+release the execution slot between observations. Review uses its confirmed
+request deadline; CI uses an independent durable 30-minute deadline per pull
+request head. A new head resets only the CI generation. Dependents remain held
+while the prerequisite awaits external progress; a deadline expiry, CI failure,
+or merge conflict resumes remediation work, while exhausted same-head CI
+remediation terminalizes as failure.
 
 ## CLI config commands
 

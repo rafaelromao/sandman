@@ -34,6 +34,92 @@ func TestReviewWaitStabilization_CancellationAbortsForegroundWait(t *testing.T) 
 	runReviewWaitScenario(t, binPath, true)
 }
 
+func TestReviewWaitStabilization_CIFailureFixReviewMerge(t *testing.T) {
+	if !testenv.E2EGateAllowed(testenv.E2EScenarioReviewWait) {
+		t.Skip("set SANDMAN_E2E_GATES=review_wait to run the review-wait stabilization scenario")
+	}
+
+	binPath := buildSandmanBinary(t)
+	repoDir := testenv.MkdirShort(t, "sm-review-remediate-")
+	initRunIntegrationRepoWithRemote(t, repoDir)
+
+	sandmanDir := filepath.Join(repoDir, ".sandman")
+	shimDir := filepath.Join(sandmanDir, "bin")
+	if err := os.MkdirAll(shimDir, 0o755); err != nil {
+		t.Fatalf("create shim directory: %v", err)
+	}
+	statePath := filepath.Join(sandmanDir, "review-remediate.state")
+	callLogPath := filepath.Join(sandmanDir, "gh.calls")
+	agentCountPath := filepath.Join(sandmanDir, "agent.count")
+	writeReviewRemediationGHShim(t, shimDir, statePath, callLogPath)
+	writeReviewRemediationAgent(t, filepath.Join(shimDir, "fake-agent"), statePath, agentCountPath)
+	writeReviewWaitConfig(t, sandmanDir, filepath.Join(shimDir, "fake-agent"))
+
+	portalURL := startPortalBinary(t, binPath, repoDir, shimDir)
+	cmd := exec.Command(binPath, "run", "--agent", "fake", "--sandbox", "worktree", "--parallel", "1", "--retries", "0", "--run-idle-timeout", "1", "42")
+	cmd.Dir = repoDir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	t.Cleanup(func() {
+		t.Logf("sandman stdout:\n%s", stdout.String())
+		t.Logf("sandman stderr:\n%s", stderr.String())
+	})
+	cmd.Env = append(os.Environ(),
+		"PATH="+shimDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"GH_TOKEN=fake",
+		"GITHUB_TOKEN=fake",
+		"HOME="+filepath.Join(repoDir, ".sandman-test-home"),
+	)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start sandman run: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	eventsPath := filepath.Join(sandmanDir, "events.jsonl")
+	waitForReviewWaitEvent(t, eventsPath, 42, "run.resumed")
+	waitForReviewWaitEvent(t, eventsPath, 42, "run.await")
+	if got := readTrimmedFile(t, agentCountPath); got != "2" {
+		t.Fatalf("agent launches = %s, want 2 after CI remediation", got)
+	}
+	logs := readReviewWaitEvents(t, eventsPath)
+	if got := countReviewWaitEvents(logs, 42, "run.finished"); got != 0 {
+		t.Fatalf("run finished before delegated review resolved: %d", got)
+	}
+	waitForPortalRun(t, portalURL, 42, func(run portalRun) bool {
+		return run.Status == "running" && run.FinishedAt == nil
+	})
+
+	if err := os.WriteFile(statePath, []byte("merged\n"), 0o644); err != nil {
+		t.Fatalf("resolve pull request fixture: %v", err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("sandman run after review merge: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+		}
+	case <-time.After(150 * time.Second):
+		t.Fatal("sandman run did not finish after CI remediation and pull-request merge")
+	}
+	logs = readReviewWaitEvents(t, eventsPath)
+	if countReviewWaitEvents(logs, 42, "run.resumed") != 1 {
+		t.Fatalf("run.resumed events = %d, want 1 CI remediation", countReviewWaitEvents(logs, 42, "run.resumed"))
+	}
+	if countReviewWaitEvents(logs, 42, "run.await") == 0 {
+		t.Fatal("expected review await after CI remediation")
+	}
+	if countReviewWaitEvents(logs, 42, "run.finished") != 1 {
+		t.Fatalf("run.finished events = %d, want 1", countReviewWaitEvents(logs, 42, "run.finished"))
+	}
+	terminalRun := waitForPortalRun(t, portalURL, 42, func(run portalRun) bool {
+		return run.Status == "success" && run.FinishedAt != nil
+	})
+	if terminalRun.FinishedAt == nil {
+		t.Fatal("merged portal row has no terminal timestamp")
+	}
+}
+
 func runReviewWaitScenario(t *testing.T, binPath string, cancelPending bool) {
 	t.Helper()
 	repoDir := testenv.MkdirShort(t, "sm-review-wait-")
@@ -285,6 +371,107 @@ exit 1
 	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
 		t.Fatalf("write review-wait gh shim: %v", err)
 	}
+}
+
+func writeReviewRemediationAgent(t *testing.T, path, statePath, countPath string) {
+	t.Helper()
+	script := strings.ReplaceAll(strings.ReplaceAll(`#!/bin/sh
+set -eu
+count_file="__COUNT__"
+state_file="__STATE__"
+count=0
+if [ -f "$count_file" ]; then count=$(tr -d '\n' < "$count_file"); fi
+count=$((count + 1))
+printf '%s' "$count" > "$count_file"
+if [ "$count" -ge 2 ]; then printf 'review-pending\n' > "$state_file"; fi
+exit 0
+`, "__COUNT__", countPath), "__STATE__", statePath)
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake review-remediation agent: %v", err)
+	}
+}
+
+func writeReviewRemediationGHShim(t *testing.T, dir, statePath, callLogPath string) {
+	t.Helper()
+	script := strings.ReplaceAll(strings.ReplaceAll(`#!/bin/sh
+set -eu
+state_file="__STATE__"
+call_log="__CALLS__"
+printf '%s\n' "$*" >> "$call_log"
+state=ci-failed
+if [ -f "$state_file" ]; then state=$(tr -d '\n' < "$state_file"); fi
+
+if [ "${1:-}" = "auth" ] && [ "${2:-}" = "token" ]; then
+  printf 'fake-token\n'
+  exit 0
+fi
+if [ "${1:-}" = "repo" ] && [ "${2:-}" = "view" ]; then
+  printf '{"name":"sandbox","owner":{"login":"example"}}\n'
+  exit 0
+fi
+if [ "${1:-}" = "api" ]; then
+  path=""
+  for arg in "$@"; do
+    case "$arg" in
+      repos/*) path="$arg" ;;
+    esac
+  done
+  case "$path" in
+    repos/example/sandbox/issues/42)
+      issue_state=OPEN
+      if [ "$state" = "merged" ]; then issue_state=CLOSED; fi
+      printf '{"number":42,"title":"parent","body":"Parent implementation","state":"%s","labels":[]}\n' "$issue_state" ; exit 0 ;;
+    */dependencies/blocked_by|*/events|*/sub_issues*)
+      printf '[]\n' ; exit 0 ;;
+    */comments*)
+      printf '[]\n' ; exit 0 ;;
+  esac
+fi
+
+if [ "${1:-}" = "pr" ] && [ "${2:-}" = "list" ]; then
+  head=""
+  previous=""
+  for arg in "$@"; do
+    if [ "$previous" = "--head" ]; then head="$arg"; fi
+    previous="$arg"
+  done
+  case "$state" in
+    merged)
+      printf '[{"number":42,"title":"parent","body":"Closes #42","state":"MERGED","mergedAt":"2026-08-21T00:00:00Z","headRefName":"%s","headRefOid":"current-sha","reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","statusCheckRollup":"success"}]\n' "$head" ;;
+    review-pending)
+      printf '[{"number":42,"title":"parent","body":"Closes #42","state":"OPEN","mergedAt":null,"headRefName":"%s","headRefOid":"current-sha","reviewDecision":"REVIEW_REQUIRED","mergeStateStatus":"BLOCKED","statusCheckRollup":"success"}]\n' "$head" ;;
+    *)
+      printf '[{"number":42,"title":"parent","body":"Closes #42","state":"OPEN","mergedAt":null,"headRefName":"%s","headRefOid":"current-sha","reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","statusCheckRollup":"failure"}]\n' "$head" ;;
+  esac
+  exit 0
+fi
+if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
+  if [ "$state" = "merged" ]; then
+    printf '{"number":42,"title":"parent","body":"Closes #42","state":"MERGED","mergedAt":"2026-08-21T00:00:00Z","headRefName":"42-parent","headRefOid":"current-sha","closingIssuesReferences":[{"number":42}]}\n'
+  else
+    printf '{"number":42,"title":"parent","body":"Closes #42","state":"OPEN","mergedAt":null,"headRefName":"42-parent","headRefOid":"current-sha","closingIssuesReferences":[{"number":42}]}\n'
+  fi
+  exit 0
+fi
+if [ "${1:-}" = "pr" ] && [ "${2:-}" = "merge" ]; then
+  printf 'merged\n' > "$state_file"
+  exit 0
+fi
+printf 'unexpected gh command: %s\n' "$*" >&2
+exit 1
+`, "__STATE__", statePath), "__CALLS__", callLogPath)
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write review-remediation gh shim: %v", err)
+	}
+}
+
+func readTrimmedFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return strings.TrimSpace(string(data))
 }
 
 func waitForReviewWaitEvent(t *testing.T, path string, issue int, eventType string) {
