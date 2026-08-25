@@ -64,11 +64,12 @@ Emitted when an issue enters the wait queue due to unresolved blockers or parall
 | `blocked_by` | List of issue numbers blocking this run |
 
 #### `run.blocked`
-Emitted when one or more `BlockedBy` issues failed in the same batch.
+Emitted when one or more `BlockedBy` issues are not satisfied at the dependent start decision. For in-batch blockers the two-part gate applies: the blocker must both have reached terminal batch status `success` and be `closed` on GitHub; a successful but still `open` in-batch blocker produces terminal `run.blocked` with the open blocker named, and no agent is launched or wait state added. External blockers are gated on `closed` alone. Failed and `blocked` blockers also produce `run.blocked`; an `aborted` blocker cascades as `run.aborted` instead. See `CONTEXT.md` BlockedBy / In-batch blocker for the canonical gate definition.
 
 | Field | Description |
 |-------|-------------|
-| `blocked_by` | List of issue numbers that caused the block |
+| `blocked_by` | List of issue numbers that caused the block (includes open-on-GitHub successful in-batch blockers) |
+| `batch_id` | Public BatchId for the batch that evaluated the dependency gate |
 
 #### `run.retry`
 Emitted at the top of each retry iteration in the orchestrator's `for attempt` loop, between two attempts that are both actually about to run. The first attempt and the final attempt do not emit `run.retry`; the terminal `run.finished` (or `run.aborted`) covers those cases. Symmetric across the issue-driven and prompt-only retry loops; prompt-only runs use `issue: null` to match the existing prompt-only convention.
@@ -228,7 +229,7 @@ Set `run_idle_timeout: 0` in `.sandman/config.yaml` or pass `--run-idle-timeout 
 
 ### Blocked runs
 
-- A dependency-blocked run has one or more `BlockedBy` issues that failed in the same batch with a non-aborted status. It does not execute and emits `run.blocked`, including the upstream blockers.
+- A dependency-blocked run has one or more `BlockedBy` issues that are not satisfied at the start decision: for in-batch blockers this is the two-part gate — the blocker must both have reached terminal batch status `success` and be `closed` on GitHub (a successful but still `open` in-batch blocker produces terminal `run.blocked` with the open blocker named and no agent launch or wait state); for external blockers the gate is `closed` on GitHub alone. A blocker that finished with `failure` or `blocked` also produces `run.blocked` including the upstream blockers.
 
 Only dependency-blocked runs appear in the blocked bucket of the batch summary:
 

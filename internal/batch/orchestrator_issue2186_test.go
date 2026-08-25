@@ -262,6 +262,9 @@ func TestRunBatch_InBatchBlockerSuccessButIssueOpen_EmitsRunBlocked(t *testing.T
 		if e.Type == "run.started" && e.Issue == 100 {
 			t.Fatal("did not expect run.started for dependent when blocker issue remains open")
 		}
+		if e.Type == "run.await" && e.Issue == 100 {
+			t.Fatal("did not expect run.await for dependent when blocker issue remains open")
+		}
 	}
 	if blockedEvent == nil {
 		t.Fatal("expected run.blocked event for dependent when blocker issue remains open")
@@ -349,5 +352,115 @@ func TestRunBatch_InBatchBlockerStaysQueuedUntilBlockerTerminal(t *testing.T) {
 	}
 	if len(result.Runs) != 2 {
 		t.Fatalf("expected 2 runs, got %d", len(result.Runs))
+	}
+}
+
+func TestRunBatch_InBatchBlockerAborted_EmitsRunAborted(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42:  {Number: 42, Title: "Blocker", State: "closed"},
+			100: {Number: 100, Title: "Dependent", State: "open", BlockedBy: []int{42}},
+		},
+		prs: map[string]*github.PR{
+			"42-blocker":    mergedPR("42-blocker", ""),
+			"100-dependent": mergedPR("100-dependent", ""),
+		},
+	}
+
+	resolver := NewDependencyResolver(client)
+	resolver.warningWriter = &bytes.Buffer{}
+	resolved, err := resolver.Resolve(context.Background(), []int{42, 100}, true, nil)
+	if err != nil {
+		t.Fatalf("resolver: %v", err)
+	}
+
+	spyLog := &spyEventLog{}
+	blockerStarted := make(chan struct{})
+	factory := &controlledRunnableFactory{
+		runnables: map[int]Runnable{
+			42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "aborted"}, started: blockerStarted},
+		},
+	}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog, WithRunnableFactory(factory))
+
+	done := make(chan struct{})
+	var result *Result
+	go func() {
+		defer close(done)
+		result, _ = o.RunBatch(context.Background(), Request{
+			Issues:       resolved.Issues,
+			Dependencies: resolved.Deps,
+			Parallel:     2,
+		})
+	}()
+
+	waitForSignal(t, blockerStarted, "expected blocker to start")
+	waitForSignal(t, done, "expected batch to complete")
+
+	if len(factory.created) != 1 || factory.created[0] != 42 {
+		t.Fatalf("expected only blocker runnable to be created, got %v", factory.created)
+	}
+
+	var abortedEvent *events.Event
+	var queuedEvent *events.Event
+	for i := range spyLog.events {
+		e := spyLog.events[i]
+		if e.Type == "run.queued" && e.Issue == 100 {
+			queuedEvent = &e
+		}
+		if e.Type == "run.aborted" && e.Issue == 100 {
+			abortedEvent = &e
+		}
+		if e.Type == "run.started" && e.Issue == 100 {
+			t.Fatal("did not expect run.started for aborted dependent")
+		}
+		if e.Type == "run.blocked" && e.Issue == 100 {
+			t.Fatal("did not expect run.blocked for aborted dependent")
+		}
+		if e.Type == "run.await" && e.Issue == 100 {
+			t.Fatal("did not expect run.await for aborted dependent")
+		}
+	}
+	if queuedEvent == nil {
+		t.Fatal("expected run.queued for dependent")
+	}
+	if abortedEvent == nil {
+		t.Fatal("expected run.aborted event for dependent")
+	}
+	if abortedEvent.RunID != queuedEvent.RunID {
+		t.Fatalf("expected same RunID for queued and aborted, got %q vs %q", queuedEvent.RunID, abortedEvent.RunID)
+	}
+	abortedBy, ok := abortedEvent.Payload["aborted_by"].([]int)
+	if !ok || !reflect.DeepEqual(abortedBy, []int{42}) {
+		t.Fatalf("expected aborted_by [42], got %#v", abortedEvent.Payload["aborted_by"])
+	}
+	if len(result.Runs) != 2 {
+		t.Fatalf("expected 2 runs, got %d", len(result.Runs))
+	}
+	statuses := map[int]string{}
+	for _, r := range result.Runs {
+		statuses[r.IssueNumber] = r.Status
+	}
+	if statuses[100] != "aborted" {
+		t.Fatalf("expected dependent aborted, got %q", statuses[100])
+	}
+	runs := events.ProjectRunStates(spyLog.events)
+	var depRun *events.RunState
+	for i := range runs {
+		if runs[i].IssueNumber() == 100 {
+			depRun = &runs[i]
+			break
+		}
+	}
+	if depRun == nil {
+		t.Fatal("expected projected run for dependent")
+	}
+	if depRun.Status() != "aborted" {
+		t.Fatalf("expected projected status aborted, got %q", depRun.Status())
 	}
 }
