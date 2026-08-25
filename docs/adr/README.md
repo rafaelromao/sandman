@@ -56,7 +56,7 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0013 | Sandman Review - Daemon-Monitored PR Reviews | accepted |
 | 0014 | Store container config snapshots under the run dir | accepted |
 | 0015 | Split OpenCode config snapshot from mutable state | accepted |
-| 0016 | Unblock dependents from same-batch success | accepted |
+| 0016 | Unblock dependents from same-batch success | superseded by ADR-0054 |
 | 0017 | Canonical test env vars for provider allowlists and e2e scenario gates | accepted |
 | 0018 | Per-agent env vars to parameterize the model used by smoke and e2e tests | accepted |
 | 0019 | Portal auto-runs `clean --stale` on startup | accepted |
@@ -92,3 +92,4 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0051 | Explicit child declarations authorize Specification edges | proposed |
 | 0052 | Request-scoped delegated review response classification | proposed |
 | 0053 | Bound external waits and release execution capacity | proposed |
+| 0054 | Retain GitHub closure gate for in-batch blockers | accepted |

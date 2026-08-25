@@ -5,15 +5,15 @@ Domain vocabulary for Sandman, a CLI tool that orchestrates AFK coding agents in
 ## Language
 
 **BlockedBy**:
-The set of issue numbers that must complete successfully before an AgentRun for this issue can start. Derived from the union of body references and GitHub native dependency fields. An external blocker (not in the current batch) must still be closed on GitHub immediately before start time. An in-batch blocker only needs to reach status `success` within the batch — its GitHub issue may still be open at that instant.
+The set of issue numbers that must both complete successfully and be closed on GitHub before a dependent AgentRun can start. Derived from the union of body references and GitHub native dependency fields. Every blocker — in-batch or external — is gated on GitHub closure at the dependent start decision; an in-batch blocker additionally requires terminal batch status `success` at that instant.
 _Avoid_: dependencies, prerequisites.
 
 **In-batch blocker**:
-A blocker that is itself a member of the current Batch. Its terminal batch status (`success`, `failure`, `aborted`, or `blocked`) is the single source of truth for whether the dependent may start; the corresponding GitHub issue's `state` is not consulted.
+A blocker that is itself a member of the current Batch. The dependent may start only after the blocker both reaches terminal batch status `success` and GitHub reports its issue as `closed` at the start decision. If a successful blocker remains open on GitHub, the dependent finishes as `blocked` with the open blocker named; no agent is launched and no wait state is added. Terminal `failure`, `aborted`, or `blocked` on the blocker also blocks the dependent (with `failure`/`blocked` → `blocked`, `aborted` → `aborted`). References ADR-0054, which supersedes ADR-0016's single-source rule.
 _Avoid_: local blocker, sibling blocker.
 
 **External blocker**:
-A blocker named in an AgentRun's BlockedBy that is not a member of the current Batch. The dependent may only start once GitHub reports the external blocker's issue as `closed` at the instant just before start time.
+A blocker named in an AgentRun's BlockedBy that is not a member of the current Batch. The dependent may only start once GitHub reports the external blocker's issue as `closed` at the instant just before start time, matching the in-batch closure half of the two-part gate.
 _Avoid_: outside blocker, third-party blocker.
 
 **Agent**:
@@ -336,7 +336,7 @@ _Avoid_: Continuation context, continuation file.
 - A **DependencyResolver** produces a **ResolvedBatch** from a set of **Issues**
 - An **Orchestrator** executes a **ResolvedBatch**, respecting **BlockedBy** ordering
 - A **SpecificationResolver** runs before a **DependencyResolver**, rewriting each **Specification** in the input into its child **Issues** followed by the retained **Specification** itself as an ordinary row; the retained parent participates in the batch under a **Parent completion gate** so it cannot start until its accepted open children succeed in the same batch.
-- An **AgentRun** may be **blocked** if any of its in-batch **BlockedBy** issues did not finish with status `success`, or if any of its external **BlockedBy** issues is still open on GitHub when the run is about to start
+- An **AgentRun** may be **blocked** if any of its in-batch **BlockedBy** issues either did not finish with status `success` or finished with `success` but is still open on GitHub when the run is about to start, or if any of its external **BlockedBy** issues is still open on GitHub when the run is about to start; a successful but open in-batch blocker produces terminal `run.blocked` with `blocked_by` naming the open blocker and no agent launch or wait state
 - A **Sandbox** provides isolation for one or more **AgentRuns**
 - In `sandbox: worktree`, each **AgentRun** gets its own **Sandbox** (a **WorktreeSandbox**)
 - In a container-backed sandbox strategy, each **ContainerSandbox** may host up to **ContainerCapacity** **AgentRuns** at once
