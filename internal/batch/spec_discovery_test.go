@@ -165,6 +165,10 @@ func (c *discoveryClient) CloseIssue(ctx context.Context, issueNumber int, comme
 	return nil
 }
 
+func (c *discoveryClient) ClosePR(ctx context.Context, prNumber int) error {
+	return nil
+}
+
 // --- Optional interfaces ---
 
 func (c *discoveryClient) ListOpenIssues(ctx context.Context) ([]github.Issue, error) {
@@ -586,5 +590,9 @@ func (b *bareClient) RemoveIssueReaction(ctx context.Context, issueNumber int, r
 }
 
 func (b *bareClient) CloseIssue(ctx context.Context, issueNumber int, comment string) error {
+	return nil
+}
+
+func (b *bareClient) ClosePR(ctx context.Context, prNumber int) error {
 	return nil
 }

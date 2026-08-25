@@ -176,6 +176,12 @@ type fakeGitHubClient struct {
 	listSubIssuesErr       error
 	editPRBodyCalls        int
 	closeIssueCalls        int
+	closePRCalls           []int
+	closePRErr             error
+	findPRSequence         map[string][]*github.PR
+	findPRSeqIdx           map[string]int
+	findPRVerifyErr        error
+	verifyAfterClose       bool
 }
 
 func (f *fakeGitHubClient) FetchIssue(ctx context.Context, number int) (*github.Issue, error) {
@@ -216,6 +222,21 @@ func (f *fakeGitHubClient) SearchIssues(ctx context.Context, query string) ([]gi
 func (f *fakeGitHubClient) FindPRByBranch(ctx context.Context, branch string) (*github.PR, error) {
 	if f.findPRHook != nil {
 		f.findPRHook()
+	}
+	if f.findPRSequence != nil {
+		if seq, ok := f.findPRSequence[branch]; ok {
+			idx := f.findPRSeqIdx[branch]
+			if idx < len(seq) {
+				if f.findPRSeqIdx == nil {
+					f.findPRSeqIdx = map[string]int{}
+				}
+				f.findPRSeqIdx[branch] = idx + 1
+				return seq[idx], nil
+			}
+		}
+	}
+	if len(f.closePRCalls) > 0 && f.verifyAfterClose && f.findPRVerifyErr != nil {
+		return nil, f.findPRVerifyErr
 	}
 	if f.findPRErr != nil {
 		return nil, f.findPRErr
@@ -308,6 +329,32 @@ func (f *fakeGitHubClient) RemoveIssueReaction(ctx context.Context, issueNumber 
 
 func (f *fakeGitHubClient) CloseIssue(ctx context.Context, issueNumber int, comment string) error {
 	f.closeIssueCalls++
+	return nil
+}
+
+func (f *fakeGitHubClient) ClosePR(ctx context.Context, prNumber int) error {
+	f.closePRCalls = append(f.closePRCalls, prNumber)
+	if f.closePRErr != nil {
+		return f.closePRErr
+	}
+	if f.findPRVerifyErr != nil {
+		f.verifyAfterClose = true
+	}
+	if f.prs != nil {
+		for branch, pr := range f.prs {
+			if pr.Number == prNumber {
+				f.prs[branch] = &github.PR{Number: prNumber, State: "closed", HeadRefName: branch}
+			}
+		}
+	}
+	if f.findPRSequence != nil {
+		for _, seq := range f.findPRSequence {
+			if len(seq) > 0 && seq[0] != nil && seq[0].Number == prNumber {
+				// Mark that close was called, so next Find will return closed
+				f.verifyAfterClose = true
+			}
+		}
+	}
 	return nil
 }
 
@@ -3725,6 +3772,256 @@ func TestRunBatch_OverrideClearsExistingBranchesAndProceeds(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".sandman", "worktrees", branch)); err != nil {
 		t.Fatalf("expected worktree for %s to be recreated: %v", branch, err)
+	}
+}
+
+func TestCloseOpenPRForBranch_SuccessClosesOpenPR(t *testing.T) {
+	client := &fakeGitHubClient{
+		findPRSequence: map[string][]*github.PR{
+			"42-fix": {{Number: 10, State: "open", HeadRefName: "42-fix"}, nil},
+		},
+	}
+	if err := closeOpenPRForBranch(context.Background(), "42-fix", client); err != nil {
+		t.Fatalf("expected nil, got %v", err)
+	}
+	if len(client.closePRCalls) != 1 || client.closePRCalls[0] != 10 {
+		t.Fatalf("expected ClosePR called with 10, got %v", client.closePRCalls)
+	}
+}
+
+func TestCloseOpenPRForBranch_NoPRIsNoop(t *testing.T) {
+	client := &fakeGitHubClient{
+		prs: map[string]*github.PR{},
+	}
+	if err := closeOpenPRForBranch(context.Background(), "42-fix", client); err != nil {
+		t.Fatalf("expected nil, got %v", err)
+	}
+	if len(client.closePRCalls) != 0 {
+		t.Fatalf("expected no ClosePR calls, got %v", client.closePRCalls)
+	}
+}
+
+func TestCloseOpenPRForBranch_ClosedPRIsNoop(t *testing.T) {
+	client := &fakeGitHubClient{
+		prs: map[string]*github.PR{"42-fix": {Number: 10, State: "closed", HeadRefName: "42-fix"}},
+	}
+	if err := closeOpenPRForBranch(context.Background(), "42-fix", client); err != nil {
+		t.Fatalf("expected nil, got %v", err)
+	}
+	if len(client.closePRCalls) != 0 {
+		t.Fatalf("expected no ClosePR calls, got %v", client.closePRCalls)
+	}
+}
+
+func TestCloseOpenPRForBranch_CloseError(t *testing.T) {
+	client := &fakeGitHubClient{
+		findPRSequence: map[string][]*github.PR{
+			"42-fix": {{Number: 10, State: "open", HeadRefName: "42-fix"}},
+		},
+		closePRErr: errors.New("gh pr close failed"),
+	}
+	if err := closeOpenPRForBranch(context.Background(), "42-fix", client); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestCloseOpenPRForBranch_StillOpenAfterClose(t *testing.T) {
+	client := &fakeGitHubClient{
+		findPRSequence: map[string][]*github.PR{
+			"42-fix": {{Number: 10, State: "open", HeadRefName: "42-fix"}, {Number: 10, State: "open", HeadRefName: "42-fix"}},
+		},
+	}
+	err := closeOpenPRForBranch(context.Background(), "42-fix", client)
+	if err == nil {
+		t.Fatal("expected error for still open")
+	}
+	if !strings.Contains(err.Error(), "still open") {
+		t.Fatalf("expected still open error, got %v", err)
+	}
+}
+
+func TestCloseOpenPRForBranch_VerifyError(t *testing.T) {
+	client2 := &fakeGitHubClient{
+		prs:              map[string]*github.PR{"42-fix": {Number: 10, State: "open", HeadRefName: "42-fix"}},
+		verifyAfterClose: true,
+		findPRVerifyErr:  errors.New("network error"),
+	}
+	err := closeOpenPRForBranch(context.Background(), "42-fix", client2)
+	if err == nil {
+		t.Fatal("expected error for verify fetch failure")
+	}
+}
+
+func TestRunBatch_OverrideClosesOpenPRBeforeCleanup(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	branch := BranchName(42, "Fix bug", "")
+	runGit(t, dir, "checkout", "-b", branch)
+	runGit(t, dir, "checkout", "main")
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+		prs:    map[string]*github.PR{branch: mergedPR(branch, "current-sha")},
+		findPRSequence: map[string][]*github.PR{
+			branch: {{Number: 100, State: "open", HeadRefName: branch}, nil},
+		},
+	}
+	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success"}}}
+	var logBuf bytes.Buffer
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithRunnableFactory(factory),
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+		WithErrorLog(&logBuf),
+	)
+	oldBranchExists := branchExists
+	branchExists = sandbox.BranchExists
+	t.Cleanup(func() { branchExists = oldBranchExists })
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+
+	result, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Mode: map[int]IssueMode{42: ModeOverride}})
+	t.Logf("logBuf: %q", logBuf.String())
+	t.Logf("result: %+v err: %v", result, err)
+	if result != nil {
+		for i, r := range result.Runs {
+			t.Logf("run %d: %+v", i, r)
+		}
+	}
+	if err != nil {
+		t.Fatalf("expected success, got %v: runs=%+v", err, result)
+	}
+	if len(client.closePRCalls) != 1 || client.closePRCalls[0] != 100 {
+		t.Fatalf("expected ClosePR 100, got %v", client.closePRCalls)
+	}
+	if len(result.Runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(result.Runs))
+	}
+	if result.Runs[0].Status != "success" {
+		t.Fatalf("expected success status, got %q", result.Runs[0].Status)
+	}
+}
+
+func TestRunBatch_OverrideFailedClosePreventsDeletion(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	branch := BranchName(42, "Fix bug", "")
+	runGit(t, dir, "checkout", "-b", branch)
+	runGit(t, dir, "checkout", "main")
+	wtPath := filepath.Join(dir, ".sandman", "worktrees", branch)
+	runGit(t, dir, "worktree", "add", filepath.Join(".sandman", "worktrees", branch), branch)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+		findPRSequence: map[string][]*github.PR{
+			branch: {{Number: 100, State: "open", HeadRefName: branch}},
+		},
+		closePRErr: errors.New("gh pr close: permission denied"),
+	}
+	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success"}}}
+	var logBuf bytes.Buffer
+	eventLog := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, eventLog,
+		WithRunnableFactory(factory),
+		WithErrorLog(&logBuf),
+	)
+	oldBranchExists := branchExists
+	branchExists = sandbox.BranchExists
+	t.Cleanup(func() { branchExists = oldBranchExists })
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Mode: map[int]IssueMode{42: ModeOverride}})
+	if err == nil {
+		t.Fatal("expected error when close fails")
+	}
+	if !strings.Contains(err.Error(), "failed to close") {
+		t.Fatalf("expected close error, got %v", err)
+	}
+	if _, err := os.Stat(wtPath); err != nil {
+		t.Fatalf("expected worktree preserved, got %v", err)
+	}
+	if out := strings.TrimSpace(runGit(t, dir, "branch", "--list", branch)); out == "" {
+		t.Fatalf("expected branch preserved, got empty list")
+	}
+	if !strings.Contains(logBuf.String(), "worktree and branch preserved") {
+		t.Fatalf("expected log to mention preserved, got %q", logBuf.String())
+	}
+	if eventLog.removeEventsByIssueCalls != 0 {
+		t.Fatalf("expected failed override to preserve event log, got %d removals", eventLog.removeEventsByIssueCalls)
+	}
+}
+
+func TestRunBatch_OverrideStillOpenPreventsDeletion(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	branch := BranchName(42, "Fix bug", "")
+	runGit(t, dir, "checkout", "-b", branch)
+	runGit(t, dir, "checkout", "main")
+	wtPath := filepath.Join(dir, ".sandman", "worktrees", branch)
+	runGit(t, dir, "worktree", "add", filepath.Join(".sandman", "worktrees", branch), branch)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+		findPRSequence: map[string][]*github.PR{
+			branch: {{Number: 100, State: "open", HeadRefName: branch}, {Number: 100, State: "open", HeadRefName: branch}},
+		},
+	}
+	factory := &fakeRunnableFactory{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithRunnableFactory(factory),
+	)
+	oldBranchExists := branchExists
+	branchExists = sandbox.BranchExists
+	t.Cleanup(func() { branchExists = oldBranchExists })
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Mode: map[int]IssueMode{42: ModeOverride}})
+	if err == nil {
+		t.Fatal("expected error when still open")
+	}
+	if _, err := os.Stat(wtPath); err != nil {
+		t.Fatalf("expected worktree preserved, got %v", err)
+	}
+}
+
+func TestRunBatch_OverrideNoPRProceeds(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	branch := BranchName(42, "Fix bug", "")
+	runGit(t, dir, "checkout", "-b", branch)
+	runGit(t, dir, "checkout", "main")
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+		prs:    map[string]*github.PR{branch: mergedPR(branch, "current-sha")},
+	}
+	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success"}}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithRunnableFactory(factory),
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+	)
+	oldBranchExists := branchExists
+	branchExists = sandbox.BranchExists
+	t.Cleanup(func() { branchExists = oldBranchExists })
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+
+	result, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Mode: map[int]IssueMode{42: ModeOverride}})
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if len(client.closePRCalls) != 0 {
+		t.Fatalf("expected no ClosePR, got %v", client.closePRCalls)
+	}
+	if len(result.Runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(result.Runs))
 	}
 }
 

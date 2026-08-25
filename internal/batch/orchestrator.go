@@ -1201,6 +1201,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		overrideIndex = readEventLogIndex(o.eventLog)
 	}
 
+	var overridePRCloseErrors []string
 	for _, num := range req.Issues {
 		if req.IssueMode(num) != ModeOverride {
 			continue
@@ -1212,8 +1213,16 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 		branches := collectIssueBranchesFromIndex(num, issue.Title, req.Branches[num], baseBranch, overrideIndex)
 		for _, branch := range branches {
+			if err := closeOpenPRForBranch(ctx, branch, o.githubClient); err != nil {
+				fmt.Fprintf(o.errorLog, "error: override: failed to retire open PR for branch %s (issue %d): %v; worktree and branch preserved\n", branch, num, err)
+				overridePRCloseErrors = append(overridePRCloseErrors, fmt.Sprintf("branch %s (issue %d): %v", branch, num, err))
+				continue
+			}
 			ClearIssueArtifacts(num, branch, layout.WorktreeDir, o.eventLog, o.errorLog, baseBranch, req.StrandedReconcile, layout.BatchesIndexPath)
 		}
+	}
+	if len(overridePRCloseErrors) > 0 {
+		return nil, fmt.Errorf("override: failed to close open PR(s) before replacing branch(es): %s; worktree and branch preserved", strings.Join(overridePRCloseErrors, "; "))
 	}
 
 	eventIndex := eventLogIndex{priorRunByIssue: map[int]bool{}, branchesByIssue: map[int][]string{}}
@@ -3848,6 +3857,36 @@ func isMissingBranchError(err error, out []byte) bool {
 // is preserved (the failure is logged and the function continues);
 // false is the explicit opt-out (`--no-reconcile-stranded`).
 //
+// closeOpenPRForBranch retires an open PR for branch before destructive
+// override cleanup. It finds the PR via FindPRByBranch, closes it without
+// merge if open, then refetches to verify it is no longer open. A nil
+// github client, missing PR, or non-open state is a no-op success. A close
+// error or a verification that still reports open (or a verification fetch
+// error) is returned so the caller can preserve the worktree and branch.
+func closeOpenPRForBranch(ctx context.Context, branch string, ghClient github.Client) error {
+	if ghClient == nil {
+		return nil
+	}
+	pr, err := ghClient.FindPRByBranch(ctx, branch)
+	if err != nil {
+		return fmt.Errorf("find PR for branch %s: %w", branch, err)
+	}
+	if pr == nil || !strings.EqualFold(strings.TrimSpace(pr.State), "open") {
+		return nil
+	}
+	if err := ghClient.ClosePR(ctx, pr.Number); err != nil {
+		return fmt.Errorf("close PR %d for branch %s: %w", pr.Number, branch, err)
+	}
+	verified, err := ghClient.FindPRByBranch(ctx, branch)
+	if err != nil {
+		return fmt.Errorf("verify PR closure for branch %s (pr %d): %w", branch, pr.Number, err)
+	}
+	if verified != nil && strings.EqualFold(strings.TrimSpace(verified.State), "open") {
+		return fmt.Errorf("PR %d for branch %s still open after close", pr.Number, branch)
+	}
+	return nil
+}
+
 // `baseBranch` is accepted for API compatibility with prior call sites
 // but is no longer used by the recovery flow.
 func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, eventLog events.EventLog, logWriter io.Writer, baseBranch string, strandedReconcile *bool, batchesIndexPath string) {

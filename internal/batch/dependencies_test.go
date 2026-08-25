@@ -298,6 +298,10 @@ func (c *fetchIssueErrorClient) CloseIssue(ctx context.Context, issueNumber int,
 	return nil
 }
 
+func (c *fetchIssueErrorClient) ClosePR(ctx context.Context, prNumber int) error {
+	return nil
+}
+
 func TestDependencyResolverResolve_IgnoresClosedBlockers(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{

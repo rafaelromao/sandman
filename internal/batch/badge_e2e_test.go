@@ -110,6 +110,9 @@ func (badgeE2EIssueGitHubClient) RemoveIssueReaction(_ context.Context, _ int, _
 func (badgeE2EIssueGitHubClient) CloseIssue(_ context.Context, _ int, _ string) error {
 	return nil
 }
+func (badgeE2EIssueGitHubClient) ClosePR(_ context.Context, _ int) error {
+	return nil
+}
 
 // badgeE2ENoopRenderer is a renderer that hands back the empty
 // prompt. It satisfies prompt.IssueRenderer so the orchestrator can

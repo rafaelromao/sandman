@@ -1588,5 +1588,24 @@ func (c *CLIClient) CloseIssue(ctx context.Context, issueNumber int, comment str
 	return nil
 }
 
+// ClosePR closes a pull request without merging it.
+func (c *CLIClient) ClosePR(ctx context.Context, prNumber int) error {
+	if prNumber <= 0 {
+		return fmt.Errorf("pr number must be positive, got %d", prNumber)
+	}
+	owner, repo, err := c.resolveRepo(ctx)
+	if err != nil {
+		return err
+	}
+	callCtx, cancel := c.boundContext(ctx)
+	defer cancel()
+	cmd := c.command(callCtx, "gh", "pr", "close", fmt.Sprintf("%d", prNumber), "--repo", fmt.Sprintf("%s/%s", owner, repo))
+	_, err = c.runCmd(callCtx, cmd, "gh pr close")
+	if err != nil {
+		return fmt.Errorf("gh pr close: %w", err)
+	}
+	return nil
+}
+
 // Ensure CLIClient implements Client.
 var _ Client = (*CLIClient)(nil)

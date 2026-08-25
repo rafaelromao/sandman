@@ -219,6 +219,10 @@ func (f *fakeGitHubClient) CloseIssue(ctx context.Context, issueNumber int, comm
 	return nil
 }
 
+func (f *fakeGitHubClient) ClosePR(ctx context.Context, prNumber int) error {
+	return nil
+}
+
 // newRunDeps returns Dependencies for a run command test, isolated
 // from the real repo via a fresh temp dir that is git-init'd and
 // chdir'd into. The default review command is overridden to
