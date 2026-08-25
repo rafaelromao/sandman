@@ -3893,12 +3893,12 @@ func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, eve
 		}
 	}
 
-	// Remove events for this issue
-	if eventLog != nil {
-		if err := eventLog.RemoveEventsByIssue(issueNumber); err != nil {
-			fmt.Fprintf(logWriter, "error: remove events for issue %d: %v\n", issueNumber, err)
-		}
-	}
+	// Override preserves prior AgentRun history: events are append-only
+	// and batch/run artifacts (batches.json, batch.json, run.log) are
+	// retained. Only the worktree and branch are replaced for the new
+	// attempt so the earlier blocked event remains inspectable.
+	_ = eventLog
+	_ = batchesIndexPath
 }
 
 // recoverBranchDeleteFromMainRepo attempts to unstick `git branch -D <branch>`

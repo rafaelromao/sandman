@@ -2,12 +2,10 @@ package events
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -91,86 +89,6 @@ func (l *JSONLLogger) Read() ([]Event, error) {
 	return events, nil
 }
 
-// RemoveEventsByIssue removes events matching either issue representation.
-// Rewrites retain the main log inode so already-open O_APPEND descriptors do
-// not become ghost writers.
-func (l *JSONLLogger) RemoveEventsByIssue(issueNumber int) error {
-	return l.withLock(func() error {
-		f, err := l.ensureOpen()
-		if err != nil {
-			return err
-		}
-		raw, err := readAll(f)
-		if err != nil {
-			return err
-		}
-		all, bad := parseLogLines(string(raw))
-		kept := make([]Event, 0, len(all))
-		for _, event := range all {
-			if event.Issue == issueNumber || (event.IssueRef != nil && *event.IssueRef == issueNumber) {
-				continue
-			}
-			kept = append(kept, event)
-		}
-		if len(bad) == 0 && len(kept) == len(all) {
-			return nil
-		}
-
-		var rewritten []byte
-		for _, event := range kept {
-			data, err := json.Marshal(event)
-			if err != nil {
-				return fmt.Errorf("marshal event: %w", err)
-			}
-			rewritten = append(rewritten, data...)
-			rewritten = append(rewritten, '\n')
-		}
-
-		if err := l.beginTransaction(raw); err != nil {
-			return err
-		}
-		failed := func(primary error) error {
-			return l.abortTransaction(raw, primary)
-		}
-
-		toQuarantine := l.filterAlreadyQuarantined(bad)
-		if len(toQuarantine) > 0 {
-			if err := l.quarantineMalformed(toQuarantine); err != nil {
-				return failed(fmt.Errorf("quarantine %d malformed line(s): %w", len(toQuarantine), err))
-			}
-			l.markQuarantined(toQuarantine)
-		}
-		if err := l.hit("truncate"); err != nil {
-			return failed(err)
-		}
-		if err := f.Truncate(0); err != nil {
-			return failed(fmt.Errorf("truncate event log: %w", err))
-		}
-		if _, err := f.Seek(0, io.SeekStart); err != nil {
-			return failed(fmt.Errorf("rewind event log: %w", err))
-		}
-		if err := l.hit("write"); err != nil {
-			return failed(err)
-		}
-		if _, err := f.Write(rewritten); err != nil {
-			return failed(fmt.Errorf("write event log: %w", err))
-		}
-		if err := l.hit("sync"); err != nil {
-			return failed(err)
-		}
-		if err := f.Sync(); err != nil {
-			return failed(fmt.Errorf("sync event log: %w", err))
-		}
-		if err := l.commitTransaction(); err != nil {
-			return failed(err)
-		}
-		if err := l.finishTransaction(); err != nil {
-			return err
-		}
-		return nil
-	})
-}
-
 func (l *JSONLLogger) withLock(operation func() error) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -185,166 +103,8 @@ func (l *JSONLLogger) withLock(operation func() error) error {
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
 
-	if err := l.recoverTransaction(); err != nil {
-		return err
-	}
 	return operation()
 }
-
-func (l *JSONLLogger) beginTransaction(raw []byte) error {
-	if err := l.writeSynced(l.snapshotPath(), raw); err != nil {
-		return fmt.Errorf("write recovery snapshot: %w", err)
-	}
-	if err := l.hit("snapshot"); err != nil {
-		return l.abortTransaction(raw, err)
-	}
-	if err := l.writeSynced(l.markerPath(), []byte("pending\n")); err != nil {
-		return l.abortTransaction(raw, fmt.Errorf("write recovery marker: %w", err))
-	}
-	if err := l.hit("marker"); err != nil {
-		return l.abortTransaction(raw, err)
-	}
-	return nil
-}
-
-func (l *JSONLLogger) finishTransaction() error {
-	if err := l.hit("cleanup-snapshot"); err != nil {
-		return err
-	}
-	if err := os.Remove(l.snapshotPath()); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove recovery snapshot: %w", err)
-	}
-	if err := syncDir(filepath.Dir(l.Path)); err != nil {
-		return fmt.Errorf("sync recovery snapshot removal: %w", err)
-	}
-	if err := l.hit("cleanup-marker"); err != nil {
-		return err
-	}
-	if err := os.Remove(l.markerPath()); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove recovery marker: %w", err)
-	}
-	if err := syncDir(filepath.Dir(l.Path)); err != nil {
-		return fmt.Errorf("sync recovery marker removal: %w", err)
-	}
-	return nil
-}
-
-func (l *JSONLLogger) commitTransaction() error {
-	if err := l.writeSynced(l.markerPath(), []byte("committed\n")); err != nil {
-		return fmt.Errorf("mark event log transaction committed: %w", err)
-	}
-	return nil
-}
-
-func (l *JSONLLogger) recoverTransaction() error {
-	marker, err := os.ReadFile(l.markerPath())
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("stat recovery marker: %w", err)
-	}
-	if string(marker) == "committed\n" {
-		if err := l.finishTransaction(); err != nil {
-			return fmt.Errorf("cleanup committed event log transaction: %w", err)
-		}
-		return nil
-	}
-	raw, err := os.ReadFile(l.snapshotPath())
-	if err != nil {
-		return fmt.Errorf("read recovery snapshot: %w", err)
-	}
-	if err := l.restore(raw); err != nil {
-		return fmt.Errorf("recover interrupted event log transaction: %w", err)
-	}
-	if err := l.clearTransaction(); err != nil {
-		return fmt.Errorf("cleanup recovered event log transaction: %w", err)
-	}
-	return nil
-}
-
-func (l *JSONLLogger) abortTransaction(raw []byte, primary error) error {
-	if recoveryErr := l.restore(raw); recoveryErr != nil {
-		return errors.Join(primary, fmt.Errorf("restore event log: %w", recoveryErr))
-	}
-	if err := l.clearTransaction(); err != nil {
-		return errors.Join(primary, fmt.Errorf("cleanup recovered event log transaction: %w", err))
-	}
-	return primary
-}
-
-func (l *JSONLLogger) clearTransaction() error {
-	if err := os.Remove(l.markerPath()); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove recovery marker: %w", err)
-	}
-	if err := syncDir(filepath.Dir(l.Path)); err != nil {
-		return fmt.Errorf("sync recovery marker removal: %w", err)
-	}
-	if err := os.Remove(l.snapshotPath()); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove recovery snapshot: %w", err)
-	}
-	if err := syncDir(filepath.Dir(l.Path)); err != nil {
-		return fmt.Errorf("sync recovery snapshot removal: %w", err)
-	}
-	return nil
-}
-
-func (l *JSONLLogger) restore(raw []byte) error {
-	f, err := l.ensureOpen()
-	if err != nil {
-		return err
-	}
-	if err := f.Truncate(0); err != nil {
-		return err
-	}
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
-	if _, err := f.Write(raw); err != nil {
-		return err
-	}
-	return f.Sync()
-}
-
-func (l *JSONLLogger) writeSynced(path string, data []byte) error {
-	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-")
-	if err != nil {
-		return err
-	}
-	temp := f.Name()
-	defer os.Remove(temp)
-	if err := f.Chmod(0644); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(temp, path); err != nil {
-		return err
-	}
-	return syncDir(filepath.Dir(path))
-}
-
-func syncDir(path string) error {
-	dir, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	return dir.Sync()
-}
-
-func (l *JSONLLogger) snapshotPath() string { return l.Path + ".recovery" }
-func (l *JSONLLogger) markerPath() string   { return l.Path + ".txn" }
 
 func (l *JSONLLogger) hit(stage string) error {
 	if l.hooks != nil && l.hooks.fail != nil {

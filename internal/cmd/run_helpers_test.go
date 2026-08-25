@@ -236,23 +236,6 @@ func (l *recordingEventLog) Read() ([]events.Event, error) {
 	return append([]events.Event(nil), l.events...), nil
 }
 
-func (l *recordingEventLog) RemoveEventsByIssue(issueNumber int) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	var kept []events.Event
-	for _, e := range l.events {
-		if e.Issue == issueNumber {
-			continue
-		}
-		if e.IssueRef != nil && *e.IssueRef == issueNumber {
-			continue
-		}
-		kept = append(kept, e)
-	}
-	l.events = kept
-	return nil
-}
-
 func writeSandmanDockerfile(t *testing.T, dir string) {
 	t.Helper()
 	dockerfileDir := filepath.Join(dir, ".sandman")

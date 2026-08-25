@@ -22,7 +22,6 @@ func (r *recordingEventLog) Log(event events.Event) error {
 }
 
 func (r *recordingEventLog) Read() ([]events.Event, error) { return nil, nil }
-func (r *recordingEventLog) RemoveEventsByIssue(int) error { return nil }
 
 func writeManifestFile(t *testing.T, runDir string, manifest BatchManifest) {
 	t.Helper()
