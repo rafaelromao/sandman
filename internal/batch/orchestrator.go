@@ -640,71 +640,82 @@ func (g *batchStartGate) Acquire(ctx context.Context, priority ...bool) error {
 		}
 	}()
 	for {
-		if err := ctx.Err(); err != nil {
+		wake, wait, ok, err := g.tryAcquire(ctx, waiter, isPriority)
+		if err != nil {
 			return err
 		}
-
-		g.mu.Lock()
-		if err := ctx.Err(); err != nil {
-			g.mu.Unlock()
-			return err
-		}
-		now := time.Now()
-		if g.canAcquireLocked(waiter, now) {
-			if err := ctx.Err(); err != nil {
-				g.mu.Unlock()
-				return err
-			}
-			if g.parallel > 0 {
-				g.active++
-			}
-			g.removeWaiterLocked(waiter)
-			g.signalLocked()
+		if ok {
 			acquired = true
-			g.mu.Unlock()
 			return nil
 		}
+		if err := waitForStartGate(ctx, wake, wait); err != nil {
+			return err
+		}
+	}
+}
 
-		queued := false
-		if !g.isQueuedLocked(waiter) {
-			if isPriority {
-				g.priorityWaiters = append(g.priorityWaiters, waiter)
-			} else {
-				g.normalWaiters = append(g.normalWaiters, waiter)
-			}
-			queued = true
-		}
-		wake := g.wake
-		wait := time.Duration(0)
-		if g.delay > 0 && now.Before(g.nextAllowedStart) {
-			wait = time.Until(g.nextAllowedStart)
-		}
+func (g *batchStartGate) tryAcquire(ctx context.Context, waiter *batchStartWaiter, priority bool) (chan struct{}, time.Duration, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, 0, false, err
+	}
+	g.mu.Lock()
+	if err := ctx.Err(); err != nil {
 		g.mu.Unlock()
-		if queued && g.onWaiterQueued != nil {
-			g.onWaiterQueued(isPriority)
+		return nil, 0, false, err
+	}
+	now := time.Now()
+	if g.canAcquireLocked(waiter, now) {
+		if g.parallel > 0 {
+			g.active++
 		}
+		g.removeWaiterLocked(waiter)
+		g.signalLocked()
+		g.mu.Unlock()
+		return nil, 0, true, nil
+	}
+	queued := g.enqueueWaiterLocked(waiter, priority)
+	wake := g.wake
+	wait := time.Duration(0)
+	if g.delay > 0 && now.Before(g.nextAllowedStart) {
+		wait = time.Until(g.nextAllowedStart)
+	}
+	g.mu.Unlock()
+	if queued && g.onWaiterQueued != nil {
+		g.onWaiterQueued(priority)
+	}
+	return wake, wait, false, nil
+}
 
-		if wait <= 0 {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-wake:
-			}
-			continue
-		}
-		timer := time.NewTimer(wait)
+func (g *batchStartGate) enqueueWaiterLocked(waiter *batchStartWaiter, priority bool) bool {
+	if g.isQueuedLocked(waiter) {
+		return false
+	}
+	if priority {
+		g.priorityWaiters = append(g.priorityWaiters, waiter)
+	} else {
+		g.normalWaiters = append(g.normalWaiters, waiter)
+	}
+	return true
+}
+
+func waitForStartGate(ctx context.Context, wake <-chan struct{}, wait time.Duration) error {
+	if wait <= 0 {
 		select {
 		case <-ctx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
 			return ctx.Err()
 		case <-wake:
-			if !timer.Stop() {
-				<-timer.C
-			}
-		case <-timer.C:
+			return nil
 		}
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-wake:
+		return nil
+	case <-timer.C:
+		return nil
 	}
 }
 
