@@ -121,6 +121,7 @@ func (w *opencodeOutput) Write(p []byte) (int, error) {
 		if !found {
 			break
 		}
+		line = append([]byte(nil), line...)
 		w.buf.Reset()
 		_, _ = w.buf.Write(rest)
 		if err := w.writeLine(line, true); err != nil {

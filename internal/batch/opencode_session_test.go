@@ -326,6 +326,22 @@ func TestOpenCodeOutput_PreservesFirstSessionAcrossStreams(t *testing.T) {
 	}
 }
 
+func TestOpenCodeOutput_ParsesMultipleEventsInOneWrite(t *testing.T) {
+	var out strings.Builder
+	parsed := newOpenCodeOutput(&out, io.Discard, false)
+	input := []byte(`{"type":"text","sessionID":"first","part":{"text":"hello"}}` + "\n" +
+		`{"type":"text","sessionID":"first","part":{"text":"world"}}` + "\n")
+	if _, err := parsed.Write(input); err != nil {
+		t.Fatalf("write returned error: %v", err)
+	}
+	if got := parsed.SessionID(); got != "first" {
+		t.Fatalf("session id = %q, want first", got)
+	}
+	if out.String() != "hello\nworld\n" {
+		t.Fatalf("output = %q, want both event texts", out.String())
+	}
+}
+
 func TestOpenCodeOutput_PreservesMalformedLineAndWarns(t *testing.T) {
 	var out, warning strings.Builder
 	parsed := newOpenCodeOutput(&out, &warning, false)
