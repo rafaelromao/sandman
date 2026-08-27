@@ -88,7 +88,7 @@ func TestReviewWaitStabilization_CIFailureFixReviewMerge(t *testing.T) {
 		t.Fatalf("run finished before delegated review resolved: %d", got)
 	}
 	waitForPortalRun(t, portalURL, 42, func(run portalRun) bool {
-		return run.Status == "running" && run.FinishedAt == nil
+		return run.Status == "waiting" && run.SocketPath != "" && run.FinishedAt == nil
 	})
 
 	if err := os.WriteFile(statePath, []byte("merged\n"), 0o644); err != nil {
@@ -166,10 +166,10 @@ func runReviewWaitScenario(t *testing.T, binPath string, cancelPending bool) {
 	waitForFile(t, agentStartedPath)
 	waitForReviewWaitSocket(t, repoDir)
 	pendingRun := waitForPortalRun(t, portalURL, 42, func(run portalRun) bool {
-		return run.Status == "running" && run.FinishedAt == nil
+		return run.Status == "waiting" && run.SocketPath != "" && run.FinishedAt == nil
 	})
-	if pendingRun.Status != "running" {
-		t.Fatalf("pending portal status = %q, want running", pendingRun.Status)
+	if pendingRun.Status != "waiting" {
+		t.Fatalf("pending portal status = %q, want waiting", pendingRun.Status)
 	}
 
 	logs := readReviewWaitEvents(t, eventsPath)
@@ -271,7 +271,7 @@ func assertReviewWaitRemainsPending(t *testing.T, eventsPath, repoDir, portalURL
 			t.Fatal("batch socket disappeared during foreground observation")
 		}
 		run := waitForPortalRun(t, portalURL, 42, func(run portalRun) bool {
-			return run.Status == "running" && run.FinishedAt == nil
+			return run.Status == "waiting" && run.SocketPath != "" && run.FinishedAt == nil
 		})
 		if run.LastOutputAt == nil || time.Since(*run.LastOutputAt) > 5*time.Second {
 			t.Fatalf("portal marked foreground wait stale: lastOutputAt=%v", run.LastOutputAt)

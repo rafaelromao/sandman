@@ -478,6 +478,9 @@ func abortPortalRun(ctx context.Context, repoRoot, runKey string, issueNumber in
 	if runDir == "" {
 		runDir = filepath.Dir(run.SocketPath)
 	}
+	if filepath.Base(run.SocketPath) == "batch.sock" {
+		runDir = filepath.Dir(run.SocketPath)
+	}
 
 	// For batch-level sockets (batch.sock), resolve to the per-run folder.
 	cmdSock := daemon.CommandSocketPath(runDir)

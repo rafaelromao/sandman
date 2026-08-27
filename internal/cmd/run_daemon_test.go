@@ -247,9 +247,12 @@ func TestRun_CreatesControlSocketInRunDirWithCommander(t *testing.T) {
 	}
 	conn.Close()
 
-	// Per-row run.sock creation is verified by TestRun_BootArtifactsBeforeRunStarted
-	// which uses a real orchestrator. This test only verifies batch.sock since
-	// the mock runner does not call execute() where per-row artifacts are created.
+	batchCommandSock := filepath.Join(batchesDir, entries[0].Name(), "run.sock")
+	if conn, err := net.Dial("unix", batchCommandSock); err != nil {
+		t.Fatalf("batch command socket should exist with an issue commander: %v", err)
+	} else {
+		conn.Close()
+	}
 
 	close(runner.release)
 
