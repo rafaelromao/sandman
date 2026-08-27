@@ -58,6 +58,7 @@ func TestDependencyBlockEvidenceSurvivesOverrideE2E(t *testing.T) {
 
 	assertDependencyOverrideInitialEvents(t, initialEvents, dependencyOverrideBlocker, dependencyOverrideDependent)
 	assertDependencyOverrideInitialArtifacts(t, repoDir, oldBatchID, oldRunID)
+	assertDependencyOverrideAgentCalls(t, agentCallsPath, 1, "42")
 
 	if err := os.WriteFile(phasePath, []byte("ready\n"), 0644); err != nil {
 		t.Fatalf("advance fixture phase: %v", err)
@@ -88,6 +89,8 @@ func TestDependencyBlockEvidenceSurvivesOverrideE2E(t *testing.T) {
 	}
 
 	assertDependencyOverrideReplacementArtifacts(t, repoDir, newBatchID, newStarted.RunID)
+	assertDependencyOverrideRetainedBatch(t, repoDir, oldBatchID)
+	assertDependencyOverrideAgentCalls(t, agentCallsPath, 2, "100")
 
 	portalURL := startPortalBinary(t, binPath, repoDir, shimDir)
 	waitForPortalReady(t, portalURL)
@@ -251,7 +254,12 @@ func writeDependencyOverrideAgentShim(t *testing.T, dir, callsPath string) {
 	t.Helper()
 	script := fmt.Sprintf(`#!/bin/sh
 set -eu
-printf '%%s\n' "$*" >> %q
+issue=unknown
+case "$*" in
+  *"issue #42:"*) issue=42 ;;
+  *"issue #100:"*) issue=100 ;;
+esac
+printf '%%s\n' "$issue" >> %q
 printf 'fixture agent completed\n'
 exit 0
 `, callsPath)
@@ -310,6 +318,10 @@ func assertDependencyOverrideInitialEvents(t *testing.T, eventList []events.Even
 	t.Helper()
 	if got := countDependencyOverrideEvents(eventList, "run.finished", blocker); got != 1 {
 		t.Fatalf("expected one successful blocker finish, got %d", got)
+	}
+	blockerFinished := findDependencyOverrideEventValue(t, eventList, "run.finished", blocker)
+	if status, _ := blockerFinished.Payload["status"].(string); status != "success" {
+		t.Fatalf("blocker finished status = %q, want success", status)
 	}
 	if got := countDependencyOverrideEvents(eventList, "run.blocked", dependent); got != 1 {
 		t.Fatalf("expected one dependent blocked event, got %d", got)
@@ -375,6 +387,36 @@ func assertDependencyOverrideReplacementArtifacts(t *testing.T, repoDir, batchID
 	}
 	if _, err := os.Stat(filepath.Join(runDir, "run.log")); err != nil {
 		t.Fatalf("replacement run log missing: %v", err)
+	}
+}
+
+func assertDependencyOverrideRetainedBatch(t *testing.T, repoDir, batchID string) {
+	t.Helper()
+	batchDir := filepath.Join(repoDir, ".sandman", "batches", batchID)
+	if _, err := daemon.ReadManifest(batchDir); err != nil {
+		t.Fatalf("retained original batch manifest missing: %v", err)
+	}
+	idx, err := batchindex.Load(filepath.Join(repoDir, ".sandman", "batches.json"))
+	if err != nil {
+		t.Fatalf("read batches index after override: %v", err)
+	}
+	if idx.ResolveBatch(batchID) == nil {
+		t.Fatalf("retained original batch %q is missing from batches index", batchID)
+	}
+}
+
+func assertDependencyOverrideAgentCalls(t *testing.T, path string, wantCount int, wantLast string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read agent call log: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != wantCount {
+		t.Fatalf("agent launch count = %d, want %d: %q", len(lines), wantCount, data)
+	}
+	if !strings.Contains(lines[len(lines)-1], wantLast) {
+		t.Fatalf("last agent invocation = %q, want prompt containing %q", lines[len(lines)-1], wantLast)
 	}
 }
 
