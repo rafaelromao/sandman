@@ -124,7 +124,7 @@ Emitted when an agent run completes.
 | `review_request` | Present for retained delegated-review outcomes; retains the confirmed request identity, current head, deadline, budget, elapsed time, response counters, validated request-scoped classification, outcome, and next action. |
 
 #### `run.await`
-Emitted when an issue-driven run ends its agent session while recoverable pull-request work remains (CI, review, mergeability, or decision publication). Non-terminal: the run does not finish or consume a retry. Pending current-head CI carries a durable, non-renewing 30-minute per-head deadline in `ci_wait`; the row keeps dependency ownership while the scheduler releases execution capacity between observations.
+Emitted when an issue-driven run ends its agent session while recoverable pull-request work remains (CI, review, mergeability, or decision publication). Non-terminal: the run does not finish or consume a retry. Pending current-head CI carries a durable, non-renewing 30-minute per-head deadline in `ci_wait`; the row keeps dependency ownership while the scheduler releases execution capacity between observations. When the external poll interval elapses, the row joins a FIFO priority queue and receives the next permitted free execution slot before newly queued work.
 
 | Field | Description |
 |-------|-------------|
@@ -245,7 +245,7 @@ If a dependency blocker finished with status `aborted`, the dependent is itself 
 
 ### Queued runs
 
-When all container slots are full (container capacity reached and max containers limit hit), eligible `AgentRun`s wait in a queue. The event log records queue-related events. Runs are dispatched as capacity frees up within the same batch.
+When all container slots are full (container capacity reached and max containers limit hit), eligible `AgentRun`s wait in a queue. The event log records queue-related events. Runs are dispatched as capacity frees up within the same batch. An awaiting row does not reserve a slot while its external poll timer is active. Once that timer elapses, it is placed ahead of ordinary queued rows, in FIFO order among ready awaited rows. This ordering applies only to a free slot: it never preempts an executing run, exceeds effective parallelism or container capacity, or bypasses `start_delay`.
 
 ## Summary output
 

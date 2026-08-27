@@ -344,7 +344,7 @@ _Avoid_: Continuation context, continuation file.
 - If all containers are full and the **Batch** is already at **MaxContainers**, additional **AgentRuns** wait in a queue until capacity becomes available
 - If `max_containers=0`, Sandman auto-scales the container pool up to the minimum number of containers needed for active **AgentRuns**
 - Container pooling is batch-scoped: idle **ContainerSandboxes** may be reused by later **AgentRuns** in the same **Batch**, and are stopped when that **Batch** completes
-- A **Batch** may apply **StartDelay** pacing between **AgentRun** starts; the delay is batch-local and does not change container capacity
+- A **Batch** may apply **StartDelay** pacing between **AgentRun** starts; the delay is batch-local and does not change container capacity. An AgentRun awaiting external progress releases its execution slot during the poll interval, then enters a FIFO priority queue only when the interval elapses; ready awaited rows receive the next permitted free slot before ordinary queued rows without preempting active runs or releasing their dependency ownership
 - An **AgentRun** generates many **Events**
 - A **Prompt** is rendered per **AgentRun** from the selected built-in **AgentPreset**
 - A **Prompt** is rendered per **AgentRun** from the selected built-in **AgentPreset**, and the shared **Sandman Skill** provides the rest of the workflow guidance

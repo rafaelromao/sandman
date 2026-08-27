@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -123,6 +124,250 @@ func TestBatchStartGate_HonoursEffectiveParallelCap(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("gate acquirers did not finish in time")
 	}
+}
+
+func TestBatchStartGate_ReadyAwaitedWaiterPrecedesQueuedWork(t *testing.T) {
+	gate := newBatchStartGate(1, 0)
+	if err := gate.Acquire(context.Background()); err != nil {
+		t.Fatalf("initial acquire: %v", err)
+	}
+
+	normalAcquired := make(chan struct{})
+	go func() {
+		if err := gate.Acquire(context.Background()); err != nil {
+			return
+		}
+		close(normalAcquired)
+	}()
+
+	priorityAcquired := make(chan struct{})
+	go func() {
+		if err := gate.Acquire(context.Background(), true); err != nil {
+			return
+		}
+		close(priorityAcquired)
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		gate.mu.Lock()
+		queued := len(gate.priorityWaiters) == 1 && len(gate.normalWaiters) == 1
+		gate.mu.Unlock()
+		if queued {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	gate.mu.Lock()
+	queued := len(gate.priorityWaiters) == 1 && len(gate.normalWaiters) == 1
+	active := gate.active
+	normalCount := len(gate.normalWaiters)
+	priorityCount := len(gate.priorityWaiters)
+	gate.mu.Unlock()
+	if !queued {
+		t.Fatalf("waiters did not queue before releasing the held slot: active=%d normal=%d priority=%d", active, normalCount, priorityCount)
+	}
+
+	gate.Release()
+	select {
+	case <-priorityAcquired:
+	case <-normalAcquired:
+		t.Fatal("ordinary queued work acquired the slot before the ready awaited waiter")
+	case <-time.After(time.Second):
+		t.Fatal("priority waiter did not acquire the released slot")
+	}
+	gate.Release()
+	select {
+	case <-normalAcquired:
+	case <-time.After(time.Second):
+		t.Fatal("ordinary queued waiter did not acquire the second slot")
+	}
+	gate.Release()
+}
+
+func TestBatchStartGate_ReadyAwaitedWaitersRemainFIFO(t *testing.T) {
+	gate := newBatchStartGate(1, 0)
+	if err := gate.Acquire(context.Background()); err != nil {
+		t.Fatalf("initial acquire: %v", err)
+	}
+
+	firstAcquired := make(chan struct{})
+	go func() {
+		if err := gate.Acquire(context.Background(), true); err == nil {
+			close(firstAcquired)
+		}
+	}()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		gate.mu.Lock()
+		queued := len(gate.priorityWaiters) == 1
+		gate.mu.Unlock()
+		if queued {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	gate.mu.Lock()
+	queued := len(gate.priorityWaiters) == 1
+	gate.mu.Unlock()
+	if !queued {
+		t.Fatal("first priority waiter did not queue")
+	}
+
+	secondAcquired := make(chan struct{})
+	go func() {
+		if err := gate.Acquire(context.Background(), true); err == nil {
+			close(secondAcquired)
+		}
+	}()
+
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		gate.mu.Lock()
+		queued = len(gate.priorityWaiters) == 2
+		gate.mu.Unlock()
+		if queued {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	gate.mu.Lock()
+	queued = len(gate.priorityWaiters) == 2
+	gate.mu.Unlock()
+	if !queued {
+		t.Fatal("priority waiters did not queue before release")
+	}
+
+	gate.Release()
+	select {
+	case <-firstAcquired:
+	case <-secondAcquired:
+		t.Fatal("second ready awaited waiter acquired before the first")
+	case <-time.After(time.Second):
+		t.Fatal("first ready awaited waiter did not acquire")
+	}
+	gate.Release()
+	select {
+	case <-secondAcquired:
+	case <-time.After(time.Second):
+		t.Fatal("second ready awaited waiter did not acquire")
+	}
+	gate.Release()
+}
+
+func TestBatchStartGate_CancelledPriorityWaiterIsRemoved(t *testing.T) {
+	gate := newBatchStartGate(1, 0)
+	if err := gate.Acquire(context.Background()); err != nil {
+		t.Fatalf("initial acquire: %v", err)
+	}
+
+	priorityCtx, cancelPriority := context.WithCancel(context.Background())
+	priorityDone := make(chan error, 1)
+	go func() { priorityDone <- gate.Acquire(priorityCtx, true) }()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		gate.mu.Lock()
+		queued := len(gate.priorityWaiters) == 1
+		gate.mu.Unlock()
+		if queued {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancelPriority()
+	select {
+	case err := <-priorityDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled priority acquire error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancelled priority waiter did not return")
+	}
+
+	gate.mu.Lock()
+	remaining := len(gate.priorityWaiters)
+	gate.mu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("cancelled priority waiters = %d, want 0", remaining)
+	}
+	gate.mu.Lock()
+	active := gate.active
+	gate.mu.Unlock()
+	if active != 1 {
+		t.Fatalf("active slots after cancelling an unacquired waiter = %d, want 1", active)
+	}
+
+	normalAcquired := make(chan struct{})
+	go func() {
+		if err := gate.Acquire(context.Background()); err == nil {
+			close(normalAcquired)
+		}
+	}()
+	gate.Release()
+	select {
+	case <-normalAcquired:
+	case <-time.After(time.Second):
+		t.Fatal("normal waiter did not acquire after priority cancellation")
+	}
+	gate.Release()
+}
+
+func TestBatchStartGate_PriorityWaiterHonoursStartDelay(t *testing.T) {
+	delay := 40 * time.Millisecond
+	gate := newBatchStartGate(1, delay)
+	if err := gate.Acquire(context.Background()); err != nil {
+		t.Fatalf("initial acquire: %v", err)
+	}
+	startedAt := time.Now()
+	gate.Release()
+
+	normalAcquired := make(chan struct{})
+	go func() {
+		if err := gate.Acquire(context.Background()); err == nil {
+			close(normalAcquired)
+		}
+	}()
+	priorityAcquired := make(chan struct{})
+	go func() {
+		if err := gate.Acquire(context.Background(), true); err == nil {
+			close(priorityAcquired)
+		}
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		gate.mu.Lock()
+		queued := len(gate.priorityWaiters) == 1 && len(gate.normalWaiters) == 1
+		gate.mu.Unlock()
+		if queued {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	gate.mu.Lock()
+	queued := len(gate.priorityWaiters) == 1 && len(gate.normalWaiters) == 1
+	gate.mu.Unlock()
+	if !queued {
+		t.Fatal("waiters did not queue during start delay")
+	}
+
+	select {
+	case <-priorityAcquired:
+	case <-normalAcquired:
+		t.Fatal("ordinary waiter bypassed ready-await priority during start delay")
+	case <-time.After(time.Second):
+		t.Fatal("priority waiter did not acquire after start delay")
+	}
+	if elapsed := time.Since(startedAt); elapsed < delay {
+		t.Fatalf("priority waiter acquired after %s, before configured delay %s", elapsed, delay)
+	}
+	gate.Release()
+	select {
+	case <-normalAcquired:
+	case <-time.After(time.Second):
+		t.Fatal("normal waiter did not acquire after priority waiter")
+	}
+	gate.Release()
 }
 
 // TestRunBatch_StartGateUsesEffectiveParallelNotRawParallel is a direct
