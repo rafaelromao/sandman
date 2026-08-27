@@ -13,6 +13,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
 type opencodeExecResult struct {
@@ -159,6 +160,134 @@ func TestAgentRun_PreservesReadableOutputWhenOpenCodeFails(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "before failure") {
 		t.Fatalf("run log = %q, want output emitted before failure", data)
+	}
+}
+
+func TestRunExecutor_ContinuedRowSelectsOpenCodeSession(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	worktree := filepath.Join(root, "worktree")
+	if err := os.MkdirAll(filepath.Join(worktree, ".sandman"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	sb := &fakeSandbox{
+		workDir:    worktree,
+		execStdout: `{"type":"text","sessionID":"new-session","part":{"text":"continued"}}` + "\n",
+	}
+	factory := &capturingAgentRunFactory{agentRunCh: make(chan *AgentRun, 1)}
+	client := &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug", State: "closed"}}}
+	o := NewOrchestrator(client, &noopRenderer{}, nil, nil,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: sb}),
+		WithRunnableFactory(factory),
+		WithErrorLog(io.Discard),
+	)
+	layout := paths.NewLayout(&config.Config{}, root)
+	if err := writeOpenCodeSession(layout.RunSessionPath("prior-batch", "prior-run"), "prior-session"); err != nil {
+		t.Fatal(err)
+	}
+	bc := BatchConfig{
+		Cfg:              &config.Config{WorktreeDir: worktree, Git: config.GitConfig{BaseBranch: "main"}},
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Preset: "opencode", Command: config.BuiltInAgentPresets["opencode"].Command},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          0,
+	}
+	row := RowSpec{
+		IssueNumber:         42,
+		Mode:                ModeContinue,
+		Branches:            map[int]string{42: "42-fix"},
+		PreviousRunIDs:      map[int]string{42: "prior-run"},
+		PreviousRunBatchIDs: map[int]string{42: "prior-batch"},
+		ReuseSession:        true,
+		BaseBranch:          "main",
+		BatchID:             "current-batch",
+		RunTS:               "260827120000",
+		RunShortID:          "abcd",
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, &fakeSandboxFactory{sandbox: sb}, nil).Execute(context.Background(), row)
+	if !started {
+		t.Fatalf("executor result = %+v, started=%v; want started row", result, started)
+	}
+	run := <-factory.agentRunCh
+	if !run.reuseSession || run.previousRunID != "prior-run" || run.previousBatchID != "prior-batch" {
+		t.Fatalf("AgentRun reuse state = reuse=%v run=%q batch=%q", run.reuseSession, run.previousRunID, run.previousBatchID)
+	}
+	if !strings.Contains(sb.execCommand, "--session 'prior-session'") {
+		t.Fatalf("executed command = %q, want exact prior session", sb.execCommand)
+	}
+}
+
+func TestRunExecutor_LifecycleRelaunchReusesCurrentSession(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	worktree := filepath.Join(root, "worktree")
+	if err := os.MkdirAll(filepath.Join(worktree, ".sandman"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	sb := &opencodeSequenceSandbox{
+		fakeSandbox: fakeSandbox{workDir: worktree},
+		results: []opencodeExecResult{
+			{stdout: `{"type":"text","sessionID":"lifecycle-session","part":{"text":"first"}}` + "\n"},
+			{stdout: `{"type":"text","sessionID":"lifecycle-session","part":{"text":"second"}}` + "\n"},
+		},
+	}
+	factory := &capturingAgentRunFactory{agentRunCh: make(chan *AgentRun, 2)}
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug", State: "open"}},
+		prs: map[string]*github.PR{gateTestBranch: {
+			Number:            7,
+			State:             "open",
+			HeadRefOid:        "current-sha",
+			HeadRefName:       gateTestBranch,
+			MergeStateStatus:  "CLEAN",
+			StatusCheckRollup: "success",
+		}},
+	}
+	runOpts := gateTestRunOptions()
+	runOpts.awaitResumeMax = 1
+	sandboxFactory := sandboxFactoryFunc(func(string, string, string, string, sandbox.Container) sandbox.Sandbox { return sb })
+	o := NewOrchestrator(client, &retryRenderer{result: "rendered prompt"}, &fakeConfigStore{config: &config.Config{
+		Agent:          "opencode",
+		DefaultAgent:   "opencode",
+		WorktreeDir:    worktree,
+		Sandbox:        "worktree",
+		Git:            config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: config.BuiltInAgentPresets["opencode"].Command}},
+	}}, nil,
+		WithSandboxFactory(sandboxFactory),
+		WithRunnableFactory(factory),
+		WithRunSessionOpts(runOpts),
+		WithErrorLog(io.Discard),
+	)
+	bc := BatchConfig{
+		Cfg:              &config.Config{WorktreeDir: worktree, Git: config.GitConfig{BaseBranch: "main"}},
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Preset: "opencode", Command: config.BuiltInAgentPresets["opencode"].Command},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          0,
+	}
+	row := RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: gateTestBranch},
+		BaseBranch:  "main",
+		BatchID:     "lifecycle-batch",
+		RunTS:       "260827120001",
+		RunShortID:  "abcd",
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, sandboxFactory, nil).Execute(context.Background(), row)
+	if !started {
+		t.Fatalf("lifecycle executor result = %+v, started=%v", result, started)
+	}
+	first := <-factory.agentRunCh
+	second := <-factory.agentRunCh
+	if first.reuseSession {
+		t.Fatal("initial lifecycle launch unexpectedly reused a session")
+	}
+	if !second.reuseSession {
+		t.Fatal("lifecycle relaunch did not opt into session reuse")
+	}
+	if !strings.Contains(sb.commands[1], "--session 'lifecycle-session'") {
+		t.Fatalf("lifecycle relaunch command = %q, want current session", sb.commands[1])
 	}
 }
 
