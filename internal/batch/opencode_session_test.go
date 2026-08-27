@@ -134,6 +134,34 @@ func TestAgentRun_DoesNotFallbackForUnrelatedOpenCodeFailure(t *testing.T) {
 	}
 }
 
+func TestAgentRun_PreservesReadableOutputWhenOpenCodeFails(t *testing.T) {
+	root := t.TempDir()
+	runFolder := filepath.Join(root, "current")
+	sb := &opencodeSequenceSandbox{
+		fakeSandbox: fakeSandbox{workDir: root},
+		results: []opencodeExecResult{{
+			stdout: `{"type":"text","sessionID":"failed-session","part":{"text":"before failure"}}` + "\n",
+			err:    errors.New("agent failed"),
+		}},
+	}
+	run := NewAgentRunWithLayout(&github.Issue{Number: 42}, "42-fix", sb, paths.NewLayout(&config.Config{}, root))
+	run.preset = "opencode"
+	run.runID = "current-run"
+	run.batchID = "current-batch"
+	run.runFolder = runFolder
+
+	if result := run.Run(context.Background(), &spyRenderer{result: "prompt"}, config.BuiltInAgentPresets["opencode"].Command, prompt.RenderConfig{}); result.Status != "failure" {
+		t.Fatalf("status = %q, want failure", result.Status)
+	}
+	data, err := os.ReadFile(filepath.Join(runFolder, "run.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "before failure") {
+		t.Fatalf("run log = %q, want output emitted before failure", data)
+	}
+}
+
 func TestOpenCodeOutput_OnlyExactErrorEventTriggersSessionFallback(t *testing.T) {
 	var out strings.Builder
 	parsed := newOpenCodeOutput(&out, io.Discard, false)

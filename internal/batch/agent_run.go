@@ -144,15 +144,15 @@ func (r *AgentRun) execute(ctx context.Context, command string, stdout, stderr i
 		combinedErr = parsedStderr
 	}
 
-	if err := r.sandbox.Exec(ctx, command, combinedOut, combinedErr); err != nil {
-		flushOpenCodeOutputs(parsedStdout, parsedStderr)
-		return fmt.Errorf("execute agent: %w", err)
-	}
+	execErr := r.sandbox.Exec(ctx, command, combinedOut, combinedErr)
 	flushOpenCodeOutputs(parsedStdout, parsedStderr)
 	_ = prefixedOut.Flush()
 	_ = prefixedErr.Flush()
 	_ = logPrefixedOut.Flush()
 	_ = logPrefixedErr.Flush()
+	if execErr != nil {
+		return fmt.Errorf("execute agent: %w", execErr)
+	}
 	return nil
 }
 
