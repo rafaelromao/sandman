@@ -125,7 +125,8 @@ E2E tests exercise multi-session behavior such as continuing a previous run, bat
 Implementation pull-request lifecycle changes must keep the production-path
 regression slice green with `go test ./internal/batch ./internal/cmd`. This
 slice covers merged completion precedence, recoverable awaits, continuation
-re-evaluation, retained review evidence, and portal projection.
+re-evaluation, retained review evidence, and portal projection, including the
+non-terminal `waiting` status for a current await phase.
 
 ```bash
 SANDMAN_TEST_PROVIDERS=opencode \

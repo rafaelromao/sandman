@@ -582,10 +582,22 @@ type batchStartGate struct {
 	delay            time.Duration
 	active           int
 	nextAllowedStart time.Time
+	wake             chan struct{}
+	priorityWaiters  []*batchStartWaiter
+	normalWaiters    []*batchStartWaiter
+	onWaiterQueued   func(bool)
 }
 
-func newBatchStartGate(parallel int, delay time.Duration) *batchStartGate {
-	return &batchStartGate{parallel: parallel, delay: delay}
+type batchStartWaiter struct {
+	priority bool
+}
+
+func newBatchStartGate(parallel int, delay time.Duration, onWaiterQueued ...func(bool)) *batchStartGate {
+	var callback func(bool)
+	if len(onWaiterQueued) > 0 {
+		callback = onWaiterQueued[0]
+	}
+	return &batchStartGate{parallel: parallel, delay: delay, wake: make(chan struct{}), onWaiterQueued: callback}
 }
 
 // effectiveParallelCap returns the effective parallel concurrency after applying
@@ -615,49 +627,173 @@ func effectiveParallelCap(parallel, containerCapacity, maxContainers int) int {
 	return parallel
 }
 
-func (g *batchStartGate) Acquire(ctx context.Context) error {
+// Acquire waits for an execution slot. A priority waiter is selected before
+// ordinary waiters, but only after capacity and start delay permit a start.
+// The optional argument keeps the existing ordinary-start call sites concise.
+func (g *batchStartGate) Acquire(ctx context.Context, priority ...bool) error {
+	isPriority := len(priority) > 0 && priority[0]
+	waiter := &batchStartWaiter{priority: isPriority}
+	acquired := false
+	defer func() {
+		if !acquired {
+			g.cancelWaiter(waiter)
+		}
+	}()
 	for {
-		if err := ctx.Err(); err != nil {
+		wake, wait, ok, err := g.tryAcquire(ctx, waiter, isPriority)
+		if err != nil {
 			return err
 		}
-
-		g.mu.Lock()
-		if err := ctx.Err(); err != nil {
-			g.mu.Unlock()
-			return err
-		}
-		now := time.Now()
-		if (g.parallel <= 0 || g.active < g.parallel) && (g.delay <= 0 || !now.Before(g.nextAllowedStart)) {
-			if err := ctx.Err(); err != nil {
-				g.mu.Unlock()
-				return err
-			}
-			if g.parallel > 0 {
-				g.active++
-			}
-			g.mu.Unlock()
+		if ok {
+			acquired = true
 			return nil
 		}
-
-		wait := 10 * time.Millisecond
-		if g.delay > 0 && now.Before(g.nextAllowedStart) {
-			wait = time.Until(g.nextAllowedStart)
+		if err := waitForStartGate(ctx, wake, wait); err != nil {
+			return err
 		}
+	}
+}
+
+func (g *batchStartGate) tryAcquire(ctx context.Context, waiter *batchStartWaiter, priority bool) (chan struct{}, time.Duration, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, 0, false, err
+	}
+	g.mu.Lock()
+	if err := ctx.Err(); err != nil {
 		g.mu.Unlock()
-
-		if wait <= 0 {
-			wait = 10 * time.Millisecond
+		return nil, 0, false, err
+	}
+	now := time.Now()
+	if g.canAcquireLocked(waiter, now) {
+		if g.parallel > 0 {
+			g.active++
 		}
+		g.removeWaiterLocked(waiter)
+		g.signalLocked()
+		g.mu.Unlock()
+		return nil, 0, true, nil
+	}
+	queued := g.enqueueWaiterLocked(waiter, priority)
+	wake := g.wake
+	wait := time.Duration(0)
+	if g.delay > 0 && now.Before(g.nextAllowedStart) {
+		wait = time.Until(g.nextAllowedStart)
+	}
+	g.mu.Unlock()
+	if queued && g.onWaiterQueued != nil {
+		g.onWaiterQueued(priority)
+	}
+	return wake, wait, false, nil
+}
 
-		timer := time.NewTimer(wait)
+func (g *batchStartGate) enqueueWaiterLocked(waiter *batchStartWaiter, priority bool) bool {
+	if g.isQueuedLocked(waiter) {
+		return false
+	}
+	if priority {
+		g.priorityWaiters = append(g.priorityWaiters, waiter)
+	} else {
+		g.normalWaiters = append(g.normalWaiters, waiter)
+	}
+	return true
+}
+
+func waitForStartGate(ctx context.Context, wake <-chan struct{}, wait time.Duration) error {
+	if wait <= 0 {
 		select {
 		case <-ctx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
 			return ctx.Err()
-		case <-timer.C:
+		case <-wake:
+			return nil
 		}
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-wake:
+		return nil
+	case <-timer.C:
+		return nil
+	}
+}
+
+func (g *batchStartGate) canAcquireLocked(waiter *batchStartWaiter, now time.Time) bool {
+	if g.parallel > 0 && g.active >= g.parallel {
+		return false
+	}
+	if g.delay > 0 && now.Before(g.nextAllowedStart) {
+		return false
+	}
+	if len(g.priorityWaiters) > 0 {
+		return g.priorityWaiters[0] == waiter
+	}
+	if len(g.normalWaiters) > 0 {
+		return g.normalWaiters[0] == waiter
+	}
+	return true
+}
+
+func (g *batchStartGate) isQueuedLocked(waiter *batchStartWaiter) bool {
+	for _, candidate := range g.priorityWaiters {
+		if candidate == waiter {
+			return true
+		}
+	}
+	for _, candidate := range g.normalWaiters {
+		if candidate == waiter {
+			return true
+		}
+	}
+	return false
+}
+
+func (g *batchStartGate) removeWaiterLocked(waiter *batchStartWaiter) {
+	for list := range [][]*batchStartWaiter{g.priorityWaiters, g.normalWaiters} {
+		var waiters []*batchStartWaiter
+		if list == 0 {
+			waiters = g.priorityWaiters
+		} else {
+			waiters = g.normalWaiters
+		}
+		for index, candidate := range waiters {
+			if candidate != waiter {
+				continue
+			}
+			waiters = append(waiters[:index], waiters[index+1:]...)
+			if list == 0 {
+				g.priorityWaiters = waiters
+			} else {
+				g.normalWaiters = waiters
+			}
+			return
+		}
+	}
+}
+
+func (g *batchStartGate) cancelWaiter(waiter *batchStartWaiter) {
+	g.mu.Lock()
+	if g.isQueuedLocked(waiter) {
+		g.removeWaiterLocked(waiter)
+		g.signalLocked()
+	}
+	g.mu.Unlock()
+}
+
+func (g *batchStartGate) signalLocked() {
+	close(g.wake)
+	g.wake = make(chan struct{})
+}
+
+func waitForAwaitPoll(ctx context.Context, interval time.Duration) error {
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 
@@ -674,6 +810,7 @@ func (g *batchStartGate) release(applyDelay bool) {
 				g.nextAllowedStart = next
 			}
 		}
+		g.signalLocked()
 		g.mu.Unlock()
 		return
 	}
@@ -684,6 +821,7 @@ func (g *batchStartGate) release(applyDelay bool) {
 		}
 	}
 	g.active--
+	g.signalLocked()
 	g.mu.Unlock()
 }
 
@@ -1260,7 +1398,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		return o.runPromptOnly(ctx, cfg, agentName, agentCfg, newBatchIdentityResolver(o, "."), policy.sandboxFactory, policy.containerAlloc, req, baseBranch, startDelay, parallel, retries, runIdleTimeout, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions, strandedReconcile, coord, layout)
 	}
 
-	startGate := newBatchStartGate(effectiveParallel, startDelay)
+	startGate := newBatchStartGate(effectiveParallel, startDelay, o.runSessionOpts.startWaiterQueued)
 	var wg sync.WaitGroup
 	results := make([]AgentRunResult, len(req.Issues))
 	var mu sync.Mutex
@@ -1508,8 +1646,11 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			var res AgentRunResult
 			var started bool
 			awaitPoll := 0
+			// An awaiter is ordinary work until its external poll interval
+			// elapses. It then competes for the next free slot as priority work.
+			priority := false
 			for {
-				if err := startGate.Acquire(issueCtx); err != nil {
+				if err := startGate.Acquire(issueCtx, priority); err != nil {
 					o.logAborted(issueNum, runID, nil)
 					res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
 					break
@@ -1531,20 +1672,21 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					interval = time.Duration(implementationReviewPollPlan[awaitPoll]) * time.Second
 				}
 				awaitPoll++
-				timer := time.NewTimer(interval)
-				select {
-				case <-issueCtx.Done():
-					timer.Stop()
+				awaitWait := o.runSessionOpts.awaitWait
+				if awaitWait == nil {
+					awaitWait = waitForAwaitPoll
+				}
+				if err := awaitWait(issueCtx, interval); err != nil {
 					o.logAborted(issueNum, runID, nil)
 					res.Status = "aborted"
-				case <-timer.C:
-					row.Mode = ModeContinue
-					row.PreviousRunIDs = map[int]string{issueNum: runID}
-					row.PreviousRunBatchIDs = map[int]string{issueNum: issueBatchID}
-					row.ReuseSession = true
-					continue
+					break
 				}
-				break
+				row.Mode = ModeContinue
+				row.PreviousRunIDs = map[int]string{issueNum: runID}
+				row.PreviousRunBatchIDs = map[int]string{issueNum: issueBatchID}
+				row.ReuseSession = true
+				priority = true
+				continue
 			}
 			mu.Lock()
 			results[idx] = res
@@ -1893,6 +2035,8 @@ type runSessionOptions struct {
 	// and a context-aware timer when these hooks are unset.
 	lifecyclePollPlan    []time.Duration
 	lifecycleWait        func(context.Context, time.Duration) error
+	awaitWait            func(context.Context, time.Duration) error
+	startWaiterQueued    func(bool)
 	foregroundLifecycle  bool
 	releaseAwaitCapacity bool
 	// awaitResumeMax bounds in-session agent relaunches triggered by a

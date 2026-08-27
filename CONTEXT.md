@@ -295,6 +295,10 @@ _Avoid_: dashboard, monitor, control panel.
 The in-flight portal status for an active review run (a run whose `run.started` event carried `payload.review = true`). Displayed in the status badge as `● reviewing`. The `Status` field is set to `"reviewing"` by `statusOrDefault` when `active && isReview` is true. Terminal review runs use `success`, `failure`, or `aborted` like any other run.
 _Avoid_: reviewing status, review-in-progress. No secondary-row review chip.
 
+**Waiting**:
+The non-terminal portal status for an active implementation AgentRun whose current lifecycle phase is `run.await`, while CI, review, mergeability, or decision publication remains external work. Historical await events remain available for diagnostics, but a later continuation or resume returns the status to `running`; a live linked review may promote the non-terminal parent to `reviewing`.
+_Avoid_: blocked, queued, or terminal external-gate status.
+
 **Review-only (orphan)**:
 A portal issue group that contains only review child rows and no canonical implementation row. The portal renders the visible row with the explicit label `PR <prNumber> (#<issueNumber>)` (e.g. `PR 1508 (#1472)`) — the PR the review targeted is surfaced first, the linked issue is shown as a parenthesised reference. The row uses the review run's own `run_id` as the row identity (`data-run-key`) and does not fabricate implementation-run metadata such as `batchKey` or `issueTitle`. The row is expandable; the subject selector lists the real review runs so the user can inspect each one's log/events/details tabs.
 _Avoid_: fake parent row, synthesized issue row, fake implementation-like row, "Review of" prefix on orphan rows.
@@ -348,7 +352,7 @@ _Avoid_: Continuation context, continuation file.
 - If all containers are full and the **Batch** is already at **MaxContainers**, additional **AgentRuns** wait in a queue until capacity becomes available
 - If `max_containers=0`, Sandman auto-scales the container pool up to the minimum number of containers needed for active **AgentRuns**
 - Container pooling is batch-scoped: idle **ContainerSandboxes** may be reused by later **AgentRuns** in the same **Batch**, and are stopped when that **Batch** completes
-- A **Batch** may apply **StartDelay** pacing between **AgentRun** starts; the delay is batch-local and does not change container capacity
+- A **Batch** may apply **StartDelay** pacing between **AgentRun** starts; the delay is batch-local and does not change container capacity. An AgentRun awaiting external progress releases its execution slot during the poll interval, then enters a FIFO priority queue only when the interval elapses; ready awaited rows receive the next permitted free slot before ordinary queued rows without preempting active runs or releasing their dependency ownership
 - An **AgentRun** generates many **Events**
 - A **Prompt** is rendered per **AgentRun** from the selected built-in **AgentPreset**
 - A **Prompt** is rendered per **AgentRun** from the selected built-in **AgentPreset**, and the shared **Sandman Skill** provides the rest of the workflow guidance

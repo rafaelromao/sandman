@@ -1107,6 +1107,14 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffStatusClass_WaitingReturnsWaiting(t *testing.T) {
+	js := `const result = helpers.statusClass({ status: 'waiting' });
+if (result !== 'waiting') throw new Error('expected statusClass to return waiting, got ' + result);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffBuildBadgeCell_AbortedHasBadgeAbortedClasses(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', kind: 'completed', status: 'aborted', issueLabel: 'A', runId: 'r1' };

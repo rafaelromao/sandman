@@ -19,6 +19,10 @@ type RunState struct {
 	// review_request. Consumers read AwaitReason() and
 	// AwaitReviewRequest() for the structured fields.
 	AwaitEvent *Event
+	// awaiting reports whether the most recently projected lifecycle event
+	// puts the active run in an await phase. AwaitEvent is intentionally
+	// retained separately as historical evidence for diagnostics.
+	awaiting bool
 	// ResumedEvent records the most recent run.resumed event for a run
 	// whose agent session was relaunched in-session with request-scoped
 	// review evidence (actionable feedback or a ready-to-merge
@@ -62,14 +66,17 @@ func ProjectRunStates(events []Event) []RunState {
 		case "run.started", "run.continued":
 			state.Started = event
 			state.Finished = nil
+			state.awaiting = false
 		case "run.blocked":
 			state.Started = event
 			finished := event
 			state.Finished = &finished
+			state.awaiting = false
 		case "run.queued":
 			state.Started = event
 			finished := event
 			state.Finished = &finished
+			state.awaiting = false
 		case "run.await":
 			// run.await is a non-terminal event: it records that the run
 			// is awaiting external progress (CI, review, decision
@@ -77,6 +84,7 @@ func ProjectRunStates(events []Event) []RunState {
 			// The run stays active (Finished is not set).
 			awaitEvent := event
 			state.AwaitEvent = &awaitEvent
+			state.awaiting = true
 		case "run.resumed":
 			// run.resumed is a non-terminal event: it records that the
 			// run relaunched its agent session in-session with
@@ -85,11 +93,14 @@ func ProjectRunStates(events []Event) []RunState {
 			// is not set); Started and AwaitEvent are preserved.
 			resumeEvent := event
 			state.ResumedEvent = &resumeEvent
+			state.awaiting = false
 		case "run.finished", "run.aborted", "run.cancelled":
 			finished := event
 			state.Finished = &finished
+			state.awaiting = false
 		case "run.retry":
 			state.Retries = append(state.Retries, event)
+			state.awaiting = false
 		}
 	}
 
@@ -166,6 +177,13 @@ func (r RunState) RunKind() string {
 // IsActive reports whether the run has not finished yet.
 func (r RunState) IsActive() bool {
 	return r.Finished == nil
+}
+
+// IsAwaiting reports whether the current lifecycle phase is an external
+// await. It does not infer current state from AwaitEvent alone because that
+// event remains available after a continuation or resume for diagnostics.
+func (r RunState) IsAwaiting() bool {
+	return r.IsActive() && r.awaiting
 }
 
 // Status returns the terminal status from the finished event.

@@ -4,6 +4,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,9 +12,9 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 )
 
-// TestPortal_AwaitEventShowsInProgress verifies that when a run has
-// run.await event (no run.finished), the portal shows it as "in progress".
-func TestPortal_AwaitEventShowsInProgress(t *testing.T) {
+// TestPortal_AwaitEventShowsWaiting verifies that when a run has a current
+// run.await event (no run.finished), the portal shows it as "waiting".
+func TestPortal_AwaitEventShowsWaiting(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "p")
 	if err != nil {
 		t.Fatal(err)
@@ -71,8 +72,8 @@ func TestPortal_AwaitEventShowsInProgress(t *testing.T) {
 	if got.Kind != "active" {
 		t.Fatalf("expected kind 'active' for run with await event, got %q", got.Kind)
 	}
-	if got.Status != "running" {
-		t.Fatalf("expected status 'running' for active run with await event, got %q", got.Status)
+	if got.Status != "waiting" {
+		t.Fatalf("expected status 'waiting' for active run with await event, got %q", got.Status)
 	}
 	if got.FinishedAt != nil {
 		t.Fatalf("expected nil FinishedAt for active run with await event, got %v", got.FinishedAt)
@@ -82,5 +83,79 @@ func TestPortal_AwaitEventShowsInProgress(t *testing.T) {
 	}
 	if got.Branch != "42-fix-bug" {
 		t.Fatalf("expected branch '42-fix-bug', got %q", got.Branch)
+	}
+
+	previousStaleCleaner := portalStaleCleaner
+	portalStaleCleaner = func(string) error { return nil }
+	t.Cleanup(func() { portalStaleCleaner = previousStaleCleaner })
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	responseRuns := readPortalRuns(t, server.URL)
+	var responseRun *portalRun
+	for i := range responseRuns {
+		if responseRuns[i].IssueNumber == 42 {
+			responseRun = &responseRuns[i]
+			break
+		}
+	}
+	if responseRun == nil || responseRun.Status != "waiting" {
+		t.Fatalf("expected /api/runs issue 42 to return waiting, got %#v", responseRuns)
+	}
+
+	eventLog := &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")}
+	if err := eventLog.Log(events.Event{
+		Type: "run.continued", Timestamp: awaitAt.Add(time.Minute), RunID: "1-42", Issue: 42,
+		Payload: map[string]any{"branch": "42-fix-bug", "batch_id": "1-batch"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runs, err = (&portalRunsView{}).compute(repoRoot, eventLog)
+	if err != nil {
+		t.Fatalf("compute after continuation: %v", err)
+	}
+	for i := range runs {
+		if runs[i].IssueNumber == 42 {
+			got = &runs[i]
+			break
+		}
+	}
+	if got.Status != "running" {
+		t.Fatalf("expected continuation to clear waiting, got %q", got.Status)
+	}
+	if len(got.Events) != 3 {
+		t.Fatalf("expected historical await event to remain in portal events, got %d events", len(got.Events))
+	}
+
+	if err := eventLog.Log(events.Event{
+		Type: "run.await", Timestamp: awaitAt.Add(2 * time.Minute), RunID: "1-42", Issue: 42,
+		Payload: map[string]any{"await_reason": "review-timeout", "branch": "42-fix-bug", "batch_id": "1-batch"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runs, err = (&portalRunsView{}).compute(repoRoot, eventLog)
+	if err != nil {
+		t.Fatalf("compute after second await: %v", err)
+	}
+	for i := range runs {
+		if runs[i].IssueNumber == 42 {
+			got = &runs[i]
+			break
+		}
+	}
+	if got.Status != "waiting" {
+		t.Fatalf("expected newer await to restore waiting, got %q", got.Status)
+	}
+	if len(got.Events) != 4 {
+		t.Fatalf("expected both await events in portal details, got %d events", len(got.Events))
+	}
+}
+
+func TestPortal_WaitingBadgeHasDedicatedStyle(t *testing.T) {
+	html, err := os.ReadFile("portal.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(html)
+	if !strings.Contains(source, ".badge.waiting {") || !strings.Contains(source, ".badge.waiting .dot {") {
+		t.Fatal("expected portal to style waiting badges distinctly")
 	}
 }

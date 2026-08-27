@@ -153,7 +153,7 @@ See [Sandbox Modes](sandbox-modes.md) for detailed scheduling behavior.
 |-----|---------|-------------|
 | `start_delay` | `0` | Wait this many seconds after any `AgentRun` finishes before starting the next one. `0` disables batch pacing |
 
-`start_delay` is batch-local pacing behavior. It applies across sandbox modes, starts only after the first run completes, and does not change container capacity or max container scheduling.
+`start_delay` is batch-local pacing behavior. It applies across sandbox modes, starts only after the first run completes, and does not change container capacity or max container scheduling. Ready awaited rows remain subject to this delay; they are prioritized only after a start is permitted.
 
 ## Idle timeout
 
