@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/paths"
@@ -89,16 +90,25 @@ func priorOpenCodeSession(layout paths.Layout, batchID, runID string) (opencodeS
 }
 
 type opencodeOutput struct {
-	dst             io.Writer
-	warning         io.Writer
+	dst     io.Writer
+	warning io.Writer
+	capture *opencodeSessionCapture
+	stderr  bool
+	buf     bytes.Buffer
+}
+
+type opencodeSessionCapture struct {
+	mu              sync.Mutex
 	sessionID       string
 	sessionNotFound bool
-	stderr          bool
-	buf             bytes.Buffer
 }
 
 func newOpenCodeOutput(dst, warning io.Writer, stderr bool) *opencodeOutput {
-	return &opencodeOutput{dst: dst, warning: warning, stderr: stderr}
+	return newSharedOpenCodeOutput(dst, warning, stderr, &opencodeSessionCapture{})
+}
+
+func newSharedOpenCodeOutput(dst, warning io.Writer, stderr bool, capture *opencodeSessionCapture) *opencodeOutput {
+	return &opencodeOutput{dst: dst, warning: warning, stderr: stderr, capture: capture}
 }
 
 func (w *opencodeOutput) Write(p []byte) (int, error) {
@@ -132,7 +142,9 @@ func (w *opencodeOutput) Flush() error {
 func (w *opencodeOutput) writeLine(line []byte, newline bool) error {
 	text := string(line)
 	if w.stderr && (strings.TrimSpace(text) == "Session not found" || strings.TrimSpace(text) == "Error: Session not found") {
-		w.sessionNotFound = true
+		w.capture.mu.Lock()
+		w.capture.sessionNotFound = true
+		w.capture.mu.Unlock()
 	}
 
 	var event map[string]any
@@ -140,10 +152,15 @@ func (w *opencodeOutput) writeLine(line []byte, newline bool) error {
 		return w.writeRaw(line, newline)
 	}
 	if id, ok := event["sessionID"].(string); ok && strings.TrimSpace(id) != "" {
-		if w.sessionID == "" {
-			w.sessionID = strings.TrimSpace(id)
-		} else if w.sessionID != strings.TrimSpace(id) {
-			w.warn(fmt.Sprintf("conflicting OpenCode session IDs %q and %q", w.sessionID, strings.TrimSpace(id)))
+		id = strings.TrimSpace(id)
+		w.capture.mu.Lock()
+		previous := w.capture.sessionID
+		if previous == "" {
+			w.capture.sessionID = id
+		}
+		w.capture.mu.Unlock()
+		if previous != "" && previous != id {
+			w.warn(fmt.Sprintf("conflicting OpenCode session IDs %q and %q", previous, id))
 		}
 	}
 
@@ -152,7 +169,9 @@ func (w *opencodeOutput) writeLine(line []byte, newline bool) error {
 	case "error":
 		message := eventMessage(event)
 		if normalizeSessionMessage(message) == "Session not found" {
-			w.sessionNotFound = true
+			w.capture.mu.Lock()
+			w.capture.sessionNotFound = true
+			w.capture.mu.Unlock()
 		}
 		if message != "" {
 			return w.writeText(message)
@@ -246,9 +265,17 @@ func normalizeSessionMessage(message string) string {
 	return strings.Join(strings.Fields(message), " ")
 }
 
-func (w *opencodeOutput) SessionID() string { return w.sessionID }
+func (w *opencodeOutput) SessionID() string {
+	w.capture.mu.Lock()
+	defer w.capture.mu.Unlock()
+	return w.capture.sessionID
+}
 
-func (w *opencodeOutput) SessionNotFound() bool { return w.sessionNotFound }
+func (w *opencodeOutput) SessionNotFound() bool {
+	w.capture.mu.Lock()
+	defer w.capture.mu.Unlock()
+	return w.capture.sessionNotFound
+}
 
 func flushOpenCodeOutputs(outputs ...*opencodeOutput) {
 	for _, output := range outputs {

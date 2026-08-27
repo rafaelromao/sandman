@@ -260,8 +260,9 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	}
 	var parsedStdout, parsedStderr *opencodeOutput
 	if builtInOpenCode {
-		parsedStdout = newOpenCodeOutput(nil, r.warningWriter(), false)
-		parsedStderr = newOpenCodeOutput(nil, r.warningWriter(), true)
+		capture := &opencodeSessionCapture{}
+		parsedStdout = newSharedOpenCodeOutput(nil, r.warningWriter(), false, capture)
+		parsedStderr = newSharedOpenCodeOutput(nil, r.warningWriter(), true, capture)
 	}
 	execErr := r.execute(attemptCtx, renderedCmd, stdout, stderr, parsedStdout, parsedStderr)
 	if detector != nil {
@@ -285,8 +286,9 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 			renderedCmd, err = render("", true)
 			if err == nil {
 				fallbackUsed = true
-				fallbackOut := newOpenCodeOutput(nil, r.warningWriter(), false)
-				fallbackErr := newOpenCodeOutput(nil, r.warningWriter(), true)
+				capture := &opencodeSessionCapture{}
+				fallbackOut := newSharedOpenCodeOutput(nil, r.warningWriter(), false, capture)
+				fallbackErr := newSharedOpenCodeOutput(nil, r.warningWriter(), true, capture)
 				execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, fallbackOut, fallbackErr)
 				if execErr == nil {
 					r.persistSession(firstSessionID(fallbackOut, fallbackErr))
@@ -333,7 +335,8 @@ func (r *AgentRun) persistSession(sessionID string) {
 	} else if r.batchID != "" && r.runID != "" {
 		path = r.layout.RunSessionPath(r.batchID, r.runID)
 	} else {
-		path = filepath.Join(r.sandbox.WorkDir(), "session.json")
+		r.warnSession(errors.New("current Run metadata path is unavailable"))
+		return
 	}
 	if err := writeOpenCodeSession(path, sessionID); err != nil {
 		r.warnSession(err)

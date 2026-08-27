@@ -146,3 +146,18 @@ func TestOpenCodeOutput_OnlyExactErrorEventTriggersSessionFallback(t *testing.T)
 		t.Fatal("normalized exact error event should trigger session fallback")
 	}
 }
+
+func TestOpenCodeOutput_PreservesFirstSessionAcrossStreams(t *testing.T) {
+	var out, warning strings.Builder
+	capture := &opencodeSessionCapture{}
+	stdout := newSharedOpenCodeOutput(&out, &warning, false, capture)
+	stderr := newSharedOpenCodeOutput(&out, &warning, true, capture)
+	_, _ = stdout.Write([]byte(`{"type":"text","sessionID":"first","part":{"text":"hello"}}` + "\n"))
+	_, _ = stderr.Write([]byte(`{"type":"text","sessionID":"second","part":{"text":"warning"}}` + "\n"))
+	if got := stderr.SessionID(); got != "first" {
+		t.Fatalf("session id = %q, want first observed id", got)
+	}
+	if !strings.Contains(warning.String(), "conflicting OpenCode session IDs") {
+		t.Fatalf("expected conflicting-ID warning, got %q", warning.String())
+	}
+}

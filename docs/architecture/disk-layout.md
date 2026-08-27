@@ -74,6 +74,7 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 | `batches/<batchID>/runs/<runID>/run.json` | runtime, atomic-rename | orchestrator (run start, status change, finish) | orchestrator, portal, attach client | orchestrator (on run completion) | per AgentRun |
 | `batches/<batchID>/runs/<runID>/run.log` | runtime, O_APPEND | `AgentRun.Execute` (prefixed stdout/stderr) | `readPortalTextFile`, attach client | never (run log is canonical per-run artefact) | per AgentRun |
 | `batches/<batchID>/runs/<runID>/session.json` | runtime, atomic-rename | OpenCode execution boundary | runtime-owned re-entry and explicit session reuse | never (retained with Run) | per OpenCode AgentRun |
+| `batches/runs/<runID>/session.json` | legacy compatibility evidence | prior runtime versions | explicit reuse lookup when the canonical batch path is absent | never | legacy Run only |
 | `batches/<batchID>/runs/<runID>/run.sock` | runtime | command server on per-row start | external caller (`{"action":"abort","issue":N}`) | command server on per-row completion | per AgentRun |
 | `batches/<batchID>/runs/<runID>/review-state.json` | runtime, atomic-rename | review state store (dedup, claim lock) | review state store | orchestrator (on run completion) | per review AgentRun |
 | `batches/<batchID>/runs/<runID>/config/` | runtime, container snapshot | `PrepareContainerConfigMounts` | container runtime (bind-mount) | orchestrator (on run completion) | per AgentRun |
