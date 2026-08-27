@@ -294,7 +294,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 			}
 		}
 	}
-	if !fallbackUsed && execErr == nil {
+	if !fallbackUsed && (!useContinue || execErr == nil) {
 		r.persistSession(firstSessionID(parsedStdout, parsedStderr))
 	}
 	if execErr != nil {
@@ -327,11 +327,14 @@ func (r *AgentRun) persistSession(sessionID string) {
 	if strings.TrimSpace(sessionID) == "" {
 		return
 	}
-	runFolder := r.runFolder
-	if runFolder == "" {
-		runFolder = r.sandbox.WorkDir()
+	path := ""
+	if r.runFolder != "" {
+		path = filepath.Join(r.runFolder, "session.json")
+	} else if r.batchID != "" && r.runID != "" {
+		path = r.layout.RunSessionPath(r.batchID, r.runID)
+	} else {
+		path = filepath.Join(r.sandbox.WorkDir(), "session.json")
 	}
-	path := filepath.Join(runFolder, "session.json")
 	if err := writeOpenCodeSession(path, sessionID); err != nil {
 		r.warnSession(err)
 	}
