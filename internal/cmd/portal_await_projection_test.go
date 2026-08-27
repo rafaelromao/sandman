@@ -85,6 +85,22 @@ func TestPortal_AwaitEventShowsWaiting(t *testing.T) {
 		t.Fatalf("expected branch '42-fix-bug', got %q", got.Branch)
 	}
 
+	previousStaleCleaner := portalStaleCleaner
+	portalStaleCleaner = func(string) error { return nil }
+	t.Cleanup(func() { portalStaleCleaner = previousStaleCleaner })
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	responseRuns := readPortalRuns(t, server.URL)
+	var responseRun *portalRun
+	for i := range responseRuns {
+		if responseRuns[i].IssueNumber == 42 {
+			responseRun = &responseRuns[i]
+			break
+		}
+	}
+	if responseRun == nil || responseRun.Status != "waiting" {
+		t.Fatalf("expected /api/runs issue 42 to return waiting, got %#v", responseRuns)
+	}
+
 	eventLog := &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")}
 	if err := eventLog.Log(events.Event{
 		Type: "run.continued", Timestamp: awaitAt.Add(time.Minute), RunID: "1-42", Issue: 42,
