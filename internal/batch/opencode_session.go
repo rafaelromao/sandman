@@ -141,7 +141,8 @@ func (w *opencodeOutput) Flush() error {
 
 func (w *opencodeOutput) writeLine(line []byte, newline bool) error {
 	text := string(line)
-	if w.stderr && (strings.TrimSpace(text) == "Session not found" || strings.TrimSpace(text) == "Error: Session not found") {
+	stderrLine := strings.TrimSuffix(text, "\r")
+	if w.stderr && (stderrLine == "Session not found" || stderrLine == "Error: Session not found") {
 		w.capture.mu.Lock()
 		w.capture.sessionNotFound = true
 		w.capture.mu.Unlock()
@@ -171,13 +172,14 @@ func (w *opencodeOutput) writeLine(line []byte, newline bool) error {
 	switch eventType {
 	case "error":
 		message := eventMessage(event)
-		if normalizeSessionMessage(message) == "Session not found" {
+		normalizedMessage := normalizeSessionMessage(message)
+		if normalizedMessage == "Session not found" {
 			w.capture.mu.Lock()
 			w.capture.sessionNotFound = true
 			w.capture.mu.Unlock()
 		}
-		if message != "" {
-			return w.writeText(message)
+		if normalizedMessage != "" {
+			return w.writeText(normalizedMessage)
 		}
 	case "text":
 		if text := eventText(event); text != "" {

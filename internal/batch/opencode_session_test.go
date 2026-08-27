@@ -164,7 +164,11 @@ func TestAgentRun_PreservesReadableOutputWhenOpenCodeFails(t *testing.T) {
 
 func TestOpenCodeOutput_OnlyExactErrorEventTriggersSessionFallback(t *testing.T) {
 	var out strings.Builder
-	parsed := newOpenCodeOutput(&out, io.Discard, false)
+	parsed := newOpenCodeOutput(&out, io.Discard, true)
+	_, _ = parsed.Write([]byte(" Session not found \n"))
+	if parsed.SessionNotFound() {
+		t.Fatal("surrounding stderr whitespace must not trigger session fallback")
+	}
 	_, _ = parsed.Write([]byte(`{"type":"text","part":{"text":"Session not found while explaining"}}` + "\n"))
 	if parsed.SessionNotFound() {
 		t.Fatal("ordinary text must not trigger session fallback")
@@ -172,6 +176,9 @@ func TestOpenCodeOutput_OnlyExactErrorEventTriggersSessionFallback(t *testing.T)
 	_, _ = parsed.Write([]byte(`{"type":"error","error":{"data":{"message":"Session   not found"}}}` + "\n"))
 	if !parsed.SessionNotFound() {
 		t.Fatal("normalized exact error event should trigger session fallback")
+	}
+	if !strings.Contains(out.String(), "Session not found\n") {
+		t.Fatalf("normalized error output = %q, want readable normalized message", out.String())
 	}
 }
 
