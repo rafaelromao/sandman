@@ -161,3 +161,15 @@ func TestOpenCodeOutput_PreservesFirstSessionAcrossStreams(t *testing.T) {
 		t.Fatalf("expected conflicting-ID warning, got %q", warning.String())
 	}
 }
+
+func TestOpenCodeOutput_PreservesMalformedLineAndWarns(t *testing.T) {
+	var out, warning strings.Builder
+	parsed := newOpenCodeOutput(&out, &warning, false)
+	_, _ = parsed.Write([]byte("not-json\n"))
+	if out.String() != "not-json\n" {
+		t.Fatalf("output = %q, want original malformed line", out.String())
+	}
+	if !strings.Contains(warning.String(), "malformed OpenCode event") {
+		t.Fatalf("warning = %q, want malformed-event diagnostic", warning.String())
+	}
+}

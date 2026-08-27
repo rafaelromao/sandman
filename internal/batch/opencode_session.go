@@ -149,6 +149,9 @@ func (w *opencodeOutput) writeLine(line []byte, newline bool) error {
 
 	var event map[string]any
 	if err := json.Unmarshal(line, &event); err != nil {
+		if strings.TrimSpace(text) != "" {
+			w.warn(fmt.Sprintf("malformed OpenCode event: %v", err))
+		}
 		return w.writeRaw(line, newline)
 	}
 	if id, ok := event["sessionID"].(string); ok && strings.TrimSpace(id) != "" {
