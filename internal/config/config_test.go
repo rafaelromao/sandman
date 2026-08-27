@@ -236,7 +236,7 @@ func TestConfig_ResolveAgentProvider_BuiltInPreset(t *testing.T) {
 	if agent.Preset != "opencode" {
 		t.Errorf("preset: got %q, want %q", agent.Preset, "opencode")
 	}
-	wantCmd := `opencode run{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .SessionName}} --title '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}}{{if .VariantFlag}} {{.VariantFlag}}{{end}} "$(cat {{.PromptFile}})"`
+	wantCmd := `opencode run --format json{{if .ContinueFlag}} --continue{{end}}{{if .SessionFlag}} --session {{.SessionFlag}}{{end}}{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .SessionName}} --title '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}}{{if .VariantFlag}} {{.VariantFlag}}{{end}} "$(cat {{.PromptFile}})"`
 	if agent.Command != wantCmd {
 		t.Errorf("command: got %q, want %q", agent.Command, wantCmd)
 	}
