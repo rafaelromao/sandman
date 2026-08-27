@@ -141,6 +141,69 @@ func TestAgentRun_DoesNotFallbackForUnrelatedOpenCodeFailure(t *testing.T) {
 	}
 }
 
+func TestAgentRun_PersistsSessionObservedBeforeFallbackFailure(t *testing.T) {
+	root := t.TempDir()
+	runFolder := filepath.Join(root, "current")
+	sb := &opencodeSequenceSandbox{
+		fakeSandbox: fakeSandbox{workDir: root},
+		results: []opencodeExecResult{
+			{stdout: `{"type":"error","sessionID":"old","error":{"message":"Session not found"}}` + "\n", err: errors.New("exact session missing")},
+			{stdout: `{"type":"text","sessionID":"new","part":{"text":"before failure"}}` + "\n", err: errors.New("fallback failed")},
+		},
+	}
+	run := NewAgentRunWithLayout(&github.Issue{Number: 42}, "42-fix", sb, paths.NewLayout(&config.Config{}, root))
+	run.preset = "opencode"
+	run.reuseSession = true
+	run.previousBatchID = "prior-batch"
+	run.previousRunID = "prior-run"
+	run.runFolder = runFolder
+	if err := writeOpenCodeSession(filepath.Join(root, ".sandman", "batches", "prior-batch", "runs", "prior-run", "session.json"), "old"); err != nil {
+		t.Fatal(err)
+	}
+
+	result := run.Run(context.Background(), &spyRenderer{result: "prompt"}, config.BuiltInAgentPresets["opencode"].Command, prompt.RenderConfig{})
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure", result.Status)
+	}
+	data, err := os.ReadFile(filepath.Join(runFolder, "session.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"session_id": "new"`) {
+		t.Errorf("current metadata = %s, want identity observed before fallback failure", data)
+	}
+}
+
+func TestAgentRun_PersistsSessionObservedBeforeMissingSessionFailure(t *testing.T) {
+	root := t.TempDir()
+	runFolder := filepath.Join(root, "current")
+	sb := &opencodeSequenceSandbox{
+		fakeSandbox: fakeSandbox{workDir: root},
+		results: []opencodeExecResult{{
+			stdout: `{"type":"text","sessionID":"new","part":{"text":"before failure"}}` + "\n",
+			err:    errors.New("fallback failed"),
+		}},
+	}
+	run := NewAgentRunWithLayout(&github.Issue{Number: 42}, "42-fix", sb, paths.NewLayout(&config.Config{}, root))
+	run.preset = "opencode"
+	run.reuseSession = true
+	run.previousBatchID = "prior-batch"
+	run.previousRunID = "prior-run"
+	run.runFolder = runFolder
+
+	result := run.Run(context.Background(), &spyRenderer{result: "prompt"}, config.BuiltInAgentPresets["opencode"].Command, prompt.RenderConfig{})
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure", result.Status)
+	}
+	data, err := os.ReadFile(filepath.Join(runFolder, "session.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"session_id": "new"`) {
+		t.Errorf("current metadata = %s, want identity observed before fallback failure", data)
+	}
+}
+
 func TestAgentRun_PreservesReadableOutputWhenOpenCodeFails(t *testing.T) {
 	root := t.TempDir()
 	runFolder := filepath.Join(root, "current")

@@ -293,13 +293,11 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 				fallbackOut := newSharedOpenCodeOutput(nil, r.warningWriter(), false, capture)
 				fallbackErr := newSharedOpenCodeOutput(nil, r.warningWriter(), true, capture)
 				execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, fallbackOut, fallbackErr)
-				if execErr == nil {
-					r.persistSession(firstSessionID(fallbackOut, fallbackErr))
-				}
+				r.persistSession(firstSessionID(fallbackOut, fallbackErr))
 			}
 		}
 	}
-	if !fallbackUsed && (!useContinue || execErr == nil) {
+	if !fallbackUsed {
 		r.persistSession(firstSessionID(parsedStdout, parsedStderr))
 	}
 	if execErr != nil {
