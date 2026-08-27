@@ -40,6 +40,12 @@ func TestDependencyBlockEvidenceSurvivesOverrideE2E(t *testing.T) {
 	writeDependencyOverrideAgentShim(t, shimDir, agentCallsPath)
 
 	binPath := buildSandmanBinary(t)
+	blockedLine, oldBatchID, oldRunID := runDependencyOverrideInitialPhase(t, repoDir, binPath, agentCallsPath)
+	runDependencyOverrideReplacementPhase(t, repoDir, binPath, shimDir, phasePath, ghCallsPath, agentCallsPath, blockedLine, oldBatchID, oldRunID)
+}
+
+func runDependencyOverrideInitialPhase(t *testing.T, repoDir, binPath, agentCallsPath string) (string, string, string) {
+	t.Helper()
 	if out, err := runSandmanBinary(t, binPath, repoDir, "run", "--include-dependencies", "--sandbox", "worktree", "--parallel", "2", "42", "100"); err != nil {
 		t.Fatalf("initial sandman run failed: %v\noutput:\n%s", err, out)
 	}
@@ -59,7 +65,12 @@ func TestDependencyBlockEvidenceSurvivesOverrideE2E(t *testing.T) {
 	assertDependencyOverrideInitialEvents(t, initialEvents, dependencyOverrideBlocker, dependencyOverrideDependent)
 	assertDependencyOverrideInitialArtifacts(t, repoDir, oldBatchID, oldRunID)
 	assertDependencyOverrideAgentCalls(t, agentCallsPath, 1, "42")
+	return blockedLine, oldBatchID, oldRunID
+}
 
+func runDependencyOverrideReplacementPhase(t *testing.T, repoDir, binPath, shimDir, phasePath, ghCallsPath, agentCallsPath, blockedLine, oldBatchID, oldRunID string) {
+	t.Helper()
+	initialEventsPath := filepath.Join(repoDir, ".sandman", "events.jsonl")
 	if err := os.WriteFile(phasePath, []byte("ready\n"), 0644); err != nil {
 		t.Fatalf("advance fixture phase: %v", err)
 	}
