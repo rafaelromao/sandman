@@ -80,6 +80,7 @@ func TestAgentRun_ReusesMissingSessionWithOneTimeFallback(t *testing.T) {
 	run.batchID = "current-batch"
 	run.runID = "current-run"
 	run.runFolder = runFolder
+	run.env = map[string]string{"TEST_ENV": "test-value"}
 	layout := paths.NewLayout(&config.Config{}, root)
 	if err := writeOpenCodeSession(layout.RunSessionPath("prior-batch", "prior-run"), "old"); err != nil {
 		t.Fatal(err)
@@ -94,6 +95,11 @@ func TestAgentRun_ReusesMissingSessionWithOneTimeFallback(t *testing.T) {
 	}
 	if !strings.Contains(sb.commands[0], "--session 'old'") {
 		t.Errorf("exact command = %q, want session selector", sb.commands[0])
+	}
+	for i, command := range sb.commands {
+		if !strings.HasPrefix(command, "export TEST_ENV=test-value; ") {
+			t.Errorf("command %d = %q, want configured environment", i, command)
+		}
 	}
 	if strings.Contains(sb.commands[1], "--session") || !strings.Contains(sb.commands[1], "--continue") {
 		t.Errorf("fallback command = %q, want only --continue", sb.commands[1])

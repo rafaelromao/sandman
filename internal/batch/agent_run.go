@@ -285,6 +285,9 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		if ctx.Err() == nil && attemptCtx.Err() == nil {
 			renderedCmd, err = render("", true)
 			if err == nil {
+				renderedCmd, err = r.prependEnv(renderedCmd)
+			}
+			if err == nil {
 				fallbackUsed = true
 				capture := &opencodeSessionCapture{}
 				fallbackOut := newSharedOpenCodeOutput(nil, r.warningWriter(), false, capture)
