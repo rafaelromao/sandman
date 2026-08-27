@@ -1476,6 +1476,16 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			coord.registerIssueCancel(issueNum, issueCancel)
 			defer coord.unregisterIssueCancel(issueNum)
 			defer issueCancel()
+			cmdServer := daemon.NewCommandServerForIssue(
+				daemon.RunFolder(layout.BatchDir(issueBatchID), runID),
+				coord,
+				issueNum,
+			)
+			if err := cmdServer.Start(); err != nil {
+				fmt.Fprintf(o.errorLog, "error: start command server for issue %d: %v\n", issueNum, err)
+			} else {
+				defer cmdServer.Stop()
+			}
 
 			// parentCtx is the RunBatch ctx — it is only
 			// cancelled by an external abort (e.g. parent ctx
@@ -3285,13 +3295,6 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		s.emitEarlyFailure("write run manifest", branch, err)
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 	}
-	cmdServer := daemon.NewCommandServerForIssue(daemon.RunFolder(batchDir, runID), s.commander, s.issueNumber)
-	if err := cmdServer.Start(); err != nil {
-		fmt.Fprintf(s.deps.errorLog, "error: start command server for issue %d: %v\n", s.issueNumber, err)
-	} else {
-		defer cmdServer.Stop()
-	}
-
 	// Pre-register the supervisor's done channel with the batch-wide
 	// fan-in BEFORE spawning the supervisor, so a session that
 	// started just before ctx fired cannot race the snapshot taken

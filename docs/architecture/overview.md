@@ -7,7 +7,6 @@ The reasoning behind Sandman's shape, in one page. For the canonical on-disk inv
 Sandman has no database. Every artifact that needs to survive a process restart lives in a flat file under `.sandman/` and is written atomically (temp-file + `os.Rename`). Coordination between processes happens over Unix domain sockets:
 
 - Batch control socket: `<batch>/batch.sock`
-- Batch command socket: `<batch>/run.sock`
 - Per-row command socket: `<batch>/runs/<runID>/run.sock`
 - Review daemon socket: `.sandman/reviews/review.sock`
 

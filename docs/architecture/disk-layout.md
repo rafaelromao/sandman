@@ -23,7 +23,6 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 │   └── <batchID>/
 │       ├── batch.json                  # batch manifest
 │       ├── batch.sock                  # batch control socket
-│       ├── run.sock                    # batch command socket
 │       ├── config/                     # container config snapshot (batch-owned)
 │       └── runs/<runID>/
 │           ├── run.json                # row manifest (atomic-rename)
@@ -70,7 +69,6 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 | `batches/<batchID>/` | runtime | orchestrator (batch start) | orchestrator, portal, attach client | orchestrator (on batch completion) | per batch |
 | `batches/<batchID>/batch.json` | runtime, atomic-rename | orchestrator (batch start, status change) | orchestrator, portal | orchestrator (on batch completion, move to archive) | per batch |
 | `batches/<batchID>/batch.sock` | runtime | daemon on start | attach client, orchestrator | daemon on stop | per batch |
-| `batches/<batchID>/run.sock` | runtime | command server when the batch runner implements issue cancellation | portal / external caller (`{"action":"abort","issue":N}`) | command server on batch completion | per batch |
 | `batches/<batchID>/config/` | runtime, container snapshot | `PrepareContainerConfigMounts` | container runtime (bind-mount) | orchestrator (on batch completion) | per batch |
 | `batches/<batchID>/runs/<runID>/` | runtime | orchestrator (per-row execution path) | orchestrator, portal | orchestrator (on run completion) | per AgentRun |
 | `batches/<batchID>/runs/<runID>/run.json` | runtime, atomic-rename | orchestrator (run start, status change, finish) | orchestrator, portal, attach client | orchestrator (on run completion) | per AgentRun |
@@ -102,7 +100,7 @@ The following artefacts do **not** live under `<repo>/.sandman/` and are documen
 - **`os.MkdirTemp("", "sandman-config-*")`** — the **config-snapshot parent tempdir**, used by `PrepareContainerConfigMounts` when the caller passes an empty `runDir`. This is an out-of-repo tempdir because the agent's `ConfigDirs` / `ConfigFiles` mount resolution needs a parent to host the resolved snapshot tree when no run-owned parent is available. The directory is removed by the cleanup function returned from `prepareSnapshotParent`.
 - **`os.MkdirTemp(parentDir, ".config-*")`** — the **config-snapshot subdir**, atomically renamed to `<parentDir>/config/` immediately after creation. When `parentDir` is a run-owned path, this lands back under `.sandman/batches/<batchID>/runs/<runID>/config/` and is on-layout; when `parentDir` is the tempdir parent above, this is the out-of-layout half of the same pair.
 - **`~/.agents/skills/sandman/**`** — the **shared Sandman skill tree**, installed by `sandman init` into the user's home directory. This is repo-scoped *content* but not repo-scoped *location*: it is a single installed tree shared across every repo on the host, so it is intentionally out of the per-repo `.sandman/` layout. See `CONTEXT.md` §Sandman Skill.
-- **`/tmp/sandman-<sha256 prefix>.sock`** — the **deterministic short Unix socket address** (issue #2441), used when the logical `.sandman/batches/<batchID>/batch.sock`, `.sandman/batches/<batchID>/run.sock`, `.sandman/batches/<batchID>/runs/<runID>/run.sock`, or `.sandman/reviews/review.sock` path exceeds the host `sun_path` limit. The hash is a 12-byte SHA-256 prefix of the full logical path, so the same logical path always maps to the same short address and every consumer (bind, dial, `os.Stat`, liveness probes, attach, portal discovery) sees the same effective path on every host. Mode 0o600. Removed by the daemon on Stop.
+- **`/tmp/sandman-<sha256 prefix>.sock`** — the **deterministic short Unix socket address** (issue #2441), used when the logical `.sandman/batches/<batchID>/batch.sock`, `.sandman/batches/<batchID>/runs/<runID>/run.sock`, or `.sandman/reviews/review.sock` path exceeds the host `sun_path` limit. The hash is a 12-byte SHA-256 prefix of the full logical path, so the same logical path always maps to the same short address and every consumer (bind, dial, `os.Stat`, liveness probes, attach, portal discovery) sees the same effective path on every host. Mode 0o600. Removed by the daemon on Stop.
 
 ## Upgrades
 

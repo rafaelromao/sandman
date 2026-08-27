@@ -779,14 +779,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				return err
 			}
 			defer rs.Close()
-			if commander, ok := deps.BatchRunner.(daemon.IssueCommander); ok {
-				cmdServer := daemon.NewCommandServer(rs.RunDir(), commander)
-				if err := cmdServer.Start(); err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "warning: start batch command server: %v\n", err)
-				} else {
-					defer cmdServer.Stop()
-				}
-			}
 
 			relRunDir, err := filepath.Rel(repoRoot, rs.RunDir())
 			if err != nil {

@@ -77,7 +77,7 @@ The subset of Specification children identified by the Open-issue scan and persi
 _Avoid_: auto-discovered children, scan results.
 
 **Batch**:
-The folder `.sandman/batches/<batch-id>/` plus all child run folders. The batch root contains `batch.sock` for attach streaming, `run.sock` for batch-scoped command routing, the `batch.json` manifest, and the `config/` host snapshot. Each run folder (`.sandman/batches/<batch-id>/runs/<run-id>/`) holds its own `run.json`, `run.log`, and attempt-local command socket. One daemon process, one `batch.json`. References ADR-0032.
+The folder `.sandman/batches/<batch-id>/` plus all child run folders. Contains the daemon sockets (`batch.sock`, `run.sock`), the `batch.json` manifest, and the `config/` host snapshot at the batch root. Each run folder (`.sandman/batches/<batch-id>/runs/<run-id>/`) holds its own `run.json`, `run.log`, and per-run command socket. One daemon process, one `batch.json`. References ADR-0032.
 _Avoid_: Batch run, invocation.
 
 **Batches index**:
@@ -276,7 +276,7 @@ _Avoid_: bot log, agent log, comment log.
 _See_: Saved Run Log.
 
 **Command Server**:
- A Unix domain socket at `<batch>/run.sock` or `<batch>/runs/<runID>/run.sock` that accepts one-shot JSON command requests from outside the daemon process. First supported command is `{"action":"abort","issue":<n>}`, dispatched to the orchestrator's per-issue cancel API. The batch-scoped server stays available for the Batch lifetime; the attempt-local server exists only while its AgentRun executes. When the filesystem socket path exceeds the Unix `sun_path` limit, it falls back to an abstract socket named `@sandman-<hex-hash>` so long paths still work. Distinct from the **Control Socket**, which streams daemon output to **Attach** clients.
+ A Unix domain socket at `<batch>/runs/<runID>/run.sock` that accepts one-shot JSON command requests from outside the daemon process. First supported command is `{"action":"abort","issue":<n>}`, dispatched to the orchestrator's per-issue cancel API. Created per-AgentRun when the orchestrator's per-row execution path starts, removed when the run completes. When the filesystem socket path exceeds the Unix `sun_path` limit, it falls back to an abstract socket named `@sandman-<hex-hash>` so long paths still work. Distinct from the **Control Socket**, which streams daemon output to **Attach** clients.
 _Avoid_: management socket, IPC socket.
 
 **Issue Commander**:
@@ -327,9 +327,9 @@ _Avoid_: Continuation context, continuation file.
 
 - A **Daemon Process** is created by `sandman run`, which starts a **Control Socket**
 - A **Control Socket** at `<batch>/batch.sock` accepts **Attach** connections for the duration of the **Batch**
-- A **Daemon Process** starts a batch-scoped **Command Server** at `<batch>/run.sock` for surgical per-issue control requests throughout the **Batch**, and may also start an attempt-local server at `<batch>/runs/<runID>/run.sock`
+- A **Daemon Process** also starts a **Command Server** at `<batch>/runs/<runID>/run.sock` for surgical per-issue control requests; the **Command Server** is created per-AgentRun in the orchestrator's per-row execution path
 - An **Issue Commander** is the orchestrator seam the **Command Server** dispatches to; it maps an external cancel to a single **AgentRun**
-- A **Daemon Process** stops the **Control Socket** and batch-scoped **Command Server** when its **Batch** completes; per-row **Command Server** instances are stopped when each **AgentRun** completes
+- A **Daemon Process** stops the **Control Socket** when its **Batch** completes; per-row **Command Server** instances are stopped when each **AgentRun** completes
 - An **Attach** client connects to the **Control Socket** and reads the daemon's output until EOF
 - A **Portal** is repo-scoped and can show multiple **Daemon Process** instances from the same repository at once
 - A **Portal** rescans the current repository's `.sandman/batches/` tree on each poll so newly started **Daemon Process** instances appear without restarting the portal

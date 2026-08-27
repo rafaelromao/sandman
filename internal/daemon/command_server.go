@@ -24,9 +24,8 @@ const (
 )
 
 // CommandRequest is the JSON wire format the Command Server accepts from
-// external clients on a run.sock Unix socket at either the batch root
-// (.sandman/batches/<batch-id>/run.sock) or a per-row run folder
-// (.sandman/batches/<batch-id>/runs/<run-id>/run.sock). It is the daemon's public wire
+// external clients on the run.sock Unix socket at
+// .sandman/batches/<batch-id>/runs/<run-id>/run.sock. It is the daemon's public wire
 // contract, not an internal helper the Portal (or any other client) can
 // depend on casually — every field and tag below is observable on the
 // wire. The Daemon Process is the only reader; the Portal is one of
@@ -58,8 +57,8 @@ type CommandResponse struct {
 	Message string `json:"message,omitempty"`
 }
 
-// CommandSocketPath returns the Unix socket path for a command server in the
-// supplied batch root or per-row run folder.
+// CommandSocketPath returns the unix socket path for the per-run command
+// server inside a run folder.
 func CommandSocketPath(dir string) string {
 	return socketpath.Path(filepath.Join(dir, "run.sock"))
 }
