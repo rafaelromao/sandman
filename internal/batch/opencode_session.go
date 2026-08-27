@@ -180,7 +180,7 @@ func (w *opencodeOutput) writeLine(line []byte, newline bool) error {
 			w.capture.mu.Unlock()
 		}
 		if normalizedMessage != "" {
-			return w.writeText(normalizedMessage)
+			return w.writeText("Error: " + normalizedMessage)
 		}
 	case "text":
 		if text := eventText(event); text != "" {

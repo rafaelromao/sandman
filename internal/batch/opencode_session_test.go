@@ -317,6 +317,15 @@ func TestOpenCodeOutput_OnlyExactErrorEventTriggersSessionFallback(t *testing.T)
 	}
 }
 
+func TestOpenCodeOutput_PreservesContextErrorMarker(t *testing.T) {
+	var out strings.Builder
+	parsed := newOpenCodeOutput(&out, io.Discard, true)
+	_, _ = parsed.Write([]byte(`{"type":"error","error":{"message":"prompt is too long"}}` + "\n"))
+	if got := out.String(); got != "Error: prompt is too long\n" {
+		t.Fatalf("structured error output = %q, want detector-compatible marker", got)
+	}
+}
+
 func TestOpenCodeOutput_PreservesFirstSessionAcrossStreams(t *testing.T) {
 	var out, warning strings.Builder
 	capture := &opencodeSessionCapture{}
