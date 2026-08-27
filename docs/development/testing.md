@@ -28,6 +28,16 @@ For OpenCode context rollover changes, the hermetic production-path coverage is:
 go test -run 'ContextRollover|ContextRecoveryTask' ./internal/batch ./internal/prompt ./internal/events ./internal/cmd
 ```
 
+For OpenCode session reuse, the focused production-path coverage is:
+
+```bash
+go test -run 'OpenCode|ContinueFlag' ./internal/batch ./internal/cmd
+```
+
+These tests cover structured output capture, atomic per-Run identity metadata,
+fresh versus explicit continuation, exact-session selection, and the narrow
+one-time fallback boundary.
+
 ## CI coverage
 
 Sandman publishes four GoReleaser targets that match the four Unix platforms OpenCode supports (sans Windows): Linux amd64, Linux arm64, macOS amd64 (Intel), and macOS arm64 (Apple Silicon). The CI and release-validation tiers exercise those platforms as follows:
