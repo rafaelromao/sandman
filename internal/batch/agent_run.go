@@ -281,30 +281,36 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	sessionNotFound := (parsedStdout != nil && parsedStdout.SessionNotFound()) || (parsedStderr != nil && parsedStderr.SessionNotFound())
 	fallbackUsed := false
 	if execErr != nil && builtInOpenCode && r.reuseSession && priorSession != "" && sessionNotFound {
-		if ctx.Err() == nil {
+		if ctx.Err() == nil && attemptCtx.Err() == nil {
 			renderedCmd, err = render("", true)
 			if err == nil {
 				fallbackUsed = true
 				fallbackOut := newOpenCodeOutput(nil, r.warningWriter(), false)
 				fallbackErr := newOpenCodeOutput(nil, r.warningWriter(), true)
 				execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, fallbackOut, fallbackErr)
-				if fallbackOut.SessionID() != "" {
-					r.persistSession(fallbackOut.SessionID())
+				if execErr == nil {
+					r.persistSession(firstSessionID(fallbackOut, fallbackErr))
 				}
 			}
 		}
 	}
-	if !fallbackUsed && parsedStdout != nil && parsedStdout.SessionID() != "" {
-		r.persistSession(parsedStdout.SessionID())
-	}
-	if !fallbackUsed && parsedStderr != nil && parsedStderr.SessionID() != "" {
-		r.persistSession(parsedStderr.SessionID())
+	if !fallbackUsed && execErr == nil {
+		r.persistSession(firstSessionID(parsedStdout, parsedStderr))
 	}
 	if execErr != nil {
 		r.status = "failure"
 		return r.Result()
 	}
 	return r.Result()
+}
+
+func firstSessionID(outputs ...*opencodeOutput) string {
+	for _, output := range outputs {
+		if output != nil && output.SessionID() != "" {
+			return output.SessionID()
+		}
+	}
+	return ""
 }
 
 func (r *AgentRun) warningWriter() io.Writer {
@@ -318,6 +324,9 @@ func (r *AgentRun) warnSession(err error) {
 }
 
 func (r *AgentRun) persistSession(sessionID string) {
+	if strings.TrimSpace(sessionID) == "" {
+		return
+	}
 	runFolder := r.runFolder
 	if runFolder == "" {
 		runFolder = r.sandbox.WorkDir()
