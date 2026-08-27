@@ -304,9 +304,49 @@ func TestAgentRun_Run_IncludesModelFlagForBuiltInPreset(t *testing.T) {
 		t.Fatalf("expected success, got %s", res.Status)
 	}
 
-	want := `opencode run -m gpt-4.1 "$(cat .sandman/task.md)"`
+	want := `opencode run --format json -m gpt-4.1 "$(cat .sandman/task.md)"`
 	if sb.execCommand != want {
 		t.Errorf("expected command %q, got %q", want, sb.execCommand)
+	}
+}
+
+func TestAgentRun_RunCapturesOpenCodeSessionAndReadableJSONOutput(t *testing.T) {
+	dir := t.TempDir()
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{
+		workDir:    dir,
+		execStdout: `{"type":"text","sessionID":"ses_42","part":{"text":"hello"}}` + "\n",
+	}
+	spy := &spyRenderer{result: "rendered prompt"}
+	run := NewAgentRunWithLayout(issue, "42-fix-bug", sb, paths.NewLayout(&config.Config{}, dir))
+	run.preset = "opencode"
+	run.runID = "run-42"
+	run.batchID = "batch-42"
+	run.runFolder = filepath.Join(dir, "runs", "run-42")
+
+	res := run.Run(context.Background(), spy, config.BuiltInAgentPresets["opencode"].Command, prompt.RenderConfig{})
+	if res.Status != "success" {
+		t.Fatalf("expected success, got %s", res.Status)
+	}
+	if !strings.Contains(sb.execCommand, "--format json") {
+		t.Fatalf("expected structured OpenCode output, got %q", sb.execCommand)
+	}
+	if strings.Contains(sb.execCommand, "--session") || strings.Contains(sb.execCommand, "--continue") {
+		t.Fatalf("fresh launch unexpectedly selected a prior session: %q", sb.execCommand)
+	}
+	logData, err := os.ReadFile(filepath.Join(run.runFolder, "run.log"))
+	if err != nil {
+		t.Fatalf("read run log: %v", err)
+	}
+	if !strings.Contains(string(logData), "hello") {
+		t.Fatalf("expected readable text event in run log, got %q", logData)
+	}
+	identity, err := os.ReadFile(filepath.Join(run.runFolder, "session.json"))
+	if err != nil {
+		t.Fatalf("read session metadata: %v", err)
+	}
+	if !strings.Contains(string(identity), `"session_id": "ses_42"`) {
+		t.Fatalf("expected captured session identity, got %q", identity)
 	}
 }
 
@@ -324,7 +364,7 @@ func TestAgentRun_RunQuotesOpaqueVariantAsOneArgument(t *testing.T) {
 	if res.Status != "success" {
 		t.Fatalf("expected success, got %s", res.Status)
 	}
-	want := `opencode run --variant ` + shellenv.Quote(run.variant) + ` "$(cat .sandman/task.md)"`
+	want := `opencode run --format json --variant ` + shellenv.Quote(run.variant) + ` "$(cat .sandman/task.md)"`
 	if sb.execCommand != want {
 		t.Errorf("expected command %q, got %q", want, sb.execCommand)
 	}

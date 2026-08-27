@@ -33,6 +33,8 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 
 	lastRuns := lastRunPerIssue(eventsList, issues)
 	previousRunIDs := make(map[int]string, len(issues))
+	previousRunBatchIDs := make(map[int]string, len(issues))
+	reuseSessions := make(map[int]bool, len(issues))
 	branches := make(map[int]string, len(issues))
 	baseBranches := make(map[int]string, len(issues))
 	taskPrompts := make(map[int]string, len(issues))
@@ -48,6 +50,8 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 		issues = []int{0}
 		lastRuns[0] = promptOnlyEvent
 		previousRunIDs[0] = promptOnlyEvent.RunID
+		previousRunBatchIDs[0] = previousRunBatchID(promptOnlyEvent)
+		reuseSessions[0] = continuationReuseSession(cmd)
 		promptOnlyBranch, _ = payloadString(promptOnlyEvent.Payload, "branch")
 		promptOnlyBaseBranch, _ = payloadString(promptOnlyEvent.Payload, "base_branch")
 	}
@@ -92,6 +96,8 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 			}
 
 			previousRunIDs[num] = lastRun.RunID
+			previousRunBatchIDs[num] = previousRunBatchID(lastRun)
+			reuseSessions[num] = continuationReuseSession(cmd)
 			branches[num] = strings.TrimSpace(branch)
 			baseBranches[num] = strings.TrimSpace(baseBranch)
 			taskPrompts[num] = prompt.ContinuationTaskPromptWithReviewTimeout(content, reviewTimeout)
@@ -268,6 +274,8 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 		BaseBranch:                 baseBranch,
 		Mode:                       modes,
 		PreviousRunIDs:             previousRunIDs,
+		PreviousRunBatchIDs:        previousRunBatchIDs,
+		ReuseSession:               reuseSessions,
 		BaseBranches:               baseBranches,
 		TaskPrompts:                taskPrompts,
 		Retries:                    retries,
@@ -295,6 +303,18 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 		},
 		RunID: runID,
 	}, nil
+}
+
+func continuationReuseSession(cmd *cobra.Command) bool {
+	value, _ := cmd.Flags().GetBool("reuse-session")
+	return value
+}
+
+func previousRunBatchID(event events.Event) string {
+	if batchID, ok := payloadString(event.Payload, "batch_id"); ok && strings.TrimSpace(batchID) != "" {
+		return strings.TrimSpace(batchID)
+	}
+	return batchIDFromRunID(event.RunID)
 }
 
 func lastRunPerIssue(eventsList []events.Event, issues []int) map[int]events.Event {

@@ -1471,18 +1471,20 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			}
 
 			row := RowSpec{
-				IssueNumber:      issueNum,
-				Mode:             mode,
-				Branches:         req.Branches,
-				PreviousRunIDs:   req.PreviousRunIDs,
-				BaseBranch:       issueBaseBranch,
-				ExternalBlockers: req.Blocked[issueNum],
-				RenderCfg:        renderCfg,
-				OutputWriter:     req.OutputWriter,
-				RunTS:            req.RunTS,
-				RunShortID:       req.RunShortID,
-				BatchID:          issueBatchID,
-				QualityRulesFile: req.QualityRulesFile,
+				IssueNumber:         issueNum,
+				Mode:                mode,
+				Branches:            req.Branches,
+				PreviousRunIDs:      req.PreviousRunIDs,
+				PreviousRunBatchIDs: req.PreviousRunBatchIDs,
+				ReuseSession:        req.ReuseSession[issueNum],
+				BaseBranch:          issueBaseBranch,
+				ExternalBlockers:    req.Blocked[issueNum],
+				RenderCfg:           renderCfg,
+				OutputWriter:        req.OutputWriter,
+				RunTS:               req.RunTS,
+				RunShortID:          req.RunShortID,
+				BatchID:             issueBatchID,
+				QualityRulesFile:    req.QualityRulesFile,
 			}
 			bc := BatchConfig{
 				Cfg:                        cfg,
@@ -1538,6 +1540,8 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				case <-timer.C:
 					row.Mode = ModeContinue
 					row.PreviousRunIDs = map[int]string{issueNum: runID}
+					row.PreviousRunBatchIDs = map[int]string{issueNum: issueBatchID}
+					row.ReuseSession = true
 					continue
 				}
 				break
@@ -1921,6 +1925,8 @@ type runSession struct {
 	variant                    string
 	mode                       IssueMode
 	previousRunIDs             map[int]string
+	previousRunBatchIDs        map[int]string
+	reuseSession               bool
 	identityResolver           *gitIdentityResolver
 	branches                   map[int]string
 	renderCfg                  prompt.RenderConfig
@@ -2720,6 +2726,9 @@ func (s *runSession) runOnce(
 loop:
 	for attempt := 0; attempt < attempts; attempt++ {
 		if attempt > 0 {
+			// Session reuse is a launch choice, not retry state. Retries and
+			// context-rollover recovery always start a fresh conversation.
+			s.reuseSession = false
 			// An operator cancellation must win before recovery can replace the
 			// Task or start a fresh session.
 			if result.ContextExhausted && ctx.Err() != nil {
@@ -2810,6 +2819,11 @@ loop:
 				agentRun.dangerouslySkipPermissions = &s.dangerouslySkipPermissions
 				agentRun.sessionName = "Sandman " + runID + ": "
 				agentRun.runFolder = s.runFolderFor(runID)
+				agentRun.batchID = s.batchID
+				agentRun.previousRunID = s.previousRunIDs[s.issueNumber]
+				agentRun.previousBatchID = s.previousRunBatchIDs[s.issueNumber]
+				agentRun.reuseSession = s.reuseSession
+				agentRun.sessionWarning = s.deps.errorLog
 			}
 
 			s.reviewRegistrationAttempted = false
@@ -2857,6 +2871,9 @@ loop:
 						gateStatus, extras, handled = s.observeLifecycle(ctx, wt.WorkDir(), branch, logPath, runID, result, extras, hostPathsReady)
 					}
 					if resumePrompt, resume := s.resumePromptFromGate(ctx, wt, branch, runID, extras); resume {
+						s.reuseSession = true
+						s.previousRunIDs = map[int]string{s.issueNumber: runID}
+						s.previousRunBatchIDs = map[int]string{s.issueNumber: s.batchID}
 						attemptRenderCfg.TaskPrompt = resumePrompt
 						continue relaunch
 					}
@@ -3448,22 +3465,24 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 		}
 	}
 	row := RowSpec{
-		IssueNumber:       req.IssueNumber,
-		Mode:              req.IssueMode(0),
-		Branches:          map[int]string{0: branch},
-		PreviousRunIDs:    req.PreviousRunIDs,
-		BaseBranch:        baseBranch,
-		RenderCfg:         req.PromptConfig,
-		OutputWriter:      req.OutputWriter,
-		BatchID:           batchIDForPromptOnly(req.BatchTS, req.BatchShortID, req.RunID, req.RunDir),
-		BatchTS:           req.BatchTS,
-		BatchShortID:      req.BatchShortID,
-		RunID:             req.RunID,
-		UserProvidedRunID: req.RunID,
-		Review:            req.Review,
-		PRNumber:          req.PRNumber,
-		ReviewFocus:       req.ReviewFocus,
-		QualityRulesFile:  req.QualityRulesFile,
+		IssueNumber:         req.IssueNumber,
+		Mode:                req.IssueMode(0),
+		Branches:            map[int]string{0: branch},
+		PreviousRunIDs:      req.PreviousRunIDs,
+		PreviousRunBatchIDs: req.PreviousRunBatchIDs,
+		ReuseSession:        req.ReuseSession[0],
+		BaseBranch:          baseBranch,
+		RenderCfg:           req.PromptConfig,
+		OutputWriter:        req.OutputWriter,
+		BatchID:             batchIDForPromptOnly(req.BatchTS, req.BatchShortID, req.RunID, req.RunDir),
+		BatchTS:             req.BatchTS,
+		BatchShortID:        req.BatchShortID,
+		RunID:               req.RunID,
+		UserProvidedRunID:   req.RunID,
+		Review:              req.Review,
+		PRNumber:            req.PRNumber,
+		ReviewFocus:         req.ReviewFocus,
+		QualityRulesFile:    req.QualityRulesFile,
 	}
 	bc := BatchConfig{
 		Cfg:                        cfg,

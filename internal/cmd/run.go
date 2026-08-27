@@ -196,8 +196,12 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 			overrideFlag, _ := cmd.Flags().GetBool("override")
 			continueFlag, _ := cmd.Flags().GetBool("continue")
+			reuseSessionFlag, _ := cmd.Flags().GetBool("reuse-session")
 			if overrideFlag && continueFlag {
 				return MarkUsage(fmt.Errorf("--override cannot be combined with --continue"))
+			}
+			if reuseSessionFlag && !continueFlag {
+				return MarkUsage(fmt.Errorf("--reuse-session requires --continue"))
 			}
 			if err := requireReviewDaemon(cfg.EffectiveReviewCommand(), sandmanDir); err != nil {
 				return err
@@ -505,6 +509,8 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 			modes := make(map[int]batch.IssueMode)
 			previousRunIDs := make(map[int]string)
+			previousRunBatchIDs := make(map[int]string)
+			reuseSessions := make(map[int]bool)
 			branches := make(map[int]string)
 			baseBranches := make(map[int]string)
 			taskPrompts := make(map[int]string)
@@ -567,6 +573,8 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					}
 					modes[num] = batch.ModeContinue
 					previousRunIDs[num] = lastRun.RunID
+					previousRunBatchIDs[num] = previousRunBatchID(lastRun)
+					reuseSessions[num] = reuseSessionFlag
 					continuationTimeout := cfg.EffectiveReviewTimeout()
 					if reviewTimeoutSet {
 						continuationTimeout = reviewTimeout
@@ -603,6 +611,8 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				BaseBranch:                 baseBranch,
 				Mode:                       modes,
 				PreviousRunIDs:             previousRunIDs,
+				PreviousRunBatchIDs:        previousRunBatchIDs,
+				ReuseSession:               reuseSessions,
 				Branches:                   branches,
 				BaseBranches:               baseBranches,
 				TaskPrompts:                taskPrompts,
@@ -644,6 +654,12 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 				for k, v := range continuationReq.PreviousRunIDs {
 					req.PreviousRunIDs[k] = v
+				}
+				for k, v := range continuationReq.PreviousRunBatchIDs {
+					req.PreviousRunBatchIDs[k] = v
+				}
+				for k, v := range continuationReq.ReuseSession {
+					req.ReuseSession[k] = v
 				}
 				for k, v := range continuationReq.Branches {
 					req.Branches[k] = v
@@ -819,6 +835,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Bool("reconcile-stranded", true, "Auto-recover stranded worktrees when the main repo is checked out on a <n>-<slug> branch (use --no-reconcile-stranded to disable)")
 	cmd.Flags().Bool("no-reconcile-stranded", false, "Opt out of stranded-worktree auto-recovery (negative form of --reconcile-stranded)")
 	cmd.Flags().Bool("continue", false, "Continue the latest AgentRun for each selected issue by reusing the prior handoff; tunables come from current flags/config and the worktree identity is replayed")
+	cmd.Flags().Bool("reuse-session", false, "With --continue, reuse each prior OpenCode session when available")
 	cmd.Flags().BoolP("verbose", "v", false, "Print diagnostic phase timing to stderr")
 
 	return cmd

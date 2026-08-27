@@ -99,6 +99,13 @@ The built-in preset also sees `~/.agents`, which is where Sandman installs the s
 
 `sandman run --agent` selects the built-in preset per invocation. `sandman config set agent` changes the project default.
 
+OpenCode session reuse is a run-time choice rather than a configuration
+default. `sandman run --continue` starts a fresh OpenCode conversation;
+`sandman run --continue --reuse-session` selects the prior Run's exact session
+for each continued row. Runtime-owned re-entry after an external wait selects
+reuse automatically. Missing sessions use one `--continue` fallback only for
+these selected reuse launches.
+
 Use `sandman run --base-branch` to override `git.base_branch` for a single invocation.
 
 ### Prompt templates

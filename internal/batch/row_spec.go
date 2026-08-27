@@ -24,14 +24,16 @@ import (
 // review otherwise (BatchTS/BatchShortID/RunID carry them; Review/PRNumber/
 // ReviewFocus set for review runs).
 type RowSpec struct {
-	IssueNumber      int
-	Mode             IssueMode
-	Branches         map[int]string
-	PreviousRunIDs   map[int]string
-	BaseBranch       string
-	ExternalBlockers []int
-	RenderCfg        prompt.RenderConfig
-	OutputWriter     io.Writer
+	IssueNumber         int
+	Mode                IssueMode
+	Branches            map[int]string
+	PreviousRunIDs      map[int]string
+	PreviousRunBatchIDs map[int]string
+	ReuseSession        bool
+	BaseBranch          string
+	ExternalBlockers    []int
+	RenderCfg           prompt.RenderConfig
+	OutputWriter        io.Writer
 	// ID minting — issue-driven path.
 	RunTS      string
 	RunShortID string
@@ -209,6 +211,8 @@ func newRunSession(e *runExecutor, row RowSpec) *runSession {
 		variant:                    bc.Variant,
 		mode:                       row.Mode,
 		previousRunIDs:             row.PreviousRunIDs,
+		previousRunBatchIDs:        row.PreviousRunBatchIDs,
+		reuseSession:               row.ReuseSession,
 		identityResolver:           bc.IdentityResolver,
 		branches:                   row.Branches,
 		renderCfg:                  renderCfg,

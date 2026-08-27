@@ -104,6 +104,16 @@ func (l Layout) RunLogPath(batchID, runID string) string {
 	return filepath.Join(l.RunFolder(batchID, runID), "run.log")
 }
 
+// RunSessionPath returns the OpenCode session metadata file for a Run.
+func (l Layout) RunSessionPath(batchID, runID string) string {
+	return filepath.Join(l.RunFolder(batchID, runID), "session.json")
+}
+
+// LegacyRunSessionPath returns the pre-layout session metadata location.
+func (l Layout) LegacyRunSessionPath(runID string) string {
+	return filepath.Join(l.BatchesDir, "runs", runID, "session.json")
+}
+
 // RunSocketPath returns the per-run command socket address. For
 // typical repos the socket lives at
 // <batchesDir>/<batchID>/runs/<runID>/run.sock. When the logical path
