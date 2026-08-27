@@ -1932,6 +1932,7 @@ func TestRun_ContinueFlagAcceptedAndMutuallyExclusiveWithOverride(t *testing.T) 
 		{name: "continue only", args: []string{"--continue", "42"}},
 		{name: "override then continue", args: []string{"--override", "--continue", "42"}, wantUsage: true},
 		{name: "continue then override", args: []string{"--continue", "--override", "42"}, wantUsage: true},
+		{name: "reuse requires continue", args: []string{"--reuse-session", "42"}, wantUsage: true},
 	}
 
 	for _, tt := range tests {
@@ -2023,7 +2024,7 @@ func TestRun_ContinueFlag_UsesCurrentFlagsOverStoredValues(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--continue", "--variant", " cli/provider ", "--review-timeout", "240", "42"})
+	cmd.SetArgs([]string{"--continue", "--reuse-session", "--variant", " cli/provider ", "--review-timeout", "240", "42"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -2038,6 +2039,9 @@ func TestRun_ContinueFlag_UsesCurrentFlagsOverStoredValues(t *testing.T) {
 	}
 	if spy.req.PreviousRunIDs[42] != testRunID42Second {
 		t.Fatalf("expected PreviousRunIDs[42]=%s, got %q", testRunID42Second, spy.req.PreviousRunIDs[42])
+	}
+	if !spy.req.ReuseSession[42] {
+		t.Fatal("expected --reuse-session to propagate to the continued row")
 	}
 	if spy.req.Branches[42] != branch {
 		t.Fatalf("expected branch %q, got %q", branch, spy.req.Branches[42])

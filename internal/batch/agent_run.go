@@ -26,6 +26,9 @@ type AgentRun struct {
 	baseBranch                 string
 	runID                      string
 	batchID                    string
+	previousBatchID            string
+	previousRunID              string
+	reuseSession               bool
 	review                     bool
 	preset                     string
 	model                      string
@@ -45,6 +48,7 @@ type AgentRun struct {
 	layout                     paths.Layout
 	runFolder                  string
 	taskWriter                 func(string, []byte, os.FileMode) error
+	sessionWarning             io.Writer
 }
 
 // NewAgentRun creates an AgentRun for the given issue, branch, and sandbox.
@@ -98,6 +102,10 @@ func (r *AgentRun) Prepare(renderer prompt.IssueRenderer, cfg prompt.RenderConfi
 // Execute propagates it through the returned error so Run can record it
 // on the AgentRunResult (issue #2605 acceptance criterion #4).
 func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr io.Writer) error {
+	return r.execute(ctx, command, stdout, stderr, nil, nil)
+}
+
+func (r *AgentRun) execute(ctx context.Context, command string, stdout, stderr io.Writer, parsedStdout, parsedStderr *opencodeOutput) error {
 	runFolder := r.runFolder
 	if runFolder == "" {
 		runFolder = r.sandbox.WorkDir()
@@ -127,14 +135,24 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 
 	combinedOut := io.MultiWriter(prefixedOut, logPrefixedOut)
 	combinedErr := io.MultiWriter(prefixedErr, logPrefixedErr)
-
-	if err := r.sandbox.Exec(ctx, command, combinedOut, combinedErr); err != nil {
-		return fmt.Errorf("execute agent: %w", err)
+	if parsedStdout != nil {
+		parsedStdout.dst = combinedOut
+		combinedOut = parsedStdout
 	}
+	if parsedStderr != nil {
+		parsedStderr.dst = combinedErr
+		combinedErr = parsedStderr
+	}
+
+	execErr := r.sandbox.Exec(ctx, command, combinedOut, combinedErr)
+	flushOpenCodeOutputs(parsedStdout, parsedStderr)
 	_ = prefixedOut.Flush()
 	_ = prefixedErr.Flush()
 	_ = logPrefixedOut.Flush()
 	_ = logPrefixedErr.Flush()
+	if execErr != nil {
+		return fmt.Errorf("execute agent: %w", execErr)
+	}
 	return nil
 }
 
@@ -177,15 +195,38 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		}
 	}
 
-	renderedCmd, err := RenderCommand(command, CommandData{
-		PromptFile:                 renderedPromptFile,
-		ModelFlag:                  r.modelFlag(command),
-		VariantFlag:                r.variantFlag(command),
-		ModelProvider:              r.modelProvider,
-		ModelName:                  r.modelName,
-		DangerouslySkipPermissions: r.dangerouslySkipPermissions != nil && *r.dangerouslySkipPermissions,
-		SessionName:                r.sessionName,
-	})
+	builtInOpenCode := r.preset == "opencode" && command == config.BuiltInAgentPresets["opencode"].Command
+	priorSession := ""
+	useContinue := false
+	if builtInOpenCode && r.reuseSession {
+		identity, found, lookupErr := priorOpenCodeSession(r.layout, r.previousBatchID, r.previousRunID)
+		if lookupErr != nil {
+			r.warnSession(lookupErr)
+		}
+		if found {
+			priorSession = identity.SessionID
+		} else {
+			useContinue = true
+		}
+	}
+	render := func(sessionID string, continueFlag bool) (string, error) {
+		sessionFlag := ""
+		if sessionID != "" {
+			sessionFlag = shellenv.Quote(sessionID)
+		}
+		return RenderCommand(command, CommandData{
+			PromptFile:                 renderedPromptFile,
+			ModelFlag:                  r.modelFlag(command),
+			VariantFlag:                r.variantFlag(command),
+			ModelProvider:              r.modelProvider,
+			ModelName:                  r.modelName,
+			DangerouslySkipPermissions: r.dangerouslySkipPermissions != nil && *r.dangerouslySkipPermissions,
+			SessionName:                r.sessionName,
+			SessionFlag:                sessionFlag,
+			ContinueFlag:               continueFlag,
+		})
+	}
+	renderedCmd, err := render(priorSession, useContinue)
 	if err != nil {
 		r.status = "failure"
 		return r.Result()
@@ -217,7 +258,13 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		stdout = io.MultiWriter(stdout, detector)
 		stderr = io.MultiWriter(stderr, detector)
 	}
-	execErr := r.Execute(attemptCtx, renderedCmd, stdout, stderr)
+	var parsedStdout, parsedStderr *opencodeOutput
+	if builtInOpenCode {
+		capture := &opencodeSessionCapture{}
+		parsedStdout = newSharedOpenCodeOutput(nil, r.warningWriter(), false, capture)
+		parsedStderr = newSharedOpenCodeOutput(nil, r.warningWriter(), true, capture)
+	}
+	execErr := r.execute(attemptCtx, renderedCmd, stdout, stderr, parsedStdout, parsedStderr)
 	if detector != nil {
 		detector.Flush()
 	}
@@ -232,11 +279,69 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		}
 		return r.Result()
 	}
+	sessionNotFound := (parsedStdout != nil && parsedStdout.SessionNotFound()) || (parsedStderr != nil && parsedStderr.SessionNotFound())
+	fallbackUsed := false
+	if execErr != nil && builtInOpenCode && r.reuseSession && priorSession != "" && sessionNotFound {
+		if ctx.Err() == nil && attemptCtx.Err() == nil {
+			renderedCmd, err = render("", true)
+			if err == nil {
+				renderedCmd, err = r.prependEnv(renderedCmd)
+			}
+			if err == nil {
+				fallbackUsed = true
+				capture := &opencodeSessionCapture{}
+				fallbackOut := newSharedOpenCodeOutput(nil, r.warningWriter(), false, capture)
+				fallbackErr := newSharedOpenCodeOutput(nil, r.warningWriter(), true, capture)
+				execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, fallbackOut, fallbackErr)
+				r.persistSession(firstSessionID(fallbackOut, fallbackErr))
+			}
+		}
+	}
+	if !fallbackUsed {
+		r.persistSession(firstSessionID(parsedStdout, parsedStderr))
+	}
 	if execErr != nil {
 		r.status = "failure"
 		return r.Result()
 	}
 	return r.Result()
+}
+
+func firstSessionID(outputs ...*opencodeOutput) string {
+	for _, output := range outputs {
+		if output != nil && output.SessionID() != "" {
+			return output.SessionID()
+		}
+	}
+	return ""
+}
+
+func (r *AgentRun) warningWriter() io.Writer {
+	return r.sessionWarning
+}
+
+func (r *AgentRun) warnSession(err error) {
+	if err != nil && r.warningWriter() != nil {
+		fmt.Fprintf(r.warningWriter(), "warning: OpenCode session metadata: %v\n", err)
+	}
+}
+
+func (r *AgentRun) persistSession(sessionID string) {
+	if strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	path := ""
+	if r.runFolder != "" {
+		path = filepath.Join(r.runFolder, "session.json")
+	} else if r.batchID != "" && r.runID != "" {
+		path = r.layout.RunSessionPath(r.batchID, r.runID)
+	} else {
+		r.warnSession(errors.New("current Run metadata path is unavailable"))
+		return
+	}
+	if err := writeOpenCodeSession(path, sessionID); err != nil {
+		r.warnSession(err)
+	}
 }
 
 func (r *AgentRun) variantFlag(command string) string {

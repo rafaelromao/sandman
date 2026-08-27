@@ -93,3 +93,4 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0052 | Request-scoped delegated review response classification | proposed |
 | 0053 | Bound external waits and release execution capacity | proposed |
 | 0054 | Retain GitHub closure gate for in-batch blockers | accepted |
+| 0055 | Opt into OpenCode session reuse | accepted |

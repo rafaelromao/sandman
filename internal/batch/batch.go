@@ -45,6 +45,12 @@ type Request struct {
 	Mode map[int]IssueMode
 	// PreviousRunIDs maps each issue number to the run id being continued.
 	PreviousRunIDs map[int]string
+	// PreviousRunBatchIDs maps each issue number to the batch containing its
+	// previous Run. It is needed to locate runtime metadata across batches.
+	PreviousRunBatchIDs map[int]string
+	// ReuseSession opts an individual continued row into exact OpenCode
+	// session reuse. Runtime-owned relaunches set the equivalent on the row.
+	ReuseSession map[int]bool
 	// BaseBranches maps each issue number to its base branch.
 	BaseBranches map[int]string
 	// TaskPrompts maps each issue number to its rendered task prompt.

@@ -6,7 +6,14 @@ Sandman includes one built-in preset: `opencode`.
 
 | Preset | Display Name | Command Template |
 |--------|-------------|------------------|
-| `opencode` | OpenCode | `opencode run{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .SessionName}} --title '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}} "$(cat {{.PromptFile}})"` |
+| `opencode` | OpenCode | `opencode run --format json ...` |
+
+The built-in preset uses OpenCode's structured JSON output so Sandman can retain
+the first session identity in each Run's `session.json` while rendering text,
+tool, and error events into the normal readable output. A runtime-owned re-entry
+uses that exact session. An operator must pass `--continue --reuse-session` to
+request the same behavior for an ordinary continuation; plain `--continue` is
+fresh. Custom agent commands are not rewritten or placed on this state path.
 
 ## OpenCode shell strategy
 
@@ -91,4 +98,3 @@ Agents should work within the current directory and use standard git operations 
 - Config directories and files with `~` are expanded to the user's home directory on the host before being resolved into a temporary copy for the container
 - Missing config directories and files are silently skipped (no error if an optional config path does not exist)
 - Container images are built from `.sandman/Dockerfile` at project initialization
-

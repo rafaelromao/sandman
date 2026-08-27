@@ -69,7 +69,8 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--max-containers` | config default (0) | Max containers; `0` = no cap (unbounded pool growth) |
 | `--retries` | `0` | Number of times to retry a failed run |
 | `--override` | `false` | Replace worktree and branch for a new attempt while retaining prior AgentRun events (append-only), batch artifacts, and logs; force-checkout worktree to expected branch on mismatch or detached HEAD |
-| `--continue` | `false` | Continue the latest AgentRun for selected issues by reusing the preserved worktree (branch, base branch, task file, prior run id); tunables come from current flags/config |
+| `--continue` | `false` | Continue the latest AgentRun for selected issues by reusing the preserved worktree (branch, base branch, task file, prior run id); OpenCode starts a fresh conversation by default |
+| `--reuse-session` | `false` | Only with `--continue`: explicitly reuse each continued row's prior OpenCode session, falling back once to OpenCode `--continue` if the exact session is unavailable |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for agent runs |
 | `--include-dependencies` | `false` | Auto-expand batch with transitive blockers |
 | `--label` | — | Select issues by label |
@@ -103,6 +104,8 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 - `--variant` is trimmed and treated as opaque provider-specific text; when omitted, Sandman uses `variant` from config. On `--continue`, current CLI/config values replace the prior event value. Non-empty values are safely passed as one argument to built-in OpenCode; custom commands are unchanged.
 - `--agent` selects which built-in preset to use for this run; if omitted, Sandman uses `agent` from config
 - `--continue` cannot be combined with `--override`
+- `--reuse-session` requires `--continue`; it applies independently to each continued row and never to promoted or fresh rows
+- Runtime-owned re-entry after an external pull-request wait reuses the exact OpenCode session automatically; ordinary retries and context-rollover retries remain fresh
 - `--review-timeout` uses explicit override > repository `review_timeout` > built-in default `1800`; each confirmed review trigger receives one full absolute deadline, while retries and continuations of that trigger keep the original deadline
 - When `--max-containers` and `--container-capacity` together constrain concurrency below `--parallel`, the tighter limit wins
 - `--reconcile-stranded` auto-recovers stranded worktrees when the main repo is checked out on a `<n>-<slug>` branch; `--no-reconcile-stranded` opts out of this auto-recovery
@@ -135,7 +138,7 @@ Continue the last agent run for one or more issues. Reads the task file (`.sandm
 sandman run --continue <issue-number>...
 ```
 
-Reuses the prior run's worktree identity: the existing branch, the stored base branch (the worktree was cut from it), the prior run id, the `.sandman/task.md` contents, and the issue mode. Tunables (agent, model, parallel, retries, sandbox, container tunables, review command, review timeout) come from current CLI flags / config defaults, not from the stored payload. CLI overrides on the `--continue` invocation still win over both config defaults and stored values. When no task file exists, an empty task template is used as the resume prompt (with a warning on stderr).
+Reuses the prior run's worktree identity: the existing branch, the stored base branch (the worktree was cut from it), the prior run id, the `.sandman/task.md` contents, and the issue mode. Tunables (agent, model, parallel, retries, sandbox, container tunables, review command, review timeout) come from current CLI flags / config defaults, not from the stored payload. CLI overrides on the `--continue` invocation still win over both config defaults and stored values. OpenCode starts a fresh conversation unless `--reuse-session` is also supplied. When no task file exists, an empty task template is used as the resume prompt (with a warning on stderr).
 
 | Flag | Default | Description |
 |------|---------|-------------|

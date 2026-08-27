@@ -3110,18 +3110,18 @@ func TestRunBatch_ModelPrecedenceAndDefaultBehavior(t *testing.T) {
 			agent:    "opencode",
 			cfgModel: "config-model",
 			reqModel: "request-model",
-			wantCmd:  `opencode run --title 'Sandman ` + runIDFor(42),
+			wantCmd:  `opencode run --format json --title 'Sandman ` + runIDFor(42),
 		},
 		{
 			name:     "config model is used",
 			agent:    "opencode",
 			cfgModel: "config-model",
-			wantCmd:  `opencode run --title 'Sandman ` + runIDFor(42),
+			wantCmd:  `opencode run --format json --title 'Sandman ` + runIDFor(42),
 		},
 		{
 			name:    "default behavior leaves model out",
 			agent:   "opencode",
-			wantCmd: `opencode run --title 'Sandman ` + runIDFor(42),
+			wantCmd: `opencode run --format json --title 'Sandman ` + runIDFor(42),
 		},
 	}
 
