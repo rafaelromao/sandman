@@ -160,7 +160,8 @@ evidence: a closing reference produces `success`, while an unverifiable or
 missing closing reference produces `failure` with completion diagnostics.
 
 Recoverable open-pull-request states produce `run.await` without consuming an
-agent retry. Pending current-head CI is bounded by its durable per-head
+agent retry and the Portal projects the current await phase as `waiting`.
+Pending current-head CI is bounded by its durable per-head
 deadline; a new head is the only reset boundary. The logical row keeps its
 dependents queued while execution capacity is released between observations.
 Deadline expiry, CI failure, and merge conflicts relaunch remediation work;

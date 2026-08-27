@@ -48,6 +48,7 @@ const formatSource = (run) => {
 const statusClass = (run) => {
   const s = String(run.status || '').toLowerCase();
   if (s === 'running') return 'running';
+  if (s === 'waiting') return 'waiting';
   if (s === 'active') return 'active';
   if (s === 'success') return 'success';
   if (s === 'failure' || s === 'failed' || s === 'error') return 'failure';

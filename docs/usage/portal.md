@@ -36,7 +36,7 @@ When the server starts, it prints the URL to open in your browser.
 ## What it shows
 
 - Live Sandman instances in the current repository
-- Active and completed runs from `.sandman/events.jsonl`
+- Active, waiting, and completed runs from `.sandman/events.jsonl`
 
 The runs table displays these columns: **Run**, **Status**, **Started**, **Duration**, **Issue Title**, **Branch**, and **Actions**. The Issue Title column shows the GitHub issue title for runs with that data available, or an em-dash for prompt-only runs. Source information (socket and log file paths) remains visible in the Details tab when expanding a run.
 
@@ -170,7 +170,7 @@ Full snapshot and summary variants return `runs` as an array:
       "key": "<per-row RunID>",
       "runId": "<per-row RunID>",
       "kind": "issue|review|prompt",
-      "status": "active|success|failure|blocked|aborted|archived|queued",
+      "status": "active|waiting|success|failure|blocked|aborted|archived|queued",
       "issueLabel": "#1234",
       "issueNumber": 1234,
       "branch": "feature-branch",
@@ -198,6 +198,8 @@ The single-row keyed lookup returns `run` (singular) instead of `runs`:
 ```
 
 Not all fields appear in every row. `lastOutputAt`, `socketPath`, and `logUrl` are omitted for terminal rows. `review`, `reviewCount`, and `reviewVerdict` are only present for rows that own child review runs.
+
+An active implementation row with a current `run.await` lifecycle event is shown as `waiting`. Waiting is non-terminal: its lifecycle details and event history remain available, and a later continuation or resume returns the row to `running`. A live linked review can show the non-terminal implementation row as `reviewing`. `queued`, `blocked`, and terminal statuses retain their existing meanings.
 
 ### `GET /api/runs/stream`
 
