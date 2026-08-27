@@ -797,6 +797,8 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     }
     .badge.running { background: var(--accent-weak); border-color: color-mix(in oklch, var(--accent) 30%, var(--border)); }
     .badge.running .dot { background: var(--accent); }
+    .badge.waiting { background: color-mix(in oklch, var(--warning) 12%, var(--surface)); border-color: color-mix(in oklch, var(--warning) 30%, var(--border)); }
+    .badge.waiting .dot { background: var(--warning); }
     .badge.reviewing { background: color-mix(in oklch, var(--reviewing-accent) 18%, var(--surface)); border-color: color-mix(in oklch, var(--reviewing-accent) 30%, var(--border)); }
     .badge.reviewing .dot { background: var(--reviewing-accent); }
     .badge.active { background: var(--accent-weak); border-color: color-mix(in oklch, var(--accent) 30%, var(--border)); }
@@ -2597,6 +2599,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     function statusClass(item) {
       const status = (item.status || '').toLowerCase();
       if (status === 'running') return 'running';
+      if (status === 'waiting') return 'waiting';
       if (status === 'reviewing') return 'reviewing';
       if (status === 'active') return 'active';
       if (status === 'success') return 'success';

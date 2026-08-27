@@ -735,6 +735,34 @@ func TestAggregateReviewChildren_StampLandsOnCanonicalParent(t *testing.T) {
 		}
 	})
 
+	t.Run("live_review_only_overrides_non_terminal_parent", func(t *testing.T) {
+		liveReview := portalRun{IssueNumber: 1793, Review: true, RunID: "rev-live", Key: "rev-live", Kind: "active", Status: "reviewing", StartedAt: reviewStarted}
+		cases := []struct {
+			name       string
+			parentKind string
+			status     string
+			want       string
+		}{
+			{name: "waiting parent", parentKind: "active", status: "waiting", want: "reviewing"},
+			{name: "success parent", parentKind: "completed", status: "success", want: "success"},
+			{name: "failure parent", parentKind: "completed", status: "failure", want: "failure"},
+			{name: "aborted parent", parentKind: "completed", status: "aborted", want: "aborted"},
+			{name: "blocked parent", parentKind: "completed", status: "blocked", want: "blocked"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				parent := portalRun{IssueNumber: 1793, RunID: "impl-parent", Key: "impl-parent", Kind: tc.parentKind, Status: tc.status, StartedAt: reviewStarted}
+				got := (&portalRunsView{}).aggregateReviewChildren(layout, []portalRun{parent, liveReview})
+				if len(got) != 2 {
+					t.Fatalf("got %d rows, want parent and live review: %#v", len(got), got)
+				}
+				if got[0].Status != tc.want {
+					t.Fatalf("parent status = %q, want %q", got[0].Status, tc.want)
+				}
+			})
+		}
+	})
+
 	t.Run("two_active_latest_started_wins", func(t *testing.T) {
 		earlier := time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC)
 		later := time.Date(2026, 7, 5, 1, 0, 0, 0, time.UTC)

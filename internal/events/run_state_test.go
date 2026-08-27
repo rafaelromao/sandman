@@ -946,6 +946,70 @@ func TestProjectRunStates_AwaitEventKeepsRunActive(t *testing.T) {
 	}
 }
 
+func TestProjectRunStates_CurrentAwaitPhaseTracksLifecycle(t *testing.T) {
+	t.Parallel()
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	awaitAt := startedAt.Add(time.Minute)
+	resumedAt := awaitAt.Add(time.Minute)
+	continuedAt := resumedAt.Add(time.Minute)
+	secondAwaitAt := continuedAt.Add(time.Minute)
+
+	run := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-await-phase", Issue: 42},
+		{Type: "run.await", Timestamp: awaitAt, RunID: "run-await-phase", Issue: 42, Payload: map[string]any{"await_reason": "pending"}},
+	})[0]
+	if !run.IsAwaiting() {
+		t.Fatal("expected run.await to be the current lifecycle phase")
+	}
+	if run.AwaitEvent == nil {
+		t.Fatal("expected await evidence to be retained")
+	}
+
+	for _, event := range []Event{
+		{Type: "run.resumed", Timestamp: resumedAt, RunID: "run-await-phase", Issue: 42},
+		{Type: "run.continued", Timestamp: continuedAt, RunID: "run-await-phase", Issue: 42},
+	} {
+		run = ProjectRunStates(append([]Event{
+			{Type: "run.started", Timestamp: startedAt, RunID: "run-await-phase", Issue: 42},
+			{Type: "run.await", Timestamp: awaitAt, RunID: "run-await-phase", Issue: 42, Payload: map[string]any{"await_reason": "pending"}},
+		}, event))[0]
+		if run.IsAwaiting() {
+			t.Fatalf("expected %s to clear current waiting", event.Type)
+		}
+		if run.AwaitEvent == nil || run.AwaitReason() != "pending" {
+			t.Fatalf("expected %s to retain historical await evidence, got %#v", event.Type, run.AwaitEvent)
+		}
+	}
+
+	cycles := []Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-await-phase", Issue: 42},
+		{Type: "run.await", Timestamp: awaitAt, RunID: "run-await-phase", Issue: 42, Payload: map[string]any{"await_reason": "pending"}},
+		{Type: "run.resumed", Timestamp: resumedAt, RunID: "run-await-phase", Issue: 42},
+		{Type: "run.continued", Timestamp: continuedAt, RunID: "run-await-phase", Issue: 42},
+		{Type: "run.await", Timestamp: secondAwaitAt, RunID: "run-await-phase", Issue: 42, Payload: map[string]any{"await_reason": "review-timeout"}},
+	}
+	run = ProjectRunStates(cycles)[0]
+	if !run.IsAwaiting() || run.AwaitReason() != "review-timeout" {
+		t.Fatalf("expected newer await to restore current waiting, got awaiting=%v reason=%q", run.IsAwaiting(), run.AwaitReason())
+	}
+
+	for _, eventType := range []string{"run.finished", "run.aborted", "run.cancelled", "run.blocked", "run.queued"} {
+		payload := map[string]any{"status": "success"}
+		if eventType == "run.blocked" {
+			payload = map[string]any{}
+		}
+		if eventType == "run.queued" {
+			payload = map[string]any{}
+		}
+		terminalRun := append(append([]Event(nil), cycles[:len(cycles)-1]...), Event{
+			Type: eventType, Timestamp: secondAwaitAt.Add(time.Minute), RunID: "run-await-phase", Issue: 42, Payload: payload,
+		})
+		if got := ProjectRunStates(terminalRun)[0].IsAwaiting(); got {
+			t.Fatalf("expected %s to clear current waiting", eventType)
+		}
+	}
+}
+
 func TestProjectRunStates_AwaitPayloadCarriesReasonAndReviewRequest(t *testing.T) {
 	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)

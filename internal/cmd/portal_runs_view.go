@@ -1067,7 +1067,7 @@ func finishedAtOrZero(run portalRun) time.Time {
 }
 
 func isTerminalStatus(status string) bool {
-	return status == "success" || status == "failure" || status == "aborted"
+	return status == "success" || status == "failure" || status == "aborted" || status == "blocked"
 }
 
 func reviewOutcomeIsNewer(candidateEffectiveAt, candidateStartedAt time.Time, candidateRunID string, currentEffectiveAt, currentStartedAt time.Time, currentRunID string) bool {
@@ -1985,9 +1985,9 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		issueLabel = runID
 	}
 
-	status := runState.Status()
-	if runState.IsActive() {
-		status = "running"
+	status := v.statusOrDefault(runState.Status(), runState.IsActive() || (runState.Status() == "" && activeSocket), runState.IsReview())
+	if runState.IsAwaiting() && !runState.IsReview() {
+		status = "waiting"
 	}
 	startedAt := runState.Started.Timestamp
 	var finishedAt *time.Time
@@ -2014,7 +2014,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		Key:             runID,
 		RunID:           runID,
 		Kind:            v.kindForRun(runState),
-		Status:          v.statusOrDefault(status, runState.IsActive() || (status == "" && activeSocket), runState.IsReview()),
+		Status:          status,
 		IssueLabel:      issueLabel,
 		IssueNumber:     issueNumber,
 		IssueTitle:      v.issueTitleFromPayload(runState.Started.Payload),
