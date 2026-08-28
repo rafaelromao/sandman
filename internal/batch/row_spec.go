@@ -108,6 +108,8 @@ type runDeps struct {
 type runCoordination interface {
 	registerActiveRun(key int, sb sandbox.Sandbox)
 	unregisterActiveRun(key int)
+	startCommandServer(issueNumber int, dir string, commander daemon.IssueCommander) error
+	stopCommandServer(issueNumber int) error
 	trackShutdownSupervisor(done <-chan struct{})
 	currentPhaseWriter() io.Writer
 	firstSandboxStart(sandboxStarted time.Time)

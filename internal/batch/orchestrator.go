@@ -428,14 +428,16 @@ type batchCoordinator struct {
 	firstSandboxStartOnce  sync.Once
 	activeRuns             map[int]sandbox.Sandbox
 	issueCancels           map[int]context.CancelFunc
+	commandServers         map[int]*daemon.CommandServer
 	shutdownSupervisorDone []<-chan struct{}
 }
 
 func newBatchCoordinator(phaseWriter io.Writer) *batchCoordinator {
 	return &batchCoordinator{
-		phaseWriter:  phaseWriter,
-		activeRuns:   make(map[int]sandbox.Sandbox),
-		issueCancels: make(map[int]context.CancelFunc),
+		phaseWriter:    phaseWriter,
+		activeRuns:     make(map[int]sandbox.Sandbox),
+		issueCancels:   make(map[int]context.CancelFunc),
+		commandServers: make(map[int]*daemon.CommandServer),
 	}
 }
 
@@ -482,6 +484,33 @@ func (c *batchCoordinator) unregisterActiveRun(key int) {
 	c.mu.Lock()
 	delete(c.activeRuns, key)
 	c.mu.Unlock()
+}
+
+// startCommandServer keeps an awaited run's per-run endpoint alive across
+// attempts, but creates it only after the session has passed its external gate.
+func (c *batchCoordinator) startCommandServer(issueNumber int, dir string, commander daemon.IssueCommander) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.commandServers[issueNumber] != nil {
+		return nil
+	}
+	server := daemon.NewCommandServerForIssue(dir, commander, issueNumber)
+	if err := server.Start(); err != nil {
+		return err
+	}
+	c.commandServers[issueNumber] = server
+	return nil
+}
+
+func (c *batchCoordinator) stopCommandServer(issueNumber int) error {
+	c.mu.Lock()
+	server := c.commandServers[issueNumber]
+	delete(c.commandServers, issueNumber)
+	c.mu.Unlock()
+	if server == nil {
+		return nil
+	}
+	return server.Stop()
 }
 
 func (c *batchCoordinator) trackShutdownSupervisor(done <-chan struct{}) {
@@ -1646,7 +1675,11 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			var res AgentRunResult
 			var started bool
 			awaitPoll := 0
-			commandServerStarted := false
+			defer func() {
+				if err := coord.stopCommandServer(issueNum); err != nil {
+					fmt.Fprintf(o.errorLog, "error: stop command server for issue %d: %v\n", issueNum, err)
+				}
+			}()
 			// An awaiter is ordinary work until its external poll interval
 			// elapses. It then competes for the next free slot as priority work.
 			priority := false
@@ -1655,19 +1688,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					o.logAborted(issueNum, runID, nil)
 					res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
 					break
-				}
-				if !commandServerStarted {
-					cmdServer := daemon.NewCommandServerForIssue(
-						daemon.RunFolder(layout.BatchDir(issueBatchID), runID),
-						coord,
-						issueNum,
-					)
-					if err := cmdServer.Start(); err != nil {
-						fmt.Fprintf(o.errorLog, "error: start command server for issue %d: %v\n", issueNum, err)
-					} else {
-						defer cmdServer.Stop()
-						commandServerStarted = true
-					}
 				}
 				res, started = o.newRunExecutorWith(parentCtx, bc, policy.sandboxFactory, policy.containerAlloc, coord, coord, layout).Execute(issueCtx, row)
 				if started {
@@ -3273,10 +3293,17 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		return res, false
 	}
 
+	batchDir := s.deps.layout.BatchDir(s.batchID)
+	if s.batchID == "" {
+		batchDir = s.deps.layout.BatchesDir
+	}
+	if err := s.coord.startCommandServer(s.issueNumber, daemon.RunFolder(batchDir, runID), s.commander); err != nil {
+		fmt.Fprintf(s.deps.errorLog, "error: start command server for issue %d: %v\n", s.issueNumber, err)
+	}
+
 	s.coord.registerActiveRun(s.issueNumber, wt)
 	defer s.coord.unregisterActiveRun(s.issueNumber)
 
-	batchDir := s.deps.layout.BatchDir(s.batchID)
 	manifestBatchID := s.batchID
 	if s.batchID == "" {
 		batchDir = s.deps.layout.BatchesDir

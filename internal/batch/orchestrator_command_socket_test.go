@@ -13,7 +13,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
-func TestRunBatch_BlockedDependencyDoesNotCreateCommandSocket(t *testing.T) {
+func TestRunBatch_ExternallyBlockedDependencyDoesNotCreateCommandSocket(t *testing.T) {
 	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
@@ -23,10 +23,7 @@ func TestRunBatch_BlockedDependencyDoesNotCreateCommandSocket(t *testing.T) {
 		&fakeGitHubClient{
 			issues: map[int]*github.Issue{
 				42:  {Number: 42, State: "open", Title: "Blocker"},
-				100: {Number: 100, State: "open", Title: "Dependent", BlockedBy: []int{42}},
-			},
-			prs: map[string]*github.PR{
-				"42-blocker": {Number: 42, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: "42-blocker", HeadRefOid: "current-sha"},
+				100: {Number: 100, State: "open", Title: "Dependent"},
 			},
 		},
 		&noopRenderer{},
@@ -40,18 +37,16 @@ func TestRunBatch_BlockedDependencyDoesNotCreateCommandSocket(t *testing.T) {
 		eventLog,
 		WithErrorLog(io.Discard),
 		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
-		WithRunnableFactory(&byIssueRunnableFactory{results: map[int]AgentRunResult{
-			42: {IssueNumber: 42, Status: "success", Branch: "42-blocker"},
-		}}),
+		WithRunnableFactory(&byIssueRunnableFactory{}),
 		WithRunSessionOpts(runSessionOptions{currentHead: func(string) (string, error) { return "current-sha", nil }}),
 	)
 
 	if _, err := o.RunBatch(context.Background(), Request{
-		Issues:       []int{42, 100},
-		Dependencies: map[int][]int{100: {42}},
-		Parallel:     2,
-		RunTS:        "260828120000",
-		RunShortID:   "test",
+		Issues:     []int{100},
+		Blocked:    map[int][]int{100: {42}},
+		Parallel:   2,
+		RunTS:      "260828120000",
+		RunShortID: "test",
 	}); err != nil {
 		t.Fatalf("run batch: %v; events=%#v", err, mustReadEvents(t, eventLog))
 	}
@@ -71,7 +66,7 @@ func TestRunBatch_BlockedDependencyDoesNotCreateCommandSocket(t *testing.T) {
 		t.Fatalf("blocked event has no batch_id: %#v", blocked.Payload)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".sandman", "batches", batchID, "runs", blocked.RunID)); !os.IsNotExist(err) {
-		t.Fatalf("blocked dependent unexpectedly has a command-socket folder, stat error=%v", err)
+		t.Fatalf("externally blocked dependent unexpectedly has a command-socket folder, stat error=%v", err)
 	}
 }
 
