@@ -1476,16 +1476,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			coord.registerIssueCancel(issueNum, issueCancel)
 			defer coord.unregisterIssueCancel(issueNum)
 			defer issueCancel()
-			cmdServer := daemon.NewCommandServerForIssue(
-				daemon.RunFolder(layout.BatchDir(issueBatchID), runID),
-				coord,
-				issueNum,
-			)
-			if err := cmdServer.Start(); err != nil {
-				fmt.Fprintf(o.errorLog, "error: start command server for issue %d: %v\n", issueNum, err)
-			} else {
-				defer cmdServer.Stop()
-			}
 
 			// parentCtx is the RunBatch ctx — it is only
 			// cancelled by an external abort (e.g. parent ctx
@@ -1656,6 +1646,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			var res AgentRunResult
 			var started bool
 			awaitPoll := 0
+			commandServerStarted := false
 			// An awaiter is ordinary work until its external poll interval
 			// elapses. It then competes for the next free slot as priority work.
 			priority := false
@@ -1664,6 +1655,19 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					o.logAborted(issueNum, runID, nil)
 					res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
 					break
+				}
+				if !commandServerStarted {
+					cmdServer := daemon.NewCommandServerForIssue(
+						daemon.RunFolder(layout.BatchDir(issueBatchID), runID),
+						coord,
+						issueNum,
+					)
+					if err := cmdServer.Start(); err != nil {
+						fmt.Fprintf(o.errorLog, "error: start command server for issue %d: %v\n", issueNum, err)
+					} else {
+						defer cmdServer.Stop()
+						commandServerStarted = true
+					}
 				}
 				res, started = o.newRunExecutorWith(parentCtx, bc, policy.sandboxFactory, policy.containerAlloc, coord, coord, layout).Execute(issueCtx, row)
 				if started {
