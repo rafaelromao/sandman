@@ -314,8 +314,9 @@ func TestAgentRun_RunCapturesOpenCodeSessionAndReadableJSONOutput(t *testing.T) 
 	dir := t.TempDir()
 	issue := &github.Issue{Number: 42, Title: "Fix bug"}
 	sb := &fakeSandbox{
-		workDir:    dir,
-		execStdout: `{"type":"text","sessionID":"ses_42","part":{"text":"hello"}}` + "\n",
+		workDir: dir,
+		execStdout: `{"type":"step_start","sessionID":"ses_42","part":{"type":"step-start"}}` + "\n" +
+			`{"type":"text","sessionID":"ses_42","part":{"text":"hello"}}` + "\n",
 	}
 	spy := &spyRenderer{result: "rendered prompt"}
 	run := NewAgentRunWithLayout(issue, "42-fix-bug", sb, paths.NewLayout(&config.Config{}, dir))
@@ -323,6 +324,8 @@ func TestAgentRun_RunCapturesOpenCodeSessionAndReadableJSONOutput(t *testing.T) 
 	run.runID = "run-42"
 	run.batchID = "batch-42"
 	run.runFolder = filepath.Join(dir, "runs", "run-42")
+	var portalOutput bytes.Buffer
+	run.outputWriter = &portalOutput
 
 	res := run.Run(context.Background(), spy, config.BuiltInAgentPresets["opencode"].Command, prompt.RenderConfig{})
 	if res.Status != "success" {
@@ -340,6 +343,12 @@ func TestAgentRun_RunCapturesOpenCodeSessionAndReadableJSONOutput(t *testing.T) 
 	}
 	if !strings.Contains(string(logData), "hello") {
 		t.Fatalf("expected readable text event in run log, got %q", logData)
+	}
+	if strings.Contains(string(logData), `"type":"step_start"`) {
+		t.Fatalf("run log contains structural event: %q", logData)
+	}
+	if strings.Contains(portalOutput.String(), `"type":"step_start"`) || !strings.Contains(portalOutput.String(), "hello") {
+		t.Fatalf("portal output = %q, want readable text without structural event", portalOutput.String())
 	}
 	identity, err := os.ReadFile(filepath.Join(run.runFolder, "session.json"))
 	if err != nil {
