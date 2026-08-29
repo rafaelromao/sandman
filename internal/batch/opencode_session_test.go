@@ -474,6 +474,11 @@ func TestOpenCodeOutput_RendersToolDetails(t *testing.T) {
 			want:  "tool: read /tmp/foo.txt\n",
 		},
 		{
+			name:  "read with offset and limit",
+			input: `{"type":"tool_use","part":{"tool":"read","state":{"status":"completed","input":{"filePath":"/tmp/foo.txt","offset":20,"limit":10}}}}` + "\n",
+			want:  "tool: read /tmp/foo.txt (offset 20, limit 10)\n",
+		},
+		{
 			name:  "grep with pattern and path",
 			input: `{"type":"tool_use","part":{"tool":"grep","state":{"status":"completed","input":{"pattern":"hello.*world","path":"/tmp/demo"}}}}` + "\n",
 			want:  "tool: grep \"hello.*world\" in /tmp/demo\n",

@@ -207,10 +207,15 @@ func formatToolEvent(event map[string]any, tool string) string {
 	case "read":
 		if v, _ := input["filePath"].(string); v != "" {
 			detail = v
+			pagination := make([]string, 0, 2)
+			if offset, ok := input["offset"]; ok && offset != nil {
+				pagination = append(pagination, "offset "+formatToolInputValue(offset))
+			}
 			if limit, ok := input["limit"]; ok {
-				detail += fmt.Sprintf(" (%v)", formatToolInputValue(limit))
-			} else if offset, ok := input["offset"]; ok && offset != nil {
-				detail += fmt.Sprintf(" (offset %v)", formatToolInputValue(offset))
+				pagination = append(pagination, "limit "+formatToolInputValue(limit))
+			}
+			if len(pagination) > 0 {
+				detail += " (" + strings.Join(pagination, ", ") + ")"
 			}
 		}
 	case "grep":
