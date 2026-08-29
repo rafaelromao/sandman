@@ -171,6 +171,10 @@ func (w *opencodeOutput) writeLine(line []byte, newline bool) error {
 
 	eventType, _ := event["type"].(string)
 	switch eventType {
+	case "step_start", "step_finish":
+		// These delimit OpenCode's internal tool loop and had no counterpart in
+		// its previous human-oriented output.
+		return nil
 	case "error":
 		message := eventMessage(event)
 		normalizedMessage := normalizeSessionMessage(message)

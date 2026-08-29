@@ -431,3 +431,33 @@ func TestOpenCodeOutput_PreservesMalformedLineAndWarns(t *testing.T) {
 		t.Fatalf("warning = %q, want malformed-event diagnostic", warning.String())
 	}
 }
+
+func TestOpenCodeOutput_SuppressesStructuralEvents(t *testing.T) {
+	var out strings.Builder
+	parsed := newOpenCodeOutput(&out, io.Discard, false)
+	input := []byte(`{"type":"step_start","sessionID":"ses_42","part":{"type":"step-start"}}` + "\n" +
+		`{"type":"tool","part":{"tool":"read"}}` + "\n" +
+		`{"type":"step_finish","part":{"reason":"tool-calls","type":"step-finish"}}` + "\n" +
+		`{"type":"text","part":{"text":"Finished reviewing."}}` + "\n")
+	if _, err := parsed.Write(input); err != nil {
+		t.Fatalf("write returned error: %v", err)
+	}
+	if got := out.String(); got != "tool: read\nFinished reviewing.\n" {
+		t.Fatalf("output = %q, want only human-readable events", got)
+	}
+	if got := parsed.SessionID(); got != "ses_42" {
+		t.Fatalf("session id = %q, want session from suppressed event", got)
+	}
+}
+
+func TestOpenCodeOutput_PreservesUnknownJSONEvent(t *testing.T) {
+	var out strings.Builder
+	parsed := newOpenCodeOutput(&out, io.Discard, false)
+	input := `{"type":"future_event","detail":"keep me"}` + "\n"
+	if _, err := parsed.Write([]byte(input)); err != nil {
+		t.Fatalf("write returned error: %v", err)
+	}
+	if got := out.String(); got != input {
+		t.Fatalf("output = %q, want unknown event unchanged", got)
+	}
+}
