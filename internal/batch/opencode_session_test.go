@@ -504,9 +504,14 @@ func TestOpenCodeOutput_RendersToolDetails(t *testing.T) {
 			want:  "tool: edit /tmp/foo.txt\n",
 		},
 		{
+			name:  "apply patch with target",
+			input: `{"type":"tool_use","part":{"tool":"apply_patch","state":{"status":"completed","input":{"patchText":"*** Begin Patch\n*** Update File: /tmp/foo.txt\n@@\n-old\n+new\n*** End Patch"}}}}` + "\n",
+			want:  "tool: apply_patch /tmp/foo.txt\n",
+		},
+		{
 			name:  "todowrite count",
 			input: `{"type":"tool_use","part":{"tool":"todowrite","state":{"status":"completed","input":{"todos":[{"content":"a","status":"pending"}]}}}}` + "\n",
-			want:  "tool: todowrite 1 todos\n",
+			want:  "tool: todowrite 1 todos (pending: 1)\n",
 		},
 		{
 			name:  "bash error status",

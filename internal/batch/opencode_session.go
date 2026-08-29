@@ -261,12 +261,20 @@ func formatToolEvent(event map[string]any, tool string) string {
 			detail = fp
 		} else if fp, _ := input["path"].(string); fp != "" {
 			detail = fp
+		} else if patch, _ := input["patchText"].(string); patch != "" {
+			detail = patchTargets(patch)
 		}
 	case "todowrite":
 		if todos, ok := input["todos"].([]any); ok {
 			detail = fmt.Sprintf("%d todos", len(todos))
+			detail += todoStatusSummary(todos)
 		} else if todos, ok := input["todos"].([]map[string]any); ok {
 			detail = fmt.Sprintf("%d todos", len(todos))
+			items := make([]any, len(todos))
+			for i := range todos {
+				items[i] = todos[i]
+			}
+			detail += todoStatusSummary(items)
 		}
 	case "question":
 		if q, _ := input["question"].(string); q != "" {
@@ -295,6 +303,64 @@ func formatToolEvent(event map[string]any, tool string) string {
 		}
 	}
 	return base
+}
+
+func patchTargets(patch string) string {
+	const marker = "*** "
+	targets := make([]string, 0, 1)
+	for _, line := range strings.Split(patch, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, marker) {
+			continue
+		}
+		line = strings.TrimPrefix(line, marker)
+		for _, action := range []string{"Update File: ", "Add File: ", "Delete File: "} {
+			if target := strings.TrimPrefix(line, action); target != line {
+				if target != "" && !containsString(targets, target) {
+					targets = append(targets, target)
+				}
+				break
+			}
+		}
+	}
+	return strings.Join(targets, ", ")
+}
+
+func todoStatusSummary(todos []any) string {
+	counts := make(map[string]int)
+	for _, todo := range todos {
+		item, ok := todo.(map[string]any)
+		if !ok {
+			continue
+		}
+		status, _ := item["status"].(string)
+		if status != "" {
+			counts[status]++
+		}
+	}
+	if len(counts) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(counts))
+	for _, status := range []string{"pending", "in_progress", "completed", "cancelled"} {
+		if count := counts[status]; count > 0 {
+			parts = append(parts, fmt.Sprintf("%s: %d", status, count))
+			delete(counts, status)
+		}
+	}
+	for status, count := range counts {
+		parts = append(parts, fmt.Sprintf("%s: %d", status, count))
+	}
+	return " (" + strings.Join(parts, ", ") + ")"
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func toolInput(event map[string]any) map[string]any {
