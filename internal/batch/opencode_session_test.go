@@ -461,3 +461,64 @@ func TestOpenCodeOutput_PreservesUnknownJSONEvent(t *testing.T) {
 		t.Fatalf("output = %q, want unknown event unchanged", got)
 	}
 }
+
+func TestOpenCodeOutput_RendersToolDetails(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "read with filePath",
+			input: `{"type":"tool_use","part":{"tool":"read","state":{"status":"completed","input":{"filePath":"/tmp/foo.txt"}}}}` + "\n",
+			want:  "tool: read /tmp/foo.txt\n",
+		},
+		{
+			name:  "grep with pattern and path",
+			input: `{"type":"tool_use","part":{"tool":"grep","state":{"status":"completed","input":{"pattern":"hello.*world","path":"/tmp/demo"}}}}` + "\n",
+			want:  "tool: grep \"hello.*world\" in /tmp/demo\n",
+		},
+		{
+			name:  "glob with pattern",
+			input: `{"type":"tool_use","part":{"tool":"glob","state":{"status":"completed","input":{"pattern":"**/*.go","path":"/tmp"}}}}` + "\n",
+			want:  "tool: glob \"**/*.go\" in /tmp\n",
+		},
+		{
+			name:  "bash with command",
+			input: `{"type":"tool_use","part":{"tool":"bash","state":{"status":"completed","input":{"command":"ls -la /tmp/foo"}}}}` + "\n",
+			want:  "tool: bash ls -la /tmp/foo\n",
+		},
+		{
+			name:  "skill with name",
+			input: `{"type":"tool_use","part":{"tool":"skill","state":{"status":"completed","input":{"name":"recall"}}}}` + "\n",
+			want:  "tool: skill recall\n",
+		},
+		{
+			name:  "edit with filePath",
+			input: `{"type":"tool_use","part":{"tool":"edit","state":{"status":"completed","input":{"filePath":"/tmp/foo.txt"}}}}` + "\n",
+			want:  "tool: edit /tmp/foo.txt\n",
+		},
+		{
+			name:  "todowrite count",
+			input: `{"type":"tool_use","part":{"tool":"todowrite","state":{"status":"completed","input":{"todos":[{"content":"a","status":"pending"}]}}}}` + "\n",
+			want:  "tool: todowrite 1 todos\n",
+		},
+		{
+			name:  "bash error status",
+			input: `{"type":"tool_use","part":{"tool":"read","state":{"status":"error","input":{"filePath":"/etc/hosts"},"error":"The user rejected permission"}}}` + "\n",
+			want:  "tool: read /etc/hosts (error: The user rejected permission)\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var out strings.Builder
+			parsed := newOpenCodeOutput(&out, io.Discard, false)
+			if _, err := parsed.Write([]byte(tc.input)); err != nil {
+				t.Fatalf("write error: %v", err)
+			}
+			if got := out.String(); got != tc.want {
+				t.Fatalf("output = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

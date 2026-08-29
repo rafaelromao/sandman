@@ -192,10 +192,170 @@ func (w *opencodeOutput) writeLine(line []byte, newline bool) error {
 		}
 	case "tool", "tool_use", "tool_result":
 		if tool := eventTool(event); tool != "" {
-			return w.writeText("tool: " + tool)
+			return w.writeText(formatToolEvent(event, tool))
 		}
 	}
 	return w.writeRaw(line, newline)
+}
+
+func formatToolEvent(event map[string]any, tool string) string {
+	input := toolInput(event)
+	state := toolState(event)
+	status, _ := state["status"].(string)
+	var detail string
+	switch tool {
+	case "read":
+		if v, _ := input["filePath"].(string); v != "" {
+			detail = v
+			if limit, ok := input["limit"]; ok {
+				detail += fmt.Sprintf(" (%v)", formatToolInputValue(limit))
+			} else if offset, ok := input["offset"]; ok && offset != nil {
+				detail += fmt.Sprintf(" (offset %v)", formatToolInputValue(offset))
+			}
+		}
+	case "grep":
+		pattern, _ := input["pattern"].(string)
+		path, _ := input["path"].(string)
+		if path == "" {
+			path, _ = input["include"].(string)
+		}
+		if pattern != "" && path != "" {
+			detail = fmt.Sprintf("%q in %s", truncateString(pattern, 60), path)
+		} else if pattern != "" {
+			detail = fmt.Sprintf("%q", truncateString(pattern, 60))
+		} else if path != "" {
+			detail = path
+		}
+	case "glob":
+		pattern, _ := input["pattern"].(string)
+		path, _ := input["path"].(string)
+		if pattern != "" && path != "" {
+			detail = fmt.Sprintf("%q in %s", truncateString(pattern, 60), path)
+		} else if pattern != "" {
+			detail = fmt.Sprintf("%q", truncateString(pattern, 60))
+		} else if path != "" {
+			detail = path
+		}
+	case "bash":
+		if cmd, _ := input["command"].(string); cmd != "" {
+			detail = truncateString(strings.TrimSpace(cmd), 120)
+			if workdir, _ := input["workdir"].(string); workdir != "" && workdir != "." && workdir != "/tmp" {
+				detail += " @ " + workdir
+			}
+		} else if cmd, _ := input["cmd"].(string); cmd != "" {
+			detail = truncateString(strings.TrimSpace(cmd), 120)
+		}
+	case "skill":
+		if name, _ := input["name"].(string); name != "" {
+			detail = name
+		} else if name, _ := input["skill"].(string); name != "" {
+			detail = name
+		}
+	case "edit", "write", "apply_patch":
+		if fp, _ := input["filePath"].(string); fp != "" {
+			detail = fp
+		} else if fp, _ := input["path"].(string); fp != "" {
+			detail = fp
+		}
+	case "todowrite":
+		if todos, ok := input["todos"].([]any); ok {
+			detail = fmt.Sprintf("%d todos", len(todos))
+		} else if todos, ok := input["todos"].([]map[string]any); ok {
+			detail = fmt.Sprintf("%d todos", len(todos))
+		}
+	case "question":
+		if q, _ := input["question"].(string); q != "" {
+			detail = truncateString(q, 80)
+		} else if header, _ := input["header"].(string); header != "" {
+			detail = truncateString(header, 80)
+		}
+	default:
+		if input != nil && len(input) > 0 {
+			if b, err := json.Marshal(input); err == nil {
+				detail = truncateString(string(b), 120)
+			}
+		}
+	}
+	base := "tool: " + tool
+	if detail != "" {
+		base += " " + detail
+	}
+	if status == "error" {
+		if msg, _ := state["error"].(string); msg != "" {
+			base += fmt.Sprintf(" (error: %s)", truncateString(strings.TrimSpace(msg), 80))
+		} else if msg := toolErrorMessage(state); msg != "" {
+			base += fmt.Sprintf(" (error: %s)", truncateString(msg, 80))
+		} else {
+			base += " (error)"
+		}
+	}
+	return base
+}
+
+func toolInput(event map[string]any) map[string]any {
+	if part, ok := event["part"].(map[string]any); ok {
+		if state, ok := part["state"].(map[string]any); ok {
+			if input, ok := state["input"].(map[string]any); ok {
+				return input
+			}
+		}
+		if input, ok := part["input"].(map[string]any); ok {
+			return input
+		}
+	}
+	if input, ok := event["input"].(map[string]any); ok {
+		return input
+	}
+	return nil
+}
+
+func toolState(event map[string]any) map[string]any {
+	if part, ok := event["part"].(map[string]any); ok {
+		if state, ok := part["state"].(map[string]any); ok {
+			return state
+		}
+	}
+	return nil
+}
+
+func toolErrorMessage(state map[string]any) string {
+	if state == nil {
+		return ""
+	}
+	if msg, _ := state["error"].(string); msg != "" {
+		return msg
+	}
+	if errObj, ok := state["error"].(map[string]any); ok {
+		if msg, _ := errObj["message"].(string); msg != "" {
+			return msg
+		}
+	}
+	return ""
+}
+
+func formatToolInputValue(v any) string {
+	switch x := v.(type) {
+	case string:
+		return truncateString(x, 40)
+	case float64:
+		return fmt.Sprintf("%v", x)
+	default:
+		if b, err := json.Marshal(v); err == nil {
+			return truncateString(string(b), 40)
+		}
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+func truncateString(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= max {
+		return s
+	}
+	if max <= 3 {
+		return s[:max]
+	}
+	return s[:max-3] + "..."
 }
 
 func (w *opencodeOutput) writeText(text string) error {
