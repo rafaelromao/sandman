@@ -3056,11 +3056,16 @@ loop:
 						continue relaunch
 					}
 					if gateStatus == "resume" {
-						gateStatus = "failure"
-						extras = map[string]any{
-							"gate":        extras["gate"],
-							"reason":      "REMEDIATION_BUDGET_EXHAUSTED",
-							"next_action": "advance the pull-request head before requesting another remediation run",
+						gate, _ := extras["gate"].(string)
+						if isCIRemediationGate(gate) {
+							gateStatus = "await"
+						} else {
+							gateStatus = "failure"
+							extras = map[string]any{
+								"gate":        gate,
+								"reason":      "REMEDIATION_BUDGET_EXHAUSTED",
+								"next_action": "advance the pull-request head before requesting another remediation run",
+							}
 						}
 					}
 					result.Status = gateStatus
