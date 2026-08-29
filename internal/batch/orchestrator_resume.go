@@ -137,15 +137,6 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 		result.Status = s.emitTerminal(ctx, runID, result, nextExtras)
 		return result, true, true
 	}
-	if isCIRemediationGate(gate) && !consumeCIWaitRemediation(wt.WorkDir(), extras) {
-		result := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: 1}
-		result.Status = s.emitTerminal(ctx, runID, result, map[string]any{
-			"gate":        extras["gate"],
-			"reason":      "REMEDIATION_BUDGET_EXHAUSTED",
-			"next_action": "advance the pull-request head before requesting another remediation run",
-		})
-		return result, true, true
-	}
 	evidence := s.resumeEvidenceFor(ctx, branch, extras)
 	taskContent, _, _ := ReadTaskContent(filepath.Join(wt.WorkDir(), ".sandman", "task.md"))
 	s.renderCfg.TaskPrompt = s.resumePromptFor(taskContent, evidence, s.renderCfg.ReviewTimeout)
@@ -177,9 +168,6 @@ func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbo
 	if !isResumeGate(gate) {
 		return "", false
 	}
-	if isCIRemediationGate(gate) && !consumeCIWaitRemediation(wt.WorkDir(), extras) {
-		return "", false
-	}
 	evidence := s.resumeEvidenceFor(ctx, branch, extras)
 	taskContent, _, _ := ReadTaskContent(filepath.Join(wt.WorkDir(), ".sandman", "task.md"))
 	s.resumeCount++
@@ -198,7 +186,7 @@ func isResumeGate(gate string) bool {
 
 func isCIRemediationGate(gate string) bool {
 	switch gate {
-	case gateCIWaitTimeout, "ci-failure", "merge-conflict":
+	case gateCIWaitTimeout, "ci-failure":
 		return true
 	default:
 		return false

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/events"
 
 	"github.com/rafaelromao/sandman/internal/config"
@@ -25,6 +26,24 @@ func TestRunSingle_ModeContinueCIFailureReEvaluatesToAwait(t *testing.T) {
 
 	branch := "42-fix-bug"
 	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman", "state"), 0o755); err != nil {
+		t.Fatalf("create worktree state directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("# Task\n"), 0o644); err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+	registration := ciWaitRegistration{
+		Protocol:             ciWaitProtocol,
+		PullRequest:          17,
+		HeadSHA:              "current-sha",
+		StartedUnixSeconds:   time.Now().Add(-time.Minute).Unix(),
+		DeadlineUnixSeconds:  time.Now().Add(ciWaitTimeout - time.Minute).Unix(),
+		EffectiveTimeoutSecs: int64(ciWaitTimeout / time.Second),
+		RemediationAttempts:  defaultAwaitResumeMax,
+	}
+	if err := atomicfs.WriteAtomicJSON(filepath.Join(worktreePath, ".sandman", "state", "17.ci_wait.json"), registration, 0o600); err != nil {
+		t.Fatalf("seed exhausted CI wait state: %v", err)
+	}
 
 	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
 	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
@@ -70,7 +89,10 @@ func TestRunSingle_ModeContinueCIFailureReEvaluatesToAwait(t *testing.T) {
 		t.Fatalf("status = %q, want await after bounded CI remediation resumes", result.Status)
 	}
 	if got := len(resultFactory.created); got != 4 {
-		t.Fatalf("agent launches = %d, want entry launch plus three remediation resumes", got)
+		t.Fatalf("agent launches = %d, want exhausted entry remediation plus three in-session remediation resumes", got)
+	}
+	if !strings.Contains(resultFactory.configs[0].TaskPrompt, "CI_FAILURE") {
+		t.Fatalf("entry remediation prompt = %q, want CI failure evidence", resultFactory.configs[0].TaskPrompt)
 	}
 	logs, err := spyLog.Read()
 	if err != nil {

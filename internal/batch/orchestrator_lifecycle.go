@@ -589,6 +589,9 @@ func (s *runSession) observeLifecycle(ctx context.Context, workDir, branch, logP
 			if isResumeGate(gate) && s.resumeCount < s.resumeCapFor() {
 				return status, nextExtras, true
 			}
+			if isCIRemediationGate(gate) {
+				return "await", nextExtras, true
+			}
 			return "failure", map[string]any{
 				"gate":        gate,
 				"reason":      "REMEDIATION_BUDGET_EXHAUSTED",

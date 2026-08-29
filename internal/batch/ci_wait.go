@@ -77,29 +77,6 @@ func ciWaitEvidenceFromRegistration(registration ciWaitRegistration, prNumber in
 	}, nil
 }
 
-func consumeCIWaitRemediation(workDir string, evidence map[string]any) bool {
-	ciWait, ok := evidence["ci_wait"].(map[string]any)
-	if !ok {
-		return true
-	}
-	pullRequest, ok := ciWait["pull_request"].(int)
-	headSHA, headOK := ciWait["head_sha"].(string)
-	if !ok || !headOK || pullRequest <= 0 || strings.TrimSpace(headSHA) == "" {
-		return false
-	}
-	path := filepath.Join(paths.NewLayout(nil, workDir).StateDir, fmt.Sprintf("%d.ci_wait.json", pullRequest))
-	registration, err := readCIWaitRegistration(path)
-	if err != nil || !strings.EqualFold(registration.HeadSHA, headSHA) || registration.RemediationAttempts >= defaultAwaitResumeMax {
-		return false
-	}
-	registration.RemediationAttempts++
-	if err := atomicfs.WriteAtomicJSON(path, registration, 0o600); err != nil {
-		return false
-	}
-	ciWait["remediation_attempts"] = registration.RemediationAttempts
-	return true
-}
-
 func readCIWaitRegistration(path string) (ciWaitRegistration, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
