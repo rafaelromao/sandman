@@ -475,15 +475,16 @@ func TestOpenCodeOutput_FormatsUnhandledValidJSON(t *testing.T) {
 	}
 }
 
-func TestOpenCodeOutput_BoundsLargeUnhandledJSON(t *testing.T) {
+func TestOpenCodeOutput_PreservesLargeUnhandledJSON(t *testing.T) {
 	var out strings.Builder
 	parsed := newOpenCodeOutput(&out, io.Discard, false)
-	input := `{"detail":"` + strings.Repeat("x", maxOpenCodeJSONPreview*2) + `"}` + "\n"
+	detail := strings.Repeat("x", 2048)
+	input := `{"detail":"` + detail + `"}` + "\n"
 	if _, err := parsed.Write([]byte(input)); err != nil {
 		t.Fatalf("write returned error: %v", err)
 	}
-	if got := out.String(); len(got) > maxOpenCodeJSONPreview || !strings.Contains(got, `"truncated": true`) || !strings.Contains(got, `"preview":`) {
-		t.Fatalf("bounded output = %q, want valid truncated JSON wrapper", got)
+	if got := out.String(); !strings.Contains(got, detail) {
+		t.Fatalf("output omitted large JSON detail")
 	}
 }
 

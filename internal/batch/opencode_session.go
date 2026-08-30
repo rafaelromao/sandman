@@ -17,7 +17,6 @@ import (
 const (
 	opencodeSessionProtocol = "opencode-session/v1"
 	opencodeProvider        = "opencode"
-	maxOpenCodeJSONPreview  = 1024
 )
 
 type opencodeSessionIdentity struct {
@@ -203,26 +202,14 @@ func (w *opencodeOutput) writeLine(line []byte, newline bool) error {
 	return w.writeText(formatUnhandledOpenCodeJSON(value))
 }
 
-// formatUnhandledOpenCodeJSON keeps valid protocol additions useful without
-// letting an unexpectedly large event dominate the run log. Large values stay
-// valid JSON by placing a rune-safe preview inside a small wrapper object.
+// formatUnhandledOpenCodeJSON keeps valid protocol additions readable while
+// preserving their complete payload in the canonical run log.
 func formatUnhandledOpenCodeJSON(value any) string {
 	formatted, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return fmt.Sprintf("%v", value)
 	}
-	if len(formatted) <= maxOpenCodeJSONPreview {
-		return string(formatted)
-	}
-	preview := truncateString(string(formatted), maxOpenCodeJSONPreview-80)
-	bounded, err := json.MarshalIndent(map[string]any{
-		"truncated": true,
-		"preview":   preview,
-	}, "", "  ")
-	if err != nil {
-		return preview
-	}
-	return string(bounded)
+	return string(formatted)
 }
 
 func formatToolEvent(event map[string]any, tool string) string {
