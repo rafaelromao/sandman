@@ -149,12 +149,16 @@ func (w *opencodeOutput) writeLine(line []byte, newline bool) error {
 		w.capture.mu.Unlock()
 	}
 
-	var event map[string]any
-	if err := json.Unmarshal(line, &event); err != nil {
+	var value any
+	if err := json.Unmarshal(line, &value); err != nil {
 		if strings.TrimSpace(text) != "" {
 			w.warn(fmt.Sprintf("malformed OpenCode event: %v", err))
 		}
 		return w.writeRaw(line, newline)
+	}
+	event, ok := value.(map[string]any)
+	if !ok {
+		return w.writeText(formatUnhandledOpenCodeJSON(value))
 	}
 	if id, ok := event["sessionID"].(string); ok && strings.TrimSpace(id) != "" {
 		id = strings.TrimSpace(id)
@@ -195,7 +199,17 @@ func (w *opencodeOutput) writeLine(line []byte, newline bool) error {
 			return w.writeText(formatToolEvent(event, tool))
 		}
 	}
-	return w.writeRaw(line, newline)
+	return w.writeText(formatUnhandledOpenCodeJSON(value))
+}
+
+// formatUnhandledOpenCodeJSON keeps valid protocol additions readable while
+// preserving their complete payload in the canonical run log.
+func formatUnhandledOpenCodeJSON(value any) string {
+	formatted, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return fmt.Sprintf("%v", value)
+	}
+	return string(formatted)
 }
 
 func formatToolEvent(event map[string]any, tool string) string {
@@ -282,6 +296,10 @@ func formatToolEvent(event map[string]any, tool string) string {
 		} else if header, _ := input["header"].(string); header != "" {
 			detail = truncateString(header, 80)
 		}
+	case "pty_spawn":
+		detail = formatPTYSpawn(input, state)
+	case "pty_read", "pty_write", "pty_kill":
+		detail = formatPTYEvent(tool, input, state)
 	default:
 		if input != nil && len(input) > 0 {
 			if b, err := json.Marshal(input); err == nil {
@@ -312,6 +330,18 @@ func formatToolLabel(tool, detail string) string {
 	if tool == "skill" && detail != "" {
 		return fmt.Sprintf("→ Skill %q", detail)
 	}
+	ptyLabels := map[string]string{
+		"pty_spawn": "→ PTY Spawn",
+		"pty_read":  "→ PTY Read",
+		"pty_write": "→ PTY Write",
+		"pty_kill":  "→ PTY Kill",
+	}
+	if label := ptyLabels[tool]; label != "" {
+		if detail == "" {
+			return label
+		}
+		return label + " " + detail
+	}
 	labels := map[string]string{
 		"read":        "→ Read",
 		"grep":        "✱ Grep",
@@ -330,6 +360,72 @@ func formatToolLabel(tool, detail string) string {
 		return label
 	}
 	return label + " " + detail
+}
+
+func formatPTYSpawn(input, state map[string]any) string {
+	parts := make([]string, 0, 4)
+	if command, _ := input["command"].(string); command != "" {
+		parts = append(parts, command)
+	}
+	if args, ok := input["args"]; ok {
+		if rendered := formatToolInputValue(args); rendered != "" && rendered != "null" && rendered != "[]" {
+			parts = append(parts, rendered)
+		}
+	}
+	if description, _ := input["description"].(string); description != "" {
+		parts = append(parts, "("+truncateString(description, 80)+")")
+	}
+	if session := ptySessionID(input, state); session != "" {
+		parts = append(parts, "["+session+"]")
+	}
+	return strings.Join(parts, " ")
+}
+
+func formatPTYEvent(tool string, input, state map[string]any) string {
+	parts := make([]string, 0, 3)
+	if session := ptySessionID(input, state); session != "" {
+		parts = append(parts, session)
+	}
+	if tool == "pty_write" {
+		if data, _ := input["data"].(string); data != "" {
+			parts = append(parts, fmt.Sprintf("%q", truncateString(data, 120)))
+		}
+	}
+	if tool == "pty_read" {
+		if output := ptyOutput(input, state); output != "" {
+			parts = append(parts, "output "+fmt.Sprintf("%q", truncateString(output, 120)))
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func ptySessionID(input, state map[string]any) string {
+	for _, values := range []map[string]any{input, state} {
+		for _, key := range []string{"id", "session", "sessionID"} {
+			if value, _ := values[key].(string); value != "" {
+				return value
+			}
+		}
+		if output, _ := values["output"].(map[string]any); output != nil {
+			for _, key := range []string{"id", "session", "sessionID"} {
+				if value, _ := output[key].(string); value != "" {
+					return value
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func ptyOutput(input, state map[string]any) string {
+	for _, values := range []map[string]any{state, input} {
+		for _, key := range []string{"output", "data", "result"} {
+			if value, _ := values[key].(string); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
 }
 
 func patchTargets(patch string) string {
@@ -450,10 +546,14 @@ func truncateString(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
-	if max <= 3 {
-		return s[:max]
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
 	}
-	return s[:max-3] + "..."
+	if max <= 3 {
+		return string(runes[:max])
+	}
+	return string(runes[:max-3]) + "..."
 }
 
 func (w *opencodeOutput) writeText(text string) error {
