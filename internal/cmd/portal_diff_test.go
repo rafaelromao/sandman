@@ -2905,7 +2905,7 @@ func TestPortalHTMLTerminalTimeThemeToken(t *testing.T) {
 		if end := strings.Index(block, "\n    }"); end >= 0 {
 			block = block[:end]
 		}
-		if !strings.Contains(block, "--terminal-time: color-mix(in oklch, var(--accent) 65%, var(--text));") {
+		if !strings.Contains(block, "--terminal-time: color-mix(in oklch, var(--accent) 65%, white);") {
 			t.Fatalf("theme %q does not define a light --terminal-time accent", selector)
 		}
 	}
