@@ -289,10 +289,7 @@ func formatToolEvent(event map[string]any, tool string) string {
 			}
 		}
 	}
-	base := "tool: " + tool
-	if detail != "" {
-		base += " " + detail
-	}
+	base := formatToolLabel(tool, detail)
 	if status == "error" {
 		if msg, _ := state["error"].(string); msg != "" {
 			base += fmt.Sprintf(" (error: %s)", truncateString(strings.TrimSpace(msg), 80))
@@ -303,6 +300,36 @@ func formatToolEvent(event map[string]any, tool string) string {
 		}
 	}
 	return base
+}
+
+func formatToolLabel(tool, detail string) string {
+	if tool == "bash" {
+		if detail == "" {
+			return "$"
+		}
+		return "$ " + detail
+	}
+	if tool == "skill" && detail != "" {
+		return fmt.Sprintf("Skill %q", detail)
+	}
+	labels := map[string]string{
+		"read":        "Read",
+		"grep":        "Grep",
+		"glob":        "Glob",
+		"edit":        "Edit",
+		"write":       "Write",
+		"apply_patch": "Apply patch",
+		"todowrite":   "Todos:",
+		"question":    "Question:",
+	}
+	label := labels[tool]
+	if label == "" {
+		label = tool
+	}
+	if detail == "" {
+		return label
+	}
+	return label + " " + detail
 }
 
 func patchTargets(patch string) string {
