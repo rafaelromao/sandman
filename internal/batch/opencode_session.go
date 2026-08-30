@@ -310,21 +310,21 @@ func formatToolLabel(tool, detail string) string {
 		return "$ " + detail
 	}
 	if tool == "skill" && detail != "" {
-		return fmt.Sprintf("→ Skill %q", detail)
+		return fmt.Sprintf("Skill %q", detail)
 	}
 	labels := map[string]string{
-		"read":        "→ Read",
-		"grep":        "✱ Grep",
-		"glob":        "✱ Glob",
-		"edit":        "→ Edit",
-		"write":       "→ Write",
-		"apply_patch": "→ Edit",
-		"todowrite":   "→ Task",
-		"question":    "→ Task",
+		"read":        "Read",
+		"grep":        "Grep",
+		"glob":        "Glob",
+		"edit":        "Edit",
+		"write":       "Write",
+		"apply_patch": "Apply patch",
+		"todowrite":   "Todos:",
+		"question":    "Question:",
 	}
 	label := labels[tool]
 	if label == "" {
-		label = "→ Tool " + tool
+		label = tool
 	}
 	if detail == "" {
 		return label

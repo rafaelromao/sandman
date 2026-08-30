@@ -2891,7 +2891,7 @@ if (bashTool.indexOf('Bash') === -1) throw new Error('expected Bash label preser
 	const readTool = SandmanPortalDiff.highlightTerminalLog('→ Read file.go');
 	if (readTool.indexOf('term-action') === -1) throw new Error('expected term-action span for Read');
 	if (readTool.indexOf('Read') === -1) throw new Error('expected Read label preserved');
-	for (const line of ['→ Skill "sandman"', '✱ Grep "pattern" in .', '✱ Glob "**/*.go" in .', '→ Edit file.go', '→ Task 2 todos']) {
+	for (const line of ['Skill "sandman"', 'Grep "pattern" in .', 'Glob "**/*.go" in .', 'Edit file.go', 'Apply patch file.go', 'Todos: 2 todos']) {
 	  const rendered = SandmanPortalDiff.highlightTerminalLog(line);
 	  if (rendered.indexOf('term-action') === -1) throw new Error('expected term-action span for ' + line);
 	}
