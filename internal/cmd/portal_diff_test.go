@@ -2846,6 +2846,74 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffHighlightTerminalLog_TimestampOnlyAtLineStart(t *testing.T) {
+	js := `const result = SandmanPortalDiff.highlightTerminalLog('started at 14:32:15');
+if (result.indexOf('term-time') !== -1) throw new Error('timestamp away from line start must stay plain: ' + result);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightTerminalLog_PTYAndFormattedJSON(t *testing.T) {
+	js := `for (const line of ['→ PTY Spawn npm ["run","dev"]', '-> PTY Read pty_123 output "ready"']) {
+  const result = SandmanPortalDiff.highlightTerminalLog(line);
+  if (result.indexOf('term-tool') === -1 || result.indexOf('term-action') === -1) throw new Error('expected PTY marker and label highlighting: ' + result);
+}
+const json = SandmanPortalDiff.highlightTerminalLog('{\n  "truncated": true,\n  "preview": "value"\n}');
+for (const token of ['json-key', 'json-boolean', 'json-string', 'json-punctuation']) {
+  if (json.indexOf(token) === -1) throw new Error('expected formatted JSON ' + token + ': ' + json);
+}
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightTerminalLog_PrismHarnessRecognizesPTYAndJSON(t *testing.T) {
+	setup := `sandbox.Prism = {
+  languages: {},
+  util: { encode: function(value) { return String(value); } },
+  Token: { stringify: function(token) { return '<span class="token ' + token.type + '">' + token.content + '</span>'; } },
+  tokenize: function(text, grammar) {
+    return grammar['term-action'].pattern.test(text) ? [{ type: 'term-action', content: text }] : [text];
+  }
+};`
+	js := `const pty = SandmanPortalDiff.highlightTerminalLog('→ PTY Kill pty_123');
+if (pty.indexOf('term-action') === -1) throw new Error('Prism PTY label not highlighted: ' + pty);
+const json = SandmanPortalDiff.highlightTerminalLog('{"ok":true}');
+if (json.indexOf('json-key') === -1 || json.indexOf('json-boolean') === -1) throw new Error('Prism JSON not highlighted: ' + json);
+console.log('PASS');
+`
+	runNodeScriptWithSetup(t, setup, js)
+}
+
+func TestPortalHTMLTerminalTimeThemeToken(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(currentFile), "portal.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	for _, selector := range []string{":root", `html[data-theme="sandman"]`, `html[data-theme="sandman-light"]`, `html[data-theme="catppuccin"]`, `html[data-theme="tokio-night"]`, `html[data-theme="gruvbox"]`, `html[data-theme="evergreen"]`} {
+		start := strings.Index(content, selector+" {")
+		if start < 0 {
+			t.Fatalf("missing theme selector %q", selector)
+		}
+		block := content[start:]
+		if end := strings.Index(block, "\n    }"); end >= 0 {
+			block = block[:end]
+		}
+		if !strings.Contains(block, "--terminal-time:") {
+			t.Fatalf("theme %q does not define --terminal-time", selector)
+		}
+	}
+	if !strings.Contains(content, ".term-time { color: var(--terminal-time);") {
+		t.Fatal("term-time must use --terminal-time")
+	}
+}
+
 func TestPortalDiffHighlightTerminalLog_BareCommandWordsStayPlain(t *testing.T) {
 	js := `const cases = [
   'git command not found',
@@ -3550,6 +3618,10 @@ const documentRef = makeMockDocument();
 }
 
 func runNodeScript(t *testing.T, js string) {
+	runNodeScriptWithSetup(t, "", js)
+}
+
+func runNodeScriptWithSetup(t *testing.T, setup, js string) {
 	t.Helper()
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -3587,6 +3659,7 @@ const source = fs.readFileSync(helperPath, 'utf8');
 			helpers.renderRunMeta = sandbox.renderRunMeta;
 		}
 	}
+	` + setup + `
 	vm.runInNewContext(source, sandbox, { filename: helperPath });
 	const SandmanPortalDiff = sandbox.SandmanPortalDiff;
 	if (!SandmanPortalDiff) throw new Error('SandmanPortalDiff missing');

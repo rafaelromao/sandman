@@ -768,7 +768,7 @@
     };
 
     Prism.languages['sandman-log'] = {
-      'term-time': { pattern: /\b\d{2}:\d{2}:\d{2}\b/, greedy: true },
+      'term-time': { pattern: /^\d{2}:\d{2}:\d{2}\b/, greedy: true },
       'term-command': {
         pattern: new RegExp('^\\$\\s+(?:' + shellCommands + ')\\b'),
         inside: {
@@ -779,14 +779,14 @@
       },
       'term-prompt': { pattern: /^\$ /, greedy: true },
       'term-action': {
-        pattern: new RegExp('^\\s*(?:[→←✱]\\s+)?(?:' + actionVerbs + ')\\b'),
+        pattern: new RegExp('^\\s*(?:(?:[→←✱]|->)\\s+)?(?:' + actionVerbs + '|PTY (?:Spawn|Read|Write|Kill))\\b'),
         inside: {
-          'term-tool': /^\s*[→←✱]\s+/,
-          'term-action': new RegExp('\\b(?:' + actionVerbs + ')\\b')
+          'term-tool': /^\s*(?:[→←✱]|->)\s+/,
+          'term-action': new RegExp('\\b(?:' + actionVerbs + '|PTY (?:Spawn|Read|Write|Kill))\\b')
         },
         greedy: true
       },
-      'term-tool': { pattern: /^(\s*)([→←✱])\s/, lookbehind: true, greedy: true },
+      'term-tool': { pattern: /^(\s*)([→←✱]|->)\s/, lookbehind: true, greedy: true },
       'term-mark': { pattern: /^--- (?:run|retry) \d+\/\d+ ---$/, greedy: true },
       'term-heading': { pattern: /^(?:```[A-Za-z0-9_+-]*|lang=[A-Za-z0-9_+-]+|> build.*|#{1,6} .*|@@.*@@)$/, greedy: true },
       'term-pass': { pattern: /^\*\*APPROVED(?:\s+with\s+comments)?\*\*|^--- PASS:|^--- FAIL:|^FAIL\s+\S|^ok\s+\S|^PASSED$|^FAILED$|^Passed!|^Failed!|^Tests run:.*Failures: 0|^\d+ tests?, 0 failures|^\d+ examples?, 0 failures|^test result: ok|^test result: FAILED|^✓|^✕/, greedy: true },
@@ -834,7 +834,7 @@
       { regex: /^(?:test result: FAILED.*)/, render: (m) => wrapToken('term-fail', m[0]) },
       { regex: new RegExp('^(\\$\\s+)(' + shellCommands + ')\\b'), render: (m) => wrapToken('term-prompt', m[1]) + wrapToken('term-command', m[2]) },
       { regex: /^(?:\$ )/, render: (m) => wrapToken('term-prompt', m[0]) },
-      { regex: /^(\s*)(?:([→←✱])(\s+))?(Read|Edit|Glob|Skill|Bash|Write|Task|Grep|Search|Apply patch|Todos)\b/, render: (m) => escapeHTML(m[1]) + (m[2] ? wrapToken('term-tool', m[2] + m[3]) : '') + wrapToken('term-action', m[4]) },
+      { regex: /^(\s*)(?:([→←✱]|->)(\s+))?(Read|Edit|Glob|Skill|Bash|Write|Task|Grep|Search|Apply patch|Todos|PTY (?:Spawn|Read|Write|Kill))\b/, render: (m) => escapeHTML(m[1]) + (m[2] ? wrapToken('term-tool', m[2] + m[3]) : '') + wrapToken('term-action', m[4]) },
       { regex: /^--- (?:run|retry) \d+\/\d+ ---$/, render: (m) => wrapToken('term-mark', m[0]) },
       { regex: /^(> build.*)$/, render: (m) => wrapToken('term-heading', m[1]) },
       { regex: /^(#{1,6} .*?)$/, render: (m) => wrapToken('term-heading', m[1]) },
@@ -846,7 +846,7 @@
       { regex: /^(?:\+\+\+ .*?)$/, render: (m) => wrapToken('term-path', m[0]) },
       { regex: /^(?:--- .*?)$/, render: (m) => wrapToken('term-path', m[0]) },
       { regex: /^(?:@@.*@@)$/, render: (m) => wrapToken('term-heading', m[0]) },
-      { regex: /^(\d{2}:\d{2}:\d{2})\b/, render: (m) => wrapToken('term-time', m[1]) },
+      { regex: /^(\d{2}:\d{2}:\d{2})\b/, lineStart: true, render: (m) => wrapToken('term-time', m[1]) },
       { regex: /^(?:#\d+|PR#?\d+)\b/, render: (m) => wrapToken('term-issue', m[0]) },
       { regex: /^(?:[0-9a-fA-F]{7,})\b/, render: (m) => wrapToken('term-hash', m[0]) },
       { regex: /^\b(?:sub-agent|subagent)\b/, render: (m) => wrapToken('term-subagent', m[0]) },
@@ -866,12 +866,14 @@
 
   function renderGrammarLine(line, grammar) {
     if (!line) return '';
+    if (isFormattedJSONLine(line)) return highlightJSON(line);
     const rules = Array.isArray(grammar) && grammar.length ? grammar : terminalGrammar();
     let out = '';
     let index = 0;
     while (index < line.length) {
       let matched = null;
       for (const rule of rules) {
+		if (rule.lineStart && index !== 0) continue;
         const slice = line.slice(index);
         const match = rule.regex.exec(slice);
         if (match && match.index === 0) {
@@ -888,6 +890,10 @@
       index += 1;
     }
     return out;
+  }
+
+  function isFormattedJSONLine(line) {
+    return /^\s*(?:[\[{].*|[}\],]|"(?:[^"\\]|\\.)*"\s*:.*|"(?:[^"\\]|\\.)*"\s*,?|true|false|null|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)[\s,}\]]*$/.test(line);
   }
 
   // Memoize the expensive full-log tokenization. highlightTerminalLog is
@@ -949,6 +955,7 @@
       if (/^```[A-Za-z0-9_+-]*$/.test(raw) || /^lang=[A-Za-z0-9_+-]+$/.test(raw)) {
         return '<span class="term-heading">' + escapeHTML(raw) + '</span>';
       }
+      if (isFormattedJSONLine(raw)) return highlightJSON(raw);
       const grammar = Prism.languages['sandman-log'];
       const tokens = Prism.tokenize(raw, grammar);
       return tokens.map(token => {

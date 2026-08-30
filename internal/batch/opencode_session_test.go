@@ -450,15 +450,40 @@ func TestOpenCodeOutput_SuppressesStructuralEvents(t *testing.T) {
 	}
 }
 
-func TestOpenCodeOutput_PreservesUnknownJSONEvent(t *testing.T) {
+func TestOpenCodeOutput_FormatsUnhandledValidJSON(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "object", input: `{"type":"future_event","detail":"keep me"}` + "\n", want: "{\n  \"detail\": \"keep me\",\n  \"type\": \"future_event\"\n}\n"},
+		{name: "array", input: `["future",true]` + "\n", want: "[\n  \"future\",\n  true\n]\n"},
+		{name: "scalar", input: `42` + "\n", want: "42\n"},
+		{name: "null", input: `null` + "\n", want: "null\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var out strings.Builder
+			parsed := newOpenCodeOutput(&out, io.Discard, false)
+			if _, err := parsed.Write([]byte(tc.input)); err != nil {
+				t.Fatalf("write returned error: %v", err)
+			}
+			if got := out.String(); got != tc.want {
+				t.Fatalf("output = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestOpenCodeOutput_BoundsLargeUnhandledJSON(t *testing.T) {
 	var out strings.Builder
 	parsed := newOpenCodeOutput(&out, io.Discard, false)
-	input := `{"type":"future_event","detail":"keep me"}` + "\n"
+	input := `{"detail":"` + strings.Repeat("x", maxOpenCodeJSONPreview*2) + `"}` + "\n"
 	if _, err := parsed.Write([]byte(input)); err != nil {
 		t.Fatalf("write returned error: %v", err)
 	}
-	if got := out.String(); got != input {
-		t.Fatalf("output = %q, want unknown event unchanged", got)
+	if got := out.String(); len(got) > maxOpenCodeJSONPreview || !strings.Contains(got, `"truncated": true`) || !strings.Contains(got, `"preview":`) {
+		t.Fatalf("bounded output = %q, want valid truncated JSON wrapper", got)
 	}
 }
 
@@ -522,6 +547,26 @@ func TestOpenCodeOutput_RendersToolDetails(t *testing.T) {
 			name:  "bash error status",
 			input: `{"type":"tool_use","part":{"tool":"read","state":{"status":"error","input":{"filePath":"/etc/hosts"},"error":"The user rejected permission"}}}` + "\n",
 			want:  "→ Read /etc/hosts (error: The user rejected permission)\n",
+		},
+		{
+			name:  "pty spawn with command args description and session",
+			input: `{"type":"tool_use","part":{"tool":"pty_spawn","state":{"status":"completed","input":{"command":"npm","args":["run","dev"],"description":"Start development server"},"output":{"id":"pty_123"}}}}` + "\n",
+			want:  "→ PTY Spawn npm [\"run\",\"dev\"] (Start development server) [pty_123]\n",
+		},
+		{
+			name:  "pty read preserves session output and error",
+			input: `{"type":"tool_result","part":{"tool":"pty_read","state":{"status":"error","input":{"id":"pty_123"},"output":"server ready","error":"read failed"}}}` + "\n",
+			want:  "→ PTY Read pty_123 output \"server ready\" (error: read failed)\n",
+		},
+		{
+			name:  "pty write preserves input",
+			input: `{"type":"tool_use","part":{"tool":"pty_write","state":{"status":"completed","input":{"id":"pty_123","data":"status\n"}}}}` + "\n",
+			want:  "→ PTY Write pty_123 \"status\"\n",
+		},
+		{
+			name:  "pty kill preserves session",
+			input: `{"type":"tool_use","part":{"tool":"pty_kill","state":{"status":"completed","input":{"id":"pty_123"}}}}` + "\n",
+			want:  "→ PTY Kill pty_123\n",
 		},
 	}
 	for _, tc := range cases {
