@@ -2888,10 +2888,18 @@ if (prompt.indexOf('term-command') === -1) throw new Error('expected term-comman
 const bashTool = SandmanPortalDiff.highlightTerminalLog('→ Bash install');
 if (bashTool.indexOf('term-action') === -1) throw new Error('expected term-action span for Bash');
 if (bashTool.indexOf('Bash') === -1) throw new Error('expected Bash label preserved');
-const readTool = SandmanPortalDiff.highlightTerminalLog('→ Read file.go');
-if (readTool.indexOf('term-action') === -1) throw new Error('expected term-action span for Read');
-if (readTool.indexOf('Read') === -1) throw new Error('expected Read label preserved');
-console.log('PASS');
+	const readTool = SandmanPortalDiff.highlightTerminalLog('→ Read file.go');
+	if (readTool.indexOf('term-action') === -1) throw new Error('expected term-action span for Read');
+	if (readTool.indexOf('Read') === -1) throw new Error('expected Read label preserved');
+	for (const line of ['→ Skill "sandman"', '✱ Grep "pattern" in .', '✱ Glob "**/*.go" in .', '→ Edit file.go', '→ Task 2 todos']) {
+	  const rendered = SandmanPortalDiff.highlightTerminalLog(line);
+	  if (rendered.indexOf('term-action') === -1) throw new Error('expected term-action span for ' + line);
+	}
+	for (const line of ['Read file.go', 'Apply patch file.go', 'Todos: 2 todos']) {
+	  const rendered = SandmanPortalDiff.highlightTerminalLog(line);
+	  if (rendered.indexOf('term-action') === -1) throw new Error('expected term-action span for legacy ' + line);
+	}
+	console.log('PASS');
 `
 	runNodeScript(t, js)
 }

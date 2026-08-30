@@ -14,7 +14,7 @@
   const logPaneCache = new Map();
   const LOG_PANE_CACHE_LIMIT = 8;
   const shellCommands = 'gh|git|go|npm|yarn|node|npx|ls|echo|cat|make|mkdir|rm|cp|mv|find|grep|sed|awk|curl|wget|pwd|cd|printf|tar|unzip|jq|chmod|ln|whoami|sort|head|tail|less|more|touch|ssh|scp';
-  const actionVerbs = 'Read|Edit|Glob|Skill|Bash|Write|Task|Grep|Search';
+  const actionVerbs = 'Read|Edit|Glob|Skill|Bash|Write|Task|Grep|Search|Apply patch|Todos';
   function takeCachedLogPane(subjectValue) {
     const pane = logPaneCache.get(subjectValue);
     if (pane) logPaneCache.delete(subjectValue);
@@ -779,7 +779,7 @@
       },
       'term-prompt': { pattern: /^\$ /, greedy: true },
       'term-action': {
-        pattern: new RegExp('^\\s*[→←✱]\\s+(?:' + actionVerbs + ')\\b'),
+        pattern: new RegExp('^\\s*(?:[→←✱]\\s+)?(?:' + actionVerbs + ')\\b'),
         inside: {
           'term-tool': /^\s*[→←✱]\s+/,
           'term-action': new RegExp('\\b(?:' + actionVerbs + ')\\b')
@@ -834,7 +834,7 @@
       { regex: /^(?:test result: FAILED.*)/, render: (m) => wrapToken('term-fail', m[0]) },
       { regex: new RegExp('^(\\$\\s+)(' + shellCommands + ')\\b'), render: (m) => wrapToken('term-prompt', m[1]) + wrapToken('term-command', m[2]) },
       { regex: /^(?:\$ )/, render: (m) => wrapToken('term-prompt', m[0]) },
-      { regex: /^(\s*)([→←✱])(\s+)(Read|Edit|Glob|Skill|Bash|Write|Task|Grep|Search)\b/, render: (m) => escapeHTML(m[1]) + wrapToken('term-tool', m[2] + m[3]) + wrapToken('term-action', m[4]) },
+      { regex: /^(\s*)(?:([→←✱])(\s+))?(Read|Edit|Glob|Skill|Bash|Write|Task|Grep|Search|Apply patch|Todos)\b/, render: (m) => escapeHTML(m[1]) + (m[2] ? wrapToken('term-tool', m[2] + m[3]) : '') + wrapToken('term-action', m[4]) },
       { regex: /^--- (?:run|retry) \d+\/\d+ ---$/, render: (m) => wrapToken('term-mark', m[0]) },
       { regex: /^(> build.*)$/, render: (m) => wrapToken('term-heading', m[1]) },
       { regex: /^(#{1,6} .*?)$/, render: (m) => wrapToken('term-heading', m[1]) },
