@@ -442,7 +442,7 @@ func TestOpenCodeOutput_SuppressesStructuralEvents(t *testing.T) {
 	if _, err := parsed.Write(input); err != nil {
 		t.Fatalf("write returned error: %v", err)
 	}
-	if got := out.String(); got != "Read\nFinished reviewing.\n" {
+	if got := out.String(); got != "→ Read\nFinished reviewing.\n" {
 		t.Fatalf("output = %q, want only human-readable events", got)
 	}
 	if got := parsed.SessionID(); got != "ses_42" {
@@ -471,22 +471,22 @@ func TestOpenCodeOutput_RendersToolDetails(t *testing.T) {
 		{
 			name:  "read with filePath",
 			input: `{"type":"tool_use","part":{"tool":"read","state":{"status":"completed","input":{"filePath":"/tmp/foo.txt"}}}}` + "\n",
-			want:  "Read /tmp/foo.txt\n",
+			want:  "→ Read /tmp/foo.txt\n",
 		},
 		{
 			name:  "read with offset and limit",
 			input: `{"type":"tool_use","part":{"tool":"read","state":{"status":"completed","input":{"filePath":"/tmp/foo.txt","offset":20,"limit":10}}}}` + "\n",
-			want:  "Read /tmp/foo.txt (offset 20, limit 10)\n",
+			want:  "→ Read /tmp/foo.txt (offset 20, limit 10)\n",
 		},
 		{
 			name:  "grep with pattern and path",
 			input: `{"type":"tool_use","part":{"tool":"grep","state":{"status":"completed","input":{"pattern":"hello.*world","path":"/tmp/demo"}}}}` + "\n",
-			want:  "Grep \"hello.*world\" in /tmp/demo\n",
+			want:  "✱ Grep \"hello.*world\" in /tmp/demo\n",
 		},
 		{
 			name:  "glob with pattern",
 			input: `{"type":"tool_use","part":{"tool":"glob","state":{"status":"completed","input":{"pattern":"**/*.go","path":"/tmp"}}}}` + "\n",
-			want:  "Glob \"**/*.go\" in /tmp\n",
+			want:  "✱ Glob \"**/*.go\" in /tmp\n",
 		},
 		{
 			name:  "bash with command",
@@ -496,22 +496,22 @@ func TestOpenCodeOutput_RendersToolDetails(t *testing.T) {
 		{
 			name:  "skill with name",
 			input: `{"type":"tool_use","part":{"tool":"skill","state":{"status":"completed","input":{"name":"recall"}}}}` + "\n",
-			want:  "Skill \"recall\"\n",
+			want:  "→ Skill \"recall\"\n",
 		},
 		{
 			name:  "edit with filePath",
 			input: `{"type":"tool_use","part":{"tool":"edit","state":{"status":"completed","input":{"filePath":"/tmp/foo.txt"}}}}` + "\n",
-			want:  "Edit /tmp/foo.txt\n",
+			want:  "→ Edit /tmp/foo.txt\n",
 		},
 		{
 			name:  "apply patch with target",
 			input: `{"type":"tool_use","part":{"tool":"apply_patch","state":{"status":"completed","input":{"patchText":"*** Begin Patch\n*** Update File: /tmp/foo.txt\n@@\n-old\n+new\n*** End Patch"}}}}` + "\n",
-			want:  "Apply patch /tmp/foo.txt\n",
+			want:  "→ Edit /tmp/foo.txt\n",
 		},
 		{
 			name:  "todowrite count",
 			input: `{"type":"tool_use","part":{"tool":"todowrite","state":{"status":"completed","input":{"todos":[{"content":"a","status":"pending"}]}}}}` + "\n",
-			want:  "Todos: 1 todos (pending: 1)\n",
+			want:  "→ Task 1 todos (pending: 1)\n",
 		},
 		{
 			name:  "unknown tool input",
@@ -521,7 +521,7 @@ func TestOpenCodeOutput_RendersToolDetails(t *testing.T) {
 		{
 			name:  "bash error status",
 			input: `{"type":"tool_use","part":{"tool":"read","state":{"status":"error","input":{"filePath":"/etc/hosts"},"error":"The user rejected permission"}}}` + "\n",
-			want:  "Read /etc/hosts (error: The user rejected permission)\n",
+			want:  "→ Read /etc/hosts (error: The user rejected permission)\n",
 		},
 	}
 	for _, tc := range cases {
