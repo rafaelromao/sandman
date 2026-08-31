@@ -569,6 +569,16 @@ func TestOpenCodeOutput_RendersToolDetails(t *testing.T) {
 			input: `{"type":"tool_use","part":{"tool":"pty_kill","state":{"status":"completed","input":{"id":"pty_123"}}}}` + "\n",
 			want:  "→ PTY Kill pty_123\n",
 		},
+		{
+			name:  "pty list has a marker-led label",
+			input: `{"type":"tool_use","part":{"tool":"pty_list","state":{"status":"completed","input":{}}}}` + "\n",
+			want:  "→ PTY List\n",
+		},
+		{
+			name:  "task uses its description",
+			input: `{"type":"tool_use","part":{"tool":"task","state":{"status":"completed","input":{"description":"Review CI standards"}}}}` + "\n",
+			want:  "→ Task Review CI standards\n",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
