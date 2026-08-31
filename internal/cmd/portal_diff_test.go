@@ -2855,7 +2855,7 @@ console.log('PASS');
 }
 
 func TestPortalDiffHighlightTerminalLog_PTYAndFormattedJSON(t *testing.T) {
-	js := `for (const line of ['→ PTY Spawn npm ["run","dev"]', '-> PTY Read pty_123 output "ready"']) {
+	js := `for (const line of ['→ PTY Spawn npm ["run","dev"]', '-> PTY Read pty_123 output "ready"', '→ PTY List', '→ Task Review CI standards']) {
   const result = SandmanPortalDiff.highlightTerminalLog(line);
   if (result.indexOf('term-tool') === -1 || result.indexOf('term-action') === -1) throw new Error('expected PTY marker and label highlighting: ' + result);
 }

@@ -779,10 +779,10 @@
       },
       'term-prompt': { pattern: /^\$ /, greedy: true },
       'term-action': {
-        pattern: new RegExp('^\\s*(?:(?:[→←✱]|->)\\s+)?(?:' + actionVerbs + '|PTY (?:Spawn|Read|Write|Kill))\\b'),
+        pattern: new RegExp('^\\s*(?:(?:[→←✱]|->)\\s+)?(?:' + actionVerbs + '|PTY (?:Spawn|Read|Write|Kill|List))\\b'),
         inside: {
           'term-tool': /^\s*(?:[→←✱]|->)\s+/,
-          'term-action': new RegExp('\\b(?:' + actionVerbs + '|PTY (?:Spawn|Read|Write|Kill))\\b')
+          'term-action': new RegExp('\\b(?:' + actionVerbs + '|PTY (?:Spawn|Read|Write|Kill|List))\\b')
         },
         greedy: true
       },
@@ -834,7 +834,7 @@
       { regex: /^(?:test result: FAILED.*)/, render: (m) => wrapToken('term-fail', m[0]) },
       { regex: new RegExp('^(\\$\\s+)(' + shellCommands + ')\\b'), render: (m) => wrapToken('term-prompt', m[1]) + wrapToken('term-command', m[2]) },
       { regex: /^(?:\$ )/, render: (m) => wrapToken('term-prompt', m[0]) },
-      { regex: /^(\s*)(?:([→←✱]|->)(\s+))?(Read|Edit|Glob|Skill|Bash|Write|Task|Grep|Search|Apply patch|Todos|PTY (?:Spawn|Read|Write|Kill))\b/, render: (m) => escapeHTML(m[1]) + (m[2] ? wrapToken('term-tool', m[2] + m[3]) : '') + wrapToken('term-action', m[4]) },
+      { regex: /^(\s*)(?:([→←✱]|->)(\s+))?(Read|Edit|Glob|Skill|Bash|Write|Task|Grep|Search|Apply patch|Todos|PTY (?:Spawn|Read|Write|Kill|List))\b/, render: (m) => escapeHTML(m[1]) + (m[2] ? wrapToken('term-tool', m[2] + m[3]) : '') + wrapToken('term-action', m[4]) },
       { regex: /^--- (?:run|retry) \d+\/\d+ ---$/, render: (m) => wrapToken('term-mark', m[0]) },
       { regex: /^(> build.*)$/, render: (m) => wrapToken('term-heading', m[1]) },
       { regex: /^(#{1,6} .*?)$/, render: (m) => wrapToken('term-heading', m[1]) },

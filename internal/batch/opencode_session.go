@@ -300,6 +300,8 @@ func formatToolEvent(event map[string]any, tool string) string {
 		detail = formatPTYSpawn(input, state)
 	case "pty_read", "pty_write", "pty_kill":
 		detail = formatPTYEvent(tool, input, state)
+	case "task":
+		detail, _ = input["description"].(string)
 	default:
 		if input != nil && len(input) > 0 {
 			if b, err := json.Marshal(input); err == nil {
@@ -335,6 +337,7 @@ func formatToolLabel(tool, detail string) string {
 		"pty_read":  "→ PTY Read",
 		"pty_write": "→ PTY Write",
 		"pty_kill":  "→ PTY Kill",
+		"pty_list":  "→ PTY List",
 	}
 	if label := ptyLabels[tool]; label != "" {
 		if detail == "" {
@@ -351,6 +354,7 @@ func formatToolLabel(tool, detail string) string {
 		"apply_patch": "→ Edit",
 		"todowrite":   "→ Task",
 		"question":    "→ Task",
+		"task":        "→ Task",
 	}
 	label := labels[tool]
 	if label == "" {
