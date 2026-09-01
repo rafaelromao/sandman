@@ -25,7 +25,7 @@ sandman run --sandbox podman 42 43   # default
 sandman run --sandbox docker 42 43
 ```
 
-In container mode, each `AgentRun` executes inside a Docker or Podman container. Sandman manages a pool of containers per batch, each hosting one or more worktrees.
+In container mode, each `AgentRun` executes inside a Docker or Podman container. Sandman manages a pool of containers per batch, each hosting one or more worktrees. The repository root is bind-mounted read-write at `/workspace` inside every container (`<repo>:/workspace` in `internal/sandbox/container.go`), so container isolation does not hide sibling worktrees or repo-local `.sandman/` state from other runs.
 
 ### Container scheduling
 
@@ -89,7 +89,7 @@ Each container hosts exactly one `AgentRun`. This is the most constrained per-co
 | Aspect | Worktree | Container |
 |--------|----------|-----------|
 | Setup | None | Requires container runtime |
-| Isolation | None beyond git | Filesystem and process isolation |
+| Isolation | None beyond git | Process isolation; repo is bind-mounted at `/workspace` read-write |
 | Overhead | Minimal | Container startup and resource usage |
 | Sharing | Runs directly on host | Config dirs and files resolved via temporary copy |
 | Auth | Supports keychain auth | File-based auth only (keychain rejected) |

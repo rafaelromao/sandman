@@ -66,23 +66,23 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 | `batches.json.lock` | runtime coordination sidecar | batch-index transaction writer | batch-index transaction writer | never (advisory lock; OS releases held lock on writer exit) | continuous |
 | `archive/` | runtime | `sandman archive` | portal, orchestrator (read-only) | `sandman archive` (move source), `sandman clean` (delete archived) | per archived batch |
 | `archive/<batchID>/...` | runtime | `sandman archive run` / `sandman archive older-than` | portal, orchestrator (read-only after archive) | `sandman clean` | retired batch |
-| `batches/<batchID>/` | runtime | orchestrator (batch start) | orchestrator, portal, attach client | orchestrator (on batch completion) | per batch |
-| `batches/<batchID>/batch.json` | runtime, atomic-rename | orchestrator (batch start, status change) | orchestrator, portal | orchestrator (on batch completion, move to archive) | per batch |
+| `batches/<batchID>/` | runtime | orchestrator (batch start) | orchestrator, portal, attach client | `sandman archive` / `sandman clean` (retained while any row is needed) | per batch |
+| `batches/<batchID>/batch.json` | runtime, atomic-rename | orchestrator (batch start, status change) | orchestrator, portal | `sandman archive` / `sandman clean` | per batch |
 | `batches/<batchID>/batch.sock` | runtime | daemon on start | attach client, orchestrator | daemon on stop | per batch |
-| `batches/<batchID>/config/` | runtime, container snapshot | `PrepareContainerConfigMounts` | container runtime (bind-mount) | orchestrator (on batch completion) | per batch |
-| `batches/<batchID>/runs/<runID>/` | runtime | orchestrator (per-row execution path) | orchestrator, portal | orchestrator (on run completion) | per AgentRun |
-| `batches/<batchID>/runs/<runID>/run.json` | runtime, atomic-rename | orchestrator (run start, status change, finish) | orchestrator, portal, attach client | orchestrator (on run completion) | per AgentRun |
+| `batches/<batchID>/config/` | runtime, container snapshot | `PrepareContainerConfigMounts` | container runtime (bind-mount) | `sandman clean` (retained with batch) | per batch |
+| `batches/<batchID>/runs/<runID>/` | runtime | orchestrator (per-row execution path) | orchestrator, portal | `sandman archive run` / `sandman clean` (retained after success) | per AgentRun |
+| `batches/<batchID>/runs/<runID>/run.json` | runtime, atomic-rename | orchestrator (run start, status change, finish) | orchestrator, portal, attach client | `sandman archive` / `sandman clean` | per AgentRun |
 | `batches/<batchID>/runs/<runID>/run.log` | runtime, O_APPEND | `AgentRun.Execute` (prefixed stdout/stderr) | `readPortalTextFile`, attach client | never (run log is canonical per-run artefact) | per AgentRun |
 | `batches/<batchID>/runs/<runID>/session.json` | runtime, atomic-rename | OpenCode execution boundary | runtime-owned re-entry and explicit session reuse | never (retained with Run) | per OpenCode AgentRun |
 | `batches/runs/<runID>/session.json` | legacy compatibility evidence | prior runtime versions | explicit reuse lookup when the canonical batch path is absent | never | legacy Run only |
 | `batches/<batchID>/runs/<runID>/run.sock` | runtime | command server on per-row start | external caller (`{"action":"abort","issue":N}`) | command server on per-row completion | per AgentRun |
-| `batches/<batchID>/runs/<runID>/review-state.json` | runtime, atomic-rename | review state store (dedup, claim lock) | review state store | orchestrator (on run completion) | per review AgentRun |
-| `batches/<batchID>/runs/<runID>/config/` | runtime, container snapshot | `PrepareContainerConfigMounts` | container runtime (bind-mount) | orchestrator (on run completion) | per AgentRun |
+| `batches/<batchID>/runs/<runID>/review-state.json` | runtime, atomic-rename | review state store (dedup, claim lock) | review state store | `sandman archive` / `sandman clean` | per review AgentRun |
+| `batches/<batchID>/runs/<runID>/config/` | runtime, container snapshot | `PrepareContainerConfigMounts` | container runtime (bind-mount) | `sandman clean` (retained with Run) | per AgentRun |
 | `reviews/review-prompt.md` | scaffold | `sandman init` | review daemon (materialization + live template render) | repo (manual) | init only |
 | `reviews/quality-rules.md` | scaffold | `sandman init` | review daemon (prompt materialization) | repo (manual) | init only |
 | `reviews/review.sock` | runtime | review daemon on start | review daemon CLI | review daemon on stop | continuous |
-| `worktrees/<branch>/` | runtime, git worktree | `git worktree add` (orchestrator) | agent, orchestrator | orchestrator (on run completion) | per AgentRun |
-| `worktrees/<branch>/.sandman/task.md` | runtime, atomic-rename | prompt renderer (or `--continue` skips render and reads existing) | agent | orchestrator (on run completion) | per AgentRun |
+| `worktrees/<branch>/` | runtime, git worktree | `git worktree add` (orchestrator) | agent, orchestrator | `sandman clean` (preserved on success for `--continue` / inspection) | per AgentRun |
+| `worktrees/<branch>/.sandman/task.md` | runtime, atomic-rename | prompt renderer (or `--continue` skips render and reads existing) | agent | `sandman clean` (preserved with worktree) | per AgentRun |
 | `state/.prompt-version` | runtime, atomic-rename | prompt materializer | prompt materializer (cache check) | `sandman clean` (optional) | per prompt template change |
 | `state/.built_with_sandman` | runtime, empty control file | badge sidecar (post-batch) | portal / status badge | `sandman clean` (optional) | per post-batch badge |
 | `state/<N>.head_sha` | legacy compatibility evidence | existing implementor review path (legacy only) | runtime diagnostics / stale-approval compatibility | implementor review lifecycle | per confirmed request |

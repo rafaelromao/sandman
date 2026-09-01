@@ -97,7 +97,22 @@ When you use the `opencode` preset, install the `opencode-shell-strategy` plugin
 
 The built-in preset also sees `~/.agents`, which is where Sandman installs the shared skill folder.
 
-`sandman run --agent` selects the built-in preset per invocation. `sandman config set agent` changes the project default.
+`sandman run --agent` selects the agent preset per invocation (built-in `opencode` or a custom provider under `agents`). `sandman config set agent` changes the project default.
+
+Custom providers are defined under the top-level `agents` map in `.sandman/config.yaml`:
+
+```yaml
+agents:
+  my-agent:
+    command: my-agent --prompt {{.PromptFile}}
+    model: my-agent/model-name
+    env:
+      MY_AGENT_API_KEY: xxx
+    config_dirs: ["~/.config/my-agent"]
+    config_files: ["~/.my-agent/config.json"]
+```
+
+Each entry may set `command`, `model`, `preset`, `env`, `config_dirs`, `config_files`, and `keychain_auth`. When `preset` is set, the custom entry inherits the built-in preset's defaults before applying overrides. See `internal/config/config.go:Agents` and `ResolveAgentProvider`.
 
 OpenCode session reuse is a run-time choice rather than a configuration
 default. `sandman run --continue` starts a fresh OpenCode conversation;

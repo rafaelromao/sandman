@@ -21,12 +21,13 @@ The installed folder mirrors the local Sandman skill and includes routed subskil
 
 You can also load `sandman-implement`, `sandman-code-review`, and `sandman-pr-review` directly in OpenCode for a local run without `sandman run`. Use `sandman-code-review` in self-review context for an implementor's own changes; the review daemon uses its daemon-review context with supplied pull-request information and writes the reviewer decision artifact without managing the pull request. The same autonomous workflow, guardrails, and terminal conditions apply; the skills do not wait for operator input.
 
-The implementor-side review skill is an AFK foreground workflow: after a
-confirmed request, the active implementation run waits through its configured
-deadline while retaining sandbox capacity and holding dependents. It resumes
-only for matching current-request evidence. Invalid or stale evidence is
-diagnostics-only, and cancellation produces an aborted run that can be
-recovered from durable publication state without launching another reviewer.
+The implementor-side review skill is an AFK workflow: after a confirmed
+request, the active implementation run retains logical row ownership but
+releases the execution slot and container lease between observations while
+holding dependents. It resumes only for matching current-request evidence.
+Invalid or stale evidence is diagnostics-only, and cancellation produces an
+aborted run that can be recovered from durable publication state without
+launching another reviewer.
 
 ## Container access
 
