@@ -3168,6 +3168,13 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       if (isWaitStateRun(run)) return;
       const subjectKey = subjectRunIdentity(run) || runKey;
       if (state.expandedRunKey === subjectKey) {
+        const streamKey = run && run.key ? run.key : subjectKey;
+        // Preserve a live tail before the scheduled render detaches this pane
+        // into the per-subject cache. Otherwise its pending rAF can find no
+        // mounted <pre> and drop entries that the next stream replay omits.
+        stopRunStream(streamKey);
+        streamCoalescer.setBlocked(streamKey, false);
+        streamCoalescer.flushPending(streamKey);
         state.expandedRunKey = null;
       } else {
         state.expandedRunKey = subjectKey;
