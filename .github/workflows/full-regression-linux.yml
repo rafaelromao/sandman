@@ -52,8 +52,21 @@ jobs:
 
       - name: Install opencode CLI
         run: |
-          curl -fsSL https://opencode.ai/install | bash
+          for attempt in 1 2 3; do
+            echo "Attempt $attempt to install opencode CLI..."
+            if curl -fsSL https://opencode.ai/install | bash; then
+              echo "opencode install succeeded on attempt $attempt"
+              break
+            fi
+            echo "::warning::opencode install failed on attempt $attempt"
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::opencode install failed after 3 attempts"
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
           echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
+          "$HOME/.opencode/bin/opencode" --version || echo "::warning::opencode binary not found after install"
 
       - name: Provision opencode auth
         env:
