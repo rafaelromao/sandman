@@ -1799,6 +1799,9 @@
   function cacheLogPaneBeforeRemove(detailRow) {
     const pre = detailRow.querySelector('pre[data-scroll-key]');
     if (!pre) return;
+    if (pre.getAttribute('data-rendered-log')) {
+      pre.setAttribute('data-stream-replay-pending', '1');
+    }
     // The fingerprint attr lives on the grandparent .detail-content (the
     // pre is wrapped in a .detail-box section). Walk up at most two levels
     // to find a node that carries the fingerprint, then use that node as

@@ -2141,8 +2141,10 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const backendKey = run.backendKey || run.key;
       const pre = streamPreFor(run.key);
       let cachedLog = '';
+      let awaitingReplayCheckpoint = false;
       if (pre) {
         cachedLog = pre.getAttribute('data-rendered-log') || '';
+        awaitingReplayCheckpoint = pre.getAttribute('data-stream-replay-pending') === '1';
         if (!cachedLog) {
           while (pre.firstChild) pre.removeChild(pre.firstChild);
           pre.setAttribute('data-rendered-log', '');
@@ -2181,10 +2183,22 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           }
         }
       }
-      streamCoalescer.seedKnownLines(run.key, cachedLog.split('\n').filter(Boolean));
+      const cachedLineList = cachedLog.split('\n').filter(Boolean);
+      const cachedLines = new Set(cachedLineList);
+      streamCoalescer.seedKnownLines(run.key, cachedLineList);
       streamCoalescer.clearBuffer(run.key);
       const src = new EventSource(streamPath + '?runKey=' + encodeURIComponent(backendKey));
       src.onmessage = function (ev) {
+        if (awaitingReplayCheckpoint) {
+          // A collapsed pane holds only the portal's newest socket suffix,
+          // while a replacement connection starts with the broadcaster's
+          // older replay. Ignore that lead-in until the two streams overlap;
+          // otherwise unrecognised older lines append after the newer cache.
+          if (!cachedLines.has(ev.data)) return;
+          awaitingReplayCheckpoint = false;
+          if (pre) pre.removeAttribute('data-stream-replay-pending');
+          return;
+        }
         streamCoalescer.scheduleLine(run.key, ev.data);
         if (state.streamReconnectAttempts) delete state.streamReconnectAttempts[run.key];
       };
