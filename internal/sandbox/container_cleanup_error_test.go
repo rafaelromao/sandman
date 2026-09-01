@@ -49,13 +49,19 @@ func TestContainerSandbox_Exec_KillAgentFnFailureWrapsCleanupError(t *testing.T)
 		defer close(doneCh)
 		errCh <- sb.Exec(ctx, "echo hello", io.Discard, io.Discard)
 	}()
-	defer func() { <-doneCh }()
 
 	waitForChildReadyTB(t, readyPath, 2*time.Second)
 	cancel()
 
 	select {
 	case err := <-errCh:
+		// Wait for goroutine to exit, but bound the wait so a regression that
+		// leaves Exec hanging does not deadlock the test's cleanup.
+		select {
+		case <-doneCh:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("Exec goroutine did not exit after returning")
+		}
 		if err == nil {
 			t.Fatal("expected error from context cancellation with cleanup failure")
 		}
@@ -74,5 +80,7 @@ func TestContainerSandbox_Exec_KillAgentFnFailureWrapsCleanupError(t *testing.T)
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("Exec did not unblock after context cancel")
+		// No wait for doneCh here; the test must fail independently without
+		// blocking on the goroutine that is the regression being detected.
 	}
 }
