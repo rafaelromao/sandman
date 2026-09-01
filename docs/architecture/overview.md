@@ -14,9 +14,9 @@ Atomic writes mean a torn read can never produce a corrupt document. The portal,
 
 ## Run status is a projection, not a record
 
-The append-only `.sandman/events.jsonl` is the source of truth. There is no mutable `Status` field anywhere on disk. Every status a user sees (`status`, `history`, the portal table, the HTTP API) is computed by folding events through `events.RunState`.
+The append-only `.sandman/events.jsonl` is the source of truth for user-facing status. Every status a user sees (`status`, `history`, the portal table, the HTTP API) is computed by folding events through `events.RunState`.
 
-This is why status bugs in Sandman are almost always bugs in projection logic or in the event types the projector consumes, not in a status field that needs to be set. If a run's status looks wrong, start by tracing its events.
+Each `run.json` also carries a mutable `status` field that the orchestrator rewrites on terminal transitions (`internal/daemon/runfs.go:UpdateRunManifestStatus`, `internal/batchindex/batchindex.go`). It is used for batch `status` derivation and archive eligibility, not for the portal's event-sourced projection. This is why status bugs are almost always bugs in projection logic or in the event types the projector consumes, not in a `run.json` field that needs to be set. If a run's displayed status looks wrong, start by tracing its events.
 
 The event types are documented in [Monitoring](../usage/monitoring.md#event-log).
 
@@ -28,12 +28,12 @@ In tests, fakes are injected at the interface boundary (`Runner`, `Sandbox`, `St
 
 ## Two factory seams
 
-`batch.Request` accepts two factory interfaces:
+`batch.Request` is the public batch input (issues, config, flags) and does not carry factories. Factories are orchestrator dependencies held in `runDeps` / `OrchestratorOpt`:
 
 - `RunnableFactory` — produces the per-row `Runnable` (one per AgentRun).
 - `SandboxFactory` — produces the `Sandbox` for each AgentRun (`WorktreeSandbox` or `ContainerSandbox`).
 
-New `Runnable` or `Sandbox` implementations plug in by satisfying the interface; nothing else in the orchestrator changes.
+See `internal/batch/row_spec.go:RunExecutor` / `runDeps` and `internal/cmd/root.go:Dependencies`. New `Runnable` or `Sandbox` implementations plug in by satisfying the interface; nothing else in the orchestrator changes.
 
 ## The `Sandbox.Exec` Setpgid invariant
 

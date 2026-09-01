@@ -79,20 +79,22 @@ sandman portal
 ## Continuing a previous run
 
 ```bash
-sandman run --continue 42 --prompt "finish the tests"
+sandman run --continue 42
 ```
 
-Reuses the existing branch for issue #42 and feeds the agent the stored task file plus any new prompt text. Useful when the original prompt stalled or drifted.
+Reuses the existing branch for issue #42 and the stored `.sandman/task.md` from its worktree. Tunables (agent, model, parallel, retries, sandbox, container tunables, review command) come from current CLI flags / config defaults; `--prompt` and `--template` supplied alongside `--continue` do not replace the stored task, which remains the prompt source for the continued run.
 
 ## Cleaning up
 
 ```bash
-sandman clean --all         # Full cleanup: stale recovery + orphaned + archived + temp/image sweep
-sandman clean --archived    # Remove archived batches
-sandman clean --stale       # Recover stale runs and archive dead batches
-sandman clean --orphaned    # Remove orphaned batch directories
-sandman clean --dry-run     # Preview what would be removed
+sandman clean --all                 # Full cleanup: stale recovery + orphaned + archived + temp/image sweep
+sandman clean --archived            # Remove archived batches
+sandman clean --archived --dry-run  # Preview archived removals
+sandman clean --stale               # Recover stale runs in dead batches (emits run.aborted)
+sandman clean --orphaned            # Remove orphaned batch directories
 ```
+
+`clean` always requires an explicit mode flag (`--all`, `--archived`, `--stale`, or `--orphaned`); bare `sandman clean --dry-run` is an error. `--stale` only emits `run.aborted` for unterminated runs in dead batches and does not archive batches.
 
 Containers are stopped automatically when a batch completes. No dedicated container cleanup command is needed.
 
@@ -104,10 +106,10 @@ Sandman can detect BlockedBy relationships between issues and execute them in th
 
 Sandman discovers `BlockedBy` relationships from two sources:
 
-1. **Body references** — issue bodies containing `blocked by #N` or `depends on #N`
+1. **Body references** — blocker entries declared under a recognized H2 heading (`## Blocked by`, `## Depends on`, or `## Blocked-by`) using bullet or link entries; inline phrases like `blocked by #N` or `depends on #N` outside those headings are ignored
 2. **GitHub REST API** — `gh api` issue and events responses that surface native blocker numbers
 
-The union of both sources forms each issue's `BlockedBy` set. See [Issue body formats](issue-body-formats.md) for accepted inline, heading, bullet, and annotation shapes.
+The union of both sources forms each issue's `BlockedBy` set. See [Issue body formats](issue-body-formats.md) for the heading-only contract and accepted bullet, link, and annotation shapes.
 
 ### Strict mode (default)
 

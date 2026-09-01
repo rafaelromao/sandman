@@ -263,17 +263,17 @@ func TestReviewLifecycleDocumentationDescribesBoundedWait(t *testing.T) {
 			"Explicit cancellation emits `run.aborted`",
 		},
 		"reviews.md": {
-			"foreground-active",
+			"execution slot",
 			"current-request",
 			"diagnostics-only",
 		},
 		"configuration.md": {
 			"independent durable 30-minute deadline",
-			"release the execution slot",
+			"execution slot",
 			"Dependents remain held",
 		},
 		"skills.md": {
-			"AFK foreground workflow",
+			"AFK workflow",
 			"matching current-request evidence",
 			"durable publication state",
 		},

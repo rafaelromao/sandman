@@ -67,7 +67,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--base-branch` | config `git.base_branch` (`main`) | Base branch to fetch from origin before each `AgentRun` starts |
 | `--container-capacity` | config default (4) | Max concurrent agent runs per container; `0` = unlimited, `1` = one agent per container |
 | `--max-containers` | config default (0) | Max containers; `0` = no cap (unbounded pool growth) |
-| `--retries` | `0` | Number of times to retry a failed run |
+| `--retries` | config `retries` (3) | Number of times to retry a failed run; omit to use `retries` from `.sandman/config.yaml` (default 3) |
 | `--override` | `false` | Replace worktree and branch for a new attempt while retaining prior AgentRun events (append-only), batch artifacts, and logs; force-checkout worktree to expected branch on mismatch or detached HEAD |
 | `--continue` | `false` | Continue the latest AgentRun for selected issues by reusing the preserved worktree (branch, base branch, task file, prior run id); OpenCode starts a fresh conversation by default |
 | `--reuse-session` | `false` | Only with `--continue`: explicitly reuse each continued row's prior OpenCode session, falling back once to OpenCode `--continue` if the exact session is unavailable |
@@ -80,7 +80,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--prompt-arg` | — | Custom template substitution (`KEY=VALUE`, repeatable) |
 | `--model` | `model` from config | Override the model passed to the agent for built-in presets |
 | `--variant` | `variant` from config | Override the implementation model variant; forwarded to built-in OpenCode only when non-empty |
-| `--agent` | `agent` from config (`opencode`) | Built-in agent preset for this run; on `--continue` uses the current value, not the prior run's stored agent |
+| `--agent` | `agent` from config (`opencode`) | Agent preset for this run (built-in `opencode` or a custom provider under `agents` in config); on `--continue` uses the current CLI/config value, not the prior run's stored agent |
 | `--run-id` | — | Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection |
 | `--run-idle-timeout` | config `run_idle_timeout` (`3600`) | Treat an AgentRun as stuck if it produces no output for N seconds; explicit `0` disables the timeout |
 | `--review-timeout` | config `review_timeout` (`1800`) | Override the absolute per-confirmed-request delegated review deadline in seconds; minimum `240` |
@@ -102,7 +102,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 - `--max-containers` caps the number of `ContainerSandbox` instances; `0` means no cap (unbounded pool growth)
 - `--model` only applies to built-in presets; if omitted, Sandman uses `model` from config, falling back to the agent provider's configured model
 - `--variant` is trimmed and treated as opaque provider-specific text; when omitted, Sandman uses `variant` from config. On `--continue`, current CLI/config values replace the prior event value. Non-empty values are safely passed as one argument to built-in OpenCode; custom commands are unchanged.
-- `--agent` selects which built-in preset to use for this run; if omitted, Sandman uses `agent` from config
+- `--agent` selects the agent preset for this run (built-in `opencode` or a custom provider under `agents` in config); if omitted, Sandman uses `agent` from config
 - `--continue` cannot be combined with `--override`
 - `--reuse-session` requires `--continue`; it applies independently to each continued row and never to promoted or fresh rows
 - Runtime-owned re-entry after an external pull-request wait reuses the exact OpenCode session automatically; ordinary retries and context-rollover retries remain fresh
@@ -144,7 +144,7 @@ Reuses the prior run's worktree identity: the existing branch, the stored base b
 |------|---------|-------------|
 | `--model` | `model` from config | Override the model for the continued run |
 | `--variant` | `variant` from config | Override the implementation model variant for the continued run; current CLI/config values take precedence over the prior run |
-| `--agent` | prior run's agent | Override the agent preset for the continued run |
+| `--agent` | `agent` from config (`opencode`) | Override the agent preset for the continued run; current CLI/config value wins over the prior run's stored agent (supports built-in and custom `agents` providers) |
 | `--run-id` | — | Continue the most recent prompt-only run by its batch-level identifier; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue numbers. Reads the prior task file from the existing worktree and reuses the same branch for the continued run. When the most recent Issue-0 event is a review run (not a prompt-only run), `sandman run --continue` skips it and selects the prior prompt-only run instead — or errors if none exists. |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for the continued run |
 | `--run-idle-timeout` | config `run_idle_timeout` (`3600`) | Treat an AgentRun as stuck if it produces no output for N seconds; explicit `0` disables the timeout |
