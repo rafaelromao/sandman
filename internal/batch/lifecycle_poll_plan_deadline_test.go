@@ -36,6 +36,7 @@ func TestLifecyclePollIntervals_PersistedIntPlan(t *testing.T) {
 
 func TestLifecyclePollIntervals_MalformedFallbackUsesDefault(t *testing.T) {
 	s := &runSession{opts: runSessionOptions{}}
+	want := []time.Duration{120 * time.Second, 60 * time.Second, 60 * time.Second, 30 * time.Second}
 	cases := []map[string]any{
 		// non-integer float
 		{"review_request": map[string]any{"poll_plan": []any{float64(30.5), float64(60)}}},
@@ -50,12 +51,8 @@ func TestLifecyclePollIntervals_MalformedFallbackUsesDefault(t *testing.T) {
 	}
 	for i, extras := range cases {
 		got := s.lifecyclePollIntervals(extras)
-		if len(got) == 0 {
-			t.Fatalf("case %d: expected fallback to default plan, got empty", i)
-		}
-		// default is implementationReviewPollPlan = []int{120,60,60,30}
-		if got[0] != 120*time.Second {
-			t.Fatalf("case %d: expected default plan first element 120s, got %v", i, got)
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("case %d: expected fallback to default plan %v, got %v", i, want, got)
 		}
 	}
 }
@@ -66,14 +63,9 @@ func TestLifecyclePollIntervals_NegativeIntFallback(t *testing.T) {
 		"review_request": map[string]any{"poll_plan": []int{120, -1}},
 	}
 	got := s.lifecyclePollIntervals(extras)
-	if got[0] != 120*time.Second && len(got) != 4 {
-		// Should fallback to default because one element is negative
-		if got[1] == -1*time.Second {
-			t.Fatalf("should have fallen back to default on negative int, got %v", got)
-		}
-	}
-	if got[0] != 120*time.Second {
-		t.Fatalf("expected default fallback, got %v", got)
+	want := []time.Duration{120 * time.Second, 60 * time.Second, 60 * time.Second, 30 * time.Second}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected fallback to default plan %v on negative int, got %v", want, got)
 	}
 }
 
