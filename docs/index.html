@@ -444,20 +444,28 @@
               <p class="lead">You do not babysit the agent, but you can inspect the loop at any time.</p>
 
               <div class="cli-shot" aria-label="Sandman CLI screenshot">
-                <pre><span class="branch">sandman main ?</span> <span class="prompt">❯</span> <span class="cmd">sandman run 2102</span>
-expanded specification #2102 to 3 accepted children
-<span class="dim">[260710093543-0142-2103] 09:36:34</span>
-<span class="dim">[260710093543-0142-2103] 09:36:34</span> <span class="arrow">→</span> build · MiniMax-M2.7
-<span class="dim">[260710093543-0142-2103] 09:36:34</span>
-<span class="dim">[260710093543-0142-2105] 09:36:35</span> <span class="arrow">→</span> build · MiniMax-M2.7
-<span class="dim">[260710093543-0142-2105] 09:36:35</span>
-<span class="dim">[260710093543-0142-2105] 09:36:39</span> <span class="arrow">→</span> Skill "sandman"
-<span class="dim">[260710093543-0142-2105] 09:36:40</span> <span class="arrow">→</span> Skill "sandman"
-<span class="dim">[260710093543-0142-2105] 09:36:40</span> <span class="arrow">→</span> Read .sandman/task.md
-<span class="dim">[260710093543-0142-2105] 09:36:42</span> <span class="arrow">→</span> Skill "sandman-implement"
-<span class="dim">[260710093543-0142-2103] 09:36:48</span> <span class="arrow">→</span> Read .sandman/task.md
-<span class="dim">[260710093543-0142-2103] 09:36:49</span>
-<span class="dim">[260710093543-0142-2103] 09:36:49</span> <span class="shell">$</span> <span class="cmd">gh issue view 2103 --json title,number,state,body --jq '{title, number, state, body}'</span>
+                <pre><span class="branch">sandman main ?</span> <span class="prompt">❯</span> <span class="cmd">sandman run 447 --model opencode/muse-spark-1.2-contributor-free --continue</span>
+<span class="dim">[260902115556-b36b-447] 11:56:17</span> <span class="arrow">→</span> Read /workspace/.sandman/worktrees/447-add-subtractive-extrusion-through-every-adapter/.sandman/task.md
+<span class="dim">[260902115556-b36b-447] 11:56:20</span> <span class="shell">$</span> <span class="cmd">git status; echo "---"; git branch --show-current; echo "---"; git log --oneline -10; echo "---"; git log origin/main...</span>
+<span class="dim">[260902115556-b36b-447] 11:56:22</span> <span class="shell">$</span> <span class="cmd">git diff origin/main --stat; echo "---"; gh pr view --json number,title,state,url,headRefOid,baseRefName,mergeable,re...</span>
+<span class="dim">[260902115556-b36b-447] 11:56:40</span> <span class="shell">$</span> <span class="cmd">gh pr list --head 447-add-subtractive-extrusion-through-every-adapter --json number,title,state,url 2&gt;&amp;1; echo "---";...</span>
+<span class="dim">[260902115556-b36b-447] 11:56:42</span> <span class="arrow">→</span> Read /workspace/.sandman/worktrees/447-add-subtractive-extrusion-through-every-adapter/AGENTS.md
+<span class="dim">[260902115556-b36b-447] 11:56:43</span> <span class="shell">$</span> <span class="cmd">cat docs/agents/issue-tracker.md 2&gt;&amp;1 | head -n 100; echo "---"; cat docs/agents/domain.md 2&gt;&amp;1 | head -n 100</span>
+<span class="dim">[260902115556-b36b-447] 11:56:45</span> <span class="arrow">→</span> Read /workspace/.sandman/worktrees/447-add-subtractive-extrusion-through-every-adapter/CONTEXT.md
+<span class="dim">[260902115556-b36b-447] 11:56:46</span> <span class="shell">$</span> <span class="cmd">git diff origin/main -- crates/host/src/lib.rs | head -n 300</span>
+<span class="dim">[260902115556-b36b-447] 11:56:51</span> <span class="shell">$</span> <span class="cmd">git diff origin/main -- crates/protocol/src/schema.rs crates/protocol/src/schema_validator.rs crates/persistence/src/...</span>
+<span class="dim">[260902115556-b36b-447] 11:56:53</span> <span class="arrow">→</span> Skill "sandman"
+<span class="dim">[260902115556-b36b-447] 11:56:55</span> <span class="arrow">→</span> Skill "sandman-implement"
+<span class="dim">[260902115556-b36b-447] 11:56:56</span> <span class="arrow">→</span> Skill "sandman-code-review"
+<span class="dim">[260902115556-b36b-447] 11:56:58</span> <span class="shell">$</span> <span class="cmd">git diff origin/main...HEAD --stat; echo "==LOGS=="; git log --oneline origin/main..HEAD</span>
+<span class="dim">[260902115556-b36b-447] 11:57:00</span> <span class="shell">$</span> <span class="cmd">git diff origin/main...HEAD | head -n 200</span>
+<span class="dim">[260902115556-b36b-447] 11:57:04</span> <span class="arrow">→</span> Skill "sandman-back-merge"
+<span class="dim">[260902115556-b36b-447] 11:57:09</span> <span class="shell">$</span> <span class="cmd">git status --short; echo "---"; git fetch origin 2&gt;&amp;1 | head -n 20; echo "---fetch done"; git merge-base --is-ancesto...</span>
+<span class="dim">[260902115556-b36b-447] 11:58:10</span> <span class="shell">$</span> <span class="cmd">cargo fmt --check 2&gt;&amp;1 | head -n 50; echo "fmt check exit $?"; echo "---"; cargo test --quiet --workspace 2&gt;&amp;1 | tail...</span>
+<span class="dim">[260902115556-b36b-447] 11:58:45</span> <span class="shell">$</span> <span class="cmd">cargo test --quiet 2&gt;&amp;1 | tail -n 30; echo "exit:$?"</span>
+<span class="dim">[260902115556-b36b-447] 11:58:53</span> <span class="shell">$</span> <span class="cmd">git push -u origin 447-add-subtractive-extrusion-through-every-adapter 2&gt;&amp;1</span>
+<span class="dim">[260902115556-b36b-447] 11:58:55</span> <span class="shell">$</span> <span class="cmd">git log --oneline -1 --format="%s"; echo "---"; git log --oneline origin/main..HEAD --format="%s"</span>
+</pre>
               </div>
             </div>
             <figure class="portal-figure">
