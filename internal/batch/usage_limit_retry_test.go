@@ -101,6 +101,19 @@ func TestUsageLimitAwaitPollsWhileQuotaRemainsExhausted(t *testing.T) {
 	}
 }
 
+func TestUsageLimitAwaitExcludesCustomOpenCodePreset(t *testing.T) {
+	session := runSession{
+		issueNumber: 42,
+		agentCfg: config.Agent{
+			Preset:  opencodeProvider,
+			Command: "custom-opencode run",
+		},
+	}
+	if session.shouldAwaitUsageLimit(AgentRunResult{UsageLimitReached: true}) {
+		t.Fatal("custom OpenCode-preset command unexpectedly entered usage-limit waiting")
+	}
+}
+
 func runUsageLimitBatch(t *testing.T, failures, idleTimeout, retries int) (*Result, *usageLimitRetrySandbox, *spyEventLog, []time.Duration) {
 	t.Helper()
 	root := t.TempDir()

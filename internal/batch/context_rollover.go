@@ -257,8 +257,8 @@ func stripContextRolloverANSI(value string) string {
 }
 
 // usageLimitDetector recognizes the stable OpenCode provider response that
-// should cool down before an ordinary retry. It observes output only; unlike
-// context rollover, the process is allowed to exit normally first.
+// should enter usage-limit waiting before an ordinary retry. It observes output
+// only; unlike context rollover, the process is allowed to exit normally first.
 type usageLimitDetector struct {
 	mu        sync.Mutex
 	pending   string

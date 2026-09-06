@@ -3224,6 +3224,7 @@ loop:
 func (s *runSession) shouldAwaitUsageLimit(result AgentRunResult) bool {
 	return s.issueNumber > 0 &&
 		s.agentCfg.Preset == opencodeProvider &&
+		s.agentCfg.Command == config.BuiltInAgentPresets[opencodeProvider].Command &&
 		result.UsageLimitReached &&
 		!result.ContextExhausted &&
 		s.usageLimitWaited < usageLimitRetryWindow
