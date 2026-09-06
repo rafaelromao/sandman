@@ -30,10 +30,14 @@ type RowSpec struct {
 	PreviousRunIDs      map[int]string
 	PreviousRunBatchIDs map[int]string
 	ReuseSession        bool
-	BaseBranch          string
-	ExternalBlockers    []int
-	RenderCfg           prompt.RenderConfig
-	OutputWriter        io.Writer
+	// UsageLimitProbe re-enters an OpenCode session after a usage-limit poll.
+	// It bypasses PR lifecycle entry evaluation so the agent itself is probed.
+	UsageLimitProbe  bool
+	UsageLimitWaited time.Duration
+	BaseBranch       string
+	ExternalBlockers []int
+	RenderCfg        prompt.RenderConfig
+	OutputWriter     io.Writer
 	// ID minting — issue-driven path.
 	RunTS      string
 	RunShortID string
@@ -215,6 +219,8 @@ func newRunSession(e *runExecutor, row RowSpec) *runSession {
 		previousRunIDs:             row.PreviousRunIDs,
 		previousRunBatchIDs:        row.PreviousRunBatchIDs,
 		reuseSession:               row.ReuseSession,
+		usageLimitProbe:            row.UsageLimitProbe,
+		usageLimitWaited:           row.UsageLimitWaited,
 		identityResolver:           bc.IdentityResolver,
 		branches:                   row.Branches,
 		renderCfg:                  renderCfg,

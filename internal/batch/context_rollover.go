@@ -8,6 +8,7 @@ import (
 
 const contextRolloverWindow = 30 * time.Second
 const contextExhaustedRetryReason = "context-exhausted"
+const usageLimitLiteral = "usage limit has been reached"
 
 type contextRolloverLiteralRule []string
 
@@ -253,4 +254,62 @@ func stripContextRolloverANSI(value string) string {
 		}
 	}
 	return b.String()
+}
+
+// usageLimitDetector recognizes the stable OpenCode provider response that
+// should enter usage-limit waiting before an ordinary retry. It observes output
+// only; unlike context rollover, the process is allowed to exit normally first.
+type usageLimitDetector struct {
+	mu        sync.Mutex
+	pending   string
+	triggered bool
+}
+
+func newUsageLimitDetector() *usageLimitDetector {
+	return &usageLimitDetector{}
+}
+
+func (d *usageLimitDetector) Write(p []byte) (int, error) {
+	d.consume(string(p), false)
+	return len(p), nil
+}
+
+func (d *usageLimitDetector) Flush() {
+	d.consume("", true)
+}
+
+func (d *usageLimitDetector) Triggered() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.triggered
+}
+
+func (d *usageLimitDetector) consume(text string, final bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	d.pending += text
+	parts := strings.Split(d.pending, "\n")
+	if final {
+		d.pending = ""
+	} else {
+		d.pending = parts[len(parts)-1]
+		parts = parts[:len(parts)-1]
+	}
+	for _, line := range parts {
+		if usageLimitLine(line) {
+			d.triggered = true
+			return
+		}
+	}
+}
+
+func usageLimitLine(line string) bool {
+	line = normalizeContextRolloverLine(line)
+	lower := strings.ToLower(line)
+	if !strings.HasPrefix(lower, "error:") {
+		return false
+	}
+	return strings.Contains(strings.TrimSpace(lower[len("error:"):]), usageLimitLiteral)
 }

@@ -41,6 +41,7 @@ type AgentRun struct {
 	sandbox                    sandbox.Sandbox
 	status                     string
 	contextExhausted           bool
+	usageLimitReached          bool
 	cleanupError               error // distinct cleanup failure from context cancellation
 	contextRolloverLiterals    []string
 	env                        map[string]string
@@ -245,18 +246,20 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	attemptCtx, cancelAttempt := context.WithCancel(ctx)
 	defer cancelAttempt()
 	var detector *contextRolloverDetector
+	var usageDetector *usageLimitDetector
 	if r.preset == "opencode" {
 		detector = newContextRolloverDetector(time.Now, r.contextRolloverLiterals, func() {
 			if ctx.Err() == nil {
 				cancelAttempt()
 			}
 		})
+		usageDetector = newUsageLimitDetector()
 	}
 	stdout := io.Writer(os.Stdout)
 	stderr := io.Writer(os.Stderr)
 	if detector != nil {
-		stdout = io.MultiWriter(stdout, detector)
-		stderr = io.MultiWriter(stderr, detector)
+		stdout = io.MultiWriter(stdout, detector, usageDetector)
+		stderr = io.MultiWriter(stderr, detector, usageDetector)
 	}
 	var parsedStdout, parsedStderr *opencodeOutput
 	if builtInOpenCode {
@@ -267,6 +270,9 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	execErr := r.execute(attemptCtx, renderedCmd, stdout, stderr, parsedStdout, parsedStderr)
 	if detector != nil {
 		detector.Flush()
+	}
+	if usageDetector != nil {
+		usageDetector.Flush()
 	}
 	if detector != nil && detector.Triggered() {
 		r.contextExhausted = true
@@ -301,6 +307,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		r.persistSession(firstSessionID(parsedStdout, parsedStderr))
 	}
 	if execErr != nil {
+		r.usageLimitReached = ctx.Err() == nil && usageDetector != nil && usageDetector.Triggered()
 		r.status = "failure"
 		return r.Result()
 	}
@@ -416,13 +423,14 @@ func (r *AgentRun) Result() AgentRunResult {
 		issueRefPtr = issueRef(issue.Number)
 	}
 	return AgentRunResult{
-		IssueNumber:      issue.Number,
-		Issue:            issueRefPtr,
-		Status:           r.status,
-		Branch:           r.branch,
-		WorktreePath:     r.sandbox.WorkDir(),
-		ContextExhausted: r.contextExhausted,
-		CleanupError:     r.cleanupError,
+		IssueNumber:       issue.Number,
+		Issue:             issueRefPtr,
+		Status:            r.status,
+		Branch:            r.branch,
+		WorktreePath:      r.sandbox.WorkDir(),
+		ContextExhausted:  r.contextExhausted,
+		UsageLimitReached: r.usageLimitReached,
+		CleanupError:      r.cleanupError,
 	}
 }
 

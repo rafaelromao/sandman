@@ -45,7 +45,7 @@ parallel_reviews: 1
 
 # Idle timeout in seconds for agent runs. When the agent produces no new log
 # output for this duration, the heartbeat watchdog aborts the run.
-# 0 disables the watchdog (runs never abort due to inactivity).
+# 0 disables the watchdog.
 # Default: 3600 (60 minutes).
 run_idle_timeout: 3600
 
@@ -174,9 +174,9 @@ See [Sandbox Modes](sandbox-modes.md) for detailed scheduling behavior.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `run_idle_timeout` | `3600` | Seconds of inactivity before the heartbeat watchdog aborts the run. `0` disables the watchdog (runs never abort due to inactivity) |
+| `run_idle_timeout` | `3600` | Seconds of inactivity before the heartbeat watchdog aborts the run. `0` disables the watchdog |
 
-`run_idle_timeout` detects when an agent has stalled (e.g., blocked on an interactive prompt, deadlocked, or looping). When triggered, the watchdog kills the agent process and marks the run as `aborted`. A `run.idle_timeout` event is written to the event log for diagnostics. The `--run-idle-timeout` CLI flag overrides the config value for a single invocation.
+`run_idle_timeout` detects when an agent has stalled (e.g., blocked on an interactive prompt, deadlocked, or looping). When triggered, the watchdog kills the agent process and marks the run as `aborted`. A `run.idle_timeout` event is written to the event log for diagnostics. A built-in OpenCode attempt that exits after reporting `Error: The usage limit has been reached` instead emits `run.await`, releases its capacity, and re-enters the same session every ten minutes. A still-limited probe follows the ordinary retry path after five hours of accumulated polling. The `--run-idle-timeout` CLI flag overrides the config value for a single invocation.
 
 ## Context rollover phrases
 

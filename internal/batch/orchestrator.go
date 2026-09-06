@@ -116,6 +116,11 @@ func issueRef(num int) *int {
 var branchExists = sandbox.BranchExists
 var branchValidationEnabled = true
 
+const (
+	usageLimitPollInterval = 10 * time.Minute
+	usageLimitRetryWindow  = 5 * time.Hour
+)
+
 func resolveRetries(req Request, cfg *config.Config) int {
 	if req.Retries >= 0 {
 		return req.Retries
@@ -1675,6 +1680,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			var res AgentRunResult
 			var started bool
 			awaitPoll := 0
+			var usageLimitWaited time.Duration
 			defer func() {
 				if err := coord.stopCommandServer(issueNum); err != nil {
 					fmt.Fprintf(o.errorLog, "error: stop command server for issue %d: %v\n", issueNum, err)
@@ -1700,7 +1706,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				}
 				advanceTurn()
 				interval := time.Duration(implementationReviewPollPlan[len(implementationReviewPollPlan)-1]) * time.Second
-				if len(o.runSessionOpts.lifecyclePollPlan) > 0 {
+				if res.UsageLimitReached {
+					interval = usageLimitPollInterval
+				} else if len(o.runSessionOpts.lifecyclePollPlan) > 0 {
 					interval = o.runSessionOpts.lifecyclePollPlan[min(awaitPoll, len(o.runSessionOpts.lifecyclePollPlan)-1)]
 				} else if awaitPoll < len(implementationReviewPollPlan) {
 					interval = time.Duration(implementationReviewPollPlan[awaitPoll]) * time.Second
@@ -1719,6 +1727,11 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				row.PreviousRunIDs = map[int]string{issueNum: runID}
 				row.PreviousRunBatchIDs = map[int]string{issueNum: issueBatchID}
 				row.ReuseSession = true
+				row.UsageLimitProbe = res.UsageLimitReached
+				if res.UsageLimitReached {
+					usageLimitWaited += interval
+					row.UsageLimitWaited = usageLimitWaited
+				}
 				priority = true
 				continue
 			}
@@ -2105,6 +2118,8 @@ type runSession struct {
 	previousRunIDs             map[int]string
 	previousRunBatchIDs        map[int]string
 	reuseSession               bool
+	usageLimitProbe            bool
+	usageLimitWaited           time.Duration
 	identityResolver           *gitIdentityResolver
 	branches                   map[int]string
 	renderCfg                  prompt.RenderConfig
@@ -3192,6 +3207,9 @@ loop:
 				}
 			}
 		}
+		if s.shouldAwaitUsageLimit(result) {
+			break loop
+		}
 	}
 
 	if result.ContextExhausted {
@@ -3201,6 +3219,15 @@ loop:
 		terminalExtras["context_exhausted"] = true
 	}
 	return result, terminalExtras, true
+}
+
+func (s *runSession) shouldAwaitUsageLimit(result AgentRunResult) bool {
+	return s.issueNumber > 0 &&
+		s.agentCfg.Preset == opencodeProvider &&
+		s.agentCfg.Command == config.BuiltInAgentPresets[opencodeProvider].Command &&
+		result.UsageLimitReached &&
+		!result.ContextExhausted &&
+		s.usageLimitWaited < usageLimitRetryWindow
 }
 
 func (s *runSession) restoreHostPathsBeforeExternalGate(wt sandbox.Sandbox) bool {
@@ -3426,8 +3453,10 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	// a ready-to-merge / actionable-feedback gate attaches the
 	// request-scoped evidence to the entry launch prompt (the entry launch
 	// IS the resume).
-	if entryResult, entryStarted, entryHandled := s.tryEntryResume(ctx, branch, wt, logPath, runID); entryHandled {
-		return entryResult, entryStarted
+	if !s.usageLimitProbe {
+		if entryResult, entryStarted, entryHandled := s.tryEntryResume(ctx, branch, wt, logPath, runID); entryHandled {
+			return entryResult, entryStarted
+		}
 	}
 	result, terminalExtras, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, s.mode != ModeContinue, func(attempt int, previous AgentRunResult) (prompt.RenderConfig, *AgentRunResult) {
 		attemptRenderCfg := s.renderCfg
@@ -3500,6 +3529,15 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	// and skip terminal cleanup. The observation loop emitted the initial
 	// await before waiting; the run stays active until the external gate
 	// resolves or the context is canceled.
+	if s.shouldAwaitUsageLimit(result) {
+		result.Status = s.emitAwait(ctx, runID, result, map[string]any{
+			"await_reason":                     "usage-limit",
+			"usage_limit_poll_seconds":         int(usageLimitPollInterval / time.Second),
+			"usage_limit_waited_seconds":       int(s.usageLimitWaited / time.Second),
+			"usage_limit_retry_window_seconds": int(usageLimitRetryWindow / time.Second),
+		})
+		return result, true
+	}
 	if result.Status == "await" {
 		return result, true
 	}
