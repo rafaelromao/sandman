@@ -116,7 +116,10 @@ func issueRef(num int) *int {
 var branchExists = sandbox.BranchExists
 var branchValidationEnabled = true
 
-const usageLimitPollInterval = 10 * time.Minute
+const (
+	usageLimitPollInterval = 10 * time.Minute
+	usageLimitRetryWindow  = 5 * time.Hour
+)
 
 func resolveRetries(req Request, cfg *config.Config) int {
 	if req.Retries >= 0 {
@@ -3223,8 +3226,7 @@ func (s *runSession) shouldAwaitUsageLimit(result AgentRunResult) bool {
 		s.agentCfg.Preset == opencodeProvider &&
 		result.UsageLimitReached &&
 		!result.ContextExhausted &&
-		s.runIdleTimeout > 0 &&
-		s.usageLimitWaited < time.Duration(s.runIdleTimeout)*time.Second
+		s.usageLimitWaited < usageLimitRetryWindow
 }
 
 func (s *runSession) restoreHostPathsBeforeExternalGate(wt sandbox.Sandbox) bool {
@@ -3528,10 +3530,10 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	// resolves or the context is canceled.
 	if s.shouldAwaitUsageLimit(result) {
 		result.Status = s.emitAwait(ctx, runID, result, map[string]any{
-			"await_reason":               "usage-limit",
-			"usage_limit_poll_seconds":   int(usageLimitPollInterval / time.Second),
-			"usage_limit_waited_seconds": int(s.usageLimitWaited / time.Second),
-			"run_idle_timeout_seconds":   s.runIdleTimeout,
+			"await_reason":                     "usage-limit",
+			"usage_limit_poll_seconds":         int(usageLimitPollInterval / time.Second),
+			"usage_limit_waited_seconds":       int(s.usageLimitWaited / time.Second),
+			"usage_limit_retry_window_seconds": int(usageLimitRetryWindow / time.Second),
 		})
 		return result, true
 	}

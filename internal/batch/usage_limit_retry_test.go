@@ -16,8 +16,8 @@ import (
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
-func TestUsageLimitAwaitResumesSameSessionAfterTenMinutePoll(t *testing.T) {
-	result, sandbox, log, waits := runUsageLimitBatch(t, 1, 601, 1)
+func TestUsageLimitAwaitResumesSameSessionWithIdleTimeoutDisabled(t *testing.T) {
+	result, sandbox, log, waits := runUsageLimitBatch(t, 1, 0, 1)
 
 	if result.Runs[0].Status != "success" {
 		t.Fatalf("status = %q, want success", result.Runs[0].Status)
@@ -45,44 +45,49 @@ func TestUsageLimitAwaitResumesSameSessionAfterTenMinutePoll(t *testing.T) {
 		if event.Type != "run.await" {
 			continue
 		}
-		if event.Payload["await_reason"] != "usage-limit" || event.Payload["usage_limit_poll_seconds"] != int(usageLimitPollInterval/time.Second) {
+		if event.Payload["await_reason"] != "usage-limit" || event.Payload["usage_limit_poll_seconds"] != int(usageLimitPollInterval/time.Second) || event.Payload["usage_limit_retry_window_seconds"] != int(usageLimitRetryWindow/time.Second) {
 			t.Fatalf("run.await payload = %#v, want usage-limit polling metadata", event.Payload)
 		}
 	}
 }
 
-func TestUsageLimitAwaitRetriesAfterIdleTimeout(t *testing.T) {
-	result, sandbox, log, waits := runUsageLimitBatch(t, 2, 10*60, 1)
+func TestUsageLimitAwaitRetriesAfterFiveHours(t *testing.T) {
+	result, sandbox, log, waits := runUsageLimitBatch(t, 31, 0, 1)
 
 	if result.Runs[0].Status != "failure" {
 		t.Fatalf("status = %q, want failure after the fresh retry has no merged PR", result.Runs[0].Status)
 	}
-	if got := sandbox.attemptCount(); got != 3 {
-		t.Fatalf("agent attempts = %d, want 3", got)
+	if got := sandbox.attemptCount(); got != 32 {
+		t.Fatalf("agent attempts = %d, want 32", got)
 	}
-	if len(waits) != 1 || waits[0] != 10*time.Minute {
-		t.Fatalf("await waits = %v, want [10m0s]", waits)
+	if len(waits) != 30 {
+		t.Fatalf("await waits = %d, want 30", len(waits))
+	}
+	for _, wait := range waits {
+		if wait != usageLimitPollInterval {
+			t.Fatalf("await waits = %v, want every wait to be 10m", waits)
+		}
 	}
 	commands := sandbox.commandsSnapshot()
 	if !strings.Contains(commands[1], "--session 'usage-limit-session'") {
 		t.Fatalf("commands = %q, want the poll to reuse the OpenCode session", commands)
 	}
-	if strings.Contains(commands[2], "--session") {
+	if strings.Contains(commands[31], "--session") {
 		t.Fatalf("commands = %q, want retry to start a fresh session", commands)
 	}
-	if got := countEventsByType(log.snapshot(), "run.await"); got != 1 {
-		t.Fatalf("run.await events = %d, want 1", got)
+	if got := countEventsByType(log.snapshot(), "run.await"); got != 30 {
+		t.Fatalf("run.await events = %d, want 30", got)
 	}
 	if got := countEventsByType(log.snapshot(), "run.retry"); got != 1 {
 		t.Fatalf("run.retry events = %d, want 1", got)
 	}
 }
 
-func TestUsageLimitAwaitPollsUntilIdleTimeout(t *testing.T) {
-	_, sandbox, log, waits := runUsageLimitBatch(t, 3, 20*60, 1)
+func TestUsageLimitAwaitPollsWhileQuotaRemainsExhausted(t *testing.T) {
+	_, sandbox, log, waits := runUsageLimitBatch(t, 2, 0, 1)
 
-	if got := sandbox.attemptCount(); got != 4 {
-		t.Fatalf("agent attempts = %d, want 4", got)
+	if got := sandbox.attemptCount(); got != 3 {
+		t.Fatalf("agent attempts = %d, want 3", got)
 	}
 	if len(waits) != 2 || waits[0] != 10*time.Minute || waits[1] != 10*time.Minute {
 		t.Fatalf("await waits = %v, want [10m0s 10m0s]", waits)
@@ -91,24 +96,8 @@ func TestUsageLimitAwaitPollsUntilIdleTimeout(t *testing.T) {
 	if !strings.Contains(commands[1], "--session 'usage-limit-session'") || !strings.Contains(commands[2], "--session 'usage-limit-session'") {
 		t.Fatalf("commands = %q, want every poll to reuse the OpenCode session", commands)
 	}
-	if strings.Contains(commands[3], "--session") {
-		t.Fatalf("commands = %q, want retry to start a fresh session", commands)
-	}
 	if got := countEventsByType(log.snapshot(), "run.await"); got != 2 {
 		t.Fatalf("run.await events = %d, want 2", got)
-	}
-}
-
-func TestUsageLimitRetryZeroIdleTimeoutDoesNotAwait(t *testing.T) {
-	_, sandbox, log, waits := runUsageLimitBatch(t, 1, 0, 1)
-	if got := sandbox.attemptCount(); got != 2 {
-		t.Fatalf("agent attempts = %d, want 2", got)
-	}
-	if len(waits) != 0 {
-		t.Fatalf("await waits = %v, want none", waits)
-	}
-	if got := countEventsByType(log.snapshot(), "run.await"); got != 0 {
-		t.Fatalf("run.await events = %d, want 0", got)
 	}
 }
 
@@ -125,7 +114,7 @@ func runUsageLimitBatch(t *testing.T, failures, idleTimeout, retries int) (*Resu
 	client := &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Usage limit", State: "closed"}}}
 	// A continued session needs a merged PR to finish successfully. A timeout
 	// test omits it so the ordinary retry reaches a fresh agent launch.
-	if failures == 1 && idleTimeout > 0 {
+	if failures < 31 {
 		client.prs = map[string]*github.PR{branch: {Number: 7, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: branch}}
 	}
 	cfg := &config.Config{
