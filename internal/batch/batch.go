@@ -179,15 +179,16 @@ type Result struct {
 // at write time in `emitTerminal` in `internal/batch/orchestrator.go`,
 // where the `retries_done` payload key is set to `RetriesTotal - 1`.
 type AgentRunResult struct {
-	IssueNumber      int
-	Issue            *int
-	Status           string
-	RetriesTotal     int
-	Branch           string
-	WorktreePath     string
-	Review           bool
-	RunID            string
-	ContextExhausted bool
+	IssueNumber       int
+	Issue             *int
+	Status            string
+	RetriesTotal      int
+	Branch            string
+	WorktreePath      string
+	Review            bool
+	RunID             string
+	ContextExhausted  bool
+	UsageLimitReached bool
 	// CleanupError records a failure during process cleanup after context
 	// cancellation. When non-nil, the orchestrator must not mark the run as
 	// terminal until the error is recorded in the event log, satisfying

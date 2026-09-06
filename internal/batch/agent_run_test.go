@@ -600,6 +600,70 @@ func TestAgentRun_Run_ExecuteFailure(t *testing.T) {
 	}
 }
 
+func TestAgentRun_Run_RecognizesOpenCodeUsageLimitOnlyOnFailedDirectOutput(t *testing.T) {
+	tests := []struct {
+		name        string
+		preset      string
+		stderr      string
+		execErr     error
+		wantReached bool
+	}{
+		{
+			name:        "direct OpenCode failure",
+			preset:      "opencode",
+			stderr:      "Error: The usage limit has been reached\n",
+			execErr:     errors.New("agent failed"),
+			wantReached: true,
+		},
+		{
+			name:        "successful exit",
+			preset:      "opencode",
+			stderr:      "Error: The usage limit has been reached\n",
+			wantReached: false,
+		},
+		{
+			name:        "nested forwarded error",
+			preset:      "opencode",
+			stderr:      "[run-42] 12:00:00 Error: The usage limit has been reached\n",
+			execErr:     errors.New("agent failed"),
+			wantReached: false,
+		},
+		{
+			name:        "other preset",
+			preset:      "custom",
+			stderr:      "Error: The usage limit has been reached\n",
+			execErr:     errors.New("agent failed"),
+			wantReached: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sb := &fakeSandbox{workDir: t.TempDir(), execStderr: tt.stderr, execError: tt.execErr}
+			run := NewAgentRun(&github.Issue{Number: 42, Title: "Usage limit"}, "42-usage-limit", sb)
+			run.preset = tt.preset
+			var output bytes.Buffer
+			run.outputWriter = &output
+			result := run.Run(context.Background(), &spyRenderer{result: "task"}, "opencode run {{.PromptFile}}", prompt.RenderConfig{})
+			if result.UsageLimitReached != tt.wantReached {
+				t.Fatalf("UsageLimitReached = %v, want %v (result=%+v)", result.UsageLimitReached, tt.wantReached, result)
+			}
+			if tt.wantReached {
+				if !strings.Contains(output.String(), "The usage limit has been reached") {
+					t.Fatalf("output = %q, want provider error", output.String())
+				}
+				log, err := os.ReadFile(filepath.Join(sb.workDir, "run.log"))
+				if err != nil {
+					t.Fatalf("read run log: %v", err)
+				}
+				if !strings.Contains(string(log), "The usage limit has been reached") {
+					t.Fatalf("run log = %q, want provider error", log)
+				}
+			}
+		})
+	}
+}
+
 func TestAgentRun_Execute_WritesToOutputWriter(t *testing.T) {
 	dir := t.TempDir()
 	issue := &github.Issue{Number: 42, Title: "Fix bug"}

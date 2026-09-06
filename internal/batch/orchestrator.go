@@ -2062,8 +2062,11 @@ type runSessionOptions struct {
 	contextRolloverLiteralsSet bool
 	taskWriter                 func(string, []byte, os.FileMode) error
 	retryReset                 func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error
-	killTimeout                time.Duration
-	currentHead                func(workDir string) (string, error)
+	// usageLimitRetryWait makes the OpenCode provider-limit cooldown
+	// deterministic in tests. Production uses a context-aware timer.
+	usageLimitRetryWait func(context.Context, time.Duration) error
+	killTimeout         time.Duration
+	currentHead         func(workDir string) (string, error)
 	// lifecyclePollPlan and lifecycleWait keep foreground lifecycle observation
 	// deterministic in tests. Production uses the implementation review plan
 	// and a context-aware timer when these hooks are unset.
@@ -2907,6 +2910,11 @@ loop:
 			// Session reuse is a launch choice, not retry state. Retries and
 			// context-rollover recovery always start a fresh conversation.
 			s.reuseSession = false
+			if result.UsageLimitReached {
+				if err := s.waitForUsageLimitRetry(ctx); err != nil {
+					break loop
+				}
+			}
 			// An operator cancellation must win before recovery can replace the
 			// Task or start a fresh session.
 			if result.ContextExhausted && ctx.Err() != nil {
@@ -3201,6 +3209,24 @@ loop:
 		terminalExtras["context_exhausted"] = true
 	}
 	return result, terminalExtras, true
+}
+
+func (s *runSession) waitForUsageLimitRetry(ctx context.Context) error {
+	if s.runIdleTimeout <= 0 {
+		return nil
+	}
+	delay := time.Duration(s.runIdleTimeout) * time.Second
+	if s.opts.usageLimitRetryWait != nil {
+		return s.opts.usageLimitRetryWait(ctx, delay)
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (s *runSession) restoreHostPathsBeforeExternalGate(wt sandbox.Sandbox) bool {
