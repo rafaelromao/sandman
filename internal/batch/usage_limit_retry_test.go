@@ -6,377 +6,186 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/config"
-	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
-func TestUsageLimitRetryWaitsBeforeRetryPreparation(t *testing.T) {
-	workDir := t.TempDir()
-	t.Chdir(workDir)
+func TestUsageLimitAwaitResumesSameSessionAfterTenMinutePoll(t *testing.T) {
+	result, sandbox, log, waits := runUsageLimitBatch(t, 1, 601, 1)
+
+	if result.Runs[0].Status != "success" {
+		t.Fatalf("status = %q, want success", result.Runs[0].Status)
+	}
+	if got := sandbox.attemptCount(); got != 2 {
+		t.Fatalf("agent attempts = %d, want 2", got)
+	}
+	if len(waits) != 1 || waits[0] != 10*time.Minute {
+		t.Fatalf("await waits = %v, want [10m0s]", waits)
+	}
+	commands := sandbox.commandsSnapshot()
+	if len(commands) != 2 || !strings.Contains(commands[1], "--session 'usage-limit-session'") {
+		t.Fatalf("commands = %q, want second command to reuse the OpenCode session", commands)
+	}
+	if got := countEventsByType(log.snapshot(), "run.await"); got != 1 {
+		t.Fatalf("run.await events = %d, want 1", got)
+	}
+	if got := countEventsByType(log.snapshot(), "run.continued"); got != 1 {
+		t.Fatalf("run.continued events = %d, want 1", got)
+	}
+	if got := countEventsByType(log.snapshot(), "run.retry"); got != 0 {
+		t.Fatalf("run.retry events = %d, want 0", got)
+	}
+	for _, event := range log.snapshot() {
+		if event.Type != "run.await" {
+			continue
+		}
+		if event.Payload["await_reason"] != "usage-limit" || event.Payload["usage_limit_poll_seconds"] != int(usageLimitPollInterval/time.Second) {
+			t.Fatalf("run.await payload = %#v, want usage-limit polling metadata", event.Payload)
+		}
+	}
+}
+
+func TestUsageLimitAwaitRetriesAfterIdleTimeout(t *testing.T) {
+	result, sandbox, log, waits := runUsageLimitBatch(t, 2, 10*60, 1)
+
+	if result.Runs[0].Status != "failure" {
+		t.Fatalf("status = %q, want failure after the fresh retry has no merged PR", result.Runs[0].Status)
+	}
+	if got := sandbox.attemptCount(); got != 3 {
+		t.Fatalf("agent attempts = %d, want 3", got)
+	}
+	if len(waits) != 1 || waits[0] != 10*time.Minute {
+		t.Fatalf("await waits = %v, want [10m0s]", waits)
+	}
+	commands := sandbox.commandsSnapshot()
+	if !strings.Contains(commands[1], "--session 'usage-limit-session'") {
+		t.Fatalf("commands = %q, want the poll to reuse the OpenCode session", commands)
+	}
+	if strings.Contains(commands[2], "--session") {
+		t.Fatalf("commands = %q, want retry to start a fresh session", commands)
+	}
+	if got := countEventsByType(log.snapshot(), "run.await"); got != 1 {
+		t.Fatalf("run.await events = %d, want 1", got)
+	}
+	if got := countEventsByType(log.snapshot(), "run.retry"); got != 1 {
+		t.Fatalf("run.retry events = %d, want 1", got)
+	}
+}
+
+func TestUsageLimitAwaitPollsUntilIdleTimeout(t *testing.T) {
+	_, sandbox, log, waits := runUsageLimitBatch(t, 3, 20*60, 1)
+
+	if got := sandbox.attemptCount(); got != 4 {
+		t.Fatalf("agent attempts = %d, want 4", got)
+	}
+	if len(waits) != 2 || waits[0] != 10*time.Minute || waits[1] != 10*time.Minute {
+		t.Fatalf("await waits = %v, want [10m0s 10m0s]", waits)
+	}
+	commands := sandbox.commandsSnapshot()
+	if !strings.Contains(commands[1], "--session 'usage-limit-session'") || !strings.Contains(commands[2], "--session 'usage-limit-session'") {
+		t.Fatalf("commands = %q, want every poll to reuse the OpenCode session", commands)
+	}
+	if strings.Contains(commands[3], "--session") {
+		t.Fatalf("commands = %q, want retry to start a fresh session", commands)
+	}
+	if got := countEventsByType(log.snapshot(), "run.await"); got != 2 {
+		t.Fatalf("run.await events = %d, want 2", got)
+	}
+}
+
+func TestUsageLimitRetryZeroIdleTimeoutDoesNotAwait(t *testing.T) {
+	_, sandbox, log, waits := runUsageLimitBatch(t, 1, 0, 1)
+	if got := sandbox.attemptCount(); got != 2 {
+		t.Fatalf("agent attempts = %d, want 2", got)
+	}
+	if len(waits) != 0 {
+		t.Fatalf("await waits = %v, want none", waits)
+	}
+	if got := countEventsByType(log.snapshot(), "run.await"); got != 0 {
+		t.Fatalf("run.await events = %d, want 0", got)
+	}
+}
+
+func runUsageLimitBatch(t *testing.T, failures, idleTimeout, retries int) (*Result, *usageLimitRetrySandbox, *spyEventLog, []time.Duration) {
+	t.Helper()
+	root := t.TempDir()
+	t.Chdir(root)
+	initGitRepo(t, root)
 
 	const branch = "42-usage-limit"
-	var order []string
-	var orderMu sync.Mutex
-	record := func(step string) {
-		orderMu.Lock()
-		defer orderMu.Unlock()
-		order = append(order, step)
+	sb := &usageLimitRetrySandbox{workDir: filepath.Join(root, "worktree"), failures: failures}
+	log := &spyEventLog{}
+	var waits []time.Duration
+	client := &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Usage limit", State: "closed"}}}
+	// A continued session needs a merged PR to finish successfully. A timeout
+	// test omits it so the ordinary retry reaches a fresh agent launch.
+	if failures == 1 && idleTimeout > 0 {
+		client.prs = map[string]*github.PR{branch: {Number: 7, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: branch}}
 	}
-	sb := &usageLimitRetrySandbox{
-		workDir: filepath.Join(workDir, "worktree"),
-		onExec: func(attempt int) {
-			record("attempt-" + string(rune('0'+attempt)))
-		},
+	cfg := &config.Config{
+		Agent:          "opencode",
+		DefaultAgent:   "opencode",
+		Sandbox:        "worktree",
+		WorktreeDir:    filepath.Join(root, "worktrees"),
+		Git:            config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{"opencode": config.BuiltInAgentPresets["opencode"].Agent("opencode")},
 	}
-	previousRetryMarker := logRetryMarkerFn
-	logRetryMarkerFn = func(logPath string, attempt, maxRetries int) error {
-		record("marker")
-		return previousRetryMarker(logPath, attempt, maxRetries)
-	}
-	t.Cleanup(func() { logRetryMarkerFn = previousRetryMarker })
-
-	o := NewOrchestrator(
-		&fakeGitHubClient{issues: map[int]*github.Issue{
-			42: {Number: 42, Title: "Usage limit", State: "closed"},
-		}},
-		&retryRenderer{result: "# Task\n\nRetry safely."},
-		nil,
-		&events.JSONLLogger{Path: filepath.Join(workDir, "events.jsonl")},
+	o := NewOrchestrator(client, &retryRenderer{result: "# Task\n\nRetry safely."}, &fakeConfigStore{config: cfg}, log,
 		WithErrorLog(io.Discard),
 		WithSandboxFactory(&usageLimitRetrySandboxFactory{sandbox: sb}),
 		WithRunnableFactory(&usageLimitRetryRunnableFactory{}),
 		WithRunSessionOpts(runSessionOptions{
-			usageLimitRetryWait: func(ctx context.Context, delay time.Duration) error {
-				if delay != time.Second {
-					t.Errorf("retry delay = %s, want 1s", delay)
-				}
-				record("wait")
+			releaseAwaitCapacity: true,
+			awaitWait: func(_ context.Context, delay time.Duration) error {
+				waits = append(waits, delay)
 				return nil
 			},
 		}),
 	)
-
-	result, started := o.newRunExecutor(context.Background(), BatchConfig{
-		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
-		AgentName:        "opencode",
-		AgentCfg:         config.BuiltInAgentPresets["opencode"].Agent("opencode"),
-		IdentityResolver: noopIdentityResolver(),
-		Retries:          1,
-		RunIdleTimeout:   1,
-	}, &usageLimitRetrySandboxFactory{sandbox: sb}, nil).Execute(context.Background(), RowSpec{
-		IssueNumber: 42,
-		Branches:    map[int]string{42: branch},
-		BaseBranch:  "main",
-		RunTS:       "260906151914",
-		RunShortID:  "limit",
+	result, err := o.RunBatch(context.Background(), Request{
+		Issues:            []int{42},
+		Branches:          map[int]string{42: branch},
+		Agent:             "opencode",
+		Retries:           retries,
+		Parallel:          1,
+		RunIdleTimeout:    idleTimeout,
+		RunIdleTimeoutSet: true,
+		RunTS:             "260906151914",
+		RunShortID:        "limit",
 	})
-	if !started {
-		t.Fatalf("expected run to start, result=%+v", result)
+	if result == nil {
+		t.Fatalf("run batch result is nil: %v", err)
 	}
-	orderMu.Lock()
-	gotOrder := append([]string(nil), order...)
-	orderMu.Unlock()
-	wantOrder := []string{"attempt-1", "wait", "marker", "attempt-2"}
-	if len(gotOrder) != len(wantOrder) {
-		t.Fatalf("order = %v, want %v", gotOrder, wantOrder)
-	}
-	for i, want := range wantOrder {
-		if gotOrder[i] != want {
-			t.Fatalf("order = %v, want %v", gotOrder, wantOrder)
-		}
-	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure without a merged pull request", result.Status)
-	}
-}
-
-func TestUsageLimitRetryPromptOnlyWaits(t *testing.T) {
-	workDir := t.TempDir()
-	t.Chdir(workDir)
-
-	var order []string
-	var orderMu sync.Mutex
-	record := func(step string) {
-		orderMu.Lock()
-		defer orderMu.Unlock()
-		order = append(order, step)
-	}
-	sb := &usageLimitRetrySandbox{
-		workDir: filepath.Join(workDir, "worktree"),
-		onExec: func(attempt int) {
-			record("attempt-" + string(rune('0'+attempt)))
-		},
-	}
-	o := NewOrchestrator(
-		nil,
-		&retryRenderer{result: "# Task\n\nRetry safely."},
-		nil,
-		&events.JSONLLogger{Path: filepath.Join(workDir, "events.jsonl")},
-		WithErrorLog(io.Discard),
-		WithSandboxFactory(&usageLimitRetrySandboxFactory{sandbox: sb}),
-		WithRunnableFactory(&usageLimitRetryRunnableFactory{}),
-		WithRunSessionOpts(runSessionOptions{
-			retryReset: func(context.Context, sandbox.Sandbox, string, string) error { return nil },
-			usageLimitRetryWait: func(ctx context.Context, delay time.Duration) error {
-				if delay != 2*time.Second {
-					t.Errorf("retry delay = %s, want 2s", delay)
-				}
-				record("wait")
-				return nil
-			},
-		}),
-	)
-
-	result, started := o.newRunExecutor(context.Background(), BatchConfig{
-		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
-		AgentName:        "opencode",
-		AgentCfg:         config.BuiltInAgentPresets["opencode"].Agent("opencode"),
-		IdentityResolver: noopIdentityResolver(),
-		Retries:          1,
-		RunIdleTimeout:   2,
-	}, &usageLimitRetrySandboxFactory{sandbox: sb}, nil).Execute(context.Background(), RowSpec{
-		Mode:              ModeFresh,
-		Branches:          map[int]string{0: "usage-limit-prompt"},
-		BaseBranch:        "main",
-		BatchID:           "usage-limit-prompt",
-		RunID:             "usage-limit-prompt",
-		UserProvidedRunID: "usage-limit-prompt",
-	})
-	if !started {
-		t.Fatalf("expected prompt-only run to start, result=%+v", result)
-	}
-	if result.Status != "success" {
-		t.Fatalf("status = %q, want success", result.Status)
-	}
-
-	orderMu.Lock()
-	gotOrder := append([]string(nil), order...)
-	orderMu.Unlock()
-	wantOrder := []string{"attempt-1", "wait", "attempt-2"}
-	if len(gotOrder) != len(wantOrder) {
-		t.Fatalf("order = %v, want %v", gotOrder, wantOrder)
-	}
-	for i, want := range wantOrder {
-		if gotOrder[i] != want {
-			t.Fatalf("order = %v, want %v", gotOrder, wantOrder)
-		}
-	}
-}
-
-func TestUsageLimitRetryCancellationPreventsRetry(t *testing.T) {
-	workDir := t.TempDir()
-	t.Chdir(workDir)
-
-	const branch = "42-usage-limit-cancel"
-	sb := &usageLimitRetrySandbox{workDir: filepath.Join(workDir, "worktree")}
-	eventLog := &events.JSONLLogger{Path: filepath.Join(workDir, "events.jsonl")}
-	waitStarted := make(chan struct{})
-	previousRetryMarker := logRetryMarkerFn
-	markerCalls := 0
-	logRetryMarkerFn = func(string, int, int) error {
-		markerCalls++
-		return nil
-	}
-	t.Cleanup(func() { logRetryMarkerFn = previousRetryMarker })
-	o := NewOrchestrator(
-		&fakeGitHubClient{issues: map[int]*github.Issue{
-			42: {Number: 42, Title: "Usage limit", State: "closed"},
-		}},
-		&retryRenderer{result: "# Task\n\nRetry safely."},
-		nil,
-		eventLog,
-		WithErrorLog(io.Discard),
-		WithSandboxFactory(&usageLimitRetrySandboxFactory{sandbox: sb}),
-		WithRunnableFactory(&usageLimitRetryRunnableFactory{}),
-		WithRunSessionOpts(runSessionOptions{
-			usageLimitRetryWait: func(ctx context.Context, _ time.Duration) error {
-				close(waitStarted)
-				<-ctx.Done()
-				return ctx.Err()
-			},
-		}),
-	)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := make(chan struct{})
-	var result AgentRunResult
-	var started bool
-	go func() {
-		defer close(done)
-		result, started = o.newRunExecutor(ctx, BatchConfig{
-			Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
-			AgentName:        "opencode",
-			AgentCfg:         config.BuiltInAgentPresets["opencode"].Agent("opencode"),
-			IdentityResolver: noopIdentityResolver(),
-			Retries:          1,
-			RunIdleTimeout:   1,
-		}, &usageLimitRetrySandboxFactory{sandbox: sb}, nil).Execute(ctx, RowSpec{
-			IssueNumber: 42,
-			Branches:    map[int]string{42: branch},
-			BaseBranch:  "main",
-			RunTS:       "260906151914",
-			RunShortID:  "cancel",
-		})
-	}()
-
-	<-waitStarted
-	cancel()
-	<-done
-	if !started {
-		t.Fatalf("expected run to start, result=%+v", result)
-	}
-	if result.Status != "aborted" {
-		t.Fatalf("status = %q, want aborted", result.Status)
-	}
-	if sb.attemptCount() != 1 {
-		t.Fatalf("agent attempts = %d, want 1", sb.attemptCount())
-	}
-	if markerCalls != 0 {
-		t.Fatalf("retry marker calls = %d, want 0", markerCalls)
-	}
-
-	logged, err := eventLog.Read()
-	if err != nil {
-		t.Fatalf("read events: %v", err)
-	}
-	for _, event := range logged {
-		if event.Type == "run.retry" {
-			t.Fatalf("unexpected retry event after cooldown cancellation: %+v", logged)
-		}
-	}
-}
-
-func TestUsageLimitRetryWaitsForEachQualifyingFailure(t *testing.T) {
-	workDir := t.TempDir()
-	t.Chdir(workDir)
-
-	sb := &usageLimitRetrySandbox{
-		workDir:  filepath.Join(workDir, "worktree"),
-		failures: 2,
-	}
-	waits := 0
-	o := NewOrchestrator(
-		&fakeGitHubClient{issues: map[int]*github.Issue{
-			42: {Number: 42, Title: "Usage limit", State: "closed"},
-		}},
-		&retryRenderer{result: "# Task\n\nRetry safely."},
-		nil,
-		&events.JSONLLogger{Path: filepath.Join(workDir, "events.jsonl")},
-		WithErrorLog(io.Discard),
-		WithSandboxFactory(&usageLimitRetrySandboxFactory{sandbox: sb}),
-		WithRunnableFactory(&usageLimitRetryRunnableFactory{}),
-		WithRunSessionOpts(runSessionOptions{
-			usageLimitRetryWait: func(_ context.Context, delay time.Duration) error {
-				if delay != 3*time.Second {
-					t.Errorf("retry delay = %s, want 3s", delay)
-				}
-				waits++
-				return nil
-			},
-		}),
-	)
-
-	_, started := o.newRunExecutor(context.Background(), BatchConfig{
-		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
-		AgentName:        "opencode",
-		AgentCfg:         config.BuiltInAgentPresets["opencode"].Agent("opencode"),
-		IdentityResolver: noopIdentityResolver(),
-		Retries:          2,
-		RunIdleTimeout:   3,
-	}, &usageLimitRetrySandboxFactory{sandbox: sb}, nil).Execute(context.Background(), RowSpec{
-		IssueNumber: 42,
-		Branches:    map[int]string{42: "42-usage-limit-repeat"},
-		BaseBranch:  "main",
-		RunTS:       "260906151914",
-		RunShortID:  "repeat",
-	})
-	if !started {
-		t.Fatal("expected run to start")
-	}
-	if waits != 2 {
-		t.Fatalf("cooldown waits = %d, want 2", waits)
-	}
-	if sb.attemptCount() != 3 {
-		t.Fatalf("agent attempts = %d, want 3", sb.attemptCount())
-	}
-}
-
-func TestUsageLimitRetryZeroIdleTimeoutSkipsCooldown(t *testing.T) {
-	workDir := t.TempDir()
-	t.Chdir(workDir)
-
-	sb := &usageLimitRetrySandbox{workDir: filepath.Join(workDir, "worktree")}
-	o := NewOrchestrator(
-		&fakeGitHubClient{issues: map[int]*github.Issue{
-			42: {Number: 42, Title: "Usage limit", State: "closed"},
-		}},
-		&retryRenderer{result: "# Task\n\nRetry safely."},
-		nil,
-		&events.JSONLLogger{Path: filepath.Join(workDir, "events.jsonl")},
-		WithErrorLog(io.Discard),
-		WithSandboxFactory(&usageLimitRetrySandboxFactory{sandbox: sb}),
-		WithRunnableFactory(&usageLimitRetryRunnableFactory{}),
-		WithRunSessionOpts(runSessionOptions{
-			usageLimitRetryWait: func(context.Context, time.Duration) error {
-				t.Fatal("zero idle timeout invoked cooldown")
-				return nil
-			},
-		}),
-	)
-
-	_, started := o.newRunExecutor(context.Background(), BatchConfig{
-		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
-		AgentName:        "opencode",
-		AgentCfg:         config.BuiltInAgentPresets["opencode"].Agent("opencode"),
-		IdentityResolver: noopIdentityResolver(),
-		Retries:          1,
-	}, &usageLimitRetrySandboxFactory{sandbox: sb}, nil).Execute(context.Background(), RowSpec{
-		IssueNumber: 42,
-		Branches:    map[int]string{42: "42-usage-limit-zero"},
-		BaseBranch:  "main",
-		RunTS:       "260906151914",
-		RunShortID:  "zero",
-	})
-	if !started {
-		t.Fatal("expected run to start")
-	}
-	if sb.attemptCount() != 2 {
-		t.Fatalf("agent attempts = %d, want 2", sb.attemptCount())
-	}
+	return result, sb, log, waits
 }
 
 type usageLimitRetrySandbox struct {
 	workDir  string
-	onExec   func(int)
 	failures int
 
 	mu       sync.Mutex
 	attempts int
+	commands []string
 }
 
 func (s *usageLimitRetrySandbox) Start(sandbox.SandboxStart) error {
 	return os.MkdirAll(filepath.Join(s.workDir, ".sandman"), 0o755)
 }
 
-func (s *usageLimitRetrySandbox) Exec(_ context.Context, _ string, _ io.Writer, stderr io.Writer) error {
+func (s *usageLimitRetrySandbox) Exec(_ context.Context, command string, stdout, stderr io.Writer) error {
 	s.mu.Lock()
 	s.attempts++
 	attempt := s.attempts
+	s.commands = append(s.commands, command)
 	s.mu.Unlock()
-	if s.onExec != nil {
-		s.onExec(attempt)
-	}
-	failures := s.failures
-	if failures == 0 {
-		failures = 1
-	}
-	if attempt <= failures {
+	_, _ = io.WriteString(stdout, `{"type":"text","sessionID":"usage-limit-session","part":{"text":"working"}}`+"\n")
+	if attempt <= s.failures {
 		_, _ = io.WriteString(stderr, "Error: The usage limit has been reached\n")
 		return errors.New("OpenCode usage limit")
 	}
@@ -390,17 +199,19 @@ func (s *usageLimitRetrySandbox) RepoPath() string                              
 func (s *usageLimitRetrySandbox) Process() sandbox.Process                      { return nil }
 func (s *usageLimitRetrySandbox) RestoreHostPaths() error                       { return nil }
 func (s *usageLimitRetrySandbox) WritePrompt(content string) error {
-	path := filepath.Join(s.workDir, ".sandman", "task.md")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(content), 0o644)
+	return os.WriteFile(filepath.Join(s.workDir, ".sandman", "task.md"), []byte(content), 0o644)
 }
 
 func (s *usageLimitRetrySandbox) attemptCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.attempts
+}
+
+func (s *usageLimitRetrySandbox) commandsSnapshot() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.commands...)
 }
 
 type usageLimitRetrySandboxFactory struct {

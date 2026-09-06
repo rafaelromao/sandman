@@ -116,6 +116,8 @@ func issueRef(num int) *int {
 var branchExists = sandbox.BranchExists
 var branchValidationEnabled = true
 
+const usageLimitPollInterval = 10 * time.Minute
+
 func resolveRetries(req Request, cfg *config.Config) int {
 	if req.Retries >= 0 {
 		return req.Retries
@@ -1675,6 +1677,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			var res AgentRunResult
 			var started bool
 			awaitPoll := 0
+			var usageLimitWaited time.Duration
 			defer func() {
 				if err := coord.stopCommandServer(issueNum); err != nil {
 					fmt.Fprintf(o.errorLog, "error: stop command server for issue %d: %v\n", issueNum, err)
@@ -1700,7 +1703,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				}
 				advanceTurn()
 				interval := time.Duration(implementationReviewPollPlan[len(implementationReviewPollPlan)-1]) * time.Second
-				if len(o.runSessionOpts.lifecyclePollPlan) > 0 {
+				if res.UsageLimitReached {
+					interval = usageLimitPollInterval
+				} else if len(o.runSessionOpts.lifecyclePollPlan) > 0 {
 					interval = o.runSessionOpts.lifecyclePollPlan[min(awaitPoll, len(o.runSessionOpts.lifecyclePollPlan)-1)]
 				} else if awaitPoll < len(implementationReviewPollPlan) {
 					interval = time.Duration(implementationReviewPollPlan[awaitPoll]) * time.Second
@@ -1719,6 +1724,11 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				row.PreviousRunIDs = map[int]string{issueNum: runID}
 				row.PreviousRunBatchIDs = map[int]string{issueNum: issueBatchID}
 				row.ReuseSession = true
+				row.UsageLimitProbe = res.UsageLimitReached
+				if res.UsageLimitReached {
+					usageLimitWaited += interval
+					row.UsageLimitWaited = usageLimitWaited
+				}
 				priority = true
 				continue
 			}
@@ -2062,11 +2072,8 @@ type runSessionOptions struct {
 	contextRolloverLiteralsSet bool
 	taskWriter                 func(string, []byte, os.FileMode) error
 	retryReset                 func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error
-	// usageLimitRetryWait makes the OpenCode provider-limit cooldown
-	// deterministic in tests. Production uses a context-aware timer.
-	usageLimitRetryWait func(context.Context, time.Duration) error
-	killTimeout         time.Duration
-	currentHead         func(workDir string) (string, error)
+	killTimeout                time.Duration
+	currentHead                func(workDir string) (string, error)
 	// lifecyclePollPlan and lifecycleWait keep foreground lifecycle observation
 	// deterministic in tests. Production uses the implementation review plan
 	// and a context-aware timer when these hooks are unset.
@@ -2108,6 +2115,8 @@ type runSession struct {
 	previousRunIDs             map[int]string
 	previousRunBatchIDs        map[int]string
 	reuseSession               bool
+	usageLimitProbe            bool
+	usageLimitWaited           time.Duration
 	identityResolver           *gitIdentityResolver
 	branches                   map[int]string
 	renderCfg                  prompt.RenderConfig
@@ -2910,11 +2919,6 @@ loop:
 			// Session reuse is a launch choice, not retry state. Retries and
 			// context-rollover recovery always start a fresh conversation.
 			s.reuseSession = false
-			if result.UsageLimitReached {
-				if err := s.waitForUsageLimitRetry(ctx); err != nil {
-					break loop
-				}
-			}
 			// An operator cancellation must win before recovery can replace the
 			// Task or start a fresh session.
 			if result.ContextExhausted && ctx.Err() != nil {
@@ -3200,6 +3204,9 @@ loop:
 				}
 			}
 		}
+		if s.shouldAwaitUsageLimit(result) {
+			break loop
+		}
 	}
 
 	if result.ContextExhausted {
@@ -3211,22 +3218,13 @@ loop:
 	return result, terminalExtras, true
 }
 
-func (s *runSession) waitForUsageLimitRetry(ctx context.Context) error {
-	if s.runIdleTimeout <= 0 {
-		return nil
-	}
-	delay := time.Duration(s.runIdleTimeout) * time.Second
-	if s.opts.usageLimitRetryWait != nil {
-		return s.opts.usageLimitRetryWait(ctx, delay)
-	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
+func (s *runSession) shouldAwaitUsageLimit(result AgentRunResult) bool {
+	return s.issueNumber > 0 &&
+		s.agentCfg.Preset == opencodeProvider &&
+		result.UsageLimitReached &&
+		!result.ContextExhausted &&
+		s.runIdleTimeout > 0 &&
+		s.usageLimitWaited < time.Duration(s.runIdleTimeout)*time.Second
 }
 
 func (s *runSession) restoreHostPathsBeforeExternalGate(wt sandbox.Sandbox) bool {
@@ -3452,8 +3450,10 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	// a ready-to-merge / actionable-feedback gate attaches the
 	// request-scoped evidence to the entry launch prompt (the entry launch
 	// IS the resume).
-	if entryResult, entryStarted, entryHandled := s.tryEntryResume(ctx, branch, wt, logPath, runID); entryHandled {
-		return entryResult, entryStarted
+	if !s.usageLimitProbe {
+		if entryResult, entryStarted, entryHandled := s.tryEntryResume(ctx, branch, wt, logPath, runID); entryHandled {
+			return entryResult, entryStarted
+		}
 	}
 	result, terminalExtras, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, s.mode != ModeContinue, func(attempt int, previous AgentRunResult) (prompt.RenderConfig, *AgentRunResult) {
 		attemptRenderCfg := s.renderCfg
@@ -3526,6 +3526,15 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	// and skip terminal cleanup. The observation loop emitted the initial
 	// await before waiting; the run stays active until the external gate
 	// resolves or the context is canceled.
+	if s.shouldAwaitUsageLimit(result) {
+		result.Status = s.emitAwait(ctx, runID, result, map[string]any{
+			"await_reason":               "usage-limit",
+			"usage_limit_poll_seconds":   int(usageLimitPollInterval / time.Second),
+			"usage_limit_waited_seconds": int(s.usageLimitWaited / time.Second),
+			"run_idle_timeout_seconds":   s.runIdleTimeout,
+		})
+		return result, true
+	}
 	if result.Status == "await" {
 		return result, true
 	}

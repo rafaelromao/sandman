@@ -45,9 +45,10 @@ parallel_reviews: 1
 
 # Idle timeout in seconds for agent runs. When the agent produces no new log
 # output for this duration, the heartbeat watchdog aborts the run. A failed
-# OpenCode-preset attempt that reports its usage limit also waits this duration
-# before its ordinary retry.
-# 0 disables the watchdog and the OpenCode usage-limit cooldown.
+# OpenCode usage-limit failures enter waiting, release run capacity, and probe
+# the same session every 10 minutes. Once the accumulated polling time reaches
+# this duration, a still-limited probe follows the ordinary retry path.
+# 0 disables the watchdog and usage-limit waiting.
 # Default: 3600 (60 minutes).
 run_idle_timeout: 3600
 
@@ -176,9 +177,9 @@ See [Sandbox Modes](sandbox-modes.md) for detailed scheduling behavior.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `run_idle_timeout` | `3600` | Seconds of inactivity before the heartbeat watchdog aborts the run and the cooldown before retrying an OpenCode usage-limit failure. `0` disables both behaviors |
+| `run_idle_timeout` | `3600` | Seconds of inactivity before the heartbeat watchdog aborts the run and the maximum accumulated ten-minute OpenCode usage-limit polling time before ordinary retry. `0` disables both behaviors |
 
-`run_idle_timeout` detects when an agent has stalled (e.g., blocked on an interactive prompt, deadlocked, or looping). When triggered, the watchdog kills the agent process and marks the run as `aborted`. A `run.idle_timeout` event is written to the event log for diagnostics. The same duration is a cooldown before retrying an OpenCode-preset attempt that exits after reporting `Error: The usage limit has been reached`; it does not add a retry or change the retry reason. The `--run-idle-timeout` CLI flag overrides the config value for a single invocation.
+`run_idle_timeout` detects when an agent has stalled (e.g., blocked on an interactive prompt, deadlocked, or looping). When triggered, the watchdog kills the agent process and marks the run as `aborted`. A `run.idle_timeout` event is written to the event log for diagnostics. An OpenCode-preset attempt that exits after reporting `Error: The usage limit has been reached` instead emits `run.await`, releases its capacity, and re-enters the same session every ten minutes. If a re-entry remains limited after the accumulated polling time reaches this duration, it follows the ordinary retry path. The `--run-idle-timeout` CLI flag overrides the config value for a single invocation.
 
 ## Context rollover phrases
 

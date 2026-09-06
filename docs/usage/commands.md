@@ -82,7 +82,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--variant` | `variant` from config | Override the implementation model variant; forwarded to built-in OpenCode only when non-empty |
 | `--agent` | `agent` from config (`opencode`) | Agent preset for this run (built-in `opencode` or a custom provider under `agents` in config); on `--continue` uses the current CLI/config value, not the prior run's stored agent |
 | `--run-id` | — | Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection |
-| `--run-idle-timeout` | config `run_idle_timeout` (`3600`) | Treat an AgentRun as stuck if it produces no output for N seconds and set the OpenCode usage-limit retry cooldown; explicit `0` disables both behaviors |
+| `--run-idle-timeout` | config `run_idle_timeout` (`3600`) | Treat an AgentRun as stuck if it produces no output for N seconds and cap accumulated ten-minute OpenCode usage-limit polling before ordinary retry; explicit `0` disables both behaviors |
 | `--review-timeout` | config `review_timeout` (`1800`) | Override the absolute per-confirmed-request delegated review deadline in seconds; minimum `240` |
 | `--branch` | `""` | Branch name for prompt-only runs; overrides the default `<slug>-<timestamp>` shape (prompt-only mode only) |
 | `--reconcile-stranded` | `true` | Auto-recover stranded worktrees when the main repo is checked out on a `<n>-<slug>` branch |
