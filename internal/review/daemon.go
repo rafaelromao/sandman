@@ -1250,6 +1250,7 @@ func (d *Daemon) tick(ctx context.Context) error {
 		if d.isQuotaProbeDue() {
 			if d.quotaProbeRecovered(ctx) {
 				d.clearQuotaPause()
+				return nil
 			} else {
 				d.extendQuotaPauseForProbeFailure()
 				return nil

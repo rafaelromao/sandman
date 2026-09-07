@@ -175,7 +175,7 @@ func TestReviewQuotaProbeSuccessResumes(t *testing.T) {
 	d.authenticatedLogin = "sandman"
 
 	tickAndWait(t, d, context.Background())
-	// Make the next review succeed so the probe-success tick does not immediately re-enter quota pause
+	// The recovery probe clears the gate but does not launch a review in its tick.
 	runner.reviewResult = &batch.Result{Runs: []batch.AgentRunResult{{Status: "success"}}}
 	now = now.Add(10 * time.Minute)
 	d.Clock = func() time.Time { return now }
@@ -185,6 +185,14 @@ func TestReviewQuotaProbeSuccessResumes(t *testing.T) {
 	}
 	if d.IsQuotaPaused() {
 		t.Fatal("should clear pause after probe success")
+	}
+	if runner.reviewCalls != 1 {
+		t.Fatalf("recovery probe tick launched %d reviews, want none", runner.reviewCalls-1)
+	}
+
+	tickAndWait(t, d, context.Background())
+	if runner.reviewCalls != 2 {
+		t.Fatalf("next tick review calls = %d, want 2", runner.reviewCalls)
 	}
 }
 
