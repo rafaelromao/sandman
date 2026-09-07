@@ -47,14 +47,12 @@ func ResolveSandboxVersion(mode, hostVersion, dockerfilePin, catalogDefault stri
 // FormatMismatchWarning renders the multi-line warning emitted when the
 // host opencode version differs from the sandbox-installed version.
 // It is intentionally human-readable (not machine-parseable), names
-// the symptom operators search for, and points at the two escape
-// paths: re-running sandman init (picks up host version automatically)
-// or editing internal/scaffold/scaffolder.go's catalog directly.
+// the symptom operators search for, and directs them to re-run
+// sandman init, which picks up the host version automatically.
 func FormatMismatchWarning(hostVersion, sandboxVersion, repoRoot string) string {
 	return fmt.Sprintf(
 		"warning: opencode host version (%s) does not match sandbox version (%s).\n"+
-			"         Run `sandman init` to refresh the pinned image, or update\n"+
-			"         `builtInAgentVersionCatalog[\"opencode\"]` in internal/scaffold/scaffolder.go.\n"+
+			"         Run `sandman init` to refresh the pinned image.\n"+
 			"         Mismatches can cause agent runs to exit 1 with \"UnknownError:\n"+
 			"         Unexpected server error\" before producing a result.\n",
 		hostVersion, sandboxVersion,
