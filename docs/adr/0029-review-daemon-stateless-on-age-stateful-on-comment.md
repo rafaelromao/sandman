@@ -8,7 +8,7 @@ accepted
 
 The original review daemon maintained per-PR state under `.sandman/reviews/<PR>/` (seen comments, claim locks, rendered prompt), regardless of whether a review run actually existed for that PR. This meant daemon-shared state outlived the runs that produced it, and per-run state was co-located with daemon-level state in ways that made cleanup and recovery ambiguous.
 
-The layout redesign (ADR-0032) introduced per-run folders inside batches, which provided a natural home for per-run review state. The review daemon's daemon-level state could be reduced to only the socket and the shared prompt template, eliminating per-PR subdirectories entirely.
+The layout redesign (ADR-0032) introduced per-run folders inside batches, which provided a natural home for per-run review state. The review daemon's daemon-level state could be reduced to shared coordination files, eliminating per-PR subdirectories entirely.
 
 Parent: [#1218](https://github.com/rafaelromao/sandman/issues/1218) — Sandman `.sandman/` folder layout redesign, "ADRs to write" section, Phase 6.
 
@@ -44,8 +44,10 @@ Daemon-level state lives in `.sandman/reviews/`:
 |------|---------|
 | `review.sock` | Daemon command socket at `.sandman/reviews/review.sock` |
 | `review-prompt.md` | Shared prompt template (no PR data) at `.sandman/reviews/review-prompt.md` |
+| `quality-rules.md` | Shared review quality rules materialized alongside the prompt |
+| `quota-pause.json` | Atomic provider-wide OpenCode quota recovery gate; records pause and probe timing across daemon restart |
 
-No per-PR subdirectories are created under `.sandman/reviews/`. Per-run state lives inside the batch run folder.
+No per-PR subdirectories are created under `.sandman/reviews/`. `quota-pause.json` is daemon-wide rather than per-PR: a quota-limited built-in OpenCode review pauses all review launches until a prompt-only recovery probe succeeds. Per-run state lives inside the batch run folder.
 
 ### Per-run `review-state.json`
 
@@ -84,7 +86,7 @@ After issue #2211, a `failure` row may also carry a `nextAttemptAt` stamp:
 3. For each PR, find the latest `/sandman` comment.
 4. If a `review-state.json` already records `(pr, commentID)` with a terminal status (`success`/`failure`/`aborted`), skip.
 5. Otherwise, create a new review batch + run folder, index it in `batches.json`, process the comment.
-6. Per-run state (seen comments, claim locks) lives inside the run folder. Daemon-shared state is only `review.sock` and `review-prompt.md`.
+6. Per-run state (seen comments, claim locks) lives inside the run folder. Daemon-shared state is the socket, shared prompt/rules, and provider-wide quota recovery gate; it never creates per-PR state under `reviews/`.
 
 ### `review-prompt.md` is shared
 

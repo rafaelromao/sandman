@@ -19,15 +19,15 @@ import (
 	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
-// TestDaemon_ReviewsDirContainsOnlySocketPrompt asserts the daemon
+// TestDaemon_ReviewsDirContainsDaemonState asserts the daemon
 // leaves .sandman/reviews/ flat: after a successful tick with a
 // trigger comment, the entries under <BaseDir>/reviews/ are
-// review.sock, review-prompt.md, and quality-rules.md. No
+// review.sock, review-prompt.md, quality-rules.md, and quota-pause.json. No
 // per-PR subdirectory is created. Post-#1848 the SelfPostStore and
 // its self-posted.json file are gone — the reviews dir contains no
 // self-post data. This locks in acceptance criterion #1 ("No code
 // path creates .sandman/reviews/<PR>/") from issue #1224.
-func TestDaemon_ReviewsDirContainsOnlySocketPrompt(t *testing.T) {
+func TestDaemon_ReviewsDirContainsDaemonState(t *testing.T) {
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 7, State: "open"}},
@@ -39,7 +39,9 @@ func TestDaemon_ReviewsDirContainsOnlySocketPrompt(t *testing.T) {
 		},
 		prFetch: map[int]*github.PR{7: {Number: 7, Title: "PR 7", Body: "B"}},
 	}
-	runner := &capturedRequest{}
+	runner := &quotaProbeRunner{
+		reviewResult: &batch.Result{Runs: []batch.AgentRunResult{{UsageLimitReached: true, Status: "failure"}}},
+	}
 	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
@@ -51,8 +53,8 @@ func TestDaemon_ReviewsDirContainsOnlySocketPrompt(t *testing.T) {
 	d.Clock = func() time.Time { return now }
 
 	tickAndWait(t, d, context.Background())
-	if runner.calls != 1 {
-		t.Fatalf("expected 1 batch run, got %d", runner.calls)
+	if runner.reviewCalls != 1 {
+		t.Fatalf("expected 1 batch run, got %d", runner.reviewCalls)
 	}
 
 	reviewsDir := filepath.Join(d.BaseDir, "reviews")
@@ -65,7 +67,7 @@ func TestDaemon_ReviewsDirContainsOnlySocketPrompt(t *testing.T) {
 		names = append(names, e.Name())
 	}
 	sort.Strings(names)
-	want := []string{"quality-rules.md", "review-prompt.md", "review.sock"}
+	want := []string{"quality-rules.md", "quota-pause.json", "review-prompt.md", "review.sock"}
 	sort.Strings(want)
 
 	if len(names) != len(want) {
