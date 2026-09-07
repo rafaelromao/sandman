@@ -34,6 +34,7 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 ├── reviews/
 │   ├── review-prompt.md                # scaffold (init only)
 │   ├── quality-rules.md                # scaffold (init only)
+│   ├── quota-pause.json                # review quota recovery gate (atomic-rename)
 │   └── review.sock                     # review-daemon control socket
 ├── worktrees/<branch>/                 # per-run worktree (git)
 │   └── .sandman/task.md                # per-worktree rendered prompt
@@ -80,6 +81,7 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 | `batches/<batchID>/runs/<runID>/config/` | runtime, container snapshot | `PrepareContainerConfigMounts` | container runtime (bind-mount) | `sandman clean` (retained with Run) | per AgentRun |
 | `reviews/review-prompt.md` | scaffold | `sandman init` | review daemon (materialization + live template render) | repo (manual) | init only |
 | `reviews/quality-rules.md` | scaffold | `sandman init` | review daemon (prompt materialization) | repo (manual) | init only |
+| `reviews/quota-pause.json` | runtime, atomic-rename | review daemon (OpenCode review quota failure / probe) | review daemon (startup / tick) | review daemon (cleared after a successful probe) | provider-wide quota recovery |
 | `reviews/review.sock` | runtime | review daemon on start | review daemon CLI | review daemon on stop | continuous |
 | `worktrees/<branch>/` | runtime, git worktree | `git worktree add` (orchestrator) | agent, orchestrator | `sandman clean` (preserved on success for `--continue` / inspection) | per AgentRun |
 | `worktrees/<branch>/.sandman/task.md` | runtime, atomic-rename | prompt renderer (or `--continue` skips render and reads existing) | agent | `sandman clean` (preserved with worktree) | per AgentRun |

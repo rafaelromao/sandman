@@ -284,6 +284,16 @@ func (d *usageLimitDetector) Triggered() bool {
 	return d.triggered
 }
 
+// IsUsageLimitOutput reports whether output contains the normalized OpenCode
+// usage-limit provider response. Callers that receive an error instead of an
+// AgentRunResult use this to preserve the same detection boundary.
+func IsUsageLimitOutput(output string) bool {
+	detector := newUsageLimitDetector()
+	_, _ = detector.Write([]byte(output))
+	detector.Flush()
+	return detector.Triggered()
+}
+
 func (d *usageLimitDetector) consume(text string, final bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()

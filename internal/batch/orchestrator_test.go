@@ -2889,6 +2889,39 @@ func TestRunBatch_ReturnsAbortedStatusOnPromptOnlyCancel(t *testing.T) {
 	}
 }
 
+func TestRunBatch_PromptOnlyFailurePreservesUsageLimitResult(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	o := NewOrchestrator(
+		&fakeGitHubClient{},
+		&noopRenderer{},
+		&fakeConfigStore{config: &config.Config{
+			Agent:       "test-agent",
+			Sandbox:     "worktree",
+			WorktreeDir: filepath.Join(dir, "worktrees"),
+			Git:         config.GitConfig{BaseBranch: "main"},
+			AgentProviders: map[string]config.Agent{
+				"test-agent": {Command: "true"},
+			},
+		}},
+		nil,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(dir, "worktree")}}),
+		WithRunnableFactory(&promptOnlyRunnableFactory{hook: func(*github.Issue, string) AgentRunResult {
+			return AgentRunResult{Status: "failure", UsageLimitReached: true}
+		}}),
+	)
+
+	result, err := o.RunBatch(context.Background(), Request{PromptConfig: prompt.RenderConfig{PromptFlag: "Return only OK."}})
+	if err == nil || !strings.Contains(err.Error(), "prompt-only run failed") {
+		t.Fatalf("error = %v, want prompt-only failure", err)
+	}
+	if result == nil || len(result.Runs) != 1 || !result.Runs[0].UsageLimitReached {
+		t.Fatalf("usage-limit result must accompany prompt-only failure, got %#v", result)
+	}
+}
+
 func TestRunBatch_PromptOnlyCommandSocketRejectsAbort(t *testing.T) {
 	for _, review := range []bool{false, true} {
 		review := review
