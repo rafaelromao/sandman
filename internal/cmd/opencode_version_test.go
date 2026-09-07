@@ -151,6 +151,23 @@ func TestFormatMismatchWarning_MentionsBothVersions(t *testing.T) {
 	}
 }
 
+func TestFormatMismatchWarning_OnlyProvidesUserFacingRemediation(t *testing.T) {
+	warning := FormatMismatchWarning("1.17.19", "1.15.0", "/repo/path")
+
+	if !strings.Contains(warning, "Run `sandman init` to refresh the pinned image.") {
+		t.Errorf("warning must tell users how to refresh the pinned image; got:\n%s", warning)
+	}
+	for _, internal := range []string{
+		"builtInAgentVersionCatalog",
+		"internal/scaffold/scaffolder.go",
+		"or update",
+	} {
+		if strings.Contains(warning, internal) {
+			t.Errorf("warning must not expose internal guidance %q; got:\n%s", internal, warning)
+		}
+	}
+}
+
 func TestFormatMismatchWarning_EmptySideProducesNoWarning(t *testing.T) {
 	// Caller is responsible for skipping the call when hostVersion or
 	// sandboxVersion is empty; the formatter does not gate on that.
