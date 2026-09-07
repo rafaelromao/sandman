@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
 type quotaProbeRunner struct {
@@ -29,20 +31,14 @@ func (r *quotaProbeRunner) RunBatch(ctx context.Context, req batch.Request) (*ba
 	r.requests = append(r.requests, req)
 	if req.PromptConfig.PromptFlag == "quota-probe" {
 		r.probeCalls++
-		if r.probeErr != nil {
-			return nil, r.probeErr
-		}
-		if r.probeResult != nil {
-			return r.probeResult, nil
+		if r.probeResult != nil || r.probeErr != nil {
+			return r.probeResult, r.probeErr
 		}
 		return &batch.Result{Runs: []batch.AgentRunResult{{Status: "success"}}}, nil
 	}
 	r.reviewCalls++
-	if r.reviewErr != nil {
-		return nil, r.reviewErr
-	}
-	if r.reviewResult != nil {
-		return r.reviewResult, nil
+	if r.reviewResult != nil || r.reviewErr != nil {
+		return r.reviewResult, r.reviewErr
 	}
 	return &batch.Result{Runs: []batch.AgentRunResult{{Status: "success"}}}, nil
 }
@@ -189,6 +185,85 @@ func TestReviewQuotaProbeSuccessResumes(t *testing.T) {
 	}
 	if d.IsQuotaPaused() {
 		t.Fatal("should clear pause after probe success")
+	}
+}
+
+func TestReviewQuotaProbeErrorKeepsPause(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 42, State: "open"}},
+		comments: map[int][]github.PRComment{
+			42: {{ID: "c1", Body: "/sandman review", CreatedAt: now, AuthorLogin: "sandman"}},
+		},
+		prFetch: map[int]*github.PR{42: {Number: 42, Title: "T", Body: "B"}},
+	}
+	runner := &quotaProbeRunner{
+		reviewResult: &batch.Result{Runs: []batch.AgentRunResult{{UsageLimitReached: true, Status: "failure"}}},
+		probeResult:  &batch.Result{Runs: []batch.AgentRunResult{{UsageLimitReached: true, Status: "failure"}}},
+		probeErr:     errors.New("prompt-only run failed"),
+	}
+	cfg := &config.Config{DefaultReviewAgent: "opencode", DefaultReviewModel: "m"}
+	d, _, _ := newDaemonForTest(t, gh, runner, cfg)
+	d.Clock = func() time.Time { return now }
+	d.quotaProbeInterval = 10 * time.Minute
+	d.authenticatedLogin = "sandman"
+
+	tickAndWait(t, d, context.Background())
+	now = now.Add(10 * time.Minute)
+	d.Clock = func() time.Time { return now }
+	tickAndWait(t, d, context.Background())
+	if !d.IsQuotaPaused() {
+		t.Fatal("quota result returned with prompt-only error must keep the pause")
+	}
+	if runner.reviewCalls != 1 {
+		t.Fatalf("review calls = %d, want 1 while quota probe fails", runner.reviewCalls)
+	}
+
+	// A generic probe failure also cannot prove quota recovery.
+	runner.probeResult = nil
+	now = now.Add(10 * time.Minute)
+	d.Clock = func() time.Time { return now }
+	tickAndWait(t, d, context.Background())
+	if !d.IsQuotaPaused() {
+		t.Fatal("indeterminate prompt-only error must keep the pause")
+	}
+}
+
+func TestReviewQuotaPauseSurvivesRestart(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 42, State: "open"}},
+		comments: map[int][]github.PRComment{
+			42: {{ID: "c1", Body: "/sandman review", CreatedAt: now, AuthorLogin: "sandman"}},
+		},
+		prFetch: map[int]*github.PR{42: {Number: 42, Title: "T", Body: "B"}},
+	}
+	cfg := &config.Config{DefaultReviewAgent: "opencode", DefaultReviewModel: "m"}
+	initialRunner := &quotaProbeRunner{
+		reviewResult: &batch.Result{Runs: []batch.AgentRunResult{{UsageLimitReached: true, Status: "failure"}}},
+	}
+	d, _, baseDir := newDaemonForTest(t, gh, initialRunner, cfg)
+	d.Clock = func() time.Time { return now }
+	d.quotaProbeInterval = 10 * time.Minute
+	d.authenticatedLogin = "sandman"
+	tickAndWait(t, d, context.Background())
+
+	probeRunner := &quotaProbeRunner{
+		probeResult: &batch.Result{Runs: []batch.AgentRunResult{{UsageLimitReached: true, Status: "failure"}}},
+	}
+	restarted := New(baseDir, gh, &prompt.Engine{}, probeRunner, cfg, &lockedBuffer{}, 0, false, nil)
+	restarted.Clock = func() time.Time { return now.Add(15 * time.Minute) }
+	restarted.quotaProbeInterval = 10 * time.Minute
+	restarted.authenticatedLogin = "sandman"
+	tickAndWait(t, restarted, context.Background())
+	if !restarted.IsQuotaPaused() {
+		t.Fatal("restart should retain the global quota pause until a probe succeeds")
+	}
+	if probeRunner.probeCalls != 1 {
+		t.Fatalf("probe calls = %d, want 1 after expired gate", probeRunner.probeCalls)
+	}
+	if probeRunner.reviewCalls != 0 {
+		t.Fatalf("review calls = %d, want 0 before quota recovery", probeRunner.reviewCalls)
 	}
 }
 

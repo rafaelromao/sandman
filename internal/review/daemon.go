@@ -274,11 +274,66 @@ func (d *Daemon) effectiveLaunchBackoff(attempts int) time.Duration {
 
 const quotaProbeIntervalDefault = 10 * time.Minute
 
+type quotaPauseState struct {
+	Paused      bool      `json:"paused"`
+	PausedUntil time.Time `json:"paused_until,omitempty"`
+	LastProbeAt time.Time `json:"last_probe_at,omitempty"`
+}
+
 func (d *Daemon) effectiveQuotaProbeInterval() time.Duration {
 	if d.quotaProbeInterval > 0 {
 		return d.quotaProbeInterval
 	}
 	return quotaProbeIntervalDefault
+}
+
+func (d *Daemon) reviewsDir() string {
+	reviewsDir := d.Layout.ReviewsDir()
+	if reviewsDir == "" || reviewsDir == "reviews" {
+		return filepath.Join(d.BaseDir, "reviews")
+	}
+	return reviewsDir
+}
+
+func (d *Daemon) quotaPauseStatePath() string {
+	return filepath.Join(d.reviewsDir(), "quota-pause.json")
+}
+
+func (d *Daemon) saveQuotaPauseLocked() error {
+	return atomicfs.WriteAtomicJSON(d.quotaPauseStatePath(), quotaPauseState{
+		Paused:      d.quotaPaused,
+		PausedUntil: d.quotaPausedUntil,
+		LastProbeAt: d.quotaLastProbe,
+	}, 0644)
+}
+
+func (d *Daemon) loadQuotaPause() error {
+	data, err := os.ReadFile(d.quotaPauseStatePath())
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("read quota pause: %w", err)
+	}
+	var persisted quotaPauseState
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		// A damaged quota record must not reopen provider-wide review retries.
+		d.quotaMu.Lock()
+		d.quotaPaused = true
+		d.quotaPausedUntil = d.now()
+		d.quotaLastProbe = time.Time{}
+		d.quotaMu.Unlock()
+		return fmt.Errorf("decode quota pause: %w", err)
+	}
+	if !persisted.Paused {
+		return nil
+	}
+	d.quotaMu.Lock()
+	d.quotaPaused = true
+	d.quotaPausedUntil = persisted.PausedUntil
+	d.quotaLastProbe = persisted.LastProbeAt
+	d.quotaMu.Unlock()
+	return nil
 }
 
 func (d *Daemon) isQuotaPaused() bool {
@@ -310,11 +365,15 @@ func (d *Daemon) QuotaPausedUntil() time.Time {
 }
 
 func (d *Daemon) enterQuotaPause(prNumber int, commentID string, state *ReviewStateStore) {
-	until := d.now().Add(d.effectiveQuotaProbeInterval())
+	now := d.now()
+	until := now.Add(d.effectiveQuotaProbeInterval())
 	d.quotaMu.Lock()
 	d.quotaPaused = true
 	d.quotaPausedUntil = until
-	d.quotaLastProbe = d.now()
+	d.quotaLastProbe = now
+	if err := d.saveQuotaPauseLocked(); err != nil {
+		d.logf("persist quota pause: %v", err)
+	}
 	d.quotaMu.Unlock()
 	if state != nil {
 		attempts := ReadFailureAttempts(state, commentID) + 1
@@ -328,6 +387,14 @@ func (d *Daemon) clearQuotaPause() {
 	prevUntil := d.quotaPausedUntil
 	d.quotaPaused = false
 	d.quotaPausedUntil = time.Time{}
+	d.quotaLastProbe = time.Time{}
+	if err := d.saveQuotaPauseLocked(); err != nil {
+		d.quotaPaused = true
+		d.quotaPausedUntil = prevUntil
+		d.logf("persist cleared quota pause: %v", err)
+		d.quotaMu.Unlock()
+		return
+	}
 	d.quotaMu.Unlock()
 	// Clear per-trigger quota gates so the next tick can retry immediately.
 	// Only gates that exactly match the quota pause are cleared; ordinary
@@ -347,14 +414,33 @@ func (d *Daemon) clearQuotaPause() {
 }
 
 func (d *Daemon) extendQuotaPauseForProbeFailure() {
+	now := d.now()
 	d.quotaMu.Lock()
 	d.quotaPaused = true
-	d.quotaPausedUntil = d.now().Add(d.effectiveQuotaProbeInterval())
-	d.quotaLastProbe = d.now()
+	d.quotaPausedUntil = now.Add(d.effectiveQuotaProbeInterval())
+	d.quotaLastProbe = now
+	if err := d.saveQuotaPauseLocked(); err != nil {
+		d.logf("persist quota probe pause: %v", err)
+	}
 	d.quotaMu.Unlock()
 }
 
-func (d *Daemon) runQuotaProbe(ctx context.Context) bool {
+func resultReachedUsageLimit(result *batch.Result) bool {
+	if result == nil {
+		return false
+	}
+	for _, run := range result.Runs {
+		if run.UsageLimitReached {
+			return true
+		}
+	}
+	return false
+}
+
+// quotaProbeRecovered reports whether a prompt-only probe completed successfully
+// without a usage-limit result. Errors are inconclusive, so callers retain the
+// pause rather than reopening review launches.
+func (d *Daemon) quotaProbeRecovered(ctx context.Context) bool {
 	req := batch.Request{
 		Agent:   d.effectiveAgent(),
 		Model:   d.effectiveModel(),
@@ -364,20 +450,7 @@ func (d *Daemon) runQuotaProbe(ctx context.Context) bool {
 		},
 	}
 	result, err := d.Runner.RunBatch(ctx, req)
-	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "usage limit has been reached") {
-			return true
-		}
-		return false
-	}
-	if result != nil {
-		for _, run := range result.Runs {
-			if run.UsageLimitReached {
-				return true
-			}
-		}
-	}
-	return false
+	return !resultReachedUsageLimit(result) && err == nil
 }
 
 func (d *Daemon) isQuotaError(err error) bool {
@@ -445,6 +518,9 @@ func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, 
 		// map; loadPendingPosts (Slice B) populates it from the
 		// on-disk review-state.json files at construction.
 		pendingPost: map[int]map[string]pendingPostEntry{},
+	}
+	if err := d.loadQuotaPause(); err != nil {
+		d.logf("load quota pause: %v", err)
 	}
 	if err := d.loadSeenCache(); err != nil {
 		d.logf("load seen cache: %v", err)
@@ -1070,10 +1146,7 @@ func (d *Daemon) SetSocket(s *daemon.ControlSocket) {
 // static shared prompt template, and starts the control socket. Safe
 // to call multiple times.
 func (d *Daemon) StartSocket() error {
-	reviewsDir := d.Layout.ReviewsDir()
-	if reviewsDir == "" || reviewsDir == "reviews" {
-		reviewsDir = filepath.Join(d.BaseDir, "reviews")
-	}
+	reviewsDir := d.reviewsDir()
 	if err := os.MkdirAll(reviewsDir, 0755); err != nil {
 		return fmt.Errorf("create reviews dir: %w", err)
 	}
@@ -1175,11 +1248,12 @@ func (d *Daemon) tick(ctx context.Context) error {
 
 	if d.isQuotaPaused() {
 		if d.isQuotaProbeDue() {
-			if d.runQuotaProbe(ctx) {
+			if d.quotaProbeRecovered(ctx) {
+				d.clearQuotaPause()
+			} else {
 				d.extendQuotaPauseForProbeFailure()
 				return nil
 			}
-			d.clearQuotaPause()
 		} else {
 			return nil
 		}
@@ -2031,20 +2105,15 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 		QualityRulesFile: d.QualityRulesPath(),
 	}
 	result, err := d.Runner.RunBatch(ctx, req)
-	if err != nil {
-		if d.isQuotaError(err) && d.isBuiltInOpenCodeReview() {
-			d.enterQuotaPause(prNumber, triggerKey, state)
+	if d.isBuiltInOpenCodeReview() && (resultReachedUsageLimit(result) || d.isQuotaError(err)) {
+		d.enterQuotaPause(prNumber, triggerKey, state)
+		if err != nil {
 			return fmt.Errorf("quota exhausted: %w", err)
 		}
-		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("run batch: %w", err))
+		return errors.New("quota exhausted: usage limit reached")
 	}
-	if d.isBuiltInOpenCodeReview() && result != nil {
-		for _, run := range result.Runs {
-			if run.UsageLimitReached {
-				d.enterQuotaPause(prNumber, triggerKey, state)
-				return fmt.Errorf("quota exhausted: usage limit reached")
-			}
-		}
+	if err != nil {
+		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("run batch: %w", err))
 	}
 
 	// S3 post step (issue #1846): the agent writes
