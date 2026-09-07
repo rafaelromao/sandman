@@ -267,6 +267,39 @@ func TestReviewQuotaPauseSurvivesRestart(t *testing.T) {
 	}
 }
 
+func TestReviewOpenCodeDirectQuotaErrorDetection(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	for _, tt := range []struct {
+		name       string
+		err        error
+		wantPaused bool
+	}{
+		{name: "normalized usage limit", err: errors.New("Error: The usage limit has been reached"), wantPaused: true},
+		{name: "unrelated mention", err: errors.New("retry failed after prior usage limit has been reached"), wantPaused: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			gh := &fakeGH{
+				prs: []github.PR{{Number: 42, State: "open"}},
+				comments: map[int][]github.PRComment{
+					42: {{ID: "c1", Body: "/sandman review", CreatedAt: now, AuthorLogin: "sandman"}},
+				},
+				prFetch: map[int]*github.PR{42: {Number: 42, Title: "T", Body: "B"}},
+			}
+			runner := &quotaProbeRunner{reviewErr: tt.err}
+			cfg := &config.Config{DefaultReviewAgent: "opencode", DefaultReviewModel: "m"}
+			d, _, _ := newDaemonForTest(t, gh, runner, cfg)
+			d.Clock = func() time.Time { return now }
+			d.quotaProbeInterval = 10 * time.Minute
+			d.authenticatedLogin = "sandman"
+
+			tickAndWait(t, d, context.Background())
+			if got := d.IsQuotaPaused(); got != tt.wantPaused {
+				t.Fatalf("quota paused = %v, want %v", got, tt.wantPaused)
+			}
+		})
+	}
+}
+
 func TestReviewNonOpenCodeDoesNotTriggerQuotaPause(t *testing.T) {
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{

@@ -457,7 +457,7 @@ func (d *Daemon) isQuotaError(err error) bool {
 	if err == nil {
 		return false
 	}
-	return strings.Contains(strings.ToLower(err.Error()), "usage limit has been reached")
+	return batch.IsUsageLimitOutput(err.Error())
 }
 
 func (d *Daemon) isBuiltInOpenCodeReview() bool {
