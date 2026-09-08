@@ -3404,7 +3404,6 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	}
 	if err := daemon.WriteRunManifest(batchDir, runID, runManifest); err != nil {
 		fmt.Fprintf(s.deps.errorLog, "error: write run manifest for issue %d: %v\n", s.issueNumber, err)
-		_ = wt.Stop()
 		s.emitEarlyFailure("write run manifest", branch, err)
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 	}

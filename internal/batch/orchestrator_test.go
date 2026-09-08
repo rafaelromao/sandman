@@ -1740,6 +1740,47 @@ func TestRunSingle_PreservesStartedWorktreeWhenBlockerRecheckFails(t *testing.T)
 	}
 }
 
+func TestRunSingle_PreservesStartedWorktreeWhenManifestWriteFails(t *testing.T) {
+	workDir := t.TempDir()
+	t.Chdir(workDir)
+	branch := "42-fix-bug"
+	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(worktreePath, 0o755); err != nil {
+		t.Fatalf("create worktree: %v", err)
+	}
+	batchPath := filepath.Join(workDir, "batches-file")
+	if err := os.WriteFile(batchPath, []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("create manifest failure sentinel: %v", err)
+	}
+	sb := &fakeSandbox{workDir: worktreePath}
+	sbFactory := &fakeSandboxFactory{sandbox: sb}
+	client := &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}}
+	layout := paths.NewLayout(&config.Config{}, workDir)
+	layout.BatchesDir = batchPath
+	o := &Orchestrator{
+		githubClient:    client,
+		renderer:        &noopRenderer{},
+		sandboxFactory:  sbFactory,
+		errorLog:        io.Discard,
+		runnableFactory: &fakeRunnableFactory{results: []AgentRunResult{{Status: "success", Branch: branch}}},
+		layout:          layout,
+		runSessionOpts: runSessionOptions{
+			baseBranchSync: func(string, string) error { return nil },
+		},
+	}
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false, false, "", "")
+	if started || result.Status != "failure" {
+		t.Fatalf("result = (%q, started=%v), want failure and not started", result.Status, started)
+	}
+	if sb.stopCalled {
+		t.Fatal("manifest-write failure must preserve its started worktree")
+	}
+	if _, err := os.Stat(worktreePath); err != nil {
+		t.Fatalf("manifest-failure worktree was removed: %v", err)
+	}
+}
+
 func TestRunSingle_ModeContinueRequestedChangesIsActionableWithoutRetry(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
