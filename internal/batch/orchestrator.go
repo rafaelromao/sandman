@@ -2678,7 +2678,7 @@ func (s *runSession) finishTerminal(ctx context.Context, runID string, result Ag
 	result, extras = s.normalizeTerminalResult(result, extras)
 	_, terminalStatus := terminalRunEvent(ctx, result.Status)
 	worktreeState := "preserved"
-	if terminalStatus == "success" {
+	if terminalStatus == "success" && !s.review {
 		restoreErr := wt.RestoreHostPaths()
 		if restoreErr != nil && s.deps.errorLog != nil {
 			fmt.Fprintf(s.deps.errorLog, "warning: restore host paths for succeeded run %d: %v\n", s.issueNumber, restoreErr)

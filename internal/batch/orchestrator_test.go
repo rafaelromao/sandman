@@ -6033,8 +6033,9 @@ func TestRunBatch_PromptOnlyReviewRunEmitsReviewTag(t *testing.T) {
 
 	client := &fakeGitHubClient{err: errors.New("fetch should not run")}
 	spyLog := &spyEventLog{}
+	sb := &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "review-17-1")}
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
-		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "review-17-1")}}),
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: sb}),
 		WithRunnableFactory(&promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
 			return AgentRunResult{Status: "success", Branch: branch, WorktreePath: filepath.Join(".sandman", "worktrees", branch)}
 		}}),
@@ -6064,6 +6065,12 @@ func TestRunBatch_PromptOnlyReviewRunEmitsReviewTag(t *testing.T) {
 		if evt.Payload["review_focus"] != "focus on tests" {
 			t.Errorf("event %q missing review_focus in payload, got %#v", evt.Type, evt.Payload["review_focus"])
 		}
+	}
+	if sb.stopCalled {
+		t.Fatal("successful review must preserve its worktree for decision publication")
+	}
+	if got := spyLog.events[1].Payload["worktree_state"]; got != "preserved" {
+		t.Fatalf("successful review worktree_state = %q, want preserved", got)
 	}
 }
 
