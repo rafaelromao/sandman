@@ -113,7 +113,7 @@ Emitted when an agent run completes.
 | `status` | Terminal status (`success`, `failure`, or `blocked`; `blocked` is reserved for dependency outcomes) |
 | `branch` | Branch name |
 | `base_branch` | Base branch name |
-| `worktree_state` | `cleaned` on `success` (orchestrator auto-removes worktree + local branch), `preserved` otherwise (for `failure`/`aborted`/`blocked` inspection and `--continue`) |
+| `worktree_state` | `cleaned` when successful cleanup removes the worktree checkout and registration, `preserved` otherwise (for `failure`/`aborted`/`blocked` inspection and `--continue`) |
 | `retries_total` | Total retry attempts configured |
 | `retries_done` | Actual retries performed |
 | `context_exhausted` | Present as `true` when the final attempt exhausted the OpenCode context and no clean retry remained |
@@ -193,7 +193,7 @@ Each agent run writes its output to the run's log file inside the batch director
 sandman run 42
 ```
 
-Every completed run prints `worktree: <path>` on stdout. Succeeded runs are auto-cleaned (worktree + local branch removed); failed/aborted/blocked runs keep their worktrees for inspection and `sandman run --continue`, and are removed with `sandman clean`.
+Every completed run prints `worktree: <path>` on stdout. Succeeded runs are auto-cleaned (the worktree checkout and registration are removed); failed/aborted/blocked runs keep their worktrees for inspection and `sandman run --continue`, and are removed with `sandman clean`.
 
 Prompt-only runs print the same summary shape, but their issue column appears as `prompt-only` instead of `#<number>`.
 

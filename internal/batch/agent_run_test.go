@@ -96,6 +96,7 @@ type fakeSandbox struct {
 	execStderr             string
 	process                *fakeProcess
 	stopCalled             bool
+	stopError              error
 	workDir                string
 	repoPath               string
 	restoreHostPathsCalled bool
@@ -136,7 +137,7 @@ func (f *fakeSandbox) Stop() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.stopCalled = true
-	return nil
+	return f.stopError
 }
 func (f *fakeSandbox) WorkDir() string { return f.workDir }
 func (f *fakeSandbox) RepoPath() string {

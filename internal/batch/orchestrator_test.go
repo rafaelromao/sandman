@@ -1633,7 +1633,8 @@ func TestRunSingle_ModeContinueMergedPRIsSuccess(t *testing.T) {
 	branch := "42-fix-bug"
 	worktreePath := filepath.Join(workDir, "worktree")
 
-	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
+	sb := &fakeSandbox{workDir: worktreePath}
+	sbFactory := &fakeSandboxFactory{sandbox: sb}
 	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
 		{IssueNumber: 42, Status: "success", Branch: branch},
 	}}
@@ -1657,6 +1658,17 @@ func TestRunSingle_ModeContinueMergedPRIsSuccess(t *testing.T) {
 	}
 	if result.Status != "success" {
 		t.Fatalf("status = %q, want success (ModeContinue with merged PR should be success)", result.Status)
+	}
+	if !sb.stopCalled {
+		t.Fatal("expected entry-resumed successful run to auto-clean its worktree")
+	}
+	logs, err := spyLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	finished := findEvent(logs, "run.finished")
+	if finished == nil || finished.Payload["worktree_state"] != "cleaned" {
+		t.Fatalf("run.finished worktree_state = %v, want cleaned", finished)
 	}
 }
 
@@ -7113,6 +7125,31 @@ func TestRunBatch_LogsFinishedEventOnFailure(t *testing.T) {
 	}
 }
 
+func TestFinishTerminal_PreservesWorktreeStateWhenCleanupFails(t *testing.T) {
+	stopErr := errors.New("worktree removal failed")
+	sb := &fakeSandbox{stopError: stopErr}
+	spyLog := &spyEventLog{}
+	s := &runSession{
+		deps:        runDeps{eventLog: spyLog, errorLog: io.Discard},
+		baseBranch:  "main",
+		issueNumber: 42,
+	}
+
+	status := s.finishTerminal(context.Background(), "run-id", AgentRunResult{Status: "success"}, nil, sb, "42-fix-bug")
+	if status != "success" {
+		t.Fatalf("status = %q, want success", status)
+	}
+	if !sb.restoreHostPathsCalled || !sb.stopCalled {
+		t.Fatalf("cleanup calls = restore:%v stop:%v, want both", sb.restoreHostPathsCalled, sb.stopCalled)
+	}
+	if len(spyLog.events) != 1 {
+		t.Fatalf("events = %d, want 1", len(spyLog.events))
+	}
+	if got := spyLog.events[0].Payload["worktree_state"]; got != "preserved" {
+		t.Errorf("worktree_state = %q, want preserved", got)
+	}
+}
+
 type fakeContainerForOrchestrator struct {
 	id          string
 	stopCalled  bool
@@ -11423,8 +11460,9 @@ func TestRunSession_StartOptsFor_PropagatesContinueFalse(t *testing.T) {
 // RestoreHostPaths() runs at the end of every runSession.execute —
 // including normal completion — so container sandboxes normalize the
 // preserved worktree's .git pointer back to host paths on every exit.
-// Succeeded runs are now auto-cleaned (worktree + branch removed), so
-// Stop is expected to be called; failed runs remain preserved.
+// Succeeded runs are now auto-cleaned (the worktree is removed while the
+// branch remains), so Stop is expected to be called; failed runs remain
+// preserved.
 func TestRunBatch_CallsRestoreHostPathsAfterSuccessfulRun(t *testing.T) {
 	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)

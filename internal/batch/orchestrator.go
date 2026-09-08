@@ -2606,7 +2606,7 @@ func (s *runSession) emitAwait(ctx context.Context, runID string, result AgentRu
 // post-check: if the agent's branch has an open PR whose mergeable state is
 // `CONFLICTING`, the terminal event payload carries `merge_conflict: true`
 // and the PR number. The result is reclassified as a lifecycle failure.
-func (s *runSession) emitTerminal(ctx context.Context, runID string, result AgentRunResult, extras map[string]any) string {
+func (s *runSession) normalizeTerminalResult(result AgentRunResult, extras map[string]any) (AgentRunResult, map[string]any) {
 	if conflictExtras, ok := s.detectConflictingPR(result.Branch); ok {
 		result.Status = "failure"
 		if extras == nil {
@@ -2616,6 +2616,17 @@ func (s *runSession) emitTerminal(ctx context.Context, runID string, result Agen
 			extras[k] = v
 		}
 	}
+	return result, extras
+}
+
+// emitTerminal writes a terminal event without changing the sandbox. Callers
+// that own a sandbox should use finishTerminal so the event reflects cleanup.
+func (s *runSession) emitTerminal(ctx context.Context, runID string, result AgentRunResult, extras map[string]any) string {
+	result, extras = s.normalizeTerminalResult(result, extras)
+	return s.emitNormalizedTerminal(ctx, runID, result, extras)
+}
+
+func (s *runSession) emitNormalizedTerminal(ctx context.Context, runID string, result AgentRunResult, extras map[string]any) string {
 	terminalEventType, terminalStatus := terminalRunEvent(ctx, result.Status)
 	s.updateRunManifestStatus(runID, batchindex.RunManifestStatus(terminalStatus))
 	if s.deps.eventLog == nil {
@@ -2626,8 +2637,8 @@ func (s *runSession) emitTerminal(ctx context.Context, runID string, result Agen
 		retriesDone = 0
 	}
 	worktreeState := "preserved"
-	if terminalStatus == "success" {
-		worktreeState = "cleaned"
+	if state, ok := extras["worktree_state"].(string); ok && state != "" {
+		worktreeState = state
 	}
 	event := events.Event{
 		Type:      terminalEventType,
@@ -2659,6 +2670,32 @@ func (s *runSession) emitTerminal(ctx context.Context, runID string, result Agen
 	}
 	_ = s.deps.eventLog.Log(event)
 	return terminalStatus
+}
+
+// finishTerminal cleans successful runs before recording their terminal event
+// so worktree_state describes the actual on-disk result.
+func (s *runSession) finishTerminal(ctx context.Context, runID string, result AgentRunResult, extras map[string]any, wt sandbox.Sandbox, branch string) string {
+	result, extras = s.normalizeTerminalResult(result, extras)
+	_, terminalStatus := terminalRunEvent(ctx, result.Status)
+	worktreeState := "preserved"
+	if terminalStatus == "success" {
+		restoreErr := wt.RestoreHostPaths()
+		if restoreErr != nil && s.deps.errorLog != nil {
+			fmt.Fprintf(s.deps.errorLog, "warning: restore host paths for succeeded run %d: %v\n", s.issueNumber, restoreErr)
+		}
+		stopErr := wt.Stop()
+		if stopErr != nil && s.deps.errorLog != nil {
+			fmt.Fprintf(s.deps.errorLog, "warning: auto-clean worktree %s for succeeded run %d: %v\n", branch, s.issueNumber, stopErr)
+		}
+		if restoreErr == nil && stopErr == nil {
+			worktreeState = "cleaned"
+		}
+	}
+	if extras == nil {
+		extras = make(map[string]any)
+	}
+	extras["worktree_state"] = worktreeState
+	return s.emitNormalizedTerminal(ctx, runID, result, extras)
 }
 
 // emitEarlyFailure logs a terminal run.finished event (status "failure") for
@@ -3546,26 +3583,13 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		return result, true
 	}
 
-	result.Status = s.emitTerminal(ctx, runID, result, terminalExtras)
+	result.Status = s.finishTerminal(ctx, runID, result, terminalExtras, wt, branch)
 
 	// Verify no process with the terminal run ID remains after the terminal
 	// event (issue #2605 acceptance criterion #2). This is a safety net: the
 	// primary cleanup happens inside waitCmd before emitTerminal, but a
 	// failed onAbort or a slow process-group kill can leave orphans.
 	s.verifyNoRemainingProcesses(runID)
-
-	if events.RunStatusFromPayload(result.Status).IsSuccess() {
-		// Auto-clean worktree artifacts for succeeded runs: remove the
-		// worktree checkout so succeeded runs do not accumulate under
-		// .sandman/worktrees/. Preservation is kept for failure/aborted/
-		// blocked runs for inspection and --continue. Container sandboxes
-		// rewrite the worktree's .git pointer to /workspace; restore host
-		// paths before host-side git operations.
-		_ = wt.RestoreHostPaths()
-		if err := wt.Stop(); err != nil {
-			fmt.Fprintf(s.deps.errorLog, "warning: auto-clean worktree %s for succeeded run %d: %v\n", branch, s.issueNumber, err)
-		}
-	}
 
 	return result, true
 }
@@ -3978,14 +4002,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		return result, false
 	}
 
-	result.Status = s.emitTerminal(ctx, runID, result, terminalExtras)
-
-	if events.RunStatusFromPayload(result.Status).IsSuccess() {
-		_ = wt.RestoreHostPaths()
-		if err := wt.Stop(); err != nil {
-			fmt.Fprintf(s.deps.errorLog, "warning: auto-clean worktree %s for succeeded prompt-only run: %v\n", branch, err)
-		}
-	}
+	result.Status = s.finishTerminal(ctx, runID, result, terminalExtras, wt, branch)
 
 	return result, true
 }

@@ -103,7 +103,7 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 			Branch:       branch,
 			RetriesTotal: 1,
 		}
-		result.Status = s.emitTerminal(ctx, runID, result, extras)
+		result.Status = s.finishTerminal(ctx, runID, result, extras, wt, branch)
 		return result, true, true
 	}
 	if gateStatus != "await" && gateStatus != "resume" {
@@ -134,7 +134,7 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 		if gateStatus == "await" {
 			return result, true, true
 		}
-		result.Status = s.emitTerminal(ctx, runID, result, nextExtras)
+		result.Status = s.finishTerminal(ctx, runID, result, nextExtras, wt, branch)
 		return result, true, true
 	}
 	evidence := s.resumeEvidenceFor(ctx, branch, extras)
