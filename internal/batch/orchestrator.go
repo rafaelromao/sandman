@@ -2687,8 +2687,19 @@ func (s *runSession) finishTerminal(ctx context.Context, runID string, result Ag
 		if stopErr != nil && s.deps.errorLog != nil {
 			fmt.Fprintf(s.deps.errorLog, "warning: auto-clean worktree %s for succeeded run %d: %v\n", branch, s.issueNumber, stopErr)
 		}
-		if restoreErr == nil && stopErr == nil {
+		worktreeRemoved := false
+		if workDir := wt.WorkDir(); workDir != "" {
+			_, statErr := os.Stat(workDir)
+			worktreeRemoved = os.IsNotExist(statErr)
+		}
+		if (restoreErr == nil && stopErr == nil) || worktreeRemoved {
 			worktreeState = "cleaned"
+		}
+		if cleanupErr := errors.Join(restoreErr, stopErr); cleanupErr != nil {
+			if extras == nil {
+				extras = make(map[string]any)
+			}
+			extras["cleanup_error"] = cleanupErr.Error()
 		}
 	}
 	if extras == nil {
@@ -3344,17 +3355,16 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	}
 	s.coord.firstSandboxStart(sandboxStarted)
 	// Guaranteed cleanup: defer wt.RestoreHostPaths() so container
-	// sandboxes normalize the preserved worktree's .git pointer back to
-	// host paths on every exit path including panic, cancellation,
-	// timeout, and normal completion. Worktree-only sandboxes no-op
-	// this. The defer does NOT call Stop() — the worktree is preserved
-	// on success for --continue reuse. Issue #2189.
+	// sandboxes normalize the worktree's .git pointer back to host paths
+	// on every exit path including panic, cancellation, timeout, and
+	// normal completion. Worktree-only sandboxes no-op this. The defer
+	// does not call Stop(); terminal success performs explicit auto-clean,
+	// while failure and blocked paths preserve the worktree. Issue #2189.
 	defer func() { _ = wt.RestoreHostPaths() }()
 
 	blockedBy, err := recheckBlockedBy(ctx, s.deps.githubClient, s.externalBlockers)
 	if err != nil {
 		fmt.Fprintf(s.deps.errorLog, "error: recheck blockers for issue %d: %v\n", s.issueNumber, err)
-		_ = wt.Stop()
 		s.emitEarlyFailure("recheck blockers", branch, err)
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 	}
@@ -3362,7 +3372,6 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	if len(blockedBy) > 0 {
 		res := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "blocked", Branch: branch}
 		logBlocked(s.deps.eventLog, s.issueNumber, blockedBy, runID, s.batchID)
-		_ = wt.Stop()
 		return res, false
 	}
 

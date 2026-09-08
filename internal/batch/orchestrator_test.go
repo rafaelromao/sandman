@@ -1672,6 +1672,74 @@ func TestRunSingle_ModeContinueMergedPRIsSuccess(t *testing.T) {
 	}
 }
 
+func TestRunSingle_PreservesStartedWorktreeForBlockedRun(t *testing.T) {
+	workDir := t.TempDir()
+	t.Chdir(workDir)
+	branch := "42-fix-bug"
+	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(worktreePath, 0o755); err != nil {
+		t.Fatalf("create worktree: %v", err)
+	}
+	sb := &fakeSandbox{workDir: worktreePath}
+	sbFactory := &fakeSandboxFactory{sandbox: sb}
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+			7:  {Number: 7, Title: "Open blocker", State: "open"},
+		}},
+		renderer:        &noopRenderer{},
+		sandboxFactory:  sbFactory,
+		errorLog:        io.Discard,
+		runnableFactory: &fakeRunnableFactory{results: []AgentRunResult{{Status: "success", Branch: branch}}},
+	}
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", []int{7}, 0, 0, 0, 0, "", 0, false, 0, false, false, false, "", "")
+	if started || result.Status != "blocked" {
+		t.Fatalf("result = (%q, started=%v), want blocked and not started", result.Status, started)
+	}
+	if sb.stopCalled {
+		t.Fatal("blocked run must preserve its started worktree")
+	}
+	if _, err := os.Stat(worktreePath); err != nil {
+		t.Fatalf("blocked worktree was removed: %v", err)
+	}
+}
+
+func TestRunSingle_PreservesStartedWorktreeWhenBlockerRecheckFails(t *testing.T) {
+	workDir := t.TempDir()
+	t.Chdir(workDir)
+	branch := "42-fix-bug"
+	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(worktreePath, 0o755); err != nil {
+		t.Fatalf("create worktree: %v", err)
+	}
+	sb := &fakeSandbox{workDir: worktreePath}
+	sbFactory := &fakeSandboxFactory{sandbox: sb}
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+			7:  {Number: 7, Title: "Open blocker", State: "open"},
+		}},
+		renderer:        &noopRenderer{},
+		sandboxFactory:  sbFactory,
+		errorLog:        io.Discard,
+		runnableFactory: &fakeRunnableFactory{results: []AgentRunResult{{Status: "success", Branch: branch}}},
+	}
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	result, started := o.runSingle(ctx, ctx, 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", []int{7}, 0, 0, 0, 0, "", 0, false, 0, false, false, false, "", "")
+	if started || result.Status != "failure" {
+		t.Fatalf("result = (%q, started=%v), want failure and not started", result.Status, started)
+	}
+	if sb.stopCalled {
+		t.Fatal("failed blocker recheck must preserve its started worktree")
+	}
+	if _, err := os.Stat(worktreePath); err != nil {
+		t.Fatalf("failed-recheck worktree was removed: %v", err)
+	}
+}
+
 func TestRunSingle_ModeContinueRequestedChangesIsActionableWithoutRetry(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
@@ -7147,6 +7215,33 @@ func TestFinishTerminal_PreservesWorktreeStateWhenCleanupFails(t *testing.T) {
 	}
 	if got := spyLog.events[0].Payload["worktree_state"]; got != "preserved" {
 		t.Errorf("worktree_state = %q, want preserved", got)
+	}
+}
+
+func TestFinishTerminalReportsRemovedWorktreeAfterPartialCleanupFailure(t *testing.T) {
+	stopErr := errors.New("container stop failed")
+	workDir := t.TempDir()
+	sb := &fakeSandbox{
+		workDir: workDir,
+		stopFunc: func() error {
+			if err := os.RemoveAll(workDir); err != nil {
+				t.Fatalf("remove worktree: %v", err)
+			}
+			return stopErr
+		},
+	}
+	spyLog := &spyEventLog{}
+	s := &runSession{deps: runDeps{eventLog: spyLog, errorLog: io.Discard}, baseBranch: "main", issueNumber: 42}
+
+	s.finishTerminal(context.Background(), "run-id", AgentRunResult{Status: "success"}, nil, sb, "42-fix-bug")
+	if len(spyLog.events) != 1 {
+		t.Fatalf("events = %d, want 1", len(spyLog.events))
+	}
+	if got := spyLog.events[0].Payload["worktree_state"]; got != "cleaned" {
+		t.Errorf("worktree_state = %q, want cleaned", got)
+	}
+	if got := spyLog.events[0].Payload["cleanup_error"]; got != stopErr.Error() {
+		t.Errorf("cleanup_error = %q, want %q", got, stopErr)
 	}
 }
 
