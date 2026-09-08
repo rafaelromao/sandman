@@ -93,7 +93,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 - Positional arguments (numbers and ranges) can be combined with `--label` or `--query` — finite selections are resolved locally; open-ended ranges and unsupported queries still use GitHub search
 - If `--prompt` or `--template` is used with no issue arguments, `--label`, or `--query`, and the final selected prompt omits `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, and `{{ISSUE_BODY}}`, Sandman enters prompt-only mode and skips GitHub issue lookup
 - If any issue selection is provided, Sandman stays in issue-driven mode even when `--prompt` or `--template` is set
-- `run` preserves worktrees by default; use `sandman clean --all` (or a specific mode like `--archived`) to delete them
+- `run` preserves worktrees for `failure`/`aborted`/`blocked`/`await` (for inspection and `--continue`); succeeded runs are auto-cleaned (the worktree checkout and registration are removed) so `sandman clean` is only needed for remaining cases
 - `--parallel` limits total concurrent `AgentRun`s across all sandboxes
 - `--start-delay` is batch-local pacing; it waits after any `AgentRun` finishes before the next start, and `0` disables the delay
 - `--base-branch` controls which branch Sandman fetches from origin before each `AgentRun` starts and which branch new worktrees are cut from
