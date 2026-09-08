@@ -1781,6 +1781,44 @@ func TestRunSingle_PreservesStartedWorktreeWhenManifestWriteFails(t *testing.T) 
 	}
 }
 
+func TestRunPromptOnly_PreservesStartedWorktreeWhenManifestWriteFails(t *testing.T) {
+	workDir := t.TempDir()
+	t.Chdir(workDir)
+	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(worktreePath, 0o755); err != nil {
+		t.Fatalf("create worktree: %v", err)
+	}
+	batchPath := filepath.Join(workDir, "batches-file")
+	if err := os.WriteFile(batchPath, []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("create manifest failure sentinel: %v", err)
+	}
+	sb := &fakeSandbox{workDir: worktreePath}
+	sbFactory := &fakeSandboxFactory{sandbox: sb}
+	layout := paths.NewLayout(&config.Config{}, workDir)
+	layout.BatchesDir = batchPath
+	o := NewOrchestrator(
+		&fakeGitHubClient{err: errors.New("prompt-only must not fetch issues")},
+		&noopRenderer{},
+		&fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", Git: config.GitConfig{BaseBranch: "main"}}},
+		nil,
+		WithSandboxFactory(sbFactory),
+		WithRunnableFactory(&promptOnlyRunnableFactory{hook: func(*github.Issue, string) AgentRunResult {
+			return AgentRunResult{Status: "success"}
+		}}),
+	)
+	coord := newBatchCoordinator(nil)
+	_, _ = o.runPromptOnly(context.Background(), &config.Config{Git: config.GitConfig{BaseBranch: "main"}}, "test-agent", config.Agent{Command: "true"}, noopIdentityResolver(), sbFactory, nil, Request{
+		PromptConfig: prompt.RenderConfig{PromptFlag: "manifest failure"},
+		RunID:        "prompt-manifest-failure",
+	}, "main", 0, 0, 0, 0, "worktree", 0, false, 0, false, false, false, coord, layout)
+	if sb.stopCalled {
+		t.Fatal("prompt-only manifest failure must preserve its started worktree")
+	}
+	if _, err := os.Stat(worktreePath); err != nil {
+		t.Fatalf("prompt-only manifest-failure worktree was removed: %v", err)
+	}
+}
+
 func TestRunSingle_ModeContinueRequestedChangesIsActionableWithoutRetry(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)

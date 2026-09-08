@@ -3913,7 +3913,6 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 	}
 	if err := daemon.WriteRunManifest(batchDir, runID, runManifest); err != nil {
 		fmt.Fprintf(s.deps.errorLog, "error: write run manifest for prompt-only run: %v\n", err)
-		_ = wt.Stop()
 		return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: runID}, false
 	}
 	cmdServer := daemon.NewCommandServerForIssue(daemon.RunFolder(batchDir, runID), s.commander, s.issueNumber)
