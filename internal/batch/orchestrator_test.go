@@ -3072,8 +3072,8 @@ func TestRunBatch_PreservesWorktreeOnSuccess(t *testing.T) {
 	}
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "42-fix-bug")
-	if _, err := os.Stat(worktreePath); err != nil {
-		t.Errorf("expected worktree to be preserved on success, got: %v", err)
+	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
+		t.Errorf("expected worktree to be cleaned on success, got: %v", err)
 	}
 }
 
@@ -3099,8 +3099,8 @@ func TestRunBatch_DoesNotCallStopOnSuccess(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if sb.stopCalled {
-		t.Error("expected Stop not to be called on successful run")
+	if !sb.stopCalled {
+		t.Error("expected Stop to be called on successful run (auto-clean)")
 	}
 }
 
@@ -3125,8 +3125,8 @@ func TestRunBatch_LeavesWorktreeOnSuccess(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if sb.stopCalled {
-		t.Error("expected Stop not to be called on successful run")
+	if !sb.stopCalled {
+		t.Error("expected Stop to be called on successful run (auto-clean)")
 	}
 }
 
@@ -3769,8 +3769,8 @@ func TestRunBatch_OverrideClearsExistingBranchesAndProceeds(t *testing.T) {
 	if branchOut := strings.TrimSpace(runGit(t, dir, "branch", "--list", branch)); branchOut == "" {
 		t.Fatalf("expected branch %s to be recreated", branch)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".sandman", "worktrees", branch)); err != nil {
-		t.Fatalf("expected worktree for %s to be recreated: %v", branch, err)
+	if _, err := os.Stat(filepath.Join(dir, ".sandman", "worktrees", branch)); !os.IsNotExist(err) {
+		t.Fatalf("expected worktree for %s to be auto-cleaned on success, still exists: %v", branch, err)
 	}
 }
 
@@ -4499,14 +4499,9 @@ func TestRunBatch_WritesPromptAndExecutesAgent(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	promptPath := filepath.Join(dir, ".sandman", "worktrees", "42-fix-bug", ".sandman", "task.md")
-	if _, err := os.Stat(promptPath); err != nil {
-		t.Errorf("prompt file not found: %v", err)
-	}
-
-	markerPath := filepath.Join(dir, ".sandman", "worktrees", "42-fix-bug", "agent-ran.txt")
-	if _, err := os.Stat(markerPath); err != nil {
-		t.Errorf("agent marker not found: %v", err)
+	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "42-fix-bug")
+	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
+		t.Errorf("expected worktree to be auto-cleaned on success, still exists: %v", err)
 	}
 
 	if len(result.Runs) != 1 || result.Runs[0].Status != "success" {
@@ -6970,8 +6965,8 @@ func TestRunBatch_LogsWorktreeStateDeletedOnSuccess(t *testing.T) {
 		t.Fatalf("expected 2 events, got %d", len(spyLog.events))
 	}
 	state, _ := spyLog.events[1].Payload["worktree_state"].(string)
-	if state != "preserved" {
-		t.Errorf("expected worktree_state preserved, got %q", state)
+	if state != "cleaned" {
+		t.Errorf("expected worktree_state cleaned, got %q", state)
 	}
 }
 
@@ -7086,8 +7081,8 @@ func TestRunBatch_LogsWorktreeStatePreservedOnSuccess(t *testing.T) {
 		t.Fatalf("expected 2 events, got %d", len(spyLog.events))
 	}
 	state, _ := spyLog.events[1].Payload["worktree_state"].(string)
-	if state != "preserved" {
-		t.Errorf("expected worktree_state preserved, got %q", state)
+	if state != "cleaned" {
+		t.Errorf("expected worktree_state cleaned, got %q", state)
 	}
 }
 
@@ -9178,8 +9173,11 @@ func TestRunBatch_UsesDotGitconfigIdentityOverRepoLocalConfig(t *testing.T) {
 	}
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "42-fix-bug")
-	assertGitCommitAuthor(t, worktreePath, "Alice <alice@example.com>")
-	assertLocalGitIdentity(t, worktreePath, "Test", "test@test.com")
+	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
+		t.Fatalf("expected worktree to be auto-cleaned on success, worktree still exists: %v", err)
+	}
+	// Branch remains after worktree auto-clean; verify commit author via branch from main repo.
+	assertGitCommitAuthorOnBranch(t, dir, "42-fix-bug", "Alice <alice@example.com>")
 }
 
 func TestRunBatch_UsesXDGGitIdentityWhenDotGitconfigLacksIdentity(t *testing.T) {
@@ -9229,8 +9227,10 @@ func TestRunBatch_UsesXDGGitIdentityWhenDotGitconfigLacksIdentity(t *testing.T) 
 	}
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "42-fix-bug")
-	assertGitCommitAuthor(t, worktreePath, "XDG User <xdg@example.com>")
-	assertLocalGitIdentity(t, worktreePath, "Test", "test@test.com")
+	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
+		t.Fatalf("expected worktree to be auto-cleaned on success, worktree still exists: %v", err)
+	}
+	assertGitCommitAuthorOnBranch(t, dir, "42-fix-bug", "XDG User <xdg@example.com>")
 }
 
 func TestRunBatch_FallsBackToRepoLocalGitIdentity(t *testing.T) {
@@ -9270,8 +9270,10 @@ func TestRunBatch_FallsBackToRepoLocalGitIdentity(t *testing.T) {
 	}
 
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "42-fix-bug")
-	assertGitCommitAuthor(t, worktreePath, "Test <test@test.com>")
-	assertLocalGitIdentity(t, worktreePath, "Test", "test@test.com")
+	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
+		t.Fatalf("expected worktree to be auto-cleaned on success, worktree still exists: %v", err)
+	}
+	assertGitCommitAuthorOnBranch(t, dir, "42-fix-bug", "Test <test@test.com>")
 }
 
 func TestRunBatch_FailsWhenNoGitIdentityResolved(t *testing.T) {
@@ -9331,6 +9333,19 @@ func assertGitCommitAuthor(t *testing.T, worktreePath, want string) {
 	}
 	if got := strings.TrimSpace(string(out)); got != want {
 		t.Fatalf("commit author: got %q, want %q", got, want)
+	}
+}
+
+func assertGitCommitAuthorOnBranch(t *testing.T, repoPath, branch, want string) {
+	t.Helper()
+	cmd := exec.Command("git", "log", "--format=%an <%ae>", "-1", branch)
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git log author on branch %s: %v", branch, err)
+	}
+	if got := strings.TrimSpace(string(out)); got != want {
+		t.Fatalf("commit author on branch %s: got %q, want %q", branch, got, want)
 	}
 }
 
@@ -11408,8 +11423,8 @@ func TestRunSession_StartOptsFor_PropagatesContinueFalse(t *testing.T) {
 // RestoreHostPaths() runs at the end of every runSession.execute —
 // including normal completion — so container sandboxes normalize the
 // preserved worktree's .git pointer back to host paths on every exit.
-// The orchestrator must NOT call Stop() on success (the worktree is
-// preserved for --continue reuse); the cleanup is path-only.
+// Succeeded runs are now auto-cleaned (worktree + branch removed), so
+// Stop is expected to be called; failed runs remain preserved.
 func TestRunBatch_CallsRestoreHostPathsAfterSuccessfulRun(t *testing.T) {
 	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
@@ -11435,8 +11450,8 @@ func TestRunBatch_CallsRestoreHostPathsAfterSuccessfulRun(t *testing.T) {
 	if !sb.restoreHostPathsCalled {
 		t.Error("expected RestoreHostPaths to be called after successful run")
 	}
-	if sb.stopCalled {
-		t.Error("expected Stop NOT to be called after successful run (worktree preserved for --continue)")
+	if !sb.stopCalled {
+		t.Error("expected Stop to be called after successful run (auto-clean)")
 	}
 }
 
@@ -11494,8 +11509,11 @@ func TestRunBatch_RestoresHostPathsBeforeSuccessfulReconcile(t *testing.T) {
 	if strings.Contains(errorBuf.String(), "not a valid git directory") {
 		t.Fatalf("reconcile ran before host paths were restored:\n%s", errorBuf.String())
 	}
+	if !sb.stopCalled {
+		t.Error("expected Stop to be called on successful run (auto-clean)")
+	}
 	if !sandbox.IsGitDir(worktreePath) {
-		t.Fatal("worktree is not host-visible after run")
+		t.Fatalf("expected worktree to remain host-visible after fake Stop (fake does not delete real worktree), got not git dir")
 	}
 }
 
@@ -11581,11 +11599,16 @@ func TestRunSingle_WorktreeBranchMismatch(t *testing.T) {
 	o.runnableFactory = nil
 
 	// The first run strands the worktree on the wrong branch (via the
-	// strand runnable) and succeeds. After the run, reconcileWorktreeBranch
-	// (issue #941) restores the worktree to the issue branch. Re-strand
-	// here so the next subtest exercises the Start-time branch-mismatch
-	// error path on a freshly stranded worktree.
+	// strand runnable) and succeeds. With auto-clean on success, the
+	// worktree is removed; with the previous reconcile behavior (issue #941)
+	// it was restored to the issue branch. In either case, ensure a
+	// stranded worktree exists for the next subtests.
 	worktreePath := filepath.Join(workDir, "worktrees", branch)
+	if _, err := os.Stat(worktreePath); os.IsNotExist(err) {
+		if out, err := exec.Command("git", "worktree", "add", worktreePath, branch).CombinedOutput(); err != nil {
+			t.Fatalf("recreate worktree after auto-clean: %v: %s", err, out)
+		}
+	}
 	if out, err := exec.Command("git", "-C", worktreePath, "checkout", "-f", "wrong-branch").CombinedOutput(); err != nil {
 		t.Fatalf("re-strand worktree: %v: %s", err, out)
 	}
@@ -11613,14 +11636,11 @@ func TestRunSingle_WorktreeBranchMismatch(t *testing.T) {
 			t.Fatalf("override status = %q, want success", result.Status)
 		}
 		worktreePath := filepath.Join(workDir, "worktrees", branch)
-		cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
-		cmd.Dir = worktreePath
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git rev-parse HEAD in worktree: %v\n%s", err, out)
+		if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
+			t.Fatalf("expected worktree to be auto-cleaned on success after override, still exists: %v", err)
 		}
-		if got := strings.TrimSpace(string(out)); got != branch {
-			t.Fatalf("worktree HEAD on %q, want %q", got, branch)
+		if branchOut := strings.TrimSpace(runGit(t, workDir, "branch", "--list", branch)); branchOut == "" {
+			t.Fatalf("expected branch %s to remain after auto-clean", branch)
 		}
 	})
 }

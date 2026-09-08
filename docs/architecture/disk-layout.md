@@ -83,8 +83,8 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 | `reviews/quality-rules.md` | scaffold | `sandman init` | review daemon (prompt materialization) | repo (manual) | init only |
 | `reviews/quota-pause.json` | runtime, atomic-rename | review daemon (OpenCode review quota failure / probe) | review daemon (startup / tick) | review daemon (cleared after a successful probe) | provider-wide quota recovery |
 | `reviews/review.sock` | runtime | review daemon on start | review daemon CLI | review daemon on stop | continuous |
-| `worktrees/<branch>/` | runtime, git worktree | `git worktree add` (orchestrator) | agent, orchestrator | `sandman clean` (preserved on success for `--continue` / inspection) | per AgentRun |
-| `worktrees/<branch>/.sandman/task.md` | runtime, atomic-rename | prompt renderer (or `--continue` skips render and reads existing) | agent | `sandman clean` (preserved with worktree) | per AgentRun |
+| `worktrees/<branch>/` | runtime, git worktree | `git worktree add` (orchestrator) | agent, orchestrator | orchestrator (auto-cleaned on `success`; preserved on `failure`/`aborted`/`blocked` for `--continue` / inspection) + `sandman clean` (remaining cases) | per AgentRun |
+| `worktrees/<branch>/.sandman/task.md` | runtime, atomic-rename | prompt renderer (or `--continue` skips render and reads existing) | agent | orchestrator (removed with worktree on `success`) + `sandman clean` (preserved with worktree otherwise) | per AgentRun |
 | `state/.prompt-version` | runtime, atomic-rename | prompt materializer | prompt materializer (cache check) | `sandman clean` (optional) | per prompt template change |
 | `state/.built_with_sandman` | runtime, empty control file | badge sidecar (post-batch) | portal / status badge | `sandman clean` (optional) | per post-batch badge |
 | `state/<N>.head_sha` | legacy compatibility evidence | existing implementor review path (legacy only) | runtime diagnostics / stale-approval compatibility | implementor review lifecycle | per confirmed request |

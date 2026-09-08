@@ -38,7 +38,7 @@ Yes. Sandman resolves `user.name` and `user.email` from your git config (host gl
 
 ## What stays on disk when a run finishes?
 
-Everything. Worktrees stay under `.sandman/worktrees/` until you remove them with `sandman clean`. Run logs persist as `.sandman/batches/<batch-id>/runs/<run-id>/run.log`. The append-only event log at `.sandman/events.jsonl` grows on every event. Use `sandman archive` to move terminal batches to `.sandman/archive/` if you want to keep the active `batches/` tree small.
+Succeeded runs are auto-cleaned (worktree + local branch removed). Failed, aborted, or blocked runs keep their worktrees under `.sandman/worktrees/` for inspection and `sandman run --continue` until you remove them with `sandman clean`. Run logs persist as `.sandman/batches/<batch-id>/runs/<run-id>/run.log`. The append-only event log at `.sandman/events.jsonl` grows on every event. Use `sandman archive` to move terminal batches to `.sandman/archive/` if you want to keep the active `batches/` tree small.
 
 ## Can I stop a run mid-flight?
 

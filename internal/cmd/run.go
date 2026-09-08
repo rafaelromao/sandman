@@ -168,7 +168,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run [issue...]",
 		Short: "Run an AFK agent for specific issues",
-		Long:  "Run an AFK agent for selected issues and leave worktrees on disk. Prompt or template overrides that omit {{ISSUE_NUMBER}} run without issue lookup. Use --continue to resume the latest AgentRun for each selected issue with its prior handoff; tunables come from current flags/config and the worktree identity (branch, base branch, task prompt) is replayed. Use --base-branch to fetch a different origin branch before each run starts. Use \"sandman clean\" to delete preserved worktrees.",
+		Long:  "Run an AFK agent for selected issues. Succeeded runs auto-clean their worktrees; failed/aborted/blocked runs leave worktrees on disk for inspection and --continue. Prompt or template overrides that omit {{ISSUE_NUMBER}} run without issue lookup. Use --continue to resume the latest AgentRun for each selected issue with its prior handoff; tunables come from current flags/config and the worktree identity (branch, base branch, task prompt) is replayed. Use --base-branch to fetch a different origin branch before each run starts. Use \"sandman clean\" to delete remaining preserved worktrees.",
 		Example: `  sandman run 42 43
   sandman run 42:45
   sandman run :45

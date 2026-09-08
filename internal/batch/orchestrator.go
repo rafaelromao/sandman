@@ -2625,6 +2625,10 @@ func (s *runSession) emitTerminal(ctx context.Context, runID string, result Agen
 	if retriesDone < 0 {
 		retriesDone = 0
 	}
+	worktreeState := "preserved"
+	if terminalStatus == "success" {
+		worktreeState = "cleaned"
+	}
 	event := events.Event{
 		Type:      terminalEventType,
 		Timestamp: time.Now(),
@@ -2634,7 +2638,7 @@ func (s *runSession) emitTerminal(ctx context.Context, runID string, result Agen
 			"status":         terminalStatus,
 			"branch":         result.Branch,
 			"base_branch":    s.baseBranch,
-			"worktree_state": "preserved",
+			"worktree_state": worktreeState,
 			"retries_total":  s.retries,
 			"retries_done":   retriesDone,
 		},
@@ -3551,11 +3555,16 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	s.verifyNoRemainingProcesses(runID)
 
 	if events.RunStatusFromPayload(result.Status).IsSuccess() {
-		// Container sandboxes leave the worktree's .git pointer addressed for
-		// /workspace until cleanup. Restore it before running host-side git;
-		// the deferred call remains as the fallback for every other exit path.
+		// Auto-clean worktree artifacts for succeeded runs: remove the
+		// worktree checkout so succeeded runs do not accumulate under
+		// .sandman/worktrees/. Preservation is kept for failure/aborted/
+		// blocked runs for inspection and --continue. Container sandboxes
+		// rewrite the worktree's .git pointer to /workspace; restore host
+		// paths before host-side git operations.
 		_ = wt.RestoreHostPaths()
-		s.reconcileWorktreeBranch(wt, branch)
+		if err := wt.Stop(); err != nil {
+			fmt.Fprintf(s.deps.errorLog, "warning: auto-clean worktree %s for succeeded run %d: %v\n", branch, s.issueNumber, err)
+		}
 	}
 
 	return result, true
@@ -3970,6 +3979,13 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 	}
 
 	result.Status = s.emitTerminal(ctx, runID, result, terminalExtras)
+
+	if events.RunStatusFromPayload(result.Status).IsSuccess() {
+		_ = wt.RestoreHostPaths()
+		if err := wt.Stop(); err != nil {
+			fmt.Fprintf(s.deps.errorLog, "warning: auto-clean worktree %s for succeeded prompt-only run: %v\n", branch, err)
+		}
+	}
 
 	return result, true
 }
