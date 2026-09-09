@@ -1163,22 +1163,24 @@ func TestPortalRefresh_ExpandedDetailsTabShowsLoadingCursorWhileDetailFetchPendi
       if (!row) throw new Error('missing run row');
       row.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     }, 50);
-    setTimeout(function () {
+    (function waitForDetailLoading() {
       var detail = document.querySelector('tr.detail-row[data-detail-for="`+runID+`"]');
       var panel = detail && detail.querySelector('.detail-panel');
+      if (!panel || typeof window.__portalDetailResolve !== 'function') {
+        setTimeout(waitForDetailLoading, 10);
+        return;
+      }
       var marker = document.createElement('pre');
       marker.id = 'portal-expanded-details-loading-before';
       marker.textContent = JSON.stringify({
-        busy: !!(panel && panel.classList.contains('is-loading')),
-        ariaBusy: panel && panel.getAttribute('aria-busy'),
+        busy: !!panel.classList.contains('is-loading'),
+        ariaBusy: panel.getAttribute('aria-busy'),
         fetchCalls: window.__portalFetchCalls || 0,
         detailFetchCalls: window.__portalDetailFetchCalls || 0,
       });
       document.body.appendChild(marker);
-      if (typeof window.__portalDetailResolve === 'function') {
-        window.__portalDetailResolve({ run: `+string(detailRunJSON)+` });
-      }
-    }, 150);
+      window.__portalDetailResolve({ run: `+string(detailRunJSON)+` });
+    }());
     setTimeout(function () {
       var detail = document.querySelector('tr.detail-row[data-detail-for="`+runID+`"]');
       var panel = detail && detail.querySelector('.detail-panel');

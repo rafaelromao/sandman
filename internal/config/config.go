@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -9,6 +10,10 @@ import (
 	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"gopkg.in/yaml.v3"
 )
+
+// ErrBreakingContract marks config errors that require an explicit migration
+// decision before init may replace the file.
+var ErrBreakingContract = errors.New("config contract migration required")
 
 // Defaults for optional config fields.
 const (
@@ -236,7 +241,7 @@ func Load(path string) (*Config, error) {
 	}
 
 	if raw.Git.LegacyBranch != nil {
-		return nil, fmt.Errorf("validate config: git.default_branch was renamed to git.base_branch")
+		return nil, fmt.Errorf("validate config: %w: git.default_branch was renamed to git.base_branch", ErrBreakingContract)
 	}
 
 	if cfg.DefaultParallel <= 0 {

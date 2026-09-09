@@ -16,14 +16,16 @@ import (
 )
 
 type fakePrompter struct {
-	confirm    bool
-	confirmErr error
-	selected   string
-	selectErr  error
-	selectMsgs []string
+	confirm     bool
+	confirmErr  error
+	confirmMsgs []string
+	selected    string
+	selectErr   error
+	selectMsgs  []string
 }
 
 func (f *fakePrompter) Confirm(msg string) (bool, error) {
+	f.confirmMsgs = append(f.confirmMsgs, msg)
 	return f.confirm, f.confirmErr
 }
 
@@ -78,6 +80,112 @@ func TestScaffold_PersistsRuntimeDefaults(t *testing.T) {
 	}
 	if !strings.Contains(content, "review_model: opencode/big-pickle") {
 		t.Errorf("scaffolded config missing %q, got:\n%s", "review_model: opencode/big-pickle", content)
+	}
+}
+
+func TestScaffold_ReInitPreservesValidConfig(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+	initialPrompter := &fakePrompter{confirm: true}
+
+	if err := s.Scaffold(dir, Options{BuildTools: "generic"}, initialPrompter); err != nil {
+		t.Fatalf("initial scaffold: %v", err)
+	}
+	configPath := filepath.Join(dir, ".sandman", "config.yaml")
+	original, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read initial config: %v", err)
+	}
+	if err := os.WriteFile(configPath, append(original, []byte("# repository-specific setting\n")...), 0600); err != nil {
+		t.Fatalf("customize config: %v", err)
+	}
+	original, err = os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read customized config: %v", err)
+	}
+
+	if err := s.Scaffold(dir, Options{BuildTools: "go", Agent: "opencode"}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatalf("re-init: %v", err)
+	}
+	got, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read preserved config: %v", err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("re-init changed valid config\nwant:\n%s\ngot:\n%s", original, got)
+	}
+}
+
+func TestScaffold_IncompatibleConfigWarnsBeforeReplacement(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+	configDir := filepath.Join(dir, ".sandman")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("create config directory: %v", err)
+	}
+	configPath := filepath.Join(configDir, "config.yaml")
+	original := []byte("git:\n  default_branch: develop\n")
+	if err := os.WriteFile(configPath, original, 0600); err != nil {
+		t.Fatalf("write incompatible config: %v", err)
+	}
+
+	prompter := &fakePrompter{confirm: false}
+	if err := s.Scaffold(dir, Options{BuildTools: "generic"}, prompter); err == nil {
+		t.Fatal("expected init cancellation")
+	}
+	got, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read unchanged config: %v", err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("declining migration changed config\nwant:\n%s\ngot:\n%s", original, got)
+	}
+}
+
+func TestScaffold_IncompatibleConfigCanBeReplaced(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+	configDir := filepath.Join(dir, ".sandman")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("create config directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte("git:\n  default_branch: develop\n"), 0600); err != nil {
+		t.Fatalf("write incompatible config: %v", err)
+	}
+
+	if err := s.Scaffold(dir, Options{BuildTools: "generic"}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatalf("scaffold after migration confirmation: %v", err)
+	}
+	if _, err := config.Load(filepath.Join(configDir, "config.yaml")); err != nil {
+		t.Fatalf("replacement config is invalid: %v", err)
+	}
+}
+
+func TestScaffold_InvalidConfigIsNotTreatedAsMigration(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, ".sandman")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("create config directory: %v", err)
+	}
+	configPath := filepath.Join(configDir, "config.yaml")
+	original := []byte("review_timeout: invalid\n")
+	if err := os.WriteFile(configPath, original, 0600); err != nil {
+		t.Fatalf("write invalid config: %v", err)
+	}
+
+	prompter := &fakePrompter{confirm: true}
+	if err := (&Scaffolder{}).Scaffold(dir, Options{BuildTools: "generic"}, prompter); err == nil {
+		t.Fatal("expected invalid config error")
+	}
+	if len(prompter.confirmMsgs) != 0 {
+		t.Fatalf("invalid config unexpectedly prompted for migration: %v", prompter.confirmMsgs)
+	}
+	got, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read unchanged config: %v", err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("invalid config was replaced\nwant:\n%s\ngot:\n%s", original, got)
 	}
 }
 
