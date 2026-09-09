@@ -29,6 +29,7 @@ const (
 	DefaultMaxContainers     = 0
 	DefaultWorktreeDir       = ".sandman/worktrees"
 	DefaultSandbox           = "podman"
+	DefaultCleanupWorktrees  = true
 )
 
 // Config holds the loaded Sandman configuration.
@@ -52,6 +53,7 @@ type Config struct {
 	MaxContainers         int              `yaml:"max_containers"`
 	WorktreeDir           string           `yaml:"worktree_dir"`
 	Sandbox               string           `yaml:"sandbox"`
+	CleanupWorktrees      *bool            `yaml:"cleanup_worktrees,omitempty"`
 	Agents                map[string]Agent `yaml:"agents,omitempty"`
 	Git                   GitConfig        `yaml:"git"`
 	Agent                 string           `yaml:"-"`
@@ -168,6 +170,7 @@ func SupportedKeys() []string {
 		"max_containers",
 		"worktree_dir",
 		"sandbox",
+		"cleanup_worktrees",
 		"git.base_branch",
 	}
 }
@@ -199,6 +202,7 @@ func Load(path string) (*Config, error) {
 		MaxContainers         *int             `yaml:"max_containers"`
 		WorktreeDir           string           `yaml:"worktree_dir"`
 		Sandbox               string           `yaml:"sandbox"`
+		CleanupWorktrees      *bool            `yaml:"cleanup_worktrees"`
 		Agents                map[string]Agent `yaml:"agents"`
 		Git                   struct {
 			BaseBranch   string  `yaml:"base_branch"`
@@ -226,6 +230,7 @@ func Load(path string) (*Config, error) {
 		StartDelay:            raw.StartDelay,
 		WorktreeDir:           raw.WorktreeDir,
 		Sandbox:               raw.Sandbox,
+		CleanupWorktrees:      raw.CleanupWorktrees,
 		Agents:                raw.Agents,
 		Git:                   GitConfig{BaseBranch: raw.Git.BaseBranch},
 	}
@@ -518,6 +523,8 @@ func (c *Config) GetValue(key string) (string, error) {
 		return c.WorktreeDir, nil
 	case "sandbox":
 		return c.Sandbox, nil
+	case "cleanup_worktrees":
+		return strconv.FormatBool(c.EffectiveCleanupWorktrees()), nil
 	case "git.base_branch":
 		return c.Git.BaseBranch, nil
 	case "git.default_branch":
@@ -582,6 +589,12 @@ func (c *Config) SetValue(key, value string) error {
 		c.WorktreeDir = value
 	case "sandbox":
 		c.Sandbox = value
+	case "cleanup_worktrees":
+		cleanup, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("invalid value for cleanup_worktrees: %w", err)
+		}
+		c.CleanupWorktrees = &cleanup
 	case "git.base_branch":
 		c.Git.BaseBranch = value
 	case "git.default_branch":
@@ -590,6 +603,15 @@ func (c *Config) SetValue(key, value string) error {
 		return fmt.Errorf("unknown config key: %s", key)
 	}
 	return nil
+}
+
+// EffectiveCleanupWorktrees returns whether successful implementation worktrees
+// are removed after a run. The default preserves the historical behavior.
+func (c *Config) EffectiveCleanupWorktrees() bool {
+	if c == nil || c.CleanupWorktrees == nil {
+		return DefaultCleanupWorktrees
+	}
+	return *c.CleanupWorktrees
 }
 
 func setIntField(c *Config, field intSetField, value string) error {

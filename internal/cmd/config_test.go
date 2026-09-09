@@ -272,6 +272,7 @@ git:
 		"max_containers: 2",
 		"worktree_dir: /tmp/wt",
 		"sandbox: worktree",
+		"cleanup_worktrees: true",
 		"git.base_branch: trunk",
 	}
 

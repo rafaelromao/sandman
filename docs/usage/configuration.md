@@ -82,6 +82,11 @@ worktree_dir: .sandman/worktrees
 # Sandbox mode: podman (default), docker, or worktree.
 sandbox: podman
 
+# Remove successful implementation worktrees after terminal cleanup.
+# Review worktrees and unsuccessful runs are always preserved.
+# Default: true.
+cleanup_worktrees: true
+
 # Git configuration for branch management.
 git:
   base_branch: main
@@ -177,6 +182,14 @@ See [Sandbox Modes](sandbox-modes.md) for detailed scheduling behavior.
 | `run_idle_timeout` | `3600` | Seconds of inactivity before the heartbeat watchdog aborts the run. `0` disables the watchdog |
 
 `run_idle_timeout` detects when an agent has stalled (e.g., blocked on an interactive prompt, deadlocked, or looping). When triggered, the watchdog kills the agent process and marks the run as `aborted`. A `run.idle_timeout` event is written to the event log for diagnostics. A built-in OpenCode attempt that exits after reporting `Error: The usage limit has been reached` instead emits `run.await`, releases its capacity, and re-enters the same session every ten minutes. A still-limited probe follows the ordinary retry path after five hours of accumulated polling. The `--run-idle-timeout` CLI flag overrides the config value for a single invocation.
+
+## Worktree cleanup
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `cleanup_worktrees` | `true` | Remove successful implementation worktrees after completion; `false` preserves them |
+
+This setting only controls successful implementation runs. Review worktrees and unsuccessful or blocked runs remain available for inspection regardless of this setting.
 
 ## Context rollover phrases
 
