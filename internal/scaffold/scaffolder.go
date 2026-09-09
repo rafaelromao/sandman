@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -444,6 +445,8 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	if _, err := os.Stat(configPath); err == nil {
 		if _, err := config.Load(configPath); err == nil {
 			preserveConfig = true
+		} else if !errors.Is(err, config.ErrBreakingContract) {
+			return fmt.Errorf("load config.yaml: %w", err)
 		} else {
 			ok, err := p.Confirm("Existing config.yaml is incompatible with the current config contract. Replace it?")
 			if err != nil {

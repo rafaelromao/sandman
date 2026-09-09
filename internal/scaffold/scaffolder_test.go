@@ -16,14 +16,16 @@ import (
 )
 
 type fakePrompter struct {
-	confirm    bool
-	confirmErr error
-	selected   string
-	selectErr  error
-	selectMsgs []string
+	confirm     bool
+	confirmErr  error
+	confirmMsgs []string
+	selected    string
+	selectErr   error
+	selectMsgs  []string
 }
 
 func (f *fakePrompter) Confirm(msg string) (bool, error) {
+	f.confirmMsgs = append(f.confirmMsgs, msg)
 	return f.confirm, f.confirmErr
 }
 
@@ -156,6 +158,34 @@ func TestScaffold_IncompatibleConfigCanBeReplaced(t *testing.T) {
 	}
 	if _, err := config.Load(filepath.Join(configDir, "config.yaml")); err != nil {
 		t.Fatalf("replacement config is invalid: %v", err)
+	}
+}
+
+func TestScaffold_InvalidConfigIsNotTreatedAsMigration(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, ".sandman")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("create config directory: %v", err)
+	}
+	configPath := filepath.Join(configDir, "config.yaml")
+	original := []byte("review_timeout: invalid\n")
+	if err := os.WriteFile(configPath, original, 0600); err != nil {
+		t.Fatalf("write invalid config: %v", err)
+	}
+
+	prompter := &fakePrompter{confirm: true}
+	if err := (&Scaffolder{}).Scaffold(dir, Options{BuildTools: "generic"}, prompter); err == nil {
+		t.Fatal("expected invalid config error")
+	}
+	if len(prompter.confirmMsgs) != 0 {
+		t.Fatalf("invalid config unexpectedly prompted for migration: %v", prompter.confirmMsgs)
+	}
+	got, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read unchanged config: %v", err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("invalid config was replaced\nwant:\n%s\ngot:\n%s", original, got)
 	}
 }
 
