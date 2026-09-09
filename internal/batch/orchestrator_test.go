@@ -4751,6 +4751,7 @@ func TestRunBatch_EndToEnd(t *testing.T) {
 	configData := `agent: opencode
 worktree_dir: .sandman/worktrees
 sandbox: worktree
+cleanup_worktrees: false
 `
 	if err := os.WriteFile(configPath, []byte(configData), 0644); err != nil {
 		t.Fatalf("write config: %v", err)

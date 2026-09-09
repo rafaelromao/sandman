@@ -74,11 +74,12 @@ func runContextRolloverWorktreeE2E(t *testing.T, finalExhaustion bool) {
 		branch:           branch,
 	}
 	store := &fakeConfigStore{config: &config.Config{
-		DefaultAgent: "opencode",
-		Agent:        "opencode",
-		Sandbox:      "worktree",
-		WorktreeDir:  ".sandman/worktrees",
-		Git:          config.GitConfig{BaseBranch: "main"},
+		DefaultAgent:     "opencode",
+		Agent:            "opencode",
+		Sandbox:          "worktree",
+		WorktreeDir:      ".sandman/worktrees",
+		CleanupWorktrees: func() *bool { value := false; return &value }(),
+		Git:              config.GitConfig{BaseBranch: "main"},
 		AgentProviders: map[string]config.Agent{
 			"opencode": {
 				Preset:  "opencode",
