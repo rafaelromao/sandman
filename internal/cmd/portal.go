@@ -175,6 +175,9 @@ func runPortalServer(ctx context.Context, repoRoot string, port int, host string
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
+		if waiter, ok := server.Handler.(interface{ waitForStaleCleanup() }); ok {
+			waiter.waitForStaleCleanup()
+		}
 		err := <-errCh
 		if err == nil || errors.Is(err, http.ErrServerClosed) {
 			return nil
@@ -192,13 +195,15 @@ func runPortalServer(ctx context.Context, repoRoot string, port int, host string
 // portal command. The exported factory is the testable seam: tests assert that
 // the timeouts are configured without having to drive a real connection.
 func newPortalHTTPServer(repoRoot string) *http.Server {
-	return &http.Server{
-		Handler:           newPortalHandler(repoRoot),
+	handler := newPortalHandler(repoRoot)
+	server := &http.Server{
+		Handler:           handler,
 		ReadTimeout:       portalReadHeaderTimeout,
 		ReadHeaderTimeout: portalReadHeaderTimeout,
 		WriteTimeout:      portalWriteTimeout,
 		IdleTimeout:       portalIdleTimeout,
 	}
+	return server
 }
 
 func writeJSONError(w http.ResponseWriter, msg string, status int) {
