@@ -439,6 +439,23 @@ func (s *Scaffolder) resolveHooksDir(repoRoot string) string {
 func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
 	sandmanDir := layout.SandmanDir
+	preserveConfig := false
+	configPath := layout.ConfigPath()
+	if _, err := os.Stat(configPath); err == nil {
+		if _, err := config.Load(configPath); err == nil {
+			preserveConfig = true
+		} else {
+			ok, err := p.Confirm("Existing config.yaml is incompatible with the current config contract. Replace it?")
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return fmt.Errorf("init cancelled")
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat config.yaml: %w", err)
+	}
 
 	if info, err := os.Stat(sandmanDir); err == nil && info.IsDir() {
 		ok, err := p.Confirm("Directory .sandman/ already exists. Overwrite?")
@@ -569,9 +586,10 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		},
 	}
 
-	configPath := layout.ConfigPath()
-	if err := config.Save(configPath, cfg); err != nil {
-		return fmt.Errorf("save config: %w", err)
+	if !preserveConfig {
+		if err := config.Save(configPath, cfg); err != nil {
+			return fmt.Errorf("save config: %w", err)
+		}
 	}
 
 	agentVersion := resolveAgentVersion(defaultAgent)

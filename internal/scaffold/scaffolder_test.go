@@ -81,6 +81,84 @@ func TestScaffold_PersistsRuntimeDefaults(t *testing.T) {
 	}
 }
 
+func TestScaffold_ReInitPreservesValidConfig(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+	initialPrompter := &fakePrompter{confirm: true}
+
+	if err := s.Scaffold(dir, Options{BuildTools: "generic"}, initialPrompter); err != nil {
+		t.Fatalf("initial scaffold: %v", err)
+	}
+	configPath := filepath.Join(dir, ".sandman", "config.yaml")
+	original, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read initial config: %v", err)
+	}
+	if err := os.WriteFile(configPath, append(original, []byte("# repository-specific setting\n")...), 0600); err != nil {
+		t.Fatalf("customize config: %v", err)
+	}
+	original, err = os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read customized config: %v", err)
+	}
+
+	if err := s.Scaffold(dir, Options{BuildTools: "go", Agent: "opencode"}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatalf("re-init: %v", err)
+	}
+	got, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read preserved config: %v", err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("re-init changed valid config\nwant:\n%s\ngot:\n%s", original, got)
+	}
+}
+
+func TestScaffold_IncompatibleConfigWarnsBeforeReplacement(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+	configDir := filepath.Join(dir, ".sandman")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("create config directory: %v", err)
+	}
+	configPath := filepath.Join(configDir, "config.yaml")
+	original := []byte("git:\n  default_branch: develop\n")
+	if err := os.WriteFile(configPath, original, 0600); err != nil {
+		t.Fatalf("write incompatible config: %v", err)
+	}
+
+	prompter := &fakePrompter{confirm: false}
+	if err := s.Scaffold(dir, Options{BuildTools: "generic"}, prompter); err == nil {
+		t.Fatal("expected init cancellation")
+	}
+	got, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read unchanged config: %v", err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("declining migration changed config\nwant:\n%s\ngot:\n%s", original, got)
+	}
+}
+
+func TestScaffold_IncompatibleConfigCanBeReplaced(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+	configDir := filepath.Join(dir, ".sandman")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("create config directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte("git:\n  default_branch: develop\n"), 0600); err != nil {
+		t.Fatalf("write incompatible config: %v", err)
+	}
+
+	if err := s.Scaffold(dir, Options{BuildTools: "generic"}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatalf("scaffold after migration confirmation: %v", err)
+	}
+	if _, err := config.Load(filepath.Join(configDir, "config.yaml")); err != nil {
+		t.Fatalf("replacement config is invalid: %v", err)
+	}
+}
+
 func TestScaffold_PersistsExplicitReviewTimeout(t *testing.T) {
 	dir := t.TempDir()
 	reviewTimeout := 600
