@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-rc.3](https://github.com/rafaelromao/sandman/compare/v1.0.0-rc.2...v1.0.0-rc.3) (2026-09-09)
+
+
+### Features
+
+* **batch:** automatically clean worktree artifacts for succeeded runs ([bb07c6d](https://github.com/rafaelromao/sandman/commit/bb07c6db6e7ca3a04cd30c3428ee4677af41f3b8))
+* **batch:** automatically clean worktree artifacts for succeeded runs ([b0ad948](https://github.com/rafaelromao/sandman/commit/b0ad9482ea10ed70476ae1f561122f2f458970af))
+* **config:** make successful worktree cleanup configurable ([fd6c32a](https://github.com/rafaelromao/sandman/commit/fd6c32ae72564949fc2114fffba81e10d809086a))
+* **config:** make successful worktree cleanup configurable ([d6e27e5](https://github.com/rafaelromao/sandman/commit/d6e27e5a9dac49f79c17953fdea3bcdb5a87b7b7))
+
+
+### Bug Fixes
+
+* address review feedback on [#2703](https://github.com/rafaelromao/sandman/issues/2703) ([bf6550d](https://github.com/rafaelromao/sandman/commit/bf6550df678b5c932680e2110415110c8023530d))
+* **cmd:** keep OpenCode version guidance user-facing ([63c65cd](https://github.com/rafaelromao/sandman/commit/63c65cdfd4522a9eb1ca3050b6391e2970c44b12))
+* **cmd:** keep OpenCode version guidance user-facing ([e41a261](https://github.com/rafaelromao/sandman/commit/e41a261e7667f66a0488ba72848a39d77ae0c4a3))
+* **events:** pause duration while runs await ([b39cf12](https://github.com/rafaelromao/sandman/commit/b39cf1220f4f2b0e24cc2a1c0b064aaa34c9fa38))
+* **events:** pause duration while runs await ([ad62170](https://github.com/rafaelromao/sandman/commit/ad62170b55e9b772323844936c9ba378737a8634))
+* **init:** preserve compatible config ([a94f101](https://github.com/rafaelromao/sandman/commit/a94f101ec80c15c5d10cab00b0b1a7a6fb9cbb79))
+* **init:** preserve compatible config ([bc896cd](https://github.com/rafaelromao/sandman/commit/bc896cd8e517c3851ff5b08177875acf819e580b))
+* **init:** reject unrelated config errors ([e757b5e](https://github.com/rafaelromao/sandman/commit/e757b5e2216e85795bcb0aa91ca02cf85cd5499d))
+* **portal:** wait for stale cleanup before shutdown ([d106c8a](https://github.com/rafaelromao/sandman/commit/d106c8a95a781b73a75a66e2a224b50d0fecf0cf))
+* **portal:** wait for stale cleanup before shutdown ([7979238](https://github.com/rafaelromao/sandman/commit/7979238586f4123692121099179d8cb338438dec))
+* preserve blocked worktrees after review ([8012811](https://github.com/rafaelromao/sandman/commit/801281169ab198f05608f26320f14c9a10836fdc))
+* preserve prompt worktree on manifest failure ([13cc7b0](https://github.com/rafaelromao/sandman/commit/13cc7b03295d74d03fd2136be6e47c1fb95c0c78))
+* preserve successful review worktrees ([885d3c6](https://github.com/rafaelromao/sandman/commit/885d3c685867b7469c55ce8b0bdb4f773f3b3dd6))
+* preserve worktree on manifest failure ([1cef3dd](https://github.com/rafaelromao/sandman/commit/1cef3dd9c42ee3896f9bb3ddda65bb155f8d8f2c))
+* **review:** defer launches after quota recovery ([ceb13c8](https://github.com/rafaelromao/sandman/commit/ceb13c8e25ca6f95b3ca70b66f29a6e0cc8eae24))
+* **review:** normalize direct quota errors ([28e751d](https://github.com/rafaelromao/sandman/commit/28e751d76cc6c632b25afeb7028a7f98468357c7))
+* **review:** pause retries during OpenCode quota exhaustion ([8e758d7](https://github.com/rafaelromao/sandman/commit/8e758d79e0a5ce1e29c328d42987e0d929f83791))
+* **review:** pause retries during OpenCode quota exhaustion ([f5e0ab8](https://github.com/rafaelromao/sandman/commit/f5e0ab87f60a0ad4149a0845e1bd3d6321eea295))
+* **review:** retain quota pause across probe failures ([77ea3a1](https://github.com/rafaelromao/sandman/commit/77ea3a165a7279c3a26b1c1341b0270e5a06ec73))
+* **run:** await OpenCode usage-limit recovery ([b871179](https://github.com/rafaelromao/sandman/commit/b871179a93fa519ff5f99efd857a878e7b180004))
+* **run:** await OpenCode usage-limit recovery ([1366e1b](https://github.com/rafaelromao/sandman/commit/1366e1b039559b477387947500f76d87e66cf490))
+* **run:** delay retries after OpenCode usage limits ([3fe39e7](https://github.com/rafaelromao/sandman/commit/3fe39e77a5f81e493fc100bc3fae298c119313bb))
+* **run:** restrict quota waiting to built-in OpenCode ([0581b87](https://github.com/rafaelromao/sandman/commit/0581b872eb9f40e8562a9a764ff4ffd2e2fa7aaa))
+* **run:** wait five hours for OpenCode quota ([de84ab2](https://github.com/rafaelromao/sandman/commit/de84ab2bfc020d7919fc1bdbed7da8eee56578f8))
+
 ## [1.0.0-rc.2](https://github.com/rafaelromao/sandman/compare/v1.0.0-rc.1...v1.0.0-rc.2) (2026-09-01)
 
 
