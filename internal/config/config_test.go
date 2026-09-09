@@ -61,11 +61,37 @@ git:
 	if cfg.Sandbox != "worktree" {
 		t.Errorf("sandbox: got %q, want %q", cfg.Sandbox, "worktree")
 	}
+	if !cfg.EffectiveCleanupWorktrees() {
+		t.Error("cleanup_worktrees defaulted to false, want true")
+	}
 	if cfg.Git.BaseBranch != "trunk" {
 		t.Errorf("git.base_branch: got %q, want %q", cfg.Git.BaseBranch, "trunk")
 	}
 	if _, ok := cfg.AgentProviders["opencode"]; !ok {
 		t.Fatal("expected built-in opencode agent in derived map")
+	}
+}
+
+func TestConfig_CleanupWorktreesCanBeDisabled(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("cleanup_worktrees: false\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.EffectiveCleanupWorktrees() {
+		t.Fatal("cleanup_worktrees = true, want false")
+	}
+	if got, err := cfg.GetValue("cleanup_worktrees"); err != nil || got != "false" {
+		t.Fatalf("GetValue(cleanup_worktrees) = %q, %v", got, err)
+	}
+	if err := cfg.SetValue("cleanup_worktrees", "true"); err != nil {
+		t.Fatalf("SetValue(cleanup_worktrees): %v", err)
+	}
+	if !cfg.EffectiveCleanupWorktrees() {
+		t.Fatal("cleanup_worktrees remained false after SetValue")
 	}
 }
 

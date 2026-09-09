@@ -7304,6 +7304,29 @@ func TestFinishTerminal_PreservesWorktreeStateWhenCleanupFails(t *testing.T) {
 	}
 }
 
+func TestFinishTerminal_PreservesSuccessfulWorktreeWhenCleanupDisabled(t *testing.T) {
+	sb := &fakeSandbox{}
+	spyLog := &spyEventLog{}
+	cleanup := false
+	s := &runSession{
+		cfg:         &config.Config{CleanupWorktrees: &cleanup},
+		deps:        runDeps{eventLog: spyLog, errorLog: io.Discard},
+		baseBranch:  "main",
+		issueNumber: 42,
+	}
+
+	status := s.finishTerminal(context.Background(), "run-id", AgentRunResult{Status: "success"}, nil, sb, "42-fix-bug")
+	if status != "success" {
+		t.Fatalf("status = %q, want success", status)
+	}
+	if sb.restoreHostPathsCalled || sb.stopCalled {
+		t.Fatal("cleanup called with cleanup_worktrees disabled")
+	}
+	if got := spyLog.events[0].Payload["worktree_state"]; got != "preserved" {
+		t.Errorf("worktree_state = %q, want preserved", got)
+	}
+}
+
 func TestFinishTerminalReportsRemovedWorktreeAfterPartialCleanupFailure(t *testing.T) {
 	stopErr := errors.New("container stop failed")
 	workDir := t.TempDir()
