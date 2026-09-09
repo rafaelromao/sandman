@@ -12,6 +12,11 @@ type RunState struct {
 	RunID    string
 	Started  Event
 	Finished *Event
+	// activeDuration stores completed active segments. activeSince is set only
+	// while the current lifecycle phase is executing, so await time is never
+	// included in elapsed duration.
+	activeDuration time.Duration
+	activeSince    time.Time
 	// AwaitEvent records the most recent run.await event for a run that
 	// is awaiting external progress (CI, review, decision publication).
 	// When set, the run is active (Finished is nil) and the event's
@@ -67,21 +72,28 @@ func ProjectRunStates(events []Event) []RunState {
 			state.Started = event
 			state.Finished = nil
 			state.awaiting = false
+			state.activeDuration = 0
+			state.activeSince = event.Timestamp
 		case "run.blocked":
 			state.Started = event
 			finished := event
 			state.Finished = &finished
 			state.awaiting = false
+			state.activeDuration = 0
+			state.activeSince = time.Time{}
 		case "run.queued":
 			state.Started = event
 			finished := event
 			state.Finished = &finished
 			state.awaiting = false
+			state.activeDuration = 0
+			state.activeSince = time.Time{}
 		case "run.await":
 			// run.await is a non-terminal event: it records that the run
 			// is awaiting external progress (CI, review, decision
 			// publication) without consuming retries or holding capacity.
 			// The run stays active (Finished is not set).
+			state.accumulateActiveUntil(event.Timestamp)
 			awaitEvent := event
 			state.AwaitEvent = &awaitEvent
 			state.awaiting = true
@@ -93,13 +105,22 @@ func ProjectRunStates(events []Event) []RunState {
 			// is not set); Started and AwaitEvent are preserved.
 			resumeEvent := event
 			state.ResumedEvent = &resumeEvent
-			state.awaiting = false
+			if state.Finished == nil {
+				if state.awaiting || state.activeSince.IsZero() {
+					state.activeSince = event.Timestamp
+				}
+				state.awaiting = false
+			}
 		case "run.finished", "run.aborted", "run.cancelled":
+			state.accumulateActiveUntil(event.Timestamp)
 			finished := event
 			state.Finished = &finished
 			state.awaiting = false
 		case "run.retry":
 			state.Retries = append(state.Retries, event)
+			if state.awaiting {
+				state.activeSince = event.Timestamp
+			}
 			state.awaiting = false
 		}
 	}
@@ -242,12 +263,41 @@ func (r RunState) BatchID() string {
 	return ""
 }
 
-// Duration returns the elapsed time between start and finish.
+// Duration returns the active execution time between start and finish. Time
+// spent in an await phase is excluded.
 func (r RunState) Duration() time.Duration {
 	if r.Finished == nil || r.Started.Timestamp.IsZero() || r.Finished.Timestamp.IsZero() {
 		return 0
 	}
-	return r.Finished.Timestamp.Sub(r.Started.Timestamp).Round(time.Second)
+	return r.DurationAt(r.Finished.Timestamp)
+}
+
+// DurationAt returns the active execution time observed at at. An awaiting
+// run is frozen at the accumulated active time; an active run includes the
+// current segment through at. Terminal runs are capped at their terminal event.
+func (r RunState) DurationAt(at time.Time) time.Duration {
+	if r.Started.Timestamp.IsZero() || at.IsZero() {
+		return 0
+	}
+	if r.Finished != nil && !r.Finished.Timestamp.IsZero() && at.After(r.Finished.Timestamp) {
+		at = r.Finished.Timestamp
+	}
+
+	duration := r.activeDuration
+	if !r.awaiting && !r.activeSince.IsZero() && at.After(r.activeSince) {
+		duration += at.Sub(r.activeSince)
+	}
+	return duration.Round(time.Second)
+}
+
+func (r *RunState) accumulateActiveUntil(at time.Time) {
+	if r.awaiting || r.activeSince.IsZero() {
+		return
+	}
+	if at.After(r.activeSince) {
+		r.activeDuration += at.Sub(r.activeSince)
+	}
+	r.activeSince = time.Time{}
 }
 
 // RetriesTotal returns the configured retry count from the finished payload.

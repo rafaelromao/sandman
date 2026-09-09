@@ -11,6 +11,13 @@ import (
 
 // NewStatusCmd creates the status command.
 func NewStatusCmd(log events.EventLog) *cobra.Command {
+	return newStatusCmd(log, time.Now)
+}
+
+func newStatusCmd(log events.EventLog, now func() time.Time) *cobra.Command {
+	if now == nil {
+		now = time.Now
+	}
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Show the status of active agent runs",
@@ -41,7 +48,7 @@ func NewStatusCmd(log events.EventLog) *cobra.Command {
 			})
 			fmt.Fprintln(cmd.OutOrStdout(), "Active runs:")
 			for _, run := range active {
-				elapsed := time.Since(run.Started.Timestamp).Round(time.Second)
+				elapsed := run.DurationAt(now())
 				fmt.Fprintf(cmd.OutOrStdout(), "  %s  elapsed %s\n", run.IssueLabel(), elapsed)
 			}
 			return nil

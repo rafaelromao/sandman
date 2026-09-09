@@ -213,6 +213,7 @@ type portalRunMatch struct {
 type portalRunsView struct {
 	mu            sync.Mutex
 	manifestCache map[string]portalManifestCacheEntry
+	now           func() time.Time
 }
 
 type portalManifestCacheEntry struct {
@@ -1925,7 +1926,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		PRNumber:    prNumber,
 		Reason:      reason,
 		StartedAt:   startedAt,
-		Duration:    time.Since(startedAt).Round(time.Second).String(),
+		Duration:    v.currentTime().Sub(startedAt).Round(time.Second).String(),
 		SocketPath:  match.instance.SocketPath,
 		LogPath:     logPath,
 		LogURL:      logURL,
@@ -2245,10 +2246,14 @@ func (v *portalRunsView) statusOrDefault(status string, active bool, isReview bo
 }
 
 func (v *portalRunsView) durationForRun(runState events.RunState) string {
-	if runState.IsActive() {
-		return time.Since(runState.Started.Timestamp).Round(time.Second).String()
+	return runState.DurationAt(v.currentTime()).String()
+}
+
+func (v *portalRunsView) currentTime() time.Time {
+	if v.now != nil {
+		return v.now()
 	}
-	return runState.Duration().String()
+	return time.Now()
 }
 
 func (v *portalRunsView) filterPortalLogByRunID(text string, runID string) string {

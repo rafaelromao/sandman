@@ -199,7 +199,7 @@ The single-row keyed lookup returns `run` (singular) instead of `runs`:
 
 Not all fields appear in every row. `lastOutputAt`, `socketPath`, and `logUrl` are omitted for terminal rows. `review`, `reviewCount`, and `reviewVerdict` are only present for rows that own child review runs.
 
-An active implementation row with a current `run.await` lifecycle event is shown as `waiting`. Waiting is non-terminal: its lifecycle details and event history remain available, and a later continuation or resume returns the row to `running`. A live linked review can show the non-terminal implementation row as `reviewing`. `queued`, `blocked`, and terminal statuses retain their existing meanings.
+An active implementation row with a current `run.await` lifecycle event is shown as `waiting`. Waiting is non-terminal: its lifecycle details and event history remain available, and its duration stays frozen until an in-session `run.resumed` event returns the row to `running`. The resumed duration adds only the active time after the resume and excludes all await intervals. A separate continuation is a new run with a fresh clock. A live linked review can show the non-terminal implementation row as `reviewing`. `queued`, `blocked`, and terminal statuses retain their existing meanings.
 
 ### `GET /api/runs/stream`
 

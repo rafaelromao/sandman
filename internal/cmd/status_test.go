@@ -133,3 +133,26 @@ func TestStatus_ExcludesBlockedRuns(t *testing.T) {
 		t.Fatalf("expected no active runs message, got:\n%s", out)
 	}
 }
+
+func TestStatus_UsesActiveDurationWhileAwaiting(t *testing.T) {
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	awaitAt := startedAt.Add(5 * time.Minute)
+	log := &fakeEventLog{
+		events: []events.Event{
+			{Type: "run.started", Timestamp: startedAt, RunID: "run-status-await", Issue: 42},
+			{Type: "run.await", Timestamp: awaitAt, RunID: "run-status-await", Issue: 42},
+		},
+	}
+
+	var buf bytes.Buffer
+	cmd := newStatusCmd(log, func() time.Time { return awaitAt.Add(time.Hour) })
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := buf.String(); !strings.Contains(got, "elapsed 5m0s") {
+		t.Fatalf("status duration = %q, want frozen 5m0s", got)
+	}
+}
