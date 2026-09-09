@@ -159,3 +159,41 @@ func TestPortal_WaitingBadgeHasDedicatedStyle(t *testing.T) {
 		t.Fatal("expected portal to style waiting badges distinctly")
 	}
 }
+
+func TestPortal_AwaitDurationPausesAndResumes(t *testing.T) {
+	t.Parallel()
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	awaitAt := startedAt.Add(5 * time.Minute)
+	resumedAt := awaitAt.Add(time.Hour)
+	finishedAt := resumedAt.Add(7 * time.Minute)
+	repoRoot := t.TempDir()
+
+	awaiting := events.ProjectRunStates([]events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-portal-duration", Issue: 42},
+		{Type: "run.await", Timestamp: awaitAt, RunID: "run-portal-duration", Issue: 42},
+	})[0]
+	view := &portalRunsView{now: func() time.Time { return awaitAt.Add(2 * time.Hour) }}
+	row := view.runFromState(repoRoot, awaiting, nil, nil, nil, nil)
+	if row.Status != "waiting" {
+		t.Fatalf("status = %q, want waiting", row.Status)
+	}
+	if row.Duration != "5m0s" {
+		t.Fatalf("waiting duration = %q, want frozen 5m0s", row.Duration)
+	}
+	view.now = func() time.Time { return awaitAt.Add(3 * time.Hour) }
+	row = view.runFromState(repoRoot, awaiting, nil, nil, nil, nil)
+	if row.Duration != "5m0s" {
+		t.Fatalf("later waiting duration = %q, want unchanged 5m0s", row.Duration)
+	}
+
+	resumed := events.ProjectRunStates([]events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-portal-duration", Issue: 42},
+		{Type: "run.await", Timestamp: awaitAt, RunID: "run-portal-duration", Issue: 42},
+		{Type: "run.resumed", Timestamp: resumedAt, RunID: "run-portal-duration", Issue: 42},
+	})[0]
+	view.now = func() time.Time { return finishedAt }
+	row = view.runFromState(repoRoot, resumed, nil, nil, nil, nil)
+	if row.Duration != "12m0s" {
+		t.Fatalf("resumed duration = %q, want 12m0s", row.Duration)
+	}
+}

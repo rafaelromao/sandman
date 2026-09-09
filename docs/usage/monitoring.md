@@ -6,7 +6,7 @@
 sandman status
 ```
 
-Displays currently active (in-progress) agent runs with elapsed time. Reads `.sandman/events.jsonl` and filters for runs that have started but not yet finished.
+Displays currently active (in-progress) agent runs with active elapsed time. Time spent in a current `run.await` phase is paused and excluded; an in-session `run.resumed` event continues the same clock. Reads `.sandman/events.jsonl` and filters for runs that have started but not yet finished.
 
 ## History
 
@@ -125,6 +125,8 @@ Emitted when an agent run completes.
 
 #### `run.await`
 Emitted when an issue-driven run ends its agent session while recoverable pull-request work remains (CI, review, mergeability, or decision publication). Non-terminal: the run does not finish or consume a retry. Pending current-head CI carries a durable, non-renewing 30-minute per-head deadline in `ci_wait`; the row keeps dependency ownership while the scheduler releases execution capacity between observations. When the external poll interval elapses, the row joins a FIFO priority queue and receives the next permitted free execution slot before newly queued work.
+
+The run timer pauses at `run.await`. A later `run.resumed` event starts a new active segment, so duration readers exclude the full await interval. A separate `run.continued` event represents a new run and starts a fresh clock.
 
 | Field | Description |
 |-------|-------------|

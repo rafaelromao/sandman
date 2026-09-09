@@ -946,6 +946,106 @@ func TestProjectRunStates_AwaitEventKeepsRunActive(t *testing.T) {
 	}
 }
 
+func TestRunState_DurationAtPausesWhileAwaiting(t *testing.T) {
+	t.Parallel()
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	awaitAt := startedAt.Add(5 * time.Minute)
+
+	run := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-await-duration", Issue: 42},
+		{Type: "run.await", Timestamp: awaitAt, RunID: "run-await-duration", Issue: 42},
+	})[0]
+
+	if got, want := run.DurationAt(awaitAt), 5*time.Minute; got != want {
+		t.Fatalf("duration at await = %s, want %s", got, want)
+	}
+	if got, want := run.DurationAt(awaitAt.Add(time.Hour)), 5*time.Minute; got != want {
+		t.Fatalf("duration while awaiting = %s, want frozen duration %s", got, want)
+	}
+}
+
+func TestRunState_DurationExcludesAwaitBeforeTerminal(t *testing.T) {
+	t.Parallel()
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	awaitAt := startedAt.Add(5 * time.Minute)
+	finishedAt := awaitAt.Add(time.Hour)
+
+	for _, terminalType := range []string{"run.finished", "run.aborted"} {
+		t.Run(terminalType, func(t *testing.T) {
+			run := ProjectRunStates([]Event{
+				{Type: "run.started", Timestamp: startedAt, RunID: "run-await-terminal", Issue: 42},
+				{Type: "run.await", Timestamp: awaitAt, RunID: "run-await-terminal", Issue: 42},
+				{Type: terminalType, Timestamp: finishedAt, RunID: "run-await-terminal", Issue: 42, Payload: map[string]any{"status": "aborted"}},
+			})[0]
+
+			if got, want := run.Duration(), 5*time.Minute; got != want {
+				t.Fatalf("duration = %s, want %s without counting await time", got, want)
+			}
+		})
+	}
+}
+
+func TestRunState_DurationResumesAfterAwait(t *testing.T) {
+	t.Parallel()
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	awaitAt := startedAt.Add(5 * time.Minute)
+	resumedAt := awaitAt.Add(time.Hour)
+	finishedAt := resumedAt.Add(7 * time.Minute)
+
+	run := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-await-resumed", Issue: 42},
+		{Type: "run.await", Timestamp: awaitAt, RunID: "run-await-resumed", Issue: 42},
+		{Type: "run.resumed", Timestamp: resumedAt, RunID: "run-await-resumed", Issue: 42},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-await-resumed", Issue: 42, Payload: map[string]any{"status": "success"}},
+	})[0]
+
+	if got, want := run.Duration(), 12*time.Minute; got != want {
+		t.Fatalf("duration = %s, want %s from active segments", got, want)
+	}
+}
+
+func TestRunState_DurationExcludesRepeatedAwaitIntervals(t *testing.T) {
+	t.Parallel()
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	firstAwaitAt := startedAt.Add(5 * time.Minute)
+	firstResumedAt := firstAwaitAt.Add(time.Hour)
+	secondAwaitAt := firstResumedAt.Add(5 * time.Minute)
+	secondResumedAt := secondAwaitAt.Add(time.Hour)
+	finishedAt := secondResumedAt.Add(5 * time.Minute)
+
+	run := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-repeated-await", Issue: 42},
+		{Type: "run.await", Timestamp: firstAwaitAt, RunID: "run-repeated-await", Issue: 42},
+		{Type: "run.resumed", Timestamp: firstResumedAt, RunID: "run-repeated-await", Issue: 42},
+		{Type: "run.await", Timestamp: secondAwaitAt, RunID: "run-repeated-await", Issue: 42},
+		{Type: "run.resumed", Timestamp: secondResumedAt, RunID: "run-repeated-await", Issue: 42},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-repeated-await", Issue: 42, Payload: map[string]any{"status": "success"}},
+	})[0]
+
+	if got, want := run.Duration(), 15*time.Minute; got != want {
+		t.Fatalf("duration = %s, want %s from active segments", got, want)
+	}
+}
+
+func TestRunState_ContinuedRunStartsFreshDuration(t *testing.T) {
+	t.Parallel()
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	awaitAt := startedAt.Add(5 * time.Minute)
+	continuedAt := awaitAt.Add(time.Hour)
+	finishedAt := continuedAt.Add(7 * time.Minute)
+
+	run := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-continued-duration", Issue: 42},
+		{Type: "run.await", Timestamp: awaitAt, RunID: "run-continued-duration", Issue: 42},
+		{Type: "run.continued", Timestamp: continuedAt, RunID: "run-continued-duration", Issue: 42},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-continued-duration", Issue: 42, Payload: map[string]any{"status": "success"}},
+	})[0]
+
+	if got, want := run.Duration(), 7*time.Minute; got != want {
+		t.Fatalf("duration = %s, want fresh continued-run duration %s", got, want)
+	}
+}
+
 func TestProjectRunStates_CurrentAwaitPhaseTracksLifecycle(t *testing.T) {
 	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
