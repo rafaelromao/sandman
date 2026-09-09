@@ -2246,6 +2246,9 @@ func startPortalHTTPServer(t *testing.T, handler http.Handler) *portalHTTPServer
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = server.Shutdown(ctx)
+		if waiter, ok := handler.(interface{ waitForStaleCleanup() }); ok {
+			waiter.waitForStaleCleanup()
+		}
 	}
 	t.Cleanup(closeFn)
 	return &portalHTTPServer{URL: "http://" + ln.Addr().String(), Close: closeFn}

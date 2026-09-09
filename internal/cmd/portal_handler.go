@@ -19,6 +19,8 @@ type portalHandler struct {
 	repoRoot     string
 	runsIndex    *portalRunsIndex
 	staleCleaner func(string) error
+	handler      http.Handler
+	staleDone    chan struct{}
 }
 
 func newPortalHandler(repoRoot string) http.Handler {
@@ -36,12 +38,16 @@ func newPortalHandler(repoRoot string) http.Handler {
 	mux.HandleFunc("/api/runs/archive", h.handleRunArchive)
 	mux.HandleFunc("/api/logs", h.handleLogs)
 	mux.HandleFunc("/", h.handlePage)
+	h.handler = mux
 	h.startStaleCleaner()
-	return mux
+	return h
 }
 
 func (h *portalHandler) startStaleCleaner() {
+	done := make(chan struct{})
+	h.staleDone = done
 	go func() {
+		defer close(done)
 		defer func() {
 			if r := recover(); r != nil {
 				log.Printf("portal: stale cleanup panicked: %v", r)
@@ -51,6 +57,16 @@ func (h *portalHandler) startStaleCleaner() {
 			log.Printf("portal: stale cleanup failed: %v", err)
 		}
 	}()
+}
+
+func (h *portalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.handler.ServeHTTP(w, r)
+}
+
+func (h *portalHandler) waitForStaleCleanup() {
+	if h.staleDone != nil {
+		<-h.staleDone
+	}
 }
 
 func (h *portalHandler) handleInstances(w http.ResponseWriter, r *http.Request) {
