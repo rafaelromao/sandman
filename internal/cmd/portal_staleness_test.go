@@ -209,8 +209,6 @@ func TestPortal_DiscoverActiveRuns_IssueMultiBatch_RunIDIsPerRow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const firstIssue = 1699
-	const issueN = 6
 	const perRowRunID = "260703095305-fde2-1704"
 	const onDiskDir = "260703095305-fde2-1699+6"
 

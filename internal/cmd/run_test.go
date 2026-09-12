@@ -69,18 +69,6 @@ type fakeGitHubClient struct {
 	searchIssuesError  error
 }
 
-func (f *fakeGitHubClient) setIssueState(number int, state string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	prev, ok := f.issues[number]
-	if !ok {
-		return
-	}
-	updated := *prev
-	updated.State = state
-	f.issues[number] = &updated
-}
-
 func (f *fakeGitHubClient) FetchIssue(ctx context.Context, number int) (*github.Issue, error) {
 	f.mu.Lock()
 	if f.fetchCount == nil {

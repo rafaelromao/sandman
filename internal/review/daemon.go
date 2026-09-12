@@ -2130,7 +2130,7 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	return d.postDecisionWithCleanup(ctx, prNumber, triggerKey, reviewRunFolder, state, &preserveWorktree)
 }
 
-// postDecision implements the S3 post step (issue #1846):
+// postDecisionWithCleanup implements the S3 post step (issue #1846):
 //
 //   - If <worktree>/decision.md is missing: MarkSeen("pending") and
 //     register a pendingPost entry (issue #1949) so the next tick's
@@ -2157,10 +2157,9 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 // path is deterministic from (prNumber, commentID,
 // d.Config.WorktreeDir), so the daemon computes it without waiting
 // for the orchestrator to report back.
-func (d *Daemon) postDecision(ctx context.Context, prNumber int, commentID, reviewRunFolder string, state *ReviewStateStore) error {
-	return d.postDecisionWithCleanup(ctx, prNumber, commentID, reviewRunFolder, state, nil)
-}
-
+//
+// When preserveWorktree is non-nil, a successful post may set
+// *preserveWorktree so the caller can skip worktree cleanup.
 func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, commentID, reviewRunFolder string, state *ReviewStateStore, preserveWorktree *bool) error {
 	decisionPath := d.reviewDecisionPath(prNumber, commentID)
 	info, err := os.Stat(decisionPath)

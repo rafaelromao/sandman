@@ -169,7 +169,7 @@ func WithRunner(r execRunner) CLIOption {
 // the bug class from issue #1780 — a hung gh wedging the daemon — is
 // closed by default.
 func NewCLIClient(opts ...CLIOption) *CLIClient {
-	c := &CLIClient{Timeout: DefaultCallTimeout}
+	c := &CLIClient{Timeout: DefaultCallTimeout, runner: &realRunner{}}
 	for _, opt := range opts {
 		opt(c)
 	}

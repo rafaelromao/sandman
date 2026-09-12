@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -76,32 +75,6 @@ func (f *fakeGhCommander) runGh(ctx context.Context, args ...string) ([]byte, er
 	}
 	return f.payload, nil
 }
-
-type fakeGhCall struct {
-	payload []byte
-	err     error
-}
-
-type sequencedFakeGhCommander struct {
-	calls []fakeGhCall
-	idx   int
-	args  []string
-}
-
-func (f *sequencedFakeGhCommander) runGh(ctx context.Context, args ...string) ([]byte, error) {
-	f.args = append([]string(nil), args...)
-	if f.idx >= len(f.calls) {
-		return []byte{}, nil
-	}
-	c := f.calls[f.idx]
-	f.idx++
-	if c.err != nil {
-		return nil, c.err
-	}
-	return c.payload, nil
-}
-
-func intToString(n int) string { return strconv.Itoa(n) }
 
 type fakeSandmanRunner struct {
 	prURL          string

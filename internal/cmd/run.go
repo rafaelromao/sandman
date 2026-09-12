@@ -1238,14 +1238,6 @@ func searchIssues(ctx context.Context, client github.Client, query string) ([]gi
 	return ghIssues, nil
 }
 
-func resolveIssues(ctx context.Context, client github.Client, query string) ([]int, error) {
-	ghIssues, err := searchIssues(ctx, client, query)
-	if err != nil {
-		return nil, err
-	}
-	return extractIssueNumbers(ghIssues), nil
-}
-
 func pickIssues(ctx context.Context, client github.Client, picker IssuePicker) ([]int, error) {
 	ghIssues, err := client.SearchIssues(ctx, "is:open")
 	if err != nil {
