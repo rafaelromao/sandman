@@ -93,6 +93,9 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
+
       - name: Format check
         run: |
           if [ -n "$(gofmt -l .)" ]; then

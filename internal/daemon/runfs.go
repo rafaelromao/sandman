@@ -507,22 +507,20 @@ func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log even
 			return 0, fmt.Errorf("read batches dir for orphan scan: %w", err)
 		}
 	}
-	if entries != nil {
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-			batchPath := filepath.Join(batchesDir, entry.Name())
-			manifest, err := ReadManifest(batchPath)
-			if err != nil {
-				if os.IsNotExist(err) {
-					manifest = BatchManifest{}
-				} else {
-					return 0, fmt.Errorf("read manifest for orphan scan %s: %w", batchPath, err)
-				}
-			}
-			batches = append(batches, batchInfo{dir: batchPath, manifest: manifest})
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
 		}
+		batchPath := filepath.Join(batchesDir, entry.Name())
+		manifest, err := ReadManifest(batchPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				manifest = BatchManifest{}
+			} else {
+				return 0, fmt.Errorf("read manifest for orphan scan %s: %w", batchPath, err)
+			}
+		}
+		batches = append(batches, batchInfo{dir: batchPath, manifest: manifest})
 	}
 
 	// Build a set of issue numbers where a queued/blocked placeholder was

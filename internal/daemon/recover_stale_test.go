@@ -885,9 +885,7 @@ func TestRecoverStaleRuns_DoesNotRecoverRunFromDifferentBatch(t *testing.T) {
 	// event. (RecoverStaleRuns returned a deduplicated count of 0, so
 	// the recorded events list is what the portal would observe.)
 	finalEvents := append([]events.Event(nil), existing...)
-	for _, e := range eventLog.logged {
-		finalEvents = append(finalEvents, e)
-	}
+	finalEvents = append(finalEvents, eventLog.logged...)
 	finalRuns := events.ProjectRunStates(finalEvents)
 	var liveState *events.RunState
 	for i := range finalRuns {

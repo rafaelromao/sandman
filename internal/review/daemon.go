@@ -1804,7 +1804,7 @@ func (d *Daemon) prepareReviewRun(ctx context.Context, prNumber int, commentID s
 		return "", "", nil, nil, fmt.Errorf("prepare review run session: %w", err)
 	}
 
-	runDir := rs.RunDir()
+	runDir := rs.BatchDir()
 	reviewRunFolder := daemon.RunFolder(runDir, perRowRunID)
 	if err := os.MkdirAll(reviewRunFolder, 0755); err != nil {
 		_ = rs.Close()
