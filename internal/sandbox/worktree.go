@@ -358,15 +358,6 @@ func CurrentBranchRef(workDir string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// forceCheckoutBranch runs git checkout -f in the given workdir to switch to branch.
-func forceCheckoutBranch(workDir, branch string) error {
-	out, err := runGitCommand(workDir, "checkout", "-f", branch)
-	if err != nil {
-		return fmt.Errorf("git checkout -f %s: %w\n%s", branch, err, out)
-	}
-	return nil
-}
-
 // warn writes a warning line to the operator log (s.errorLog or os.Stderr).
 func (s *WorktreeSandbox) warn(format string, args ...interface{}) {
 	w := s.errorLog
@@ -880,28 +871,4 @@ func ReleaseBranchInWorktree(path string) error {
 		return fmt.Errorf("detach HEAD in worktree %q: %w\n%s", path, err, out)
 	}
 	return nil
-}
-
-// reconcileStrandedBranch attempts to remove the stale branch after the
-// initial "git branch -D" failed because the branch is checked out
-// somewhere. The caller has already attempted the stranded-worktree
-// strategy (delete from the stranded worktree's cwd) and removed any
-// stale worktree registration; the recovery path here is therefore
-// the "main repo on the branch" case, dispatched through the
-// package-level reconcileStrandedFn seam (see ADR-0023).
-//
-// The default seam implementation drops the stray ref via
-// `git branch -D` rather than force-checking out the source branch
-// in the parent repo, so the operator's working-tree HEAD is preserved
-// across the recovery. `git branch -D` re-checks worktree holders at
-// the moment of the delete; a sibling worktree that acquires the
-// branch after the parent detach but before the delete is preserved.
-// The branch is re-created later in Start() by the worktree-add step
-// (which reuses the branch if it exists, or creates a fresh branch
-// from source if it does not), so the operator's local view of the
-// branch is restored within the same Start().
-//
-// Returns nil on success, or a non-nil error on hard failure.
-func (s *WorktreeSandbox) reconcileStrandedBranch() error {
-	return reconcileStrandedFn(s.repoPath, s.worktreeBase, s.branch, s.sourceBranch)
 }

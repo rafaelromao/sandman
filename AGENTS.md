@@ -181,7 +181,7 @@ Concretely: a contributor reviewing a skill should be able to read it without kn
 Run:
 
 ```bash
-gofmt -w . && go vet ./...
+gofmt -w . && go vet ./... && go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
 ```
 
 If the change affects behavior materially, also run the most relevant targeted tests for the touched package(s) before finalizing.

@@ -39,10 +39,8 @@ func (s *runSession) isEntryResumeCandidate(workDir string) bool {
 // them.
 func (s *runSession) resumeEvidenceFor(ctx context.Context, branch string, extras map[string]any) map[string]any {
 	evidence := map[string]any{}
-	if extras != nil {
-		for k, v := range extras {
-			evidence[k] = v
-		}
+	for k, v := range extras {
+		evidence[k] = v
 	}
 	switch gate := evidence["gate"]; gate {
 	case gateReadyToMerge:

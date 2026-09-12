@@ -885,26 +885,3 @@ process.stdout.write(JSON.stringify({
   perClickAvgMs: Math.round(perClickAvgMs * 100) / 100,
 }));
 `
-
-const scenarioSubjectSwitchJS = `
-const recorder = longTaskRecorder({ thresholdMs: 50 });
-const body = makeMockBody();
-const runs = perfBuildRuns(5, 12 * 1024);
-for (const run of runs) {
-  run.log = bigLog(run.key, 200);
-  run.events = [];
-  for (let i = 0; i < 200; i++) {
-    run.events.push({ type: 'log', timestamp: 1700000000000 + i, payload: { line: 'event-' + i + ' payload with some text ' + (run.key), extra: bigLog('ev-' + i, 50) } });
-  }
-}
-sandbox.state.runs = runs;
-SandmanPortalDiff.diffRuns(body, runs, { helpers, stopGroups: new Set(), expandedKey: 'k2', tabs: { k2: 'log' } });
-const totalStart = performance.now();
-recorder.start();
-perfDispatchSubjectSwitch('k2', 'events');
-perfHeavySyncWork(runs[2].events.map(e => JSON.stringify(e)).join(''), 400);
-perfDispatchSubjectSwitch('k2', 'log');
-recorder.stop();
-const totalEnd = performance.now();
-perfEmitMetrics('subject_switch', totalStart, totalEnd, recorder);
-`

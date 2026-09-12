@@ -932,34 +932,6 @@ func confirmRemoved(path string) error {
 	return nil
 }
 
-// pruneBatchesIndexByOrphanPlan removes the index entries whose BatchID matches
-// the basename of any path in plan, then atomically saves the index. It is the
-// shared prune step used by both the standalone --orphaned mode and the --all
-// umbrella flag.
-func pruneBatchesIndexByOrphanPlan(indexPath string, plan []string) error {
-	pruned := make(map[string]string, len(plan))
-	for _, p := range plan {
-		absolutePath, err := filepath.Abs(p)
-		if err != nil {
-			return fmt.Errorf("resolve orphan plan path %q: %w", p, err)
-		}
-		pruned[filepath.Base(p)] = absolutePath
-	}
-	return batchindex.Update(indexPath, func(idx *batchindex.Index) error {
-		var kept []batchindex.Batch
-		for _, entry := range idx.Batches {
-			if plannedPath, drop := pruned[entry.ID]; drop && filepath.Clean(entry.Path) == filepath.Clean(plannedPath) {
-				if _, err := os.Stat(entry.Path); os.IsNotExist(err) {
-					continue
-				}
-			}
-			kept = append(kept, entry)
-		}
-		idx.Batches = kept
-		return nil
-	})
-}
-
 func runCleanTemps(cmd *cobra.Command, deps Dependencies, layout paths.Layout, dryRun bool) (tempDirs []string, images []string, cleanupErr error) {
 	tc := deps.TempCleaner
 	if tc == nil {

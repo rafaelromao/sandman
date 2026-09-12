@@ -77,16 +77,6 @@ func (s *ControlSocket) Start() error {
 	return nil
 }
 
-func (s *ControlSocket) acceptLoop(listener net.Listener) {
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		s.broadcaster.AddClient(conn)
-	}
-}
-
 func (s *ControlSocket) Stop() error {
 	var closeErr error
 	if s.listener != nil {
