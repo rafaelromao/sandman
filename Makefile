@@ -22,9 +22,12 @@ VERSION ?= $(shell git -C . describe --tags --always --dirty 2>/dev/null || git 
 
 LDFLAGS := -ldflags '-X main.version=$(VERSION)'
 
-.PHONY: check build install fmt test vet clean
+.PHONY: check build install fmt test vet staticcheck clean
 
-check: fmt vet test
+# Pin must support the Go version in go.mod (currently 1.25).
+STATICCHECK_VERSION := v0.7.0
+
+check: fmt vet staticcheck test
 	@echo "All checks passed."
 
 fmt:
@@ -34,6 +37,10 @@ fmt:
 vet:
 	@echo "Running go vet..."
 	go vet ./...
+
+staticcheck:
+	@echo "Running staticcheck..."
+	go run honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION) ./...
 
 test:
 	@echo "Running tests..."

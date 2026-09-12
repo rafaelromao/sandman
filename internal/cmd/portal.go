@@ -501,7 +501,6 @@ func abortPortalRun(ctx context.Context, repoRoot, runKey string, issueNumber in
 			perRunDir := filepath.Join(runDir, "runs", perRunID)
 			perRunSock := daemon.CommandSocketPath(perRunDir)
 			if _, statErr := os.Stat(perRunSock); statErr == nil {
-				runDir = perRunDir
 				cmdSock = perRunSock
 			}
 		}
