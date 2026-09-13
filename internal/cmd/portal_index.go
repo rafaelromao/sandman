@@ -81,13 +81,12 @@ func getPortalRunsIndex(repoRoot string) *portalRunsIndex {
 }
 
 func (idx *portalRunsIndex) Snapshot(ctx context.Context) ([]portalRun, error) {
-	idx.mu.Lock()
-	if (idx.snapshotReady || len(idx.snapshotCache) > 0) && time.Since(idx.snapshotAt) < portalRunsSnapshotTTL {
+	if idx.snapshotCacheUsable() {
+		idx.mu.Lock()
 		runs := clonePortalRuns(idx.snapshotCache)
 		idx.mu.Unlock()
 		return runs, nil
 	}
-	idx.mu.Unlock()
 
 	state, err := idx.loadSummaryState(ctx)
 	if err != nil {
@@ -113,15 +112,13 @@ func (idx *portalRunsIndex) Snapshot(ctx context.Context) ([]portalRun, error) {
 }
 
 func (idx *portalRunsIndex) SummarySnapshot(ctx context.Context, ifNoneMatch string) (portalSummaryResponse, error) {
-	idx.mu.Lock()
-	if (idx.snapshotReady || len(idx.snapshotCache) > 0) && time.Since(idx.snapshotAt) < portalRunsSnapshotTTL {
+	if idx.snapshotCacheUsable() {
+		idx.mu.Lock()
 		eTag := idx.snapshotETag
 		idx.mu.Unlock()
 		if eTag != "" && etagMatches(ifNoneMatch, eTag) {
 			return portalSummaryResponse{ETag: eTag, NotModified: true}, nil
 		}
-	} else {
-		idx.mu.Unlock()
 	}
 
 	state, err := idx.loadSummaryProbe(ctx)
@@ -169,6 +166,27 @@ func (idx *portalRunsIndex) SummarySnapshot(ctx context.Context, ifNoneMatch str
 	idx.snapshotETag = etag
 	idx.mu.Unlock()
 	return portalSummaryResponse{Runs: portalSummaryRuns(runs), ETag: etag}, nil
+}
+
+// snapshotCacheUsable keeps the short-lived view cache from hiding an event
+// appended after the cache was populated. The event log is the authoritative
+// lifecycle source, so its filesystem fingerprint is sufficient to detect a
+// terminal transition without rebuilding the full view on every request.
+func (idx *portalRunsIndex) snapshotCacheUsable() bool {
+	idx.mu.Lock()
+	ready := (idx.snapshotReady || len(idx.snapshotCache) > 0) && time.Since(idx.snapshotAt) < portalRunsSnapshotTTL
+	cachedSize := idx.eventsSize
+	cachedModTime := idx.eventsModTime
+	idx.mu.Unlock()
+	if !ready {
+		return false
+	}
+
+	info, err := os.Stat(idx.eventLogPath)
+	if err != nil {
+		return os.IsNotExist(err) && cachedSize == 0 && cachedModTime.IsZero()
+	}
+	return info.Size() == cachedSize && info.ModTime().Equal(cachedModTime)
 }
 
 func (idx *portalRunsIndex) loadSummaryProbe(ctx context.Context) (portalSummaryState, error) {

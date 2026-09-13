@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,6 +12,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/paths"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 func TestPortalRunsIndex_InitializesWithEventsLogPath(t *testing.T) {
@@ -72,6 +74,166 @@ func TestPortalRunsIndex_ReadEvents_AppendsJSONLTail(t *testing.T) {
 	}
 	if !second[1].Timestamp.Equal(secondTS) {
 		t.Fatalf("second event timestamp=%v, want %v", second[1].Timestamp, secondTS)
+	}
+}
+
+func TestPortalRunsIndex_SnapshotRecomputesAfterAwaitedRunFinishes(t *testing.T) {
+	repoRoot := testenv.MkdirShort(t, "portal-await-finish-")
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	layout := paths.NewLayout(nil, repoRoot)
+	batchID := "260912164222-c538-466+6"
+	runID := "260912164222-c538-466"
+	batchDir := filepath.Join(layout.BatchesDir, batchID)
+	runDir := filepath.Join(batchDir, "runs", runID)
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	createUnixRunSocket(t, filepath.Join(batchDir, "batch.sock"))
+	startedAt := time.Date(2026, 9, 13, 3, 0, 0, 0, time.FixedZone("-03", -3*60*60))
+	awaitAt := startedAt.Add(5 * time.Minute)
+	continuedAt := awaitAt.Add(time.Hour)
+	secondContinuedAt := continuedAt.Add(time.Hour)
+	finishedAt := secondContinuedAt.Add(7 * time.Minute)
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{
+		Issues:    []int{466},
+		CreatedAt: startedAt,
+		BatchId:   batchID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteRunManifest(batchDir, runID, batchindex.RunManifest{
+		RunID:      runID,
+		BatchID:    batchID,
+		Issue:      466,
+		Branch:     "466-fix",
+		BaseBranch: "main",
+		CreatedAt:  startedAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	addBatchToIndex(t, repoRoot, batchID, batchDir, []int{466})
+	eventLog := &events.JSONLLogger{Path: layout.EventsLogPath}
+	writePortalLog(t, layout.EventsLogPath, []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 466, Payload: map[string]any{
+			"branch": "466-fix", "batch_id": batchID,
+		}},
+		{Type: "run.await", Timestamp: awaitAt, RunID: runID, Issue: 466, Payload: map[string]any{
+			"await_reason": "pending", "branch": "466-fix", "batch_id": batchID,
+		}},
+	})
+
+	idx := getPortalRunsIndex(repoRoot)
+	initial, err := idx.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("initial snapshot: %v", err)
+	}
+	if len(initial) != 1 || initial[0].Status != "waiting" || initial[0].FinishedAt != nil {
+		t.Fatalf("initial snapshot = %#v, want one waiting active row", initial)
+	}
+	previousStaleCleaner := portalStaleCleaner
+	portalStaleCleaner = func(string) error { return nil }
+	t.Cleanup(func() { portalStaleCleaner = previousStaleCleaner })
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	initialAPI := readPortalRuns(t, server.URL)
+	if len(initialAPI) != 1 || initialAPI[0].Status != "waiting" {
+		t.Fatalf("initial /api/runs = %#v, want one waiting row", initialAPI)
+	}
+
+	for _, event := range []events.Event{
+		{Type: "run.continued", Timestamp: continuedAt, RunID: runID, Issue: 466, Payload: map[string]any{
+			"branch": "466-fix", "batch_id": batchID,
+		}},
+		{Type: "run.continued", Timestamp: secondContinuedAt, RunID: runID, Issue: 466, Payload: map[string]any{
+			"branch": "466-fix", "batch_id": batchID,
+		}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 466, Payload: map[string]any{
+			"status": "success", "branch": "466-fix", "batch_id": batchID,
+		}},
+	} {
+		if err := eventLog.Log(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	terminalAPI := readPortalRuns(t, server.URL)
+	if len(terminalAPI) != 1 || terminalAPI[0].Status != "success" || terminalAPI[0].Kind != "completed" || terminalAPI[0].FinishedAt == nil {
+		t.Fatalf("terminal /api/runs = %#v, want one completed success row", terminalAPI)
+	}
+	terminal, err := idx.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("terminal snapshot: %v", err)
+	}
+	if len(terminal) != 1 {
+		t.Fatalf("terminal snapshot = %#v, want exactly one row", terminal)
+	}
+	if got := terminal[0]; got.Status != "success" || got.Kind != "completed" || got.FinishedAt == nil {
+		t.Fatalf("terminal snapshot row = %#v, want completed success with terminal timestamp", got)
+	}
+	if got, want := terminal[0].Duration, "7m0s"; got != want {
+		t.Fatalf("terminal duration = %q, want %q", got, want)
+	}
+	if len(terminal[0].Events) != 5 || terminal[0].Events[1].Type != "run.await" {
+		t.Fatalf("terminal event history = %#v, want await evidence and all lifecycle events", terminal[0].Events)
+	}
+}
+
+func TestPortalRunsIndex_SummaryRecomputesAfterAwaitedRunFinishes(t *testing.T) {
+	repoRoot := t.TempDir()
+	layout := paths.NewLayout(nil, repoRoot)
+	runID := "run-42-1234567890"
+	startedAt := time.Date(2026, 9, 13, 3, 0, 0, 0, time.UTC)
+	awaitAt := startedAt.Add(5 * time.Minute)
+	continuedAt := awaitAt.Add(time.Hour)
+	finishedAt := continuedAt.Add(7 * time.Minute)
+	eventLog := &events.JSONLLogger{Path: layout.EventsLogPath}
+	writePortalLog(t, layout.EventsLogPath, []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
+		{Type: "run.await", Timestamp: awaitAt, RunID: runID, Issue: 42, Payload: map[string]any{
+			"await_reason": "pending", "branch": "42-fix",
+		}},
+	})
+	idx := &portalRunsIndex{
+		repoRoot:     repoRoot,
+		eventLogPath: layout.EventsLogPath,
+		view:         &portalRunsView{},
+	}
+	initial, err := idx.SummarySnapshot(context.Background(), "")
+	if err != nil {
+		t.Fatalf("initial summary snapshot: %v", err)
+	}
+	if len(initial.Runs) != 1 || initial.Runs[0].Status != "waiting" || initial.ETag == "" {
+		t.Fatalf("initial summary = %#v, want one waiting row with ETag", initial)
+	}
+
+	for _, event := range []events.Event{
+		{Type: "run.continued", Timestamp: continuedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "42-fix"}},
+	} {
+		if err := eventLog.Log(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	terminal, err := idx.SummarySnapshot(context.Background(), initial.ETag)
+	if err != nil {
+		t.Fatalf("terminal summary snapshot: %v", err)
+	}
+	if terminal.NotModified || terminal.ETag == initial.ETag {
+		t.Fatalf("terminal summary = %#v, want changed ETag and fresh response", terminal)
+	}
+	if len(terminal.Runs) != 1 {
+		t.Fatalf("terminal summary runs = %#v, want one row", terminal.Runs)
+	}
+	if got := terminal.Runs[0]; got.Status != "success" || got.Kind != "completed" || got.FinishedAt == nil {
+		t.Fatalf("terminal summary row = %#v, want completed success with terminal timestamp", got)
+	}
+
+	unchanged, err := idx.SummarySnapshot(context.Background(), terminal.ETag)
+	if err != nil {
+		t.Fatalf("unchanged summary snapshot: %v", err)
+	}
+	if !unchanged.NotModified || unchanged.ETag != terminal.ETag {
+		t.Fatalf("unchanged summary = %#v, want 304-equivalent response", unchanged)
 	}
 }
 
