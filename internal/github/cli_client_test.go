@@ -65,14 +65,6 @@ func (b *blockingFakeRunner) Run(ctx context.Context, name string, arg ...string
 	return cmd
 }
 
-// blockingCmd returns an *exec.Cmd whose Run blocks until ctx is
-// cancelled. The returned error is the ctx error after cancellation.
-func blockingCmd(ctx context.Context) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "sleep", "60")
-	configureCancelProcessGroup(cmd)
-	return cmd
-}
-
 func TestCLIClient_ListIssueComments_Success(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},

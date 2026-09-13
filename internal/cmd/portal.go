@@ -43,7 +43,6 @@ var portalANSISequence = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
 
 var portalRunAborter = abortPortalRun
 var portalPeerPID = resolvePortalPeerPID
-var portalSignalProcess = signalPortalProcess
 
 // portalRunLivenessProbe is a package-level var so tests can substitute it.
 var portalRunLivenessProbe = daemon.IsRunActive
@@ -243,13 +242,6 @@ func (e *portalArchiveError) Error() string {
 		return e.message
 	}
 	return fmt.Sprintf("%s (archivePath=%q)", e.message, e.path)
-}
-
-// portalArchiveDir returns the absolute archive directory path for a
-// given repo root and run id.
-func portalArchiveDir(repoRoot, runID string) string {
-	layout := paths.NewLayout(&config.Config{}, repoRoot)
-	return filepath.Join(layout.ArchiveDir, runID)
 }
 
 // archivePortalRunHandler performs the per-row terminal-check and
@@ -501,7 +493,6 @@ func abortPortalRun(ctx context.Context, repoRoot, runKey string, issueNumber in
 			perRunDir := filepath.Join(runDir, "runs", perRunID)
 			perRunSock := daemon.CommandSocketPath(perRunDir)
 			if _, statErr := os.Stat(perRunSock); statErr == nil {
-				runDir = perRunDir
 				cmdSock = perRunSock
 			}
 		}
@@ -583,14 +574,6 @@ func emitRunAbortedForQueuedRun(repoRoot string, run portalRun, issueNumber int)
 		return &portalAbortError{status: http.StatusInternalServerError, message: fmt.Sprintf("failed to emit run.aborted event: %v", err)}
 	}
 	return nil
-}
-
-func signalPortalProcess(pid int, sig syscall.Signal) error {
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return err
-	}
-	return proc.Signal(sig)
 }
 
 func findRepoRoot(start string) (string, error) {

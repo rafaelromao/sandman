@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1524,15 +1523,6 @@ func TestPortal_Compute_ActiveReviewStatusFollowsEventLog(t *testing.T) {
 	if !reviewRow.FinishedAt.Equal(runFinishedAt) {
 		t.Fatalf("active review FinishedAt=%s, want %s", reviewRow.FinishedAt.Format(time.RFC3339Nano), runFinishedAt.Format(time.RFC3339Nano))
 	}
-}
-
-func badgeAssertion(issue int) string {
-	if issue == 1001 {
-		return `if (visible.status !== 'reviewing') throw new Error('issue 1001 visible badge must be reviewing (backend-projected for live review), got ' + JSON.stringify(visible.status));
-`
-	}
-	return `if (visible.status !== 'success') throw new Error('issue ` + strconv.Itoa(issue) + ` visible badge must be parent status (no live review, AC3), got ' + JSON.stringify(visible.status));
-`
 }
 
 // TestPortal_ReviewGrouping_OrphanReviewStaysOrphan pins the slice-3

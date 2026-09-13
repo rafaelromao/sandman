@@ -1,3 +1,5 @@
+//go:build smoke || e2e
+
 package cmd
 
 import (

@@ -46,13 +46,6 @@ func findRepoRoot(t *testing.T) string {
 	}
 }
 
-// stubCommander is a minimal IssueCommander used by RunSession tests.
-type stubCommander struct {
-	abortErr error
-}
-
-func (s *stubCommander) AbortIssue(issueNumber int) error { return s.abortErr }
-
 // TestRunSession_Prepare_CreatesRunDirManifestAndSockets is the unit-level
 // companion to the integration test in internal/cmd. It exercises the
 // RunSession boot in isolation: Prepare must produce the run directory,
@@ -263,13 +256,6 @@ func TestRunSession_Prepare_PropagatesMkdirError(t *testing.T) {
 	}
 }
 
-// nilCommander is a concrete IssueCommander whose pointer is nil.
-// The only safe way to detect this is via reflect.ValueOf().IsNil();
-// a plain `commander != nil` returns true for a typed-nil interface.
-type nilCommander struct{}
-
-func (*nilCommander) AbortIssue(int) error { return nil }
-
 // TestRunSession_Prepare_AppendsToBatchesIndex asserts that Prepare
 // appends an entry to batches.json with the expected id, kind, status,
 // issues, and pr fields.
@@ -366,8 +352,7 @@ func TestRunSession_IdxAddOnlyCalledFromPrepare(t *testing.T) {
 
 // TestRunSession_Prepare_TypedNilCommanderIsTreatedAsNil guards the
 // reflect-based nil check in Prepare. A typed-nil IssueCommander
-// (e.g. `var c IssueCommander = (*nilCommander)(nil)`) must NOT
-// trigger the run.sock step, because calling its method would panic.
+// must NOT trigger the run.sock step, because calling its method would panic.
 func TestRunSession_Prepare_TypedNilCommanderIsTreatedAsNil(t *testing.T) {
 	dir := testenv.MkdirShort(t, "sm-daemon-")
 	rs := NewRunSession(dir, "typed-nil-run-1")

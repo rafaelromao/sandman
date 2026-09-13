@@ -504,21 +504,6 @@ func (f *retrySandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceB
 	return f.sandbox
 }
 
-type syncTrackingSandboxFactory struct {
-	mu         sync.Mutex
-	synced     bool
-	beforeSync bool
-}
-
-func (f *syncTrackingSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if !f.synced {
-		f.beforeSync = true
-	}
-	return &fakeSandbox{}
-}
-
 type baseBranchSyncTracker struct {
 	mu          sync.Mutex
 	syncCalls   int
@@ -6425,14 +6410,6 @@ func (f *capturingAgentRunFactory) NewRunnable(issue *github.Issue, branch strin
 	return ar
 }
 
-func keysOf(m map[string]string) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
-}
-
 // TestRunBatch_ReviewRunFolderHonorsReqRunDir pins the orchestrator ↔
 // daemon contract for review runs: when the caller sets
 // `Request.RunDir` (which the review daemon does, as
@@ -9565,19 +9542,6 @@ func TestRunBatch_FailsWhenNoGitIdentityResolved(t *testing.T) {
 	}
 }
 
-func assertGitCommitAuthor(t *testing.T, worktreePath, want string) {
-	t.Helper()
-	cmd := exec.Command("git", "log", "--format=%an <%ae>", "-1")
-	cmd.Dir = worktreePath
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("git log author: %v", err)
-	}
-	if got := strings.TrimSpace(string(out)); got != want {
-		t.Fatalf("commit author: got %q, want %q", got, want)
-	}
-}
-
 func assertGitCommitAuthorOnBranch(t *testing.T, repoPath, branch, want string) {
 	t.Helper()
 	cmd := exec.Command("git", "log", "--format=%an <%ae>", "-1", branch)
@@ -9588,29 +9552,6 @@ func assertGitCommitAuthorOnBranch(t *testing.T, repoPath, branch, want string) 
 	}
 	if got := strings.TrimSpace(string(out)); got != want {
 		t.Fatalf("commit author on branch %s: got %q, want %q", branch, got, want)
-	}
-}
-
-func assertLocalGitIdentity(t *testing.T, worktreePath, wantName, wantEmail string) {
-	t.Helper()
-	cmd := exec.Command("git", "config", "--local", "user.name")
-	cmd.Dir = worktreePath
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("git config --local user.name: %v", err)
-	}
-	if got := strings.TrimSpace(string(out)); got != wantName {
-		t.Fatalf("local user.name: got %q, want %q", got, wantName)
-	}
-
-	cmd = exec.Command("git", "config", "--local", "user.email")
-	cmd.Dir = worktreePath
-	out, err = cmd.Output()
-	if err != nil {
-		t.Fatalf("git config --local user.email: %v", err)
-	}
-	if got := strings.TrimSpace(string(out)); got != wantEmail {
-		t.Fatalf("local user.email: got %q, want %q", got, wantEmail)
 	}
 }
 

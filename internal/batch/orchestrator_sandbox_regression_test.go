@@ -10,7 +10,6 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
-	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
@@ -138,20 +137,4 @@ func TestWorktreeSandboxStart_OverrideStaleBranchSucceeds(t *testing.T) {
 	if err := wt.Start(sandbox.SandboxStart{Override: true, StrandedReconcile: true}); err != nil {
 		t.Fatalf("WorktreeSandbox.Start on a bare stale-branch state succeeded in our repro but the live host failed on 2026-07-21; this documents the non-reproduction: %v", err)
 	}
-}
-
-// stopRunnableFactory returns a Runnable that exits cleanly so the orchestrator
-// can complete the per-issue lifecycle after wt.Start succeeds. In the failing
-// case the orchestrator short-circuits at wt.Start before reaching the runnable
-// at all, so this is mostly defensive.
-type stopRunnableFactory struct{}
-
-func (stopRunnableFactory) NewRunnable(_ *github.Issue, _ string, _ sandbox.Sandbox) Runnable {
-	return &stopRunnable{}
-}
-
-type stopRunnable struct{}
-
-func (s *stopRunnable) Run(_ context.Context, _ prompt.IssueRenderer, _ string, _ prompt.RenderConfig) AgentRunResult {
-	return AgentRunResult{Status: "success"}
 }

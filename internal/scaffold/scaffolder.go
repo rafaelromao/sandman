@@ -1869,67 +1869,6 @@ func parseGoVersionHint(name string, data []byte) (string, bool) {
 	return "", false
 }
 
-func (s *Scaffolder) resolveAgentVersion(agent, selector string, p Prompter) (string, error) {
-	versions, ok := builtInAgentVersionCatalog[agent]
-	if !ok || len(versions) == 0 {
-		return "", fmt.Errorf("unknown built-in agent version catalog for %q", agent)
-	}
-
-	choice := strings.TrimSpace(selector)
-	if choice == "repo" {
-		choice = ""
-	}
-	if choice == "" && p != nil {
-		selected, err := p.Select("Choose a built-in agent version:", append([]string{"latest", "lts"}, versions...))
-		if err == nil {
-			choice = strings.TrimSpace(selected)
-		}
-	}
-	if choice == "" {
-		choice = "latest"
-	}
-
-	resolved, err := resolveVersionChoice(choice, versions)
-	if err != nil {
-		return "", fmt.Errorf("resolve tool version: %w", err)
-	}
-	return resolved, nil
-}
-
-func resolveVersionChoice(choice string, versions []string) (string, error) {
-	choice = strings.TrimSpace(strings.TrimPrefix(strings.ToLower(choice), "v"))
-	if choice == "" {
-		return "", fmt.Errorf("empty version selector")
-	}
-
-	switch choice {
-	case "latest":
-		return versions[0], nil
-	case "lts":
-		if len(versions) > 1 {
-			return versions[1], nil
-		}
-		return versions[0], nil
-	}
-
-	parts := strings.Split(choice, ".")
-	if len(parts) > 3 {
-		return "", fmt.Errorf("unsupported version selector %q", choice)
-	}
-	if len(parts) == 3 {
-		return choice, nil
-	}
-
-	prefix := choice + "."
-	for _, version := range versions {
-		if strings.HasPrefix(version, prefix) {
-			return version, nil
-		}
-	}
-
-	return "", fmt.Errorf("no version matching %q", choice)
-}
-
 // resolveAgentVersion returns the opencode version that sandman init
 // should pin in the new .sandman/Dockerfile. For the opencode preset
 // the host-version probe (probeOpencodeVersion) wins when it returns

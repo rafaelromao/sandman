@@ -780,7 +780,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 			defer rs.Close()
 
-			relRunDir, err := filepath.Rel(repoRoot, rs.RunDir())
+			relRunDir, err := filepath.Rel(repoRoot, rs.BatchDir())
 			if err != nil {
 				return fmt.Errorf("rel run dir: %w", err)
 			}
@@ -1236,14 +1236,6 @@ func searchIssues(ctx context.Context, client github.Client, query string) ([]gi
 		return nil, fmt.Errorf("search issues: %w", err)
 	}
 	return ghIssues, nil
-}
-
-func resolveIssues(ctx context.Context, client github.Client, query string) ([]int, error) {
-	ghIssues, err := searchIssues(ctx, client, query)
-	if err != nil {
-		return nil, err
-	}
-	return extractIssueNumbers(ghIssues), nil
 }
 
 func pickIssues(ctx context.Context, client github.Client, picker IssuePicker) ([]int, error) {

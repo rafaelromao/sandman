@@ -2068,27 +2068,6 @@ func loadPortalScreenshot(path string) (image.Image, error) {
 	return png.Decode(f)
 }
 
-func rectContainsInk(img image.Image, rect portalRect, background color.Color) bool {
-	if rect.Width <= 0 || rect.Height <= 0 {
-		return false
-	}
-	minX := clampInt(int(rect.Left), 0, img.Bounds().Dx()-1)
-	maxX := clampInt(int(rect.Left+rect.Width), 0, img.Bounds().Dx()-1)
-	minY := clampInt(int(rect.Top), 0, img.Bounds().Dy()-1)
-	maxY := clampInt(int(rect.Top+rect.Height), 0, img.Bounds().Dy()-1)
-	if minX > maxX || minY > maxY {
-		return false
-	}
-	for y := minY; y <= maxY; y += max(1, (maxY-minY)/3) {
-		for x := minX; x <= maxX; x += max(1, (maxX-minX)/5) {
-			if !sameColor(img.At(x, y), background) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func inkBands(img image.Image, rect portalRect, background color.Color) []int {
 	if rect.Width <= 0 || rect.Height <= 0 {
 		return nil

@@ -1,0 +1,4 @@
+# High blast-radius packages — review requested from primary maintainer
+/internal/batch/   @rafaelromao
+/internal/events/  @rafaelromao
+/internal/review/  @rafaelromao

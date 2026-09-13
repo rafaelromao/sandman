@@ -244,12 +244,6 @@ func extractStatus(body string) string {
 	return ""
 }
 
-func normalizeStatus(s string) string {
-	s = strings.ToLower(s)
-	s = strings.TrimSpace(s)
-	return s
-}
-
 var adrRefRe = regexp.MustCompile(`ADR-(\d{4})`)
 var strikethroughRe = regexp.MustCompile(`~~ADR-\d{4}`)
 
@@ -286,17 +280,4 @@ func checkCrossRefs(adrDir string, validNumbers map[string]bool) error {
 		}
 	}
 	return nil
-}
-
-func slugify(title string) string {
-	title = strings.ToLower(title)
-	title = strings.ReplaceAll(title, " ", "-")
-	// Remove non-alphanumeric except dash
-	var out strings.Builder
-	for _, r := range title {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
-			out.WriteRune(r)
-		}
-	}
-	return out.String()
 }

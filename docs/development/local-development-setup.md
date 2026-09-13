@@ -23,13 +23,13 @@ go mod download
 ## Common commands
 
 ```bash
-make check    # Format, vet, and test
+make check    # Format, vet, staticcheck, and test
 make build    # Build ./sandman
 make install  # Install to $GOPATH/bin
 make fmt      # Format Go files
 ```
 
-The default `make check` target runs `gofmt -w .`, `go vet ./...`, and `go test -race -v ./...`.
+The default `make check` target runs `gofmt -w .`, `go vet ./...`, pinned `staticcheck`, and `go test -race -v ./...`.
 
 ## Change-request titles
 
