@@ -115,8 +115,41 @@ func TestReviewWaitStabilization_CIFailureFixReviewMerge(t *testing.T) {
 	terminalRun := waitForPortalRun(t, portalURL, 42, func(run portalRun) bool {
 		return run.Status == "success" && run.FinishedAt != nil
 	})
+	if terminalRun.Kind != "completed" {
+		t.Fatalf("merged portal row kind = %q, want completed", terminalRun.Kind)
+	}
 	if terminalRun.FinishedAt == nil {
 		t.Fatal("merged portal row has no terminal timestamp")
+	}
+	history := make([]string, 0, len(terminalRun.Events))
+	hasAwait, hasResumed, hasFinished := false, false, false
+	for _, event := range terminalRun.Events {
+		history = append(history, event.Type)
+		switch event.Type {
+		case "run.await":
+			hasAwait = true
+		case "run.resumed":
+			hasResumed = true
+		case "run.finished":
+			hasFinished = true
+		}
+	}
+	if !hasAwait || !hasResumed || !hasFinished {
+		t.Fatalf("merged portal history = %v, want await/resumed/finished evidence", history)
+	}
+	rows := fetchPortalRuns(t, portalURL)
+	issueRows := 0
+	for _, row := range rows {
+		if row.IssueNumber != 42 {
+			continue
+		}
+		issueRows++
+		if row.Status == "waiting" || row.Kind == "active" {
+			t.Fatalf("merged portal API retained active waiting row: %#v", row)
+		}
+	}
+	if issueRows != 1 {
+		t.Fatalf("merged portal API rows for issue 42 = %d, want exactly one terminal row: %#v", issueRows, rows)
 	}
 }
 

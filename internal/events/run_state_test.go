@@ -1110,6 +1110,47 @@ func TestProjectRunStates_CurrentAwaitPhaseTracksLifecycle(t *testing.T) {
 	}
 }
 
+func TestProjectRunStates_AwaitContinuedThenFinishedProjectsTerminalSuccess(t *testing.T) {
+	t.Parallel()
+	startedAt := time.Date(2026, 9, 13, 3, 0, 0, 0, time.UTC)
+	awaitAt := startedAt.Add(5 * time.Minute)
+	continuedAt := awaitAt.Add(time.Hour)
+	secondContinuedAt := continuedAt.Add(time.Hour)
+	finishedAt := secondContinuedAt.Add(7 * time.Minute)
+	runID := "260912164222-c538-466"
+
+	run := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 466, Payload: map[string]any{"branch": "466-fix"}},
+		{Type: "run.await", Timestamp: awaitAt, RunID: runID, Issue: 466, Payload: map[string]any{
+			"await_reason": "pending", "branch": "466-fix",
+		}},
+		{Type: "run.continued", Timestamp: continuedAt, RunID: runID, Issue: 466, Payload: map[string]any{"branch": "466-fix"}},
+		{Type: "run.continued", Timestamp: secondContinuedAt, RunID: runID, Issue: 466, Payload: map[string]any{"branch": "466-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 466, Payload: map[string]any{
+			"status": "success", "branch": "466-fix",
+		}},
+	})
+	if len(run) != 1 {
+		t.Fatalf("projected runs = %d, want 1", len(run))
+	}
+	state := run[0]
+	if state.IsActive() || state.IsAwaiting() {
+		t.Fatalf("state = %#v, want terminal non-awaiting state", state)
+	}
+	if got := state.Status(); got != "success" {
+		t.Fatalf("status = %q, want success", got)
+	}
+	if state.Finished == nil || !state.Finished.Timestamp.Equal(finishedAt) {
+		t.Fatalf("finished = %#v, want terminal event at %v", state.Finished, finishedAt)
+	}
+	if state.AwaitEvent == nil || state.AwaitReason() != "pending" {
+		t.Fatalf("await evidence = %#v, want retained pending evidence", state.AwaitEvent)
+	}
+	if got, want := state.Duration(), 7*time.Minute; got != want {
+		t.Fatalf("duration = %s, want %s for the final continued attempt", got, want)
+	}
+}
+
 func TestProjectRunStates_AwaitPayloadCarriesReasonAndReviewRequest(t *testing.T) {
 	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
