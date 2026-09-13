@@ -410,11 +410,7 @@ func (w *wrappingPRLister) ListMergedSandmanPRs(ctx context.Context) ([]MergedSa
 	var result []MergedSandmanPR
 	for _, p := range payloads {
 		if isSandmanBranch(p.HeadRefName) {
-			result = append(result, MergedSandmanPR{
-				Number:      p.Number,
-				HeadRefName: p.HeadRefName,
-				Title:       p.Title,
-			})
+			result = append(result, MergedSandmanPR(p))
 		}
 	}
 	return result, nil

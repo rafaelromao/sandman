@@ -115,7 +115,7 @@ Before submitting a PR, always run `make check` locally.
 ### Coding Standards
 
 - Follow standard Go conventions (formatting is enforced by `gofmt`).
-- Run `go vet ./...` and resolve all warnings.
+- Run `go vet ./...` and `staticcheck` (via `make check`) and resolve all warnings.
 - Write tests for new functionality.
 - Keep the domain vocabulary in `CONTEXT.md` in mind when naming things.
 

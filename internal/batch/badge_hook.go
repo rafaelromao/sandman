@@ -94,11 +94,7 @@ func (d *defaultPRLister) ListMergedSandmanPRs(ctx context.Context) ([]MergedSan
 	var result []MergedSandmanPR
 	for _, p := range payloads {
 		if isSandmanBranch(p.HeadRefName) {
-			result = append(result, MergedSandmanPR{
-				Number:      p.Number,
-				HeadRefName: p.HeadRefName,
-				Title:       p.Title,
-			})
+			result = append(result, MergedSandmanPR(p))
 		}
 	}
 	return result, nil
@@ -166,10 +162,7 @@ type defaultBadgeControlFileReader struct {
 // does not yet exist.
 func (d *defaultBadgeControlFileReader) HasBadgeControlFile() bool {
 	_, err := os.Stat(badgeControlFilePath(d.layout))
-	if err != nil {
-		return false
-	}
-	return true
+	return err == nil
 }
 
 // defaultBadgeControlFileWriter is the production implementation of

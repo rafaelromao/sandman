@@ -3598,7 +3598,7 @@ func TestPortal_RunsAPI_BatchKeyEqualsPublicBatchId(t *testing.T) {
 				t.Errorf("run.batchKey = %q, want %q (public BatchId)", got.BatchKey, tt.wantBatch)
 			}
 			// Event payload batch_id == public BatchId.
-			if got.Events == nil || len(got.Events) == 0 {
+			if len(got.Events) == 0 {
 				t.Fatalf("expected events array, got %#v", got.Events)
 			}
 			var batchIDPayload string
@@ -3795,7 +3795,7 @@ func TestPortal_RunsAPI_BatchKeyEqualsPublicBatchId_PromptOnly(t *testing.T) {
 				t.Errorf("run.runID = %q, want %q (public BatchId == per-row RunID for prompt-only)", got.RunID, tt.wantBatch)
 			}
 			// Event payload batch_id == public BatchId.
-			if got.Events == nil || len(got.Events) == 0 {
+			if len(got.Events) == 0 {
 				t.Fatalf("expected events array, got %#v", got.Events)
 			}
 			var batchIDPayload string
