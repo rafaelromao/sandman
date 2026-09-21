@@ -14,6 +14,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/paths"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 // B-tag vocabulary for issue #2109 (review canonical row):
@@ -976,6 +977,55 @@ func TestPortal_DiscoverActiveRuns_ReviewRunFolderPreservesIssueIdentity(t *test
 	}
 	if got := active[0].IssueNumbers; len(got) != 1 || got[0] != issueNumber {
 		t.Fatalf("expected active IssueNumbers [%d], got %#v", issueNumber, got)
+	}
+}
+
+func TestPortal_DiscoverActiveRuns_PreservesPortalHiddenMarker(t *testing.T) {
+	repoRoot := testenv.MkdirShort(t, "portal-hidden-")
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	const batchID = "run-0-1790024702176590468"
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	createUnixRunSocket(t, filepath.Join(batchDir, "batch.sock"))
+	startedAt := time.Now().Add(-time.Minute)
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{
+		BatchId:      batchID,
+		CreatedAt:    startedAt,
+		PortalHidden: true,
+	}); err != nil {
+		t.Fatalf("write batch manifest: %v", err)
+	}
+	layout := paths.NewLayout(nil, repoRoot)
+	if err := (&batchindex.Index{
+		Version: batchindex.IndexVersion,
+		Batches: []batchindex.Batch{{
+			ID:        batchID,
+			Path:      batchDir,
+			Kind:      batchindex.KindPromptOnly,
+			Status:    batchindex.StatusActive,
+			CreatedAt: startedAt,
+		}},
+	}).Save(layout.BatchesIndexPath); err != nil {
+		t.Fatalf("save batches index: %v", err)
+	}
+
+	active, err := (&portalRunsView{}).discoverActiveRuns(repoRoot, nil)
+	if err != nil {
+		t.Fatalf("discoverActiveRuns: %v", err)
+	}
+	if len(active) != 1 || !active[0].PortalHidden {
+		t.Fatalf("active runs = %#v, want one portal-hidden instance", active)
+	}
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: layout.EventsLogPath})
+	if err != nil {
+		t.Fatalf("compute portal runs: %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("portal runs = %#v, want no active probe rows", runs)
 	}
 }
 

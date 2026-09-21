@@ -151,13 +151,14 @@ func CleanupStaleRunSnapshots(baseDir string) (int, error) {
 // back via ReadManifest so other sandman commands (status, portal) can
 // inspect a live or completed run.
 type BatchManifest struct {
-	Issues     []int     `json:"issues,omitempty"`
-	CreatedAt  time.Time `json:"createdAt"`
-	RunKind    string    `json:"runKind,omitempty"`
-	BatchId    string    `json:"batchId,omitempty"`
-	RunTS      string    `json:"runTs,omitempty"`
-	RunShortID string    `json:"runShortId,omitempty"`
-	PR         *int      `json:"pr,omitempty"`
+	Issues       []int     `json:"issues,omitempty"`
+	CreatedAt    time.Time `json:"createdAt"`
+	RunKind      string    `json:"runKind,omitempty"`
+	BatchId      string    `json:"batchId,omitempty"`
+	RunTS        string    `json:"runTs,omitempty"`
+	RunShortID   string    `json:"runShortId,omitempty"`
+	PR           *int      `json:"pr,omitempty"`
+	PortalHidden bool      `json:"portalHidden,omitempty"`
 }
 
 // BatchDir returns a batch directory path under baseDir/batches/. The dirID
@@ -204,8 +205,9 @@ func ReadManifest(runDir string) (BatchManifest, error) {
 		var runManifest batchindex.RunManifest
 		if err := json.Unmarshal(data, &runManifest); err == nil {
 			manifest := BatchManifest{
-				BatchId:   runManifest.BatchID,
-				CreatedAt: runManifest.CreatedAt,
+				BatchId:      runManifest.BatchID,
+				CreatedAt:    runManifest.CreatedAt,
+				PortalHidden: runManifest.PortalHidden,
 			}
 			if runManifest.Issue > 0 {
 				manifest.Issues = []int{runManifest.Issue}
