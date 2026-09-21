@@ -165,6 +165,20 @@ func (r RunState) IsPromptOnly() bool {
 	return r.IssueNumber() == 0 && r.Started.IssueRef == nil && (r.Finished == nil || r.Finished.IssueRef == nil)
 }
 
+// IsPortalHidden reports whether runtime metadata marks this run as internal
+// and therefore absent from the portal projection.
+func (r RunState) IsPortalHidden() bool {
+	if hidden, ok := payloadBool(r.Started.Payload, "portal_hidden"); ok && hidden {
+		return true
+	}
+	if r.Finished != nil {
+		if hidden, ok := payloadBool(r.Finished.Payload, "portal_hidden"); ok && hidden {
+			return true
+		}
+	}
+	return false
+}
+
 // IsReview reports whether the run was tagged as a review-agent run. The
 // orchestrator sets payload["review"] = true on the run.started (and
 // run.finished) event when the batch was issued by `sandman review`

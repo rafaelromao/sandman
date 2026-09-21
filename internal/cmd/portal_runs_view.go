@@ -470,6 +470,9 @@ func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventLis
 		if _, ok := consumedRunIDs[runState.RunID]; ok {
 			continue
 		}
+		if runState.IsPortalHidden() {
+			continue
+		}
 		if runState.Status() == "queued" && !activeBatchStart.IsZero() && v.eventBelongsToBatch(runState.Started.Timestamp, activeBatchStart) {
 			continue
 		}
