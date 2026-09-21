@@ -425,6 +425,36 @@ func TestPortal_LoadPortalRunsShowsReviewAndPromptOnlyLabels(t *testing.T) {
 	}
 }
 
+func TestPortal_HidesPortalHiddenProbeButShowsPromptOnlyRun(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now().Add(-5 * time.Minute)
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: started, RunID: "run-0-1790024702176590468", Payload: map[string]any{
+			"branch": "prompt-only-probe", "portal_hidden": true,
+		}},
+		{Type: "run.finished", Timestamp: started.Add(time.Minute), RunID: "run-0-1790024702176590468", Payload: map[string]any{
+			"status": "success", "branch": "prompt-only-probe", "portal_hidden": true,
+		}},
+		{Type: "run.started", Timestamp: started.Add(2 * time.Minute), RunID: "run-prompt-visible", Payload: map[string]any{
+			"branch": "prompt-only-visible",
+		}},
+		{Type: "run.finished", Timestamp: started.Add(3 * time.Minute), RunID: "run-prompt-visible", Payload: map[string]any{
+			"status": "success", "branch": "prompt-only-visible",
+		}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].RunID != "run-prompt-visible" {
+		t.Fatalf("portal runs = %#v, want only visible prompt-only run", runs)
+	}
+}
+
 func TestPortal_RunsEndpoint_RoundTripsReasonForReview(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
