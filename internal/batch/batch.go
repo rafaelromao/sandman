@@ -133,6 +133,9 @@ type Request struct {
 	// runid.IsValidUserRunID before passing it in (the cmd layer does so
 	// in the --run-id flag path).
 	RunID string
+	// PortalHidden marks an internal prompt-only run that should remain in the
+	// event and filesystem history but be omitted from the portal projection.
+	PortalHidden bool
 	// RunTS is the timestamp component of the auto-generated batch id for
 	// issue-driven runs (set by `sandman run 42 43 44`). The orchestrator
 	// combines RunTS with RunShortID via runid.NewRunID to build the

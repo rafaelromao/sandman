@@ -455,6 +455,56 @@ func TestPortal_HidesPortalHiddenProbeButShowsPromptOnlyRun(t *testing.T) {
 	}
 }
 
+func TestPortal_RunsEndpointExcludesPortalHiddenProbe(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now().Add(-5 * time.Minute)
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: started, RunID: "run-0-probe", Payload: map[string]any{
+			"branch": "quota-probe", "portal_hidden": true,
+		}},
+		{Type: "run.finished", Timestamp: started.Add(time.Minute), RunID: "run-0-probe", Payload: map[string]any{
+			"status": "success", "branch": "quota-probe", "portal_hidden": true,
+		}},
+		{Type: "run.started", Timestamp: started.Add(2 * time.Minute), RunID: "run-prompt", Payload: map[string]any{
+			"branch": "prompt-only-visible",
+		}},
+		{Type: "run.finished", Timestamp: started.Add(3 * time.Minute), RunID: "run-prompt", Payload: map[string]any{
+			"status": "success", "branch": "prompt-only-visible",
+		}},
+		{Type: "run.started", Timestamp: started.Add(4 * time.Minute), RunID: "run-42", Issue: 42, Payload: map[string]any{
+			"branch": "42-fix",
+		}},
+		{Type: "run.finished", Timestamp: started.Add(5 * time.Minute), RunID: "run-42", Issue: 42, Payload: map[string]any{
+			"status": "success", "branch": "42-fix",
+		}},
+		{Type: "run.started", Timestamp: started.Add(6 * time.Minute), RunID: "PR99", Payload: map[string]any{
+			"branch": "review-pr-99", "review": true, "pr_number": 99,
+		}},
+		{Type: "run.finished", Timestamp: started.Add(7 * time.Minute), RunID: "PR99", Payload: map[string]any{
+			"status": "success", "branch": "review-pr-99", "review": true, "pr_number": 99,
+		}},
+	})
+
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	defer server.Close()
+	runs := readPortalRuns(t, server.URL)
+	byID := make(map[string]portalRun, len(runs))
+	for _, run := range runs {
+		byID[run.RunID] = run
+	}
+	if _, ok := byID["run-0-probe"]; ok {
+		t.Fatalf("/api/runs exposed hidden probe: %#v", byID["run-0-probe"])
+	}
+	for _, runID := range []string{"run-prompt", "run-42", "PR99"} {
+		if _, ok := byID[runID]; !ok {
+			t.Fatalf("/api/runs omitted visible run %q: %#v", runID, runs)
+		}
+	}
+}
+
 func TestPortal_RunsEndpoint_RoundTripsReasonForReview(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {

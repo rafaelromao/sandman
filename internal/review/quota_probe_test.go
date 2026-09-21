@@ -138,6 +138,9 @@ func TestReviewQuotaProbeWhilePaused(t *testing.T) {
 			if req.PRNumber != 0 {
 				t.Errorf("probe PRNumber = %d, want 0", req.PRNumber)
 			}
+			if !req.PortalHidden {
+				t.Error("quota probe should be hidden from the portal")
+			}
 		}
 	}
 	if !foundProbe {
