@@ -973,6 +973,37 @@ func TestDefaultPRReviewPrompt_DelegatesToCodeReviewSkill(t *testing.T) {
 	}
 }
 
+func TestDefaultPRReviewPrompt_ContainsAnalyzerContract(t *testing.T) {
+	data, err := os.ReadFile("default_pr_review_prompt.md")
+	if err != nil {
+		t.Fatalf("read default PR review prompt template: %v", err)
+	}
+	prompt := string(data)
+
+	for _, phrase := range []string{
+		"# sandman analyzers:",
+		"`command -v <tool>`",
+		"`<tool> --version`",
+		"`gocognit -over 0 -avg <dir>`",
+		"`gocyclo -over 0 <dir>`",
+		"`dotnet-crap analyze <dir>`",
+		"`eslint --no-config-lookup --rule 'complexity: [warn, {max: 0}]' <dir>`",
+		"`radon cc -s <dir>`",
+		"`credo suggest`",
+		"`flog <dir>`",
+		"`cargo clippy -- -W clippy::cognitive_complexity`",
+		"`pmd check -d <dir> -R \"category/java/design.xml/CyclomaticComplexity,category/java/design.xml/CognitiveComplexity\" -f text`",
+		"Manual review of diff, no static analyzer configured for this PR.",
+		"Do not invoke `mix credo`",
+		"do not pass a project config to `eslint`",
+		"quickstart.xml",
+	} {
+		if !strings.Contains(prompt, phrase) {
+			t.Errorf("default PR review prompt must contain analyzer-contract phrase %q", phrase)
+		}
+	}
+}
+
 func TestRenderReview_PreservesQualityCheckAndSkillDelegation(t *testing.T) {
 	engine := &Engine{}
 	data := PRData{

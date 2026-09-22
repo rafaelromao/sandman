@@ -92,9 +92,21 @@ Read the supplied change in the current review worktree end to end. The pull-req
      - `cross-cutting — <one-line justification>` (three or more modules, shared infrastructure, or a public contract used outside the changed location)
    - `### Metrics` — report the worst cognitive and cyclomatic complexity values found in a changed location, with the configured threshold for each, in the formats `value (threshold N). No flag.` or `value (threshold N). Flag: <location>`. Report prior coverage of code in the blast radius when the repository exposes a coverage tool; otherwise render `Prior coverage of the blast radius not measured: repository has no configured coverage tool.` Do not convert any percentage into a finding severity. State explicitly which analyzer or manual assessment was used.
    - `### Findings` — list any quality findings filed from this PR. Cite the construct tag from `.sandman/reviews/quality-rules.md` for each finding.
-   - `### Tools used` — one line: either the analyzer used (e.g. `gocognit`, `radon`, `complexity-report`) or `Manual review of diff, no static analyzer configured for this PR.`
+   - `### Tools used` — one line. Read the analyzer inventory from the repo's `.sandman/Dockerfile` metadata line `# sandman analyzers: <name>@<version>,...` (or `manual`). For each analyzer listed, verify availability with `command -v <tool>` (for the rust `clippy` analyzer, verify with `cargo clippy --version` instead — the standalone binary is `cargo-clippy`, so `command -v clippy` never resolves) and record `<tool> --version` (or `cargo clippy --version` for rust) where the tool supports a version flag. Run the analyzer that matches the PR's language as instructed below; if the metadata lists `manual`, or no provisioned analyzer matches the diff, or the matching tool is not found on `PATH`, render `Manual review of diff, no static analyzer configured for this PR.`
 
-   Do not restate the threshold literal; refer to `.sandman/reviews/quality-rules.md` for the value. Do not produce aggregate ratios. Do not invent metric values that the analyzer did not produce.
+     Per-language analyzer invocation:
+     - Go: `gocognit -over 0 -avg <dir>` and `gocyclo -over 0 <dir>` (gocognit may be absent when the go toolchain predates the analyzer floor; then use `gocyclo` only).
+     - .NET: `dotnet-crap analyze <dir>` (syntactic CRAP; complexity only, no build step needed).
+     - Node: `eslint --no-config-lookup --rule 'complexity: [warn, {max: 0}]' <dir>` (lists every function's cyclomatic value; quote the worst from the output).
+     - Python: `radon cc -s <dir>`.
+     - Elixir: `credo suggest` (run the standalone escript; see `credo list --help` for output details).
+     - Ruby: `flog <dir>`.
+     - Rust: `cargo clippy -- -W clippy::cognitive_complexity` (requires a cargo project; otherwise fall back to manual assessment).
+     - Java: `pmd check -d <dir> -R "category/java/design.xml/CyclomaticComplexity,category/java/design.xml/CognitiveComplexity" -f text`.
+
+     Report these values in `### Metrics` as produced by the analyzer, with `(threshold N)` from the quality rules file. Do not invoke `mix credo` or raw `credo` through a non-escript path, do not pass a project config to `eslint`, and do not use the PMD `quickstart.xml` ruleset for complexity (both complexity rules are commented out there).
+
+   Do not restate the threshold literal; refer to `.sandman/reviews/quality-rules.md` for the value. Do not produce aggregate ratios. Do not invent metric values that the analyzer did not produce. The exact form of the output (`value (threshold N). No flag.` or `value (threshold N). Flag: <location>`) must match an analyzer-observed (not invented) value.
 
 7. When you find an issue, cite the file and line range, quote the offending snippet, and describe the concrete fix.
 
