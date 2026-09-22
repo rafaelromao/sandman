@@ -93,6 +93,9 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Staticcheck
+        run: make staticcheck
+
       - name: Format check
         run: |
           if [ -n "$(gofmt -l .)" ]; then

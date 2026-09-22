@@ -544,7 +544,7 @@ func TestPortalStateStorageKeySync(t *testing.T) {
 		withoutComments.WriteString("\n")
 	}
 
-	re := regexp.MustCompile("DEFAULT_STORAGE_KEY\\s*=\\s*'([^']+)'")
+	re := regexp.MustCompile(`DEFAULT_STORAGE_KEY\s*=\s*'([^']+)'`)
 	match := re.FindStringSubmatch(withoutComments.String())
 	if match == nil {
 		t.Fatal("could not find DEFAULT_STORAGE_KEY assignment in portal_state.js")

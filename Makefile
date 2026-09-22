@@ -22,9 +22,14 @@ VERSION ?= $(shell git -C . describe --tags --always --dirty 2>/dev/null || git 
 
 LDFLAGS := -ldflags '-X main.version=$(VERSION)'
 
-.PHONY: check build install fmt test vet clean
+.PHONY: check build install fmt test vet staticcheck clean
 
-check: fmt vet test
+# Keep Staticcheck on the repository's supported Go toolchain. Newer local
+# toolchains may emit export data that v0.7.0 cannot consume.
+STATICCHECK_VERSION := v0.7.0
+STATICCHECK_TOOLCHAIN := go1.25.0
+
+check: fmt vet staticcheck test
 	@echo "All checks passed."
 
 fmt:
@@ -34,6 +39,10 @@ fmt:
 vet:
 	@echo "Running go vet..."
 	go vet ./...
+
+staticcheck:
+	@echo "Running staticcheck $(STATICCHECK_VERSION) with $(STATICCHECK_TOOLCHAIN)..."
+	GOTOOLCHAIN=$(STATICCHECK_TOOLCHAIN) go run honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION) ./...
 
 test:
 	@echo "Running tests..."
