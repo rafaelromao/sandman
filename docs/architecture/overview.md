@@ -43,6 +43,11 @@ Any new `Sandbox` implementation must set `Setpgid: true` on the spawned command
 
 > Note: killing the host-side `docker exec` / `podman exec` wrapper does not yet propagate to the in-container AgentRun. This is a known limitation.
 
+The production GitHub CLI adapter follows the same cancellation rule. Its
+`realRunner` starts `gh` as a process-group leader and cancels the negative PGID
+so descendants do not survive a timeout or context cancellation. Tests may
+replace that runner through the existing `WithRunner` seam.
+
 ## The daemon-as-poster trust boundary for review
 
 The review pipeline does not let the LLM post to PRs directly. Instead:
