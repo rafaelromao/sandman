@@ -34,6 +34,61 @@ func TestReviewWaitStabilization_CancellationAbortsForegroundWait(t *testing.T) 
 	runReviewWaitScenario(t, binPath, true)
 }
 
+func TestReviewWaitStabilization_PendingCIReleasesCapacityForIndependentWork(t *testing.T) {
+	if !testenv.E2EGateAllowed(testenv.E2EScenarioReviewWait) {
+		t.Skip("set SANDMAN_E2E_GATES=review_wait to run the review-wait stabilization scenario")
+	}
+
+	binPath := buildSandmanBinary(t)
+	repoDir := testenv.MkdirShort(t, "sm-review-yield-")
+	initRunIntegrationRepoWithRemote(t, repoDir)
+
+	sandmanDir := filepath.Join(repoDir, ".sandman")
+	shimDir := filepath.Join(sandmanDir, "bin")
+	if err := os.MkdirAll(shimDir, 0o755); err != nil {
+		t.Fatalf("create shim directory: %v", err)
+	}
+	statePath := filepath.Join(sandmanDir, "review-wait.state")
+	callLogPath := filepath.Join(sandmanDir, "gh.calls")
+	writeReviewWaitGHShimWithDependencies(t, shimDir, statePath, callLogPath, false)
+	writeReviewWaitAgent(t, filepath.Join(shimDir, "fake-agent"), filepath.Join(sandmanDir, "agent.started"))
+	writeReviewWaitConfig(t, sandmanDir, filepath.Join(shimDir, "fake-agent"))
+
+	cmd := exec.Command(binPath, "run", "--agent", "fake", "--sandbox", "worktree", "--parallel", "1", "--retries", "0", "42", "43")
+	cmd.Dir = repoDir
+	cmd.Env = append(os.Environ(),
+		"PATH="+shimDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"GH_TOKEN=fake",
+		"GITHUB_TOKEN=fake",
+		"HOME="+filepath.Join(repoDir, ".sandman-test-home"),
+	)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start sandman run: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	eventsPath := filepath.Join(sandmanDir, "events.jsonl")
+	waitForReviewWaitEvent(t, eventsPath, 42, "run.await")
+	waitForReviewWaitEvent(t, eventsPath, 43, "run.started")
+	logs := readReviewWaitEvents(t, eventsPath)
+	if countReviewWaitEvents(logs, 42, "run.finished") != 0 {
+		t.Fatal("pending CI row finished before its pull request resolved")
+	}
+
+	if err := os.WriteFile(statePath, []byte("merged\n"), 0o644); err != nil {
+		t.Fatalf("resolve pull request fixture: %v", err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("sandman run after merge: %v", err)
+		}
+	case <-time.After(150 * time.Second):
+		t.Fatal("sandman run did not finish after pull-request resolution")
+	}
+}
+
 func TestReviewWaitStabilization_CIFailureFixReviewMerge(t *testing.T) {
 	if !testenv.E2EGateAllowed(testenv.E2EScenarioReviewWait) {
 		t.Skip("set SANDMAN_E2E_GATES=review_wait to run the review-wait stabilization scenario")
@@ -342,7 +397,15 @@ func writeReviewWaitAgent(t *testing.T, path, startedPath string) {
 }
 
 func writeReviewWaitGHShim(t *testing.T, dir, statePath, callLogPath string) {
+	writeReviewWaitGHShimWithDependencies(t, dir, statePath, callLogPath, true)
+}
+
+func writeReviewWaitGHShimWithDependencies(t *testing.T, dir, statePath, callLogPath string, dependent bool) {
 	t.Helper()
+	issue43Body := "Independent implementation"
+	if dependent {
+		issue43Body = "## Blocked by\\n- #42"
+	}
 	script := strings.ReplaceAll(strings.ReplaceAll(`#!/bin/sh
 set -eu
 state_file="__STATE__"
@@ -370,7 +433,7 @@ if [ "${1:-}" = "api" ]; then
       if [ -f "$state_file" ] && [ "$(tr -d '\\n' < "$state_file")" = "merged" ]; then issue_state=CLOSED; fi
       printf '{"number":42,"title":"parent","body":"Parent implementation","state":"%s","labels":[]}\n' "$issue_state" ; exit 0 ;;
     repos/example/sandbox/issues/43)
-      printf '{"number":43,"title":"dependent","body":"## Blocked by\\n- #42","state":"OPEN","labels":[]}\n' ; exit 0 ;;
+      printf '{"number":43,"title":"independent","body":"__ISSUE_43_BODY__","state":"OPEN","labels":[]}\n' ; exit 0 ;;
     */dependencies/blocked_by|*/events|*/sub_issues*)
       printf '[]\n' ; exit 0 ;;
     */comments*)
@@ -401,6 +464,7 @@ fi
 printf 'unexpected gh command: %s\n' "$*" >&2
 exit 1
 `, "__STATE__", statePath), "__CALLS__", callLogPath)
+	script = strings.ReplaceAll(script, "__ISSUE_43_BODY__", issue43Body)
 	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
 		t.Fatalf("write review-wait gh shim: %v", err)
 	}
