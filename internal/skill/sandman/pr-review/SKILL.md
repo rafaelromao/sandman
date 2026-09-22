@@ -20,7 +20,7 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 
 6. **You must NOT request another review before the previous one has produced a response, UNLESS a new commit has landed.** Every iteration that would post a new `{{REVIEW_COMMAND}}` must first check whether the head SHA has changed since the last request and run the read-only trigger guard. If SHA changed, treat the matching trusted prior request as consumed and allow re-requesting. If SHA is unchanged, only re-request after a response has arrived.
 
-7. **You must NOT request review until CI is green.** If CI is still pending or failing, keep polling Step 2 and do not post `{{REVIEW_COMMAND}}` yet.
+7. **You must NOT request review until CI is green.** If CI is still pending, follow Step 2: a Sandman-created run checkpoints and yields its session, while standalone use keeps polling. If CI is failing, keep working through Step 2's bounded remediation loop. Do not post `{{REVIEW_COMMAND}}` yet.
 
 8. **You must NOT give up on a `CHANGES_REQUESTED` review when the reviewer's request maps to the issue description or acceptance criteria.** When the reviewer flags a requirement that comes from the issue body or its acceptance criteria (the same criteria the implementor agent was asked to satisfy), you have exactly two acceptable paths:
    - **Implement the requested change.** Read the issue description and its acceptance criteria, confirm the reviewer's interpretation is consistent with them, then make the change, commit, push, and re-request review.
@@ -66,6 +66,17 @@ comments=$(echo "$pr_data" | jq -r '.comments')
 #### Step 2: Wait for CI to pass
 
 The CI wait has a 60-minute budget per PR head SHA. A failed check gets at most 3 fix-and-push attempts for that SHA; after the budget or attempts are exhausted, record `CI_TIMEOUT` or `CI_FAILURE_UNRESOLVED` in `.sandman/task.md` and the run log with the exact failure and next executable action, then leave the PR open for the next run.
+
+When the task's Runtime Context says the session is running inside a
+Sandman-created worktree, do not hold the agent process open while checks are
+pending. Record the current head SHA and pending checks in `.sandman/task.md`,
+leave PR-Review unchecked, and end the current agent session successfully.
+This lets the Sandman run enter waiting, release its execution slot, and resume
+automatically when the pull-request gate changes. A continuation must re-check
+the live PR state before acting on the checkpoint. This yield is not a
+`CI_TIMEOUT`, a failed attempt, or completion of PR-Review.
+
+Outside a Sandman-created run, keep polling within the bounded CI budget below.
 
 Enforce those limits in the polling loop with a deadline and attempt counter:
 
@@ -124,7 +135,8 @@ while true; do
     # Continue to wait for the NEW CI run triggered by the push.
     continue
   fi
-  # Pending: keep waiting.
+  # Pending: a Sandman-created run checkpoints and yields as described above;
+  # standalone use keeps waiting here.
   if echo "$states" | grep -qE '^(PENDING|IN_PROGRESS|QUEUED)$'; then
     sleep 20; continue
   fi
