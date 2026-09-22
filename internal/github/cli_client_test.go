@@ -3,10 +3,15 @@ package github
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -2356,4 +2361,107 @@ func TestCLIClient_WithTimeoutZeroPreservesNoTimeout(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("SearchIssues did not return within 2 s after ctx cancel")
 	}
+}
+
+func TestNewCLIClient_CancelsSpawnedGHProcess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process-group cancellation is Unix-specific")
+	}
+
+	dir := t.TempDir()
+	childPIDPath := filepath.Join(dir, "child.pid")
+	ghPath := filepath.Join(dir, "gh")
+	ghScript := "#!/bin/sh\n/bin/sleep 60 &\nchild=$!\nprintf '%s\\n' \"$child\" > \"$SANDMAN_TEST_CHILD_PID\"\nwait \"$child\"\n"
+	if err := os.WriteFile(ghPath, []byte(ghScript), 0o755); err != nil {
+		t.Fatalf("write fake gh: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("SANDMAN_TEST_CHILD_PID", childPIDPath)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client := NewCLIClient()
+	done := make(chan error, 1)
+	go func() {
+		_, err := client.RepoName(ctx)
+		done <- err
+	}()
+
+	var childPID int
+	readyDeadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(readyDeadline) {
+		data, err := os.ReadFile(childPIDPath)
+		if err == nil {
+			childPID, err = strconv.Atoi(strings.TrimSpace(string(data)))
+			if err == nil && processExists(childPID) {
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if childPID == 0 || !processExists(childPID) {
+		t.Fatalf("fake gh did not publish a live child process")
+	}
+	t.Cleanup(func() {
+		cancel()
+		if childPID != 0 {
+			_ = syscall.Kill(childPID, syscall.SIGKILL)
+		}
+	})
+
+	cancelStarted := time.Now()
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("RepoName error = %v, want context cancellation", err)
+		}
+		if elapsed := time.Since(cancelStarted); elapsed > time.Second {
+			t.Fatalf("RepoName took %v to return after cancellation", elapsed)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("RepoName did not return within 2 s after cancellation")
+	}
+
+	processGoneDeadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(processGoneDeadline) && processExists(childPID) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if processExists(childPID) {
+		t.Fatalf("fake gh child process %d survived cancellation", childPID)
+	}
+}
+
+func TestNewCLIClient_WithRunnerOverridesProductionRunner(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{{output: `{"name":"repo","owner":{"login":"owner"}}`}}}
+	client := NewCLIClient(WithRunner(runner))
+
+	got, err := client.RepoName(context.Background())
+	if err != nil {
+		t.Fatalf("RepoName: %v", err)
+	}
+	if got != "owner/repo" {
+		t.Fatalf("RepoName = %q, want owner/repo", got)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("injected runner calls = %d, want 1", len(runner.calls))
+	}
+}
+
+func TestCLIClient_ZeroValueWithInjectedRunnerRemainsUsable(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{{output: `{"name":"repo","owner":{"login":"owner"}}`}}}
+	client := &CLIClient{runner: runner}
+
+	got, err := client.RepoName(context.Background())
+	if err != nil {
+		t.Fatalf("RepoName: %v", err)
+	}
+	if got != "owner/repo" {
+		t.Fatalf("RepoName = %q, want owner/repo", got)
+	}
+}
+
+func processExists(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
 }
