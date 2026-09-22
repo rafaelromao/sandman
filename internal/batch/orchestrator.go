@@ -355,7 +355,7 @@ func (o *Orchestrator) validateBatchBranchesWithIndex(ctx context.Context, req R
 	}
 
 	return fmt.Errorf(
-		"refusing to start batch: branches already exist from previous runs: %s. %s. Delete the branch with `git branch -D <branch>` or use --override to restart from scratch.",
+		"refusing to start batch: branches already exist from previous runs: %s. %s. Delete the branch with `git branch -D <branch>` or use --override to restart from scratch",
 		strings.Join(conflictLabels, ", "),
 		strings.Join(remediations, ". "),
 	)
@@ -3132,7 +3132,7 @@ loop:
 							break loop
 						}
 						s.emitAwait(ctx, runID, result, extras)
-						gateStatus, extras, handled = s.observeLifecycle(ctx, wt.WorkDir(), branch, logPath, runID, result, extras, hostPathsReady)
+						gateStatus, extras, _ = s.observeLifecycle(ctx, wt.WorkDir(), branch, logPath, runID, result, extras, hostPathsReady)
 					}
 					if resumePrompt, resume := s.resumePromptFromGate(ctx, wt, branch, runID, extras); resume {
 						s.reuseSession = true

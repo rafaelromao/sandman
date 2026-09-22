@@ -303,7 +303,7 @@ func formatToolEvent(event map[string]any, tool string) string {
 	case "task":
 		detail, _ = input["description"].(string)
 	default:
-		if input != nil && len(input) > 0 {
+		if len(input) > 0 {
 			if b, err := json.Marshal(input); err == nil {
 				detail = truncateString(string(b), 120)
 			}
