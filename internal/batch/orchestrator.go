@@ -1440,8 +1440,10 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	abortedCount := 0
 	statuses := make(map[int]string, len(req.Issues))
 	completed := make(map[int]chan struct{}, len(req.Issues))
+	yielded := make(map[int]chan struct{}, len(req.Issues))
 	for _, num := range req.Issues {
 		completed[num] = make(chan struct{})
+		yielded[num] = make(chan struct{})
 	}
 
 	batchIdentityResolver := newBatchIdentityResolver(o, ".")
@@ -1505,6 +1507,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		go func(idx, issueNum int, blockers []int, turn int, runID string) {
 			defer wg.Done()
 			defer close(completed[issueNum])
+			yieldedCapacity := false
 
 			issueCtx, issueCancel := context.WithCancel(ctx)
 			coord.registerIssueCancel(issueNum, issueCancel)
@@ -1552,6 +1555,11 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				} else {
 					select {
 					case <-completed[blocker]:
+					case <-yielded[blocker]:
+						// This row cannot use the slot its blocker released. Defer
+						// its serial turn so later independent work can compete for it.
+						advanceTurn()
+						<-completed[blocker]
 					case <-issueCtx.Done():
 						<-completed[blocker]
 					}
@@ -1605,7 +1613,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				return
 			}
 
-			if effectiveParallel == 1 {
+			if effectiveParallel == 1 && !turnAdvanced {
 				turnMu.Lock()
 				waiting := true
 				for waiting {
@@ -1703,6 +1711,10 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				}
 				if res.Status != "await" || !o.runSessionOpts.releaseAwaitCapacity {
 					break
+				}
+				if !yieldedCapacity {
+					close(yielded[issueNum])
+					yieldedCapacity = true
 				}
 				advanceTurn()
 				interval := time.Duration(implementationReviewPollPlan[len(implementationReviewPollPlan)-1]) * time.Second
