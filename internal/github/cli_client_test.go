@@ -2448,9 +2448,16 @@ func TestNewCLIClient_WithRunnerOverridesProductionRunner(t *testing.T) {
 	}
 }
 
-func TestCLIClient_ZeroValueWithInjectedRunnerRemainsUsable(t *testing.T) {
-	runner := &fakeRunner{responses: []fakeResponse{{output: `{"name":"repo","owner":{"login":"owner"}}`}}}
-	client := &CLIClient{runner: runner}
+func TestCLIClient_ZeroValueRemainsUsable(t *testing.T) {
+	dir := t.TempDir()
+	ghPath := filepath.Join(dir, "gh")
+	ghScript := "#!/bin/sh\nprintf '%s\\n' '{\"name\":\"repo\",\"owner\":{\"login\":\"owner\"}}'\n"
+	if err := os.WriteFile(ghPath, []byte(ghScript), 0o755); err != nil {
+		t.Fatalf("write fake gh: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var client CLIClient
 
 	got, err := client.RepoName(context.Background())
 	if err != nil {
