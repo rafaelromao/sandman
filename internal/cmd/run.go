@@ -780,6 +780,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 			defer rs.Close()
 
+			//lint:ignore SA1019 RunDir remains the compatibility accessor for this caller.
 			relRunDir, err := filepath.Rel(repoRoot, rs.RunDir())
 			if err != nil {
 				return fmt.Errorf("rel run dir: %w", err)

@@ -501,6 +501,8 @@ func abortPortalRun(ctx context.Context, repoRoot, runKey string, issueNumber in
 			perRunDir := filepath.Join(runDir, "runs", perRunID)
 			perRunSock := daemon.CommandSocketPath(perRunDir)
 			if _, statErr := os.Stat(perRunSock); statErr == nil {
+				// SA4006 flagged the old runDir reassignment; cmdSock is the
+				// authoritative value used by the remaining abort path.
 				cmdSock = perRunSock
 			}
 		}

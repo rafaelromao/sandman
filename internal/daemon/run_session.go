@@ -64,6 +64,11 @@ func NewRunSession(baseDir, batchID string) *RunSession {
 // to complete. RunDir is not safe for concurrent use; the session is
 // expected to be constructed, queried, and torn down by a single
 // goroutine.
+//
+// Deprecated: RunDir is an alias for BatchDir. New code should use
+// BatchDir. This alias is kept for backward compatibility during the
+// transition to per-batch-per-run layout where run artifacts live
+// in <batchDir>/runs/<runID>/ within .sandman/batches/<batch-id>/.
 func (s *RunSession) RunDir() string {
 	return s.runDir
 }
