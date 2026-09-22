@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
@@ -80,7 +81,11 @@ func TestRunBatch_ReadyAwaitedRowPrecedesQueuedIndependentWork(t *testing.T) {
 			},
 			startWaiterQueued: func(priority bool) {
 				if priority {
-					close(priorityQueued)
+					select {
+					case <-priorityQueued:
+					default:
+						close(priorityQueued)
+					}
 				}
 			},
 		}),
@@ -116,7 +121,7 @@ func TestRunBatch_ReadyAwaitedRowPrecedesQueuedIndependentWork(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("batch did not finish")
+		t.Fatalf("batch did not finish; starts=%v events=%v", factory.startsSnapshot(), log.snapshot())
 	}
 	if runErr != nil {
 		t.Fatalf("run batch: %v", runErr)
@@ -132,12 +137,97 @@ func TestRunBatch_ReadyAwaitedRowPrecedesQueuedIndependentWork(t *testing.T) {
 			t.Fatalf("issue %d status = %q, want success", run.IssueNumber, run.Status)
 		}
 	}
-	if got := factory.startsSnapshot(); !equalPriorityInts(got, []int{1, 2, 1, 3, 4}) {
-		t.Fatalf("start order = %v, want [1 2 1 3 4]", got)
+	if got := factory.startsSnapshot(); len(got) != 5 || !equalPriorityInts(got[:3], []int{1, 2, 1}) || got[3]+got[4] != 7 || got[3] == got[4] {
+		t.Fatalf("start order = %v, want awaited row [1 2 1] before remaining issues 3 and 4", got)
 	}
 	if got := factory.maxActiveSnapshot(); got > 1 {
 		t.Fatalf("peak active runs = %d, want at most 1", got)
 	}
+}
+
+func TestRunBatch_AwaitingRowDoesNotLetDependentBlockIndependentWork(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "Awaited"},
+			2: {Number: 2, Title: "Independent"},
+			3: {Number: 3, Title: "Dependent"},
+		},
+		prs: map[string]*github.PR{
+			"1-awaited":     {Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
+			"2-independent": {Number: 2, State: "merged", Merged: true, Body: "Closes #2", HeadRefName: "2-independent"},
+		},
+	}
+	independentStarted := make(chan struct{})
+	allowIndependentFinish := make(chan struct{})
+	awaiting := make(chan struct{})
+	log := &spyEventLog{}
+	factory := &awaitPriorityRunnableFactory{
+		independentStarted:     independentStarted,
+		allowIndependentFinish: allowIndependentFinish,
+	}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+		Agent:          "test-agent",
+		Sandbox:        "worktree",
+		WorktreeDir:    ".sandman/worktrees",
+		Git:            config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}},
+	}}, log,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&freshSandboxFactory{}),
+		WithRunnableFactory(factory),
+		WithRunSessionOpts(runSessionOptions{
+			releaseAwaitCapacity: true,
+			awaitWait: func(ctx context.Context, _ time.Duration) error {
+				select {
+				case <-awaiting:
+				default:
+					close(awaiting)
+				}
+				<-ctx.Done()
+				return ctx.Err()
+			},
+		}),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = o.RunBatch(ctx, Request{
+			Issues:       []int{1, 3, 2},
+			Branches:     map[int]string{1: "1-awaited", 2: "2-independent", 3: "3-dependent"},
+			Dependencies: map[int][]int{3: {1}},
+			Parallel:     1,
+		})
+	}()
+
+	select {
+	case <-awaiting:
+	case <-time.After(time.Second):
+		cancel()
+		<-done
+		t.Fatal("first row did not enter lifecycle await")
+	}
+	states := events.ProjectRunStates(log.snapshot())
+	if len(states) == 0 || !states[0].IsAwaiting() || states[0].AwaitReason() != "pending" {
+		cancel()
+		<-done
+		t.Fatalf("CI-pending row was not projected as waiting: %#v", states)
+	}
+	select {
+	case <-independentStarted:
+		close(allowIndependentFinish)
+	case <-time.After(200 * time.Millisecond):
+		cancel()
+		<-done
+		t.Fatal("dependent waiting on the awaited row blocked later independent work")
+	}
+	cancel()
+	<-done
 }
 
 type awaitPriorityRunnableFactory struct {
