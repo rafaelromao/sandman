@@ -53,6 +53,22 @@ const DefaultMISEVersion = "v2026.5.8"
 
 const DefaultRTKVersion = "v0.42.0"
 
+const DefaultGocognitVersion = "v1.2.1"
+
+const DefaultGocycloVersion = "v0.6.0"
+
+const DefaultRadonVersion = "6.0.1"
+
+const DefaultESLintVersion = "10.8.0"
+
+const DefaultCredoVersion = "1.7.19"
+
+const DefaultFlogVersion = "4.9.4"
+
+const DefaultPMDVersion = "7.27.0"
+
+const DefaultCrap4DotnetVersion = "0.1.1"
+
 // DefaultNodeLTSVersion returns the Node.js LTS version from the bundled version catalog.
 // This is used by e2e tests to assert the resolved version matches the catalog pin
 // without hardcoding a version literal in the test.
@@ -1978,6 +1994,7 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	}
 	fmt.Fprintf(&out, "# sandman mise-version: %s\n", preset.MiseVersion)
 	fmt.Fprintf(&out, "# sandman rtk-version: %s\n", DefaultRTKVersion)
+	fmt.Fprintf(&out, "%s\n", renderAnalyzerMetadataLine(preset.Name, goVersion, nodeVersion, dotnetVersion, rustVersion))
 	fmt.Fprintf(&out, "FROM %s\n", preset.BaseImage)
 	aptPackages := append([]string{}, preset.SharedPackages...)
 	aptPackages = append(aptPackages, preset.ExtraPackages...)
@@ -2016,6 +2033,7 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	if preset.Name == javaBuildToolsPreset {
 		out.WriteString(renderJavaInstallCommand(javaVersion))
 	}
+	out.WriteString(renderAnalyzerInstallCommands(preset.Name, goVersion, nodeVersion, dotnetVersion))
 	out.WriteString(renderAgentInstallCommand("opencode", agentVersion))
 	out.WriteString(renderRTKInstallCommand())
 	return out.String()
@@ -2186,6 +2204,124 @@ func parsePythonVersionHint(name string, data []byte) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// versionAtLeast reports whether the resolved version string is equal to or
+// greater than the minimum version. It compares numeric dot-separated
+// segments left to right, tolerating missing trailing segments on either side
+// and a leading "v" prefix on the resolved version.
+func versionAtLeast(resolved, min string) bool {
+	resolved = strings.TrimPrefix(strings.TrimSpace(resolved), "v")
+	min = strings.TrimPrefix(strings.TrimSpace(min), "v")
+	resolvedParts := strings.Split(resolved, ".")
+	minParts := strings.Split(min, ".")
+	for i := 0; i < len(resolvedParts) || i < len(minParts); i++ {
+		var a, b int
+		if i < len(resolvedParts) {
+			a, _ = strconv.Atoi(nonNumericSuffix(resolvedParts[i]))
+		}
+		if i < len(minParts) {
+			b, _ = strconv.Atoi(nonNumericSuffix(minParts[i]))
+		}
+		if a != b {
+			return a > b
+		}
+	}
+	return true
+}
+
+func nonNumericSuffix(s string) string {
+	for i, r := range s {
+		if r < '0' || r > '9' {
+			return s[:i]
+		}
+	}
+	return s
+}
+
+// analyzerMetadataKey is the canonical list of analyzers provisioned for a
+// preset. renderAnalyzerMetadataLine derives it deterministically from the
+// resolved toolchain versions so gated analyzers only appear when they would
+// actually be installed.
+func renderAnalyzerMetadataLine(preset, goVersion, nodeVersion, dotnetVersion, rustVersion string) string {
+	analyzers := analyzerList(preset, goVersion, nodeVersion, dotnetVersion, rustVersion)
+	if len(analyzers) == 0 {
+		return "# sandman analyzers: manual"
+	}
+	return "# sandman analyzers: " + strings.Join(analyzers, ",")
+}
+
+func analyzerList(preset, goVersion, nodeVersion, dotnetVersion, rustVersion string) []string {
+	switch preset {
+	case goBuildToolsPreset:
+		var out []string
+		if versionAtLeast(goVersion, "1.24.0") {
+			out = append(out, "gocognit@"+DefaultGocognitVersion)
+		}
+		out = append(out, "gocyclo@"+DefaultGocycloVersion)
+		return out
+	case dotnetBuildToolsPreset:
+		if !versionAtLeast(dotnetVersion, "8.0") {
+			return nil
+		}
+		return []string{"dotnet-crap@" + DefaultCrap4DotnetVersion}
+	case nodeBuildToolsPreset:
+		if !versionAtLeast(nodeVersion, "20.19") {
+			return nil
+		}
+		return []string{"eslint@" + DefaultESLintVersion}
+	case pythonBuildToolsPreset:
+		return []string{"radon@" + DefaultRadonVersion}
+	case elixirBuildToolsPreset:
+		return []string{"credo@" + DefaultCredoVersion}
+	case rubyBuildToolsPreset:
+		return []string{"flog@" + DefaultFlogVersion}
+	case rustBuildToolsPreset:
+		return []string{"clippy@" + rustVersion}
+	case javaBuildToolsPreset:
+		return []string{"pmd@" + DefaultPMDVersion}
+	default:
+		return nil
+	}
+}
+
+func renderAnalyzerInstallCommands(preset, goVersion, nodeVersion, dotnetVersion string) string {
+	switch preset {
+	case goBuildToolsPreset:
+		var out strings.Builder
+		out.WriteString("ENV PATH=\"/.local/share/go/bin:$PATH\"\n")
+		if versionAtLeast(goVersion, "1.24.0") {
+			out.WriteString("RUN go install github.com/uudashr/gocognit/cmd/gocognit@" + DefaultGocognitVersion + "\n")
+		}
+		out.WriteString("RUN go install github.com/fzipp/gocyclo/cmd/gocyclo@" + DefaultGocycloVersion + "\n")
+		return out.String()
+	case dotnetBuildToolsPreset:
+		if !versionAtLeast(dotnetVersion, "8.0") {
+			return ""
+		}
+		return "RUN dotnet tool install -g Crap4DotNet --version " + DefaultCrap4DotnetVersion + "\n" +
+			"ENV PATH=\"/root/.dotnet/tools:$PATH\"\n"
+	case nodeBuildToolsPreset:
+		if !versionAtLeast(nodeVersion, "20.19") {
+			return ""
+		}
+		return "RUN npm install -g eslint@" + DefaultESLintVersion + "\n"
+	case pythonBuildToolsPreset:
+		return "RUN pip3 install radon==" + DefaultRadonVersion + "\n" +
+			"RUN ln -sf \"$(dirname \"$(mise which python3)\")/radon\" /usr/local/bin/radon\n"
+	case elixirBuildToolsPreset:
+		return "RUN mix escript.install hex credo " + DefaultCredoVersion + " --force\n" +
+			"ENV PATH=\"/root/.mix/escripts:$PATH\"\n"
+	case rubyBuildToolsPreset:
+		return "RUN gem install flog -v " + DefaultFlogVersion + "\n" +
+			"RUN ln -sf \"$(dirname \"$(mise which ruby)\")/flog\" /usr/local/bin/flog\n"
+	case rustBuildToolsPreset:
+		return ""
+	case javaBuildToolsPreset:
+		return "RUN curl -fsSL https://github.com/pmd/pmd/releases/download/pmd_releases%2F7.27.0/pmd-dist-7.27.0-bin.zip -o /tmp/pmd.zip && unzip -q /tmp/pmd.zip -d /opt && ln -s /opt/pmd-bin-7.27.0/bin/pmd /usr/local/bin/pmd && rm /tmp/pmd.zip\n"
+	default:
+		return ""
+	}
 }
 
 func renderGoInstallCommand(version string) string {
@@ -2393,6 +2529,7 @@ type dockerfileMetadata struct {
 	ToolVersion      string
 	MiseVersion      string
 	RtkVersion       string
+	Analyzers        string
 }
 
 func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
@@ -2469,6 +2606,8 @@ func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
 			meta.MiseVersion = strings.TrimSpace(value)
 		case "rtk-version":
 			meta.RtkVersion = strings.TrimSpace(value)
+		case "analyzers":
+			meta.Analyzers = strings.TrimSpace(value)
 		}
 	}
 	if err := scanner.Err(); err != nil {
