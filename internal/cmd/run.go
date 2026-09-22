@@ -780,7 +780,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 			defer rs.Close()
 
-			relRunDir, err := filepath.Rel(repoRoot, rs.BatchDir())
+			relRunDir, err := filepath.Rel(repoRoot, rs.RunDir())
 			if err != nil {
 				return fmt.Errorf("rel run dir: %w", err)
 			}

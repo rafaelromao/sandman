@@ -354,8 +354,9 @@ func (o *Orchestrator) validateBatchBranchesWithIndex(ctx context.Context, req R
 		}
 	}
 
+	//lint:ignore ST1005 Preserve the existing operator-facing error text.
 	return fmt.Errorf(
-		"refusing to start batch: branches already exist from previous runs: %s. %s. Delete the branch with `git branch -D <branch>` or use --override to restart from scratch",
+		"refusing to start batch: branches already exist from previous runs: %s. %s. Delete the branch with `git branch -D <branch>` or use --override to restart from scratch.",
 		strings.Join(conflictLabels, ", "),
 		strings.Join(remediations, ". "),
 	)

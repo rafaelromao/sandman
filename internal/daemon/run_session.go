@@ -58,24 +58,14 @@ func NewRunSession(baseDir, batchID string) *RunSession {
 	}
 }
 
-// BatchDir returns the batch directory this session will own. It is
+// RunDir returns the batch directory this session will own. It is
 // available before Prepare (it is just a path computation) so callers
 // can wire it into batch.Request.RunDir without waiting for the boot
-// to complete. BatchDir is not safe for concurrent use; the session is
+// to complete. RunDir is not safe for concurrent use; the session is
 // expected to be constructed, queried, and torn down by a single
 // goroutine.
-func (s *RunSession) BatchDir() string {
-	return s.runDir
-}
-
-// RunDir returns the batch directory this session will own.
-//
-// Deprecated: RunDir is an alias for BatchDir. New code should use
-// BatchDir. This alias is kept for backward compatibility during the
-// transition to per-batch-per-run layout where run artifacts live
-// in <batchDir>/runs/<runID>/ within .sandman/batches/<batch-id>/.
 func (s *RunSession) RunDir() string {
-	return s.BatchDir()
+	return s.runDir
 }
 
 // Broadcaster returns the broadcaster the ControlSocket streams to.
