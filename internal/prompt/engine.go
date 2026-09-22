@@ -45,7 +45,7 @@ const promptVersionFile = "state/.prompt-version"
 // materialized that generation are upgraded to the new default while
 // user edits are preserved. Files older than the immediately previous
 // generation are treated as user edits and left untouched.
-var legacyPRReviewPromptSHA256 = "f110731850cfa585fe9dd026153b5d54dc3aec52c2174b47af1354c66cf89c69"
+var legacyPRReviewPromptSHA256 = "589bcf16a67e784e2f058bc7a1afc6e345cb871e21cc68ec09288d1a9dd29698"
 
 func init() {
 	sum := sha256.Sum256([]byte(defaultPrompt))
