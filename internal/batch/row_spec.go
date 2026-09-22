@@ -53,6 +53,9 @@ type RowSpec struct {
 	Review      bool
 	PRNumber    int
 	ReviewFocus string
+	// PortalHidden preserves internal prompt-only visibility metadata through
+	// the per-run execution seam.
+	PortalHidden bool
 	// QualityRulesFile is the host-absolute path of the
 	// `.sandman/reviews/quality-rules.md` file the review daemon has
 	// materialised. The orchestrator copies it into the per-row worktree
@@ -250,6 +253,7 @@ func newRunSession(e *runExecutor, row RowSpec) *runSession {
 		review:                     row.Review,
 		prNumber:                   row.PRNumber,
 		reviewFocus:                row.ReviewFocus,
+		portalHidden:               row.PortalHidden,
 		qualityRulesFile:           row.QualityRulesFile,
 		parentCtx:                  e.parentCtx,
 		opts:                       opts,

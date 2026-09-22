@@ -203,6 +203,27 @@ type portalActiveRun struct {
 	RunShortID   string
 	StartedAt    time.Time
 	ModTime      time.Time
+	PortalHidden bool
+}
+
+func portalEventsHidden(runEvents []portalEvent) bool {
+	for _, event := range runEvents {
+		value, ok := event.Payload["portal_hidden"]
+		if !ok {
+			continue
+		}
+		switch hidden := value.(type) {
+		case bool:
+			if hidden {
+				return true
+			}
+		case string:
+			if strings.EqualFold(strings.TrimSpace(hidden), "true") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type portalRunMatch struct {
@@ -421,6 +442,12 @@ func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventLis
 	// still owns the live-socket probe and the lazy flip itself.
 	unavailableRunIDs := v.unavailableRunIDsByBatchIndex(idx)
 	for _, active := range activeInstances {
+		if active.PortalHidden {
+			if active.RunID != "" {
+				consumedRunIDs[active.RunID] = struct{}{}
+			}
+			continue
+		}
 		if activeBatchStart.IsZero() && !active.StartedAt.IsZero() {
 			activeBatchStart = active.StartedAt
 		}
@@ -468,6 +495,9 @@ func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventLis
 	}
 	for _, runState := range runStates {
 		if _, ok := consumedRunIDs[runState.RunID]; ok {
+			continue
+		}
+		if runState.IsPortalHidden() {
 			continue
 		}
 		if runState.Status() == "queued" && !activeBatchStart.IsZero() && v.eventBelongsToBatch(runState.Started.Timestamp, activeBatchStart) {
@@ -1362,6 +1392,7 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 		if len(issueNumbers) > 0 {
 			issueNumber = issueNumbers[0]
 		}
+		portalHidden := manifest.PortalHidden || portalEventsHidden(eventsByRun[runID]) || portalEventsHidden(eventsByRun[instance.Name])
 		lastOutputAt := startedAt
 		if logInfo, err := os.Stat(filepath.Join(runDir, "runs", runID, "run.log")); err == nil && !logInfo.IsDir() {
 			lastOutputAt = logInfo.ModTime()
@@ -1380,6 +1411,7 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 			RunShortID:   manifest.RunShortID,
 			StartedAt:    startedAt,
 			ModTime:      info.ModTime(),
+			PortalHidden: portalHidden,
 		}
 		entry.Key = activeKeyForActive(entry)
 		active = append(active, entry)

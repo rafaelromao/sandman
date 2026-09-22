@@ -6106,6 +6106,65 @@ func TestRunBatch_PromptOnlyRunSkipsIssueLookupAndUsesNullIssue(t *testing.T) {
 	}
 }
 
+func TestRunBatch_PortalHiddenPromptOnlyPersistsVisibilityMarker(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(
+		&fakeGitHubClient{err: errors.New("fetch should not run")},
+		&noopRenderer{},
+		&fakeConfigStore{config: &config.Config{
+			Agent:          "test-agent",
+			Sandbox:        "worktree",
+			WorktreeDir:    ".sandman/worktrees",
+			Git:            config.GitConfig{BaseBranch: "main"},
+			AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}},
+		}},
+		spyLog,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+		WithRunnableFactory(&promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
+			return AgentRunResult{Status: "success", Branch: branch}
+		}}),
+	)
+
+	result, err := o.RunBatch(context.Background(), Request{
+		PromptConfig: prompt.RenderConfig{PromptFlag: "quota-probe"},
+		PortalHidden: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || len(result.Runs) != 1 || len(spyLog.events) != 2 {
+		t.Fatalf("result/events = %#v/%#v, want one run and two lifecycle events", result, spyLog.events)
+	}
+	for _, event := range spyLog.events {
+		if event.Payload["portal_hidden"] != true {
+			t.Fatalf("event %q portal_hidden = %#v, want true", event.Type, event.Payload["portal_hidden"])
+		}
+	}
+	started := spyLog.events[0]
+	batchID, ok := started.Payload["batch_id"].(string)
+	if !ok || batchID == "" {
+		t.Fatalf("started event batch_id = %#v, want non-empty string", started.Payload["batch_id"])
+	}
+	manifest, err := daemon.ReadRunManifest(filepath.Join(dir, ".sandman", "batches", batchID), started.RunID)
+	if err != nil {
+		t.Fatalf("read run manifest: %v", err)
+	}
+	if !manifest.PortalHidden {
+		t.Fatal("run manifest portalHidden = false, want true")
+	}
+	batchManifest, err := daemon.ReadManifest(filepath.Join(dir, ".sandman", "batches", batchID))
+	if err != nil {
+		t.Fatalf("read batch manifest: %v", err)
+	}
+	if !batchManifest.PortalHidden {
+		t.Fatal("batch manifest portalHidden = false, want true")
+	}
+}
+
 func TestRunBatch_PromptOnlyReviewRunEmitsReviewTag(t *testing.T) {
 	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)

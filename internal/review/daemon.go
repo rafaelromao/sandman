@@ -448,6 +448,7 @@ func (d *Daemon) quotaProbeRecovered(ctx context.Context) bool {
 		PromptConfig: prompt.RenderConfig{
 			PromptFlag: "quota-probe",
 		},
+		PortalHidden: true,
 	}
 	result, err := d.Runner.RunBatch(ctx, req)
 	return !resultReachedUsageLimit(result) && err == nil

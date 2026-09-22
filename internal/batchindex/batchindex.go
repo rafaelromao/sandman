@@ -165,6 +165,7 @@ type RunManifest struct {
 	Kind         Kind              `json:"kind"`
 	CreatedAt    time.Time         `json:"createdAt"`
 	PR           int               `json:"pr,omitempty"`
+	PortalHidden bool              `json:"portalHidden,omitempty"`
 	Status       RunManifestStatus `json:"status"`
 }
 

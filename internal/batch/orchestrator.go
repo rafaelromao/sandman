@@ -2186,9 +2186,10 @@ type runSession struct {
 	// portal can distinguish review runs from implementation runs. They
 	// are only set on prompt-only sessions; issue-driven sessions always
 	// leave them at zero values.
-	review      bool
-	prNumber    int
-	reviewFocus string
+	review       bool
+	prNumber     int
+	reviewFocus  string
+	portalHidden bool
 	// qualityRulesFile is the host-absolute path of the
 	// `.sandman/reviews/quality-rules.md` file the daemon has just
 	// materialised. The session copies the file into the per-row
@@ -2574,6 +2575,9 @@ func (s *runSession) emitAwait(ctx context.Context, runID string, result AgentRu
 	if s.issueNumber > 0 {
 		event.IssueRef = issueRef(s.issueNumber)
 	}
+	if s.portalHidden {
+		event.Payload["portal_hidden"] = true
+	}
 	for k, v := range extras {
 		event.Payload[k] = v
 	}
@@ -2664,6 +2668,9 @@ func (s *runSession) emitNormalizedTerminal(ctx context.Context, runID string, r
 		if s.issueNumber > 0 {
 			event.Payload["issue_number"] = s.issueNumber
 		}
+	}
+	if s.portalHidden {
+		event.Payload["portal_hidden"] = true
 	}
 	for k, v := range extras {
 		event.Payload[k] = v
@@ -3744,6 +3751,7 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 		Review:              req.Review,
 		PRNumber:            req.PRNumber,
 		ReviewFocus:         req.ReviewFocus,
+		PortalHidden:        req.PortalHidden,
 		QualityRulesFile:    req.QualityRulesFile,
 	}
 	bc := BatchConfig{
@@ -3909,11 +3917,30 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		Kind:         runKind,
 		CreatedAt:    time.Now(),
 		PR:           s.prNumber,
+		PortalHidden: s.portalHidden,
 		Status:       batchindex.RunManifestStatusActive,
 	}
 	if err := daemon.WriteRunManifest(batchDir, runID, runManifest); err != nil {
 		fmt.Fprintf(s.deps.errorLog, "error: write run manifest for prompt-only run: %v\n", err)
 		return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: runID}, false
+	}
+	if s.portalHidden {
+		batchManifest, err := daemon.ReadManifest(batchDir)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				fmt.Fprintf(s.deps.errorLog, "error: read batch manifest for prompt-only run: %v\n", err)
+				return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: runID}, false
+			}
+			batchManifest = daemon.BatchManifest{BatchId: manifestBatchID, CreatedAt: runManifest.CreatedAt}
+		}
+		if batchManifest.BatchId == "" {
+			batchManifest.BatchId = manifestBatchID
+		}
+		batchManifest.PortalHidden = true
+		if err := daemon.WriteManifest(batchDir, batchManifest); err != nil {
+			fmt.Fprintf(s.deps.errorLog, "error: write batch manifest for prompt-only run: %v\n", err)
+			return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: runID}, false
+		}
 	}
 	cmdServer := daemon.NewCommandServerForIssue(daemon.RunFolder(batchDir, runID), s.commander, s.issueNumber)
 	if err := cmdServer.Start(); err != nil {
@@ -3959,6 +3986,9 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 			if s.issueNumber > 0 {
 				payload["issue_number"] = s.issueNumber
 			}
+		}
+		if s.portalHidden {
+			payload["portal_hidden"] = true
 		}
 		eventType := "run.started"
 		if s.mode == ModeContinue {
