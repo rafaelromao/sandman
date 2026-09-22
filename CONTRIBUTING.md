@@ -97,7 +97,7 @@ The full rule lives in [`AGENTS.md`](AGENTS.md#feature-branches).
 Use the Makefile for common tasks:
 
 ```bash
-# Format code, run vet, and run tests
+# Format code, run vet, Staticcheck, and run tests
 make check
 
 # Build the binary
@@ -115,7 +115,7 @@ Before submitting a PR, always run `make check` locally.
 ### Coding Standards
 
 - Follow standard Go conventions (formatting is enforced by `gofmt`).
-- Run `go vet ./...` and pinned Staticcheck via `make check`; resolve all warnings.
+- Run `go vet ./...` and `GOTOOLCHAIN=go1.25.0 go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...` via `make check`; resolve all warnings.
 - Write tests for new functionality.
 - Keep the domain vocabulary in `CONTEXT.md` in mind when naming things.
 
