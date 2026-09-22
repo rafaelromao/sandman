@@ -133,6 +133,34 @@ The default prompt requires the `sandman-code-review` skill for daemon reviews a
 
 The template must not contain stray `{{...}}` literals beyond the placeholders above: an unknown key fails the render and the review is not launched.
 
+## Complexity analyzers
+
+Every built-in build-tools preset provisions a pinned, non-interactive complexity analyzer for the reviewer's `### Metrics` step. The inventory is recorded in the scaffolded `.sandman/Dockerfile` metadata line `# sandman analyzers: <name>@<version>,...`; presets with no analyzers render `# sandman analyzers: manual`. The reviewer reads that line, verifies each tool with `command -v <tool>` / `<tool> --version`, and runs the analyzer matching the PR's language.
+
+| Preset | Analyzer | Version | Provisioning | Version floor | Invocation |
+|--------|----------|---------|--------------|---------------|------------|
+| `go` | gocognit | v1.2.1 | `go install` | go >= 1.24 (omitted below, cognitive manual) | `gocognit -over 0 -avg <dir>` |
+| `go` | gocyclo | v0.6.0 | `go install` | none | `gocyclo -over 0 <dir>` |
+| `dotnet` | dotnet-crap | 0.1.1 | `dotnet tool install -g` | dotnet >= 8.0 (omitted below, manual) | `dotnet-crap analyze <dir>` |
+| `node` | eslint | 10.8.0 | `npm install -g` | node >= 20.19 (omitted below, manual) | `eslint --no-config-lookup --rule 'complexity: [warn, {max: 0}]' <dir>` |
+| `python` | radon | 6.0.1 | `pip3 install` | none | `radon cc -s <dir>` |
+| `elixir` | credo | 1.7.19 | `mix escript.install` | none | `credo suggest` |
+| `ruby` | flog | 4.9.4 | `gem install` | none | `flog <dir>` |
+| `rust` | clippy | bundled toolchain | `rustup component add clippy` | none | `cargo clippy -- -W clippy::cognitive_complexity` |
+| `java` | pmd | 7.27.0 | release zip under `/opt` | none | `pmd check -d <dir> -R "category/java/design.xml/CyclomaticComplexity,category/java/design.xml/CognitiveComplexity" -f text` |
+| `generic` | — | — | none | — | manual |
+
+Ecosystem limitations and fallbacks:
+
+- **go < 1.24** — gocognit requires a go 1.24 toolchain and is omitted; the reviewer uses gocyclo for cyclomatic complexity and assesses cognitive complexity manually.
+- **.NET < 8.0** — dotnet-crap targets .NET 8.0+ and is omitted; the whole complexity step falls back to manual assessment.
+- **node < 20.19** — eslint 10 requires Node 20.19+ and is omitted; complexity falls back to manual assessment.
+- **node / python / ruby / elixir** — the provisioned tools are cyclomatic analyzers; cognitive complexity is assessed manually.
+- **rust** — clippy only reports `clippy::cognitive_complexity` in a cargo project; a non-cargo rust repo falls back to manual assessment.
+- **generic** — never provisioned; complexity is always manual.
+
+Complexity analyzers are a **reviewer-only** capability. They are not invoked anywhere else in the pipeline — no CI status check, no pre-commit hook, and no build-time validation depends on them.
+
 ## See also
 
 - [Commands Reference](commands.md#sandman-review) — full `sandman review` flags
