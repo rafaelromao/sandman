@@ -170,8 +170,8 @@ func TestScaffold_DockerfileProvisionAnalyzers(t *testing.T) {
 		},
 		{
 			preset:      "rust",
-			metadata:    "# sandman analyzers: clippy@",
-			installBits: nil,
+			toolVersion: "1.96",
+			installBits: []string{"RUN rustup component add rustfmt clippy"},
 		},
 		{
 			preset:   "java",
@@ -205,12 +205,21 @@ func TestScaffold_DockerfileProvisionAnalyzers(t *testing.T) {
 			if err := s.Scaffold(dir, Options{BuildTools: tc.preset, ToolVersion: tc.toolVersion}, &fakePrompter{confirm: true}); err != nil {
 				t.Fatalf("scaffold: %v", err)
 			}
-			data, err := readDockerfileContent(filepath.Join(dir, ".sandman", "Dockerfile"))
+			dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
 			if err != nil {
 				t.Fatalf("read Dockerfile: %v", err)
 			}
-			if !strings.Contains(data, tc.metadata) {
-				t.Errorf("Dockerfile missing analyzer metadata %q, got:\n%s", tc.metadata, data)
+			data := string(dockerfileData)
+			want := tc.metadata
+			if tc.preset == rustBuildToolsPreset {
+				rustVersion, err := (&Scaffolder{}).resolveRustVersion(dir, "", &fakePrompter{confirm: true})
+				if err != nil {
+					t.Fatalf("resolve rust version: %v", err)
+				}
+				want = "# sandman analyzers: clippy@" + rustVersion
+			}
+			if !strings.Contains(data, want) {
+				t.Errorf("Dockerfile missing analyzer metadata %q, got:\n%s", want, data)
 			}
 			for _, bit := range tc.installBits {
 				if !strings.Contains(data, bit) {
@@ -226,10 +235,11 @@ func TestScaffold_GatingOmitsAnalyzerBelowFloor(t *testing.T) {
 		preset      string
 		toolVersion string
 		omit        string
+		keep        string
 	}{
-		{"go", "prefix:1.20", "gocognit"},
-		{"node", "18", "eslint"},
-		{"dotnet", "7", "Crap4DotNet"},
+		{"go", "prefix:1.20", "gocognit", "gocyclo"},
+		{"node", "18", "eslint", "RUN npm install -g opencode-ai@" + DefaultBuiltInAgentVersion("opencode")},
+		{"dotnet", "7", "Crap4DotNet", "RUN npm install -g opencode-ai@" + DefaultBuiltInAgentVersion("opencode")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.preset, func(t *testing.T) {
@@ -238,12 +248,16 @@ func TestScaffold_GatingOmitsAnalyzerBelowFloor(t *testing.T) {
 			if err := s.Scaffold(dir, Options{BuildTools: tc.preset, ToolVersion: tc.toolVersion}, &fakePrompter{confirm: true}); err != nil {
 				t.Fatalf("scaffold: %v", err)
 			}
-			data, err := readDockerfileContent(filepath.Join(dir, ".sandman", "Dockerfile"))
+			dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
 			if err != nil {
 				t.Fatalf("read Dockerfile: %v", err)
 			}
+			data := string(dockerfileData)
 			if strings.Contains(data, tc.omit) {
 				t.Errorf("Dockerfile should omit %q below its version floor, got:\n%s", tc.omit, data)
+			}
+			if !strings.Contains(data, tc.keep) {
+				t.Errorf("Dockerfile should keep %q below its version floor, got:\n%s", tc.keep, data)
 			}
 		})
 	}
@@ -266,11 +280,4 @@ func TestReadDockerfileMetadata_ParsesAnalyzers(t *testing.T) {
 	if meta.Analyzers != "gocognit@v1.2.1,gocyclo@v0.6.0" {
 		t.Errorf("Analyzers = %q, want %q", meta.Analyzers, "gocognit@v1.2.1,gocyclo@v0.6.0")
 	}
-}
-func readDockerfileContent(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
 }

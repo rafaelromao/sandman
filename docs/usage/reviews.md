@@ -135,7 +135,7 @@ The template must not contain stray `{{...}}` literals beyond the placeholders a
 
 ## Complexity analyzers
 
-Every built-in build-tools preset provisions a pinned, non-interactive complexity analyzer for the reviewer's `### Metrics` step. The inventory is recorded in the scaffolded `.sandman/Dockerfile` metadata line `# sandman analyzers: <name>@<version>,...`; presets with no analyzers render `# sandman analyzers: manual`. The reviewer reads that line, verifies each tool with `command -v <tool>` / `<tool> --version`, and runs the analyzer matching the PR's language.
+Every built-in build-tools preset provisions a pinned, non-interactive complexity analyzer for the reviewer's `### Metrics` step. The inventory is recorded in the scaffolded `.sandman/Dockerfile` metadata line `# sandman analyzers: <name>@<version>,...`; presets with no analyzers render `# sandman analyzers: manual`. The reviewer reads that line, verifies each tool with `command -v <tool>` / `<tool> --version` (for `clippy`, `cargo clippy --version`, since the standalone binary is `cargo-clippy`), and runs the analyzer matching the PR's language.
 
 | Preset | Analyzer | Version | Provisioning | Version floor | Invocation |
 |--------|----------|---------|--------------|---------------|------------|
