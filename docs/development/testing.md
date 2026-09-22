@@ -17,8 +17,14 @@ That runs:
 ```bash
 gofmt -w .
 go vet ./...
+GOTOOLCHAIN=go1.25.0 go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
 go test -race -v ./...
 ```
+
+The Staticcheck gate inherits the default checks and explicitly defers `U1000`
+(unused code) to the v1.1 cleanup work. The analyzer is pinned to `v0.7.0`
+and runs with Go `1.25.0` so newer local toolchains do not provide incompatible
+export data.
 
 For a faster targeted loop while editing one package, run the smallest relevant `go test` command first, then finish with `make check` when the change is ready.
 
