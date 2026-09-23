@@ -776,6 +776,7 @@ func (g *batchStartGate) tryAcquire(ctx context.Context, waiter *batchStartWaite
 		return nil, 0, opportunity, true, nil
 	}
 	queued := g.enqueueWaiterLocked(waiter)
+	g.refreshAwaitingWaitersLocked(now)
 	wake := g.wake
 	wait := time.Duration(0)
 	if g.delay > 0 && now.Before(g.nextAllowedStart) {
@@ -805,7 +806,7 @@ func (g *batchStartGate) enqueueWaiterLocked(waiter *batchStartWaiter) bool {
 	if waiter.priority {
 		g.insertPriorityWaiterLocked(waiter)
 	} else {
-		g.normalWaiters = append(g.normalWaiters, waiter)
+		g.insertNormalWaiterLocked(waiter)
 	}
 	return true
 }
@@ -821,6 +822,23 @@ func (g *batchStartGate) insertPriorityWaiterLocked(waiter *batchStartWaiter) {
 	g.priorityWaiters = append(g.priorityWaiters, nil)
 	copy(g.priorityWaiters[index+1:], g.priorityWaiters[index:])
 	g.priorityWaiters[index] = waiter
+}
+
+func (g *batchStartGate) insertNormalWaiterLocked(waiter *batchStartWaiter) {
+	if !waiter.ordinary {
+		g.normalWaiters = append(g.normalWaiters, waiter)
+		return
+	}
+	index := len(g.normalWaiters)
+	for i, candidate := range g.normalWaiters {
+		if !candidate.ordinary {
+			index = i
+			break
+		}
+	}
+	g.normalWaiters = append(g.normalWaiters, nil)
+	copy(g.normalWaiters[index+1:], g.normalWaiters[index:])
+	g.normalWaiters[index] = waiter
 }
 
 func waitForStartGate(ctx context.Context, wake <-chan struct{}, wait time.Duration) error {
@@ -861,6 +879,22 @@ func (g *batchStartGate) hasOrdinaryWaiterLocked() bool {
 }
 
 func (g *batchStartGate) refreshAwaitingWaitersLocked(now time.Time) {
+	for index := 0; index < len(g.priorityWaiters); {
+		waiter := g.priorityWaiters[index]
+		if !waiter.awaiting || awaitedRowMayUsePriority(
+			waiter.lastChance,
+			waiter.ordinaryStartsAtChance,
+			g.ordinaryStarts,
+			g.hasOrdinaryWaiterLocked(),
+			now,
+		) {
+			index++
+			continue
+		}
+		g.priorityWaiters = append(g.priorityWaiters[:index], g.priorityWaiters[index+1:]...)
+		waiter.priority = false
+		g.insertNormalWaiterLocked(waiter)
+	}
 	for index := 0; index < len(g.normalWaiters); {
 		waiter := g.normalWaiters[index]
 		if !waiter.awaiting || !awaitedRowMayUsePriority(

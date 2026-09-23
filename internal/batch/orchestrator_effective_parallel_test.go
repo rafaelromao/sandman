@@ -120,6 +120,57 @@ func TestBatchStartGate_RecentAwaitedWaiterUsesPriorityWithoutOrdinaryQueue(t *t
 	gate.Release()
 }
 
+func TestBatchStartGate_OrdinaryArrivalDemotesRecentAwaitedWaiter(t *testing.T) {
+	gate := newBatchStartGate(1, 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := gate.Acquire(ctx); err != nil {
+		t.Fatalf("initial acquire: %v", err)
+	}
+
+	awaitedDone := make(chan error, 1)
+	go func() {
+		_, err := gate.AcquireAwaiting(ctx, awaitOpportunity{
+			lastChance:     time.Now().Add(-time.Minute),
+			ordinaryStarts: 1,
+		})
+		awaitedDone <- err
+	}()
+	waitForGateQueue(t, gate, func() bool { return len(gate.priorityWaiters) == 1 })
+
+	ordinaryDone := make(chan error, 1)
+	go func() { ordinaryDone <- gate.Acquire(ctx) }()
+	waitForGateQueue(t, gate, func() bool {
+		return len(gate.priorityWaiters) == 0 && len(gate.normalWaiters) == 2 && gate.normalWaiters[0].ordinary
+	})
+
+	gate.Release()
+	select {
+	case err := <-ordinaryDone:
+		if err != nil {
+			t.Fatalf("ordinary acquire: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ordinary waiter did not acquire after demoting the waiting row")
+	}
+	select {
+	case err := <-awaitedDone:
+		t.Fatalf("recently resumed waiting row bypassed arriving ordinary work, err=%v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	gate.Release()
+	select {
+	case err := <-awaitedDone:
+		if err != nil {
+			t.Fatalf("awaited acquire: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("waiting row did not acquire after ordinary work")
+	}
+	gate.Release()
+}
+
 func TestBatchStartGate_OrdinaryStartPromotesRecentAwaitedWaiterAheadOfRemainingQueue(t *testing.T) {
 	gate := newBatchStartGate(1, 0)
 	ctx, cancel := context.WithCancel(context.Background())
