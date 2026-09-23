@@ -230,6 +230,89 @@ func TestRunBatch_AwaitingRowDoesNotLetDependentBlockIndependentWork(t *testing.
 	<-done
 }
 
+func TestRunBatch_RecentAwaitingRowsDoNotStarveQueuedWork(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "Awaited one"},
+			2: {Number: 2, Title: "Awaited two"},
+			3: {Number: 3, Title: "Awaited three"},
+			4: {Number: 4, Title: "Queued work"},
+		},
+		prs: map[string]*github.PR{
+			"1-awaited-one":   {Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited-one", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
+			"2-awaited-two":   {Number: 2, State: "open", Body: "Closes #2", HeadRefName: "2-awaited-two", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
+			"3-awaited-three": {Number: 3, State: "open", Body: "Closes #3", HeadRefName: "3-awaited-three", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
+			"4-queued-work":   {Number: 4, State: "merged", Merged: true, Body: "Closes #4", HeadRefName: "4-queued-work"},
+		},
+	}
+	ordinaryQueued := make(chan struct{})
+	var ordinaryQueuedOnce sync.Once
+	factory := &recentAwaitingRunnableFactory{queuedStarted: make(chan struct{})}
+	log := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+		Agent:          "test-agent",
+		Sandbox:        "worktree",
+		WorktreeDir:    ".sandman/worktrees",
+		Git:            config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}},
+	}}, log,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&freshSandboxFactory{}),
+		WithRunnableFactory(factory),
+		WithRunSessionOpts(runSessionOptions{
+			releaseAwaitCapacity: true,
+			awaitWait: func(ctx context.Context, _ time.Duration) error {
+				select {
+				case <-ordinaryQueued:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			},
+			startWaiterQueued: func(priority bool) {
+				if !priority {
+					ordinaryQueuedOnce.Do(func() { close(ordinaryQueued) })
+				}
+			},
+		}),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = o.RunBatch(ctx, Request{
+			Issues:   []int{1, 2, 3, 4},
+			Branches: map[int]string{1: "1-awaited-one", 2: "2-awaited-two", 3: "3-awaited-three", 4: "4-queued-work"},
+			Parallel: 1,
+		})
+	}()
+
+	select {
+	case <-factory.queuedStarted:
+		cancel()
+	case <-time.After(2 * time.Second):
+		cancel()
+		<-done
+		t.Fatalf("queued work starved; starts=%v events=%v", factory.startsSnapshot(), log.snapshot())
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		cancel()
+		t.Fatal("batch did not stop after cancellation")
+	}
+
+	starts := factory.startsSnapshot()
+	if !containsPriorityInt(starts, 4) {
+		t.Fatalf("queued work did not start; starts=%v", starts)
+	}
+}
+
 type awaitPriorityRunnableFactory struct {
 	mu                     sync.Mutex
 	starts                 []int
@@ -241,6 +324,53 @@ type awaitPriorityRunnableFactory struct {
 
 func (f *awaitPriorityRunnableFactory) NewRunnable(issue *github.Issue, _ string, _ sandbox.Sandbox) Runnable {
 	return &awaitPriorityRunnable{factory: f, issue: issue.Number}
+}
+
+type recentAwaitingRunnableFactory struct {
+	mu            sync.Mutex
+	starts        []int
+	queuedStarted chan struct{}
+}
+
+func (f *recentAwaitingRunnableFactory) NewRunnable(issue *github.Issue, _ string, _ sandbox.Sandbox) Runnable {
+	return &recentAwaitingRunnable{factory: f, issue: issue.Number}
+}
+
+type recentAwaitingRunnable struct {
+	factory *recentAwaitingRunnableFactory
+	issue   int
+}
+
+func (r *recentAwaitingRunnable) Run(ctx context.Context, _ prompt.IssueRenderer, _ string, _ prompt.RenderConfig) AgentRunResult {
+	if ctx.Err() != nil {
+		return AgentRunResult{IssueNumber: r.issue, Status: "aborted"}
+	}
+	r.factory.mu.Lock()
+	r.factory.starts = append(r.factory.starts, r.issue)
+	if r.issue == 4 {
+		select {
+		case <-r.factory.queuedStarted:
+		default:
+			close(r.factory.queuedStarted)
+		}
+	}
+	r.factory.mu.Unlock()
+	return AgentRunResult{IssueNumber: r.issue, Status: "success"}
+}
+
+func (f *recentAwaitingRunnableFactory) startsSnapshot() []int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]int(nil), f.starts...)
+}
+
+func containsPriorityInt(values []int, want int) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 type awaitPriorityRunnable struct {

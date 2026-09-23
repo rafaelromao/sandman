@@ -59,6 +59,279 @@ func TestEffectiveParallel_CapCalculation(t *testing.T) {
 	}
 }
 
+func TestAwaitedRowPriority_RecentChanceYieldsToQueuedOrdinaryWork(t *testing.T) {
+	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	if got := awaitedRowMayUsePriority(now.Add(-time.Minute), 4, 4, true, now); got {
+		t.Fatal("recently resumed waiting row bypassed queued ordinary work without ordinary progress")
+	}
+}
+
+func TestAwaitedRowPriority_EligibilityConditions(t *testing.T) {
+	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name           string
+		lastChance     time.Time
+		startsAtChance uint64
+		ordinaryStarts uint64
+		ordinaryQueued bool
+		want           bool
+	}{
+		{name: "no ordinary queue", lastChance: now.Add(-time.Minute), startsAtChance: 4, ordinaryStarts: 4, want: true},
+		{name: "ordinary progress", lastChance: now.Add(-time.Minute), startsAtChance: 4, ordinaryStarts: 5, ordinaryQueued: true, want: true},
+		{name: "cooldown boundary", lastChance: now.Add(-awaitingPriorityCooldown), startsAtChance: 4, ordinaryStarts: 4, ordinaryQueued: true, want: true},
+		{name: "before cooldown boundary", lastChance: now.Add(-awaitingPriorityCooldown + time.Nanosecond), startsAtChance: 4, ordinaryStarts: 4, ordinaryQueued: true, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := awaitedRowMayUsePriority(tc.lastChance, tc.startsAtChance, tc.ordinaryStarts, tc.ordinaryQueued, now); got != tc.want {
+				t.Fatalf("awaitedRowMayUsePriority() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBatchStartGate_RecentAwaitedWaiterUsesPriorityWithoutOrdinaryQueue(t *testing.T) {
+	gate := newBatchStartGate(1, 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := gate.Acquire(ctx); err != nil {
+		t.Fatalf("initial acquire: %v", err)
+	}
+
+	awaitedDone := make(chan error, 1)
+	go func() {
+		_, err := gate.AcquireAwaiting(ctx, awaitOpportunity{
+			lastChance:     time.Now().Add(-time.Minute),
+			ordinaryStarts: 1,
+		})
+		awaitedDone <- err
+	}()
+	waitForGateQueue(t, gate, func() bool { return len(gate.priorityWaiters) == 1 })
+
+	gate.Release()
+	select {
+	case err := <-awaitedDone:
+		if err != nil {
+			t.Fatalf("awaited acquire: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("waiting row did not acquire after the only active row released")
+	}
+	gate.Release()
+}
+
+func TestBatchStartGate_OrdinaryStartPromotesRecentAwaitedWaiterAheadOfRemainingQueue(t *testing.T) {
+	gate := newBatchStartGate(1, 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := gate.Acquire(ctx); err != nil {
+		t.Fatalf("initial acquire: %v", err)
+	}
+
+	ordinaryFirstDone := make(chan error, 1)
+	go func() { ordinaryFirstDone <- gate.Acquire(ctx) }()
+	waitForGateQueue(t, gate, func() bool { return len(gate.normalWaiters) == 1 })
+	awaitedDone := make(chan error, 1)
+	go func() {
+		_, err := gate.AcquireAwaiting(ctx, awaitOpportunity{
+			lastChance:     time.Now().Add(-time.Minute),
+			ordinaryStarts: 1,
+		})
+		awaitedDone <- err
+	}()
+	waitForGateQueue(t, gate, func() bool { return len(gate.normalWaiters) == 2 })
+	ordinarySecondDone := make(chan error, 1)
+	go func() { ordinarySecondDone <- gate.Acquire(ctx) }()
+	waitForGateQueue(t, gate, func() bool { return len(gate.normalWaiters) == 3 })
+
+	gate.Release()
+	select {
+	case err := <-ordinaryFirstDone:
+		if err != nil {
+			t.Fatalf("first ordinary acquire: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first ordinary waiter did not acquire")
+	}
+
+	gate.Release()
+	select {
+	case err := <-awaitedDone:
+		if err != nil {
+			t.Fatalf("awaited acquire: %v", err)
+		}
+	case err := <-ordinarySecondDone:
+		t.Fatalf("remaining ordinary waiter bypassed by wrong queue order, err=%v", err)
+	case <-time.After(time.Second):
+		t.Fatal("awaited waiter did not acquire after ordinary progress")
+	}
+
+	gate.Release()
+	select {
+	case err := <-ordinarySecondDone:
+		if err != nil {
+			t.Fatalf("second ordinary acquire: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("remaining ordinary waiter did not acquire")
+	}
+	gate.Release()
+}
+
+func TestBatchStartGate_RemovingOrdinaryWaiterPromotesRecentAwaitedWaiter(t *testing.T) {
+	gate := newBatchStartGate(1, 0)
+	activeCtx, cancelActive := context.WithCancel(context.Background())
+	defer cancelActive()
+	if err := gate.Acquire(activeCtx); err != nil {
+		t.Fatalf("initial acquire: %v", err)
+	}
+
+	ordinaryCtx, cancelOrdinary := context.WithCancel(context.Background())
+	ordinaryDone := make(chan error, 1)
+	go func() { ordinaryDone <- gate.Acquire(ordinaryCtx) }()
+	waitForGateQueue(t, gate, func() bool { return len(gate.normalWaiters) == 1 })
+
+	awaitedDone := make(chan error, 1)
+	go func() {
+		_, err := gate.AcquireAwaiting(activeCtx, awaitOpportunity{
+			lastChance:     time.Now().Add(-time.Minute),
+			ordinaryStarts: 1,
+		})
+		awaitedDone <- err
+	}()
+	waitForGateQueue(t, gate, func() bool { return len(gate.normalWaiters) == 2 })
+
+	cancelOrdinary()
+	select {
+	case err := <-ordinaryDone:
+		if err == nil {
+			t.Fatal("cancelled ordinary waiter acquired a slot")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancelled ordinary waiter did not exit")
+	}
+	waitForGateQueue(t, gate, func() bool { return len(gate.priorityWaiters) == 1 && len(gate.normalWaiters) == 0 })
+
+	gate.Release()
+	select {
+	case err := <-awaitedDone:
+		if err != nil {
+			t.Fatalf("awaited acquire: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("waiting row did not acquire after ordinary queue removal")
+	}
+	gate.Release()
+}
+
+func TestBatchStartGate_EligibleAwaitedWaitersRemainFIFO(t *testing.T) {
+	gate := newBatchStartGate(1, 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := gate.Acquire(ctx); err != nil {
+		t.Fatalf("initial acquire: %v", err)
+	}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := gate.AcquireAwaiting(ctx, awaitOpportunity{lastChance: time.Now().Add(-time.Minute), ordinaryStarts: 1})
+		firstDone <- err
+	}()
+	waitForGateQueue(t, gate, func() bool { return len(gate.priorityWaiters) == 1 })
+	secondDone := make(chan error, 1)
+	go func() {
+		_, err := gate.AcquireAwaiting(ctx, awaitOpportunity{lastChance: time.Now().Add(-time.Minute), ordinaryStarts: 1})
+		secondDone <- err
+	}()
+	waitForGateQueue(t, gate, func() bool { return len(gate.priorityWaiters) == 2 })
+
+	gate.Release()
+	select {
+	case err := <-firstDone:
+		if err != nil {
+			t.Fatalf("first awaited acquire: %v", err)
+		}
+	case <-secondDone:
+		t.Fatal("second awaited waiter acquired before the first")
+	case <-time.After(time.Second):
+		t.Fatal("first awaited waiter did not acquire")
+	}
+	gate.Release()
+	select {
+	case err := <-secondDone:
+		if err != nil {
+			t.Fatalf("second awaited acquire: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second awaited waiter did not acquire")
+	}
+	gate.Release()
+}
+
+func TestBatchStartGate_RecentAwaitedWaiterYieldsToQueuedOrdinaryWork(t *testing.T) {
+	gate := newBatchStartGate(1, 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := gate.Acquire(ctx); err != nil {
+		t.Fatalf("initial acquire: %v", err)
+	}
+
+	ordinaryDone := make(chan error, 1)
+	go func() { ordinaryDone <- gate.Acquire(ctx) }()
+	waitForGateQueue(t, gate, func() bool { return len(gate.normalWaiters) == 1 })
+
+	awaitedDone := make(chan error, 1)
+	go func() {
+		_, err := gate.AcquireAwaiting(ctx, awaitOpportunity{
+			lastChance:     time.Now().Add(-time.Minute),
+			ordinaryStarts: 1,
+		})
+		awaitedDone <- err
+	}()
+	waitForGateQueue(t, gate, func() bool { return len(gate.normalWaiters) == 2 })
+
+	gate.Release()
+	select {
+	case err := <-ordinaryDone:
+		if err != nil {
+			t.Fatalf("ordinary acquire: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("queued ordinary waiter did not acquire")
+	}
+	select {
+	case err := <-awaitedDone:
+		t.Fatalf("recently resumed waiting row bypassed ordinary waiter, err=%v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	gate.Release()
+	select {
+	case err := <-awaitedDone:
+		if err != nil {
+			t.Fatalf("awaited acquire: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("waiting row did not acquire after ordinary work")
+	}
+	gate.Release()
+}
+
+func waitForGateQueue(t *testing.T, gate *batchStartGate, predicate func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		gate.mu.Lock()
+		queued := predicate()
+		gate.mu.Unlock()
+		if queued {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("gate waiters did not reach the expected queue state")
+}
+
 // TestEffectiveParallelCap_NonContainerCases verifies the cap is a no-op when
 // the run is not in container mode (containerCapacity == 0).
 func TestEffectiveParallelCap_NonContainerCases(t *testing.T) {

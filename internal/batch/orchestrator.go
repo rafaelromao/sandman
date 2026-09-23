@@ -621,10 +621,38 @@ type batchStartGate struct {
 	priorityWaiters  []*batchStartWaiter
 	normalWaiters    []*batchStartWaiter
 	onWaiterQueued   func(bool)
+	ordinaryStarts   uint64
+	nextWaiterOrder  uint64
+	now              func() time.Time
 }
 
 type batchStartWaiter struct {
-	priority bool
+	priority               bool
+	ordinary               bool
+	awaiting               bool
+	lastChance             time.Time
+	ordinaryStartsAtChance uint64
+	order                  uint64
+}
+
+type awaitOpportunity struct {
+	lastChance     time.Time
+	ordinaryStarts uint64
+}
+
+const awaitingPriorityCooldown = 10 * time.Minute
+
+// awaitedRowMayUsePriority applies the fairness rule at one gate observation.
+// A recent waiting-row chance may bypass ordinary work only when no ordinary
+// waiter remains or ordinary progress has occurred since that chance.
+func awaitedRowMayUsePriority(lastChance time.Time, ordinaryStartsAtChance, ordinaryStarts uint64, ordinaryQueued bool, now time.Time) bool {
+	if lastChance.IsZero() || now.Sub(lastChance) >= awaitingPriorityCooldown {
+		return true
+	}
+	if !ordinaryQueued {
+		return true
+	}
+	return ordinaryStarts > ordinaryStartsAtChance
 }
 
 func newBatchStartGate(parallel int, delay time.Duration, onWaiterQueued ...func(bool)) *batchStartGate {
@@ -632,7 +660,13 @@ func newBatchStartGate(parallel int, delay time.Duration, onWaiterQueued ...func
 	if len(onWaiterQueued) > 0 {
 		callback = onWaiterQueued[0]
 	}
-	return &batchStartGate{parallel: parallel, delay: delay, wake: make(chan struct{}), onWaiterQueued: callback}
+	return &batchStartGate{
+		parallel:       parallel,
+		delay:          delay,
+		wake:           make(chan struct{}),
+		onWaiterQueued: callback,
+		now:            time.Now,
+	}
 }
 
 // effectiveParallelCap returns the effective parallel concurrency after applying
@@ -667,7 +701,26 @@ func effectiveParallelCap(parallel, containerCapacity, maxContainers int) int {
 // The optional argument keeps the existing ordinary-start call sites concise.
 func (g *batchStartGate) Acquire(ctx context.Context, priority ...bool) error {
 	isPriority := len(priority) > 0 && priority[0]
-	waiter := &batchStartWaiter{priority: isPriority}
+	_, err := g.acquire(ctx, &batchStartWaiter{priority: isPriority, ordinary: !isPriority})
+	return err
+}
+
+func (g *batchStartGate) AcquireWithOpportunity(ctx context.Context, priority bool) (awaitOpportunity, error) {
+	return g.acquire(ctx, &batchStartWaiter{priority: priority, ordinary: !priority})
+}
+
+// AcquireAwaiting re-enters a row that previously returned to external wait.
+// Its returned opportunity is the timestamp and ordinary-start marker for the
+// newly acquired chance.
+func (g *batchStartGate) AcquireAwaiting(ctx context.Context, opportunity awaitOpportunity) (awaitOpportunity, error) {
+	return g.acquire(ctx, &batchStartWaiter{
+		awaiting:               true,
+		lastChance:             opportunity.lastChance,
+		ordinaryStartsAtChance: opportunity.ordinaryStarts,
+	})
+}
+
+func (g *batchStartGate) acquire(ctx context.Context, waiter *batchStartWaiter) (awaitOpportunity, error) {
 	acquired := false
 	defer func() {
 		if !acquired {
@@ -675,62 +728,99 @@ func (g *batchStartGate) Acquire(ctx context.Context, priority ...bool) error {
 		}
 	}()
 	for {
-		wake, wait, ok, err := g.tryAcquire(ctx, waiter, isPriority)
+		wake, wait, opportunity, ok, err := g.tryAcquire(ctx, waiter)
 		if err != nil {
-			return err
+			return awaitOpportunity{}, err
 		}
 		if ok {
 			acquired = true
-			return nil
+			return opportunity, nil
 		}
 		if err := waitForStartGate(ctx, wake, wait); err != nil {
-			return err
+			return awaitOpportunity{}, err
 		}
 	}
 }
 
-func (g *batchStartGate) tryAcquire(ctx context.Context, waiter *batchStartWaiter, priority bool) (chan struct{}, time.Duration, bool, error) {
+func (g *batchStartGate) tryAcquire(ctx context.Context, waiter *batchStartWaiter) (chan struct{}, time.Duration, awaitOpportunity, bool, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, 0, false, err
+		return nil, 0, awaitOpportunity{}, false, err
 	}
 	g.mu.Lock()
 	if err := ctx.Err(); err != nil {
 		g.mu.Unlock()
-		return nil, 0, false, err
+		return nil, 0, awaitOpportunity{}, false, err
 	}
-	now := time.Now()
+	now := g.currentTime()
+	g.refreshAwaitingWaitersLocked(now)
+	if waiter.awaiting && !g.isQueuedLocked(waiter) {
+		waiter.priority = awaitedRowMayUsePriority(
+			waiter.lastChance,
+			waiter.ordinaryStartsAtChance,
+			g.ordinaryStarts,
+			g.hasOrdinaryWaiterLocked(),
+			now,
+		)
+	}
 	if g.canAcquireLocked(waiter, now) {
 		if g.parallel > 0 {
 			g.active++
 		}
+		if waiter.ordinary {
+			g.ordinaryStarts++
+		}
+		opportunity := awaitOpportunity{lastChance: now, ordinaryStarts: g.ordinaryStarts}
 		g.removeWaiterLocked(waiter)
 		g.signalLocked()
 		g.mu.Unlock()
-		return nil, 0, true, nil
+		return nil, 0, opportunity, true, nil
 	}
-	queued := g.enqueueWaiterLocked(waiter, priority)
+	queued := g.enqueueWaiterLocked(waiter)
 	wake := g.wake
 	wait := time.Duration(0)
 	if g.delay > 0 && now.Before(g.nextAllowedStart) {
-		wait = time.Until(g.nextAllowedStart)
+		wait = g.nextAllowedStart.Sub(now)
+	}
+	if waiter.awaiting && !waiter.priority {
+		cooldownWait := waiter.lastChance.Add(awaitingPriorityCooldown).Sub(now)
+		if cooldownWait > wait {
+			wait = cooldownWait
+		}
 	}
 	g.mu.Unlock()
 	if queued && g.onWaiterQueued != nil {
-		g.onWaiterQueued(priority)
+		g.onWaiterQueued(waiter.priority)
 	}
-	return wake, wait, false, nil
+	return wake, wait, awaitOpportunity{}, false, nil
 }
 
-func (g *batchStartGate) enqueueWaiterLocked(waiter *batchStartWaiter, priority bool) bool {
+func (g *batchStartGate) enqueueWaiterLocked(waiter *batchStartWaiter) bool {
 	if g.isQueuedLocked(waiter) {
 		return false
 	}
-	if priority {
-		g.priorityWaiters = append(g.priorityWaiters, waiter)
+	if waiter.order == 0 {
+		g.nextWaiterOrder++
+		waiter.order = g.nextWaiterOrder
+	}
+	if waiter.priority {
+		g.insertPriorityWaiterLocked(waiter)
 	} else {
 		g.normalWaiters = append(g.normalWaiters, waiter)
 	}
 	return true
+}
+
+func (g *batchStartGate) insertPriorityWaiterLocked(waiter *batchStartWaiter) {
+	index := len(g.priorityWaiters)
+	for i, candidate := range g.priorityWaiters {
+		if waiter.order < candidate.order {
+			index = i
+			break
+		}
+	}
+	g.priorityWaiters = append(g.priorityWaiters, nil)
+	copy(g.priorityWaiters[index+1:], g.priorityWaiters[index:])
+	g.priorityWaiters[index] = waiter
 }
 
 func waitForStartGate(ctx context.Context, wake <-chan struct{}, wait time.Duration) error {
@@ -751,6 +841,41 @@ func waitForStartGate(ctx context.Context, wake <-chan struct{}, wait time.Durat
 		return nil
 	case <-timer.C:
 		return nil
+	}
+}
+
+func (g *batchStartGate) currentTime() time.Time {
+	if g.now != nil {
+		return g.now()
+	}
+	return time.Now()
+}
+
+func (g *batchStartGate) hasOrdinaryWaiterLocked() bool {
+	for _, waiter := range g.normalWaiters {
+		if waiter.ordinary {
+			return true
+		}
+	}
+	return false
+}
+
+func (g *batchStartGate) refreshAwaitingWaitersLocked(now time.Time) {
+	for index := 0; index < len(g.normalWaiters); {
+		waiter := g.normalWaiters[index]
+		if !waiter.awaiting || !awaitedRowMayUsePriority(
+			waiter.lastChance,
+			waiter.ordinaryStartsAtChance,
+			g.ordinaryStarts,
+			g.hasOrdinaryWaiterLocked(),
+			now,
+		) {
+			index++
+			continue
+		}
+		g.normalWaiters = append(g.normalWaiters[:index], g.normalWaiters[index+1:]...)
+		waiter.priority = true
+		g.insertPriorityWaiterLocked(waiter)
 	}
 }
 
@@ -811,6 +936,7 @@ func (g *batchStartGate) cancelWaiter(waiter *batchStartWaiter) {
 	g.mu.Lock()
 	if g.isQueuedLocked(waiter) {
 		g.removeWaiterLocked(waiter)
+		g.refreshAwaitingWaitersLocked(g.currentTime())
 		g.signalLocked()
 	}
 	g.mu.Unlock()
@@ -1695,11 +1821,16 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					fmt.Fprintf(o.errorLog, "error: stop command server for issue %d: %v\n", issueNum, err)
 				}
 			}()
-			// An awaiter is ordinary work until its external poll interval
-			// elapses. It then competes for the next free slot as priority work.
-			priority := false
+			awaiting := false
+			var opportunity awaitOpportunity
 			for {
-				if err := startGate.Acquire(issueCtx, priority); err != nil {
+				var err error
+				if awaiting {
+					opportunity, err = startGate.AcquireAwaiting(issueCtx, opportunity)
+				} else {
+					opportunity, err = startGate.AcquireWithOpportunity(issueCtx, false)
+				}
+				if err != nil {
 					o.logAborted(issueNum, runID, nil)
 					res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
 					break
@@ -1745,7 +1876,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					usageLimitWaited += interval
 					row.UsageLimitWaited = usageLimitWaited
 				}
-				priority = true
+				awaiting = true
 				continue
 			}
 			mu.Lock()
