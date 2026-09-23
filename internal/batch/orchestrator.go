@@ -763,20 +763,20 @@ func (g *batchStartGate) tryAcquire(ctx context.Context, waiter *batchStartWaite
 		)
 	}
 	if g.canAcquireLocked(waiter, now) {
-		if g.parallel > 0 {
-			g.active++
-		}
-		if waiter.ordinary {
-			g.ordinaryStarts++
-		}
-		opportunity := awaitOpportunity{lastChance: now, ordinaryStarts: g.ordinaryStarts}
-		g.removeWaiterLocked(waiter)
-		g.signalLocked()
+		opportunity := g.grantLocked(waiter, now)
 		g.mu.Unlock()
 		return nil, 0, opportunity, true, nil
 	}
 	queued := g.enqueueWaiterLocked(waiter)
 	g.refreshAwaitingWaitersLocked(now)
+	if g.canAcquireLocked(waiter, now) {
+		opportunity := g.grantLocked(waiter, now)
+		g.mu.Unlock()
+		if queued && g.onWaiterQueued != nil {
+			g.onWaiterQueued(waiter.priority)
+		}
+		return nil, 0, opportunity, true, nil
+	}
 	wake := g.wake
 	wait := time.Duration(0)
 	if g.delay > 0 && now.Before(g.nextAllowedStart) {
@@ -793,6 +793,19 @@ func (g *batchStartGate) tryAcquire(ctx context.Context, waiter *batchStartWaite
 		g.onWaiterQueued(waiter.priority)
 	}
 	return wake, wait, awaitOpportunity{}, false, nil
+}
+
+func (g *batchStartGate) grantLocked(waiter *batchStartWaiter, now time.Time) awaitOpportunity {
+	if g.parallel > 0 {
+		g.active++
+	}
+	if waiter.ordinary {
+		g.ordinaryStarts++
+	}
+	opportunity := awaitOpportunity{lastChance: now, ordinaryStarts: g.ordinaryStarts}
+	g.removeWaiterLocked(waiter)
+	g.signalLocked()
+	return opportunity
 }
 
 func (g *batchStartGate) enqueueWaiterLocked(waiter *batchStartWaiter) bool {

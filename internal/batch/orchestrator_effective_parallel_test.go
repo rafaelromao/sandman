@@ -171,6 +171,36 @@ func TestBatchStartGate_OrdinaryArrivalDemotesRecentAwaitedWaiter(t *testing.T) 
 	gate.Release()
 }
 
+func TestBatchStartGate_OrdinaryArrivalAcquiresAfterDemotingPriorityWaiter(t *testing.T) {
+	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	gate := newBatchStartGate(1, 0)
+	gate.now = func() time.Time { return now }
+	gate.priorityWaiters = []*batchStartWaiter{{
+		priority:               true,
+		awaiting:               true,
+		lastChance:             now.Add(-time.Minute),
+		ordinaryStartsAtChance: 1,
+		order:                  1,
+	}}
+	gate.nextWaiterOrder = 1
+
+	waiter := &batchStartWaiter{ordinary: true}
+	_, _, _, acquired, err := gate.tryAcquire(context.Background(), waiter)
+	if err != nil {
+		t.Fatalf("ordinary acquire: %v", err)
+	}
+	if !acquired {
+		t.Fatal("ordinary waiter missed the free slot after demoting the recent priority waiter")
+	}
+	if gate.active != 1 {
+		t.Fatalf("active slots = %d, want 1", gate.active)
+	}
+	if len(gate.priorityWaiters) != 0 || len(gate.normalWaiters) != 1 || gate.normalWaiters[0].ordinary {
+		t.Fatalf("unexpected waiter queues: priority=%v normal=%v", gate.priorityWaiters, gate.normalWaiters)
+	}
+	gate.Release()
+}
+
 func TestBatchStartGate_OrdinaryStartPromotesRecentAwaitedWaiterAheadOfRemainingQueue(t *testing.T) {
 	gate := newBatchStartGate(1, 0)
 	ctx, cancel := context.WithCancel(context.Background())
