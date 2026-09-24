@@ -185,27 +185,38 @@ func TestPRReviewSkill_BehavioralSmoke(t *testing.T) {
 
 func TestPRReviewSkill_ManagedWaitYieldsToRuntime(t *testing.T) {
 	text := readPRReviewSkill(t)
+	start := strings.Index(text, "After a review request is confirmed")
+	if start < 0 {
+		t.Fatal("could not locate managed wait guidance")
+	}
+	end := strings.Index(text[start:], "Before Step 6, retain the existing self-check")
+	if end < 0 {
+		t.Fatal("could not isolate managed wait guidance")
+	}
+	managedWait := text[start : start+end]
 
 	for _, phrase := range []string{
 		"checkpoints the",
 		"current head, pending request, and next step in `.sandman/task.md`",
-		"agent session successfully instead of invoking the wait helper",
-		"runtime owns the non-terminal wait and re-entry",
-		"retains logical dependency",
-		"releases the execution slot between external observations",
-		"Outside a Sandman-created run",
+		"then ends the",
+		"agent session successfully",
+		"dependent work queued",
+		"frees the agent sandbox for other work between",
+		"Only current, matching evidence from this request can resume the managed",
+		"Outside a\nSandman-created run",
 		"the final interval repeats",
 	} {
-		if !strings.Contains(text, phrase) {
+		if !strings.Contains(managedWait, phrase) {
 			t.Errorf("pr-review skill must distinguish managed and standalone wait ownership with %q", phrase)
 		}
 	}
 
 	for _, stale := range []string{
-		"foreground-active while this request is pending",
-		"keeps its sandbox capacity while dependent work remains held",
+		"wait helper",
+		"logical dependency ownership",
+		"execution slot",
 	} {
-		if strings.Contains(text, stale) {
+		if strings.Contains(managedWait, stale) {
 			t.Errorf("pr-review skill must not retain stale managed-wait guidance %q", stale)
 		}
 	}

@@ -295,7 +295,7 @@ func TestReviewLifecycleDocumentationDescribesBoundedWait(t *testing.T) {
 	}
 
 	prReview := readSkillMarkdown(t)["pr-review/SKILL.md"]
-	for _, phrase := range []string{"non-terminal wait", "final interval repeats", "diagnostics-only", "aborted outcome"} {
+	for _, phrase := range []string{"Sandman waits for the review response", "final interval repeats", "responses are kept", "Explicit cancellation aborts"} {
 		if !strings.Contains(prReview, phrase) {
 			t.Errorf("pr-review skill must describe managed lifecycle waits with %q", phrase)
 		}

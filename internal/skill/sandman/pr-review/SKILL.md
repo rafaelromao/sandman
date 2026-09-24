@@ -405,13 +405,12 @@ An envelope with `state:"unavailable"` is structured failure, never approval.
 
 After a review request is confirmed, a Sandman-created run checkpoints the
 current head, pending request, and next step in `.sandman/task.md`, then ends the
-agent session successfully instead of invoking the wait helper. Sandman's
-runtime owns the non-terminal wait and re-entry, retains logical dependency
-ownership, and releases the execution slot between external observations. Only
-matching current-request evidence can select a resume. Stale, mismatched,
-malformed, or otherwise invalid evidence is diagnostics-only and leaves the
-managed wait active. Explicit cancellation selects the normal aborted outcome;
-it does not spend an agent retry or launch held dependent work. Outside a
+agent session successfully. Sandman waits for the review response, keeps
+dependent work queued, and frees the agent sandbox for other work between
+checks. Only current, matching evidence from this request can resume the managed
+agent. Stale, mismatched, malformed, or otherwise unusable responses are kept
+for inspection but cannot resume the managed run. Explicit cancellation aborts
+the run without spending an agent retry or starting dependent work. Outside a
 Sandman-created run, the skill continues the configured observation plan through
 its absolute deadline; the final interval repeats.
 
