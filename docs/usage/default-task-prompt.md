@@ -59,6 +59,10 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
     3. If the blocker no longer exists, remove or mark it resolved in `.sandman/task.md`, recompute `## Next Step` from current live state and the first unchecked checklist item, and continue automatically.
     4. If the blocker still exists, refresh its evidence and next executable action before following it.
 
+    ### Runtime-managed external gates
+
+    When a Sandman-created run has no agent-owned work left and its open PR is waiting on CI, review, mergeability, or publication, checkpoint the current head, pending gate, and next action in `.sandman/task.md`, then end the agent session successfully. Sandman's runtime owns the non-terminal wait and re-entry. This overrides any persisted instruction to keep polling that PR gate; after continuation, re-check live state. Outside a Sandman-managed run, poll within the documented budget.
+
     Never stop or exit solely because an earlier attempt recorded a blocker.
 
     ## Already Resolved
@@ -112,7 +116,7 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
     3. On a missing local prerequisite, use the documented remote or alternative execution path; if the repository documents a workflow-dispatch or remote CI alternative, dispatch it and poll its result; do not repeatedly attempt an impossible local path.
     4. Resolve implementation ambiguity from the work item, repository documentation, code, tests, history, or a permitted subagent.
     5. Resolve PR-review ambiguity with the reviewer through a review-command-prefixed PR comment, not with the operator.
-    6. For asynchronous CI, review, or workflow gates, poll for the full documented budget and preserve current-head state across waits.
+    6. For Sandman-created runs, follow the Runtime-managed external gates rule in the Continuation Freshness Guard instead of polling asynchronous PR gates; standalone use polls within the documented budget.
     7. Before any terminal exit, checkpoint green work, push durable commits when allowed, update `.sandman/task.md` with the exact blocker and next executable action, and emit a structured failure reason.
     
     ### Hard Ban

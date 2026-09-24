@@ -27,6 +27,10 @@ Before acting on any persisted blocker or next action:
 3. If the blocker no longer exists, remove or mark it resolved in .sandman/task.md, recompute ## Next Step from current live state and the first unchecked checklist item, and continue automatically.
 4. If the blocker still exists, refresh its evidence and next executable action before following it.
 
+### Runtime-managed external gates
+
+When a Sandman-created run has no agent-owned work left and its open PR is waiting on CI, review, mergeability, or publication, checkpoint the current head, pending gate, and next action in .sandman/task.md, then end the agent session successfully. Sandman's runtime owns the non-terminal wait and re-entry. This overrides any persisted instruction to keep polling that PR gate; after continuation, re-check live state. Outside a Sandman-managed run, poll within the documented budget.
+
 Never stop or exit solely because an earlier attempt recorded a blocker.`
 
 var contextRecoveryGuard = `## Context Recovery Guard

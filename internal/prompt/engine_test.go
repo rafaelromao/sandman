@@ -87,6 +87,8 @@ func TestDefaultPrompt_AFKContractDefinesAutonomousFallback(t *testing.T) {
 		"documented remote or alternative execution path",
 		"workflow-dispatch or remote CI alternative",
 		"dispatch it and poll its result",
+		"For Sandman-created runs, follow the Runtime-managed external gates rule",
+		"standalone use polls within the documented budget",
 		"Before any terminal exit, checkpoint green work",
 		"structured failure reason",
 		"Terminal exits remain valid only for explicit stop conditions",
@@ -104,6 +106,9 @@ func TestDefaultPrompt_AFKContractDefinesAutonomousFallback(t *testing.T) {
 			t.Errorf("AFK contract must not contain operator-dependent fallback %q", forbidden)
 		}
 	}
+	if strings.Contains(prompt, "poll for the full documented budget") {
+		t.Error("AFK contract must not keep a Sandman-managed run polling an external gate")
+	}
 }
 
 func TestDefaultPrompt_RequiresPersistedBlockerRevalidation(t *testing.T) {
@@ -112,6 +117,8 @@ func TestDefaultPrompt_RequiresPersistedBlockerRevalidation(t *testing.T) {
 		"## Continuation Freshness Guard",
 		"Treat every persisted blocker and next action as historical evidence",
 		"Re-check its authoritative live source",
+		"### Runtime-managed external gates",
+		"This overrides any persisted instruction to keep polling that PR gate",
 		"remove or mark it resolved",
 		"Never stop or exit solely because an earlier attempt recorded a blocker",
 	} {

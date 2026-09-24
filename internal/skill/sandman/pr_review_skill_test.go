@@ -183,6 +183,34 @@ func TestPRReviewSkill_BehavioralSmoke(t *testing.T) {
 	}
 }
 
+func TestPRReviewSkill_ManagedWaitYieldsToRuntime(t *testing.T) {
+	text := readPRReviewSkill(t)
+
+	for _, phrase := range []string{
+		"checkpoints the",
+		"current head, pending request, and next step in `.sandman/task.md`",
+		"agent session successfully instead of invoking the wait helper",
+		"runtime owns the non-terminal wait and re-entry",
+		"retains logical dependency",
+		"releases the execution slot between external observations",
+		"Outside a Sandman-created run",
+		"the final interval repeats",
+	} {
+		if !strings.Contains(text, phrase) {
+			t.Errorf("pr-review skill must distinguish managed and standalone wait ownership with %q", phrase)
+		}
+	}
+
+	for _, stale := range []string{
+		"foreground-active while this request is pending",
+		"keeps its sandbox capacity while dependent work remains held",
+	} {
+		if strings.Contains(text, stale) {
+			t.Errorf("pr-review skill must not retain stale managed-wait guidance %q", stale)
+		}
+	}
+}
+
 // TestPRReviewSkill_StaleApprovalHardRule pins the rule that prevents an old
 // informal approval from gating PR-Merge after a new commit has landed. The
 // regression case (run 260720131929-8d25-257) showed the agent classifying a
