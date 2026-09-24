@@ -73,6 +73,10 @@ Implement GitHub issue #1193.
 
 - PR #1208 remains open, awaiting unrelated CI failure to be resolved before merge.
 
+## AFK Rule
+
+For asynchronous CI, review, or workflow gates, poll for the full documented budget and preserve current-head state across waits.
+
 ## Next Step
 
 Wait for CI to be green.
@@ -89,9 +93,19 @@ Wait for CI to be green.
 	if !strings.Contains(got, "## Execution Checklist") {
 		t.Fatalf("expected continuation prompt to preserve ## Execution Checklist, got:\n%s", got)
 	}
+	legacyPolling := "For asynchronous CI, review, or workflow gates, poll for the full documented budget and preserve current-head state across waits."
+	if !strings.Contains(got, legacyPolling) {
+		t.Fatalf("expected continuation prompt to preserve historical polling instruction as evidence, got:\n%s", got)
+	}
+	if strings.Index(got, "## Continuation Freshness Guard") < strings.Index(got, legacyPolling) {
+		t.Fatalf("freshness guard must follow the historical polling instruction so it can supersede it, got:\n%s", got)
+	}
 	for _, phrase := range []string{
 		"Treat every persisted blocker and next action as historical evidence",
 		"Re-check its authoritative live source",
+		"checkpoint the current head, pending gate, and next action in .sandman/task.md",
+		"This overrides any persisted instruction to keep polling that PR gate",
+		"Outside a Sandman-managed run, poll within the documented budget",
 		"Never stop or exit solely because an earlier attempt recorded a blocker",
 	} {
 		if !strings.Contains(got, phrase) {
