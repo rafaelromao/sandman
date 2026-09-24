@@ -4,6 +4,7 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -404,8 +405,25 @@ func writeReviewWaitGHShimWithDependencies(t *testing.T, dir, statePath, callLog
 	t.Helper()
 	issue43Body := "Independent implementation"
 	if dependent {
-		issue43Body = "## Blocked by\\n- #42"
+		issue43Body = "## Blocked by\n- #42"
 	}
+	issue43JSON, err := json.Marshal(struct {
+		Number int      `json:"number"`
+		Title  string   `json:"title"`
+		Body   string   `json:"body"`
+		State  string   `json:"state"`
+		Labels []string `json:"labels"`
+	}{
+		Number: 43,
+		Title:  "independent",
+		Body:   issue43Body,
+		State:  "OPEN",
+		Labels: []string{},
+	})
+	if err != nil {
+		t.Fatalf("marshal issue #43 fixture: %v", err)
+	}
+	issue43JSONArg := "'" + strings.ReplaceAll(string(issue43JSON), "'", "'\\''") + "'"
 	script := strings.ReplaceAll(strings.ReplaceAll(`#!/bin/sh
 set -eu
 state_file="__STATE__"
@@ -433,7 +451,7 @@ if [ "${1:-}" = "api" ]; then
       if [ -f "$state_file" ] && [ "$(tr -d '\\n' < "$state_file")" = "merged" ]; then issue_state=CLOSED; fi
       printf '{"number":42,"title":"parent","body":"Parent implementation","state":"%s","labels":[]}\n' "$issue_state" ; exit 0 ;;
     repos/example/sandbox/issues/43)
-      printf '{"number":43,"title":"independent","body":"__ISSUE_43_BODY__","state":"OPEN","labels":[]}\n' ; exit 0 ;;
+      printf '%s\n' __ISSUE_43_JSON__ ; exit 0 ;;
     */dependencies/blocked_by|*/events|*/sub_issues*)
       printf '[]\n' ; exit 0 ;;
     */comments*)
@@ -464,7 +482,7 @@ fi
 printf 'unexpected gh command: %s\n' "$*" >&2
 exit 1
 `, "__STATE__", statePath), "__CALLS__", callLogPath)
-	script = strings.ReplaceAll(script, "__ISSUE_43_BODY__", issue43Body)
+	script = strings.ReplaceAll(script, "__ISSUE_43_JSON__", issue43JSONArg)
 	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
 		t.Fatalf("write review-wait gh shim: %v", err)
 	}
