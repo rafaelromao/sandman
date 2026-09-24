@@ -81,9 +81,10 @@ func TestPortalRowReopen_PreservesQueuedStreamTailBeforeReplay(t *testing.T) {
       if (!replayStream || typeof replayStream.onmessage !== 'function') {
         throw new Error('reopened active row did not create a replacement stream');
       }
-      // The replay includes the persisted prefix and then a new line. The
-      // prefix must dedupe, while the cached live tail remains between them.
+      // The broadcaster replays the persisted prefix and buffered live tail
+      // before delivering new output. Each replayed cached line must dedupe.
       replayStream.onmessage({ data: '`+snapshotLine+`' });
+      replayStream.onmessage({ data: '`+bufferedLine+`' });
       replayStream.onmessage({ data: '`+replayedLine+`' });
       setTimeout(function () {
         window.__portalRunAllRafs();
@@ -225,5 +226,111 @@ func TestPortalRowReopen_DiscardsStaleReplayBeforeCachedSuffix(t *testing.T) {
 	}
 	if strings.Index(result.RenderedLog, cachedStart) > strings.Index(result.RenderedLog, liveTail) {
 		t.Fatalf("live tail preceded cached suffix: %q (streams=%d)", result.RenderedLog, result.StreamCount)
+	}
+}
+
+// TestPortalRowReopen_DoesNotAcceptAnEarlierRepeatedLineAsReplayCheckpoint
+// covers a replay that contains a duplicate of a cached line before reaching
+// the cached suffix. The duplicate must not release the replay gate early,
+// or following historical lines are appended after the newer cached log.
+func TestPortalRowReopen_DoesNotAcceptAnEarlierRepeatedLineAsReplayCheckpoint(t *testing.T) {
+	const runID = "260924114000-08ee-555"
+	const repeatedLine = "12:30:00 $ cargo test -p host"
+	const cachedTail = "12:41:52 PR-Review: CI pending"
+	const staleLine = "12:27:13 * Grep old source snippet"
+	const liveTail = "12:42:01 Read current source"
+
+	run := map[string]any{
+		"key":         runID,
+		"runId":       runID,
+		"kind":        "active",
+		"status":      "running",
+		"issueLabel":  "#555",
+		"issueNumber": 555,
+		"batchKey":    "260924114000-08ee-555+7",
+		"socketPath":  "/tmp/" + runID + ".sock",
+		"log":         repeatedLine + "\n" + cachedTail + "\n",
+	}
+	runsJSON, err := json.Marshal([]map[string]any{run})
+	if err != nil {
+		t.Fatalf("marshal runs: %v", err)
+	}
+	stateJSON := `{"expandedRunKey":"` + runID + `","tabs":{"` + runID + `":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
+
+	page := buildPortalReproPage(t, stateJSON, runsJSON, `
+    window.__portalRafQueue = [];
+    window.requestAnimationFrame = function (cb) {
+      window.__portalRafQueue.push(cb);
+      return window.__portalRafQueue.length;
+    };
+    window.__portalRunAllRafs = function () {
+      while (window.__portalRafQueue.length) {
+        var cb = window.__portalRafQueue.shift();
+        if (typeof cb === 'function') cb(performance.now());
+      }
+    };
+    window.__portalStreams = [];
+    window.EventSource = function (url) {
+      this.url = url;
+      this.readyState = 1;
+      this.closed = false;
+      this.onmessage = null;
+      this.onerror = null;
+      this.close = function () {
+        this.closed = true;
+        this.readyState = 2;
+      };
+      window.__portalStreams.push(this);
+    };
+    setTimeout(function () {
+      window.__portalRunAllRafs();
+      var row = document.querySelector('tr[data-run-key="`+runID+`"]');
+      if (!row || window.__portalStreams.length !== 1) {
+        throw new Error('initial active row and stream were not mounted');
+      }
+
+      row.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      window.__portalRunAllRafs();
+      row.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      window.__portalRunAllRafs();
+
+      var replayStream = window.__portalStreams[1];
+      if (!replayStream || typeof replayStream.onmessage !== 'function') {
+        throw new Error('reopened active row did not create a replacement stream');
+      }
+      // This earlier occurrence is text-identical to a cached line, but the
+      // replay has not reached the cached suffix yet. The later occurrence
+      // starts the real overlap.
+      replayStream.onmessage({ data: '`+repeatedLine+`' });
+      replayStream.onmessage({ data: '`+staleLine+`' });
+      replayStream.onmessage({ data: '`+repeatedLine+`' });
+      replayStream.onmessage({ data: '`+cachedTail+`' });
+      replayStream.onmessage({ data: '`+liveTail+`' });
+      setTimeout(function () {
+        window.__portalRunAllRafs();
+        var pre = document.querySelector('pre[data-scroll-key="`+runID+`"]');
+        var marker = document.createElement('pre');
+        marker.id = 'portal-reopen-repeated-checkpoint';
+        marker.textContent = JSON.stringify({
+          renderedLog: pre ? pre.getAttribute('data-rendered-log') || '' : '',
+          streamCount: window.__portalStreams.length,
+        });
+        document.body.appendChild(marker);
+      }, 20);
+    }, 80);
+  `)
+
+	dom, _ := runPortalChromium(t, page)
+	payload := extractPortalMarker(t, dom, "portal-reopen-repeated-checkpoint")
+	var result struct {
+		RenderedLog string `json:"renderedLog"`
+		StreamCount int    `json:"streamCount"`
+	}
+	if err := json.Unmarshal([]byte(payload), &result); err != nil {
+		t.Fatalf("parse repeated-checkpoint payload: %v\nraw=%s", err, payload)
+	}
+	want := repeatedLine + "\n" + cachedTail + "\n" + liveTail + "\n"
+	if result.RenderedLog != want {
+		t.Fatalf("reopened log = %q, want %q (streams=%d)", result.RenderedLog, want, result.StreamCount)
 	}
 }

@@ -2184,19 +2184,41 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         }
       }
       const cachedLineList = cachedLog.split('\n').filter(Boolean);
-      const cachedLines = new Set(cachedLineList);
+      // A single cached line is not a safe replay boundary: identical output
+      // can occur earlier in the broadcaster's history, followed by older
+      // lines that would then be appended after this newer cached tail. Match
+      // an ordered suffix window instead. The window is bounded so reconnect
+      // cost does not grow with the full lifetime of a long-running log.
+      const replayCheckpointLines = cachedLineList.slice(-16);
+      awaitingReplayCheckpoint = awaitingReplayCheckpoint && replayCheckpointLines.length > 0;
+      const replayCheckpointPrefix = new Array(replayCheckpointLines.length).fill(0);
+      for (let i = 1, matched = 0; i < replayCheckpointLines.length; i++) {
+        while (matched > 0 && replayCheckpointLines[i] !== replayCheckpointLines[matched]) {
+          matched = replayCheckpointPrefix[matched - 1];
+        }
+        if (replayCheckpointLines[i] === replayCheckpointLines[matched]) matched += 1;
+        replayCheckpointPrefix[i] = matched;
+      }
+      let replayCheckpointMatched = 0;
       streamCoalescer.seedKnownLines(run.key, cachedLineList);
       streamCoalescer.clearBuffer(run.key);
       const src = new EventSource(streamPath + '?runKey=' + encodeURIComponent(backendKey));
       src.onmessage = function (ev) {
         if (awaitingReplayCheckpoint) {
-          // A collapsed pane holds only the portal's newest socket suffix,
-          // while a replacement connection starts with the broadcaster's
-          // older replay. Ignore that lead-in until the two streams overlap;
-          // otherwise unrecognised older lines append after the newer cache.
-          if (!cachedLines.has(ev.data)) return;
-          awaitingReplayCheckpoint = false;
-          if (pre) pre.removeAttribute('data-stream-replay-pending');
+          // Search for the cached suffix as a contiguous sequence. KMP keeps
+          // this linear in replay size and handles repeated lines without
+          // mistaking an earlier occurrence for the handoff boundary.
+          while (replayCheckpointMatched > 0
+            && ev.data !== replayCheckpointLines[replayCheckpointMatched]) {
+            replayCheckpointMatched = replayCheckpointPrefix[replayCheckpointMatched - 1];
+          }
+          if (ev.data === replayCheckpointLines[replayCheckpointMatched]) {
+            replayCheckpointMatched += 1;
+          }
+          if (replayCheckpointMatched === replayCheckpointLines.length) {
+            awaitingReplayCheckpoint = false;
+            if (pre) pre.removeAttribute('data-stream-replay-pending');
+          }
           return;
         }
         streamCoalescer.scheduleLine(run.key, ev.data);
