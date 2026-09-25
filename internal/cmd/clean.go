@@ -35,9 +35,7 @@ func newRealGitRunner(repoPath string) *realGitRunner {
 }
 
 func (r *realGitRunner) removeWorktree(path string) error {
-	cmd := exec.Command("git", "worktree", "remove", "--force", path)
-	cmd.Dir = r.repoPath
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := sandbox.RemoveWorktree(r.repoPath, path); err != nil {
 		if isStaleWorktreeRemovalError(err, out) {
 			if removeErr := sandbox.RemoveWorktreeRegistration(r.repoPath, path); removeErr != nil {
 				return fmt.Errorf("remove stale worktree registration: %w", removeErr)

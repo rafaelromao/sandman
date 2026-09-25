@@ -1839,6 +1839,58 @@ func TestWorktreeSandbox_ParallelStartsDoNotDestroyEachOther(t *testing.T) {
 	}
 }
 
+func TestWorktreeSandbox_ConcurrentStartsKeepRegistrationsValid(t *testing.T) {
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	const count = 8
+	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
+	type startResult struct {
+		index int
+		err   error
+	}
+	sandboxes := make([]*WorktreeSandbox, count)
+	started := make([]bool, count)
+	startGate := make(chan struct{})
+	results := make(chan startResult, count)
+	for i := range count {
+		branch := fmt.Sprintf("concurrent-start-%02d", i)
+		sandboxes[i] = NewWorktreeSandbox(repoDir, worktreeBase, branch, "main")
+		go func(index int, sandbox *WorktreeSandbox) {
+			<-startGate
+			results <- startResult{index: index, err: sandbox.Start(SandboxStart{StrandedReconcile: true})}
+		}(i, sandboxes[i])
+	}
+	close(startGate)
+	for range count {
+		result := <-results
+		if result.err != nil {
+			t.Errorf("Start %d failed: %v", result.index, result.err)
+			continue
+		}
+		started[result.index] = true
+	}
+	t.Cleanup(func() {
+		for i, sandbox := range sandboxes {
+			if started[i] {
+				if err := sandbox.Stop(); err != nil {
+					t.Errorf("Stop %d failed: %v", i, err)
+				}
+			}
+		}
+	})
+
+	worktrees := runGit(t, repoDir, "worktree", "list", "--porcelain")
+	for i, sandbox := range sandboxes {
+		if !started[i] {
+			continue
+		}
+		if !strings.Contains(worktrees, "branch refs/heads/"+sandbox.branch) {
+			t.Errorf("worktree registration for %q is missing or invalid:\n%s", sandbox.branch, worktrees)
+		}
+	}
+}
+
 func TestRemoveWorktreeRegistration_MatchesStoredPath(t *testing.T) {
 	repoDir := t.TempDir()
 	registrations := filepath.Join(repoDir, ".git", "worktrees")

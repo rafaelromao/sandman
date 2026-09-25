@@ -58,6 +58,12 @@ func (s *WorktreeSandbox) RestoreHostPaths() error {
 // ride on four independent setters; this method is the only configuration
 // entry point.
 func (s *WorktreeSandbox) Start(opts SandboxStart) error {
+	return withGitWorktreeAdminLock(s.repoPath, func() error {
+		return s.start(opts)
+	})
+}
+
+func (s *WorktreeSandbox) start(opts SandboxStart) error {
 	s.override = opts.Override
 	s.continueRun = opts.Continue
 	s.strandedReconcile = opts.StrandedReconcile
@@ -539,12 +545,26 @@ func (s *WorktreeSandbox) ExecInteractive(ctx context.Context, command string) e
 
 // Stop cleans up the worktree.
 func (s *WorktreeSandbox) Stop() error {
-	cmd := exec.Command("git", "worktree", "remove", "--force", s.workDir)
-	cmd.Dir = s.repoPath
-	if out, err := cmd.CombinedOutput(); err != nil {
+	out, err := RemoveWorktree(s.repoPath, s.workDir)
+	if err != nil {
 		return fmt.Errorf("git worktree remove: %w\n%s", err, out)
 	}
 	return nil
+}
+
+// RemoveWorktree removes a linked worktree while holding the repository's
+// worktree-administration lock. The output is returned so callers can retain
+// their existing error classification and reporting.
+func RemoveWorktree(repoPath, worktreePath string) ([]byte, error) {
+	var output []byte
+	err := withGitWorktreeAdminLock(repoPath, func() error {
+		cmd := exec.Command("git", "worktree", "remove", "--force", worktreePath)
+		cmd.Dir = repoPath
+		var err error
+		output, err = cmd.CombinedOutput()
+		return err
+	})
+	return output, err
 }
 
 // WritePrompt writes the prompt content to .sandman/task.md in the worktree.
@@ -721,7 +741,7 @@ func parseCheckedOutPath(out []byte) (string, bool) {
 //
 // Issue #2187.
 func (s *WorktreeSandbox) removePrunableWorktreeRegistration() error {
-	return RemoveWorktreeRegistration(s.repoPath, s.workDir)
+	return removeWorktreeRegistration(s.repoPath, s.workDir)
 }
 
 // RemoveWorktreeRegistration removes only the registration corresponding to
@@ -729,6 +749,12 @@ func (s *WorktreeSandbox) removePrunableWorktreeRegistration() error {
 // which can remove live sibling registrations when host paths are not visible
 // from a container.
 func RemoveWorktreeRegistration(repoPath, worktreePath string) error {
+	return withGitWorktreeAdminLock(repoPath, func() error {
+		return removeWorktreeRegistration(repoPath, worktreePath)
+	})
+}
+
+func removeWorktreeRegistration(repoPath, worktreePath string) error {
 	registrations := filepath.Join(repoPath, ".git", "worktrees")
 	entries, err := os.ReadDir(registrations)
 	if err != nil {

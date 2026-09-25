@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
 // ClearReviewArtifacts removes the review worktree directory and branch
@@ -28,7 +30,7 @@ func ClearReviewArtifacts(branch, worktreeDir string, logWriter io.Writer) {
 	}
 	wtPath := filepath.Join(worktreeDir, branch)
 
-	if out, err := exec.Command("git", "worktree", "remove", "--force", wtPath).CombinedOutput(); err != nil && !isMissingWorktreeErr(out) {
+	if out, err := sandbox.RemoveWorktree(".", wtPath); err != nil && !isMissingWorktreeErr(out) {
 		fmt.Fprintf(logWriter, "error: remove review worktree %s: %v: %s\n", wtPath, err, out)
 	}
 	if out, err := exec.Command("git", "branch", "-D", branch).CombinedOutput(); err != nil && !isMissingBranchErr(out) {

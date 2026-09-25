@@ -4404,7 +4404,7 @@ func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, eve
 	wtPath := filepath.Join(worktreeDir, branch)
 
 	// Remove worktree (may fail if already removed — idempotent)
-	if out, err := exec.Command("git", "worktree", "remove", "--force", wtPath).CombinedOutput(); err != nil {
+	if out, err := sandbox.RemoveWorktree(".", wtPath); err != nil {
 		if (isPrunableWorktreeError(err, out) || isMissingWorktreeError(err, out)) && strandedReconcile != nil && *strandedReconcile {
 			if rmErr := os.RemoveAll(wtPath); rmErr != nil {
 				fmt.Fprintf(logWriter, "error: remove worktree dir %s for issue %d: %v\n", wtPath, issueNumber, rmErr)
