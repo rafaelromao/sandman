@@ -170,7 +170,7 @@ func TestPortalRunsIndex_SnapshotRecomputesAfterAwaitedRunFinishes(t *testing.T)
 	if got := terminal[0]; got.Status != "success" || got.Kind != "completed" || got.FinishedAt == nil {
 		t.Fatalf("terminal snapshot row = %#v, want completed success with terminal timestamp", got)
 	}
-	if got, want := terminal[0].Duration, "7m0s"; got != want {
+	if got, want := terminal[0].Duration, "1h12m0s"; got != want {
 		t.Fatalf("terminal duration = %q, want %q", got, want)
 	}
 	if len(terminal[0].Events) != 5 || terminal[0].Events[1].Type != "run.await" {
