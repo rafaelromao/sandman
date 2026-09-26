@@ -65,6 +65,9 @@ type outputParser interface {
 	Flush() error
 	SessionID() string
 	SessionNotFound() bool
+	// UsageLimitReached reports a usage-limit response the parser recognised
+	// in the raw stream before rendering it away.
+	UsageLimitReached() bool
 	setDestination(dst io.Writer)
 }
 
@@ -247,6 +250,15 @@ func firstSessionID(outputs ...outputParser) string {
 func sessionNotFound(outputs ...outputParser) bool {
 	for _, output := range outputs {
 		if output != nil && output.SessionNotFound() {
+			return true
+		}
+	}
+	return false
+}
+
+func parsersReachedUsageLimit(outputs ...outputParser) bool {
+	for _, output := range outputs {
+		if output != nil && output.UsageLimitReached() {
 			return true
 		}
 	}

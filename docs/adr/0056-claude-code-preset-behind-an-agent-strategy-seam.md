@@ -77,6 +77,12 @@ window. A recognised limit enters the existing usage-limit await, whose
 re-entry renders `--continue`. The review daemon's daemon-wide quota gate
 (ADR-0029) now applies to any review agent whose strategy awaits usage limits.
 
+**Claude output is rendered like OpenCode's.** The Claude strategy's output
+parser turns stream-json records into readable lines (agent text, tool labels,
+tool errors, permission denials, and a result summary) and drops progress
+records. Because rendering removes the raw `result` record, the parser applies
+the usage-limit rule to the raw record itself and reports it to the run loop.
+
 **Models follow the agent's preset.** Each preset declares a default model
 (`opencode/big-pickle`, `sonnet`). The global `model` key applies only to
 agents that share the default agent's preset; another preset uses its own
@@ -117,7 +123,7 @@ strategy seam.
 
 - Capabilities that are not wired for Claude are limitations rather than
   features: exact-ID session identity, context rollover, the host/sandbox
-  version-drift warning, readable `run.log` rendering, and macOS Keychain
+  version-drift warning, and macOS Keychain
   credentials in containers. `docs/usage/agent-compatibility.md` lists each
   one with its workaround.
 - Claude's usage-limit rule depends on the documented message text and on the

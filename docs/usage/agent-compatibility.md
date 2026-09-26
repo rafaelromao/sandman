@@ -162,7 +162,8 @@ through `permissions.allow` rules in your own `~/.claude/settings.json`.
 
 Podman runs the agent as root inside the container, and Claude Code refuses
 `--dangerously-skip-permissions` as root outside a recognized sandbox. The preset
-exports `IS_SANDBOX=1` for that check. If your Claude Code version still refuses,
+exports `IS_SANDBOX=1` for that check, which Claude Code 2.1.283 honours: the
+session starts in `bypassPermissions` mode. If a later version refuses again,
 use a custom command that pre-approves tools instead of skipping permission
 checks:
 
@@ -178,6 +179,16 @@ agents:
 
 A custom command receives no `--model`, `--effort`, or `--continue` from Sandman;
 add `--model <alias>` to it directly.
+
+Bypass mode does not disable every check. Claude Code still denies some compound
+shell commands (`Permission denied: Bash` followed by `This Bash command
+contains multiple operations`), and the agent normally retries with simpler
+commands. If your `~/.claude/settings.json` enables Claude Code's own sandbox,
+the copied settings make every container run print `Sandbox disabled: ...
+bubblewrap (bwrap) not installed, socat not installed`. The container is
+already the isolation boundary, so the warning is harmless; add `bubblewrap
+socat` to the Dockerfile's `apt-get install` line if you want Claude Code's
+sandbox inside the container too.
 
 ### Session reuse
 
@@ -211,15 +222,31 @@ to `review_agent: claude` and enters its daemon-wide quota pause.
 
 ### Readable logs
 
-`run.log` keeps the raw stream-json records, one per line, behind Sandman's
-`[run-id] HH:MM:SS` prefix. To read the agent's text:
+The built-in command's stream-json is rendered into readable lines in the
+terminal, `run.log`, and the portal, in the same style as OpenCode runs:
 
-```bash
-sed 's/^\[[^]]*\] [0-9:]* //' run.log | jq -rR 'fromjson? | select(.type=="assistant") | .message.content[]? | select(.type=="text") | .text'
+```text
+Claude Code 2.1.283 · model claude-opus-5-5 · permissions bypassPermissions · session ed547cbf-...
+Reading the issue first.
+$ gh issue view 2514 --json body
+→ Read /workspace/internal/cmd/run.go
+→ Skill "sandman-implement"
+Permission denied: Bash
+Tool error: This Bash command contains multiple operations. ...
+Result: success · 12 turns · 1m1s · $1.23
 ```
 
-The final `result` record also carries `total_cost_usd`, `num_turns`, and
-per-model usage for the attempt.
+Agent text is kept as written; tool calls become one-line labels (`$ <command>`
+for shell commands, `→ <Tool> <detail>` otherwise); failed tool results,
+permission denials, compaction, and non-`allowed` rate-limit warnings get their
+own line; the final `result` record becomes a summary with turns, duration, and
+cost, followed by `Error: <message>` when the run failed. Thinking blocks,
+thinking-token estimates, command lists, and partial stream events are dropped,
+successful tool output is not repeated, and lines that are not JSON (Claude
+Code's own warnings) pass through unchanged. Usage limits are recognised on the
+raw `result` record before it is rendered.
+
+A custom `command` under the `claude` preset keeps its own output unchanged.
 
 ### Supported and limited capabilities
 
@@ -235,7 +262,7 @@ per-model usage for the attempt.
 | Exact-ID session identity (`session.json`) | Limitation: OpenCode only; Claude reuse is per worktree |
 | Session reuse across batches in container mode | Limitation: use worktree mode, or add `~/.claude/projects` as a live mount in a custom provider (exposes every host transcript to the container) |
 | Context-limit rollover and the `context-exhausted` retry reason | Limitation by design: Claude Code compacts automatically; a failed compaction takes the ordinary retry path |
-| Readable `run.log` rendering | Limitation: raw stream-json; use the `jq` recipe above |
+| Readable `run.log` rendering | Supported for the built-in command; custom commands keep raw output |
 | Host/sandbox version-drift warning | Limitation: OpenCode only; the image pins a version and disables auto-update |
 | macOS Keychain credentials in containers | Limitation for every preset: use `claude setup-token` |
 | `context_error_phrases` | OpenCode only |

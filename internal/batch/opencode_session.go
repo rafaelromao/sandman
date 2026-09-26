@@ -643,6 +643,10 @@ func (w *opencodeOutput) SessionID() string {
 	return w.capture.sessionID
 }
 
+// UsageLimitReached is always false: the OpenCode usage-limit rule matches
+// the rendered `Error:` line, which the line detector observes.
+func (w *opencodeOutput) UsageLimitReached() bool { return false }
+
 func (w *opencodeOutput) SessionNotFound() bool {
 	w.capture.mu.Lock()
 	defer w.capture.mu.Unlock()

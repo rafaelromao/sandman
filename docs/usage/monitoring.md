@@ -189,7 +189,7 @@ Payload shape depends on the abort path:
 
 Each agent run writes its output to the run's log file inside the batch directory. The file captures both stdout and stderr from the agent process, prefixed with run-specific timestamps.
 
-The built-in `opencode` preset renders OpenCode's JSON events into readable text. The built-in `claude` preset keeps Claude Code's raw stream-json records, one per line, ending with a `result` record; see [Agent Compatibility > Readable logs](agent-compatibility.md#readable-logs) for a `jq` recipe.
+The built-in `opencode` preset renders OpenCode's JSON events into readable text. The built-in `claude` preset renders Claude Code's stream-json the same way, ending with a `Result:` summary line; see [Agent Compatibility > Readable logs](agent-compatibility.md#readable-logs).
 
 ## Worktree hints
 

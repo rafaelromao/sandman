@@ -286,6 +286,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 				fallbackUsed = true
 				fallbackOut, fallbackErr := strategy.NewOutputParsers(r.warningWriter())
 				execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, fallbackOut, fallbackErr)
+				parsedStdout, parsedStderr = fallbackOut, fallbackErr
 				strategy.PersistSession(r, fallbackOut, fallbackErr)
 			}
 		}
@@ -294,7 +295,8 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		strategy.PersistSession(r, parsedStdout, parsedStderr)
 	}
 	if execErr != nil {
-		r.usageLimitReached = ctx.Err() == nil && usageDetector != nil && usageDetector.Triggered()
+		r.usageLimitReached = ctx.Err() == nil &&
+			((usageDetector != nil && usageDetector.Triggered()) || parsersReachedUsageLimit(parsedStdout, parsedStderr))
 		r.status = "failure"
 		return r.Result()
 	}

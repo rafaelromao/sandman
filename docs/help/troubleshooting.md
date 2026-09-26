@@ -66,6 +66,8 @@ See [`sandman stranded`](../usage/commands.md#sandman-stranded).
      ```
 
   `.sandman/` is gitignored and Sandman writes the config with owner-only permissions, but treat the file as a secret. The token is exported on the agent's command line and is visible to `ps` on the host during a run. When it expires the same `Not logged in` or `Login expired` message returns; create a new token. Worktree runs do not need the token: they use the host login.
+- `⚠ Sandbox disabled: sandbox is enabled but dependencies are missing: bubblewrap (bwrap) not installed, socat not installed` at the top of every run: your `~/.claude/settings.json` enables Claude Code's own sandbox, and the image lacks its tools. The container already isolates the run, so this is harmless; add `bubblewrap socat` to the Dockerfile's `apt-get install` line to enable it anyway.
+- `Permission denied: Bash` with `This Bash command contains multiple operations`: a Claude Code safety check that still applies in bypass mode to some compound commands. The agent normally retries with simpler commands; nothing to fix in Sandman.
 - Every edit or command is denied in a worktree run: print mode cannot answer permission prompts. Pass `--dangerously-skip-permissions` or allow the tools in `~/.claude/settings.json`.
 - A run waits with `await_reason: usage-limit`: your subscription hit its session, weekly, or model limit. Sandman probes every ten minutes for up to five hours and resumes the same conversation; see [Agent Compatibility > Usage limits](../usage/agent-compatibility.md#usage-limits).
 

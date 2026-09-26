@@ -154,8 +154,13 @@ func TestRunBatch_ClaudePresetWorktreeEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read run.log: %v", err)
 	}
-	if !strings.Contains(string(runLog), `"is_error":true,"result":"You've hit your session limit`) || !strings.Contains(string(runLog), `"result":"done"`) {
-		t.Fatalf("run.log = %q, want both raw stream-json result records", runLog)
+	for _, want := range []string{"Error: You've hit your session limit · resets 3pm", "Result: success"} {
+		if !strings.Contains(string(runLog), want) {
+			t.Fatalf("run.log = %q, want rendered %q", runLog, want)
+		}
+	}
+	if strings.Contains(string(runLog), `"type":"result"`) {
+		t.Fatalf("run.log = %q, want rendered records instead of raw stream-json", runLog)
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(runLogs[0]), "session.json")); !os.IsNotExist(err) {
 		t.Fatalf("session.json stat = %v; claude runs keep no OpenCode session identity", err)

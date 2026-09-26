@@ -11,9 +11,9 @@ import (
 // claudeStrategy runs the unmodified Claude Code CLI in print mode
 // (`claude -p --output-format stream-json --verbose`). It reuses sessions
 // through Claude Code's working-directory-scoped --continue, relies on Claude
-// Code's automatic compaction instead of context rollover, streams the raw
-// stream-json records, and recognises subscription usage limits on the final
-// result record.
+// Code's automatic compaction instead of context rollover, renders the
+// stream-json records as readable lines, and recognises subscription usage
+// limits on the final result record.
 type claudeStrategy struct {
 	builtInCommand bool
 }
@@ -52,8 +52,13 @@ func (claudeStrategy) RetryAfterMissingSession(*AgentRun, string, error, outputP
 
 func (claudeStrategy) PersistSession(*AgentRun, outputParser, outputParser) {}
 
-func (claudeStrategy) NewOutputParsers(io.Writer) (outputParser, outputParser) {
-	return nil, nil
+// NewOutputParsers renders the built-in command's stream-json into readable
+// lines. Custom commands keep their own output untouched.
+func (s claudeStrategy) NewOutputParsers(io.Writer) (outputParser, outputParser) {
+	if !s.builtInCommand {
+		return nil, nil
+	}
+	return newClaudeOutputs()
 }
 
 func (claudeStrategy) ContextRolloverDetector([]string, func()) *contextRolloverDetector {

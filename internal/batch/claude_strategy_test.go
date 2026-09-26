@@ -145,8 +145,8 @@ func TestAgentRun_ClaudePresetRendersPrintModeCommand(t *testing.T) {
 			if launch.command != tt.want {
 				t.Fatalf("command:\n got %s\nwant %s", launch.command, tt.want)
 			}
-			if !strings.Contains(launch.runLog, `{"type":"result","subtype":"success","is_error":false,"result":"SMOKE_OK"}`) {
-				t.Fatalf("run.log = %q, want the raw stream-json records", launch.runLog)
+			if !strings.Contains(launch.runLog, "Result: success") || strings.Contains(launch.runLog, `"type":"result"`) {
+				t.Fatalf("run.log = %q, want the rendered result instead of raw stream-json", launch.runLog)
 			}
 			if _, err := os.Stat(filepath.Join(launch.root, "run", "session.json")); !os.IsNotExist(err) {
 				t.Fatalf("session.json stat err = %v, want no OpenCode session identity for claude", err)
