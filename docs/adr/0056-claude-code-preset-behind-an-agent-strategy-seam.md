@@ -47,7 +47,9 @@ runs `claude -p --output-format stream-json --verbose` with `--continue`,
 `--effort` rendered from the existing template keys. `stream-json` with
 `--verbose` is the only print-mode format that streams while the agent works,
 which the idle-timeout heartbeat needs. The preset exports
-`DISABLE_AUTOUPDATER`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, and
+`DISABLE_AUTOUPDATER`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`,
+`CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` (Sandman's idle timeout and retries
+bound hung background work instead of a fixed 600-second kill), and
 `IS_SANDBOX` (containers run as root under podman, and Claude Code refuses to
 skip permission prompts as root outside a recognized sandbox), mounts
 `~/.claude`, `~/.agents`, and `~/.claude.json`, and keeps transcripts, caches,
@@ -82,6 +84,8 @@ parser turns stream-json records into readable lines (agent text, tool labels,
 tool errors, permission denials, and a result summary) and drops progress
 records. Because rendering removes the raw `result` record, the parser applies
 the usage-limit rule to the raw record itself and reports it to the run loop.
+Dropped progress records still refresh the run log's modification time, so
+rendering never changes what the idle-timeout heartbeat sees.
 
 **Models follow the agent's preset.** Each preset declares a default model
 (`opencode/big-pickle`, `sonnet`). The global `model` key applies only to

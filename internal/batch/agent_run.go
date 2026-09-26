@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/config"
@@ -135,6 +136,15 @@ func (r *AgentRun) execute(ctx context.Context, command string, stdout, stderr i
 
 	combinedOut := io.MultiWriter(prefixedOut, logPrefixedOut)
 	combinedErr := io.MultiWriter(prefixedErr, logPrefixedErr)
+	touchLog := func() {
+		now := time.Now()
+		_ = os.Chtimes(logPath, now, now)
+	}
+	for _, parser := range []outputParser{parsedStdout, parsedStderr} {
+		if observer, ok := parser.(progressObserver); ok {
+			observer.setProgress(touchLog)
+		}
+	}
 	if parsedStdout != nil {
 		parsedStdout.setDestination(combinedOut)
 		combinedOut = parsedStdout

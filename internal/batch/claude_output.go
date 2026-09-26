@@ -21,9 +21,10 @@ import (
 // Rendering removes the raw final `result` record from the log, so the
 // usage-limit rule is applied here, to the raw record, before rendering.
 type claudeOutput struct {
-	dst   io.Writer
-	state *claudeOutputState
-	buf   bytes.Buffer
+	dst      io.Writer
+	progress func()
+	state    *claudeOutputState
+	buf      bytes.Buffer
 }
 
 type claudeOutputState struct {
@@ -38,6 +39,12 @@ func newClaudeOutputs() (outputParser, outputParser) {
 }
 
 func (w *claudeOutput) setDestination(dst io.Writer) { w.dst = dst }
+
+// setProgress registers the callback that reports liveness for records the
+// renderer drops. The idle-timeout heartbeat watches run.log's modification
+// time, and a long tool call or long thinking emits only progress records, so
+// dropping them must still count as activity.
+func (w *claudeOutput) setProgress(progress func()) { w.progress = progress }
 
 func (w *claudeOutput) Write(p []byte) (int, error) {
 	n, err := w.buf.Write(p)
@@ -116,6 +123,9 @@ func (w *claudeOutput) writeLine(line []byte, newline bool) error {
 	case "stream_event", "tool_progress":
 	default:
 		return w.writeRaw(line, newline)
+	}
+	if len(lines) == 0 && w.progress != nil {
+		w.progress()
 	}
 	for _, rendered := range lines {
 		if _, err := io.WriteString(w.dst, rendered+"\n"); err != nil {

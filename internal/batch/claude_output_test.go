@@ -2,8 +2,18 @@ package batch
 
 import (
 	"bytes"
+	"context"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/paths"
+	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
 func renderClaudeStream(t *testing.T, stream string) (string, outputParser) {
@@ -87,4 +97,70 @@ func TestClaudeOutput_KeepsUnknownAndPartialLines(t *testing.T) {
 	if got != want {
 		t.Fatalf("rendered = %q, want unknown records and a trailing partial line unchanged", got)
 	}
+}
+
+func TestClaudeOutput_DroppedRecordsReportProgress(t *testing.T) {
+	var out bytes.Buffer
+	stdout, _ := newClaudeOutputs()
+	stdout.setDestination(&out)
+	progress := 0
+	stdout.(progressObserver).setProgress(func() { progress++ })
+	_, _ = stdout.Write([]byte(strings.Join([]string{
+		`{"type":"tool_progress","tool_name":"Bash","elapsed_time_seconds":30,"heartbeat":true}`,
+		`{"type":"system","subtype":"thinking_tokens","estimated_tokens":50}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"visible"}]}}`,
+	}, "\n") + "\n"))
+	if progress != 2 {
+		t.Fatalf("progress calls = %d, want one per dropped record", progress)
+	}
+	if out.String() != "visible\n" {
+		t.Fatalf("rendered = %q", out.String())
+	}
+}
+
+// The idle-timeout heartbeat watches run.log's modification time. A long tool
+// call emits only heartbeat records, which the renderer drops, so they must
+// still advance the log's modification time.
+func TestAgentRun_ClaudeDroppedHeartbeatsKeepRunLogFresh(t *testing.T) {
+	stale := time.Now().Add(-time.Hour)
+	var before, after time.Time
+	root := t.TempDir()
+	sb := &claudeHeartbeatSandbox{fakeSandbox: fakeSandbox{workDir: filepath.Join(root, "worktree")}, logPath: filepath.Join(root, "run", "run.log"), stale: stale, before: &before, after: &after}
+	agent := config.BuiltInAgentPresets["claude"].Agent("claude")
+	run := NewAgentRunWithLayout(&github.Issue{Number: 42}, "42-claude", sb, paths.NewLayout(&config.Config{}, root))
+	run.preset = agent.Preset
+	run.runID = "run-1"
+	run.runFolder = filepath.Join(root, "run")
+	run.outputWriter = &bytes.Buffer{}
+	if result := run.Run(context.Background(), &spyRenderer{result: "task"}, agent.Command, prompt.RenderConfig{}); result.Status != "success" {
+		t.Fatalf("status = %q", result.Status)
+	}
+	if !before.Equal(stale) {
+		t.Fatalf("setup mtime = %v, want %v", before, stale)
+	}
+	if !after.After(stale) {
+		t.Fatalf("run.log mtime after a dropped heartbeat = %v, want it advanced past %v", after, stale)
+	}
+}
+
+type claudeHeartbeatSandbox struct {
+	fakeSandbox
+	logPath       string
+	stale         time.Time
+	before, after *time.Time
+}
+
+func (s *claudeHeartbeatSandbox) Exec(_ context.Context, _ string, stdout, _ io.Writer) error {
+	if err := os.Chtimes(s.logPath, s.stale, s.stale); err != nil {
+		return err
+	}
+	if info, err := os.Stat(s.logPath); err == nil {
+		*s.before = info.ModTime()
+	}
+	_, _ = io.WriteString(stdout, `{"type":"tool_progress","tool_name":"Bash","elapsed_time_seconds":30,"heartbeat":true}`+"\n")
+	if info, err := os.Stat(s.logPath); err == nil {
+		*s.after = info.ModTime()
+	}
+	_, _ = io.WriteString(stdout, `{"type":"result","subtype":"success","is_error":false,"num_turns":1}`+"\n")
+	return nil
 }

@@ -92,7 +92,7 @@ func runClaudeLaunch(t *testing.T, configure func(*AgentRun), results ...opencod
 }
 
 func TestAgentRun_ClaudePresetRendersPrintModeCommand(t *testing.T) {
-	const env = "export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1; export DISABLE_AUTOUPDATER=1; export IS_SANDBOX=1; "
+	const env = "export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1; export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0; export DISABLE_AUTOUPDATER=1; export IS_SANDBOX=1; "
 	skip := true
 	noSkip := false
 	ok := opencodeExecResult{stdout: `{"type":"system","subtype":"init","session_id":"abc"}` + "\n" + `{"type":"result","subtype":"success","is_error":false,"result":"SMOKE_OK"}` + "\n"}

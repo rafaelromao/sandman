@@ -167,6 +167,10 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 		Env: map[string]string{
 			"DISABLE_AUTOUPDATER":                      "1",
 			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+			// Print mode otherwise kills background tasks still running 600s
+			// after the main turn ends. Sandman's idle timeout and retries
+			// already bound a run whose background work hangs.
+			"CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "0",
 			// Containers run the agent as root under podman. Claude Code
 			// refuses --dangerously-skip-permissions as root unless it runs
 			// inside a recognized sandbox.

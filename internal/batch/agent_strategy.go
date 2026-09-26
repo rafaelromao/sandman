@@ -71,6 +71,14 @@ type outputParser interface {
 	setDestination(dst io.Writer)
 }
 
+// progressObserver is implemented by parsers that drop progress-only records.
+// The run loop hands them a callback that keeps the run log's modification
+// time, which the idle-timeout heartbeat watches, advancing for dropped
+// records, so rendering never changes liveness.
+type progressObserver interface {
+	setProgress(progress func())
+}
+
 // agentStrategies maps each built-in agent preset to its strategy
 // constructor. The constructor learns whether the launch runs the preset's
 // own command template: a custom command under a built-in preset keeps the

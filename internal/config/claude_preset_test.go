@@ -28,6 +28,7 @@ func TestBuiltInAgentPresets_ClaudeRunsUnmodifiedPrintMode(t *testing.T) {
 	wantEnv := map[string]string{
 		"DISABLE_AUTOUPDATER":                      "1",
 		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+		"CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS":     "0",
 		"IS_SANDBOX":                               "1",
 	}
 	if !reflect.DeepEqual(preset.Env, wantEnv) {

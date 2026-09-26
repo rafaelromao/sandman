@@ -78,10 +78,17 @@ claude -p --output-format stream-json --verbose [--continue] [--dangerously-skip
   (`variant`/`review_variant`); Claude Code validates both.
 
 The preset exports `DISABLE_AUTOUPDATER=1`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`,
-and `IS_SANDBOX=1`, and mounts `~/.claude`, `~/.agents`, and `~/.claude.json` into
+`CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, and `IS_SANDBOX=1`, and mounts `~/.claude`, `~/.agents`, and `~/.claude.json` into
 containers. Transcripts, caches, and logs under `~/.claude` stay out of the
 per-batch config snapshot; credentials, settings, skills, agents, commands,
 plugins, and `CLAUDE.md` are copied.
+
+Without `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, print mode terminates
+background tasks (background shell commands, subagents) that are still running
+600 seconds after the main turn ends, and logs `Background tasks still running
+after 600s; terminating`. Sandman leaves them running: a run whose background
+work hangs stops producing output and is ended by `run_idle_timeout`, then takes
+the ordinary retry path.
 
 Claude Code reads `AGENTS.md` natively from version 2.1.277; scaffolded images pin
 a newer version.
@@ -245,7 +252,9 @@ thinking-token estimates, command lists, partial stream events, and
 long-running tool heartbeats are dropped,
 successful tool output is not repeated, and lines that are not JSON (Claude
 Code's own warnings) pass through unchanged. Usage limits are recognised on the
-raw `result` record before it is rendered.
+raw `result` record before it is rendered. Dropped records still refresh
+`run.log`'s modification time, so a long tool call or long thinking keeps
+counting as activity for `run_idle_timeout`.
 
 A custom `command` under the `claude` preset keeps its own output unchanged.
 
