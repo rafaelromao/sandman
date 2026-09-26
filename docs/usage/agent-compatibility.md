@@ -241,7 +241,8 @@ for shell commands, `→ <Tool> <detail>` otherwise); failed tool results,
 permission denials, compaction, and non-`allowed` rate-limit warnings get their
 own line; the final `result` record becomes a summary with turns, duration, and
 cost, followed by `Error: <message>` when the run failed. Thinking blocks,
-thinking-token estimates, command lists, and partial stream events are dropped,
+thinking-token estimates, command lists, partial stream events, and
+long-running tool heartbeats are dropped,
 successful tool output is not repeated, and lines that are not JSON (Claude
 Code's own warnings) pass through unchanged. Usage limits are recognised on the
 raw `result` record before it is rendered.

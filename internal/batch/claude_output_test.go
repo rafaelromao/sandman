@@ -34,6 +34,7 @@ func TestClaudeOutput_RendersStreamJSONReadably(t *testing.T) {
 		`{"type":"system","subtype":"permission_denied","tool_name":"Bash","tool_use_id":"t4","decision_reason_type":"safety"}`,
 		`{"type":"user","message":{"content":[{"type":"tool_result","content":"This Bash command contains multiple operations.\nThe following part requires approval","is_error":true,"tool_use_id":"t4"}]}}`,
 		`{"type":"stream_event","event":{"type":"content_block_delta"}}`,
+		`{"type":"tool_progress","tool_use_id":"t5-heartbeat-0","tool_name":"Bash","parent_tool_use_id":"t5","elapsed_time_seconds":30,"heartbeat":true,"session_id":"ed547cbf"}`,
 		`{"type":"system","subtype":"compact_boundary"}`,
 		`{"type":"result","subtype":"success","is_error":false,"num_turns":12,"duration_ms":61400,"total_cost_usd":1.234,"result":"Done.","session_id":"ed547cbf"}`,
 	}, "\n") + "\n"

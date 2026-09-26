@@ -15,7 +15,7 @@ import (
 // OpenCode parser: agent text as-is, tool calls as one-line labels, tool
 // errors, permission denials, and a closing result summary. Progress and
 // bookkeeping records (thinking-token estimates, command lists, partial
-// stream events) are dropped. Lines that are not JSON objects, such as
+// stream events, long-running tool heartbeats) are dropped. Lines that are not JSON objects, such as
 // Claude Code's own stderr warnings, pass through unchanged.
 //
 // Rendering removes the raw final `result` record from the log, so the
@@ -113,7 +113,7 @@ func (w *claudeOutput) writeLine(line []byte, newline bool) error {
 		lines = claudeToolErrorLines(record)
 	case "result":
 		lines = claudeResultLines(record)
-	case "stream_event":
+	case "stream_event", "tool_progress":
 	default:
 		return w.writeRaw(line, newline)
 	}
