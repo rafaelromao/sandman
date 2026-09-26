@@ -26,19 +26,21 @@ const coldSpecificationBody = "## Problem Statement\n\nImported tickets keep the
 
 // specDiscoveryGitHubClient is the GitHub boundary for Specification
 // discovery through `sandman run`. It extends fakeGitHubClient with
-// per-Issue comments that reflect its own posts, mention-search results
-// kept apart from the repo-wide `is:open` search, and the optional
+// per-Issue comments that reflect its own posts, native sub-issues,
+// mention-search results kept apart from the repo-wide `is:open` search,
+// and the optional
 // ADR-0044 capabilities (open-Issue listing and Issue comment posting)
 // that the production GitHub client provides.
 type specDiscoveryGitHubClient struct {
 	*fakeGitHubClient
 
-	state    sync.Mutex
-	comments map[int][]github.IssueComment
-	mentions map[int][]github.Issue
-	listings int
-	listErr  error
-	posts    []postedIssueComment
+	state     sync.Mutex
+	comments  map[int][]github.IssueComment
+	subIssues map[int][]int
+	mentions  map[int][]github.Issue
+	listings  int
+	listErr   error
+	posts     []postedIssueComment
 	// postErr fails every post; with postErrStores the comment still
 	// lands, like a gh timeout that fires after GitHub stored it.
 	postErr       error
@@ -54,6 +56,7 @@ func newSpecDiscoveryGitHub(issues map[int]*github.Issue) *specDiscoveryGitHubCl
 	return &specDiscoveryGitHubClient{
 		fakeGitHubClient: &fakeGitHubClient{issues: issues},
 		comments:         make(map[int][]github.IssueComment),
+		subIssues:        make(map[int][]int),
 		mentions:         make(map[int][]github.Issue),
 	}
 }
@@ -90,6 +93,12 @@ func (c *specDiscoveryGitHubClient) ListIssueComments(ctx context.Context, numbe
 	c.state.Lock()
 	defer c.state.Unlock()
 	return append([]github.IssueComment(nil), c.comments[number]...), nil
+}
+
+func (c *specDiscoveryGitHubClient) ListSubIssues(ctx context.Context, parent int) ([]int, error) {
+	c.state.Lock()
+	defer c.state.Unlock()
+	return append([]int(nil), c.subIssues[parent]...), nil
 }
 
 // ListOpenIssues lists every open Issue in ascending number order, like
@@ -296,5 +305,88 @@ func TestRun_MarkerPostFailureIsReportedAndChildrenStayInBatch(t *testing.T) {
 	}
 	if len(gh.posts) != 1 {
 		t.Errorf("expected exactly one post attempt, got %+v", gh.posts)
+	}
+}
+
+func TestRun_CheaperSpecificationSourcesKeepScanSkipped(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		specBody string
+		seed     func(gh *specDiscoveryGitHubClient)
+	}{
+		{
+			name:     "body child section",
+			specBody: coldSpecificationBody + "\n## Child Issues\n\n- #10\n",
+		},
+		{
+			name:     "structured comment children",
+			specBody: coldSpecificationBody,
+			seed: func(gh *specDiscoveryGitHubClient) {
+				gh.comments[58] = []github.IssueComment{{Body: "## Children\n\n- #10\n"}}
+			},
+		},
+		{
+			name:     "native sub-issues",
+			specBody: coldSpecificationBody,
+			seed: func(gh *specDiscoveryGitHubClient) {
+				gh.subIssues[58] = []int{10}
+			},
+		},
+		{
+			name:     "mention search",
+			specBody: coldSpecificationBody,
+			seed: func(gh *specDiscoveryGitHubClient) {
+				gh.mentions[58] = []github.Issue{{Number: 10, State: "open", Title: "Child 10", Body: "## Parent\n\n#58\n"}}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// #11 also backlinks #58 but only the open-Issue scan could
+			// find it, so it must stay out of the Batch.
+			gh := newSpecDiscoveryGitHub(map[int]*github.Issue{
+				58: {Number: 58, State: "open", Title: "Specification", Body: tc.specBody},
+				10: {Number: 10, State: "open", Title: "Child 10", Body: "## Parent\n\n#58\n"},
+				11: {Number: 11, State: "open", Title: "Scan-only child", Body: "## Parent\n\n#58\n"},
+			})
+			if tc.seed != nil {
+				tc.seed(gh)
+			}
+
+			spy, stderr := executeRunWithGitHub(t, gh, "58")
+
+			if want := []int{10, 58}; !slices.Equal(spy.req.Issues, want) {
+				t.Fatalf("Batch issues = %v, want %v (stderr: %q)", spy.req.Issues, want, stderr)
+			}
+			if want := []int{10}; !slices.Equal(spy.req.Dependencies[58], want) {
+				t.Errorf("Specification #58 gated on %v, want %v", spy.req.Dependencies[58], want)
+			}
+			if gh.listings != 0 {
+				t.Errorf("expected the open-Issue scan to stay skipped, got %d listings", gh.listings)
+			}
+			if len(gh.posts) != 0 {
+				t.Errorf("expected no discovered-children comment, got %+v", gh.posts)
+			}
+		})
+	}
+}
+
+func TestRun_ColdSpecificationWithoutDiscoveryCapabilitiesRunsAlone(t *testing.T) {
+	// The plain fake lacks the optional capabilities. Seeding only #58
+	// keeps its query-blind search from feeding the mention fallback, so
+	// the resolver reaches the open-Issue scan.
+	gh := &fakeGitHubClient{issues: map[int]*github.Issue{
+		58: {Number: 58, State: "open", Title: "Cold Specification", Body: coldSpecificationBody},
+	}}
+
+	spy, stderr := executeRunWithGitHub(t, gh, "58")
+
+	if want := []int{58}; !slices.Equal(spy.req.Issues, want) {
+		t.Fatalf("Batch issues = %v, want %v (stderr: %q)", spy.req.Issues, want, stderr)
+	}
+	if !strings.Contains(stderr, "running issue #58 as a regular issue (no children)") {
+		t.Errorf("expected the regular-issue log line, got: %q", stderr)
+	}
+	if strings.Contains(stderr, "warning:") {
+		t.Errorf("expected no scan or post warning without the optional capabilities, got: %q", stderr)
 	}
 }
