@@ -117,6 +117,8 @@ agents:
       CLAUDE_CODE_OAUTH_TOKEN: sk-ant-oat01-...
 ```
 
+Without a token, a macOS container run fails at once with `Not logged in · Please run /login` (the stream's `system/init` record shows `"apiKeySource":"none"`); see [Troubleshooting > Claude Code runs fail in containers](../help/troubleshooting.md#claude-code-runs-fail-in-containers). If `claude` is not on your `PATH` but the Claude desktop app is installed, run `claude setup-token` with the copy the app manages under `~/Library/Application Support/Claude/claude-code/<version>/claude.app/Contents/MacOS/claude`.
+
 `claude setup-token` creates a one-year token for your subscription (Pro, Max,
 Team, or Enterprise); it is not refreshed automatically, and an expired token
 fails the run like any other authentication error. Treat `.sandman/config.yaml`

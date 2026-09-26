@@ -45,7 +45,27 @@ See [`sandman stranded`](../usage/commands.md#sandman-stranded).
 ## Claude Code runs fail in containers
 
 - `--dangerously-skip-permissions cannot be used with root/sudo privileges`: podman runs the agent as root. The `claude` preset exports `IS_SANDBOX=1` for this check; if your Claude Code version still refuses, switch to the pre-approved-tools command in [Agent Compatibility > Permissions](../usage/agent-compatibility.md#permissions).
-- `Not logged in` or `Login expired` on macOS: the Keychain login never reaches a container. Create a token with `claude setup-token` and set `agents.claude.env.CLAUDE_CODE_OAUTH_TOKEN`; tokens expire after one year.
+- `Not logged in · Please run /login` on macOS: the run log shows a `system/init` record with `"apiKeySource":"none"`, then a `result` record with `"is_error":true` and that message, and every retry fails within seconds. The host login lives in the macOS Keychain, which never reaches a container. Fix it once per machine:
+
+  1. Create a one-year subscription token (Pro, Max, Team, or Enterprise). It opens a browser to authorize and prints a value that starts with `sk-ant-oat01-`:
+
+     ```bash
+     claude setup-token
+     ```
+
+     If `claude` is not on your `PATH` but the Claude desktop app is installed, run the copy the app manages instead, adjusting the version folder to the one present: `"$HOME/Library/Application Support/Claude/claude-code/<version>/claude.app/Contents/MacOS/claude" setup-token`.
+
+  2. Add the token to `.sandman/config.yaml`, keeping `preset: claude` so the entry still inherits the preset:
+
+     ```yaml
+     agents:
+       claude:
+         preset: claude
+         env:
+           CLAUDE_CODE_OAUTH_TOKEN: sk-ant-oat01-...
+     ```
+
+  `.sandman/` is gitignored and Sandman writes the config with owner-only permissions, but treat the file as a secret. The token is exported on the agent's command line and is visible to `ps` on the host during a run. When it expires the same `Not logged in` or `Login expired` message returns; create a new token. Worktree runs do not need the token: they use the host login.
 - Every edit or command is denied in a worktree run: print mode cannot answer permission prompts. Pass `--dangerously-skip-permissions` or allow the tools in `~/.claude/settings.json`.
 - A run waits with `await_reason: usage-limit`: your subscription hit its session, weekly, or model limit. Sandman probes every ten minutes for up to five hours and resumes the same conversation; see [Agent Compatibility > Usage limits](../usage/agent-compatibility.md#usage-limits).
 
