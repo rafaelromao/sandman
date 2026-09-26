@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/rafaelromao/sandman/internal/daemon"
 )
 
 // portalStreamReadTimeout caps a blocking read on the bridged Control
@@ -77,6 +79,9 @@ func servePortalRunStream(w http.ResponseWriter, r *http.Request, repoRoot strin
 		return
 	}
 	defer conn.Close()
+	if _, err := conn.Write([]byte{daemon.PortalStreamHandshake}); err != nil {
+		return
+	}
 
 	// Clear this response's write deadline so the server's 30s WriteTimeout
 	// does not sever a long-lived tail. Falls back silently if the writer
@@ -140,6 +145,15 @@ func servePortalRunStream(w http.ResponseWriter, r *http.Request, repoRoot strin
 		}
 		_ = conn.SetReadDeadline(time.Now().Add(portalStreamReadTimeout))
 		line, readErr := br.ReadString('\n')
+		if line == daemon.PortalReplayBoundary {
+			writeMu.Lock()
+			if _, werr := fmt.Fprint(w, "event: replay-complete\ndata: replay-complete\n\n"); werr != nil {
+				writeMu.Unlock()
+				return
+			}
+			_ = rc.Flush()
+			writeMu.Unlock()
+		}
 		if line != "" && lineBelongsToRun(line, run.RunID) {
 			cleaned := cleanPortalStreamLine(line)
 			writeMu.Lock()

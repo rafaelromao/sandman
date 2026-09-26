@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -51,6 +52,33 @@ func TestBroadcaster_ClientReplayOnConnect(t *testing.T) {
 	want := "line one\nline two\n"
 	if got != want {
 		t.Fatalf("read %q, want %q", got, want)
+	}
+}
+
+func TestBroadcaster_PortalClientReceivesReplayBoundaryBeforeQueuedLiveOutput(t *testing.T) {
+	b := NewBroadcaster()
+	if _, err := b.Write([]byte("replayed line\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	reader, writer := net.Pipe()
+	defer reader.Close()
+	b.AddPortalClient(writer)
+	defer b.Close()
+
+	// net.Pipe blocks the client's replay write until the reader below starts,
+	// so this live write is deterministically queued while replay is in flight.
+	if _, err := b.Write([]byte("live line\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	want := "replayed line\n" + PortalReplayBoundary + "live line\n"
+	got := make([]byte, len(want))
+	if _, err := io.ReadFull(reader, got); err != nil {
+		t.Fatalf("read replay, boundary, and live output: %v", err)
+	}
+	if string(got) != want {
+		t.Fatalf("portal stream = %q, want %q", got, want)
 	}
 }
 

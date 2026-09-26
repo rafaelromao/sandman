@@ -2203,6 +2203,16 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       streamCoalescer.seedKnownLines(run.key, cachedLineList);
       streamCoalescer.clearBuffer(run.key);
       const src = new EventSource(streamPath + '?runKey=' + encodeURIComponent(backendKey));
+      if (typeof src.addEventListener === 'function') {
+        src.addEventListener('replay-complete', function () {
+          if (!awaitingReplayCheckpoint) return;
+          // The daemon marks the end of its bounded replay. If the cached
+          // suffix was not present, retain the pane and begin appending only
+          // subsequent live output instead of waiting forever.
+          awaitingReplayCheckpoint = false;
+          if (pre) pre.removeAttribute('data-stream-replay-pending');
+        });
+      }
       src.onmessage = function (ev) {
         if (awaitingReplayCheckpoint) {
           // Search for the cached suffix as a contiguous sequence. KMP keeps

@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/socketpath"
 )
@@ -64,15 +65,7 @@ func (s *ControlSocket) Start() error {
 	}
 	s.listener = listener
 
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			s.broadcaster.AddClient(conn)
-		}
-	}()
+	go s.acceptLoop(listener)
 
 	return nil
 }
@@ -83,8 +76,23 @@ func (s *ControlSocket) acceptLoop(listener net.Listener) {
 		if err != nil {
 			return
 		}
-		s.broadcaster.AddClient(conn)
+		go s.addClient(conn)
 	}
+}
+
+func (s *ControlSocket) addClient(conn net.Conn) {
+	// Portal sends a one-byte opt-in immediately after connecting. Ordinary
+	// attach clients remain read-only; the short deadline lets them proceed
+	// without changing their wire format or waiting for the run to finish.
+	_ = conn.SetReadDeadline(time.Now().Add(25 * time.Millisecond))
+	var handshake [1]byte
+	n, _ := conn.Read(handshake[:])
+	_ = conn.SetReadDeadline(time.Time{})
+	if n == 1 && handshake[0] == PortalStreamHandshake {
+		s.broadcaster.AddPortalClient(conn)
+		return
+	}
+	s.broadcaster.AddClient(conn)
 }
 
 func (s *ControlSocket) Stop() error {
