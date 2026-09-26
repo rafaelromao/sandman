@@ -649,10 +649,8 @@ func (w *opencodeOutput) SessionNotFound() bool {
 	return w.capture.sessionNotFound
 }
 
-func flushOpenCodeOutputs(outputs ...*opencodeOutput) {
-	for _, output := range outputs {
-		if output != nil {
-			_ = output.Flush()
-		}
-	}
+// setDestination points the parser at the prefixed terminal/run.log writers
+// once the run's output chain is assembled.
+func (w *opencodeOutput) setDestination(dst io.Writer) {
+	w.dst = dst
 }

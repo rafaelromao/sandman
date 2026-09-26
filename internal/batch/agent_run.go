@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/config"
@@ -106,7 +105,7 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 	return r.execute(ctx, command, stdout, stderr, nil, nil)
 }
 
-func (r *AgentRun) execute(ctx context.Context, command string, stdout, stderr io.Writer, parsedStdout, parsedStderr *opencodeOutput) error {
+func (r *AgentRun) execute(ctx context.Context, command string, stdout, stderr io.Writer, parsedStdout, parsedStderr outputParser) error {
 	runFolder := r.runFolder
 	if runFolder == "" {
 		runFolder = r.sandbox.WorkDir()
@@ -137,16 +136,16 @@ func (r *AgentRun) execute(ctx context.Context, command string, stdout, stderr i
 	combinedOut := io.MultiWriter(prefixedOut, logPrefixedOut)
 	combinedErr := io.MultiWriter(prefixedErr, logPrefixedErr)
 	if parsedStdout != nil {
-		parsedStdout.dst = combinedOut
+		parsedStdout.setDestination(combinedOut)
 		combinedOut = parsedStdout
 	}
 	if parsedStderr != nil {
-		parsedStderr.dst = combinedErr
+		parsedStderr.setDestination(combinedErr)
 		combinedErr = parsedStderr
 	}
 
 	execErr := r.sandbox.Exec(ctx, command, combinedOut, combinedErr)
-	flushOpenCodeOutputs(parsedStdout, parsedStderr)
+	flushOutputParsers(parsedStdout, parsedStderr)
 	_ = prefixedOut.Flush()
 	_ = prefixedErr.Flush()
 	_ = logPrefixedOut.Flush()
@@ -196,20 +195,10 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		}
 	}
 
-	builtInOpenCode := r.preset == "opencode" && command == config.BuiltInAgentPresets["opencode"].Command
-	priorSession := ""
-	useContinue := false
-	if builtInOpenCode && r.reuseSession {
-		identity, found, lookupErr := priorOpenCodeSession(r.layout, r.previousBatchID, r.previousRunID)
-		if lookupErr != nil {
-			r.warnSession(lookupErr)
-		}
-		if found {
-			priorSession = identity.SessionID
-		} else {
-			useContinue = true
-		}
-	}
+	// The strategy is the only source of agent-specific behaviour for the
+	// launch; see agentStrategy.
+	strategy := strategyFor(r.preset, command)
+	priorSession, useContinue := strategy.PrepareLaunch(r)
 	render := func(sessionID string, continueFlag bool) (string, error) {
 		sessionFlag := ""
 		if sessionID != "" {
@@ -217,8 +206,8 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		}
 		return RenderCommand(command, CommandData{
 			PromptFile:                 renderedPromptFile,
-			ModelFlag:                  r.modelFlag(command),
-			VariantFlag:                r.variantFlag(command),
+			ModelFlag:                  strategy.ModelFlag(strings.TrimSpace(r.model)),
+			VariantFlag:                strategy.VariantFlag(r.variant),
 			ModelProvider:              r.modelProvider,
 			ModelName:                  r.modelName,
 			DangerouslySkipPermissions: r.dangerouslySkipPermissions != nil && *r.dangerouslySkipPermissions,
@@ -232,7 +221,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		r.status = "failure"
 		return r.Result()
 	}
-	renderedCmd, err = r.prependEnv(renderedCmd)
+	renderedCmd, err = r.prependEnv(strategy, renderedCmd)
 	if err != nil {
 		// The typed *shellenv.InvalidKeyError from shellenv.Build is
 		// intentionally not surfaced to the run result: the run is
@@ -245,28 +234,29 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 
 	attemptCtx, cancelAttempt := context.WithCancel(ctx)
 	defer cancelAttempt()
-	var detector *contextRolloverDetector
+	detector := strategy.ContextRolloverDetector(r.contextRolloverLiterals, func() {
+		if ctx.Err() == nil {
+			cancelAttempt()
+		}
+	})
 	var usageDetector *usageLimitDetector
-	if r.preset == "opencode" {
-		detector = newContextRolloverDetector(time.Now, r.contextRolloverLiterals, func() {
-			if ctx.Err() == nil {
-				cancelAttempt()
-			}
-		})
-		usageDetector = newUsageLimitDetector()
+	if rule := strategy.UsageLimitRule(); rule != nil {
+		usageDetector = newUsageLimitDetector(rule)
 	}
 	stdout := io.Writer(os.Stdout)
 	stderr := io.Writer(os.Stderr)
+	var observers []io.Writer
 	if detector != nil {
-		stdout = io.MultiWriter(stdout, detector, usageDetector)
-		stderr = io.MultiWriter(stderr, detector, usageDetector)
+		observers = append(observers, detector)
 	}
-	var parsedStdout, parsedStderr *opencodeOutput
-	if builtInOpenCode {
-		capture := &opencodeSessionCapture{}
-		parsedStdout = newSharedOpenCodeOutput(nil, r.warningWriter(), false, capture)
-		parsedStderr = newSharedOpenCodeOutput(nil, r.warningWriter(), true, capture)
+	if usageDetector != nil {
+		observers = append(observers, usageDetector)
 	}
+	if len(observers) > 0 {
+		stdout = io.MultiWriter(append([]io.Writer{stdout}, observers...)...)
+		stderr = io.MultiWriter(append([]io.Writer{stderr}, observers...)...)
+	}
+	parsedStdout, parsedStderr := strategy.NewOutputParsers(r.warningWriter())
 	execErr := r.execute(attemptCtx, renderedCmd, stdout, stderr, parsedStdout, parsedStderr)
 	if detector != nil {
 		detector.Flush()
@@ -285,26 +275,23 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		}
 		return r.Result()
 	}
-	sessionNotFound := (parsedStdout != nil && parsedStdout.SessionNotFound()) || (parsedStderr != nil && parsedStderr.SessionNotFound())
 	fallbackUsed := false
-	if execErr != nil && builtInOpenCode && r.reuseSession && priorSession != "" && sessionNotFound {
+	if strategy.RetryAfterMissingSession(r, priorSession, execErr, parsedStdout, parsedStderr) {
 		if ctx.Err() == nil && attemptCtx.Err() == nil {
 			renderedCmd, err = render("", true)
 			if err == nil {
-				renderedCmd, err = r.prependEnv(renderedCmd)
+				renderedCmd, err = r.prependEnv(strategy, renderedCmd)
 			}
 			if err == nil {
 				fallbackUsed = true
-				capture := &opencodeSessionCapture{}
-				fallbackOut := newSharedOpenCodeOutput(nil, r.warningWriter(), false, capture)
-				fallbackErr := newSharedOpenCodeOutput(nil, r.warningWriter(), true, capture)
+				fallbackOut, fallbackErr := strategy.NewOutputParsers(r.warningWriter())
 				execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, fallbackOut, fallbackErr)
-				r.persistSession(firstSessionID(fallbackOut, fallbackErr))
+				strategy.PersistSession(r, fallbackOut, fallbackErr)
 			}
 		}
 	}
 	if !fallbackUsed {
-		r.persistSession(firstSessionID(parsedStdout, parsedStderr))
+		strategy.PersistSession(r, parsedStdout, parsedStderr)
 	}
 	if execErr != nil {
 		r.usageLimitReached = ctx.Err() == nil && usageDetector != nil && usageDetector.Triggered()
@@ -312,15 +299,6 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		return r.Result()
 	}
 	return r.Result()
-}
-
-func firstSessionID(outputs ...*opencodeOutput) string {
-	for _, output := range outputs {
-		if output != nil && output.SessionID() != "" {
-			return output.SessionID()
-		}
-	}
-	return ""
 }
 
 func (r *AgentRun) warningWriter() io.Writer {
@@ -351,36 +329,21 @@ func (r *AgentRun) persistSession(sessionID string) {
 	}
 }
 
-func (r *AgentRun) variantFlag(command string) string {
-	if r.variant == "" || r.preset != "opencode" || command != config.BuiltInAgentPresets["opencode"].Command {
-		return ""
-	}
-	return "--variant " + shellenv.Quote(r.variant)
-}
-
 // prependEnv returns command prefixed with `export KEY=VALUE; ...` entries
-// for r.env. The opencode permission skip rule still applies: the
-// OPENCODE_PERMISSION entry is dropped when the opencode preset is in
-// "builtin" mode and the rendered command does not request
-// --dangerously-skip-permissions. The *shellenv.InvalidKeyError returned
+// for the environment the strategy exports for this launch (for example, the
+// OpenCode strategy drops its built-in OPENCODE_PERMISSION allow-list from
+// runs that keep permission prompts). The *shellenv.InvalidKeyError returned
 // by shellenv.Build is propagated unchanged so the caller can surface a
 // typed failure.
-func (r *AgentRun) prependEnv(command string) (string, error) {
+func (r *AgentRun) prependEnv(strategy agentStrategy, command string) (string, error) {
 	if len(r.env) == 0 {
 		return command, nil
 	}
-	applyOpencodePermission := strings.Contains(command, "--dangerously-skip-permissions")
-	filtered := make(map[string]string, len(r.env))
-	for key, value := range r.env {
-		if key == "OPENCODE_PERMISSION" && r.opencodePermissionMode == "builtin" && !applyOpencodePermission {
-			continue
-		}
-		filtered[key] = value
-	}
-	if len(filtered) == 0 {
+	env := strategy.LaunchEnv(r.env, r.opencodePermissionMode, command)
+	if len(env) == 0 {
 		return command, nil
 	}
-	return shellenv.Build(filtered, command)
+	return shellenv.Build(env, command)
 }
 
 func (r *AgentRun) writeTaskPrompt(renderedPromptFile, content string) error {
@@ -396,23 +359,6 @@ func (r *AgentRun) writeTaskPrompt(renderedPromptFile, content string) error {
 		return fmt.Errorf("write prompt: %w", err)
 	}
 	return nil
-}
-
-func (r *AgentRun) modelFlag(command string) string {
-	model := strings.TrimSpace(r.model)
-	if model == "" || r.preset == "" {
-		return ""
-	}
-	preset, ok := config.BuiltInAgentPresets[r.preset]
-	if !ok || preset.Command != command {
-		return ""
-	}
-	switch r.preset {
-	case "opencode":
-		return "-m " + model
-	default:
-		return ""
-	}
 }
 
 // Result returns the current outcome of the AgentRun.

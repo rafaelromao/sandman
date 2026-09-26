@@ -131,7 +131,7 @@ The run timer pauses at `run.await`. A later `run.resumed` event starts a new ac
 | Field | Description |
 |-------|-------------|
 | `await` | Always `true` |
-| `await_reason` | Lifecycle reason such as `"pending"`, `"failed"`, `"review-timeout"`, `"ready-to-merge"`, or `"actionable-feedback"` |
+| `await_reason` | Lifecycle reason such as `"pending"`, `"failed"`, `"review-timeout"`, `"ready-to-merge"`, `"actionable-feedback"`, or `"usage-limit"` (a built-in OpenCode or Claude Code attempt stopped at a provider usage limit and polls for the reset) |
 | `gate` | Lifecycle state at await time |
 | `branch` | Branch name |
 | `base_branch` | Base branch name |
@@ -188,6 +188,8 @@ Payload shape depends on the abort path:
 ## Run logs
 
 Each agent run writes its output to the run's log file inside the batch directory. The file captures both stdout and stderr from the agent process, prefixed with run-specific timestamps.
+
+The built-in `opencode` preset renders OpenCode's JSON events into readable text. The built-in `claude` preset keeps Claude Code's raw stream-json records, one per line, ending with a `result` record; see [Agent Compatibility > Readable logs](agent-compatibility.md#readable-logs) for a `jq` recipe.
 
 ## Worktree hints
 

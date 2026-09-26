@@ -20,6 +20,14 @@ Command code should stay testable through explicit dependencies. Prefer changing
 
 When writing tests, fake the documented boundary rather than mocking deep implementation details.
 
+## Keep agent-specific behaviour behind the agent strategy
+
+Sandman supports more than one agent CLI. Everything that differs between agents at run time (command flags, launch environment, session reuse, output parsing, context-limit and usage-limit handling) is a method on the agent strategy that `strategyFor(preset, command)` selects once per launch in `internal/batch/agent_strategy.go`. Per-agent data that other packages need lives in registries keyed by preset: `config.BuiltInAgentPresets` (command template, env, mounts, default model) and the scaffold's installer table (Dockerfile install).
+
+- Never branch on an agent or preset name at a call site; add or change a strategy method, or a registry field, instead. `TestAgentSelection_NoAgentNameComparisonsOutsideStrategy` enforces this.
+- Adding an agent means a preset entry, an installer entry, and one strategy type.
+- Behaviour an agent does not support is documented as a limitation in `docs/usage/agent-compatibility.md`, not emulated with a special case.
+
 ## Preserve atomic filesystem writes
 
 Sandman stores state in flat files under `.sandman/`. Writers should use atomic replacement patterns: write a temp file, flush it as appropriate, then rename it into place.
@@ -43,6 +51,7 @@ Pay special attention to:
 - Event definitions and run-state projection
 - Command dependency wiring
 - Batch and sandbox interfaces
+- The agent strategy interface and its selector
 - Persistence helpers
 - IPC and socket lifecycle code
 

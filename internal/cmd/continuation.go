@@ -158,7 +158,7 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 
 	model := strings.TrimSpace(cmdFlag(cmd, "model"))
 	if model == "" {
-		model = resolveModel("", cfg.DefaultModel, agentCfg.Preset)
+		model = resolveModel("", cfg, agentCfg)
 	}
 	variantFlag := strings.TrimSpace(cmdFlag(cmd, "variant"))
 	variantSet := false

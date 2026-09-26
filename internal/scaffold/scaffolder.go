@@ -11,8 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -230,6 +230,56 @@ var KnownBuildToolsPresets = func() []string {
 
 var builtInAgentVersionCatalog = map[string][]string{
 	"opencode": {"1.15.0", "1.14.0", "1.13.0"},
+	// 2.1.277 is the floor: the first Claude Code release that reads
+	// AGENTS.md natively.
+	"claude": {"2.1.283"},
+}
+
+// agentInstaller holds the per-agent facts the scaffold needs to install a
+// built-in agent preset into a generated Dockerfile. The scaffold package
+// cannot depend on the run loop, so per-agent data lives in this registry
+// instead of behind the batch package's agent strategy seam.
+type agentInstaller struct {
+	// packageName is the npm package that provides the agent CLI.
+	packageName string
+	// probeHostVersion returns the agent version installed on the host, or
+	// is nil when init always pins the catalog head.
+	probeHostVersion func() (string, error)
+}
+
+// InstallCommand renders the Dockerfile instruction that installs version.
+func (i agentInstaller) InstallCommand(version string) string {
+	return fmt.Sprintf("RUN npm install -g %s@%s\n", i.packageName, version)
+}
+
+// InstallName is the package name shown in the init summary.
+func (i agentInstaller) InstallName() string {
+	return i.packageName
+}
+
+// ProbeHostVersion returns the host-installed agent version when the agent
+// has a probe and the probe succeeds.
+func (i agentInstaller) ProbeHostVersion() (string, bool) {
+	if i.probeHostVersion == nil {
+		return "", false
+	}
+	version, err := i.probeHostVersion()
+	if err != nil || version == "" {
+		return "", false
+	}
+	return version, true
+}
+
+// agentInstallers maps each built-in agent preset to its installer.
+var agentInstallers = map[string]agentInstaller{
+	"opencode": {
+		packageName: "opencode-ai",
+		// Late-bound so tests can replace probeOpencodeVersion.
+		probeHostVersion: func() (string, error) { return probeOpencodeVersion() },
+	},
+	"claude": {
+		packageName: "@anthropic-ai/claude-code",
+	},
 }
 
 var bundledGoVersionCatalog = map[string]string{
@@ -467,10 +517,12 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
 	sandmanDir := layout.SandmanDir
 	preserveConfig := false
+	var preserved *config.Config
 	configPath := layout.ConfigPath()
 	if _, err := os.Stat(configPath); err == nil {
-		if _, err := config.Load(configPath); err == nil {
+		if existing, err := config.Load(configPath); err == nil {
 			preserveConfig = true
+			preserved = existing
 		} else if !errors.Is(err, config.ErrBreakingContract) {
 			return fmt.Errorf("load config.yaml: %w", err)
 		} else {
@@ -502,7 +554,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return fmt.Errorf("create .sandman: %w", err)
 	}
 
-	defaultAgent, err := s.resolveDefaultAgent(opts)
+	defaultAgent, err := s.resolveDefaultAgent(opts, preserved)
 	if err != nil {
 		return err
 	}
@@ -577,7 +629,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	}
 	model := opts.Model
 	if model == "" {
-		model = config.DefaultModel
+		model = config.DefaultModelForAgent(defaultAgent)
 	}
 
 	retries, err := resolveRetries(opts.Retries)
@@ -592,12 +644,14 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	if err != nil {
 		return err
 	}
+	// Review runs default to the same agent as implementation runs, with that
+	// agent's own default model.
 	cfg := &config.Config{
 		DefaultAgent:          defaultAgent,
 		DefaultModel:          model,
 		Variant:               strings.TrimSpace(opts.Variant),
-		DefaultReviewAgent:    config.DefaultReviewAgent,
-		DefaultReviewModel:    config.DefaultReviewModel,
+		DefaultReviewAgent:    defaultAgent,
+		DefaultReviewModel:    config.DefaultModelForAgent(defaultAgent),
 		BuildTools:            preset.Name,
 		ReviewCommand:         effectiveReviewCommand(opts.ReviewCommand),
 		DefaultParallel:       parallel,
@@ -615,9 +669,15 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		},
 	}
 
+	configUpdate := ""
 	if !preserveConfig {
 		if err := config.Save(configPath, cfg); err != nil {
 			return fmt.Errorf("save config: %w", err)
+		}
+	} else if opts.Agent != "" {
+		configUpdate, err = switchPreservedAgent(configPath, preserved, defaultAgent, opts.Model)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -679,7 +739,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	if w == nil {
 		w = io.Discard
 	}
-	fmt.Fprint(w, summary)
+	fmt.Fprint(w, configUpdate+summary)
 
 	return nil
 }
@@ -767,14 +827,55 @@ func resolveReviewTimeout(override *int) (int, error) {
 	return *override, nil
 }
 
-func (s *Scaffolder) resolveDefaultAgent(opts Options) (string, error) {
+// resolveDefaultAgent returns the agent init installs and records as the
+// default: the --agent flag, else the preserved config's built-in default
+// agent (so a re-init keeps the Dockerfile in step with config.yaml), else
+// the built-in default.
+func (s *Scaffolder) resolveDefaultAgent(opts Options, preserved *config.Config) (string, error) {
 	if opts.Agent == "" {
+		if preserved != nil {
+			if _, ok := config.BuiltInAgentPresets[preserved.DefaultAgent]; ok {
+				return preserved.DefaultAgent, nil
+			}
+		}
 		return config.DefaultAgent, nil
 	}
 	if _, ok := config.BuiltInAgentPresets[opts.Agent]; !ok {
 		return "", fmt.Errorf("unknown default agent: %q (supported: %s)", opts.Agent, strings.Join(KnownAgents, ", "))
 	}
 	return opts.Agent, nil
+}
+
+// switchPreservedAgent applies an explicit `init --agent` to a preserved
+// config.yaml: the default agent becomes agent, and the model becomes the
+// --model value or the agent's preset default. A review agent that followed
+// the previous default agent moves with it and gets the new agent's default
+// review model; a separately chosen review agent is kept. It returns a
+// one-line description of the change, or "" when nothing changed.
+func switchPreservedAgent(configPath string, cfg *config.Config, agent, model string) (string, error) {
+	previous := strings.TrimSpace(cfg.DefaultAgent)
+	model = strings.TrimSpace(model)
+	if previous == agent && model == "" {
+		return "", nil
+	}
+	if model == "" {
+		model = config.DefaultModelForAgent(agent)
+	}
+	updates := [][2]string{{"agent", agent}, {"model", model}}
+	if review := strings.TrimSpace(cfg.DefaultReviewAgent); previous != agent && (review == "" || review == previous) {
+		updates = append(updates, [2]string{"review_agent", agent}, [2]string{"review_model", config.DefaultModelForAgent(agent)})
+	}
+	var changed []string
+	for _, update := range updates {
+		if err := cfg.SetValue(update[0], update[1]); err != nil {
+			return "", fmt.Errorf("update config %s: %w", update[0], err)
+		}
+		changed = append(changed, update[0]+"="+update[1])
+	}
+	if err := config.Save(configPath, cfg); err != nil {
+		return "", fmt.Errorf("save config: %w", err)
+	}
+	return "Updated .sandman/config.yaml: " + strings.Join(changed, ", ") + "\n", nil
 }
 
 func (s *Scaffolder) resolveBuildToolsPreset(repoRoot string, opts Options, p Prompter) (BuildToolsPreset, error) {
@@ -1956,17 +2057,14 @@ func resolveVersionChoice(choice string, versions []string) (string, error) {
 	return "", fmt.Errorf("no version matching %q", choice)
 }
 
-// resolveAgentVersion returns the opencode version that sandman init
-// should pin in the new .sandman/Dockerfile. For the opencode preset
-// the host-version probe (probeOpencodeVersion) wins when it returns
-// a non-empty string; otherwise we fall back to the catalog head. The
-// early return for non-opencode presets keeps the contract uniform
-// across future agent types (the function signature can stay open for
-// additional preset-specific probes later).
+// resolveAgentVersion returns the agent version that sandman init should
+// pin in the new .sandman/Dockerfile. An agent whose installer has a host
+// probe pins the host version when the probe succeeds (OpenCode, so the
+// host and sandbox agree); otherwise init pins the catalog head.
 func resolveAgentVersion(agent string) string {
-	if agent == "opencode" {
-		if v, err := probeOpencodeVersion(); err == nil && v != "" {
-			return v
+	if installer, ok := agentInstallers[agent]; ok {
+		if version, ok := installer.ProbeHostVersion(); ok {
+			return version
 		}
 	}
 	return DefaultBuiltInAgentVersion(agent)
@@ -1976,7 +2074,7 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	var out strings.Builder
 	fmt.Fprintf(&out, "# sandman build-tools: %s\n", preset.Name)
 	fmt.Fprintf(&out, "# sandman default-agent: %s\n", defaultAgent)
-	fmt.Fprintf(&out, "# sandman installed-agents: opencode\n")
+	fmt.Fprintf(&out, "# sandman installed-agents: %s\n", defaultAgent)
 	if preset.Name == goBuildToolsPreset {
 		fmt.Fprintf(&out, "# sandman go-version: %s\n", goVersion)
 	}
@@ -2044,7 +2142,7 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 		out.WriteString(renderJavaInstallCommand(javaVersion))
 	}
 	out.WriteString(renderAnalyzerInstallCommands(preset.Name, goVersion, nodeVersion, dotnetVersion))
-	out.WriteString(renderAgentInstallCommand("opencode", agentVersion))
+	out.WriteString(renderAgentInstallCommand(defaultAgent, agentVersion))
 	out.WriteString(renderRTKInstallCommand())
 	return out.String()
 }
@@ -2429,21 +2527,19 @@ func renderJavaInstallCommand(version string) string {
 }
 
 func renderAgentInstallCommand(agent, version string) string {
-	switch agent {
-	case "opencode":
-		return fmt.Sprintf("RUN npm install -g opencode-ai@%s\n", version)
-	default:
+	installer, ok := agentInstallers[agent]
+	if !ok {
 		return ""
 	}
+	return installer.InstallCommand(version)
 }
 
 func agentInstallName(agent string) string {
-	switch agent {
-	case "opencode":
-		return "opencode-ai"
-	default:
+	installer, ok := agentInstallers[agent]
+	if !ok {
 		return agent
 	}
+	return installer.InstallName()
 }
 
 func renderRTKInstallCommand() string {
@@ -2496,13 +2592,19 @@ func (s *Scaffolder) formatInitSummary(presetName, defaultAgent, defaultAgentVer
 // Metadata-free Dockerfiles are treated as opaque custom files.
 // tool-version and mise-version are intentionally not validated here because
 // runtime config has no canonical pinned value to compare against.
-func ValidateDockerfileMetadata(repoRoot, expectedBuildTools, expectedDefaultAgent string) error {
+//
+// expectedDefaultAgent is compared with the default-agent header; an empty
+// value skips that comparison, which callers use for a run whose agent is not
+// the config default agent. requiredAgents names the built-in agent presets
+// the run needs inside the image; the installed-agents header must contain
+// each of them, so a run whose agent is missing from the image fails before
+// any container starts. When requiredAgents is empty and expectedDefaultAgent
+// is a built-in preset, that preset is required.
+func ValidateDockerfileMetadata(repoRoot, expectedBuildTools, expectedDefaultAgent string, requiredAgents []string) error {
 	if strings.TrimSpace(expectedBuildTools) == "" {
 		expectedBuildTools = defaultBuildToolsPreset
 	}
-	if strings.TrimSpace(expectedDefaultAgent) == "" {
-		expectedDefaultAgent = config.DefaultAgent
-	}
+	expectedDefaultAgent = strings.TrimSpace(expectedDefaultAgent)
 	dockerfilePath := paths.NewLayout(&config.Config{}, repoRoot).DockerfilePath()
 	meta, found, err := readDockerfileMetadata(dockerfilePath)
 	if err != nil {
@@ -2514,12 +2616,18 @@ func ValidateDockerfileMetadata(repoRoot, expectedBuildTools, expectedDefaultAge
 	if meta.BuildToolsPreset != expectedBuildTools {
 		return fmt.Errorf("scaffold metadata drift: Dockerfile build-tools %q does not match expected %q", meta.BuildToolsPreset, expectedBuildTools)
 	}
-	if meta.DefaultAgent != expectedDefaultAgent {
+	if expectedDefaultAgent != "" && meta.DefaultAgent != expectedDefaultAgent {
 		return fmt.Errorf("scaffold metadata drift: Dockerfile default-agent %q does not match config default agent %q", meta.DefaultAgent, expectedDefaultAgent)
 	}
-	wantAgents := []string{"opencode"}
-	if !reflect.DeepEqual(meta.InstalledAgents, wantAgents) {
-		return fmt.Errorf("scaffold metadata drift: Dockerfile installed-agents %v does not match expected %v", meta.InstalledAgents, wantAgents)
+	if _, ok := config.BuiltInAgentPresets[expectedDefaultAgent]; ok && len(requiredAgents) == 0 {
+		requiredAgents = []string{expectedDefaultAgent}
+	}
+	for _, agent := range requiredAgents {
+		agent = strings.TrimSpace(agent)
+		if agent == "" || slices.Contains(meta.InstalledAgents, agent) {
+			continue
+		}
+		return fmt.Errorf("scaffold metadata drift: Dockerfile installed-agents %v does not include agent %q; install it in .sandman/Dockerfile and add it to the \"# sandman installed-agents:\" header", meta.InstalledAgents, agent)
 	}
 	return nil
 }

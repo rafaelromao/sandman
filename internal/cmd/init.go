@@ -125,7 +125,7 @@ func NewInitCmd() *cobra.Command {
 	cmd.Flags().String("build-tools", "", fmt.Sprintf("Build tools preset (%s)", strings.Join(scaffold.KnownBuildToolsPresets, ", ")))
 	cmd.Flags().BoolP("verbose", "v", false, "Print diagnostic output")
 	cmd.Flags().String("tool-version", "", "Logical version selector (repo, latest, lts, or semver shorthand)")
-	cmd.Flags().String("agent", "", "Default built-in agent preset (opencode)")
+	cmd.Flags().String("agent", "", "Default built-in agent preset ("+strings.Join(scaffold.KnownAgents, ", ")+")")
 	cmd.Flags().String("model", "", "Default model for the agent")
 	cmd.Flags().String("variant", "", "Default implementation model variant")
 	cmd.Flags().Int("parallel", -1, fmt.Sprintf("Default parallel container count (-1 = use config default %d)", config.DefaultParallel))

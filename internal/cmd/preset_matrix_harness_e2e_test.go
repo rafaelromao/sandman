@@ -370,6 +370,44 @@ func TestPresetMatrixHarness_RealAgentContinue(t *testing.T) {
 	runSmokeProviderTwice(t, smokeProviderCases[0], "--continue")
 }
 
+// requireClaudeAgentE2E gates the real Claude Code run with the same CI and
+// SANDMAN_RUN_AGENT_E2E opt-in rules as the OpenCode cases, plus the provider
+// allowlist (SANDMAN_TEST_PROVIDERS must name claude or all). The claude CLI
+// and its auth (file-backed credentials or CLAUDE_CODE_OAUTH_TOKEN) are
+// checked by the shared smoke preparation, which skips when they are absent.
+func requireClaudeAgentE2E(t *testing.T) smokeProviderCase {
+	t.Helper()
+	if os.Getenv("CI") != "" && !testenv.FullRegression() {
+		t.Skip("skip claude real-agent e2e in CI")
+	}
+	if os.Getenv("SANDMAN_RUN_AGENT_E2E") != "1" {
+		t.Skip("skip claude real-agent e2e: SANDMAN_RUN_AGENT_E2E=1 not set")
+	}
+	allowed, err := parseSmokeProviders(smokeProviderCases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !allowed["claude"] {
+		t.Skip("skip claude real-agent e2e: set SANDMAN_TEST_PROVIDERS=claude (or all)")
+	}
+	containerRuntimeAvailable(t)
+	for _, tc := range smokeProviderCases {
+		if tc.name == "claude" {
+			return tc
+		}
+	}
+	t.Fatal("claude smoke provider case missing")
+	return smokeProviderCase{}
+}
+
+// TestPresetMatrixHarness_RealClaudeAgentReuseSession runs the claude preset
+// in a container, then continues the same row with --reuse-session, which
+// renders Claude Code's --continue against the row's worktree.
+func TestPresetMatrixHarness_RealClaudeAgentReuseSession(t *testing.T) {
+	tc := requireClaudeAgentE2E(t)
+	runSmokeProviderTwice(t, tc, "--continue", "--reuse-session")
+}
+
 // customizePresetMatrixOpencodeAgent rewires the scaffolded opencode agent
 // for a real in-container run, mirroring prflow_e2e_test.go's
 // customizeOpenCodeAgentForContainer: --pure (no host sessions/config leak

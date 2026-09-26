@@ -5,26 +5,30 @@ Sandman reads configuration from `.sandman/config.yaml` in the project root. You
 ## Full schema
 
 ```yaml
-# Default built-in agent preset used by `sandman run` when `--agent` is omitted.
+# Default built-in agent preset used by `sandman run` when `--agent` is omitted
+# (opencode or claude).
 agent: opencode
 
-# Default model passed to the agent when `--model` is omitted.
+# Default model passed to the agent when `--model` is omitted. It applies only
+# to agents that use the same preset as `agent`; another preset uses its own
+# configured model or its preset default (opencode/big-pickle, sonnet).
 # Falls back to the agent provider's configured model if empty.
 model: opencode/big-pickle
 
 # Optional provider-specific implementation model variant. Empty disables
-# forwarding --variant to the built-in OpenCode command.
+# forwarding it to the built-in command (--variant for OpenCode, --effort for
+# Claude Code).
 variant: ""
 
 # Default agent preset used for review runs when `--agent` is omitted in `sandman review`.
 review_agent: opencode
 
 # Default model passed to the review agent when `--model` is omitted in `sandman review`.
-# Falls back to model if empty.
+# Defaults to the review agent's preset default model when unset.
 review_model: opencode/big-pickle
 
 # Optional provider-specific review model variant. Empty disables forwarding
-# --variant to review OpenCode commands.
+# it to the built-in review command.
 review_variant: ""
 
 # Build tools preset for the container image (generic, dotnet, go, node, python, elixir, ruby, rust, java).
@@ -91,18 +95,20 @@ cleanup_worktrees: true
 git:
   base_branch: main
 
-# Sandman installs the built-in agent in scaffolded Dockerfiles and mounts the shared skills directory.
+# Sandman installs the default built-in agent in scaffolded Dockerfiles and mounts the shared skills directory.
 ```
 
-## Built-in preset
+## Built-in presets
 
-Sandman has one built-in preset: `opencode`. It is installed into scaffolded Dockerfiles and is the default `agent`.
+Sandman has two built-in presets: `opencode` (the default `agent`) and `claude`. `sandman init --agent <preset>` installs the chosen preset into the scaffolded Dockerfile and writes it as both `agent` and `review_agent`, with the preset's default model as `model` and `review_model`.
 
 When you use the `opencode` preset, install the `opencode-shell-strategy` plugin first. Sandman runs OpenCode without a TTY/PTY, so this plugin prevents interactive shell commands from hanging during runs. OpenCode subagents inherit the same instructions.
 
-The built-in preset also sees `~/.agents`, which is where Sandman installs the shared skill folder.
+The `claude` preset runs the unmodified Claude Code CLI in print mode and is how you use a Claude subscription with Sandman. See [Agent Compatibility](agent-compatibility.md#claude-code) for authentication, permissions, and its limitations.
 
-`sandman run --agent` selects the agent preset per invocation (built-in `opencode` or a custom provider under `agents`). `sandman config set agent` changes the project default.
+Both built-in presets also see `~/.agents`, which is where Sandman installs the shared skill folder.
+
+`sandman run --agent` selects the agent preset per invocation (built-in `opencode` or `claude`, or a custom provider under `agents`). `sandman config set agent` changes the project default. A container run whose agent is not listed in the Dockerfile's `# sandman installed-agents:` header fails before any container starts; a run on an agent other than the default does not depend on the default agent's metadata.
 
 Custom providers are defined under the top-level `agents` map in `.sandman/config.yaml`:
 
@@ -119,12 +125,14 @@ agents:
 
 Each entry may set `command`, `model`, `preset`, `env`, `config_dirs`, `config_files`, and `keychain_auth`. When `preset` is set, the custom entry inherits the built-in preset's defaults before applying overrides. See `internal/config/config.go:Agents` and `ResolveAgentProvider`.
 
-OpenCode session reuse is a run-time choice rather than a configuration
-default. `sandman run --continue` starts a fresh OpenCode conversation;
-`sandman run --continue --reuse-session` selects the prior Run's exact session
-for each continued row. Runtime-owned re-entry after an external wait selects
-reuse automatically. Missing sessions use one `--continue` fallback only for
-these selected reuse launches.
+Session reuse is a run-time choice rather than a configuration
+default. `sandman run --continue` starts a fresh agent conversation;
+`sandman run --continue --reuse-session` selects the prior conversation for
+each continued row. Runtime-owned re-entry after an external wait selects
+reuse automatically. OpenCode resumes the prior Run's exact session, and
+missing sessions use one `--continue` fallback only for these selected reuse
+launches. Claude Code resumes the worktree's most recent conversation with its
+own `--continue`.
 
 Use `sandman run --base-branch` to override `git.base_branch` for a single invocation.
 
@@ -181,7 +189,7 @@ See [Sandbox Modes](sandbox-modes.md) for detailed scheduling behavior.
 |-----|---------|-------------|
 | `run_idle_timeout` | `3600` | Seconds of inactivity before the heartbeat watchdog aborts the run. `0` disables the watchdog |
 
-`run_idle_timeout` detects when an agent has stalled (e.g., blocked on an interactive prompt, deadlocked, or looping). When triggered, the watchdog kills the agent process and marks the run as `aborted`. A `run.idle_timeout` event is written to the event log for diagnostics. A built-in OpenCode attempt that exits after reporting `Error: The usage limit has been reached` instead emits `run.await`, releases its capacity, and re-enters the same session every ten minutes. A still-limited probe follows the ordinary retry path after five hours of accumulated polling. The `--run-idle-timeout` CLI flag overrides the config value for a single invocation.
+`run_idle_timeout` detects when an agent has stalled (e.g., blocked on an interactive prompt, deadlocked, or looping). When triggered, the watchdog kills the agent process and marks the run as `aborted`. A `run.idle_timeout` event is written to the event log for diagnostics. A built-in OpenCode attempt that exits after reporting `Error: The usage limit has been reached`, or a built-in Claude Code attempt whose final result reports a session, weekly, or model usage limit, instead emits `run.await`, releases its capacity, and re-enters the same session every ten minutes. A still-limited probe follows the ordinary retry path after five hours of accumulated polling. The `--run-idle-timeout` CLI flag overrides the config value for a single invocation.
 
 ## Worktree cleanup
 

@@ -86,8 +86,15 @@ type Agent struct {
 }
 
 // AgentPreset defines the built-in defaults for a provider preset.
+//
+// Presets hold data only. Agent-specific run-loop behaviour (flags, session
+// reuse, output parsing, failure classification) lives behind the agent
+// strategy seam in the batch package, keyed by the same preset name.
 type AgentPreset struct {
-	DisplayName      string
+	DisplayName string
+	// DefaultModel is the model a run of this preset uses when neither the
+	// command line nor config names one for it; see DefaultModelForAgent.
+	DefaultModel     string
 	Command          string
 	Env              map[string]string
 	ConfigDirs       []string
@@ -107,8 +114,9 @@ const OpencodePermissionExternalDirectoryAllow = `{"external_directory":"allow"}
 // BuiltInAgentPresets lists the provider presets Sandman knows about without repo-specific config.
 var BuiltInAgentPresets = map[string]AgentPreset{
 	"opencode": {
-		DisplayName: "OpenCode",
-		Command:     `opencode run --format json{{if .ContinueFlag}} --continue{{end}}{{if .SessionFlag}} --session {{.SessionFlag}}{{end}}{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .SessionName}} --title '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}}{{if .VariantFlag}} {{.VariantFlag}}{{end}} "$(cat {{.PromptFile}})"`,
+		DisplayName:  "OpenCode",
+		DefaultModel: DefaultModel,
+		Command:      `opencode run --format json{{if .ContinueFlag}} --continue{{end}}{{if .SessionFlag}} --session {{.SessionFlag}}{{end}}{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .SessionName}} --title '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}}{{if .VariantFlag}} {{.VariantFlag}}{{end}} "$(cat {{.PromptFile}})"`,
 		Env: map[string]string{
 			"OPENCODE_PERMISSION": OpencodePermissionExternalDirectoryAllow,
 		},
@@ -146,6 +154,58 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 			"~/.local/share/opencode/opencode.db-wal",
 		},
 	},
+	// The claude preset runs the unmodified Claude Code CLI in print mode.
+	// stream-json with --verbose is the only print-mode format that emits
+	// output while the agent works, which the idle-timeout heartbeat needs.
+	// --continue resumes the worktree's most recent conversation when
+	// Sandman selects session reuse, and --name puts the Run's session name
+	// on the command line for the lingering-process check.
+	"claude": {
+		DisplayName:  "Claude Code",
+		DefaultModel: "sonnet",
+		Command:      `claude -p --output-format stream-json --verbose{{if .ContinueFlag}} --continue{{end}}{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .SessionName}} --name '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}}{{if .VariantFlag}} {{.VariantFlag}}{{end}} "$(cat {{.PromptFile}})"`,
+		Env: map[string]string{
+			"DISABLE_AUTOUPDATER":                      "1",
+			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+			// Containers run the agent as root under podman. Claude Code
+			// refuses --dangerously-skip-permissions as root unless it runs
+			// inside a recognized sandbox.
+			"IS_SANDBOX": "1",
+		},
+		// The container runs with HOME=/, so Claude Code's default config
+		// locations resolve to /.claude and /.claude.json, exactly where these
+		// host paths are mounted. ~/.agents carries the shared Sandman skill.
+		ConfigDirs:  []string{"~/.claude", "~/.agents"},
+		ConfigFiles: []string{"~/.claude.json"},
+		// Transcripts, caches, and logs stay out of the per-batch snapshot.
+		// Credentials, settings, skills, agents, commands, plugins, and
+		// CLAUDE.md are copied on purpose. The container writes its own
+		// transcripts into the batch snapshot, which is what lets an await
+		// re-entry --continue the same conversation.
+		SnapshotExcludes: []string{
+			"~/.claude/projects",
+			"~/.claude/debug",
+			"~/.claude/shell-snapshots",
+			"~/.claude/todos",
+			"~/.claude/statsig",
+			"~/.claude/cache",
+			"~/.claude/backups",
+			"~/.claude/file-history",
+			"~/.claude/session-env",
+			"~/.claude/local",
+			"~/.claude/downloads",
+			"~/.claude/telemetry",
+			"~/.claude/paste-cache",
+			"~/.claude/ide",
+			"~/.claude/usage-data",
+		},
+	},
+}
+
+// DefaultModelForAgent returns the default model of the named built-in agent
+// preset, or "" when the name is not a built-in preset.
+func DefaultModelForAgent(agent string) string {
+	return BuiltInAgentPresets[strings.TrimSpace(agent)].DefaultModel
 }
 
 // Store loads and saves Sandman configuration.
@@ -312,7 +372,7 @@ func Load(path string) (*Config, error) {
 		cfg.DefaultReviewAgent = DefaultReviewAgent
 	}
 	if strings.TrimSpace(cfg.DefaultReviewModel) == "" {
-		cfg.DefaultReviewModel = DefaultReviewModel
+		cfg.DefaultReviewModel = cfg.defaultReviewModelFor(cfg.DefaultReviewAgent)
 	}
 	cfg.Agent = cfg.DefaultAgent
 	cfg.AgentProviders = make(map[string]Agent, len(BuiltInAgentPresets))
@@ -696,6 +756,19 @@ func (c *Config) EffectiveReviewModel() string {
 		return model
 	}
 	return strings.TrimSpace(c.DefaultModel)
+}
+
+// defaultReviewModelFor returns the review model used when review_model is
+// unset: the default model of the review agent's built-in preset. Agents
+// without a preset default keep the historical DefaultReviewModel.
+func (c *Config) defaultReviewModelFor(reviewAgent string) string {
+	agent, err := c.ResolveAgentProvider(strings.TrimSpace(reviewAgent))
+	if err == nil {
+		if model := DefaultModelForAgent(agent.Preset); model != "" {
+			return model
+		}
+	}
+	return DefaultReviewModel
 }
 
 // EffectiveReviewVariant returns the configured review model variant, or an

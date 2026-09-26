@@ -20,11 +20,13 @@ Creates or updates:
 
 The scaffolded `.sandman/Dockerfile` is a **minimal BuildToolsPreset** for the detected project type. It includes the shared baseline packages and the preset-specific toolchain, but it is intentionally lightweight. Before starting work with Sandman, **review and extend `.sandman/Dockerfile`** with the project-specific tools, runtimes, and system packages you need — then rebuild the container image so the sandbox has everything your work requires.
 
-It also installs the shared Sandman skill folder into `~/.agents/skills/sandman/` when needed.
+It also installs the shared Sandman skill folder into `~/.agents/skills/sandman/` when needed and links it into `~/.claude/skills/` for Claude Code.
 
 ## Re-running init
 
 If `.sandman/` already exists, `sandman init` asks before overwriting in an interactive terminal.
+
+A valid existing `.sandman/config.yaml` is preserved, with one exception: an explicit `--agent` switches it. `agent` becomes the new preset and `model` becomes `--model` or the preset's default model. A `review_agent` that followed the previous default agent moves too, with the new preset's default `review_model`; a separately chosen review agent is kept. `init` prints the keys it changed. Without `--agent`, re-running `init` keeps the configured built-in agent in the regenerated Dockerfile.
 
 Review prompt files are write-if-missing: existing `.sandman/reviews/review-prompt.md` and `.sandman/reviews/quality-rules.md` files are preserved so local edits survive re-initialization.
 
@@ -102,7 +104,7 @@ Useful init flags:
 
 | Flag | Purpose |
 |------|---------|
-| `--agent` | Default built-in agent preset (`opencode`) |
+| `--agent` | Default built-in agent preset (`opencode` or `claude`); it is installed in the Dockerfile and written as `agent` and `review_agent`, with the preset's default model |
 | `--model` | Default agent model |
 | `--variant` | Default provider-specific implementation model variant |
 | `--build-tools` | Build-tools preset |
@@ -125,9 +127,22 @@ sandman init --build-tools python --tool-version 3.12
 
 The config value controls future runs, and re-running `init` regenerates the scaffolded Dockerfile for the selected preset.
 
+## Agents in the image
+
+The scaffolded Dockerfile starts with `# sandman ...` metadata comments. `# sandman installed-agents:` lists the built-in agent presets installed in the image; `init` installs only the default agent. Before a container run, Sandman requires `installed-agents` to contain the run agent's preset, so a missing agent fails early with a metadata error instead of `command not found` inside the container. `# sandman default-agent:` must match the config `agent` only when the run uses that default agent; a run that selects another agent with `--agent`, or a review run, depends only on its own agent.
+
+To use both presets from one image, add the second agent's install line and list both in the header:
+
+```dockerfile
+# sandman installed-agents: opencode, claude
+RUN npm install -g @anthropic-ai/claude-code@2.1.283
+```
+
+Dockerfiles without `# sandman` metadata are treated as custom and are not validated.
+
 ## See also
 
 - [Installation](../get-started/install.md) — first project setup
 - [Configuration](configuration.md) — full config schema
 - [Sandbox Modes](sandbox-modes.md) — how the scaffolded Dockerfile is used
-- [Agent Compatibility](agent-compatibility.md) — built-in agent preset behavior
+- [Agent Compatibility](agent-compatibility.md) — built-in agent preset behavior, including Claude Code auth and limitations

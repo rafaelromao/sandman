@@ -23,6 +23,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/runid"
 	"github.com/rafaelromao/sandman/internal/sandbox"
+	"github.com/rafaelromao/sandman/internal/scaffold"
 	"github.com/spf13/cobra"
 )
 
@@ -605,7 +606,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				Dependencies:               resolvedBatch.Deps,
 				Blocked:                    resolvedBatch.Blocked,
 				Agent:                      agentName,
-				Model:                      resolveModel(modelFlag, cfg.DefaultModel, agentCfg.Preset),
+				Model:                      resolveModel(modelFlag, cfg, agentCfg),
 				Variant:                    variant,
 				VariantSet:                 variantSet,
 				BaseBranch:                 baseBranch,
@@ -826,17 +827,17 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().String("model", "", "Override agent model for built-in presets")
 	cmd.Flags().String("variant", "", "Override implementation model variant")
 	cmd.Flags().String("run-id", "", "Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores (max 64 chars); cannot be combined with issue selection")
-	cmd.Flags().String("agent", "", "Built-in agent preset (opencode)")
+	cmd.Flags().String("agent", "", "Agent to run: a built-in preset ("+strings.Join(scaffold.KnownAgents, ", ")+") or a custom provider under agents")
 	cmd.Flags().String("base-branch", "", "Base branch to fetch from origin before each AgentRun starts")
 	cmd.Flags().StringArray("prompt-arg", nil, "Custom template substitution KEY=VALUE (repeatable)")
 
-	cmd.Flags().Bool("dangerously-skip-permissions", false, "Skip opencode permission prompts (auto-approves non-denied actions); default is true for container runs, false for worktree runs")
+	cmd.Flags().Bool("dangerously-skip-permissions", false, "Skip agent permission prompts (auto-approves non-denied actions); default is true for container runs, false for worktree runs")
 
 	cmd.Flags().Bool("override", false, "Clear existing artifacts (worktree, branch, logs, events) before running; force-checkout worktree to expected branch on mismatch or detached HEAD")
 	cmd.Flags().Bool("reconcile-stranded", true, "Auto-recover stranded worktrees when the main repo is checked out on a <n>-<slug> branch (use --no-reconcile-stranded to disable)")
 	cmd.Flags().Bool("no-reconcile-stranded", false, "Opt out of stranded-worktree auto-recovery (negative form of --reconcile-stranded)")
 	cmd.Flags().Bool("continue", false, "Continue the latest AgentRun for each selected issue by reusing the prior handoff; tunables come from current flags/config and the worktree identity is replayed")
-	cmd.Flags().Bool("reuse-session", false, "With --continue, reuse each prior OpenCode session when available")
+	cmd.Flags().Bool("reuse-session", false, "With --continue, resume each prior agent session when the agent supports it")
 	cmd.Flags().BoolP("verbose", "v", false, "Print diagnostic phase timing to stderr")
 
 	return cmd
