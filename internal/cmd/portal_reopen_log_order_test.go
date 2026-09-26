@@ -334,3 +334,88 @@ func TestPortalRowReopen_DoesNotAcceptAnEarlierRepeatedLineAsReplayCheckpoint(t 
 		t.Fatalf("reopened log = %q, want %q (streams=%d)", result.RenderedLog, want, result.StreamCount)
 	}
 }
+
+func TestPortalRowReopen_AcceptsLiveOutputWhenCachedSuffixIsMissingFromReplay(t *testing.T) {
+	const runID = "260926104500-08ee-556"
+	const cachedHead = "10:00:00 $ previous output"
+	const cachedTail = "10:01:00 latest cached output"
+	const replayLine = "10:02:00 * replay starts after cached suffix"
+	const liveLine = "10:03:00 live output after replay"
+
+	run := map[string]any{
+		"key":         runID,
+		"runId":       runID,
+		"kind":        "active",
+		"status":      "running",
+		"issueLabel":  "#556",
+		"issueNumber": 556,
+		"batchKey":    "260926104500-08ee-556+1",
+		"socketPath":  "/tmp/" + runID + ".sock",
+		"log":         cachedHead + "\n" + cachedTail + "\n",
+	}
+	runsJSON, err := json.Marshal([]map[string]any{run})
+	if err != nil {
+		t.Fatalf("marshal runs: %v", err)
+	}
+	stateJSON := `{"expandedRunKey":"` + runID + `","tabs":{"` + runID + `":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
+
+	page := buildPortalReproPage(t, stateJSON, runsJSON, `
+    window.__portalRafQueue = [];
+    window.requestAnimationFrame = function (cb) { window.__portalRafQueue.push(cb); return window.__portalRafQueue.length; };
+    window.__portalRunAllRafs = function () {
+      while (window.__portalRafQueue.length) {
+        var cb = window.__portalRafQueue.shift();
+        if (typeof cb === 'function') cb(performance.now());
+      }
+    };
+    window.__portalStreams = [];
+    window.EventSource = function (url) {
+      this.url = url;
+      this.readyState = 1;
+      this.listeners = {};
+      this.close = function () { this.readyState = 2; };
+      this.addEventListener = function (type, fn) { this.listeners[type] = fn; };
+      this.dispatchEvent = function (event) {
+        if (this.listeners[event.type]) this.listeners[event.type](event);
+      };
+      window.__portalStreams.push(this);
+    };
+    setTimeout(function () {
+      window.__portalRunAllRafs();
+      var row = document.querySelector('tr[data-run-key="`+runID+`"]');
+      if (!row || window.__portalStreams.length !== 1) throw new Error('initial active row and stream were not mounted');
+
+      row.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      window.__portalRunAllRafs();
+      row.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      window.__portalRunAllRafs();
+
+      var replayStream = window.__portalStreams[1];
+      if (!replayStream) throw new Error('reopened active row did not create a replacement stream');
+      replayStream.onmessage({ data: '`+replayLine+`' });
+      replayStream.dispatchEvent({ type: 'replay-complete' });
+      replayStream.onmessage({ data: '`+liveLine+`' });
+      setTimeout(function () {
+        window.__portalRunAllRafs();
+        var pre = document.querySelector('pre[data-scroll-key="`+runID+`"]');
+        var marker = document.createElement('pre');
+        marker.id = 'portal-reopen-missing-checkpoint';
+        marker.textContent = JSON.stringify({ renderedLog: pre ? pre.getAttribute('data-rendered-log') || '' : '' });
+        document.body.appendChild(marker);
+      }, 20);
+    }, 80);
+  `)
+
+	dom, _ := runPortalChromium(t, page)
+	payload := extractPortalMarker(t, dom, "portal-reopen-missing-checkpoint")
+	var result struct {
+		RenderedLog string `json:"renderedLog"`
+	}
+	if err := json.Unmarshal([]byte(payload), &result); err != nil {
+		t.Fatalf("parse missing-checkpoint payload: %v\nraw=%s", err, payload)
+	}
+	want := cachedHead + "\n" + cachedTail + "\n" + liveLine + "\n"
+	if result.RenderedLog != want {
+		t.Fatalf("reopened log = %q, want cached log followed by live output %q", result.RenderedLog, want)
+	}
+}

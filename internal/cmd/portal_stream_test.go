@@ -80,7 +80,6 @@ func TestPortal_RunStream_BridgesControlSocketToSSE(t *testing.T) {
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", "PR42")
 	runID := "PR42"
 	runFolder := filepath.Join(batchDir, "runs", runID)
-	sockPath := filepath.Join(runFolder, "run.sock")
 	if err := os.MkdirAll(runFolder, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -99,11 +98,21 @@ func TestPortal_RunStream_BridgesControlSocketToSSE(t *testing.T) {
 	if err := idx.Save(idxPath); err != nil {
 		t.Fatal(err)
 	}
-	startFakeRunDaemon(t, sockPath, []string{
+	broadcaster := daemon.NewBroadcaster()
+	controlSocket := daemon.NewControlSocketWithName(runFolder, "run.sock", broadcaster)
+	if err := controlSocket.Start(); err != nil {
+		t.Fatalf("start run control socket: %v", err)
+	}
+	t.Cleanup(func() { _ = controlSocket.Stop() })
+	for _, line := range []string{
 		"\x1b[32m[" + runID + "]\x1b[0m 12:00:01 starting work\r\n",
 		"[" + runID + "] 12:00:02 \x1b[1;33mwarning\x1b[0m: low disk\n",
 		"[" + runID + "] 12:00:03 done\n",
-	}, 200*time.Millisecond)
+	} {
+		if _, err := broadcaster.Write([]byte(line)); err != nil {
+			t.Fatalf("write replay output: %v", err)
+		}
+	}
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 		{Type: "run.started", Timestamp: startedAt, RunID: runID, Payload: map[string]any{"branch": "review-PR42", "review": true, "pr_number": 42}},
@@ -130,14 +139,52 @@ func TestPortal_RunStream_BridgesControlSocketToSSE(t *testing.T) {
 		t.Fatalf("expected text/event-stream content-type, got %q", ct)
 	}
 
-	events := readSSEEvents(t, resp.Body)
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	var events []string
+	var replayBoundarySeen bool
+	var liveWritten bool
+	eventType := ""
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "event: ") {
+			eventType = strings.TrimPrefix(line, "event: ")
+			if eventType == "replay-complete" {
+				replayBoundarySeen = true
+				if !liveWritten {
+					if _, err := broadcaster.Write([]byte("[" + runID + "] 12:00:04 live after replay\n")); err != nil {
+						t.Fatalf("write live output: %v", err)
+					}
+					liveWritten = true
+				}
+			}
+			continue
+		}
+		if line == "" {
+			eventType = ""
+			continue
+		}
+		if (eventType == "" || eventType == "message") && strings.HasPrefix(line, "data: ") {
+			events = append(events, strings.TrimPrefix(line, "data: "))
+			if len(events) == 4 {
+				break
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("read replay and live SSE frames: %v", err)
+	}
+	if !replayBoundarySeen || !liveWritten {
+		t.Fatalf("stream did not emit the replay boundary before accepting live output: events=%q boundary=%t", events, replayBoundarySeen)
+	}
 	want := []string{
 		"12:00:01 starting work",
 		"12:00:02 warning: low disk",
 		"12:00:03 done",
+		"12:00:04 live after replay",
 	}
-	if len(events) < len(want) {
-		t.Fatalf("expected at least %d events, got %d: %v", len(want), len(events), events)
+	if len(events) != len(want) {
+		t.Fatalf("expected exactly %d message events, got %d: %v", len(want), len(events), events)
 	}
 	for i, w := range want {
 		if events[i] != w {

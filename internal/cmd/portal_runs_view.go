@@ -2794,6 +2794,10 @@ func (v *portalRunsView) readPortalSocketOutput(sockPath string) string {
 		return ""
 	}
 	defer conn.Close()
+	if _, err := conn.Write([]byte{daemon.AttachStreamHandshake}); err != nil {
+		logPortalViewDegrade("handshake-socket:"+sockPath, "initialize live socket %q: %v", sockPath, err)
+		return ""
+	}
 	_ = conn.SetReadDeadline(time.Now().Add(portalReadTimeout))
 
 	var buf bytes.Buffer

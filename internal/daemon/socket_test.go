@@ -1,11 +1,13 @@
 package daemon
 
 import (
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/socketpath"
 	"github.com/rafaelromao/sandman/internal/testenv"
@@ -80,6 +82,50 @@ func TestControlSocket_CustomFilename(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(dir, "batch.sock")); err == nil {
 		t.Fatalf("default batch.sock should not exist when custom name is used")
+	}
+}
+
+func TestControlSocket_DelayedPortalHandshakeAddsReplayBoundary(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-sock-")
+	broadcaster := NewBroadcaster()
+	if _, err := broadcaster.Write([]byte("replay line\n")); err != nil {
+		t.Fatal(err)
+	}
+	sock := NewControlSocket(dir, broadcaster)
+	if err := sock.Start(); err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+	defer sock.Stop()
+
+	conn, err := net.Dial("unix", sock.Path())
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	time.Sleep(50 * time.Millisecond)
+	if _, err := conn.Write([]byte{PortalStreamHandshake}); err != nil {
+		t.Fatalf("write Portal handshake: %v", err)
+	}
+
+	wantReplay := "replay line\n" + PortalReplayBoundary
+	gotReplay := make([]byte, len(wantReplay))
+	if _, err := io.ReadFull(conn, gotReplay); err != nil {
+		t.Fatalf("read replay and boundary: %v", err)
+	}
+	if string(gotReplay) != wantReplay {
+		t.Fatalf("replay frame = %q, want %q", gotReplay, wantReplay)
+	}
+
+	if _, err := broadcaster.Write([]byte("live line\n")); err != nil {
+		t.Fatal(err)
+	}
+	gotLive := make([]byte, len("live line\n"))
+	if _, err := io.ReadFull(conn, gotLive); err != nil {
+		t.Fatalf("read live output: %v", err)
+	}
+	if string(gotLive) != "live line\n" {
+		t.Fatalf("live output = %q, want %q", gotLive, "live line\n")
 	}
 }
 

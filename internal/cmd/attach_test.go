@@ -2,12 +2,27 @@ package cmd
 
 import (
 	"bytes"
+	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/rafaelromao/sandman/internal/daemon"
 )
+
+func readAttachHandshake(conn net.Conn) error {
+	var handshake [1]byte
+	if _, err := io.ReadFull(conn, handshake[:]); err != nil {
+		return err
+	}
+	if handshake[0] != daemon.AttachStreamHandshake {
+		return fmt.Errorf("attach handshake = %d, want %d", handshake[0], daemon.AttachStreamHandshake)
+	}
+	return nil
+}
 
 func TestAttach_NoDaemonReturnsError(t *testing.T) {
 	dir := t.TempDir()
@@ -53,6 +68,10 @@ func TestAttach_ReadsFromSocket(t *testing.T) {
 		if err != nil {
 			return
 		}
+		if err := readAttachHandshake(conn); err != nil {
+			conn.Close()
+			return
+		}
 		conn.Write([]byte("hello from daemon"))
 		conn.Close()
 	}()
@@ -92,6 +111,10 @@ func TestAttach_ExitsOnEOF(t *testing.T) {
 	go func() {
 		conn, err := listener.Accept()
 		if err != nil {
+			return
+		}
+		if err := readAttachHandshake(conn); err != nil {
+			conn.Close()
 			return
 		}
 		conn.Close()

@@ -1,12 +1,20 @@
 package daemon
 
 import (
+	"io"
 	"net"
 	"testing"
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
+
+func startAttachStream(t *testing.T, conn net.Conn) {
+	t.Helper()
+	if _, err := conn.Write([]byte{AttachStreamHandshake}); err != nil {
+		t.Fatalf("write attach handshake: %v", err)
+	}
+}
 
 func TestBroadcaster_StoresAndReturnsBytes(t *testing.T) {
 	b := NewBroadcaster()
@@ -40,6 +48,7 @@ func TestBroadcaster_ClientReplayOnConnect(t *testing.T) {
 		t.Fatalf("connect: %v", err)
 	}
 	defer conn.Close()
+	startAttachStream(t, conn)
 
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
@@ -51,6 +60,33 @@ func TestBroadcaster_ClientReplayOnConnect(t *testing.T) {
 	want := "line one\nline two\n"
 	if got != want {
 		t.Fatalf("read %q, want %q", got, want)
+	}
+}
+
+func TestBroadcaster_PortalClientReceivesReplayBoundaryBeforeQueuedLiveOutput(t *testing.T) {
+	b := NewBroadcaster()
+	if _, err := b.Write([]byte("replayed line\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	reader, writer := net.Pipe()
+	defer reader.Close()
+	b.AddPortalClient(writer)
+	defer b.Close()
+
+	// net.Pipe blocks the client's replay write until the reader below starts,
+	// so this live write is deterministically queued while replay is in flight.
+	if _, err := b.Write([]byte("live line\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	want := "replayed line\n" + PortalReplayBoundary + "live line\n"
+	got := make([]byte, len(want))
+	if _, err := io.ReadFull(reader, got); err != nil {
+		t.Fatalf("read replay, boundary, and live output: %v", err)
+	}
+	if string(got) != want {
+		t.Fatalf("portal stream = %q, want %q", got, want)
 	}
 }
 
@@ -68,6 +104,7 @@ func TestBroadcaster_ClientLiveStream(t *testing.T) {
 		t.Fatalf("connect: %v", err)
 	}
 	defer conn.Close()
+	startAttachStream(t, conn)
 
 	done := make(chan string, 1)
 	go func() {
@@ -105,6 +142,8 @@ func TestBroadcaster_MultipleClientsAllReceiveSameData(t *testing.T) {
 		t.Fatalf("connect client 2: %v", err)
 	}
 	defer conn2.Close()
+	startAttachStream(t, conn1)
+	startAttachStream(t, conn2)
 
 	done1 := make(chan string, 1)
 	done2 := make(chan string, 1)
@@ -211,6 +250,7 @@ func TestBroadcaster_NewClientGetsTrimmedReplay(t *testing.T) {
 		t.Fatalf("connect: %v", err)
 	}
 	defer conn.Close()
+	startAttachStream(t, conn)
 
 	replay := make([]byte, MaxBufferSize+1024)
 	n, err := conn.Read(replay)
@@ -238,6 +278,7 @@ func TestBroadcaster_CloseClosesAllClients(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
+	startAttachStream(t, conn)
 
 	sock.Stop()
 
