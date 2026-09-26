@@ -28,9 +28,8 @@ const coldSpecificationBody = "## Problem Statement\n\nImported tickets keep the
 // discovery through `sandman run`. It extends fakeGitHubClient with
 // per-Issue comments that reflect its own posts, native sub-issues,
 // mention-search results kept apart from the repo-wide `is:open` search,
-// and the optional
-// ADR-0044 capabilities (open-Issue listing and Issue comment posting)
-// that the production GitHub client provides.
+// and the optional ADR-0044 capabilities (open-Issue listing and Issue
+// comment posting) that the production GitHub client provides.
 type specDiscoveryGitHubClient struct {
 	*fakeGitHubClient
 
