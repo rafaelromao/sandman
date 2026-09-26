@@ -193,6 +193,10 @@ type Daemon struct {
 	busy                 chan struct{}
 	seenCache            map[int]map[string]bool
 	seenCacheMu          sync.RWMutex
+	seenFilesMu          sync.RWMutex
+	batchIndexSnapshot   fileSnapshot
+	reviewStateSnapshots map[string]fileSnapshot
+	commentStatePaths    map[reviewStateKey]string
 	commentVersions      map[int]time.Time
 	commentVersionsMu    sync.Mutex
 	rateLimitedUntil     time.Time
@@ -499,22 +503,24 @@ func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, 
 		}
 	}
 	d := &Daemon{
-		BaseDir:       baseDir,
-		GitHub:        gh,
-		Prompts:       prompts,
-		Runner:        runner,
-		Config:        cfg,
-		Broadcaster:   broadcaster,
-		Clock:         time.Now,
-		Trigger:       nil,
-		PollInterval:  PollingInterval,
-		Parallel:      parallel,
-		ParallelSet:   parallelSet,
-		CommentPoster: poster,
-		busy:          make(chan struct{}, 1),
-		seenCache:     map[int]map[string]bool{},
-		slotTable:     map[int]struct{}{},
-		slotPool:      make(chan struct{}, parallelReviews),
+		BaseDir:              baseDir,
+		GitHub:               gh,
+		Prompts:              prompts,
+		Runner:               runner,
+		Config:               cfg,
+		Broadcaster:          broadcaster,
+		Clock:                time.Now,
+		Trigger:              nil,
+		PollInterval:         PollingInterval,
+		Parallel:             parallel,
+		ParallelSet:          parallelSet,
+		CommentPoster:        poster,
+		busy:                 make(chan struct{}, 1),
+		seenCache:            map[int]map[string]bool{},
+		reviewStateSnapshots: map[string]fileSnapshot{},
+		commentStatePaths:    map[reviewStateKey]string{},
+		slotTable:            map[int]struct{}{},
+		slotPool:             make(chan struct{}, parallelReviews),
 		// S4 (issue #1847): initialise the rehydrate-on-startup
 		// map; loadPendingPosts (Slice B) populates it from the
 		// on-disk review-state.json files at construction.
@@ -642,7 +648,6 @@ func (d *Daemon) IsTerminalSeen(prNumber int, commentID string) bool {
 // block a comment that has reached its terminal state.
 func (d *Daemon) MarkTerminalSeen(prNumber int, commentID string) {
 	d.seenCacheMu.Lock()
-	defer d.seenCacheMu.Unlock()
 	if d.seenCache == nil {
 		d.seenCache = map[int]map[string]bool{}
 	}
@@ -650,7 +655,48 @@ func (d *Daemon) MarkTerminalSeen(prNumber int, commentID string) {
 		d.seenCache[prNumber] = map[string]bool{}
 	}
 	d.seenCache[prNumber][commentID] = true
+	d.seenCacheMu.Unlock()
 	d.SetNextAttemptAt(prNumber, commentID, time.Time{})
+	d.refreshReviewStateSnapshot(prNumber, commentID)
+}
+
+func (d *Daemon) trackReviewStatePath(prNumber int, commentID, path string) {
+	snapshot, err := snapshotFile(path)
+	if err != nil {
+		d.logf("stat review state %s: %v", path, err)
+		return
+	}
+	d.seenFilesMu.Lock()
+	if d.commentStatePaths == nil {
+		d.commentStatePaths = map[reviewStateKey]string{}
+	}
+	if d.reviewStateSnapshots == nil {
+		d.reviewStateSnapshots = map[string]fileSnapshot{}
+	}
+	key := reviewStateKey{prNumber: prNumber, commentID: commentID}
+	d.commentStatePaths[key] = path
+	d.reviewStateSnapshots[path] = snapshot
+	d.seenFilesMu.Unlock()
+}
+
+func (d *Daemon) refreshReviewStateSnapshot(prNumber int, commentID string) {
+	key := reviewStateKey{prNumber: prNumber, commentID: commentID}
+	d.seenFilesMu.RLock()
+	path := d.commentStatePaths[key]
+	d.seenFilesMu.RUnlock()
+	if path == "" {
+		return
+	}
+	snapshot, err := snapshotFile(path)
+	if err != nil {
+		d.logf("stat review state %s: %v", path, err)
+		return
+	}
+	d.seenFilesMu.Lock()
+	if d.commentStatePaths[key] == path {
+		d.reviewStateSnapshots[path] = snapshot
+	}
+	d.seenFilesMu.Unlock()
 }
 
 // Forget removes (prNumber, commentID) from the daemon's seen cache.
@@ -732,11 +778,29 @@ func (d *Daemon) loadSeenCache() error {
 	defer d.nextAttemptMu.Unlock()
 	d.nextAttempt = map[int]map[string]time.Time{}
 
+	indexPath := daemon.BatchesIndexPath(d.BaseDir)
+	indexBefore, err := snapshotFile(indexPath)
+	if err != nil {
+		return fmt.Errorf("stat batches index: %w", err)
+	}
 	idx, err := seenCacheLoader(d.BaseDir)
 	if err != nil {
 		return fmt.Errorf("load batches index: %w", err)
 	}
+	indexAfter, err := snapshotFile(indexPath)
+	if err != nil {
+		return fmt.Errorf("stat batches index: %w", err)
+	}
+	indexSnapshot := indexAfter
+	if indexBefore != indexAfter {
+		// Keep the pre-load snapshot so the next poll retries hydration if
+		// another daemon changed the index while this cache was loading.
+		indexSnapshot = indexBefore
+	}
+	stateSnapshots := map[string]fileSnapshot{}
+	commentPaths := map[reviewStateKey]string{}
 	if idx == nil {
+		d.replaceSeenFileSnapshots(indexSnapshot, stateSnapshots, commentPaths)
 		return nil
 	}
 	for _, entry := range idx.Batches {
@@ -757,7 +821,23 @@ func (d *Daemon) loadSeenCache() error {
 			continue
 		}
 		runDir := filepath.Join(entry.Path, "runs", rowID)
+		statePath := filepath.Join(runDir, "review-state.json")
+		stateBefore, statErr := snapshotFile(statePath)
+		if statErr != nil {
+			d.logf("stat review state %s: %v", statePath, statErr)
+		}
 		state, err := seenStateReader(runDir)
+		stateAfter, afterErr := snapshotFile(statePath)
+		if afterErr != nil {
+			d.logf("stat review state %s: %v", statePath, afterErr)
+		}
+		stateSnapshot := stateAfter
+		if statErr == nil && afterErr == nil && stateBefore != stateAfter {
+			// Force a retry on the next poll if the atomic replacement raced
+			// the read; the cached state may represent the prior version.
+			stateSnapshot = stateBefore
+		}
+		stateSnapshots[statePath] = stateSnapshot
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -766,6 +846,7 @@ func (d *Daemon) loadSeenCache() error {
 			continue
 		}
 		for _, sc := range state.SeenComments {
+			commentPaths[reviewStateKey{prNumber: entry.PR, commentID: sc.CommentID}] = statePath
 			if shouldSkipDedupStatus(sc.Status) {
 				if _, ok := d.seenCache[entry.PR]; !ok {
 					d.seenCache[entry.PR] = map[string]bool{}
@@ -779,6 +860,50 @@ func (d *Daemon) loadSeenCache() error {
 				d.nextAttempt[entry.PR][sc.CommentID] = *sc.NextAttemptAt
 			}
 		}
+	}
+	d.replaceSeenFileSnapshots(indexSnapshot, stateSnapshots, commentPaths)
+	return nil
+}
+
+func (d *Daemon) replaceSeenFileSnapshots(indexSnapshot fileSnapshot, stateSnapshots map[string]fileSnapshot, commentPaths map[reviewStateKey]string) {
+	d.seenFilesMu.Lock()
+	d.batchIndexSnapshot = indexSnapshot
+	d.reviewStateSnapshots = stateSnapshots
+	d.commentStatePaths = commentPaths
+	d.seenFilesMu.Unlock()
+}
+
+func (d *Daemon) refreshSeenCacheIfChanged() error {
+	d.seenFilesMu.RLock()
+	indexSnapshot := d.batchIndexSnapshot
+	current, err := snapshotFile(daemon.BatchesIndexPath(d.BaseDir))
+	if err != nil {
+		d.seenFilesMu.RUnlock()
+		return fmt.Errorf("stat batches index: %w", err)
+	}
+	changed := current != indexSnapshot
+	if !changed {
+		for path, previous := range d.reviewStateSnapshots {
+			current, err := snapshotFile(path)
+			if err != nil {
+				d.seenFilesMu.RUnlock()
+				return fmt.Errorf("stat review state %s: %w", path, err)
+			}
+			if current != previous {
+				changed = true
+				break
+			}
+		}
+	}
+	d.seenFilesMu.RUnlock()
+	if !changed {
+		return nil
+	}
+	if err := d.loadSeenCache(); err != nil {
+		return err
+	}
+	if err := d.loadPendingPosts(); err != nil {
+		return fmt.Errorf("reload pending review posts: %w", err)
 	}
 	return nil
 }
@@ -1260,6 +1385,9 @@ func (d *Daemon) tick(ctx context.Context) error {
 			return nil
 		}
 	}
+	if err := d.refreshSeenCacheIfChanged(); err != nil {
+		return fmt.Errorf("refresh review state cache: %w", err)
+	}
 
 	prs, err := d.GitHub.ListOpenPRs(ctx)
 	if err != nil {
@@ -1353,6 +1481,31 @@ func reviewTriggerKey(comment github.PRComment) string {
 		return comment.ID
 	}
 	return fmt.Sprintf("%s@%d", comment.ID, comment.UpdatedAt.UTC().UnixNano())
+}
+
+func hasLaterDaemonReviewResponse(trigger github.PRComment, comments []github.PRComment, authenticatedLogin string) bool {
+	if strings.TrimSpace(authenticatedLogin) == "" {
+		return false
+	}
+	for _, comment := range comments {
+		if !comment.CreatedAt.After(trigger.CreatedAt) || !strings.EqualFold(strings.TrimSpace(comment.AuthorLogin), strings.TrimSpace(authenticatedLogin)) {
+			continue
+		}
+		if hasMarkdownHeading(comment.Body, "Summary") && hasMarkdownHeading(comment.Body, "Decision") {
+			return true
+		}
+	}
+	return false
+}
+
+func hasMarkdownHeading(body, heading string) bool {
+	want := "## " + heading
+	for _, line := range strings.Split(body, "\n") {
+		if strings.EqualFold(strings.TrimSpace(line), want) {
+			return true
+		}
+	}
+	return false
 }
 
 // processPR scans one PR's comments and launches a review agent for the
@@ -1472,6 +1625,10 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		}
 		focus, ok := ParseTrigger(comment.Body)
 		if ok {
+			if hasLaterDaemonReviewResponse(comment, comments, d.authenticatedLogin) {
+				d.logf("PR #%d request comment %s has a later daemon review response; skipping", prNumber, comment.ID)
+				continue
+			}
 			triggers = append(triggers, unseenTrigger{comment: comment, focus: focus, key: reviewTriggerKey(comment)})
 			continue
 		}
@@ -1582,6 +1739,10 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		d.releasePRSlot(prNumber)
 		return nil
 	}
+	statePath := d.ReviewStatePath(reviewRunFolder)
+	for _, trigger := range unprocessed {
+		d.trackReviewStatePath(prNumber, trigger.key, statePath)
+	}
 
 	commentReactionID, commentErr := d.GitHub.AddCommentReaction(ctx, comment.ID, "eyes")
 	if commentErr != nil {
@@ -1594,7 +1755,6 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 
 	// persisted must be captured before any MarkSeen call so it
 	// reflects whether the state file pre-existed the launch path.
-	statePath := d.ReviewStatePath(reviewRunFolder)
 	persisted, _ := os.Stat(statePath)
 
 	// Superseded marking is independent of RunBatch and stays
