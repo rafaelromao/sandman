@@ -35,6 +35,13 @@ type cachedGitHubClient struct {
 	searches  map[string][]github.Issue
 }
 
+// The command cache must keep the optional Specification discovery
+// capabilities visible to the resolver's type assertions (ADR-0044).
+var (
+	_ github.OpenIssueLister    = (*cachedGitHubClient)(nil)
+	_ github.IssueCommentPoster = (*cachedGitHubClient)(nil)
+)
+
 func newCachedGitHubClient(client github.Client) *cachedGitHubClient {
 	return &cachedGitHubClient{
 		Client:    client,
@@ -71,6 +78,28 @@ func (c *cachedGitHubClient) FetchIssueState(ctx context.Context, number int) (s
 		return "", err
 	}
 	return issue.State, nil
+}
+
+// ListOpenIssues preserves the optional open-Issue scan capability through
+// the command cache. A delegate without the capability lists nothing, which
+// keeps the scan the no-op the resolver makes it for such clients.
+func (c *cachedGitHubClient) ListOpenIssues(ctx context.Context) ([]github.Issue, error) {
+	lister, ok := c.Client.(github.OpenIssueLister)
+	if !ok {
+		return nil, nil
+	}
+	return lister.ListOpenIssues(ctx)
+}
+
+// PostIssueComment preserves the optional Issue comment capability that
+// persists discovered children through the command cache. A delegate without
+// the capability posts nothing, matching the resolver's skip for such clients.
+func (c *cachedGitHubClient) PostIssueComment(ctx context.Context, issueNumber int, body string) error {
+	poster, ok := c.Client.(github.IssueCommentPoster)
+	if !ok {
+		return nil
+	}
+	return poster.PostIssueComment(ctx, issueNumber, body)
 }
 
 func (c *cachedGitHubClient) SearchIssues(ctx context.Context, query string) ([]github.Issue, error) {

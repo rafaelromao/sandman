@@ -1609,3 +1609,10 @@ func (c *CLIClient) ClosePR(ctx context.Context, prNumber int) error {
 
 // Ensure CLIClient implements Client.
 var _ Client = (*CLIClient)(nil)
+
+// Ensure CLIClient keeps the optional Specification discovery capabilities
+// the resolver type-asserts against (ADR-0044).
+var (
+	_ OpenIssueLister    = (*CLIClient)(nil)
+	_ IssueCommentPoster = (*CLIClient)(nil)
+)
