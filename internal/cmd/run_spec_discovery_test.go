@@ -37,6 +37,7 @@ type specDiscoveryGitHubClient struct {
 	comments map[int][]github.IssueComment
 	mentions map[int][]github.Issue
 	listings int
+	listErr  error
 	posts    []postedIssueComment
 	// postErr fails every post; with postErrStores the comment still
 	// lands, like a gh timeout that fires after GitHub stored it.
@@ -96,7 +97,11 @@ func (c *specDiscoveryGitHubClient) ListIssueComments(ctx context.Context, numbe
 func (c *specDiscoveryGitHubClient) ListOpenIssues(ctx context.Context) ([]github.Issue, error) {
 	c.state.Lock()
 	c.listings++
+	listErr := c.listErr
 	c.state.Unlock()
+	if listErr != nil {
+		return nil, listErr
+	}
 
 	c.fakeGitHubClient.mu.Lock()
 	defer c.fakeGitHubClient.mu.Unlock()
@@ -257,5 +262,39 @@ func TestRun_ReexpandedColdSpecificationPostsOneMarkerPerCommand(t *testing.T) {
 				t.Errorf("expected one marker post attempt on #60 within one command, got %d: %+v", attempts, gh.posts)
 			}
 		})
+	}
+}
+
+func TestRun_OpenIssueListingFailureIsReported(t *testing.T) {
+	gh := newColdSpecificationGitHub()
+	gh.listErr = errors.New("gh api issues: HTTP 502")
+
+	spy, stderr := executeRunWithGitHub(t, gh, "58")
+
+	if want := []int{58}; !slices.Equal(spy.req.Issues, want) {
+		t.Fatalf("Batch issues = %v, want %v (stderr: %q)", spy.req.Issues, want, stderr)
+	}
+	if !strings.Contains(stderr, "open-issue scan for specification #58 failed: gh api issues: HTTP 502") {
+		t.Errorf("expected the listing failure to be reported, got: %q", stderr)
+	}
+	if len(gh.posts) != 0 {
+		t.Errorf("expected no marker after a failed scan, got %+v", gh.posts)
+	}
+}
+
+func TestRun_MarkerPostFailureIsReportedAndChildrenStayInBatch(t *testing.T) {
+	gh := newColdSpecificationGitHub()
+	gh.postErr = errors.New("gh issue comment: HTTP 403")
+
+	spy, stderr := executeRunWithGitHub(t, gh, "58")
+
+	if want := []int{232, 234, 58}; !slices.Equal(spy.req.Issues, want) {
+		t.Fatalf("Batch issues = %v, want %v (stderr: %q)", spy.req.Issues, want, stderr)
+	}
+	if !strings.Contains(stderr, "could not post discovered-children comment for specification #58: gh issue comment: HTTP 403") {
+		t.Errorf("expected the post failure to be reported, got: %q", stderr)
+	}
+	if len(gh.posts) != 1 {
+		t.Errorf("expected exactly one post attempt, got %+v", gh.posts)
 	}
 }
