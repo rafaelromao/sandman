@@ -1027,7 +1027,32 @@ func TestRunState_DurationExcludesRepeatedAwaitIntervals(t *testing.T) {
 	}
 }
 
-func TestRunState_ContinuedRunStartsFreshDuration(t *testing.T) {
+func TestRunState_DurationAccumulatesAcrossSameBatchContinuation(t *testing.T) {
+	t.Parallel()
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	awaitAt := startedAt.Add(5 * time.Minute)
+	continuedAt := awaitAt.Add(time.Hour)
+	finishedAt := continuedAt.Add(7 * time.Minute)
+
+	continuedEvents := []Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-continued-duration", Issue: 42, Payload: map[string]any{"batch_id": "batch-42"}},
+		{Type: "run.await", Timestamp: awaitAt, RunID: "run-continued-duration", Issue: 42},
+		{Type: "run.continued", Timestamp: continuedAt, RunID: "run-continued-duration", Issue: 42, Payload: map[string]any{"batch_id": "batch-42"}},
+	}
+	active := ProjectRunStates(continuedEvents)[0]
+	if got, want := active.DurationAt(continuedAt.Add(2*time.Minute)), 7*time.Minute; got != want {
+		t.Fatalf("active duration after continuation = %s, want accumulated duration %s", got, want)
+	}
+
+	continuedEvents = append(continuedEvents, Event{Type: "run.finished", Timestamp: finishedAt, RunID: "run-continued-duration", Issue: 42, Payload: map[string]any{"status": "success"}})
+	run := ProjectRunStates(continuedEvents)[0]
+
+	if got, want := run.Duration(), 12*time.Minute; got != want {
+		t.Fatalf("duration = %s, want accumulated active duration %s", got, want)
+	}
+}
+
+func TestRunState_DifferentBatchContinuationStartsFreshDuration(t *testing.T) {
 	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	awaitAt := startedAt.Add(5 * time.Minute)
@@ -1035,14 +1060,14 @@ func TestRunState_ContinuedRunStartsFreshDuration(t *testing.T) {
 	finishedAt := continuedAt.Add(7 * time.Minute)
 
 	run := ProjectRunStates([]Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "run-continued-duration", Issue: 42},
-		{Type: "run.await", Timestamp: awaitAt, RunID: "run-continued-duration", Issue: 42},
-		{Type: "run.continued", Timestamp: continuedAt, RunID: "run-continued-duration", Issue: 42},
-		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-continued-duration", Issue: 42, Payload: map[string]any{"status": "success"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-different-batch-duration", Issue: 42, Payload: map[string]any{"batch_id": "batch-old"}},
+		{Type: "run.await", Timestamp: awaitAt, RunID: "run-different-batch-duration", Issue: 42},
+		{Type: "run.continued", Timestamp: continuedAt, RunID: "run-different-batch-duration", Issue: 42, Payload: map[string]any{"batch_id": "batch-new"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-different-batch-duration", Issue: 42, Payload: map[string]any{"status": "success"}},
 	})[0]
 
 	if got, want := run.Duration(), 7*time.Minute; got != want {
-		t.Fatalf("duration = %s, want fresh continued-run duration %s", got, want)
+		t.Fatalf("duration = %s, want fresh duration for a different batch %s", got, want)
 	}
 }
 
@@ -1120,14 +1145,14 @@ func TestProjectRunStates_AwaitContinuedThenFinishedProjectsTerminalSuccess(t *t
 	runID := "260912164222-c538-466"
 
 	run := ProjectRunStates([]Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 466, Payload: map[string]any{"branch": "466-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 466, Payload: map[string]any{"branch": "466-fix", "batch_id": "batch-466"}},
 		{Type: "run.await", Timestamp: awaitAt, RunID: runID, Issue: 466, Payload: map[string]any{
-			"await_reason": "pending", "branch": "466-fix",
+			"await_reason": "pending", "branch": "466-fix", "batch_id": "batch-466",
 		}},
-		{Type: "run.continued", Timestamp: continuedAt, RunID: runID, Issue: 466, Payload: map[string]any{"branch": "466-fix"}},
-		{Type: "run.continued", Timestamp: secondContinuedAt, RunID: runID, Issue: 466, Payload: map[string]any{"branch": "466-fix"}},
+		{Type: "run.continued", Timestamp: continuedAt, RunID: runID, Issue: 466, Payload: map[string]any{"branch": "466-fix", "batch_id": "batch-466"}},
+		{Type: "run.continued", Timestamp: secondContinuedAt, RunID: runID, Issue: 466, Payload: map[string]any{"branch": "466-fix", "batch_id": "batch-466"}},
 		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 466, Payload: map[string]any{
-			"status": "success", "branch": "466-fix",
+			"status": "success", "branch": "466-fix", "batch_id": "batch-466",
 		}},
 	})
 	if len(run) != 1 {
@@ -1146,8 +1171,8 @@ func TestProjectRunStates_AwaitContinuedThenFinishedProjectsTerminalSuccess(t *t
 	if state.AwaitEvent == nil || state.AwaitReason() != "pending" {
 		t.Fatalf("await evidence = %#v, want retained pending evidence", state.AwaitEvent)
 	}
-	if got, want := state.Duration(), 7*time.Minute; got != want {
-		t.Fatalf("duration = %s, want %s for the final continued attempt", got, want)
+	if got, want := state.Duration(), 72*time.Minute; got != want {
+		t.Fatalf("duration = %s, want accumulated active duration across continuations %s", got, want)
 	}
 }
 

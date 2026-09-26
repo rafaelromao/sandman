@@ -126,7 +126,7 @@ Emitted when an agent run completes.
 #### `run.await`
 Emitted when an issue-driven run ends its agent session while recoverable pull-request work remains (CI, review, mergeability, or decision publication). Non-terminal: the run does not finish or consume a retry. Pending current-head CI carries a durable, non-renewing 30-minute per-head deadline in `ci_wait`; the row keeps dependency ownership while the scheduler releases execution capacity between observations. When the external poll interval elapses, the row joins a FIFO priority queue and receives the next permitted free execution slot before newly queued work.
 
-The run timer pauses at `run.await`. A later `run.resumed` event starts a new active segment, so duration readers exclude the full await interval. A separate `run.continued` event represents a new run and starts a fresh clock.
+The run timer pauses at `run.await`. A later `run.resumed` event starts a new active segment, so duration readers exclude the full await interval. A `run.continued` event with the same RunID and BatchID continues the same Batch run and retains its accumulated active duration. A separate continued run with a new RunID or BatchID starts a fresh clock.
 
 | Field | Description |
 |-------|-------------|

@@ -68,11 +68,29 @@ func ProjectRunStates(events []Event) []RunState {
 		}
 		state := getOrCreate(event.RunID)
 		switch event.Type {
-		case "run.started", "run.continued":
+		case "run.started":
 			state.Started = event
 			state.Finished = nil
 			state.awaiting = false
 			state.activeDuration = 0
+			state.activeSince = event.Timestamp
+		case "run.continued":
+			previousBatchID := state.BatchID()
+			continuedBatchID, _ := payloadString(event.Payload, "batch_id")
+			// Multiple continuations for the same Batch belong to one run timer;
+			// a continuation from another Batch starts a fresh duration.
+			sameBatchContinuation := state.Finished == nil &&
+				previousBatchID != "" &&
+				continuedBatchID != "" &&
+				previousBatchID == continuedBatchID
+			if sameBatchContinuation {
+				state.accumulateActiveUntil(event.Timestamp)
+			} else {
+				state.activeDuration = 0
+			}
+			state.Started = event
+			state.Finished = nil
+			state.awaiting = false
 			state.activeSince = event.Timestamp
 		case "run.blocked":
 			state.Started = event
