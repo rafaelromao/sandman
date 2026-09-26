@@ -92,14 +92,21 @@ func (c *cachedGitHubClient) ListOpenIssues(ctx context.Context) ([]github.Issue
 }
 
 // PostIssueComment preserves the optional Issue comment capability that
-// persists discovered children through the command cache. A delegate without
-// the capability posts nothing, matching the resolver's skip for such clients.
+// persists discovered children through the command cache. Every delegated
+// attempt drops the Issue's cached comments, even a failed one because GitHub
+// may still have stored the comment, so later reads in the same command see
+// the marker instead of posting it again. A delegate without the capability
+// posts nothing, matching the resolver's skip for such clients.
 func (c *cachedGitHubClient) PostIssueComment(ctx context.Context, issueNumber int, body string) error {
 	poster, ok := c.Client.(github.IssueCommentPoster)
 	if !ok {
 		return nil
 	}
-	return poster.PostIssueComment(ctx, issueNumber, body)
+	err := poster.PostIssueComment(ctx, issueNumber, body)
+	c.mu.Lock()
+	delete(c.comments, issueNumber)
+	c.mu.Unlock()
+	return err
 }
 
 func (c *cachedGitHubClient) SearchIssues(ctx context.Context, query string) ([]github.Issue, error) {

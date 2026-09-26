@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"slices"
 	"sort"
 	"strconv"
@@ -37,6 +38,10 @@ type specDiscoveryGitHubClient struct {
 	mentions map[int][]github.Issue
 	listings int
 	posts    []postedIssueComment
+	// postErr fails every post; with postErrStores the comment still
+	// lands, like a gh timeout that fires after GitHub stored it.
+	postErr       error
+	postErrStores bool
 }
 
 type postedIssueComment struct {
@@ -105,12 +110,16 @@ func (c *specDiscoveryGitHubClient) ListOpenIssues(ctx context.Context) ([]githu
 	return open, nil
 }
 
+// PostIssueComment records every post attempt. The comment lands on the
+// Issue unless the post fails before GitHub stored it.
 func (c *specDiscoveryGitHubClient) PostIssueComment(ctx context.Context, issueNumber int, body string) error {
 	c.state.Lock()
 	defer c.state.Unlock()
 	c.posts = append(c.posts, postedIssueComment{issue: issueNumber, body: body})
-	c.comments[issueNumber] = append(c.comments[issueNumber], github.IssueComment{Body: body})
-	return nil
+	if c.postErr == nil || c.postErrStores {
+		c.comments[issueNumber] = append(c.comments[issueNumber], github.IssueComment{Body: body})
+	}
+	return c.postErr
 }
 
 func executeRunWithGitHub(t *testing.T, gh github.Client, args ...string) (*spyBatchRunner, string) {
@@ -166,5 +175,87 @@ func TestRun_ColdSpecificationPersistsDiscoveredChildrenMarker(t *testing.T) {
 	}
 	if got, want := github.ParseChildrenFromBody(posted.body), []int{232, 234}; !slices.Equal(got, want) {
 		t.Errorf("posted comment lists children %v, want %v:\n%s", got, want, posted.body)
+	}
+}
+
+func TestRun_PersistedMarkerSkipsScanOnNextRun(t *testing.T) {
+	gh := newColdSpecificationGitHub()
+	executeRunWithGitHub(t, gh, "58")
+
+	spy, stderr := executeRunWithGitHub(t, gh, "58")
+
+	if want := []int{232, 234, 58}; !slices.Equal(spy.req.Issues, want) {
+		t.Fatalf("second run Batch issues = %v, want %v (stderr: %q)", spy.req.Issues, want, stderr)
+	}
+	if gh.listings != 1 {
+		t.Errorf("expected the second run to reuse the marker instead of listing open Issues; listings = %d", gh.listings)
+	}
+	if len(gh.posts) != 1 {
+		t.Errorf("expected the persisted marker to prevent a second post; posts = %+v", gh.posts)
+	}
+}
+
+func TestRun_CuratedMarkerStillScansWithoutReposting(t *testing.T) {
+	gh := newColdSpecificationGitHub()
+	gh.comments[58] = []github.IssueComment{{Body: discoveredChildrenMarker + "\n\n## Discovered children\n\n"}}
+
+	spy, stderr := executeRunWithGitHub(t, gh, "58")
+
+	if want := []int{232, 234, 58}; !slices.Equal(spy.req.Issues, want) {
+		t.Fatalf("Batch issues = %v, want %v (stderr: %q)", spy.req.Issues, want, stderr)
+	}
+	if gh.listings != 1 {
+		t.Errorf("expected the open-Issue scan to run once, got %d listings", gh.listings)
+	}
+	if len(gh.posts) != 0 {
+		t.Errorf("expected the existing marker to prevent a post, got %+v", gh.posts)
+	}
+}
+
+// newNestedColdSpecificationGitHub seeds Specification #58, which lists
+// cold Specification #60 as its child, and open #61 whose Parent section
+// cites #60. Running `sandman run 58 60` expands #60 twice in one
+// command: nested inside #58, then as a typed input.
+func newNestedColdSpecificationGitHub() *specDiscoveryGitHubClient {
+	return newSpecDiscoveryGitHub(map[int]*github.Issue{
+		58: {Number: 58, State: "open", Title: "Outer Specification", Body: "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## Child Issues\n\n- #60\n"},
+		60: {Number: 60, State: "open", Title: "Cold nested Specification", Body: "## Parent\n\n#58\n\n" + coldSpecificationBody},
+		61: {Number: 61, State: "open", Title: "Child 61", Body: "## Parent\n\n#60\n"},
+	})
+}
+
+func TestRun_ReexpandedColdSpecificationPostsOneMarkerPerCommand(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		postErr error
+	}{
+		{name: "post succeeds"},
+		{name: "post fails after GitHub stored the comment", postErr: errors.New("gh issue comment: context deadline exceeded")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gh := newNestedColdSpecificationGitHub()
+			gh.postErr = tc.postErr
+			gh.postErrStores = true
+
+			spy, stderr := executeRunWithGitHub(t, gh, "58", "60")
+
+			for _, n := range []int{61, 60, 58} {
+				if !slices.Contains(spy.req.Issues, n) {
+					t.Fatalf("expected #%d in Batch issues %v (stderr: %q)", n, spy.req.Issues, stderr)
+				}
+			}
+			if want := []int{61}; !slices.Equal(spy.req.Dependencies[60], want) {
+				t.Errorf("Specification #60 gated on %v, want %v", spy.req.Dependencies[60], want)
+			}
+			var attempts int
+			for _, post := range gh.posts {
+				if post.issue == 60 {
+					attempts++
+				}
+			}
+			if attempts != 1 {
+				t.Errorf("expected one marker post attempt on #60 within one command, got %d: %+v", attempts, gh.posts)
+			}
+		})
 	}
 }
