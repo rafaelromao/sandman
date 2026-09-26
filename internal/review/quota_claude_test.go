@@ -14,13 +14,19 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 )
 
-const claudeReviewUsageLimitResult = `{"type":"result","subtype":"success","is_error":true,"result":"You've hit your session limit · resets 3pm"}`
+// claudeReviewUsageLimitResult uses the real Claude Code result framing (see
+// the batch package's claudeRealAuthFailureResult) with the documented
+// subscription-limit message.
+const claudeReviewUsageLimitResult = `{"duration_api_ms":0,"stop_reason":"stop_sequence","session_id":"00000000-0000-4000-8000-000000000001","total_cost_usd":0,"usage":{"output_tokens_details":{"thinking_tokens":0},"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard","cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":0},"inference_geo":"","iterations":[],"speed":"standard"},"modelUsage":{},"permission_denials":[],"terminal_reason":"api_error","fast_mode_state":"off","is_error":true,"num_turns":1,"subtype":"success","api_error_status":429,"result":"You've hit your session limit · resets 3pm (America/Sao_Paulo)","type":"result","duration_ms":203,"uuid":"00000000-0000-4000-8000-000000000002","queued_turn_count":0,"result_index":0}`
 
 func TestReviewQuotaGateFollowsTheReviewAgentStrategy(t *testing.T) {
 	cfg := &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "m",
-		Agents:             map[string]config.Agent{"other": {Preset: "custom", Command: "other"}},
+		Agents: map[string]config.Agent{
+			"other":    {Preset: "custom", Command: "other"},
+			"reviewer": {Preset: "claude"},
+		},
 	}
 	tests := []struct {
 		agent      string
@@ -33,6 +39,7 @@ func TestReviewQuotaGateFollowsTheReviewAgentStrategy(t *testing.T) {
 		{agent: "claude", err: errors.New(claudeReviewUsageLimitResult), wantGate: true, wantQuotaE: true},
 		{agent: "claude", err: errors.New("Error: The usage limit has been reached"), wantGate: true, wantQuotaE: false},
 		{agent: "other", err: errors.New("Error: The usage limit has been reached"), wantGate: false, wantQuotaE: false},
+		{agent: "reviewer", err: errors.New(claudeReviewUsageLimitResult), wantGate: true, wantQuotaE: true},
 	}
 	for _, tt := range tests {
 		d := &Daemon{Config: cfg, Agent: tt.agent}

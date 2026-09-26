@@ -81,13 +81,23 @@ func TestClaudeOutput_RecognisesUsageLimitBeforeRendering(t *testing.T) {
 	if !parser.UsageLimitReached() {
 		t.Fatal("usage-limit result was not recognised")
 	}
-	if !strings.Contains(got, "Result: error · 1 turns · 1s") || !strings.Contains(got, "Error: You've hit your session limit · resets 3pm (America/Sao_Paulo)") {
+	if !strings.Contains(got, "Result: error · 1 turns\n") || !strings.Contains(got, "Error: You've hit your session limit · resets 3pm (America/Sao_Paulo)") {
 		t.Fatalf("rendered = %q, want the error result summary and message", got)
 	}
 
 	_, echo := renderClaudeStream(t, `{"type":"assistant","message":{"content":[{"type":"text","text":"You've hit your session limit"}]}}`+"\n")
 	if echo.UsageLimitReached() {
 		t.Fatal("assistant echo of the limit message was treated as a usage limit")
+	}
+}
+
+func TestClaudeOutput_RendersRealAuthFailureResult(t *testing.T) {
+	got, parser := renderClaudeStream(t, claudeRealAuthFailureResult+"\n")
+	if got != "Result: error · 1 turns\nError: Not logged in · Please run /login\n" {
+		t.Fatalf("rendered = %q", got)
+	}
+	if parser.UsageLimitReached() {
+		t.Fatal("authentication failure was treated as a usage limit")
 	}
 }
 

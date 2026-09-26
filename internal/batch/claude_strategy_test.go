@@ -15,9 +15,19 @@ import (
 	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
-// claudeUsageLimitResult is a representative final stream-json record of a
-// print-mode run that stopped at a subscription limit.
-const claudeUsageLimitResult = `{"type":"result","subtype":"success","is_error":true,"duration_ms":1200,"num_turns":1,"result":"You've hit your session limit · resets 3pm (America/Sao_Paulo)","session_id":"0f7c","total_cost_usd":0}`
+// claudeRealAuthFailureResult is a real terminal stream-json record, captured
+// from a Claude Code 2.1.283 print-mode run in a container without
+// credentials; only the session and record IDs are sanitized. It pins the
+// framing Claude Code uses for a run that ends on an API-side error: a
+// top-level `result` record with `is_error: true`, `subtype: "success"`,
+// `terminal_reason: "api_error"`, and the user-facing message in `result`.
+const claudeRealAuthFailureResult = `{"duration_api_ms":0,"stop_reason":"stop_sequence","session_id":"00000000-0000-4000-8000-000000000001","total_cost_usd":0,"usage":{"output_tokens_details":{"thinking_tokens":0},"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard","cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":0},"inference_geo":"","iterations":[],"speed":"standard"},"modelUsage":{},"permission_denials":[],"terminal_reason":"api_error","fast_mode_state":"off","is_error":true,"num_turns":1,"subtype":"success","api_error_status":null,"result":"Not logged in · Please run /login","type":"result","duration_ms":203,"uuid":"00000000-0000-4000-8000-000000000002","queued_turn_count":0,"result_index":0}`
+
+// claudeUsageLimitResult is the real framing above with the documented
+// subscription-limit message and HTTP 429 status. A subscription limit cannot
+// be triggered on demand; replace this fixture with a real capture when one is
+// available.
+const claudeUsageLimitResult = `{"duration_api_ms":0,"stop_reason":"stop_sequence","session_id":"00000000-0000-4000-8000-000000000001","total_cost_usd":0,"usage":{"output_tokens_details":{"thinking_tokens":0},"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard","cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":0},"inference_geo":"","iterations":[],"speed":"standard"},"modelUsage":{},"permission_denials":[],"terminal_reason":"api_error","fast_mode_state":"off","is_error":true,"num_turns":1,"subtype":"success","api_error_status":429,"result":"You've hit your session limit · resets 3pm (America/Sao_Paulo)","type":"result","duration_ms":203,"uuid":"00000000-0000-4000-8000-000000000002","queued_turn_count":0,"result_index":0}`
 
 func TestClaudeUsageLimitLine(t *testing.T) {
 	tests := []struct {
@@ -42,6 +52,8 @@ func TestClaudeUsageLimitLine(t *testing.T) {
 		{name: "opencode literal", line: "Error: The usage limit has been reached", want: false},
 		{name: "plain text phrase", line: "You've hit your session limit", want: false},
 		{name: "malformed json", line: `{"type":"result","is_error":true,"result":"You've hit your session limit"`, want: false},
+		{name: "real authentication failure is not a usage limit", line: claudeRealAuthFailureResult, want: false},
+		{name: "legacy usage limit wording", line: `{"type":"result","subtype":"success","is_error":true,"result":"Claude AI usage limit reached|1790434800"}`, want: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -458,14 +458,25 @@ func (d *Daemon) isQuotaError(err error) bool {
 	if err == nil {
 		return false
 	}
-	return batch.IsUsageLimitOutput(d.effectiveAgent(), err.Error())
+	return batch.IsUsageLimitOutput(d.reviewAgentPreset(), err.Error())
 }
 
 // reviewAwaitsUsageLimit reports whether the review agent's preset waits for
 // recognised usage limits to reset, which is what enables the daemon-wide
 // quota pause.
 func (d *Daemon) reviewAwaitsUsageLimit() bool {
-	return batch.AwaitsUsageLimit(d.effectiveAgent())
+	return batch.AwaitsUsageLimit(d.reviewAgentPreset())
+}
+
+// reviewAgentPreset resolves the effective review agent to its built-in
+// preset, so a custom provider such as `agents.reviewer.preset: claude` gets
+// the same usage-limit handling as `claude` itself.
+func (d *Daemon) reviewAgentPreset() string {
+	name := strings.TrimSpace(d.effectiveAgent())
+	if d.Config == nil {
+		return name
+	}
+	return d.agentPreset(name)
 }
 
 // New returns a Daemon configured with the project defaults for the

@@ -290,7 +290,7 @@ The model resolution order is:
 3. The selected agent provider's configured model (e.g., from the agent's `model` field)
 4. For an agent on a different preset than the default `agent`, that preset's default model (`opencode/big-pickle` or `sonnet`)
 
-If none are set, no model flag is passed to the agent, leaving it to the agent's own default.
+If none are set, the `claude` preset still runs on its default model (`sonnet`), because Claude Code would otherwise pick the account's default, often the most expensive model. The `opencode` preset passes no model flag and leaves the choice to OpenCode's own default.
 
 Claude Code accepts model aliases (`sonnet`, `opus`, `haiku`, `fable`, `opusplan`,
 `sonnet[1m]`) or full model names, never `provider/model` identifiers.

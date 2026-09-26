@@ -92,16 +92,21 @@ type Agent struct {
 // strategy seam in the batch package, keyed by the same preset name.
 type AgentPreset struct {
 	DisplayName string
-	// DefaultModel is the model a run of this preset uses when neither the
-	// command line nor config names one for it; see DefaultModelForAgent.
-	DefaultModel     string
-	Command          string
-	Env              map[string]string
-	ConfigDirs       []string
-	ConfigFiles      []string
-	SnapshotExcludes []string
-	LiveMounts       []string
-	KeychainAuth     bool
+	// DefaultModel is the preset's default model: `sandman init` writes it,
+	// review_model defaults to it, and a run on another preset than the
+	// default agent falls back to it; see DefaultModelForAgent.
+	DefaultModel string
+	// DefaultModelWhenUnset makes a run of this preset use DefaultModel when
+	// no model is configured anywhere. When false, such a run passes no model
+	// flag and the agent CLI's own default applies.
+	DefaultModelWhenUnset bool
+	Command               string
+	Env                   map[string]string
+	ConfigDirs            []string
+	ConfigFiles           []string
+	SnapshotExcludes      []string
+	LiveMounts            []string
+	KeychainAuth          bool
 }
 
 // OpencodePermissionExternalDirectoryAllow is the OPENCODE_PERMISSION value
@@ -163,7 +168,11 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 	"claude": {
 		DisplayName:  "Claude Code",
 		DefaultModel: "sonnet",
-		Command:      `claude -p --output-format stream-json --verbose{{if .ContinueFlag}} --continue{{end}}{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .SessionName}} --name '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}}{{if .VariantFlag}} {{.VariantFlag}}{{end}} "$(cat {{.PromptFile}})"`,
+		// Without --model, Claude Code picks the account's default, which is
+		// often the most expensive model; parallel AFK runs spend subscription
+		// quota, so a minimal config still runs on the preset default.
+		DefaultModelWhenUnset: true,
+		Command:               `claude -p --output-format stream-json --verbose{{if .ContinueFlag}} --continue{{end}}{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .SessionName}} --name '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}}{{if .VariantFlag}} {{.VariantFlag}}{{end}} "$(cat {{.PromptFile}})"`,
 		Env: map[string]string{
 			"DISABLE_AUTOUPDATER":                      "1",
 			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",

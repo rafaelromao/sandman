@@ -243,7 +243,7 @@ func claudeResultLines(record map[string]any) []string {
 	if turns, ok := record["num_turns"].(float64); ok {
 		summary += fmt.Sprintf(" · %d turns", int(turns))
 	}
-	if duration, ok := record["duration_ms"].(float64); ok {
+	if duration, ok := record["duration_ms"].(float64); ok && duration >= 1000 {
 		summary += " · " + (time.Duration(duration) * time.Millisecond).Round(time.Second).String()
 	}
 	if cost, ok := record["total_cost_usd"].(float64); ok && cost > 0 {

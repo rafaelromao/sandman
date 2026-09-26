@@ -12,7 +12,8 @@ agent: opencode
 # Default model passed to the agent when `--model` is omitted. It applies only
 # to agents that use the same preset as `agent`; another preset uses its own
 # configured model or its preset default (opencode/big-pickle, sonnet).
-# Falls back to the agent provider's configured model if empty.
+# Falls back to the agent provider's configured model if empty; with nothing
+# configured, claude runs on sonnet and opencode on its own CLI default.
 model: opencode/big-pickle
 
 # Optional provider-specific implementation model variant. Empty disables

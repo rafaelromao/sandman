@@ -77,7 +77,8 @@ contain one of the documented session, weekly, or model limit messages; spend
 and budget limits are not awaited because they do not reset within the waiting
 window. A recognised limit enters the existing usage-limit await, whose
 re-entry renders `--continue`. The review daemon's daemon-wide quota gate
-(ADR-0029) now applies to any review agent whose strategy awaits usage limits.
+(ADR-0029) now applies to any review agent whose preset's strategy awaits usage
+limits, including custom providers such as `agents.reviewer.preset: claude`.
 
 **Claude output is rendered like OpenCode's.** The Claude strategy's output
 parser turns stream-json records into readable lines (agent text, tool labels,
@@ -90,7 +91,10 @@ rendering never changes what the idle-timeout heartbeat sees.
 **Models follow the agent's preset.** Each preset declares a default model
 (`opencode/big-pickle`, `sonnet`). The global `model` key applies only to
 agents that share the default agent's preset; another preset uses its own
-configured model or its preset default. `review_model` defaults to the review
+configured model or its preset default. A preset may also opt into its default
+when no model is configured at all; `claude` does, so a minimal config never
+falls back to the account's most expensive model, while `opencode` keeps
+deferring to its CLI. `review_model` defaults to the review
 agent's preset default, and a review agent override that changes preset never
 inherits a model configured for another provider.
 

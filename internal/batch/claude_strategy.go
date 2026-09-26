@@ -79,6 +79,8 @@ var claudeUsageLimitLiterals = []string{
 	"hit your opus limit",
 	"hit your sonnet limit",
 	"fable limit reached",
+	// Wording of earlier Claude Code releases, still seen on older installs.
+	"claude ai usage limit reached",
 }
 
 // claudeUsageLimitLine recognises Claude Code's usage-limit response. In print
