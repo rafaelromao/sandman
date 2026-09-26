@@ -80,7 +80,7 @@ func (c *cachedGitHubClient) FetchIssueState(ctx context.Context, number int) (s
 	return issue.State, nil
 }
 
-// ListOpenIssues preserves the optional open-Issue scan capability through
+// ListOpenIssues preserves the optional open-issue scan capability through
 // the command cache. A delegate without the capability lists nothing, which
 // keeps the scan the no-op the resolver makes it for such clients.
 func (c *cachedGitHubClient) ListOpenIssues(ctx context.Context) ([]github.Issue, error) {

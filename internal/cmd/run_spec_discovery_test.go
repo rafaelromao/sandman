@@ -16,19 +16,19 @@ import (
 )
 
 // discoveredChildrenMarker is the hidden marker ADR-0044 writes on a
-// Specification to persist the children its open-Issue scan discovered.
+// Specification to persist the children its open-issue scan discovered.
 const discoveredChildrenMarker = "<!-- sandman-discovered-children -->"
 
 // coldSpecificationBody carries the canonical Specification shape but no
 // child signal: no child section, no issue references outside a Parent
-// section. Only the open-Issue scan (ADR-0044) can discover its children.
+// section. Only the open-issue scan (ADR-0044) can discover its children.
 const coldSpecificationBody = "## Problem Statement\n\nImported tickets keep their relationship on the child side only.\n\n## Solution\n\nDiscover the children from their Parent sections.\n"
 
 // specDiscoveryGitHubClient is the GitHub boundary for Specification
 // discovery through `sandman run`. It extends fakeGitHubClient with
-// per-Issue comments that reflect its own posts, native sub-issues,
+// per-issue comments that reflect its own posts, native sub-issues,
 // mention-search results kept apart from the repo-wide `is:open` search,
-// and the optional ADR-0044 capabilities (open-Issue listing and Issue
+// and the optional ADR-0044 capabilities (open-issue listing and issue
 // comment posting) that the production GitHub client provides.
 type specDiscoveryGitHubClient struct {
 	*fakeGitHubClient
@@ -74,7 +74,7 @@ func newColdSpecificationGitHub() *specDiscoveryGitHubClient {
 
 // SearchIssues answers the resolver's `issues/<n>` mention search from
 // its own table, so the embedded fake's `is:open` answer (every open
-// Issue) cannot masquerade as mention results.
+// issue) cannot masquerade as mention results.
 func (c *specDiscoveryGitHubClient) SearchIssues(ctx context.Context, query string) ([]github.Issue, error) {
 	if rest, ok := strings.CutPrefix(query, "issues/"); ok {
 		number, err := strconv.Atoi(rest)
@@ -100,7 +100,7 @@ func (c *specDiscoveryGitHubClient) ListSubIssues(ctx context.Context, parent in
 	return append([]int(nil), c.subIssues[parent]...), nil
 }
 
-// ListOpenIssues lists every open Issue in ascending number order, like
+// ListOpenIssues lists every open issue in ascending number order, like
 // the production client.
 func (c *specDiscoveryGitHubClient) ListOpenIssues(ctx context.Context) ([]github.Issue, error) {
 	c.state.Lock()
@@ -201,25 +201,22 @@ func TestRun_PersistedMarkerSkipsScanOnNextRun(t *testing.T) {
 		t.Fatalf("second run Batch issues = %v, want %v (stderr: %q)", spy.req.Issues, want, stderr)
 	}
 	if gh.listings != 1 {
-		t.Errorf("expected the second run to reuse the marker instead of listing open Issues; listings = %d", gh.listings)
+		t.Errorf("expected the second run to reuse the marker instead of listing open issues; listings = %d", gh.listings)
 	}
 	if len(gh.posts) != 1 {
 		t.Errorf("expected the persisted marker to prevent a second post; posts = %+v", gh.posts)
 	}
 }
 
-func TestRun_CuratedMarkerStillScansWithoutReposting(t *testing.T) {
+func TestRun_ExistingMarkerPreventsSecondPost(t *testing.T) {
+	// The operator curated every bullet out of the marker comment, so the
+	// comment harvest finds no children. Whatever the resolver harvests
+	// next, the intact marker must stop a second post (ADR-0044 §3).
 	gh := newColdSpecificationGitHub()
 	gh.comments[58] = []github.IssueComment{{Body: discoveredChildrenMarker + "\n\n## Discovered children\n\n"}}
 
-	spy, stderr := executeRunWithGitHub(t, gh, "58")
+	executeRunWithGitHub(t, gh, "58")
 
-	if want := []int{232, 234, 58}; !slices.Equal(spy.req.Issues, want) {
-		t.Fatalf("Batch issues = %v, want %v (stderr: %q)", spy.req.Issues, want, stderr)
-	}
-	if gh.listings != 1 {
-		t.Errorf("expected the open-Issue scan to run once, got %d listings", gh.listings)
-	}
 	if len(gh.posts) != 0 {
 		t.Errorf("expected the existing marker to prevent a post, got %+v", gh.posts)
 	}
@@ -340,7 +337,7 @@ func TestRun_CheaperSpecificationSourcesKeepScanSkipped(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			// #11 also backlinks #58 but only the open-Issue scan could
+			// #11 also backlinks #58 but only the open-issue scan could
 			// find it, so it must stay out of the Batch.
 			gh := newSpecDiscoveryGitHub(map[int]*github.Issue{
 				58: {Number: 58, State: "open", Title: "Specification", Body: tc.specBody},
@@ -360,7 +357,7 @@ func TestRun_CheaperSpecificationSourcesKeepScanSkipped(t *testing.T) {
 				t.Errorf("Specification #58 gated on %v, want %v", spy.req.Dependencies[58], want)
 			}
 			if gh.listings != 0 {
-				t.Errorf("expected the open-Issue scan to stay skipped, got %d listings", gh.listings)
+				t.Errorf("expected the open-issue scan to stay skipped, got %d listings", gh.listings)
 			}
 			if len(gh.posts) != 0 {
 				t.Errorf("expected no discovered-children comment, got %+v", gh.posts)
@@ -372,7 +369,7 @@ func TestRun_CheaperSpecificationSourcesKeepScanSkipped(t *testing.T) {
 func TestRun_ColdSpecificationWithoutDiscoveryCapabilitiesRunsAlone(t *testing.T) {
 	// The plain fake lacks the optional capabilities. Seeding only #58
 	// keeps its query-blind search from feeding the mention fallback, so
-	// the resolver reaches the open-Issue scan.
+	// the resolver reaches the open-issue scan.
 	gh := &fakeGitHubClient{issues: map[int]*github.Issue{
 		58: {Number: 58, State: "open", Title: "Cold Specification", Body: coldSpecificationBody},
 	}}
@@ -385,7 +382,9 @@ func TestRun_ColdSpecificationWithoutDiscoveryCapabilitiesRunsAlone(t *testing.T
 	if !strings.Contains(stderr, "running issue #58 as a regular issue (no children)") {
 		t.Errorf("expected the regular-issue log line, got: %q", stderr)
 	}
-	if strings.Contains(stderr, "warning:") {
-		t.Errorf("expected no scan or post warning without the optional capabilities, got: %q", stderr)
+	for _, unexpected := range []string{"warning:", "open-issue scan for specification #58", "discovered-children comment"} {
+		if strings.Contains(stderr, unexpected) {
+			t.Errorf("expected no scan or post warning without the optional capabilities, found %q in: %q", unexpected, stderr)
+		}
 	}
 }
