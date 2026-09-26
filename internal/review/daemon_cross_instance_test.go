@@ -147,3 +147,45 @@ func TestDaemonDoesNotTreatUnrelatedLaterCommentAsReviewResponse(t *testing.T) {
 		})
 	}
 }
+
+func TestDaemonProcessesEditedTriggerWhenPriorResponsePredatesEdit(t *testing.T) {
+	const prNumber = 2739
+	createdAt := time.Date(2026, time.September, 26, 13, 0, 0, 0, time.UTC)
+	editedAt := createdAt.Add(2 * time.Minute)
+	comment := github.PRComment{
+		ID:          "request",
+		Body:        "/sandman review focus on the edited request",
+		AuthorLogin: "sandman",
+		CreatedAt:   createdAt,
+		UpdatedAt:   editedAt,
+	}
+	response := github.PRComment{
+		ID:          "response",
+		Body:        "## Summary\nReviewed the earlier request.\n\n## Decision\n**APPROVED**",
+		AuthorLogin: "sandman",
+		CreatedAt:   createdAt.Add(time.Minute),
+	}
+	gh := &fakeGH{
+		prs: []github.PR{{Number: prNumber, State: "open", UpdatedAt: editedAt}},
+		comments: map[int][]github.PRComment{
+			prNumber: {comment, response},
+		},
+	}
+	runner := newDecisionRunner()
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+	d.authenticatedLogin = "sandman"
+
+	tickAndWait(t, d, context.Background())
+	if got := runner.Calls(); got != 1 {
+		t.Fatalf("edited trigger was suppressed by a response to its earlier revision: RunBatch calls = %d, want 1", got)
+	}
+	runner.mu.Lock()
+	focus := runner.last.ReviewFocus
+	runner.mu.Unlock()
+	if focus != "focus on the edited request" {
+		t.Fatalf("edited trigger focus = %q, want %q", focus, "focus on the edited request")
+	}
+}

@@ -1483,12 +1483,20 @@ func reviewTriggerKey(comment github.PRComment) string {
 	return fmt.Sprintf("%s@%d", comment.ID, comment.UpdatedAt.UTC().UnixNano())
 }
 
+func reviewTriggerTimestamp(comment github.PRComment) time.Time {
+	if !comment.UpdatedAt.IsZero() {
+		return comment.UpdatedAt
+	}
+	return comment.CreatedAt
+}
+
 func hasLaterDaemonReviewResponse(trigger github.PRComment, comments []github.PRComment, authenticatedLogin string) bool {
 	if strings.TrimSpace(authenticatedLogin) == "" {
 		return false
 	}
+	triggeredAt := reviewTriggerTimestamp(trigger)
 	for _, comment := range comments {
-		if !comment.CreatedAt.After(trigger.CreatedAt) || !strings.EqualFold(strings.TrimSpace(comment.AuthorLogin), strings.TrimSpace(authenticatedLogin)) {
+		if !comment.CreatedAt.After(triggeredAt) || !strings.EqualFold(strings.TrimSpace(comment.AuthorLogin), strings.TrimSpace(authenticatedLogin)) {
 			continue
 		}
 		if hasMarkdownHeading(comment.Body, "Summary") && hasMarkdownHeading(comment.Body, "Decision") {
