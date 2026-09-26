@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -64,15 +65,7 @@ func (s *ControlSocket) Start() error {
 	}
 	s.listener = listener
 
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			s.broadcaster.AddClient(conn)
-		}
-	}()
+	go s.acceptLoop(listener)
 
 	return nil
 }
@@ -83,7 +76,25 @@ func (s *ControlSocket) acceptLoop(listener net.Listener) {
 		if err != nil {
 			return
 		}
+		go s.addClient(conn)
+	}
+}
+
+func (s *ControlSocket) addClient(conn net.Conn) {
+	// Every stream consumer identifies its wire mode before the broadcaster
+	// attaches it, so replay-boundary selection is independent of scheduling.
+	var handshake [1]byte
+	if _, err := io.ReadFull(conn, handshake[:]); err != nil {
+		_ = conn.Close()
+		return
+	}
+	switch handshake[0] {
+	case PortalStreamHandshake:
+		s.broadcaster.AddPortalClient(conn)
+	case AttachStreamHandshake:
 		s.broadcaster.AddClient(conn)
+	default:
+		_ = conn.Close()
 	}
 }
 

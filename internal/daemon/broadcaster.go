@@ -8,6 +8,17 @@ import (
 
 const MaxBufferSize = 256 * 1024
 
+// PortalStreamHandshake opts a control-socket client into replay-boundary framing.
+const PortalStreamHandshake byte = 0
+
+// AttachStreamHandshake selects the ordinary raw output stream for attach and
+// Portal snapshot clients.
+const AttachStreamHandshake byte = 1
+
+// PortalReplayBoundary separates the bounded replay snapshot from live output
+// for clients that used PortalStreamHandshake.
+const PortalReplayBoundary = "\x00SANDMAN-PORTAL-REPLAY-END\x00\n"
+
 type Broadcaster struct {
 	mu      sync.Mutex
 	buffer  bytes.Buffer
@@ -21,6 +32,7 @@ type broadcastClient struct {
 	conn   net.Conn
 	ch     chan []byte
 	replay []byte
+	portal bool
 	mu     sync.Mutex
 	closed bool
 }
@@ -72,13 +84,24 @@ func (b *Broadcaster) Bytes() []byte {
 }
 
 func (b *Broadcaster) AddClient(conn net.Conn) {
+	b.addClient(conn, false)
+}
+
+// AddPortalClient registers a Portal stream. Registration and the replay
+// snapshot are atomic with respect to Write; client.run emits the boundary
+// after that snapshot and before draining output queued by later writes.
+func (b *Broadcaster) AddPortalClient(conn net.Conn) {
+	b.addClient(conn, true)
+}
+
+func (b *Broadcaster) addClient(conn net.Conn, portal bool) {
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
 		_ = conn.Close()
 		return
 	}
-	client := &broadcastClient{conn: conn, ch: make(chan []byte, 64), replay: append([]byte(nil), b.buffer.Bytes()...)}
+	client := &broadcastClient{conn: conn, ch: make(chan []byte, 64), replay: append([]byte(nil), b.buffer.Bytes()...), portal: portal}
 	b.clients[client] = struct{}{}
 	b.runWG.Add(1)
 	b.mu.Unlock()
@@ -134,6 +157,12 @@ func (c *broadcastClient) enqueue(data []byte) bool {
 func (c *broadcastClient) run(b *Broadcaster) {
 	if len(c.replay) > 0 {
 		if _, err := c.conn.Write(c.replay); err != nil {
+			b.removeClient(c)
+			return
+		}
+	}
+	if c.portal {
+		if _, err := c.conn.Write([]byte(PortalReplayBoundary)); err != nil {
 			b.removeClient(c)
 			return
 		}
