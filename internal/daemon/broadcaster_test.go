@@ -9,6 +9,13 @@ import (
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
+func startAttachStream(t *testing.T, conn net.Conn) {
+	t.Helper()
+	if _, err := conn.Write([]byte{AttachStreamHandshake}); err != nil {
+		t.Fatalf("write attach handshake: %v", err)
+	}
+}
+
 func TestBroadcaster_StoresAndReturnsBytes(t *testing.T) {
 	b := NewBroadcaster()
 	n, err := b.Write([]byte("hello world"))
@@ -41,6 +48,7 @@ func TestBroadcaster_ClientReplayOnConnect(t *testing.T) {
 		t.Fatalf("connect: %v", err)
 	}
 	defer conn.Close()
+	startAttachStream(t, conn)
 
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
@@ -96,6 +104,7 @@ func TestBroadcaster_ClientLiveStream(t *testing.T) {
 		t.Fatalf("connect: %v", err)
 	}
 	defer conn.Close()
+	startAttachStream(t, conn)
 
 	done := make(chan string, 1)
 	go func() {
@@ -133,6 +142,8 @@ func TestBroadcaster_MultipleClientsAllReceiveSameData(t *testing.T) {
 		t.Fatalf("connect client 2: %v", err)
 	}
 	defer conn2.Close()
+	startAttachStream(t, conn1)
+	startAttachStream(t, conn2)
 
 	done1 := make(chan string, 1)
 	done2 := make(chan string, 1)
@@ -239,6 +250,7 @@ func TestBroadcaster_NewClientGetsTrimmedReplay(t *testing.T) {
 		t.Fatalf("connect: %v", err)
 	}
 	defer conn.Close()
+	startAttachStream(t, conn)
 
 	replay := make([]byte, MaxBufferSize+1024)
 	n, err := conn.Read(replay)
@@ -266,6 +278,7 @@ func TestBroadcaster_CloseClosesAllClients(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
+	startAttachStream(t, conn)
 
 	sock.Stop()
 

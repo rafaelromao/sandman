@@ -36,6 +36,10 @@ func TestAttach_FindsReviewSock(t *testing.T) {
 		if err != nil {
 			return
 		}
+		if err := readAttachHandshake(conn); err != nil {
+			conn.Close()
+			return
+		}
 		conn.Write([]byte("hello from review daemon"))
 		conn.Close()
 	}()
@@ -164,6 +168,10 @@ func TestAttach_FindsLongPathReviewSock(t *testing.T) {
 	go func() {
 		conn, err := listener.Accept()
 		if err != nil {
+			return
+		}
+		if err := readAttachHandshake(conn); err != nil {
+			conn.Close()
 			return
 		}
 		conn.Write([]byte("hello from long-path review daemon"))

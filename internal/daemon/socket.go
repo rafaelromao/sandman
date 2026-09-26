@@ -2,10 +2,10 @@ package daemon
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/rafaelromao/sandman/internal/socketpath"
 )
@@ -81,18 +81,21 @@ func (s *ControlSocket) acceptLoop(listener net.Listener) {
 }
 
 func (s *ControlSocket) addClient(conn net.Conn) {
-	// Portal sends a one-byte opt-in immediately after connecting. Ordinary
-	// attach clients remain read-only; the short deadline lets them proceed
-	// without changing their wire format or waiting for the run to finish.
-	_ = conn.SetReadDeadline(time.Now().Add(25 * time.Millisecond))
+	// Every stream consumer identifies its wire mode before the broadcaster
+	// attaches it, so replay-boundary selection is independent of scheduling.
 	var handshake [1]byte
-	n, _ := conn.Read(handshake[:])
-	_ = conn.SetReadDeadline(time.Time{})
-	if n == 1 && handshake[0] == PortalStreamHandshake {
-		s.broadcaster.AddPortalClient(conn)
+	if _, err := io.ReadFull(conn, handshake[:]); err != nil {
+		_ = conn.Close()
 		return
 	}
-	s.broadcaster.AddClient(conn)
+	switch handshake[0] {
+	case PortalStreamHandshake:
+		s.broadcaster.AddPortalClient(conn)
+	case AttachStreamHandshake:
+		s.broadcaster.AddClient(conn)
+	default:
+		_ = conn.Close()
+	}
 }
 
 func (s *ControlSocket) Stop() error {

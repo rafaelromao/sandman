@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/socketpath"
 	"github.com/rafaelromao/sandman/internal/testenv"
@@ -84,7 +85,7 @@ func TestControlSocket_CustomFilename(t *testing.T) {
 	}
 }
 
-func TestControlSocket_PortalHandshakeAddsReplayBoundary(t *testing.T) {
+func TestControlSocket_DelayedPortalHandshakeAddsReplayBoundary(t *testing.T) {
 	dir := testenv.MkdirShort(t, "sm-sock-")
 	broadcaster := NewBroadcaster()
 	if _, err := broadcaster.Write([]byte("replay line\n")); err != nil {
@@ -101,6 +102,8 @@ func TestControlSocket_PortalHandshakeAddsReplayBoundary(t *testing.T) {
 		t.Fatalf("connect: %v", err)
 	}
 	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	time.Sleep(50 * time.Millisecond)
 	if _, err := conn.Write([]byte{PortalStreamHandshake}); err != nil {
 		t.Fatalf("write Portal handshake: %v", err)
 	}

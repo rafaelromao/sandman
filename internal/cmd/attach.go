@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/spf13/cobra"
 )
@@ -32,6 +33,9 @@ func NewAttachCmd() *cobra.Command {
 				return fmt.Errorf("connect to daemon: %w", err)
 			}
 			defer conn.Close()
+			if _, err := conn.Write([]byte{daemon.AttachStreamHandshake}); err != nil {
+				return fmt.Errorf("initialize daemon stream: %w", err)
+			}
 
 			_, err = io.Copy(cmd.OutOrStdout(), conn)
 			return err

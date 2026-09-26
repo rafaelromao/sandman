@@ -8,9 +8,12 @@ import (
 
 const MaxBufferSize = 256 * 1024
 
-// PortalStreamHandshake opts a control-socket client into replay-boundary
-// framing. Ordinary attach clients send no handshake and keep the raw stream.
+// PortalStreamHandshake opts a control-socket client into replay-boundary framing.
 const PortalStreamHandshake byte = 0
+
+// AttachStreamHandshake selects the ordinary raw output stream for attach and
+// Portal snapshot clients.
+const AttachStreamHandshake byte = 1
 
 // PortalReplayBoundary separates the bounded replay snapshot from live output
 // for clients that used PortalStreamHandshake.
