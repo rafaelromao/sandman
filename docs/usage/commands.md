@@ -23,7 +23,7 @@ sandman init [flags]
 |------|---------|-------------|
 | `--build-tools` | `""` | Build tools preset (`generic`, `dotnet`, `go`, `node`, `python`, `rust`, `elixir`, `ruby`, `java`) |
 | `--tool-version` | `""` | Version selector (`latest`, `lts`, `repo`, or semver shorthand) |
-| `--agent` | `""` | Default built-in agent preset for `init` (`opencode`) |
+| `--agent` | `""` | Default built-in agent preset for `init` (`opencode` or `claude`); also becomes `review_agent`, and the preset's default model becomes `model` and `review_model` |
 | `--model` | `""` | Default model for the agent |
 | `--variant` | `""` | Default provider-specific implementation model variant |
 | `--parallel` | `-1` | Default parallel container count (`-1` = use config default 1) |
@@ -69,8 +69,8 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--max-containers` | config default (0) | Max containers; `0` = no cap (unbounded pool growth) |
 | `--retries` | config `retries` (3) | Number of times to retry a failed run; omit to use `retries` from `.sandman/config.yaml` (default 3) |
 | `--override` | `false` | Replace worktree and branch for a new attempt while retaining prior AgentRun events (append-only), batch artifacts, and logs; force-checkout worktree to expected branch on mismatch or detached HEAD |
-| `--continue` | `false` | Continue the latest AgentRun for selected issues by reusing the preserved worktree (branch, base branch, task file, prior run id); OpenCode starts a fresh conversation by default |
-| `--reuse-session` | `false` | Only with `--continue`: explicitly reuse each continued row's prior OpenCode session, falling back once to OpenCode `--continue` if the exact session is unavailable |
+| `--continue` | `false` | Continue the latest AgentRun for selected issues by reusing the preserved worktree (branch, base branch, task file, prior run id); the agent starts a fresh conversation by default |
+| `--reuse-session` | `false` | Only with `--continue`: explicitly reuse each continued row's prior conversation. OpenCode selects the exact prior session, falling back once to OpenCode `--continue` if it is unavailable; Claude Code resumes the worktree's most recent conversation with `--continue` |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for agent runs |
 | `--include-dependencies` | `false` | Auto-expand batch with transitive blockers |
 | `--label` | — | Select issues by label |
@@ -79,8 +79,8 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--template` | — | Path to prompt template file |
 | `--prompt-arg` | — | Custom template substitution (`KEY=VALUE`, repeatable) |
 | `--model` | `model` from config | Override the model passed to the agent for built-in presets |
-| `--variant` | `variant` from config | Override the implementation model variant; forwarded to built-in OpenCode only when non-empty |
-| `--agent` | `agent` from config (`opencode`) | Agent preset for this run (built-in `opencode` or a custom provider under `agents` in config); on `--continue` uses the current CLI/config value, not the prior run's stored agent |
+| `--variant` | `variant` from config | Override the implementation model variant; forwarded to the built-in command only when non-empty (`--variant` for OpenCode, `--effort` for Claude Code) |
+| `--agent` | `agent` from config (`opencode`) | Agent preset for this run (built-in `opencode` or `claude`, or a custom provider under `agents` in config); on `--continue` uses the current CLI/config value, not the prior run's stored agent |
 | `--run-id` | — | Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection |
 | `--run-idle-timeout` | config `run_idle_timeout` (`3600`) | Treat an AgentRun as stuck if it produces no output for N seconds; explicit `0` disables the timeout |
 | `--review-timeout` | config `review_timeout` (`1800`) | Override the absolute per-confirmed-request delegated review deadline in seconds; minimum `240` |
@@ -100,12 +100,12 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 - `--container-capacity` limits concurrent `AgentRun`s per `ContainerSandbox`
 - `--container-capacity` accepts `0` as unlimited mode (no per-container cap)
 - `--max-containers` caps the number of `ContainerSandbox` instances; `0` means no cap (unbounded pool growth)
-- `--model` only applies to built-in presets; if omitted, Sandman uses `model` from config, falling back to the agent provider's configured model
-- `--variant` is trimmed and treated as opaque provider-specific text; when omitted, Sandman uses `variant` from config. On `--continue`, current CLI/config values replace the prior event value. Non-empty values are safely passed as one argument to built-in OpenCode; custom commands are unchanged.
-- `--agent` selects the agent preset for this run (built-in `opencode` or a custom provider under `agents` in config); if omitted, Sandman uses `agent` from config
+- `--model` only applies to built-in presets; if omitted, Sandman uses `model` from config when the agent shares the default `agent`'s preset, then the agent provider's configured model, then the preset's default model (`opencode/big-pickle`, `sonnet`)
+- `--variant` is trimmed and treated as opaque provider-specific text; when omitted, Sandman uses `variant` from config. On `--continue`, current CLI/config values replace the prior event value. Non-empty values are safely passed as one argument to the built-in command (`--variant` for OpenCode, `--effort` for Claude Code); custom commands are unchanged.
+- `--agent` selects the agent preset for this run (built-in `opencode` or `claude`, or a custom provider under `agents` in config); if omitted, Sandman uses `agent` from config. In container mode the Dockerfile's `installed-agents` header must list the agent's preset
 - `--continue` cannot be combined with `--override`
 - `--reuse-session` requires `--continue`; it applies independently to each continued row and never to promoted or fresh rows
-- Runtime-owned re-entry after an external pull-request wait reuses the exact OpenCode session automatically; ordinary retries and context-rollover retries remain fresh
+- Runtime-owned re-entry after an external pull-request wait reuses the prior conversation automatically (the exact OpenCode session, or Claude Code's `--continue`); ordinary retries and context-rollover retries remain fresh
 - `--review-timeout` uses explicit override > repository `review_timeout` > built-in default `1800`; each confirmed review trigger receives one full absolute deadline, while retries and continuations of that trigger keep the original deadline
 - When `--max-containers` and `--container-capacity` together constrain concurrency below `--parallel`, the tighter limit wins
 - `--reconcile-stranded` auto-recovers stranded worktrees when the main repo is checked out on a `<n>-<slug>` branch; `--no-reconcile-stranded` opts out of this auto-recovery
@@ -138,7 +138,7 @@ Continue the last agent run for one or more issues. Reads the task file (`.sandm
 sandman run --continue <issue-number>...
 ```
 
-Reuses the prior run's worktree identity: the existing branch, the stored base branch (the worktree was cut from it), the prior run id, the `.sandman/task.md` contents, and the issue mode. Tunables (agent, model, parallel, retries, sandbox, container tunables, review command, review timeout) come from current CLI flags / config defaults, not from the stored payload. CLI overrides on the `--continue` invocation still win over both config defaults and stored values. OpenCode starts a fresh conversation unless `--reuse-session` is also supplied. When no task file exists, an empty task template is used as the resume prompt (with a warning on stderr).
+Reuses the prior run's worktree identity: the existing branch, the stored base branch (the worktree was cut from it), the prior run id, the `.sandman/task.md` contents, and the issue mode. Tunables (agent, model, parallel, retries, sandbox, container tunables, review command, review timeout) come from current CLI flags / config defaults, not from the stored payload. CLI overrides on the `--continue` invocation still win over both config defaults and stored values. The agent starts a fresh conversation unless `--reuse-session` is also supplied. When no task file exists, an empty task template is used as the resume prompt (with a warning on stderr).
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -245,8 +245,8 @@ The daemon's review path is **daemon-as-poster**: the reviewer agent writes its 
 | `--parallel` | `0` | Override parallel_reviews for this run; `0` uses the configured value |
 | `--container-capacity` | `0` | Maximum concurrent agent runs per container; `0` means unlimited |
 | `--max-containers` | `0` | Maximum number of containers to run at once; `0` means no cap (unbounded pool) |
-| `--agent` | `""` | Override `default_review_agent` for this run |
-| `--model` | `""` | Override `default_review_model` for this run |
+| `--agent` | `""` | Override `review_agent` for this run; an agent on another preset needs `--model` unless `review_model` suits it |
+| `--model` | `""` | Override `review_model` for this run |
 | `--variant` | `""` | Override `review_variant` for this run; trimmed and forwarded as one argument only when non-empty |
 | `--sandbox` | `""` (config default: `podman`) | Sandbox mode for the review run |
 

@@ -62,6 +62,18 @@ Add it to `~/.config/opencode/opencode.json`:
 
 Restart OpenCode after installing.
 
+## Claude Code instead
+
+To use a Claude subscription, install Claude Code, sign in once with `claude` and `/login`, and initialize with the `claude` preset:
+
+```bash
+npm install -g @anthropic-ai/claude-code
+sandman init --agent claude
+sandman run --sandbox worktree --dangerously-skip-permissions 42
+```
+
+Container runs need file-based credentials or a `claude setup-token` token; see [Agent Compatibility](../usage/agent-compatibility.md#claude-code).
+
 ## See also
 
 - [Installation](install.md) — full prerequisites, build from source, init details

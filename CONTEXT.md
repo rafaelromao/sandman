@@ -17,19 +17,23 @@ A blocker named in an AgentRun's BlockedBy that is not a member of the current B
 _Avoid_: outside blocker, third-party blocker.
 
 **Agent**:
-An external AI coding tool (OpenCode) invoked by Sandman via `os/exec`. Sandman does not contain the agent; it renders a command template and executes it.
+An external AI coding tool (OpenCode or Claude Code) invoked by Sandman via `os/exec`. Sandman does not contain the agent; it renders a command template and executes it.
 _Avoid_: AI model, LLM, copilot.
 
 **AgentPreset**:
-A built-in command, config source, and auth profile for a known AI coding tool keyed by name (currently `opencode`). Declared in `config.BuiltInAgentPresets` and resolved by `config.ResolveAgentProvider`.
+A built-in command, config source, auth profile, and default model for a known AI coding tool keyed by name (`opencode`, `claude`). Declared in `config.BuiltInAgentPresets` and resolved by `config.ResolveAgentProvider`. Presets hold data only; the agent-specific run-loop behaviour for a preset is its AgentStrategy.
 _Avoid_: Provider template, agent type.
 
+**AgentStrategy**:
+The per-preset behaviour bundle the run loop selects once per launch with `strategyFor(preset, command)` in `internal/batch/agent_strategy.go`: command flags (model, variant), the launch environment, session selection, output parsing, and failure classification (context rollover, usage limits, and whether a usage limit is awaited). Implementations are OpenCode, Claude, and passthrough (custom commands and preset-less providers). A custom command under a built-in preset keeps that preset's failure classification and environment rules but receives no injected flags, session selection, or parsing. No agent-name comparison may appear outside the selector and the preset and installer registries.
+_Avoid_: agent type switch, preset check.
+
 **Agent Provider**:
-A configured agent preset or custom provider definition. Sandman supports the built-in preset (`opencode`) and optional repo-local custom providers via the `agents` config map.
+A configured agent preset or custom provider definition. Sandman supports the built-in presets (`opencode`, `claude`) and optional repo-local custom providers via the `agents` config map.
 _Avoid_: Agent type, runner.
 
 **AgentModel**:
-A built-in agent model identifier overridden via `sandman run --model`.
+A built-in agent model identifier overridden via `sandman run --model`. Each AgentPreset declares a default model (`opencode/big-pickle`, `sonnet`); the global `model` key applies only to agents that share the default agent's preset.
 _Avoid_: agent model, default model.
 
 **AgentRun**:
@@ -89,7 +93,7 @@ One folder under `.sandman/batches/<batch-id>/runs/<run-id>/` containing `run.js
 _Avoid_: run folder, run directory.
 
 **OpenCode session identity**:
-The validated runtime metadata in `<Run>/session.json` that records `{protocol: "opencode-session/v1", provider: "opencode", session_id: "..."}`. It is atomically replaced when a supported OpenCode invocation observes a session ID. Runtime-owned await re-entry and explicit `--continue --reuse-session` may select it; plain `--continue`, retries, and non-OpenCode agents do not. Missing exact sessions use one OpenCode `--continue` fallback only on the selected reuse path.
+The validated runtime metadata in `<Run>/session.json` that records `{protocol: "opencode-session/v1", provider: "opencode", session_id: "..."}`. It is atomically replaced when a supported OpenCode invocation observes a session ID. Runtime-owned await re-entry and explicit `--continue --reuse-session` may select it; plain `--continue`, retries, and non-OpenCode agents do not. Missing exact sessions use one OpenCode `--continue` fallback only on the selected reuse path. The `claude` preset keeps no session identity: on the same reuse paths it renders Claude Code's working-directory-scoped `--continue`.
 _Avoid_: transcript, mutable Run status.
 
 **Run retry**:
@@ -121,7 +125,7 @@ _Avoid_: review-only RunID, special review alias, `runs/review`.
 _See_: Run, RunID, Review daemon state.
 
 **Review daemon state**:
-Flat files under `.sandman/reviews/` for daemon-level state only: `review.sock` (daemon command socket), `review-prompt.md` (shared prompt template), `quality-rules.md` (materialised alongside the prompt), and `quota-pause.json` (atomic provider-wide OpenCode quota recovery gate). `quota-pause.json` records whether review launches are paused plus the next probe timing; it is cleared only after a successful prompt-only recovery probe. The folder holds **no** per-PR subdirectories, **no** per-row RunID folders, and **no** body-hash tracker. Per-run review state (`review-state.json` with seen comments and claim locks) lives inside the batch run folder at `.sandman/batches/<batch-id>/runs/<runID>/review-state.json`, where `<runID>` is the canonical per-row RunID for the review run (see `Review run`). Dedup key is `(prNumber, commentID)`.
+Flat files under `.sandman/reviews/` for daemon-level state only: `review.sock` (daemon command socket), `review-prompt.md` (shared prompt template), `quality-rules.md` (materialised alongside the prompt), and `quota-pause.json` (atomic provider-wide quota recovery gate for review agents whose AgentStrategy awaits usage limits). `quota-pause.json` records whether review launches are paused plus the next probe timing; it is cleared only after a successful prompt-only recovery probe. The folder holds **no** per-PR subdirectories, **no** per-row RunID folders, and **no** body-hash tracker. Per-run review state (`review-state.json` with seen comments and claim locks) lives inside the batch run folder at `.sandman/batches/<batch-id>/runs/<runID>/review-state.json`, where `<runID>` is the canonical per-row RunID for the review run (see `Review run`). Dedup key is `(prNumber, commentID)`.
 
 Post-redaction the bot's review body cannot re-trigger the daemon because the daemon-side redaction layer strips every `/sandman` substring from the review worktree's `decision.md` (see `Review decision`) before posting via `gh pr comment`, and the structural sniff `LooksLikeBotReviewBody` drops bodies that structurally look like a previous bot review (carrying both the `## Previous review progress` heading AND the literal `/sandman review` substring) before `ParseTrigger` runs. The redactor is the primary defence; the structural sniff is the belt-and-braces backstop.
 _Avoid_: review state, PR state.
@@ -213,7 +217,7 @@ The canonical bootstrap prompt template embedded in Sandman at `internal/prompt/
 _Avoid_: Base prompt, stock prompt.
 
 **Sandman Skill**:
-The shared skill folder installed by `sandman init` into `~/.agents/skills/sandman/` and used by Sandman agents for the full plan/implement/review/merge/continue flow.
+The shared skill folder installed by `sandman init` into `~/.agents/skills/sandman/` and used by Sandman agents for the full plan/implement/review/merge/continue flow. Claude Code discovers skills only under `~/.claude/skills/<name>/`, so skill sync also links `~/.claude/skills/sandman` and `~/.claude/skills/sandman-<mode>` into the shared folder.
 _Avoid_: Prompt workflow, local prompt copy.
 
 **Project Prompt Template**:
@@ -224,7 +228,7 @@ _Avoid_: User prompt, custom prompt.
 The built-in substitution keys available in prompt templates: `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, `{{ISSUE_BODY}}`, `{{SOURCE_BRANCH}}`, `{{BASE_BRANCH}}`, `{{BRANCH}}`, `{{REVIEW_COMMAND}}`, `{{REVIEW_TIMEOUT}}`. `REVIEW_TIMEOUT` is the effective delegated review response budget in integer seconds for the current AgentRun. Custom keys are supported via the `--prompt-arg KEY=VALUE` CLI flag.
 
 **Command template key**:
-The substitution keys available in agent command templates: `{{.PromptFile}}` (relative path of `.sandman/task.md`), `{{.SessionName}}` (pre-formatted session display title), `{{.SessionFlag}}` (validated exact OpenCode session selector), and `{{.ContinueFlag}}` (boolean for the narrow OpenCode continuation fallback). `SessionName` must not contain single quotes — the template shells it as `--title '{{.SessionName}}'` and the renderer rejects any value containing `'` with an error. Templates that reference `{{.SessionName}}` should guard the substitution with `{{if .SessionName}}` to avoid emitting a bare `--title ''` when the field is empty.
+The substitution keys available in agent command templates: `{{.PromptFile}}` (relative path of `.sandman/task.md`), `{{.SessionName}}` (pre-formatted session display title), `{{.SessionFlag}}` (validated exact OpenCode session selector), `{{.ContinueFlag}}` (boolean: the narrow OpenCode continuation fallback, or Claude Code's `--continue` when session reuse is selected), `{{.ModelFlag}}` and `{{.VariantFlag}}` (the AgentStrategy's rendered model and variant selectors, for example `-m <model>`/`--variant '<v>'` for OpenCode and `--model '<model>'`/`--effort '<v>'` for Claude Code), and `{{.DangerouslySkipPermissions}}` (boolean; true by default for container runs). Session, model, and variant keys are populated only when the command is the preset's own template. `SessionName` must not contain single quotes — templates shell it as `--title '{{.SessionName}}'` (OpenCode) or `--name '{{.SessionName}}'` (Claude Code), and the renderer rejects any value containing `'` with an error. Templates that reference `{{.SessionName}}` should guard the substitution with `{{if .SessionName}}` to avoid emitting a bare empty flag when the field is empty.
 
 **ResolvedBatch**:
 A batch where all issues have been fetched, their BlockedBy relationships resolved, and the execution order topologically sorted. Ready for the Orchestrator.

@@ -94,3 +94,4 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0053 | Bound external waits and release execution capacity | accepted |
 | 0054 | Retain GitHub closure gate for in-batch blockers | accepted |
 | 0055 | Opt into OpenCode session reuse | accepted |
+| 0056 | Re-add Claude Code as a second built-in agent preset behind an agent strategy seam | proposed |

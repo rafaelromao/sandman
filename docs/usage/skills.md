@@ -19,7 +19,7 @@ The installed folder mirrors the local Sandman skill and includes routed subskil
 
 ## Using the skills directly
 
-You can also load `sandman-implement`, `sandman-code-review`, and `sandman-pr-review` directly in OpenCode for a local run without `sandman run`. Use `sandman-code-review` in self-review context for an implementor's own changes; the review daemon uses its daemon-review context with supplied pull-request information and writes the reviewer decision artifact without managing the pull request. The same autonomous workflow, guardrails, and terminal conditions apply; the skills do not wait for operator input.
+You can also load `sandman-implement`, `sandman-code-review`, and `sandman-pr-review` directly in OpenCode or Claude Code for a local run without `sandman run`. Use `sandman-code-review` in self-review context for an implementor's own changes; the review daemon uses its daemon-review context with supplied pull-request information and writes the reviewer decision artifact without managing the pull request. The same autonomous workflow, guardrails, and terminal conditions apply; the skills do not wait for operator input.
 
 The implementor-side review skill is an AFK workflow: after a confirmed
 request, the active implementation run retains logical row ownership but
@@ -29,9 +29,18 @@ Invalid or stale evidence is diagnostics-only, and cancellation produces an
 aborted run that can be recovered from durable publication state without
 launching another reviewer.
 
+## Claude Code discovery
+
+Claude Code discovers skills only as `~/.claude/skills/<name>/SKILL.md`, one level deep. Skill sync therefore also creates symlinks into the shared folder:
+
+- `~/.claude/skills/sandman` points to `~/.agents/skills/sandman`
+- `~/.claude/skills/sandman-<mode>` points to each mode's folder, for example `sandman-implement`
+
+Sync creates `~/.claude/skills` when it is missing, repoints existing symlinks, and leaves a real file or directory at a link path untouched with a warning. The links are refreshed on every `sandman init` and `review_command` change.
+
 ## Container access
 
-Sandman mounts `~/.agents` into built-in agent containers so the shared skill is visible in container-backed runs.
+Sandman mounts `~/.agents` into built-in agent containers so the shared skill is visible in container-backed runs. The `claude` preset also mounts `~/.claude`; the container config snapshot copies symlinks as plain files, so the `sandman-*` skills are present inside the container.
 
 ## Review command
 

@@ -32,6 +32,10 @@ By design. Sandman scaffolds `.sandman/Dockerfile` from your selected BuildTools
 
 Sandman runs OpenCode headlessly (no TTY/PTY). The plugin teaches OpenCode to avoid interactive shell commands that would hang indefinitely in that environment — package manager prompts, `git commit` without `-m`, editors, pagers. OpenCode subagents inherit the same instructions, so the plugin is a per-installation prerequisite, not a per-run flag. See [Installation > OpenCode setup](../get-started/install.md#opencode-setup).
 
+## Can I use my Claude subscription?
+
+Yes, through the `claude` preset. Anthropic does not allow Claude subscription login in third-party harnesses such as OpenCode, but Sandman's `claude` preset runs the unmodified Claude Code binary (`claude -p`) with your own login, which is the sanctioned way to use a Pro, Max, Team, or Enterprise seat unattended. Limits are per seat and shared with claude.ai, so parallel AFK batches use them up faster than interactive work. See [Agent Compatibility > Claude Code](../usage/agent-compatibility.md#claude-code).
+
 ## Does Sandman commit on my behalf?
 
 Yes. Sandman resolves `user.name` and `user.email` from your git config (host global/XDG first, then repo-local) and uses that identity for every agent commit. There is no Sandman-side commit author; the commit attribution is yours, with a `Co-authored-by:` trailer where appropriate (for example, on badge sidecars).
@@ -50,7 +54,7 @@ The daemon process and any in-flight AgentRun are paused by the OS. They resume 
 
 ## Can Sandman run without an AI agent?
 
-No. Sandman is the *delivery loop*; the agent does the implementation work. The agent is one of the things Sandman shells out to, configured via `.sandman/config.yaml` (`agent: opencode` by default).
+No. Sandman is the *delivery loop*; the agent does the implementation work. The agent is one of the things Sandman shells out to, configured via `.sandman/config.yaml` (`agent: opencode` by default, or `agent: claude` for Claude Code).
 
 ## What workflow works well with Sandman?
 
