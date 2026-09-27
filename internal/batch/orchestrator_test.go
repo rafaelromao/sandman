@@ -244,6 +244,9 @@ func (f *fakeGitHubClient) FindPRByBranch(ctx context.Context, branch string) (*
 	}
 	if f.prs != nil {
 		if pr, ok := f.prs[branch]; ok {
+			if pr == nil {
+				return nil, nil
+			}
 			if pr.Merged && strings.TrimSpace(pr.Body) == "" {
 				copy := *pr
 				refs := make([]string, 0, len(f.issues))

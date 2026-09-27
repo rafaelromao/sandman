@@ -488,14 +488,27 @@ func TestRunExecutor_ForegroundWaitCoversPullRequestPublication(t *testing.T) {
 		Branches:    map[int]string{42: branch},
 		BaseBranch:  "main",
 	})
+	// Issue #2743: scripted eventual PR appearance alone must not park the
+	// run in await. The terminal outcome comes from verified merge state
+	// with no lifecycle waiting.
 	if !started || result.Status != "success" {
 		t.Fatalf("run = (%t, %q), want started success", started, result.Status)
 	}
-	if len(waits) != 2 || waits[0] != time.Second || waits[1] != 2*time.Second {
-		t.Fatalf("publication waits = %v, want [1s 2s]", waits)
+	if len(waits) != 0 {
+		t.Fatalf("publication waits = %v, want [] (no wait without initiated operation)", waits)
 	}
 	if len(factory.created) != 1 {
 		t.Fatalf("agent launches = %d, want 1", len(factory.created))
+	}
+	logs, err := eventLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if got := countEventsByType(logs, "run.await"); got != 0 {
+		t.Fatalf("run.await events = %d, want 0", got)
+	}
+	if finishedStatus(t, logs) != "success" {
+		t.Fatalf("finished status = %q, want success", finishedStatus(t, logs))
 	}
 }
 

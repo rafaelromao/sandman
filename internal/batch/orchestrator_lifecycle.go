@@ -272,15 +272,11 @@ func lifecycleFailureExtras(d lifecycleDecision, issueNumber int) map[string]any
 // handleLifecycleDecision turns an AgentRun exit into the result selected by
 // the lifecycle decision point. It gathers live PR facts and retained review
 // evidence, while event and prompt writing remain adapter concerns.
-func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool) (string, map[string]any, bool) {
-	return s.handleLifecycleDecisionWithPublication(ctx, workDir, branch, logPath, runID, hostPathsReady, s.mode != ModeContinue)
-}
-
 func (s *runSession) handleLifecycleDecisionAfterAgent(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool) (string, map[string]any, bool) {
-	return s.handleLifecycleDecisionWithPublication(ctx, workDir, branch, logPath, runID, hostPathsReady, true)
+	return s.handleLifecycleDecision(ctx, workDir, branch, logPath, runID, hostPathsReady)
 }
 
-func (s *runSession) handleLifecycleDecisionWithPublication(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady, awaitPublication bool) (string, map[string]any, bool) {
+func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool) (string, map[string]any, bool) {
 	if s.deps.githubClient == nil {
 		return "", nil, false
 	}
@@ -328,11 +324,13 @@ func (s *runSession) handleLifecycleDecisionWithPublication(ctx context.Context,
 	}
 
 	if gate == lifecycleGateNone {
-		if err == nil && pr == nil && awaitPublication && strings.TrimSpace(s.issueState) != "" && !strings.EqualFold(strings.TrimSpace(s.issueState), "closed") {
-			// PR publication can lag behind a clean agent exit. Keep the
-			// session foreground until the pull request becomes observable.
-			return "await", map[string]any{"gate": string(lifecycleGatePending), "await": true}, true
-		}
+		// A missing pull request is implementor-owned work (push the branch,
+		// create the PR), not an external publication wait. There is no
+		// active resolver, so the run must not enter waiting: return
+		// unhandled and let the caller terminalize through the ordinary
+		// failure path. Transient publication lag is recovered through
+		// bounded ordinary retries, not an indefinite await.
+		// See issue #2743.
 		return "", nil, false
 	}
 	if refreshUnavailable {
