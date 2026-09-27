@@ -44,6 +44,27 @@ These tests cover structured output capture, atomic per-Run identity metadata,
 fresh versus explicit continuation, exact-session selection, and the narrow
 one-time fallback boundary.
 
+For agent strategy or `claude` preset changes, the focused coverage is:
+
+```bash
+go test -run 'Strategy|AgentSelection|Claude|UsageLimit|RenderCommand' ./internal/batch
+go test -run 'Claude|DefaultModel|BuiltInPresets|ReviewModel' ./internal/config ./internal/scaffold ./internal/review ./internal/skill ./internal/cmd
+```
+
+`TestAgentStrategyGolden_OpenCodeLaunches` pins the rendered OpenCode commands,
+`session.json` writes, logs, and detector results captured before the agent
+strategy seam existed; regenerate its golden with
+`SANDMAN_AGENT_STRATEGY_UPDATE=1` only for an intended OpenCode behaviour change.
+`TestAgentSelection_NoAgentNameComparisonsOutsideStrategy` fails when a new
+`== "opencode"`-style agent-name comparison appears outside the strategy seam.
+The hermetic `claude` preset path (a fake `claude` binary behind the real
+worktree sandbox, usage-limit await, and `--continue` re-entry) runs with the
+`batch` E2E gate:
+
+```bash
+SANDMAN_E2E_GATES=batch go test -tags e2e -run ClaudePresetWorktreeEndToEnd ./internal/batch
+```
+
 ## CI coverage
 
 Sandman publishes four GoReleaser targets that match the four Unix platforms OpenCode supports (sans Windows): Linux amd64, Linux arm64, macOS amd64 (Intel), and macOS arm64 (Apple Silicon). The CI and release-validation tiers exercise those platforms as follows:
@@ -193,7 +214,7 @@ SANDMAN_TEST_MODEL_OPENCODE=opencode/gpt-5-nano \
 ## Real-agent opt-in (`SANDMAN_RUN_AGENT_E2E`)
 
 Real-agent E2E sub-tests, including PR-flow and preset-matrix scenarios, run
-the **real** opencode agent inside a real container against a real LLM
+the **real** opencode or claude agent inside a real container against a real LLM
 provider. Those sub-tests are gated behind a runtime opt-in so the `-tags e2e`
 suite stays runnable on developer machines and CI without live agent
 credentials:
@@ -206,7 +227,15 @@ SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all \
 
 `SANDMAN_RUN_AGENT_E2E=1` requires the host's opencode auth snapshot
 (`~/.local/share/opencode/auth.json`) and a working `podman` or `docker`
-runtime. With the opt-in set, the preset-matrix sub-tests are real-workflow
+runtime. The Claude Code case (`TestPresetMatrixHarness_RealClaudeAgentReuseSession`)
+runs only when `SANDMAN_TEST_PROVIDERS` names `claude` (or `all`), the `claude`
+CLI is on `PATH`, and either `~/.claude/.credentials.json` exists or
+`CLAUDE_CODE_OAUTH_TOKEN` is exported (the macOS path, from `claude setup-token`).
+It uses the `haiku` alias unless `SANDMAN_TEST_MODEL_CLAUDE` is set, runs the
+built-in preset command in a container, and continues the row with
+`--reuse-session`. The first real run is also the place to capture one
+usage-limit `result` line on a limited account and pin it as the golden for the
+Claude usage-limit rule. With the opt-in set, the preset-matrix sub-tests are real-workflow
 and need the wider `-timeout 90m` budget. Without it, the same tests skip with
 a message naming the skipped provider and the missing opt-in, and the rest of
 the suite runs as normal.

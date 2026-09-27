@@ -21,9 +21,9 @@ curl -fsSL https://raw.githubusercontent.com/rafaelromao/sandman/main/scripts/in
 ## Quick Start
 
 ```bash
-# Prerequisites: Git, gh and OpenCode properly configured
+# Prerequisites: Git, gh and OpenCode (or Claude Code) properly configured
 
-# 1. Initialize a project
+# 1. Initialize a project (use `sandman init --agent claude` for Claude Code)
 cd my-repo && sandman init
 
 # 2. Run the review daemon (optional)
@@ -53,7 +53,7 @@ Sandman manages the lifecycle of automated coding workflows:
 |-------|-------------|
 | [Overview](docs/get-started/overview.md) | What Sandman is, the delivery loop, and what it is not |
 | [Quick Start](docs/get-started/quickstart.md) | The five-minute path from install to first run |
-| [Installation](docs/get-started/install.md) | Prerequisites, installation, OpenCode setup, and project setup |
+| [Installation](docs/get-started/install.md) | Prerequisites, installation, OpenCode or Claude Code setup, and project setup |
 | [Concepts](docs/get-started/concepts.md) | The Batch / AgentRun / Sandbox / Specification model in prose |
 | [Commands Reference](docs/usage/commands.md) | All CLI commands, flags, and issue selection modes |
 | [Scaffolding and Supported Languages](docs/usage/scaffolding.md) | `sandman init`, generated files, build-tool presets, and language version selection |
@@ -67,7 +67,7 @@ Sandman manages the lifecycle of automated coding workflows:
 | [Badge](docs/usage/badge.md) | Built with Sandman badge — trigger, idempotency, and opt-out |
 | [Monitoring and Debugging](docs/usage/monitoring.md) | Status, history, event log, and idle timeout |
 | [Troubleshooting](docs/help/troubleshooting.md) | Common failure modes and the first thing to try for each |
-| [Agent Compatibility](docs/usage/agent-compatibility.md) | Built-in agent presets and container auth model |
+| [Agent Compatibility](docs/usage/agent-compatibility.md) | Built-in agent presets (OpenCode, Claude Code), container auth model, and limitations |
 | [FAQ](docs/help/faq.md) | Questions people ask before installing |
 
 Other:

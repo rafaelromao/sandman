@@ -40,6 +40,71 @@ See [`sandman stranded`](../usage/commands.md#sandman-stranded).
 - Confirm `.sandman/Dockerfile` exists. If not, re-run `sandman init` to scaffold it.
 - Confirm the chosen runtime (`podman` or `docker`) is on `PATH` and the sandbox user has permission to run containers.
 - Confirm `keychain_auth: false` on the active agent preset. **Keychain auth is explicitly rejected in container mode** — see [Agent Compatibility > Container auth model](../usage/agent-compatibility.md#container-auth-model).
+- `scaffold metadata drift: Dockerfile installed-agents [...] does not include agent "claude"` means the run's agent is not installed in the image. Re-run `sandman init --agent claude`, or add the agent's install line and list it in the `# sandman installed-agents:` header (see [Scaffolding > Agents in the image](../usage/scaffolding.md#agents-in-the-image)).
+
+## Claude Code runs fail in containers
+
+- `--dangerously-skip-permissions cannot be used with root/sudo privileges`: podman runs the agent as root. The `claude` preset exports `IS_SANDBOX=1` for this check; if your Claude Code version still refuses, switch to the pre-approved-tools command in [Agent Compatibility > Permissions](../usage/agent-compatibility.md#permissions).
+- `Not logged in · Please run /login` on macOS: the run log shows a `system/init` record with `"apiKeySource":"none"`, then a `result` record with `"is_error":true` and that message, and every retry fails within seconds. The host login lives in the macOS Keychain, which never reaches a container. Fix it once per machine:
+
+  1. Create a one-year subscription token (Pro, Max, Team, or Enterprise). It opens a browser to authorize and prints a value that starts with `sk-ant-oat01-`:
+
+     ```bash
+     claude setup-token
+     ```
+
+     If `claude` is not on your `PATH` but the Claude desktop app is installed, run the copy the app manages instead, adjusting the version folder to the one present: `"$HOME/Library/Application Support/Claude/claude-code/<version>/claude.app/Contents/MacOS/claude" setup-token`.
+
+  2. Add the token to `.sandman/config.yaml`, keeping `preset: claude` so the entry still inherits the preset:
+
+     ```yaml
+     agents:
+       claude:
+         preset: claude
+         env:
+           CLAUDE_CODE_OAUTH_TOKEN: sk-ant-oat01-...
+     ```
+
+  `.sandman/` is gitignored and Sandman writes the config with owner-only permissions, but treat the file as a secret. The token is exported on the agent's command line and is visible to `ps` on the host during a run. When it expires the same `Not logged in` or `Login expired` message returns; create a new token. Worktree runs do not need the token: they use the host login.
+- `⚠ Sandbox disabled: sandbox is enabled but dependencies are missing: bubblewrap (bwrap) not installed, socat not installed` at the top of every run: your `~/.claude/settings.json` enables Claude Code's own sandbox, and the image lacks its tools. The container already isolates the run, so this is harmless; add `bubblewrap socat` to the Dockerfile's `apt-get install` line to enable it anyway.
+- `Permission denied: Bash` with `This Bash command contains multiple operations`: a Claude Code safety check that still applies in bypass mode to some compound commands. The agent normally retries with simpler commands; nothing to fix in Sandman.
+- Every edit or command is denied in a worktree run: print mode cannot answer permission prompts. Pass `--dangerously-skip-permissions` or allow the tools in `~/.claude/settings.json`.
+- A run waits with `await_reason: usage-limit`: your subscription hit its session, weekly, or model limit. Sandman probes every ten minutes for up to five hours and resumes the same conversation; see [Agent Compatibility > Usage limits](../usage/agent-compatibility.md#usage-limits).
+
+## Container image build fails with `mise: not found`
+
+Symptom: a container run stops with `build image from .sandman/Dockerfile: exit status 127`, and the build log ends with `RUN mise use -g --pin ...` and `/bin/sh: 1: mise: not found`. Scroll up to the `RUN curl https://mise.run | ... sh` step: it printed `curl: (60) SSL certificate problem: unable to get local issuer certificate`.
+
+Cause: HTTPS traffic from the container build is re-signed by a certificate authority the Debian base image does not trust, usually a corporate TLS-inspection proxy. The host trusts that authority, so the same URLs work outside the container, and `apt-get` still works because Debian mirrors use plain HTTP. The mise step only looks successful: `curl` fails, `sh` reads empty input and exits 0, and the missing `mise` surfaces at the first step that uses it.
+
+Fix: trust the proxy's root certificate inside the image.
+
+1. Confirm the issuer from the host. A company name instead of a public certificate authority confirms the cause:
+
+   ```bash
+   openssl s_client -connect mise.run:443 -servername mise.run </dev/null 2>/dev/null | grep '^issuer='
+   ```
+
+2. On macOS, export that root certificate from the system keychain into the repo:
+
+   ```bash
+   security find-certificate -c "<issuer common name>" -p /Library/Keychains/System.keychain > .sandman/corp-ca.crt
+   ```
+
+   If the issuer is an intermediate certificate, export the root of its chain instead.
+
+3. Add these lines to `.sandman/Dockerfile` directly after the `apt-get install` line:
+
+   ```dockerfile
+   COPY .sandman/corp-ca.crt /usr/local/share/ca-certificates/corp-ca.crt
+   RUN update-ca-certificates
+   ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
+   ```
+
+   `update-ca-certificates` fixes `curl` (mise, rtk), and `NODE_EXTRA_CA_CERTS` makes npm and the agent CLIs trust the same authority during the build and at run time.
+
+- `sandman init` regenerates `.sandman/Dockerfile`, so re-apply these lines after every re-init.
+- To run without the image while you fix it, use a worktree run, which uses the agent CLI installed on the host: `sandman run <issue> --sandbox worktree`. The `claude` preset also needs `--dangerously-skip-permissions` there; see [Agent Compatibility > Permissions](../usage/agent-compatibility.md#permissions).
 
 ## Portal shows unknown rows after upgrading Sandman
 
@@ -86,7 +151,7 @@ Interrupted or failed e2e runs leave worktrees, orphaned batch directories, and 
 
 Smoke tests skip the expensive real-agent cases unless `SANDMAN_RUN_SMOKE_E2E=1` is set. When enabled, they build a per-provider / per-buildTools image on demand. Set `SANDMAN_SMOKE_PREFETCH=1` to enable the optional upfront prewarm fan-out; subsequent test invocations reuse the cached image unless the cache is cleared.
 
-- Enable the real-agent smoke path with prewarm: `SANDMAN_RUN_SMOKE_E2E=1 SANDMAN_SMOKE_PREFETCH=1 SANDMAN_TEST_PROVIDERS=opencode go test -tags smoke ./internal/cmd -run Smoke`.
+- Enable the real-agent smoke path with prewarm: `SANDMAN_RUN_SMOKE_E2E=1 SANDMAN_SMOKE_PREFETCH=1 SANDMAN_TEST_PROVIDERS=opencode go test -tags smoke ./internal/cmd -run Smoke` (use `SANDMAN_TEST_PROVIDERS=claude` or `all` to prewarm the Claude Code image too).
 - See [Testing > Smoke image prewarm](../development/testing.md#smoke-image-prewarm).
 
 ## Git identity missing

@@ -26,12 +26,11 @@ var prebuiltSmokeImages sync.Map
 var prewarmImageFunc = prewarmSmokeImage
 
 // smokePrewarmVariants enumerates the (provider, buildTools) pairs whose
-// images the pre-warm builds. These are the cross-product of the
-// smoke provider (opencode) and the buildTools variants
-// (generic, go, python, elixir, node, dotnet, rust, java, ruby)
-// that TestSmoke_RealAgentCLIs_* exercises via buildTools overrides
-// on smokeProviderCases.
+// images the pre-warm builds: the opencode provider across the buildTools
+// variants (generic, go, python, elixir, node, dotnet, rust, java, ruby),
+// and the claude provider on the generic preset used by its smoke case.
 var smokePrewarmVariants = []smokePrewarmVariant{
+	{provider: "claude", buildTools: "generic"},
 	{provider: "opencode", buildTools: "generic"},
 	{provider: "opencode", buildTools: "go"},
 	{provider: "opencode", buildTools: "python"},

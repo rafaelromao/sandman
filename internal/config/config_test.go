@@ -875,7 +875,7 @@ func TestConfig_GetAndSetBaseBranch(t *testing.T) {
 }
 
 func TestBuiltInPresets_AreOnlySupportedAgents(t *testing.T) {
-	want := []string{"opencode"}
+	want := []string{"claude", "opencode"}
 	got := make([]string, 0, len(BuiltInAgentPresets))
 	for name := range BuiltInAgentPresets {
 		got = append(got, name)

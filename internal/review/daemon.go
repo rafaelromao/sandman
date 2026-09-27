@@ -354,7 +354,7 @@ func (d *Daemon) isQuotaProbeDue() bool {
 	return !d.now().Before(d.quotaLastProbe.Add(d.effectiveQuotaProbeInterval()))
 }
 
-// IsQuotaPaused reports whether the daemon is currently pausing review launches due to OpenCode quota exhaustion. Exposed for tests. Issue #2699.
+// IsQuotaPaused reports whether the daemon is currently pausing review launches due to a review agent's usage-limit (quota) exhaustion. Exposed for tests. Issue #2699.
 func (d *Daemon) IsQuotaPaused() bool { return d.isQuotaPaused() }
 
 // QuotaPausedUntil returns the time until which quota-paused triggers are gated. Exposed for tests. Issue #2699.
@@ -458,11 +458,25 @@ func (d *Daemon) isQuotaError(err error) bool {
 	if err == nil {
 		return false
 	}
-	return batch.IsUsageLimitOutput(err.Error())
+	return batch.IsUsageLimitOutput(d.reviewAgentPreset(), err.Error())
 }
 
-func (d *Daemon) isBuiltInOpenCodeReview() bool {
-	return strings.TrimSpace(d.effectiveAgent()) == "opencode"
+// reviewAwaitsUsageLimit reports whether the review agent's preset waits for
+// recognised usage limits to reset, which is what enables the daemon-wide
+// quota pause.
+func (d *Daemon) reviewAwaitsUsageLimit() bool {
+	return batch.AwaitsUsageLimit(d.reviewAgentPreset())
+}
+
+// reviewAgentPreset resolves the effective review agent to its built-in
+// preset, so a custom provider such as `agents.reviewer.preset: claude` gets
+// the same usage-limit handling as `claude` itself.
+func (d *Daemon) reviewAgentPreset() string {
+	name := strings.TrimSpace(d.effectiveAgent())
+	if d.Config == nil {
+		return name
+	}
+	return d.agentPreset(name)
 }
 
 // New returns a Daemon configured with the project defaults for the
@@ -1017,6 +1031,13 @@ func (d *Daemon) effectiveAgent() string {
 // Precedence matches effectiveAgent: the CLI override (Daemon.Model)
 // wins, otherwise d.Config.EffectiveReviewModel(). Returns the empty
 // string when both sources are unset.
+//
+// A configured review model belongs to the configured review agent's
+// preset. When a CLI agent override (Daemon.Agent) selects a different
+// preset and no CLI model is given, the configured model is not handed to
+// the other provider: the empty result makes the startup and launch checks
+// fail with a clear configuration error instead of an agent-side "model not
+// found".
 func (d *Daemon) effectiveModel() string {
 	if v := strings.TrimSpace(d.Model); v != "" {
 		return v
@@ -1024,7 +1045,28 @@ func (d *Daemon) effectiveModel() string {
 	if d.Config == nil {
 		return ""
 	}
+	if d.agentOverrideChangesPreset() {
+		return ""
+	}
 	return d.Config.EffectiveReviewModel()
+}
+
+// agentOverrideChangesPreset reports whether the CLI agent override selects
+// a different built-in preset than the configured review agent.
+func (d *Daemon) agentOverrideChangesPreset() bool {
+	override := strings.TrimSpace(d.Agent)
+	if override == "" || d.Config == nil {
+		return false
+	}
+	return d.agentPreset(override) != d.agentPreset(d.Config.EffectiveReviewAgent())
+}
+
+func (d *Daemon) agentPreset(name string) string {
+	agent, err := d.Config.ResolveAgentProvider(strings.TrimSpace(name))
+	if err != nil {
+		return ""
+	}
+	return agent.Preset
 }
 
 // effectiveVariant returns the review-specific model variant. An explicit
@@ -1195,6 +1237,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 			return err
 		}
 		if strings.TrimSpace(d.effectiveModel()) == "" {
+			if d.agentOverrideChangesPreset() {
+				return fmt.Errorf("review model is not set for agent %q: the configured review_model belongs to review agent %q; pass --model or configure review_model for that agent", effectiveAgent, d.Config.EffectiveReviewAgent())
+			}
 			return fmt.Errorf("review model is not set; configure review_model or model in sandman config")
 		}
 	}
@@ -2108,7 +2153,7 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 		QualityRulesFile: d.QualityRulesPath(),
 	}
 	result, err := d.Runner.RunBatch(ctx, req)
-	if d.isBuiltInOpenCodeReview() && (resultReachedUsageLimit(result) || d.isQuotaError(err)) {
+	if d.reviewAwaitsUsageLimit() && (resultReachedUsageLimit(result) || d.isQuotaError(err)) {
 		d.enterQuotaPause(prNumber, triggerKey, state)
 		if err != nil {
 			return fmt.Errorf("quota exhausted: %w", err)

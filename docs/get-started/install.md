@@ -1,12 +1,12 @@
 # Installation
 
-Full setup guide: prerequisites, install methods, OpenCode setup, project initialization, and first-run details.
+Full setup guide: prerequisites, install methods, agent setup (OpenCode or Claude Code), project initialization, and first-run details.
 
 ## Prerequisites
 
 - [Git](https://git-scm.com/)
 - [`gh` CLI](https://cli.github.com/) — authenticated and with `repo` scope
-- [OpenCode](https://opencode.ai/)
+- An agent CLI: [OpenCode](https://opencode.ai/) (the default) or [Claude Code](https://code.claude.com/) (to use a Claude subscription)
 - Optional but recommended: [Podman](https://podman.io/) or [Docker](https://docker.com/) for container-backed sandboxing
 
 ## Install Sandman
@@ -128,6 +128,17 @@ Add the instruction file to `~/.config/opencode/opencode.json`:
 
 Restart OpenCode after installing so the instruction file is loaded for the next session.
 
+## Claude Code setup
+
+To run Sandman with a Claude Pro, Max, Team, or Enterprise subscription, use the `claude` preset, which runs the unmodified Claude Code CLI in print mode:
+
+```bash
+npm install -g @anthropic-ai/claude-code
+claude   # then /login once
+```
+
+Initialize the project with `sandman init --agent claude`. Worktree runs use your host login. Container runs need file-based credentials (`~/.claude/.credentials.json` on Linux) or a token from `claude setup-token` in the agent's env on macOS, because the macOS Keychain never reaches a container. See [Agent Compatibility](../usage/agent-compatibility.md#claude-code) for authentication, permissions, usage limits, and limitations.
+
 ## Initialize a project
 
 Navigate to a git repository where you want to run AFK agents and run:
@@ -142,7 +153,7 @@ This scaffolds `.sandman/` with:
 - **`.sandman/Dockerfile`** — container image definition for container-backed sandboxing
 - **`.sandman/prompt.md`** — Project Prompt Template seeded from the Default Task Prompt
 
-Sandman also installs the shared `sandman` skill folder into `~/.agents/skills/sandman/` if it does not already exist.
+Sandman also installs the shared `sandman` skill folder into `~/.agents/skills/sandman/` and links it into `~/.claude/skills/` so Claude Code can discover it.
 
 ### Git identity
 

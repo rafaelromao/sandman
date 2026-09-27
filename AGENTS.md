@@ -10,12 +10,13 @@ This file provides operating instructions for coding agents working in this repo
 
 - **Event-sourced state**: Run status is a projection over the append-only `.sandman/events.jsonl`, not mutable records. `events.RunState` folds events into current state. If a status looks wrong, start by tracing the relevant event types and the fold/projection logic rather than searching for mutable status fields.
 - **Portal waiting state**: An active implementation whose current lifecycle phase is `run.await` is projected as `waiting`. The await event remains historical evidence, but continuation, resume, and terminal events clear the current waiting phase; live linked review promotion still cannot relabel terminal parents.
-- **Context rollover**: A repeated OpenCode context-limit failure stops only the active attempt, preserves its worktree and Task, and records `context-exhausted` on the ordinary retry path. The next attempt must be a clean session reconstructed from the preserved Task; do not add a nested retry loop or mutable run-state shortcut.
+- **Context rollover**: A repeated OpenCode context-limit failure stops only the active attempt, preserves its worktree and Task, and records `context-exhausted` on the ordinary retry path. The next attempt must be a clean session reconstructed from the preserved Task; do not add a nested retry loop or mutable run-state shortcut. The rollover detector belongs to the OpenCode strategy; the `claude` preset relies on Claude Code's automatic compaction, and a failed compaction takes the ordinary retry path.
 - **Implementation pull-request lifecycle**: Clean exits are evaluated by one runtime-owned lifecycle decision before event, task, log, portal, or dependency projections. Verified merged completion wins over retained review evidence; recoverable open pull-request states await or resume; terminal `blocked` is reserved for dependency outcomes.
 - **Factory seams**: `cmd.Dependencies` (`internal/cmd/root.go`) is the top-level dependency injection struct. The per-run seam is `RunExecutor{Execute(ctx, row RowSpec)}` (`internal/batch/row_spec.go`); its implementation holds a `runDeps` struct (github.Client, prompt.IssueRenderer, events.EventLog, RunnableFactory, SandboxFactory, paths.Layout, heartbeatTickInterval, errorLog, runSessionOptions, verifyPath) and a narrow `runCoordination` interface (`*Orchestrator` implements it; RunBatch owns the state). Test injection of the orchestrator's behavior goes through `OrchestratorOpt` options on `NewOrchestrator` — `WithRunnableFactory`, `WithSandboxFactory`, `WithContainerRuntimeFactory`, `WithErrorLog`, `WithRunSessionOpts`, `WithHeartbeatTickInterval`, `WithVerifyPath` (and `WithBadgeHooker` for production). `batch.Request` is the public batch input (issues, config, flags) — it does **not** carry factories. Inject fakes at the `runDeps`/`OrchestratorOpt` seams rather than mocking deep concrete types.
+- **Agent strategy seam**: `strategyFor(preset, command)` in `internal/batch/agent_strategy.go` is the only place that may inspect the agent name; agent-specific flags, launch environment, session reuse, output parsing, and failure classification (context rollover, usage limits, awaiting) are methods on the selected `agentStrategy` (OpenCode, Claude, passthrough). Adding an agent = a preset entry in `config.BuiltInAgentPresets` + an installer entry in the scaffold's `agentInstallers` + a strategy type. `TestAgentSelection_NoAgentNameComparisonsOutsideStrategy` fails on any `== "opencode"`-style comparison elsewhere.
 - **Sandbox interface** (`internal/sandbox/sandbox.go`): the abstract isolation contract implemented by `WorktreeSandbox` and `ContainerSandbox`. After the parent-map consolidation (#2244), the interface has 9 methods and `Start(opts SandboxStart) error` is the only configuration entry point — the previous 4-setter pre-Start dance (SetOverride / SetStrandedReconcile / SetGitIdentity / SetContinue) is gone. `SandboxStart{Override, Continue, StrandedReconcile, Identity}` plus `SandboxIdentity{Name, Email}` are the value types callers build per row; production builds them via `runSession.startOptsFor(branch)`. `RestoreHostPaths()` is a separate post-Start protocol and stays unchanged.
-- **Filesystem as data store**: There is no database. State lives in flat files under `.sandman/` (manifests, logs, review state), written atomically via temp-file + `os.Rename`. The review daemon's provider-wide OpenCode quota recovery gate is `.sandman/reviews/quota-pause.json`; it is daemon-wide, never per-PR. IPC uses Unix domain sockets.
-- **OpenCode session reuse**: Supported OpenCode runs write the first valid session identity to the current Run's `session.json` atomically. Runtime-owned await re-entry reuses it; ordinary `--continue` is fresh unless `--reuse-session` is explicitly selected. Missing exact sessions use one narrow OpenCode `--continue` fallback; unrelated failures and non-OpenCode agents do not.
+- **Filesystem as data store**: There is no database. State lives in flat files under `.sandman/` (manifests, logs, review state), written atomically via temp-file + `os.Rename`. The review daemon's provider-wide quota recovery gate is `.sandman/reviews/quota-pause.json`; it applies to review agents whose strategy awaits usage limits (OpenCode and Claude Code, each with its own usage-limit rule) and is daemon-wide, never per-PR. IPC uses Unix domain sockets.
+- **OpenCode session reuse**: Supported OpenCode runs write the first valid session identity to the current Run's `session.json` atomically. Runtime-owned await re-entry reuses it; ordinary `--continue` is fresh unless `--reuse-session` is explicitly selected. Missing exact sessions use one narrow OpenCode `--continue` fallback; unrelated failures and non-OpenCode agents do not. The `claude` preset keeps no session identity: on the same reuse paths its strategy renders Claude Code's working-directory-scoped `--continue`.
 
 ## Sandman task routing
 
@@ -47,6 +48,14 @@ If a task involves execution flow, runners, or sandbox lifecycle:
 - Trace `runDeps` for the test/constructor seam and `OrchestratorOpt` (`WithRunnableFactory`, `WithSandboxFactory`, `WithContainerRuntimeFactory`, `WithErrorLog`, `WithRunSessionOpts`, ...) for test injection. `RunnableFactory` and `SandboxFactory` are the factory interface types inside `runDeps`.
 - Keep orchestration logic testable by preserving the `RunExecutor`/`runDeps`/`OrchestratorOpt` interface seams.
 
+### Agent-specific behaviour
+
+If a bug or feature involves one agent's flags, environment, session reuse, output, usage limits, or context handling:
+
+- Start with the agent strategy in `internal/batch/agent_strategy.go` (`opencodeStrategy`) or `internal/batch/claude_strategy.go` (`claudeStrategy`), selected by `strategyFor`.
+- Per-agent data lives in `config.BuiltInAgentPresets` (command template, env, mounts, default model) and in the scaffold's `agentInstallers` (Dockerfile install).
+- Never add an `if preset == ...` branch at a call site; add or change a strategy method instead.
+
 ### Persistence and file safety
 
 If the task involves manifests, logs, review state, or other persisted data:
@@ -72,6 +81,7 @@ Always run dependency or blast-radius checks before changing:
 - Shared command wiring or `cmd.Dependencies`.
 - The per-run seam: `RunExecutor` interface, `RowSpec`/`BatchConfig`, `runDeps` (incl. `RunnableFactory`/`SandboxFactory` and their implementations), and `runCoordination`.
 - `OrchestratorOpt` options on `NewOrchestrator` (`WithRunnableFactory`, `WithSandboxFactory`, `WithContainerRuntimeFactory`, `WithErrorLog`, `WithRunSessionOpts`, `WithHeartbeatTickInterval`, `WithVerifyPath`, `WithBadgeHooker`).
+- The agent strategy seam: the `agentStrategy` interface, `strategyFor`, and the strategy registry (`internal/batch/agent_strategy.go`); the OpenCode launch golden (`internal/batch/agent_strategy_test/opencode_launches.golden`) must stay byte-identical unless OpenCode behaviour is meant to change.
 - Files with high blast radius.
 - Persistence code under `.sandman/`.
 - IPC or socket lifecycle code.
@@ -103,7 +113,7 @@ SANDMAN_FULL_REGRESSION=1 SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SAN
   go test -tags e2e -timeout 90m ./...
 ```
 
-`SANDMAN_FULL_REGRESSION=1` disables the CI-only skip guards so the exhaustive run actually executes every test (see `docs/development/testing.md`). The real-agent E2E cases still skip with a clear reason when their runtime prerequisites (opencode binary, auth snapshot, podman) are absent. Aggregate the per-tier PASS/FAIL/SKIP counts and surface a final summary, never silently swallow a failure. Timeouts are tuned per tier — do not lower them; lowering reintroduces the `batch aborted by operator` false-positive from under-budgeted test processes.
+`SANDMAN_FULL_REGRESSION=1` disables the CI-only skip guards so the exhaustive run actually executes every test (see `docs/development/testing.md`). The real-agent E2E cases still skip with a clear reason when their runtime prerequisites (the opencode or claude binary, its auth snapshot or token, podman) are absent. Aggregate the per-tier PASS/FAIL/SKIP counts and surface a final summary, never silently swallow a failure. Timeouts are tuned per tier — do not lower them; lowering reintroduces the `batch aborted by operator` false-positive from under-budgeted test processes.
 
 ## Implementation constraints
 

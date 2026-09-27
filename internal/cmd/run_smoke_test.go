@@ -45,7 +45,13 @@ type smokeProviderCase struct {
 	issue        github.Issue
 	requiredAuth []string
 	authPaths    []string
-	wantBranch   string
+	// authEnv names an environment variable that authenticates the agent
+	// without file-backed credentials (for example a Claude Code OAuth token
+	// on macOS, where login credentials live in the Keychain). When it is
+	// set, requiredAuth is not consulted and the value reaches the agent
+	// through its env config.
+	authEnv    string
+	wantBranch string
 }
 
 type smokePrompter struct{}
@@ -77,6 +83,28 @@ var smokeProviderCases = []smokeProviderCase{
 			"~/.config/opencode",
 			"~/.local/share/opencode",
 		},
+	},
+	{
+		name:       "claude",
+		hostCLI:    "claude",
+		buildTools: "generic",
+		// The cheapest alias keeps smoke runs light on subscription quota;
+		// override with SANDMAN_TEST_MODEL_CLAUDE.
+		model: "haiku",
+		issue: github.Issue{
+			Number: 422,
+			Title:  "Smoke claude",
+			Body:   "Reply with exactly SMOKE_OK.",
+		},
+		wantBranch: "422-smoke-claude",
+		requiredAuth: []string{
+			"~/.claude/.credentials.json",
+		},
+		authPaths: []string{
+			"~/.claude",
+			"~/.claude.json",
+		},
+		authEnv: "CLAUDE_CODE_OAUTH_TOKEN",
 	},
 }
 
@@ -112,7 +140,11 @@ func prepareSmokeProvider(t *testing.T, tc smokeProviderCase) (runtime string, r
 	if err := os.MkdirAll(filepath.Join(homeDir, ".ssh"), 0755); err != nil {
 		t.Fatalf("create ssh dir: %v", err)
 	}
-	if !hasSmokeAuth(realHome, tc.requiredAuth, tc.authPaths) {
+	authToken := ""
+	if tc.authEnv != "" {
+		authToken = os.Getenv(tc.authEnv)
+	}
+	if authToken == "" && !hasSmokeAuth(realHome, tc.requiredAuth, tc.authPaths) {
 		probePaths := tc.requiredAuth
 		if len(probePaths) == 0 {
 			probePaths = tc.authPaths
@@ -156,6 +188,15 @@ func prepareSmokeProvider(t *testing.T, tc smokeProviderCase) (runtime string, r
 	depsCfg, err := customizeSmokeConfig(repoDir, tc.name, tc.model)
 	if err != nil {
 		t.Fatalf("update config: %v", err)
+	}
+	if authToken != "" {
+		agent := depsCfg.Agents[tc.name]
+		if agent.Env == nil {
+			agent.Env = map[string]string{}
+		}
+		agent.Env[tc.authEnv] = authToken
+		depsCfg.Agents[tc.name] = agent
+		depsCfg.AgentProviders[tc.name] = agent
 	}
 	imageTag := preflightSmokeImage(t, runtime, repoDir, tc.name, tc.buildTools)
 	preflightSmokeContainer(t, runtime, imageTag, repoDir, homeDir, tc.name, tc.buildTools, tc.authPaths)
@@ -420,12 +461,29 @@ func copySmokeDir(src, dst string) error {
 			continue
 		}
 		srcPath := filepath.Join(src, entry.Name())
+		if smokeClaudeStateExcluded(srcPath) {
+			continue
+		}
 		dstPath := filepath.Join(dst, entry.Name())
 		if err := copySmokePath(srcPath, dstPath); err != nil {
 			return err
 		}
 	}
 	return os.Chmod(dst, 0777)
+}
+
+// smokeClaudeStateExcluded skips Claude Code transcripts, caches, and logs
+// when copying the operator's ~/.claude into the isolated smoke home. They can
+// be large, and the claude preset excludes the same paths from its container
+// snapshot.
+func smokeClaudeStateExcluded(srcPath string) bool {
+	slashed := filepath.ToSlash(srcPath)
+	for _, exclude := range config.BuiltInAgentPresets["claude"].SnapshotExcludes {
+		if strings.HasSuffix(slashed, strings.TrimPrefix(exclude, "~")) {
+			return true
+		}
+	}
+	return false
 }
 
 func copySmokeFile(src, dst string, mode os.FileMode) error {
@@ -478,8 +536,9 @@ func addSmokeDockerDeps(repoDir, provider, buildTools string) error {
 	if err != nil {
 		return err
 	}
-	if provider == "opencode" {
-		data = append(data, []byte("RUN command -v opencode >/dev/null\n")...)
+	if _, ok := config.BuiltInAgentPresets[provider]; ok {
+		// Every built-in preset's CLI binary is named after the preset.
+		data = append(data, []byte(fmt.Sprintf("RUN command -v %s >/dev/null\n", provider))...)
 	}
 	if dep, ok := smokeDockerDeps[buildTools]; ok {
 		data = append(data, []byte(dep)...)
@@ -498,6 +557,9 @@ func customizeSmokeConfig(repoDir, provider, model string) (*config.Config, erro
 		return nil, err
 	}
 	resolved.Model = model
+	// The built-in claude command receives the model through --model, and a
+	// run without --model forwards the global model, so pin it there too.
+	cfg.DefaultModel = model
 	if provider == "opencode" {
 		resolved.Command = strings.Join([]string{
 			fmt.Sprintf(`test "$(git config user.name)" = %q`, smokeGitName),

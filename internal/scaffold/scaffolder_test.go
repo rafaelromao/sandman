@@ -1743,8 +1743,11 @@ func TestScaffold_AllAgentPresets_GenerateUsableFiles(t *testing.T) {
 			if !strings.Contains(content, "# sandman default-agent: "+agent) {
 				t.Fatalf("Dockerfile missing default-agent metadata, got:\n%s", content)
 			}
-			if !strings.Contains(content, "# sandman installed-agents: opencode") {
+			if !strings.Contains(content, "# sandman installed-agents: "+agent+"\n") {
 				t.Fatalf("Dockerfile missing installed-agents metadata, got:\n%s", content)
+			}
+			if want := agentInstallers[agent].InstallCommand(DefaultBuiltInAgentVersion(agent)); !strings.Contains(content, want) {
+				t.Fatalf("Dockerfile missing agent install %q, got:\n%s", want, content)
 			}
 			if !strings.Contains(content, "FROM debian:bookworm-slim") {
 				t.Fatalf("Dockerfile missing Debian base image, got:\n%s", content)
@@ -3330,7 +3333,7 @@ func TestValidateDockerfileMetadata_AllowsGoPreset(t *testing.T) {
 		t.Fatalf("write Dockerfile: %v", err)
 	}
 
-	if err := ValidateDockerfileMetadata(dir, "go", "opencode"); err != nil {
+	if err := ValidateDockerfileMetadata(dir, "go", "opencode", []string{"opencode"}); err != nil {
 		t.Fatalf("validate metadata: %v", err)
 	}
 }

@@ -53,6 +53,50 @@ func TestPrepareContainerConfigMounts_StoresSnapshotUnderRunDir(t *testing.T) {
 	}
 }
 
+// sandman run passes the batch dir relative to the repo root. Mount sources
+// must still be absolute host paths: podman on macOS resolves a relative -v
+// source inside its VM (for example under /var/home/core) and fails to start.
+func TestPrepareContainerConfigMounts_RelativeRunDirYieldsAbsoluteSources(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repo := t.TempDir()
+	t.Chdir(repo)
+
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0700); err != nil {
+		t.Fatalf("mkdir ssh dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sshDir, "known_hosts"), []byte("github.com ssh-ed25519 AAAA\n"), 0600); err != nil {
+		t.Fatalf("write known_hosts: %v", err)
+	}
+	opts := sandbox.StartOptions{AgentConfigDirs: []string{sshDir}}
+	relRunDir := filepath.Join(".sandman", "batches", "260926095154-2eb8-2514")
+	cleanup, err := PrepareContainerConfigMounts(context.Background(), ".", relRunDir, &opts, func(context.Context) (string, error) { return "gho_token", nil })
+	if err != nil {
+		t.Fatalf("prepare container config mounts: %v", err)
+	}
+	defer cleanup()
+
+	if len(opts.ConfigMounts) == 0 {
+		t.Fatal("expected config mounts")
+	}
+	wantRoot, err := filepath.Abs(filepath.Join(relRunDir, "config"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mount := range opts.ConfigMounts {
+		if !filepath.IsAbs(mount.Source) {
+			t.Fatalf("mount %s -> %s has a relative source", mount.Source, mount.Target)
+		}
+		if !strings.HasPrefix(mount.Source, wantRoot) {
+			t.Fatalf("mount source %q is outside the run-owned snapshot %q", mount.Source, wantRoot)
+		}
+		if _, err := os.Stat(mount.Source); err != nil {
+			t.Fatalf("mount source %q does not exist: %v", mount.Source, err)
+		}
+	}
+}
+
 func TestPrepareContainerConfigMounts_RewritesGitConfigCopiesSSHAndHydratesGH(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

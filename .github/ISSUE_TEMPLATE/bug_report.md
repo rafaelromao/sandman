@@ -26,7 +26,7 @@ What actually happened, including any error messages or stack traces.
  - OS: [e.g. macOS, Linux]
  - Sandman version: [e.g. 0.1.0]
  - Go version: [e.g. 1.24]
- - Agent provider: [e.g. opencode]
+ - Agent provider: [e.g. opencode, claude]
 
 **Configuration**
 If applicable, share the relevant parts of your `.sandman/config.yaml` (redact sensitive values).
