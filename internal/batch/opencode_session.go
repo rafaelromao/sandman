@@ -643,16 +643,18 @@ func (w *opencodeOutput) SessionID() string {
 	return w.capture.sessionID
 }
 
+// UsageLimitReached is always false: the OpenCode usage-limit rule matches
+// the rendered `Error:` line, which the line detector observes.
+func (w *opencodeOutput) UsageLimitReached() bool { return false }
+
 func (w *opencodeOutput) SessionNotFound() bool {
 	w.capture.mu.Lock()
 	defer w.capture.mu.Unlock()
 	return w.capture.sessionNotFound
 }
 
-func flushOpenCodeOutputs(outputs ...*opencodeOutput) {
-	for _, output := range outputs {
-		if output != nil {
-			_ = output.Flush()
-		}
-	}
+// setDestination points the parser at the prefixed terminal/run.log writers
+// once the run's output chain is assembled.
+func (w *opencodeOutput) setDestination(dst io.Writer) {
+	w.dst = dst
 }

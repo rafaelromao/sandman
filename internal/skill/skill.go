@@ -43,7 +43,8 @@ type SyncOptions struct {
 }
 
 // Sync writes the embedded Sandman skill into the shared agent skills directory,
-// substituting {{REVIEW_COMMAND}} with the given reviewCommand value.
+// substituting {{REVIEW_COMMAND}} with the given reviewCommand value, and
+// links it into Claude Code's skills directory (see syncClaudeCodeSkillLinks).
 func Sync(opts SyncOptions) error {
 	homeDir := strings.TrimSpace(opts.HomeDir)
 	if homeDir == "" {
@@ -112,6 +113,7 @@ func Sync(opts SyncOptions) error {
 	if err := writeManifest(targetDir); err != nil {
 		return err
 	}
+	syncClaudeCodeSkillLinks(homeDir, targetDir, opts.Out)
 	return nil
 }
 

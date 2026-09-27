@@ -21,10 +21,18 @@ import (
 // (handled by sandbox.ResolveConfigMounts cleanup).
 func prepareSnapshotParent(runDir string) (string, func(), error) {
 	if runDir != "" {
-		if err := os.MkdirAll(runDir, 0755); err != nil {
+		// Snapshot paths become bind-mount sources. A relative source is
+		// resolved by the container engine, not by Sandman: podman on macOS
+		// runs in a VM and would resolve it against the VM user's home, so
+		// anchor the parent to the host path first.
+		absRunDir, err := filepath.Abs(runDir)
+		if err != nil {
+			return "", nil, fmt.Errorf("resolve run dir for config snapshot: %w", err)
+		}
+		if err := os.MkdirAll(absRunDir, 0755); err != nil {
 			return "", nil, fmt.Errorf("prepare run dir for config snapshot: %w", err)
 		}
-		return runDir, func() {}, nil
+		return absRunDir, func() {}, nil
 	}
 	tmpDir, err := os.MkdirTemp("", "sandman-config-*")
 	if err != nil {

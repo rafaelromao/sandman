@@ -256,17 +256,19 @@ func stripContextRolloverANSI(value string) string {
 	return b.String()
 }
 
-// usageLimitDetector recognizes the stable OpenCode provider response that
-// should enter usage-limit waiting before an ordinary retry. It observes output
-// only; unlike context rollover, the process is allowed to exit normally first.
+// usageLimitDetector recognizes an agent's stable usage-limit response that
+// should enter usage-limit waiting before an ordinary retry. The per-line rule
+// comes from the launch's agent strategy. It observes output only; unlike
+// context rollover, the process is allowed to exit normally first.
 type usageLimitDetector struct {
 	mu        sync.Mutex
+	rule      func(line string) bool
 	pending   string
 	triggered bool
 }
 
-func newUsageLimitDetector() *usageLimitDetector {
-	return &usageLimitDetector{}
+func newUsageLimitDetector(rule func(line string) bool) *usageLimitDetector {
+	return &usageLimitDetector{rule: rule}
 }
 
 func (d *usageLimitDetector) Write(p []byte) (int, error) {
@@ -284,16 +286,6 @@ func (d *usageLimitDetector) Triggered() bool {
 	return d.triggered
 }
 
-// IsUsageLimitOutput reports whether output contains the normalized OpenCode
-// usage-limit provider response. Callers that receive an error instead of an
-// AgentRunResult use this to preserve the same detection boundary.
-func IsUsageLimitOutput(output string) bool {
-	detector := newUsageLimitDetector()
-	_, _ = detector.Write([]byte(output))
-	detector.Flush()
-	return detector.Triggered()
-}
-
 func (d *usageLimitDetector) consume(text string, final bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -308,14 +300,16 @@ func (d *usageLimitDetector) consume(text string, final bool) {
 		parts = parts[:len(parts)-1]
 	}
 	for _, line := range parts {
-		if usageLimitLine(line) {
+		if d.rule != nil && d.rule(line) {
 			d.triggered = true
 			return
 		}
 	}
 }
 
-func usageLimitLine(line string) bool {
+// opencodeUsageLimitLine is the OpenCode usage-limit rule: the normalized
+// provider response on a line that starts with `Error:`.
+func opencodeUsageLimitLine(line string) bool {
 	line = normalizeContextRolloverLine(line)
 	lower := strings.ToLower(line)
 	if !strings.HasPrefix(lower, "error:") {

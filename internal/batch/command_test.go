@@ -179,6 +179,7 @@ func TestRenderCommand_PlainCommandPassesThrough(t *testing.T) {
 func TestRenderCommand_BuiltInPresets(t *testing.T) {
 	presets := map[string]string{
 		"opencode": `opencode run --format json "$(cat .sandman/task.md)"`,
+		"claude":   `claude -p --output-format stream-json --verbose "$(cat .sandman/task.md)"`,
 	}
 
 	for key, want := range presets {
@@ -198,6 +199,39 @@ func TestRenderCommand_BuiltInPresets(t *testing.T) {
 			}
 			if got != want {
 				t.Errorf("got %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestRenderCommand_ClaudePresetFlags(t *testing.T) {
+	command := config.BuiltInAgentPresets["claude"].Command
+	const prefix = `claude -p --output-format stream-json --verbose`
+	tests := []struct {
+		name string
+		data CommandData
+		want string
+	}{
+		{name: "prompt only", data: CommandData{PromptFile: "./.sandman/task.md"}, want: prefix + ` "$(cat ./.sandman/task.md)"`},
+		{name: "model", data: CommandData{PromptFile: ".sandman/task.md", ModelFlag: "--model 'sonnet'"}, want: prefix + ` --model 'sonnet' "$(cat .sandman/task.md)"`},
+		{name: "continue", data: CommandData{PromptFile: ".sandman/task.md", ContinueFlag: true}, want: prefix + ` --continue "$(cat .sandman/task.md)"`},
+		{name: "skip permissions", data: CommandData{PromptFile: ".sandman/task.md", DangerouslySkipPermissions: true}, want: prefix + ` --dangerously-skip-permissions "$(cat .sandman/task.md)"`},
+		{name: "session name", data: CommandData{PromptFile: ".sandman/task.md", SessionName: "Sandman 260925-abcd-42: "}, want: prefix + ` --name 'Sandman 260925-abcd-42: ' "$(cat .sandman/task.md)"`},
+		{name: "effort", data: CommandData{PromptFile: ".sandman/task.md", VariantFlag: "--effort 'max'"}, want: prefix + ` --effort 'max' "$(cat .sandman/task.md)"`},
+		{
+			name: "everything",
+			data: CommandData{PromptFile: ".sandman/task.md", ModelFlag: "--model 'opus'", VariantFlag: "--effort 'high'", DangerouslySkipPermissions: true, SessionName: "Sandman r: ", ContinueFlag: true, SessionFlag: "'ignored'"},
+			want: prefix + ` --continue --dangerously-skip-permissions --name 'Sandman r: ' --model 'opus' --effort 'high' "$(cat .sandman/task.md)"`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := RenderCommand(command, tt.data)
+			if err != nil {
+				t.Fatalf("RenderCommand: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("got  %s\nwant %s", got, tt.want)
 			}
 		})
 	}

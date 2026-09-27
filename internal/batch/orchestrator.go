@@ -2014,7 +2014,8 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(ctx context.Context, cfg *c
 	if defaultAgent == "" {
 		defaultAgent = strings.TrimSpace(cfg.Agent)
 	}
-	if err := scaffold.ValidateDockerfileMetadata(".", cfg.BuildTools, defaultAgent); err != nil {
+	expectedDefaultAgent, requiredAgents := dockerfileAgentExpectations(defaultAgent, req.Agent, agentCfg)
+	if err := scaffold.ValidateDockerfileMetadata(".", cfg.BuildTools, expectedDefaultAgent, requiredAgents); err != nil {
 		return nil, err
 	}
 
@@ -2157,6 +2158,23 @@ func logRetry(eventLog events.EventLog, runID, branch string, attempt, maxAttemp
 		event.IssueRef = issueRef(issueNumber)
 	}
 	_ = eventLog.Log(event)
+}
+
+// dockerfileAgentExpectations returns what a container run requires of the
+// Dockerfile metadata. The image must install the run agent's preset. The
+// default-agent header is compared with config only when the run uses the
+// config default agent: a run that selects another agent with --agent does not
+// depend on the default agent at all. Preset-less custom providers add no
+// install requirement because Sandman cannot know which binary they run.
+func dockerfileAgentExpectations(defaultAgent, runAgent string, runAgentCfg config.Agent) (string, []string) {
+	var required []string
+	if runAgentCfg.Preset != "" {
+		required = []string{runAgentCfg.Preset}
+	}
+	if runAgent = strings.TrimSpace(runAgent); runAgent != "" && runAgent != defaultAgent {
+		return "", required
+	}
+	return defaultAgent, required
 }
 
 func buildStartOptions(agentCfg config.Agent) (sandbox.StartOptions, error) {
@@ -3473,8 +3491,7 @@ loop:
 
 func (s *runSession) shouldAwaitUsageLimit(result AgentRunResult) bool {
 	return s.issueNumber > 0 &&
-		s.agentCfg.Preset == opencodeProvider &&
-		s.agentCfg.Command == config.BuiltInAgentPresets[opencodeProvider].Command &&
+		strategyFor(s.agentCfg.Preset, s.agentCfg.Command).AwaitsUsageLimit() &&
 		result.UsageLimitReached &&
 		!result.ContextExhausted &&
 		s.usageLimitWaited < usageLimitRetryWindow
