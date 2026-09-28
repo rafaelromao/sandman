@@ -615,7 +615,7 @@ func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branc
 		var ciEvidence map[string]any
 		var ciErr error
 		switch strings.ToLower(strings.TrimSpace(pr.StatusCheckRollup)) {
-		case "pending", "failure":
+		case "pending", "in_progress", "queued", "failure":
 			ciEvidence, ciErr = s.ciWaitEvidence(workDir, pr, headSHA)
 		default:
 			if strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "DIRTY") ||

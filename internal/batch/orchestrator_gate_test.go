@@ -757,88 +757,96 @@ func TestExternalGate_MergedPRWithoutClosingReferenceStillFailsVerification(t *t
 	}
 }
 
-func TestRunSingle_OpenPRIgnoresMalformedRetainedReviewForLiveGate(t *testing.T) {
-	workDir := testenv.MkdirShort(t, "sm-orch-")
-	t.Chdir(workDir)
-	worktreePath := filepath.Join(workDir, "worktree")
-	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0o755); err != nil {
-		t.Fatalf("create worktree task directory: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("# Task\n"), 0o644); err != nil {
-		t.Fatalf("seed task: %v", err)
-	}
-	writeTimedOutReviewRequest(t, worktreePath)
-	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "state", "17.review_request.json.state"), []byte("not-json"), 0o600); err != nil {
-		t.Fatalf("malform retained review state: %v", err)
-	}
+func TestRunSingle_OpenPRPersistsCIWaitForActiveCurrentHeadRollups(t *testing.T) {
+	for _, statusCheckRollup := range []string{"pending", "queued", "in_progress"} {
+		t.Run(statusCheckRollup, func(t *testing.T) {
+			workDir := testenv.MkdirShort(t, "sm-orch-")
+			t.Chdir(workDir)
+			worktreePath := filepath.Join(workDir, "worktree")
+			if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0o755); err != nil {
+				t.Fatalf("create worktree task directory: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("# Task\n"), 0o644); err != nil {
+				t.Fatalf("seed task: %v", err)
+			}
+			writeTimedOutReviewRequest(t, worktreePath)
+			if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "state", "17.review_request.json.state"), []byte("not-json"), 0o600); err != nil {
+				t.Fatalf("malform retained review state: %v", err)
+			}
 
-	branch := gateTestBranch
-	sb := &retrySandbox{workDir: worktreePath}
-	sbFactory := &retrySandboxFactory{sandbox: sb}
-	factory := &fakeRunnableFactory{results: []AgentRunResult{{
-		IssueNumber: 42,
-		Status:      "success",
-		Branch:      branch,
-	}}}
-	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
-	client := &fakeGitHubClient{
-		issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}},
-		prs: map[string]*github.PR{branch: {
-			Number:            17,
-			State:             "open",
-			HeadRefName:       branch,
-			HeadRefOid:        "current-sha",
-			StatusCheckRollup: "pending",
-			ReviewDecision:    "APPROVED",
-			MergeStateStatus:  "BLOCKED",
-		}},
-	}
-	o := NewOrchestrator(
-		client,
-		&retryRenderer{result: "rendered prompt"},
-		nil,
-		eventLog,
-		WithErrorLog(io.Discard),
-		WithSandboxFactory(sbFactory),
-		WithRunnableFactory(factory),
-		WithRunSessionOpts(gateTestRunOptions()),
-	)
+			branch := gateTestBranch
+			sb := &retrySandbox{workDir: worktreePath}
+			sbFactory := &retrySandboxFactory{sandbox: sb}
+			factory := &fakeRunnableFactory{results: []AgentRunResult{{
+				IssueNumber: 42,
+				Status:      "success",
+				Branch:      branch,
+			}}}
+			eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
+			client := &fakeGitHubClient{
+				issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}},
+				prs: map[string]*github.PR{branch: {
+					Number:            17,
+					State:             "open",
+					HeadRefName:       branch,
+					HeadRefOid:        "current-sha",
+					StatusCheckRollup: statusCheckRollup,
+					ReviewDecision:    "APPROVED",
+					MergeStateStatus:  "BLOCKED",
+				}},
+			}
+			o := NewOrchestrator(
+				client,
+				&retryRenderer{result: "rendered prompt"},
+				nil,
+				eventLog,
+				WithErrorLog(io.Discard),
+				WithSandboxFactory(sbFactory),
+				WithRunnableFactory(factory),
+				WithRunSessionOpts(gateTestRunOptions()),
+			)
 
-	bc := BatchConfig{
-		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
-		AgentName:        "opencode",
-		AgentCfg:         config.Agent{Command: "echo hi"},
-		IdentityResolver: noopIdentityResolver(),
-		Retries:          3,
-	}
-	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
-		IssueNumber: 42,
-		Branches:    map[int]string{42: branch},
-		BaseBranch:  "main",
-	})
-	if !started {
-		t.Fatalf("expected run to start, status=%q", result.Status)
-	}
-	if result.Status != "await" {
-		t.Fatalf("status = %q, want await for actively running current-head CI", result.Status)
-	}
-	logs, err := eventLog.Read()
-	if err != nil {
-		t.Fatalf("read events: %v", err)
-	}
-	awaitEvt := findEvent(logs, "run.await")
-	if awaitEvt == nil {
-		t.Fatalf("run.await event not found: %v", logs)
-	}
-	if awaitEvt.Payload["gate"] != string(lifecycleGatePending) {
-		t.Fatalf("open PR gate = %v, want active current-head CI gate", awaitEvt.Payload["gate"])
-	}
-	if _, ok := awaitEvt.Payload["ci_wait"].(map[string]any); !ok {
-		t.Fatalf("await payload omitted active CI evidence: %#v", awaitEvt.Payload)
-	}
-	diagnostic, ok := awaitEvt.Payload["review_diagnostic"].(map[string]any)
-	if !ok || diagnostic["status"] != "invalid" || diagnostic["error"] == "" {
-		t.Fatalf("production retained review diagnostic = %#v, want invalid-record evidence", awaitEvt.Payload["review_diagnostic"])
+			bc := BatchConfig{
+				Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
+				AgentName:        "opencode",
+				AgentCfg:         config.Agent{Command: "echo hi"},
+				IdentityResolver: noopIdentityResolver(),
+				Retries:          3,
+			}
+			result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
+				IssueNumber: 42,
+				Branches:    map[int]string{42: branch},
+				BaseBranch:  "main",
+			})
+			if !started {
+				t.Fatalf("expected run to start, status=%q", result.Status)
+			}
+			if result.Status != "await" {
+				t.Fatalf("status = %q, want await for active current-head CI", result.Status)
+			}
+			logs, err := eventLog.Read()
+			if err != nil {
+				t.Fatalf("read events: %v", err)
+			}
+			awaitEvt := findEvent(logs, "run.await")
+			if awaitEvt == nil {
+				t.Fatalf("run.await event not found: %v", logs)
+			}
+			if awaitEvt.Payload["gate"] != string(lifecycleGatePending) {
+				t.Fatalf("open PR gate = %v, want active current-head CI gate", awaitEvt.Payload["gate"])
+			}
+			ciWait, ok := awaitEvt.Payload["ci_wait"].(map[string]any)
+			if !ok {
+				t.Fatalf("await payload omitted active CI evidence: %#v", awaitEvt.Payload)
+			}
+			if ciWait["head_sha"] != "current-sha" || ciWait["deadline_unix_seconds"] == nil {
+				t.Fatalf("await CI evidence lacks current head or durable deadline: %#v", ciWait)
+			}
+			diagnostic, ok := awaitEvt.Payload["review_diagnostic"].(map[string]any)
+			if !ok || diagnostic["status"] != "invalid" || diagnostic["error"] == "" {
+				t.Fatalf("production retained review diagnostic = %#v, want invalid-record evidence", awaitEvt.Payload["review_diagnostic"])
+			}
+		})
 	}
 }
 
