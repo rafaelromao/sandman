@@ -241,22 +241,42 @@ func TestDecideImplementationPRLifecycle_NonResolvedGates(t *testing.T) {
 			wantGate: lifecycleGate("merge-conflict"), wantAction: lifecycleResume,
 		},
 		{
+			// A stale changes-requested decision with no actionable
+			// evidence and no confirmed request has no active resolver:
+			// fail instead of waiting (issue #2743).
 			name: "changes requested",
 			pr: &github.PR{Number: 42, State: "open", StatusCheckRollup: "success",
 				ReviewDecision: "CHANGES_REQUESTED", MergeStateStatus: "CLEAN", HeadRefOid: "current-sha"},
-			wantGate: lifecycleGateFailed, wantAction: lifecycleAwait,
+			wantGate: lifecycleGateFailed, wantAction: lifecycleFailure,
 		},
 		{
+			name: "required review blocked with empty checks",
+			pr: &github.PR{Number: 42, State: "open", ReviewDecision: "REVIEW_REQUIRED",
+				MergeStateStatus: "BLOCKED", HeadRefOid: "current-sha"},
+			wantGate: lifecycleGatePending, wantAction: lifecycleFailure,
+		},
+		{
+			// A ready gate is no longer externally resolving; merge work
+			// resumes under the implementor rather than waiting.
 			name: "ready to merge",
 			pr: &github.PR{Number: 42, State: "open", MergeStateStatus: "CLEAN",
 				HeadRefOid: "current-sha"},
-			wantGate: lifecycleGateReady, wantAction: lifecycleAwait,
+			wantGate: lifecycleGateReady, wantAction: lifecycleResume,
 		},
 		{
+			// A drifted head with no running CI and no confirmed request
+			// has no active resolver: fail instead of waiting (issue
+			// #2743).
 			name: "head drifted",
 			pr: &github.PR{Number: 42, State: "open", MergeStateStatus: "CLEAN",
 				HeadRefOid: "other-sha"},
-			wantGate: lifecycleGatePending, wantAction: lifecycleAwait,
+			wantGate: lifecycleGatePending, wantAction: lifecycleFailure,
+		},
+		{
+			name: "pending checks on stale head",
+			pr: &github.PR{Number: 42, State: "open", StatusCheckRollup: "pending",
+				MergeStateStatus: "BLOCKED", HeadRefOid: "other-sha"},
+			wantGate: lifecycleGatePending, wantAction: lifecycleFailure,
 		},
 		{
 			name:     "unavailable state",
@@ -280,13 +300,61 @@ func TestDecideImplementationPRLifecycle_NonResolvedGates(t *testing.T) {
 	}
 }
 
-func TestDecideImplementationPRLifecycle_EmptyPRHeadAwaits(t *testing.T) {
+func TestDecideImplementationPRLifecycle_EmptyPRHeadFailsIdle(t *testing.T) {
 	d := decideImplementationPRLifecycle(implementationPRFacts{
 		pr:      &github.PR{Number: 42, State: "open", MergeStateStatus: "CLEAN"},
 		headSHA: "",
 	})
-	if !d.handled || d.action != lifecycleAwait || d.gate != lifecycleGatePending {
-		t.Fatalf("empty head decision = %+v, want handled pending await", d)
+	if !d.handled || d.action != lifecycleFailure || d.gate != lifecycleGatePending {
+		t.Fatalf("empty head decision = %+v, want handled pending idle failure", d)
+	}
+	if d.failureExtras["reason"] != idleGateReason {
+		t.Fatalf("failure reason = %v, want %q", d.failureExtras["reason"], idleGateReason)
+	}
+}
+
+// Issue #2743: only actively resolving external work authorizes waiting.
+// A confirmed in-deadline review request admits waiting even before the
+// review run starts; corrupt retained state and expired requests fail.
+func TestDecideImplementationPRLifecycle_ActiveResolutionGatesWaiting(t *testing.T) {
+	pendingPR := func() *github.PR {
+		return &github.PR{Number: 42, State: "open", StatusCheckRollup: "success",
+			ReviewDecision: "REVIEW_REQUIRED", MergeStateStatus: "BLOCKED", HeadRefOid: "current-sha"}
+	}
+	idle := decideImplementationPRLifecycle(implementationPRFacts{pr: pendingPR(), headSHA: "current-sha"})
+	if !idle.handled || idle.action != lifecycleFailure || idle.failureExtras["reason"] != idleGateReason {
+		t.Fatalf("idle decision = %+v, want handled idle failure", idle)
+	}
+	requested := decideImplementationPRLifecycle(implementationPRFacts{pr: pendingPR(), headSHA: "current-sha", reviewRequested: true})
+	if !requested.handled || requested.action != lifecycleAwait || requested.gate != lifecycleGatePending {
+		t.Fatalf("requested decision = %+v, want handled pending await", requested)
+	}
+	approved := &github.PR{Number: 42, State: "open", ReviewDecision: "APPROVED",
+		MergeStateStatus: "CLEAN", HeadRefOid: "current-sha"}
+	readyResume := decideImplementationPRLifecycle(implementationPRFacts{pr: approved, headSHA: "current-sha"})
+	if !readyResume.handled || readyResume.action != lifecycleResume || readyResume.gate != lifecycleGateReady {
+		t.Fatalf("ready gate decision = %+v, want implementor resume", readyResume)
+	}
+	requestScopedApproval := decideImplementationPRLifecycle(implementationPRFacts{
+		pr: approved, headSHA: "current-sha",
+		retainedEvidence: retainedReviewEvidence{outcome: retainedReviewApproval},
+	})
+	if !requestScopedApproval.handled || requestScopedApproval.action != lifecycleResume || requestScopedApproval.gate != lifecycleGateReady {
+		t.Fatalf("request-scoped approval decision = %+v, want ready resume", requestScopedApproval)
+	}
+	stateErr := decideImplementationPRLifecycle(implementationPRFacts{
+		pr: pendingPR(), headSHA: "current-sha",
+		retainedEvidence: retainedReviewEvidence{present: true, stateError: true},
+	})
+	if !stateErr.handled || stateErr.action != lifecycleFailure || stateErr.failureExtras["reason"] != stateErrorReason {
+		t.Fatalf("state-error decision = %+v, want handled state-error failure", stateErr)
+	}
+	expired := decideImplementationPRLifecycle(implementationPRFacts{
+		pr: pendingPR(), headSHA: "current-sha",
+		retainedEvidence: retainedReviewEvidence{present: true, outcome: retainedReviewTimeout},
+	})
+	if !expired.handled || expired.action != lifecycleFailure || expired.failureExtras["reason"] != reviewTimeoutReason {
+		t.Fatalf("expired decision = %+v, want handled review-timeout failure", expired)
 	}
 }
 

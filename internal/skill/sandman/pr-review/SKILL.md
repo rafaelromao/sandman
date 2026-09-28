@@ -12,7 +12,7 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 
 2. **You must NOT finish on ambiguous feedback.** If the reviewer's intent cannot be reduced to a concrete, actionable code change, do not guess, do not change code, and do not stop the loop. Post a new PR comment that includes `{{REVIEW_COMMAND}}` plus a freeform request asking the reviewer to clarify the intended actionable change, then continue polling. The loop only ends on approval (formal case A or informal case C), an explicit skill-defined irrecoverable stop condition, or max passes reached — never on ambiguity.
 
-3. **You must NOT finish before the review timeout or max attempts when no feedback has been provided.** If `reviewDecision` is still `REVIEW_REQUIRED` (or absent), no reviews exist yet, no inline file comments exist, and only boilerplate setup comments are present, keep polling. Do not declare done or stop the loop. The only acceptable reasons to exit early are: approval (formal case A or informal case C), an explicit skill-defined irrecoverable stop condition, or 10 passes reached.
+3. **In standalone use, you must NOT finish before the review timeout or max attempts when no feedback has been provided.** If `reviewDecision` is still `REVIEW_REQUIRED` (or absent), no reviews exist yet, no inline file comments exist, and only boilerplate setup comments are present, keep polling. Do not declare done or stop the loop. The only acceptable reasons to exit early are: approval (formal case A or informal case C), an explicit skill-defined irrecoverable stop condition, or 10 passes reached. A Sandman-created run follows Hard Rule 11 and yields its confirmed request to the runtime before entering this polling loop.
 
 4. **You must NOT exit the polling loop on a `0/0` count of (formal reviews, inline comments) when the top-level PR conversation has a new non-trigger comment.** A reviewer who only posts a top-level PR conversation comment (no formal review event, no inline file comments) is still a real reviewer response. Re-classify the state, run the self-check (Step 4), and continue polling — do not give up.
 
@@ -34,6 +34,8 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
     - When posting the bot's own review-body, do NOT prefix it with the review command. The review-body is the substance the reviewer writes back to you — prefixing it would cause the daemon to mis-classify the body as a duplicate trigger on the next tick and drop the actual review content.
 
 10. **You must NOT dismiss a review-shaped response based on who posted it, and you must NOT investigate how the reviewer is hosted.** Any comment that arrives after your review request and contains review content — a summary, findings, an approval, change requests, or substantive feedback on the diff — is a valid reviewer response. Accept it, classify it per Step 6, and act on it. Do not filter it out because the author shares your GitHub login, because `viewerDidAuthor` is true, or because you cannot identify a separate reviewer account. Do not inspect `.github/workflows/`, branch protection rules, collaborator lists, or any repository configuration to determine who will respond to the review request — the reviewer may be a local process, a CI action, a bot, a separate user, or the same operator under the same credentials. The skill does not assume any of these, and neither should you.
+
+11. **Managed runs yield before polling.** When the Runtime Context says this is a Sandman-created run, current-head CI queued/running or a review request confirmed for the current head is handed back to Sandman's runtime before any blocking poll. A confirmed review request is active from successful delivery, even if the reviewer has not started. Checkpoint the identity and next action, leave PR-Review unchecked, and end this agent session successfully before invoking the standalone wait coordinator. This yield is not completion of PR-Review: only current request-scoped approval completes it. Sandman owns the managed wait, capacity release, and automatic re-entry. Rules requiring polling through a response budget apply only to standalone use.
 
 ## Workflow
 
@@ -77,6 +79,15 @@ the live PR state before acting on the checkpoint. This yield is not a
 `CI_TIMEOUT`, a failed attempt, or completion of PR-Review.
 
 Outside a Sandman-created run, keep polling within the bounded CI budget below.
+
+**Managed-mode branch happens before polling.** If this is a Sandman-created
+run and current-head CI is queued or running, checkpoint the head and check
+identity, then end the agent session successfully so Sandman can observe it.
+Do not enter the polling loop below, sleep on the checks, or invoke the
+standalone wait coordinator from a managed run. CI failure and merge conflicts
+are implementor-owned repair work: fix/back-merge them rather than waiting.
+Missing checks, stale heads, empty gate data, and lookup errors do not prove
+that CI is resolving and must not be presented as a wait.
 
 Enforce those limits in the polling loop with a deadline and attempt counter:
 
@@ -345,7 +356,30 @@ Retries and continuations invoke the same request again; they do not create a
 new deadline. A later confirmed trigger replaces the request envelope and is a
 new request, even when the pull request and head are unchanged.
 
-Invoke the installed coordinator exactly once for this wait. It is a portable
+### Managed handoff: return before the standalone wait
+
+After a review request is confirmed against the current PR head, a
+Sandman-created run must checkpoint the head, confirmed request identity, and
+next action in `.sandman/task.md`, then end the agent session successfully
+**before** invoking `review-wait-v1.sh` or entering any polling loop. A confirmed
+request is already an ongoing external operation from successful delivery,
+even if the review agent has not started yet. Sandman's runtime owns waiting,
+capacity release, request observation, and re-entry. It resumes this
+implementation automatically when current request-scoped feedback or approval
+arrives and an execution slot is available; when all slots are occupied the
+continuation stays queued until one frees, without a manual `--continue`.
+Sandman waits for the review response, keeps dependent work queued, and releases
+the implementation execution slot while it observes the request. Revalidate the
+live request and head before acting. A reviewer finishing without usable
+current-request evidence is not approval. Stale, mismatched, malformed, or
+otherwise unusable responses are kept for inspection but cannot resume managed
+work. Explicit cancellation aborts the run without spending an agent retry or
+starting dependent work. If the confirmed request expires or becomes unusable,
+use bounded recovery or fail with a next action; never extend or recreate the
+wait without a newly confirmed request.
+
+Outside a Sandman-created run, invoke the installed coordinator exactly once
+for this wait. It is a portable
 POSIX-shell entry point shipped with the shared skill, so it works in a
 worktree and in a container where the skill is visible at `/.agents`; it does
 not require a host `sandman` binary. It does not require a host `sandman` binary:
@@ -403,16 +437,12 @@ approval, and concrete-feedback rules remain owned by Step 6. The bundled
 `review-observe-v1.sh` observer returns a response whose body does not begin with `{{REVIEW_COMMAND}}` regardless of author; it excludes a top-level response only when that body begins with the configured prefix. Do not filter by author. Preserve observed response counts, and use only the active request's window in the classification.
 An envelope with `state:"unavailable"` is structured failure, never approval.
 
-After a review request is confirmed, a Sandman-created run checkpoints the
-current head, pending request, and next step in `.sandman/task.md`, then ends the
-agent session successfully. Sandman waits for the review response, keeps
-dependent work queued, and frees the agent sandbox for other work between
-checks. Only current, matching evidence from this request can resume the managed
-agent. Stale, mismatched, malformed, or otherwise unusable responses are kept
-for inspection but cannot resume the managed run. Explicit cancellation aborts
-the run without spending an agent retry or starting dependent work. Outside a
-Sandman-created run, the skill continues the configured observation plan through
-its absolute deadline; the final interval repeats.
+The standalone coordinator keeps dependent work queued while it observes the
+confirmed request through the configured deadline. Only current, matching
+evidence from this request can be classified as approval or feedback. Stale,
+mismatched, malformed, or otherwise unusable responses cannot authorize merge
+or resume. Outside a Sandman-created run, the skill continues the configured
+observation plan through its absolute deadline; the final interval repeats.
 
 Before Step 6, retain the existing self-check: when `top > 0`, `reviews == 0`,
 and `inline == 0`, and no previous `{{REVIEW_COMMAND}}` request is already

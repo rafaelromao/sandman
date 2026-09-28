@@ -624,7 +624,7 @@ func TestReviewRegistration_ProductionGateRegistersBeforeLivePendingHandoff(t *t
 	}
 }
 
-func TestReviewRegistration_WriteFailureFallsThroughToLivePendingGate(t *testing.T) {
+func TestReviewRegistration_WriteFailureWaitsOnlyOnActiveCIGate(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-review-registration-")
 	client := &registrationGitHubClient{
 		fakeGitHubClient: fakeGitHubClient{prs: map[string]*github.PR{
@@ -660,8 +660,11 @@ func TestReviewRegistration_WriteFailureFallsThroughToLivePendingGate(t *testing
 	}
 
 	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
-	if !handled || status != "await" || extras["gate"] != "pending" {
-		t.Fatalf("write failure gate = (%q, %#v, %t), want await/pending", status, extras, handled)
+	if !handled || status != "await" || extras["gate"] != string(lifecycleGatePending) {
+		t.Fatalf("write failure gate = (%q, %#v, %t), want current-CI await", status, extras, handled)
+	}
+	if _, ok := extras["ci_wait"].(map[string]any); !ok {
+		t.Fatalf("write failure await omitted active CI identity/deadline: %#v", extras)
 	}
 	if store.writes != 1 {
 		t.Fatalf("registration writes = %d, want one attempted atomic commit", store.writes)
@@ -671,7 +674,7 @@ func TestReviewRegistration_WriteFailureFallsThroughToLivePendingGate(t *testing
 	}
 }
 
-func TestReviewRegistration_WriteFailureDoesNotChangeLiveReadyGate(t *testing.T) {
+func TestReviewRegistration_WriteFailureCannotWaitOnAggregateReadyGate(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-review-registration-")
 	client := &registrationGitHubClient{
 		fakeGitHubClient: fakeGitHubClient{prs: map[string]*github.PR{
@@ -707,8 +710,11 @@ func TestReviewRegistration_WriteFailureDoesNotChangeLiveReadyGate(t *testing.T)
 	}
 
 	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
-	if !handled || status != "await" || extras["gate"] != gateReadyToMerge {
-		t.Fatalf("write failure ready gate = (%q, %#v, %t), want await/ready-to-merge", status, extras, handled)
+	if !handled || status != "failure" || extras["reason"] != stateErrorReason {
+		t.Fatalf("write failure ready gate = (%q, %#v, %t), want review-state failure", status, extras, handled)
+	}
+	if _, ok := extras["gate"]; ok {
+		t.Fatalf("write failure terminal result carries gate: %#v", extras)
 	}
 }
 
@@ -799,8 +805,11 @@ func TestReviewRegistration_CorruptCanonicalRecordCannotOverrideLivePendingState
 	session := &runSession{deps: runDeps{githubClient: client, errorLog: io.Discard}, opts: gateTestRunOptions()}
 
 	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
-	if !handled || status != "await" || extras["gate"] != gateReviewTimeoutError {
-		t.Fatalf("corrupt canonical gate = (%q, %#v, %t), want await/review-timeout-state-error", status, extras, handled)
+	if !handled || status != "await" || extras["gate"] != string(lifecycleGatePending) {
+		t.Fatalf("corrupt canonical gate = (%q, %#v, %t), want active-CI await", status, extras, handled)
+	}
+	if _, ok := extras["ci_wait"].(map[string]any); !ok {
+		t.Fatalf("corrupt canonical await omitted active CI evidence: %#v", extras)
 	}
 	diagnostic, ok := extras["review_diagnostic"].(map[string]any)
 	if !ok || diagnostic["status"] != "invalid" {
@@ -1106,8 +1115,14 @@ func TestReviewRegistration_GateRefreshesAfterHeadRevalidationFailure(t *testing
 	}
 
 	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
-	if !handled || status != "await" || extras["gate"] != "pending" {
-		t.Fatalf("refreshed live gate = (%q, %#v, %t), want await/pending", status, extras, handled)
+	// The re-fetch succeeds but reveals a head that differs from the local
+	// checkout; without a confirmed request bound to the new head, the gate
+	// is idle and must fail rather than wait (issue #2743).
+	if !handled || status != "failure" {
+		t.Fatalf("refreshed live gate = (%q, %#v, %t), want failure", status, extras, handled)
+	}
+	if extras["reason"] != idleGateReason {
+		t.Fatalf("refreshed live reason = %v, want %q", extras["reason"], idleGateReason)
 	}
 }
 
@@ -1156,8 +1171,15 @@ func TestReviewRegistration_HeadRefreshFailureDoesNotReuseReadySnapshot(t *testi
 	}
 
 	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
-	if !handled || status != "await" || extras["gate"] != "pending" {
-		t.Fatalf("head refresh failure gate = (%q, %#v, %t), want await/pending", status, extras, handled)
+	// Issue #2743: the local head no longer matches the pull request and no
+	// confirmed request binds either side, so nothing is resolving — fail
+	// closed instead of waiting. The ready snapshot is still never reused
+	// for a merge.
+	if !handled || status != "failure" {
+		t.Fatalf("head refresh failure gate = (%q, %#v, %t), want failure", status, extras, handled)
+	}
+	if extras["reason"] != idleGateReason {
+		t.Fatalf("head refresh reason = %v, want %q", extras["reason"], idleGateReason)
 	}
 }
 

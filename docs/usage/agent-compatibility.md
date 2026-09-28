@@ -202,8 +202,8 @@ sandbox inside the container too.
 Claude Code's `claude -p --continue` reopens the most recent conversation in the
 current directory, print-mode sessions included. Each row owns one worktree, so
 Sandman resumes a Claude conversation by rendering `--continue` on the same
-paths that reuse an OpenCode session: runtime-owned await re-entry (including
-usage-limit polling) and `sandman run --continue --reuse-session`. Plain
+paths that reuse an OpenCode session: runtime-owned external-gate await re-entry
+and `sandman run --continue --reuse-session`. Plain
 `--continue` starts a fresh conversation. No `session.json` is written for
 `claude` runs.
 
@@ -220,12 +220,11 @@ waiting for the reset. Sandman recognises the limit on the final stream-json
 `result` record (a top-level `"type":"result"` with `"is_error":true`) when it
 contains one of these messages: `hit your session limit`, `hit your weekly
 limit`, `hit your Opus limit`, `hit your Sonnet limit`, or `Fable limit reached`.
-The run then emits `run.await` with `await_reason: usage-limit`, probes every
-ten minutes for up to five hours, and resumes the same conversation with
-`--continue`. A weekly limit usually outlasts that window, after which the
-ordinary retry path runs. Spend and budget limits (`monthly spend limit`,
-`shared budget`, ...) are not awaited. The review daemon applies the same rule
-to `review_agent: claude` and enters its daemon-wide quota pause.
+The implementation run follows its configured ordinary retry budget and, when
+exhausted, fails with a structured `AGENT_USAGE_LIMIT` reason. It does not emit
+`run.await` or poll a quota-reset timer. Select an available agent provider or
+resume after the provider's limit resets. The review daemon separately applies
+its provider-wide quota recovery gate to reviewer launches.
 
 ### Readable logs
 
@@ -266,7 +265,7 @@ A custom `command` under the `claude` preset keeps its own output unchanged.
 | Idle-timeout heartbeat | Supported (streams with `stream-json --verbose`) |
 | `--model`, per-preset default model, `variant` as `--effort` | Supported |
 | Session reuse on await re-entry and `--continue --reuse-session` | Supported through `--continue` |
-| Usage-limit waiting and the review daemon's quota pause | Supported |
+| Implementation usage limits | Supported through ordinary bounded retries/failure; the review daemon separately recovers reviewer quota |
 | Scaffolded Dockerfile install and `installed-agents` pre-flight | Supported |
 | Skill discovery | Supported through `~/.claude/skills` links; see [Skills](skills.md) |
 | Exact-ID session identity (`session.json`) | Limitation: OpenCode only; Claude reuse is per worktree |

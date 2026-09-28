@@ -745,6 +745,7 @@ func TestAggregateReviewChildren_StampLandsOnCanonicalParent(t *testing.T) {
 			want       string
 		}{
 			{name: "waiting parent", parentKind: "active", status: "waiting", want: "reviewing"},
+			{name: "running parent", parentKind: "active", status: "running", want: "reviewing"},
 			{name: "success parent", parentKind: "completed", status: "success", want: "success"},
 			{name: "failure parent", parentKind: "completed", status: "failure", want: "failure"},
 			{name: "aborted parent", parentKind: "completed", status: "aborted", want: "aborted"},

@@ -3,6 +3,8 @@ package batch
 import (
 	"context"
 	"io"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +15,115 @@ import (
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
+
+type reviewWaitSchedulerGitHubClient struct {
+	fakeGitHubClient
+	mu       sync.RWMutex
+	comments []github.PRComment
+}
+
+func (c *reviewWaitSchedulerGitHubClient) FindPRByBranch(ctx context.Context, branch string) (*github.PR, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.fakeGitHubClient.FindPRByBranch(ctx, branch)
+}
+
+func (c *reviewWaitSchedulerGitHubClient) ListPRComments(context.Context, int) ([]github.PRComment, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.comments == nil {
+		return []github.PRComment{{
+			ID:        "https://github.com/owner/repo/pull/17#issuecomment-1001",
+			Body:      "/sandman review",
+			CreatedAt: time.Now().UTC(),
+		}}, nil
+	}
+	return append([]github.PRComment(nil), c.comments...), nil
+}
+
+func (c *reviewWaitSchedulerGitHubClient) setPR(branch string, mutate func(*github.PR)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	mutate(c.prs[branch])
+}
+
+type reviewWaitSchedulerSandboxFactory struct{}
+
+func (reviewWaitSchedulerSandboxFactory) NewSandbox(_, worktreeBase, branch, _ string, _ sandbox.Container) sandbox.Sandbox {
+	workDir := filepath.Join(worktreeBase, branch)
+	_ = os.MkdirAll(filepath.Join(workDir, ".sandman"), 0o755)
+	return &fakeSandbox{workDir: workDir}
+}
+
+type reviewWaitSchedulerRunnableFactory struct {
+	client               *reviewWaitSchedulerGitHubClient
+	allowIndependentDone <-chan struct{}
+	independentStarted   chan struct{}
+	dependentStarted     chan struct{}
+	mu                   sync.Mutex
+	launches             map[int]int
+	starts               []int
+}
+
+func (f *reviewWaitSchedulerRunnableFactory) NewRunnable(issue *github.Issue, branch string, _ sandbox.Sandbox) Runnable {
+	f.mu.Lock()
+	if f.launches == nil {
+		f.launches = make(map[int]int)
+	}
+	f.launches[issue.Number]++
+	launch := f.launches[issue.Number]
+	f.mu.Unlock()
+	return &reviewWaitSchedulerRunnable{factory: f, issue: issue.Number, branch: branch, launch: launch}
+}
+
+func (f *reviewWaitSchedulerRunnableFactory) startsSnapshot() []int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]int(nil), f.starts...)
+}
+
+type reviewWaitSchedulerRunnable struct {
+	factory *reviewWaitSchedulerRunnableFactory
+	issue   int
+	branch  string
+	launch  int
+}
+
+func (r *reviewWaitSchedulerRunnable) Run(ctx context.Context, _ prompt.IssueRenderer, _ string, _ prompt.RenderConfig) AgentRunResult {
+	f := r.factory
+	f.mu.Lock()
+	f.starts = append(f.starts, r.issue)
+	f.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return AgentRunResult{IssueNumber: r.issue, Status: "aborted", Branch: r.branch}
+	}
+	switch {
+	case r.issue == 1 && r.launch == 2:
+		f.client.setPR(r.branch, func(pr *github.PR) {
+			pr.State = "merged"
+			pr.Merged = true
+			pr.Body = "Closes #1"
+		})
+	case r.issue == 2:
+		select {
+		case <-f.independentStarted:
+		default:
+			close(f.independentStarted)
+		}
+		select {
+		case <-f.allowIndependentDone:
+		case <-ctx.Done():
+			return AgentRunResult{IssueNumber: r.issue, Status: "aborted", Branch: r.branch}
+		}
+	case r.issue == 3:
+		select {
+		case <-f.dependentStarted:
+		default:
+			close(f.dependentStarted)
+		}
+	}
+	return AgentRunResult{IssueNumber: r.issue, Status: "success", Branch: r.branch}
+}
 
 func TestRunBatch_ReadyAwaitedRowPrecedesQueuedIndependentWork(t *testing.T) {
 	dir := t.TempDir()
@@ -33,11 +144,11 @@ func TestRunBatch_ReadyAwaitedRowPrecedesQueuedIndependentWork(t *testing.T) {
 		},
 		findPRSequence: map[string][]*github.PR{
 			"1-awaited": {
-				{Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited"},
-				{Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited"},
-				{Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited", StatusCheckRollup: "failure"},
-				{Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited", StatusCheckRollup: "failure"},
-				{Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited", StatusCheckRollup: "failure"},
+				{Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited", HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
+				{Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited", HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
+				{Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited", HeadRefOid: "current-sha", StatusCheckRollup: "failure"},
+				{Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited", HeadRefOid: "current-sha", StatusCheckRollup: "failure"},
+				{Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited", HeadRefOid: "current-sha", StatusCheckRollup: "failure"},
 				{Number: 1, State: "merged", Merged: true, Body: "Closes #1", HeadRefName: "1-awaited"},
 				{Number: 1, State: "merged", Merged: true, Body: "Closes #1", HeadRefName: "1-awaited"},
 				{Number: 1, State: "merged", Merged: true, Body: "Closes #1", HeadRefName: "1-awaited"},
@@ -62,10 +173,11 @@ func TestRunBatch_ReadyAwaitedRowPrecedesQueuedIndependentWork(t *testing.T) {
 		AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}},
 	}}, log,
 		WithErrorLog(io.Discard),
-		WithSandboxFactory(&freshSandboxFactory{}),
+		WithSandboxFactory(reviewWaitSchedulerSandboxFactory{}),
 		WithRunnableFactory(factory),
 		WithRunSessionOpts(runSessionOptions{
 			releaseAwaitCapacity: true,
+			currentHead:          func(string) (string, error) { return "current-sha", nil },
 			awaitWait: func(ctx context.Context, _ time.Duration) error {
 				select {
 				case <-timerElapsed:
@@ -157,7 +269,7 @@ func TestRunBatch_AwaitingRowDoesNotLetDependentBlockIndependentWork(t *testing.
 			3: {Number: 3, Title: "Dependent"},
 		},
 		prs: map[string]*github.PR{
-			"1-awaited":     {Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
+			"1-awaited":     {Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited", HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
 			"2-independent": {Number: 2, State: "merged", Merged: true, Body: "Closes #2", HeadRefName: "2-independent"},
 		},
 	}
@@ -177,10 +289,11 @@ func TestRunBatch_AwaitingRowDoesNotLetDependentBlockIndependentWork(t *testing.
 		AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}},
 	}}, log,
 		WithErrorLog(io.Discard),
-		WithSandboxFactory(&freshSandboxFactory{}),
+		WithSandboxFactory(reviewWaitSchedulerSandboxFactory{}),
 		WithRunnableFactory(factory),
 		WithRunSessionOpts(runSessionOptions{
 			releaseAwaitCapacity: true,
+			currentHead:          func(string) (string, error) { return "current-sha", nil },
 			awaitWait: func(ctx context.Context, _ time.Duration) error {
 				select {
 				case <-awaiting:
@@ -243,9 +356,9 @@ func TestRunBatch_RecentAwaitingRowsDoNotStarveQueuedWork(t *testing.T) {
 			4: {Number: 4, Title: "Queued work"},
 		},
 		prs: map[string]*github.PR{
-			"1-awaited-one":   {Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited-one", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
-			"2-awaited-two":   {Number: 2, State: "open", Body: "Closes #2", HeadRefName: "2-awaited-two", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
-			"3-awaited-three": {Number: 3, State: "open", Body: "Closes #3", HeadRefName: "3-awaited-three", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
+			"1-awaited-one":   {Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited-one", HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
+			"2-awaited-two":   {Number: 2, State: "open", Body: "Closes #2", HeadRefName: "2-awaited-two", HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
+			"3-awaited-three": {Number: 3, State: "open", Body: "Closes #3", HeadRefName: "3-awaited-three", HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
 			"4-queued-work":   {Number: 4, State: "merged", Merged: true, Body: "Closes #4", HeadRefName: "4-queued-work"},
 		},
 	}
@@ -261,10 +374,11 @@ func TestRunBatch_RecentAwaitingRowsDoNotStarveQueuedWork(t *testing.T) {
 		AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}},
 	}}, log,
 		WithErrorLog(io.Discard),
-		WithSandboxFactory(&freshSandboxFactory{}),
+		WithSandboxFactory(reviewWaitSchedulerSandboxFactory{}),
 		WithRunnableFactory(factory),
 		WithRunSessionOpts(runSessionOptions{
 			releaseAwaitCapacity: true,
+			currentHead:          func(string) (string, error) { return "current-sha", nil },
 			awaitWait: func(ctx context.Context, _ time.Duration) error {
 				select {
 				case <-ordinaryQueued:
@@ -310,6 +424,191 @@ func TestRunBatch_RecentAwaitingRowsDoNotStarveQueuedWork(t *testing.T) {
 	starts := factory.startsSnapshot()
 	if !containsPriorityInt(starts, 4) {
 		t.Fatalf("queued work did not start; starts=%v", starts)
+	}
+}
+
+// A confirmed review request is an ongoing external operation before the
+// reviewer run starts. The implementation releases its slot, independent
+// work starts while its dependent stays queued, and request-scoped approval
+// resumes the same implementation once a slot is free (issue #2743).
+func TestRunBatch_ConfirmedReviewReleasesSlotAndResumesAfterResponse(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	const (
+		implBranch  = "1-awaiting-review"
+		independent = "2-independent"
+		dependent   = "3-dependent"
+		currentHead = "current-sha"
+		prNumber    = 17
+	)
+	client := &reviewWaitSchedulerGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{
+			issues: map[int]*github.Issue{
+				1: {Number: 1, Title: "Implementation"},
+				2: {Number: 2, Title: "Independent"},
+				3: {Number: 3, Title: "Dependent"},
+			},
+			prs: map[string]*github.PR{
+				implBranch:  {Number: prNumber, State: "open", Body: "Closes #1", HeadRefName: implBranch, HeadRefOid: currentHead, StatusCheckRollup: "success", ReviewDecision: "REVIEW_REQUIRED", MergeStateStatus: "BLOCKED"},
+				independent: {Number: 2, State: "merged", Merged: true, Body: "Closes #2", HeadRefName: independent},
+				dependent:   {Number: 3, State: "merged", Merged: true, Body: "Closes #3", HeadRefName: dependent},
+			},
+		},
+	}
+	awaitEntered := make(chan struct{})
+	responseReady := make(chan struct{})
+	independentStarted := make(chan struct{})
+	allowIndependentDone := make(chan struct{})
+	dependentStarted := make(chan struct{})
+	priorityQueued := make(chan struct{})
+	factory := &reviewWaitSchedulerRunnableFactory{
+		client:               client,
+		allowIndependentDone: allowIndependentDone,
+		independentStarted:   independentStarted,
+		dependentStarted:     dependentStarted,
+	}
+	log := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+		Agent:          "test-agent",
+		Sandbox:        "worktree",
+		WorktreeDir:    ".sandman/worktrees",
+		Git:            config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}},
+	}}, log,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(reviewWaitSchedulerSandboxFactory{}),
+		WithRunnableFactory(factory),
+		WithRunSessionOpts(runSessionOptions{
+			releaseAwaitCapacity: true,
+			currentHead:          func(string) (string, error) { return currentHead, nil },
+			awaitWait: func(ctx context.Context, _ time.Duration) error {
+				select {
+				case <-awaitEntered:
+				default:
+					close(awaitEntered)
+				}
+				select {
+				case <-responseReady:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			},
+			startWaiterQueued: func(priority bool) {
+				if priority {
+					select {
+					case <-priorityQueued:
+					default:
+						close(priorityQueued)
+					}
+				}
+			},
+		}),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	done := make(chan struct{})
+	var result *Result
+	var runErr error
+	go func() {
+		defer close(done)
+		result, runErr = o.RunBatch(ctx, Request{
+			Issues:       []int{1, 3, 2},
+			Branches:     map[int]string{1: implBranch, 2: independent, 3: dependent},
+			Dependencies: map[int][]int{3: {1}},
+			Parallel:     1,
+			PromptConfig: prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+		})
+	}()
+
+	select {
+	case <-awaitEntered:
+	case <-time.After(3 * time.Second):
+		cancel()
+		<-done
+		t.Fatalf("implementation did not yield on the confirmed review request: %v", log.snapshot())
+	}
+	select {
+	case <-independentStarted:
+	case <-time.After(3 * time.Second):
+		cancel()
+		<-done
+		t.Fatalf("independent work did not use the released slot: %v", factory.startsSnapshot())
+	}
+	states := events.ProjectRunStates(log.snapshot())
+	var implAwaiting bool
+	for _, state := range states {
+		if state.IssueNumber() == 1 && state.IsAwaiting() {
+			implAwaiting = true
+			if got := state.AwaitReviewRequest(); got == nil {
+				t.Fatalf("awaiting implementation has no confirmed request evidence: %#v", state.AwaitEvent.Payload)
+			}
+		}
+	}
+	if !implAwaiting {
+		t.Fatalf("implementation was not projected waiting during delegated review: %#v", states)
+	}
+	select {
+	case <-dependentStarted:
+		t.Fatal("dependent work started before its awaited implementation completed")
+	default:
+	}
+
+	implWorktree := filepath.Join(dir, ".sandman", "worktrees", implBranch)
+	writeRespondedApprovalForCanonicalRequest(t, implWorktree, prNumber)
+	client.setPR(implBranch, func(pr *github.PR) {
+		pr.ReviewDecision = "APPROVED"
+		pr.MergeStateStatus = "CLEAN"
+	})
+	close(responseReady)
+
+	select {
+	case <-priorityQueued:
+	case <-time.After(3 * time.Second):
+		cancel()
+		<-done
+		t.Fatalf("approved implementation did not queue for the occupied slot: starts=%v events=%v", factory.startsSnapshot(), log.snapshot())
+	}
+	if starts := factory.startsSnapshot(); len(starts) != 2 || starts[0] != 1 || starts[1] != 2 {
+		t.Fatalf("ready implementation ran before a slot freed: starts=%v", starts)
+	}
+	select {
+	case <-dependentStarted:
+		t.Fatal("dependent work started while implementation continuation waited for capacity")
+	default:
+	}
+	close(allowIndependentDone)
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		cancel()
+		t.Fatal("reviewed implementation did not resume and release its dependent after capacity became available")
+	}
+	if runErr != nil {
+		t.Fatalf("run batch: %v; events=%v", runErr, log.snapshot())
+	}
+	if result == nil || len(result.Runs) != 3 {
+		t.Fatalf("batch result = %#v, want three runs", result)
+	}
+	for _, run := range result.Runs {
+		if run.Status != "success" {
+			t.Fatalf("issue %d status = %q, want success", run.IssueNumber, run.Status)
+		}
+	}
+	starts := factory.startsSnapshot()
+	if len(starts) != 4 || starts[0] != 1 || starts[1] != 2 || starts[2] != 1 || starts[3] != 3 {
+		t.Fatalf("start order = %v, want initial, independent, resumed implementation, dependent", starts)
+	}
+	logs := log.snapshot()
+	if countEventsByType(logs, "run.await") != 1 {
+		t.Fatalf("run.await events = %d, want exactly the delegated-review await", countEventsByType(logs, "run.await"))
+	}
+	if countEventsByType(logs, "run.continued") != 1 {
+		t.Fatalf("run.continued events = %d, want one automatic review-completion continuation", countEventsByType(logs, "run.continued"))
 	}
 }
 

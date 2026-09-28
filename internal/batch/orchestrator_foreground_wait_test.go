@@ -145,7 +145,7 @@ func TestRunExecutor_ForegroundLifecycleWaitRepeatsFinalPollInterval(t *testing.
 		BaseBranch:  "main",
 	})
 	if !started || result.Status != "success" {
-		t.Fatalf("run = (%t, %q), want started success", started, result.Status)
+		t.Fatalf("run = (%t, %q), want started success after the active CI gate resolves merged", started, result.Status)
 	}
 	wantWaits := []time.Duration{7 * time.Second, 3 * time.Second, 3 * time.Second, 3 * time.Second}
 	if len(waits) != len(wantWaits) {
@@ -162,6 +162,9 @@ func TestRunExecutor_ForegroundLifecycleWaitRepeatsFinalPollInterval(t *testing.
 }
 
 func TestRunBatch_ExplicitAbortDuringForegroundWaitBlocksDependent(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
 	parentWaiting := make(chan struct{})
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
@@ -185,7 +188,7 @@ func TestRunBatch_ExplicitAbortDuringForegroundWaitBlocksDependent(t *testing.T)
 		AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}},
 	}}, log,
 		WithErrorLog(io.Discard),
-		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+		WithSandboxFactory(reviewWaitSchedulerSandboxFactory{}),
 		WithRunnableFactory(results),
 		WithRunSessionOpts(runSessionOptions{
 			currentHead:         func(string) (string, error) { return "current-sha", nil },
@@ -252,6 +255,9 @@ func TestRunBatch_ExplicitAbortDuringForegroundWaitBlocksDependent(t *testing.T)
 }
 
 func TestRunBatch_ForegroundWaitRetainsCapacityForIndependentSibling(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
 	parentWaiting := make(chan struct{})
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
@@ -278,7 +284,7 @@ func TestRunBatch_ForegroundWaitRetainsCapacityForIndependentSibling(t *testing.
 		AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}},
 	}}, log,
 		WithErrorLog(io.Discard),
-		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+		WithSandboxFactory(reviewWaitSchedulerSandboxFactory{}),
 		WithRunnableFactory(results),
 		WithRunSessionOpts(runSessionOptions{
 			currentHead:         func(string) (string, error) { return "current-sha", nil },
@@ -431,14 +437,14 @@ func TestRunExecutor_ResumeCapFallsBackToForegroundObservation(t *testing.T) {
 		Branches:    map[int]string{42: branch},
 		BaseBranch:  "main",
 	})
-	if !started || result.Status != "success" {
-		t.Fatalf("run = (%t, %q), want started success", started, result.Status)
+	if !started || result.Status != "failure" {
+		t.Fatalf("run = (%t, %q), want bounded failure after merge resume leaves PR open", started, result.Status)
 	}
 	if len(factory.created) != 2 {
 		t.Fatalf("agent launches = %d, want initial plus one resume", len(factory.created))
 	}
-	if len(waits) != 1 || waits[0] != 5*time.Second {
-		t.Fatalf("lifecycle waits = %v, want [5s] after resume cap", waits)
+	if len(waits) != 0 {
+		t.Fatalf("lifecycle waits = %v, want [] after the resolved ready gate exhausts its resume budget", waits)
 	}
 	logs, err := eventLog.Read()
 	if err != nil {
@@ -449,6 +455,9 @@ func TestRunExecutor_ResumeCapFallsBackToForegroundObservation(t *testing.T) {
 	}
 	if countEventsByType(logs, "run.resumed") != 1 {
 		t.Fatalf("run.resumed events = %d, want 1", countEventsByType(logs, "run.resumed"))
+	}
+	if countEventsByType(logs, "run.await") != 0 {
+		t.Fatalf("run.await events = %d, want 0 after review completion", countEventsByType(logs, "run.await"))
 	}
 }
 
@@ -489,10 +498,10 @@ func TestRunExecutor_ForegroundWaitCoversPullRequestPublication(t *testing.T) {
 		BaseBranch:  "main",
 	})
 	// Issue #2743: scripted eventual PR appearance alone must not park the
-	// run in await. The terminal outcome comes from verified merge state
-	// with no lifecycle waiting.
-	if !started || result.Status != "success" {
-		t.Fatalf("run = (%t, %q), want started success", started, result.Status)
+	// run in await. At the clean exit there is no PR and no initiated
+	// publication operation, so the run fails with a publish-next action.
+	if !started || result.Status != "failure" {
+		t.Fatalf("run = (%t, %q), want started failure", started, result.Status)
 	}
 	if len(waits) != 0 {
 		t.Fatalf("publication waits = %v, want [] (no wait without initiated operation)", waits)
@@ -507,8 +516,8 @@ func TestRunExecutor_ForegroundWaitCoversPullRequestPublication(t *testing.T) {
 	if got := countEventsByType(logs, "run.await"); got != 0 {
 		t.Fatalf("run.await events = %d, want 0", got)
 	}
-	if finishedStatus(t, logs) != "success" {
-		t.Fatalf("finished status = %q, want success", finishedStatus(t, logs))
+	if finishedStatus(t, logs) != "failure" {
+		t.Fatalf("finished status = %q, want failure", finishedStatus(t, logs))
 	}
 }
 

@@ -33,6 +33,10 @@ You need to follow all steps in this workflow. Make sure you have gone through a
 
 4. **Never stage Sandman runtime state.** The `.sandman/` directory holds runtime files (config, prompt, Dockerfile, reviews, the per-run task document). It is intentionally gitignored and is untracked by `sandman init`'s pre-commit guard. Do not run `git add` (with or without `-f`) on any path under `.sandman/`, and do not commit changes that include such paths. The pre-commit hook installed by `sandman init` will reject any commit that attempts to put a `.sandman/` path back into the index, but treat that as a last line of defense: do not stage it in the first place. Other Sandman-managed worktrees may not yet have the hook installed, and a force-pushed history rewrite can resurrect ignored paths.
 
+5. **Never yield for work this workflow owns.** Finish back-merge, commit/push, pull-request creation, and post-create body verification autonomously. Do not ask whether those actions are authorized; the user's request to implement the work item already authorizes them. A checklist transition such as `PR-Review` is not permission to stop before the PR exists. A missing PR or unpushed branch is not an external wait. If an owned action cannot be completed after bounded recovery, record the exact failure and next action and fail the run; do not report success or ask the operator to resume it manually.
+
+6. **Yield only to an operation already in progress.** A confirmed review request is ongoing from successful delivery, even before a reviewer begins; current-head CI may also resolve while you wait when checks are queued or running. In a Sandman-managed run, checkpoint that confirmed request or current-head CI and yield for runtime observation. Do not yield for a generic pending gate, missing checks, a stale head, an unconfirmed review comment, a lookup failure, or an exhausted operation budget. When the reviewer responds, continue the implementation/merge work autonomously; if no external operation is actively resolving a blocker, fail with a specific next action instead of waiting.
+
 ### 1. Setup branch
 
 ```bash

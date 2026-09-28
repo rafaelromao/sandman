@@ -18,9 +18,10 @@ import (
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
-// B20: When re-evaluation shows CI failure after resume from await, emit a
-// recoverable run.await event with gate: failed.
-func TestRunSingle_ModeContinueCIFailureReEvaluatesToAwait(t *testing.T) {
+// When re-evaluation shows CI failure after resume from await, the runtime
+// relaunches bounded remediation work; exhausting that budget terminalizes
+// instead of waiting again without a remaining resolver budget.
+func TestRunSingle_ModeContinueCIFailureExhaustsRemediationAsFailure(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 
@@ -85,8 +86,8 @@ func TestRunSingle_ModeContinueCIFailureReEvaluatesToAwait(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "await" {
-		t.Fatalf("status = %q, want await after bounded CI remediation resumes", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure after bounded CI remediation is exhausted", result.Status)
 	}
 	if got := len(resultFactory.created); got != 4 {
 		t.Fatalf("agent launches = %d, want exhausted entry remediation plus three in-session remediation resumes", got)
@@ -98,15 +99,12 @@ func TestRunSingle_ModeContinueCIFailureReEvaluatesToAwait(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
-	await := findEvent(logs, "run.await")
-	if await == nil {
-		t.Fatalf("run.await event not found: %v", logs)
+	if got := countEventsByType(logs, "run.await"); got != 0 {
+		t.Fatalf("run.await events = %d, want 0 after remediation budget exhaustion", got)
 	}
-	if await.Payload["gate"] != "ci-failure" {
-		t.Fatalf("gate = %v, want ci-failure", await.Payload["gate"])
-	}
-	if _, ok := await.Payload["blocker"]; ok {
-		t.Fatalf("await blocker = %v, want absent", await.Payload["blocker"])
+	finished := findEvent(logs, "run.finished")
+	if finished == nil || finished.Payload["reason"] != "REMEDIATION_BUDGET_EXHAUSTED" {
+		t.Fatalf("finished event = %#v, want remediation-budget failure", finished)
 	}
 }
 
@@ -292,9 +290,9 @@ func TestEntryReevaluation_ModeContinuePendingGateAwaitsImmediately(t *testing.T
 }
 
 // Entry re-evaluation: a continuation session re-entering while the PR gate is
-// ready-to-merge resumes the agent with request-scoped merge evidence instead
-// of launching blindly. The resumed session ends on the same gate (the
-// in-session resume loop is a later slice) without consuming a retry.
+// ready-to-merge resumes the agent with merge evidence instead of launching
+// blindly. The fake resumed agent leaves merge work incomplete, so exhausting
+// the in-session resume budget fails rather than creating another wait.
 func TestEntryReevaluation_ModeContinueReadyToMergeResumesAgentWithEvidence(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
@@ -341,8 +339,8 @@ func TestEntryReevaluation_ModeContinueReadyToMergeResumesAgentWithEvidence(t *t
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "await" {
-		t.Fatalf("status = %q, want await (post-resume gate still ready-to-merge, covered by resume cap fallback)", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure after ready-gate resume budget is exhausted", result.Status)
 	}
 	if got := len(resultFactory.created); got != 2 {
 		t.Fatalf("agent launches = %d, want 2 (entry resume + in-session resume)", got)
@@ -369,16 +367,15 @@ func TestEntryReevaluation_ModeContinueReadyToMergeResumesAgentWithEvidence(t *t
 	if resumedEvt == nil || resumedEvt.Payload["gate"] != gateReadyToMerge {
 		t.Fatalf("run.resumed gate = %v, want ready-to-merge", resumedEvt.Payload["gate"])
 	}
-	awaitEvt := findEvent(logs, "run.await")
-	if awaitEvt == nil || awaitEvt.Payload["gate"] != "ready-to-merge" {
-		t.Fatalf("run.await gate = %v, want ready-to-merge", awaitEvt.Payload["gate"])
+	if got := countEventsByType(logs, "run.await"); got != 0 {
+		t.Fatalf("run.await events = %d, want 0 after ready-gate resume budget exhaustion", got)
 	}
 }
 
 // In-session resume: after the agent completes cleanly and the gate is
 // ready-to-merge, the run relaunches the agent in the same attempt (no
 // run.retry) with the merge evidence attached, bounded by the resume cap;
-// the final same-gate observation falls back to run.await.
+// if the agent leaves merge work incomplete, the run fails instead of waiting.
 func TestRunSingle_ReadyToMergeResumesWithinSameAttempt(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
@@ -425,8 +422,8 @@ func TestRunSingle_ReadyToMergeResumesWithinSameAttempt(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "await" {
-		t.Fatalf("status = %q, want await (resume cap exhausted on steady ready-to-merge gate)", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure after ready-gate resume budget is exhausted", result.Status)
 	}
 	if got := len(resultFactory.created); got != 2 {
 		t.Fatalf("agent launches = %d, want 2 (initial + one resumed relaunch)", got)
@@ -454,16 +451,14 @@ func TestRunSingle_ReadyToMergeResumesWithinSameAttempt(t *testing.T) {
 	if resumedEvt == nil || resumedEvt.Payload["reason"] != "approval" {
 		t.Fatalf("run.resumed reason = %v, want approval", resumedEvt.Payload["reason"])
 	}
-	awaitEvt := findEvent(logs, "run.await")
-	if awaitEvt == nil || awaitEvt.Payload["gate"] != "ready-to-merge" {
-		t.Fatalf("run.await gate = %v, want ready-to-merge", awaitEvt.Payload["gate"])
+	if got := countEventsByType(logs, "run.await"); got != 0 {
+		t.Fatalf("run.await events = %d, want 0 after ready-gate resume budget exhaustion", got)
 	}
 }
 
-// In-session resume via the poll: the gate starts pending and flips to
-// ready-to-merge between poll iterations; the run resumes the agent with the
-// merge evidence instead of awaiting on the polled gate.
-func TestRunSingle_GatePollTransitionToReadyResumesAgent(t *testing.T) {
+// Non-foreground execution yields on active current-head CI. The batch
+// scheduler owns the subsequent observation and slot-aware re-entry.
+func TestRunSingle_PendingCurrentCIGateYieldsWithoutAgentPolling(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 
@@ -496,7 +491,7 @@ func TestRunSingle_GatePollTransitionToReadyResumesAgent(t *testing.T) {
 	waits := 0
 	client.findPRHook = func() {
 		lookups++
-		if lookups >= 2 {
+		if lookups >= 4 {
 			client.prs[branch] = readyPR
 		}
 	}
@@ -534,16 +529,16 @@ func TestRunSingle_GatePollTransitionToReadyResumesAgent(t *testing.T) {
 		t.Fatal("expected run to start")
 	}
 	if result.Status != "await" {
-		t.Fatalf("status = %q, want await after resumed relaunch on steady ready gate", result.Status)
+		t.Fatalf("status = %q, want await for active current-head CI; events=%v", result.Status, spyLog.snapshot())
 	}
-	if got := len(resultFactory.created); got != 2 {
-		t.Fatalf("agent launches = %d, want 2 (initial + poll-transition resume)", got)
+	if got := len(resultFactory.created); got != 1 {
+		t.Fatalf("agent launches = %d, want 1 (runtime yields without polling in the agent)", got)
 	}
-	if got := len(resultFactory.configs); got != 2 {
-		t.Fatalf("captured configs = %d, want 2", got)
+	if got := len(resultFactory.configs); got != 1 {
+		t.Fatalf("captured configs = %d, want only the initial agent prompt", got)
 	}
-	if !strings.Contains(resultFactory.configs[1].TaskPrompt, "## Review Evidence") {
-		t.Fatalf("poll-resumed relaunch must carry evidence:\n%s", resultFactory.configs[1].TaskPrompt)
+	if strings.Contains(resultFactory.configs[0].TaskPrompt, "## Review Evidence") {
+		t.Fatalf("agent prompt unexpectedly contains review evidence before an external response:\n%s", resultFactory.configs[0].TaskPrompt)
 	}
 	logs, err := spyLog.Read()
 	if err != nil {
@@ -552,9 +547,8 @@ func TestRunSingle_GatePollTransitionToReadyResumesAgent(t *testing.T) {
 	if got := countEventsByType(logs, "run.retry"); got != 0 {
 		t.Fatalf("run.retry events = %d, want 0", got)
 	}
-	awaitEvt := findEvent(logs, "run.await")
-	if awaitEvt == nil || awaitEvt.Payload["gate"] != "ready-to-merge" {
-		t.Fatalf("run.await gate = %v, want ready-to-merge", awaitEvt.Payload["gate"])
+	if got := countEventsByType(logs, "run.await"); got != 1 {
+		t.Fatalf("run.await events = %d, want one current-head CI wait", got)
 	}
 }
 
@@ -691,8 +685,8 @@ func TestRunSingle_PendingGatePollFailureWithActionableFeedbackResumesAgent(t *t
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "await" {
-		t.Fatalf("status = %q, want await after polled actionable-feedback transition", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure after actionable-feedback resume budget is exhausted", result.Status)
 	}
 	if got := len(resultFactory.created); got != 2 {
 		t.Fatalf("agent launches = %d, want 2 (initial + actionable-feedback resume)", got)
@@ -710,15 +704,18 @@ func TestRunSingle_PendingGatePollFailureWithActionableFeedbackResumesAgent(t *t
 	if got := countEventsByType(logs, "run.retry"); got != 0 {
 		t.Fatalf("run.retry events = %d, want 0", got)
 	}
-	awaitEvt := findEvent(logs, "run.await")
-	if awaitEvt == nil || awaitEvt.Payload["gate"] != gateActionableFeedback {
-		t.Fatalf("run.await gate = %v, want actionable-feedback", awaitEvt.Payload["gate"])
+	if got := countEventsByType(logs, "run.await"); got != 0 {
+		t.Fatalf("run.await events = %d, want 0 after review feedback is resolved and resume budget is exhausted", got)
+	}
+	finished := findEvent(logs, "run.finished")
+	if finished == nil || finished.Payload["reason"] != "REMEDIATION_BUDGET_EXHAUSTED" {
+		t.Fatalf("finished event = %#v, want remediation-budget failure", finished)
 	}
 }
 
-// CI failure with retained actionable evidence awaits at entry without
-// launching an agent: the live PR state is recoverable but not resume-worthy.
-func TestRunSingle_CIFailurePrecedesActionableEvidenceAwaitsAtEntry(t *testing.T) {
+// CI failure with retained actionable evidence prioritizes implementor-owned
+// CI repair and terminalizes when the bounded remediation budget is exhausted.
+func TestRunSingle_CIFailurePrecedesActionableEvidenceAndExhaustsBudget(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 
@@ -772,8 +769,8 @@ func TestRunSingle_CIFailurePrecedesActionableEvidenceAwaitsAtEntry(t *testing.T
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "await" {
-		t.Fatalf("status = %q, want await (CI failure precedes actionable evidence)", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure after CI remediation budget is exhausted", result.Status)
 	}
 	if got := len(resultFactory.created); got != 2 {
 		t.Fatalf("agent launches = %d, want entry launch plus remediation resume", got)
@@ -785,16 +782,19 @@ func TestRunSingle_CIFailurePrecedesActionableEvidenceAwaitsAtEntry(t *testing.T
 	if got := countEventsByType(logs, "run.resumed"); got != 1 {
 		t.Fatalf("run.resumed events = %d, want 1 remediation relaunch", got)
 	}
-	await := findEvent(logs, "run.await")
-	if await == nil || await.Payload["gate"] != "ci-failure" {
-		t.Fatalf("await event = %#v, want ci-failure gate", await)
+	if got := countEventsByType(logs, "run.await"); got != 0 {
+		t.Fatalf("run.await events = %d, want 0 after remediation budget exhaustion", got)
+	}
+	finished := findEvent(logs, "run.finished")
+	if finished == nil || finished.Payload["reason"] != "REMEDIATION_BUDGET_EXHAUSTED" {
+		t.Fatalf("finished event = %#v, want remediation-budget failure", finished)
 	}
 }
 
 // Retained concrete informal feedback resumes a continuation session at entry
-// (gate actionable-feedback, REVIEW_INFORMAL_FEEDBACK): the entry launch is the
-// resume, and the in-session loop relaunches once on the steady gate before
-// exhausting the resume cap.
+// (gate actionable-feedback, REVIEW_INFORMAL_FEEDBACK): after the entry launch
+// and one in-session remediation relaunch, exhausted feedback work fails
+// instead of becoming another wait.
 func TestEntryReevaluation_ModeContinueInformalFeedbackResumesAgentWithEvidence(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
@@ -848,8 +848,8 @@ func TestEntryReevaluation_ModeContinueInformalFeedbackResumesAgentWithEvidence(
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "await" {
-		t.Fatalf("status = %q, want await (post-resume steady gate covered by resume cap fallback)", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure after actionable-feedback resume budget is exhausted", result.Status)
 	}
 	if got := len(resultFactory.created); got != 2 {
 		t.Fatalf("agent launches = %d, want 2 (entry resume + one in-session relaunch)", got)
@@ -879,12 +879,11 @@ func TestEntryReevaluation_ModeContinueInformalFeedbackResumesAgentWithEvidence(
 	if got := countEventsByType(logs, "run.resumed"); got != 1 {
 		t.Fatalf("run.resumed events = %d, want exactly 1 (entry relaunch emits no run.resumed; one in-session relaunch does)", got)
 	}
-	awaitEvt := findEvent(logs, "run.await")
-	if awaitEvt == nil || awaitEvt.Payload["gate"] != gateActionableFeedback {
-		t.Fatalf("run.await gate = %v, want actionable-feedback", awaitEvt.Payload["gate"])
+	if got := countEventsByType(logs, "run.await"); got != 0 {
+		t.Fatalf("run.await events = %d, want 0 after review feedback has finished", got)
 	}
-	if request, ok := awaitEvt.Payload["review_request"].(map[string]any); !ok || request["informal_feedback"] == nil {
-		t.Fatalf("run.await review request missing informal feedback: %#v", awaitEvt.Payload["review_request"])
+	if request, ok := resumedEvt.Payload["review_request"].(map[string]any); !ok || request["informal_feedback"] == nil {
+		t.Fatalf("run.resumed review request missing informal feedback: %#v", resumedEvt.Payload["review_request"])
 	}
 }
 
@@ -1024,8 +1023,8 @@ func TestRunSingle_InformalFeedbackResumesWithinSameAttempt(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "await" {
-		t.Fatalf("status = %q, want await after resumed relaunch on steady informal gate", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure after informal-feedback remediation budget is exhausted", result.Status)
 	}
 	if got := len(resultFactory.created); got != 2 {
 		t.Fatalf("agent launches = %d, want 2 (entry resume + informal-feedback resume)", got)
@@ -1059,20 +1058,16 @@ func TestRunSingle_InformalFeedbackResumesWithinSameAttempt(t *testing.T) {
 	if request, ok := resumedEvt.Payload["review_request"].(map[string]any); !ok || request["informal_feedback"] == nil {
 		t.Fatalf("run.resumed review request missing informal feedback: %#v", resumedEvt.Payload["review_request"])
 	}
-	awaitEvt := findEvent(logs, "run.await")
-	if awaitEvt == nil || awaitEvt.Payload["gate"] != gateActionableFeedback {
-		t.Fatalf("run.await gate = %v, want actionable-feedback", awaitEvt.Payload["gate"])
+	if got := countEventsByType(logs, "run.await"); got != 0 {
+		t.Fatalf("run.await events = %d, want 0 after review feedback has finished", got)
 	}
 }
 
-// Vertical lifecycle (issue #2595 demo): a fresh run exits to the delegated
-// review gate (run.await pending), a CHANGES_REQUESTED review resumes the
-// agent with actionable evidence, the pushed head lands back on a pending
-// gate, and the APPROVED+CLEAN transition resumes the agent again before the
-// PR merges into verified success. Across the whole lifecycle there is zero
-// run.retry, at most three launches per session, and the worktree task.md is
-// preserved.
-func TestRunSingle_FullLifecycleRequestsFeedbackThenApprovalThenMergeSuccess(t *testing.T) {
+// A stale request cannot authorize another wait after implementor-owned
+// feedback work advances the pull-request head. The first current-head CI
+// await is valid; after the head drifts without a newly confirmed review
+// request, the continuation fails with evidence instead of parking again.
+func TestRunSingle_StaleReviewRequestFailsAfterHeadAdvance(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 
@@ -1171,22 +1166,8 @@ func TestRunSingle_FullLifecycleRequestsFeedbackThenApprovalThenMergeSuccess(t *
 	if !started {
 		t.Fatalf("session 2 not started: %q", result.Status)
 	}
-	if result.Status != "await" || len(resultFactory.created) != 3 {
-		t.Fatalf("session 2 = (%q, %d launches), want await after entry resume + in-session resume", result.Status, len(resultFactory.created))
-	}
-
-	pr.ReviewDecision = "APPROVED"
-	pr.StatusCheckRollup = "success"
-	pr.MergeStateStatus = "CLEAN"
-	phase = 2
-	headForGate = "new-sha"
-	lookups = 0
-	result, started = runSession(true, "run-b")
-	if !started {
-		t.Fatalf("session 3 not started: %q", result.Status)
-	}
-	if result.Status != "success" || len(resultFactory.created) != 5 {
-		t.Fatalf("session 3 = (%q, %d launches), want success after merged PR (entry resume + merge resume)", result.Status, len(resultFactory.created))
+	if result.Status != "failure" || len(resultFactory.created) != 3 {
+		t.Fatalf("session 2 = (%q, %d launches), want failure after entry feedback resume and head drift", result.Status, len(resultFactory.created))
 	}
 
 	logs, err := spyLog.Read()
@@ -1196,8 +1177,8 @@ func TestRunSingle_FullLifecycleRequestsFeedbackThenApprovalThenMergeSuccess(t *
 	if got := countEventsByType(logs, "run.retry"); got != 0 {
 		t.Fatalf("run.retry events = %d, want 0", got)
 	}
-	if got := countEventsByType(logs, "run.resumed"); got != 2 {
-		t.Fatalf("run.resumed events = %d, want 2", got)
+	if got := countEventsByType(logs, "run.resumed"); got != 1 {
+		t.Fatalf("run.resumed events = %d, want 1 feedback remediation", got)
 	}
 	resumedEvt := findEvent(logs, "run.resumed")
 	if resumedEvt == nil || resumedEvt.Payload["reason"] != "feedback" {
@@ -1212,21 +1193,18 @@ func TestRunSingle_FullLifecycleRequestsFeedbackThenApprovalThenMergeSuccess(t *
 			awaits = append(awaits, e)
 		}
 	}
-	if len(awaits) != 2 {
-		t.Fatalf("run.await events = %d, want 2", len(awaits))
-	}
-	if awaits[0].Payload["gate"] != "pending" || awaits[1].Payload["gate"] != "pending" {
-		t.Fatalf("await gates = %v, %v, want pending, pending", awaits[0].Payload["gate"], awaits[1].Payload["gate"])
+	if len(awaits) != 1 || awaits[0].Payload["gate"] != "pending" {
+		t.Fatalf("run.await events = %#v, want only the initial active current-head CI wait", awaits)
 	}
 	finished := findEvent(logs, "run.finished")
 	if finished == nil {
 		t.Fatalf("run.finished event not found: %v", logs)
 	}
-	if status, _ := finished.Payload["status"].(string); !events.RunStatusFromPayload(status).IsSuccess() {
-		t.Fatalf("run.finished = %#v, want success", finished)
+	if status, _ := finished.Payload["status"].(string); status != "failure" || finished.Payload["reason"] != idleGateReason {
+		t.Fatalf("run.finished = %#v, want structured idle-gate failure", finished)
 	}
-	if countEventsByType(logs, "run.started") != 1 || countEventsByType(logs, "run.continued") != 2 {
-		t.Fatalf("run.started = %d, run.continued = %d, want 1 and 2", countEventsByType(logs, "run.started"), countEventsByType(logs, "run.continued"))
+	if countEventsByType(logs, "run.started") != 1 || countEventsByType(logs, "run.continued") != 1 {
+		t.Fatalf("run.started = %d, run.continued = %d, want 1 and 1", countEventsByType(logs, "run.started"), countEventsByType(logs, "run.continued"))
 	}
 	var seq []string
 	for _, e := range logs {
@@ -1235,7 +1213,7 @@ func TestRunSingle_FullLifecycleRequestsFeedbackThenApprovalThenMergeSuccess(t *
 			seq = append(seq, e.Type)
 		}
 	}
-	wantSeq := []string{"run.started", "run.await", "run.continued", "run.resumed", "run.await", "run.continued", "run.resumed"}
+	wantSeq := []string{"run.started", "run.await", "run.continued", "run.resumed"}
 	if len(seq) != len(wantSeq) {
 		t.Fatalf("lifecycle sequence = %v, want %v", seq, wantSeq)
 	}
@@ -1244,13 +1222,13 @@ func TestRunSingle_FullLifecycleRequestsFeedbackThenApprovalThenMergeSuccess(t *
 			t.Fatalf("lifecycle event %d = %s, want %s (sequence %v)", i, seq[i], want, seq)
 		}
 	}
-	if len(resultFactory.configs) != 5 {
-		t.Fatalf("captured configs = %d, want 5", len(resultFactory.configs))
+	if len(resultFactory.configs) != 3 {
+		t.Fatalf("captured configs = %d, want 3", len(resultFactory.configs))
 	}
 	if strings.Contains(resultFactory.configs[0].TaskPrompt, "## Review Evidence") {
 		t.Fatalf("initial launch must not carry evidence")
 	}
-	for i, evi := range []string{"REVIEW_CHANGES_REQUESTED", "REVIEW_CHANGES_REQUESTED", "REVIEW_APPROVED", "REVIEW_APPROVED"} {
+	for i, evi := range []string{"REVIEW_CHANGES_REQUESTED", "REVIEW_CHANGES_REQUESTED"} {
 		if !strings.Contains(resultFactory.configs[i+1].TaskPrompt, evi) {
 			t.Fatalf("launch %d prompt missing %s evidence:\n%s", i+1, evi, resultFactory.configs[i+1].TaskPrompt)
 		}

@@ -103,8 +103,10 @@ Wait for CI to be green.
 	for _, phrase := range []string{
 		"Treat every persisted blocker and next action as historical evidence",
 		"Re-check its authoritative live source",
-		"checkpoint the current head, pending gate, and next action in .sandman/task.md",
-		"This overrides any persisted instruction to keep polling that PR gate",
+		"checkpoint the head and checks in .sandman/task.md",
+		"This overrides persisted instructions to keep polling a managed gate",
+		"successful request delivery is an ongoing external operation even before the reviewer starts",
+		"without an active external resolver, fail with a specific next action instead of waiting",
 		"Outside a Sandman-managed run, poll within the documented budget",
 		"Never stop or exit solely because an earlier attempt recorded a blocker",
 	} {

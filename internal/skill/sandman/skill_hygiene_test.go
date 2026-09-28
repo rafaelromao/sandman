@@ -275,7 +275,7 @@ func TestReviewLifecycleDocumentationDescribesBoundedWait(t *testing.T) {
 		"skills.md": {
 			"AFK workflow",
 			"matching current-request evidence",
-			"durable publication state",
+			"durable request state",
 		},
 	}
 	for name, required := range docs {

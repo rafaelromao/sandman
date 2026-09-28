@@ -28,10 +28,10 @@ The daemon polls open pull requests for the configured review command, which def
 /sandman review
 ```
 
-The implementor-side delegated review loop waits according to the project
-`review_timeout` setting (default `1800` seconds, minimum `240`). The value is
-carried in the current AgentRun Task and is independent of the review daemon's
-reviewer AgentRun lifetime and lifecycle re-evaluation. Use
+The implementor-side delegated review request uses the project `review_timeout`
+setting (default `1800` seconds, minimum `240`). The value is carried in the
+current AgentRun Task and is independent of the review daemon's reviewer
+AgentRun lifetime and lifecycle re-evaluation. Use
 `sandman config set review_timeout <seconds>` for repository policy or
 `sandman run --review-timeout <seconds>` for one run or continuation.
 
@@ -44,15 +44,20 @@ evidence is diagnostics-only and leaves observation active. Explicit
 cancellation produces the normal aborted outcome and does not launch a
 dependent.
 
-After a configured trigger is posted and confirmed for the current head, the
-implementor skill writes one request envelope under `.sandman/state/` and calls
-the versioned `review-wait-v1.sh` entry point. Re-entering with the same
-trigger reuses that request; a later confirmed trigger is a new request, even
-on the same pull request. The wait returns structured transport state and raw
-response evidence plus a request-scoped `review-classification/v1` envelope.
-That envelope preserves the existing top-level, formal-review, and inline
-sources while associating them with one trigger and head; existing approval and
-feedback rules consume it without adding natural-language inference.
+After a configured trigger is posted and confirmed for the current head, that
+delivery is an ongoing external operation even before the reviewer agent starts.
+The managed runtime owns the confirmed request record, releases implementation
+capacity, observes the request, and resumes the same implementation when
+current request-scoped evidence arrives and a slot is available. The managed
+agent checkpoints and exits before any polling loop; it never waits inside its
+execution slot. Re-entering with the same trigger reuses that request; a later
+confirmed trigger is a new request, even on the same pull request. Standalone
+use of `sandman-pr-review` invokes the versioned `review-wait-v1.sh` entry point.
+It returns structured transport state and raw response evidence plus a
+request-scoped `review-classification/v1` envelope. That envelope preserves the
+existing top-level, formal-review, and inline sources while associating them
+with one trigger and head; existing approval and feedback rules consume it
+without adding natural-language inference.
 
 When it sees a matching comment authored by the GitHub user authenticated to the daemon, it launches a review AgentRun and posts the result back to the pull request. Requests from other users are ignored. Use direct review for manual or CI-driven reviews that should not be tied to the daemon's authenticated user.
 

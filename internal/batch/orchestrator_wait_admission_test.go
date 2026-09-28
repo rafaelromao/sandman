@@ -13,11 +13,11 @@ import (
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
-// runMissingPRCase runs one issue-driven session with no pull request behind
-// the branch through the production RunExecutor path. The fake supplies one
-// successful agent result per attempt so bounded retries can exhaust without
-// tripping the fake factory.
-func runMissingPRCase(t *testing.T, mode IssueMode, prevRunID string) (AgentRunResult, []events.Event, int) {
+// runIdleGateCase runs one issue-driven session through the production
+// RunExecutor path with the given pull request behind the branch (nil for no
+// pull request). The fake supplies one successful agent result per attempt so
+// bounded retries can exhaust without tripping the fake factory.
+func runIdleGateCase(t *testing.T, mode IssueMode, prevRunID string, pr *github.PR) (AgentRunResult, []events.Event, int) {
 	t.Helper()
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	oldWD, err := os.Getwd()
@@ -43,7 +43,7 @@ func runMissingPRCase(t *testing.T, mode IssueMode, prevRunID string) (AgentRunR
 	}}
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}},
-		prs:    map[string]*github.PR{},
+		prs:    map[string]*github.PR{gateTestBranch: pr},
 	}
 	runOpts := gateTestRunOptions()
 	runOpts.awaitResumeMax = 1
@@ -90,7 +90,7 @@ func runMissingPRCase(t *testing.T, mode IssueMode, prevRunID string) (AgentRunR
 // no pull request must not enter external waiting. Missing PR creation is
 // implementor-owned work, not a publication wait.
 func TestRunExecutor_MissingPRDoesNotAwait(t *testing.T) {
-	result, logs, _ := runMissingPRCase(t, ModeFresh, "")
+	result, logs, _ := runIdleGateCase(t, ModeFresh, "", nil)
 	if got := countEventsByType(logs, "run.await"); got != 0 {
 		t.Fatalf("run.await events = %d, want 0 (no PR means no external resolver)", got)
 	}
@@ -109,13 +109,48 @@ func TestRunExecutor_MissingPRDoesNotAwait(t *testing.T) {
 	}
 	if got := finishedStatus(t, logs); got != "failure" {
 		t.Fatalf("finished status = %q, want failure", got)
+	}
+	finished := findEvent(logs, "run.finished")
+	if finished.Payload["reason"] != missingPRReason || finished.Payload["next_action"] != missingPRNextAction {
+		t.Fatalf("missing-PR failure evidence = %#v, want structured publication next action", finished.Payload)
+	}
+	if _, ok := finished.Payload["blocker"]; ok {
+		t.Fatalf("missing PR was mislabeled dependency blocker: %#v", finished.Payload)
+	}
+}
+
+// An open pull request with no actively resolving operation (no running CI,
+// no confirmed request, no live approval) is idle work, not a wait: the run
+// must fail instead of parking in waiting (issue #2743).
+func TestRunExecutor_IdleGateWithoutRequestFailsInsteadOfWaiting(t *testing.T) {
+	idlePR := &github.PR{
+		Number:            17,
+		State:             "open",
+		HeadRefName:       gateTestBranch,
+		HeadRefOid:        "current-sha",
+		StatusCheckRollup: "success",
+		MergeStateStatus:  "BLOCKED",
+	}
+	result, logs, _ := runIdleGateCase(t, ModeFresh, "", idlePR)
+	if got := countEventsByType(logs, "run.await"); got != 0 {
+		t.Fatalf("run.await events = %d, want 0 (idle gate has no active resolver)", got)
+	}
+	if result.Status != "failure" {
+		t.Fatalf("result status = %q, want failure", result.Status)
+	}
+	finished := findEvent(logs, "run.finished")
+	if finished == nil || finished.Payload["reason"] != idleGateReason {
+		t.Fatalf("finished reason = %v, want %q", finished, idleGateReason)
+	}
+	if finished.Payload["external_gate"] != string(lifecycleGatePending) || finished.Payload["expected_head_sha"] != "current-sha" {
+		t.Fatalf("terminal failure omitted idle-gate evidence: %#v", finished.Payload)
 	}
 }
 
 // Continuation path of the same tracer: a --continue re-entry with no PR must
 // also refuse waiting and terminalize instead of parking the run.
 func TestRunExecutor_ContinuationMissingPRDoesNotAwait(t *testing.T) {
-	result, logs, _ := runMissingPRCase(t, ModeContinue, "previous-run")
+	result, logs, _ := runIdleGateCase(t, ModeContinue, "previous-run", nil)
 	if got := countEventsByType(logs, "run.await"); got != 0 {
 		t.Fatalf("run.await events = %d, want 0 (no PR means no external resolver)", got)
 	}
@@ -134,5 +169,9 @@ func TestRunExecutor_ContinuationMissingPRDoesNotAwait(t *testing.T) {
 	}
 	if got := finishedStatus(t, logs); got != "failure" {
 		t.Fatalf("finished status = %q, want failure", got)
+	}
+	finished := findEvent(logs, "run.finished")
+	if finished.Payload["reason"] != missingPRReason || finished.Payload["next_action"] != missingPRNextAction {
+		t.Fatalf("continuation missing-PR evidence = %#v, want structured publication next action", finished.Payload)
 	}
 }

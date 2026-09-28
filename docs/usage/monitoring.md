@@ -124,14 +124,14 @@ Emitted when an agent run completes.
 | `review_request` | Present for retained delegated-review outcomes; retains the confirmed request identity, current head, deadline, budget, elapsed time, response counters, validated request-scoped classification, outcome, and next action. |
 
 #### `run.await`
-Emitted when an issue-driven run ends its agent session while recoverable pull-request work remains (CI, review, mergeability, or decision publication). Non-terminal: the run does not finish or consume a retry. Pending current-head CI carries a durable, non-renewing 30-minute per-head deadline in `ci_wait`; the row keeps dependency ownership while the scheduler releases execution capacity between observations. When the external poll interval elapses, the row joins a FIFO priority queue and receives the next permitted free execution slot before newly queued work.
+Emitted when an issue-driven run ends its agent session while an external operation is actively resolving: current-head CI is queued/running, or a delegated-review request has been confirmed and remains within its deadline. A confirmed review request counts as ongoing from successful delivery, even before the reviewer starts. A PR's existence, generic `pending` label, `REVIEW_REQUIRED`, `BLOCKED`, absent checks, stale head, failed lookup/state read, or exhausted operation budget cannot alone authorize an await. Agent-owned work is resumed or fails with a structured next action instead of being parked. A legitimate await is non-terminal and does not consume an agent retry. Pending current-head CI carries a durable, non-renewing 30-minute per-head deadline in `ci_wait`; a review request carries its confirmed request identity and deadline. The row keeps dependency ownership while the scheduler releases execution capacity between observations. When external work finishes, the run resumes on an available slot (or remains capacity-queued until one frees); it does not require manual continuation.
 
 The run timer pauses at `run.await`. A later `run.resumed` event starts a new active segment, so duration readers exclude the full await interval. A `run.continued` event with the same RunID and BatchID continues the same Batch run and retains its accumulated active duration. A separate continued run with a new RunID or BatchID starts a fresh clock.
 
 | Field | Description |
 |-------|-------------|
 | `await` | Always `true` |
-| `await_reason` | Lifecycle reason such as `"pending"`, `"failed"`, `"review-timeout"`, `"ready-to-merge"`, `"actionable-feedback"`, or `"usage-limit"` (a built-in OpenCode or Claude Code attempt stopped at a provider usage limit and polls for the reset) |
+| `await_reason` | Lifecycle reason such as `"pending"`, `"failed"`, `"review-timeout"`, `"ready-to-merge"`, or `"actionable-feedback"`. Historical events may also contain the legacy `"usage-limit"` reason; new implementation runs use the ordinary retry/failure path for provider usage limits. |
 | `gate` | Lifecycle state at await time |
 | `branch` | Branch name |
 | `base_branch` | Base branch name |
@@ -161,18 +161,22 @@ lifecycle decision. Verified merged completion wins over retained review
 evidence: a closing reference produces `success`, while an unverifiable or
 missing closing reference produces `failure` with completion diagnostics.
 
-Recoverable open-pull-request states produce `run.await` without consuming an
-agent retry and the Portal projects the current await phase as `waiting`.
-Pending current-head CI is bounded by its durable per-head
+Only an actively resolving current-head CI operation or a confirmed, in-deadline
+delegated-review request produces `run.await` without consuming an agent retry.
+A review request is active from successful trigger confirmation, even before a
+review run starts. Pending current-head CI is bounded by its durable per-head
 deadline; a new head is the only reset boundary. The logical row keeps its
 dependents queued while execution capacity is released between observations.
-Deadline expiry, CI failure, and merge conflicts relaunch remediation work;
-exhausted same-head remediation budget terminalizes as failure. A continuation
-or in-session relaunch re-evaluates the same facts. Retained review records and
-daemon decisions are evidence only: they can supply the await reason and
-request-scoped prompt evidence, but cannot terminalize a run or override
-verified merged completion. Explicit cancellation emits `run.aborted` and
-prevents the held dependent from launching.
+When the review produces request-scoped feedback or approval, the implementation
+resumes on an available slot to repair or merge; if capacity is full it remains
+queued and revalidates the live head/request before launch. Deadline expiry,
+unsupported gates, missing PR publication, stale heads, lookup/state errors, and
+exhausted remediation budgets cannot prolong waiting: the runtime resumes
+implementor-owned work where possible or terminalizes with a structured failure
+and next action. A continuation or in-session relaunch re-evaluates the same
+facts. Retained review records are evidence only and cannot override verified
+merged completion. Explicit cancellation emits `run.aborted` and prevents the
+held dependent from launching.
 
 Closed pull requests without a merge are terminal `failure`. Terminal
 `blocked` remains exclusively the dependency outcome emitted by `run.blocked`.
