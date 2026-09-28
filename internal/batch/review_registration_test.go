@@ -301,6 +301,36 @@ func TestReviewRegistration_RepeatsWarningAfterDifferentRunLogEntry(t *testing.T
 	}
 }
 
+func TestReviewRegistration_RepeatsWarningAfterMultiWriteLogEntry(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	var warningLog strings.Builder
+	session := &runSession{
+		deps: runDeps{
+			githubClient: &registrationGitHubClient{fakeGitHubClient: fakeGitHubClient{}},
+			layout:       paths.NewLayout(nil, workDir),
+			errorLog:     &warningLog,
+		},
+	}
+	pr := &github.PR{Number: 592, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "new-head"}
+
+	if err := session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "old-head", "run-260928115623-9590-561"); err == nil {
+		t.Fatal("stale local head unexpectedly registered")
+	}
+	if _, err := fmt.Fprint(session.deps.errorLog, "unrelated partial entry"); err != nil {
+		t.Fatalf("write partial log entry: %v", err)
+	}
+	if _, err := fmt.Fprintln(session.deps.errorLog, "warning: implementation review registration for PR #592: review registration head changed: current pull-request head changed during registration"); err != nil {
+		t.Fatalf("finish intervening log entry: %v", err)
+	}
+	if err := session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "old-head", "run-260928115623-9590-561"); err == nil {
+		t.Fatal("stale local head unexpectedly registered on second observation")
+	}
+
+	if got := strings.Count(warningLog.String(), "run=run-260928115623-9590-561 warning: implementation review registration for PR #592"); got != 2 {
+		t.Fatalf("registration warning lines = %d, want repeated warning after a multi-write intervening entry; log=%q", got, warningLog.String())
+	}
+}
+
 func TestReviewRegistration_RejectsSameTriggerFromStaleCanonicalHead(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-review-registration-")
 	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
