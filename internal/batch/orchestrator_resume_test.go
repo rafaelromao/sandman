@@ -374,7 +374,7 @@ func TestEntryReevaluation_ModeContinueTopLevelApprovalResumesAgentWithEvidence(
 		t.Fatalf("run.resumed reason = %v, want approval", resumedEvt.Payload["reason"])
 	}
 	request, ok := resumedEvt.Payload["review_request"].(map[string]any)
-	if !ok || request["outcome"] != "approved" || request["informal_approval"] == nil {
+	if !ok || request["outcome"] != "approved" || request["review_decision_approval"] == nil {
 		t.Fatalf("run.resumed omitted current-head top-level approval evidence: %#v", resumedEvt.Payload)
 	}
 	awaitEvt := findEvent(logs, "run.await")

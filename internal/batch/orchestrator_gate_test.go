@@ -1158,7 +1158,7 @@ func TestExternalGate_CanonicalRegistrationResumesCurrentHeadApproval(t *testing
 
 func TestExternalGate_CanonicalTopLevelApprovalResumesCurrentHead(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
-	writeInformalRespondedClassification(t, workDir, "APPROVED")
+	writeInformalRespondedClassification(t, workDir, "## Decision\n\n**APPROVED**")
 	writeCanonicalRegistrationForTest(t, workDir)
 	session := &runSession{
 		issueNumber: 42,

@@ -196,7 +196,7 @@ func (s *runSession) retainedLifecycleEvidence(ctx context.Context, workDir stri
 				evidence.payload = handoff.payloadFor(gateReadyToMerge, "REVIEW_APPROVED", "revalidate current-head approval, CI, and mergeability, then execute the normal pull-request merge gate")
 				if request, ok := evidence.payload["review_request"].(map[string]any); ok {
 					request["outcome"] = "approved"
-					request["informal_approval"] = handoff.Classification.informalApprovalEvidenceFor(handoff.Request, handoff.Classification.WindowEnd)
+					request["review_decision_approval"] = handoff.Classification.reviewDecisionApprovalEvidenceFor(handoff.Request, handoff.Classification.WindowEnd)
 				}
 			} else {
 				return evidence

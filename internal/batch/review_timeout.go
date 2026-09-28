@@ -348,7 +348,7 @@ func retainedReviewClassificationOutcome(classification *reviewClassification, r
 		classification.FormalDecision == "approved" {
 		return retainedReviewApproval
 	}
-	if len(classification.informalApprovalEvidenceFor(request, classification.WindowEnd)) > 0 {
+	if len(classification.reviewDecisionApprovalEvidenceFor(request, classification.WindowEnd)) > 0 {
 		return retainedReviewApproval
 	}
 	return retainedReviewPending
