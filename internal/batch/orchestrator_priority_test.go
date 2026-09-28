@@ -25,7 +25,14 @@ type reviewWaitSchedulerGitHubClient struct {
 func (c *reviewWaitSchedulerGitHubClient) FindPRByBranch(ctx context.Context, branch string) (*github.PR, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.fakeGitHubClient.FindPRByBranch(ctx, branch)
+	pr, err := c.fakeGitHubClient.FindPRByBranch(ctx, branch)
+	if pr == nil || err != nil {
+		return pr, err
+	}
+	// Return a snapshot so callers can inspect PR facts after the lock is
+	// released while another test actor advances the fake review lifecycle.
+	prSnapshot := *pr
+	return &prSnapshot, nil
 }
 
 func (c *reviewWaitSchedulerGitHubClient) ListPRComments(context.Context, int) ([]github.PRComment, error) {
