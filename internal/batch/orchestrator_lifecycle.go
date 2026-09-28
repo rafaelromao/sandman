@@ -298,7 +298,7 @@ func (s *runSession) handleLifecycleDecisionWithPublication(ctx context.Context,
 		gate = lifecycleGatePending
 	}
 	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.State), "open") {
-		registrationErr := s.ensureReviewRegistrationForPR(ctx, workDir, pr, headSHA)
+		registrationErr := s.ensureReviewRegistrationForPR(ctx, workDir, pr, headSHA, runID)
 		headChanged := errors.Is(registrationErr, errReviewRegistrationHeadChanged)
 		refreshLivePR := headChanged ||
 			(registrationErr == nil && s.reviewRegistrationObserved)
