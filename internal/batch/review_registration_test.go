@@ -1206,7 +1206,7 @@ func TestReviewRegistration_GateRefreshesAfterHeadRevalidationFailure(t *testing
 
 	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
 	if !handled || status != "await" || extras["gate"] != "pending" {
-		t.Fatalf("refreshed live gate = (%q, %#v, %t), want await/pending", status, extras, handled)
+		t.Fatalf("refreshed live gate = (%q, %#v, %t), want await/pending for stale local head", status, extras, handled)
 	}
 }
 
