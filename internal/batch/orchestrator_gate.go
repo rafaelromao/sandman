@@ -191,19 +191,25 @@ func (s *runSession) retainedLifecycleEvidence(ctx context.Context, workDir stri
 				if request, ok := evidence.payload["review_request"].(map[string]any); ok {
 					request["informal_feedback"] = evidence.informalFeedback
 				}
+			} else if handoff.Outcome == retainedReviewApproval {
+				evidence.outcome = retainedReviewApproval
+				evidence.payload = handoff.payloadFor(gateReadyToMerge, "REVIEW_APPROVED", "revalidate current-head approval, CI, and mergeability, then execute the normal pull-request merge gate")
+				if request, ok := evidence.payload["review_request"].(map[string]any); ok {
+					request["outcome"] = "approved"
+					request["informal_approval"] = handoff.Classification.informalApprovalEvidenceFor(handoff.Request, handoff.Classification.WindowEnd)
+				}
 			} else {
 				return evidence
 			}
-		case handoff.Outcome == retainedReviewApproval:
-			// Canonical registration must not turn aggregate approval into a
-			// feedback resume. The live ready-to-merge gate remains the only
-			// approval path.
-			return evidence
 		default:
 			return evidence
 		}
 		if evidence.payload != nil {
-			evidence.payload["gate"] = gateActionableFeedback
+			if evidence.outcome == retainedReviewApproval {
+				evidence.payload["gate"] = gateReadyToMerge
+			} else {
+				evidence.payload["gate"] = gateActionableFeedback
+			}
 			evidence.payload["await"] = true
 		}
 		return evidence
@@ -251,6 +257,12 @@ func (s *runSession) retainedLifecycleEvidence(ctx context.Context, workDir stri
 			evidenceGate = gateActionableFeedback
 			if request, ok := evidence.payload["review_request"].(map[string]any); ok {
 				request["informal_feedback"] = evidence.informalFeedback
+			}
+		} else if handoff.Outcome == retainedReviewApproval {
+			evidence.payload = handoff.payloadFor(gateReadyToMerge, "REVIEW_APPROVED", "revalidate current-head approval, CI, and mergeability, then execute the normal pull-request merge gate")
+			evidenceGate = gateReadyToMerge
+			if request, ok := evidence.payload["review_request"].(map[string]any); ok {
+				request["outcome"] = "approved"
 			}
 		}
 	case handoff.Outcome == retainedReviewApproval:

@@ -443,12 +443,6 @@ func (s *runSession) handleLifecycleDecisionWithPublication(ctx context.Context,
 			return "resume", resume, true
 		}
 	}
-	if status == "resume" && decision.gate == lifecycleGateReady {
-		// Ready-to-merge remains an await until the normal merge lifecycle
-		// consumes its live approval gate; only actionable feedback is an
-		// explicit feedback resume at this adapter boundary.
-		status = "await"
-	}
 	return status, extras, true
 }
 

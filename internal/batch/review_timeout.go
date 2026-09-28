@@ -234,7 +234,7 @@ func reviewTimeoutHandoffFromArtifacts(artifacts *reviewTimeoutArtifacts, curren
 			State:          artifacts.State,
 			ResponseCounts: counts,
 			Classification: classification,
-			Outcome:        retainedReviewClassificationOutcome(classification),
+			Outcome:        retainedReviewClassificationOutcome(classification, artifacts.Request),
 		}, nil
 	case "timed_out":
 		outcome := retainedReviewTimeout
@@ -245,7 +245,7 @@ func reviewTimeoutHandoffFromArtifacts(artifacts *reviewTimeoutArtifacts, curren
 			if classification.RequestState == "superseded" && len(classification.RequestedChanges) > 0 {
 				return nil, fmt.Errorf("timed-out review wait request was superseded")
 			}
-			outcome = retainedReviewClassificationOutcome(classification)
+			outcome = retainedReviewClassificationOutcome(classification, artifacts.Request)
 		}
 		return &reviewTimeoutHandoff{
 			Request:        artifacts.Request,
@@ -341,8 +341,14 @@ func reviewClassificationResponseCounts(raw map[string]any) (reviewResponseCount
 	}, nil
 }
 
-func retainedReviewClassificationOutcome(classification *reviewClassification) retainedReviewOutcome {
-	if classification != nil && classification.RequestState == "active" && classification.Decision == "approved" && classification.FormalDecision == "approved" {
+func retainedReviewClassificationOutcome(classification *reviewClassification, request reviewRequestEnvelope) retainedReviewOutcome {
+	if classification != nil &&
+		classification.RequestState == "active" &&
+		classification.Decision == "approved" &&
+		classification.FormalDecision == "approved" {
+		return retainedReviewApproval
+	}
+	if len(classification.informalApprovalEvidenceFor(request, classification.WindowEnd)) > 0 {
 		return retainedReviewApproval
 	}
 	return retainedReviewPending
