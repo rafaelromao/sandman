@@ -345,13 +345,38 @@ func retainedReviewClassificationOutcome(classification *reviewClassification, r
 	if classification != nil &&
 		classification.RequestState == "active" &&
 		classification.Decision == "approved" &&
-		classification.FormalDecision == "approved" {
+		classification.FormalDecision == "approved" &&
+		currentFormalApprovalEvidence(classification, request) {
 		return retainedReviewApproval
 	}
 	if len(classification.reviewDecisionApprovalEvidenceFor(request, classification.WindowEnd)) > 0 {
 		return retainedReviewApproval
 	}
 	return retainedReviewPending
+}
+
+func currentFormalApprovalEvidence(classification *reviewClassification, request reviewRequestEnvelope) bool {
+	if classification == nil {
+		return false
+	}
+	formal, ok := objectValue(classification.Raw, "formal")
+	if !ok {
+		return false
+	}
+	approvals, ok := mapArray(formal["approval_evidence"])
+	if !ok {
+		return false
+	}
+	for _, evidence := range approvals {
+		commitID, validCommitID := evidenceCommitID(evidence)
+		if validCommitID &&
+			strings.EqualFold(stringValue(evidence, "state"), "APPROVED") &&
+			stringValue(evidence, "head_status") == "current" &&
+			strings.EqualFold(commitID, request.HeadSHA) {
+			return true
+		}
+	}
+	return false
 }
 
 func validateReviewClassification(raw map[string]any, request reviewRequestEnvelope, currentHead string) error {

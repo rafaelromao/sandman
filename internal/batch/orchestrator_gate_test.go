@@ -1202,6 +1202,40 @@ func TestExternalGate_CanonicalApprovalForOlderHeadDoesNotResume(t *testing.T) {
 	}
 }
 
+func TestRetainedReviewClassificationOutcomeRequiresCurrentFormalApproval(t *testing.T) {
+	request := reviewRequestEnvelope{HeadSHA: "current-sha"}
+	for _, tt := range []struct {
+		name       string
+		headStatus string
+		commitID   string
+		want       retainedReviewOutcome
+	}{
+		{name: "current", headStatus: "current", commitID: "current-sha", want: retainedReviewApproval},
+		{name: "stale", headStatus: "stale", commitID: "old-sha", want: retainedReviewPending},
+		{name: "wrong current commit", headStatus: "current", commitID: "old-sha", want: retainedReviewPending},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			classification := &reviewClassification{
+				RequestState:   "active",
+				Decision:       "approved",
+				FormalDecision: "approved",
+				Raw: map[string]any{
+					"formal": map[string]any{
+						"approval_evidence": []any{map[string]any{
+							"state":       "APPROVED",
+							"head_status": tt.headStatus,
+							"commit_id":   tt.commitID,
+						}},
+					},
+				},
+			}
+			if got := retainedReviewClassificationOutcome(classification, request); got != tt.want {
+				t.Fatalf("retained review outcome = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestExternalGate_CanonicalRegistrationRejectsDifferentTriggerEvidence(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	writeTimedOutReviewRequest(t, workDir)

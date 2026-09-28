@@ -28,9 +28,9 @@ func (s *runSession) livePRHeadForLifecycle(ctx context.Context, workDir, branch
 		}
 		return prHead, currentHead, nil
 	}
-	localHead, err := currentBranchHead(workDir)
+	localHead, err := currentBranchHeadFn(workDir)
 	if err != nil {
-		return "", "", nil
+		return prHead, "", fmt.Errorf("read implementation worktree head: %w", err)
 	}
 	if strings.EqualFold(localHead, prHead) {
 		return prHead, localHead, nil

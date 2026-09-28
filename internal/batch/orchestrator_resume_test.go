@@ -73,6 +73,7 @@ func TestRunSingle_ModeContinueCIFailureReEvaluatesToAwait(t *testing.T) {
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
+			currentHead:       func(string) (string, error) { return "current-sha", nil },
 			lifecyclePollPlan: []time.Duration{0},
 			lifecycleWait: func(context.Context, time.Duration) error {
 				return errLifecycleObservationTestStop

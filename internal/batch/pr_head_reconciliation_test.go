@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -138,6 +139,34 @@ func TestLifecycleDecision_DirtyStaleWorktreeGetsActionableResumeWithoutOverwrit
 	}
 	if extras["head_sha"] != remoteHead || extras["worktree_head_sha"] != oldHead || extras["next_action"] == "" {
 		t.Fatalf("head reconciliation resume lacks both heads/action: %#v", extras)
+	}
+}
+
+func TestLifecycleDecision_WorktreeHeadReadFailureIsActionable(t *testing.T) {
+	previousHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) {
+		return "", errors.New("head unavailable")
+	}
+	t.Cleanup(func() { currentBranchHeadFn = previousHeadFn })
+	branch := gateTestBranch
+	prHead := strings.Repeat("a", 40)
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{branch: {
+				Number: 17, State: "open", HeadRefName: branch, HeadRefOid: prHead,
+				StatusCheckRollup: "success", MergeStateStatus: "CLEAN",
+			}}},
+			errorLog: io.Discard,
+		},
+	}
+
+	status, extras, handled := session.handleLifecycleDecision(context.Background(), t.TempDir(), branch, "", "run-head-unavailable", true)
+	if !handled || status != "resume" || extras["gate"] != gatePRHeadChanged || extras["reason"] != "PR_HEAD_RECONCILE_REQUIRED" {
+		t.Fatalf("unreadable worktree head = (%q, %#v, %t), want actionable reconciliation resume", status, extras, handled)
+	}
+	if extras["head_reconcile_error"] == "" || extras["next_action"] == "" {
+		t.Fatalf("head-read failure omitted the error or next action: %#v", extras)
 	}
 }
 
