@@ -2863,6 +2863,12 @@ func TestExternalGate_LateApprovalPreservesHardGatePrecedence(t *testing.T) {
 			if got := extras["gate"]; got != tt.want {
 				t.Fatalf("hard-gate reason = %v, want %q", got, tt.want)
 			}
+			if tt.name == "pending checks" {
+				request, ok := extras["review_request"].(map[string]any)
+				if !ok || request["review_decision_approval"] == nil {
+					t.Fatalf("legacy retained approval evidence = %#v, want review_decision_approval", extras["review_request"])
+				}
+			}
 		})
 	}
 }
@@ -3589,19 +3595,25 @@ func TestHandleExternalGateFailsClosedWhenHeadCannotBeValidated(t *testing.T) {
 		name        string
 		currentHead func(string) (string, error)
 		prHead      string
+		wantStatus  string
+		wantGate    string
 	}{
 		{
 			name: "current head resolver fails",
 			currentHead: func(string) (string, error) {
 				return "", context.DeadlineExceeded
 			},
-			prHead: "current-sha",
+			prHead:     "current-sha",
+			wantStatus: "resume",
+			wantGate:   gatePRHeadChanged,
 		},
 		{
 			name: "pull request head is unavailable",
 			currentHead: func(string) (string, error) {
 				return "current-sha", nil
 			},
+			wantStatus: "await",
+			wantGate:   "pending",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -3621,11 +3633,11 @@ func TestHandleExternalGateFailsClosedWhenHeadCannotBeValidated(t *testing.T) {
 			}
 
 			status, extras, handled := session.lifecycleDecisionForTest(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
-			if !handled || status != "await" {
-				t.Fatalf("head validation gate = (%q, %#v, %t), want await", status, extras, handled)
+			if !handled || status != tt.wantStatus {
+				t.Fatalf("head validation gate = (%q, %#v, %t), want %s", status, extras, handled, tt.wantStatus)
 			}
-			if got := extras["gate"]; got != "pending" {
-				t.Fatalf("head validation gate reason = %v, want pending", got)
+			if got := extras["gate"]; got != tt.wantGate {
+				t.Fatalf("head validation gate reason = %v, want %s", got, tt.wantGate)
 			}
 		})
 	}
@@ -3778,7 +3790,7 @@ func TestCheckPRExternalGateHeadFreshnessPreservesPrecedence(t *testing.T) {
 	}
 }
 
-func TestHandleExternalGateHeadLookupFailureRemainsPending(t *testing.T) {
+func TestHandleExternalGateHeadLookupFailureProducesReconciliationResume(t *testing.T) {
 	client := &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
 		State:             "open",
 		HeadRefOid:        "stale-sha",
@@ -3796,11 +3808,11 @@ func TestHandleExternalGateHeadLookupFailureRemainsPending(t *testing.T) {
 	}
 
 	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
-	if !handled || status != "await" {
-		t.Fatalf("fallback gate = (%q, %#v, %t), want await", status, extras, handled)
+	if !handled || status != "resume" {
+		t.Fatalf("fallback gate = (%q, %#v, %t), want actionable resume", status, extras, handled)
 	}
-	if got := extras["gate"]; got != "pending" {
-		t.Fatalf("fallback gate reason = %v, want pending", got)
+	if got := extras["gate"]; got != gatePRHeadChanged || extras["reason"] != "PR_HEAD_RECONCILE_REQUIRED" {
+		t.Fatalf("fallback gate = (%v, %v), want head reconciliation", got, extras["reason"])
 	}
 }
 

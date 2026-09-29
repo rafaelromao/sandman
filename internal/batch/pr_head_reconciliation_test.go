@@ -143,11 +143,9 @@ func TestLifecycleDecision_DirtyStaleWorktreeGetsActionableResumeWithoutOverwrit
 }
 
 func TestLifecycleDecision_WorktreeHeadReadFailureIsActionable(t *testing.T) {
-	previousHeadFn := currentBranchHeadFn
-	currentBranchHeadFn = func(string) (string, error) {
+	headResolver := func(string) (string, error) {
 		return "", errors.New("head unavailable")
 	}
-	t.Cleanup(func() { currentBranchHeadFn = previousHeadFn })
 	branch := gateTestBranch
 	prHead := strings.Repeat("a", 40)
 	session := &runSession{
@@ -159,6 +157,7 @@ func TestLifecycleDecision_WorktreeHeadReadFailureIsActionable(t *testing.T) {
 			}}},
 			errorLog: io.Discard,
 		},
+		opts: runSessionOptions{currentHead: headResolver},
 	}
 
 	status, extras, handled := session.handleLifecycleDecision(context.Background(), t.TempDir(), branch, "", "run-head-unavailable", true)

@@ -11,7 +11,7 @@ import (
 
 const gatePRHeadChanged = "pull-request-head-changed"
 
-func (s *runSession) livePRHeadForLifecycle(ctx context.Context, workDir, branch string, pr *github.PR, currentHead string) (string, string, error) {
+func (s *runSession) livePRHeadForLifecycle(ctx context.Context, workDir, branch string, pr *github.PR, currentHead string, currentHeadErr error) (string, string, error) {
 	if pr == nil {
 		return currentHead, currentHead, nil
 	}
@@ -19,25 +19,30 @@ func (s *runSession) livePRHeadForLifecycle(ctx context.Context, workDir, branch
 	if prHead == "" {
 		return currentHead, currentHead, nil
 	}
+	if currentHeadErr != nil {
+		return prHead, "", fmt.Errorf("read implementation worktree head: %w", currentHeadErr)
+	}
 	if s.opts.currentHead != nil {
 		// Tests may inject a symbolic head without constructing a Git worktree.
 		// The injected value remains the test's local-head authority; without a
 		// real Git worktree, a mismatch must stay a stale-head pending decision.
-		if strings.TrimSpace(currentHead) == "" || !strings.EqualFold(currentHead, prHead) {
+		if strings.TrimSpace(currentHead) == "" {
+			return currentHead, currentHead, nil
+		}
+		if !strings.EqualFold(currentHead, prHead) {
 			return currentHead, currentHead, nil
 		}
 		return prHead, currentHead, nil
 	}
-	localHead, err := currentBranchHeadFn(workDir)
-	if err != nil {
-		return prHead, "", fmt.Errorf("read implementation worktree head: %w", err)
+	if strings.TrimSpace(currentHead) == "" {
+		return prHead, "", fmt.Errorf("implementation worktree head is unavailable")
 	}
-	if strings.EqualFold(localHead, prHead) {
-		return prHead, localHead, nil
+	if strings.EqualFold(currentHead, prHead) {
+		return prHead, currentHead, nil
 	}
 	updatedHead, _, err := reconcileWorktreeToPRHead(ctx, workDir, branch, pr.Number, prHead)
 	if err != nil {
-		return prHead, localHead, err
+		return prHead, currentHead, err
 	}
 	return prHead, updatedHead, nil
 }

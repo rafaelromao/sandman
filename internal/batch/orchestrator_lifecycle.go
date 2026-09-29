@@ -284,11 +284,11 @@ func (s *runSession) handleLifecycleDecisionWithPublication(ctx context.Context,
 	if s.deps.githubClient == nil {
 		return "", nil, false
 	}
-	headSHA := s.currentGateHead(workDir)
+	headSHA, currentHeadErr := s.currentGateHeadSnapshot(workDir)
+	worktreeHeadSHA := headSHA
 	if !hostPathsReady {
 		headSHA = ""
 	}
-	worktreeHeadSHA := headSHA
 	var headReconcileErr error
 	pr, err := lookupPRForExternalGate(ctx, s.deps.githubClient, branch)
 	gate := lifecycleGateNone
@@ -301,7 +301,7 @@ func (s *runSession) handleLifecycleDecisionWithPublication(ctx context.Context,
 	}
 	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.State), "open") {
 		if hostPathsReady {
-			headSHA, worktreeHeadSHA, headReconcileErr = s.livePRHeadForLifecycle(ctx, workDir, branch, pr, headSHA)
+			headSHA, worktreeHeadSHA, headReconcileErr = s.livePRHeadForLifecycle(ctx, workDir, branch, pr, worktreeHeadSHA, currentHeadErr)
 		}
 		registrationErr := s.ensureReviewRegistrationForPR(ctx, workDir, pr, headSHA, runID)
 		headChanged := errors.Is(registrationErr, errReviewRegistrationHeadChanged)
@@ -326,7 +326,7 @@ func (s *runSession) handleLifecycleDecisionWithPublication(ctx context.Context,
 				pr = refreshedPR
 				err = nil
 				if pr != nil && strings.EqualFold(strings.TrimSpace(pr.State), "open") && hostPathsReady {
-					headSHA, worktreeHeadSHA, headReconcileErr = s.livePRHeadForLifecycle(ctx, workDir, branch, pr, headSHA)
+					headSHA, worktreeHeadSHA, headReconcileErr = s.livePRHeadForLifecycle(ctx, workDir, branch, pr, worktreeHeadSHA, currentHeadErr)
 				}
 			}
 		}

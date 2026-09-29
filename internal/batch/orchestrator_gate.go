@@ -263,6 +263,7 @@ func (s *runSession) retainedLifecycleEvidence(ctx context.Context, workDir stri
 			evidenceGate = gateReadyToMerge
 			if request, ok := evidence.payload["review_request"].(map[string]any); ok {
 				request["outcome"] = "approved"
+				request["review_decision_approval"] = handoff.Classification.reviewDecisionApprovalEvidenceFor(handoff.Request, handoff.Classification.WindowEnd)
 			}
 		}
 	case handoff.Outcome == retainedReviewApproval:
@@ -307,9 +308,9 @@ func (s *runSession) invalidRetainedReviewDiagnostic(branch string, err error) m
 	}
 }
 
-func (s *runSession) currentGateHead(workDir string) string {
-	if strings.TrimSpace(workDir) == "" {
-		return ""
+func (s *runSession) currentGateHeadSnapshot(workDir string) (string, error) {
+	if strings.TrimSpace(workDir) == "" && s.opts.currentHead == nil {
+		return "", nil
 	}
 	resolver := s.opts.currentHead
 	if resolver == nil {
@@ -317,7 +318,7 @@ func (s *runSession) currentGateHead(workDir string) string {
 	}
 	headSHA, err := resolver(workDir)
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return strings.TrimSpace(headSHA)
+	return strings.TrimSpace(headSHA), nil
 }
