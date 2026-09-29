@@ -73,6 +73,7 @@ func TestRunSingle_ModeContinueCIFailureReEvaluatesToAwait(t *testing.T) {
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
+			currentHead:       func(string) (string, error) { return "current-sha", nil },
 			lifecyclePollPlan: []time.Duration{0},
 			lifecycleWait: func(context.Context, time.Duration) error {
 				return errLifecycleObservationTestStop
@@ -291,16 +292,18 @@ func TestEntryReevaluation_ModeContinuePendingGateAwaitsImmediately(t *testing.T
 	}
 }
 
-// Entry re-evaluation: a continuation session re-entering while the PR gate is
-// ready-to-merge resumes the agent with request-scoped merge evidence instead
-// of launching blindly. The resumed session ends on the same gate (the
-// in-session resume loop is a later slice) without consuming a retry.
-func TestEntryReevaluation_ModeContinueReadyToMergeResumesAgentWithEvidence(t *testing.T) {
+// Entry re-evaluation: a continuation session re-entering while a current-head
+// top-level approval has made the PR ready-to-merge resumes the agent with
+// request-scoped merge evidence instead of waiting for an aggregate review
+// decision that may not exist.
+func TestEntryReevaluation_ModeContinueTopLevelApprovalResumesAgentWithEvidence(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 
 	branch := "42-fix-bug"
 	worktreePath := filepath.Join(workDir, "worktree")
+	writeInformalRespondedClassification(t, worktreePath, "## Summary\nNo findings.\n\n## Decision\n\n**APPROVED**")
+	writeCanonicalRegistrationForTest(t, worktreePath)
 
 	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
 	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
@@ -317,7 +320,6 @@ func TestEntryReevaluation_ModeContinueReadyToMergeResumesAgentWithEvidence(t *t
 				HeadRefName:       branch,
 				HeadRefOid:        "current-sha",
 				StatusCheckRollup: "success",
-				ReviewDecision:    "APPROVED",
 				MergeStateStatus:  "CLEAN",
 			}},
 		},
@@ -368,6 +370,13 @@ func TestEntryReevaluation_ModeContinueReadyToMergeResumesAgentWithEvidence(t *t
 	resumedEvt := findEvent(logs, "run.resumed")
 	if resumedEvt == nil || resumedEvt.Payload["gate"] != gateReadyToMerge {
 		t.Fatalf("run.resumed gate = %v, want ready-to-merge", resumedEvt.Payload["gate"])
+	}
+	if resumedEvt.Payload["reason"] != "approval" {
+		t.Fatalf("run.resumed reason = %v, want approval", resumedEvt.Payload["reason"])
+	}
+	request, ok := resumedEvt.Payload["review_request"].(map[string]any)
+	if !ok || request["outcome"] != "approved" || request["review_decision_approval"] == nil {
+		t.Fatalf("run.resumed omitted current-head top-level approval evidence: %#v", resumedEvt.Payload)
 	}
 	awaitEvt := findEvent(logs, "run.await")
 	if awaitEvt == nil || awaitEvt.Payload["gate"] != "ready-to-merge" {

@@ -191,19 +191,25 @@ func (s *runSession) retainedLifecycleEvidence(ctx context.Context, workDir stri
 				if request, ok := evidence.payload["review_request"].(map[string]any); ok {
 					request["informal_feedback"] = evidence.informalFeedback
 				}
+			} else if handoff.Outcome == retainedReviewApproval {
+				evidence.outcome = retainedReviewApproval
+				evidence.payload = handoff.payloadFor(gateReadyToMerge, "REVIEW_APPROVED", "revalidate current-head approval, CI, and mergeability, then execute the normal pull-request merge gate")
+				if request, ok := evidence.payload["review_request"].(map[string]any); ok {
+					request["outcome"] = "approved"
+					request["review_decision_approval"] = handoff.Classification.reviewDecisionApprovalEvidenceFor(handoff.Request, handoff.Classification.WindowEnd)
+				}
 			} else {
 				return evidence
 			}
-		case handoff.Outcome == retainedReviewApproval:
-			// Canonical registration must not turn aggregate approval into a
-			// feedback resume. The live ready-to-merge gate remains the only
-			// approval path.
-			return evidence
 		default:
 			return evidence
 		}
 		if evidence.payload != nil {
-			evidence.payload["gate"] = gateActionableFeedback
+			if evidence.outcome == retainedReviewApproval {
+				evidence.payload["gate"] = gateReadyToMerge
+			} else {
+				evidence.payload["gate"] = gateActionableFeedback
+			}
 			evidence.payload["await"] = true
 		}
 		return evidence
@@ -252,6 +258,13 @@ func (s *runSession) retainedLifecycleEvidence(ctx context.Context, workDir stri
 			if request, ok := evidence.payload["review_request"].(map[string]any); ok {
 				request["informal_feedback"] = evidence.informalFeedback
 			}
+		} else if handoff.Outcome == retainedReviewApproval {
+			evidence.payload = handoff.payloadFor(gateReadyToMerge, "REVIEW_APPROVED", "revalidate current-head approval, CI, and mergeability, then execute the normal pull-request merge gate")
+			evidenceGate = gateReadyToMerge
+			if request, ok := evidence.payload["review_request"].(map[string]any); ok {
+				request["outcome"] = "approved"
+				request["review_decision_approval"] = handoff.Classification.reviewDecisionApprovalEvidenceFor(handoff.Request, handoff.Classification.WindowEnd)
+			}
 		}
 	case handoff.Outcome == retainedReviewApproval:
 		evidence.payload = handoff.payloadFor(gateReadyToMerge, "REVIEW_APPROVED", "revalidate current-head approval, CI, and mergeability, then execute the normal pull-request merge gate")
@@ -295,9 +308,9 @@ func (s *runSession) invalidRetainedReviewDiagnostic(branch string, err error) m
 	}
 }
 
-func (s *runSession) currentGateHead(workDir string) string {
-	if strings.TrimSpace(workDir) == "" {
-		return ""
+func (s *runSession) currentGateHeadSnapshot(workDir string) (string, error) {
+	if strings.TrimSpace(workDir) == "" && s.opts.currentHead == nil {
+		return "", nil
 	}
 	resolver := s.opts.currentHead
 	if resolver == nil {
@@ -305,7 +318,7 @@ func (s *runSession) currentGateHead(workDir string) string {
 	}
 	headSHA, err := resolver(workDir)
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return strings.TrimSpace(headSHA)
+	return strings.TrimSpace(headSHA), nil
 }

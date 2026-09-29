@@ -234,7 +234,7 @@ func reviewTimeoutHandoffFromArtifacts(artifacts *reviewTimeoutArtifacts, curren
 			State:          artifacts.State,
 			ResponseCounts: counts,
 			Classification: classification,
-			Outcome:        retainedReviewClassificationOutcome(classification),
+			Outcome:        retainedReviewClassificationOutcome(classification, artifacts.Request),
 		}, nil
 	case "timed_out":
 		outcome := retainedReviewTimeout
@@ -245,7 +245,7 @@ func reviewTimeoutHandoffFromArtifacts(artifacts *reviewTimeoutArtifacts, curren
 			if classification.RequestState == "superseded" && len(classification.RequestedChanges) > 0 {
 				return nil, fmt.Errorf("timed-out review wait request was superseded")
 			}
-			outcome = retainedReviewClassificationOutcome(classification)
+			outcome = retainedReviewClassificationOutcome(classification, artifacts.Request)
 		}
 		return &reviewTimeoutHandoff{
 			Request:        artifacts.Request,
@@ -341,11 +341,42 @@ func reviewClassificationResponseCounts(raw map[string]any) (reviewResponseCount
 	}, nil
 }
 
-func retainedReviewClassificationOutcome(classification *reviewClassification) retainedReviewOutcome {
-	if classification != nil && classification.RequestState == "active" && classification.Decision == "approved" && classification.FormalDecision == "approved" {
+func retainedReviewClassificationOutcome(classification *reviewClassification, request reviewRequestEnvelope) retainedReviewOutcome {
+	if classification != nil &&
+		classification.RequestState == "active" &&
+		classification.Decision == "approved" &&
+		classification.FormalDecision == "approved" &&
+		currentFormalApprovalEvidence(classification, request) {
+		return retainedReviewApproval
+	}
+	if len(classification.reviewDecisionApprovalEvidenceFor(request, classification.WindowEnd)) > 0 {
 		return retainedReviewApproval
 	}
 	return retainedReviewPending
+}
+
+func currentFormalApprovalEvidence(classification *reviewClassification, request reviewRequestEnvelope) bool {
+	if classification == nil {
+		return false
+	}
+	formal, ok := objectValue(classification.Raw, "formal")
+	if !ok {
+		return false
+	}
+	approvals, ok := mapArray(formal["approval_evidence"])
+	if !ok {
+		return false
+	}
+	for _, evidence := range approvals {
+		commitID, validCommitID := evidenceCommitID(evidence)
+		if validCommitID &&
+			strings.EqualFold(stringValue(evidence, "state"), "APPROVED") &&
+			stringValue(evidence, "head_status") == "current" &&
+			strings.EqualFold(commitID, request.HeadSHA) {
+			return true
+		}
+	}
+	return false
 }
 
 func validateReviewClassification(raw map[string]any, request reviewRequestEnvelope, currentHead string) error {
