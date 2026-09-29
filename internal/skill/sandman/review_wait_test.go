@@ -470,7 +470,7 @@ func TestReviewObserveV1DoesNotStartNextAPICallAfterDeadline(t *testing.T) {
 printf '%s %s\n' "$1" "$2" >> "$SANDMAN_TEST_GH_CALLS"
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
   printf '%s\n' '{"headRefOid":"abc123","comments":[{"id":"1001","url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","createdAt":"2026-08-11T18:00:01Z"}],"reviewDecision":"","mergeStateStatus":"CLEAN"}'
-  printf '%s\n' 100 > "$SANDMAN_REVIEW_WAIT_CLOCK_STATE"
+  : > "$SANDMAN_REVIEW_WAIT_CLOCK_STATE"
   exit 0
 fi
 exit 2
@@ -480,14 +480,9 @@ exit 2
 	}
 	clock := filepath.Join(t.TempDir(), "clock.sh")
 	clockState := filepath.Join(t.TempDir(), "clock.state")
-	if err := os.WriteFile(clockState, []byte("0\n"), 0o600); err != nil {
-		t.Fatalf("write clock state: %v", err)
-	}
 	clockScript := `#!/bin/sh
-calls=$(tr -d '\n' < "$SANDMAN_REVIEW_WAIT_CLOCK_STATE")
-if [ "$calls" -ge 100 ]; then value=100; else value=99; fi
+if [ -e "$SANDMAN_REVIEW_WAIT_CLOCK_STATE" ]; then value=100; else value=99; fi
 printf '%s\n' "$value"
-printf '%s\n' $((calls + 1)) > "$SANDMAN_REVIEW_WAIT_CLOCK_STATE"
 `
 	if err := os.WriteFile(clock, []byte(clockScript), 0o700); err != nil {
 		t.Fatalf("write clock: %v", err)
