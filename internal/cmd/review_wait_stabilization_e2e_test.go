@@ -51,7 +51,8 @@ func TestReviewWaitStabilization_PendingCIReleasesCapacityForIndependentWork(t *
 	}
 	statePath := filepath.Join(sandmanDir, "review-wait.state")
 	callLogPath := filepath.Join(sandmanDir, "gh.calls")
-	writeReviewWaitGHShimWithDependencies(t, shimDir, statePath, callLogPath, false)
+	prHead := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
+	writeReviewWaitGHShimWithDependencies(t, shimDir, statePath, callLogPath, prHead, false)
 	writeReviewWaitAgent(t, filepath.Join(shimDir, "fake-agent"), filepath.Join(sandmanDir, "agent.started"))
 	writeReviewWaitConfig(t, sandmanDir, filepath.Join(shimDir, "fake-agent"))
 
@@ -107,7 +108,8 @@ func TestReviewWaitStabilization_CIFailureFixReviewMerge(t *testing.T) {
 	statePath := filepath.Join(sandmanDir, "review-remediate.state")
 	callLogPath := filepath.Join(sandmanDir, "gh.calls")
 	agentCountPath := filepath.Join(sandmanDir, "agent.count")
-	writeReviewRemediationGHShim(t, shimDir, statePath, callLogPath)
+	prHead := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
+	writeReviewRemediationGHShim(t, shimDir, statePath, callLogPath, prHead)
 	writeReviewRemediationAgent(t, filepath.Join(shimDir, "fake-agent"), statePath, agentCountPath)
 	writeReviewWaitConfig(t, sandmanDir, filepath.Join(shimDir, "fake-agent"))
 
@@ -222,7 +224,8 @@ func runReviewWaitScenario(t *testing.T, binPath string, cancelPending bool) {
 	statePath := filepath.Join(sandmanDir, "review-wait.state")
 	callLogPath := filepath.Join(sandmanDir, "gh.calls")
 	agentStartedPath := filepath.Join(sandmanDir, "agent.started")
-	writeReviewWaitGHShim(t, shimDir, statePath, callLogPath)
+	prHead := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
+	writeReviewWaitGHShim(t, shimDir, statePath, callLogPath, prHead)
 	writeReviewWaitAgent(t, filepath.Join(shimDir, "fake-agent"), agentStartedPath)
 	writeReviewWaitConfig(t, sandmanDir, filepath.Join(shimDir, "fake-agent"))
 
@@ -397,11 +400,11 @@ func writeReviewWaitAgent(t *testing.T, path, startedPath string) {
 	}
 }
 
-func writeReviewWaitGHShim(t *testing.T, dir, statePath, callLogPath string) {
-	writeReviewWaitGHShimWithDependencies(t, dir, statePath, callLogPath, true)
+func writeReviewWaitGHShim(t *testing.T, dir, statePath, callLogPath, prHead string) {
+	writeReviewWaitGHShimWithDependencies(t, dir, statePath, callLogPath, prHead, true)
 }
 
-func writeReviewWaitGHShimWithDependencies(t *testing.T, dir, statePath, callLogPath string, dependent bool) {
+func writeReviewWaitGHShimWithDependencies(t *testing.T, dir, statePath, callLogPath, prHead string, dependent bool) {
 	t.Helper()
 	issue43Body := "Independent implementation"
 	if dependent {
@@ -469,20 +472,21 @@ if [ "${1:-}" = "pr" ] && [ "${2:-}" = "list" ]; then
   if case "$head" in 43-*) true ;; *) false ;; esac; then
     printf '[{"number":43,"title":"dependent","body":"Closes #43","state":"MERGED","mergedAt":"2026-08-21T00:00:00Z","headRefName":"%s","headRefOid":"dependent-sha","reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","statusCheckRollup":"success"}]\n' "$head"
   elif [ -f "$state_file" ] && [ "$(tr -d '\n' < "$state_file")" = "merged" ]; then
-    printf '[{"number":42,"title":"parent","body":"Closes #42","state":"MERGED","mergedAt":"2026-08-21T00:00:00Z","headRefName":"%s","headRefOid":"current-sha","reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","statusCheckRollup":"success"}]\n' "$head"
+    printf '[{"number":42,"title":"parent","body":"Closes #42","state":"MERGED","mergedAt":"2026-08-21T00:00:00Z","headRefName":"%s","headRefOid":"__HEAD__","reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","statusCheckRollup":"success"}]\n' "$head"
   else
-    printf '[{"number":42,"title":"parent","body":"Closes #42","state":"OPEN","mergedAt":null,"headRefName":"%s","headRefOid":"current-sha","reviewDecision":"","mergeStateStatus":"BLOCKED","statusCheckRollup":"pending"}]\n' "$head"
+    printf '[{"number":42,"title":"parent","body":"Closes #42","state":"OPEN","mergedAt":null,"headRefName":"%s","headRefOid":"__HEAD__","reviewDecision":"","mergeStateStatus":"BLOCKED","statusCheckRollup":"pending"}]\n' "$head"
   fi
   exit 0
 fi
 if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
-  printf '{"number":42,"title":"parent","body":"Closes #42","state":"OPEN","mergedAt":null,"headRefName":"42-parent","headRefOid":"current-sha","closingIssuesReferences":[{"number":42}]}\n'
+  printf '{"number":42,"title":"parent","body":"Closes #42","state":"OPEN","mergedAt":null,"headRefName":"42-parent","headRefOid":"__HEAD__","closingIssuesReferences":[{"number":42}]}\n'
   exit 0
 fi
 printf 'unexpected gh command: %s\n' "$*" >&2
 exit 1
-`, "__STATE__", statePath), "__CALLS__", callLogPath)
+	`, "__STATE__", statePath), "__CALLS__", callLogPath)
 	script = strings.ReplaceAll(script, "__ISSUE_43_JSON__", issue43JSONArg)
+	script = strings.ReplaceAll(script, "__HEAD__", prHead)
 	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
 		t.Fatalf("write review-wait gh shim: %v", err)
 	}
@@ -506,7 +510,7 @@ exit 0
 	}
 }
 
-func writeReviewRemediationGHShim(t *testing.T, dir, statePath, callLogPath string) {
+func writeReviewRemediationGHShim(t *testing.T, dir, statePath, callLogPath, prHead string) {
 	t.Helper()
 	script := strings.ReplaceAll(strings.ReplaceAll(`#!/bin/sh
 set -eu
@@ -552,19 +556,19 @@ if [ "${1:-}" = "pr" ] && [ "${2:-}" = "list" ]; then
   done
   case "$state" in
     merged)
-      printf '[{"number":42,"title":"parent","body":"Closes #42","state":"MERGED","mergedAt":"2026-08-21T00:00:00Z","headRefName":"%s","headRefOid":"current-sha","reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","statusCheckRollup":"success"}]\n' "$head" ;;
+      printf '[{"number":42,"title":"parent","body":"Closes #42","state":"MERGED","mergedAt":"2026-08-21T00:00:00Z","headRefName":"%s","headRefOid":"__HEAD__","reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","statusCheckRollup":"success"}]\n' "$head" ;;
     review-pending)
-      printf '[{"number":42,"title":"parent","body":"Closes #42","state":"OPEN","mergedAt":null,"headRefName":"%s","headRefOid":"current-sha","reviewDecision":"REVIEW_REQUIRED","mergeStateStatus":"BLOCKED","statusCheckRollup":"success"}]\n' "$head" ;;
+      printf '[{"number":42,"title":"parent","body":"Closes #42","state":"OPEN","mergedAt":null,"headRefName":"%s","headRefOid":"__HEAD__","reviewDecision":"REVIEW_REQUIRED","mergeStateStatus":"BLOCKED","statusCheckRollup":"success"}]\n' "$head" ;;
     *)
-      printf '[{"number":42,"title":"parent","body":"Closes #42","state":"OPEN","mergedAt":null,"headRefName":"%s","headRefOid":"current-sha","reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","statusCheckRollup":"failure"}]\n' "$head" ;;
+      printf '[{"number":42,"title":"parent","body":"Closes #42","state":"OPEN","mergedAt":null,"headRefName":"%s","headRefOid":"__HEAD__","reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","statusCheckRollup":"failure"}]\n' "$head" ;;
   esac
   exit 0
 fi
 if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
   if [ "$state" = "merged" ]; then
-    printf '{"number":42,"title":"parent","body":"Closes #42","state":"MERGED","mergedAt":"2026-08-21T00:00:00Z","headRefName":"42-parent","headRefOid":"current-sha","closingIssuesReferences":[{"number":42}]}\n'
+     printf '{"number":42,"title":"parent","body":"Closes #42","state":"MERGED","mergedAt":"2026-08-21T00:00:00Z","headRefName":"42-parent","headRefOid":"__HEAD__","closingIssuesReferences":[{"number":42}]}\n'
   else
-    printf '{"number":42,"title":"parent","body":"Closes #42","state":"OPEN","mergedAt":null,"headRefName":"42-parent","headRefOid":"current-sha","closingIssuesReferences":[{"number":42}]}\n'
+     printf '{"number":42,"title":"parent","body":"Closes #42","state":"OPEN","mergedAt":null,"headRefName":"42-parent","headRefOid":"__HEAD__","closingIssuesReferences":[{"number":42}]}\n'
   fi
   exit 0
 fi
@@ -574,7 +578,8 @@ if [ "${1:-}" = "pr" ] && [ "${2:-}" = "merge" ]; then
 fi
 printf 'unexpected gh command: %s\n' "$*" >&2
 exit 1
-`, "__STATE__", statePath), "__CALLS__", callLogPath)
+	`, "__STATE__", statePath), "__CALLS__", callLogPath)
+	script = strings.ReplaceAll(script, "__HEAD__", prHead)
 	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
 		t.Fatalf("write review-remediation gh shim: %v", err)
 	}
