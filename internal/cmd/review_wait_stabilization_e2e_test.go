@@ -142,6 +142,16 @@ func TestReviewWaitStabilization_CIFailureFixReviewMerge(t *testing.T) {
 		t.Fatalf("agent launches = %s, want 2 after CI remediation", got)
 	}
 	logs := readReviewWaitEvents(t, eventsPath)
+	var reviewAwait *events.Event
+	for i := range logs {
+		if logs[i].Issue == 42 && logs[i].Type == "run.await" {
+			reviewAwait = &logs[i]
+			break
+		}
+	}
+	if reviewAwait == nil || reviewAwait.Payload["review_request"] == nil {
+		t.Fatalf("post-remediation await lacks confirmed delegated-review evidence: %#v", reviewAwait)
+	}
 	if got := countReviewWaitEvents(logs, 42, "run.finished"); got != 0 {
 		t.Fatalf("run finished before delegated review resolved: %d", got)
 	}
@@ -502,7 +512,13 @@ count=0
 if [ -f "$count_file" ]; then count=$(tr -d '\n' < "$count_file"); fi
 count=$((count + 1))
 printf '%s' "$count" > "$count_file"
-if [ "$count" -ge 2 ]; then printf 'review-pending\n' > "$state_file"; fi
+if [ "$count" -ge 2 ]; then
+  sleep 1
+  trigger_created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  state_tmp="${state_file}.tmp.$$"
+  printf 'review-pending|%s\n' "$trigger_created_at" > "$state_tmp"
+  mv -f "$state_tmp" "$state_file"
+fi
 exit 0
 `, "__COUNT__", countPath), "__STATE__", statePath)
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
@@ -518,7 +534,14 @@ state_file="__STATE__"
 call_log="__CALLS__"
 printf '%s\n' "$*" >> "$call_log"
 state=ci-failed
-if [ -f "$state_file" ]; then state=$(tr -d '\n' < "$state_file"); fi
+review_trigger_created_at=
+if [ -f "$state_file" ]; then
+  state_value=$(tr -d '\n' < "$state_file")
+  case "$state_value" in
+    *'|'*) state=${state_value%%|*}; review_trigger_created_at=${state_value#*|} ;;
+    *) state=$state_value ;;
+  esac
+fi
 
 if [ "${1:-}" = "auth" ] && [ "${2:-}" = "token" ]; then
   printf 'fake-token\n'
@@ -543,7 +566,12 @@ if [ "${1:-}" = "api" ]; then
     */dependencies/blocked_by|*/events|*/sub_issues*)
       printf '[]\n' ; exit 0 ;;
     */comments*)
-      printf '[]\n' ; exit 0 ;;
+      if [ "$state" = "review-pending" ] && [ -n "$review_trigger_created_at" ]; then
+        printf '[{"id":1001,"body":"/oc review","user":{"login":"reviewer"},"created_at":"%s","updated_at":"%s"}]\n' "$review_trigger_created_at" "$review_trigger_created_at"
+      else
+        printf '[]\n'
+      fi
+      exit 0 ;;
   esac
 fi
 
