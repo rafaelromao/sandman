@@ -268,6 +268,12 @@ func TestPortal_E2E_MixedBatchShowsBatchMembershipAndFiltersSiblingLogs(t *testi
 	t.Cleanup(func() { _ = os.RemoveAll(runDir) })
 
 	waitForRunCount(t, portalURL, 2)
+	for _, issue := range []int{860, 854} {
+		ownTimestamp := fmt.Sprintf("18:51:0%d", issue%10)
+		waitForPortalRun(t, portalURL, issue, func(run portalRun) bool {
+			return strings.Contains(run.Log, ownTimestamp)
+		})
+	}
 
 	runs := fetchPortalRuns(t, portalURL)
 	if len(runs) != 2 {
