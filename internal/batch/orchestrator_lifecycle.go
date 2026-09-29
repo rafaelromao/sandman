@@ -458,10 +458,12 @@ func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branc
 	if s.deps.githubClient == nil {
 		return "", nil, false
 	}
-	headSHA := s.currentGateHead(workDir)
+	headSHA, currentHeadErr := s.currentGateHeadSnapshot(workDir)
+	worktreeHeadSHA := headSHA
 	if !hostPathsReady {
 		headSHA = ""
 	}
+	var headReconcileErr error
 	pr, err := lookupPRForExternalGate(ctx, s.deps.githubClient, branch)
 	gate := lifecycleGateNone
 	refreshUnavailable := false
@@ -473,7 +475,10 @@ func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branc
 		gate = lifecycleGatePending
 	}
 	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.State), "open") {
-		registrationErr := s.ensureReviewRegistrationForPR(ctx, workDir, pr, headSHA)
+		if hostPathsReady {
+			headSHA, worktreeHeadSHA, headReconcileErr = s.livePRHeadForLifecycle(ctx, workDir, branch, pr, worktreeHeadSHA, currentHeadErr)
+		}
+		registrationErr := s.ensureReviewRegistrationForPR(ctx, workDir, pr, headSHA, runID)
 		headChanged := errors.Is(registrationErr, errReviewRegistrationHeadChanged)
 		reviewRegistrationFailure = registrationErr != nil && !headChanged
 		refreshLivePR := headChanged ||
@@ -496,6 +501,9 @@ func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branc
 			} else {
 				pr = refreshedPR
 				err = nil
+				if pr != nil && strings.EqualFold(strings.TrimSpace(pr.State), "open") && hostPathsReady {
+					headSHA, worktreeHeadSHA, headReconcileErr = s.livePRHeadForLifecycle(ctx, workDir, branch, pr, worktreeHeadSHA, currentHeadErr)
+				}
 			}
 		}
 	}
@@ -669,6 +677,20 @@ func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branc
 	}
 	extras["await"] = true
 	status := lifecycleStatusRepr(decision)
+	if headReconcileErr != nil && (status == "await" || status == "resume") {
+		extras["gate"] = gatePRHeadChanged
+		extras["reason"] = "PR_HEAD_RECONCILE_REQUIRED"
+		extras["pull_request"] = pr.Number
+		extras["head_sha"] = strings.TrimSpace(pr.HeadRefOid)
+		extras["worktree_head_sha"] = strings.TrimSpace(worktreeHeadSHA)
+		extras["head_reconcile_error"] = headReconcileErr.Error()
+		nextAction := "safely reconcile the implementation worktree to the exact current pull-request head without discarding local changes, then revalidate review, CI, and mergeability"
+		if action, ok := extras["next_action"].(string); ok && strings.TrimSpace(action) != "" {
+			nextAction += "; then " + strings.TrimSpace(action)
+		}
+		extras["next_action"] = nextAction
+		return "resume", extras, true
+	}
 	if status == "await" && decision.gate == lifecycleGatePending {
 		if deadline, deadlineGate, ok := lifecycleDeadline(extras); ok && !time.Now().Before(deadline) {
 			resume := cloneLifecycleExtras(extras)

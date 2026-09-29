@@ -506,7 +506,7 @@ func reviewTriggerMatchesRequest(request reviewRequestEnvelope, trigger reviewTr
 	return request.TriggerID == trigger.ID
 }
 
-func (s *runSession) ensureReviewRegistrationForPR(ctx context.Context, workDir string, pr *github.PR, currentHead string) error {
+func (s *runSession) ensureReviewRegistrationForPR(ctx context.Context, workDir string, pr *github.PR, currentHead, runID string) error {
 	s.reviewRegistrationObserved = false
 	if s.deps.githubClient == nil {
 		return nil
@@ -516,8 +516,10 @@ func (s *runSession) ensureReviewRegistrationForPR(ctx context.Context, workDir 
 	}
 	s.reviewRegistrationAttempted = true
 	if err := s.registerReviewRequest(ctx, workDir, pr, currentHead); err != nil {
-		if s.deps.errorLog != nil {
-			fmt.Fprintf(s.deps.errorLog, "warning: implementation review registration for PR #%d: %v\n", pr.Number, err)
+		if log := s.runLogWriter(); log != nil {
+			warning := fmt.Sprintf("warning: implementation review registration for PR #%d: %v", pr.Number, err)
+			line := fmt.Sprintf("%s run=%s %s\n", s.reviewNow().Format(time.RFC3339Nano), runID, warning)
+			_, _ = log.WriteEntry(warning, []byte(line))
 		}
 		return err
 	}

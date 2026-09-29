@@ -1264,7 +1264,7 @@ func TestExternalGate_CanonicalRegistrationPreservesMatchingInformalFeedback(t *
 	}
 }
 
-func TestExternalGate_CanonicalRegistrationDoesNotTrustExpiredAggregateApproval(t *testing.T) {
+func TestExternalGate_CanonicalRegistrationResumesCurrentHeadApproval(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	writeCurrentHeadApprovalClassification(t, workDir)
 	writeCanonicalRegistrationForTest(t, workDir)
@@ -1280,11 +1280,91 @@ func TestExternalGate_CanonicalRegistrationDoesNotTrustExpiredAggregateApproval(
 		opts: gateTestRunOptions(),
 	}
 	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
-	if !handled || status != "failure" || extras["reason"] != idleGateReason {
-		t.Fatalf("canonical expired aggregate approval = (%q, %#v, %t), want idle failure", status, extras, handled)
+	if !handled || status != "resume" || extras["gate"] != gateReadyToMerge {
+		t.Fatalf("canonical current-head approval = (%q, %#v, %t), want resume/ready-to-merge", status, extras, handled)
 	}
-	if _, ok := extras["gate"]; ok {
-		t.Fatalf("aggregate approval failure carried gate: %#v", extras)
+	if extras["reason"] != "REVIEW_APPROVED" {
+		t.Fatalf("current-head approval reason = %v, want REVIEW_APPROVED", extras["reason"])
+	}
+}
+
+func TestExternalGate_CanonicalTopLevelApprovalResumesCurrentHead(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeInformalRespondedClassification(t, workDir, "## Decision\n\n**APPROVED**")
+	writeCanonicalRegistrationForTest(t, workDir)
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha",
+				StatusCheckRollup: "success", MergeStateStatus: "CLEAN",
+			}}},
+			errorLog: io.Discard,
+		},
+		opts: gateTestRunOptions(),
+	}
+	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-top-level-approval", "current-sha")
+	if !handled || status != "resume" || extras["gate"] != gateReadyToMerge {
+		t.Fatalf("canonical top-level approval = (%q, %#v, %t), want resume/ready-to-merge", status, extras, handled)
+	}
+	request, ok := extras["review_request"].(map[string]any)
+	if !ok || request["outcome"] != "approved" {
+		t.Fatalf("top-level approval omitted request-scoped approval evidence: %#v", extras)
+	}
+}
+
+func TestExternalGate_CanonicalApprovalForOlderHeadDoesNotResume(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeCurrentHeadApprovalClassification(t, workDir)
+	writeCanonicalRegistrationForTest(t, workDir)
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "new-head",
+				StatusCheckRollup: "success", MergeStateStatus: "CLEAN",
+			}}},
+			errorLog: io.Discard,
+		},
+		opts: gateTestRunOptions(),
+	}
+	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-stale-approval", "new-head")
+	if !handled || status == "resume" {
+		t.Fatalf("older-head approval = (%q, %#v, %t), want handled non-resume", status, extras, handled)
+	}
+}
+
+func TestRetainedReviewClassificationOutcomeRequiresCurrentFormalApproval(t *testing.T) {
+	request := reviewRequestEnvelope{HeadSHA: "current-sha"}
+	for _, tt := range []struct {
+		name       string
+		headStatus string
+		commitID   string
+		want       retainedReviewOutcome
+	}{
+		{name: "current", headStatus: "current", commitID: "current-sha", want: retainedReviewApproval},
+		{name: "stale", headStatus: "stale", commitID: "old-sha", want: retainedReviewPending},
+		{name: "wrong current commit", headStatus: "current", commitID: "old-sha", want: retainedReviewPending},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			classification := &reviewClassification{
+				RequestState:   "active",
+				Decision:       "approved",
+				FormalDecision: "approved",
+				Raw: map[string]any{
+					"formal": map[string]any{
+						"approval_evidence": []any{map[string]any{
+							"state":       "APPROVED",
+							"head_status": tt.headStatus,
+							"commit_id":   tt.commitID,
+						}},
+					},
+				},
+			}
+			if got := retainedReviewClassificationOutcome(classification, request); got != tt.want {
+				t.Fatalf("retained review outcome = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -1699,7 +1779,7 @@ func TestExternalGate_DirtyWithInformalFeedbackResumes(t *testing.T) {
 	}
 }
 
-func TestExternalGate_RespondedCurrentHeadApprovalRemainsReadyToMerge(t *testing.T) {
+func TestExternalGate_RespondedCurrentHeadApprovalResumesReadyToMerge(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	writeCurrentHeadApprovalClassification(t, workDir)
 	statePath := filepath.Join(workDir, ".sandman", "state", "17.review_request.json.state")
@@ -1725,8 +1805,8 @@ func TestExternalGate_RespondedCurrentHeadApprovalRemainsReadyToMerge(t *testing
 		opts: gateTestRunOptions(),
 	}
 	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
-	if !handled || status != "resume" || extras["gate"] != gateReadyToMerge {
-		t.Fatalf("responded current-head approval = (%q, %#v, %t), want ready-to-merge resume", status, extras, handled)
+	if !handled || status != "resume" || extras["gate"] != gateReadyToMerge || extras["reason"] != "REVIEW_APPROVED" {
+		t.Fatalf("responded current-head approval = (%q, %#v, %t), want resume ready-to-merge", status, extras, handled)
 	}
 }
 
@@ -2946,6 +3026,12 @@ func TestExternalGate_LateApprovalPreservesHardGatePrecedence(t *testing.T) {
 			if got := extras["gate"]; got != tt.want {
 				t.Fatalf("hard-gate reason = %v, want %q", got, tt.want)
 			}
+			if tt.name == "pending checks" {
+				request, ok := extras["review_request"].(map[string]any)
+				if !ok || request["review_decision_approval"] == nil {
+					t.Fatalf("legacy retained approval evidence = %#v, want review_decision_approval", extras["review_request"])
+				}
+			}
 		})
 	}
 }
@@ -3881,24 +3967,32 @@ func TestHandleExternalGateHostPathRestoreFailureRemainsPending(t *testing.T) {
 	}
 }
 
-func TestHandleExternalGateFailsClosedWhenHeadCannotBeValidated(t *testing.T) {
+func TestHandleExternalGateRoutesUnvalidatedHeadsToReconciliationOrFailure(t *testing.T) {
 	for _, tt := range []struct {
 		name        string
 		currentHead func(string) (string, error)
 		prHead      string
+		wantStatus  string
+		wantGate    string
+		wantReason  string
 	}{
 		{
 			name: "current head resolver fails",
 			currentHead: func(string) (string, error) {
 				return "", context.DeadlineExceeded
 			},
-			prHead: "current-sha",
+			prHead:     "current-sha",
+			wantStatus: "resume",
+			wantGate:   gatePRHeadChanged,
+			wantReason: "PR_HEAD_RECONCILE_REQUIRED",
 		},
 		{
 			name: "pull request head is unavailable",
 			currentHead: func(string) (string, error) {
 				return "current-sha", nil
 			},
+			wantStatus: "failure",
+			wantReason: idleGateReason,
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -3918,14 +4012,18 @@ func TestHandleExternalGateFailsClosedWhenHeadCannotBeValidated(t *testing.T) {
 			}
 
 			status, extras, handled := session.lifecycleDecisionForTest(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
-			if !handled || status != "failure" {
-				t.Fatalf("head validation gate = (%q, %#v, %t), want failure", status, extras, handled)
+			if !handled || status != tt.wantStatus {
+				t.Fatalf("head validation gate = (%q, %#v, %t), want %s", status, extras, handled, tt.wantStatus)
 			}
-			if extras["reason"] != idleGateReason {
-				t.Fatalf("head validation reason = %v, want %q", extras["reason"], idleGateReason)
+			if tt.wantGate == "" {
+				if _, ok := extras["gate"]; ok {
+					t.Fatalf("head validation failure carries gate: %#v", extras)
+				}
+			} else if extras["gate"] != tt.wantGate {
+				t.Fatalf("head validation gate reason = %v, want %q", extras["gate"], tt.wantGate)
 			}
-			if _, ok := extras["gate"]; ok {
-				t.Fatalf("head validation failure carries gate: %#v", extras)
+			if extras["reason"] != tt.wantReason {
+				t.Fatalf("head validation reason = %v, want %q", extras["reason"], tt.wantReason)
 			}
 		})
 	}
@@ -4088,7 +4186,7 @@ func TestCheckPRExternalGateHeadFreshnessPreservesPrecedence(t *testing.T) {
 	}
 }
 
-func TestHandleExternalGateHeadLookupFailureRemainsPending(t *testing.T) {
+func TestHandleExternalGateHeadLookupFailureProducesReconciliationResume(t *testing.T) {
 	client := &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
 		State:             "open",
 		HeadRefOid:        "stale-sha",
@@ -4106,12 +4204,11 @@ func TestHandleExternalGateHeadLookupFailureRemainsPending(t *testing.T) {
 	}
 
 	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
-	// Issue #2743: an unvalidatable head fails closed instead of waiting.
-	if !handled || status != "failure" {
-		t.Fatalf("fallback gate = (%q, %#v, %t), want failure", status, extras, handled)
+	if !handled || status != "resume" {
+		t.Fatalf("fallback gate = (%q, %#v, %t), want actionable resume", status, extras, handled)
 	}
-	if extras["reason"] != idleGateReason {
-		t.Fatalf("fallback gate reason = %v, want %q", extras["reason"], idleGateReason)
+	if got := extras["gate"]; got != gatePRHeadChanged || extras["reason"] != "PR_HEAD_RECONCILE_REQUIRED" {
+		t.Fatalf("fallback gate = (%v, %v), want head reconciliation", got, extras["reason"])
 	}
 }
 

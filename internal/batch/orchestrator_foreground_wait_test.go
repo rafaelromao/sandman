@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -162,9 +163,13 @@ func TestRunExecutor_ForegroundLifecycleWaitRepeatsFinalPollInterval(t *testing.
 }
 
 func TestRunBatch_ExplicitAbortDuringForegroundWaitBlocksDependent(t *testing.T) {
-	dir := testenv.MkdirShort(t, "sm-orch-")
-	t.Chdir(dir)
-	initGitRepo(t, dir)
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(workDir)
+	initGitRepo(t, workDir)
+	worktreePath := filepath.Join(workDir, ".sandman", "worktrees", "42-parent")
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman", "state"), 0o755); err != nil {
+		t.Fatalf("create isolated fake worktree state: %v", err)
+	}
 	parentWaiting := make(chan struct{})
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
@@ -191,6 +196,7 @@ func TestRunBatch_ExplicitAbortDuringForegroundWaitBlocksDependent(t *testing.T)
 		WithSandboxFactory(reviewWaitSchedulerSandboxFactory{}),
 		WithRunnableFactory(results),
 		WithRunSessionOpts(runSessionOptions{
+			baseBranchSync:      func(string, string) error { return nil },
 			currentHead:         func(string) (string, error) { return "current-sha", nil },
 			lifecyclePollPlan:   []time.Duration{time.Hour},
 			foregroundLifecycle: true,
@@ -258,6 +264,10 @@ func TestRunBatch_ForegroundWaitRetainsCapacityForIndependentSibling(t *testing.
 	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
+	worktreePath := filepath.Join(dir, ".sandman", "worktrees", "42-parent")
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman", "state"), 0o755); err != nil {
+		t.Fatalf("create isolated fake worktree state: %v", err)
+	}
 	parentWaiting := make(chan struct{})
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
@@ -337,7 +347,7 @@ func TestRunBatch_ForegroundWaitRetainsCapacityForIndependentSibling(t *testing.
 		time.Sleep(10 * time.Millisecond)
 	}
 	if got := countEventsByType(logs, "run.started"); got != 1 {
-		t.Fatalf("agent launches while parent waits = %d, want 1 occupied slot", got)
+		t.Fatalf("agent launches while parent waits = %d, want 1 occupied slot; events=%+v", got, logs)
 	}
 	for _, issue := range []int{43, 44} {
 		queued := false

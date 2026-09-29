@@ -51,6 +51,10 @@ func (s *runSession) resumeEvidenceFor(ctx context.Context, branch string, extra
 		setDefaultEvidence(evidence, "outcome", gateActionableFeedback)
 		setDefaultEvidence(evidence, "reason", actionableFeedbackReason)
 		setDefaultEvidence(evidence, "next_action", actionableFeedbackNextAction)
+	case gatePRHeadChanged:
+		setDefaultEvidence(evidence, "outcome", gatePRHeadChanged)
+		setDefaultEvidence(evidence, "reason", "PR_HEAD_RECONCILE_REQUIRED")
+		setDefaultEvidence(evidence, "next_action", "safely reconcile the implementation worktree to the exact current pull-request head, then revalidate review, CI, and mergeability")
 	}
 	if s.deps.githubClient != nil {
 		if pr, err := s.deps.githubClient.FindPRByBranch(ctx, branch); err == nil && pr != nil {
@@ -193,7 +197,7 @@ func isImplementorOwnedGateFailure(extras map[string]any) bool {
 
 func isResumeGate(gate string) bool {
 	switch gate {
-	case gateReadyToMerge, gateActionableFeedback, gateReviewTimeout, gateCIWaitTimeout, "ci-failure", "merge-conflict":
+	case gateReadyToMerge, gateActionableFeedback, gateReviewTimeout, gateCIWaitTimeout, gatePRHeadChanged, "ci-failure", "merge-conflict":
 		return true
 	default:
 		return false
@@ -217,6 +221,8 @@ func (s *runSession) emitResume(ctx context.Context, runID, branch, gate string,
 		reason = "CI_FAILURE"
 	case "merge-conflict":
 		reason = "MERGE_CONFLICT"
+	case gatePRHeadChanged:
+		reason = "PR_HEAD_RECONCILE_REQUIRED"
 	}
 	event := events.Event{
 		Type:      "run.resumed",

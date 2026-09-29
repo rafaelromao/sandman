@@ -3511,6 +3511,7 @@ func (o *Orchestrator) runSingleRow(ctx context.Context, parentCtx context.Conte
 // execute runs the issue-driven AgentRun lifecycle owned by this session. It
 // contains the body that previously lived in (*Orchestrator).runSingle.
 func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
+	_ = s.runLogWriter()
 	issue, err := fetchIssueContent(ctx, s.deps.githubClient, s.issueNumber)
 	if err != nil {
 		fmt.Fprintf(s.deps.errorLog, "error: fetch issue %d: %v\n", s.issueNumber, err)

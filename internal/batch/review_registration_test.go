@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -202,6 +204,133 @@ func TestReviewRegistration_RegistersOnePendingCurrentHeadRecord(t *testing.T) {
 	}
 }
 
+func TestReviewRegistration_RepeatedHeadMismatchWarningIsSuppressed(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	var warningLog strings.Builder
+	client := &registrationGitHubClient{fakeGitHubClient: fakeGitHubClient{}}
+	session := &runSession{
+		deps: runDeps{
+			githubClient: client,
+			layout:       paths.NewLayout(nil, workDir),
+			errorLog:     &warningLog,
+		},
+		reviewAttemptStartedAt: time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC),
+	}
+	pr := &github.PR{Number: 592, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "new-head"}
+
+	for range 2 {
+		if err := session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "old-head", "run-260928115623-9590-561"); err == nil {
+			t.Fatal("stale local head unexpectedly registered")
+		}
+	}
+
+	if got := strings.Count(warningLog.String(), "implementation review registration for PR #592"); got != 1 {
+		t.Fatalf("registration warnings = %d, want one repeated warning suppressed; log=%q", got, warningLog.String())
+	}
+}
+
+func TestReviewRegistration_WarningIncludesTimestampAndRunID(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	var warningLog strings.Builder
+	baseTime := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	clockCalls := 0
+	session := &runSession{
+		deps: runDeps{
+			githubClient: &registrationGitHubClient{fakeGitHubClient: fakeGitHubClient{}},
+			layout:       paths.NewLayout(nil, workDir),
+			errorLog:     &warningLog,
+		},
+		reviewRegistrationNow: func() time.Time {
+			at := baseTime.Add(time.Duration(clockCalls) * time.Second)
+			clockCalls++
+			return at
+		},
+	}
+	pr := &github.PR{Number: 592, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "new-head"}
+
+	for range 2 {
+		if err := session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "old-head", "run-260928115623-9590-561"); err == nil {
+			t.Fatal("stale local head unexpectedly registered")
+		}
+	}
+
+	lines := strings.Split(strings.TrimSpace(warningLog.String()), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("registration warning lines = %d, want one; log=%q", len(lines), warningLog.String())
+	}
+	timestamp, remainder, ok := strings.Cut(lines[0], " ")
+	if !ok {
+		t.Fatalf("warning line has no timestamp separator: %q", lines[0])
+	}
+	if _, err := time.Parse(time.RFC3339Nano, timestamp); err != nil {
+		t.Fatalf("warning timestamp %q is not RFC3339: %v", timestamp, err)
+	}
+	if !strings.HasPrefix(remainder, "run=run-260928115623-9590-561 warning: implementation review registration for PR #592:") {
+		t.Fatalf("warning line lacks run ID and message: %q", remainder)
+	}
+}
+
+func TestReviewRegistration_RepeatsWarningAfterDifferentRunLogEntry(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	var warningLog strings.Builder
+	session := &runSession{
+		deps: runDeps{
+			githubClient: &registrationGitHubClient{fakeGitHubClient: fakeGitHubClient{}},
+			layout:       paths.NewLayout(nil, workDir),
+			errorLog:     &warningLog,
+		},
+	}
+	pr := &github.PR{Number: 592, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "new-head"}
+
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "old-head", "run-260928115623-9590-561"); err == nil {
+			t.Fatal("stale local head unexpectedly registered")
+		}
+		if attempt == 0 {
+			if _, err := fmt.Fprintln(session.deps.errorLog, "warning: an unrelated run log entry"); err != nil {
+				t.Fatalf("write intervening log entry: %v", err)
+			}
+		}
+	}
+
+	if got := strings.Count(warningLog.String(), "implementation review registration for PR #592"); got != 2 {
+		t.Fatalf("registration warnings = %d, want warning repeated after an intervening log entry; log=%q", got, warningLog.String())
+	}
+	if got := strings.Count(warningLog.String(), "an unrelated run log entry"); got != 1 {
+		t.Fatalf("intervening log entries = %d, want one; log=%q", got, warningLog.String())
+	}
+}
+
+func TestReviewRegistration_RepeatsWarningAfterMultiWriteLogEntry(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	var warningLog strings.Builder
+	session := &runSession{
+		deps: runDeps{
+			githubClient: &registrationGitHubClient{fakeGitHubClient: fakeGitHubClient{}},
+			layout:       paths.NewLayout(nil, workDir),
+			errorLog:     &warningLog,
+		},
+	}
+	pr := &github.PR{Number: 592, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "new-head"}
+
+	if err := session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "old-head", "run-260928115623-9590-561"); err == nil {
+		t.Fatal("stale local head unexpectedly registered")
+	}
+	if _, err := fmt.Fprint(session.deps.errorLog, "unrelated partial entry"); err != nil {
+		t.Fatalf("write partial log entry: %v", err)
+	}
+	if _, err := fmt.Fprintln(session.deps.errorLog, "warning: implementation review registration for PR #592: review registration head changed: current pull-request head changed during registration"); err != nil {
+		t.Fatalf("finish intervening log entry: %v", err)
+	}
+	if err := session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "old-head", "run-260928115623-9590-561"); err == nil {
+		t.Fatal("stale local head unexpectedly registered on second observation")
+	}
+
+	if got := strings.Count(warningLog.String(), "run=run-260928115623-9590-561 warning: implementation review registration for PR #592"); got != 2 {
+		t.Fatalf("registration warning lines = %d, want repeated warning after a multi-write intervening entry; log=%q", got, warningLog.String())
+	}
+}
+
 func TestReviewRegistration_RejectsSameTriggerFromStaleCanonicalHead(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-review-registration-")
 	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
@@ -235,7 +364,7 @@ func TestReviewRegistration_RejectsSameTriggerFromStaleCanonicalHead(t *testing.
 
 	livePR.HeadRefOid = "current-sha"
 	currentPR := *livePR
-	if err := session.ensureReviewRegistrationForPR(context.Background(), workDir, &currentPR, "current-sha"); err == nil {
+	if err := session.ensureReviewRegistrationForPR(context.Background(), workDir, &currentPR, "current-sha", "run-registration-test"); err == nil {
 		t.Fatal("same trigger from stale canonical head was accepted as a duplicate")
 	}
 
@@ -244,7 +373,7 @@ func TestReviewRegistration_RejectsSameTriggerFromStaleCanonicalHead(t *testing.
 		Body:      "/sandman review follow-up",
 		CreatedAt: now.Add(-30 * time.Second),
 	})
-	if err := session.ensureReviewRegistrationForPR(context.Background(), workDir, &currentPR, "current-sha"); err != nil {
+	if err := session.ensureReviewRegistrationForPR(context.Background(), workDir, &currentPR, "current-sha", "run-registration-test"); err != nil {
 		t.Fatalf("register newer current-head generation: %v", err)
 	}
 	registration, err := readReviewRegistration(
@@ -749,8 +878,8 @@ func TestReviewRegistration_RetriesAfterHostPathsBecomeAvailable(t *testing.T) {
 	}
 	pr := &github.PR{Number: 27, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha"}
 
-	session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "")
-	session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "current-sha")
+	session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "", "run-registration-test")
+	session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "current-sha", "run-registration-test")
 	if store.writes != 1 {
 		t.Fatalf("registration writes = %d, want one retry after host paths restore", store.writes)
 	}
@@ -1306,13 +1435,13 @@ func TestReviewRegistration_RetriesWhenTriggerAppearsAfterFirstObservation(t *te
 	}
 	pr := &github.PR{Number: 34, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha"}
 
-	session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "current-sha")
+	session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "current-sha", "run-registration-test")
 	client.comments = []github.PRComment{{
 		ID:        "trigger-late",
 		Body:      "/sandman review",
 		CreatedAt: now.Add(time.Second),
 	}}
-	session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "current-sha")
+	session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "current-sha", "run-registration-test")
 	if store.writes != 1 {
 		t.Fatalf("registration writes = %d, want one late-trigger registration", store.writes)
 	}
@@ -1344,7 +1473,7 @@ func TestReviewRegistration_RegistersNewerTriggerAfterConfirmedGeneration(t *tes
 	}
 	pr := &github.PR{Number: 36, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha"}
 
-	if err := session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "current-sha"); err != nil {
+	if err := session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "current-sha", "run-registration-test"); err != nil {
 		t.Fatalf("register confirmed generation: %v", err)
 	}
 	client.comments = append(client.comments, github.PRComment{
@@ -1352,7 +1481,7 @@ func TestReviewRegistration_RegistersNewerTriggerAfterConfirmedGeneration(t *tes
 		Body:      "/sandman review follow-up",
 		CreatedAt: now.Add(-time.Minute),
 	})
-	if err := session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "current-sha"); err != nil {
+	if err := session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "current-sha", "run-registration-test"); err != nil {
 		t.Fatalf("register newer generation: %v", err)
 	}
 	registration, err := readReviewRegistration(paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number), "owner/repo", pr, "current-sha")
