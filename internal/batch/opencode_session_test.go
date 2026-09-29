@@ -286,7 +286,7 @@ func TestRunExecutor_ContinuedRowSelectsOpenCodeSession(t *testing.T) {
 	}
 }
 
-func TestRunExecutor_LifecycleRelaunchReusesCurrentSession(t *testing.T) {
+func TestRunExecutor_LifecycleRemediationRelaunchReusesCurrentSession(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
 	worktree := filepath.Join(root, "worktree")
@@ -304,12 +304,16 @@ func TestRunExecutor_LifecycleRelaunchReusesCurrentSession(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug", State: "open"}},
 		prs: map[string]*github.PR{gateTestBranch: {
-			Number:            7,
-			State:             "open",
-			HeadRefOid:        "current-sha",
-			HeadRefName:       gateTestBranch,
-			MergeStateStatus:  "CLEAN",
-			StatusCheckRollup: "success",
+			Number:           7,
+			State:            "open",
+			HeadRefOid:       "current-sha",
+			HeadRefName:      gateTestBranch,
+			MergeStateStatus: "CLEAN",
+			// A failed current-head CI check is implementor-owned
+			// remediation and authorizes this in-session relaunch; a bare
+			// aggregate approval does not (issue #2743).
+			StatusCheckRollup: "failure",
+			ReviewDecision:    "CHANGES_REQUESTED",
 		}},
 	}
 	runOpts := gateTestRunOptions()

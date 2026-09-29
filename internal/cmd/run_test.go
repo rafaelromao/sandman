@@ -887,6 +887,61 @@ func TestRun_SingleIssueInvokesBatchRunner(t *testing.T) {
 	}
 }
 
+func TestRun_AutomaticallyRehydratesReadyCapacityContinuation(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(t, spy)
+	deps.ConfigStore = &fakeStore{config: &config.Config{
+		Agent: "opencode", WorktreeDir: ".sandman/worktrees", ReviewCommand: "/oc review",
+	}}
+	deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{
+		42: {Number: 42, State: "open", Title: "Fix bug"},
+	}}
+	started := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	awaited := started.Add(time.Minute)
+	queued := awaited.Add(time.Minute)
+	deps.EventLog = &fakeEventLog{events: []events.Event{
+		{Type: "run.started", Timestamp: started, RunID: testRunID42Prev, Issue: 42, Payload: map[string]any{
+			"branch": "42-fix-bug", "base_branch": "main", "batch_id": "old-batch", "issue_title": "Fix bug",
+		}},
+		{Type: "run.await", Timestamp: awaited, RunID: testRunID42Prev, Issue: 42, Payload: map[string]any{"gate": "pending", "await": true}},
+		{Type: "run.capacity_queued", Timestamp: queued, RunID: testRunID42Prev, Issue: 42, Payload: map[string]any{
+			"ready_continuation": true, "branch": "42-fix-bug", "base_branch": "main", "batch_id": "old-batch",
+			"previous_run_id": testRunID42Prev, "previous_run_batch_id": "old-batch", "issue_title": "Fix bug",
+		}},
+	}}
+	taskPath := filepath.Join(".sandman", "worktrees", "42-fix-bug", ".sandman", "task.md")
+	if err := os.MkdirAll(filepath.Dir(taskPath), 0o755); err != nil {
+		t.Fatalf("create ready continuation worktree: %v", err)
+	}
+	if err := os.WriteFile(taskPath, []byte("# Task\n\nMerge the approved PR.\n"), 0o600); err != nil {
+		t.Fatalf("write ready continuation Task: %v", err)
+	}
+
+	var output bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&output)
+	cmd.SetErr(&output)
+	cmd.SetArgs(nil)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("sandman run after restart: %v\noutput:\n%s", err, output.String())
+	}
+	if !spy.called {
+		t.Fatal("ready continuation was not submitted to the batch runner")
+	}
+	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 42 {
+		t.Fatalf("issues = %v, want the ready continuation despite no manual issue selection", spy.req.Issues)
+	}
+	if spy.req.IssueMode(42) != batch.ModeContinue || spy.req.RunIDs[42] != testRunID42Prev || !spy.req.ReadyContinuations[42] {
+		t.Fatalf("continuation routing = mode:%v run:%q ready:%v", spy.req.IssueMode(42), spy.req.RunIDs[42], spy.req.ReadyContinuations[42])
+	}
+	if spy.req.PreviousRunIDs[42] != testRunID42Prev || spy.req.PreviousRunBatchIDs[42] != "old-batch" || !spy.req.ReuseSession[42] {
+		t.Fatalf("previous run identity = runs:%v batches:%v reuse:%v", spy.req.PreviousRunIDs, spy.req.PreviousRunBatchIDs, spy.req.ReuseSession)
+	}
+	if spy.req.Branches[42] != "42-fix-bug" || spy.req.BaseBranches[42] != "main" || !strings.Contains(spy.req.TaskPrompts[42], "Merge the approved PR.") {
+		t.Fatalf("rehydrated worktree identity/prompt = branches:%v bases:%v prompt:%q", spy.req.Branches, spy.req.BaseBranches, spy.req.TaskPrompts[42])
+	}
+}
+
 func TestRun_ExpandsSpecificationBeforeBatchRunner(t *testing.T) {
 	specBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n- #11\n"
 	childBody := "## Parent\n\n#1\n\n## What\n\n"

@@ -17,6 +17,7 @@ import (
 //	run.idle_timeout  — heartbeat watchdog detected inactivity (fire-and-forget; terminal status is set on run.aborted)
 //	run.warning       — non-fatal issue during sandbox cleanup
 //	run.await         — run stayed active awaiting recoverable lifecycle work (CI, review, mergeability, or decision publication)
+//	run.capacity_queued — resolved continuation is ready but waiting for an execution slot
 //	run.resumed       — run relaunched its agent session in-session with review evidence
 //	run.finished      — agent run completed successfully
 //	run.aborted       — run interrupted by context cancellation

@@ -196,14 +196,14 @@ func TestPRReviewSkill_ManagedWaitYieldsToRuntime(t *testing.T) {
 	managedWait := text[start : start+end]
 
 	for _, phrase := range []string{
-		"checkpoints the",
-		"current head, pending request, and next step in `.sandman/task.md`",
-		"then ends the",
+		"must checkpoint the head, confirmed request identity, and",
+		"before** invoking `review-wait-v1.sh`",
+		"even if the review agent has not started yet",
 		"agent session successfully",
 		"dependent work queued",
-		"frees the agent sandbox for other work between",
-		"Only current, matching evidence from this request can resume the managed",
-		"Outside a\nSandman-created run",
+		"execution slot is available",
+		"evidence from this request can be classified as approval or feedback",
+		"Outside a Sandman-created run",
 		"the final interval repeats",
 	} {
 		if !strings.Contains(managedWait, phrase) {
@@ -212,13 +212,22 @@ func TestPRReviewSkill_ManagedWaitYieldsToRuntime(t *testing.T) {
 	}
 
 	for _, stale := range []string{
-		"wait helper",
-		"logical dependency ownership",
-		"execution slot",
+		"managed run waits retain the execution slot",
+		"managed run polls in the agent session",
 	} {
 		if strings.Contains(managedWait, stale) {
 			t.Errorf("pr-review skill must not retain stale managed-wait guidance %q", stale)
 		}
+	}
+	managedCI := strings.Index(text, "**Managed-mode branch happens before polling.**")
+	standaloneLoop := strings.Index(text, "while true; do")
+	if managedCI < 0 || standaloneLoop < 0 || managedCI > standaloneLoop {
+		t.Fatal("managed CI yield must be defined before the standalone polling loop")
+	}
+	managedReview := strings.Index(text, "### Managed handoff: return before the standalone wait")
+	coordinator := strings.Index(text, "wait_result=$(sh \"$skill_root/pr-review/review-wait-v1.sh\"")
+	if managedReview < 0 || coordinator < 0 || managedReview > coordinator {
+		t.Fatal("managed review yield must be defined before invoking the standalone wait coordinator")
 	}
 }
 

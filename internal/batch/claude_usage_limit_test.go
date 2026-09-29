@@ -16,7 +16,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
-func TestUsageLimitAwait_ClaudeResumesSameConversationWithContinue(t *testing.T) {
+func TestClaudeUsageLimitFailsWithoutExternalWait(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
 	initGitRepo(t, root)
@@ -26,8 +26,7 @@ func TestUsageLimitAwait_ClaudeResumesSameConversationWithContinue(t *testing.T)
 	log := &spyEventLog{}
 	var waits []time.Duration
 	client := &fakeGitHubClient{
-		issues: map[int]*github.Issue{42: {Number: 42, Title: "Claude usage limit", State: "closed"}},
-		prs:    map[string]*github.PR{branch: {Number: 7, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: branch}},
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "Claude usage limit", State: "open"}},
 	}
 	cfg := &config.Config{
 		Agent:          "claude",
@@ -54,7 +53,7 @@ func TestUsageLimitAwait_ClaudeResumesSameConversationWithContinue(t *testing.T)
 		Branches:          map[int]string{42: branch},
 		Agent:             "claude",
 		Model:             "sonnet",
-		Retries:           1,
+		Retries:           0,
 		Parallel:          1,
 		RunIdleTimeout:    0,
 		RunIdleTimeoutSet: true,
@@ -65,51 +64,31 @@ func TestUsageLimitAwait_ClaudeResumesSameConversationWithContinue(t *testing.T)
 		t.Fatalf("run batch result is nil: %v", err)
 	}
 
-	if result.Runs[0].Status != "success" {
-		t.Fatalf("status = %q, want success after the limit resets", result.Runs[0].Status)
+	if result.Runs[0].Status != "failure" {
+		t.Fatalf("status = %q, want terminal usage-limit failure", result.Runs[0].Status)
 	}
-	if len(waits) != 1 || waits[0] != usageLimitPollInterval {
-		t.Fatalf("await waits = %v, want one usage-limit poll interval", waits)
+	if len(waits) != 0 {
+		t.Fatalf("await waits = %v, want none", waits)
 	}
 	commands := sb.commandsSnapshot()
-	if len(commands) != 2 {
-		t.Fatalf("commands = %q, want the limited launch and one re-entry", commands)
+	if len(commands) != 1 {
+		t.Fatalf("commands = %q, want one failed launch", commands)
 	}
 	if strings.Contains(commands[0], "--continue") {
 		t.Fatalf("first command = %q, want a fresh conversation", commands[0])
 	}
-	for i, command := range commands {
-		if !strings.Contains(command, "claude -p --output-format stream-json --verbose") || !strings.Contains(command, "--model 'sonnet'") {
-			t.Fatalf("command[%d] = %q, want the claude preset with the requested model", i, command)
-		}
+	if !strings.Contains(commands[0], "claude -p --output-format stream-json --verbose") || !strings.Contains(commands[0], "--model 'sonnet'") {
+		t.Fatalf("command = %q, want the claude preset with the requested model", commands[0])
 	}
-	if !strings.Contains(commands[1], " --continue ") || strings.Contains(commands[1], "--session") {
-		t.Fatalf("re-entry command = %q, want Claude Code's --continue and no session selector", commands[1])
-	}
-	if got := countEventsByType(log.snapshot(), "run.await"); got != 1 {
-		t.Fatalf("run.await events = %d, want 1", got)
+	if got := countEventsByType(log.snapshot(), "run.await"); got != 0 {
+		t.Fatalf("run.await events = %d, want 0", got)
 	}
 	if got := countEventsByType(log.snapshot(), "run.retry"); got != 0 {
 		t.Fatalf("run.retry events = %d, want 0", got)
 	}
-	for _, event := range log.snapshot() {
-		if event.Type == "run.await" && event.Payload["await_reason"] != "usage-limit" {
-			t.Fatalf("run.await payload = %#v, want await_reason usage-limit", event.Payload)
-		}
-	}
-}
-
-func TestUsageLimitAwait_ExcludesCustomClaudeCommand(t *testing.T) {
-	session := runSession{
-		issueNumber: 42,
-		agentCfg:    config.Agent{Preset: "claude", Command: "claude -p {{.PromptFile}} | jq ."},
-	}
-	if session.shouldAwaitUsageLimit(AgentRunResult{UsageLimitReached: true}) {
-		t.Fatal("custom claude-preset command unexpectedly entered usage-limit waiting")
-	}
-	session.agentCfg.Command = config.BuiltInAgentPresets["claude"].Command
-	if !session.shouldAwaitUsageLimit(AgentRunResult{UsageLimitReached: true}) {
-		t.Fatal("built-in claude command did not enter usage-limit waiting")
+	finished := findEvent(log.snapshot(), "run.finished")
+	if finished == nil || finished.Payload["reason"] != "AGENT_USAGE_LIMIT" {
+		t.Fatalf("run.finished = %#v, want structured usage-limit failure", finished)
 	}
 }
 

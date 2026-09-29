@@ -48,6 +48,12 @@ type Request struct {
 	// PreviousRunBatchIDs maps each issue number to the batch containing its
 	// previous Run. It is needed to locate runtime metadata across batches.
 	PreviousRunBatchIDs map[int]string
+	// RunIDs pins an automatically rehydrated ready continuation to the
+	// original Run identity so its non-terminal lifecycle resumes in place.
+	RunIDs map[int]string
+	// ReadyContinuations marks rows restored from durable capacity-queue
+	// evidence. They enter the scheduler's awaited priority queue immediately.
+	ReadyContinuations map[int]bool
 	// ReuseSession opts an individual continued row into exact OpenCode
 	// session reuse. Runtime-owned relaunches set the equivalent on the row.
 	ReuseSession map[int]bool

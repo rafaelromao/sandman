@@ -167,3 +167,51 @@ func TestRecoverStaleRuns_RecoversResumedRun(t *testing.T) {
 		t.Fatalf("recovered resumed run should be terminal not awaiting: active=%v awaiting=%v status=%q", final.IsActive(), final.IsAwaiting(), final.Status())
 	}
 }
+
+func TestRecoverStaleRuns_PreservesReadyCapacityContinuation(t *testing.T) {
+	baseDir := t.TempDir()
+	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	started := createdAt.Add(5 * time.Minute)
+	awaited := started.Add(time.Minute)
+	queued := awaited.Add(2 * time.Minute)
+	batchID := "dead-ready-1"
+	runID := "run-ready-42"
+
+	batchDir := filepath.Join(baseDir, "batches", batchID)
+	writeManifestFile(t, batchDir, BatchManifest{Issues: []int{42}, CreatedAt: createdAt})
+	runDir := filepath.Join(batchDir, "runs", runID)
+	if err := batchindex.WriteManifest(runDir, batchindex.RunManifest{
+		RunID: runID, BatchID: batchID, Issue: 42, Status: batchindex.RunManifestStatusActive, CreatedAt: started,
+	}); err != nil {
+		t.Fatalf("write run manifest: %v", err)
+	}
+
+	eventLog := &recordingEventLog{}
+	existing := []events.Event{
+		{Type: "run.started", RunID: runID, Issue: 42, Timestamp: started, Payload: map[string]any{"branch": "42-fix", "base_branch": "main", "batch_id": batchID}},
+		{Type: "run.await", RunID: runID, Issue: 42, Timestamp: awaited, Payload: map[string]any{"gate": "pending", "await": true}},
+		{Type: "run.capacity_queued", RunID: runID, Issue: 42, Timestamp: queued, Payload: map[string]any{
+			"ready_continuation": true, "branch": "42-fix", "base_branch": "main", "batch_id": batchID,
+			"previous_run_id": runID, "previous_run_batch_id": batchID,
+		}},
+	}
+
+	before := events.ProjectRunStates(existing)[0]
+	if !before.IsActive() || before.IsAwaiting() || !before.IsCapacityQueued() || before.Status() != "queued" {
+		t.Fatalf("before recovery = active:%v awaiting:%v capacity-queued:%v status:%q", before.IsActive(), before.IsAwaiting(), before.IsCapacityQueued(), before.Status())
+	}
+	recovered, dirs, err := RecoverStaleRuns(baseDir, existing, eventLog)
+	if err != nil {
+		t.Fatalf("RecoverStaleRuns: %v", err)
+	}
+	if recovered != 0 || dirs != 1 || len(eventLog.logged) != 0 {
+		t.Fatalf("recovery = (%d, %d), events=%v; ready continuation must be preserved", recovered, dirs, eventLog.logged)
+	}
+	manifest, err := batchindex.ReadManifest(runDir)
+	if err != nil {
+		t.Fatalf("read preserved run manifest: %v", err)
+	}
+	if manifest.Status != batchindex.RunManifestStatusActive {
+		t.Fatalf("manifest status = %q, want active for rehydration", manifest.Status)
+	}
+}

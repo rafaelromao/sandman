@@ -1135,6 +1135,46 @@ func TestProjectRunStates_CurrentAwaitPhaseTracksLifecycle(t *testing.T) {
 	}
 }
 
+func TestProjectRunStates_CapacityQueuedIsNonTerminalAndNotAwaiting(t *testing.T) {
+	t.Parallel()
+	startedAt := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	awaitAt := startedAt.Add(time.Minute)
+	queuedAt := awaitAt.Add(2 * time.Minute)
+	continuedAt := queuedAt.Add(3 * time.Minute)
+	runID := "run-capacity-queued"
+	events := []Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "42-fix", "batch_id": "batch-1"}},
+		{Type: "run.await", Timestamp: awaitAt, RunID: runID, Issue: 42, Payload: map[string]any{"await_reason": "pending"}},
+		{Type: "run.capacity_queued", Timestamp: queuedAt, RunID: runID, Issue: 42, Payload: map[string]any{"ready_continuation": true}},
+	}
+
+	queued := ProjectRunStates(events)[0]
+	if !queued.IsActive() || queued.IsAwaiting() || !queued.IsCapacityQueued() {
+		t.Fatalf("capacity-queued state = active:%v awaiting:%v capacity-queued:%v, want active/non-awaiting/capacity-queued", queued.IsActive(), queued.IsAwaiting(), queued.IsCapacityQueued())
+	}
+	if queued.Status() != "queued" || queued.Finished != nil {
+		t.Fatalf("capacity-queued status = %q finished=%v, want non-terminal queued", queued.Status(), queued.Finished)
+	}
+	if queued.AwaitEvent == nil || queued.CapacityQueuedEvent == nil {
+		t.Fatalf("capacity transition dropped history: await=%v queued=%v", queued.AwaitEvent, queued.CapacityQueuedEvent)
+	}
+	if got, want := queued.DurationAt(continuedAt), time.Minute; got != want {
+		t.Fatalf("duration while capacity queued = %s, want active time %s", got, want)
+	}
+
+	continued := append(append([]Event(nil), events...), Event{
+		Type: "run.continued", Timestamp: continuedAt, RunID: runID, Issue: 42,
+		Payload: map[string]any{"branch": "42-fix", "batch_id": "batch-1"},
+	})
+	resumed := ProjectRunStates(continued)[0]
+	if !resumed.IsActive() || resumed.IsAwaiting() || resumed.IsCapacityQueued() || resumed.Status() != "" {
+		t.Fatalf("continued state = active:%v awaiting:%v capacity-queued:%v status:%q, want active execution", resumed.IsActive(), resumed.IsAwaiting(), resumed.IsCapacityQueued(), resumed.Status())
+	}
+	if resumed.CapacityQueuedEvent == nil || resumed.AwaitEvent == nil {
+		t.Fatalf("continuation did not retain queue/await history: queued=%v await=%v", resumed.CapacityQueuedEvent, resumed.AwaitEvent)
+	}
+}
+
 func TestProjectRunStates_AwaitContinuedThenFinishedProjectsTerminalSuccess(t *testing.T) {
 	t.Parallel()
 	startedAt := time.Date(2026, 9, 13, 3, 0, 0, 0, time.UTC)

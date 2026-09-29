@@ -21,13 +21,15 @@ The installed folder mirrors the local Sandman skill and includes routed subskil
 
 You can also load `sandman-implement`, `sandman-code-review`, and `sandman-pr-review` directly in OpenCode or Claude Code for a local run without `sandman run`. Use `sandman-code-review` in self-review context for an implementor's own changes; the review daemon uses its daemon-review context with supplied pull-request information and writes the reviewer decision artifact without managing the pull request. The same autonomous workflow, guardrails, and terminal conditions apply; the skills do not wait for operator input.
 
-The implementor-side review skill is an AFK workflow: after a confirmed
-request, the active implementation run retains logical row ownership but
-releases the execution slot and container lease between observations while
-holding dependents. It resumes only for matching current-request evidence.
-Invalid or stale evidence is diagnostics-only, and cancellation produces an
-aborted run that can be recovered from durable publication state without
-launching another reviewer.
+The managed implementor-side review handoff is an AFK workflow: after a
+current-head review request is confirmed, that request is active even before
+the reviewer starts. The runtime retains logical row ownership, releases the
+execution slot and container lease, holds dependents, observes the request, and
+resumes the implementation when matching current-request evidence arrives and
+capacity is available. The managed agent exits before polling; standalone
+`sandman-pr-review` keeps its own bounded observer loop. Invalid or stale
+evidence cannot approve or resume managed work, and cancellation produces an
+aborted run that can be recovered from durable request state.
 
 ## Claude Code discovery
 
@@ -51,10 +53,12 @@ effective delegated review response budget in seconds. It is deliberately not
 written into the globally shared skill tree, so repositories with different
 policies cannot overwrite one another's active run context.
 
-The implementor-side review skill uses the versioned
-`pr-review/review-wait-v1.sh` entry point for one confirmed request. The
-request envelope identifies the pull request, current head, confirmed trigger,
-effective timeout, and absolute deadline. The command returns one structured
+Standalone use of `sandman-pr-review` uses the versioned
+`pr-review/review-wait-v1.sh` entry point for one confirmed request. Managed
+implementation runs yield before invoking that poller; runtime observation is
+the sole managed lifecycle authority. The request envelope identifies the pull
+request, current head, confirmed trigger, effective timeout, and absolute
+deadline. The command returns one structured
 JSON result (`pending`, `responded`, `timed_out`, or `unavailable`). A responded
 result carries both the preserved raw snapshot and an additive
 `review-classification/v1` object scoped to the confirmed trigger and current

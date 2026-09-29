@@ -46,6 +46,7 @@ import (
 // only the run.log lines the orchestrator itself writes (retry markers,
 // heartbeat context). A fixture using the real AgentRun would deepen the pin.
 var charNetTimestampRe = regexp.MustCompile(`\d{2}:\d{2}:\d{2}`)
+var charNetUnixTimestampRe = regexp.MustCompile(`("(?:started_unix_seconds|deadline_unix_seconds)":)\d+`)
 
 // charNetFixture is one scenario captured by the net. setup returns the ctx
 // RunBatch runs under (so abort fixtures can pre-arm a cancellation).
@@ -273,7 +274,7 @@ func charNetIssueRetrySuccess(t *testing.T) (context.Context, Request, *Orchestr
 		issues: map[int]*github.Issue{
 			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
 		},
-		prs: map[string]*github.PR{"42-fix-bug": {Number: 1, State: "open", Merged: false, HeadRefName: "42-fix-bug"}},
+		prs: map[string]*github.PR{"42-fix-bug": {Number: 1, State: "open", Merged: false, HeadRefName: "42-fix-bug", HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"}},
 	}
 	cfg := &config.Config{
 		Agent:       "test-agent",
@@ -291,7 +292,7 @@ func charNetIssueRetrySuccess(t *testing.T) (context.Context, Request, *Orchestr
 			{IssueNumber: 42, Status: "failure", Branch: "42-fix-bug"},
 			{IssueNumber: 42, Status: "success", Branch: "42-fix-bug"},
 		}}),
-		WithRunSessionOpts(runSessionOptions{retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+		WithRunSessionOpts(runSessionOptions{currentHead: func(string) (string, error) { return "current-sha", nil }, retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
 			return nil
 		}, lifecyclePollPlan: []time.Duration{0}, lifecycleWait: func(context.Context, time.Duration) error {
 			return errLifecycleObservationTestStop
@@ -393,7 +394,7 @@ func charNetSerialize(c charNetCaptured) string {
 			payload := "<nil>"
 			if e.Payload != nil {
 				if js, jerr := json.Marshal(e.Payload); jerr == nil {
-					payload = string(js)
+					payload = charNetUnixTimestampRe.ReplaceAllString(string(js), `${1}"<unix>"`)
 				} else {
 					payload = fmt.Sprintf("<marshal-error: %v>", jerr)
 				}

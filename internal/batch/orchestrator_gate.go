@@ -284,6 +284,53 @@ func (s *runSession) retainedLifecycleEvidence(ctx context.Context, workDir stri
 	return evidence
 }
 
+// confirmedReviewRequestActive reports whether a confirmed delegated-review
+// request is actively resolving for this pull request at the current head. It
+// validates the canonical runtime-owned registration first and falls back to
+// legacy review-wait artifacts; either must match repository, pull request,
+// and head, remain in the pending wait state, and stay within its deadline. A
+// requested review counts as an ongoing external operation even before the
+// review run starts (issue #2743). Stale, mismatched, expired, corrupt, or
+// otherwise unusable records never authorize waiting.
+func (s *runSession) confirmedReviewRequestActive(ctx context.Context, workDir string, pr *github.PR, currentHead string) bool {
+	if pr == nil || pr.Number <= 0 || s.deps.githubClient == nil {
+		return false
+	}
+	repository, err := s.deps.githubClient.RepoName(ctx)
+	if err != nil || strings.TrimSpace(repository) == "" {
+		return false
+	}
+	now := s.reviewNow().Unix()
+	if registration, err := readReviewRegistrationWithStore(s.reviewRegistrationStoreForRead(), paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number), repository, pr, currentHead); err == nil && registration != nil {
+		if registration.State.State != "pending" || int64(registration.Request.DeadlineUnixSeconds) <= now {
+			return false
+		}
+		// The canonical registration records a confirmed handoff. A matching
+		// legacy observation may show that this operation has since resolved;
+		// do not keep treating the initial pending registration as active once
+		// the review has responded or timed out.
+		artifacts, artifactErr := readReviewTimeoutArtifacts(workDir, repository, pr, currentHead)
+		if artifactErr == nil && artifacts != nil && reviewRequestIdentityMatches(registration.Request, artifacts.Request) {
+			return artifacts.State.State == "pending" && int64(artifacts.Request.DeadlineUnixSeconds) > now
+		}
+		// Legacy response artifacts that are absent, malformed, stale, or
+		// mismatched cannot resolve a valid canonical pending request. Only a
+		// validated matching response/timeout changes this confirmed operation
+		// out of the pending state.
+		return true
+	} else if err != nil && !isReviewRegistrationNotExist(err) {
+		// A canonical record exists but is not valid. It wins over legacy
+		// sidecars as evidence: fail closed rather than resurrecting stale
+		// authority from an older artifact.
+		return false
+	}
+	artifacts, err := readReviewTimeoutArtifacts(workDir, repository, pr, currentHead)
+	if err != nil || artifacts == nil {
+		return false
+	}
+	return artifacts.State.State == "pending" && int64(artifacts.Request.DeadlineUnixSeconds) > now
+}
+
 func retainedEvidenceIsStale(err error) bool {
 	if err == nil {
 		return false

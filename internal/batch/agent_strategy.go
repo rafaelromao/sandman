@@ -52,8 +52,9 @@ type agentStrategy interface {
 	// UsageLimitRule returns the per-line rule that recognises the agent's
 	// usage-limit response, or nil when the agent has none.
 	UsageLimitRule() func(line string) bool
-	// AwaitsUsageLimit reports whether a recognised usage limit enters
-	// run.await with usage-limit polling instead of the ordinary retry path.
+	// AwaitsUsageLimit reports whether a recognised usage limit is eligible
+	// for the review daemon's provider-wide quota recovery gate. Implementation
+	// AgentRuns always use the ordinary bounded retry/failure path.
 	AwaitsUsageLimit() bool
 }
 
@@ -83,7 +84,7 @@ type progressObserver interface {
 // constructor. The constructor learns whether the launch runs the preset's
 // own command template: a custom command under a built-in preset keeps the
 // preset's failure classification and environment rules, but receives no
-// agent flags, session selection, output parsing, or usage-limit awaiting.
+// agent flags, session selection, output parsing, or review quota recovery.
 var agentStrategies = map[string]func(builtInCommand bool) agentStrategy{
 	"opencode": func(builtInCommand bool) agentStrategy { return opencodeStrategy{builtInCommand: builtInCommand} },
 	"claude":   func(builtInCommand bool) agentStrategy { return claudeStrategy{builtInCommand: builtInCommand} },
@@ -114,10 +115,9 @@ func strategyForPreset(preset string) agentStrategy {
 	return strategyFor(preset, builtIn.Command)
 }
 
-// AwaitsUsageLimit reports whether a run of the named built-in agent preset
-// waits for a recognised usage limit to reset instead of retrying. The review
-// daemon, which knows only the review agent's name, uses it to gate its
-// daemon-wide quota pause with the same rule as the run loop.
+// AwaitsUsageLimit reports whether the named built-in preset's review-agent
+// launches use the daemon-wide quota recovery gate after a recognised usage
+// limit. Implementation AgentRuns do not wait for provider quota resets.
 func AwaitsUsageLimit(agentName string) bool {
 	return strategyForPreset(strings.TrimSpace(agentName)).AwaitsUsageLimit()
 }

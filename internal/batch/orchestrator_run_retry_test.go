@@ -39,7 +39,7 @@ func TestRunSingle_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 	// The PR remains open with a pending external gate for the whole run.
 	// Agent failures still consume retries, while the third clean exit is
 	// terminal blocked state rather than another agent failure.
-	pr := &github.PR{Number: 17, State: "open", HeadRefName: branch, MergeStateStatus: "BLOCKED", StatusCheckRollup: "pending"}
+	pr := &github.PR{Number: 17, State: "open", HeadRefName: branch, HeadRefOid: "current-sha", MergeStateStatus: "BLOCKED", StatusCheckRollup: "pending"}
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}
 	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
@@ -1269,7 +1269,9 @@ func TestRunSingle_InitialAttemptOnlyHasNoBanner(t *testing.T) {
 	oldHeadFn := currentBranchHeadFn
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
-	pr := &github.PR{Number: 17, State: "open", Merged: false, HeadRefName: branch}
+	// Running CI is the actively resolving operation the await below is
+	// pinned to (issue #2743).
+	pr := &github.PR{Number: 17, State: "open", Merged: false, HeadRefName: branch, HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"}
 	o := NewOrchestrator(
 		&fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},

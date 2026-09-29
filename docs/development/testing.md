@@ -152,8 +152,17 @@ E2E tests exercise multi-session behavior such as continuing a previous run, bat
 Implementation pull-request lifecycle changes must keep the production-path
 regression slice green with `go test ./internal/batch ./internal/cmd`. This
 slice covers merged completion precedence, recoverable awaits, continuation
-re-evaluation, retained review evidence, and portal projection, including the
-non-terminal `waiting` status for a current await phase.
+re-evaluation, retained review evidence, and portal projection. Wait admission
+is restricted to current-head CI queued/running or a confirmed in-deadline
+delegated-review request (which counts as active from delivery, before the
+reviewer starts). The suite also pins failure for absent PRs, idle/generic
+gates, stale heads, lookup/state errors, and exhausted budgets; verified
+request-scoped review outcomes resume implementor-owned repair or merge work.
+Scheduler coverage must show that legitimate awaits release execution
+capacity, keep dependents queued, and resume automatically when external work
+resolves and a slot is available. Portal aggregation remains `Reviewing` while
+an associated review run is active, whether the implementation's runtime phase
+is waiting or running.
 
 ```bash
 SANDMAN_TEST_PROVIDERS=opencode \

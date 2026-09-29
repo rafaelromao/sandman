@@ -116,11 +116,6 @@ func issueRef(num int) *int {
 var branchExists = sandbox.BranchExists
 var branchValidationEnabled = true
 
-const (
-	usageLimitPollInterval = 10 * time.Minute
-	usageLimitRetryWindow  = 5 * time.Hour
-)
-
 func resolveRetries(req Request, cfg *config.Config) int {
 	if req.Retries >= 0 {
 		return req.Retries
@@ -1658,8 +1653,11 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 
 	for turn, num := range ordered {
 		wg.Add(1)
-		runID := buildRunID(num, req.RunTS, req.RunShortID)
-		if o.eventLog != nil && (len(dependencies[num]) > 0 || (effectiveParallel > 0 && effectiveParallel < len(req.Issues))) {
+		runID := strings.TrimSpace(req.RunIDs[num])
+		if runID == "" {
+			runID = buildRunID(num, req.RunTS, req.RunShortID)
+		}
+		if o.eventLog != nil && (req.ReadyContinuations[num] || len(dependencies[num]) > 0 || (effectiveParallel > 0 && effectiveParallel < len(req.Issues))) {
 			queuedPayload := map[string]any{"blocked_by": dependencies[num]}
 			if title, ok := req.IssueTitles[num]; ok && title != "" {
 				queuedPayload["issue_title"] = title
@@ -1669,8 +1667,17 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			if issueBatchID != "" {
 				queuedPayload["batch_id"] = issueBatchID
 			}
+			queuedType := "run.queued"
+			if req.ReadyContinuations[num] {
+				queuedType = "run.capacity_queued"
+				queuedPayload["ready_continuation"] = true
+				queuedPayload["branch"] = req.Branches[num]
+				queuedPayload["base_branch"] = req.BaseBranches[num]
+				queuedPayload["previous_run_id"] = req.PreviousRunIDs[num]
+				queuedPayload["previous_run_batch_id"] = req.PreviousRunBatchIDs[num]
+			}
 			_ = o.eventLog.Log(events.Event{
-				Type:      "run.queued",
+				Type:      queuedType,
 				Timestamp: time.Now(),
 				RunID:     runID,
 				Issue:     num,
@@ -1830,6 +1837,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				Branches:            req.Branches,
 				PreviousRunIDs:      req.PreviousRunIDs,
 				PreviousRunBatchIDs: req.PreviousRunBatchIDs,
+				RunID:               runID,
 				ReuseSession:        req.ReuseSession[issueNum],
 				BaseBranch:          issueBaseBranch,
 				ExternalBlockers:    req.Blocked[issueNum],
@@ -1862,15 +1870,55 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			var res AgentRunResult
 			var started bool
 			awaitPoll := 0
-			var usageLimitWaited time.Duration
 			defer func() {
 				if err := coord.stopCommandServer(issueNum); err != nil {
 					fmt.Fprintf(o.errorLog, "error: stop command server for issue %d: %v\n", issueNum, err)
 				}
 			}()
-			awaiting := false
+			executor := o.newRunExecutorWith(parentCtx, bc, policy.sandboxFactory, policy.containerAlloc, coord, coord, layout)
+			awaiting := req.ReadyContinuations[issueNum]
+			readyContinuation := awaiting
 			var opportunity awaitOpportunity
+			waitForObservation := func() error {
+				interval := awaitPollInterval(o.runSessionOpts, awaitPoll)
+				awaitPoll++
+				awaitWait := o.runSessionOpts.awaitWait
+				if awaitWait == nil {
+					awaitWait = waitForAwaitPoll
+				}
+				return awaitWait(issueCtx, interval)
+			}
 			for {
+				if awaiting && !readyContinuation {
+					status, extras, handled := executor.observeLifecycle(issueCtx, row)
+					if issueCtx.Err() != nil {
+						o.logAborted(issueNum, runID, nil)
+						res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
+						break
+					}
+					if handled && status == "await" {
+						if err := waitForObservation(); err != nil {
+							o.logAborted(issueNum, runID, nil)
+							res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
+							break
+						}
+						continue
+					}
+					if o.eventLog != nil {
+						if err := logCapacityQueuedContinuation(o.eventLog, runID, issueNum, issueBatchID, row, extras, req.IssueTitles[issueNum]); err != nil {
+							if o.errorLog != nil {
+								fmt.Fprintf(o.errorLog, "warning: persist ready continuation for issue %d: %v; keeping the run in its external wait\n", issueNum, err)
+							}
+							if waitErr := waitForObservation(); waitErr != nil {
+								o.logAborted(issueNum, runID, nil)
+								res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
+								break
+							}
+							continue
+						}
+					}
+					readyContinuation = true
+				}
 				var err error
 				if awaiting {
 					opportunity, err = startGate.AcquireAwaiting(issueCtx, opportunity)
@@ -1882,7 +1930,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
 					break
 				}
-				res, started = o.newRunExecutorWith(parentCtx, bc, policy.sandboxFactory, policy.containerAlloc, coord, coord, layout).Execute(issueCtx, row)
+				res, started = executor.Execute(issueCtx, row)
 				if started {
 					startGate.Release()
 				} else {
@@ -1896,20 +1944,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					yieldedCapacity = true
 				}
 				advanceTurn()
-				interval := time.Duration(implementationReviewPollPlan[len(implementationReviewPollPlan)-1]) * time.Second
-				if res.UsageLimitReached {
-					interval = usageLimitPollInterval
-				} else if len(o.runSessionOpts.lifecyclePollPlan) > 0 {
-					interval = o.runSessionOpts.lifecyclePollPlan[min(awaitPoll, len(o.runSessionOpts.lifecyclePollPlan)-1)]
-				} else if awaitPoll < len(implementationReviewPollPlan) {
-					interval = time.Duration(implementationReviewPollPlan[awaitPoll]) * time.Second
-				}
-				awaitPoll++
-				awaitWait := o.runSessionOpts.awaitWait
-				if awaitWait == nil {
-					awaitWait = waitForAwaitPoll
-				}
-				if err := awaitWait(issueCtx, interval); err != nil {
+				if err := waitForObservation(); err != nil {
 					o.logAborted(issueNum, runID, nil)
 					res.Status = "aborted"
 					break
@@ -1918,12 +1953,8 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				row.PreviousRunIDs = map[int]string{issueNum: runID}
 				row.PreviousRunBatchIDs = map[int]string{issueNum: issueBatchID}
 				row.ReuseSession = true
-				row.UsageLimitProbe = res.UsageLimitReached
-				if res.UsageLimitReached {
-					usageLimitWaited += interval
-					row.UsageLimitWaited = usageLimitWaited
-				}
 				awaiting = true
+				readyContinuation = false
 				continue
 			}
 			mu.Lock()
@@ -2298,7 +2329,8 @@ type runSessionOptions struct {
 	// awaitResumeMax bounds in-session agent relaunches triggered by a
 	// resume-worthy PR gate (ready-to-merge / actionable-feedback) within
 	// one session. Zero uses the default (3); when the cap is exhausted the
-	// gate falls back to run.await so a non-progressing gate cannot loop.
+	// run fails with a remediation-budget diagnostic rather than waiting on
+	// already-resolved or implementor-owned work.
 	// Re-invocation starts a fresh session, so the cap resets per session.
 	awaitResumeMax int
 	// Review registration seams keep the completion boundary deterministic in
@@ -2327,8 +2359,6 @@ type runSession struct {
 	previousRunIDs             map[int]string
 	previousRunBatchIDs        map[int]string
 	reuseSession               bool
-	usageLimitProbe            bool
-	usageLimitWaited           time.Duration
 	identityResolver           *gitIdentityResolver
 	branches                   map[int]string
 	renderCfg                  prompt.RenderConfig
@@ -2953,7 +2983,7 @@ func (s *runSession) emitEarlyFailure(reason, branch string, underlyingErr error
 	if s.deps.eventLog == nil {
 		return
 	}
-	runID := buildRunID(s.issueNumber, s.runTS, s.runShortID)
+	runID := s.issueRunID()
 	payload := map[string]any{
 		"status":        "failure",
 		"branch":        branch,
@@ -3257,8 +3287,8 @@ loop:
 		// A resume relaunch reuses the attempt index — no run.retry, no
 		// retry branch reset, no snapshot — and carries the request-scoped
 		// review evidence in the prompt. The per-session resume cap
-		// (awaitResumeMax) bounds the loop; exhaustion falls back to
-		// run.await on the same gate.
+		// (awaitResumeMax) bounds the loop; exhaustion is terminal failure
+		// on the same gate instead of a synthetic await.
 		for {
 			runnable = factory.NewRunnable(issue, branch, wt)
 			if agentRun, ok := runnable.(*AgentRun); ok {
@@ -3317,12 +3347,18 @@ loop:
 						break loop
 					}
 					gate, _ := extras["gate"].(string)
+					if gateStatus == "resume" && s.resumeCount >= s.resumeCapFor() {
+						// The external operation has produced an outcome but
+						// this session has exhausted its autonomous resume
+						// budget. Do not manufacture another wait for an
+						// already-resolved gate (issue #2743).
+						result.Status = "failure"
+						terminalExtras = remediationBudgetFailureEvidence(gate, extras,
+							"inspect the current pull-request remediation evidence and start a new run after advancing the pull-request head")
+						break loop
+					}
 					observe := gateStatus == "await" && (gate != gateReadyToMerge && gate != gateActionableFeedback || s.resumeCount >= s.resumeCapFor())
-					observe = observe || gateStatus == "resume" && s.resumeCount >= s.resumeCapFor()
 					if observe {
-						if gateStatus == "resume" {
-							gateStatus = "await"
-						}
 						if !s.opts.foregroundLifecycle {
 							s.emitAwait(ctx, runID, result, extras)
 							result.Status = gateStatus
@@ -3339,17 +3375,15 @@ loop:
 						continue relaunch
 					}
 					if gateStatus == "resume" {
+						// An exhausted in-session resume budget ends the
+						// session for every gate, including CI remediation:
+						// a budget with no remaining relaunch cannot keep
+						// resolving, so it must not prolong a wait
+						// (issue #2743).
 						gate, _ := extras["gate"].(string)
-						if isCIRemediationGate(gate) {
-							gateStatus = "await"
-						} else {
-							gateStatus = "failure"
-							extras = map[string]any{
-								"gate":        gate,
-								"reason":      "REMEDIATION_BUDGET_EXHAUSTED",
-								"next_action": "advance the pull-request head before requesting another remediation run",
-							}
-						}
+						gateStatus = "failure"
+						extras = remediationBudgetFailureEvidence(gate, extras,
+							"advance the pull-request head before requesting another remediation run")
 					}
 					result.Status = gateStatus
 					terminalExtras = mergeBlockerExtras(terminalExtras, extras)
@@ -3462,7 +3496,12 @@ loop:
 						hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
 						if gateStatus, extras, handled := s.handleLifecycleDecisionAfterAgent(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled {
 							if gateStatus == "resume" {
-								gateStatus = "await"
+								// This legacy verification fallback is past the
+								// in-session resume point. Never turn a resolved
+								// gate into an await here; fail with the owned
+								// action and let the next session resume it.
+								gateStatus = "failure"
+								extras = lifecycleGateFailureEvidence("IMPLEMENTOR_ACTION_REQUIRED", "resume the implementation to complete current pull-request feedback or merge work", lifecycleGateNone, nil, "")
 							}
 							result.Status = gateStatus
 							terminalExtras = mergeBlockerExtras(terminalExtras, extras)
@@ -3475,9 +3514,13 @@ loop:
 				}
 			}
 		}
-		if s.shouldAwaitUsageLimit(result) {
-			break loop
-		}
+	}
+	if result.UsageLimitReached && !result.ContextExhausted &&
+		!events.RunStatusFromPayload(result.Status).IsSuccess() {
+		terminalExtras = mergeLifecycleDiagnostics(terminalExtras, map[string]any{
+			"reason":      "AGENT_USAGE_LIMIT",
+			"next_action": "retry with an agent provider that has available capacity or resume after its usage limit resets; Sandman did not enter an external wait",
+		})
 	}
 
 	if result.ContextExhausted {
@@ -3487,14 +3530,6 @@ loop:
 		terminalExtras["context_exhausted"] = true
 	}
 	return result, terminalExtras, true
-}
-
-func (s *runSession) shouldAwaitUsageLimit(result AgentRunResult) bool {
-	return s.issueNumber > 0 &&
-		strategyFor(s.agentCfg.Preset, s.agentCfg.Command).AwaitsUsageLimit() &&
-		result.UsageLimitReached &&
-		!result.ContextExhausted &&
-		s.usageLimitWaited < usageLimitRetryWindow
 }
 
 func (s *runSession) restoreHostPathsBeforeExternalGate(wt sandbox.Sandbox) bool {
@@ -3584,7 +3619,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		s.emitEarlyFailure("recheck blockers", branch, err)
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 	}
-	runID := buildRunID(s.issueNumber, s.runTS, s.runShortID)
+	runID := s.issueRunID()
 	if len(blockedBy) > 0 {
 		res := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "blocked", Branch: branch}
 		logBlocked(s.deps.eventLog, s.issueNumber, blockedBy, runID, s.batchID)
@@ -3713,15 +3748,13 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	logPath := s.runLogPathFor(runID)
 	// Entry re-evaluation (issue #2595): a resume candidate (continuation,
 	// or preserved review artifacts) re-entering while the PR gate is
-	// already resolvable must not launch the agent blindly. A merely
-	// pending gate emits run.await and ends the session without launching;
+	// already resolvable must not launch the agent blindly. An actively
+	// resolving pending gate emits run.await and ends the session without launching;
 	// a ready-to-merge / actionable-feedback gate attaches the
 	// request-scoped evidence to the entry launch prompt (the entry launch
 	// IS the resume).
-	if !s.usageLimitProbe {
-		if entryResult, entryStarted, entryHandled := s.tryEntryResume(ctx, branch, wt, logPath, runID); entryHandled {
-			return entryResult, entryStarted
-		}
+	if entryResult, entryStarted, entryHandled := s.tryEntryResume(ctx, branch, wt, logPath, runID); entryHandled {
+		return entryResult, entryStarted
 	}
 	result, terminalExtras, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, s.mode != ModeContinue, func(attempt int, previous AgentRunResult) (prompt.RenderConfig, *AgentRunResult) {
 		attemptRenderCfg := s.renderCfg
@@ -3790,19 +3823,9 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		terminalExtras["cleanup_error"] = result.CleanupError.Error()
 	}
 
-	// Await is a non-terminal state: emit run.await (not run.finished)
-	// and skip terminal cleanup. The observation loop emitted the initial
-	// await before waiting; the run stays active until the external gate
-	// resolves or the context is canceled.
-	if s.shouldAwaitUsageLimit(result) {
-		result.Status = s.emitAwait(ctx, runID, result, map[string]any{
-			"await_reason":                     "usage-limit",
-			"usage_limit_poll_seconds":         int(usageLimitPollInterval / time.Second),
-			"usage_limit_waited_seconds":       int(s.usageLimitWaited / time.Second),
-			"usage_limit_retry_window_seconds": int(usageLimitRetryWindow / time.Second),
-		})
-		return result, true
-	}
+	// Usage-limit responses take the ordinary bounded failure/retry path.
+	// They are not admitted to run.await: a timer alone is not proof of a
+	// restart-safe external resolver (issue #2743).
 	if result.Status == "await" {
 		return result, true
 	}

@@ -229,16 +229,33 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					return fmt.Errorf("resolve repo root: %w", err)
 				}
 			}
-			sandmanDir := paths.NewLayout(cfg, repoRoot).SandmanDir
+			layout := paths.NewLayout(cfg, repoRoot)
+			sandmanDir := layout.SandmanDir
 
 			overrideFlag, _ := cmd.Flags().GetBool("override")
 			continueFlag, _ := cmd.Flags().GetBool("continue")
 			reuseSessionFlag, _ := cmd.Flags().GetBool("reuse-session")
+			runIDFlag := cmd.Flags().Lookup("run-id")
+			runID, _ := cmd.Flags().GetString("run-id")
+			if runIDFlag.Changed {
+				if err := runid.IsValidUserRunID(runID); err != nil {
+					return MarkUsage(fmt.Errorf("--run-id %v", err))
+				}
+			}
 			if overrideFlag && continueFlag {
 				return MarkUsage(fmt.Errorf("--override cannot be combined with --continue"))
 			}
 			if reuseSessionFlag && !continueFlag {
 				return MarkUsage(fmt.Errorf("--reuse-session requires --continue"))
+			}
+			var eventLogSnapshot []events.Event
+			var readyContinuations []batch.ReadyContinuation
+			if runID == "" && !overrideFlag && deps.EventLog != nil {
+				eventLogSnapshot, err = deps.EventLog.Read()
+				if err != nil {
+					return fmt.Errorf("read event log for ready continuations: %w", err)
+				}
+				readyContinuations = batch.FindReadyContinuations(eventLogSnapshot, layout)
 			}
 			if err := requireReviewDaemon(cfg.EffectiveReviewCommand(), sandmanDir); err != nil {
 				return err
@@ -269,14 +286,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 			reviewCommand := cfg.EffectiveReviewCommand()
 
-			runIDFlag := cmd.Flags().Lookup("run-id")
-			runID, _ := cmd.Flags().GetString("run-id")
-			if runIDFlag.Changed {
-				if err := runid.IsValidUserRunID(runID); err != nil {
-					return MarkUsage(fmt.Errorf("--run-id %v", err))
-				}
-			}
-
 			selectedPrompt := ""
 			overridePrompt := false
 			switch {
@@ -298,6 +307,9 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 			includeDependencies, _ := cmd.Flags().GetBool("include-dependencies")
 			issueSelectionProvided := len(args) > 0 || label != "" || query != ""
+			if overridePrompt && !issueSelectionProvided {
+				readyContinuations = nil
+			}
 
 			if runID != "" && issueSelectionProvided {
 				return MarkUsage(fmt.Errorf("--run-id cannot be combined with issue selection, --label, or --query"))
@@ -418,14 +430,14 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 							if err != nil {
 								return err
 							}
-						} else {
+						} else if len(readyContinuations) == 0 {
 							return MarkUsage(fmt.Errorf("no issues provided"))
 						}
 					}
 				}
 			}
 
-			if len(issues) == 0 && (!overridePrompt || promptNeedsIssueSelection) && !(continueFlag && runID != "") {
+			if len(issues) == 0 && (!overridePrompt || promptNeedsIssueSelection) && !(continueFlag && runID != "") && len(readyContinuations) == 0 {
 				return MarkUsage(fmt.Errorf("no issues selected"))
 			}
 
@@ -445,6 +457,13 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 			if parentChildren == nil {
 				parentChildren = map[int][]int{}
+			}
+			if runID == "" && (!overridePrompt || issueSelectionProvided) {
+				for _, continuation := range readyContinuations {
+					if !containsIssue(issues, continuation.IssueNumber) {
+						issues = append(issues, continuation.IssueNumber)
+					}
+				}
 			}
 
 			baseBranchFlag, _ := cmd.Flags().GetString("base-branch")
@@ -712,6 +731,15 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 				if continuationReq.PromptConfig.PromptFlag != "" {
 					req.PromptConfig.PromptFlag = continuationReq.PromptConfig.PromptFlag
+				}
+			}
+			if runID == "" && (!overridePrompt || issueSelectionProvided) && len(readyContinuations) > 0 {
+				continuationTimeout := cfg.EffectiveReviewTimeout()
+				if reviewTimeoutSet {
+					continuationTimeout = reviewTimeout
+				}
+				if err := batch.ApplyReadyContinuations(&req, readyContinuations, layout, continuationTimeout); err != nil {
+					return err
 				}
 			}
 

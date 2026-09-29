@@ -21,8 +21,8 @@ import (
 // TestRunBatch_ClaudePresetWorktreeEndToEnd runs the built-in claude preset
 // command through a real git worktree and a real shell against a fake
 // `claude` binary on PATH. The first launch stops at a subscription usage
-// limit; the run must await instead of retrying, and the re-entry must resume
-// the same conversation through Claude Code's --continue.
+// limit; the run follows the configured ordinary retry budget without
+// entering an external wait or reusing the limited conversation.
 func TestRunBatch_ClaudePresetWorktreeEndToEnd(t *testing.T) {
 	if !testenv.E2EGateAllowed(testenv.E2EScenarioBatch) {
 		t.Skip("set SANDMAN_E2E_GATES=batch (or all) to run the claude preset e2e")
@@ -90,8 +90,8 @@ func TestRunBatch_ClaudePresetWorktreeEndToEnd(t *testing.T) {
 		logged, _ := eventLog.Read()
 		t.Fatalf("result = %+v, want one successful run\nevents=%+v\nerror log:\n%s", result, logged, errorLog.String())
 	}
-	if len(waits) != 1 || waits[0] != usageLimitPollInterval {
-		t.Fatalf("await waits = %v, want one usage-limit poll", waits)
+	if len(waits) != 0 {
+		t.Fatalf("await waits = %v, want none for a provider usage limit", waits)
 	}
 
 	logged, err := eventLog.Read()
@@ -100,6 +100,7 @@ func TestRunBatch_ClaudePresetWorktreeEndToEnd(t *testing.T) {
 	}
 	runID := ""
 	awaits := 0
+	retries := 0
 	for _, event := range logged {
 		switch event.Type {
 		case "run.started":
@@ -108,15 +109,12 @@ func TestRunBatch_ClaudePresetWorktreeEndToEnd(t *testing.T) {
 			}
 		case "run.await":
 			awaits++
-			if event.Payload["await_reason"] != "usage-limit" {
-				t.Fatalf("run.await payload = %+v, want await_reason usage-limit", event.Payload)
-			}
 		case "run.retry":
-			t.Fatalf("usage limit took the retry path: %+v", event)
+			retries++
 		}
 	}
-	if runID == "" || awaits != 1 {
-		t.Fatalf("run id %q, awaits %d; events=%+v", runID, awaits, logged)
+	if runID == "" || awaits != 0 || retries != 1 {
+		t.Fatalf("run id %q, awaits %d, retries %d; events=%+v", runID, awaits, retries, logged)
 	}
 
 	worktree, err := filepath.EvalSymlinks(filepath.Join(dir, ".sandman", "worktrees", branch))
@@ -133,9 +131,9 @@ func TestRunBatch_ClaudePresetWorktreeEndToEnd(t *testing.T) {
 		t.Fatalf("prompt argument = %q, want the rendered Task", prompt)
 	}
 	secondPrompt := strings.TrimRight(readFakeClaudeFile(t, stateDir, "launch-2.task"), "\n")
-	wantSecond := []string{"-p", "--output-format", "stream-json", "--verbose", "--continue", "--name", "Sandman " + runID + ": ", "--model", "sonnet", secondPrompt}
+	wantSecond := []string{"-p", "--output-format", "stream-json", "--verbose", "--name", "Sandman " + runID + ": ", "--model", "sonnet", secondPrompt}
 	if got := readFakeClaudeArgs(t, stateDir, 2); !reflect.DeepEqual(got, wantSecond) {
-		t.Fatalf("re-entry argv:\n got %q\nwant %q", got, wantSecond)
+		t.Fatalf("ordinary retry argv:\n got %q\nwant %q", got, wantSecond)
 	}
 	for launch := 1; launch <= 2; launch++ {
 		env := readFakeClaudeFile(t, stateDir, "launch-"+string(rune('0'+launch))+".env")
@@ -166,7 +164,7 @@ func TestRunBatch_ClaudePresetWorktreeEndToEnd(t *testing.T) {
 		t.Fatalf("session.json stat = %v; claude runs keep no OpenCode session identity", err)
 	}
 	if committed := runGit(t, worktree, "show", "HEAD:claude-resumed.txt"); strings.TrimSpace(committed) != "claude resumed" {
-		t.Fatalf("re-entry work = %q, want the resumed commit", committed)
+		t.Fatalf("retry work = %q, want the committed retry result", committed)
 	}
 }
 

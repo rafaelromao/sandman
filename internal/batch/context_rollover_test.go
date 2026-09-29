@@ -30,6 +30,7 @@ func TestContextRolloverRecovery(t *testing.T) {
 		issues: map[int]*github.Issue{
 			42: {Number: 42, Title: "Recover context", State: "closed"},
 		},
+		prs: map[string]*github.PR{branch: nil},
 	}
 
 	o := NewOrchestrator(
@@ -748,7 +749,7 @@ func TestContextRecoveryTaskWriteFailure(t *testing.T) {
 	eventLog := &events.JSONLLogger{Path: filepath.Join(workDir, "events.jsonl")}
 	writeCalls := 0
 	o := NewOrchestrator(
-		&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Recover task", State: "closed"}}},
+		&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Recover task", State: "closed"}}, prs: map[string]*github.PR{branch: nil}},
 		&retryRenderer{result: "# Task\n\nInitial task."},
 		nil,
 		eventLog,

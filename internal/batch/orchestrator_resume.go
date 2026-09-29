@@ -97,6 +97,15 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 	if !handled {
 		return AgentRunResult{}, false, false
 	}
+	if gateStatus == "failure" && isImplementorOwnedGateFailure(extras) {
+		// An idle gate at session entry means nobody is resolving yet and
+		// the next step is implementor-owned work (push, create the PR,
+		// request review): launch the agent instead of terminalizing or
+		// waiting, so the session can perform it (issue #2743). A session
+		// that exits with the work still undone fails at the post-agent
+		// decision.
+		return AgentRunResult{}, false, false
+	}
 	if gateStatus == "success" || gateStatus == "failure" || gateStatus == "aborted" {
 		result := AgentRunResult{
 			IssueNumber:  s.issueNumber,
@@ -160,8 +169,8 @@ func (s *runSession) resumeCapFor() int {
 // the continuation prompt carrying the request-scoped review evidence. The
 // returned bool reports whether a relaunch should happen; callers leave the
 // gate-handling (await / terminal) untouched when it is false — in
-// particular, when the per-session resume cap is exhausted the gate falls
-// back to run.await.
+// particular, when the per-session resume cap is exhausted the gate
+// terminalizes as failure instead of entering another wait.
 func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbox, branch, runID string, extras map[string]any) (string, bool) {
 	if s.deps.githubClient == nil || s.resumeCount >= s.resumeCapFor() {
 		return "", false
@@ -177,18 +186,18 @@ func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbo
 	return s.resumePromptFor(taskContent, evidence, s.renderCfg.ReviewTimeout), true
 }
 
+// isImplementorOwnedGateFailure reports lifecycle failures whose next step
+// belongs to the implementor (missing PR publication or an idle gate). At
+// session entry, launch the agent to perform that work instead of terminalizing
+// before it gets an opportunity.
+func isImplementorOwnedGateFailure(extras map[string]any) bool {
+	reason, _ := extras["reason"].(string)
+	return reason == idleGateReason || reason == missingPRReason
+}
+
 func isResumeGate(gate string) bool {
 	switch gate {
 	case gateReadyToMerge, gateActionableFeedback, gateReviewTimeout, gateCIWaitTimeout, gatePRHeadChanged, "ci-failure", "merge-conflict":
-		return true
-	default:
-		return false
-	}
-}
-
-func isCIRemediationGate(gate string) bool {
-	switch gate {
-	case gateCIWaitTimeout, "ci-failure":
 		return true
 	default:
 		return false

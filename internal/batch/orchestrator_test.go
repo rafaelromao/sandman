@@ -244,6 +244,9 @@ func (f *fakeGitHubClient) FindPRByBranch(ctx context.Context, branch string) (*
 	}
 	if f.prs != nil {
 		if pr, ok := f.prs[branch]; ok {
+			if pr == nil {
+				return nil, nil
+			}
 			if pr.Merged && strings.TrimSpace(pr.Body) == "" {
 				copy := *pr
 				refs := make([]string, 0, len(f.issues))
@@ -1457,13 +1460,17 @@ func TestRunSingle_WaitsForExternalGateAfterCleanExit(t *testing.T) {
 	o := &Orchestrator{
 		githubClient: &fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
-			prs:    map[string]*github.PR{branch: {Number: 17, State: "open", Merged: false, HeadRefName: branch}},
+			prs: map[string]*github.PR{branch: {Number: 17, State: "open", Merged: false, HeadRefName: branch, HeadRefOid: "current-sha",
+				// Running CI is the actively resolving operation this
+				// external-gate wait is pinned to (issue #2743).
+				StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"}},
 		},
 		renderer:        &retryRenderer{result: "rendered prompt"},
 		sandboxFactory:  sbFactory,
 		eventLog:        spyLog,
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
+		runSessionOpts:  runSessionOptions{currentHead: func(string) (string, error) { return "current-sha", nil }},
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
@@ -1520,6 +1527,7 @@ func TestRunSingle_MergedPRSuccessRegardlessOfAgentExitCode(t *testing.T) {
 		eventLog:        spyLog,
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
+		runSessionOpts:  runSessionOptions{currentHead: func(string) (string, error) { return "current-sha", nil }},
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
@@ -1547,13 +1555,19 @@ func TestRunSingle_UnmergedPROpenGateIsNotAgentFailure(t *testing.T) {
 	o := &Orchestrator{
 		githubClient: &fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
-			prs:    map[string]*github.PR{branch: {Number: 17, State: "open", Merged: false, HeadRefName: branch}},
+			prs: map[string]*github.PR{branch: {Number: 17, State: "open", Merged: false, HeadRefName: branch, HeadRefOid: "current-sha",
+				// Running CI is the actively resolving operation this
+				// external-gate wait is pinned to (issue #2743).
+				StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"}},
 		},
 		renderer:        &retryRenderer{result: "rendered prompt"},
 		sandboxFactory:  sbFactory,
 		eventLog:        spyLog,
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
+		runSessionOpts: runSessionOptions{
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
@@ -1588,9 +1602,9 @@ func TestRunSingle_ModeContinueUnmergedPROpenGateIsBlocked(t *testing.T) {
 				State:             "open",
 				HeadRefName:       branch,
 				HeadRefOid:        "current-sha",
-				StatusCheckRollup: "success",
-				ReviewDecision:    "APPROVED",
-				MergeStateStatus:  "CLEAN",
+				StatusCheckRollup: "pending",
+				ReviewDecision:    "REVIEW_REQUIRED",
+				MergeStateStatus:  "BLOCKED",
 			}},
 		},
 		renderer:        &retryRenderer{result: "rendered prompt"},
@@ -1868,11 +1882,15 @@ func TestRunSingle_ModeContinueRequestedChangesIsActionableWithoutRetry(t *testi
 		PreviousRunIDs: map[int]string{42: "prior-run"},
 		BaseBranch:     "main",
 	})
+	// Issue #2743: a stale changes-requested gate with no actionable
+	// evidence and no confirmed request has no active resolver. Entry
+	// launches the agent once so it can perform the owned next step, and
+	// the post-agent decision fails instead of waiting.
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "await" {
-		t.Fatalf("status = %q, want await", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure (idle gate must not wait)", result.Status)
 	}
 	if result.RetriesTotal != 1 {
 		t.Fatalf("retries total = %d, want 1", result.RetriesTotal)
@@ -1884,9 +1902,12 @@ func TestRunSingle_ModeContinueRequestedChangesIsActionableWithoutRetry(t *testi
 	if got := countEventsByType(logs, "run.retry"); got != 0 {
 		t.Fatalf("run.retry events = %d, want 0", got)
 	}
-	await := findEvent(logs, "run.await")
-	if await == nil || await.Payload["gate"] != "failed" {
-		t.Fatalf("continuation await gate = %v, want failed", await)
+	if got := countEventsByType(logs, "run.await"); got != 0 {
+		t.Fatalf("run.await events = %d, want 0", got)
+	}
+	finished := findEvent(logs, "run.finished")
+	if finished == nil || finished.Payload["reason"] != idleGateReason {
+		t.Fatalf("finished reason = %v, want %q", finished, idleGateReason)
 	}
 }
 
@@ -7055,7 +7076,10 @@ func TestRunBatch_ModeContinueAgentSuccessUnmergedPROpenGate(t *testing.T) {
 	log := &spyEventLog{}
 	o := NewOrchestrator(&fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
-		prs:    map[string]*github.PR{branch: {Number: 1, State: "open", Merged: false, HeadRefName: branch}},
+		prs: map[string]*github.PR{branch: {Number: 1, State: "open", Merged: false, HeadRefName: branch, HeadRefOid: "current-sha",
+			// Running CI is the actively resolving operation this
+			// continuation await is pinned to (issue #2743).
+			StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"}},
 	}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "opencode", Sandbox: "worktree", WorktreeDir: filepath.Join(".sandman", "worktrees"), Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}}, log,
 		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}),
 		WithRunnableFactory(&controlledRunnableFactory{runnables: map[int]Runnable{
