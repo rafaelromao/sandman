@@ -579,6 +579,20 @@ func TestRunBatch_ConfirmedReviewReleasesSlotAndResumesAfterResponse(t *testing.
 		<-done
 		t.Fatalf("approved implementation did not queue for the occupied slot: starts=%v events=%v", factory.startsSnapshot(), log.snapshot())
 	}
+	var readyState *events.RunState
+	for _, state := range events.ProjectRunStates(log.snapshot()) {
+		if state.IssueNumber() == 1 {
+			copy := state
+			readyState = &copy
+			break
+		}
+	}
+	if readyState == nil || !readyState.IsActive() || readyState.IsAwaiting() || !readyState.IsCapacityQueued() || readyState.Status() != "queued" {
+		t.Fatalf("resolved continuation phase = %#v, want active capacity-queued state separate from external waiting", readyState)
+	}
+	if readyState.CapacityQueuedEvent == nil || readyState.CapacityQueuedEvent.Payload["ready_continuation"] != true {
+		t.Fatalf("resolved continuation is not durably marked ready: %#v", readyState.CapacityQueuedEvent)
+	}
 	if starts := factory.startsSnapshot(); len(starts) != 2 || starts[0] != 1 || starts[1] != 2 {
 		t.Fatalf("ready implementation ran before a slot freed: starts=%v", starts)
 	}

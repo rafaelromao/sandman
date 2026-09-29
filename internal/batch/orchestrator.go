@@ -1653,8 +1653,11 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 
 	for turn, num := range ordered {
 		wg.Add(1)
-		runID := buildRunID(num, req.RunTS, req.RunShortID)
-		if o.eventLog != nil && (len(dependencies[num]) > 0 || (effectiveParallel > 0 && effectiveParallel < len(req.Issues))) {
+		runID := strings.TrimSpace(req.RunIDs[num])
+		if runID == "" {
+			runID = buildRunID(num, req.RunTS, req.RunShortID)
+		}
+		if o.eventLog != nil && (req.ReadyContinuations[num] || len(dependencies[num]) > 0 || (effectiveParallel > 0 && effectiveParallel < len(req.Issues))) {
 			queuedPayload := map[string]any{"blocked_by": dependencies[num]}
 			if title, ok := req.IssueTitles[num]; ok && title != "" {
 				queuedPayload["issue_title"] = title
@@ -1664,8 +1667,17 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			if issueBatchID != "" {
 				queuedPayload["batch_id"] = issueBatchID
 			}
+			queuedType := "run.queued"
+			if req.ReadyContinuations[num] {
+				queuedType = "run.capacity_queued"
+				queuedPayload["ready_continuation"] = true
+				queuedPayload["branch"] = req.Branches[num]
+				queuedPayload["base_branch"] = req.BaseBranches[num]
+				queuedPayload["previous_run_id"] = req.PreviousRunIDs[num]
+				queuedPayload["previous_run_batch_id"] = req.PreviousRunBatchIDs[num]
+			}
 			_ = o.eventLog.Log(events.Event{
-				Type:      "run.queued",
+				Type:      queuedType,
 				Timestamp: time.Now(),
 				RunID:     runID,
 				Issue:     num,
@@ -1825,6 +1837,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				Branches:            req.Branches,
 				PreviousRunIDs:      req.PreviousRunIDs,
 				PreviousRunBatchIDs: req.PreviousRunBatchIDs,
+				RunID:               runID,
 				ReuseSession:        req.ReuseSession[issueNum],
 				BaseBranch:          issueBaseBranch,
 				ExternalBlockers:    req.Blocked[issueNum],
@@ -1862,9 +1875,50 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					fmt.Fprintf(o.errorLog, "error: stop command server for issue %d: %v\n", issueNum, err)
 				}
 			}()
-			awaiting := false
+			executor := o.newRunExecutorWith(parentCtx, bc, policy.sandboxFactory, policy.containerAlloc, coord, coord, layout)
+			awaiting := req.ReadyContinuations[issueNum]
+			readyContinuation := awaiting
 			var opportunity awaitOpportunity
+			waitForObservation := func() error {
+				interval := awaitPollInterval(o.runSessionOpts, awaitPoll)
+				awaitPoll++
+				awaitWait := o.runSessionOpts.awaitWait
+				if awaitWait == nil {
+					awaitWait = waitForAwaitPoll
+				}
+				return awaitWait(issueCtx, interval)
+			}
 			for {
+				if awaiting && !readyContinuation {
+					status, extras, handled := executor.observeLifecycle(issueCtx, row)
+					if issueCtx.Err() != nil {
+						o.logAborted(issueNum, runID, nil)
+						res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
+						break
+					}
+					if handled && status == "await" {
+						if err := waitForObservation(); err != nil {
+							o.logAborted(issueNum, runID, nil)
+							res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
+							break
+						}
+						continue
+					}
+					if o.eventLog != nil {
+						if err := logCapacityQueuedContinuation(o.eventLog, runID, issueNum, issueBatchID, row, extras, req.IssueTitles[issueNum]); err != nil {
+							if o.errorLog != nil {
+								fmt.Fprintf(o.errorLog, "warning: persist ready continuation for issue %d: %v; keeping the run in its external wait\n", issueNum, err)
+							}
+							if waitErr := waitForObservation(); waitErr != nil {
+								o.logAborted(issueNum, runID, nil)
+								res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
+								break
+							}
+							continue
+						}
+					}
+					readyContinuation = true
+				}
 				var err error
 				if awaiting {
 					opportunity, err = startGate.AcquireAwaiting(issueCtx, opportunity)
@@ -1876,7 +1930,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
 					break
 				}
-				res, started = o.newRunExecutorWith(parentCtx, bc, policy.sandboxFactory, policy.containerAlloc, coord, coord, layout).Execute(issueCtx, row)
+				res, started = executor.Execute(issueCtx, row)
 				if started {
 					startGate.Release()
 				} else {
@@ -1890,18 +1944,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					yieldedCapacity = true
 				}
 				advanceTurn()
-				interval := time.Duration(implementationReviewPollPlan[len(implementationReviewPollPlan)-1]) * time.Second
-				if len(o.runSessionOpts.lifecyclePollPlan) > 0 {
-					interval = o.runSessionOpts.lifecyclePollPlan[min(awaitPoll, len(o.runSessionOpts.lifecyclePollPlan)-1)]
-				} else if awaitPoll < len(implementationReviewPollPlan) {
-					interval = time.Duration(implementationReviewPollPlan[awaitPoll]) * time.Second
-				}
-				awaitPoll++
-				awaitWait := o.runSessionOpts.awaitWait
-				if awaitWait == nil {
-					awaitWait = waitForAwaitPoll
-				}
-				if err := awaitWait(issueCtx, interval); err != nil {
+				if err := waitForObservation(); err != nil {
 					o.logAborted(issueNum, runID, nil)
 					res.Status = "aborted"
 					break
@@ -1911,6 +1954,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				row.PreviousRunBatchIDs = map[int]string{issueNum: issueBatchID}
 				row.ReuseSession = true
 				awaiting = true
+				readyContinuation = false
 				continue
 			}
 			mu.Lock()
@@ -2939,7 +2983,7 @@ func (s *runSession) emitEarlyFailure(reason, branch string, underlyingErr error
 	if s.deps.eventLog == nil {
 		return
 	}
-	runID := buildRunID(s.issueNumber, s.runTS, s.runShortID)
+	runID := s.issueRunID()
 	payload := map[string]any{
 		"status":        "failure",
 		"branch":        branch,
@@ -3575,7 +3619,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		s.emitEarlyFailure("recheck blockers", branch, err)
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 	}
-	runID := buildRunID(s.issueNumber, s.runTS, s.runShortID)
+	runID := s.issueRunID()
 	if len(blockedBy) > 0 {
 		res := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "blocked", Branch: branch}
 		logBlocked(s.deps.eventLog, s.issueNumber, blockedBy, runID, s.batchID)

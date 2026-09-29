@@ -35,6 +35,11 @@ type RunState struct {
 	// Started and AwaitEvent are preserved. Consumers read
 	// ResumeReason() for the structured reason.
 	ResumedEvent *Event
+	// CapacityQueuedEvent records the latest resolved continuation that is
+	// waiting for an execution slot. It is historical evidence, like AwaitEvent;
+	// capacityQueued describes whether it is the current non-terminal phase.
+	CapacityQueuedEvent *Event
+	capacityQueued      bool
 	// Retries holds every run.retry event emitted against this run, in
 	// input (events.jsonl) order. It is the projection's view of the
 	// retry timeline; state-level helpers (LiveAttempt,
@@ -72,6 +77,7 @@ func ProjectRunStates(events []Event) []RunState {
 			state.Started = event
 			state.Finished = nil
 			state.awaiting = false
+			state.capacityQueued = false
 			state.activeDuration = 0
 			state.activeSince = event.Timestamp
 		case "run.continued":
@@ -91,12 +97,14 @@ func ProjectRunStates(events []Event) []RunState {
 			state.Started = event
 			state.Finished = nil
 			state.awaiting = false
+			state.capacityQueued = false
 			state.activeSince = event.Timestamp
 		case "run.blocked":
 			state.Started = event
 			finished := event
 			state.Finished = &finished
 			state.awaiting = false
+			state.capacityQueued = false
 			state.activeDuration = 0
 			state.activeSince = time.Time{}
 		case "run.queued":
@@ -104,6 +112,7 @@ func ProjectRunStates(events []Event) []RunState {
 			finished := event
 			state.Finished = &finished
 			state.awaiting = false
+			state.capacityQueued = false
 			state.activeDuration = 0
 			state.activeSince = time.Time{}
 		case "run.await":
@@ -115,6 +124,18 @@ func ProjectRunStates(events []Event) []RunState {
 			awaitEvent := event
 			state.AwaitEvent = &awaitEvent
 			state.awaiting = true
+			state.capacityQueued = false
+		case "run.capacity_queued":
+			// This non-terminal phase is distinct from both external waiting
+			// and the terminal run.queued placeholder. The external operation
+			// has resolved; the ready continuation is durably waiting for
+			// scheduler capacity and may be rehydrated after a restart.
+			state.accumulateActiveUntil(event.Timestamp)
+			queuedEvent := event
+			state.CapacityQueuedEvent = &queuedEvent
+			state.Finished = nil
+			state.awaiting = false
+			state.capacityQueued = true
 		case "run.resumed":
 			// run.resumed is a non-terminal event: it records that the
 			// run relaunched its agent session in-session with
@@ -128,18 +149,21 @@ func ProjectRunStates(events []Event) []RunState {
 					state.activeSince = event.Timestamp
 				}
 				state.awaiting = false
+				state.capacityQueued = false
 			}
 		case "run.finished", "run.aborted", "run.cancelled":
 			state.accumulateActiveUntil(event.Timestamp)
 			finished := event
 			state.Finished = &finished
 			state.awaiting = false
+			state.capacityQueued = false
 		case "run.retry":
 			state.Retries = append(state.Retries, event)
 			if state.awaiting {
 				state.activeSince = event.Timestamp
 			}
 			state.awaiting = false
+			state.capacityQueued = false
 		}
 	}
 
@@ -239,8 +263,18 @@ func (r RunState) IsAwaiting() bool {
 	return r.IsActive() && r.awaiting
 }
 
-// Status returns the terminal status from the finished event.
+// IsCapacityQueued reports whether a non-terminal continuation is waiting for
+// execution capacity after its external gate resolved.
+func (r RunState) IsCapacityQueued() bool {
+	return r.IsActive() && r.capacityQueued
+}
+
+// Status returns the terminal status from the finished event, or "queued"
+// while a resolved continuation is waiting for execution capacity.
 func (r RunState) Status() string {
+	if r.IsCapacityQueued() {
+		return RunStatusQueued.String()
+	}
 	return runStatusFromFinished(r.Finished).String()
 }
 
@@ -271,6 +305,11 @@ func runStatusFromFinished(finished *Event) RunStatus {
 
 // Branch returns the run branch from the first event that recorded one.
 func (r RunState) Branch() string {
+	if r.CapacityQueuedEvent != nil {
+		if branch, ok := payloadString(r.CapacityQueuedEvent.Payload, "branch"); ok && branch != "" {
+			return branch
+		}
+	}
 	if branch, ok := payloadString(r.Started.Payload, "branch"); ok && branch != "" {
 		return branch
 	}
@@ -284,6 +323,11 @@ func (r RunState) Branch() string {
 
 // BatchID returns the batch identifier from the started event payload.
 func (r RunState) BatchID() string {
+	if r.CapacityQueuedEvent != nil {
+		if id, ok := payloadString(r.CapacityQueuedEvent.Payload, "batch_id"); ok && id != "" {
+			return id
+		}
+	}
 	if id, ok := payloadString(r.Started.Payload, "batch_id"); ok && id != "" {
 		return id
 	}
@@ -316,7 +360,7 @@ func (r RunState) DurationAt(at time.Time) time.Duration {
 	}
 
 	duration := r.activeDuration
-	if !r.awaiting && !r.activeSince.IsZero() && at.After(r.activeSince) {
+	if !r.awaiting && !r.capacityQueued && !r.activeSince.IsZero() && at.After(r.activeSince) {
 		duration += at.Sub(r.activeSince)
 	}
 	return duration.Round(time.Second)

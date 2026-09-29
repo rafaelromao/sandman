@@ -32,7 +32,7 @@ Sandman writes structured events to `.sandman/events.jsonl` in newline-delimited
 
 | Field | Description |
 |-------|-------------|
-| `type` | Event type (`run.started`, `run.continued`, `run.queued`, `run.blocked`, `run.retry`, `run.idle_timeout`, `run.warning`, `run.await`, `run.resumed`, `run.finished`, `run.aborted`) |
+| `type` | Event type (`run.started`, `run.continued`, `run.queued`, `run.capacity_queued`, `run.blocked`, `run.retry`, `run.idle_timeout`, `run.warning`, `run.await`, `run.resumed`, `run.finished`, `run.aborted`) |
 | `timestamp` | ISO 8601 timestamp |
 | `run_id` | Per-row RunID. For review runs the shape is `<ts>-<sid>-<linkedIssue?>-PR<pr>`. This is the row-level identifier; the batch-level identifier (public BatchId) is the `batch_id` field on the `run.started` / `run.finished` payloads, not this row. |
 | `batch_id` | Public BatchId (batch-level identifier). Always present on `run.started` and `run.continued` payloads; mirrors the batch folder basename. |
@@ -64,6 +64,19 @@ Emitted when an issue enters the wait queue due to unresolved blockers or parall
 | Field | Description |
 |-------|-------------|
 | `blocked_by` | List of issue numbers blocking this run |
+
+#### `run.capacity_queued`
+Emitted after a lifecycle observation confirms that an external gate has resolved, when the continuation still needs an execution slot. It is non-terminal and distinct from both `run.await` (external work is still resolving) and the terminal `run.queued` placeholder. The active run projects as `queued`, not `waiting`; its historical await evidence remains available. If the owning process stops before capacity becomes available, the next normal `sandman run` admission rehydrates this continuation without requiring `--continue`, then revalidates the live head and request before execution.
+
+| Field | Description |
+|-------|-------------|
+| `ready_continuation` | `true` for a durable continuation that may be rehydrated |
+| `branch`, `base_branch` | Preserved worktree identity |
+| `batch_id` | Batch currently scheduling the continuation |
+| `previous_run_id`, `previous_run_batch_id` | Prior Run identity, used to restore runtime-owned continuation context |
+| `reuse_session` | `true` when the continuation may reuse its supported agent session |
+| `gate`, `reason`, `next_action` | Resolved lifecycle evidence that made the continuation runnable |
+| `review_request`, `ci_wait` | Optional request-scoped review or CI evidence |
 
 #### `run.blocked`
 Emitted when one or more `BlockedBy` issues are not satisfied at the dependent start decision. For in-batch blockers the two-part gate applies: the blocker must both have reached terminal batch status `success` and be `closed` on GitHub; a successful but still `open` in-batch blocker produces terminal `run.blocked` with the open blocker named, and no agent is launched or wait state added. External blockers are gated on `closed` alone. Failed and `blocked` blockers also produce `run.blocked`; an `aborted` blocker cascades as `run.aborted` instead. See `CONTEXT.md` BlockedBy / In-batch blocker for the canonical gate definition.
@@ -126,7 +139,7 @@ Emitted when an agent run completes.
 #### `run.await`
 Emitted when an issue-driven run ends its agent session while an external operation is actively resolving: current-head CI is queued/running, or a delegated-review request has been confirmed and remains within its deadline. A confirmed review request counts as ongoing from successful delivery, even before the reviewer starts. A PR's existence, generic `pending` label, `REVIEW_REQUIRED`, `BLOCKED`, absent checks, stale head, failed lookup/state read, or exhausted operation budget cannot alone authorize an await. Agent-owned work is resumed or fails with a structured next action instead of being parked. A legitimate await is non-terminal and does not consume an agent retry. Pending current-head CI carries a durable, non-renewing 30-minute per-head deadline in `ci_wait`; a review request carries its confirmed request identity and deadline. The row keeps dependency ownership while the scheduler releases execution capacity between observations. When external work finishes, the run resumes on an available slot (or remains capacity-queued until one frees); it does not require manual continuation.
 
-The run timer pauses at `run.await`. A later `run.resumed` event starts a new active segment, so duration readers exclude the full await interval. A `run.continued` event with the same RunID and BatchID continues the same Batch run and retains its accumulated active duration. A separate continued run with a new RunID or BatchID starts a fresh clock.
+The run timer pauses at `run.await` and remains paused while `run.capacity_queued` waits for a slot. A later `run.resumed` or `run.continued` event starts a new active segment, so duration readers exclude external wait and capacity-queue time. A `run.continued` event with the same RunID and BatchID continues the same Batch run and retains its accumulated active duration. A separate continued run with a new RunID or BatchID starts a fresh clock.
 
 | Field | Description |
 |-------|-------------|
@@ -168,8 +181,10 @@ review run starts. Pending current-head CI is bounded by its durable per-head
 deadline; a new head is the only reset boundary. The logical row keeps its
 dependents queued while execution capacity is released between observations.
 When the review produces request-scoped feedback or approval, the implementation
-resumes on an available slot to repair or merge; if capacity is full it remains
-queued and revalidates the live head/request before launch. Deadline expiry,
+resumes on an available slot to repair or merge; if capacity is full,
+`run.capacity_queued` durably records the ready continuation and rehydrates it
+through normal run admission after a process restart. It revalidates the live
+head/request before launch. Deadline expiry,
 unsupported gates, missing PR publication, stale heads, lookup/state errors, and
 exhausted remediation budgets cannot prolong waiting: the runtime resumes
 implementor-owned work where possible or terminalizes with a structured failure

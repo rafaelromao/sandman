@@ -1,0 +1,88 @@
+package batch
+
+import (
+	"context"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/rafaelromao/sandman/internal/events"
+)
+
+// observeLifecycle rechecks an awaiting continuation without acquiring an
+// execution slot or starting a sandbox. A resolved gate can therefore be
+// durably queued before the scheduler waits for capacity.
+func (e *runExecutor) observeLifecycle(ctx context.Context, row RowSpec) (string, map[string]any, bool) {
+	if row.IssueNumber <= 0 || e.deps.githubClient == nil {
+		return "", nil, false
+	}
+	session := newRunSession(e, row)
+	branch := strings.TrimSpace(row.Branches[row.IssueNumber])
+	if branch == "" {
+		return "", nil, false
+	}
+	if issue, err := e.deps.githubClient.FetchIssue(ctx, row.IssueNumber); err == nil && issue != nil {
+		session.issueState = issue.State
+	}
+	runID := row.RunID
+	if runID == "" {
+		runID = buildRunID(row.IssueNumber, row.RunTS, row.RunShortID)
+	}
+	workDir := filepath.Join(e.deps.layout.WorktreeDir, branch)
+	return session.handleLifecycleDecision(ctx, workDir, branch, session.runLogPathFor(runID), runID, true)
+}
+
+func (s *runSession) issueRunID() string {
+	if s.runID == "" {
+		s.runID = buildRunID(s.issueNumber, s.runTS, s.runShortID)
+	}
+	return s.runID
+}
+
+func awaitPollInterval(opts runSessionOptions, poll int) time.Duration {
+	if len(opts.lifecyclePollPlan) > 0 {
+		return opts.lifecyclePollPlan[min(poll, len(opts.lifecyclePollPlan)-1)]
+	}
+	if poll < len(implementationReviewPollPlan) {
+		return time.Duration(implementationReviewPollPlan[poll]) * time.Second
+	}
+	return time.Duration(implementationReviewPollPlan[len(implementationReviewPollPlan)-1]) * time.Second
+}
+
+func logCapacityQueuedContinuation(log events.EventLog, runID string, issue int, batchID string, row RowSpec, extras map[string]any, issueTitle string) error {
+	if log == nil {
+		return nil
+	}
+	branch := strings.TrimSpace(row.Branches[issue])
+	previousRunID := strings.TrimSpace(row.PreviousRunIDs[issue])
+	if previousRunID == "" {
+		previousRunID = runID
+	}
+	previousBatchID := strings.TrimSpace(row.PreviousRunBatchIDs[issue])
+	if previousBatchID == "" {
+		previousBatchID = batchID
+	}
+	payload := map[string]any{
+		"ready_continuation":    true,
+		"branch":                branch,
+		"base_branch":           row.BaseBranch,
+		"batch_id":              batchID,
+		"previous_run_id":       previousRunID,
+		"previous_run_batch_id": previousBatchID,
+		"reuse_session":         true,
+		"issue_title":           issueTitle,
+	}
+	for _, key := range []string{"gate", "reason", "next_action", "review_request", "ci_wait", "pull_request", "head_sha"} {
+		if value, ok := extras[key]; ok {
+			payload[key] = value
+		}
+	}
+	return log.Log(events.Event{
+		Type:      "run.capacity_queued",
+		Timestamp: time.Now(),
+		RunID:     runID,
+		Issue:     issue,
+		IssueRef:  issueRef(issue),
+		Payload:   payload,
+	})
+}

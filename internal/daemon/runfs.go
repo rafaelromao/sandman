@@ -339,6 +339,12 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 		latestTerminal := latestTerminalForIssues(batch.Manifest.Issues, byIssue)
 		for _, issueNumber := range batch.Manifest.Issues {
 			for _, run := range byIssue[issueNumber] {
+				if run.IsCapacityQueued() {
+					// The ready continuation is durably queued for a later
+					// scheduler admission. Preserve its worktree and event
+					// state so the next run command can rehydrate it.
+					continue
+				}
 				if _, ok := recoveredRunIDs[run.RunID]; ok {
 					continue
 				}
@@ -532,6 +538,9 @@ func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log even
 
 	var recovered int
 	for _, run := range runs {
+		if run.IsCapacityQueued() {
+			continue
+		}
 		if !run.IsActive() && run.Status() != "queued" && run.Status() != "blocked" {
 			continue
 		}
