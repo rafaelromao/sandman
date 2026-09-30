@@ -21,9 +21,9 @@ curl -fsSL https://raw.githubusercontent.com/rafaelromao/sandman/main/scripts/in
 ## Quick Start
 
 ```bash
-# Prerequisites: Git, gh and OpenCode (or Claude Code) properly configured
+# Prerequisites: Git, gh and OpenCode (or Claude Code, experimental in v1) properly configured
 
-# 1. Initialize a project (use `sandman init --agent claude` for Claude Code)
+# 1. Initialize a project (use `sandman init --agent claude` for experimental Claude Code support)
 cd my-repo && sandman init
 
 # 2. Run the review daemon (optional)
@@ -67,7 +67,7 @@ Sandman manages the lifecycle of automated coding workflows:
 | [Badge](docs/usage/badge.md) | Built with Sandman badge — trigger, idempotency, and opt-out |
 | [Monitoring and Debugging](docs/usage/monitoring.md) | Status, history, event log, and idle timeout |
 | [Troubleshooting](docs/help/troubleshooting.md) | Common failure modes and the first thing to try for each |
-| [Agent Compatibility](docs/usage/agent-compatibility.md) | Built-in agent presets (OpenCode, Claude Code), container auth model, and limitations |
+| [Agent Compatibility](docs/usage/agent-compatibility.md) | Built-in agent presets (OpenCode and experimental-in-v1 Claude Code), container auth model, and limitations |
 | [FAQ](docs/help/faq.md) | Questions people ask before installing |
 
 Other:

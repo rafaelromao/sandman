@@ -36,7 +36,7 @@ When the server starts, it prints the URL to open in your browser.
 ## What it shows
 
 - Live Sandman instances in the current repository
-- Active, waiting, and completed runs from `.sandman/events.jsonl`
+- Running, waiting, queued, reviewing, and completed runs from `.sandman/events.jsonl`
 
 The runs table displays these columns: **Run**, **Status**, **Started**, **Duration**, **Issue Title**, **Branch**, and **Actions**. The Issue Title column shows the GitHub issue title for runs with that data available, or an em-dash for prompt-only runs. Source information (socket and log file paths) remains visible in the Details tab when expanding a run.
 
@@ -170,7 +170,7 @@ Full snapshot and summary variants return `runs` as an array:
       "key": "<per-row RunID>",
       "runId": "<per-row RunID>",
       "kind": "issue|review|prompt",
-      "status": "active|waiting|success|failure|blocked|aborted|archived|queued",
+      "status": "running|waiting|queued|reviewing|success|failure|blocked|aborted|archived",
       "issueLabel": "#1234",
       "issueNumber": 1234,
       "branch": "feature-branch",

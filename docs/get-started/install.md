@@ -6,7 +6,7 @@ Full setup guide: prerequisites, install methods, agent setup (OpenCode or Claud
 
 - [Git](https://git-scm.com/)
 - [`gh` CLI](https://cli.github.com/) — authenticated and with `repo` scope
-- An agent CLI: [OpenCode](https://opencode.ai/) (the default) or [Claude Code](https://code.claude.com/) (to use a Claude subscription)
+- An agent CLI: [OpenCode](https://opencode.ai/) (the default) or [Claude Code](https://code.claude.com/) (experimental in v1, for a Claude subscription)
 - Optional but recommended: [Podman](https://podman.io/) or [Docker](https://docker.com/) for container-backed sandboxing
 
 ## Install Sandman
@@ -128,7 +128,7 @@ Add the instruction file to `~/.config/opencode/opencode.json`:
 
 Restart OpenCode after installing so the instruction file is loaded for the next session.
 
-## Claude Code setup
+## Claude Code setup (experimental in v1)
 
 To run Sandman with a Claude Pro, Max, Team, or Enterprise subscription, use the `claude` preset, which runs the unmodified Claude Code CLI in print mode:
 
