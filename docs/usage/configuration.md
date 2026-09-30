@@ -105,7 +105,7 @@ Sandman has two built-in presets: `opencode` (the default `agent`) and `claude`.
 
 When you use the `opencode` preset, install the `opencode-shell-strategy` plugin first. Sandman runs OpenCode without a TTY/PTY, so this plugin prevents interactive shell commands from hanging during runs. OpenCode subagents inherit the same instructions.
 
-The `claude` preset runs the unmodified Claude Code CLI in print mode and is how you use a Claude subscription with Sandman. See [Agent Compatibility](agent-compatibility.md#claude-code) for authentication, permissions, and its limitations.
+The `claude` preset (experimental in v1) runs the unmodified Claude Code CLI in print mode and is how you use a Claude subscription with Sandman. See [Agent Compatibility](agent-compatibility.md#claude-code) for authentication, permissions, and its limitations.
 
 Both built-in presets also see `~/.agents`, which is where Sandman installs the shared skill folder.
 

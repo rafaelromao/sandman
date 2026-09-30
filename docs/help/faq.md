@@ -34,7 +34,7 @@ Sandman runs OpenCode headlessly (no TTY/PTY). The plugin teaches OpenCode to av
 
 ## Can I use my Claude subscription?
 
-Yes, through the `claude` preset. Anthropic does not allow Claude subscription login in third-party harnesses such as OpenCode, but Sandman's `claude` preset runs the unmodified Claude Code binary (`claude -p`) with your own login, which is the sanctioned way to use a Pro, Max, Team, or Enterprise seat unattended. Limits are per seat and shared with claude.ai, so parallel AFK batches use them up faster than interactive work. See [Agent Compatibility > Claude Code](../usage/agent-compatibility.md#claude-code).
+Yes, through the `claude` preset (experimental in v1). Anthropic does not allow Claude subscription login in third-party harnesses such as OpenCode, but Sandman's `claude` preset runs the unmodified Claude Code binary (`claude -p`) with your own login, which is the sanctioned way to use a Pro, Max, Team, or Enterprise seat unattended. Limits are per seat and shared with claude.ai, so parallel AFK batches use them up faster than interactive work. See [Agent Compatibility > Claude Code](../usage/agent-compatibility.md#claude-code).
 
 ## Does Sandman commit on my behalf?
 
