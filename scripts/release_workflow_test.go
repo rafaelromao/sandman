@@ -442,6 +442,26 @@ func TestCIWorkflowKeepsOptInSuitesDisabled(t *testing.T) {
 	}
 }
 
+func TestPodmanInstallIsBoundedAcrossLinuxWorkflows(t *testing.T) {
+	for _, workflowPath := range []string{
+		"../.github/workflows/go.yml",
+		"../.github/workflows/full-regression-linux.yml",
+	} {
+		workflow := readRepositoryFile(t, workflowPath)
+		for _, required := range []string{
+			"timeout-minutes: 5",
+			"if command -v podman >/dev/null 2>&1; then",
+			"sudo env DEBIAN_FRONTEND=noninteractive timeout --signal=TERM --kill-after=30s 3m bash -e -c '",
+			"apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update",
+			"apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o DPkg::Lock::Timeout=120 install -y --no-install-recommends podman",
+		} {
+			if !strings.Contains(workflow, required) {
+				t.Errorf("%s: Podman setup must contain bounded command %q", workflowPath, required)
+			}
+		}
+	}
+}
+
 func TestPlatformCoverageMapMatchesWorkflowsAndGoReleaser(t *testing.T) {
 	ci := readRepositoryFile(t, "../.github/workflows/go.yml")
 	linuxFull := readRepositoryFile(t, "../.github/workflows/full-regression-linux.yml")
