@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -1462,6 +1463,10 @@ func TestPortal_Compute_ActiveRunRefreshesLiveSocketLog(t *testing.T) {
 			}
 			go func(c net.Conn) {
 				defer c.Close()
+				var handshake [1]byte
+				if _, err := io.ReadFull(c, handshake[:]); err != nil || handshake[0] != daemon.AttachStreamHandshake {
+					return
+				}
 				liveMu.Lock()
 				output := liveOutput
 				liveMu.Unlock()
