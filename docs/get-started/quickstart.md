@@ -62,7 +62,7 @@ Add it to `~/.config/opencode/opencode.json`:
 
 Restart OpenCode after installing.
 
-## Claude Code instead
+## Claude Code instead (experimental in v1)
 
 To use a Claude subscription, install Claude Code, sign in once with `claude` and `/login`, and initialize with the `claude` preset:
 

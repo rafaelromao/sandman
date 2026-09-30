@@ -1,6 +1,7 @@
 # Agent Compatibility
 
-Sandman includes two built-in presets: `opencode` and `claude`.
+Sandman includes two built-in presets: `opencode` and `claude`. Claude Code
+support is available but experimental in v1; OpenCode remains the default.
 
 ## Built-in presets
 
