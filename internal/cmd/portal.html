@@ -3296,7 +3296,10 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const select = event.target.closest('select[data-action="set-subject"]');
       if (!select) return;
       const nextRun = findRunByIdentity(select.value);
-      if (!nextRun) return;
+      if (!nextRun) {
+        select.value = state.expandedRunKey || '';
+        return;
+      }
       const nextRunKey = nextRun.runId || nextRun.key;
       if (state.expandedRunKey === nextRunKey) return;
       const currentRunKey = state.expandedRunKey;

@@ -1617,6 +1617,55 @@ func TestPortalReviewSubjectSwitch_ReusesCachedParentPaneAcrossRoundTrip(t *test
       window.__hlCalls += 1;
       return __origHL.apply(this, arguments);
     };
+    function finishSubjectCacheRepro(error) {
+      var pre = document.querySelector('pre[data-scroll-key]');
+      var marker = document.createElement('pre');
+      marker.id = 'portal-subject-cache';
+      marker.textContent = JSON.stringify({
+        error: error || '',
+        childSamePane: window.__childSamePane,
+        childHighlightCalls: window.__childCalls,
+        returnSamePane: pre === window.__initialPre,
+        returnSameFirstChild: pre && window.__initialFirstChild ? pre.firstChild === window.__initialFirstChild : false,
+        returnHighlightCalls: window.__hlCalls - window.__beforeReturnCalls,
+        text: pre && pre.textContent
+      });
+      document.body.appendChild(marker);
+    }
+    function waitForParentPane(deadline) {
+      var pre = document.querySelector('pre[data-scroll-key]');
+      if (pre === window.__initialPre && pre.firstChild === window.__initialFirstChild) {
+        finishSubjectCacheRepro('');
+        return;
+      }
+      if (Date.now() >= deadline) {
+        finishSubjectCacheRepro('cached parent pane was not restored');
+        return;
+      }
+      setTimeout(function () { waitForParentPane(deadline); }, 10);
+    }
+    function waitForChildPane(deadline) {
+      var pre = document.querySelector('pre[data-scroll-key]');
+      if (pre && pre !== window.__initialPre && pre.textContent.indexOf('review log line 1') !== -1) {
+        window.__childSamePane = pre === window.__initialPre;
+        window.__childCalls = window.__hlCalls - window.__beforeChildCalls;
+        window.__beforeReturnCalls = window.__hlCalls;
+        var select = document.querySelector('select[data-action="set-subject"]');
+        if (!select) {
+          finishSubjectCacheRepro('missing subject selector before return');
+          return;
+        }
+        select.value = '260618113825-abcd-1';
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        waitForParentPane(Date.now() + 2000);
+        return;
+      }
+      if (Date.now() >= deadline) {
+        finishSubjectCacheRepro('child log pane was not mounted');
+        return;
+      }
+      setTimeout(function () { waitForChildPane(deadline); }, 10);
+    }
     setTimeout(function () {
       var pre = document.querySelector('pre[data-scroll-key]');
       if (!pre) throw new Error('missing initial parent log pre');
@@ -1627,32 +1676,8 @@ func TestPortalReviewSubjectSwitch_ReusesCachedParentPaneAcrossRoundTrip(t *test
       if (!select) throw new Error('missing subject selector');
       select.value = 'PR42';
       select.dispatchEvent(new Event('change', { bubbles: true }));
+      waitForChildPane(Date.now() + 2000);
     }, 50);
-    setTimeout(function () {
-      var pre = document.querySelector('pre[data-scroll-key]');
-      if (!pre) throw new Error('missing child log pre after first switch');
-      window.__childSamePane = pre === window.__initialPre;
-      window.__childCalls = window.__hlCalls - window.__beforeChildCalls;
-      window.__beforeReturnCalls = window.__hlCalls;
-      var select = document.querySelector('select[data-action="set-subject"]');
-      if (!select) throw new Error('missing subject selector before return');
-      select.value = '260618113825-abcd-1';
-      select.dispatchEvent(new Event('change', { bubbles: true }));
-    }, 180);
-    setTimeout(function () {
-      var pre = document.querySelector('pre[data-scroll-key]');
-      var marker = document.createElement('pre');
-      marker.id = 'portal-subject-cache';
-      marker.textContent = JSON.stringify({
-        childSamePane: window.__childSamePane,
-        childHighlightCalls: window.__childCalls,
-        returnSamePane: pre === window.__initialPre,
-        returnSameFirstChild: pre && window.__initialFirstChild ? pre.firstChild === window.__initialFirstChild : false,
-        returnHighlightCalls: window.__hlCalls - window.__beforeReturnCalls,
-        text: pre && pre.textContent
-      });
-      document.body.appendChild(marker);
-    }, 360);
   `)
 	dom, _ := runPortalChromium(t, page)
 	payload := extractPortalMarker(t, dom, "portal-subject-cache")
@@ -1663,9 +1688,13 @@ func TestPortalReviewSubjectSwitch_ReusesCachedParentPaneAcrossRoundTrip(t *test
 		ReturnSameFirst     bool   `json:"returnSameFirstChild"`
 		ReturnHighlight     int    `json:"returnHighlightCalls"`
 		Text                string `json:"text"`
+		Error               string `json:"error"`
 	}
 	if err := json.Unmarshal([]byte(payload), &result); err != nil {
 		t.Fatalf("parse subject cache payload: %v\nraw=%s", err, payload)
+	}
+	if result.Error != "" {
+		t.Fatalf("subject cache repro failed: %s; got %#v", result.Error, result)
 	}
 	if !strings.Contains(result.Text, "parent log line 1") {
 		t.Fatalf("expected parent log after round-trip, got %#v", result)
