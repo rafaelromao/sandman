@@ -451,8 +451,10 @@ func customizePresetMatrixOpencodeAgent(t *testing.T, repoDir string) {
 // orchestrator would otherwise re-materialize with the heavy default
 // workflow). The task body is identical across presets; the faked gh issue
 // only supplies the title/number the prompt engine substitutes. The prompt
-// tells the agent to commit on the current branch (so the harness can assert
-// the branch advanced) and forbids pushing or opening a PR.
+// requires shell-tool execution and verification of a commit on the current
+// branch (so the harness can assert the branch advanced), rather than a final
+// response containing an unexecuted commit command. It forbids pushing or
+// opening a PR.
 func writePresetMatrixTaskTemplate(t *testing.T, repoDir string) string {
 	t.Helper()
 	templatePath := filepath.Join(repoDir, ".sandman", "preset-matrix-task.md")
@@ -462,7 +464,16 @@ This repository's main language has a source file that currently contains the wr
 
 Then create a file named answer.txt at the root of the repository whose entire contents are exactly 42 (just those two digits, no newline, no other text).
 
-When you are done, stage every change and create exactly one commit on the current branch. Do not push, do not run gh, and do not open a pull request.
+Complete the work using your tools before sending your final response:
+
+1. Record the current commit with the shell tool: git rev-parse HEAD.
+2. Edit the source file and create answer.txt as described above.
+3. Use the shell tool to execute: git add -A && git commit -m "Set answer to 42".
+4. Use the shell tool to verify that git rev-parse HEAD differs from the starting commit, git status --porcelain is empty, and git show HEAD:answer.txt contains exactly the two bytes 42. If a check fails, finish the work and repeat the checks.
+
+The task is complete only after exactly one new commit exists on the current branch and these checks pass. Writing a git command in your final response does not execute it. Your final response should report the verified commit hash.
+
+Do not push, do not run gh, and do not open a pull request.
 `
 	if err := os.WriteFile(templatePath, []byte(prompt), 0644); err != nil {
 		t.Fatalf("write task template: %v", err)
