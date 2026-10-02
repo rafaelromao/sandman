@@ -611,13 +611,12 @@ func prFlowDepsForPresetMatrix(t *testing.T, repoDir string) Dependencies {
 // override (PATH, GH_TOKEN, GITHUB_TOKEN). It is the same shape as
 // runSandmanBinary in prflow_e2e_test.go but exposes the env so the
 // harness can prepend its gh shim without mutating the process env
-// for the whole test binary. The context is a fail-fast bound, not a
-// success budget: when the real opencode agent stalls on its provider
-// the tests should surface the failure quickly instead of burning a
-// long slice of the E2E tier per preset.
+// for the whole test binary. Allow fifteen minutes for slow live-provider
+// responses, bounded by the remaining suite deadline with time for cleanup.
+// A five-minute cap cut off progressing .NET and Python agents in CI.
 func runSandmanBinaryWithEnv(t *testing.T, binPath, workDir, ghBinDir string, args []string) (string, error) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := presetMatrixRunContext(t)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binPath, args...)
 	cmd.Dir = workDir
@@ -631,6 +630,16 @@ func runSandmanBinaryWithEnv(t *testing.T, binPath, workDir, ghBinDir string, ar
 		return string(out), context.DeadlineExceeded
 	}
 	return string(out), err
+}
+
+func presetMatrixRunContext(t interface{ Deadline() (time.Time, bool) }) (context.Context, context.CancelFunc) {
+	deadline := time.Now().Add(15 * time.Minute)
+	if suiteDeadline, ok := t.Deadline(); ok {
+		if cleanupDeadline := suiteDeadline.Add(-30 * time.Second); cleanupDeadline.Before(deadline) {
+			deadline = cleanupDeadline
+		}
+	}
+	return context.WithDeadline(context.Background(), deadline)
 }
 
 // runE2EScaffold sets up a fresh e2e repo for the preset matrix:
