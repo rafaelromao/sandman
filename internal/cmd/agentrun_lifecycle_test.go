@@ -67,7 +67,7 @@ func TestAgentRunLifecycle_ArchiveRestart(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	assertReaders := func() {
+	assertReaders := func(archived bool, available bool) {
 		t.Helper()
 		fresh := &events.JSONLLogger{Path: logPath}
 		var status, history bytes.Buffer
@@ -88,6 +88,8 @@ func TestAgentRunLifecycle_ArchiveRestart(t *testing.T) {
 			t.Fatalf("history: %s", &history)
 		}
 		response := httptest.NewRecorder()
+		// A new Portal process has no per-repository snapshot cache.
+		portalRunsIndexes.Delete(root)
 		newPortalHandler(root).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/runs", nil))
 		if response.Code != http.StatusOK {
 			t.Fatalf("Portal: %d %s", response.Code, response.Body)
@@ -100,12 +102,18 @@ func TestAgentRunLifecycle_ArchiveRestart(t *testing.T) {
 		}
 		for _, row := range payload.Runs {
 			if row.RunID == id && row.Status == "success" {
+				if row.Archived != archived || row.SourceExists != available {
+					t.Fatalf("artifact facts: want %v/%v; row=%+v", archived, available, row)
+				}
+				if row.FinishedAt == nil || !row.FinishedAt.Equal(start.Add(time.Second)) {
+					t.Fatalf("finish changed: %+v", row)
+				}
 				return
 			}
 		}
 		t.Fatalf("Portal lost terminal run: %+v", payload.Runs)
 	}
-	assertReaders()
+	assertReaders(false, true)
 	deps := newTestDeps(t)
 	deps.RepoRoot, deps.EventLog = root, log
 	archive := NewArchiveCmd(deps)
@@ -113,7 +121,7 @@ func TestAgentRunLifecycle_ArchiveRestart(t *testing.T) {
 	if err := archive.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	assertReaders()
+	assertReaders(true, true)
 	fresh := &events.JSONLLogger{Path: logPath}
 	list, err := fresh.Read()
 	if err != nil {
@@ -126,7 +134,7 @@ func TestAgentRunLifecycle_ArchiveRestart(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(root, ".sandman", "archive", id)); err != nil {
 		t.Fatal(err)
 	}
-	assertReaders()
+	assertReaders(true, false)
 }
 
 func TestArchiveBatch_RequiresEveryAgentRunTerminal(t *testing.T) {
@@ -233,5 +241,172 @@ func TestCleanAll_EventTerminalityAndArtifactOwnership(t *testing.T) {
 				t.Fatalf("ineligible artifacts removed: %v", statErr)
 			}
 		})
+	}
+}
+
+func TestPortal_LifecycleIsNotInferredFromDeadArtifacts(t *testing.T) {
+	root := newSandmanDir(t)
+	batchID := "260618113825-abcd-42+1"
+	id := "260618113825-abcd-42"
+	batchDir := filepath.Join(root, ".sandman", "batches", batchID)
+	created := time.Now().UTC().Add(-time.Minute)
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{Issues: []int{42, 43}, CreatedAt: created, RunTS: "260618113825", RunShortID: "abcd"}); err != nil {
+		t.Fatal(err)
+	}
+	writeRunDirForArchive(t, batchDir, id, batchindex.RunManifest{Status: batchindex.RunManifestStatusSuccess})
+	writeBatchIndexForArchive(t, root, []batchindex.Batch{{ID: batchID, Path: batchDir, Status: batchindex.StatusActive, Issues: []int{42, 43}}})
+	list := []events.Event{{Type: "run.started", RunID: id, Issue: 42, Timestamp: created.Add(time.Second), Payload: map[string]any{"batch_id": batchID}}}
+	rows, err := (&portalRunsView{}).computeFromEvents(root, list)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := make(map[int]portalRun)
+	for _, row := range rows {
+		seen[row.IssueNumber] = row
+	}
+	if row := seen[42]; row.Status != "running" || row.FinishedAt != nil {
+		t.Fatalf("dead artifacts invented terminal outcome: %+v", row)
+	}
+	if row := seen[43]; row.Status != "unknown" || row.FinishedAt != nil {
+		t.Fatalf("missing events invented lifecycle: %+v", row)
+	}
+}
+
+func TestArchive_EventAuthorityAcrossBoundaries(t *testing.T) {
+	for _, boundary := range []string{"run", "batch", "older-than", "stale", "http"} {
+		t.Run(boundary, func(t *testing.T) {
+			for _, phase := range []string{"terminal-stale-snapshot", "unknown", "capacity-queued", "terminal-queued", "read-error"} {
+				t.Run(phase, func(t *testing.T) {
+					root := newSandmanDir(t)
+					id := "260618113825-abcd-42"
+					batchDir := filepath.Join(root, ".sandman", "batches", id)
+					status := batchindex.RunManifestStatusSuccess
+					if phase == "terminal-stale-snapshot" {
+						status = batchindex.RunManifestStatusActive
+					}
+					writeRunDirForArchive(t, batchDir, id, batchindex.RunManifest{Issue: 42, Status: status, CreatedAt: time.Now().Add(-time.Hour)})
+					writeBatchIndexForArchive(t, root, []batchindex.Batch{{ID: id, Path: batchDir, Status: batchindex.StatusActive, Runs: []batchindex.RunRecord{{RunID: id, Status: batchindex.RunRecordStatusActive}}}})
+					logPath := filepath.Join(root, ".sandman", "events.jsonl")
+					log := &events.JSONLLogger{Path: logPath}
+					terminal := phase == "terminal-stale-snapshot" || phase == "terminal-queued"
+					switch phase {
+					case "terminal-stale-snapshot":
+						recordTerminalLifecycle(t, root, id)
+					case "terminal-queued":
+						if err := log.Log(events.Event{Type: "run.queued", RunID: id, Issue: 42}); err != nil {
+							t.Fatal(err)
+						}
+					case "capacity-queued":
+						if err := log.Log(events.Event{Type: "run.started", RunID: id, Issue: 42}); err != nil {
+							t.Fatal(err)
+						}
+						if err := log.Log(events.Event{Type: "run.capacity_queued", RunID: id, Issue: 42}); err != nil {
+							t.Fatal(err)
+						}
+					case "read-error":
+						if err := os.Mkdir(logPath, 0755); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if boundary == "http" {
+						response := httptest.NewRecorder()
+						newPortalHandler(root).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/runs/archive", strings.NewReader(`{"runId":"`+id+`"}`)))
+						want := http.StatusConflict
+						if terminal {
+							want = http.StatusOK
+						}
+						if phase == "read-error" {
+							want = http.StatusInternalServerError
+						}
+						if response.Code != want {
+							t.Fatalf("HTTP=%d %s, want %d", response.Code, response.Body, want)
+						}
+					} else {
+						deps := newTestDeps(t)
+						deps.RepoRoot, deps.EventLog = root, log
+						cmd := NewArchiveCmd(deps)
+						cmd.SetOut(&bytes.Buffer{})
+						cmd.SetErr(&bytes.Buffer{})
+						args := []string{boundary, id}
+						if boundary == "older-than" {
+							args[1] = "0"
+						}
+						if boundary == "stale" {
+							args = []string{boundary}
+						}
+						cmd.SetArgs(args)
+						err := cmd.Execute()
+						wantError := phase == "read-error" || (!terminal && (boundary == "run" || boundary == "batch"))
+						if (err != nil) != wantError {
+							t.Fatalf("archive error=%v, want error=%v", err, wantError)
+						}
+					}
+					_, err := os.Stat(filepath.Join(batchDir, "runs", id))
+					if terminal {
+						if !os.IsNotExist(err) {
+							t.Fatalf("terminal Run not archived: %v", err)
+						}
+					} else if err != nil {
+						t.Fatalf("ineligible Run moved: %v", err)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestPortal_QueuedTerminalityControlsReviewPromotion(t *testing.T) {
+	for _, phase := range []string{"run.queued", "run.capacity_queued"} {
+		t.Run(phase, func(t *testing.T) {
+			root := newSandmanDir(t)
+			at := time.Now().UTC()
+			list := []events.Event{
+				{Type: "run.started", RunID: "parent", Issue: 42, Timestamp: at, Payload: map[string]any{"batch_id": "implementation"}},
+				{Type: phase, RunID: "parent", Issue: 42, Timestamp: at.Add(time.Second), Payload: map[string]any{"batch_id": "implementation"}},
+				{Type: "run.started", RunID: "review", Issue: 42, Timestamp: at.Add(2 * time.Second), Payload: map[string]any{"batch_id": "review-batch", "review": true, "pr_number": 99}},
+			}
+			rows, err := (&portalRunsView{}).computeFromEvents(root, list)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, row := range rows {
+				if row.RunID != "parent" {
+					continue
+				}
+				want := "queued"
+				if phase == "run.capacity_queued" {
+					want = "reviewing"
+				}
+				if row.Status != want {
+					t.Fatalf("phase %s parent=%+v, want %s", phase, row, want)
+				}
+				return
+			}
+			t.Fatal("missing implementation parent")
+		})
+	}
+}
+
+func TestArchiveRun_MissingSnapshotDoesNotChangeTerminality(t *testing.T) {
+	root := newSandmanDir(t)
+	id := "row"
+	batchDir := filepath.Join(root, ".sandman", "batches", "batch")
+	runDir := filepath.Join(batchDir, "runs", id)
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeBatchIndexForArchive(t, root, []batchindex.Batch{{ID: "batch", Path: batchDir, Status: batchindex.StatusActive, Runs: []batchindex.RunRecord{{RunID: id, Status: batchindex.RunRecordStatusActive}}}})
+	deps := terminalArchiveDeps(t, root, id)
+	deps.RepoRoot = root
+	cmd := NewArchiveCmd(deps)
+	cmd.SetArgs([]string{"run", id})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".sandman", "archive", "batch", "runs", id)); err != nil {
+		t.Fatal(err)
 	}
 }

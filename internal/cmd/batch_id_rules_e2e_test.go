@@ -645,7 +645,7 @@ func TestBatchIDRules_ArchiveRunMovesOnlyRunFolder(t *testing.T) {
 		{ID: runID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now, Issues: []int{42}},
 	})
 
-	cmd := NewArchiveCmd(newTestDeps(t))
+	cmd := NewArchiveCmd(terminalArchiveDeps(t, dir, runID))
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
@@ -696,7 +696,7 @@ func TestBatchIDRules_ArchiveRunLeavesSiblingsLive(t *testing.T) {
 		{ID: batchID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now, Issues: []int{42, 43}},
 	})
 
-	cmd := NewArchiveCmd(newTestDeps(t))
+	cmd := NewArchiveCmd(terminalArchiveDeps(t, dir, firstRow))
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
@@ -745,7 +745,7 @@ func TestBatchIDRules_ArchiveRunFlipsPerRowRecordStatus(t *testing.T) {
 		{ID: runID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now, Issues: []int{42}},
 	})
 
-	cmd := NewArchiveCmd(newTestDeps(t))
+	cmd := NewArchiveCmd(terminalArchiveDeps(t, dir, runID))
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
@@ -795,7 +795,7 @@ func TestBatchIDRules_ArchiveRunLogRetrievableFromNewPath(t *testing.T) {
 		{ID: runID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now, Issues: []int{42}},
 	})
 
-	cmd := NewArchiveCmd(newTestDeps(t))
+	cmd := NewArchiveCmd(terminalArchiveDeps(t, dir, runID))
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
@@ -831,6 +831,7 @@ func TestBatchIDRules_ArchiveRunAlreadyArchivedReturns409(t *testing.T) {
 	}
 
 	runID := singleIssueBatchID()
+	recordTerminalLifecycle(t, repoRoot, runID)
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", runID)
 	now := time.Now()
 	writeRunDirForArchive(t, batchDir, runID, batchindex.RunManifest{
@@ -946,7 +947,7 @@ func TestBatchIDRules_ArchiveBatchMovesWholeDirAndFlipsEntry(t *testing.T) {
 		{ID: runID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now, Issues: []int{42}},
 	})
 
-	cmd := NewArchiveCmd(newTestDeps(t))
+	cmd := NewArchiveCmd(terminalArchiveDeps(t, dir, runID))
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
@@ -1000,7 +1001,7 @@ func TestBatchIDRules_ArchiveOlderThanPerRowAware(t *testing.T) {
 		{ID: youngID, Path: youngDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: young, Issues: []int{2}},
 	})
 
-	cmd := NewArchiveCmd(newTestDeps(t))
+	cmd := NewArchiveCmd(terminalArchiveDeps(t, dir, oldID, youngID))
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
@@ -1047,7 +1048,7 @@ func TestBatchIDRules_ArchiveStalePerRowAware(t *testing.T) {
 		{ID: freshID, Path: freshDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: young, Issues: []int{2}},
 	})
 
-	cmd := NewArchiveCmd(newTestDeps(t))
+	cmd := NewArchiveCmd(terminalArchiveDeps(t, dir, staleID))
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)

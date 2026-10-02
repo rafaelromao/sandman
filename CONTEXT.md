@@ -37,7 +37,7 @@ A built-in agent model identifier overridden via `sandman run --model`. Each Age
 _Avoid_: agent model, default model.
 
 **AgentRun**:
-One execution of an agent against one issue, producing commits on a branch. The unit of work within a batch.
+One execution of an agent against one issue, producing commits on a branch. The unit of work within a batch. Its lifecycle status and terminality are folded exclusively from append-only events. Archive location, missing artifacts and socket liveness are separate facts; they do not revise an execution outcome. Terminal queued/blocked placeholders remain terminal during stale recovery, while capacity-queued continuations remain non-terminal.
 _Avoid_: Run, job, task.
 
 **Prompt-only run**:
@@ -89,7 +89,7 @@ The master list at `.sandman/batches.json` recording every batch ever created wi
 _Avoid_: index, master index.
 
 **Run**:
-One folder under `.sandman/batches/<batch-id>/runs/<run-id>/` containing `run.json`, `run.log`, `session.json` for supported OpenCode runs, `run.sock`, and (for review runs) `review-state.json`. Identified by the per-row RunID produced by `runid.NewRunID`. Each Run represents a single AgentRun within a Batch. References ADR-0032.
+One folder under `.sandman/batches/<batch-id>/runs/<run-id>/` containing `run.json`, `run.log`, `session.json` for supported OpenCode runs, `run.sock`, and (for review runs) `review-state.json`. Identified by the per-row RunID produced by `runid.NewRunID`. Each Run represents a single AgentRun within a Batch. The Run may be archived or unavailable independently of AgentRun lifecycle. `run.json` is an atomic artifact manifest whose legacy `status` is a best-effort execution snapshot for inspection/compatibility; it never overrides or substitutes for events. References ADR-0032.
 _Avoid_: run folder, run directory.
 
 **OpenCode session identity**:
@@ -259,7 +259,7 @@ _Avoid_: Orphaned worktree, lost worktree.
 _See_: Branch, Worktree.
 
 **Archive**:
-The on-disk resting place for completed batch directories at `.sandman/archive/<batch-id>/`, populated by `sandman archive run <batch-id>` or by `sandman archive older-than <days>` for bulk archival of every dead batch whose manifest `CreatedAt` (or directory mtime when the manifest is missing) is older than the given cutoff. Archiving relocates the batch directory tree from `.sandman/batches/<batch-id>/` (its live-and-during-run home) to `.sandman/archive/<batch-id>/` so the batches directory stays scoped to currently-relevant batches. The daemon is forbidden from writing to an archived batch; the batch is treated as read-only historical state once moved. References ADR-0032.
+The on-disk resting place at `.sandman/archive/<batch-id>/`. `sandman archive run <run-id>` relocates one event-terminal Run to `archive/<batch-id>/runs/<run-id>/` while siblings stay live. `archive older-than <days>` selects event-terminal Runs using manifest creation metadata (or manifest mtime); `archive stale` first appends recovery events for eligible non-terminal work. `archive batch <batch-id>` moves the whole Batch only after its daemon is gone and all known AgentRuns are event-terminal. Index archive/unavailable states describe artifacts, never AgentRun outcomes. The daemon is forbidden from writing to an archived Batch. References ADR-0032.
 _Avoid_: trash, graveyard, old runs, retired runs.
 
 **Daemon Process**:

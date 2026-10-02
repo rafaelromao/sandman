@@ -194,7 +194,7 @@ func TestPortal_RunDir_SynthesizedDeadBatchRowStampsBatchRunDir(t *testing.T) {
 
 	var synth *portalRun
 	for i := range runs {
-		if runs[i].IssueNumber == 66 && runs[i].Kind == "completed" && runs[i].Status == "aborted" {
+		if runs[i].IssueNumber == 66 && runs[i].Kind == "completed" && runs[i].Status == "unknown" {
 			synth = &runs[i]
 			break
 		}
