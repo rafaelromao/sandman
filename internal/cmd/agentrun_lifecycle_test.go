@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/batchindex"
+	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 )
@@ -171,6 +173,64 @@ func TestArchiveBatch_RequiresEveryAgentRunTerminal(t *testing.T) {
 				if _, err := os.Stat(filepath.Join(batchDir, "runs", id)); err != nil {
 					t.Fatalf("member moved: %v", err)
 				}
+			}
+		})
+	}
+}
+
+func TestCleanAll_EventTerminalityAndArtifactOwnership(t *testing.T) {
+	for _, scenario := range []string{"terminal-stale-snapshot", "unknown", "capacity-queued", "read-error", "wrong-owner"} {
+		t.Run(scenario, func(t *testing.T) {
+			deps := newRunDepsAuto(t, &fakeBatchRunner{})
+			root, err := os.Getwd()
+			if err != nil {
+				t.Fatal(err)
+			}
+			batchDir := filepath.Join(root, ".sandman", "batches", "batch")
+			manifest := batchindex.RunManifest{RunID: "row", BatchID: "batch", Kind: batchindex.KindIssue, Status: batchindex.RunManifestStatusSuccess, Branch: "42-work", WorktreePath: filepath.Join(root, ".sandman", "worktrees", "42-work")}
+			if scenario == "terminal-stale-snapshot" {
+				manifest.Status = batchindex.RunManifestStatusActive
+			}
+			if scenario == "wrong-owner" {
+				manifest.BatchID = "elsewhere"
+			}
+			if err := daemon.WriteRunManifest(batchDir, "row", manifest); err != nil {
+				t.Fatal(err)
+			}
+			writeBatchIndexForArchive(t, root, []batchindex.Batch{{ID: "batch", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive}})
+			log := &fakeEventLog{events: []events.Event{{Type: "run.finished", RunID: "row", Payload: map[string]any{"status": "success"}}}}
+			if scenario == "unknown" {
+				log.events = nil
+			}
+			if scenario == "capacity-queued" {
+				log.events = []events.Event{{Type: "run.started", RunID: "row"}, {Type: "run.capacity_queued", RunID: "row"}}
+			}
+			if scenario == "read-error" {
+				log.err = errors.New("lifecycle unavailable")
+			}
+			deps.EventLog, deps.GitRunner = log, &fakeGitRunner{}
+			deps.RepoRoot = root
+			deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(root, ".sandman", "worktrees")}}
+			deps.RunActivityProbe = func(string) bool { return false }
+			cmd := NewCleanCmd(deps)
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(&bytes.Buffer{})
+			cmd.SetArgs([]string{"--all"})
+			err = cmd.Execute()
+			if scenario == "read-error" {
+				if err == nil {
+					t.Fatal("read failure did not fail closed")
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			_, statErr := os.Stat(batchDir)
+			if scenario == "terminal-stale-snapshot" {
+				if !os.IsNotExist(statErr) {
+					t.Fatalf("terminal artifacts not reclaimed: %v", statErr)
+				}
+			} else if statErr != nil {
+				t.Fatalf("ineligible artifacts removed: %v", statErr)
 			}
 		})
 	}

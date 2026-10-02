@@ -252,7 +252,11 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				}
 
 				actions := collectCleanActions(idx, batchindex.StatusArchived)
-				if activeActions := collectEligibleActiveActions(idx, probe, layout); len(activeActions) > 0 {
+				states, err := events.ReadRunStates(deps.EventLog)
+				if err != nil {
+					return err
+				}
+				if activeActions := collectEligibleActiveActions(idx, probe, layout, states); len(activeActions) > 0 {
 					actions = append(actions, activeActions...)
 				}
 				if actions == nil {
@@ -263,7 +267,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				var outcomes []cleanOutcome
 				var cleanErr error
 				if !dryRun {
-					outcomes, cleanErr = executeCleanWithProbe(actions, gr, layout, remover, probe)
+					outcomes, cleanErr = executeCleanWithProbe(actions, gr, layout, remover, probe, deps.EventLog)
 					orphanRemoved, err = cleanupOrphanedBatches(layout, deps.EventLog, probe, remover)
 					cleanErr = errors.Join(cleanErr, err)
 				} else {
@@ -362,8 +366,8 @@ func collectCleanActions(idx *batchindex.Index, targetStatus batchindex.Status) 
 }
 
 // collectEligibleActiveActions returns cleanActions for StatusActive
-// batches whose daemon is gone and whose live and archived run manifests
-// are all terminal. The umbrella `clean --all` mode promotes these to
+// batches whose daemon is gone and whose live and archived AgentRuns
+// have terminal event projections. The umbrella `clean --all` mode promotes these to
 // the cleanup set: they are not strictly `StatusArchived` because no
 // one ever ran `archive batch` (whole-batch archive), but their runs
 // are all terminal (success/failure/aborted/blocked) and no live
@@ -372,7 +376,7 @@ func collectCleanActions(idx *batchindex.Index, targetStatus batchindex.Status) 
 // `archive stale`) marks each RunRecord archived but never promotes
 // the batch-level Status, which is the gap that lets worktrees pile
 // up under `clean --all`.
-func collectEligibleActiveActions(idx *batchindex.Index, probe runActivityProbe, layout paths.Layout) []cleanAction {
+func collectEligibleActiveActions(idx *batchindex.Index, probe runActivityProbe, layout paths.Layout, states map[string]events.RunState) []cleanAction {
 	var actions []cleanAction
 	for _, entry := range idx.Batches {
 		if entry.Status != batchindex.StatusActive {
@@ -381,7 +385,7 @@ func collectEligibleActiveActions(idx *batchindex.Index, probe runActivityProbe,
 		if entry.Path == "" {
 			continue
 		}
-		action, ok := buildEligibleActiveAction(entry, probe, layout)
+		action, ok := buildEligibleActiveAction(entry, probe, layout, states)
 		if !ok {
 			continue
 		}
@@ -392,14 +396,14 @@ func collectEligibleActiveActions(idx *batchindex.Index, probe runActivityProbe,
 
 // buildEligibleActiveAction returns a cleanAction for a single
 // StatusActive entry iff its batch daemon is gone and every run under
-// the batch is reclaimable: every live run manifest in <batch>/runs/ has a
-// terminal status, and every persisted archived RunRecord points to a
-// still-present, terminal archive manifest. When the runs dir is empty,
+// the batch is reclaimable: every live or archived AgentRun has a terminal
+// event projection and a still-present manifest proving artifact ownership.
+// When the runs dir is empty,
 // the latter condition proves that every row was per-row archived. Every
 // row's worktree/branch pair is collected so a multi-run batch reclaims
 // all of its worktrees. A batch with an unknown or missing row manifest
 // is preserved.
-func buildEligibleActiveAction(entry batchindex.Batch, probe runActivityProbe, layout paths.Layout) (cleanAction, bool) {
+func buildEligibleActiveAction(entry batchindex.Batch, probe runActivityProbe, layout paths.Layout, states map[string]events.RunState) (cleanAction, bool) {
 	if probe != nil && probe(entry.Path) {
 		return cleanAction{}, false
 	}
@@ -433,7 +437,7 @@ func buildEligibleActiveAction(entry batchindex.Batch, probe runActivityProbe, l
 		if !reclaimableRunManifest(manifest, entry, e.Name(), layout) {
 			return cleanAction{}, false
 		}
-		if !isTerminalRunManifestStatus(manifest.Status) {
+		if !states[e.Name()].IsTerminal() {
 			return cleanAction{}, false
 		}
 		liveRunIDs[e.Name()] = true
@@ -446,7 +450,7 @@ func buildEligibleActiveAction(entry batchindex.Batch, probe runActivityProbe, l
 	}
 	for _, rec := range entry.Runs {
 		if rec.Status == batchindex.RunRecordStatusArchived {
-			if !appendArchivedRunRef(&action, entry, rec, layout) {
+			if !appendArchivedRunRef(&action, entry, rec, layout, states) {
 				return cleanAction{}, false
 			}
 			continue
@@ -458,7 +462,7 @@ func buildEligibleActiveAction(entry batchindex.Batch, probe runActivityProbe, l
 	return action, true
 }
 
-func appendArchivedRunRef(action *cleanAction, entry batchindex.Batch, rec batchindex.RunRecord, layout paths.Layout) bool {
+func appendArchivedRunRef(action *cleanAction, entry batchindex.Batch, rec batchindex.RunRecord, layout paths.Layout, states map[string]events.RunState) bool {
 	if rec.ArchivePath == "" {
 		return false
 	}
@@ -467,7 +471,7 @@ func appendArchivedRunRef(action *cleanAction, entry batchindex.Batch, rec batch
 		return false
 	}
 	manifest, err := batchindex.ReadManifest(archiveDir)
-	if err != nil || !reclaimableRunManifest(manifest, entry, rec.RunID, layout) || !isTerminalRunManifestStatus(manifest.Status) {
+	if err != nil || !reclaimableRunManifest(manifest, entry, rec.RunID, layout) || !states[rec.RunID].IsTerminal() {
 		return false
 	}
 	appendWorktreeRef(action, manifest.WorktreePath, manifest.Branch)
@@ -590,10 +594,10 @@ func printCleanReport(cmd *cobra.Command, actions []cleanAction, orphanPaths []s
 }
 
 func executeClean(actions []cleanAction, gr gitRunner, layout paths.Layout, remover CleanupRemover) ([]cleanOutcome, error) {
-	return executeCleanWithProbe(actions, gr, layout, remover, nil)
+	return executeCleanWithProbe(actions, gr, layout, remover, nil, nil)
 }
 
-func executeCleanWithProbe(actions []cleanAction, gr gitRunner, layout paths.Layout, remover CleanupRemover, probe runActivityProbe) ([]cleanOutcome, error) {
+func executeCleanWithProbe(actions []cleanAction, gr gitRunner, layout paths.Layout, remover CleanupRemover, probe runActivityProbe, log events.EventLog) ([]cleanOutcome, error) {
 	if len(actions) == 0 {
 		return nil, nil
 	}
@@ -607,7 +611,11 @@ func executeCleanWithProbe(actions []cleanAction, gr gitRunner, layout paths.Lay
 				continue
 			}
 			if a.Status == batchindex.StatusActive && probe != nil {
-				fresh, ok := buildEligibleActiveAction(*entry, probe, layout)
+				states, err := events.ReadRunStates(log)
+				if err != nil {
+					return err
+				}
+				fresh, ok := buildEligibleActiveAction(*entry, probe, layout, states)
 				if !ok {
 					continue
 				}
