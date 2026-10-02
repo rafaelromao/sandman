@@ -130,31 +130,6 @@ func (c *cachedGitHubClient) SearchIssues(ctx context.Context, query string) ([]
 	return append([]github.Issue(nil), cached...), nil
 }
 
-func (c *cachedGitHubClient) TitlesFor(numbers []int) map[int]string {
-	titles := make(map[int]string, len(numbers))
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	wanted := make(map[int]struct{}, len(numbers))
-	for _, number := range numbers {
-		wanted[number] = struct{}{}
-	}
-	for _, issues := range c.searches {
-		for _, issue := range issues {
-			if _, ok := wanted[issue.Number]; ok {
-				titles[issue.Number] = issue.Title
-			}
-		}
-	}
-	for number, issue := range c.issues {
-		if _, ok := wanted[number]; ok && issue != nil {
-			if _, exists := titles[number]; !exists {
-				titles[number] = issue.Title
-			}
-		}
-	}
-	return titles
-}
-
 func (c *cachedGitHubClient) ListIssueComments(ctx context.Context, number int) ([]github.IssueComment, error) {
 	return getOrFill(&c.mu, c.comments, number, func() ([]github.IssueComment, error) {
 		comments, err := c.Client.ListIssueComments(ctx, number)
@@ -328,7 +303,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 
 			var issues []int
-			var parentChildren map[int][]int
 			if overridePrompt && !issueSelectionProvided {
 				if promptNeedsIssueSelection {
 					return MarkUsage(fmt.Errorf("prompt requires issue selection but no issue selection was provided"))
@@ -441,28 +415,10 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				return MarkUsage(fmt.Errorf("no issues selected"))
 			}
 
-			if len(issues) > 0 {
-				userTyped := append([]int(nil), issues...)
-				issues, parentChildren, err = expandSpecifications(cmd.Context(), githubClient, issues, cmd.ErrOrStderr())
-				if err != nil {
-					return err
-				}
-				if len(issues) > 0 {
-					issues, err = filterClosedIssuesAfterExpansion(cmd.Context(), issues, userTyped, githubClient.SearchIssues, liveGitHubClient.FetchIssue, cmd.ErrOrStderr())
-					if err != nil {
-						return err
-					}
-				}
-			}
-
-			if parentChildren == nil {
-				parentChildren = map[int][]int{}
-			}
+			var readyIssues []int
 			if runID == "" && (!overridePrompt || issueSelectionProvided) {
 				for _, continuation := range readyContinuations {
-					if !containsIssue(issues, continuation.IssueNumber) {
-						issues = append(issues, continuation.IssueNumber)
-					}
+					readyIssues = append(readyIssues, continuation.IssueNumber)
 				}
 			}
 
@@ -475,9 +431,11 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				baseBranch = "main"
 			}
 
-			resolvedBatch, err := batch.NewDependencyResolver(githubClient).Resolve(cmd.Context(), issues, includeDependencies, parentChildren)
+			resolvedBatch, err := batch.NewPreparer(githubClient, liveGitHubClient, cmd.ErrOrStderr()).Prepare(cmd.Context(), batch.Preparation{
+				Issues: issues, ReadyIssues: readyIssues, IncludeDependencies: includeDependencies,
+			})
 			if err != nil {
-				return fmt.Errorf("resolve dependencies: %w", err)
+				return err
 			}
 
 			parallelFlag := cmd.Flags().Lookup("parallel")
@@ -654,10 +612,9 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 			}
 
-			issueTitles := githubClient.TitlesFor(resolvedBatch.Issues)
 			req := batch.Request{
 				Issues:                     resolvedBatch.Issues,
-				IssueTitles:                issueTitles,
+				IssueTitles:                resolvedBatch.IssueTitles,
 				Dependencies:               resolvedBatch.Deps,
 				Blocked:                    resolvedBatch.Blocked,
 				Agent:                      agentName,
@@ -1154,7 +1111,7 @@ func explicitIssueNumbers(selection issueSelection) []int {
 // parity fix in #923 and is preserved for callers that match on it
 // via errors.Is. Callers propagate it as a plain runtime error so the
 // usage banner is suppressed in executeRoot.
-var errAllExplicitClosed = errors.New("all explicit issues are closed")
+var errAllExplicitClosed = batch.ErrAllExplicitClosed
 
 // filterClosedIssues returns the subset of numbers that are still open.
 // Every input number is treated equivalently: closed issues produce a
@@ -1173,119 +1130,7 @@ var errAllExplicitClosed = errors.New("all explicit issues are closed")
 // explicitIssueNumbers so the filter classifies them as a single
 // coherent batch.
 func filterClosedIssues(ctx context.Context, numbers []int, searchFn func(context.Context, string) ([]github.Issue, error), fetchFn func(context.Context, int) (*github.Issue, error), stderr io.Writer) ([]int, error) {
-	openSet, searchHitLimit, searchErr := loadOpenIssueSet(ctx, searchFn)
-	if searchErr == nil && !searchHitLimit {
-		filtered, allClosed := filterClosedByOpenSet(numbers, openSet, stderr)
-		if allClosed {
-			return nil, errAllExplicitClosed
-		}
-		return filtered, nil
-	}
-
-	filtered := make([]int, 0, len(numbers))
-	closedCount := 0
-	for _, n := range numbers {
-		issue, err := fetchFn(ctx, n)
-		if err != nil {
-			fmt.Fprintf(stderr, "Warning: could not fetch issue #%d: %v\n", n, err)
-			continue
-		}
-		if github.IsIssueClosed(issue) {
-			fmt.Fprintf(stderr, "Issue #%d is closed, skipping\n", n)
-			closedCount++
-			continue
-		}
-		filtered = append(filtered, n)
-	}
-	if len(filtered) == 0 && closedCount > 0 {
-		return nil, errAllExplicitClosed
-	}
-	return filtered, nil
-}
-
-// filterClosedIssuesAfterExpansion re-applies filterClosedIssues to the
-// post-expansion list so children that were discovered during
-// Specification expansion get the same closed-state filter as the
-// user-typed input at the top of this function.
-//
-// When the post-expansion list contains only numbers that were already
-// in the user-typed set (no expansion-introduced children), the input
-// is returned untouched — no is:open search is issued, so this helper
-// is a no-op for callers whose expansion produced only user-typed
-// pass-throughs.
-//
-// errAllExplicitClosed is swallowed: the user-typed input was
-// syntactically valid, only its expansion outcomes were filtered out.
-// The empty result makes the batch a no-op rather than a usage error.
-func filterClosedIssuesAfterExpansion(
-	ctx context.Context,
-	expanded []int,
-	userTyped []int,
-	searchFn func(context.Context, string) ([]github.Issue, error),
-	fetchFn func(context.Context, int) (*github.Issue, error),
-	stderr io.Writer,
-) ([]int, error) {
-	if len(expanded) == 0 {
-		return expanded, nil
-	}
-	userSet := make(map[int]struct{}, len(userTyped))
-	for _, n := range userTyped {
-		userSet[n] = struct{}{}
-	}
-	hasExpansionOnly := false
-	for _, n := range expanded {
-		if _, ok := userSet[n]; !ok {
-			hasExpansionOnly = true
-			break
-		}
-	}
-	if !hasExpansionOnly {
-		return expanded, nil
-	}
-	filtered, err := filterClosedIssues(ctx, expanded, searchFn, fetchFn, stderr)
-	if err != nil {
-		if errors.Is(err, errAllExplicitClosed) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return filtered, nil
-}
-
-// loadOpenIssueSet runs the repo-wide is:open search and returns a set
-// of open issue numbers. When the search hits GitHub's 1000-result
-// limit, the set is unreliable (an open issue past the cutoff would
-// look closed) and the caller should fall back to per-issue fetch.
-func loadOpenIssueSet(ctx context.Context, searchFn func(context.Context, string) ([]github.Issue, error)) (map[int]struct{}, bool, error) {
-	results, err := searchFn(ctx, "is:open")
-	if err != nil {
-		return nil, false, err
-	}
-	if len(results) >= 1000 {
-		return nil, true, nil
-	}
-	openSet := make(map[int]struct{}, len(results))
-	for _, issue := range results {
-		openSet[issue.Number] = struct{}{}
-	}
-	return openSet, false, nil
-}
-
-func filterClosedByOpenSet(numbers []int, openSet map[int]struct{}, stderr io.Writer) ([]int, bool) {
-	filtered := make([]int, 0, len(numbers))
-	closedCount := 0
-	for _, n := range numbers {
-		if _, open := openSet[n]; !open {
-			fmt.Fprintf(stderr, "Issue #%d is closed, skipping\n", n)
-			closedCount++
-			continue
-		}
-		filtered = append(filtered, n)
-	}
-	if len(filtered) == 0 && closedCount > 0 {
-		return filtered, true
-	}
-	return filtered, false
+	return batch.FilterClosedIssues(ctx, numbers, searchFn, fetchFn, stderr)
 }
 
 func extractIssueNumbers(ghIssues []github.Issue) []int {
@@ -1318,22 +1163,6 @@ func pickIssues(ctx context.Context, client github.Client, picker IssuePicker) (
 		return nil, fmt.Errorf("list open issues: %w", err)
 	}
 	return picker.Select(ghIssues)
-}
-
-// expandSpecifications runs the Specification resolver on the input issue list and returns the
-// expanded list. Empty input short-circuits to avoid wasted fetches. Any Specification
-// resolution error is wrapped as a regular command error (not a usage error)
-// because the input was syntactically valid.
-func expandSpecifications(ctx context.Context, client github.Client, issues []int, stderr io.Writer) ([]int, map[int][]int, error) {
-	if len(issues) == 0 {
-		return issues, nil, nil
-	}
-	specResolver := batch.NewSpecificationResolver(client, stderr)
-	expanded, parents, err := specResolver.Resolve(ctx, issues)
-	if err != nil {
-		return nil, nil, fmt.Errorf("resolve specifications: %w", err)
-	}
-	return expanded, parents, nil
 }
 
 func printSummary(cmd *cobra.Command, result *batch.Result) {
