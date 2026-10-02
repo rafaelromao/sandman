@@ -1605,6 +1605,23 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	var wg sync.WaitGroup
 	results := make([]AgentRunResult, len(req.Issues))
 	var mu sync.Mutex
+	// usageLimitGate pauses admission of not-yet-started rows once any row
+	// reports provider usage-limit exhaustion. Quota is global per preset, so
+	// launching another agent against the same exhausted quota only burns
+	// retries. Paused rows emit run.capacity_queued and stay non-terminal
+	// until resume via normal admission. RunBatch-local only.
+	var usageLimitMu sync.Mutex
+	usageLimitPaused := false
+	isUsageLimitPaused := func() bool {
+		usageLimitMu.Lock()
+		defer usageLimitMu.Unlock()
+		return usageLimitPaused
+	}
+	setUsageLimitPaused := func() {
+		usageLimitMu.Lock()
+		usageLimitPaused = true
+		usageLimitMu.Unlock()
+	}
 	failureCount := 0
 	abortedCount := 0
 	statuses := make(map[int]string, len(req.Issues))
@@ -1919,6 +1936,22 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					}
 					readyContinuation = true
 				}
+				if isUsageLimitPaused() {
+					extras := map[string]any{
+						"gate":        "usage-limit",
+						"reason":      "usage-limit-paused",
+						"next_action": "resume after provider usage limit resets; Sandman did not start another run while suspended",
+					}
+					if o.eventLog != nil {
+						if err := logCapacityQueuedContinuation(o.eventLog, runID, issueNum, issueBatchID, row, extras, req.IssueTitles[issueNum]); err != nil {
+							if o.errorLog != nil {
+								fmt.Fprintf(o.errorLog, "warning: persist usage-limit pause for issue %d: %v\n", issueNum, err)
+							}
+						}
+					}
+					res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "queued", Branch: req.Branches[issueNum]}
+					break
+				}
 				var err error
 				if awaiting {
 					opportunity, err = startGate.AcquireAwaiting(issueCtx, opportunity)
@@ -1931,6 +1964,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					break
 				}
 				res, started = executor.Execute(issueCtx, row)
+				if res.UsageLimitReached {
+					setUsageLimitPaused()
+				}
 				if started {
 					startGate.Release()
 				} else {
