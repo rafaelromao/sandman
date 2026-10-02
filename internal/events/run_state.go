@@ -253,7 +253,32 @@ func (r RunState) RunKind() string {
 
 // IsActive reports whether the run has not finished yet.
 func (r RunState) IsActive() bool {
-	return r.Finished == nil
+	return !r.IsTerminal()
+}
+
+// IsTerminal is the lifecycle completion predicate for all readers and artifact
+// operations. Completion comes from a terminal event, not a status label: both
+// a terminal placeholder and a capacity-queued continuation are labelled queued.
+// The zero state (no lifecycle evidence) is never terminal.
+func (r RunState) IsTerminal() bool {
+	return r.Finished != nil
+}
+
+// ReadRunStates reads the authoritative event projection, keyed by RunID.
+// Missing IDs remain unknown; callers must not fall back to artifact snapshots.
+func ReadRunStates(log EventLog) (map[string]RunState, error) {
+	if log == nil {
+		return nil, fmt.Errorf("read run lifecycle: event log is required")
+	}
+	list, err := log.Read()
+	if err != nil {
+		return nil, fmt.Errorf("read run lifecycle: %w", err)
+	}
+	states := make(map[string]RunState)
+	for _, state := range ProjectRunStates(list) {
+		states[state.RunID] = state
+	}
+	return states, nil
 }
 
 // IsAwaiting reports whether the current lifecycle phase is an external

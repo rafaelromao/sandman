@@ -110,6 +110,7 @@ func TestPortal_ArchiveEndpointMovesCompletedRunToArchiveDirectory(t *testing.T)
 	}
 
 	runID := "260618113825-abcd-archive-ok"
+	recordTerminalLifecycle(t, repoRoot, runID)
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", runID)
 	liveRunDir := filepath.Join(batchDir, "runs", runID)
 	if err := os.MkdirAll(liveRunDir, 0755); err != nil {
@@ -256,6 +257,7 @@ func TestPortal_ArchiveEndpoint_RejectsAlreadyArchivedRun(t *testing.T) {
 	}
 
 	runID := "260618113825-abcd-archive-dup"
+	recordTerminalLifecycle(t, repoRoot, runID)
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", runID)
 	if err := os.MkdirAll(batchDir, 0755); err != nil {
 		t.Fatal(err)
@@ -621,6 +623,7 @@ func TestPortal_ArchiveEndpoint_ResolvesPerRowRunIDToBatchEntryID(t *testing.T) 
 	shortid := "abcd"
 	batchEntryID := runid.NewBatchID(runid.KindIssue, 2, "42", ts, shortid)
 	perRowID := runid.NewRunID(runid.KindIssue, "43", ts, shortid)
+	recordTerminalLifecycle(t, repoRoot, perRowID)
 	if perRowID == batchEntryID {
 		t.Fatalf("fixture invariant: perRowID %q must differ from batchEntryID %q", perRowID, batchEntryID)
 	}
@@ -727,6 +730,7 @@ func TestPortal_ArchiveEndpoint_MultiIssuePerRowIDsResolveToSameEntry(t *testing
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+			recordTerminalLifecycle(t, repoRoot, perRowID)
 			if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 				t.Fatal(err)
 			}
@@ -830,6 +834,7 @@ func TestPortal_ArchiveEndpoint_ContinueReview(t *testing.T) {
 	shortid := "abcd"
 	batchEntryID := runid.NewBatchID(runid.KindReview, 1, "99", ts, shortid)
 	perRowID := runid.NewRunID(runid.KindReview, "42-PR99", ts, shortid)
+	recordTerminalLifecycle(t, repoRoot, perRowID)
 	if perRowID == batchEntryID {
 		t.Fatalf("fixture invariant: perRowID %q must differ from batchEntryID %q", perRowID, batchEntryID)
 	}
@@ -914,6 +919,7 @@ func TestPortal_ArchiveEndpoint_OrphanReview(t *testing.T) {
 	shortid := "abcd"
 	batchEntryID := runid.NewBatchID(runid.KindReview, 1, "100", ts, shortid)
 	perRowID := runid.NewRunID(runid.KindReview, "0-PR100", ts, shortid)
+	recordTerminalLifecycle(t, repoRoot, perRowID)
 	if perRowID == batchEntryID {
 		t.Fatalf("fixture invariant: perRowID %q must differ from batchEntryID %q", perRowID, batchEntryID)
 	}
@@ -993,6 +999,7 @@ func TestPortal_ArchiveEndpoint_SingleIssueRun(t *testing.T) {
 	shortid := "abcd"
 	batchEntryID := runid.NewBatchID(runid.KindIssue, 1, "42", ts, shortid)
 	perRowID := runid.NewRunID(runid.KindIssue, "42", ts, shortid)
+	recordTerminalLifecycle(t, repoRoot, perRowID)
 
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchEntryID)
 	if err := os.MkdirAll(batchDir, 0755); err != nil {
@@ -1065,6 +1072,7 @@ func TestPortal_ArchiveEndpoint_ContinueIssueRun(t *testing.T) {
 	shortid := "abcd"
 	batchEntryID := runid.NewBatchID(runid.KindIssue, 2, "42", ts, shortid)
 	perRowID := runid.NewBatchID(runid.KindIssue, 2, "42", ts, shortid)
+	recordTerminalLifecycle(t, repoRoot, perRowID)
 	if perRowID != batchEntryID {
 		t.Fatalf("fixture invariant: --continue perRowID %q must equal batchEntryID %q", perRowID, batchEntryID)
 	}
@@ -1127,6 +1135,7 @@ func TestPortal_ArchiveEndpoint_PromptOnlyRun(t *testing.T) {
 	userID := "my-fix-task"
 	publicBatchID := runid.NewBatchID(runid.KindPromptOnly, 1, userID, ts, shortid)
 	perRowID := runid.NewRunID(runid.KindPromptOnly, userID, ts, shortid)
+	recordTerminalLifecycle(t, repoRoot, perRowID)
 	// RunID == public BatchId for prompt-only (issue #1920).
 	if perRowID != publicBatchID {
 		t.Fatalf("fixture invariant: perRowID %q must equal publicBatchID %q (RunID == public BatchId for prompt-only)", perRowID, publicBatchID)
@@ -1302,6 +1311,7 @@ func TestPortal_ArchiveEndpoint_PerRowIDPreservesErrorStatuses(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+		recordTerminalLifecycle(t, repoRoot, perRowID)
 		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -1386,6 +1396,7 @@ func TestPortal_ArchiveEndpoint_PerRowIDPreservesErrorStatuses(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+		recordTerminalLifecycle(t, repoRoot, perRowID)
 		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -1465,6 +1476,7 @@ func TestPortal_ArchiveEndpoint_PerRowEmpty200(t *testing.T) {
 
 	const batchID = "b-per-row"
 	const runID = "row-per-row"
+	recordTerminalLifecycle(t, repoRoot, runID)
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
 	liveRunDir := filepath.Join(batchDir, "runs", runID)
 	if err := os.MkdirAll(liveRunDir, 0755); err != nil {
@@ -1611,6 +1623,7 @@ func TestPortal_ArchiveEndpoint_409AlreadyArchived_EchoesArchivePath(t *testing.
 
 	const batchID = "b-dup"
 	const runID = "row-dup"
+	recordTerminalLifecycle(t, repoRoot, runID)
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
 	liveRunDir := filepath.Join(batchDir, "runs", runID)
 	if err := os.MkdirAll(liveRunDir, 0755); err != nil {
@@ -1667,6 +1680,7 @@ func TestPortal_ArchiveEndpoint_LeavesSiblingsAlive(t *testing.T) {
 	const batchID = "b-multi"
 	const archivedRow = "r-archived"
 	const siblingRow = "r-sibling"
+	recordTerminalLifecycle(t, repoRoot, archivedRow)
 
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
 	archivedRunDir := filepath.Join(batchDir, "runs", archivedRow)

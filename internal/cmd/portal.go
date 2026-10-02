@@ -283,11 +283,11 @@ func archivePortalRunHandler(repoRoot, runID string) (string, error) {
 		return batch.ID, &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("batch %q is not active (status=%s)", batch.ID, batch.Status)}
 	}
 
-	status, statusErr := portalRowStatusProbe(batch, runID)
-	if statusErr != nil {
-		return batch.ID, &portalArchiveError{status: http.StatusInternalServerError, message: statusErr.Error()}
+	states, stateErr := events.ReadRunStates(&events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if stateErr != nil {
+		return batch.ID, &portalArchiveError{status: http.StatusInternalServerError, message: stateErr.Error()}
 	}
-	if !isTerminalRunManifestStatus(status) {
+	if !states[runID].IsTerminal() {
 		return batch.ID, &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("run %q is not in a terminal status", runID)}
 	}
 
@@ -388,7 +388,7 @@ func archivePortalRowArchiver(repoRoot string, entryID, runID string) error {
 		if idx.RunRecordFor(entryID, runID) == nil {
 			idx.AddRun(entryID, batchindex.RunRecord{RunID: runID, Status: batchindex.RunRecordStatusActive})
 		}
-		rec, err := daemon.ArchiveRow(repoRoot, entry, runID)
+		rec, err := daemon.ArchiveRow(repoRoot, entry, runID, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
 		if err != nil {
 			return err
 		}

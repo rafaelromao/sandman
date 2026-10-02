@@ -13,8 +13,17 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/rafaelromao/sandman/internal/batchindex"
+	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
+
+func archiveLifecycle(terminalIDs ...string) events.EventLog {
+	log := &fakeEventLog{}
+	for _, id := range terminalIDs {
+		log.events = append(log.events, events.Event{Type: "run.finished", RunID: id, Payload: map[string]any{"status": "success"}})
+	}
+	return log
+}
 
 func writePerRowArchiveManifest(t *testing.T, runDir string, manifest batchindex.RunManifest) {
 	t.Helper()
@@ -82,7 +91,7 @@ func TestArchiveRow_MovesRunFolder(t *testing.T) {
 		Kind: batchindex.KindIssue,
 	}
 
-	rec, err := ArchiveRow(repoRoot, entry, runID)
+	rec, err := ArchiveRow(repoRoot, entry, runID, archiveLifecycle(runID))
 	if err != nil {
 		t.Fatalf("ArchiveRow: %v", err)
 	}
@@ -136,7 +145,7 @@ func TestArchiveRow_StripsSocketsFromMovedFolder(t *testing.T) {
 		Kind: batchindex.KindIssue,
 	}
 
-	if _, err := ArchiveRow(repoRoot, entry, runID); err != nil {
+	if _, err := ArchiveRow(repoRoot, entry, runID, archiveLifecycle(runID)); err != nil {
 		t.Fatalf("ArchiveRow: %v", err)
 	}
 
@@ -181,7 +190,7 @@ func TestArchiveRow_RefusesNonTerminalRow(t *testing.T) {
 		Kind: batchindex.KindIssue,
 	}
 
-	_, err := ArchiveRow(repoRoot, entry, runID)
+	_, err := ArchiveRow(repoRoot, entry, runID, archiveLifecycle())
 	if err == nil {
 		t.Fatal("ArchiveRow on active row must return an error, got nil")
 	}
@@ -231,7 +240,7 @@ func TestArchiveRow_DoesNotTouchWorktreesOrEvents(t *testing.T) {
 	}
 
 	eventsInfoBefore, _ := os.Stat(eventsPath)
-	if _, err := ArchiveRow(repoRoot, entry, runID); err != nil {
+	if _, err := ArchiveRow(repoRoot, entry, runID, archiveLifecycle(runID)); err != nil {
 		t.Fatalf("ArchiveRow: %v", err)
 	}
 	eventsInfoAfter, _ := os.Stat(eventsPath)
@@ -273,7 +282,7 @@ func TestArchiveRow_AlreadyArchivedReturnsError(t *testing.T) {
 		Kind: batchindex.KindIssue,
 	}
 
-	_, err := ArchiveRow(repoRoot, entry, runID)
+	_, err := ArchiveRow(repoRoot, entry, runID, archiveLifecycle(runID))
 	if err == nil {
 		t.Fatal("ArchiveRow on already-archived row must return an error")
 	}
@@ -332,7 +341,7 @@ func TestArchiveRow_LeavesSiblingRowsAlive(t *testing.T) {
 		Kind: batchindex.KindIssue,
 	}
 
-	if _, err := ArchiveRow(repoRoot, entry, row1); err != nil {
+	if _, err := ArchiveRow(repoRoot, entry, row1, archiveLifecycle(row1)); err != nil {
 		t.Fatalf("ArchiveRow: %v", err)
 	}
 

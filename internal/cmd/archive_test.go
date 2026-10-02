@@ -209,7 +209,7 @@ func TestArchiveRun_DeadRunMovesDirectory(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps(t))
+	cmd := NewArchiveCmd(terminalArchiveDeps(t, dir, "dead-1"))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"run", "dead-1"})
@@ -287,7 +287,7 @@ func TestArchiveRun_NoSocketsInArchive(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps(t))
+	cmd := NewArchiveCmd(terminalArchiveDeps(t, dir, "socket-test"))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"run", "socket-test"})
@@ -398,7 +398,7 @@ func TestArchiveBatch_DeadBatchMovesDirectory(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps(t))
+	cmd := NewArchiveCmd(terminalArchiveDeps(t, dir, "dead-1"))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"batch", "dead-1"})
@@ -471,7 +471,7 @@ func TestArchiveBatch_CollisionWithExistingArchiveDirReturnsError(t *testing.T) 
 	}
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps(t))
+	cmd := NewArchiveCmd(terminalArchiveDeps(t, dir, "dead-2"))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"batch", "dead-2"})
@@ -517,7 +517,7 @@ func TestArchiveRun_CollisionWithExistingArchiveDirReturnsError(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps(t))
+	cmd := NewArchiveCmd(terminalArchiveDeps(t, dir, "dead-2"))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"run", "dead-2"})
@@ -582,7 +582,7 @@ func TestArchiveOlderThan_ArchivesOldDeadBatch(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps(t))
+	cmd := NewArchiveCmd(terminalArchiveDeps(t, dir, "old-dead"))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"older-than", "30"})
@@ -728,7 +728,7 @@ func TestArchiveOlderThan_MixedBatchArchivesOnlyEligible(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps(t))
+	cmd := NewArchiveCmd(terminalArchiveDeps(t, dir, "old-dead", "old-live", "young-dead", "young-live"))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"older-than", "30"})
@@ -845,7 +845,7 @@ func TestArchiveOlderThan_ZeroDaysArchivesAllDead(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps(t))
+	cmd := NewArchiveCmd(terminalArchiveDeps(t, dir, "just-now"))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"older-than", "0"})
