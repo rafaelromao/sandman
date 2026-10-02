@@ -175,6 +175,12 @@ For the full `-run TestPresetMatrixHarness` suite (every scaffold preset —
 of the scaffolded image. The script `scripts/run-preset-matrix.sh` applies
 that budget automatically.
 
+Each real-agent preset-matrix CLI invocation allows up to 15 minutes for live
+provider latency. Its deadline is capped by the remaining suite deadline minus
+30 seconds for cancellation and cleanup. This avoids cutting off an actively
+progressing agent after five minutes while retaining a bounded per-run budget;
+the exhaustive E2E tier still uses its canonical 90-minute timeout.
+
 ## Gated scenarios
 
 Some expensive scenarios run without a build tag and are selected with `SANDMAN_E2E_GATES`. The value can be a single scenario, a comma-separated list, `all`, or `*`.
