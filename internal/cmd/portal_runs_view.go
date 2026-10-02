@@ -1745,17 +1745,8 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 	if run.IssueTitle == "" && queued != nil {
 		run.IssueTitle = v.issueTitleFromPayload(queued.Payload)
 	}
-	// The state-less path falls through to "queued" by default so a
-	// pre-run.started implementation row reads as waiting. When the
-	// underlying active instance is actually a live review, the row must
-	// promote to "reviewing" instead, since the linked review is what is
-	// doing the work for this issue (mirrors the contract pinned by
-	// runFromActiveMatch's `if prNumber > 0` branch). Without this
-	// promotion, a review that started before run.started lands would
-	// surface its issue row stuck on "queued" forever.
-	if run.Status == "queued" && blocked == nil && active.PRNumber > 0 {
-		run.Status = "reviewing"
-	}
+	// Review identity can come from artifacts, but lifecycle cannot. In
+	// particular a queued placeholder must not become reviewing from a PR ID.
 	if active.PRNumber > 0 {
 		run.Review = true
 		run.PRNumber = active.PRNumber

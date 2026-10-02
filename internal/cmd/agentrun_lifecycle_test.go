@@ -187,7 +187,7 @@ func TestArchiveBatch_RequiresEveryAgentRunTerminal(t *testing.T) {
 }
 
 func TestCleanAll_EventTerminalityAndArtifactOwnership(t *testing.T) {
-	for _, scenario := range []string{"terminal-stale-snapshot", "unknown", "capacity-queued", "read-error", "wrong-owner"} {
+	for _, scenario := range []string{"terminal-stale-snapshot", "unknown", "capacity-queued", "event-only-capacity-member", "read-error", "wrong-owner"} {
 		t.Run(scenario, func(t *testing.T) {
 			deps := newRunDepsAuto(t, &fakeBatchRunner{})
 			root, err := os.Getwd()
@@ -212,6 +212,12 @@ func TestCleanAll_EventTerminalityAndArtifactOwnership(t *testing.T) {
 			}
 			if scenario == "capacity-queued" {
 				log.events = []events.Event{{Type: "run.started", RunID: "row"}, {Type: "run.capacity_queued", RunID: "row"}}
+			}
+			if scenario == "event-only-capacity-member" {
+				log.events = append(log.events,
+					events.Event{Type: "run.started", RunID: "missing-row", Payload: map[string]any{"batch_id": "batch"}},
+					events.Event{Type: "run.capacity_queued", RunID: "missing-row", Payload: map[string]any{"batch_id": "batch"}},
+				)
 			}
 			if scenario == "read-error" {
 				log.err = errors.New("lifecycle unavailable")
@@ -408,5 +414,23 @@ func TestArchiveRun_MissingSnapshotDoesNotChangeTerminality(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, ".sandman", "archive", "batch", "runs", id)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPortal_TerminalQueuedReviewRetainsOutcome(t *testing.T) {
+	root := newSandmanDir(t)
+	id := "260618113825-abcd-42-PR99"
+	batchID := "260618113825-abcd-PR99"
+	at := time.Now().UTC()
+	list := []events.Event{{Type: "run.queued", RunID: id, Issue: 42, Timestamp: at, Payload: map[string]any{"batch_id": batchID, "review": true, "pr_number": 99}}}
+	view := &portalRunsView{}
+	rows, err := view.computeWithActiveRuns(root, list, view.groupEventsByRun(list), []portalActiveRun{{
+		Key: id, RunID: id, BatchID: batchID, IssueNumber: 42, IssueNumbers: []int{42}, PRNumber: 99, StartedAt: at,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Status != "queued" || rows[0].FinishedAt == nil {
+		t.Fatalf("review queue outcome revised: %+v", rows)
 	}
 }

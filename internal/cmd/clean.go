@@ -407,6 +407,13 @@ func buildEligibleActiveAction(entry batchindex.Batch, probe runActivityProbe, l
 	if probe != nil && probe(entry.Path) {
 		return cleanAction{}, false
 	}
+	// Artifact loss must not hide in-flight members from completed cleanup.
+	// Use the same event batch membership as whole-batch archive.
+	for _, state := range states {
+		if (state.BatchID() == entry.ID || state.RunID == entry.ID) && !state.IsTerminal() {
+			return cleanAction{}, false
+		}
+	}
 	action := cleanAction{
 		BatchID:   entry.ID,
 		BatchPath: entry.Path,
