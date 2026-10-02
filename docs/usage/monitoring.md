@@ -66,7 +66,7 @@ Emitted when an issue enters the wait queue due to unresolved blockers or parall
 | `blocked_by` | List of issue numbers blocking this run |
 
 #### `run.capacity_queued`
-Emitted after a lifecycle observation confirms that an external gate has resolved, when the continuation still needs an execution slot. It is non-terminal and distinct from both `run.await` (external work is still resolving) and the terminal `run.queued` placeholder. The active run projects as `queued`, not `waiting`; its historical await evidence remains available. If the owning process stops before capacity becomes available, the next normal `sandman run` admission rehydrates this continuation without requiring `--continue`, then revalidates the live head and request before execution.
+Emitted after a lifecycle observation confirms that an external gate has resolved, when the continuation still needs an execution slot. It is also emitted when a batch pauses admission after another row reports provider usage-limit exhaustion (`gate: usage-limit`, `reason: usage-limit-paused`): not-yet-started rows do not launch another agent until the suspended run resumes, and rehydrate through normal admission. It is non-terminal and distinct from both `run.await` (external work is still resolving) and the terminal `run.queued` placeholder. The active run projects as `queued`, not `waiting`; its historical await evidence remains available. If the owning process stops before capacity becomes available, the next normal `sandman run` admission rehydrates this continuation without requiring `--continue`, then revalidates the live head and request before execution.
 
 | Field | Description |
 |-------|-------------|
