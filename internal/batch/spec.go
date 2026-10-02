@@ -180,10 +180,9 @@ func (r *SpecificationResolver) HasChildren(ctx context.Context, number int) (bo
 	return false, nil
 }
 
-// Resolve is the entry point for Specification expansion. It walks the input list
-// and replaces each Specification with its accepted child issues, removing the Specification
-// itself and deduplicating across Specifications and explicit inputs. Non-Specification
-// issues pass through unchanged.
+// Resolve expands Specifications into accepted children and retained parent
+// rows, deduplicating across Specifications and explicit inputs.
+// Non-Specification issues pass through unchanged.
 //
 // The second return value is the in-memory parent-children map: every
 // retained Specification is keyed by its issue number, and the value
@@ -218,6 +217,10 @@ func (r *SpecificationResolver) HasChildren(ctx context.Context, number int) (bo
 // Errors:
 //   - any FetchIssue error encountered while loading a candidate child
 func (r *SpecificationResolver) Resolve(ctx context.Context, issues []int) ([]int, map[int][]int, error) {
+	return r.resolve(ctx, issues, newIssueFetchGroup())
+}
+
+func (r *SpecificationResolver) resolve(ctx context.Context, issues []int, fetches *issueFetchGroup) ([]int, map[int][]int, error) {
 	unique := uniqueIssues(issues)
 	userInputSet := make(map[int]struct{}, len(unique))
 	for _, num := range unique {
@@ -252,7 +255,6 @@ func (r *SpecificationResolver) Resolve(ctx context.Context, issues []int) ([]in
 		sort.Ints(out)
 		parentChildren[parent] = out
 	}
-	fetches := newIssueFetchGroup()
 	for _, num := range unique {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
