@@ -346,7 +346,7 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 				if _, ok := recoveredRunIDs[run.RunID]; ok {
 					continue
 				}
-				if run.IsTerminal() {
+				if run.IsTerminal() || (run.Started.Type != "run.started" && run.Started.Type != "run.continued") {
 					continue
 				}
 				// Batch-identity guard: when the candidate run was
@@ -476,7 +476,9 @@ func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log even
 		if run.IsCapacityQueued() {
 			continue
 		}
-		if run.IsTerminal() {
+		// Diagnostics without a start/continuation are unknown lifecycle,
+		// not execution that recovery can declare aborted.
+		if run.IsTerminal() || (run.Started.Type != "run.started" && run.Started.Type != "run.continued") {
 			continue
 		}
 		if _, ok := skipRunIDs[run.RunID]; ok {

@@ -72,3 +72,31 @@ func TestRecoverStaleRuns_EventLifecycleSurvivesSnapshotDivergence(t *testing.T)
 		})
 	}
 }
+
+func TestRecoverStaleRuns_DiagnosticEventsDoNotAuthorizeCompletion(t *testing.T) {
+	baseDir := t.TempDir()
+	batchDir := filepath.Join(baseDir, "batches", "dead")
+	writeManifestFile(t, batchDir, BatchManifest{Issues: []int{42}})
+	if err := WriteRunManifest(batchDir, "row", batchindex.RunManifest{Issue: 42, Status: batchindex.RunManifestStatusSuccess}); err != nil {
+		t.Fatal(err)
+	}
+	log := &events.JSONLLogger{Path: filepath.Join(baseDir, "events.jsonl")}
+	if err := log.Log(events.Event{Type: "run.warning", RunID: "row", Issue: 42, Payload: map[string]any{"batch_id": "dead"}}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := log.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered, _, err := RecoverStaleRuns(baseDir, list, log)
+	if err != nil || recovered != 0 {
+		t.Fatalf("diagnostics invented completion: %d, %v", recovered, err)
+	}
+	states, err := events.ReadRunStates(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if states["row"].IsTerminal() {
+		t.Fatal("unknown lifecycle became terminal")
+	}
+}
