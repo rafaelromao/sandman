@@ -8,6 +8,7 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 // NonTerminalRowError is returned by ArchiveRow when the targeted
@@ -83,10 +84,14 @@ func ArchiveRow(repoRoot string, batch *batchindex.Batch, runID string, log even
 	if !states[runID].IsTerminal() {
 		return batchindex.RunRecord{}, &NonTerminalRowError{RunID: runID}
 	}
-	liveRunDir := filepath.Join(batch.Path, "runs", runID)
+	layout := paths.NewLayout(nil, repoRoot)
+	liveRunDir := batch.Location(layout).Run(runID).Dir
 
-	relArchive := filepath.Join(".sandman", "archive", batch.ID, "runs", runID)
-	archiveRunDir := filepath.Join(repoRoot, relArchive)
+	archiveRunDir := layout.ArchiveBatch(batch.ID).Run(runID).Dir
+	relArchive, err := filepath.Rel(repoRoot, archiveRunDir)
+	if err != nil {
+		return batchindex.RunRecord{}, fmt.Errorf("relative archive path: %w", err)
+	}
 	if info, statErr := os.Stat(archiveRunDir); statErr == nil {
 		if info.IsDir() {
 			return batchindex.RunRecord{}, &AlreadyArchivedError{ArchivePath: relArchive}
@@ -96,7 +101,7 @@ func ArchiveRow(repoRoot string, batch *batchindex.Batch, runID string, log even
 		return batchindex.RunRecord{}, fmt.Errorf("stat archive target %q: %w", archiveRunDir, statErr)
 	}
 
-	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "archive", batch.ID, "runs"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(archiveRunDir), 0755); err != nil {
 		return batchindex.RunRecord{}, fmt.Errorf("create archive parent: %w", err)
 	}
 

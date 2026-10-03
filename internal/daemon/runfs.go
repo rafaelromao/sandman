@@ -12,7 +12,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/events"
-	"github.com/rafaelromao/sandman/internal/socketpath"
+	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 // IsRunActive reports whether a batch directory is currently owned by a live
@@ -21,7 +21,8 @@ import (
 // Batch dirs that survived a crash (no live socket) are stale and safe to
 // clean up.
 func IsRunActive(batchPath string) bool {
-	batchSock := socketpath.Path(filepath.Join(batchPath, "batch.sock"))
+	location := paths.BatchLocation{Dir: batchPath}
+	batchSock := location.SocketPath()
 	if isConnectableSocket(batchSock) {
 		return true
 	}
@@ -30,7 +31,7 @@ func IsRunActive(batchPath string) bool {
 		return false
 	}
 	for _, runDir := range runDirs {
-		runSock := socketpath.Path(filepath.Join(runDir, "run.sock"))
+		runSock := (paths.RunLocation{Dir: runDir}).SocketPath()
 		if isConnectableSocket(runSock) {
 			return true
 		}
@@ -82,21 +83,20 @@ func (d DeadBatch) RunTimestamp() time.Time {
 // <baseDir>/batches/ is missing so callers can treat a fresh repository
 // the same as a clean one.
 func FindDeadRunBatches(baseDir string) ([]DeadBatch, error) {
-	batchesDir := filepath.Join(baseDir, "batches")
-	entries, err := os.ReadDir(batchesDir)
+	locations, err := batchindex.DiscoverBatchLocations(layoutForBaseDir(baseDir))
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read batches dir: %w", err)
+		return nil, err
 	}
+	return findDeadBatchLocations(locations)
+}
 
+func findDeadBatchLocations(locations []paths.BatchLocation) ([]DeadBatch, error) {
 	var batches []DeadBatch
-	for _, entry := range entries {
-		if !entry.IsDir() {
+	for _, location := range locations {
+		batchPath := location.Dir
+		if _, err := os.Stat(batchPath); os.IsNotExist(err) {
 			continue
 		}
-		batchPath := filepath.Join(batchesDir, entry.Name())
 		if IsRunActive(batchPath) {
 			continue
 		}
@@ -230,17 +230,17 @@ func ReadManifest(runDir string) (BatchManifest, error) {
 // RunFolder returns the per-run folder path for a given batch root and run ID.
 // It joins batchDir/runs/runID verbatim without auto-generation.
 func RunFolder(batchDir, runID string) string {
-	return filepath.Join(batchDir, "runs", runID)
+	return (paths.BatchLocation{Dir: batchDir}).Run(runID).Dir
 }
 
 // BatchSocketPath returns the path to the batch control socket at the batch root.
 func BatchSocketPath(batchDir string) string {
-	return socketpath.Path(filepath.Join(batchDir, "batch.sock"))
+	return (paths.BatchLocation{Dir: batchDir}).SocketPath()
 }
 
 // RunSocketPath returns the path to the per-run command socket inside a run folder.
 func RunSocketPath(batchDir, runID string) string {
-	return socketpath.Path(filepath.Join(RunFolder(batchDir, runID), "run.sock"))
+	return (paths.BatchLocation{Dir: batchDir}).Run(runID).SocketPath()
 }
 
 // WriteRunManifest writes a RunManifest to the per-run folder under the batch.
@@ -288,7 +288,16 @@ func UpdateRunManifestStatus(batchDir, runID string, status batchindex.RunManife
 // under <baseDir>/runs/ mentions the run's issue or, for prompt-only runs,
 // has zero issues in its manifest).
 func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.EventLog) (int, int, error) {
-	dead, err := FindDeadRunBatches(baseDir)
+	layout := layoutForBaseDir(baseDir)
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
+	if err != nil {
+		return 0, 0, err
+	}
+	locations, err := idx.BatchLocations(layout)
+	if err != nil {
+		return 0, 0, err
+	}
+	dead, err := findDeadBatchLocations(locations)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -334,6 +343,31 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 		return nil
 	}
 	for _, batch := range dead {
+		// A persisted row establishes exact physical ownership for every
+		// run kind, including prompt-only and orphan Review Runs. The issue
+		// window heuristics below remain the fallback for legacy batches.
+		for _, run := range runs {
+			if run.IsCapacityQueued() || run.IsTerminal() || (run.Started.Type != "run.started" && run.Started.Type != "run.continued") {
+				continue
+			}
+			if _, done := recoveredRunIDs[run.RunID]; done {
+				continue
+			}
+			if bid := run.BatchID(); bid != "" && !batchIdentityMatches(idx, layout, bid, batch.RunDir) {
+				continue
+			}
+			if !batch.Manifest.CreatedAt.IsZero() && run.Started.Timestamp.Before(batch.Manifest.CreatedAt) {
+				continue
+			}
+			manifest, err := ReadRunManifest(batch.RunDir, run.RunID)
+			if err != nil || manifest.RunID != run.RunID {
+				continue
+			}
+			if err := emitOrphan(run, run.IssueNumber()); err != nil {
+				return recovered, len(dead), err
+			}
+			_ = UpdateRunManifestStatus(batch.RunDir, run.RunID, batchindex.RunManifestStatusAborted)
+		}
 		latestTerminal := latestTerminalForIssues(batch.Manifest.Issues, byIssue)
 		for _, issueNumber := range batch.Manifest.Issues {
 			for _, run := range byIssue[issueNumber] {
@@ -365,7 +399,8 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 				// latestTerminal heuristics below; that path is
 				// exercised by every existing fixture in
 				// recover_stale_test.go.
-				if bid := run.BatchID(); bid != "" && bid != filepath.Base(batch.RunDir) {
+				bid := run.BatchID()
+				if bid != "" && !batchIdentityMatches(idx, layout, bid, batch.RunDir) {
 					continue
 				}
 				if !batch.Manifest.CreatedAt.IsZero() && run.Started.Timestamp.Before(batch.Manifest.CreatedAt) {
@@ -389,7 +424,7 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 		}
 	}
 
-	orphanRecovered, orphanErr := recoverOrphanActiveRuns(baseDir, eventsList, log, recoveredRunIDs, recoveredAt)
+	orphanRecovered, orphanErr := recoverOrphanActiveRuns(layout, idx, locations, eventsList, log, recoveredRunIDs, recoveredAt)
 	if orphanErr != nil {
 		return recovered, len(dead), orphanErr
 	}
@@ -431,7 +466,7 @@ func latestTerminalForIssues(issues []int, byIssue map[int][]events.RunState) ti
 // recoverOrphanActiveRuns recovers active RunStates that have no matching
 // batch directory under <baseDir>/batches/. Artifact loss never revises an
 // existing terminal event, including queued and blocked placeholders.
-func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log events.EventLog, skipRunIDs map[string]struct{}, recoveredAt time.Time) (int, error) {
+func recoverOrphanActiveRuns(layout paths.Layout, idx *batchindex.Index, locations []paths.BatchLocation, eventsList []events.Event, log events.EventLog, skipRunIDs map[string]struct{}, recoveredAt time.Time) (int, error) {
 	runs := events.ProjectRunStates(eventsList)
 
 	byIssue := make(map[int][]events.RunState)
@@ -448,18 +483,11 @@ func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log even
 		manifest BatchManifest
 	}
 	var batches []batchInfo
-	batchesDir := filepath.Join(baseDir, "batches")
-	entries, err := os.ReadDir(batchesDir)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return 0, fmt.Errorf("read batches dir for orphan scan: %w", err)
-		}
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
+	for _, location := range locations {
+		batchPath := location.Dir
+		if _, err := os.Stat(batchPath); os.IsNotExist(err) {
 			continue
 		}
-		batchPath := filepath.Join(batchesDir, entry.Name())
 		manifest, err := ReadManifest(batchPath)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -489,6 +517,9 @@ func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log even
 		isPromptOnly := run.IsPromptOnly()
 		hasBatch := false
 		for _, b := range batches {
+			if bid := run.BatchID(); bid != "" && !batchIdentityMatches(idx, layout, bid, b.dir) {
+				continue
+			}
 			if isPromptOnly {
 				if len(b.manifest.Issues) > 0 {
 					continue
@@ -566,4 +597,15 @@ func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log even
 		recovered++
 	}
 	return recovered, nil
+}
+
+// baseDir is the Sandman data root, including for callers with a custom root.
+func layoutForBaseDir(baseDir string) paths.Layout {
+	return paths.Layout{RepoRoot: filepath.Dir(baseDir), SandmanDir: baseDir,
+		BatchesDir: filepath.Join(baseDir, "batches"), ArchiveDir: filepath.Join(baseDir, "archive"),
+		BatchesIndexPath: filepath.Join(baseDir, "batches.json")}
+}
+
+func batchIdentityMatches(idx *batchindex.Index, layout paths.Layout, id, dir string) bool {
+	return idx.MatchesBatchLocation(layout, id, dir)
 }

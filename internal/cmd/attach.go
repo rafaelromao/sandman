@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/spf13/cobra"
@@ -67,16 +68,12 @@ func findDaemonSocket(baseDir string) (string, error) {
 		candidates = append(candidates, reviewSock)
 	}
 
-	batchesDir := layout.BatchesDir
-	entries, err := os.ReadDir(batchesDir)
-	if err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("read batches dir: %w", err)
+	locations, err := batchindex.DiscoverBatchLocations(layout)
+	if err != nil {
+		return "", fmt.Errorf("discover batches: %w", err)
 	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		sockPath := layout.BatchSocketPath(entry.Name())
+	for _, location := range locations {
+		sockPath := location.SocketPath()
 		if _, err := os.Stat(sockPath); err == nil {
 			candidates = append(candidates, sockPath)
 		}
