@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
+	"github.com/rafaelromao/sandman/internal/paths"
 	"golang.org/x/sys/unix"
 )
 
@@ -260,6 +261,10 @@ func loadBak(path string) *Index {
 }
 
 func (idx *Index) MarkUnavailable() bool {
+	return idx.markUnavailable(idx.Layout())
+}
+
+func (idx *Index) markUnavailable(layout paths.Layout) bool {
 	statFn := idx.StatFn
 	if statFn == nil {
 		statFn = os.Stat
@@ -268,7 +273,7 @@ func (idx *Index) MarkUnavailable() bool {
 	for i := range idx.Batches {
 		b := &idx.Batches[i]
 		if b.Status == StatusActive || b.Status == StatusArchived {
-			if _, err := statFn(b.Path); err != nil {
+			if _, err := statFn(b.Location(layout).Dir); err != nil {
 				if os.IsNotExist(err) {
 					b.Status = StatusUnavailable
 					dirty = true
@@ -289,7 +294,7 @@ func (idx *Index) EnsureStatus() error {
 // (ReconcileRuns). The layout parameter is the repo root used to
 // resolve on-disk paths for per-row reconciliation.
 func (idx *Index) EnsureStatusWithLayout(repoRoot string) error {
-	idx.MarkUnavailable()
+	idx.markUnavailable(paths.NewLayout(nil, repoRoot))
 	idx.ReconcileRuns(repoRoot)
 	return nil
 }
@@ -512,6 +517,7 @@ func (idx *Index) RunRecordFor(batchID, runID string) *RunRecord {
 // (legacy batches); it is a no-op for them. It does not flip the
 // batch-level Status — that decision belongs to EnsureStatus/MarkUnavailable.
 func (idx *Index) ReconcileRuns(repoRoot string) {
+	layout := paths.NewLayout(nil, repoRoot)
 	statFn := idx.StatFn
 	if statFn == nil {
 		statFn = os.Stat
@@ -523,11 +529,11 @@ func (idx *Index) ReconcileRuns(repoRoot string) {
 			if rec.ArchivePath == "" {
 				continue
 			}
-			livePath := filepath.Join(repoRoot, ".sandman", "batches", batch.ID, "runs", rec.RunID)
+			livePath := batch.Location(layout).Run(rec.RunID).Dir
 			if _, err := statFn(livePath); err == nil {
 				continue
 			}
-			archivePath := filepath.Join(repoRoot, rec.ArchivePath)
+			archivePath := layout.ResolvePath(rec.ArchivePath)
 			if _, err := statFn(archivePath); err == nil {
 				continue
 			}

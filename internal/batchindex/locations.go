@@ -9,6 +9,17 @@ import (
 	"github.com/rafaelromao/sandman/internal/paths"
 )
 
+// Layout anchors resolution at the repository containing this loaded index.
+// In-memory indices with absolute paths need no root; relative test fixtures
+// can instead pass an explicit Layout to the location APIs.
+func (idx *Index) Layout() paths.Layout {
+	root := "."
+	if idx != nil && idx.indexPath != "" {
+		root = filepath.Dir(filepath.Dir(idx.indexPath))
+	}
+	return paths.NewLayout(nil, root)
+}
+
 func (b Batch) Location(layout paths.Layout) paths.BatchLocation {
 	return layout.LocateBatch(b.ID, b.Path)
 }

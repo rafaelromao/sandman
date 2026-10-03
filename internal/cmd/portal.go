@@ -283,7 +283,9 @@ func archivePortalRunHandler(repoRoot, runID string) (string, error) {
 		return batch.ID, &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("batch %q is not active (status=%s)", batch.ID, batch.Status)}
 	}
 
-	status, statusErr := portalRowStatusProbe(batch, runID)
+	statusBatch := *batch
+	statusBatch.Path = batch.Location(layout).Dir
+	status, statusErr := portalRowStatusProbe(&statusBatch, runID)
 	if statusErr != nil {
 		return batch.ID, &portalArchiveError{status: http.StatusInternalServerError, message: statusErr.Error()}
 	}
@@ -363,7 +365,7 @@ var portalRowStatusProbe = portalReadRowStatus
 // produces a NotFound error; a malformed manifest produces a Decode
 // error. The default implementation of portalRowStatusProbe.
 func portalReadRowStatus(batch *batchindex.Batch, runID string) (batchindex.RunManifestStatus, error) {
-	manifestPath := filepath.Join(batch.Path, "runs", runID, "run.json")
+	manifestPath := (paths.BatchLocation{Dir: batch.Path}).Run(runID).ManifestPath()
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return "", err
@@ -432,7 +434,7 @@ func archivePortalRowArchiver(repoRoot string, entryID, runID string) error {
 // apply any active/archived check separately so the 404/409/500 paths
 // stay observable per kind.
 func resolveBatchFromRunIDFastOrScan(idx *batchindex.Index, runID string) *batchindex.Batch {
-	return idx.ResolveRunBatch(paths.NewLayout(nil, "."), runID)
+	return idx.ResolveRunBatch(idx.Layout(), runID)
 }
 
 // abortPortalRun sends an abort command to the run's cmd.sock for a single issue row.
@@ -617,8 +619,9 @@ func discoverPortalInstances(repoRoot string) ([]portalInstance, error) {
 			continue
 		}
 
-		batchDir := entry.Path
-		sockPath := daemon.BatchSocketPath(batchDir)
+		location := entry.Location(layout)
+		batchDir := location.Dir
+		sockPath := location.SocketPath()
 		info, err := os.Stat(sockPath)
 		if err != nil || info.IsDir() || info.Mode()&os.ModeSocket == 0 {
 			continue

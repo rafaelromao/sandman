@@ -1256,8 +1256,8 @@ func TestPortal_Compute_CompletedRunWithDeadBatchDir_ReportsSourceExists(t *test
 		t.Fatalf("expected 1 row, got %d: %#v", len(runs), runs)
 	}
 	got := runs[0]
-	if got.BatchKey != filepath.Base(runDir) {
-		t.Fatalf("BatchKey = %q, want %q", got.BatchKey, filepath.Base(runDir))
+	if got.BatchKey != runID {
+		t.Fatalf("BatchKey = %q, want public ID %q", got.BatchKey, runID)
 	}
 	if !got.SourceExists {
 		t.Fatalf("SourceExists = false, want true (per-run source directory exists under %s)", filepath.Base(runDir))

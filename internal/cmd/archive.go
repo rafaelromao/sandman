@@ -144,10 +144,11 @@ func runArchiveStale(cmd *cobra.Command, deps Dependencies) error {
 func archiveAllTerminalRows(cmd *cobra.Command, idx *batchindex.Index, layout paths.Layout, repoRoot string, archived *int) error {
 	for i := range idx.Batches {
 		entry := &idx.Batches[i]
-		if daemon.IsRunActive(entry.Path) {
+		location := entry.Location(layout)
+		if daemon.IsRunActive(location.Dir) {
 			continue
 		}
-		runDirs, err := listRunDirs(entry.Path)
+		runDirs, err := listRunDirs(location.Dir)
 		if err != nil {
 			return err
 		}
@@ -155,7 +156,7 @@ func archiveAllTerminalRows(cmd *cobra.Command, idx *batchindex.Index, layout pa
 			if rec := idx.RunRecordFor(entry.ID, runID); rec != nil && rec.Status == batchindex.RunRecordStatusArchived {
 				continue
 			}
-			manifestPath := filepath.Join(entry.Path, "runs", runID, "run.json")
+			manifestPath := entry.Location(layout).Run(runID).ManifestPath()
 			data, err := os.ReadFile(manifestPath)
 			if err != nil {
 				continue
@@ -194,7 +195,7 @@ func archiveAllTerminalRows(cmd *cobra.Command, idx *batchindex.Index, layout pa
 // <batchDir>/runs/. A missing runs/ directory yields an empty slice;
 // any other error is returned.
 func listRunDirs(batchDir string) ([]string, error) {
-	runsDir := filepath.Join(batchDir, "runs")
+	runsDir := (paths.BatchLocation{Dir: batchDir}).RunsDir()
 	entries, err := os.ReadDir(runsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -238,7 +239,7 @@ func runArchiveRun(cmd *cobra.Command, runID string, repoRoot string) error {
 
 	var batchID, archivePath string
 	if err := batchindex.Update(layout.BatchesIndexPath, func(idx *batchindex.Index) error {
-		entry := resolveBatchFromRunIDFastOrScan(idx, runID)
+		entry := idx.ResolveRunBatch(layout, runID)
 		if entry == nil {
 			return fmt.Errorf("run %q not found in index", runID)
 		}
@@ -277,7 +278,7 @@ func runArchiveBatch(cmd *cobra.Command, batchID string, probe runActivityProbe,
 	}
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
 
-	archivePath := filepath.Join(layout.ArchiveDir, batchID)
+	archivePath := layout.ArchiveBatch(batchID).Dir
 	if err := batchindex.Update(layout.BatchesIndexPath, func(idx *batchindex.Index) error {
 		entry := idx.Resolve(batchID)
 		if entry == nil {
@@ -286,7 +287,7 @@ func runArchiveBatch(cmd *cobra.Command, batchID string, probe runActivityProbe,
 		if entry.Status != batchindex.StatusActive {
 			return fmt.Errorf("batch %q is not active (status=%s); refusing to archive", batchID, entry.Status)
 		}
-		if probe != nil && probe(entry.Path) {
+		if probe != nil && probe(entry.Location(layout).Dir) {
 			return fmt.Errorf("batch %q is still active; stop the daemon before archiving", batchID)
 		}
 		if _, err := os.Stat(archivePath); err == nil {
@@ -297,7 +298,7 @@ func runArchiveBatch(cmd *cobra.Command, batchID string, probe runActivityProbe,
 		if err := os.MkdirAll(layout.ArchiveDir, 0755); err != nil {
 			return fmt.Errorf("create archive dir: %w", err)
 		}
-		if err := os.Rename(entry.Path, archivePath); err != nil {
+		if err := os.Rename(entry.Location(layout).Dir, archivePath); err != nil {
 			return fmt.Errorf("move batch dir: %w", err)
 		}
 		if err := stripSockets(archivePath); err != nil {
@@ -342,10 +343,11 @@ func runArchiveOlderThan(cmd *cobra.Command, daysArg string, repoRoot string) er
 		}
 		for i := range idx.Batches {
 			entry := &idx.Batches[i]
-			if daemon.IsRunActive(entry.Path) {
+			location := entry.Location(layout)
+			if daemon.IsRunActive(location.Dir) {
 				continue
 			}
-			runDirs, err := listRunDirs(entry.Path)
+			runDirs, err := listRunDirs(location.Dir)
 			if err != nil {
 				return err
 			}
@@ -353,7 +355,7 @@ func runArchiveOlderThan(cmd *cobra.Command, daysArg string, repoRoot string) er
 				if rec := idx.RunRecordFor(entry.ID, runID); rec != nil && rec.Status == batchindex.RunRecordStatusArchived {
 					continue
 				}
-				manifestPath := filepath.Join(entry.Path, "runs", runID, "run.json")
+				manifestPath := entry.Location(layout).Run(runID).ManifestPath()
 				info, err := os.Stat(manifestPath)
 				if err != nil {
 					continue
@@ -399,7 +401,8 @@ func runArchiveOlderThan(cmd *cobra.Command, daysArg string, repoRoot string) er
 }
 
 func archiveBatchCreatedAt(entry batchindex.Batch) (time.Time, error) {
-	manifest, err := batchindex.ReadManifest(entry.Path)
+	location := entry.Location(paths.NewLayout(nil, "."))
+	manifest, err := batchindex.ReadManifest(location.Dir)
 	if err == nil && !manifest.CreatedAt.IsZero() {
 		return manifest.CreatedAt.UTC(), nil
 	}
@@ -407,7 +410,7 @@ func archiveBatchCreatedAt(entry batchindex.Batch) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("read batch manifest for %q: %w", entry.ID, err)
 	}
 
-	info, err := os.Stat(entry.Path)
+	info, err := os.Stat(location.Dir)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("stat batch dir for %q: %w", entry.ID, err)
 	}
