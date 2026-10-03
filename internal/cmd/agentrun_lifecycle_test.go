@@ -150,7 +150,7 @@ func TestArchiveBatch_RequiresEveryAgentRunTerminal(t *testing.T) {
 			deps := terminalArchiveDeps(t, root, "done")
 			deps.RepoRoot = root
 			log := deps.EventLog
-			if phase != "unknown" {
+			if phase != "unknown" && phase != "terminal" {
 				if err := log.Log(events.Event{Type: "run.started", RunID: "other", Payload: map[string]any{"batch_id": batchID}}); err != nil {
 					t.Fatal(err)
 				}
@@ -161,7 +161,7 @@ func TestArchiveBatch_RequiresEveryAgentRunTerminal(t *testing.T) {
 				}
 			}
 			if phase == "terminal" {
-				if err := log.Log(events.Event{Type: "run.queued", RunID: "other"}); err != nil {
+				if err := log.Log(events.Event{Type: "run.queued", RunID: "other", Payload: map[string]any{"terminal_placeholder": true}}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -302,7 +302,7 @@ func TestArchive_EventAuthorityAcrossBoundaries(t *testing.T) {
 					case "terminal-stale-snapshot":
 						recordTerminalLifecycle(t, root, id)
 					case "terminal-queued":
-						if err := log.Log(events.Event{Type: "run.queued", RunID: id, Issue: 42}); err != nil {
+						if err := log.Log(events.Event{Type: "run.queued", RunID: id, Issue: 42, Payload: map[string]any{"terminal_placeholder": true}}); err != nil {
 							t.Fatal(err)
 						}
 					case "capacity-queued":
@@ -382,10 +382,9 @@ func TestPortal_QueuedTerminalityControlsReviewPromotion(t *testing.T) {
 				if row.RunID != "parent" {
 					continue
 				}
-				want := "queued"
-				if phase == "run.capacity_queued" {
-					want = "reviewing"
-				}
+				// Neither readiness nor stale initial-queue evidence terminalizes
+				// a started parent or hides its associated live review.
+				want := "reviewing"
 				if row.Status != want {
 					t.Fatalf("phase %s parent=%+v, want %s", phase, row, want)
 				}
@@ -422,7 +421,7 @@ func TestPortal_TerminalQueuedReviewRetainsOutcome(t *testing.T) {
 	id := "260618113825-abcd-42-PR99"
 	batchID := "260618113825-abcd-PR99"
 	at := time.Now().UTC()
-	list := []events.Event{{Type: "run.queued", RunID: id, Issue: 42, Timestamp: at, Payload: map[string]any{"batch_id": batchID, "review": true, "pr_number": 99}}}
+	list := []events.Event{{Type: "run.queued", RunID: id, Issue: 42, Timestamp: at, Payload: map[string]any{"batch_id": batchID, "review": true, "pr_number": 99, "terminal_placeholder": true}}}
 	view := &portalRunsView{}
 	rows, err := view.computeWithActiveRuns(root, list, view.groupEventsByRun(list), []portalActiveRun{{
 		Key: id, RunID: id, BatchID: batchID, IssueNumber: 42, IssueNumbers: []int{42}, PRNumber: 99, StartedAt: at,

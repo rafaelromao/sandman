@@ -1550,7 +1550,7 @@ func TestPortal_Compute_DeadBatchWithStaleRunSock_PreservesLifecycle(t *testing.
 	}
 }
 
-func TestPortal_Compute_DeadBatchQueuedRow_StaysQueued(t *testing.T) {
+func TestPortal_Compute_DeadBatchStartedCapacityRow_StaysWaiting(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -1581,7 +1581,7 @@ func TestPortal_Compute_DeadBatchQueuedRow_StaysQueued(t *testing.T) {
 	for _, row := range got {
 		want := "running"
 		if row.IssueNumber == 42 {
-			want = "queued"
+			want = "waiting"
 		}
 		if row.Kind != "active" || row.Status != want || row.FinishedAt != nil {
 			t.Fatalf("row = %#v, want active/%s", row, want)

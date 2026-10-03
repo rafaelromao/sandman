@@ -587,8 +587,8 @@ func TestRunBatch_ConfirmedReviewReleasesSlotAndResumesAfterResponse(t *testing.
 			break
 		}
 	}
-	if readyState == nil || !readyState.IsActive() || readyState.IsAwaiting() || !readyState.IsCapacityQueued() || readyState.Status() != "queued" {
-		t.Fatalf("resolved continuation phase = %#v, want active capacity-queued state separate from external waiting", readyState)
+	if readyState == nil || !readyState.IsActive() || !readyState.IsAwaiting() || !readyState.IsCapacityQueued() || readyState.Status() != "waiting" {
+		t.Fatalf("resolved continuation phase = %#v, want active waiting run with durable ready evidence", readyState)
 	}
 	if readyState.CapacityQueuedEvent == nil || readyState.CapacityQueuedEvent.Payload["ready_continuation"] != true {
 		t.Fatalf("resolved continuation is not durably marked ready: %#v", readyState.CapacityQueuedEvent)

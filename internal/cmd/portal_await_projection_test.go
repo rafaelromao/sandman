@@ -160,6 +160,28 @@ func TestPortal_WaitingBadgeHasDedicatedStyle(t *testing.T) {
 	}
 }
 
+func TestPortal_StartedCapacityContinuationStaysWaiting(t *testing.T) {
+	t.Parallel()
+	startedAt := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	for _, prior := range []string{"run.queued", "run.started", "run.continued"} {
+		t.Run(prior, func(t *testing.T) {
+			state := events.ProjectRunStates([]events.Event{
+				{Type: prior, Timestamp: startedAt, RunID: "row", Issue: 42},
+				{Type: "run.capacity_queued", Timestamp: startedAt.Add(time.Minute), RunID: "row", Issue: 42, Payload: map[string]any{"ready_continuation": true}},
+			})[0]
+			view := &portalRunsView{now: func() time.Time { return startedAt.Add(time.Hour) }}
+			row := view.runFromState(t.TempDir(), state, nil, nil, nil, nil)
+			want := "waiting"
+			if prior == "run.queued" {
+				want = "queued"
+			}
+			if row.Status != want || row.FinishedAt != nil {
+				t.Fatalf("after %s: status=%q finished=%v, want non-terminal %s", prior, row.Status, row.FinishedAt, want)
+			}
+		})
+	}
+}
+
 func TestPortal_AwaitDurationPausesAndResumes(t *testing.T) {
 	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)

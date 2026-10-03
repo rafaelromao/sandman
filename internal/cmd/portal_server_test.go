@@ -673,15 +673,12 @@ func TestPortal_LoadPortalRuns_ShowsQueuedIssuesFromEvents(t *testing.T) {
 	if run := byIssue[1]; run.Kind != "completed" || run.Status != "success" {
 		t.Fatalf("expected completed success run for issue 1, got kind=%q status=%q", run.Kind, run.Status)
 	}
-	// Queued runs render as completed/queued (see kindForRun, issue #1699):
-	// wait-state rows no longer borrow the active-row chrome even though
-	// the daemon has not picked them up yet. Status still tracks the
-	// wait state; only the Kind flipped from "active" to "completed".
-	if run := byIssue[2]; run.Kind != "completed" || run.Status != "queued" {
-		t.Fatalf("expected completed queued run for issue 2, got kind=%q status=%q", run.Kind, run.Status)
+	// Pending initial admission is unfinished even before the agent starts.
+	if run := byIssue[2]; run.Kind != "active" || run.Status != "queued" {
+		t.Fatalf("expected unfinished queued run for issue 2, got kind=%q status=%q", run.Kind, run.Status)
 	}
-	if run := byIssue[3]; run.Kind != "completed" || run.Status != "queued" {
-		t.Fatalf("expected completed queued run for issue 3, got kind=%q status=%q", run.Kind, run.Status)
+	if run := byIssue[3]; run.Kind != "active" || run.Status != "queued" {
+		t.Fatalf("expected unfinished queued run for issue 3, got kind=%q status=%q", run.Kind, run.Status)
 	}
 }
 
@@ -1213,8 +1210,8 @@ func TestPortal_QueuedOnlyRowHasActiveKindSoAbortRenders(t *testing.T) {
 	if queuedRow == nil {
 		t.Fatalf("expected a queued row for issue 42, got runs: %#v", runs)
 	}
-	if queuedRow.Kind != "completed" || queuedRow.FinishedAt == nil {
-		t.Fatalf("expected terminal queued placeholder despite live daemon: %+v", queuedRow)
+	if queuedRow.Kind != "active" || queuedRow.FinishedAt != nil {
+		t.Fatalf("expected unfinished queued admission with live daemon: %+v", queuedRow)
 	}
 }
 
@@ -2458,7 +2455,7 @@ func TestPortal_DedupKeepsActiveBatchAndHistoricalRows(t *testing.T) {
 		// event-fold projection path (runFromState); the
 		// live-instance constructor keeps Kind="active" because the
 		// daemon is genuinely still attached.
-		case run.Kind == "completed" && run.Status == "queued" && run.BatchKey == "active-1":
+		case run.Kind == "active" && run.Status == "queued" && run.BatchKey == "active-1":
 			sawActiveQueued = true
 		// Historical blocked rows render as kind="completed" after
 		// issue #1699: kindForRun no longer borrows active-row chrome
@@ -4019,11 +4016,8 @@ func TestPortal_OrphanActiveBatch_AllRowsRender(t *testing.T) {
 		if !ok {
 			t.Fatalf("issue %d: no portal row returned", issue)
 		}
-		// Issue 1014 is genuinely running (run.started). All others
-		// are queued wait-state rows. After issue #1699, queued rows
-		// are kind="completed" rather than "active" — only the
-		// running row keeps the active row kind.
-		wantKind := "completed"
+		// Initial queued admissions are unfinished alongside executing rows.
+		wantKind := "active"
 		wantStatus := "queued"
 		if issue == 1014 {
 			wantKind = "active"
@@ -4120,7 +4114,7 @@ func TestPortal_QueuedAndTerminalSameIssue_NotCollapsed(t *testing.T) {
 		if r.BatchKey == "old-1" && r.Kind == "completed" && r.Status == "aborted" {
 			foundOldAborted = true
 		}
-		if r.BatchKey == batchID && r.Kind == "completed" && r.Status == "queued" {
+		if r.BatchKey == batchID && r.Kind == "active" && r.Status == "queued" {
 			foundNewQueued = true
 		}
 	}

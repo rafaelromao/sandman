@@ -941,8 +941,8 @@ func TestProjectRunStates_AwaitEventKeepsRunActive(t *testing.T) {
 	if got := run.AwaitEvent.Payload["await_reason"]; got != "pending" {
 		t.Fatalf("expected await_reason %q, got %v", "pending", got)
 	}
-	if got := run.Status(); got != "" {
-		t.Fatalf("expected empty status for active run, got %q", got)
+	if got := run.Status(); got != "waiting" {
+		t.Fatalf("expected waiting status for suspended run, got %q", got)
 	}
 }
 
@@ -1052,7 +1052,7 @@ func TestRunState_DurationAccumulatesAcrossSameBatchContinuation(t *testing.T) {
 	}
 }
 
-func TestRunState_DifferentBatchContinuationStartsFreshDuration(t *testing.T) {
+func TestRunState_DifferentBatchContinuationPreservesRunDuration(t *testing.T) {
 	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	awaitAt := startedAt.Add(5 * time.Minute)
@@ -1066,8 +1066,42 @@ func TestRunState_DifferentBatchContinuationStartsFreshDuration(t *testing.T) {
 		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-different-batch-duration", Issue: 42, Payload: map[string]any{"status": "success"}},
 	})[0]
 
-	if got, want := run.Duration(), 7*time.Minute; got != want {
-		t.Fatalf("duration = %s, want fresh duration for a different batch %s", got, want)
+	if got, want := run.Duration(), 12*time.Minute; got != want {
+		t.Fatalf("duration = %s, want accumulated duration for the same RunID %s", got, want)
+	}
+}
+
+func TestRunState_DurationSurvivesRepeatedWaitingAndRehydration(t *testing.T) {
+	t.Parallel()
+	start := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	for _, resumeType := range []string{"run.continued", "run.resumed", "run.retry"} {
+		t.Run(resumeType, func(t *testing.T) {
+			events := []Event{
+				{Type: "run.started", Timestamp: start, RunID: "row", Issue: 42, Payload: map[string]any{"batch_id": "old"}},
+				{Type: "run.await", Timestamp: start.Add(5 * time.Minute), RunID: "row", Issue: 42},
+				{Type: "run.capacity_queued", Timestamp: start.Add(15 * time.Minute), RunID: "row", Issue: 42, Payload: map[string]any{"batch_id": "new", "ready_continuation": true}},
+				{Type: resumeType, Timestamp: start.Add(time.Hour), RunID: "row", Issue: 42, Payload: map[string]any{"batch_id": "new"}},
+				{Type: "run.await", Timestamp: start.Add(time.Hour + 7*time.Minute), RunID: "row", Issue: 42},
+				{Type: "run.capacity_queued", Timestamp: start.Add(90 * time.Minute), RunID: "row", Issue: 42},
+				{Type: "run.continued", Timestamp: start.Add(2 * time.Hour), RunID: "row", Issue: 42, Payload: map[string]any{"batch_id": "third"}},
+				{Type: "run.finished", Timestamp: start.Add(2*time.Hour + 3*time.Minute), RunID: "row", Issue: 42, Payload: map[string]any{"status": "success"}},
+			}
+			for _, check := range []struct {
+				count int
+				at    time.Time
+				want  time.Duration
+			}{
+				{3, start.Add(30 * time.Minute), 5 * time.Minute},
+				{4, start.Add(time.Hour + 2*time.Minute), 7 * time.Minute},
+				{6, start.Add(100 * time.Minute), 12 * time.Minute},
+				{8, start.Add(3 * time.Hour), 15 * time.Minute},
+			} {
+				state := ProjectRunStates(events[:check.count])[0]
+				if got := state.DurationAt(check.at); got != check.want {
+					t.Fatalf("%s after %d events: duration=%s, want %s", resumeType, check.count, got, check.want)
+				}
+			}
+		})
 	}
 }
 
@@ -1135,7 +1169,7 @@ func TestProjectRunStates_CurrentAwaitPhaseTracksLifecycle(t *testing.T) {
 	}
 }
 
-func TestProjectRunStates_CapacityQueuedIsNonTerminalAndNotAwaiting(t *testing.T) {
+func TestProjectRunStates_StartedCapacityContinuationStaysWaiting(t *testing.T) {
 	t.Parallel()
 	startedAt := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
 	awaitAt := startedAt.Add(time.Minute)
@@ -1149,11 +1183,11 @@ func TestProjectRunStates_CapacityQueuedIsNonTerminalAndNotAwaiting(t *testing.T
 	}
 
 	queued := ProjectRunStates(events)[0]
-	if !queued.IsActive() || queued.IsAwaiting() || !queued.IsCapacityQueued() {
-		t.Fatalf("capacity-queued state = active:%v awaiting:%v capacity-queued:%v, want active/non-awaiting/capacity-queued", queued.IsActive(), queued.IsAwaiting(), queued.IsCapacityQueued())
+	if !queued.IsActive() || !queued.IsAwaiting() || !queued.IsCapacityQueued() {
+		t.Fatalf("capacity continuation = active:%v awaiting:%v capacity-queued:%v, want active/waiting/ready", queued.IsActive(), queued.IsAwaiting(), queued.IsCapacityQueued())
 	}
-	if queued.Status() != "queued" || queued.Finished != nil {
-		t.Fatalf("capacity-queued status = %q finished=%v, want non-terminal queued", queued.Status(), queued.Finished)
+	if queued.Status() != "waiting" || queued.Finished != nil {
+		t.Fatalf("capacity continuation status = %q finished=%v, want non-terminal waiting", queued.Status(), queued.Finished)
 	}
 	if queued.AwaitEvent == nil || queued.CapacityQueuedEvent == nil {
 		t.Fatalf("capacity transition dropped history: await=%v queued=%v", queued.AwaitEvent, queued.CapacityQueuedEvent)
@@ -1172,6 +1206,67 @@ func TestProjectRunStates_CapacityQueuedIsNonTerminalAndNotAwaiting(t *testing.T
 	}
 	if resumed.CapacityQueuedEvent == nil || resumed.AwaitEvent == nil {
 		t.Fatalf("continuation did not retain queue/await history: queued=%v await=%v", resumed.CapacityQueuedEvent, resumed.AwaitEvent)
+	}
+}
+
+func TestProjectRunStates_CapacityContinuationDistinguishesInitialAdmission(t *testing.T) {
+	t.Parallel()
+	for _, phase := range []string{"run.queued", "run.started", "run.continued"} {
+		t.Run(phase, func(t *testing.T) {
+			state := ProjectRunStates([]Event{
+				{Type: phase, RunID: "row", Issue: 42},
+				{Type: "run.capacity_queued", RunID: "row", Issue: 42, Payload: map[string]any{"gate": "usage-limit", "ready_continuation": true}},
+			})[0]
+			want := "waiting"
+			if phase == "run.queued" {
+				want = "queued"
+			}
+			if state.Status() != want || !state.IsActive() || state.IsAwaiting() != (want == "waiting") {
+				t.Fatalf("after %s: status=%q active=%v awaiting=%v, want active %s", phase, state.Status(), state.IsActive(), state.IsAwaiting(), want)
+			}
+		})
+	}
+}
+
+func TestProjectRunStates_InitialAdmissionIsUnfinished(t *testing.T) {
+	t.Parallel()
+	queuedAt := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	state := ProjectRunStates([]Event{{Type: "run.queued", Timestamp: queuedAt, RunID: "row", Issue: 42}})[0]
+	if state.IsTerminal() || !state.IsActive() || state.Status() != "queued" {
+		t.Fatalf("initial admission: terminal=%v active=%v status=%q, want unfinished queued", state.IsTerminal(), state.IsActive(), state.Status())
+	}
+	if got := state.DurationAt(queuedAt.Add(time.Hour)); got != 0 {
+		t.Fatalf("unstarted duration=%s, want zero", got)
+	}
+}
+
+func TestProjectRunStates_CurrentOwnerWinsOverHistoricalReadiness(t *testing.T) {
+	t.Parallel()
+	state := ProjectRunStates([]Event{
+		{Type: "run.started", RunID: "row", Issue: 42, Payload: map[string]any{"batch_id": "old", "branch": "42-old"}},
+		{Type: "run.capacity_queued", RunID: "row", Issue: 42, Payload: map[string]any{"batch_id": "old", "branch": "42-old", "ready_continuation": true}},
+		{Type: "run.continued", RunID: "row", Issue: 42, Payload: map[string]any{"batch_id": "new", "branch": "42-current"}},
+	})[0]
+	if state.BatchID() != "new" || state.Branch() != "42-current" {
+		t.Fatalf("current ownership: batch=%q branch=%q", state.BatchID(), state.Branch())
+	}
+}
+
+func TestProjectRunStates_TerminalOutcomeRejectsStaleSchedulerEvidence(t *testing.T) {
+	t.Parallel()
+	for _, outcome := range []string{"success", "failure", "aborted"} {
+		t.Run(outcome, func(t *testing.T) {
+			state := ProjectRunStates([]Event{
+				{Type: "run.started", RunID: "row", Issue: 42},
+				{Type: "run.finished", RunID: "row", Issue: 42, Payload: map[string]any{"status": outcome}},
+				{Type: "run.capacity_queued", RunID: "row", Issue: 42},
+				{Type: "run.await", RunID: "row", Issue: 42},
+				{Type: "run.queued", RunID: "row", Issue: 42},
+			})[0]
+			if !state.IsTerminal() || state.Status() != outcome {
+				t.Fatalf("terminal %s replaced by scheduler evidence: %#v", outcome, state)
+			}
+		})
 	}
 }
 

@@ -3334,8 +3334,8 @@ func assertExternalGateTerminal(t *testing.T, logs []events.Event, wantStatus, g
 		if len(states) != 1 {
 			t.Fatalf("projected states = %d, want 1", len(states))
 		}
-		if got := states[0].Status(); got != "" {
-			t.Fatalf("projected status = %q, want empty (await is non-terminal)", got)
+		if got := states[0].Status(); got != "waiting" {
+			t.Fatalf("projected status = %q, want waiting (await is non-terminal)", got)
 		}
 		if states[0].AwaitEvent == nil {
 			t.Fatal("projected AwaitEvent is nil")

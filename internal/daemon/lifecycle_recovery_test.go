@@ -27,15 +27,17 @@ func TestRecoverStaleRuns_EventLifecycleSurvivesSnapshotDivergence(t *testing.T)
 			path := filepath.Join(baseDir, "events.jsonl")
 			log := &events.JSONLLogger{Path: path}
 			started := created.Add(time.Second)
-			if err := log.Log(events.Event{Type: "run.started", RunID: "row", Issue: 42, Timestamp: started, Payload: map[string]any{"batch_id": "dead"}}); err != nil {
-				t.Fatal(err)
+			if outcome != "queued" {
+				if err := log.Log(events.Event{Type: "run.started", RunID: "row", Issue: 42, Timestamp: started, Payload: map[string]any{"batch_id": "dead"}}); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if outcome != "running" {
 				kind := "run.finished"
 				if outcome != "success" && outcome != "failure" {
 					kind = "run." + outcome
 				}
-				if err := log.Log(events.Event{Type: kind, RunID: "row", Issue: 42, Timestamp: started.Add(time.Second), Payload: map[string]any{"status": outcome, "batch_id": "dead"}}); err != nil {
+				if err := log.Log(events.Event{Type: kind, RunID: "row", Issue: 42, Timestamp: started.Add(time.Second), Payload: map[string]any{"status": outcome, "batch_id": "dead", "terminal_placeholder": outcome == "queued"}}); err != nil {
 					t.Fatal(err)
 				}
 			}
