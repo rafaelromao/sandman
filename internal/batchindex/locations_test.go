@@ -57,3 +57,49 @@ func TestLocations_PersistedPathsAndArchiveAuthority(t *testing.T) {
 		})
 	}
 }
+
+func TestLocations_DiscoveryAndIdentityAliases(t *testing.T) {
+	layout := paths.NewLayout(nil, t.TempDir())
+	batches := []Batch{
+		{ID: "public", Path: layout.BatchDir("physical"), Status: StatusActive},
+		{ID: "physical", Path: filepath.Join(layout.SandmanDir, "moved", "other"), Status: StatusActive},
+		{ID: "archived", Path: layout.BatchDir("archived"), Status: StatusArchived},
+		{ID: "ambiguous-a", Path: filepath.Join(layout.SandmanDir, "a", "same"), Status: StatusActive},
+		{ID: "ambiguous-b", Path: filepath.Join(layout.SandmanDir, "b", "same"), Status: StatusActive},
+	}
+	for _, b := range batches {
+		if err := os.MkdirAll(b.Path, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(layout.BatchDir("legacy"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	idx := &Index{Version: IndexVersion, Batches: batches}
+	if err := idx.Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+	if b := idx.ResolveBatchIdentity("physical"); b == nil || b.ID != "physical" {
+		t.Fatalf("public ID precedence = %+v", b)
+	}
+	if b := idx.ResolveBatchIdentity("same"); b != nil {
+		t.Fatalf("ambiguous alias resolved to %+v", b)
+	}
+	locations, err := DiscoverBatchLocations(layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(locations) != 5 {
+		t.Fatalf("locations = %+v, want 4 indexed live + 1 legacy", locations)
+	}
+	seen := map[string]bool{}
+	for i, loc := range locations {
+		if seen[loc.Dir] || loc.ID == "archived" {
+			t.Fatalf("duplicate/archive in discovery: %+v", locations)
+		}
+		if i > 0 && locations[i-1].Dir > loc.Dir {
+			t.Fatal("discovery not sorted")
+		}
+		seen[loc.Dir] = true
+	}
+}

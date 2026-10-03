@@ -87,7 +87,10 @@ func FindDeadRunBatches(baseDir string) ([]DeadBatch, error) {
 	if err != nil {
 		return nil, err
 	}
+	return findDeadBatchLocations(locations)
+}
 
+func findDeadBatchLocations(locations []paths.BatchLocation) ([]DeadBatch, error) {
 	var batches []DeadBatch
 	for _, location := range locations {
 		batchPath := location.Dir
@@ -290,7 +293,11 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 	if err != nil {
 		return 0, 0, err
 	}
-	dead, err := FindDeadRunBatches(baseDir)
+	locations, err := idx.BatchLocations(layout)
+	if err != nil {
+		return 0, 0, err
+	}
+	dead, err := findDeadBatchLocations(locations)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -338,6 +345,31 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 		return nil
 	}
 	for _, batch := range dead {
+		// A persisted row establishes exact physical ownership for every
+		// run kind, including prompt-only and orphan Review Runs. The issue
+		// window heuristics below remain the fallback for legacy batches.
+		for _, run := range runs {
+			if !run.IsActive() || run.IsCapacityQueued() {
+				continue
+			}
+			if _, done := recoveredRunIDs[run.RunID]; done {
+				continue
+			}
+			if bid := run.BatchID(); bid != "" && !batchIdentityMatches(idx, layout, bid, batch.RunDir) {
+				continue
+			}
+			if !batch.Manifest.CreatedAt.IsZero() && run.Started.Timestamp.Before(batch.Manifest.CreatedAt) {
+				continue
+			}
+			manifest, err := ReadRunManifest(batch.RunDir, run.RunID)
+			if err != nil || manifest.RunID != run.RunID {
+				continue
+			}
+			if err := emitOrphan(run, run.IssueNumber()); err != nil {
+				return recovered, len(dead), err
+			}
+			_ = UpdateRunManifestStatus(batch.RunDir, run.RunID, batchindex.RunManifestStatusAborted)
+		}
 		latestTerminal := latestTerminalForIssues(batch.Manifest.Issues, byIssue)
 		for _, issueNumber := range batch.Manifest.Issues {
 			for _, run := range byIssue[issueNumber] {
@@ -394,7 +426,7 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 		}
 	}
 
-	orphanRecovered, orphanErr := recoverOrphanActiveRuns(baseDir, eventsList, log, recoveredRunIDs, recoveredAt)
+	orphanRecovered, orphanErr := recoverOrphanActiveRuns(layout, idx, locations, eventsList, log, recoveredRunIDs, recoveredAt)
 	if orphanErr != nil {
 		return recovered, len(dead), orphanErr
 	}
@@ -494,7 +526,7 @@ func buildSupersededIssues(runs []events.RunState) map[int]bool {
 // queued and blocked runs are also recovered when no subsequent run.started
 // exists for the same issue (meaning the queued/blocked state was never
 // superseded by actual work — the batch was destroyed, not completed).
-func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log events.EventLog, skipRunIDs map[string]struct{}, recoveredAt time.Time) (int, error) {
+func recoverOrphanActiveRuns(layout paths.Layout, idx *batchindex.Index, locations []paths.BatchLocation, eventsList []events.Event, log events.EventLog, skipRunIDs map[string]struct{}, recoveredAt time.Time) (int, error) {
 	runs := events.ProjectRunStates(eventsList)
 
 	byIssue := make(map[int][]events.RunState)
@@ -511,15 +543,6 @@ func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log even
 		manifest BatchManifest
 	}
 	var batches []batchInfo
-	layout := layoutForBaseDir(baseDir)
-	idx, err := batchindex.Load(layout.BatchesIndexPath)
-	if err != nil {
-		return 0, err
-	}
-	locations, err := batchindex.DiscoverBatchLocations(layout)
-	if err != nil {
-		return 0, err
-	}
 	for _, location := range locations {
 		batchPath := location.Dir
 		if _, err := os.Stat(batchPath); os.IsNotExist(err) {
@@ -652,9 +675,5 @@ func layoutForBaseDir(baseDir string) paths.Layout {
 }
 
 func batchIdentityMatches(idx *batchindex.Index, layout paths.Layout, id, dir string) bool {
-	if owner := idx.ResolveBatchIdentity(id); owner != nil {
-		return filepath.Clean(owner.Location(layout).Dir) == filepath.Clean(dir)
-	}
-	// The canonical path is the only fallback for an unindexed identity.
-	return filepath.Clean(layout.BatchDir(id)) == filepath.Clean(dir)
+	return idx.MatchesBatchLocation(layout, id, dir)
 }

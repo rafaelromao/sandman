@@ -58,6 +58,21 @@ func (idx *Index) ResolveBatchIdentity(id string) *Batch {
 	return found
 }
 
+// MatchesBatchLocation interprets event batch identity without row aliases.
+// Unknown identities may refer to a canonical unindexed legacy directory;
+// ambiguous indexed aliases never use that fallback.
+func (idx *Index) MatchesBatchLocation(layout paths.Layout, id, dir string) bool {
+	if owner := idx.ResolveBatchIdentity(id); owner != nil {
+		return filepath.Clean(owner.Location(layout).Dir) == filepath.Clean(dir)
+	}
+	for _, b := range idx.Batches {
+		if b.Path != "" && filepath.Base(b.Path) == id {
+			return false
+		}
+	}
+	return filepath.Clean(layout.BatchDir(id)) == filepath.Clean(dir)
+}
+
 // ResolveRunBatch resolves row-action IDs through the index and physical
 // evidence, never by parsing a RunID or trusting a manifest's BatchID field.
 func (idx *Index) ResolveRunBatch(layout paths.Layout, id string) *Batch {
@@ -92,6 +107,12 @@ func DiscoverBatchLocations(layout paths.Layout) ([]paths.BatchLocation, error) 
 	if err != nil {
 		return nil, err
 	}
+	return idx.BatchLocations(layout)
+}
+
+// BatchLocations discovers against this index snapshot, allowing recovery to
+// use identical ownership evidence across its stale and orphan passes.
+func (idx *Index) BatchLocations(layout paths.Layout) ([]paths.BatchLocation, error) {
 	locations := make(map[string]paths.BatchLocation)
 	indexed := make(map[string]bool)
 	key := func(dir string) string {
