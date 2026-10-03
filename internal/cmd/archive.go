@@ -399,20 +399,3 @@ func runArchiveOlderThan(cmd *cobra.Command, daysArg string, repoRoot string) er
 	fmt.Fprintf(cmd.OutOrStdout(), "Archived %d terminal row(s) older than %d day(s)\n", archived, days)
 	return nil
 }
-
-func archiveBatchCreatedAt(entry batchindex.Batch) (time.Time, error) {
-	location := entry.Location(paths.NewLayout(nil, "."))
-	manifest, err := batchindex.ReadManifest(location.Dir)
-	if err == nil && !manifest.CreatedAt.IsZero() {
-		return manifest.CreatedAt.UTC(), nil
-	}
-	if err != nil && !os.IsNotExist(err) {
-		return time.Time{}, fmt.Errorf("read batch manifest for %q: %w", entry.ID, err)
-	}
-
-	info, err := os.Stat(location.Dir)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("stat batch dir for %q: %w", entry.ID, err)
-	}
-	return info.ModTime().UTC(), nil
-}
