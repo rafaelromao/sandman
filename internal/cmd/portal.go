@@ -303,7 +303,10 @@ func archivePortalRunHandler(repoRoot, runID string) (string, error) {
 	// exists (legacy state from before the index recorded Runs[]),
 	// surface 409 with the existing path so the operator can inspect
 	// it.
-	relArchive := filepath.Join(".sandman", "archive", batch.ID, "runs", runID)
+	relArchive, relErr := filepath.Rel(repoRoot, layout.ArchiveBatch(batch.ID).Run(runID).Dir)
+	if relErr != nil {
+		return batch.ID, &portalArchiveError{status: http.StatusInternalServerError, message: relErr.Error()}
+	}
 	if _, err := os.Stat(filepath.Join(repoRoot, relArchive)); err == nil {
 		return batch.ID, &portalArchiveError{
 			status:  http.StatusConflict,
@@ -429,31 +432,7 @@ func archivePortalRowArchiver(repoRoot string, entryID, runID string) error {
 // apply any active/archived check separately so the 404/409/500 paths
 // stay observable per kind.
 func resolveBatchFromRunIDFastOrScan(idx *batchindex.Index, runID string) *batchindex.Batch {
-	if idx == nil || runID == "" {
-		return nil
-	}
-	if batch := idx.ResolveBatch(runID); batch != nil {
-		return batch
-	}
-	for i := range idx.Batches {
-		entry := &idx.Batches[i]
-		for j := range entry.Runs {
-			if entry.Runs[j].RunID == runID {
-				return entry
-			}
-		}
-	}
-	for i := range idx.Batches {
-		entry := &idx.Batches[i]
-		if entry.Path == "" {
-			continue
-		}
-		manifestPath := filepath.Join(entry.Path, "runs", runID, "run.json")
-		if _, err := os.Stat(manifestPath); err == nil {
-			return entry
-		}
-	}
-	return nil
+	return idx.ResolveRunBatch(paths.NewLayout(nil, "."), runID)
 }
 
 // abortPortalRun sends an abort command to the run's cmd.sock for a single issue row.

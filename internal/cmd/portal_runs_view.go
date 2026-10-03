@@ -627,8 +627,10 @@ func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventLis
 		// directory. Recompute the log path and URL from the index entry's
 		// recorded path, refresh the preview, and correct SourceExists.
 		if runs[i].Kind == "completed" && runs[i].Archived && idx != nil {
-			if entry := idx.ResolveBatch(locator.batchID); entry != nil && entry.Path != "" {
-				archivedLogPath := filepath.Join(entry.Path, "runs", runs[i].RunID, "run.log")
+			if entry := idx.ResolveBatchIdentity(locator.batchID); entry != nil && entry.Path != "" {
+				location := entry.RunLocation(layout, runs[i].RunID)
+				archivedLogPath := location.LogPath()
+				runs[i].RunDir = location.Dir
 				runs[i].LogPath = archivedLogPath
 				runs[i].LogURL = v.portalLogDownloadURLForPath(repoRoot, archivedLogPath)
 				if info, err := os.Stat(filepath.Dir(archivedLogPath)); err == nil && info.IsDir() {
@@ -636,9 +638,7 @@ func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventLis
 				} else {
 					runs[i].SourceExists = false
 				}
-				if strings.TrimSpace(runs[i].Log) == "" {
-					runs[i].Log = v.readPortalTextFile(archivedLogPath)
-				}
+				runs[i].Log = v.readPortalTextFile(archivedLogPath)
 			}
 		}
 	}
@@ -2522,8 +2522,8 @@ func (v *portalRunsView) sourceDirID(idx *batchindex.Index, run portalRun) runLo
 		return runLocator{}
 	}
 	if idx != nil {
-		if entry := idx.ResolveBatch(batchID); entry != nil && entry.Path != "" {
-			batchID = filepath.Base(entry.Path)
+		if entry := idx.ResolveBatchIdentity(batchID); entry != nil {
+			batchID = entry.ID
 		}
 	}
 	return runLocator{batchID: batchID, runID: runID}
@@ -2533,17 +2533,11 @@ func persistedRunDir(repoRoot string, idx *batchindex.Index, batchID, runID stri
 	if idx == nil || batchID == "" || runID == "" {
 		return ""
 	}
-	entry := idx.ResolveBatch(batchID)
+	entry := idx.ResolveBatchIdentity(batchID)
 	if entry == nil || entry.Path == "" {
 		return ""
 	}
-	if record := idx.RunRecordFor(batchID, runID); record != nil && record.ArchivePath != "" {
-		if filepath.IsAbs(record.ArchivePath) {
-			return record.ArchivePath
-		}
-		return filepath.Join(repoRoot, record.ArchivePath)
-	}
-	return filepath.Join(entry.Path, "runs", runID)
+	return entry.RunLocation(paths.NewLayout(nil, repoRoot), runID).Dir
 }
 
 // unavailableRunIDsByBatchIndex returns the set of source directory IDs
@@ -2652,32 +2646,8 @@ func (e *portalBatchNotFoundError) Error() string {
 // either success path so downstream log path resolution and archive
 // moves work without a second index lookup.
 func (v *portalRunsView) resolveBatchFromRowID(idx *batchindex.Index, runID string) (*batchindex.Batch, error) {
-	if idx == nil || runID == "" {
-		return nil, &portalBatchNotFoundError{runID: runID}
-	}
-	if entry := idx.Resolve(runID); entry != nil {
+	if entry := idx.ResolveRunBatch(paths.NewLayout(nil, "."), runID); entry != nil {
 		return entry, nil
-	}
-	for i := range idx.Batches {
-		entry := &idx.Batches[i]
-		if entry.Path == "" {
-			continue
-		}
-		manifestPath := filepath.Join(entry.Path, "runs", runID, "run.json")
-		data, err := os.ReadFile(manifestPath)
-		if err != nil {
-			continue
-		}
-		var manifest batchindex.RunManifest
-		if err := json.Unmarshal(data, &manifest); err != nil {
-			continue
-		}
-		if manifest.BatchID == "" {
-			continue
-		}
-		if resolved := idx.Resolve(manifest.BatchID); resolved != nil {
-			return resolved, nil
-		}
 	}
 	return nil, &portalBatchNotFoundError{runID: runID}
 }
