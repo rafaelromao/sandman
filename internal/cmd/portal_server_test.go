@@ -254,8 +254,8 @@ func TestPortal_RunsAPI_SynthesizesOnlyMissingDeadBatchMembers(t *testing.T) {
 			t.Fatalf("expected exactly 1 synthesized row for issue %d, got %d: %#v", issue, got, byIssue[issue])
 		}
 		run := byIssue[issue][0]
-		if run.Kind != "completed" || run.Status != "aborted" || run.BatchKey != "dead-1" {
-			t.Fatalf("expected issue %d to synthesize as dead-batch completed aborted row, got %#v", issue, run)
+		if run.Kind != "completed" || run.Status != "unknown" || run.FinishedAt != nil || run.BatchKey != "dead-1" {
+			t.Fatalf("expected issue %d to have unknown lifecycle, got %#v", issue, run)
 		}
 	}
 }
@@ -1213,8 +1213,8 @@ func TestPortal_QueuedOnlyRowHasActiveKindSoAbortRenders(t *testing.T) {
 	if queuedRow == nil {
 		t.Fatalf("expected a queued row for issue 42, got runs: %#v", runs)
 	}
-	if queuedRow.Kind != "active" {
-		t.Fatalf("expected queued row to have Kind='active' so Abort button renders, got Kind=%q", queuedRow.Kind)
+	if queuedRow.Kind != "completed" || queuedRow.FinishedAt == nil {
+		t.Fatalf("expected terminal queued placeholder despite live daemon: %+v", queuedRow)
 	}
 }
 
@@ -2458,7 +2458,7 @@ func TestPortal_DedupKeepsActiveBatchAndHistoricalRows(t *testing.T) {
 		// event-fold projection path (runFromState); the
 		// live-instance constructor keeps Kind="active" because the
 		// daemon is genuinely still attached.
-		case run.Kind == "active" && run.Status == "queued":
+		case run.Kind == "completed" && run.Status == "queued" && run.BatchKey == "active-1":
 			sawActiveQueued = true
 		// Historical blocked rows render as kind="completed" after
 		// issue #1699: kindForRun no longer borrows active-row chrome
@@ -2761,8 +2761,8 @@ func TestPortal_BatchWithMixedBlockedAndQueued_ShowsBlockedAndQueuedSeparately(t
 	if !ok {
 		t.Fatalf("expected row for issue 43, got %#v", runs)
 	}
-	if queued.Status != "queued" {
-		t.Fatalf("expected issue 43 status 'queued', got %q", queued.Status)
+	if queued.Status != "unknown" {
+		t.Fatalf("expected issue 43 unknown lifecycle without events, got %q", queued.Status)
 	}
 }
 
@@ -4120,7 +4120,7 @@ func TestPortal_QueuedAndTerminalSameIssue_NotCollapsed(t *testing.T) {
 		if r.BatchKey == "old-1" && r.Kind == "completed" && r.Status == "aborted" {
 			foundOldAborted = true
 		}
-		if r.BatchKey == batchID && r.Kind == "active" && r.Status == "queued" {
+		if r.BatchKey == batchID && r.Kind == "completed" && r.Status == "queued" {
 			foundNewQueued = true
 		}
 	}

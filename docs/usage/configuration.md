@@ -190,7 +190,7 @@ See [Sandbox Modes](sandbox-modes.md) for detailed scheduling behavior.
 |-----|---------|-------------|
 | `run_idle_timeout` | `3600` | Seconds of inactivity before the heartbeat watchdog aborts the run. `0` disables the watchdog |
 
-`run_idle_timeout` detects when an agent has stalled (e.g., blocked on an interactive prompt, deadlocked, or looping). When triggered, the watchdog kills the agent process and marks the run as `aborted`. A `run.idle_timeout` event is written to the event log for diagnostics. Built-in OpenCode and Claude Code usage-limit results follow the configured ordinary retry path and fail with a structured `AGENT_USAGE_LIMIT` reason when retries are exhausted; Sandman does not park implementation runs waiting on a quota-reset timer. The review daemon retains its separate provider-wide recovery probe for reviewer launches. The `--run-idle-timeout` CLI flag overrides the config value for a single invocation.
+`run_idle_timeout` detects when an agent has stalled (e.g., blocked on an interactive prompt, deadlocked, or looping). When triggered, the watchdog kills the agent process and marks the run as `aborted`. A `run.idle_timeout` event is written to the event log for diagnostics. A built-in OpenCode attempt that exits after reporting `Error: The usage limit has been reached`, or a built-in Claude Code attempt whose final result reports a session, weekly, or model usage limit, instead emits `run.await`, releases its capacity, and re-enters the same session every ten minutes. A still-limited probe follows the ordinary retry path after five hours of accumulated polling. The `--run-idle-timeout` CLI flag overrides the config value for a single invocation.
 
 ## Worktree cleanup
 

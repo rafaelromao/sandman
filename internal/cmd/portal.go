@@ -283,11 +283,11 @@ func archivePortalRunHandler(repoRoot, runID string) (string, error) {
 		return batch.ID, &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("batch %q is not active (status=%s)", batch.ID, batch.Status)}
 	}
 
-	status, statusErr := portalRowStatusProbe(batch, runID)
-	if statusErr != nil {
-		return batch.ID, &portalArchiveError{status: http.StatusInternalServerError, message: statusErr.Error()}
+	states, stateErr := events.ReadRunStates(&events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if stateErr != nil {
+		return batch.ID, &portalArchiveError{status: http.StatusInternalServerError, message: stateErr.Error()}
 	}
-	if !isTerminalRunManifestStatus(status) {
+	if !states[runID].IsTerminal() {
 		return batch.ID, &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("run %q is not in a terminal status", runID)}
 	}
 
@@ -332,46 +332,6 @@ func archivePortalRunHandler(repoRoot, runID string) (string, error) {
 	return batch.ID, nil
 }
 
-// isTerminalRunManifestStatus reports whether the supplied run.json
-// Status is one of the terminal values (success / failure / aborted
-// / blocked). The per-row archive contract requires a terminal row,
-// because the per-run command socket is idle in that state and the
-// run folder can be safely relocated.
-func isTerminalRunManifestStatus(s batchindex.RunManifestStatus) bool {
-	switch s {
-	case batchindex.RunManifestStatusSuccess,
-		batchindex.RunManifestStatusFailure,
-		batchindex.RunManifestStatusAborted,
-		batchindex.RunManifestStatusBlocked:
-		return true
-	}
-	return false
-}
-
-// portalRowStatusProbe is the seam the archive handler uses to read
-// the targeted row's run.json Status. It is a package-level var so
-// tests can simulate non-terminal rows without touching the real
-// filesystem. The default reads runs/<runID>/run.json and returns the
-// Status field.
-var portalRowStatusProbe = portalReadRowStatus
-
-// portalReadRowStatus reads runs/<runID>/run.json from the batch's
-// live directory and returns the Status field. A missing manifest
-// produces a NotFound error; a malformed manifest produces a Decode
-// error. The default implementation of portalRowStatusProbe.
-func portalReadRowStatus(batch *batchindex.Batch, runID string) (batchindex.RunManifestStatus, error) {
-	manifestPath := filepath.Join(batch.Path, "runs", runID, "run.json")
-	data, err := os.ReadFile(manifestPath)
-	if err != nil {
-		return "", err
-	}
-	var manifest batchindex.RunManifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		return "", fmt.Errorf("decode run manifest: %w", err)
-	}
-	return manifest.Status, nil
-}
-
 // archivePortalRowArchiver is the default implementation of
 // portalRunArchiver: it resolves the entry's path, calls
 // daemon.ArchiveRow for the targeted run, and writes the resulting
@@ -388,7 +348,7 @@ func archivePortalRowArchiver(repoRoot string, entryID, runID string) error {
 		if idx.RunRecordFor(entryID, runID) == nil {
 			idx.AddRun(entryID, batchindex.RunRecord{RunID: runID, Status: batchindex.RunRecordStatusActive})
 		}
-		rec, err := daemon.ArchiveRow(repoRoot, entry, runID)
+		rec, err := daemon.ArchiveRow(repoRoot, entry, runID, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
 		if err != nil {
 			return err
 		}

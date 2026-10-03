@@ -16,75 +16,101 @@ import (
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
-func TestUsageLimitFailureUsesOrdinaryAgentRetry(t *testing.T) {
+func TestUsageLimitAwaitResumesSameSessionWithIdleTimeoutDisabled(t *testing.T) {
 	result, sandbox, log, waits := runUsageLimitBatch(t, 1, 0, 1)
 
-	if result.Runs[0].Status != "failure" {
-		t.Fatalf("status = %q, want failure because no external operation resolves the usage limit", result.Runs[0].Status)
+	if result.Runs[0].Status != "success" {
+		t.Fatalf("status = %q, want success", result.Runs[0].Status)
 	}
 	if got := sandbox.attemptCount(); got != 2 {
 		t.Fatalf("agent attempts = %d, want 2", got)
 	}
-	if len(waits) != 0 {
-		t.Fatalf("await waits = %v, want none", waits)
+	if len(waits) != 1 || waits[0] != 10*time.Minute {
+		t.Fatalf("await waits = %v, want [10m0s]", waits)
 	}
 	commands := sandbox.commandsSnapshot()
-	if len(commands) != 2 || strings.Contains(commands[1], "--session") {
-		t.Fatalf("commands = %q, want a fresh ordinary retry", commands)
+	if len(commands) != 2 || !strings.Contains(commands[1], "--session 'usage-limit-session'") {
+		t.Fatalf("commands = %q, want second command to reuse the OpenCode session", commands)
 	}
-	if got := countEventsByType(log.snapshot(), "run.await"); got != 0 {
-		t.Fatalf("run.await events = %d, want 0", got)
+	if got := countEventsByType(log.snapshot(), "run.await"); got != 1 {
+		t.Fatalf("run.await events = %d, want 1", got)
 	}
-	if got := countEventsByType(log.snapshot(), "run.retry"); got != 1 {
-		t.Fatalf("run.retry events = %d, want one ordinary retry", got)
+	if got := countEventsByType(log.snapshot(), "run.continued"); got != 1 {
+		t.Fatalf("run.continued events = %d, want 1", got)
 	}
-	finished := findEvent(log.snapshot(), "run.finished")
-	if finished == nil || finished.Payload["reason"] != "PULL_REQUEST_MISSING" {
-		t.Fatalf("run.finished = %#v, want failure for the next unresolved implementor-owned blocker", finished)
+	if got := countEventsByType(log.snapshot(), "run.retry"); got != 0 {
+		t.Fatalf("run.retry events = %d, want 0", got)
+	}
+	for _, event := range log.snapshot() {
+		if event.Type != "run.await" {
+			continue
+		}
+		if event.Payload["await_reason"] != "usage-limit" || event.Payload["usage_limit_poll_seconds"] != int(usageLimitPollInterval/time.Second) || event.Payload["usage_limit_retry_window_seconds"] != int(usageLimitRetryWindow/time.Second) {
+			t.Fatalf("run.await payload = %#v, want usage-limit polling metadata", event.Payload)
+		}
 	}
 }
 
-func TestUsageLimitExhaustionDoesNotCreateAwait(t *testing.T) {
+func TestUsageLimitAwaitRetriesAfterFiveHours(t *testing.T) {
 	result, sandbox, log, waits := runUsageLimitBatch(t, 31, 0, 1)
 
 	if result.Runs[0].Status != "failure" {
 		t.Fatalf("status = %q, want failure after the fresh retry has no merged PR", result.Runs[0].Status)
 	}
-	if got := sandbox.attemptCount(); got != 2 {
-		t.Fatalf("agent attempts = %d, want initial attempt plus one configured retry", got)
+	if got := sandbox.attemptCount(); got != 32 {
+		t.Fatalf("agent attempts = %d, want 32", got)
 	}
-	if len(waits) != 0 {
-		t.Fatalf("await waits = %v, want none", waits)
+	if len(waits) != 30 {
+		t.Fatalf("await waits = %d, want 30", len(waits))
+	}
+	for _, wait := range waits {
+		if wait != usageLimitPollInterval {
+			t.Fatalf("await waits = %v, want every wait to be 10m", waits)
+		}
 	}
 	commands := sandbox.commandsSnapshot()
-	if len(commands) != 2 || strings.Contains(commands[1], "--session") {
-		t.Fatalf("commands = %q, want ordinary retry to start a fresh session", commands)
+	if !strings.Contains(commands[1], "--session 'usage-limit-session'") {
+		t.Fatalf("commands = %q, want the poll to reuse the OpenCode session", commands)
 	}
-	if got := countEventsByType(log.snapshot(), "run.await"); got != 0 {
-		t.Fatalf("run.await events = %d, want 0", got)
+	if strings.Contains(commands[31], "--session") {
+		t.Fatalf("commands = %q, want retry to start a fresh session", commands)
+	}
+	if got := countEventsByType(log.snapshot(), "run.await"); got != 30 {
+		t.Fatalf("run.await events = %d, want 30", got)
 	}
 	if got := countEventsByType(log.snapshot(), "run.retry"); got != 1 {
-		t.Fatalf("run.retry events = %d, want one configured retry", got)
-	}
-	finished := findEvent(log.snapshot(), "run.finished")
-	if finished == nil || finished.Payload["reason"] != "AGENT_USAGE_LIMIT" {
-		t.Fatalf("run.finished = %#v, want structured usage-limit failure", finished)
+		t.Fatalf("run.retry events = %d, want 1", got)
 	}
 }
 
-func TestUsageLimitFailureHonorsRetriesDisabled(t *testing.T) {
-	result, sandbox, log, waits := runUsageLimitBatch(t, 2, 0, 0)
-	if result.Runs[0].Status != "failure" {
-		t.Fatalf("status = %q, want failure", result.Runs[0].Status)
+func TestUsageLimitAwaitPollsWhileQuotaRemainsExhausted(t *testing.T) {
+	_, sandbox, log, waits := runUsageLimitBatch(t, 2, 0, 1)
+
+	if got := sandbox.attemptCount(); got != 3 {
+		t.Fatalf("agent attempts = %d, want 3", got)
 	}
-	if got := sandbox.attemptCount(); got != 1 {
-		t.Fatalf("agent attempts = %d, want one attempt with retries disabled", got)
+	if len(waits) != 2 || waits[0] != 10*time.Minute || waits[1] != 10*time.Minute {
+		t.Fatalf("await waits = %v, want [10m0s 10m0s]", waits)
 	}
-	if len(waits) != 0 || countEventsByType(log.snapshot(), "run.await") != 0 {
-		t.Fatalf("usage-limit path must not await: waits=%v events=%v", waits, log.snapshot())
+	commands := sandbox.commandsSnapshot()
+	if !strings.Contains(commands[1], "--session 'usage-limit-session'") || !strings.Contains(commands[2], "--session 'usage-limit-session'") {
+		t.Fatalf("commands = %q, want every poll to reuse the OpenCode session", commands)
 	}
-	if got := countEventsByType(log.snapshot(), "run.retry"); got != 0 {
-		t.Fatalf("run.retry events = %d, want 0", got)
+	if got := countEventsByType(log.snapshot(), "run.await"); got != 2 {
+		t.Fatalf("run.await events = %d, want 2", got)
+	}
+}
+
+func TestUsageLimitAwaitExcludesCustomOpenCodePreset(t *testing.T) {
+	session := runSession{
+		issueNumber: 42,
+		agentCfg: config.Agent{
+			Preset:  opencodeProvider,
+			Command: "custom-opencode run",
+		},
+	}
+	if session.shouldAwaitUsageLimit(AgentRunResult{UsageLimitReached: true}) {
+		t.Fatal("custom OpenCode-preset command unexpectedly entered usage-limit waiting")
 	}
 }
 
@@ -98,9 +124,11 @@ func runUsageLimitBatch(t *testing.T, failures, idleTimeout, retries int) (*Resu
 	sb := &usageLimitRetrySandbox{workDir: filepath.Join(root, "worktree"), failures: failures}
 	log := &spyEventLog{}
 	var waits []time.Duration
-	client := &fakeGitHubClient{
-		issues: map[int]*github.Issue{42: {Number: 42, Title: "Usage limit", State: "open"}},
-		prs:    map[string]*github.PR{branch: nil},
+	client := &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Usage limit", State: "closed"}}}
+	// A continued session needs a merged PR to finish successfully. A timeout
+	// test omits it so the ordinary retry reaches a fresh agent launch.
+	if failures < 31 {
+		client.prs = map[string]*github.PR{branch: {Number: 7, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: branch}}
 	}
 	cfg := &config.Config{
 		Agent:          "opencode",

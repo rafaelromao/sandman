@@ -110,7 +110,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	s.emitStarted(issue, branch, runID)
 
 	logPath := s.runLogPathFor(runID)
-	if issueDriven {
+	if issueDriven && !s.usageLimitProbe {
 		if entryResult, entryStarted, handled := s.tryEntryResume(ctx, branch, wt, logPath, runID); handled {
 			retainEndpoint = entryStarted && entryResult.Status == "await"
 			return entryResult, entryStarted
@@ -138,6 +138,16 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 				terminalExtras = make(map[string]any)
 			}
 			terminalExtras["cleanup_error"] = result.CleanupError.Error()
+		}
+		// Provider quota recovery is non-terminal and retains the per-run
+		// endpoint for the batch-owned polling continuation.
+		if s.shouldAwaitUsageLimit(result) {
+			result.Status = s.emitAwait(ctx, runID, result, map[string]any{
+				"await_reason":                     "usage-limit",
+				"usage_limit_poll_seconds":         int(usageLimitPollInterval / time.Second),
+				"usage_limit_waited_seconds":       int(s.usageLimitWaited / time.Second),
+				"usage_limit_retry_window_seconds": int(usageLimitRetryWindow / time.Second),
+			})
 		}
 		if result.Status == "await" {
 			retainEndpoint = true

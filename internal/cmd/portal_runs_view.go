@@ -541,7 +541,7 @@ func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventLis
 	// Strip synthetic rows whose issue is already covered by an
 	// event-backed implementation row anywhere in the index, regardless
 	// of BatchKey. A row is synthetic when it has no events, Kind is
-	// "completed" and Status is "aborted" (the shape
+	// "completed" and Status is "unknown" (the shape
 	// synthesizedDeadBatchRows produces). Live rows (Kind="active")
 	// and historical-but-non-synthetic rows are never stripped here.
 	//
@@ -594,7 +594,6 @@ func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventLis
 	runs = filtered
 
 	runs = v.dedupRuns(runs)
-	runs = v.demoteOrphanedActiveRunsFromDeadBatches(repoRoot, runs)
 	runs = v.aggregateReviewChildren(layout, runs)
 	for i := range runs {
 		// Active runs are never marked archived, even if a directory
@@ -627,8 +626,9 @@ func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventLis
 		// directory. Recompute the log path and URL from the index entry's
 		// recorded path, refresh the preview, and correct SourceExists.
 		if runs[i].Kind == "completed" && runs[i].Archived && idx != nil {
-			if entry := idx.ResolveBatch(locator.batchID); entry != nil && entry.Path != "" {
-				archivedLogPath := filepath.Join(entry.Path, "runs", runs[i].RunID, "run.log")
+			if runDir := persistedRunDir(repoRoot, idx, locator.batchID, runs[i].RunID); runDir != "" {
+				runs[i].RunDir = runDir
+				archivedLogPath := filepath.Join(runDir, "run.log")
 				runs[i].LogPath = archivedLogPath
 				runs[i].LogURL = v.portalLogDownloadURLForPath(repoRoot, archivedLogPath)
 				if info, err := os.Stat(filepath.Dir(archivedLogPath)); err == nil && info.IsDir() {
@@ -781,11 +781,10 @@ func missingManifestIssues(manifest daemon.BatchManifest, seen map[int]struct{})
 // isSyntheticDeadBatchRow reports whether the given row is a
 // placeholder fabricated by synthesizedDeadBatchRows for an issue in
 // a dead batch that never reached a real run.started event. Synthetic
-// rows carry no events, are flagged completed, and are stamped
-// "aborted" with a zero-second duration. Live active rows and
+// rows carry no events and have unknown lifecycle. Live active rows and
 // event-backed historical rows never satisfy this shape.
 func isSyntheticDeadBatchRow(run portalRun) bool {
-	return run.IssueNumber > 0 && len(run.Events) == 0 && run.Kind == "completed" && run.Status == "aborted"
+	return run.IssueNumber > 0 && len(run.Events) == 0 && run.Kind == "completed" && run.Status == "unknown"
 }
 
 func (v *portalRunsView) synthesizedDeadBatchRows(deadBatches []daemon.DeadBatch, runStates []events.RunState) []portalRun {
@@ -814,17 +813,14 @@ func (v *portalRunsView) synthesizedDeadBatchRows(deadBatches []daemon.DeadBatch
 		}
 		for _, issueNumber := range missing {
 			runID := perRowRunIDForManifest(batch.Manifest.RunTS, batch.Manifest.RunShortID, 0, issueNumber, nil)
-			finishedAt := startedAt
 			run := portalRun{
 				Key:         runID,
 				RunID:       runID,
 				Kind:        "completed",
-				Status:      "aborted",
+				Status:      "unknown",
 				IssueLabel:  fmt.Sprintf("#%d", issueNumber),
 				IssueNumber: issueNumber,
 				StartedAt:   startedAt,
-				FinishedAt:  &finishedAt,
-				Duration:    "0s",
 				BatchKey:    batchKey,
 				// Synthesized dead-batch rows already know their
 				// per-row folder location via the DeadBatch.RunDir the
@@ -898,48 +894,6 @@ func (v *portalRunsView) dedupRuns(runs []portalRun) []portalRun {
 		}
 	}
 	return result
-}
-
-func (v *portalRunsView) demoteOrphanedActiveRunsFromDeadBatches(repoRoot string, runs []portalRun) []portalRun {
-	layout := paths.NewLayout(&config.Config{}, repoRoot)
-	allDead, err := daemon.FindDeadRunBatches(layout.SandmanDir)
-	if err != nil {
-		logPortalViewDegrade("orphan-demotion", "FindDeadRunEntries: %v", err)
-		return runs
-	}
-	if len(allDead) == 0 {
-		return runs
-	}
-	for i := range runs {
-		if runs[i].Kind != "active" || runs[i].SocketPath != "" || runs[i].BatchKey == "" {
-			continue
-		}
-		if runs[i].Status != "running" && runs[i].Status != "reviewing" {
-			continue
-		}
-		var db *daemon.DeadBatch
-		for j := range allDead {
-			if filepath.Base(allDead[j].RunDir) == runs[i].BatchKey {
-				db = &allDead[j]
-				break
-			}
-		}
-		if db == nil {
-			continue
-		}
-		if runs[i].RunID == "" {
-			continue
-		}
-		runSockPath := daemon.RunSocketPath(db.RunDir, runs[i].RunID)
-		if v.isSocketAlive(runSockPath) {
-			continue
-		}
-		runs[i].Kind = "completed"
-		runs[i].Status = "aborted"
-		ts := runs[i].StartedAt
-		runs[i].FinishedAt = &ts
-	}
-	return runs
 }
 
 // aggregateReviewChildren stamps ReviewCount, ReviewVerdict,
@@ -1044,7 +998,7 @@ func (v *portalRunsView) aggregateReviewChildren(layout paths.Layout, runs []por
 		runs[idx].ReviewVerdict = summary.verdict
 		runs[idx].ReviewPendingPublication = summary.pendingPublication
 		runs[idx].ReviewLive = summary.live
-		if summary.live && !isTerminalStatus(runs[idx].Status) {
+		if summary.live && runs[idx].FinishedAt == nil && !isTerminalStatus(runs[idx].Status) {
 			runs[idx].Status = "reviewing"
 		}
 	}
@@ -1557,9 +1511,6 @@ func (v *portalRunsView) runsFromActiveBatch(repoRoot string, active portalActiv
 				}
 			}
 		}
-		if state != nil && !state.IsActive() && (state.Status() == "queued" || (state.Status() == "blocked" && blocked == nil)) {
-			state = nil
-		}
 		run := v.runFromActiveBatchIssue(repoRoot, active, issueNumber, state, blocked, queued, active.LiveOutput, eventsByRun, deadBatches)
 		runs = append(runs, run)
 		if state != nil && state.RunID != "" {
@@ -1738,6 +1689,10 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		BatchKey:    batchKey,
 		RunDir:      activeRunDir(active),
 	}
+	if state == nil && blocked == nil && queued == nil {
+		run.Status = "unknown"
+		run.Log = "No lifecycle events yet."
+	}
 	// Only surface batch membership for mixed batches. A single-issue
 	// batch is not interesting to surface and would add payload noise.
 	if len(active.IssueNumbers) > 1 {
@@ -1790,20 +1745,13 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 	if run.IssueTitle == "" && queued != nil {
 		run.IssueTitle = v.issueTitleFromPayload(queued.Payload)
 	}
-	// The state-less path falls through to "queued" by default so a
-	// pre-run.started implementation row reads as waiting. When the
-	// underlying active instance is actually a live review, the row must
-	// promote to "reviewing" instead, since the linked review is what is
-	// doing the work for this issue (mirrors the contract pinned by
-	// runFromActiveMatch's `if prNumber > 0` branch). Without this
-	// promotion, a review that started before run.started lands would
-	// surface its issue row stuck on "queued" forever.
-	if run.Status == "queued" && blocked == nil && active.PRNumber > 0 {
-		run.Status = "reviewing"
+	// Review identity can come from artifacts, but lifecycle cannot. In
+	// particular a queued placeholder must not become reviewing from a PR ID.
+	if active.PRNumber > 0 {
 		run.Review = true
 		run.PRNumber = active.PRNumber
 	}
-	v.markCompletedIfSocketDead(&run, run.SocketPath)
+	v.clearDeadSocket(&run, run.SocketPath)
 	return run
 }
 
@@ -1926,10 +1874,9 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 	} else if issueNumber > 0 {
 		issueLabel = fmt.Sprintf("#%d", issueNumber)
 	}
-	status := "running"
+	status := "unknown"
 	review := false
 	if prNumber > 0 {
-		status = "reviewing"
 		review = true
 	}
 	locator := runLocator{batchID: match.instance.BatchID, runID: match.instance.RunID}
@@ -1958,7 +1905,6 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		PRNumber:    prNumber,
 		Reason:      reason,
 		StartedAt:   startedAt,
-		Duration:    v.currentTime().Sub(startedAt).Round(time.Second).String(),
 		SocketPath:  match.instance.SocketPath,
 		LogPath:     logPath,
 		LogURL:      logURL,
@@ -1975,7 +1921,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 	if startedPayload != nil {
 		run.IssueTitle = v.issueTitleFromPayload(startedPayload)
 	}
-	v.markCompletedIfSocketDead(&run, run.SocketPath)
+	v.clearDeadSocket(&run, run.SocketPath)
 	return run
 }
 
@@ -2106,10 +2052,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		// SocketPath is `<batchDir>/runs/<runID>/run.sock`) into the
 		// single canonical per-row folder path (issue #1937).
 		portalRun.RunDir = activeRunDir(*active)
-		v.markCompletedIfSocketDead(&portalRun, active.SocketPath)
-		if portalRun.Kind == "completed" && runState.Finished != nil && activeSocket && runState.IsReview() {
-			portalRun.Kind = "active"
-		}
+		v.clearDeadSocket(&portalRun, active.SocketPath)
 	} else if portalRun.Kind == "active" {
 		batchDir, err := v.findBatchDirForRun(repoRoot, runState.RunID, deadBatches)
 		if err != nil {
@@ -2126,7 +2069,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 				// FindDeadRunBatches scan may have included it. Re-confirm
 				// the batch is dead before demoting.
 				if !daemon.IsRunActive(batchDir) {
-					v.markCompletedIfSocketDead(&portalRun, sockPath)
+					v.clearDeadSocket(&portalRun, sockPath)
 				}
 			}
 		}
@@ -2267,6 +2210,9 @@ func (v *portalRunsView) statusOrDefault(status string, active bool, isReview bo
 	status = strings.TrimSpace(status)
 	if active && isReview {
 		return "reviewing"
+	}
+	if active && status == "queued" {
+		return status
 	}
 	if active {
 		return "running"
@@ -2467,13 +2413,13 @@ func (v *portalRunsView) isSocketAlive(socketPath string) bool {
 	return true
 }
 
-func (v *portalRunsView) markCompletedIfSocketDead(run *portalRun, socketPath string) {
+func (v *portalRunsView) clearDeadSocket(run *portalRun, socketPath string) {
 	if run.Kind != "active" || socketPath == "" {
 		return
 	}
 	if !v.isSocketAlive(socketPath) {
-		logPortalViewDegrade("dead-socket:"+socketPath, "active run %q fell back to completed because run.sock %q is no longer live", run.Key, socketPath)
-		run.Kind = "completed"
+		// Socket availability is an artifact fact, not lifecycle completion.
+		run.SocketPath = ""
 	}
 }
 

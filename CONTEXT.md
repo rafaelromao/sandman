@@ -25,7 +25,7 @@ A built-in command, config source, auth profile, and default model for a known A
 _Avoid_: Provider template, agent type.
 
 **AgentStrategy**:
-The per-preset behaviour bundle the run loop selects once per launch with `strategyFor(preset, command)` in `internal/batch/agent_strategy.go`: command flags (model, variant), the launch environment, session selection, output parsing, context-rollover detection, and usage-limit classification. Implementation AgentRuns use the ordinary bounded retry/failure path for usage limits; the review daemon may use the strategy's provider-wide quota recovery behavior for reviewer launches. Implementations are OpenCode, Claude, and passthrough (custom commands and preset-less providers). A custom command under a built-in preset keeps that preset's failure classification and environment rules but receives no injected flags, session selection, or parsing. No agent-name comparison may appear outside the selector and the preset and installer registries.
+The per-preset behaviour bundle the run loop selects once per launch with `strategyFor(preset, command)` in `internal/batch/agent_strategy.go`: command flags (model, variant), the launch environment, session selection, output parsing, context-rollover detection, and usage-limit classification. Recognised usage limits enter `run.await` with quota-reset polling (ten-minute polls for up to five hours, same-session resume); the review daemon uses the strategy's provider-wide quota recovery behavior for reviewer launches. Implementations are OpenCode, Claude, and passthrough (custom commands and preset-less providers). A custom command under a built-in preset keeps that preset's failure classification and environment rules but receives no injected flags, session selection, or parsing. No agent-name comparison may appear outside the selector and the preset and installer registries.
 _Avoid_: agent type switch, preset check.
 
 **Agent Provider**:
@@ -37,7 +37,7 @@ A built-in agent model identifier overridden via `sandman run --model`. Each Age
 _Avoid_: agent model, default model.
 
 **AgentRun**:
-One execution of an agent against one issue, producing commits on a branch. The unit of work within a batch.
+One execution of an agent against one issue, producing commits on a branch. The unit of work within a batch. Its lifecycle status and terminality are folded exclusively from append-only events. Archive location, missing artifacts and socket liveness are separate facts; they do not revise an execution outcome. Terminal queued/blocked placeholders remain terminal during stale recovery, while capacity-queued continuations remain non-terminal.
 _Avoid_: Run, job, task.
 
 **Prompt-only run**:
@@ -89,7 +89,7 @@ The master list at `.sandman/batches.json` recording every batch ever created wi
 _Avoid_: index, master index.
 
 **Run**:
-One folder under `.sandman/batches/<batch-id>/runs/<run-id>/` containing `run.json`, `run.log`, `session.json` for supported OpenCode runs, `run.sock`, and (for review runs) `review-state.json`. Identified by the per-row RunID produced by `runid.NewRunID`. Each Run represents a single AgentRun within a Batch. References ADR-0032.
+One folder under `.sandman/batches/<batch-id>/runs/<run-id>/` containing `run.json`, `run.log`, `session.json` for supported OpenCode runs, `run.sock`, and (for review runs) `review-state.json`. Identified by the per-row RunID produced by `runid.NewRunID`. Each Run represents a single AgentRun within a Batch. The Run may be archived or unavailable independently of AgentRun lifecycle. `run.json` is an atomic artifact manifest whose legacy `status` is a best-effort execution snapshot for inspection/compatibility; it never overrides or substitutes for events. References ADR-0032.
 _Avoid_: run folder, run directory.
 
 **OpenCode session identity**:
@@ -259,7 +259,7 @@ _Avoid_: Orphaned worktree, lost worktree.
 _See_: Branch, Worktree.
 
 **Archive**:
-The on-disk resting place for completed batch directories at `.sandman/archive/<batch-id>/`, populated by `sandman archive run <batch-id>` or by `sandman archive older-than <days>` for bulk archival of every dead batch whose manifest `CreatedAt` (or directory mtime when the manifest is missing) is older than the given cutoff. Archiving relocates the batch directory tree from `.sandman/batches/<batch-id>/` (its live-and-during-run home) to `.sandman/archive/<batch-id>/` so the batches directory stays scoped to currently-relevant batches. The daemon is forbidden from writing to an archived batch; the batch is treated as read-only historical state once moved. References ADR-0032.
+The on-disk resting place at `.sandman/archive/<batch-id>/`. `sandman archive run <run-id>` relocates one event-terminal Run to `archive/<batch-id>/runs/<run-id>/` while siblings stay live. `archive older-than <days>` selects event-terminal Runs using manifest creation metadata (or manifest mtime); `archive stale` first appends recovery events for eligible non-terminal work. `archive batch <batch-id>` moves the whole Batch only after its daemon is gone and all known AgentRuns are event-terminal. Index archive/unavailable states describe artifacts, never AgentRun outcomes. The daemon is forbidden from writing to an archived Batch. References ADR-0032.
 _Avoid_: trash, graveyard, old runs, retired runs.
 
 **Daemon Process**:
@@ -300,7 +300,7 @@ The in-flight portal status for an active review run (a run whose `run.started` 
 _Avoid_: reviewing status, review-in-progress. No secondary-row review chip.
 
 **Waiting**:
-The non-terminal runtime phase for an active implementation AgentRun whose current lifecycle phase is `run.await`. It is permitted only while a current-head CI operation is queued/running or a confirmed delegated-review request is within its deadline and has an automatic observer. A confirmed review request is already an ongoing external operation from successful delivery, even before the reviewer starts. A PR's existence, `REVIEW_REQUIRED`, `BLOCKED`, missing checks, a stale head, a failed lookup/state read, or an exhausted budget does not alone authorize waiting. Sandman must perform implementor-owned work (including branch publication, PR creation, feedback repair, and merge) rather than wait for it; without an active resolver, the run fails with a structured next action. Awaiting retains work and dependency ownership while releasing execution capacity. Historical await events remain available for diagnostics, but a later continuation, resume, or capacity-queue transition clears the current waiting phase. Portal aggregation remains distinct: an associated active review run promotes a non-terminal implementation row to `reviewing` whether the implementation is waiting, capacity-queued, or running.
+The non-terminal runtime phase for an active implementation AgentRun whose current lifecycle phase is `run.await`. It is permitted while a current-head CI operation is queued/running, a confirmed delegated-review request is within its deadline and has an automatic observer, or a recognised provider usage limit is polling for its quota reset. A confirmed review request is already an ongoing external operation from successful delivery, even before the reviewer starts. A usage limit is ongoing because the provider window resets externally (ten-minute polls for up to five hours, same-session resume). A PR's existence, `REVIEW_REQUIRED`, `BLOCKED`, missing checks, a stale head, a failed lookup/state read, or an exhausted remediation budget does not alone authorize waiting. Sandman must perform implementor-owned work (including branch publication, PR creation, feedback repair, and merge) rather than wait for it; without an active resolver, the run fails with a structured next action. Awaiting retains work and dependency ownership while releasing execution capacity. Historical await events remain available for diagnostics, but a later continuation, resume, or capacity-queue transition clears the current waiting phase. Portal aggregation remains distinct: an associated active review run promotes a non-terminal implementation row to `reviewing` whether the implementation is waiting, capacity-queued, or running.
 _Avoid_: blocked, queued, or terminal external-gate status.
 
 **Capacity-queued continuation**:

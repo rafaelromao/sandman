@@ -52,6 +52,36 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 
 ## Per-artifact table
 
+### Lifecycle contract
+
+AgentRun lifecycle is folded exclusively from `events.jsonl` through
+`events.RunState`. Status, history, Portal, archive eligibility, completed-Run
+cleanup, and recovery share its terminality predicate. A terminal `run.queued`
+placeholder and a non-terminal `run.capacity_queued` continuation can both be
+labelled `queued`; the terminal event, rather than the label, distinguishes them.
+
+`batches.json` Batch/Run statuses (`active`, `archived`, `unavailable`) describe
+artifact location/availability, never execution outcome. Archiving relocates
+artifacts without rewriting events. Missing artifacts do not revise a terminal
+AgentRun. Socket liveness is process-ownership evidence, never completion;
+recovery appends `run.aborted` only for eligible non-terminal work and preserves
+terminal queued/blocked placeholders and capacity-queued continuations.
+
+`runs/<runID>/run.json` is an atomic artifact manifest and execution snapshot.
+Identity, branch, worktree, kind and timestamps support artifact lookup, age
+selection and ownership validation. Its existing `status` field is best-effort
+compatibility/inspection metadata written at start, finish and stale recovery;
+it may lag or disagree with events and is **never** a lifecycle fallback.
+An absent/unreadable manifest can prevent metadata-dependent artifact operations,
+but cannot change the event outcome. Absent events mean unknown lifecycle;
+event-read failures cannot authorize terminal-only operations. Portal rows with
+only artifact evidence show `unknown` without a fabricated finish time.
+
+Per-row archives live at `archive/<batchID>/runs/<runID>/` while sibling Runs
+remain in `batches/<batchID>/runs/`. Whole-batch archive moves the Batch only when
+its daemon is gone and all members known from directories, index records and
+event batch identity have terminal projections. See [Architecture Overview](overview.md#run-status-is-a-projection-not-a-record).
+
 | Path | Layout method | Writer | Reader | Cleanup owner | Lifecycle |
 |------|---------------|--------|--------|---------------|-----------|
 | `Dockerfile` | scaffold | `sandman init` | container runtime | repo (manual) | init only |
