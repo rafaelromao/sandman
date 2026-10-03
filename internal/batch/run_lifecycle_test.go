@@ -132,6 +132,65 @@ type lifecycleRunnableFactory struct {
 	cancel     context.CancelFunc
 }
 
+func TestRunExecutorLifecycleAwaitOwnsOnlyItsEndpoint(t *testing.T) {
+	dir := testenv.MkdirShort(t, "lifecycle-await-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+	client := &fakeGitHubClient{issues: map[int]*github.Issue{
+		42: {Number: 42, Title: "First"}, 43: {Number: 43, Title: "Second"},
+	}, prs: map[string]*github.PR{
+		"42-first":  {Number: 72, State: "open", HeadRefName: "42-first", HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
+		"43-second": {Number: 73, State: "open", HeadRefName: "43-second", HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
+	}}
+	el := &events.JSONLLogger{Path: filepath.Join(dir, "events.jsonl")}
+	o := NewOrchestrator(client, &noopRenderer{}, nil, el, WithErrorLog(io.Discard),
+		WithRunnableFactory(&fakeRunnableFactory{results: []AgentRunResult{
+			{Status: "success", Branch: "42-first"}, {Status: "success", Branch: "43-second"},
+		}}), WithRunSessionOpts(runSessionOptions{currentHead: func(string) (string, error) { return "current-sha", nil }}))
+	bc := BatchConfig{Cfg: &config.Config{WorktreeDir: ".sandman/worktrees"}, AgentCfg: config.Agent{Command: "true"}, IdentityResolver: noopIdentityResolver()}
+	executor := o.newRunExecutor(t.Context(), bc, &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(dir, "wt")}}, nil)
+	row := RowSpec{IssueNumber: 42, Branches: map[int]string{42: "42-first", 43: "43-second"}, BaseBranch: "main", BatchID: orchTestRunTS + "-" + orchTestRunShortID, RunTS: orchTestRunTS, RunShortID: orchTestRunShortID}
+	for _, issue := range []int{42, 43} {
+		row.IssueNumber = issue
+		result, started := executor.Execute(t.Context(), row)
+		if !started || result.Status != "await" {
+			t.Fatalf("issue %d result=%+v started=%v", issue, result, started)
+		}
+		t.Cleanup(func() { _ = executor.coord.stopCommandServer(issue) })
+		path := daemon.RunSocketPath(o.layout.BatchDir(row.BatchID), buildRunID(issue, row.RunTS, row.RunShortID))
+		conn, err := net.Dial("unix", path)
+		if err != nil {
+			t.Fatalf("await lost endpoint for %d: %v", issue, err)
+		}
+		_ = conn.Close()
+	}
+	before, err := el.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range events.ProjectRunStates(before) {
+		if !state.IsAwaiting() || !state.IsActive() {
+			t.Fatalf("await projection: %+v", state)
+		}
+	}
+	client.prs["42-first"] = &github.PR{Number: 72, State: "closed", Merged: true, HeadRefName: "42-first", Body: "Closes #42"}
+	row.IssueNumber, row.Mode = 42, ModeContinue
+	result, started := executor.Execute(t.Context(), row)
+	if !started || result.Status != "success" {
+		t.Fatalf("resolved await result=%+v started=%v", result, started)
+	}
+	for _, issue := range []int{42, 43} {
+		path := daemon.RunSocketPath(o.layout.BatchDir(row.BatchID), buildRunID(issue, row.RunTS, row.RunShortID))
+		conn, err := net.Dial("unix", path)
+		if err == nil {
+			_ = conn.Close()
+		}
+		if (err == nil) != (issue == 43) {
+			t.Fatalf("endpoint ownership for %d: %v", issue, err)
+		}
+	}
+}
+
 func (f *lifecycleRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
 	if (issue != nil) != (f.kind == "issue") || branch != f.branch {
 		f.t.Fatalf("mode policy: issue=%+v branch=%s", issue, branch)
