@@ -2611,8 +2611,8 @@ func hasExactTaskStatus(taskContent, status string) bool {
 //
 // On identity-resolution failure, returns (SandboxStart{}, AgentRunResult{
 // Status:"failure", Branch: branch, [IssueNumber/Issue if applicable]}, false).
-// The 2 call sites each handle the !ok branch by emitting the result
-// before calling wt.Start(opts), preserving the existing failure
+// The lifecycle handles the !ok branch before calling wt.Start(opts),
+// preserving the existing mode-specific failure
 // semantics (was orchestrator.go:1965-1974 in the applyOverrideAndIdentity
 // era; byte-identical in the characterization net).
 func (s *runSession) startOptsFor(branch string) (sandbox.SandboxStart, AgentRunResult, bool) {
@@ -3552,293 +3552,57 @@ func (o *Orchestrator) runSingleRow(ctx context.Context, parentCtx context.Conte
 	return o.newRunExecutorWith(parentCtx, bc, sbFactory, containerAlloc, coord, coord, o.layout).Execute(ctx, row)
 }
 
-// execute runs the issue-driven AgentRun lifecycle owned by this session. It
-// contains the body that previously lived in (*Orchestrator).runSingle.
-func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
-	_ = s.runLogWriter()
-	issue, err := fetchIssueContent(ctx, s.deps.githubClient, s.issueNumber)
-	if err != nil {
-		fmt.Fprintf(s.deps.errorLog, "error: fetch issue %d: %v\n", s.issueNumber, err)
-		s.emitEarlyFailure("fetch issue", s.branches[s.issueNumber], err)
-		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure"}, false
-	}
-	s.issueState = issue.State
-
-	branch := s.branches[s.issueNumber]
-	if branch == "" {
-		branch = BranchName(issue.Number, issue.Title, s.baseBranch)
-	}
-	if s.mode != ModeContinue {
-		if err := syncBaseBranch(s.deps.runSessionOpts, s.deps.sandboxFactory, ".", s.baseBranch); err != nil {
-			fmt.Fprintf(s.deps.errorLog, "error: sync base branch for issue %d: %v\n", s.issueNumber, err)
-			s.emitEarlyFailure("sync base branch", branch, err)
-			return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
+// prepareIssueAttempt preserves issue-specific merged-PR checks, Task recovery,
+// and retry reset policy; execution and terminal persistence belong to execute.
+func (s *runSession) prepareIssueAttempt(ctx context.Context, branch string, wt sandbox.Sandbox, logPath string, attempt int, previous AgentRunResult) (prompt.RenderConfig, *AgentRunResult) {
+	attemptRenderCfg := s.renderCfg
+	if attempt > 0 {
+		// Pre-retry guard: if the PR was merged between attempts (e.g. the
+		// agent merged it on attempt 0 but exited non-zero due to a
+		// transient error), short-circuit to success without launching
+		// the agent again, resetting the branch, or re-rendering the
+		// prompt. The merged PR is the sole success signal for
+		// issue-driven runs (see #860). Prompt-only runs use a separate
+		// retry preparation helper without this guard.
+		if checkPRMergedForIssue(ctx, s.deps.githubClient, branch, s.issueNumber) {
+			return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "success", Branch: branch, RetriesTotal: attempt}
 		}
-	}
-	sandboxStarted := time.Now()
-	var container sandbox.Container
-	if s.containerAlloc != nil {
-		lease, err := s.containerAlloc.Acquire()
+		taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
+		openPR, prLookupErr := findOpenPRByBranch(ctx, s.deps.githubClient, branch)
+		// Preserve the task content (or use the empty template if missing)
+		// and place the continuation freshness guard after persisted state. The agent
+		// revalidates the task document's ## Next Step against live state. The openPR value is only
+		// used below to decide whether to reset the branch — the agent
+		// receives the same task content regardless of open-PR state.
+		taskContent, taskExists, err := ReadTaskContent(taskPath)
 		if err != nil {
-			fmt.Fprintf(s.deps.errorLog, "error: acquire container for issue %d: %v\n", s.issueNumber, err)
-			s.emitEarlyFailure("acquire container", branch, err)
-			return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
+			fmt.Fprintf(s.deps.errorLog, "error: read task for issue %d: %v\n", s.issueNumber, err)
+			return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
 		}
-		container = lease.container
-		defer lease.Release()
-	}
-
-	wt := s.sbFactory.NewSandbox(".", s.worktreeDir(), branch, s.baseBranch, container)
-	opts, errResult, ok := s.startOptsFor(branch)
-	if !ok {
-		s.emitEarlyFailure("resolve git identity", branch, nil)
-		return errResult, false
-	}
-	if err := wt.Start(opts); err != nil {
-		fmt.Fprintf(s.deps.errorLog, "error: start sandbox for issue %d: %v\n", s.issueNumber, err)
-		s.emitEarlyFailure("start sandbox", branch, err)
-		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
-	}
-	if s.review && s.qualityRulesFile != "" {
-		if err := s.copyQualityRulesIntoWorktree(branch); err != nil {
-			fmt.Fprintf(s.deps.errorLog, "warn: copy quality rules into review worktree for issue %d: %v\n", s.issueNumber, err)
+		if previous.ContextExhausted {
+			attemptRenderCfg.TaskPrompt = prompt.ContextRecoveryTaskPrompt(taskContent, s.renderCfg.ReviewTimeout)
+			attemptRenderCfg.ContextRecovery = true
+		} else {
+			attemptRenderCfg.TaskPrompt = prompt.ContinuationTaskPromptWithReviewTimeout(taskContent, s.renderCfg.ReviewTimeout)
 		}
-	}
-	s.coord.firstSandboxStart(sandboxStarted)
-	// Guaranteed cleanup: defer wt.RestoreHostPaths() so container
-	// sandboxes normalize the worktree's .git pointer back to host paths
-	// on every exit path including panic, cancellation, timeout, and
-	// normal completion. Worktree-only sandboxes no-op this. The defer
-	// does not call Stop(); terminal success performs explicit auto-clean,
-	// while failure and blocked paths preserve the worktree. Issue #2189.
-	defer func() { _ = wt.RestoreHostPaths() }()
-
-	blockedBy, err := recheckBlockedBy(ctx, s.deps.githubClient, s.externalBlockers)
-	if err != nil {
-		fmt.Fprintf(s.deps.errorLog, "error: recheck blockers for issue %d: %v\n", s.issueNumber, err)
-		s.emitEarlyFailure("recheck blockers", branch, err)
-		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
-	}
-	runID := s.issueRunID()
-	if len(blockedBy) > 0 {
-		res := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "blocked", Branch: branch}
-		logBlocked(s.deps.eventLog, s.issueNumber, blockedBy, runID, s.batchID)
-		return res, false
-	}
-
-	batchDir := s.deps.layout.BatchDir(s.batchID)
-	if s.batchID == "" {
-		batchDir = s.deps.layout.BatchesDir
-	}
-	if err := s.coord.startCommandServer(s.issueNumber, daemon.RunFolder(batchDir, runID), s.commander); err != nil {
-		fmt.Fprintf(s.deps.errorLog, "error: start command server for issue %d: %v\n", s.issueNumber, err)
-	}
-
-	s.coord.registerActiveRun(s.issueNumber, wt)
-	defer s.coord.unregisterActiveRun(s.issueNumber)
-
-	manifestBatchID := s.batchID
-	if s.batchID == "" {
-		batchDir = s.deps.layout.BatchesDir
-		manifestBatchID = batchIDFromRunID(runID)
-	}
-	runManifest := batchindex.RunManifest{
-		RunID:        runID,
-		BatchID:      manifestBatchID,
-		Issue:        s.issueNumber,
-		Branch:       branch,
-		BaseBranch:   s.baseBranch,
-		WorktreePath: wt.WorkDir(),
-		Kind:         batchindex.KindIssue,
-		CreatedAt:    time.Now(),
-		Status:       batchindex.RunManifestStatusActive,
-	}
-	if err := daemon.WriteRunManifest(batchDir, runID, runManifest); err != nil {
-		fmt.Fprintf(s.deps.errorLog, "error: write run manifest for issue %d: %v\n", s.issueNumber, err)
-		s.emitEarlyFailure("write run manifest", branch, err)
-		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
-	}
-	// Pre-register the supervisor's done channel with the batch-wide
-	// fan-in BEFORE spawning the supervisor, so a session that
-	// started just before ctx fired cannot race the snapshot taken
-	// by RunBatch's fan-in goroutine.
-	supervisorDone := make(chan struct{})
-	s.coord.trackShutdownSupervisor(supervisorDone)
-	sessionCtx, cancelSession := context.WithCancel(ctx)
-	go func() {
-		defer close(supervisorDone)
-		<-sessionCtx.Done()
-		if s.parentCtx != nil && s.parentCtx.Err() != nil {
-			if proc := wt.Process(); proc != nil {
-				done := superviseShutdown(ctx, proc, s.opts.killTimeout)
-				<-done
-			}
-		}
-	}()
-	defer func() {
-		cancelSession()
-		<-supervisorDone
-	}()
-
-	if s.deps.eventLog != nil {
-		promptSourceType := "current"
-		promptSourceValue := ""
-		switch {
-		case s.renderCfg.PromptFlag != "":
-			promptSourceType = "prompt"
-			promptSourceValue = s.renderCfg.PromptFlag
-		case s.renderCfg.TemplateFlag != "":
-			promptSourceType = "template"
-			promptSourceValue = s.renderCfg.TemplateFlag
-		}
-
-		payload := map[string]any{
-			"branch":                 branch,
-			"base_branch":            s.baseBranch,
-			"issue_title":            issue.Title,
-			"prompt_source_type":     promptSourceType,
-			"parallel":               s.parallel,
-			"start_delay":            int(s.startDelay / time.Second),
-			"review_timeout":         s.renderCfg.ReviewTimeout,
-			"retries":                s.retries,
-			"sandbox":                s.sandboxMode,
-			"container_capacity":     s.containerCapacity,
-			"container_capacity_set": s.containerCapacitySet,
-			"max_containers":         s.maxContainers,
-			"max_containers_set":     s.maxContainersSet,
-		}
-		if s.mode == ModeContinue {
-			payload["previous_run_id"] = s.previousRunIDs[s.issueNumber]
-		}
-		if promptSourceValue != "" && s.mode != ModeContinue {
-			payload["prompt_source_value"] = promptSourceValue
-		}
-		if len(s.renderCfg.PromptArgs) > 0 {
-			payload["prompt_args"] = s.renderCfg.PromptArgs
-		}
-		if s.renderCfg.ReviewCommandSet {
-			payload["review_command"] = s.renderCfg.ReviewCommand
-		}
-		if s.agentName != "" {
-			payload["agent"] = s.agentName
-		}
-		if model := strings.TrimSpace(s.agentCfg.Model); model != "" {
-			payload["model"] = model
-		}
-		if variant := strings.TrimSpace(s.variant); variant != "" {
-			payload["variant"] = variant
-		}
-		if s.batchID != "" {
-			payload["batch_id"] = s.batchID
-		}
-		eventType := "run.started"
-		if s.mode == ModeContinue {
-			eventType = "run.continued"
-		}
-		_ = s.deps.eventLog.Log(events.Event{
-			Type:      eventType,
-			Timestamp: time.Now(),
-			RunID:     runID,
-			Issue:     s.issueNumber,
-			IssueRef:  issueRef(s.issueNumber),
-			Payload:   payload,
-		})
-	}
-
-	logPath := s.runLogPathFor(runID)
-	// Entry re-evaluation (issue #2595): a resume candidate (continuation,
-	// or preserved review artifacts) re-entering while the PR gate is
-	// already resolvable must not launch the agent blindly. An actively
-	// resolving pending gate emits run.await and ends the session without launching;
-	// a ready-to-merge / actionable-feedback gate attaches the
-	// request-scoped evidence to the entry launch prompt (the entry launch
-	// IS the resume).
-	if entryResult, entryStarted, entryHandled := s.tryEntryResume(ctx, branch, wt, logPath, runID); entryHandled {
-		return entryResult, entryStarted
-	}
-	result, terminalExtras, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, s.mode != ModeContinue, func(attempt int, previous AgentRunResult) (prompt.RenderConfig, *AgentRunResult) {
-		attemptRenderCfg := s.renderCfg
-		if attempt > 0 {
-			// Pre-retry guard: if the PR was merged between attempts (e.g. the
-			// agent merged it on attempt 0 but exited non-zero due to a
-			// transient error), short-circuit to success without launching
-			// the agent again, resetting the branch, or re-rendering the
-			// prompt. The merged PR is the sole success signal for
-			// issue-driven runs (see #860). ModeContinue uses a different
-			// `prepareAttempt` closure (the prompt-only one) that does not
-			// contain this guard, so continuation replays are unaffected.
-			if checkPRMergedForIssue(ctx, s.deps.githubClient, branch, s.issueNumber) {
-				return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "success", Branch: branch, RetriesTotal: attempt}
-			}
-			taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
-			openPR, prLookupErr := findOpenPRByBranch(ctx, s.deps.githubClient, branch)
-			// Preserve the task content (or use the empty template if missing)
-			// and place the continuation freshness guard after persisted state. The agent
-			// revalidates the task document's ## Next Step against live state. The openPR value is only
-			// used below to decide whether to reset the branch — the agent
-			// receives the same task content regardless of open-PR state.
-			taskContent, taskExists, err := ReadTaskContent(taskPath)
-			if err != nil {
-				fmt.Fprintf(s.deps.errorLog, "error: read task for issue %d: %v\n", s.issueNumber, err)
+		attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")
+		if !taskExists && openPR == nil && !previous.ContextExhausted {
+			if prLookupErr != nil {
+				fmt.Fprintf(s.deps.errorLog, "error: lookup PR for issue %d: %v\n", s.issueNumber, prLookupErr)
 				return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
 			}
-			if previous.ContextExhausted {
-				attemptRenderCfg.TaskPrompt = prompt.ContextRecoveryTaskPrompt(taskContent, s.renderCfg.ReviewTimeout)
-				attemptRenderCfg.ContextRecovery = true
-			} else {
-				attemptRenderCfg.TaskPrompt = prompt.ContinuationTaskPromptWithReviewTimeout(taskContent, s.renderCfg.ReviewTimeout)
-			}
-			attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")
-			if !taskExists && openPR == nil && !previous.ContextExhausted {
-				if prLookupErr != nil {
-					fmt.Fprintf(s.deps.errorLog, "error: lookup PR for issue %d: %v\n", s.issueNumber, prLookupErr)
-					return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
-				}
-				if err := resetRetryBranch(s.deps.runSessionOpts, ctx, wt, branch, s.baseBranch); err != nil {
-					fmt.Fprintf(s.deps.errorLog, "error: reset retry branch for issue %d: %v\n", s.issueNumber, err)
-					return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
-				}
-			}
-			if err := logRetryMarkerFn(logPath, attempt, s.retries); err != nil {
-				if s.deps.errorLog != nil {
-					fmt.Fprintf(s.deps.errorLog, "warning: write retry marker for issue %d: %v\n", s.issueNumber, err)
-				}
+			if err := resetRetryBranch(s.deps.runSessionOpts, ctx, wt, branch, s.baseBranch); err != nil {
+				fmt.Fprintf(s.deps.errorLog, "error: reset retry branch for issue %d: %v\n", s.issueNumber, err)
+				return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
 			}
 		}
-		return attemptRenderCfg, nil
-	})
-	if !started {
-		return result, false
-	}
-
-	// Record any cleanup failure before marking the run as terminal
-	// (issue #2605 acceptance criterion #4). The cleanup error is
-	// distinct from the agent's own failure and must appear in the
-	// event log so operators can diagnose orphaned processes.
-	if result.ContextExhausted && result.CleanupError != nil {
-		fmt.Fprintf(s.deps.errorLog, "warning: context-exhausted cleanup failed for issue %d: %v\n", s.issueNumber, result.CleanupError)
-		if terminalExtras == nil {
-			terminalExtras = make(map[string]any)
+		if err := logRetryMarkerFn(logPath, attempt, s.retries); err != nil {
+			if s.deps.errorLog != nil {
+				fmt.Fprintf(s.deps.errorLog, "warning: write retry marker for issue %d: %v\n", s.issueNumber, err)
+			}
 		}
-		terminalExtras["cleanup_error"] = result.CleanupError.Error()
 	}
-
-	// Usage-limit responses take the ordinary bounded failure/retry path.
-	// They are not admitted to run.await: a timer alone is not proof of a
-	// restart-safe external resolver (issue #2743).
-	if result.Status == "await" {
-		return result, true
-	}
-
-	result.Status = s.finishTerminal(ctx, runID, result, terminalExtras, wt, branch)
-
-	// Verify no process with the terminal run ID remains after the terminal
-	// event (issue #2605 acceptance criterion #2). This is a safety net: the
-	// primary cleanup happens inside waitCmd before emitTerminal, but a
-	// failed onAbort or a slow process-group kill can leave orphans.
-	s.verifyNoRemainingProcesses(runID)
-
-	return result, true
+	return attemptRenderCfg, nil
 }
 
 // reconcileWorktreeBranch returns the worktree's HEAD to the issue branch
@@ -4034,246 +3798,42 @@ func (o *Orchestrator) runPromptOnlyRow(ctx context.Context, row RowSpec, bc Bat
 	return o.newRunExecutorWith(ctx, bc, sbFactory, containerAlloc, coord, coord, o.layout).Execute(ctx, row)
 }
 
-// executePromptOnly runs the prompt-only AgentRun lifecycle owned by this
-// session. It contains the body that previously lived in
-// (*Orchestrator).runPromptOnlySingle. Unlike execute, the prompt-only
-// flavor owns its own local active-runs map because it does not share the
-// per-issue active-run bookkeeping that RunBatch uses.
-func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, bool) {
-	branch := s.branches[0]
-	if s.mode != ModeContinue {
-		if err := syncBaseBranch(s.deps.runSessionOpts, s.deps.sandboxFactory, ".", s.baseBranch); err != nil {
-			fmt.Fprintf(s.deps.errorLog, "error: sync base branch for prompt-only run: %v\n", err)
-			return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: s.runID}, false
+// preparePromptAttempt keeps prompt-only/review reset and continuation policy
+// separate from the common resource lifecycle.
+func (s *runSession) preparePromptAttempt(ctx context.Context, branch string, wt sandbox.Sandbox, logPath string, attempt int, previous AgentRunResult) (prompt.RenderConfig, *AgentRunResult) {
+	if attempt > 0 {
+		if !previous.ContextExhausted {
+			if err := resetRetryBranch(s.deps.runSessionOpts, ctx, wt, branch, s.baseBranch); err != nil {
+				fmt.Fprintf(s.deps.errorLog, "error: reset retry branch for prompt-only run: %v\n", err)
+				return prompt.RenderConfig{}, &AgentRunResult{Status: "failure", Branch: branch, RetriesTotal: attempt, Review: s.review, RunID: s.runID}
+			}
+		}
+		if err := logRetryMarkerFn(logPath, attempt, s.retries); err != nil {
+			if s.deps.errorLog != nil {
+				fmt.Fprintf(s.deps.errorLog, "warning: write retry marker for prompt-only run: %v\n", err)
+			}
 		}
 	}
-	var container sandbox.Container
-	if s.containerAlloc != nil {
-		lease, err := s.containerAlloc.Acquire()
+	attemptCfg := s.renderCfg
+	if s.mode == ModeContinue || attempt > 0 {
+		taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
+		taskContent, taskExists, err := ReadTaskContent(taskPath)
 		if err != nil {
-			fmt.Fprintf(s.deps.errorLog, "error: acquire container for prompt-only run: %v\n", err)
-			return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: s.runID}, false
-		}
-		container = lease.container
-		defer lease.Release()
-	}
-
-	wt := s.sbFactory.NewSandbox(".", s.worktreeDir(), branch, s.baseBranch, container)
-	opts, errResult, ok := s.startOptsFor(branch)
-	if !ok {
-		return errResult, false
-	}
-	if err := wt.Start(opts); err != nil {
-		fmt.Fprintf(s.deps.errorLog, "error: start sandbox for prompt-only run: %v\n", err)
-		return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: s.runID}, false
-	}
-	if s.review && s.qualityRulesFile != "" {
-		if err := s.copyQualityRulesIntoWorktree(branch); err != nil {
-			fmt.Fprintf(s.deps.errorLog, "warn: copy quality rules into review worktree for prompt-only run: %v\n", err)
-		}
-	}
-	// Guaranteed cleanup: defer wt.RestoreHostPaths() so container
-	// sandboxes normalize the preserved worktree's .git pointer back to
-	// host paths on every exit path. Worktree-only sandboxes no-op.
-	// executePromptOnly has no end-of-success cleanup otherwise; this
-	// defer is the only end-of-success cleanup here. Issue #2189.
-	defer func() { _ = wt.RestoreHostPaths() }()
-
-	s.coord.registerActiveRun(0, wt)
-	defer s.coord.unregisterActiveRun(0)
-
-	// Pre-register the supervisor's done channel with the batch-wide
-	// fan-in BEFORE spawning the supervisor, so a session that
-	// started just before ctx fired cannot race the snapshot taken
-	// by RunBatch's fan-in goroutine. sessionCtx is cancelled when
-	// this executePromptOnly call returns, regardless of how it
-	// returns, so the supervisor can exit promptly.
-	supervisorDone := make(chan struct{})
-	s.coord.trackShutdownSupervisor(supervisorDone)
-	sessionCtx, cancelSession := context.WithCancel(ctx)
-	go func() {
-		defer close(supervisorDone)
-		<-sessionCtx.Done()
-		if s.parentCtx != nil && s.parentCtx.Err() != nil {
-			if proc := wt.Process(); proc != nil {
-				done := superviseShutdown(ctx, proc, s.opts.killTimeout)
-				<-done
+			fmt.Fprintf(s.deps.errorLog, "error: read prompt-only task for continuation: %v\n", err)
+		} else if taskExists || taskContent != "" {
+			if taskContent == "" {
+				taskContent = EmptyTaskTemplate
 			}
-		}
-	}()
-	defer func() {
-		cancelSession()
-		<-supervisorDone
-	}()
-
-	runID := s.runID
-	if s.batchTS != "" && s.batchShortID != "" {
-		// runid.NewRunID(KindPromptOnly, …) hard-codes the `prompt`
-		// segment (issue #1920 of #1916), so passing the
-		// user-supplied --run-id as `subject` (or "" for the no-userid
-		// case) produces the canonical per-row RunID that doubles as
-		// the public BatchId.
-		runID = runid.NewRunID(runid.KindPromptOnly, s.userProvidedRunID, s.batchTS, s.batchShortID)
-	} else if runID == "" {
-		runID = fmt.Sprintf("run-0-%d", time.Now().UnixNano())
-	}
-	// For prompt-only batches the public BatchId equals the per-row
-	// RunID (issue #1920). The cmd layer pre-seeds s.batchID
-	// from the same runid.NewBatchID call, and the review daemon sets
-	// s.batchID by walking runDir; if neither path
-	// populated it (legacy callers), the legacy batchIDFromRunID
-	// fallback below returns the `<ts>-<sid>` prefix — which is the
-	// historical contract that the on-disk dir resolver already
-	// understood, so the manifest writes still land at a coherent
-	// (if legacy-shaped) path. The cmd and review paths pre-seed
-	// s.batchID today, so this fallback is best-effort.
-	if s.batchID == "" {
-		s.batchID = batchIDFromRunID(runID)
-	}
-
-	batchDir := s.deps.layout.BatchDir(s.batchID)
-	manifestBatchID := s.batchID
-	var runKind batchindex.Kind
-	if s.review {
-		runKind = batchindex.KindReview
-	} else {
-		runKind = batchindex.KindPromptOnly
-	}
-	runManifest := batchindex.RunManifest{
-		RunID:        runID,
-		BatchID:      manifestBatchID,
-		Issue:        s.issueNumber,
-		Branch:       branch,
-		BaseBranch:   s.baseBranch,
-		WorktreePath: wt.WorkDir(),
-		Kind:         runKind,
-		CreatedAt:    time.Now(),
-		PR:           s.prNumber,
-		PortalHidden: s.portalHidden,
-		Status:       batchindex.RunManifestStatusActive,
-	}
-	if err := daemon.WriteRunManifest(batchDir, runID, runManifest); err != nil {
-		fmt.Fprintf(s.deps.errorLog, "error: write run manifest for prompt-only run: %v\n", err)
-		return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: runID}, false
-	}
-	if s.portalHidden {
-		batchManifest, err := daemon.ReadManifest(batchDir)
-		if err != nil {
-			if !os.IsNotExist(err) {
-				fmt.Fprintf(s.deps.errorLog, "error: read batch manifest for prompt-only run: %v\n", err)
-				return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: runID}, false
+			if previous.ContextExhausted {
+				attemptCfg.TaskPrompt = prompt.ContextRecoveryTaskPrompt(taskContent, s.renderCfg.ReviewTimeout)
+				attemptCfg.ContextRecovery = true
+			} else {
+				attemptCfg.TaskPrompt = prompt.ContinuationTaskPromptWithReviewTimeout(taskContent, s.renderCfg.ReviewTimeout)
 			}
-			batchManifest = daemon.BatchManifest{BatchId: manifestBatchID, CreatedAt: runManifest.CreatedAt}
-		}
-		if batchManifest.BatchId == "" {
-			batchManifest.BatchId = manifestBatchID
-		}
-		batchManifest.PortalHidden = true
-		if err := daemon.WriteManifest(batchDir, batchManifest); err != nil {
-			fmt.Fprintf(s.deps.errorLog, "error: write batch manifest for prompt-only run: %v\n", err)
-			return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: runID}, false
+			attemptCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")
 		}
 	}
-	cmdServer := daemon.NewCommandServerForIssue(daemon.RunFolder(batchDir, runID), s.commander, s.issueNumber)
-	if err := cmdServer.Start(); err != nil {
-		fmt.Fprintf(s.deps.errorLog, "error: start command server for prompt-only run: %v\n", err)
-	} else {
-		defer cmdServer.Stop()
-	}
-
-	if s.deps.eventLog != nil {
-		promptSourceType := "current"
-		payload := map[string]any{"branch": branch, "base_branch": s.baseBranch, "prompt_source_type": "prompt", "parallel": s.parallel, "start_delay": int(s.startDelay / time.Second), "review_timeout": s.renderCfg.ReviewTimeout, "retries": s.retries, "sandbox": s.sandboxMode, "container_capacity": s.containerCapacity, "container_capacity_set": s.containerCapacitySet, "max_containers": s.maxContainers, "max_containers_set": s.maxContainersSet}
-		if s.renderCfg.PromptFlag != "" {
-			promptSourceType = "prompt"
-		} else if s.renderCfg.TemplateFlag != "" {
-			promptSourceType = "template"
-		}
-		payload["prompt_source_type"] = promptSourceType
-		if s.mode == ModeContinue {
-			payload["previous_run_id"] = s.previousRunIDs[0]
-		}
-		if len(s.renderCfg.PromptArgs) > 0 {
-			payload["prompt_args"] = s.renderCfg.PromptArgs
-		}
-		if s.renderCfg.ReviewCommandSet {
-			payload["review_command"] = s.renderCfg.ReviewCommand
-		}
-		if s.agentName != "" {
-			payload["agent"] = s.agentName
-		}
-		if model := strings.TrimSpace(s.agentCfg.Model); model != "" {
-			payload["model"] = model
-		}
-		if variant := strings.TrimSpace(s.variant); variant != "" {
-			payload["variant"] = variant
-		}
-		if s.batchID != "" {
-			payload["batch_id"] = s.batchID
-		}
-		if s.review {
-			payload["review"] = true
-			payload["pr_number"] = s.prNumber
-			payload["review_focus"] = s.reviewFocus
-			if s.issueNumber > 0 {
-				payload["issue_number"] = s.issueNumber
-			}
-		}
-		if s.portalHidden {
-			payload["portal_hidden"] = true
-		}
-		eventType := "run.started"
-		if s.mode == ModeContinue {
-			eventType = "run.continued"
-		}
-		_ = s.deps.eventLog.Log(events.Event{Type: eventType, Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: payload})
-	}
-
-	logPath := s.runLogPathFor(runID)
-	result, terminalExtras, started := s.runOnce(ctx, nil, branch, wt, logPath, runID, false, func(attempt int, previous AgentRunResult) (prompt.RenderConfig, *AgentRunResult) {
-		if attempt > 0 {
-			if !previous.ContextExhausted {
-				if err := resetRetryBranch(s.deps.runSessionOpts, ctx, wt, branch, s.baseBranch); err != nil {
-					fmt.Fprintf(s.deps.errorLog, "error: reset retry branch for prompt-only run: %v\n", err)
-					return prompt.RenderConfig{}, &AgentRunResult{Status: "failure", Branch: branch, RetriesTotal: attempt, Review: s.review, RunID: s.runID}
-				}
-			}
-			if err := logRetryMarkerFn(logPath, attempt, s.retries); err != nil {
-				if s.deps.errorLog != nil {
-					fmt.Fprintf(s.deps.errorLog, "warning: write retry marker for prompt-only run: %v\n", err)
-				}
-			}
-		}
-		attemptCfg := s.renderCfg
-		if s.mode == ModeContinue || attempt > 0 {
-			taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
-			taskContent, taskExists, err := ReadTaskContent(taskPath)
-			if err != nil {
-				fmt.Fprintf(s.deps.errorLog, "error: read prompt-only task for continuation: %v\n", err)
-			} else if taskExists || taskContent != "" {
-				if taskContent == "" {
-					taskContent = EmptyTaskTemplate
-				}
-				if previous.ContextExhausted {
-					attemptCfg.TaskPrompt = prompt.ContextRecoveryTaskPrompt(taskContent, s.renderCfg.ReviewTimeout)
-					attemptCfg.ContextRecovery = true
-				} else {
-					attemptCfg.TaskPrompt = prompt.ContinuationTaskPromptWithReviewTimeout(taskContent, s.renderCfg.ReviewTimeout)
-				}
-				attemptCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")
-			}
-		}
-		return attemptCfg, nil
-	})
-	result.Review = s.review
-	result.RunID = s.runID
-	if !started {
-		return result, false
-	}
-
-	result.Status = s.finishTerminal(ctx, runID, result, terminalExtras, wt, branch)
-
-	return result, true
+	return attemptCfg, nil
 }
 
 func promptOnlyBranch(cfg prompt.RenderConfig) string {

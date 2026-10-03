@@ -175,16 +175,13 @@ func (o *Orchestrator) newRunExecutorWith(parentCtx context.Context, bc BatchCon
 	}
 }
 
-// Execute dispatches one row through the issue-driven or prompt-only
-// lifecycle, discriminated by row.IssueNumber>0. parentCtx (the RunBatch ctx)
+// Execute runs one row through the shared lifecycle. Input policies are
+// discriminated by row.IssueNumber>0. parentCtx (the RunBatch ctx)
 // is batch-constant and held on the executor; ctx is the per-row ctx
 // (per-issue for issue-driven, the RunBatch ctx for prompt-only).
 func (e *runExecutor) Execute(ctx context.Context, row RowSpec) (AgentRunResult, bool) {
 	s := newRunSession(e, row)
-	if row.IssueNumber > 0 {
-		return s.execute(ctx)
-	}
-	return s.executePromptOnly(ctx)
+	return s.execute(ctx)
 }
 
 // newRunSession builds a runSession from the elevated seam's inputs. It
