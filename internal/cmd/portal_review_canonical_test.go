@@ -1313,8 +1313,7 @@ func TestPortal_ReviewRun_ShowsReviewingBeforeRunStarted(t *testing.T) {
 	}
 
 	// Critically: NO run.started event has been written to events.jsonl.
-	// The portal must still project status="reviewing" from the on-disk
-	// batch manifest (PR=prNumber) and per-row run.json.
+	// Artifacts preserve review identity, but do not invent lifecycle.
 	handler := newPortalHandler(repoRoot)
 	server := startPortalHTTPServer(t, handler)
 	defer server.Close()
@@ -1324,8 +1323,8 @@ func TestPortal_ReviewRun_ShowsReviewingBeforeRunStarted(t *testing.T) {
 		t.Fatalf("expected 1 run, got %d: %#v", len(runs), runs)
 	}
 	got := runs[0]
-	if got.Status != "reviewing" {
-		t.Fatalf("expected status=reviewing (manifest-only, no run.started), got %q (review=%v, prNumber=%d, runID=%q)",
+	if got.Status != "unknown" || got.FinishedAt != nil {
+		t.Fatalf("expected unknown lifecycle (manifest-only, no run.started), got %q (review=%v, prNumber=%d, runID=%q)",
 			got.Status, got.Review, got.PRNumber, got.RunID)
 	}
 	if !got.Review {

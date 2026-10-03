@@ -1,18 +1,18 @@
 package daemon
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/rafaelromao/sandman/internal/batchindex"
+	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 // NonTerminalRowError is returned by ArchiveRow when the targeted
-// row's run.json Status is still active. It carries the offending
+// row's event-derived lifecycle is nonterminal or unknown. It carries the offending
 // run id so the HTTP handler can surface a 409 with the row's identity.
 type NonTerminalRowError struct {
 	RunID string
@@ -59,8 +59,8 @@ func StripSockets(dir string) error {
 // ArchiveRow moves runs/<runID>/ from the batch's live directory to
 // .sandman/archive/<batchID>/runs/<runID>/, strips sockets from the
 // moved folder, and returns the resulting RunRecord. The targeted
-// row must have a terminal run.json Status (success / failure /
-// aborted / blocked); an active row returns a *NonTerminalRowError.
+// row must have a terminal event projection; an active or unknown row returns
+// a *NonTerminalRowError. The manifest is artifact metadata, never authority.
 //
 // ArchiveRow is the single seam both the CLI subcommand and the HTTP
 // archive endpoint dispatch through. It does not touch
@@ -69,7 +69,7 @@ func StripSockets(dir string) error {
 // destination already exists, ArchiveRow returns *AlreadyArchivedError
 // with the existing ArchivePath populated, so callers can surface it
 // in error bodies without re-walking the filesystem.
-func ArchiveRow(repoRoot string, batch *batchindex.Batch, runID string) (batchindex.RunRecord, error) {
+func ArchiveRow(repoRoot string, batch *batchindex.Batch, runID string, log events.EventLog) (batchindex.RunRecord, error) {
 	if batch == nil {
 		return batchindex.RunRecord{}, errors.New("nil batch")
 	}
@@ -77,21 +77,15 @@ func ArchiveRow(repoRoot string, batch *batchindex.Batch, runID string) (batchin
 		return batchindex.RunRecord{}, errors.New("empty run id")
 	}
 
-	layout := paths.NewLayout(nil, repoRoot)
-	live := batch.Location(layout).Run(runID)
-	liveRunDir := live.Dir
-	liveManifest := live.ManifestPath()
-	data, err := os.ReadFile(liveManifest)
+	states, err := events.ReadRunStates(log)
 	if err != nil {
-		return batchindex.RunRecord{}, fmt.Errorf("read run manifest for %q: %w", runID, err)
+		return batchindex.RunRecord{}, err
 	}
-	var manifest batchindex.RunManifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		return batchindex.RunRecord{}, fmt.Errorf("decode run manifest for %q: %w", runID, err)
-	}
-	if !isTerminalRunStatus(manifest.Status) {
+	if !states[runID].IsTerminal() {
 		return batchindex.RunRecord{}, &NonTerminalRowError{RunID: runID}
 	}
+	layout := paths.NewLayout(nil, repoRoot)
+	liveRunDir := batch.Location(layout).Run(runID).Dir
 
 	archiveRunDir := layout.ArchiveBatch(batch.ID).Run(runID).Dir
 	relArchive, err := filepath.Rel(repoRoot, archiveRunDir)
@@ -124,15 +118,4 @@ func ArchiveRow(repoRoot string, batch *batchindex.Batch, runID string) (batchin
 		Status:      batchindex.RunRecordStatusArchived,
 		ArchivePath: relArchive,
 	}, nil
-}
-
-func isTerminalRunStatus(s batchindex.RunManifestStatus) bool {
-	switch s {
-	case batchindex.RunManifestStatusSuccess,
-		batchindex.RunManifestStatusFailure,
-		batchindex.RunManifestStatusAborted,
-		batchindex.RunManifestStatusBlocked:
-		return true
-	}
-	return false
 }

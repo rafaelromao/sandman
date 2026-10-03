@@ -66,7 +66,7 @@ Emitted when an issue enters the wait queue due to unresolved blockers or parall
 | `blocked_by` | List of issue numbers blocking this run |
 
 #### `run.capacity_queued`
-Emitted after a lifecycle observation confirms that an external gate has resolved, when the continuation still needs an execution slot. It is non-terminal and distinct from both `run.await` (external work is still resolving) and the terminal `run.queued` placeholder. The active run projects as `queued`, not `waiting`; its historical await evidence remains available. If the owning process stops before capacity becomes available, the next normal `sandman run` admission rehydrates this continuation without requiring `--continue`, then revalidates the live head and request before execution.
+Emitted after a lifecycle observation confirms that an external gate has resolved, when the continuation still needs an execution slot. It is also emitted when a batch pauses admission after another row reports provider usage-limit exhaustion (`gate: usage-limit`, `reason: usage-limit-paused`): not-yet-started rows do not launch another agent until the suspended run resumes, and rehydrate through normal admission. It is non-terminal and distinct from both `run.await` (external work is still resolving) and the terminal `run.queued` placeholder. The active run projects as `queued`, not `waiting`; its historical await evidence remains available. If the owning process stops before capacity becomes available, the next normal `sandman run` admission rehydrates this continuation without requiring `--continue`, then revalidates the live head and request before execution.
 
 | Field | Description |
 |-------|-------------|
@@ -137,14 +137,14 @@ Emitted when an agent run completes.
 | `review_request` | Present for retained delegated-review outcomes; retains the confirmed request identity, current head, deadline, budget, elapsed time, response counters, validated request-scoped classification, outcome, and next action. |
 
 #### `run.await`
-Emitted when an issue-driven run ends its agent session while an external operation is actively resolving: current-head CI is queued/running, or a delegated-review request has been confirmed and remains within its deadline. A confirmed review request counts as ongoing from successful delivery, even before the reviewer starts. A PR's existence, generic `pending` label, `REVIEW_REQUIRED`, `BLOCKED`, absent checks, stale head, failed lookup/state read, or exhausted operation budget cannot alone authorize an await. Agent-owned work is resumed or fails with a structured next action instead of being parked. A legitimate await is non-terminal and does not consume an agent retry. Pending current-head CI carries a durable, non-renewing 30-minute per-head deadline in `ci_wait`; a review request carries its confirmed request identity and deadline. The row keeps dependency ownership while the scheduler releases execution capacity between observations. When external work finishes, the run resumes on an available slot (or remains capacity-queued until one frees); it does not require manual continuation.
+Emitted when an issue-driven run ends its agent session while an external operation is actively resolving: current-head CI is queued/running, a delegated-review request has been confirmed and remains within its deadline, or a built-in agent hit its provider usage limit. A confirmed review request counts as ongoing from successful delivery, even before the reviewer starts. A provider usage limit counts as ongoing because the quota window resets externally: the run probes every ten minutes for up to five hours and resumes the same session. A PR's existence, generic `pending` label, `REVIEW_REQUIRED`, `BLOCKED`, absent checks, stale head, or failed lookup/state read cannot alone authorize an await. Agent-owned work is resumed or fails with a structured next action instead of being parked. A legitimate await is non-terminal and does not consume an agent retry. Pending current-head CI carries a durable, non-renewing 30-minute per-head deadline in `ci_wait`; a review request carries its confirmed request identity and deadline. The row keeps dependency ownership while the scheduler releases execution capacity between observations. When external work finishes, the run resumes on an available slot (or remains capacity-queued until one frees); it does not require manual continuation.
 
 The run timer pauses at `run.await` and remains paused while `run.capacity_queued` waits for a slot. A later `run.resumed` or `run.continued` event starts a new active segment, so duration readers exclude external wait and capacity-queue time. A `run.continued` event with the same RunID and BatchID continues the same Batch run and retains its accumulated active duration. A separate continued run with a new RunID or BatchID starts a fresh clock.
 
 | Field | Description |
 |-------|-------------|
 | `await` | Always `true` |
-| `await_reason` | Lifecycle reason such as `"pending"`, `"failed"`, `"review-timeout"`, `"ready-to-merge"`, or `"actionable-feedback"`. Historical events may also contain the legacy `"usage-limit"` reason; new implementation runs use the ordinary retry/failure path for provider usage limits. |
+| `await_reason` | Lifecycle reason such as `"pending"`, `"failed"`, `"review-timeout"`, `"ready-to-merge"`, `"actionable-feedback"`, or `"usage-limit"` (a built-in OpenCode or Claude Code attempt stopped at a provider usage limit and polls for the reset) |
 | `gate` | Lifecycle state at await time |
 | `branch` | Branch name |
 | `base_branch` | Base branch name |
@@ -174,10 +174,10 @@ lifecycle decision. Verified merged completion wins over retained review
 evidence: a closing reference produces `success`, while an unverifiable or
 missing closing reference produces `failure` with completion diagnostics.
 
-Only an actively resolving current-head CI operation or a confirmed, in-deadline
-delegated-review request produces `run.await` without consuming an agent retry.
+Only an actively resolving current-head CI operation, a confirmed, in-deadline
+delegated-review request, or a recognised provider usage limit produces `run.await` without consuming an agent retry.
 A review request is active from successful trigger confirmation, even before a
-review run starts. Pending current-head CI is bounded by its durable per-head
+review run starts. A usage limit is active because the provider quota window resets externally: the run polls every ten minutes for up to five hours and resumes the same session, then follows the ordinary retry path. Pending current-head CI is bounded by its durable per-head
 deadline; a new head is the only reset boundary. The logical row keeps its
 dependents queued while execution capacity is released between observations.
 When the review produces request-scoped feedback or approval, the implementation
@@ -298,7 +298,7 @@ Prompt-only runs show the same summary with `prompt-only` in the issue column.
 
 | Subcommand | Behaviour |
 |------------|-----------|
-| `sandman archive run <runId>` | Move `runs/<runId>/` from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/runs/<runId>/`. The targeted row's `run.json.Status` must be terminal; sibling rows and the batch daemon stay untouched. Persists a per-row `Runs[]` record carrying `status: "archived"` and `archivePath` for crash recovery. |
+| `sandman archive run <runId>` | Move `runs/<runId>/` from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/runs/<runId>/`. The AgentRun's event projection must be terminal; sibling rows and the batch daemon stay untouched. Persists a per-row `Runs[]` artifact record carrying `status: "archived"` and `archivePath` for crash recovery; the event-derived AgentRun status is unchanged. |
 | `sandman archive batch <batchId>` | Move the whole batch dir from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/`. The batch daemon must be gone. Flips the batch-level `status` to `archived`. CLI-only — not exposed via HTTP. |
 | `sandman archive older-than <days>` | Walk every `runs/<runID>/run.json` across all batches and archive each terminal row older than the cutoff. Already-archived rows are skipped via the per-row `Runs[]` record. |
 | `sandman archive stale` | Run the same stale-recovery pass as `clean --stale` (emit `run.aborted` for unterminated runs in dead batches), then walk every `runs/<runID>/run.json` and archive each terminal row. |

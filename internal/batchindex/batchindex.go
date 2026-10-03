@@ -35,9 +35,9 @@ const (
 	StatusUnavailable Status = "unavailable"
 )
 
-// RunManifestStatus is the lifecycle status of a single run as recorded in
-// run.json. It is deliberately separate from the index Batch Status enum
-// (active/archived/unavailable).
+// RunManifestStatus is a best-effort execution snapshot in run.json retained
+// for compatibility and inspection. It is never lifecycle authority: terminality
+// and outcomes come from events.RunState. Index statuses describe artifacts.
 type RunManifestStatus string
 
 const (
@@ -70,10 +70,8 @@ type Batch struct {
 	Runs       []RunRecord `json:"runs,omitempty"`
 }
 
-// RunRecordStatus is the lifecycle status of a single row as recorded
-// in the per-row index. It mirrors the batch-level Status enum but is
-// kept independent so callers do not have to thread both into the same
-// decision.
+// RunRecordStatus describes artifact location/availability in the per-row index,
+// not AgentRun lifecycle. It mirrors the batch-level artifact Status enum.
 type RunRecordStatus string
 
 const (
@@ -83,9 +81,8 @@ const (
 )
 
 // RunRecord is the per-row projection of a Batch. It is appended to
-// Batch.Runs so each row's lifecycle is observable independently of the
-// batch-level Status (which stays active until every row is archived
-// and the batch daemon is gone).
+// Batch.Runs so each Run's artifact state is observable independently of the
+// batch-level artifact Status (which stays active until whole-batch archive).
 type RunRecord struct {
 	RunID       string          `json:"runId"`
 	Status      RunRecordStatus `json:"status"`

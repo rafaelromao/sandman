@@ -122,7 +122,7 @@ func TestLocations_ProductionMultiIssueFlow(t *testing.T) {
 			t.Fatalf("Portal missing %q", id)
 		}
 	}
-	archive := NewArchiveCmd(Dependencies{RepoRoot: env.repoDir})
+	archive := NewArchiveCmd(Dependencies{RepoRoot: env.repoDir, EventLog: log})
 	archive.SetOut(&bytes.Buffer{})
 	archive.SetArgs([]string{"run", terminalID})
 	if err := archive.Execute(); err != nil {

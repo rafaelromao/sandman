@@ -231,7 +231,7 @@ func TestRecoverStaleRuns_ContinuedResetsStartedTimestamp(t *testing.T) {
 	}
 }
 
-func TestRecoverStaleRuns_RecoversQueuedFromDeadBatch(t *testing.T) {
+func TestRecoverStaleRuns_PreservesQueuedFromDeadBatch(t *testing.T) {
 	baseDir := t.TempDir()
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	queuedAt := createdAt.Add(5 * time.Minute)
@@ -248,28 +248,18 @@ func TestRecoverStaleRuns_RecoversQueuedFromDeadBatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RecoverStaleRuns: %v", err)
 	}
-	if recovered != 1 {
-		t.Errorf("expected 1 recovered, got %d", recovered)
+	if recovered != 0 {
+		t.Errorf("expected 0 recovered, got %d", recovered)
 	}
 	if dirs != 1 {
 		t.Errorf("expected 1 dead dir, got %d", dirs)
 	}
-	if len(eventLog.logged) != 1 {
-		t.Fatalf("expected 1 logged event, got %d", len(eventLog.logged))
-	}
-	e := eventLog.logged[0]
-	if e.Type != "run.aborted" {
-		t.Errorf("expected run.aborted, got %q", e.Type)
-	}
-	if e.IssueRef == nil || *e.IssueRef != 42 {
-		t.Errorf("expected IssueRef=42, got %v", e.IssueRef)
-	}
-	if v, _ := e.Payload["recovered"].(bool); !v {
-		t.Errorf("expected payload.recovered=true, got %v", e.Payload)
+	if len(eventLog.logged) != 0 {
+		t.Fatalf("terminal queued event was rewritten: %v", eventLog.logged)
 	}
 }
 
-func TestRecoverStaleRuns_RecoversBlockedFromDeadBatch(t *testing.T) {
+func TestRecoverStaleRuns_PreservesBlockedFromDeadBatch(t *testing.T) {
 	baseDir := t.TempDir()
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	blockedAt := createdAt.Add(5 * time.Minute)
@@ -286,24 +276,14 @@ func TestRecoverStaleRuns_RecoversBlockedFromDeadBatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RecoverStaleRuns: %v", err)
 	}
-	if recovered != 1 {
-		t.Errorf("expected 1 recovered, got %d", recovered)
+	if recovered != 0 {
+		t.Errorf("expected 0 recovered, got %d", recovered)
 	}
 	if dirs != 1 {
 		t.Errorf("expected 1 dead dir, got %d", dirs)
 	}
-	if len(eventLog.logged) != 1 {
-		t.Fatalf("expected 1 logged event, got %d", len(eventLog.logged))
-	}
-	e := eventLog.logged[0]
-	if e.Type != "run.aborted" {
-		t.Errorf("expected run.aborted, got %q", e.Type)
-	}
-	if e.IssueRef == nil || *e.IssueRef != 42 {
-		t.Errorf("expected IssueRef=42, got %v", e.IssueRef)
-	}
-	if v, _ := e.Payload["recovered"].(bool); !v {
-		t.Errorf("expected payload.recovered=true, got %v", e.Payload)
+	if len(eventLog.logged) != 0 {
+		t.Fatalf("terminal blocked event was rewritten: %v", eventLog.logged)
 	}
 }
 
@@ -342,11 +322,11 @@ func TestRecoverStaleRuns_RecoversOrphanActiveRun(t *testing.T) {
 	}
 }
 
-func TestRecoverStaleRuns_QueuedRunWithoutBatchDir_Recovered(t *testing.T) {
+func TestRecoverStaleRuns_QueuedRunWithoutBatchDir_Preserved(t *testing.T) {
 	baseDir := t.TempDir()
 	queuedAt := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
 
-	// No batch directories — the queued run is orphaned and should be recovered.
+	// Artifact loss does not revise a terminal queued placeholder.
 	eventLog := &recordingEventLog{}
 	existing := []events.Event{
 		{Type: "run.queued", RunID: "run-42", Issue: 42, Timestamp: queuedAt},
@@ -356,29 +336,22 @@ func TestRecoverStaleRuns_QueuedRunWithoutBatchDir_Recovered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RecoverStaleRuns: %v", err)
 	}
-	if recovered != 1 {
-		t.Errorf("expected 1 recovered, got %d", recovered)
+	if recovered != 0 {
+		t.Errorf("expected 0 recovered, got %d", recovered)
 	}
 	if dirs != 0 {
 		t.Errorf("expected 0 dead dirs, got %d", dirs)
 	}
-	if len(eventLog.logged) != 1 {
-		t.Fatalf("expected 1 logged event, got %d", len(eventLog.logged))
-	}
-	e := eventLog.logged[0]
-	if e.Type != "run.aborted" {
-		t.Errorf("expected run.aborted, got %q", e.Type)
-	}
-	if e.IssueRef == nil || *e.IssueRef != 42 {
-		t.Errorf("expected IssueRef=42, got %v", e.IssueRef)
+	if len(eventLog.logged) != 0 {
+		t.Fatalf("terminal queued event was rewritten: %v", eventLog.logged)
 	}
 }
 
-func TestRecoverStaleRuns_BlockedRunWithoutBatchDir_Recovered(t *testing.T) {
+func TestRecoverStaleRuns_BlockedRunWithoutBatchDir_Preserved(t *testing.T) {
 	baseDir := t.TempDir()
 	blockedAt := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
 
-	// No batch directories — the blocked run is orphaned and should be recovered.
+	// Artifact loss does not revise a terminal blocked outcome.
 	eventLog := &recordingEventLog{}
 	existing := []events.Event{
 		{Type: "run.blocked", RunID: "run-42", Issue: 42, Timestamp: blockedAt, Payload: map[string]any{"blocked_by": []int{1}}},
@@ -388,21 +361,14 @@ func TestRecoverStaleRuns_BlockedRunWithoutBatchDir_Recovered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RecoverStaleRuns: %v", err)
 	}
-	if recovered != 1 {
-		t.Errorf("expected 1 recovered, got %d", recovered)
+	if recovered != 0 {
+		t.Errorf("expected 0 recovered, got %d", recovered)
 	}
 	if dirs != 0 {
 		t.Errorf("expected 0 dead dirs, got %d", dirs)
 	}
-	if len(eventLog.logged) != 1 {
-		t.Fatalf("expected 1 logged event, got %d", len(eventLog.logged))
-	}
-	e := eventLog.logged[0]
-	if e.Type != "run.aborted" {
-		t.Errorf("expected run.aborted, got %q", e.Type)
-	}
-	if e.IssueRef == nil || *e.IssueRef != 42 {
-		t.Errorf("expected IssueRef=42, got %v", e.IssueRef)
+	if len(eventLog.logged) != 0 {
+		t.Fatalf("terminal blocked event was rewritten: %v", eventLog.logged)
 	}
 }
 
@@ -499,16 +465,15 @@ func TestRecoverStaleRuns_ManifestIssueWithoutRunIsSkipped(t *testing.T) {
 	}
 }
 
-func TestRecoverStaleRuns_TwoQueuedRunsSameIssue_DeadBatch_RecoversBoth(t *testing.T) {
+func TestRecoverStaleRuns_TwoQueuedRunsSameIssue_DeadBatch_PreservesBoth(t *testing.T) {
 	baseDir := t.TempDir()
 	createdAt := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
 	queuedA := createdAt.Add(1 * time.Minute)
 	queuedB := createdAt.Add(5 * time.Minute)
 
 	// One dead batch dir with issue 42. Two queued runs for the same issue
-	// (from different batches/batch dead+re-queue). The dead batch loop
-	// should recover both — earlier queued runs are not superseded by
-	// later queued/blocked placeholders, only by actual run.started.
+	// (from different batches/batch dead+re-queue). Both terminal
+	// placeholders retain their outcome regardless of batch liveness.
 	runDir := filepath.Join(baseDir, "batches", "batch-1")
 	writeManifestFile(t, runDir, BatchManifest{Issues: []int{42}, CreatedAt: createdAt})
 
@@ -522,26 +487,18 @@ func TestRecoverStaleRuns_TwoQueuedRunsSameIssue_DeadBatch_RecoversBoth(t *testi
 	if err != nil {
 		t.Fatalf("RecoverStaleRuns: %v", err)
 	}
-	if recovered != 2 {
-		t.Errorf("expected 2 recovered, got %d", recovered)
+	if recovered != 0 {
+		t.Errorf("expected 0 recovered, got %d", recovered)
 	}
 	if dirs != 1 {
 		t.Errorf("expected 1 dead dir, got %d", dirs)
 	}
-	if len(eventLog.logged) != 2 {
-		t.Fatalf("expected 2 logged events, got %d", len(eventLog.logged))
-	}
-	for _, e := range eventLog.logged {
-		if e.Type != "run.aborted" {
-			t.Errorf("expected run.aborted, got %q", e.Type)
-		}
-		if e.IssueRef == nil || *e.IssueRef != 42 {
-			t.Errorf("expected IssueRef=42, got %v", e.IssueRef)
-		}
+	if len(eventLog.logged) != 0 {
+		t.Fatalf("terminal queued events were rewritten: %v", eventLog.logged)
 	}
 }
 
-func TestRecoverStaleRuns_TwoQueuedRunsSameIssue_NoBatchDirs_RecoversBoth(t *testing.T) {
+func TestRecoverStaleRuns_TwoQueuedRunsSameIssue_NoBatchDirs_PreservesBoth(t *testing.T) {
 	baseDir := t.TempDir()
 	queuedA := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
 	queuedB := queuedA.Add(5 * time.Minute)
@@ -558,19 +515,14 @@ func TestRecoverStaleRuns_TwoQueuedRunsSameIssue_NoBatchDirs_RecoversBoth(t *tes
 	if err != nil {
 		t.Fatalf("RecoverStaleRuns: %v", err)
 	}
-	if recovered != 2 {
-		t.Errorf("expected 2 recovered, got %d", recovered)
+	if recovered != 0 {
+		t.Errorf("expected 0 recovered, got %d", recovered)
 	}
 	if dirs != 0 {
 		t.Errorf("expected 0 dead dirs, got %d", dirs)
 	}
-	if len(eventLog.logged) != 2 {
-		t.Fatalf("expected 2 logged events, got %d", len(eventLog.logged))
-	}
-	for _, e := range eventLog.logged {
-		if e.Type != "run.aborted" {
-			t.Errorf("expected run.aborted, got %q", e.Type)
-		}
+	if len(eventLog.logged) != 0 {
+		t.Fatalf("terminal queued events were rewritten: %v", eventLog.logged)
 	}
 }
 
@@ -634,7 +586,7 @@ func TestRecoverStaleRuns_BlockedSupersededByLaterStarted_Skipped(t *testing.T) 
 	}
 }
 
-func TestRecoverStaleRuns_QueuedNotSupersededByAbortedStarted_Recovered(t *testing.T) {
+func TestRecoverStaleRuns_QueuedFollowedByAbortedStarted_Preserved(t *testing.T) {
 	baseDir := t.TempDir()
 	queuedAt := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
 	startedAt := queuedAt.Add(5 * time.Minute)
@@ -642,8 +594,7 @@ func TestRecoverStaleRuns_QueuedNotSupersededByAbortedStarted_Recovered(t *testi
 
 	// No batch directories. The earlier queued placeholder was followed
 	// by a run.started (real work began) but the daemon died — emitting
-	// run.aborted. The issue was never actually completed, so the queued
-	// placeholder is still an orphan that should be recovered.
+	// run.aborted. Both events are terminal; recovery preserves both.
 	eventLog := &recordingEventLog{}
 	existing := []events.Event{
 		{Type: "run.queued", RunID: "placeholder-42", Issue: 42, Timestamp: queuedAt, Payload: map[string]any{"blocked_by": []int{99}}},
@@ -655,15 +606,11 @@ func TestRecoverStaleRuns_QueuedNotSupersededByAbortedStarted_Recovered(t *testi
 	if err != nil {
 		t.Fatalf("RecoverStaleRuns: %v", err)
 	}
-	if recovered != 1 {
-		t.Errorf("expected 1 recovered (aborted started run does not supersede), got %d", recovered)
+	if recovered != 0 {
+		t.Errorf("expected 0 recovered, got %d", recovered)
 	}
-	if len(eventLog.logged) != 1 {
-		t.Fatalf("expected 1 logged event, got %d", len(eventLog.logged))
-	}
-	e := eventLog.logged[0]
-	if e.RunID != "placeholder-42" {
-		t.Errorf("expected run.aborted for placeholder-42, got RunID=%q", e.RunID)
+	if len(eventLog.logged) != 0 {
+		t.Fatalf("terminal queued event was rewritten: %v", eventLog.logged)
 	}
 }
 
