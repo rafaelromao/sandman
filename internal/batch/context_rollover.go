@@ -256,11 +256,10 @@ func stripContextRolloverANSI(value string) string {
 	return b.String()
 }
 
-// usageLimitDetector recognizes an agent's stable usage-limit response so the
-// terminal failure can carry a structured reason after ordinary retries are
-// exhausted. The per-line rule comes from the launch's agent strategy. It
-// observes output only; unlike context rollover, the process exits normally
-// and the usage limit does not authorize an implementation wait.
+// usageLimitDetector recognizes an agent's stable usage-limit response that
+// should enter usage-limit waiting before an ordinary retry. The per-line rule
+// comes from the launch's agent strategy. It observes output only; unlike
+// context rollover, the process is allowed to exit normally first.
 type usageLimitDetector struct {
 	mu        sync.Mutex
 	rule      func(line string) bool

@@ -69,10 +69,10 @@ func (claudeStrategy) UsageLimitRule() func(string) bool { return claudeUsageLim
 
 func (s claudeStrategy) AwaitsUsageLimit() bool { return s.builtInCommand }
 
-// claudeUsageLimitLiterals are documented Claude Code usage-limit messages
-// recognized for structured implementation failures and the review daemon's
-// provider-wide recovery probe. Spend and budget limits ("monthly spend
-// limit", "shared budget", ...) are deliberately absent.
+// claudeUsageLimitLiterals are the documented Claude Code messages for limits
+// that reset within Sandman's usage-limit waiting window. Spend and budget
+// limits ("monthly spend limit", "shared budget", ...) are deliberately
+// absent: they do not reset within that window.
 var claudeUsageLimitLiterals = []string{
 	"hit your session limit",
 	"hit your weekly limit",
