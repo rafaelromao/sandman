@@ -82,6 +82,12 @@ func (idx *Index) ResolveRunBatch(layout paths.Layout, id string) *Batch {
 	if b := idx.ResolveBatchIdentity(id); b != nil {
 		return b
 	}
+	// A known but ambiguous Batch alias must not be reinterpreted as a row.
+	for _, b := range idx.Batches {
+		if b.Path != "" && filepath.Base(b.Path) == id {
+			return nil
+		}
+	}
 	for i := range idx.Batches {
 		for _, rec := range idx.Batches[i].Runs {
 			if rec.RunID == id {

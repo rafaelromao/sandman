@@ -85,6 +85,10 @@ func TestLocations_DiscoveryAndIdentityAliases(t *testing.T) {
 	if b := idx.ResolveBatchIdentity("same"); b != nil {
 		t.Fatalf("ambiguous alias resolved to %+v", b)
 	}
+	idx.Batches[3].Runs = []RunRecord{{RunID: "same", Status: RunRecordStatusActive}}
+	if b := idx.ResolveRunBatch(layout, "same"); b != nil {
+		t.Fatalf("row lookup bypassed ambiguous alias: %+v", b)
+	}
 	locations, err := DiscoverBatchLocations(layout)
 	if err != nil {
 		t.Fatal(err)
