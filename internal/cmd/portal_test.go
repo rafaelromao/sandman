@@ -129,7 +129,7 @@ func TestPortal_IsSocketAliveReturnsFalseForEmptyPath(t *testing.T) {
 	}
 }
 
-func TestPortal_RunFromActiveBatchIssueSetsCompletedWhenSocketDead(t *testing.T) {
+func TestPortal_RunFromActiveBatchIssuePreservesLifecycleWhenSocketDead(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -165,12 +165,12 @@ func TestPortal_RunFromActiveBatchIssueSetsCompletedWhenSocketDead(t *testing.T)
 
 	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, state, nil, nil, "", nil, nil)
 
-	if run.Kind != "completed" {
-		t.Fatalf("expected kind 'completed' for run with dead socket, got %q", run.Kind)
+	if run.Kind != "active" || run.SocketPath != "" {
+		t.Fatalf("dead socket revised lifecycle: %+v", run)
 	}
 }
 
-func TestPortal_RunFromActiveMatchSetsCompletedWhenSocketDead(t *testing.T) {
+func TestPortal_RunFromActiveMatchPreservesLifecycleWhenSocketDead(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -201,12 +201,12 @@ func TestPortal_RunFromActiveMatchSetsCompletedWhenSocketDead(t *testing.T) {
 
 	run := (&portalRunsView{}).runFromActiveMatch(repoRoot, match, nil, nil)
 
-	if run.Kind != "completed" {
-		t.Fatalf("expected kind 'completed' for match with dead socket, got %q", run.Kind)
+	if run.Kind != "active" || run.SocketPath != "" {
+		t.Fatalf("dead socket revised lifecycle: %+v", run)
 	}
 }
 
-func TestPortal_RunFromStateSetsCompletedWhenActiveButSocketDead(t *testing.T) {
+func TestPortal_RunFromStatePreservesLifecycleWhenSocketDead(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -242,8 +242,8 @@ func TestPortal_RunFromStateSetsCompletedWhenActiveButSocketDead(t *testing.T) {
 
 	run := (&portalRunsView{}).runFromState(repoRoot, runState, active, nil, nil, nil)
 
-	if run.Kind != "completed" {
-		t.Fatalf("expected kind 'completed' for active run with dead socket, got %q", run.Kind)
+	if run.Kind != "active" || run.SocketPath != "" {
+		t.Fatalf("dead socket revised lifecycle: %+v", run)
 	}
 }
 
@@ -565,8 +565,8 @@ func TestPortal_RunFromActiveMatchReturnsReviewingForPRInstance(t *testing.T) {
 
 	run := (&portalRunsView{}).runFromActiveMatch(repoRoot, match, nil, nil)
 
-	if run.Status != "reviewing" {
-		t.Fatalf("expected status 'reviewing' for PR instance, got %q", run.Status)
+	if run.Status != "unknown" {
+		t.Fatalf("expected unknown lifecycle for artifact-only PR instance, got %q", run.Status)
 	}
 	if !run.Review {
 		t.Fatal("expected Review=true for PR instance")
@@ -1295,8 +1295,8 @@ func TestPortal_RunFromActiveBatchIssue_ActiveReviewPrefersLiveOutput(t *testing
 
 	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, state, nil, nil, active.LiveOutput, nil, nil)
 
-	if run.Kind != "active" {
-		t.Fatalf("expected active kind while socket exists, got %q", run.Kind)
+	if run.Kind != "completed" {
+		t.Fatalf("expected terminal lifecycle despite live socket, got %q", run.Kind)
 	}
 	if run.Status != "success" {
 		t.Fatalf("expected terminal status preserved (statusOrDefault returns non-empty status even with active socket), got %q", run.Status)
@@ -2269,8 +2269,8 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 		if got.Kind != "active" {
 			t.Fatalf("expected kind 'active' for prompt-only run with live socket, got %q", got.Kind)
 		}
-		if got.Status != "running" {
-			t.Fatalf("expected status 'running' for prompt-only run, got %q", got.Status)
+		if got.Status != "unknown" {
+			t.Fatalf("expected unknown lifecycle for artifact-only prompt run, got %q", got.Status)
 		}
 		if got.Review {
 			t.Fatal("expected Review=false for prompt-only run")

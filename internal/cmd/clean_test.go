@@ -292,7 +292,7 @@ func TestClean_All_RemovesCompletedActiveBatchWorktrees(t *testing.T) {
 
 	gr := &fakeGitRunner{}
 	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
-	deps.EventLog = &fakeEventLog{}
+	deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.finished", RunID: "batch-completed"}}}
 	deps.GitRunner = gr
 	deps.RunActivityProbe = func(string) bool { return false }
 
@@ -379,7 +379,7 @@ func TestClean_All_ReclaimsBatchWhoseRowsWerePerRowArchived(t *testing.T) {
 
 	gr := &fakeGitRunner{}
 	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
-	deps.EventLog = &fakeEventLog{}
+	deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.finished", RunID: "batch-archived-rows"}}}
 	deps.GitRunner = gr
 	deps.RunActivityProbe = func(string) bool { return false }
 
@@ -677,13 +677,18 @@ func TestExecuteClean_RechecksActiveEligibilityBeforeMutation(t *testing.T) {
 	writeBatchIndex(t, dir, []batchindex.Batch{entry})
 
 	layout := paths.NewLayout(&config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}, dir)
-	action, ok := buildEligibleActiveAction(entry, func(string) bool { return false }, layout)
+	log := &fakeEventLog{events: []events.Event{{Type: "run.finished", RunID: "run-1"}}}
+	states, err := events.ReadRunStates(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	action, ok := buildEligibleActiveAction(entry, func(string) bool { return false }, layout, states)
 	if !ok {
 		t.Fatal("expected initial active eligibility check to pass")
 	}
 
 	gr := &fakeGitRunner{}
-	if outcomes, err := executeCleanWithProbe([]cleanAction{action}, gr, layout, osCleanupRemover{}, func(string) bool { return true }); err != nil {
+	if outcomes, err := executeCleanWithProbe([]cleanAction{action}, gr, layout, osCleanupRemover{}, func(string) bool { return true }, log); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	} else if len(outcomes) != 0 {
 		t.Fatalf("expected no cleanup outcome after activity recheck, got %v", outcomes)
@@ -807,7 +812,7 @@ func TestClean_All_RemovesAllWorktreesInMultiRunBatch(t *testing.T) {
 
 	gr := &fakeGitRunner{}
 	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
-	deps.EventLog = &fakeEventLog{}
+	deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.finished", RunID: "run-1"}, {Type: "run.finished", RunID: "run-2"}}}
 	deps.GitRunner = gr
 	deps.RunActivityProbe = func(string) bool { return false }
 

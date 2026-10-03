@@ -74,8 +74,8 @@ func TestPortal_DeadBatchSynthesizesNeverStartedMembers(t *testing.T) {
 	}
 	for _, issue := range []int{2, 3} {
 		run := byIssue[issue]
-		if run.Kind != "completed" || run.Status != "aborted" {
-			t.Fatalf("expected synthesized issue %d to be completed aborted, got %#v", issue, run)
+		if run.Kind != "completed" || run.Status != "unknown" || run.FinishedAt != nil {
+			t.Fatalf("expected synthesized issue %d to have unknown lifecycle, got %#v", issue, run)
 		}
 	}
 }
@@ -104,8 +104,8 @@ func TestPortal_DeadBatchSynthesizesAllManifestMembersWithNoIssueEvents(t *testi
 		t.Fatalf("expected 3 synthesized rows, got %d: %#v", len(runs), runs)
 	}
 	for _, run := range runs {
-		if run.Kind != "completed" || run.Status != "aborted" || run.BatchKey != "dead-1" {
-			t.Fatalf("expected dead batch synthesized aborted row, got %#v", run)
+		if run.Kind != "completed" || run.Status != "unknown" || run.FinishedAt != nil || run.BatchKey != "dead-1" {
+			t.Fatalf("expected dead batch row with unknown lifecycle, got %#v", run)
 		}
 	}
 }
@@ -160,8 +160,8 @@ func TestPortal_DeadBatchSynthesizesOnlyMissingManifestMembers(t *testing.T) {
 			t.Fatalf("expected exactly 1 synthesized row for issue %d, got %d: %#v", issue, got, byIssue[issue])
 		}
 		run := byIssue[issue][0]
-		if run.Kind != "completed" || run.Status != "aborted" || run.BatchKey != "dead-1" {
-			t.Fatalf("expected issue %d to synthesize as dead-batch completed aborted row, got %#v", issue, run)
+		if run.Kind != "completed" || run.Status != "unknown" || run.FinishedAt != nil || run.BatchKey != "dead-1" {
+			t.Fatalf("expected issue %d to have unknown lifecycle, got %#v", issue, run)
 		}
 	}
 }
@@ -214,8 +214,8 @@ func TestPortal_DeadBatchSynthesizesNeverStartedMembersWithoutRunsTree(t *testin
 			t.Fatalf("expected 1 synthesized row for issue %d, got %d: %#v", issue, got, byIssue[issue])
 		}
 		run := byIssue[issue][0]
-		if run.Kind != "completed" || run.Status != "aborted" {
-			t.Fatalf("expected synthesized issue %d to be completed aborted, got %#v", issue, run)
+		if run.Kind != "completed" || run.Status != "unknown" || run.FinishedAt != nil {
+			t.Fatalf("expected synthesized issue %d to have unknown lifecycle, got %#v", issue, run)
 		}
 	}
 }
@@ -345,8 +345,8 @@ func TestPortal_LiveBatchKeepsNeverStartedMemberQueued(t *testing.T) {
 		t.Fatalf("expected 2 live rows, got %d: %#v", len(runs), runs)
 	}
 	for _, run := range runs {
-		if run.Kind != "active" || run.Status != "queued" {
-			t.Fatalf("expected live never-started member to stay active queued, got %#v", run)
+		if run.Kind != "active" || run.Status != "unknown" {
+			t.Fatalf("expected live never-started member to have unknown lifecycle, got %#v", run)
 		}
 	}
 }
@@ -399,14 +399,14 @@ func TestPortal_MixedLiveDeadAndOrphanRowsStayDistinct(t *testing.T) {
 	for _, run := range runs {
 		byIssue[run.IssueNumber] = run
 	}
-	if run := byIssue[7]; run.Kind != "active" || run.Status != "queued" {
-		t.Fatalf("expected live issue 7 to remain active queued, got %#v", run)
+	if run := byIssue[7]; run.Kind != "active" || run.Status != "unknown" {
+		t.Fatalf("expected live issue 7 to have unknown lifecycle, got %#v", run)
 	}
 	if run := byIssue[1]; run.Kind != "completed" || run.Status != "success" {
 		t.Fatalf("expected issue 1 to stay completed success, got %#v", run)
 	}
-	if run := byIssue[2]; run.Kind != "completed" || run.Status != "aborted" {
-		t.Fatalf("expected dead batch issue 2 to synthesize as completed aborted, got %#v", run)
+	if run := byIssue[2]; run.Kind != "completed" || run.Status != "unknown" || run.FinishedAt != nil {
+		t.Fatalf("expected dead batch issue 2 to have unknown lifecycle, got %#v", run)
 	}
 	if run := byIssue[99]; run.Kind != "completed" || run.Status != "aborted" {
 		t.Fatalf("expected orphan issue 99 to remain completed aborted, got %#v", run)
@@ -447,10 +447,10 @@ func TestPortal_DeadBatchSynthesisIgnoresReviewRuns(t *testing.T) {
 		if run.IssueNumber == 42 && run.Review {
 			sawReview = true
 		}
-		if run.IssueNumber == 42 && !run.Review && run.Kind == "completed" && run.Status == "aborted" && run.BatchKey == "dead-1" {
+		if run.IssueNumber == 42 && !run.Review && run.Kind == "completed" && run.Status == "unknown" && run.BatchKey == "dead-1" {
 			sawDead42 = true
 		}
-		if run.IssueNumber == 43 && run.Kind == "completed" && run.Status == "aborted" && run.BatchKey == "dead-1" {
+		if run.IssueNumber == 43 && run.Kind == "completed" && run.Status == "unknown" && run.BatchKey == "dead-1" {
 			sawDead43 = true
 		}
 	}
@@ -458,10 +458,10 @@ func TestPortal_DeadBatchSynthesisIgnoresReviewRuns(t *testing.T) {
 		t.Fatal("expected review row for issue 42")
 	}
 	if !sawDead42 {
-		t.Fatal("expected synthesized aborted row for dead batch issue 42 (review run must not suppress synthesis)")
+		t.Fatal("expected unknown lifecycle for dead batch issue 42 (review run must not suppress synthesis)")
 	}
 	if !sawDead43 {
-		t.Fatal("expected synthesized aborted row for dead batch issue 43")
+		t.Fatal("expected unknown lifecycle for dead batch issue 43")
 	}
 }
 
@@ -575,8 +575,8 @@ func TestPortal_CrossBatchSynthesisSuppressedWhenIssueAlreadyCovered(t *testing.
 		t.Fatalf("expected exactly 1 row for issue 1855 (ghost-synthesized only), got %d: %#v", len(rows), rows)
 	}
 	ghost := byIssue[1855][0]
-	if ghost.Kind != "completed" || ghost.Status != "aborted" || ghost.BatchKey != "2569-ghost" {
-		t.Fatalf("expected issue 1855 to keep the ghost-batch synthesized aborted row, got %#v", ghost)
+	if ghost.Kind != "completed" || ghost.Status != "unknown" || ghost.BatchKey != "2569-ghost" {
+		t.Fatalf("expected issue 1855 to keep unknown lifecycle, got %#v", ghost)
 	}
 }
 
@@ -640,7 +640,7 @@ func TestPortal_CrossBatchSynthesisKeepsReviewRunDistinct(t *testing.T) {
 		if run.Review {
 			sawReview = true
 		}
-		if !run.Review && run.Kind == "completed" && run.Status == "aborted" && run.BatchKey == "dead-impl" {
+		if !run.Review && run.Kind == "completed" && run.Status == "unknown" && run.BatchKey == "dead-impl" {
 			sawSynth = true
 		}
 	}
@@ -648,7 +648,7 @@ func TestPortal_CrossBatchSynthesisKeepsReviewRunDistinct(t *testing.T) {
 		t.Fatal("expected review row for issue 42")
 	}
 	if !sawSynth {
-		t.Fatal("expected ghost-batch synthesized aborted row for issue 42 (review run must not suppress synthesis)")
+		t.Fatal("expected unknown lifecycle for issue 42 (review run must not suppress synthesis)")
 	}
 }
 

@@ -28,6 +28,21 @@ export data.
 
 For a faster targeted loop while editing one package, run the smallest relevant `go test` command first, then finish with `make check` when the change is ready.
 
+For AgentRun lifecycle/artifact separation, the hermetic production-path coverage is:
+
+```bash
+go test ./internal/events ./internal/daemon ./internal/cmd -run 'AgentRunLifecycle|EventLifecycle|LifecycleIsNotInferred|EventAuthority|EventTerminality|RequiresEveryAgentRunTerminal|RecoverStaleRuns'
+```
+
+The CLI/Portal/archive/restart tracer bullet uses a real JSONL log and persisted
+index with a deliberately stale `run.json.status`. Divergence tests preserve
+event-terminal outcomes after artifact relocation/removal, abort dead active
+work despite successful snapshots, preserve capacity-queued continuations, and
+reject unknown lifecycle/read failures at archive and cleanup boundaries.
+Events own lifecycle; index records and filesystem probes own artifact
+location/availability. Snapshot identity/path validation still governs safe
+artifact reclamation.
+
 For OpenCode context rollover changes, the hermetic production-path coverage is:
 
 ```bash
