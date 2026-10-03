@@ -415,7 +415,7 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 				// terminal events has no activity to anchor the
 				// candidate — treat the run as an orphan from the moment
 				// the batch was created.
-				if bid == "" && !latestTerminal.IsZero() && !run.Started.Timestamp.After(latestTerminal) {
+				if !latestTerminal.IsZero() && !run.Started.Timestamp.After(latestTerminal) {
 					continue
 				}
 				if err := emitOrphan(run, issueNumber); err != nil {
