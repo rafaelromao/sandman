@@ -38,7 +38,9 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 │   └── review.sock                     # review-daemon control socket
 ├── worktrees/<branch>/                 # per-run worktree (git)
 │   └── .sandman/task.md                # per-worktree rendered prompt
-└── state/                              # runtime sidecars (NEW in this PRD)
+└── state/                              # runtime sidecars
+    ├── run-claims/<RunID>.lock          # stable advisory RunID ownership claim
+    ├── waiting/<RunID>.json             # initial-admission schedule/lease (no Task required)
     ├── .prompt-version                 # SHA-256 of materialized prompt template
     ├── .built_with_sandman             # empty control file (badge sidecar)
     ├── <N>.head_sha                    # legacy implementor review compatibility sidecar
@@ -56,9 +58,17 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 
 AgentRun lifecycle is folded exclusively from `events.jsonl` through
 `events.RunState`. Status, history, Portal, archive eligibility, completed-Run
-cleanup, and recovery share its terminality predicate. A terminal `run.queued`
-placeholder and a non-terminal `run.capacity_queued` continuation can both be
-labelled `queued`; the terminal event, rather than the label, distinguishes them.
+cleanup, and recovery share its terminality predicate. Initial `run.queued`
+admissions are unfinished; explicitly tagged skipped placeholders are distinct.
+A started `run.capacity_queued` continuation remains waiting. The event outcome,
+not artifact availability or a scheduling label, authorizes terminal operations.
+
+Started suspension schedules live in `<batch>/runs/<RunID>/wait.json`; initial
+admissions use `state/waiting/<RunID>.json` without creating execution folders.
+Atomic leases preserve ownerless intent for five minutes capped by the operation
+deadline, while stable advisory claims fence ownership. Worktree-local
+`<PR>.ci_wait.json` and `<PR>.lifecycle-budget.json` keep fixed operation budgets.
+These files record ownership/readiness/timing only, never mutable lifecycle status.
 
 `batches.json` Batch/Run statuses (`active`, `archived`, `unavailable`) describe
 artifact location/availability, never execution outcome. Archiving relocates

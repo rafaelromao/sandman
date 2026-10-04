@@ -59,14 +59,14 @@ Emitted when an agent run begins. `run.continued` carries the same fields as `ru
 | `review_timeout` | Effective delegated review response budget in integer seconds for this AgentRun. |
 
 #### `run.queued`
-Emitted when an issue enters the wait queue due to unresolved blockers or parallel capacity constraints.
+Emitted for unfinished initial admission due to unresolved prerequisites or capacity. An unstarted row stays queued until execution or a terminal outcome. Explicit legacy skipped placeholders are tagged `terminal_placeholder`; a started run never returns to queued.
 
 | Field | Description |
 |-------|-------------|
 | `blocked_by` | List of issue numbers blocking this run |
 
 #### `run.capacity_queued`
-Emitted after a lifecycle observation confirms that an external gate has resolved, when the continuation still needs an execution slot. It is also emitted when a batch pauses admission after another row reports provider usage-limit exhaustion (`gate: usage-limit`, `reason: usage-limit-paused`): not-yet-started rows do not launch another agent until the suspended run resumes, and rehydrate through normal admission. It is non-terminal and distinct from both `run.await` (external work is still resolving) and the terminal `run.queued` placeholder. The active run projects as `queued`, not `waiting`; its historical await evidence remains available. If the owning process stops before capacity becomes available, the next normal `sandman run` admission rehydrates this continuation without requiring `--continue`, then revalidates the live head and request before execution.
+Compatibility/readiness evidence that runnable work is awaiting admission, including quota-paused initial rows. Started runs remain **waiting**, never queued; unstarted rows remain queued. Logical ownership, cancellation and dependencies remain held. Live head/request facts are revalidated before launch. Normal admission rehydrates valid ownerless intent within five-minute grace capped by its operation deadline; explicit abort ends every unfinished row and cannot be reclaimed. See the full [transition table and state rules](../architecture/run-state-machine.md).
 
 | Field | Description |
 |-------|-------------|
@@ -139,7 +139,7 @@ Emitted when an agent run completes.
 #### `run.await`
 Emitted when an issue-driven run ends its agent session while an external operation is actively resolving: current-head CI is queued/running, a delegated-review request has been confirmed and remains within its deadline, or a built-in agent hit its provider usage limit. A confirmed review request counts as ongoing from successful delivery, even before the reviewer starts. A provider usage limit counts as ongoing because the quota window resets externally: the run probes every ten minutes for up to five hours and resumes the same session. A PR's existence, generic `pending` label, `REVIEW_REQUIRED`, `BLOCKED`, absent checks, stale head, or failed lookup/state read cannot alone authorize an await. Agent-owned work is resumed or fails with a structured next action instead of being parked. A legitimate await is non-terminal and does not consume an agent retry. Pending current-head CI carries a durable, non-renewing 30-minute per-head deadline in `ci_wait`; a review request carries its confirmed request identity and deadline. The row keeps dependency ownership while the scheduler releases execution capacity between observations. When external work finishes, the run resumes on an available slot (or remains capacity-queued until one frees); it does not require manual continuation.
 
-The run timer pauses at `run.await` and remains paused while `run.capacity_queued` waits for a slot. A later `run.resumed` or `run.continued` event starts a new active segment, so duration readers exclude external wait and capacity-queue time. A `run.continued` event with the same RunID and BatchID continues the same Batch run and retains its accumulated active duration. A separate continued run with a new RunID or BatchID starts a fresh clock.
+The run timer pauses for every suspension, including ready-but-capacity-delayed work. Resume/continuation adds another active segment to the same RunID's total, even across batches. Waiting and ownerless recovery are excluded. Only a new RunID starts a fresh clock. Verified terminal decisions require no execution slot.
 
 | Field | Description |
 |-------|-------------|

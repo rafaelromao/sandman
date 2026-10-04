@@ -67,7 +67,7 @@ comments=$(echo "$pr_data" | jq -r '.comments')
 
 #### Step 2: Wait for CI to pass
 
-The CI wait has a 60-minute budget per PR head SHA. A failed check gets at most 3 fix-and-push attempts for that SHA; after the budget or attempts are exhausted, record `CI_TIMEOUT` or `CI_FAILURE_UNRESOLVED` in `.sandman/task.md` and the run log with the exact failure and next executable action, then leave the PR open for the next run.
+The CI wait has a 30-minute budget per PR head SHA in both managed and standalone workflows. A failed check gets at most 3 fix-and-push attempts for that SHA; after the budget or attempts are exhausted, record `CI_TIMEOUT` or `CI_FAILURE_UNRESOLVED` in `.sandman/task.md` and the run log with the exact failure and next executable action, then leave the PR open for the next run. Polling, capacity delay, continuation and restart do not renew the existing head's deadline or repair budget. Review-request deadlines remain independent.
 
 When the task's Runtime Context says the session is running inside a
 Sandman-created worktree, do not hold the agent process open while checks are
@@ -92,7 +92,7 @@ that CI is resolving and must not be presented as a wait.
 Enforce those limits in the polling loop with a deadline and attempt counter:
 
 ```bash
-ci_deadline=$(( $(date +%s) + 3600 ))
+ci_deadline=$(( $(date +%s) + 1800 ))
 ci_fix_attempts=0
 ```
 
