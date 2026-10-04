@@ -186,6 +186,9 @@ func (o *Orchestrator) newRunExecutorWith(parentCtx context.Context, bc BatchCon
 // (per-issue for issue-driven, the RunBatch ctx for prompt-only).
 func (e *runExecutor) Execute(ctx context.Context, row RowSpec) (AgentRunResult, bool) {
 	s := newRunSession(e, row)
+	if s.usageLimitRestoreErr != nil {
+		return e.finishObserved(ctx, row, "failure", map[string]any{"reason": "QUOTA_RECOVERY_STATE_ERROR", "next_action": "repair persisted quota operation evidence before resuming", "recovery_error": s.usageLimitRestoreErr.Error()}), false
+	}
 	if row.IssueNumber > 0 {
 		if s.usageLimitProbe && !s.usageLimitDeadline.IsZero() && !s.runtimeNow().Before(s.usageLimitDeadline) {
 			result := e.finishObserved(ctx, row, "failure", map[string]any{"reason": "AGENT_USAGE_LIMIT", "next_action": "resume with available provider quota after the exhausted five-hour window"})
@@ -268,7 +271,7 @@ func newRunSession(e *runExecutor, row RowSpec) *runSession {
 		reviewRegistrationNow:      opts.reviewRegistrationNow,
 	}
 	if session.usageLimitProbe && session.usageLimitDeadline.IsZero() {
-		session.restoreQuotaDeadline()
+		session.usageLimitRestoreErr = session.restoreQuotaDeadline()
 	}
 	return session
 }

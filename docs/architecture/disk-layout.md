@@ -68,6 +68,11 @@ admissions use `state/waiting/<RunID>.json` without creating execution folders.
 Atomic leases preserve ownerless intent for five minutes capped by the operation
 deadline, while stable advisory claims fence ownership. Worktree-local
 `<PR>.ci_wait.json` and `<PR>.lifecycle-budget.json` keep fixed operation budgets.
+`<PR>.review-launch-<digest>.json` stores the three-attempt reviewer launch
+budget for an exact trigger revision and head. Its exhaustion is observable by
+the waiting implementation; publication retries do not consume that budget.
+Standalone CI uses `<PR>-standalone-ci-<head>.json` and retains prior-head records
+so workflow re-entry cannot reset their deadline or repair count.
 These files record ownership/readiness/timing only, never mutable lifecycle status.
 
 `batches.json` Batch/Run statuses (`active`, `archived`, `unavailable`) describe

@@ -13,7 +13,9 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/reviewlaunch"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
@@ -120,6 +122,71 @@ func TestWaitingContract_RepairBudgetSurvivesExecutorReentry(t *testing.T) {
 	}
 	if len(factory.created) != 1 {
 		t.Fatalf("same-head repair launches across executor re-entry=%d, want one durable allowed attempt", len(factory.created))
+	}
+}
+
+func TestWaitingContract_QuotaProbeWithoutDeadlineFailsClosed(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	log := &spyEventLog{}
+	factory := &controlledRunnableFactory{runnables: map[int]Runnable{}}
+	o := NewOrchestrator(&fakeGitHubClient{}, &noopRenderer{}, nil, log,
+		WithErrorLog(io.Discard), WithRunnableFactory(factory))
+	result, started := o.newRunExecutor(context.Background(), BatchConfig{}, nil, nil).Execute(context.Background(), RowSpec{
+		IssueNumber: 42, RunID: "missing-quota", UsageLimitProbe: true,
+	})
+	if started || result.Status != "failure" || len(factory.created) != 0 {
+		t.Fatalf("invalid recovery launched: result=%+v started=%v launches=%v", result, started, factory.created)
+	}
+	finished := findEvent(log.snapshot(), "run.finished")
+	if finished == nil || finished.Payload["reason"] != "QUOTA_RECOVERY_STATE_ERROR" {
+		t.Fatalf("missing structured recovery failure: %+v", finished)
+	}
+}
+
+func TestWaitingContract_CancelledRemediationPreservesBudget(t *testing.T) {
+	root := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	s := &runSession{}
+	err := s.reserveRemediation(ctx, root, map[string]any{"gate": gateReadyToMerge, "pull_request": 17, "head_sha": "head"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("reservation error=%v, want cancellation", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".sandman", "state", "17.lifecycle-budget.json")); !os.IsNotExist(err) {
+		t.Fatalf("cancelled reservation changed budget: %v", err)
+	}
+}
+
+func TestWaitingContract_CancelledQuotaOwnerWakesSiblings(t *testing.T) {
+	gate := newBatchQuotaGate()
+	gate.report(42, AgentRunResult{Status: "await", UsageLimitReached: true}, false)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- gate.wait(ctx) }()
+	gate.retire(42)
+	if err := <-done; err != nil {
+		t.Fatalf("cancelled quota owner stranded siblings: %v", err)
+	}
+}
+
+func TestWaitingContract_ReviewerLaunchExhaustionIsRequestScoped(t *testing.T) {
+	layout := paths.NewLayout(nil, t.TempDir())
+	for i := 0; i < 3; i++ {
+		if _, err := reviewlaunch.RecordFailure(layout.StateDir, 17, "request", "head"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := &runSession{deps: runDeps{layout: layout}}
+	for _, tc := range []struct {
+		trigger, head string
+		want          bool
+	}{{"request", "head", true}, {"new-request", "head", false}, {"request", "new-head", false}} {
+		exhausted, err := s.exhaustedReviewLaunch(map[string]any{"review_request": map[string]any{"trigger_id": tc.trigger, "head_sha": tc.head, "pull_request": 17}}, 17, tc.head)
+		if err != nil || exhausted != tc.want {
+			t.Fatalf("request %s/%s exhaustion=%v error=%v, want %v", tc.trigger, tc.head, exhausted, err, tc.want)
+		}
 	}
 }
 

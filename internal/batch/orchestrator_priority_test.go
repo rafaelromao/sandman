@@ -137,7 +137,7 @@ func TestRunBatch_ReadyAwaitedRowPrecedesQueuedIndependentWork(t *testing.T) {
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
-	client := &fakeGitHubClient{
+	client := &reviewWaitSchedulerGitHubClient{fakeGitHubClient: fakeGitHubClient{
 		issues: map[int]*github.Issue{
 			1: {Number: 1, Title: "Awaited"},
 			2: {Number: 2, Title: "Independent"},
@@ -145,23 +145,12 @@ func TestRunBatch_ReadyAwaitedRowPrecedesQueuedIndependentWork(t *testing.T) {
 			4: {Number: 4, Title: "Queued independent"},
 		},
 		prs: map[string]*github.PR{
+			"1-awaited":     {Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited", HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
 			"2-independent": {Number: 2, State: "merged", Merged: true, Body: "Closes #2", HeadRefName: "2-independent"},
 			"3-dependent":   {Number: 3, State: "merged", Merged: true, Body: "Closes #3", HeadRefName: "3-dependent"},
 			"4-independent": {Number: 4, State: "merged", Merged: true, Body: "Closes #4", HeadRefName: "4-independent"},
 		},
-		findPRSequence: map[string][]*github.PR{
-			"1-awaited": {
-				{Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited", HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
-				{Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited", HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
-				{Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited", HeadRefOid: "current-sha", StatusCheckRollup: "failure"},
-				{Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited", HeadRefOid: "current-sha", StatusCheckRollup: "failure"},
-				{Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited", HeadRefOid: "current-sha", StatusCheckRollup: "failure"},
-				{Number: 1, State: "merged", Merged: true, Body: "Closes #1", HeadRefName: "1-awaited"},
-				{Number: 1, State: "merged", Merged: true, Body: "Closes #1", HeadRefName: "1-awaited"},
-				{Number: 1, State: "merged", Merged: true, Body: "Closes #1", HeadRefName: "1-awaited"},
-			},
-		},
-	}
+	}}
 	independentStarted := make(chan struct{})
 	allowIndependentFinish := make(chan struct{})
 	timerElapsed := make(chan struct{})
@@ -171,6 +160,11 @@ func TestRunBatch_ReadyAwaitedRowPrecedesQueuedIndependentWork(t *testing.T) {
 	factory := &awaitPriorityRunnableFactory{
 		independentStarted:     independentStarted,
 		allowIndependentFinish: allowIndependentFinish,
+		onFinish: func(issue, launches int) {
+			if issue == 1 && launches == 2 {
+				client.setPR("1-awaited", func(pr *github.PR) { pr.State, pr.Merged = "merged", true })
+			}
+		},
 	}
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
 		Agent:          "test-agent",
@@ -188,6 +182,7 @@ func TestRunBatch_ReadyAwaitedRowPrecedesQueuedIndependentWork(t *testing.T) {
 			awaitWait: func(ctx context.Context, _ time.Duration) error {
 				select {
 				case <-timerElapsed:
+					client.setPR("1-awaited", func(pr *github.PR) { pr.StatusCheckRollup = "failure" })
 				case <-ctx.Done():
 					return ctx.Err()
 				}
@@ -640,6 +635,7 @@ type awaitPriorityRunnableFactory struct {
 	maxActive              int
 	independentStarted     chan struct{}
 	allowIndependentFinish <-chan struct{}
+	onFinish               func(int, int)
 }
 
 func (f *awaitPriorityRunnableFactory) NewRunnable(issue *github.Issue, _ string, _ sandbox.Sandbox) Runnable {
@@ -702,6 +698,12 @@ func (r *awaitPriorityRunnable) Run(ctx context.Context, _ prompt.IssueRenderer,
 	f := r.factory
 	f.mu.Lock()
 	f.starts = append(f.starts, r.issue)
+	launches := 0
+	for _, issue := range f.starts {
+		if issue == r.issue {
+			launches++
+		}
+	}
 	f.active++
 	if f.active > f.maxActive {
 		f.maxActive = f.active
@@ -724,6 +726,9 @@ func (r *awaitPriorityRunnable) Run(ctx context.Context, _ prompt.IssueRenderer,
 		case <-ctx.Done():
 			return AgentRunResult{IssueNumber: r.issue, Status: "aborted"}
 		}
+	}
+	if f.onFinish != nil {
+		f.onFinish(r.issue, launches)
 	}
 	return AgentRunResult{IssueNumber: r.issue, Status: "success"}
 }

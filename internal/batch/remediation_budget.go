@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,7 +25,10 @@ type remediationBudget struct {
 // reserveRemediation consumes the relevant head/request budget before launch.
 // Scheduling, observation and executor reconstruction consume nothing. Initial
 // publication/request work belongs to the ordinary configured retry budget.
-func (s *runSession) reserveRemediation(workDir string, extras map[string]any) error {
+func (s *runSession) reserveRemediation(ctx context.Context, workDir string, extras map[string]any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if isImplementorOwnedGateFailure(extras) {
 		return nil
 	}
@@ -57,6 +61,9 @@ func (s *runSession) reserveRemediation(workDir string, extras map[string]any) e
 			return errRemediationBudgetExhausted
 		}
 		registration.RemediationAttempts++
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		return atomicfs.WriteAtomicJSON(path, registration, 0o600)
 	case gatePRHeadChanged:
 		scope = "head-reconciliation"
@@ -89,6 +96,9 @@ func (s *runSession) reserveRemediation(workDir string, extras map[string]any) e
 	}
 	budget.Attempts[scope]++
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return atomicfs.WriteAtomicJSON(path, budget, 0o600)

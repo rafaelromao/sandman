@@ -152,7 +152,7 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 
 func (s *runSession) prepareEntryResume(ctx context.Context, wt sandbox.Sandbox, branch, runID string, extras map[string]any) (AgentRunResult, bool, bool) {
 	evidence := s.resumeEvidenceFor(ctx, branch, extras)
-	if err := s.reserveRemediation(wt.WorkDir(), evidence); err != nil {
+	if err := s.reserveRemediation(ctx, wt.WorkDir(), evidence); err != nil {
 		result := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: 1}
 		result.Status = s.finishTerminal(ctx, runID, result, remediationReservationFailure(evidence, err), wt, branch)
 		return result, true, true
@@ -188,10 +188,13 @@ func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbo
 		return "", false
 	}
 	evidence := s.resumeEvidenceFor(ctx, branch, extras)
-	if err := s.reserveRemediation(wt.WorkDir(), evidence); err != nil {
+	if err := s.reserveRemediation(ctx, wt.WorkDir(), evidence); err != nil {
 		for key, value := range remediationReservationFailure(evidence, err) {
 			extras[key] = value
 		}
+		return "", false
+	}
+	if ctx.Err() != nil {
 		return "", false
 	}
 	taskContent, _, _ := ReadTaskContent(filepath.Join(wt.WorkDir(), ".sandman", "task.md"))
@@ -222,7 +225,7 @@ func isResumeGate(gate string) bool {
 // resume trigger (reason + gate), the run coordinates, and the retained
 // review_request so the projection and operators can attribute the relaunch.
 func (s *runSession) emitResume(ctx context.Context, runID, branch, gate string, evidence map[string]any) {
-	if s.deps.eventLog == nil {
+	if ctx.Err() != nil || s.deps.eventLog == nil {
 		return
 	}
 	reason := "feedback"

@@ -89,11 +89,41 @@ are implementor-owned repair work: fix/back-merge them rather than waiting.
 Missing checks, stale heads, empty gate data, and lookup errors do not prove
 that CI is resolving and must not be presented as a wait.
 
-Enforce those limits in the polling loop with a deadline and attempt counter:
+Standalone runs restore a durable record for the exact repository, PR and head
+before polling. Use `.sandman/state/<PR>-standalone-ci-<head>.json`; keep old-head
+records so returning to an earlier head cannot replenish its budget. An unreadable
+or invalid record fails with `CI_STATE_ERROR`, rather than starting a fresh budget.
+Only an absent record for a previously unseen head receives a deadline and zero
+attempts. Serialize writers for this PR; replace JSON atomically through a temporary
+file in the same directory and rename it into place.
 
 ```bash
-ci_deadline=$(( $(date +%s) + 1800 ))
-ci_fix_attempts=0
+load_ci_budget() {
+  head_sha=$(gh pr view <N> --repo <owner/repo> --json headRefOid --jq .headRefOid) || return 1
+  [[ "$head_sha" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
+  ci_file=".sandman/state/<N>-standalone-ci-${head_sha}.json"
+  mkdir -p .sandman/state || return 1
+  if [ ! -e "$ci_file" ]; then
+    ci_tmp=$(mktemp "${ci_file}.XXXXXX") || return 1
+    jq -n --arg repository '<owner/repo>' --arg head "$head_sha" \
+      --argjson pr '<N>' --argjson deadline "$(( $(date +%s) + 1800 ))" \
+      '{repository:$repository,pr:$pr,head:$head,deadline:$deadline,attempts:0}' > "$ci_tmp" &&
+      mv "$ci_tmp" "$ci_file" || return 1
+  fi
+  jq -e --arg repository '<owner/repo>' --arg head "$head_sha" --argjson pr '<N>' \
+    '.repository == $repository and .pr == $pr and .head == $head and
+     (.deadline | type == "number") and (.attempts | type == "number") and
+     .attempts >= 0 and .attempts <= 3 and (.attempts | floor) == .attempts' "$ci_file" >/dev/null || return 1
+  ci_deadline=$(jq -r .deadline "$ci_file")
+  ci_fix_attempts=$(jq -r .attempts "$ci_file")
+}
+reserve_ci_fix() {
+  [ "$ci_fix_attempts" -lt 3 ] || return 1
+  ci_tmp=$(mktemp "${ci_file}.XXXXXX") || return 1
+  jq '.attempts += 1' "$ci_file" > "$ci_tmp" && mv "$ci_tmp" "$ci_file" || return 1
+  ci_fix_attempts=$((ci_fix_attempts + 1))
+}
+load_ci_budget || { echo CI_STATE_ERROR; exit 1; }
 ```
 
 Before each CI poll, compare the current time with `ci_deadline`. On a failed check, if `ci_fix_attempts` is already 3, record `CI_FAILURE_UNRESOLVED` and exit the review attempt; otherwise increment `ci_fix_attempts` before applying the fix and pushing. When the deadline is reached, record `CI_TIMEOUT` and exit the review attempt. A new head SHA starts a fresh deadline and counter.
@@ -125,11 +155,16 @@ fi
 # We classify each state into "fail", "pending", or "pass" and loop until
 # no "pending" remains (with "fail" taking priority).
 while true; do
+  load_ci_budget || { echo CI_STATE_ERROR; exit 1; }
+  if [ "$(date +%s)" -ge "$ci_deadline" ]; then
+    echo CI_TIMEOUT; exit 1
+  fi
   states=$(gh pr checks <N> --repo <owner/repo> --json name,state \
     --jq '.[] | select(.state != "SKIPPED") | .state' 2>/dev/null)
   if [ -z "$states" ]; then sleep 20; continue; fi
   # Fail: read logs, fix, push, then continue waiting for the new CI run.
   if echo "$states" | grep -qE '^(FAILURE|STARTUP_FAILURE|TIMED_OUT|ACTION_REQUIRED|CANCELLED)$'; then
+    reserve_ci_fix || { echo CI_FAILURE_UNRESOLVED; exit 1; }
     echo "CI failed:"; gh pr checks <N> --repo <owner/repo>
     # Fetch failure reason from job logs.
     job_id=$(gh api repos/<owner>/<repo>/actions/runs \

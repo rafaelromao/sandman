@@ -620,6 +620,13 @@ func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branc
 	// wait from it and verified completion never pays for the lookup.
 	reviewRequested := s.confirmedReviewRequestActive(ctx, workDir, pr, headSHA)
 	evidence := s.retainedLifecycleEvidence(ctx, workDir, pr, headSHA)
+	if exhausted, err := s.exhaustedReviewLaunch(evidence.payload, pr.Number, headSHA); err != nil || exhausted {
+		reason := "REVIEW_LAUNCH_EXHAUSTED"
+		if err != nil {
+			reason = "REVIEW_LAUNCH_STATE_ERROR"
+		}
+		return "failure", map[string]any{"reason": reason, "next_action": "repair reviewer launch prerequisites and deliver a new confirmed review request", "pull_request": pr.Number, "head_sha": headSHA}, true
+	}
 	if reviewRegistrationFailure {
 		// A delivered trigger whose durable identity could not be recorded is
 		// not a safe review wait: there is no restart-safe observer binding.

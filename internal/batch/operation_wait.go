@@ -2,6 +2,7 @@ package batch
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -15,18 +16,20 @@ func (s *runSession) runtimeNow() time.Time {
 	return time.Now().UTC()
 }
 
-func (s *runSession) restoreQuotaDeadline() {
+func (s *runSession) restoreQuotaDeadline() error {
 	states, err := events.ReadRunStates(s.deps.eventLog)
 	if err != nil {
-		return
+		return err
 	}
 	state, ok := states[s.issueRunID()]
 	if !ok || state.AwaitEvent == nil || state.AwaitReason() != "usage-limit" {
-		return
+		return fmt.Errorf("quota probe has no validated operation evidence")
 	}
 	if seconds, ok := lifecycleDeadlineSeconds(state.AwaitEvent.Payload["usage_limit_deadline_unix_seconds"]); ok {
 		s.usageLimitDeadline = time.Unix(seconds, 0)
+		return nil
 	}
+	return fmt.Errorf("quota probe has no valid fixed deadline")
 }
 
 // priorObservation permits transport re-observation only for a current,

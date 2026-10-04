@@ -253,6 +253,23 @@ func TestRunBatchRehydratesReadyContinuationAfterRestart(t *testing.T) {
 	if starts := factory.startsSnapshot(); len(starts) != 1 || starts[0] != issueBusy {
 		t.Fatalf("ready continuation started before the occupied slot freed: %v", starts)
 	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		finished := false
+		for _, state := range events.ProjectRunStates(log.snapshot()) {
+			if state.RunID == readyID && state.IsTerminal() && state.Status() == "success" {
+				finished = true
+			}
+		}
+		if finished {
+			break
+		}
+		if time.Now().After(deadline) {
+			close(factory.allowBusyFinish)
+			t.Fatal("merged ready continuation required the occupied execution slot to finish")
+		}
+		time.Sleep(time.Millisecond)
+	}
 	close(factory.allowBusyFinish)
 	select {
 	case <-done:
@@ -274,14 +291,72 @@ func TestRunBatchRehydratesReadyContinuationAfterRestart(t *testing.T) {
 			continued = true
 		}
 	}
-	if !continued {
-		t.Fatalf("rehydrated RunID %q did not continue; events=%v", readyID, log.snapshot())
+	if continued {
+		t.Fatalf("terminal observation must not restart active time for %q; events=%v", readyID, log.snapshot())
 	}
 	states := events.ProjectRunStates(log.snapshot())
 	for _, state := range states {
 		if state.RunID == readyID && (state.IsAwaiting() || state.IsCapacityQueued() || state.IsActive()) {
 			t.Fatalf("ready continuation did not reach verified terminal success: %#v", state)
 		}
+	}
+}
+
+func TestRecoveryRevalidatesTerminalityAndGraceUnderClaim(t *testing.T) {
+	for _, tc := range []struct {
+		name                   string
+		initial, abort, expire bool
+	}{{"initial-abort-after-discovery", true, true, false}, {"external-abort-after-discovery", false, true, false}, {"grace-expires-after-discovery", true, false, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Chdir(root)
+			initGitRepo(t, root)
+			layout := paths.NewLayout(nil, root)
+			now := time.Now().UTC()
+			wait := daemon.RunWait{Protocol: "run-wait/v1", RunID: "recovery", BatchID: "old", Issue: 42, Branch: "42-fix", BaseBranch: "main", InitialAdmission: tc.initial, Ready: tc.initial, OperationID: "admission"}
+			if err := daemon.RenewRunWait(layout.BatchDir("old"), wait, now); err != nil {
+				t.Fatal(err)
+			}
+			kind := "run.started"
+			if tc.initial {
+				kind = "run.queued"
+			}
+			log := &spyEventLog{events: []events.Event{{Type: kind, Timestamp: now, RunID: wait.RunID, Issue: 42, Payload: map[string]any{"batch_id": "old", "branch": wait.Branch, "base_branch": "main"}}}}
+			if !tc.initial {
+				_ = log.Log(events.Event{Type: "run.await", Timestamp: now, RunID: wait.RunID, Issue: 42, Payload: map[string]any{"reason": "usage-limit"}})
+			}
+			ready := FindReadyContinuations(log.snapshot(), layout)
+			if len(ready) != 1 {
+				t.Fatalf("discovery=%+v", ready)
+			}
+			req := Request{RunTS: "261004120000", RunShortID: "new", Parallel: 1}
+			if !tc.initial {
+				path := filepath.Join(layout.WorktreeDir, wait.Branch, ".sandman", "task.md")
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte("# Task\nPreserved work\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := ApplyReadyContinuations(&req, ready, layout, 1800); err != nil {
+				t.Fatal(err)
+			}
+			if tc.abort {
+				_ = log.Log(events.Event{Type: "run.aborted", Timestamp: now.Add(time.Second), RunID: wait.RunID, Issue: 42})
+			}
+			if tc.expire {
+				if err := daemon.RenewRunWait(layout.BatchDir("old"), wait, now.Add(-10*time.Minute)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			factory := &controlledRunnableFactory{runnables: map[int]Runnable{}}
+			o := NewOrchestrator(&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test", Sandbox: "worktree", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test": {Command: "true"}}}}, log, WithErrorLog(io.Discard), WithRunnableFactory(factory))
+			result, err := o.RunBatch(context.Background(), req)
+			if result == nil || len(result.Runs) != 1 || result.Runs[0].Status != "aborted" || len(factory.created) != 0 {
+				t.Fatalf("recovery resurrected: result=%+v err=%v launches=%v", result, err, factory.created)
+			}
+		})
 	}
 }
 

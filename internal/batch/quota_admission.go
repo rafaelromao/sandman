@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 )
 
 var errQuotaUnavailable = errors.New("provider quota recovery exhausted")
@@ -28,6 +29,16 @@ func (g *batchQuotaGate) paused() bool {
 	return g.failed || len(g.limited) > 0
 }
 
+// A cancelled or otherwise terminal row no longer owns a recovery episode.
+// Retiring it wakes siblings without inventing a provider-quota failure.
+func (g *batchQuotaGate) retire(issue int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.limited, issue)
+	close(g.wake)
+	g.wake = make(chan struct{})
+}
+
 func (g *batchQuotaGate) report(issue int, result AgentRunResult, wasProbe bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -47,7 +58,25 @@ func (g *batchQuotaGate) report(issue int, result AgentRunResult, wasProbe bool)
 }
 
 func (g *batchQuotaGate) wait(ctx context.Context) error {
+	return g.waitObserved(ctx, nil, 0)
+}
+
+func (g *batchQuotaGate) waitObserved(ctx context.Context, observe func() error, interval time.Duration) error {
+	var tick <-chan time.Time
+	if observe != nil {
+		if interval <= 0 {
+			interval = time.Millisecond
+		}
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		tick = ticker.C
+	}
 	for {
+		if observe != nil {
+			if err := observe(); err != nil {
+				return err
+			}
+		}
 		g.mu.Lock()
 		failed, paused, wake := g.failed, len(g.limited) > 0, g.wake
 		g.mu.Unlock()
@@ -61,6 +90,7 @@ func (g *batchQuotaGate) wait(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-wake:
+		case <-tick:
 		}
 	}
 }

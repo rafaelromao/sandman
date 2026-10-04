@@ -721,6 +721,12 @@ func (g *batchStartGate) AcquireAwaiting(ctx context.Context, opportunity awaitO
 }
 
 func (g *batchStartGate) acquire(ctx context.Context, waiter *batchStartWaiter) (awaitOpportunity, error) {
+	return g.acquireObserved(ctx, waiter, nil, 0)
+}
+
+// Keep the same queued waiter while observing lifecycle changes; observations
+// never claim execution capacity and do not change fairness opportunities.
+func (g *batchStartGate) acquireObserved(ctx context.Context, waiter *batchStartWaiter, observe func() error, interval time.Duration) (awaitOpportunity, error) {
 	acquired := false
 	defer func() {
 		if !acquired {
@@ -728,6 +734,11 @@ func (g *batchStartGate) acquire(ctx context.Context, waiter *batchStartWaiter) 
 		}
 	}()
 	for {
+		if observe != nil {
+			if err := observe(); err != nil {
+				return awaitOpportunity{}, err
+			}
+		}
 		wake, wait, opportunity, ok, err := g.tryAcquire(ctx, waiter)
 		if err != nil {
 			return awaitOpportunity{}, err
@@ -735,6 +746,9 @@ func (g *batchStartGate) acquire(ctx context.Context, waiter *batchStartWaiter) 
 		if ok {
 			acquired = true
 			return opportunity, nil
+		}
+		if observe != nil && (wait <= 0 || wait > interval) {
+			wait = interval
 		}
 		if err := waitForStartGate(ctx, wake, wait); err != nil {
 			return awaitOpportunity{}, err
@@ -1656,6 +1670,33 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			return nil, fmt.Errorf("read lifecycle under run claims: %w", err)
 		}
 	}
+	recoveryRejected := map[int]bool{}
+	for issue, recovery := range req.RecoveryWaits {
+		if claimedStates[recovery.RunID].IsTerminal() {
+			continue
+		}
+		current, err := daemon.ReadRunWait(layout.BatchDir(recovery.BatchID), recovery.RunID)
+		if err != nil || current.Issue != issue || !current.RecoverableAt(time.Now().UTC()) {
+			recoveryRejected[issue] = true
+			continue
+		}
+		newBatchID := issueBatchID
+		if newBatchID == "" {
+			newBatchID = batchIDFromRunID(current.RunID)
+			if newBatchID == "" {
+				newBatchID = current.RunID
+			}
+		}
+		current, err = daemon.TransferRunWait(layout.BatchDir(current.BatchID), layout.BatchDir(newBatchID), current.RunID, time.Now().UTC())
+		if err != nil {
+			recoveryRejected[issue] = true
+			continue
+		}
+		req.RecoveryWaits[issue] = current
+		if current.UsageLimitProbe && !claimedStates[current.RunID].IsTerminal() {
+			quotaGate.report(issue, AgentRunResult{Status: "await", UsageLimitReached: true}, true)
+		}
+	}
 
 	// Graceful shutdown: each per-session supervisor (spawned in
 	// execute / executePromptOnly) owns the signal/kill of its own
@@ -1697,7 +1738,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			runID = buildRunID(num, req.RunTS, req.RunShortID)
 		}
 		recoveredWait, recovering := req.RecoveryWaits[num]
-		if o.eventLog != nil && !claimedStates[runID].IsTerminal() && !(recovering && !recoveredWait.InitialAdmission && !recoveredWait.Ready) && (req.ReadyContinuations[num] || len(dependencies[num]) > 0 || (effectiveParallel > 0 && effectiveParallel < len(req.Issues))) {
+		if o.eventLog != nil && !recoveryRejected[num] && !claimedStates[runID].IsTerminal() && !(recovering && !recoveredWait.InitialAdmission && !recoveredWait.Ready) && (recovering && recoveredWait.InitialAdmission || req.ReadyContinuations[num] || len(dependencies[num]) > 0 || (effectiveParallel > 0 && effectiveParallel < len(req.Issues))) {
 			queuedPayload := map[string]any{"blocked_by": dependencies[num]}
 			if title, ok := req.IssueTitles[num]; ok && title != "" {
 				queuedPayload["issue_title"] = title
@@ -1729,11 +1770,22 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			defer wg.Done()
 			defer close(completed[issueNum])
 			defer claims[issueNum].Close()
-			if req.ReadyContinuations[issueNum] && claimedStates[runID].IsTerminal() {
+			defer quotaGate.retire(issueNum)
+			_, recoveringRow := req.RecoveryWaits[issueNum]
+			if claimedStates[runID].IsTerminal() {
 				state := claimedStates[runID]
 				mu.Lock()
 				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: state.Status(), Branch: state.Branch()}
 				statuses[issueNum] = state.Status()
+				mu.Unlock()
+				return
+			}
+			if recoveryRejected[issueNum] {
+				o.logAborted(issueNum, runID, nil)
+				mu.Lock()
+				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted"}
+				statuses[issueNum] = "aborted"
+				abortedCount++
 				mu.Unlock()
 				return
 			}
@@ -1776,6 +1828,42 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				turnMu.Unlock()
 			}
 			defer advanceTurn()
+			if req.ReadyContinuations[issueNum] || recoveringRow && !req.RecoveryWaits[issueNum].InitialAdmission {
+				// Observation is slot-free. Started waiting rows compete through
+				// the start gate only when their selected action needs execution.
+				advanceTurn()
+			}
+			var initialOwner *waitOwner
+			if !claimedStates[runID].HasStarted() {
+				initialBatchID := issueBatchID
+				if initialBatchID == "" {
+					initialBatchID = batchIDFromRunID(runID)
+					if initialBatchID == "" {
+						initialBatchID = runID
+					}
+				}
+				initialBaseBranch := req.BaseBranches[issueNum]
+				if initialBaseBranch == "" {
+					initialBaseBranch = baseBranch
+				}
+				record := daemon.RunWait{Protocol: "run-wait/v1", RunID: runID, BatchID: initialBatchID, Issue: issueNum, Branch: req.Branches[issueNum], BaseBranch: initialBaseBranch, InitialAdmission: true, AdmissionMode: int(req.IssueMode(issueNum)), Ready: true, OperationID: "admission", PreviousRunID: req.PreviousRunIDs[issueNum], PreviousBatchID: req.PreviousRunBatchIDs[issueNum]}
+				var err error
+				initialOwner, err = newWaitOwner(layout.BatchDir(initialBatchID), record, time.Now, o.eventLog)
+				if err != nil {
+					o.logAborted(issueNum, runID, nil)
+					mu.Lock()
+					results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted"}
+					statuses[issueNum] = "aborted"
+					abortedCount++
+					mu.Unlock()
+					return
+				}
+				defer func() {
+					if initialOwner != nil {
+						initialOwner.close()
+					}
+				}()
+			}
 
 			abortedBy := make([]int, 0, len(blockers))
 			stillBlockedBy := make([]int, 0, len(blockers))
@@ -1945,11 +2033,16 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			if waitBranch == "" {
 				waitBranch = claimedStates[runID].Branch()
 			}
-			owner, ownerErr := newWaitOwner(layout.BatchDir(waitBatchID), daemon.RunWait{
+			ownerRecord := daemon.RunWait{
 				Protocol: "run-wait/v1", RunID: runID, BatchID: waitBatchID, Issue: issueNum,
 				Branch: waitBranch, BaseBranch: issueBaseBranch, InitialAdmission: !claimedStates[runID].HasStarted(), AdmissionMode: int(row.Mode), OperationID: "admission", Ready: true,
 				PreviousRunID: row.PreviousRunIDs[issueNum], PreviousBatchID: row.PreviousRunBatchIDs[issueNum],
-			}, clock, o.eventLog)
+			}
+			if recovering {
+				ownerRecord = recovery
+				ownerRecord.BatchID = waitBatchID
+			}
+			owner, ownerErr := newWaitOwner(layout.BatchDir(waitBatchID), ownerRecord, clock, o.eventLog)
 			if ownerErr != nil {
 				o.logAborted(issueNum, runID, nil)
 				mu.Lock()
@@ -1960,6 +2053,10 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				return
 			}
 			defer owner.close()
+			if initialOwner != nil {
+				initialOwner.close()
+				initialOwner = nil
+			}
 			var res AgentRunResult
 			var started bool
 			awaitPoll := 0
@@ -2078,7 +2175,28 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 						res.Status = "aborted"
 						break
 					}
-					if err := quotaGate.wait(issueCtx); err != nil {
+					var quotaTerminalStatus string
+					var quotaTerminalExtras map[string]any
+					quotaTerminal := errors.New("terminal observation during quota admission")
+					var quotaObserve func() error
+					if awaiting {
+						quotaObserve = func() error {
+							status, extras, handled := executor.observeLifecycle(issueCtx, row)
+							if issueCtx.Err() != nil {
+								return issueCtx.Err()
+							}
+							if handled && status != "resume" && status != "await" {
+								quotaTerminalStatus, quotaTerminalExtras = status, extras
+								return quotaTerminal
+							}
+							return nil
+						}
+					}
+					if err := quotaGate.waitObserved(issueCtx, quotaObserve, awaitPollInterval(o.runSessionOpts, awaitPoll)); err != nil {
+						if errors.Is(err, quotaTerminal) {
+							res = executor.finishObserved(issueCtx, row, quotaTerminalStatus, quotaTerminalExtras)
+							break
+						}
 						if issueCtx.Err() != nil {
 							o.logAborted(issueNum, runID, nil)
 							res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
@@ -2090,10 +2208,43 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					continue
 				}
 				var err error
-				if awaiting {
+				var admissionStatus string
+				var admissionExtras map[string]any
+				admissionChanged := errors.New("lifecycle changed during execution admission")
+				if awaiting && readyContinuation && !row.UsageLimitProbe {
+					observe := func() error {
+						status, extras, handled := executor.observeLifecycle(issueCtx, row)
+						if issueCtx.Err() != nil {
+							return issueCtx.Err()
+						}
+						if !handled {
+							status = "failure"
+							extras = lifecycleGateFailureEvidence(idleGateReason, idleGateNextAction, lifecycleGateNone, nil, "")
+						}
+						if status != "resume" {
+							admissionStatus, admissionExtras = status, extras
+							return admissionChanged
+						}
+						return nil
+					}
+					opportunity, err = startGate.acquireObserved(issueCtx, &batchStartWaiter{awaiting: true, lastChance: opportunity.lastChance, ordinaryStartsAtChance: opportunity.ordinaryStarts}, observe, awaitPollInterval(o.runSessionOpts, awaitPoll))
+				} else if awaiting {
 					opportunity, err = startGate.AcquireAwaiting(issueCtx, opportunity)
 				} else {
 					opportunity, err = startGate.AcquireWithOpportunity(issueCtx, false)
+				}
+				if errors.Is(err, admissionChanged) {
+					if admissionStatus == "await" {
+						readyContinuation = false
+						if err := waitForObservation(); err != nil {
+							o.logAborted(issueNum, runID, nil)
+							res.Status = "aborted"
+							break
+						}
+						continue
+					}
+					res = executor.finishObserved(issueCtx, row, admissionStatus, admissionExtras)
+					break
 				}
 				if err != nil {
 					o.logAborted(issueNum, runID, nil)
@@ -2578,6 +2729,7 @@ type runSession struct {
 	usageLimitProbe            bool
 	usageLimitWaited           time.Duration
 	usageLimitDeadline         time.Time
+	usageLimitRestoreErr       error
 	identityResolver           *gitIdentityResolver
 	branches                   map[int]string
 	renderCfg                  prompt.RenderConfig

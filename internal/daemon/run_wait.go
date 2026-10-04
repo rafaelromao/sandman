@@ -92,7 +92,7 @@ func initialWaitPath(batchDir, runID string) string {
 }
 
 func validateRunWait(batchDir, runID string, record RunWait) error {
-	if !safeWaitID(runID) || record.Protocol != "run-wait/v1" || record.RunID != runID || record.BatchID != filepath.Base(batchDir) || record.Issue <= 0 || record.BaseBranch == "" || record.OperationID == "" || record.LeaseExpiresAt.IsZero() || record.AdmissionMode < 0 || record.AdmissionMode > 2 {
+	if !safeWaitID(runID) || !safeWaitID(record.BatchID) || record.Protocol != "run-wait/v1" || record.RunID != runID || record.BatchID != filepath.Base(batchDir) || record.Issue <= 0 || record.BaseBranch == "" || record.OperationID == "" || record.LeaseExpiresAt.IsZero() || record.AdmissionMode < 0 || record.AdmissionMode > 2 {
 		return fmt.Errorf("waiting ownership identity/timing is invalid")
 	}
 	clean := filepath.Clean(record.Branch)
@@ -147,7 +147,9 @@ func ReadRunWait(batchDir, runID string) (RunWait, error) {
 		return record, fmt.Errorf("invalid waiting run identity")
 	}
 	data, err := os.ReadFile(waitPath(batchDir, runID))
+	initial := false
 	if os.IsNotExist(err) {
+		initial = true
 		data, err = os.ReadFile(initialWaitPath(batchDir, runID))
 	}
 	if err != nil {
@@ -155,6 +157,11 @@ func ReadRunWait(batchDir, runID string) (RunWait, error) {
 	}
 	if err := json.Unmarshal(data, &record); err != nil {
 		return record, err
+	}
+	if initial && record.InitialAdmission && safeWaitID(record.BatchID) {
+		// Initial admissions have no execution artifact path. Their shared
+		// RunID sidecar is the atomic schedule pointer during batch handoff.
+		batchDir = filepath.Join(filepath.Dir(batchDir), record.BatchID)
 	}
 	return record, validateRunWait(batchDir, runID, record)
 }
@@ -167,6 +174,27 @@ func RenewRunWait(batchDir string, record RunWait, now time.Time) error {
 	} else if err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	return writeRunWait(batchDir, record, now)
+}
+
+// TransferRunWait is called under the exclusive RunID claim. Revalidate the
+// source before atomically transferring schedule ownership to another batch.
+func TransferRunWait(oldBatchDir, newBatchDir, runID string, now time.Time) (RunWait, error) {
+	record, err := ReadRunWait(oldBatchDir, runID)
+	if err != nil {
+		return record, err
+	}
+	if !record.RecoverableAt(now) {
+		return record, fmt.Errorf("waiting recovery grace expired")
+	}
+	if err := writeRunWait(oldBatchDir, record, now); err != nil {
+		return record, err
+	}
+	record.BatchID = filepath.Base(newBatchDir)
+	return record, writeRunWait(newBatchDir, record, now)
+}
+
+func writeRunWait(batchDir string, record RunWait, now time.Time) error {
 	record.LeaseExpiresAt = now.Add(RunRecoveryGrace)
 	if !record.OperationDeadline.IsZero() && record.OperationDeadline.Before(record.LeaseExpiresAt) {
 		record.LeaseExpiresAt = record.OperationDeadline
@@ -181,5 +209,15 @@ func RenewRunWait(batchDir string, record RunWait, now time.Time) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return atomicfs.WriteAtomicJSON(path, record, 0o600)
+	if err := atomicfs.WriteAtomicJSON(path, record, 0o600); err != nil {
+		return err
+	}
+	if !record.InitialAdmission {
+		// A started schedule supersedes its initial admission sidecar. The
+		// exclusive owner prevents a concurrent initial-admission takeover.
+		if err := os.Remove(initialWaitPath(batchDir, record.RunID)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
 }

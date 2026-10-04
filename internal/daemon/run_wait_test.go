@@ -42,3 +42,32 @@ func TestRunWait_ClaimAndFixedRecoveryWindow(t *testing.T) {
 	}
 	defer claim.Close()
 }
+
+func TestRunWait_BatchHandoffPreservesOperationAndSchedule(t *testing.T) {
+	for _, initial := range []bool{true, false} {
+		t.Run(map[bool]string{true: "initial", false: "started"}[initial], func(t *testing.T) {
+			root := t.TempDir()
+			claim, err := ClaimRun(root, "row")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer claim.Close()
+			now := time.Now().UTC()
+			oldDir, newDir := filepath.Join(root, "batches", "old"), filepath.Join(root, "batches", "new")
+			record := RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "old", Issue: 42, Branch: "42-fix", BaseBranch: "main", InitialAdmission: initial, OperationID: "quota:fixed", OperationDeadline: now.Add(3 * time.Minute), NextPollAt: now.Add(2 * time.Minute), UsageLimitProbe: true}
+			if err := RenewRunWait(oldDir, record, now); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := TransferRunWait(oldDir, newDir, "row", now.Add(time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			moved, err := ReadRunWait(newDir, "row")
+			if err != nil || moved.BatchID != "new" || moved.Ready || !moved.UsageLimitProbe || !moved.OperationDeadline.Equal(record.OperationDeadline) || !moved.NextPollAt.Equal(record.NextPollAt) || moved.OperationID != record.OperationID || !moved.LeaseExpiresAt.Equal(record.OperationDeadline) {
+				t.Fatalf("handoff changed fixed intent: moved=%+v err=%v", moved, err)
+			}
+			if _, err := TransferRunWait(newDir, oldDir, "row", record.OperationDeadline); err == nil {
+				t.Fatal("expired operation received another recovery window")
+			}
+		})
+	}
+}

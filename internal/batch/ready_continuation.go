@@ -44,7 +44,7 @@ func FindReadyContinuations(eventLog []events.Event, layout paths.Layout) []Read
 	ready := make([]ReadyContinuation, 0)
 	for _, state := range states {
 		issue := state.IssueNumber()
-		if issue <= 0 || latestRunByIssue[issue] != state.RunID || !state.IsActive() {
+		if issue <= 0 || latestRunByIssue[issue] != state.RunID || !state.IsActive() || !(state.IsAwaiting() || state.IsCapacityQueued() || state.Status() == "queued") {
 			continue
 		}
 		event := state.CapacityQueuedEvent
@@ -60,9 +60,10 @@ func FindReadyContinuations(eventLog []events.Event, layout paths.Layout) []Read
 		}
 		wait, waitErr := daemon.ReadRunWait(layout.BatchDir(batchID), state.RunID)
 		if waitErr == nil {
-			if !wait.RecoverableAt(time.Now().UTC()) {
+			if wait.Issue != issue || !wait.RecoverableAt(time.Now().UTC()) {
 				continue
 			}
+			batchID = wait.BatchID
 			ready = append(ready, ReadyContinuation{IssueNumber: issue, RunID: state.RunID, PreviousRunID: state.RunID, PreviousRunBatchID: batchID,
 				BatchID: batchID, Branch: wait.Branch, BaseBranch: wait.BaseBranch, Wait: &wait})
 			continue
