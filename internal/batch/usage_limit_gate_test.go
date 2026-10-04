@@ -10,7 +10,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
-func TestUsageLimitGate_PausesNotYetStartedRuns(t *testing.T) {
+func TestUsageLimitGate_UnrecoverableQuotaDoesNotLaunchDeferredRuns(t *testing.T) {
 	dir := testenv.MkdirShort(t, "sm-usage-gate-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
@@ -58,8 +58,8 @@ func TestUsageLimitGate_PausesNotYetStartedRuns(t *testing.T) {
 	if paused == nil {
 		t.Fatal("no result for issue 43")
 	}
-	if paused.Status != "queued" {
-		t.Fatalf("paused status=%q, want queued", paused.Status)
+	if paused.Status != "failure" {
+		t.Fatalf("exhausted quota status=%q, want failure without another launch", paused.Status)
 	}
 	snap := spyLog.snapshot()
 	foundAwait := false
@@ -94,7 +94,7 @@ func TestUsageLimitGate_PausesNotYetStartedRuns(t *testing.T) {
 	if st == nil {
 		t.Fatal("no RunState for issue 43")
 	}
-	if !st.IsCapacityQueued() || st.Status() != "queued" || !st.IsActive() {
-		t.Fatalf("state active=%v queued=%v status=%q", st.IsActive(), st.IsCapacityQueued(), st.Status())
+	if !st.IsTerminal() || st.Status() != "failure" {
+		t.Fatalf("exhausted quota retained live admission: active=%v queued=%v status=%q", st.IsActive(), st.IsCapacityQueued(), st.Status())
 	}
 }

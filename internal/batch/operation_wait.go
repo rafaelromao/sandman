@@ -15,6 +15,20 @@ func (s *runSession) runtimeNow() time.Time {
 	return time.Now().UTC()
 }
 
+func (s *runSession) restoreQuotaDeadline() {
+	states, err := events.ReadRunStates(s.deps.eventLog)
+	if err != nil {
+		return
+	}
+	state, ok := states[s.issueRunID()]
+	if !ok || state.AwaitEvent == nil || state.AwaitReason() != "usage-limit" {
+		return
+	}
+	if seconds, ok := lifecycleDeadlineSeconds(state.AwaitEvent.Payload["usage_limit_deadline_unix_seconds"]); ok {
+		s.usageLimitDeadline = time.Unix(seconds, 0)
+	}
+}
+
 // priorObservation permits transport re-observation only for a current,
 // previously authorized operation. Historical awaits on ready/terminal rows,
 // incomplete identities and absent deadlines authorize no synthetic wait.

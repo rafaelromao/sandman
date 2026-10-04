@@ -176,9 +176,10 @@ func decideImplementationPRLifecycle(in implementationPRFacts) lifecycleDecision
 		// A non-open, non-merged PR is closed without a merge (B2.4): an
 		// irrecoverable policy outcome that can never await.
 		return lifecycleDecision{
-			action:  lifecycleFailure,
-			gate:    lifecycleGateUnavailable,
-			handled: true,
+			action:        lifecycleFailure,
+			gate:          lifecycleGateUnavailable,
+			handled:       true,
+			failureExtras: map[string]any{"reason": "PULL_REQUEST_CLOSED", "next_action": "publish a recoverable implementation pull request before continuing"},
 		}
 	default:
 		return unhandled(gate)

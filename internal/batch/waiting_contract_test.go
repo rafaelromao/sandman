@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
@@ -287,5 +289,203 @@ func TestWaitingContract_MissingPublicationUsesConfiguredRetryBudget(t *testing.
 	finished := findEvent(log.snapshot(), "run.finished")
 	if finished == nil || finished.Payload["reason"] != missingPRReason || finished.Payload["retries_done"] != 1 {
 		t.Fatalf("publication budget outcome=%#v", finished)
+	}
+}
+
+func TestWaitingContract_QuotaRecoveryReadmitsSibling(t *testing.T) {
+	root := testenv.MkdirShort(t, "sm-wait-")
+	t.Chdir(root)
+	initGitRepo(t, root)
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, State: "closed"}, 43: {Number: 43, State: "closed"}},
+		prs:    map[string]*github.PR{"43-sibling": {Number: 43, State: "merged", Merged: true, Body: "Closes #43"}},
+	}
+	var starts []int
+	firstAttempts := 0
+	factory := &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
+		starts = append(starts, issue.Number)
+		if issue.Number == 42 {
+			firstAttempts++
+			if firstAttempts == 1 {
+				return AgentRunResult{IssueNumber: 42, Branch: branch, Status: "failure", UsageLimitReached: true}
+			}
+			client.prs[branch] = &github.PR{Number: 42, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: branch}
+		}
+		return AgentRunResult{IssueNumber: issue.Number, Branch: branch, Status: "success"}
+	}}
+	cfg := &config.Config{
+		Agent: "opencode", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{"opencode": config.BuiltInAgentPresets["opencode"].Agent("opencode")},
+	}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, &spyEventLog{},
+		WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(&freshSandboxFactory{}),
+		WithRunSessionOpts(runSessionOptions{releaseAwaitCapacity: true, awaitWait: func(context.Context, time.Duration) error { return nil }}))
+	result, err := o.RunBatch(context.Background(), Request{Issues: []int{42, 43}, Branches: map[int]string{42: "42-first", 43: "43-sibling"}, Parallel: 1, Retries: 0})
+	if err != nil || result == nil || result.Runs[1].Status != "success" {
+		t.Fatalf("quota recovery: starts=%v result=%v err=%v; sibling must be readmitted", starts, result, err)
+	}
+}
+
+type waitingCancelLog struct {
+	spyEventLog
+	cancel context.CancelFunc
+}
+
+func (l *waitingCancelLog) Log(event events.Event) error {
+	err := l.spyEventLog.Log(event)
+	if event.Issue == 43 && event.Type == "run.capacity_queued" {
+		l.cancel()
+	}
+	return err
+}
+
+func TestWaitingContract_BatchAbortReachesQuotaDeferredRows(t *testing.T) {
+	root := testenv.MkdirShort(t, "sm-wait-")
+	t.Chdir(root)
+	initGitRepo(t, root)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	log := &waitingCancelLog{cancel: cancel}
+	client := &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42}, 43: {Number: 43}, 44: {Number: 44}}}
+	factory := &controlledRunnableFactory{runnables: map[int]Runnable{
+		42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Branch: "42-limit", Status: "failure", UsageLimitReached: true}},
+	}}
+	cfg := &config.Config{Agent: "opencode", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{"opencode": config.BuiltInAgentPresets["opencode"].Agent("opencode")}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, log,
+		WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(&freshSandboxFactory{}),
+		WithRunSessionOpts(runSessionOptions{releaseAwaitCapacity: true, awaitWait: func(ctx context.Context, _ time.Duration) error {
+			<-ctx.Done()
+			return ctx.Err()
+		}}))
+	result, err := o.RunBatch(ctx, Request{Issues: []int{42, 43, 44}, Branches: map[int]string{42: "42-limit", 43: "43-next", 44: "44-last"}, Parallel: 1})
+	if result == nil || !errors.Is(err, ErrAborted) {
+		t.Fatalf("batch abort result=%v error=%v", result, err)
+	}
+	for _, run := range result.Runs {
+		if run.Status != "aborted" {
+			t.Fatalf("unfinished issue %d survived abort as %q", run.IssueNumber, run.Status)
+		}
+	}
+	for _, state := range events.ProjectRunStates(log.snapshot()) {
+		if !state.IsTerminal() || state.Status() != "aborted" {
+			t.Fatalf("aborted batch left live intent: %#v", state)
+		}
+	}
+	if len(factory.created) != 1 || countEventsByType(log.snapshot(), "run.retry") != 0 {
+		t.Fatalf("abort spent retries/launched deferred work: starts=%v events=%v", factory.created, log.snapshot())
+	}
+}
+
+type waitingRaceFactory struct {
+	mu        sync.Mutex
+	runnables []Runnable
+	created   int
+}
+
+func (f *waitingRaceFactory) NewRunnable(*github.Issue, string, sandbox.Sandbox) Runnable {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r := f.runnables[f.created]
+	f.created++
+	return r
+}
+
+func TestWaitingContract_QuotaRevalidatedAfterStartGate(t *testing.T) {
+	root := testenv.MkdirShort(t, "sm-wait-")
+	t.Chdir(root)
+	initGitRepo(t, root)
+	client := &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "closed"}, 43: {Number: 43, State: "closed"}, 44: {Number: 44, State: "closed"}}}
+	releaseLimit, releaseBusy := make(chan struct{}), make(chan struct{})
+	limitedStarted, busyStarted := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	factory := &waitingRaceFactory{runnables: []Runnable{
+		&controlledRunnable{started: limitedStarted, release: releaseLimit, result: AgentRunResult{Status: "failure", UsageLimitReached: true}},
+		&controlledRunnable{started: busyStarted, release: releaseBusy, result: AgentRunResult{Status: "success"}},
+		&controlledRunnable{result: AgentRunResult{Status: "success"}},
+	}}
+	log := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+		Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}},
+	}}, log, WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(&freshSandboxFactory{}),
+		WithRunSessionOpts(runSessionOptions{startWaiterQueued: func(bool) {
+			<-limitedStarted
+			<-busyStarted
+			releaseOnce.Do(func() { close(releaseLimit) })
+		}}))
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42, 43, 44}, Branches: map[int]string{42: "42-limit", 43: "43-busy", 44: "44-next"}, Parallel: 2})
+	}()
+	// Persistence of the rejected admission is the deterministic boundary;
+	// release the unrelated occupied slot only once the paused row is recorded.
+	deadline := time.Now().Add(3 * time.Second)
+	for countEventsByType(log.snapshot(), "run.capacity_queued") == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	close(releaseBusy)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("batch failed to finish")
+	}
+	if factory.created != 2 {
+		t.Fatalf("quota closed inside start-gate acquisition but launched %d agents, want two existing agents", factory.created)
+	}
+}
+
+func TestWaitingContract_QuotaRecoveryRestoresCIObservation(t *testing.T) {
+	root := testenv.MkdirShort(t, "sm-wait-")
+	t.Chdir(root)
+	initGitRepo(t, root)
+	client := &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}, prs: map[string]*github.PR{}}
+	launches := 0
+	factory := &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
+		launches++
+		if launches == 1 {
+			return AgentRunResult{IssueNumber: 42, Branch: branch, Status: "failure", UsageLimitReached: true}
+		}
+		client.prs[branch] = &github.PR{Number: 17, State: "open", Body: "Closes #42", HeadRefName: branch, HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"}
+		return AgentRunResult{IssueNumber: 42, Branch: branch, Status: "success"}
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	waits := 0
+	cfg := &config.Config{Agent: "opencode", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{"opencode": config.BuiltInAgentPresets["opencode"].Agent("opencode")}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, &spyEventLog{}, WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(&freshSandboxFactory{}),
+		WithRunSessionOpts(runSessionOptions{releaseAwaitCapacity: true, currentHead: func(string) (string, error) { return "current-sha", nil },
+			awaitWait: func(context.Context, time.Duration) error {
+				waits++
+				if waits == 3 {
+					cancel()
+					return context.Canceled
+				}
+				return nil
+			}}))
+	_, _ = o.RunBatch(ctx, Request{Issues: []int{42}, Branches: map[int]string{42: "42-quota-ci"}, Parallel: 1})
+	if launches != 2 || waits != 3 {
+		t.Fatalf("quota → CI launched agents while observing: launches=%d waits=%d", launches, waits)
+	}
+}
+
+func TestWaitingContract_QuotaExpirySurvivesReconstructedExecutor(t *testing.T) {
+	root := testenv.MkdirShort(t, "sm-wait-")
+	t.Chdir(root)
+	now := time.Now().UTC()
+	log := &spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "row", Issue: 42},
+		{Type: "run.await", RunID: "row", Issue: 42, Payload: map[string]any{"await_reason": "usage-limit", "usage_limit_deadline_unix_seconds": now.Add(-time.Minute).Unix()}},
+	}}
+	factory := &controlledRunnableFactory{}
+	o := NewOrchestrator(&fakeGitHubClient{}, &noopRenderer{}, nil, log, WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(&freshSandboxFactory{}))
+	e := o.newRunExecutor(context.Background(), BatchConfig{
+		Cfg: &config.Config{}, AgentCfg: config.BuiltInAgentPresets["opencode"].Agent("opencode"),
+	}, &freshSandboxFactory{}, nil)
+	result, _ := e.Execute(context.Background(), RowSpec{IssueNumber: 42, RunID: "row", Mode: ModeContinue, UsageLimitProbe: true, Branches: map[int]string{42: "42-limit"}})
+	if result.Status != "failure" || len(factory.created) != 0 || !result.UsageLimitReached {
+		t.Fatalf("expired reconstructed episode renewed/launched: result=%#v starts=%v", result, factory.created)
 	}
 }
