@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
@@ -21,7 +22,7 @@ import (
 func TestFindReadyContinuationsUsesLatestDurableCapacityPhase(t *testing.T) {
 	t.Parallel()
 	layout := paths.NewLayout(nil, t.TempDir())
-	started := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	started := time.Now().UTC().Add(-2 * time.Minute)
 	awaited := started.Add(time.Minute)
 	queued := awaited.Add(time.Minute)
 
@@ -105,6 +106,59 @@ func TestApplyReadyContinuationsDoesNotOverrideExplicitOverride(t *testing.T) {
 	}
 }
 
+func TestRecoverableWaitingAdmissionRequiresNoInventedTask(t *testing.T) {
+	root := t.TempDir()
+	layout := paths.NewLayout(nil, root)
+	now := time.Now().UTC()
+	log := []events.Event{{Type: "run.queued", RunID: "initial", Issue: 42, Timestamp: now, Payload: map[string]any{"batch_id": "old"}}}
+	if err := daemon.RenewRunWait(layout.BatchDir("old"), daemon.RunWait{
+		Protocol: "run-wait/v1", RunID: "initial", BatchID: "old", Issue: 42, BaseBranch: "main", InitialAdmission: true, Ready: true, OperationID: "admission",
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+	ready := FindReadyContinuations(log, layout)
+	if len(ready) != 1 {
+		t.Fatalf("ownerless initial admission not discovered: %v", ready)
+	}
+	request := Request{}
+	if err := ApplyReadyContinuations(&request, ready, layout, 1800); err != nil {
+		t.Fatal(err)
+	}
+	if request.IssueMode(42) != ModeFresh || request.RunIDs[42] != "initial" || len(request.TaskPrompts) != 0 {
+		t.Fatalf("initial admission invented continuation artifacts: %#v", request)
+	}
+	log = append(log, events.Event{Type: "run.aborted", RunID: "initial", Issue: 42, Timestamp: now.Add(time.Second)})
+	if got := FindReadyContinuations(log, layout); len(got) != 0 {
+		t.Fatalf("explicit abort rehydrated: %v", got)
+	}
+}
+
+func TestExternalWaitRehydratesWithinFixedGrace(t *testing.T) {
+	root := t.TempDir()
+	layout := paths.NewLayout(nil, root)
+	now := time.Now().UTC()
+	log := []events.Event{
+		{Type: "run.started", RunID: "waiting", Issue: 42, Timestamp: now.Add(-time.Minute), Payload: map[string]any{"batch_id": "old", "branch": "42-wait"}},
+		{Type: "run.await", RunID: "waiting", Issue: 42, Timestamp: now, Payload: map[string]any{"await_reason": "pending"}},
+	}
+	if err := daemon.RenewRunWait(layout.BatchDir("old"), daemon.RunWait{
+		Protocol: "run-wait/v1", RunID: "waiting", BatchID: "old", Issue: 42, Branch: "42-wait", BaseBranch: "main",
+		OperationID: "ci:17:head", OperationDeadline: now.Add(time.Hour),
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+	ready := FindReadyContinuations(log, layout)
+	if len(ready) != 1 || ready[0].Wait == nil || ready[0].Wait.Ready {
+		t.Fatalf("external wait lost readiness distinction: %v", ready)
+	}
+	if err := daemon.RenewRunWait(layout.BatchDir("old"), *ready[0].Wait, now.Add(-10*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if got := FindReadyContinuations(log, layout); len(got) != 0 {
+		t.Fatalf("expired grace was renewed by discovery: %v", got)
+	}
+}
+
 func TestRunBatchRehydratesReadyContinuationAfterRestart(t *testing.T) {
 	workDir := t.TempDir()
 	t.Chdir(workDir)
@@ -119,7 +173,7 @@ func TestRunBatchRehydratesReadyContinuationAfterRestart(t *testing.T) {
 		readyBranch = "42-ready"
 		busyBranch  = "43-busy"
 	)
-	started := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	started := time.Now().UTC().Add(-2 * time.Minute)
 	awaited := started.Add(time.Minute)
 	queued := awaited.Add(time.Minute)
 	log := &spyEventLog{events: []events.Event{

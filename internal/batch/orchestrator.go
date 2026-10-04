@@ -1628,6 +1628,34 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 
 	batchIdentityResolver := newBatchIdentityResolver(o, ".")
 	issueBatchID := issueBatchIDForRequest(req)
+	claims := make(map[int]*daemon.RunClaim, len(ordered))
+	for _, num := range ordered {
+		id := strings.TrimSpace(req.RunIDs[num])
+		if id == "" {
+			id = buildRunID(num, req.RunTS, req.RunShortID)
+		}
+		claim, err := daemon.ClaimRun(layout.SandmanDir, id)
+		if err != nil {
+			for _, held := range claims {
+				_ = held.Close()
+			}
+			return nil, fmt.Errorf("claim run %s: %w", id, err)
+		}
+		claims[num] = claim
+	}
+	defer func() {
+		for _, claim := range claims {
+			_ = claim.Close()
+		}
+	}()
+	claimedStates := map[string]events.RunState{}
+	if o.eventLog != nil {
+		var err error
+		claimedStates, err = events.ReadRunStates(o.eventLog)
+		if err != nil {
+			return nil, fmt.Errorf("read lifecycle under run claims: %w", err)
+		}
+	}
 
 	// Graceful shutdown: each per-session supervisor (spawned in
 	// execute / executePromptOnly) owns the signal/kill of its own
@@ -1668,7 +1696,8 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		if runID == "" {
 			runID = buildRunID(num, req.RunTS, req.RunShortID)
 		}
-		if o.eventLog != nil && (req.ReadyContinuations[num] || len(dependencies[num]) > 0 || (effectiveParallel > 0 && effectiveParallel < len(req.Issues))) {
+		recoveredWait, recovering := req.RecoveryWaits[num]
+		if o.eventLog != nil && !claimedStates[runID].IsTerminal() && !(recovering && !recoveredWait.InitialAdmission && !recoveredWait.Ready) && (req.ReadyContinuations[num] || len(dependencies[num]) > 0 || (effectiveParallel > 0 && effectiveParallel < len(req.Issues))) {
 			queuedPayload := map[string]any{"blocked_by": dependencies[num]}
 			if title, ok := req.IssueTitles[num]; ok && title != "" {
 				queuedPayload["issue_title"] = title
@@ -1699,6 +1728,15 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		go func(idx, issueNum int, blockers []int, turn int, runID string) {
 			defer wg.Done()
 			defer close(completed[issueNum])
+			defer claims[issueNum].Close()
+			if req.ReadyContinuations[issueNum] && claimedStates[runID].IsTerminal() {
+				state := claimedStates[runID]
+				mu.Lock()
+				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: state.Status(), Branch: state.Branch()}
+				statuses[issueNum] = state.Status()
+				mu.Unlock()
+				return
+			}
 			yieldedCapacity := false
 
 			issueCtx, issueCancel := context.WithCancel(ctx)
@@ -1859,6 +1897,18 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				BatchID:             issueBatchID,
 				QualityRulesFile:    req.QualityRulesFile,
 			}
+			recovery, recovering := req.RecoveryWaits[issueNum]
+			if recovering && !recovery.InitialAdmission {
+				row.UsageLimitProbe = recovery.UsageLimitProbe
+				if recovery.UsageLimitProbe {
+					row.UsageLimitDeadline = recovery.OperationDeadline
+				}
+				if !recovery.Ready && claimedStates[runID].AwaitEvent != nil && o.eventLog != nil {
+					payload := cloneLifecycleExtras(claimedStates[runID].AwaitEvent.Payload)
+					payload["batch_id"], payload["recovered"] = issueBatchID, true
+					_ = o.eventLog.Log(events.Event{Type: "run.await", Timestamp: time.Now().UTC(), RunID: runID, Issue: issueNum, IssueRef: issueRef(issueNum), Payload: payload})
+				}
+			}
 			bc := BatchConfig{
 				Cfg:                        cfg,
 				AgentName:                  agentName,
@@ -1878,6 +1928,38 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				DangerouslySkipPermissions: *dangerouslySkipPermissions,
 				StrandedReconcile:          strandedReconcile,
 			}
+			clock := func() time.Time {
+				if o.runSessionOpts.now != nil {
+					return o.runSessionOpts.now().UTC()
+				}
+				return time.Now().UTC()
+			}
+			waitBatchID := issueBatchID
+			if waitBatchID == "" {
+				waitBatchID = batchIDFromRunID(runID)
+				if waitBatchID == "" {
+					waitBatchID = runID
+				}
+			}
+			waitBranch := row.Branches[issueNum]
+			if waitBranch == "" {
+				waitBranch = claimedStates[runID].Branch()
+			}
+			owner, ownerErr := newWaitOwner(layout.BatchDir(waitBatchID), daemon.RunWait{
+				Protocol: "run-wait/v1", RunID: runID, BatchID: waitBatchID, Issue: issueNum,
+				Branch: waitBranch, BaseBranch: issueBaseBranch, InitialAdmission: !claimedStates[runID].HasStarted(), AdmissionMode: int(row.Mode), OperationID: "admission", Ready: true,
+				PreviousRunID: row.PreviousRunIDs[issueNum], PreviousBatchID: row.PreviousRunBatchIDs[issueNum],
+			}, clock, o.eventLog)
+			if ownerErr != nil {
+				o.logAborted(issueNum, runID, nil)
+				mu.Lock()
+				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted"}
+				statuses[issueNum] = "aborted"
+				abortedCount++
+				mu.Unlock()
+				return
+			}
+			defer owner.close()
 			var res AgentRunResult
 			var started bool
 			awaitPoll := 0
@@ -1888,11 +1970,18 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				}
 			}()
 			executor := o.newRunExecutorWith(parentCtx, bc, policy.sandboxFactory, policy.containerAlloc, coord, coord, layout)
-			awaiting := req.ReadyContinuations[issueNum]
-			readyContinuation := awaiting
+			awaiting := req.ReadyContinuations[issueNum] || recovering && !recovery.InitialAdmission
+			readyContinuation := req.ReadyContinuations[issueNum]
 			var opportunity awaitOpportunity
 			waitForObservation := func() error {
 				interval := awaitPollInterval(o.runSessionOpts, awaitPoll)
+				if recovering && recovery.NextPollAt.After(clock()) {
+					interval = recovery.NextPollAt.Sub(clock())
+					recovering = false
+				}
+				if err := owner.checkpoint(row, false, interval); err != nil {
+					return err
+				}
 				awaitPoll++
 				awaitWait := o.runSessionOpts.awaitWait
 				if awaitWait == nil {
@@ -1907,6 +1996,18 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 						res = executor.finishObserved(issueCtx, row, status, extras)
 						quotaGate.report(issueNum, res, true)
 						break
+					}
+					if recovering && recovery.NextPollAt.After(clock()) {
+						wait := o.runSessionOpts.awaitWait
+						if wait == nil {
+							wait = waitForAwaitPoll
+						}
+						if err := wait(issueCtx, recovery.NextPollAt.Sub(clock())); err != nil {
+							o.logAborted(issueNum, runID, nil)
+							res.Status = "aborted"
+							break
+						}
+						recovering = false
 					}
 				}
 				if row.UsageLimitProbe && !row.UsageLimitDeadline.IsZero() && !newRunSession(executor, row).runtimeNow().Before(row.UsageLimitDeadline) {
@@ -1952,6 +2053,11 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 						}
 					}
 					readyContinuation = true
+					if err := owner.checkpoint(row, true, 0); err != nil {
+						o.logAborted(issueNum, runID, nil)
+						res.Status = "aborted"
+						break
+					}
 				}
 				if !row.UsageLimitProbe && quotaGate.paused() {
 					extras := map[string]any{
@@ -1967,6 +2073,11 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 						}
 					}
 					advanceTurn()
+					if err := owner.checkpoint(row, true, 0); err != nil {
+						o.logAborted(issueNum, runID, nil)
+						res.Status = "aborted"
+						break
+					}
 					if err := quotaGate.wait(issueCtx); err != nil {
 						if issueCtx.Err() != nil {
 							o.logAborted(issueNum, runID, nil)
@@ -1997,6 +2108,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					continue
 				}
 				res, started = executor.Execute(issueCtx, row)
+				if res.Branch != "" {
+					row.Branches = map[int]string{issueNum: res.Branch}
+				}
 				quotaGate.report(issueNum, res, row.UsageLimitProbe)
 				if !res.UsageLimitReached {
 					row.UsageLimitProbe = false
@@ -2017,6 +2131,13 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				advanceTurn()
 				if res.UsageLimitReached {
 					interval := usageLimitPollInterval
+					row.UsageLimitDeadline = res.UsageLimitDeadline
+					row.UsageLimitProbe = true
+					if err := owner.checkpoint(row, false, interval); err != nil {
+						o.logAborted(issueNum, runID, nil)
+						res.Status = "aborted"
+						break
+					}
 					awaitWait := o.runSessionOpts.awaitWait
 					if awaitWait == nil {
 						awaitWait = waitForAwaitPoll

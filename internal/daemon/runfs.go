@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -313,6 +314,23 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 	// timestamp.
 	recoveredAt := time.Now().UTC()
 	emitOrphan := func(run events.RunState, issueNumber int) error {
+		claim, err := ClaimRun(baseDir, run.RunID)
+		if errors.Is(err, ErrRunOwned) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		defer claim.Close()
+		latest, err := log.Read()
+		if err != nil {
+			return err
+		}
+		for _, current := range events.ProjectRunStates(latest) {
+			if current.RunID == run.RunID && (current.IsTerminal() || current.BatchID() != "" && current.BatchID() != run.BatchID()) {
+				return nil
+			}
+		}
 		var issueRef *int
 		if issueNumber > 0 {
 			ref := issueNumber
@@ -337,10 +355,18 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 		latestTerminal := latestTerminalForIssues(batch.Manifest.Issues, byIssue)
 		for _, issueNumber := range batch.Manifest.Issues {
 			for _, run := range byIssue[issueNumber] {
-				if run.IsCapacityQueued() {
+				if protected, _ := waitRecovery(baseDir, run, recoveredAt); protected {
 					// The ready continuation is durably queued for a later
 					// scheduler admission. Preserve its worktree and event
 					// state so the next run command can rehydrate it.
+					continue
+				}
+				if _, suspended := waitRecovery(baseDir, run, recoveredAt); suspended && run.BatchID() == filepath.Base(batch.RunDir) {
+					if _, ok := recoveredRunIDs[run.RunID]; !ok {
+						if err := emitOrphan(run, issueNumber); err != nil {
+							return recovered, len(dead), err
+						}
+					}
 					continue
 				}
 				if _, ok := recoveredRunIDs[run.RunID]; ok {
@@ -473,7 +499,7 @@ func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log even
 
 	var recovered int
 	for _, run := range runs {
-		if run.IsCapacityQueued() {
+		if protected, _ := waitRecovery(baseDir, run, recoveredAt); protected {
 			continue
 		}
 		// Diagnostics without a start/continuation are unknown lifecycle,

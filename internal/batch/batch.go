@@ -6,6 +6,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
@@ -54,6 +55,7 @@ type Request struct {
 	// ReadyContinuations marks rows restored from durable capacity-queue
 	// evidence. They enter the scheduler's awaited priority queue immediately.
 	ReadyContinuations map[int]bool
+	RecoveryWaits      map[int]daemon.RunWait
 	// ReuseSession opts an individual continued row into exact OpenCode
 	// session reuse. Runtime-owned relaunches set the equivalent on the row.
 	ReuseSession map[int]bool

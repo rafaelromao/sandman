@@ -376,6 +376,11 @@ func (r RunState) BatchID() string {
 			return id
 		}
 	}
+	if r.IsAwaiting() && r.AwaitEvent != nil {
+		if id, ok := payloadString(r.AwaitEvent.Payload, "batch_id"); ok && id != "" {
+			return id
+		}
+	}
 	if id, ok := payloadString(r.Started.Payload, "batch_id"); ok && id != "" {
 		return id
 	}

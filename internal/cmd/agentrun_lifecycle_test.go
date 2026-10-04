@@ -306,10 +306,13 @@ func TestArchive_EventAuthorityAcrossBoundaries(t *testing.T) {
 							t.Fatal(err)
 						}
 					case "capacity-queued":
-						if err := log.Log(events.Event{Type: "run.started", RunID: id, Issue: 42}); err != nil {
+						if err := daemon.RenewRunWait(batchDir, daemon.RunWait{Protocol: "run-wait/v1", RunID: id, BatchID: id, Issue: 42, Branch: "42-fix", BaseBranch: "main", OperationID: "capacity", Ready: true}, time.Now().UTC()); err != nil {
 							t.Fatal(err)
 						}
-						if err := log.Log(events.Event{Type: "run.capacity_queued", RunID: id, Issue: 42}); err != nil {
+						if err := log.Log(events.Event{Type: "run.started", RunID: id, Issue: 42, Payload: map[string]any{"batch_id": id}}); err != nil {
+							t.Fatal(err)
+						}
+						if err := log.Log(events.Event{Type: "run.capacity_queued", RunID: id, Issue: 42, Payload: map[string]any{"batch_id": id}}); err != nil {
 							t.Fatal(err)
 						}
 					case "read-error":
