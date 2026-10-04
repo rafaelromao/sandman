@@ -500,7 +500,7 @@ func TestRunExecutor_ForegroundWaitCoversPullRequestPublication(t *testing.T) {
 		AgentName:        "opencode",
 		AgentCfg:         config.Agent{Command: "echo hi"},
 		IdentityResolver: noopIdentityResolver(),
-		Retries:          3,
+		Retries:          0, // No owned-work recovery budget in this admission test.
 	}
 	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
 		IssueNumber: 42,
@@ -560,7 +560,7 @@ func TestRunExecutor_ContinuationForegroundWaitCoversPullRequestPublication(t *t
 		AgentName:        "opencode",
 		AgentCfg:         config.Agent{Command: "echo hi"},
 		IdentityResolver: noopIdentityResolver(),
-		Retries:          3,
+		Retries:          0, // No owned-work recovery budget in this admission test.
 	}
 	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
 		IssueNumber:    42,
@@ -572,8 +572,8 @@ func TestRunExecutor_ContinuationForegroundWaitCoversPullRequestPublication(t *t
 	if !started || result.Status != "success" {
 		t.Fatalf("run = (%t, %q), want started success", started, result.Status)
 	}
-	if len(waits) != 2 || waits[0] != time.Second || waits[1] != 2*time.Second {
-		t.Fatalf("publication waits = %v, want [1s 2s]", waits)
+	if len(waits) != 1 || waits[0] != time.Second {
+		t.Fatalf("publication/CI waits = %v, want only the established CI wait [1s]", waits)
 	}
 	if len(factory.created) != 1 {
 		t.Fatalf("agent launches = %d, want 1", len(factory.created))

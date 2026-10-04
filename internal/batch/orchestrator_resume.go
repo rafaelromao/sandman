@@ -14,6 +14,9 @@ import (
 // runSessionOptions.awaitResumeMax is zero (the production default).
 const defaultAwaitResumeMax = 3
 
+const gateReviewRequestRequired = "review-request-required"
+const gateOwnedWorkRequired = "implementor-work-required"
+
 // Entry re-evaluation machinery for resuming agent work on PR lifecycle
 // transitions (issue #2595). A session that re-enters a run whose PR gate is
 // already resolvable must not launch the agent blindly: a merely pending gate
@@ -120,8 +123,7 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 	if gateStatus != "await" && gateStatus != "resume" {
 		return AgentRunResult{}, false, false
 	}
-	gate, _ := extras["gate"].(string)
-	if !isResumeGate(gate) {
+	if gateStatus == "await" {
 		result := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "await", Branch: branch, RetriesTotal: 1}
 		if !s.opts.foregroundLifecycle {
 			result.Status = s.emitAwait(ctx, runID, result, extras)
@@ -132,13 +134,10 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 		if !handled {
 			return AgentRunResult{}, false, false
 		}
-		if gateStatus == "await" || gateStatus == "resume" {
-			gate, _ = nextExtras["gate"].(string)
+		if gateStatus == "resume" {
+			gate, _ := nextExtras["gate"].(string)
 			if isResumeGate(gate) {
-				evidence := s.resumeEvidenceFor(ctx, branch, nextExtras)
-				taskContent, _, _ := ReadTaskContent(filepath.Join(wt.WorkDir(), ".sandman", "task.md"))
-				s.renderCfg.TaskPrompt = s.resumePromptFor(taskContent, evidence, s.renderCfg.ReviewTimeout)
-				return AgentRunResult{}, false, false
+				return s.prepareEntryResume(ctx, wt, branch, runID, nextExtras)
 			}
 		}
 		result.Status = gateStatus
@@ -148,7 +147,16 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 		result.Status = s.finishTerminal(ctx, runID, result, nextExtras, wt, branch)
 		return result, true, true
 	}
+	return s.prepareEntryResume(ctx, wt, branch, runID, extras)
+}
+
+func (s *runSession) prepareEntryResume(ctx context.Context, wt sandbox.Sandbox, branch, runID string, extras map[string]any) (AgentRunResult, bool, bool) {
 	evidence := s.resumeEvidenceFor(ctx, branch, extras)
+	if err := s.reserveRemediation(wt.WorkDir(), evidence); err != nil {
+		result := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: 1}
+		result.Status = s.finishTerminal(ctx, runID, result, remediationReservationFailure(evidence, err), wt, branch)
+		return result, true, true
+	}
 	taskContent, _, _ := ReadTaskContent(filepath.Join(wt.WorkDir(), ".sandman", "task.md"))
 	s.renderCfg.TaskPrompt = s.resumePromptFor(taskContent, evidence, s.renderCfg.ReviewTimeout)
 	return AgentRunResult{}, false, false
@@ -172,7 +180,7 @@ func (s *runSession) resumeCapFor() int {
 // particular, when the per-session resume cap is exhausted the gate
 // terminalizes as failure instead of entering another wait.
 func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbox, branch, runID string, extras map[string]any) (string, bool) {
-	if s.deps.githubClient == nil || s.resumeCount >= s.resumeCapFor() {
+	if s.deps.githubClient == nil {
 		return "", false
 	}
 	gate, _ := extras["gate"].(string)
@@ -180,6 +188,12 @@ func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbo
 		return "", false
 	}
 	evidence := s.resumeEvidenceFor(ctx, branch, extras)
+	if err := s.reserveRemediation(wt.WorkDir(), evidence); err != nil {
+		for key, value := range remediationReservationFailure(evidence, err) {
+			extras[key] = value
+		}
+		return "", false
+	}
 	taskContent, _, _ := ReadTaskContent(filepath.Join(wt.WorkDir(), ".sandman", "task.md"))
 	s.resumeCount++
 	s.emitResume(ctx, runID, branch, gate, evidence)
@@ -192,12 +206,12 @@ func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbo
 // before it gets an opportunity.
 func isImplementorOwnedGateFailure(extras map[string]any) bool {
 	reason, _ := extras["reason"].(string)
-	return reason == idleGateReason || reason == missingPRReason
+	return reason == idleGateReason || reason == missingPRReason || reason == "REVIEW_REQUEST_REQUIRED"
 }
 
 func isResumeGate(gate string) bool {
 	switch gate {
-	case gateReadyToMerge, gateActionableFeedback, gateReviewTimeout, gateCIWaitTimeout, gatePRHeadChanged, "ci-failure", "merge-conflict":
+	case gateReadyToMerge, gateActionableFeedback, gateReviewTimeout, gateCIWaitTimeout, gatePRHeadChanged, gateReviewRequestRequired, gateOwnedWorkRequired, "ci-failure", "merge-conflict":
 		return true
 	default:
 		return false

@@ -9,6 +9,22 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 )
 
+// finishObserved applies an authoritative terminal observation without acquiring
+// execution capacity or starting an agent/container. Cleanup uses the host
+// sandbox seam; observation never re-arbitrates the selected lifecycle action.
+func (e *runExecutor) finishObserved(ctx context.Context, row RowSpec, status string, extras map[string]any) AgentRunResult {
+	session := newRunSession(e, row)
+	branch := row.Branches[row.IssueNumber]
+	factory := e.deps.sandboxFactory
+	if factory == nil {
+		factory = defaultSandboxFactory{}
+	}
+	wt := factory.NewSandbox(".", session.worktreeDir(), branch, row.BaseBranch, nil)
+	result := AgentRunResult{IssueNumber: row.IssueNumber, Issue: issueRef(row.IssueNumber), Status: status, Branch: branch}
+	result.Status = session.finishDecidedTerminal(ctx, session.issueRunID(), result, extras, wt, branch)
+	return result
+}
+
 // observeLifecycle rechecks an awaiting continuation without acquiring an
 // execution slot or starting a sandbox. A resolved gate can therefore be
 // durably queued before the scheduler waits for capacity.

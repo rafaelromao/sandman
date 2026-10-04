@@ -1927,6 +1927,14 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 						}
 						continue
 					}
+					if !handled {
+						status = "failure"
+						extras = lifecycleGateFailureEvidence(idleGateReason, idleGateNextAction, lifecycleGateNone, nil, "")
+					}
+					if status != "resume" {
+						res = executor.finishObserved(issueCtx, row, status, extras)
+						break
+					}
 					if o.eventLog != nil {
 						if err := logCapacityQueuedContinuation(o.eventLog, runID, issueNum, issueBatchID, row, extras, req.IssueTitles[issueNum]); err != nil {
 							if o.errorLog != nil {
@@ -2373,6 +2381,7 @@ func expandPath(path string) (string, error) {
 // pointer to a value type, update runSingle / runPromptOnlySingle to share it
 // explicitly — otherwise serialisation will silently break.
 type runSessionOptions struct {
+	now                        func() time.Time
 	baseBranchSync             func(repoPath, sourceBranch string) error
 	baseBranchSyncMu           *sync.Mutex
 	contextRolloverLiterals    []string
@@ -2988,6 +2997,10 @@ func (s *runSession) emitNormalizedTerminal(ctx context.Context, runID string, r
 // so worktree_state describes the actual on-disk result.
 func (s *runSession) finishTerminal(ctx context.Context, runID string, result AgentRunResult, extras map[string]any, wt sandbox.Sandbox, branch string) string {
 	result, extras = s.normalizeTerminalResult(result, extras)
+	return s.finishDecidedTerminal(ctx, runID, result, extras, wt, branch)
+}
+
+func (s *runSession) finishDecidedTerminal(ctx context.Context, runID string, result AgentRunResult, extras map[string]any, wt sandbox.Sandbox, branch string) string {
 	_, terminalStatus := terminalRunEvent(ctx, result.Status)
 	worktreeState := "preserved"
 	if terminalStatus == "success" && !s.review && (s.cfg == nil || s.cfg.EffectiveCleanupWorktrees()) {
@@ -3282,7 +3295,13 @@ func (s *runSession) runOnce(
 	var terminalExtras map[string]any
 loop:
 	for attempt := 0; attempt < attempts; attempt++ {
+		if ctx.Err() != nil {
+			result.Status = "aborted"
+			result.ContextExhausted = false
+			break loop
+		}
 		if attempt > 0 {
+			terminalExtras = nil
 			// Session reuse is a launch choice, not retry state. Retries and
 			// context-rollover recovery always start a fresh conversation.
 			s.reuseSession = false
@@ -3305,6 +3324,11 @@ loop:
 			}
 		}
 		attemptRenderCfg, errResult := prepareAttempt(attempt, result)
+		if ctx.Err() != nil {
+			result.Status = "aborted"
+			result.ContextExhausted = false
+			break loop
+		}
 		if errResult != nil {
 			return *errResult, nil, events.RunStatusFromPayload(errResult.Status).IsSuccess()
 		}
@@ -3405,6 +3429,16 @@ loop:
 			if s.issueNumber > 0 && !(alreadyResolved && s.mode != ModeContinue) && events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
 				hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
 				if gateStatus, extras, handled := s.handleLifecycleDecisionAfterAgent(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled {
+					if isImplementorOwnedGateFailure(extras) {
+						// A clean but incomplete handoff is owned work, not an
+						// external await or a separate lifecycle-resume budget.
+						// Use the configured ordinary retry budget to perform it.
+						result.Status = "failure"
+						terminalExtras = cloneLifecycleExtras(extras)
+						delete(terminalExtras, "await")
+						delete(terminalExtras, "gate")
+						continue loop
+					}
 					if gateStatus == "success" || gateStatus == "failure" || gateStatus == "aborted" {
 						// A terminal lifecycle decision is authoritative. Do not
 						// let the legacy post-decision PR arbitration replace it.
@@ -3412,18 +3446,7 @@ loop:
 						terminalExtras = mergeBlockerExtras(terminalExtras, extras)
 						break loop
 					}
-					gate, _ := extras["gate"].(string)
-					if gateStatus == "resume" && s.resumeCount >= s.resumeCapFor() {
-						// The external operation has produced an outcome but
-						// this session has exhausted its autonomous resume
-						// budget. Do not manufacture another wait for an
-						// already-resolved gate (issue #2743).
-						result.Status = "failure"
-						terminalExtras = remediationBudgetFailureEvidence(gate, extras,
-							"inspect the current pull-request remediation evidence and start a new run after advancing the pull-request head")
-						break loop
-					}
-					observe := gateStatus == "await" && (gate != gateReadyToMerge && gate != gateActionableFeedback || s.resumeCount >= s.resumeCapFor())
+					observe := gateStatus == "await"
 					if observe {
 						if !s.opts.foregroundLifecycle {
 							s.emitAwait(ctx, runID, result, extras)
@@ -3433,12 +3456,14 @@ loop:
 						s.emitAwait(ctx, runID, result, extras)
 						gateStatus, extras, _ = s.observeLifecycle(ctx, wt.WorkDir(), branch, logPath, runID, result, extras, hostPathsReady)
 					}
-					if resumePrompt, resume := s.resumePromptFromGate(ctx, wt, branch, runID, extras); resume {
-						s.reuseSession = true
-						s.previousRunIDs = map[int]string{s.issueNumber: runID}
-						s.previousRunBatchIDs = map[int]string{s.issueNumber: s.batchID}
-						attemptRenderCfg.TaskPrompt = resumePrompt
-						continue relaunch
+					if gateStatus == "resume" {
+						if resumePrompt, resume := s.resumePromptFromGate(ctx, wt, branch, runID, extras); resume {
+							s.reuseSession = true
+							s.previousRunIDs = map[int]string{s.issueNumber: runID}
+							s.previousRunBatchIDs = map[int]string{s.issueNumber: s.batchID}
+							attemptRenderCfg.TaskPrompt = resumePrompt
+							continue relaunch
+						}
 					}
 					if gateStatus == "resume" {
 						// An exhausted in-session resume budget ends the
@@ -3448,8 +3473,10 @@ loop:
 						// (issue #2743).
 						gate, _ := extras["gate"].(string)
 						gateStatus = "failure"
-						extras = remediationBudgetFailureEvidence(gate, extras,
-							"advance the pull-request head before requesting another remediation run")
+						if extras["reason"] != "REMEDIATION_STATE_ERROR" && extras["reason"] != "REMEDIATION_BUDGET_EXHAUSTED" {
+							extras = remediationBudgetFailureEvidence(gate, extras,
+								"advance the pull-request head before requesting another remediation run")
+						}
 					}
 					result.Status = gateStatus
 					terminalExtras = mergeBlockerExtras(terminalExtras, extras)

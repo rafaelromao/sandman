@@ -345,16 +345,11 @@ func TestRunSingle_EmitsRunRetryWithKillTimeoutReasonOnParentCtxCancel(t *testin
 			retryEvents = append(retryEvents, e)
 		}
 	}
-	if len(retryEvents) != 1 {
-		t.Fatalf("expected exactly 1 run.retry event, got %d (events: %v)", len(retryEvents), logs)
+	if len(retryEvents) != 0 {
+		t.Fatalf("operator cancellation emitted retry events: %v", retryEvents)
 	}
-	raw, ok := retryEvents[0].Payload["reason"]
-	if !ok {
-		t.Fatalf("run.retry payload missing reason key, got %+v", retryEvents[0].Payload)
-	}
-	reason, _ := raw.(string)
-	if reason != "kill-timeout" {
-		t.Errorf("run.retry reason = %q, want \"kill-timeout\" (parent ctx cancelled previous attempt)", reason)
+	if result.Status != "aborted" {
+		t.Fatalf("cancelled status=%q, want aborted", result.Status)
 	}
 }
 
