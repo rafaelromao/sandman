@@ -111,15 +111,16 @@ func FindReadyContinuations(eventLog []events.Event, layout paths.Layout) []Read
 // Events determine whether execution has started. Reconcile a sidecar left
 // between the authoritative await event and its schedule checkpoint.
 func reconcileRecoveryWait(record daemon.RunWait, state events.RunState) (daemon.RunWait, bool, bool) {
-	if !state.HasStarted() || !record.InitialAdmission && record.Ready == state.IsCapacityQueued() {
+	if !state.HasStarted() {
 		return record, false, true
 	}
+	previous := record
 	record.InitialAdmission, record.AdmissionMode = false, int(ModeContinue)
 	record.Branch = state.Branch()
 	record.PreviousRunID, record.PreviousBatchID = state.RunID, record.BatchID
 	record.Ready, record.UsageLimitProbe = state.IsCapacityQueued(), false
 	record.OperationID, record.OperationDeadline = "capacity", time.Time{}
-	if record.Ready && state.CapacityQueuedEvent != nil {
+	if record.Ready && state.CapacityQueuedEvent != nil && (previous.InitialAdmission || !previous.Ready) {
 		record.LeaseExpiresAt = state.CapacityQueuedEvent.Timestamp.Add(daemon.RunRecoveryGrace)
 	}
 	if !record.Ready {
@@ -145,7 +146,11 @@ func reconcileRecoveryWait(record daemon.RunWait, state events.RunState) (daemon
 	if !record.OperationDeadline.IsZero() && record.OperationDeadline.Before(record.LeaseExpiresAt) {
 		record.LeaseExpiresAt = record.OperationDeadline
 	}
-	return record, true, record.Branch != ""
+	changed := previous.InitialAdmission || previous.Ready != record.Ready || previous.UsageLimitProbe != record.UsageLimitProbe || previous.OperationID != record.OperationID || !previous.OperationDeadline.Equal(record.OperationDeadline)
+	if !changed {
+		record.NextPollAt = previous.NextPollAt
+	}
+	return record, changed, record.Branch != ""
 }
 
 func legacyRecoveryWait(state events.RunState) (daemon.RunWait, bool) {

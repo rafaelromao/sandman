@@ -122,6 +122,9 @@ func (r *reviewWaitSchedulerRunnable) Run(ctx context.Context, _ prompt.IssueRen
 			pr.Merged = true
 			pr.Body = "Closes #1"
 		})
+		f.client.mu.Lock()
+		f.client.issues[1].State = "closed"
+		f.client.mu.Unlock()
 	case r.issue == 2:
 		select {
 		case <-f.independentStarted:

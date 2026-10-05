@@ -1671,6 +1671,24 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 	}
 	recoveryRejected := map[int]bool{}
+	var waitOwnersMu sync.Mutex
+	var waitOwners []*waitOwner
+	trackWaitOwner := func(owner *waitOwner) {
+		waitOwnersMu.Lock()
+		waitOwners = append(waitOwners, owner)
+		waitOwnersMu.Unlock()
+	}
+	ownerPulse := func(id string) <-chan time.Time {
+		if o.runSessionOpts.waitOwnerPulse != nil {
+			return o.runSessionOpts.waitOwnerPulse(id)
+		}
+		return nil
+	}
+	defer func() {
+		for _, owner := range waitOwners {
+			owner.close()
+		}
+	}()
 	recoveryNow := func() time.Time {
 		if o.runSessionOpts.now != nil {
 			return o.runSessionOpts.now().UTC()
@@ -1773,6 +1791,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			runID = buildRunID(num, req.RunTS, req.RunShortID)
 		}
 		recoveredWait, recovering := req.RecoveryWaits[num]
+		queueWriteFailed := false
 		if o.eventLog != nil && !recoveryRejected[num] && !claimedStates[runID].IsTerminal() && !(recovering && !recoveredWait.InitialAdmission && !recoveredWait.Ready) && (recovering && recoveredWait.InitialAdmission || req.ReadyContinuations[num] || len(dependencies[num]) > 0 || (effectiveParallel > 0 && effectiveParallel < len(req.Issues))) {
 			queuedPayload := map[string]any{"blocked_by": dependencies[num]}
 			if title, ok := req.IssueTitles[num]; ok && title != "" {
@@ -1792,16 +1811,19 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				queuedPayload["previous_run_id"] = req.PreviousRunIDs[num]
 				queuedPayload["previous_run_batch_id"] = req.PreviousRunBatchIDs[num]
 			}
-			_ = o.eventLog.Log(events.Event{
+			if err := o.eventLog.Log(events.Event{
 				Type:      queuedType,
 				Timestamp: time.Now(),
 				RunID:     runID,
 				Issue:     num,
 				IssueRef:  issueRef(num),
 				Payload:   queuedPayload,
-			})
+			}); err != nil {
+				queueWriteFailed = true
+				fmt.Fprintf(o.errorLog, "persist admission ownership for run %s: %v\n", runID, err)
+			}
 		}
-		go func(idx, issueNum int, blockers []int, turn int, runID string) {
+		go func(idx, issueNum int, blockers []int, turn int, runID string, queueWriteFailed bool) {
 			defer wg.Done()
 			defer close(completed[issueNum])
 			defer quotaGate.retire(issueNum)
@@ -1814,7 +1836,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				mu.Unlock()
 				return
 			}
-			if recoveryRejected[issueNum] {
+			if recoveryRejected[issueNum] || queueWriteFailed {
 				o.logAborted(issueNum, runID, nil)
 				mu.Lock()
 				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted"}
@@ -1882,7 +1904,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				}
 				record := daemon.RunWait{Protocol: "run-wait/v1", RunID: runID, BatchID: initialBatchID, Issue: issueNum, Branch: req.Branches[issueNum], BaseBranch: initialBaseBranch, InitialAdmission: true, AdmissionMode: int(req.IssueMode(issueNum)), Dependencies: append([]int(nil), blockers...), ReuseSession: req.ReuseSession[issueNum], Ready: true, OperationID: "admission", PreviousRunID: req.PreviousRunIDs[issueNum], PreviousBatchID: req.PreviousRunBatchIDs[issueNum]}
 				var err error
-				initialOwner, err = newWaitOwner(layout.BatchDir(initialBatchID), record, time.Now, o.eventLog)
+				initialOwner, err = newWaitOwner(layout.BatchDir(initialBatchID), record, recoveryNow, o.eventLog, ownerPulse(runID))
 				if err != nil {
 					o.logAborted(issueNum, runID, nil)
 					mu.Lock()
@@ -1892,8 +1914,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					mu.Unlock()
 					return
 				}
+				trackWaitOwner(initialOwner)
 				defer func() {
-					if initialOwner != nil {
+					if initialOwner != nil && events.RunStatusFromPayload(results[idx].Status).IsTerminal() {
 						initialOwner.close()
 					}
 				}()
@@ -2096,7 +2119,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				ownerRecord = recovery
 				ownerRecord.BatchID = waitBatchID
 			}
-			owner, ownerErr := newWaitOwner(layout.BatchDir(waitBatchID), ownerRecord, clock, o.eventLog)
+			owner, ownerErr := newWaitOwner(layout.BatchDir(waitBatchID), ownerRecord, clock, o.eventLog, ownerPulse(runID))
 			if ownerErr != nil {
 				o.logAborted(issueNum, runID, nil)
 				mu.Lock()
@@ -2106,7 +2129,12 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				mu.Unlock()
 				return
 			}
-			defer owner.close()
+			trackWaitOwner(owner)
+			defer func() {
+				if events.RunStatusFromPayload(results[idx].Status).IsTerminal() {
+					owner.close()
+				}
+			}()
 			if initialOwner != nil {
 				initialOwner.close()
 				initialOwner = nil
@@ -2145,6 +2173,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					status, extras, handled := executor.observeLifecycle(issueCtx, row)
 					if handled && (status == "success" || extras["reason"] == "PULL_REQUEST_CLOSED" || extras["completion"] != nil) {
 						res = executor.finishObserved(issueCtx, row, status, extras)
+						res.UsageLimitReached = true
 						quotaGate.report(issueNum, res, true)
 						break
 					}
@@ -2340,6 +2369,17 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				} else {
 					startGate.ReleaseWithoutDelay()
 				}
+				if res.Status == "await" && !o.runSessionOpts.releaseAwaitCapacity {
+					interval := awaitPollInterval(o.runSessionOpts, awaitPoll)
+					if res.UsageLimitReached {
+						row.UsageLimitProbe, row.UsageLimitDeadline = true, res.UsageLimitDeadline
+						interval = usageLimitPollInterval
+					}
+					if err := owner.checkpoint(row, false, interval); err != nil {
+						o.logAborted(issueNum, runID, nil)
+						res.Status = "aborted"
+					}
+				}
 				if res.Status != "await" || !o.runSessionOpts.releaseAwaitCapacity {
 					break
 				}
@@ -2402,7 +2442,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				abortedCount++
 			}
 			mu.Unlock()
-		}(inputIndex[num], num, dependencies[num], turn, runID)
+		}(inputIndex[num], num, dependencies[num], turn, runID, queueWriteFailed)
 	}
 
 	wg.Wait()
@@ -2762,6 +2802,7 @@ func expandPath(path string) (string, error) {
 // pointer to a value type, update runSingle / runPromptOnlySingle to share it
 // explicitly — otherwise serialisation will silently break.
 type runSessionOptions struct {
+	waitOwnerPulse             func(string) <-chan time.Time
 	now                        func() time.Time
 	baseBranchSync             func(repoPath, sourceBranch string) error
 	baseBranchSyncMu           *sync.Mutex

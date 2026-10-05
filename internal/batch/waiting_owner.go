@@ -22,20 +22,26 @@ type waitOwner struct {
 	stopOnce sync.Once
 }
 
-func newWaitOwner(batchDir string, record daemon.RunWait, now func() time.Time, log events.EventLog) (*waitOwner, error) {
+func newWaitOwner(batchDir string, record daemon.RunWait, now func() time.Time, log events.EventLog, pulse ...<-chan time.Time) (*waitOwner, error) {
 	if err := daemon.RenewRunWait(batchDir, record, now()); err != nil {
 		return nil, err
 	}
 	owner := &waitOwner{batchDir: batchDir, record: record, now: now, log: log, done: make(chan struct{}), stopped: make(chan struct{})}
 	go func() {
 		defer close(owner.stopped)
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
+		var ticks <-chan time.Time
+		if len(pulse) > 0 && pulse[0] != nil {
+			ticks = pulse[0]
+		} else {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			ticks = ticker.C
+		}
 		for {
 			select {
 			case <-owner.done:
 				return
-			case <-ticker.C:
+			case <-ticks:
 				owner.mu.Lock()
 				_ = daemon.RenewRunWait(owner.batchDir, owner.record, owner.now())
 				owner.mu.Unlock()

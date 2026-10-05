@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -149,6 +150,184 @@ func TestReadyHandoffRecoveryUsesRenewedCurrentBatch(t *testing.T) {
 	}
 }
 
+func TestProductionReadyTakeoverPublishesOwnerBeforeAdmission(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	initGitRepo(t, root)
+	layout := paths.NewLayout(nil, root)
+	now := time.Now().UTC()
+	log := &spyEventLog{events: readyContinuationEvents("ready", "old", now.Add(-time.Minute), now.Add(-30*time.Second), now)}
+	if err := daemon.RenewRunWait(layout.BatchDir("old"), daemon.RunWait{Protocol: "run-wait/v1", RunID: "ready", BatchID: "old", Issue: 42, Branch: "42-fix", BaseBranch: "main", Ready: true, OperationID: "capacity"}, now); err != nil {
+		t.Fatal(err)
+	}
+	task := filepath.Join(layout.WorktreeDir, "42-fix", ".sandman", "task.md")
+	if err := os.MkdirAll(filepath.Dir(task), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(task, []byte("# Task\nPreserved work\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request := Request{Issues: []int{43}, RunTS: "261004120000", RunShortID: "owner", Parallel: 1, Branches: map[int]string{43: "43-busy"}}
+	if err := ApplyReadyContinuations(&request, FindReadyContinuations(log.snapshot(), layout), layout, 1800); err != nil {
+		t.Fatal(err)
+	}
+	client := &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}, 43: {Number: 43, State: "closed"}}, prs: map[string]*github.PR{
+		"42-fix": {Number: 17, State: "open", HeadRefName: "42-fix", HeadRefOid: "head", StatusCheckRollup: "failure"}, "43-busy": {Number: 18, State: "closed", Merged: true, HeadRefName: "43-busy", Body: "Closes #43"},
+	}}
+	factory := &readyRecoveryRunnableFactory{busyStarted: make(chan struct{}), allowBusyFinish: make(chan struct{})}
+	queued := make(chan struct{})
+	var once sync.Once
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"test": {Command: "true"}}}}, log,
+		WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(reviewWaitSchedulerSandboxFactory{}), WithRunSessionOpts(runSessionOptions{currentHead: func(string) (string, error) { return "head", nil }, startWaiterQueued: func(priority bool) {
+			if priority {
+				once.Do(func() { close(queued) })
+			}
+		}}))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { defer close(done); _, _ = o.RunBatch(ctx, request) }()
+	select {
+	case <-queued:
+	case <-time.After(3 * time.Second):
+		cancel()
+		t.Fatal("ready takeover did not reach occupied admission")
+	}
+	select {
+	case <-factory.busyStarted:
+	case <-time.After(3 * time.Second):
+		cancel()
+		t.Fatal("ordinary row did not occupy admission")
+	}
+	states, err := events.ReadRunStates(log)
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	if state := states["ready"]; state.BatchID() != issueBatchIDForRequest(request) || state.Status() != "waiting" {
+		cancel()
+		t.Fatalf("production takeover failed to publish current ownership: %+v", state)
+	}
+	if starts := factory.startsSnapshot(); !equalPriorityInts(starts, []int{43}) {
+		cancel()
+		t.Fatalf("ready row executed before admission: %v", starts)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("cancelled takeover did not stop")
+	}
+}
+
+func TestRecoveryReconcilesChangedExternalOperation(t *testing.T) {
+	layout := paths.NewLayout(nil, t.TempDir())
+	now := time.Now().UTC()
+	record := daemon.RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "batch", Issue: 42, Branch: "42-fix", BaseBranch: "main", OperationID: "ci:old", OperationDeadline: now.Add(time.Minute)}
+	if err := daemon.RenewRunWait(layout.BatchDir("batch"), record, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name     string
+		payload  map[string]any
+		probe    bool
+		deadline time.Time
+	}{
+		{"quota", map[string]any{"await_reason": "usage-limit", "usage_limit_deadline_unix_seconds": now.Add(5 * time.Hour).Unix()}, true, now.Add(5 * time.Hour).Truncate(time.Second)},
+		{"review", map[string]any{"review_request": map[string]any{"deadline_unix_seconds": now.Add(30 * time.Minute).Unix()}}, false, now.Add(30 * time.Minute).Truncate(time.Second)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			log := []events.Event{{Type: "run.started", RunID: "row", Issue: 42, Timestamp: now.Add(-time.Minute), Payload: map[string]any{"batch_id": "batch", "branch": "42-fix"}}, {Type: "run.await", RunID: "row", Issue: 42, Timestamp: now, Payload: tc.payload}}
+			ready := FindReadyContinuations(log, layout)
+			if len(ready) != 1 || ready[0].Wait == nil || ready[0].Wait.UsageLimitProbe != tc.probe || !ready[0].Wait.OperationDeadline.Equal(tc.deadline) || ready[0].Wait.OperationID == record.OperationID || ready[0].Wait.LeaseExpiresAt.After(record.OperationDeadline) {
+				t.Fatalf("event-before-checkpoint retained obsolete operation: %+v", ready)
+			}
+		})
+	}
+}
+
+func TestReturnedWaitingIntentRenewsUntilBatchReleasesClaims(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	initGitRepo(t, root)
+	layout := paths.NewLayout(nil, root)
+	now := time.Now().UTC()
+	var clock atomic.Int64
+	clock.Store(now.UnixNano())
+	var pulseMu sync.Mutex
+	pulses := map[string]chan time.Time{}
+	log := &spyEventLog{}
+	client := &fakeGitHubClient{issues: map[int]*github.Issue{41: {Number: 41, State: "open"}, 42: {Number: 42, State: "open"}, 43: {Number: 43, State: "closed"}}, prs: map[string]*github.PR{
+		"42-parent": {Number: 17, State: "open", HeadRefName: "42-parent", HeadRefOid: "head", StatusCheckRollup: "pending"}, "43-busy": {Number: 18, State: "closed", Merged: true, HeadRefName: "43-busy", Body: "Closes #43"},
+	}}
+	factory := &readyRecoveryRunnableFactory{busyStarted: make(chan struct{}), allowBusyFinish: make(chan struct{})}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"test": {Command: "true"}}}}, log,
+		WithErrorLog(io.Discard), WithSandboxFactory(reviewWaitSchedulerSandboxFactory{}), WithRunnableFactory(factory), WithRunSessionOpts(runSessionOptions{currentHead: func(string) (string, error) { return "head", nil }, now: func() time.Time { return time.Unix(0, clock.Load()).UTC() }, waitOwnerPulse: func(id string) <-chan time.Time {
+			pulseMu.Lock()
+			defer pulseMu.Unlock()
+			ch := make(chan time.Time, 1)
+			pulses[id] = ch
+			return ch
+		}}))
+	request := Request{Issues: []int{42, 43, 41}, RunTS: "261004120000", RunShortID: "leases", Branches: map[int]string{42: "42-parent", 43: "43-busy", 41: "41-child"}, Dependencies: map[int][]int{41: {42}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { defer close(done); _, _ = o.RunBatch(ctx, request) }()
+	select {
+	case <-factory.busyStarted:
+	case <-time.After(3 * time.Second):
+		cancel()
+		t.Fatal("independent sibling did not start")
+	}
+	ids := []string{buildRunID(42, request.RunTS, request.RunShortID), buildRunID(41, request.RunTS, request.RunShortID)}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		pulseMu.Lock()
+		parent, child := pulses[ids[0]], pulses[ids[1]]
+		pulseMu.Unlock()
+		if parent != nil && child != nil && countEventsByType(log.snapshot(), "run.await") > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatal("returned waiting rows never established owner renewers")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	future := now.Add(6 * time.Minute)
+	clock.Store(future.UnixNano())
+	pulseMu.Lock()
+	for _, id := range ids {
+		pulses[id] <- future
+	}
+	pulseMu.Unlock()
+	deadline = time.Now().Add(3 * time.Second)
+	for {
+		valid := true
+		for _, id := range ids {
+			record, err := daemon.ReadRunWait(layout.BatchDir(issueBatchIDForRequest(request)), id)
+			if err != nil || !record.LeaseExpiresAt.After(future) {
+				valid = false
+			}
+		}
+		if valid {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatal("batch-owned returned intent lost renewal after original grace expired")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("batch cancellation did not stop lease owners")
+	}
+}
+
 func TestRecoverableWaitingAdmissionRequiresNoInventedTask(t *testing.T) {
 	root := t.TempDir()
 	layout := paths.NewLayout(nil, root)
@@ -182,7 +361,7 @@ func TestExternalWaitRehydratesWithinFixedGrace(t *testing.T) {
 	now := time.Now().UTC()
 	log := []events.Event{
 		{Type: "run.started", RunID: "waiting", Issue: 42, Timestamp: now.Add(-time.Minute), Payload: map[string]any{"batch_id": "old", "branch": "42-wait"}},
-		{Type: "run.await", RunID: "waiting", Issue: 42, Timestamp: now, Payload: map[string]any{"await_reason": "pending"}},
+		{Type: "run.await", RunID: "waiting", Issue: 42, Timestamp: now, Payload: map[string]any{"await_reason": "pending", "ci_wait": map[string]any{"deadline_unix_seconds": now.Add(time.Hour).Unix()}}},
 	}
 	if err := daemon.RenewRunWait(layout.BatchDir("old"), daemon.RunWait{
 		Protocol: "run-wait/v1", RunID: "waiting", BatchID: "old", Issue: 42, Branch: "42-wait", BaseBranch: "main",
@@ -372,7 +551,7 @@ func TestRecoveryRevalidatesTerminalityAndGraceUnderClaim(t *testing.T) {
 			}
 			log := &spyEventLog{events: []events.Event{{Type: kind, Timestamp: now, RunID: wait.RunID, Issue: 42, Payload: map[string]any{"batch_id": "old", "branch": wait.Branch, "base_branch": "main"}}}}
 			if !tc.initial {
-				_ = log.Log(events.Event{Type: "run.await", Timestamp: now, RunID: wait.RunID, Issue: 42, Payload: map[string]any{"reason": "usage-limit"}})
+				_ = log.Log(events.Event{Type: "run.await", Timestamp: now, RunID: wait.RunID, Issue: 42, Payload: map[string]any{"await_reason": "usage-limit", "usage_limit_deadline_unix_seconds": now.Add(5 * time.Hour).Unix()}})
 			}
 			if tc.legacy {
 				if err := logCapacityQueuedContinuation(log, wait.RunID, 42, "old", RowSpec{Branches: map[int]string{42: wait.Branch}, BaseBranch: "main"}, nil, "Legacy"); err != nil {
