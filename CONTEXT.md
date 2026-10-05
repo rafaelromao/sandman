@@ -193,7 +193,7 @@ The maximum number of ContainerSandboxes Sandman may create for one Batch. `max_
 _Avoid_: isolated container toggle, fixed pool size.
 
 **Event**:
-A single structured log entry in the append-only JSONL event log (`.sandman/events.jsonl`). Examples: `run.started`, `run.continued`, `run.queued`, `run.capacity_queued`, `run.blocked`, `run.warning`, `run.finished`, `run.aborted`. A `run.queued` event is a terminal placeholder emitted when an issue waits on blockers or initial batch capacity. A `run.capacity_queued` event is non-terminal: external work has resolved, but the implementation continuation is waiting for a scheduler slot and can be rehydrated after restart.
+A single structured log entry in the append-only JSONL event log (`.sandman/events.jsonl`). Examples: `run.started`, `run.continued`, `run.queued`, `run.capacity_queued`, `run.blocked`, `run.warning`, `run.finished`, `run.aborted`. An ordinary `run.queued` event records unfinished initial admission while an AgentRun waits on prerequisites or batch capacity; only explicitly tagged `terminal_placeholder` records describe terminal historical placeholders. A `run.capacity_queued` event records non-terminal readiness: a started continuation remains Waiting until admitted and may be rehydrated within the fixed recovery grace. See `docs/architecture/run-state-machine.md` for the transition and ownership contract.
 _Avoid_: Log line, record.
 
 **Aborted**:
