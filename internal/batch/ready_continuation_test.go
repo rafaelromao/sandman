@@ -106,13 +106,56 @@ func TestApplyReadyContinuationsDoesNotOverrideExplicitOverride(t *testing.T) {
 	}
 }
 
+func TestInitialContinuationRecoveryRetainsPreviousIdentity(t *testing.T) {
+	request := Request{}
+	wait := daemon.RunWait{InitialAdmission: true, AdmissionMode: int(ModeContinue), PreviousRunID: "previous", PreviousBatchID: "previous-batch", ReuseSession: true}
+	if err := ApplyReadyContinuations(&request, []ReadyContinuation{{IssueNumber: 42, RunID: "fresh-continuation", Branch: "42-fix", BaseBranch: "main", Wait: &wait}}, paths.NewLayout(nil, t.TempDir()), 1800); err != nil {
+		t.Fatal(err)
+	}
+	if request.RunIDs[42] != "fresh-continuation" || request.IssueMode(42) != ModeContinue || request.PreviousRunIDs[42] != "previous" || request.PreviousRunBatchIDs[42] != "previous-batch" || !request.ReuseSession[42] {
+		t.Fatalf("initial continuation lost its artifact handoff: %+v", request)
+	}
+}
+
+func TestReadyHandoffRecoveryUsesRenewedCurrentBatch(t *testing.T) {
+	layout := paths.NewLayout(nil, t.TempDir())
+	now := time.Now().UTC()
+	claim, err := daemon.ClaimRun(layout.SandmanDir, "row")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer claim.Close()
+	record := daemon.RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "old", Issue: 42, Branch: "42-fix", BaseBranch: "main", Ready: true, OperationID: "capacity"}
+	if err := daemon.RenewRunWait(layout.BatchDir("old"), record, now.Add(-10*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	moved, err := daemon.TransferRunWait(layout.BatchDir("old"), layout.BatchDir("new"), "row", now.Add(-9*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.RenewRunWait(layout.BatchDir("new"), moved, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := claim.Close(); err != nil {
+		t.Fatal(err)
+	}
+	log := &spyEventLog{events: []events.Event{{Type: "run.started", RunID: "row", Issue: 42, Timestamp: now.Add(-20 * time.Minute), Payload: map[string]any{"branch": "42-fix", "batch_id": "old"}}}}
+	if err := logCapacityQueuedContinuation(log, "row", 42, "new", RowSpec{Branches: map[int]string{42: "42-fix"}, BaseBranch: "main"}, nil, "Ready"); err != nil {
+		t.Fatal(err)
+	}
+	ready := FindReadyContinuations(log.snapshot(), layout)
+	if len(ready) != 1 || ready[0].BatchID != "new" || ready[0].Wait == nil || !ready[0].Wait.RecoverableAt(now) {
+		t.Fatalf("ready recovery selected obsolete expired owner: %+v", ready)
+	}
+}
+
 func TestRecoverableWaitingAdmissionRequiresNoInventedTask(t *testing.T) {
 	root := t.TempDir()
 	layout := paths.NewLayout(nil, root)
 	now := time.Now().UTC()
 	log := []events.Event{{Type: "run.queued", RunID: "initial", Issue: 42, Timestamp: now, Payload: map[string]any{"batch_id": "old"}}}
 	if err := daemon.RenewRunWait(layout.BatchDir("old"), daemon.RunWait{
-		Protocol: "run-wait/v1", RunID: "initial", BatchID: "old", Issue: 42, BaseBranch: "main", InitialAdmission: true, Ready: true, OperationID: "admission",
+		Protocol: "run-wait/v1", RunID: "initial", BatchID: "old", Issue: 42, BaseBranch: "main", InitialAdmission: true, Ready: true, OperationID: "admission", Dependencies: []int{43},
 	}, now); err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +167,7 @@ func TestRecoverableWaitingAdmissionRequiresNoInventedTask(t *testing.T) {
 	if err := ApplyReadyContinuations(&request, ready, layout, 1800); err != nil {
 		t.Fatal(err)
 	}
-	if request.IssueMode(42) != ModeFresh || request.RunIDs[42] != "initial" || len(request.TaskPrompts) != 0 {
+	if request.IssueMode(42) != ModeFresh || request.RunIDs[42] != "initial" || len(request.TaskPrompts) != 0 || !equalPriorityInts(request.Dependencies[42], []int{43}) {
 		t.Fatalf("initial admission invented continuation artifacts: %#v", request)
 	}
 	log = append(log, events.Event{Type: "run.aborted", RunID: "initial", Issue: 42, Timestamp: now.Add(time.Second)})
@@ -306,7 +349,8 @@ func TestRecoveryRevalidatesTerminalityAndGraceUnderClaim(t *testing.T) {
 	for _, tc := range []struct {
 		name                   string
 		initial, abort, expire bool
-	}{{"initial-abort-after-discovery", true, true, false}, {"external-abort-after-discovery", false, true, false}, {"grace-expires-after-discovery", true, false, true}} {
+		legacy                 bool
+	}{{"initial-abort-after-discovery", true, true, false, false}, {"external-abort-after-discovery", false, true, false, false}, {"grace-expires-after-discovery", true, false, true, false}, {"legacy-grace-expires-after-discovery", false, false, true, true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			t.Chdir(root)
@@ -317,6 +361,11 @@ func TestRecoveryRevalidatesTerminalityAndGraceUnderClaim(t *testing.T) {
 			if err := daemon.RenewRunWait(layout.BatchDir("old"), wait, now); err != nil {
 				t.Fatal(err)
 			}
+			if tc.legacy {
+				if err := os.Remove(filepath.Join(layout.BatchDir("old"), "runs", wait.RunID, "wait.json")); err != nil {
+					t.Fatal(err)
+				}
+			}
 			kind := "run.started"
 			if tc.initial {
 				kind = "run.queued"
@@ -324,6 +373,11 @@ func TestRecoveryRevalidatesTerminalityAndGraceUnderClaim(t *testing.T) {
 			log := &spyEventLog{events: []events.Event{{Type: kind, Timestamp: now, RunID: wait.RunID, Issue: 42, Payload: map[string]any{"batch_id": "old", "branch": wait.Branch, "base_branch": "main"}}}}
 			if !tc.initial {
 				_ = log.Log(events.Event{Type: "run.await", Timestamp: now, RunID: wait.RunID, Issue: 42, Payload: map[string]any{"reason": "usage-limit"}})
+			}
+			if tc.legacy {
+				if err := logCapacityQueuedContinuation(log, wait.RunID, 42, "old", RowSpec{Branches: map[int]string{42: wait.Branch}, BaseBranch: "main"}, nil, "Legacy"); err != nil {
+					t.Fatal(err)
+				}
 			}
 			ready := FindReadyContinuations(log.snapshot(), layout)
 			if len(ready) != 1 {
@@ -345,13 +399,17 @@ func TestRecoveryRevalidatesTerminalityAndGraceUnderClaim(t *testing.T) {
 			if tc.abort {
 				_ = log.Log(events.Event{Type: "run.aborted", Timestamp: now.Add(time.Second), RunID: wait.RunID, Issue: 42})
 			}
-			if tc.expire {
+			if tc.expire && !tc.legacy {
 				if err := daemon.RenewRunWait(layout.BatchDir("old"), wait, now.Add(-10*time.Minute)); err != nil {
 					t.Fatal(err)
 				}
 			}
 			factory := &controlledRunnableFactory{runnables: map[int]Runnable{}}
-			o := NewOrchestrator(&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test", Sandbox: "worktree", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test": {Command: "true"}}}}, log, WithErrorLog(io.Discard), WithRunnableFactory(factory))
+			opts := runSessionOptions{}
+			if tc.legacy {
+				opts.now = func() time.Time { return now.Add(10 * time.Minute) }
+			}
+			o := NewOrchestrator(&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test", Sandbox: "worktree", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test": {Command: "true"}}}}, log, WithErrorLog(io.Discard), WithRunnableFactory(factory), WithRunSessionOpts(opts))
 			result, err := o.RunBatch(context.Background(), req)
 			if result == nil || len(result.Runs) != 1 || result.Runs[0].Status != "aborted" || len(factory.created) != 0 {
 				t.Fatalf("recovery resurrected: result=%+v err=%v launches=%v", result, err, factory.created)

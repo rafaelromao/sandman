@@ -7,10 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
@@ -166,8 +168,20 @@ func TestWaitingContract_CancelledQuotaOwnerWakesSiblings(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- gate.wait(ctx) }()
 	gate.retire(42)
-	if err := <-done; err != nil {
-		t.Fatalf("cancelled quota owner stranded siblings: %v", err)
+	if err := <-done; !errors.Is(err, errQuotaUnavailable) {
+		t.Fatalf("cancelled quota owner must fail siblings without authorizing another launch: %v", err)
+	}
+}
+
+func TestWaitingContract_FailedQuotaProbeCannotReopenAdmission(t *testing.T) {
+	gate := newBatchQuotaGate()
+	gate.report(42, AgentRunResult{Status: "await", UsageLimitReached: true}, false)
+	gate.report(42, AgentRunResult{Status: "failure"}, true)
+	gate.retire(42)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := gate.wait(ctx); !errors.Is(err, errQuotaUnavailable) {
+		t.Fatalf("failed probe authorized unverified quota recovery: %v", err)
 	}
 }
 
@@ -187,6 +201,175 @@ func TestWaitingContract_ReviewerLaunchExhaustionIsRequestScoped(t *testing.T) {
 		if err != nil || exhausted != tc.want {
 			t.Fatalf("request %s/%s exhaustion=%v error=%v, want %v", tc.trigger, tc.head, exhausted, err, tc.want)
 		}
+	}
+}
+
+func TestWaitingContract_AdmissionToAwaitPreservesOperationAfterCrash(t *testing.T) {
+	root := t.TempDir()
+	layout := paths.NewLayout(nil, root)
+	now := time.Now().UTC()
+	log := &spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "row", Issue: 42, Timestamp: now.Add(-2 * time.Minute), Payload: map[string]any{"branch": "42-fix", "batch_id": "batch"}},
+		{Type: "run.capacity_queued", RunID: "row", Issue: 42, Timestamp: now.Add(-time.Minute), Payload: map[string]any{"ready_continuation": true, "branch": "42-fix", "base_branch": "main", "batch_id": "batch"}},
+	}}
+	claim, err := daemon.ClaimRun(layout.SandmanDir, "row")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer claim.Close()
+	owner, err := newWaitOwner(layout.BatchDir("batch"), daemon.RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "batch", Issue: 42, Branch: "42-fix", BaseBranch: "main", Ready: true, OperationID: "capacity"}, func() time.Time { return now }, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.close()
+	e := &runExecutor{deps: runDeps{eventLog: log, layout: layout, runSessionOpts: runSessionOptions{now: func() time.Time { return now }}}}
+	row := RowSpec{RunID: "row", IssueNumber: 42, BatchID: "batch", BaseBranch: "main", Branches: map[int]string{42: "42-fix"}}
+	session := newRunSession(e, row)
+	evidence, err := session.ciWaitEvidence(root, &github.PR{Number: 17, HeadRefOid: "head"}, "head")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.persistObservedAwait(context.Background(), row, evidence); err != nil {
+		t.Fatal(err)
+	}
+	if err := owner.checkpoint(row, false, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	owner.close()
+	if err := claim.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ready := FindReadyContinuations(log.snapshot(), layout)
+	if len(ready) != 1 || ready[0].Wait == nil || ready[0].Wait.Ready || !ready[0].Wait.OperationDeadline.Equal(now.Add(30*time.Minute).Truncate(time.Second)) {
+		t.Fatalf("new CI operation lost across admission/crash: %+v", ready)
+	}
+	status, _, handled := session.priorObservation("row", "42-fix", "head")
+	if !handled || status != "await" {
+		t.Fatalf("established CI operation could not survive transient observation: %q handled=%v", status, handled)
+	}
+}
+
+type dependencyClosureClient struct {
+	*fakeGitHubClient
+	parentFinished atomic.Bool
+	closureState   string
+	closureError   bool
+}
+
+func (c *dependencyClosureClient) FetchIssue(ctx context.Context, issue int) (*github.Issue, error) {
+	if issue == 42 && c.parentFinished.Load() {
+		if c.closureError {
+			return nil, errors.New("dependency closure observation unavailable")
+		}
+		return &github.Issue{Number: 42, State: c.closureState}, nil
+	}
+	return c.fakeGitHubClient.FetchIssue(ctx, issue)
+}
+
+type dependencyClosureLog struct {
+	spyEventLog
+	parentFinished func()
+}
+
+func (l *dependencyClosureLog) Log(event events.Event) error {
+	err := l.spyEventLog.Log(event)
+	if err == nil && event.Issue == 42 && event.Type == "run.finished" && event.Payload["status"] == "success" {
+		l.parentFinished()
+	}
+	return err
+}
+
+func TestWaitingContract_DependencyAdmissionRequiresVerifiedClosure(t *testing.T) {
+	for _, tc := range []struct {
+		name, state string
+		readError   bool
+	}{{"unknown", "", false}, {"open", "open", false}, {"read-error", "closed", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Chdir(root)
+			initGitRepo(t, root)
+			client := &dependencyClosureClient{fakeGitHubClient: &fakeGitHubClient{
+				issues: map[int]*github.Issue{42: {Number: 42, State: "closed"}, 43: {Number: 43, State: "closed"}},
+				prs:    map[string]*github.PR{"42-parent": {Number: 17, State: "closed", Merged: true, HeadRefName: "42-parent", HeadRefOid: "head", Body: "Closes #42"}},
+			}, closureState: tc.state, closureError: tc.readError}
+			log := &dependencyClosureLog{parentFinished: func() { client.parentFinished.Store(true) }}
+			factory := &controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{Status: "success", Branch: "42-parent"}}, 43: &controlledRunnable{result: AgentRunResult{Status: "success"}}}}
+			o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"test": {Command: "true"}}}}, log,
+				WithErrorLog(io.Discard), WithSandboxFactory(reviewWaitSchedulerSandboxFactory{}), WithRunnableFactory(factory), WithRunSessionOpts(runSessionOptions{currentHead: func(string) (string, error) { return "head", nil }}))
+			result, err := o.RunBatch(context.Background(), Request{Issues: []int{42, 43}, Branches: map[int]string{42: "42-parent", 43: "43-child"}, Dependencies: map[int][]int{43: {42}}})
+			if err != nil || result == nil || len(result.Runs) != 2 || result.Runs[0].Status != "success" || result.Runs[1].Status != "blocked" || !equalPriorityInts(factory.created, []int{42}) {
+				t.Fatalf("unverified dependency closure admitted work: result=%+v err=%v launches=%v", result, err, factory.created)
+			}
+		})
+	}
+}
+
+func TestWaitingContract_DependentInitialAdmissionSurvivesReturnedAwait(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	initGitRepo(t, root)
+	cfg := &config.Config{Agent: "test", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"test": {Command: "true"}}}
+	parentTask := filepath.Join(root, cfg.WorktreeDir, "42-parent", ".sandman", "task.md")
+	if err := os.MkdirAll(filepath.Dir(parentTask), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(parentTask, []byte("# Task\nPreserved parent work\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client := &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}, 43: {Number: 43, State: "open"}}, prs: map[string]*github.PR{"42-parent": {Number: 17, State: "open", HeadRefName: "42-parent", HeadRefOid: "head", StatusCheckRollup: "pending"}}}
+	log := &spyEventLog{}
+	factory := &controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{Status: "success", Branch: "42-parent"}}, 43: &controlledRunnable{result: AgentRunResult{Status: "success"}}}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, log,
+		WithErrorLog(io.Discard), WithSandboxFactory(reviewWaitSchedulerSandboxFactory{}), WithRunnableFactory(factory), WithRunSessionOpts(runSessionOptions{currentHead: func(string) (string, error) { return "head", nil }}))
+	result, err := o.RunBatch(context.Background(), Request{Issues: []int{42, 43}, RunTS: "261004120000", RunShortID: "deps", Branches: map[int]string{42: "42-parent", 43: "43-child"}, Dependencies: map[int][]int{43: {42}}})
+	if err != nil || result == nil || result.Runs[0].Status != "await" || result.Runs[1].Status != "queued" || !equalPriorityInts(factory.created, []int{42}) {
+		t.Fatalf("unfinished parent admitted dependent: result=%+v err=%v launches=%v", result, err, factory.created)
+	}
+	ready := FindReadyContinuations(log.snapshot(), paths.NewLayout(cfg, root))
+	request := Request{}
+	if len(ready) != 2 {
+		t.Fatalf("returned await lost owned parent/dependent intent: %+v", ready)
+	}
+	if err := ApplyReadyContinuations(&request, ready, paths.NewLayout(cfg, root), 1800); err != nil {
+		t.Fatal(err)
+	}
+	if !equalPriorityInts(request.Dependencies[43], []int{42}) || request.IssueMode(43) != ModeFresh {
+		t.Fatalf("recovery lost initial dependency edge: %+v", request)
+	}
+}
+
+type cancelOnAwaitLog struct {
+	spyEventLog
+	cancel context.CancelFunc
+}
+
+func (l *cancelOnAwaitLog) Log(event events.Event) error {
+	err := l.spyEventLog.Log(event)
+	if event.Type == "run.await" {
+		l.cancel()
+	}
+	return err
+}
+
+func TestWaitingContract_LateBatchAbortRevokesReturnedAwait(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	initGitRepo(t, root)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	log := &cancelOnAwaitLog{cancel: cancel}
+	cfg := &config.Config{Agent: "test", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"test": {Command: "true"}}}
+	client := &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}, prs: map[string]*github.PR{"42-parent": {Number: 17, State: "open", HeadRefName: "42-parent", HeadRefOid: "head", StatusCheckRollup: "pending"}}}
+	factory := &controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success", Branch: "42-parent"}}}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, log,
+		WithErrorLog(io.Discard), WithSandboxFactory(reviewWaitSchedulerSandboxFactory{}), WithRunnableFactory(factory), WithRunSessionOpts(runSessionOptions{currentHead: func(string) (string, error) { return "head", nil }}))
+	result, _ := o.RunBatch(ctx, Request{Issues: []int{42}, RunTS: "261004120000", RunShortID: "late", Branches: map[int]string{42: "42-parent"}})
+	if result == nil || result.Runs[0].Status != "aborted" || countEventsByType(log.snapshot(), "run.retry") != 0 || !equalPriorityInts(factory.created, []int{42}) {
+		t.Fatalf("late cancellation retained await intent: result=%+v launches=%v events=%v", result, factory.created, log.snapshot())
+	}
+	states := events.ProjectRunStates(log.snapshot())
+	if len(states) != 1 || states[0].Status() != "aborted" || !states[0].IsTerminal() || len(FindReadyContinuations(log.snapshot(), paths.NewLayout(cfg, root))) != 0 {
+		t.Fatalf("explicit cancellation became recoverable ownerless work: %+v", states)
 	}
 }
 

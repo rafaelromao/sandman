@@ -66,12 +66,15 @@ type RunWait struct {
 	PreviousBatchID   string    `json:"previous_batch_id,omitempty"`
 	InitialAdmission  bool      `json:"initial_admission"`
 	AdmissionMode     int       `json:"admission_mode"`
+	Dependencies      []int     `json:"dependencies,omitempty"`
+	ReuseSession      bool      `json:"reuse_session,omitempty"`
 	Ready             bool      `json:"ready"`
 	UsageLimitProbe   bool      `json:"usage_limit_probe,omitempty"`
 	OperationID       string    `json:"operation_id"`
 	OperationDeadline time.Time `json:"operation_deadline,omitempty"`
 	LeaseExpiresAt    time.Time `json:"lease_expires_at"`
 	NextPollAt        time.Time `json:"next_poll_at,omitempty"`
+	RecoveryEventAt   time.Time `json:"-"` // event-only compatibility provenance
 }
 
 func (w RunWait) RecoverableAt(now time.Time) bool {
@@ -101,6 +104,11 @@ func validateRunWait(batchDir, runID string, record RunWait) error {
 	}
 	if !record.InitialAdmission && record.Branch == "" {
 		return fmt.Errorf("waiting continuation branch is invalid")
+	}
+	for _, issue := range record.Dependencies {
+		if issue <= 0 || issue == record.Issue {
+			return fmt.Errorf("waiting dependency identity is invalid")
+		}
 	}
 	return nil
 }

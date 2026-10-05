@@ -30,11 +30,15 @@ func (g *batchQuotaGate) paused() bool {
 }
 
 // A cancelled or otherwise terminal row no longer owns a recovery episode.
-// Retiring it wakes siblings without inventing a provider-quota failure.
+// Without another recovery owner, fail admission rather than infer quota reset.
 func (g *batchQuotaGate) retire(issue int) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	wasLimited := g.limited[issue]
 	delete(g.limited, issue)
+	if wasLimited && len(g.limited) == 0 {
+		g.failed = true
+	}
 	close(g.wake)
 	g.wake = make(chan struct{})
 }
@@ -43,14 +47,22 @@ func (g *batchQuotaGate) report(issue int, result AgentRunResult, wasProbe bool)
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	switch {
-	case result.Status == "success":
+	case result.Status == "aborted" && g.limited[issue]:
 		delete(g.limited, issue)
+		if len(g.limited) == 0 {
+			g.failed = true
+		}
+	case result.Status == "success" && !result.UsageLimitReached:
+		delete(g.limited, issue)
+	case result.Status == "success" && result.UsageLimitReached:
+		// Verified completion ends this row, not the provider outage.
+		g.limited[issue] = true
 	case result.UsageLimitReached && result.Status == "await":
 		g.limited[issue] = true
 	case result.UsageLimitReached && result.Status == "failure":
 		g.failed = true
 		delete(g.limited, issue)
-	case wasProbe && !result.UsageLimitReached:
+	case wasProbe && !result.UsageLimitReached && result.Status == "await":
 		delete(g.limited, issue)
 	}
 	close(g.wake)

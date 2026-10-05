@@ -112,7 +112,8 @@ load_ci_budget() {
   fi
   jq -e --arg repository '<owner/repo>' --arg head "$head_sha" --argjson pr '<N>' \
     '.repository == $repository and .pr == $pr and .head == $head and
-     (.deadline | type == "number") and (.attempts | type == "number") and
+     (.deadline | type == "number") and .deadline > 0 and (.deadline | floor) == .deadline and
+     (.attempts | type == "number") and
      .attempts >= 0 and .attempts <= 3 and (.attempts | floor) == .attempts' "$ci_file" >/dev/null || return 1
   ci_deadline=$(jq -r .deadline "$ci_file")
   ci_fix_attempts=$(jq -r .attempts "$ci_file")

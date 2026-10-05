@@ -19,6 +19,7 @@ type waitOwner struct {
 	log      events.EventLog
 	done     chan struct{}
 	stopped  chan struct{}
+	stopOnce sync.Once
 }
 
 func newWaitOwner(batchDir string, record daemon.RunWait, now func() time.Time, log events.EventLog) (*waitOwner, error) {
@@ -57,6 +58,9 @@ func (o *waitOwner) checkpoint(row RowSpec, ready bool, nextPoll time.Duration) 
 	defer o.mu.Unlock()
 	record := o.record
 	record.InitialAdmission = !state.HasStarted()
+	if !record.InitialAdmission {
+		record.Dependencies = nil
+	}
 	record.Branch = state.Branch()
 	if record.Branch == "" {
 		record.Branch = row.Branches[row.IssueNumber]
@@ -96,6 +100,6 @@ func (o *waitOwner) close() {
 	if o == nil {
 		return
 	}
-	close(o.done)
+	o.stopOnce.Do(func() { close(o.done) })
 	<-o.stopped
 }

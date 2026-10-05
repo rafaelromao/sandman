@@ -35,6 +35,17 @@ func (c *reviewWaitSchedulerGitHubClient) FindPRByBranch(ctx context.Context, br
 	return &prSnapshot, nil
 }
 
+func (c *reviewWaitSchedulerGitHubClient) FetchIssue(ctx context.Context, number int) (*github.Issue, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	issue, err := c.fakeGitHubClient.FetchIssue(ctx, number)
+	if issue == nil || err != nil {
+		return issue, err
+	}
+	snapshot := *issue
+	return &snapshot, nil
+}
+
 func (c *reviewWaitSchedulerGitHubClient) ListPRComments(context.Context, int) ([]github.PRComment, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -163,6 +174,9 @@ func TestRunBatch_ReadyAwaitedRowPrecedesQueuedIndependentWork(t *testing.T) {
 		onFinish: func(issue, launches int) {
 			if issue == 1 && launches == 2 {
 				client.setPR("1-awaited", func(pr *github.PR) { pr.State, pr.Merged = "merged", true })
+				client.mu.Lock()
+				client.issues[1].State = "closed"
+				client.mu.Unlock()
 			}
 		},
 	}

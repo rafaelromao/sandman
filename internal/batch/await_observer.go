@@ -48,6 +48,18 @@ func (e *runExecutor) observeLifecycle(ctx context.Context, row RowSpec) (string
 	return session.handleLifecycleDecision(ctx, workDir, branch, session.runLogPathFor(runID), runID, true)
 }
 
+func (e *runExecutor) persistObservedAwait(ctx context.Context, row RowSpec, extras map[string]any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if e.deps.eventLog == nil {
+		return nil
+	}
+	payload := cloneLifecycleExtras(extras)
+	payload["await"], payload["branch"], payload["base_branch"], payload["batch_id"] = true, row.Branches[row.IssueNumber], row.BaseBranch, row.BatchID
+	return e.deps.eventLog.Log(events.Event{Type: "run.await", Timestamp: newRunSession(e, row).runtimeNow(), RunID: row.RunID, Issue: row.IssueNumber, IssueRef: issueRef(row.IssueNumber), Payload: payload})
+}
+
 func (s *runSession) issueRunID() string {
 	if s.runID == "" {
 		s.runID = buildRunID(s.issueNumber, s.runTS, s.runShortID)

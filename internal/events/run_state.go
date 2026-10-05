@@ -17,6 +17,9 @@ type RunState struct {
 	// included in elapsed duration.
 	activeDuration time.Duration
 	activeSince    time.Time
+	// ownerBatchID is folded from accepted lifecycle evidence in append order.
+	// Terminal observation retains ownership without starting a new time segment.
+	ownerBatchID string
 	// AwaitEvent records the most recent run.await event for a run that
 	// is awaiting external progress (CI, review, decision publication).
 	// When set, the run is active (Finished is nil) and the event's
@@ -175,6 +178,12 @@ func ProjectRunStates(events []Event) []RunState {
 			}
 			state.awaiting = false
 			state.capacityQueued = false
+		}
+		switch event.Type {
+		case "run.started", "run.continued", "run.queued", "run.await", "run.capacity_queued", "run.blocked", "run.finished", "run.aborted", "run.cancelled":
+			if id, ok := payloadString(event.Payload, "batch_id"); ok && id != "" {
+				state.ownerBatchID = id
+			}
 		}
 	}
 
@@ -369,8 +378,11 @@ func (r RunState) Branch() string {
 	return ""
 }
 
-// BatchID returns the batch identifier from the started event payload.
+// BatchID returns the current event-derived owner, including slot-free finishes.
 func (r RunState) BatchID() string {
+	if r.ownerBatchID != "" {
+		return r.ownerBatchID
+	}
 	if r.IsCapacityQueued() && r.CapacityQueuedEvent != nil {
 		if id, ok := payloadString(r.CapacityQueuedEvent.Payload, "batch_id"); ok && id != "" {
 			return id
