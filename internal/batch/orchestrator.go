@@ -2069,7 +2069,16 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				if !recovery.Ready && claimedStates[runID].AwaitEvent != nil && o.eventLog != nil {
 					payload := cloneLifecycleExtras(claimedStates[runID].AwaitEvent.Payload)
 					payload["batch_id"], payload["recovered"] = issueBatchID, true
-					_ = o.eventLog.Log(events.Event{Type: "run.await", Timestamp: time.Now().UTC(), RunID: runID, Issue: issueNum, IssueRef: issueRef(issueNum), Payload: payload})
+					if err := o.eventLog.Log(events.Event{Type: "run.await", Timestamp: time.Now().UTC(), RunID: runID, Issue: issueNum, IssueRef: issueRef(issueNum), Payload: payload}); err != nil {
+						fmt.Fprintf(o.errorLog, "persist recovered wait ownership for run %s: %v\n", runID, err)
+						o.logAborted(issueNum, runID, nil)
+						mu.Lock()
+						results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted"}
+						statuses[issueNum] = "aborted"
+						abortedCount++
+						mu.Unlock()
+						return
+					}
 				}
 			}
 			bc := BatchConfig{

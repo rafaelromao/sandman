@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -325,6 +326,47 @@ func TestReturnedWaitingIntentRenewsUntilBatchReleasesClaims(t *testing.T) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("batch cancellation did not stop lease owners")
+	}
+}
+
+type failedRecoveredAwaitLog struct{ spyEventLog }
+
+func (l *failedRecoveredAwaitLog) Log(event events.Event) error {
+	if event.Type == "run.await" && event.Payload["recovered"] == true {
+		return errors.New("recovered ownership append unavailable")
+	}
+	return l.spyEventLog.Log(event)
+}
+
+func TestExternalWaitTakeoverRejectsOwnershipAppendFailure(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	initGitRepo(t, root)
+	layout := paths.NewLayout(nil, root)
+	now := time.Now().UTC()
+	log := &failedRecoveredAwaitLog{spyEventLog: spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "row", Issue: 42, Timestamp: now.Add(-time.Minute), Payload: map[string]any{"batch_id": "old", "branch": "42-fix"}},
+		{Type: "run.await", RunID: "row", Issue: 42, Timestamp: now, Payload: map[string]any{"ci_wait": map[string]any{"deadline_unix_seconds": now.Add(30 * time.Minute).Unix()}}},
+	}}}
+	if err := daemon.RenewRunWait(layout.BatchDir("old"), daemon.RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "old", Issue: 42, Branch: "42-fix", BaseBranch: "main", OperationID: "ci:old", OperationDeadline: now.Add(30 * time.Minute)}, now); err != nil {
+		t.Fatal(err)
+	}
+	task := filepath.Join(layout.WorktreeDir, "42-fix", ".sandman", "task.md")
+	if err := os.MkdirAll(filepath.Dir(task), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(task, []byte("# Task\nPreserved work\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request := Request{RunTS: "261004120000", RunShortID: "append"}
+	if err := ApplyReadyContinuations(&request, FindReadyContinuations(log.snapshot(), layout), layout, 1800); err != nil {
+		t.Fatal(err)
+	}
+	factory := &controlledRunnableFactory{runnables: map[int]Runnable{}}
+	o := NewOrchestrator(&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"test": {Command: "true"}}}}, log, WithErrorLog(io.Discard), WithRunnableFactory(factory))
+	result, _ := o.RunBatch(context.Background(), request)
+	if result == nil || len(result.Runs) != 1 || result.Runs[0].Status != "aborted" || len(factory.created) != 0 || len(FindReadyContinuations(log.snapshot(), layout)) != 0 {
+		t.Fatalf("failed ownership publication admitted execution: result=%+v launches=%v events=%v", result, factory.created, log.snapshot())
 	}
 }
 
