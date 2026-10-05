@@ -8,9 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/paths"
+	"golang.org/x/sys/unix"
 )
 
 var errRemediationBudgetExhausted = errors.New("durable remediation budget exhausted")
@@ -50,21 +52,23 @@ func (s *runSession) reserveRemediation(ctx context.Context, workDir string, ext
 	switch gate {
 	case "ci-failure", "merge-conflict", gateCIWaitTimeout:
 		path := filepath.Join(paths.NewLayout(nil, workDir).StateDir, fmt.Sprintf("%d.ci_wait.json", prNumber))
-		registration, err := readCIWaitRegistration(path)
-		if err != nil {
-			return err
-		}
-		if _, err := ciWaitEvidenceFromRegistration(registration, int(prNumber)); err != nil || !strings.EqualFold(registration.HeadSHA, head) {
-			return fmt.Errorf("CI remediation identity is invalid")
-		}
-		if registration.RemediationAttempts >= s.resumeCapFor() {
-			return errRemediationBudgetExhausted
-		}
-		registration.RemediationAttempts++
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		return atomicfs.WriteAtomicJSON(path, registration, 0o600)
+		return withRemediationLock(ctx, path, func() error {
+			registration, err := readCIWaitRegistration(path)
+			if err != nil {
+				return err
+			}
+			if _, err := ciWaitEvidenceFromRegistration(registration, int(prNumber)); err != nil || !strings.EqualFold(registration.HeadSHA, head) {
+				return fmt.Errorf("CI remediation identity is invalid")
+			}
+			if registration.RemediationAttempts >= s.resumeCapFor() {
+				return errRemediationBudgetExhausted
+			}
+			registration.RemediationAttempts++
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return atomicfs.WriteAtomicJSON(path, registration, 0o600)
+		})
 	case gatePRHeadChanged:
 		scope = "head-reconciliation"
 	default:
@@ -75,33 +79,71 @@ func (s *runSession) reserveRemediation(ctx context.Context, workDir string, ext
 		}
 	}
 	path := filepath.Join(paths.NewLayout(nil, workDir).StateDir, fmt.Sprintf("%d.lifecycle-budget.json", prNumber))
-	var budget remediationBudget
-	data, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if err == nil {
-		if err := json.Unmarshal(data, &budget); err != nil || budget.Protocol != "lifecycle-budget/v1" || budget.PullRequest != int(prNumber) || budget.Attempts == nil {
-			return fmt.Errorf("remediation budget state is invalid")
+	return withRemediationLock(ctx, path, func() error {
+		var budget remediationBudget
+		data, err := os.ReadFile(path)
+		if err != nil && !os.IsNotExist(err) {
+			return err
 		}
-	}
-	if os.IsNotExist(err) || !strings.EqualFold(budget.HeadSHA, head) {
-		budget = remediationBudget{Protocol: "lifecycle-budget/v1", PullRequest: int(prNumber), HeadSHA: head, Attempts: map[string]int{}}
-	}
-	if budget.Attempts[scope] >= s.resumeCapFor() {
-		return errRemediationBudgetExhausted
-	}
-	if budget.Attempts[scope] < 0 {
-		return fmt.Errorf("remediation attempt count is invalid")
-	}
-	budget.Attempts[scope]++
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
+		if err == nil {
+			if err := json.Unmarshal(data, &budget); err != nil || budget.Protocol != "lifecycle-budget/v1" || budget.PullRequest != int(prNumber) || budget.Attempts == nil {
+				return fmt.Errorf("remediation budget state is invalid")
+			}
+		}
+		if os.IsNotExist(err) || !strings.EqualFold(budget.HeadSHA, head) {
+			budget = remediationBudget{Protocol: "lifecycle-budget/v1", PullRequest: int(prNumber), HeadSHA: head, Attempts: map[string]int{}}
+		}
+		if budget.Attempts[scope] >= s.resumeCapFor() {
+			return errRemediationBudgetExhausted
+		}
+		if budget.Attempts[scope] < 0 {
+			return fmt.Errorf("remediation attempt count is invalid")
+		}
+		budget.Attempts[scope]++
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return atomicfs.WriteAtomicJSON(path, budget, 0o600)
+	})
+}
+
+// Keep a stable lock inode separate from the atomically replaced state file.
+// Cancellation while another process owns it must not reserve a repair attempt.
+func withRemediationLock(ctx context.Context, path string, fn func() error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return atomicfs.WriteAtomicJSON(path, budget, 0o600)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	for {
+		err := unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		if err == nil {
+			defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return fn()
+		}
+		if !errors.Is(err, unix.EWOULDBLOCK) {
+			return err
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 func remediationNumber(value any) int {

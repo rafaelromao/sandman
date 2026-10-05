@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -36,28 +37,33 @@ func (s *runSession) ciWaitEvidence(workDir string, pr *github.PR, headSHA strin
 		return nil, nil
 	}
 	path := filepath.Join(paths.NewLayout(nil, workDir).StateDir, fmt.Sprintf("%d.ci_wait.json", pr.Number))
-	registration, err := readCIWaitRegistration(path)
-	if err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("read CI wait state: %w", err)
-	}
-	if os.IsNotExist(err) || !strings.EqualFold(registration.HeadSHA, headSHA) {
-		now := s.runtimeNow()
-		registration = ciWaitRegistration{
-			Protocol:             ciWaitProtocol,
-			PullRequest:          pr.Number,
-			HeadSHA:              headSHA,
-			StartedUnixSeconds:   now.Unix(),
-			DeadlineUnixSeconds:  now.Add(ciWaitTimeout).Unix(),
-			EffectiveTimeoutSecs: int64(ciWaitTimeout / time.Second),
+	var evidence map[string]any
+	err := withRemediationLock(context.Background(), path, func() error {
+		registration, err := readCIWaitRegistration(path)
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("read CI wait state: %w", err)
 		}
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return nil, fmt.Errorf("create CI wait state directory: %w", err)
+		if os.IsNotExist(err) || !strings.EqualFold(registration.HeadSHA, headSHA) {
+			now := s.runtimeNow()
+			registration = ciWaitRegistration{
+				Protocol:             ciWaitProtocol,
+				PullRequest:          pr.Number,
+				HeadSHA:              headSHA,
+				StartedUnixSeconds:   now.Unix(),
+				DeadlineUnixSeconds:  now.Add(ciWaitTimeout).Unix(),
+				EffectiveTimeoutSecs: int64(ciWaitTimeout / time.Second),
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				return fmt.Errorf("create CI wait state directory: %w", err)
+			}
+			if err := atomicfs.WriteAtomicJSON(path, registration, 0o600); err != nil {
+				return fmt.Errorf("write CI wait state: %w", err)
+			}
 		}
-		if err := atomicfs.WriteAtomicJSON(path, registration, 0o600); err != nil {
-			return nil, fmt.Errorf("write CI wait state: %w", err)
-		}
-	}
-	return ciWaitEvidenceFromRegistration(registration, pr.Number)
+		evidence, err = ciWaitEvidenceFromRegistration(registration, pr.Number)
+		return err
+	})
+	return evidence, err
 }
 
 func ciWaitEvidenceFromRegistration(registration ciWaitRegistration, prNumber int) (map[string]any, error) {
