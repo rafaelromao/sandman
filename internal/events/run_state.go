@@ -77,6 +77,9 @@ func ProjectRunStates(events []Event) []RunState {
 		state := getOrCreate(event.RunID)
 		switch event.Type {
 		case "run.started":
+			if state.IsTerminal() {
+				continue
+			}
 			state.accumulateActiveUntil(event.Timestamp)
 			state.Started = event
 			state.Finished = nil
@@ -84,6 +87,9 @@ func ProjectRunStates(events []Event) []RunState {
 			state.capacityQueued = false
 			state.activeSince = event.Timestamp
 		case "run.continued":
+			if state.IsTerminal() {
+				continue
+			}
 			// RunID, not batch ownership, identifies the execution clock.
 			// Paused segments are already closed and cannot count as active time.
 			state.accumulateActiveUntil(event.Timestamp)
