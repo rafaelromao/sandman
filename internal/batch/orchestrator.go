@@ -1851,6 +1851,24 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			coord.registerIssueCancel(issueNum, issueCancel)
 			defer coord.unregisterIssueCancel(issueNum)
 			defer issueCancel()
+			leaseFailure := func(err error) {
+				fmt.Fprintf(o.errorLog, "renew ownership for run %s: %v; aborting owned intent\n", runID, err)
+				issueCancel()
+				mu.Lock()
+				defer mu.Unlock()
+				// Active execution consumes cancellation through its ordinary abort
+				// path. Returned unfinished rows still belong to this batch.
+				if results[idx].Status != "" && !events.RunStatusFromPayload(results[idx].Status).IsTerminal() {
+					o.logAborted(issueNum, runID, nil)
+					results[idx].Status, statuses[issueNum] = "aborted", "aborted"
+					abortedCount++
+				}
+			}
+			rowTerminal := func() bool {
+				mu.Lock()
+				defer mu.Unlock()
+				return events.RunStatusFromPayload(results[idx].Status).IsTerminal()
+			}
 
 			// parentCtx is the RunBatch ctx — it is only
 			// cancelled by an external abort (e.g. parent ctx
@@ -1904,7 +1922,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				}
 				record := daemon.RunWait{Protocol: "run-wait/v1", RunID: runID, BatchID: initialBatchID, Issue: issueNum, Branch: req.Branches[issueNum], BaseBranch: initialBaseBranch, InitialAdmission: true, AdmissionMode: int(req.IssueMode(issueNum)), Dependencies: append([]int(nil), blockers...), ReuseSession: req.ReuseSession[issueNum], Ready: true, OperationID: "admission", PreviousRunID: req.PreviousRunIDs[issueNum], PreviousBatchID: req.PreviousRunBatchIDs[issueNum]}
 				var err error
-				initialOwner, err = newWaitOwner(layout.BatchDir(initialBatchID), record, recoveryNow, o.eventLog, ownerPulse(runID))
+				initialOwner, err = newWaitOwnerWithFailure(layout.BatchDir(initialBatchID), record, recoveryNow, o.eventLog, ownerPulse(runID), leaseFailure)
 				if err != nil {
 					o.logAborted(issueNum, runID, nil)
 					mu.Lock()
@@ -1916,7 +1934,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				}
 				trackWaitOwner(initialOwner)
 				defer func() {
-					if initialOwner != nil && events.RunStatusFromPayload(results[idx].Status).IsTerminal() {
+					if initialOwner != nil && rowTerminal() {
 						initialOwner.close()
 					}
 				}()
@@ -2128,7 +2146,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				ownerRecord = recovery
 				ownerRecord.BatchID = waitBatchID
 			}
-			owner, ownerErr := newWaitOwner(layout.BatchDir(waitBatchID), ownerRecord, clock, o.eventLog, ownerPulse(runID))
+			owner, ownerErr := newWaitOwnerWithFailure(layout.BatchDir(waitBatchID), ownerRecord, clock, o.eventLog, ownerPulse(runID), leaseFailure)
 			if ownerErr != nil {
 				o.logAborted(issueNum, runID, nil)
 				mu.Lock()
@@ -2140,7 +2158,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			}
 			trackWaitOwner(owner)
 			defer func() {
-				if events.RunStatusFromPayload(results[idx].Status).IsTerminal() {
+				if rowTerminal() {
 					owner.close()
 				}
 			}()
@@ -2440,6 +2458,10 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				continue
 			}
 			mu.Lock()
+			if issueCtx.Err() != nil && !events.RunStatusFromPayload(res.Status).IsTerminal() {
+				o.logAborted(issueNum, runID, nil)
+				res.Status = "aborted"
+			}
 			results[idx] = res
 			statuses[issueNum] = res.Status
 			resStatus := events.RunStatusFromPayload(res.Status)

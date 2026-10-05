@@ -23,6 +23,14 @@ type waitOwner struct {
 }
 
 func newWaitOwner(batchDir string, record daemon.RunWait, now func() time.Time, log events.EventLog, pulse ...<-chan time.Time) (*waitOwner, error) {
+	var ticks <-chan time.Time
+	if len(pulse) > 0 {
+		ticks = pulse[0]
+	}
+	return newWaitOwnerWithFailure(batchDir, record, now, log, ticks, nil)
+}
+
+func newWaitOwnerWithFailure(batchDir string, record daemon.RunWait, now func() time.Time, log events.EventLog, pulse <-chan time.Time, onFailure func(error)) (*waitOwner, error) {
 	if err := daemon.RenewRunWait(batchDir, record, now()); err != nil {
 		return nil, err
 	}
@@ -30,8 +38,8 @@ func newWaitOwner(batchDir string, record daemon.RunWait, now func() time.Time, 
 	go func() {
 		defer close(owner.stopped)
 		var ticks <-chan time.Time
-		if len(pulse) > 0 && pulse[0] != nil {
-			ticks = pulse[0]
+		if pulse != nil {
+			ticks = pulse
 		} else {
 			ticker := time.NewTicker(30 * time.Second)
 			defer ticker.Stop()
@@ -43,8 +51,14 @@ func newWaitOwner(batchDir string, record daemon.RunWait, now func() time.Time, 
 				return
 			case <-ticks:
 				owner.mu.Lock()
-				_ = daemon.RenewRunWait(owner.batchDir, owner.record, owner.now())
+				err := daemon.RenewRunWait(owner.batchDir, owner.record, owner.now())
 				owner.mu.Unlock()
+				if err != nil {
+					if onFailure != nil {
+						onFailure(err)
+					}
+					return
+				}
 			}
 		}
 	}()

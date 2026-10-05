@@ -204,6 +204,55 @@ func TestWaitingOwnerNilLogPreservesQuotaSchedule(t *testing.T) {
 	}
 }
 
+func TestWaitingContract_RenewalFailureStopsActiveExecution(t *testing.T) {
+	root := testenv.MkdirShort(t, "sm-renew-fail-")
+	t.Chdir(root)
+	initGitRepo(t, root)
+	started := make(chan struct{})
+	stopped := make(chan struct{})
+	pulse := make(chan time.Time, 1)
+	log := &spyEventLog{}
+	factory := &controlledRunnableFactory{runnables: map[int]Runnable{42: waitingRunnableFunction(func(ctx context.Context) AgentRunResult {
+		close(started)
+		<-ctx.Done()
+		close(stopped)
+		return AgentRunResult{IssueNumber: 42, Status: "aborted", Branch: "42-work"}
+	})}}
+	cfg := &config.Config{Agent: "test", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"test": {Command: "true"}}}
+	o := NewOrchestrator(&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}}, &noopRenderer{}, &fakeConfigStore{config: cfg}, log, WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(reviewWaitSchedulerSandboxFactory{}), WithRunSessionOpts(runSessionOptions{waitOwnerPulse: func(string) <-chan time.Time { return pulse }}))
+	request := Request{Issues: []int{42}, RunTS: "261005120000", RunShortID: "renew", Branches: map[int]string{42: "42-work"}}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan struct{})
+	var result *Result
+	go func() { defer close(done); result, _ = o.RunBatch(ctx, request) }()
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("agent did not start")
+	}
+	layout := paths.NewLayout(cfg, root)
+	path := filepath.Join(layout.StateDir, "waiting", buildRunID(42, request.RunTS, request.RunShortID)+".json")
+	if err := os.WriteFile(path, []byte("invalid ownership checkpoint"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pulse <- time.Now()
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("renewal failure did not cancel active execution")
+	}
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Fatal("renewal abort did not finish")
+	}
+	states := events.ProjectRunStates(log.snapshot())
+	if result == nil || result.Runs[0].Status != "aborted" || len(states) != 1 || !states[0].IsTerminal() || states[0].Status() != "aborted" || len(factory.created) != 1 {
+		t.Fatalf("lease failure retained execution: result=%+v states=%+v", result, states)
+	}
+}
+
 func TestWaitingContract_ReviewerLaunchExhaustionIsRequestScoped(t *testing.T) {
 	layout := paths.NewLayout(nil, t.TempDir())
 	for i := 0; i < 3; i++ {
