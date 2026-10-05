@@ -131,7 +131,19 @@ func waitRecovery(baseDir string, run events.RunState, now time.Time) (protected
 	if err != nil {
 		return true, true
 	}
-	_ = claim.Close()
+	defer claim.Close()
+	return waitRecoverySchedule(baseDir, run, now)
+}
+
+// waitRecoverySchedule requires the caller's RunID claim so a lease refresh
+// cannot race the decision to terminalize ownerless waiting intent.
+func waitRecoverySchedule(baseDir string, run events.RunState, now time.Time) (protected, suspended bool) {
+	if run.IsTerminal() {
+		return false, false
+	}
+	if !run.IsAwaiting() && !run.IsCapacityQueued() && run.Status() != "queued" {
+		return false, false
+	}
 	batchID := run.BatchID()
 	record, err := ReadRunWait(filepath.Join(baseDir, "batches", batchID), run.RunID)
 	if err == nil {

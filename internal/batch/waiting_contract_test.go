@@ -55,6 +55,39 @@ func TestWaitingContract_PendingReviewOnCleanPRDoesNotResume(t *testing.T) {
 	}
 }
 
+type observedCleanupSandbox struct {
+	*contextRolloverSandbox
+	starts int
+	stops  int
+}
+
+func (s *observedCleanupSandbox) Start(sandbox.SandboxStart) error { s.starts++; return nil }
+func (s *observedCleanupSandbox) Stop() error                      { s.stops++; return nil }
+
+func TestWaitingContract_TerminalObservationUsesResolvedContainerPolicy(t *testing.T) {
+	root := testenv.MkdirShort(t, "sm-observe-policy-")
+	t.Chdir(root)
+	sb := &observedCleanupSandbox{contextRolloverSandbox: &contextRolloverSandbox{workDir: filepath.Join(root, "worktree")}}
+	created := 0
+	resolved := sandboxFactoryFunc(func(_, _, _, _ string, container sandbox.Container) sandbox.Sandbox {
+		created++
+		if container != nil {
+			t.Fatal("terminal observation allocated a container")
+		}
+		return sb
+	})
+	log := &spyEventLog{}
+	o := NewOrchestrator(nil, nil, nil, log, WithErrorLog(io.Discard))
+	executor := o.newRunExecutor(context.Background(), BatchConfig{Cfg: &config.Config{Sandbox: "podman"}, SandboxMode: "podman"}, resolved, nil)
+	result := executor.finishObserved(context.Background(), RowSpec{IssueNumber: 42, RunID: "observed", Branches: map[int]string{42: "42-work"}, BaseBranch: "main"}, "success", nil)
+	if result.Status != "success" || created != 1 || sb.starts != 0 || sb.started != 0 || sb.stops != 1 || !sb.hostPathsRestored {
+		t.Fatalf("resolved cleanup skipped or execution started: result=%+v created=%d sandbox=%+v", result, created, sb)
+	}
+	if len(log.snapshot()) != 1 || log.snapshot()[0].Payload["worktree_state"] != "cleaned" {
+		t.Fatalf("terminal cleanup projection=%+v", log.snapshot())
+	}
+}
+
 func TestWaitingContract_ManagedCleanPRRequiresDelegatedApproval(t *testing.T) {
 	root := testenv.MkdirShort(t, "sm-wait-")
 	t.Chdir(root)

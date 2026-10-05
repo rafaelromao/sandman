@@ -403,7 +403,8 @@ even if the review agent has not started yet. Sandman's runtime owns waiting,
 capacity release, request observation, and re-entry. It resumes this
 implementation automatically when current request-scoped feedback or approval
 arrives and an execution slot is available; when all slots are occupied the
-continuation stays queued until one frees, without a manual `--continue`.
+started continuation stays waiting with a capacity reason until one frees,
+without a manual `--continue`.
 Sandman waits for the review response, keeps dependent work queued, and releases
 the implementation execution slot while it observes the request. Revalidate the
 live request and head before acting. A reviewer finishing without usable

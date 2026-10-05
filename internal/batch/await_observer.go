@@ -10,12 +10,12 @@ import (
 )
 
 // finishObserved applies an authoritative terminal observation without acquiring
-// execution capacity or starting an agent/container. Cleanup uses the host
-// sandbox seam; observation never re-arbitrates the selected lifecycle action.
+// execution capacity or starting an agent/container. Cleanup uses the resolved
+// sandbox policy; observation never re-arbitrates the selected lifecycle action.
 func (e *runExecutor) finishObserved(ctx context.Context, row RowSpec, status string, extras map[string]any) AgentRunResult {
 	session := newRunSession(e, row)
 	branch := row.Branches[row.IssueNumber]
-	factory := e.deps.sandboxFactory
+	factory := e.sbFactory
 	if factory == nil {
 		factory = defaultSandboxFactory{}
 	}

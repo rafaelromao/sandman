@@ -5,15 +5,47 @@ package reviewlaunch
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
+	"golang.org/x/sys/unix"
 )
 
 const MaxAttempts = 3
+
+var ErrLaunchOwned = errors.New("reviewer launch already owned")
+
+// ClaimLaunch fences the budget check, execution and failure recording across
+// daemon processes. Keep the claim until launch and artifact cleanup finish.
+func ClaimLaunch(stateDir string, pr int, trigger, head string) (*os.File, error) {
+	return lockBudget(budgetPath(stateDir, pr, trigger, head)+".launch.lock", true)
+}
+
+func lockBudget(path string, nonblocking bool) (*os.File, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	flags := unix.LOCK_EX
+	if nonblocking {
+		flags |= unix.LOCK_NB
+	}
+	if err := unix.Flock(int(file.Fd()), flags); err != nil {
+		_ = file.Close()
+		if nonblocking && errors.Is(err, unix.EWOULDBLOCK) {
+			return nil, ErrLaunchOwned
+		}
+		return nil, err
+	}
+	return file, nil
+}
 
 type Budget struct {
 	Protocol string `json:"protocol"`
@@ -55,8 +87,14 @@ func Read(stateDir string, pr int, trigger, head string) (Budget, error) {
 	return b, nil
 }
 
-// RecordFailure is serialized by the daemon's per-PR execution ownership.
+// RecordFailure serializes its read-modify-write on a stable lock inode. Atomic
+// replacement alone cannot prevent lost updates from another daemon process.
 func RecordFailure(stateDir string, pr int, trigger, head string) (Budget, error) {
+	lock, err := lockBudget(budgetPath(stateDir, pr, trigger, head)+".lock", false)
+	if err != nil {
+		return Budget{}, err
+	}
+	defer lock.Close()
 	b, err := Read(stateDir, pr, trigger, head)
 	if err != nil {
 		return b, err

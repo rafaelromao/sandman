@@ -2155,7 +2155,11 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	// always target the same branch.
 	reviewBranch := reviewBranchName(prNumber, triggerKey)
 	preserveWorktree := false
+	var launchClaim *os.File
 	defer func() {
+		if launchClaim != nil {
+			defer launchClaim.Close()
+		}
 		if rs != nil {
 			_ = rs.Close()
 		}
@@ -2182,6 +2186,14 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 		return fmt.Errorf("fetch PR: %w", err)
 	}
 	if pr != nil {
+		launchClaim, err = reviewlaunch.ClaimLaunch(filepath.Join(d.BaseDir, "state"), prNumber, triggerKey, pr.HeadRefOid)
+		if err != nil {
+			// Another daemon owns this exact request/head. Its artifacts must
+			// survive this losing worker's cleanup.
+			preserveWorktree = true
+			state.Release(triggerKey)
+			return fmt.Errorf("claim reviewer launch budget: %w", err)
+		}
 		budget, err := reviewlaunch.Read(filepath.Join(d.BaseDir, "state"), prNumber, triggerKey, pr.HeadRefOid)
 		if err != nil || budget.Attempts >= reviewlaunch.MaxAttempts {
 			state.Release(triggerKey)
