@@ -99,6 +99,9 @@ func ProjectRunStates(events []Event) []RunState {
 			state.capacityQueued = false
 			state.activeSince = event.Timestamp
 		case "run.blocked":
+			if state.IsTerminal() {
+				continue
+			}
 			state.accumulateActiveUntil(event.Timestamp)
 			if !state.HasStarted() {
 				state.Started = event
@@ -169,6 +172,9 @@ func ProjectRunStates(events []Event) []RunState {
 				state.capacityQueued = false
 			}
 		case "run.finished", "run.aborted", "run.cancelled":
+			if state.IsTerminal() {
+				continue
+			}
 			state.accumulateActiveUntil(event.Timestamp)
 			finished := event
 			state.Finished = &finished
