@@ -2181,7 +2181,7 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	if err != nil {
 		return fmt.Errorf("fetch PR: %w", err)
 	}
-	if pr != nil && strings.TrimSpace(pr.HeadRefOid) != "" {
+	if pr != nil {
 		budget, err := reviewlaunch.Read(filepath.Join(d.BaseDir, "state"), prNumber, triggerKey, pr.HeadRefOid)
 		if err != nil || budget.Attempts >= reviewlaunch.MaxAttempts {
 			state.Release(triggerKey)
@@ -2354,12 +2354,17 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	// escape can re-process the comment if launchReview returned
 	// an error before any decision.md existed.
 	postErr := d.postDecisionWithCleanup(ctx, prNumber, triggerKey, reviewRunFolder, state, &preserveWorktree)
-	if postErr != nil && ctx.Err() == nil && strings.TrimSpace(pr.HeadRefOid) != "" {
+	if postErr != nil && ctx.Err() == nil {
 		info, statErr := os.Stat(d.reviewDecisionPath(prNumber, triggerKey))
-		if os.IsNotExist(statErr) || statErr == nil && info.IsDir() {
+		if statErr != nil || info.IsDir() {
 			// No decision exists to publish. This is another failed launch,
 			// unlike recoverable publication of an already durable decision.
-			return d.recordLaunchFailure(ctx, triggerKey, state, postErr, pr.HeadRefOid)
+			// Preserve pending publication state while bounding missing/unreadable
+			// decision attempts independently from publication recovery.
+			if _, err := reviewlaunch.RecordFailure(filepath.Join(d.BaseDir, "state"), prNumber, triggerKey, pr.HeadRefOid); err != nil {
+				return fmt.Errorf("persist reviewer decision-read budget: %w", err)
+			}
+			return postErr
 		}
 	}
 	return postErr
@@ -2833,7 +2838,7 @@ func (d *Daemon) recordLaunchFailure(ctx context.Context, commentID string, stat
 		return cerr
 	}
 	attempts := ReadFailureAttempts(state, commentID) + 1
-	if len(head) > 0 && strings.TrimSpace(head[0]) != "" {
+	if len(head) > 0 {
 		budget, err := reviewlaunch.RecordFailure(filepath.Join(d.BaseDir, "state"), state.PR(), commentID, head[0])
 		if err != nil {
 			return fmt.Errorf("persist reviewer launch budget: %w", err)

@@ -155,9 +155,7 @@ func ReadRunWait(batchDir, runID string) (RunWait, error) {
 		return record, fmt.Errorf("invalid waiting run identity")
 	}
 	data, err := os.ReadFile(waitPath(batchDir, runID))
-	initial := false
 	if os.IsNotExist(err) {
-		initial = true
 		data, err = os.ReadFile(initialWaitPath(batchDir, runID))
 	}
 	if err != nil {
@@ -165,11 +163,6 @@ func ReadRunWait(batchDir, runID string) (RunWait, error) {
 	}
 	if err := json.Unmarshal(data, &record); err != nil {
 		return record, err
-	}
-	if initial && record.InitialAdmission && safeWaitID(record.BatchID) {
-		// Initial admissions have no execution artifact path. Their shared
-		// RunID sidecar is the atomic schedule pointer during batch handoff.
-		batchDir = filepath.Join(filepath.Dir(batchDir), record.BatchID)
 	}
 	return record, validateRunWait(batchDir, runID, record)
 }
@@ -185,7 +178,8 @@ func RenewRunWait(batchDir string, record RunWait, now time.Time) error {
 	return writeRunWait(batchDir, record, now)
 }
 
-// TransferRunWait is called under the exclusive RunID claim. Revalidate the
+// Callers must hold ClaimRun(sandmanDir, runID) throughout TransferRunWait.
+// Revalidate the
 // source before atomically transferring schedule ownership to another batch.
 func TransferRunWait(oldBatchDir, newBatchDir, runID string, now time.Time) (RunWait, error) {
 	record, err := ReadRunWait(oldBatchDir, runID)

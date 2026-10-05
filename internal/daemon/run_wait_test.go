@@ -43,6 +43,21 @@ func TestRunWait_ClaimAndFixedRecoveryWindow(t *testing.T) {
 	defer claim.Close()
 }
 
+func TestInitialWaitRejectsForeignBatchOwnership(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now().UTC()
+	record := RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "owner", Issue: 42, BaseBranch: "main", InitialAdmission: true, OperationID: "admission"}
+	if err := RenewRunWait(filepath.Join(root, "batches", "owner"), record, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadRunWait(filepath.Join(root, "batches", "foreign"), "row"); err == nil {
+		t.Fatal("foreign batch self-authorized initial intent")
+	}
+	if _, err := TransferRunWait(filepath.Join(root, "batches", "foreign"), filepath.Join(root, "batches", "new"), "row", now); err == nil {
+		t.Fatal("foreign batch transferred initial intent")
+	}
+}
+
 func TestRunWait_BatchHandoffPreservesOperationAndSchedule(t *testing.T) {
 	for _, initial := range []bool{true, false} {
 		t.Run(map[bool]string{true: "initial", false: "started"}[initial], func(t *testing.T) {

@@ -24,11 +24,17 @@ type Budget struct {
 }
 
 func budgetPath(stateDir string, pr int, trigger, head string) string {
+	if strings.TrimSpace(head) == "" {
+		head = "unknown-head"
+	}
 	key := sha256.Sum256([]byte(trigger + "\x00" + strings.ToLower(head)))
 	return filepath.Join(stateDir, fmt.Sprintf("%d.review-launch-%x.json", pr, key))
 }
 
 func Read(stateDir string, pr int, trigger, head string) (Budget, error) {
+	if strings.TrimSpace(head) == "" {
+		head = "unknown-head"
+	}
 	b := Budget{Protocol: "review-launch/v1", PR: pr, Trigger: trigger, Head: head}
 	if pr <= 0 || trigger == "" || strings.TrimSpace(head) == "" {
 		return b, fmt.Errorf("incomplete reviewer launch identity")

@@ -2182,7 +2182,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					status, extras, handled := executor.observeLifecycle(issueCtx, row)
 					if handled && (status == "success" || extras["reason"] == "PULL_REQUEST_CLOSED" || extras["completion"] != nil) {
 						res = executor.finishObserved(issueCtx, row, status, extras)
-						res.UsageLimitReached = true
 						quotaGate.report(issueNum, res, true)
 						break
 					}

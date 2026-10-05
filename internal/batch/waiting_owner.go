@@ -52,18 +52,25 @@ func newWaitOwner(batchDir string, record daemon.RunWait, now func() time.Time, 
 }
 
 func (o *waitOwner) checkpoint(row RowSpec, ready bool, nextPoll time.Duration) error {
-	states, err := events.ReadRunStates(o.log)
-	if err != nil {
-		return err
+	var state events.RunState
+	if o.log != nil {
+		states, err := events.ReadRunStates(o.log)
+		if err != nil {
+			return err
+		}
+		state = states[row.RunID]
 	}
-	state := states[row.RunID]
 	if state.IsTerminal() {
 		return nil
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	record := o.record
-	record.InitialAdmission = !state.HasStarted()
+	if o.log != nil {
+		record.InitialAdmission = !state.HasStarted()
+	} else if !ready || row.UsageLimitProbe || row.Mode == ModeContinue {
+		record.InitialAdmission = false
+	}
 	if !record.InitialAdmission {
 		record.Dependencies = nil
 	}
@@ -94,6 +101,10 @@ func (o *waitOwner) checkpoint(row RowSpec, ready bool, nextPoll time.Duration) 
 	}
 	if ready {
 		record.OperationID, record.OperationDeadline = "capacity", time.Time{}
+	}
+	if o.log == nil && row.UsageLimitProbe {
+		record.OperationDeadline = row.UsageLimitDeadline
+		record.OperationID = fmt.Sprintf("quota:%d", row.UsageLimitDeadline.Unix())
 	}
 	if err := daemon.RenewRunWait(o.batchDir, record, o.now()); err != nil {
 		return err

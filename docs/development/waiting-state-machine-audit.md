@@ -1,5 +1,11 @@
 # Waiting state-machine audit — 2026-10-03
 
+> **Superseded baseline report.** This audit describes behavior before the
+> unified waiting-state changes. Its queue classifications, 60-minute standalone
+> CI window, and non-durable quota counters are historical findings, not current
+> rules. The authoritative replacement is
+> [the run-state-machine contract](../architecture/run-state-machine.md).
+
 ## Purpose and baseline
 
 This is a diagnostic report for operator confirmation, not an approved replacement
@@ -225,7 +231,7 @@ phase is not the reviewer run's execution status.
 | R7 | Durable review decision exists but publication fails | Tries up to five posts, then retains pending publication for later tick/restart; does not need a second reviewer execution. | Keep recoverable publication; it needs operation identity and a bounded parent outcome. |
 | R8 | Reviewer/publication owner is cancelled | Launch failure recording leaves cancelled work pending; durable decisions survive as pending publication. | Confirm whether stopping the daemon means suspend/recover, and whether aborting the implementation cancels its separate review request. |
 
-### Existing clocks and limits
+### Superseded baseline clocks and limits
 
 | Mechanism | Current limit/reset boundary |
 | --- | --- |

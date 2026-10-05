@@ -14,7 +14,8 @@ queued → running ⇄ waiting → success / failure / aborted
 ```
 
 - `queued` is unfinished initial admission. The row has not started and counts
-  zero active time. Explicit historical skipped placeholders must be tagged
+  zero active time. Explicit historical skipped placeholders must carry the
+  `terminal_placeholder` tag
   separately from pending admission.
 - `running` means the row has execution admission. A retry or continuation is
   still the same lifecycle when it keeps its RunID.

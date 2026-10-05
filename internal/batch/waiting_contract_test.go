@@ -168,8 +168,8 @@ func TestWaitingContract_CancelledQuotaOwnerWakesSiblings(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- gate.wait(ctx) }()
 	gate.retire(42)
-	if err := <-done; !errors.Is(err, errQuotaUnavailable) {
-		t.Fatalf("cancelled quota owner must fail siblings without authorizing another launch: %v", err)
+	if err := <-done; err != nil {
+		t.Fatalf("cancelled quota owner must wake remaining owned work to re-test availability: %v", err)
 	}
 }
 
@@ -182,6 +182,25 @@ func TestWaitingContract_FailedQuotaProbeCannotReopenAdmission(t *testing.T) {
 	defer cancel()
 	if err := gate.wait(ctx); !errors.Is(err, errQuotaUnavailable) {
 		t.Fatalf("failed probe authorized unverified quota recovery: %v", err)
+	}
+}
+
+func TestWaitingOwnerNilLogPreservesQuotaSchedule(t *testing.T) {
+	root := t.TempDir()
+	batchDir := filepath.Join(root, "batches", "batch")
+	now := time.Now().UTC()
+	owner, err := newWaitOwner(batchDir, daemon.RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "batch", Issue: 42, Branch: "42-work", BaseBranch: "main", InitialAdmission: true, OperationID: "admission"}, func() time.Time { return now }, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.close()
+	deadline := now.Add(5 * time.Hour)
+	if err := owner.checkpoint(RowSpec{RunID: "row", IssueNumber: 42, Branches: map[int]string{42: "42-work"}, UsageLimitProbe: true, UsageLimitDeadline: deadline}, false, usageLimitPollInterval); err != nil {
+		t.Fatal(err)
+	}
+	record, err := daemon.ReadRunWait(batchDir, "row")
+	if err != nil || record.InitialAdmission || !record.UsageLimitProbe || !record.OperationDeadline.Equal(deadline) {
+		t.Fatalf("nil logger lost runtime-derived quota schedule: %+v err=%v", record, err)
 	}
 }
 
@@ -546,20 +565,25 @@ func TestWaitingContract_QuotaRecoveryReadmitsSibling(t *testing.T) {
 	root := testenv.MkdirShort(t, "sm-wait-")
 	t.Chdir(root)
 	initGitRepo(t, root)
-	client := &fakeGitHubClient{
+	client := &reviewWaitSchedulerGitHubClient{fakeGitHubClient: fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, State: "closed"}, 43: {Number: 43, State: "closed"}},
 		prs:    map[string]*github.PR{"43-sibling": {Number: 43, State: "merged", Merged: true, Body: "Closes #43"}},
-	}
+	}}
 	var starts []int
+	var hookMu sync.Mutex
 	firstAttempts := 0
 	factory := &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
+		hookMu.Lock()
+		defer hookMu.Unlock()
 		starts = append(starts, issue.Number)
 		if issue.Number == 42 {
 			firstAttempts++
 			if firstAttempts == 1 {
 				return AgentRunResult{IssueNumber: 42, Branch: branch, Status: "failure", UsageLimitReached: true}
 			}
+			client.mu.Lock()
 			client.prs[branch] = &github.PR{Number: 42, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: branch}
+			client.mu.Unlock()
 		}
 		return AgentRunResult{IssueNumber: issue.Number, Branch: branch, Status: "success"}
 	}}
@@ -570,9 +594,90 @@ func TestWaitingContract_QuotaRecoveryReadmitsSibling(t *testing.T) {
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, &spyEventLog{},
 		WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(&freshSandboxFactory{}),
 		WithRunSessionOpts(runSessionOptions{releaseAwaitCapacity: true, awaitWait: func(context.Context, time.Duration) error { return nil }}))
-	result, err := o.RunBatch(context.Background(), Request{Issues: []int{42, 43}, Branches: map[int]string{42: "42-first", 43: "43-sibling"}, Parallel: 1, Retries: 0})
+	result, err := o.RunBatch(context.Background(), Request{Issues: []int{42, 43}, Branches: map[int]string{42: "42-first", 43: "43-sibling"}, Parallel: 2, Retries: 0})
 	if err != nil || result == nil || result.Runs[1].Status != "success" {
 		t.Fatalf("quota recovery: starts=%v result=%v err=%v; sibling must be readmitted", starts, result, err)
+	}
+}
+
+type quotaParallelLog struct {
+	spyEventLog
+	limited, deferred    chan struct{}
+	limitOnce, deferOnce sync.Once
+}
+
+func (l *quotaParallelLog) Log(event events.Event) error {
+	err := l.spyEventLog.Log(event)
+	if event.Issue == 42 && event.Type == "run.await" {
+		l.limitOnce.Do(func() { close(l.limited) })
+	}
+	if event.Issue == 43 && event.Type == "run.capacity_queued" {
+		l.deferOnce.Do(func() { close(l.deferred) })
+	}
+	return err
+}
+
+type waitingRunnableFunction func(context.Context) AgentRunResult
+
+func (f waitingRunnableFunction) Run(ctx context.Context, _ prompt.IssueRenderer, _ string, _ prompt.RenderConfig) AgentRunResult {
+	return f(ctx)
+}
+
+func TestWaitingContract_ParallelQuotaRecoveryReadmitsDeferredSibling(t *testing.T) {
+	root := testenv.MkdirShort(t, "sm-par-quota-")
+	t.Chdir(root)
+	initGitRepo(t, root)
+	log := &quotaParallelLog{limited: make(chan struct{}), deferred: make(chan struct{})}
+	client := &reviewWaitSchedulerGitHubClient{fakeGitHubClient: fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "closed"}, 43: {Number: 43, State: "closed"}, 44: {Number: 44, State: "closed"}}, prs: map[string]*github.PR{
+		"43-next": {Number: 43, State: "merged", Merged: true, HeadRefName: "43-next", Body: "Closes #43"}, "44-busy": {Number: 44, State: "merged", Merged: true, HeadRefName: "44-busy", Body: "Closes #44"},
+	}}}
+	var attempts atomic.Int32
+	factory := &controlledRunnableFactory{runnables: map[int]Runnable{
+		44: waitingRunnableFunction(func(ctx context.Context) AgentRunResult {
+			select {
+			case <-log.limited:
+			case <-ctx.Done():
+				return AgentRunResult{Status: "aborted"}
+			}
+			return AgentRunResult{IssueNumber: 44, Status: "success", Branch: "44-busy"}
+		}),
+		42: waitingRunnableFunction(func(context.Context) AgentRunResult {
+			if attempts.Add(1) == 1 {
+				return AgentRunResult{IssueNumber: 42, Status: "failure", Branch: "42-limit", UsageLimitReached: true}
+			}
+			client.mu.Lock()
+			client.prs["42-limit"] = &github.PR{Number: 42, State: "merged", Merged: true, HeadRefName: "42-limit", Body: "Closes #42"}
+			client.mu.Unlock()
+			return AgentRunResult{IssueNumber: 42, Status: "success", Branch: "42-limit"}
+		}),
+		43: waitingRunnableFunction(func(context.Context) AgentRunResult {
+			return AgentRunResult{IssueNumber: 43, Status: "success", Branch: "43-next"}
+		}),
+	}}
+	cfg := &config.Config{Agent: "opencode", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"opencode": config.BuiltInAgentPresets["opencode"].Agent("opencode")}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, log, WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(reviewWaitSchedulerSandboxFactory{}), WithRunSessionOpts(runSessionOptions{releaseAwaitCapacity: true, awaitWait: func(ctx context.Context, _ time.Duration) error {
+		select {
+		case <-log.deferred:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}}))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := o.RunBatch(ctx, Request{Issues: []int{44, 42, 43}, RunTS: "261005120000", RunShortID: "parallel", Parallel: 2, Branches: map[int]string{44: "44-busy", 42: "42-limit", 43: "43-next"}, Dependencies: map[int][]int{43: {44}}})
+	if err != nil || result == nil || attempts.Load() != 2 {
+		t.Fatalf("parallel recovery failed: result=%+v err=%v attempts=%d", result, err, attempts.Load())
+	}
+	for _, run := range result.Runs {
+		if run.Status != "success" {
+			t.Fatalf("unexpired deferred row failed instead of readmission: %+v", run)
+		}
+	}
+	select {
+	case <-log.deferred:
+	default:
+		t.Fatal("sibling never experienced quota deferral")
 	}
 }
 

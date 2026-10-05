@@ -179,7 +179,16 @@ func TestProductionReadyTakeoverPublishesOwnerBeforeAdmission(t *testing.T) {
 	queued := make(chan struct{})
 	var once sync.Once
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"test": {Command: "true"}}}}, log,
-		WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(reviewWaitSchedulerSandboxFactory{}), WithRunSessionOpts(runSessionOptions{currentHead: func(string) (string, error) { return "head", nil }, startWaiterQueued: func(priority bool) {
+		WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(reviewWaitSchedulerSandboxFactory{}), WithRunSessionOpts(runSessionOptions{currentHead: func(workDir string) (string, error) {
+			if strings.HasSuffix(workDir, "42-fix") {
+				select {
+				case <-factory.busyStarted:
+				case <-time.After(3 * time.Second):
+					return "", errors.New("ordinary row failed to occupy capacity")
+				}
+			}
+			return "head", nil
+		}, startWaiterQueued: func(priority bool) {
 			if priority {
 				once.Do(func() { close(queued) })
 			}

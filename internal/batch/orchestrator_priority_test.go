@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,8 +24,8 @@ type reviewWaitSchedulerGitHubClient struct {
 }
 
 func (c *reviewWaitSchedulerGitHubClient) FindPRByBranch(ctx context.Context, branch string) (*github.PR, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	pr, err := c.fakeGitHubClient.FindPRByBranch(ctx, branch)
 	if pr == nil || err != nil {
 		return pr, err
@@ -451,6 +452,14 @@ func TestRunBatch_RecentAwaitingRowsDoNotStarveQueuedWork(t *testing.T) {
 // work starts while its dependent stays queued, and request-scoped approval
 // resumes the same implementation once a slot is free (issue #2743).
 func TestRunBatch_ConfirmedReviewReleasesSlotAndResumesAfterResponse(t *testing.T) {
+	testManagedApprovalAdmission(t, false)
+}
+
+func TestRunBatch_CIReviewApprovalOccupiedSlotMerge(t *testing.T) {
+	testManagedApprovalAdmission(t, true)
+}
+
+func testManagedApprovalAdmission(t *testing.T, initialCI bool) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	initGitRepo(t, dir)
@@ -477,6 +486,13 @@ func TestRunBatch_ConfirmedReviewReleasesSlotAndResumesAfterResponse(t *testing.
 		},
 	}
 	awaitEntered := make(chan struct{})
+	ciReady := make(chan struct{})
+	reviewWaiting := make(chan struct{})
+	var ciObserved atomic.Bool
+	var reviewOnce sync.Once
+	if initialCI {
+		client.setPR(implBranch, func(pr *github.PR) { pr.StatusCheckRollup = "pending" })
+	}
 	responseReady := make(chan struct{})
 	independentStarted := make(chan struct{})
 	allowIndependentDone := make(chan struct{})
@@ -508,6 +524,15 @@ func TestRunBatch_ConfirmedReviewReleasesSlotAndResumesAfterResponse(t *testing.
 				default:
 					close(awaitEntered)
 				}
+				if initialCI && ciObserved.CompareAndSwap(false, true) {
+					select {
+					case <-ciReady:
+						return nil
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+				reviewOnce.Do(func() { close(reviewWaiting) })
 				select {
 				case <-responseReady:
 					return nil
@@ -558,6 +583,21 @@ func TestRunBatch_ConfirmedReviewReleasesSlotAndResumesAfterResponse(t *testing.
 		t.Fatalf("independent work did not use the released slot: %v", factory.startsSnapshot())
 	}
 	states := events.ProjectRunStates(log.snapshot())
+	if initialCI {
+		firstAwait := findEvent(log.snapshot(), "run.await")
+		if firstAwait == nil || firstAwait.Payload["ci_wait"] == nil {
+			cancel()
+			t.Fatal("CI stage lacks fixed current-head operation evidence")
+		}
+		client.setPR(implBranch, func(pr *github.PR) { pr.StatusCheckRollup = "success" })
+		close(ciReady)
+		select {
+		case <-reviewWaiting:
+		case <-time.After(3 * time.Second):
+			cancel()
+			t.Fatal("CI resolution did not return to managed review observation")
+		}
+	}
 	var implAwaiting bool
 	for _, state := range states {
 		if state.IssueNumber() == 1 && state.IsAwaiting() {

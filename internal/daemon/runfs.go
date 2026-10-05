@@ -321,13 +321,14 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 		if err != nil {
 			return err
 		}
-		defer claim.Close()
 		latest, err := log.Read()
 		if err != nil {
+			_ = claim.Close()
 			return err
 		}
 		for _, current := range events.ProjectRunStates(latest) {
 			if current.RunID == run.RunID && (current.IsTerminal() || current.BatchID() != "" && current.BatchID() != run.BatchID()) {
+				_ = claim.Close()
 				return nil
 			}
 		}
@@ -345,23 +346,26 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 			Payload:   map[string]any{"recovered": true},
 		}
 		if err := log.Log(event); err != nil {
+			_ = claim.Close()
 			return fmt.Errorf("log run.aborted for issue %d: %w", issueNumber, err)
 		}
 		recovered++
 		recoveredRunIDs[run.RunID] = struct{}{}
+		_ = claim.Close()
 		return nil
 	}
 	for _, batch := range dead {
 		latestTerminal := latestTerminalForIssues(batch.Manifest.Issues, byIssue)
 		for _, issueNumber := range batch.Manifest.Issues {
 			for _, run := range byIssue[issueNumber] {
-				if protected, _ := waitRecovery(baseDir, run, recoveredAt); protected {
+				protected, suspended := waitRecovery(baseDir, run, recoveredAt)
+				if protected {
 					// The ready continuation is durably queued for a later
 					// scheduler admission. Preserve its worktree and event
 					// state so the next run command can rehydrate it.
 					continue
 				}
-				if _, suspended := waitRecovery(baseDir, run, recoveredAt); suspended && run.BatchID() == filepath.Base(batch.RunDir) {
+				if suspended && run.BatchID() == filepath.Base(batch.RunDir) {
 					if _, ok := recoveredRunIDs[run.RunID]; !ok {
 						if err := emitOrphan(run, issueNumber); err != nil {
 							return recovered, len(dead), err
