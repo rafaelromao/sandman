@@ -690,9 +690,6 @@ type quotaParallelLog struct {
 
 func (l *quotaParallelLog) Log(event events.Event) error {
 	err := l.spyEventLog.Log(event)
-	if event.Issue == 42 && event.Type == "run.await" {
-		l.limitOnce.Do(func() { close(l.limited) })
-	}
 	if event.Issue == 43 && event.Type == "run.capacity_queued" {
 		l.deferOnce.Do(func() { close(l.deferred) })
 	}
@@ -738,6 +735,9 @@ func TestWaitingContract_ParallelQuotaRecoveryReadmitsDeferredSibling(t *testing
 	}}
 	cfg := &config.Config{Agent: "opencode", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"opencode": config.BuiltInAgentPresets["opencode"].Agent("opencode")}}
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, log, WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(reviewWaitSchedulerSandboxFactory{}), WithRunSessionOpts(runSessionOptions{releaseAwaitCapacity: true, awaitWait: func(ctx context.Context, _ time.Duration) error {
+		// The scheduler has registered the quota pause before this callback.
+		// run.await itself is emitted earlier, inside the executor.
+		log.limitOnce.Do(func() { close(log.limited) })
 		select {
 		case <-log.deferred:
 			return nil
