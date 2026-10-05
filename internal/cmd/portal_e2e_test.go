@@ -101,10 +101,10 @@ func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues(t *testing.T) {
 	waitForPortalRun(t, portalURL, 1, func(run portalRun) bool {
 		return run.Kind == "active" && run.Status == "running"
 	})
-	// Initial capacity admission records a terminal queued placeholder;
-	// only the later run.started event makes the second AgentRun active.
+	// Initial admission is unfinished and remains cancellation-aware until
+	// the later run.started event admits execution.
 	waitForPortalRun(t, portalURL, 2, func(run portalRun) bool {
-		return run.Kind == "completed" && run.Status == "queued" && run.FinishedAt != nil
+		return run.Kind == "active" && run.Status == "queued" && run.FinishedAt == nil
 	})
 
 	logPath := filepath.Join(repoDir, ".sandman", "logs", "1.log")

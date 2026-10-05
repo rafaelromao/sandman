@@ -1788,8 +1788,8 @@ func TestE2E_QueuedIssuesPersistAfterBatchCompletes(t *testing.T) {
 
 		if run, ok := byIssue[parallelIssue152]; !ok {
 			t.Fatalf("issue %d (queued) not found in portal runs after batch ends", parallelIssue152)
-		} else if run.Kind != "completed" {
-			t.Fatalf("expected issue %d kind=completed, got %q", parallelIssue152, run.Kind)
+		} else if run.Kind != "active" || run.FinishedAt != nil {
+			t.Fatalf("expected issue %d unfinished admission, got kind=%q finish=%v", parallelIssue152, run.Kind, run.FinishedAt)
 		} else if run.Status != "queued" {
 			t.Fatalf("expected issue %d status=queued, got %q", parallelIssue152, run.Status)
 		}
