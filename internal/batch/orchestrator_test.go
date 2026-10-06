@@ -7038,7 +7038,7 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 		WithRunnableFactory(&continuationFlowRunnableFactory{state: state}),
 	)
 
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, RunTS: "261004120000", RunShortID: "first"})
 	if err != nil {
 		t.Fatalf("initial run failed: %v", err)
 	}
@@ -7051,7 +7051,7 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 		t.Fatalf("expected task.md to be preserved after merged PR, err=%v", err)
 	}
 
-	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, Mode: map[int]IssueMode{42: ModeContinue}, BaseBranch: "main", PreviousRunIDs: map[int]string{42: log.events[0].RunID}, PromptConfig: prompt.RenderConfig{TaskPrompt: "finish the tests"}})
+	_, err = o.RunBatch(context.Background(), Request{Issues: []int{42}, RunTS: "261004121000", RunShortID: "next", Mode: map[int]IssueMode{42: ModeContinue}, BaseBranch: "main", PreviousRunIDs: map[int]string{42: log.events[0].RunID}, PromptConfig: prompt.RenderConfig{TaskPrompt: "finish the tests"}})
 	if err != nil {
 		t.Fatalf("first continue failed: %v", err)
 	}

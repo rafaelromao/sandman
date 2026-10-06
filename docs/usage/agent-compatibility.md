@@ -223,8 +223,8 @@ contains one of these messages: `hit your session limit`, `hit your weekly
 limit`, `hit your Opus limit`, `hit your Sonnet limit`, or `Fable limit reached`.
 The run then emits `run.await` with `await_reason: usage-limit`, probes every
 ten minutes for up to five hours, and resumes the same conversation with
-`--continue`. A weekly limit usually outlasts that window, after which the
-ordinary retry path runs. Spend and budget limits (`monthly spend limit`,
+`--continue`. The five-hour deadline is absolute and durable; expiry fails
+explicitly rather than beginning an ordinary retry burst. Spend and budget limits (`monthly spend limit`,
 `shared budget`, ...) are not awaited. The review daemon applies the same rule
 to `review_agent: claude` and enters its daemon-wide quota pause.
 

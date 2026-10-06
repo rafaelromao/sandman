@@ -1978,7 +1978,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	}
 
 	status := v.statusOrDefault(runState.Status(), runState.IsActive() || (runState.Status() == "" && activeSocket), runState.IsReview())
-	if runState.IsAwaiting() && !runState.IsReview() {
+	if runState.Status() == "waiting" && !runState.IsReview() {
 		status = "waiting"
 	}
 	startedAt := runState.Started.Timestamp

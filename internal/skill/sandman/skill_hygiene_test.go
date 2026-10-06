@@ -325,7 +325,7 @@ func TestSkills_AutonomousRecoveryLaddersRemainExplicit(t *testing.T) {
 		"pr-review/SKILL.md": {
 			".sandman/task.md",
 			"reviewer-directed clarification",
-			"60-minute budget per PR head SHA",
+			"30-minute budget per PR head SHA",
 			"Sandman-created worktree",
 			"enter waiting, release its execution slot, and resume",
 			"at most 3 fix-and-push attempts",

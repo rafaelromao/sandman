@@ -461,7 +461,7 @@ func copySmokeDir(src, dst string) error {
 			continue
 		}
 		srcPath := filepath.Join(src, entry.Name())
-		if smokeClaudeStateExcluded(srcPath) {
+		if smokeAgentStateExcluded(srcPath) {
 			continue
 		}
 		dstPath := filepath.Join(dst, entry.Name())
@@ -472,15 +472,15 @@ func copySmokeDir(src, dst string) error {
 	return os.Chmod(dst, 0777)
 }
 
-// smokeClaudeStateExcluded skips Claude Code transcripts, caches, and logs
-// when copying the operator's ~/.claude into the isolated smoke home. They can
-// be large, and the claude preset excludes the same paths from its container
-// snapshot.
-func smokeClaudeStateExcluded(srcPath string) bool {
+// Keep auth fixtures aligned with preset snapshot exclusions: agent history,
+// repository snapshots and databases are unnecessary for authenticated runs.
+func smokeAgentStateExcluded(srcPath string) bool {
 	slashed := filepath.ToSlash(srcPath)
-	for _, exclude := range config.BuiltInAgentPresets["claude"].SnapshotExcludes {
-		if strings.HasSuffix(slashed, strings.TrimPrefix(exclude, "~")) {
-			return true
+	for _, preset := range config.BuiltInAgentPresets {
+		for _, exclude := range preset.SnapshotExcludes {
+			if strings.HasSuffix(slashed, strings.TrimPrefix(exclude, "~")) {
+				return true
+			}
 		}
 	}
 	return false
@@ -845,10 +845,17 @@ func TestCopySmokeAuthLayout_SkipsOpencodeDB(t *testing.T) {
 	if err := os.WriteFile(dbPath+"-wal", make([]byte, 1024*10), 0644); err != nil {
 		t.Fatal(err)
 	}
+	snapshot := filepath.Join(opencodeDir, "snapshot", "repository", "objects", "pack")
+	if err := os.MkdirAll(snapshot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(snapshot, "large.pack"), []byte("unrelated repository history"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	copySmokeAuthLayout(t, realHome, tempHome, []string{"~/.local/share/opencode"})
 
-	for _, name := range []string{"opencode.db", "opencode.db-shm", "opencode.db-wal"} {
+	for _, name := range []string{"opencode.db", "opencode.db-shm", "opencode.db-wal", "snapshot"} {
 		path := filepath.Join(tempHome, ".local", "share", "opencode", name)
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Errorf("expected %s to be absent from copied auth layout, found it at %s", name, path)

@@ -8,6 +8,15 @@ Use these rules when changing Sandman's implementation. They describe the curren
 
 Run status is derived from the append-only event log. Do not add mutable status fields as shortcuts when status should be projected from events.
 
+The canonical [AgentRun state machine](../architecture/run-state-machine.md)
+defines every lifecycle/admission transition. Initial queues are unfinished;
+started capacity-ready work remains waiting. Same RunID keeps its duration and
+current ownership across batches. Persist operation deadlines and repair counts
+without resetting them on executor re-entry. RunID claims fence lease renewal,
+takeover and terminal cancellation; lease/schedule data is not a status record.
+Tests must cover composed quota → recovery → CI/review and wait → restart/abort
+paths, including concurrent launch-boundary admission revalidation.
+
 When changing lifecycle behavior:
 
 1. Identify the event types involved.

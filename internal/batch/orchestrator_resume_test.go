@@ -90,11 +90,11 @@ func TestRunSingle_ModeContinueCIFailureExhaustsRemediationAsFailure(t *testing.
 	if result.Status != "failure" {
 		t.Fatalf("status = %q, want failure after bounded CI remediation is exhausted", result.Status)
 	}
-	if got := len(resultFactory.created); got != 4 {
-		t.Fatalf("agent launches = %d, want exhausted entry remediation plus three in-session remediation resumes", got)
+	if got := len(resultFactory.created); got != 0 {
+		t.Fatalf("agent launches = %d, want no launch after durable budget exhaustion", got)
 	}
-	if !strings.Contains(resultFactory.configs[0].TaskPrompt, "CI_FAILURE") {
-		t.Fatalf("entry remediation prompt = %q, want CI failure evidence", resultFactory.configs[0].TaskPrompt)
+	if len(resultFactory.configs) != 0 {
+		t.Fatal("exhausted durable budget prepared an agent prompt")
 	}
 	logs, err := spyLog.Read()
 	if err != nil {
@@ -328,7 +328,7 @@ func TestEntryReevaluation_ModeContinueTopLevelApprovalResumesAgentWithEvidence(
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
 			currentHead:       func(string) (string, error) { return "current-sha", nil },
-			awaitResumeMax:    1,
+			awaitResumeMax:    2,
 			lifecyclePollPlan: []time.Duration{0},
 			lifecycleWait: func(context.Context, time.Duration) error {
 				return errLifecycleObservationTestStop
@@ -681,7 +681,7 @@ func TestRunSingle_PendingGatePollFailureWithActionableFeedbackResumesAgent(t *t
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
 			currentHead:       func(string) (string, error) { return "current-sha", nil },
-			awaitResumeMax:    1,
+			awaitResumeMax:    2,
 			lifecyclePollPlan: []time.Duration{0},
 			lifecycleWait: func(context.Context, time.Duration) error {
 				return errLifecycleObservationTestStop
@@ -765,7 +765,7 @@ func TestRunSingle_CIFailurePrecedesActionableEvidenceAndExhaustsBudget(t *testi
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
 			currentHead:       func(string) (string, error) { return "current-sha", nil },
-			awaitResumeMax:    1,
+			awaitResumeMax:    2,
 			lifecyclePollPlan: []time.Duration{0},
 			lifecycleWait: func(context.Context, time.Duration) error {
 				return errLifecycleObservationTestStop
@@ -844,7 +844,7 @@ func TestEntryReevaluation_ModeContinueInformalFeedbackResumesAgentWithEvidence(
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
 			currentHead:       func(string) (string, error) { return "current-sha", nil },
-			awaitResumeMax:    1,
+			awaitResumeMax:    2,
 			lifecyclePollPlan: []time.Duration{0},
 			lifecycleWait: func(context.Context, time.Duration) error {
 				return errLifecycleObservationTestStop
@@ -1019,7 +1019,7 @@ func TestRunSingle_InformalFeedbackResumesWithinSameAttempt(t *testing.T) {
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
 			currentHead:       func(string) (string, error) { return "current-sha", nil },
-			awaitResumeMax:    1,
+			awaitResumeMax:    2,
 			lifecyclePollPlan: []time.Duration{0},
 			lifecycleWait: func(context.Context, time.Duration) error {
 				return errLifecycleObservationTestStop
@@ -1175,16 +1175,16 @@ func TestRunSingle_StaleReviewRequestFailsAfterHeadAdvance(t *testing.T) {
 	if !started {
 		t.Fatalf("session 2 not started: %q", result.Status)
 	}
-	if result.Status != "failure" || len(resultFactory.created) != 3 {
-		t.Fatalf("session 2 = (%q, %d launches), want failure after entry feedback resume and head drift", result.Status, len(resultFactory.created))
+	if result.Status != "failure" || len(resultFactory.created) != 4 {
+		t.Fatalf("session 2 = (%q, %d launches), want bounded owned-work recovery after head drift", result.Status, len(resultFactory.created))
 	}
 
 	logs, err := spyLog.Read()
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
-	if got := countEventsByType(logs, "run.retry"); got != 0 {
-		t.Fatalf("run.retry events = %d, want 0", got)
+	if got := countEventsByType(logs, "run.retry"); got != 1 {
+		t.Fatalf("run.retry events = %d, want one bounded owned-work recovery", got)
 	}
 	if got := countEventsByType(logs, "run.resumed"); got != 1 {
 		t.Fatalf("run.resumed events = %d, want 1 feedback remediation", got)
@@ -1231,8 +1231,8 @@ func TestRunSingle_StaleReviewRequestFailsAfterHeadAdvance(t *testing.T) {
 			t.Fatalf("lifecycle event %d = %s, want %s (sequence %v)", i, seq[i], want, seq)
 		}
 	}
-	if len(resultFactory.configs) != 3 {
-		t.Fatalf("captured configs = %d, want 3", len(resultFactory.configs))
+	if len(resultFactory.configs) != 4 {
+		t.Fatalf("captured configs = %d, want 4 including bounded owned-work retry", len(resultFactory.configs))
 	}
 	if strings.Contains(resultFactory.configs[0].TaskPrompt, "## Review Evidence") {
 		t.Fatalf("initial launch must not carry evidence")
@@ -1325,8 +1325,18 @@ func TestResumePromptFromGate_CIFailureAndConflictRelaunchWithoutRetry(t *testin
 				baseBranch:  "main",
 				opts:        runSessionOptions{awaitResumeMax: 1},
 			}
+			stateDir := filepath.Join(workDir, ".sandman", "state")
+			if err := os.MkdirAll(stateDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := atomicfs.WriteAtomicJSON(filepath.Join(stateDir, "17.ci_wait.json"), ciWaitRegistration{
+				Protocol: ciWaitProtocol, PullRequest: 17, HeadSHA: tc.gate,
+				StartedUnixSeconds: 1000, DeadlineUnixSeconds: 2800, EffectiveTimeoutSecs: 1800,
+			}, 0o600); err != nil {
+				t.Fatal(err)
+			}
 			promptText, resume := s.resumePromptFromGate(context.Background(), &fakeSandbox{workDir: workDir}, "42-fix", "run-1", map[string]any{
-				"gate": tc.gate, "reason": tc.reason,
+				"gate": tc.gate, "reason": tc.reason, "pull_request": 17, "head_sha": tc.gate,
 			})
 			if !resume || !strings.Contains(promptText, tc.reason) {
 				t.Fatalf("resume = (%q, %t), want prompt with %s", promptText, resume, tc.reason)

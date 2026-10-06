@@ -21,8 +21,8 @@ import (
 // TestRunBatch_ClaudePresetWorktreeEndToEnd runs the built-in claude preset
 // command through a real git worktree and a real shell against a fake
 // `claude` binary on PATH. The first launch stops at a subscription usage
-// limit; the run follows the configured ordinary retry budget without
-// entering an external wait or reusing the limited conversation.
+// limit; the run waits for quota recovery and reuses the limited conversation
+// without spending an ordinary retry.
 func TestRunBatch_ClaudePresetWorktreeEndToEnd(t *testing.T) {
 	if !testenv.E2EGateAllowed(testenv.E2EScenarioBatch) {
 		t.Skip("set SANDMAN_E2E_GATES=batch (or all) to run the claude preset e2e")
@@ -47,7 +47,7 @@ func TestRunBatch_ClaudePresetWorktreeEndToEnd(t *testing.T) {
 
 	const issueNumber = 42
 	branch := BranchName(issueNumber, "Claude usage limit e2e", "main")
-	client := &contextRolloverGitHubClient{
+	client := &claudeQuotaGitHubClient{contextRolloverGitHubClient: &contextRolloverGitHubClient{
 		fakeGitHubClient: &fakeGitHubClient{issues: map[int]*github.Issue{issueNumber: {
 			Number: issueNumber,
 			Title:  "Claude usage limit e2e",
@@ -56,7 +56,7 @@ func TestRunBatch_ClaudePresetWorktreeEndToEnd(t *testing.T) {
 		}}},
 		stateDir: stateDir,
 		branch:   branch,
-	}
+	}}
 	store := &fakeConfigStore{config: &config.Config{
 		DefaultAgent:     "claude",
 		Agent:            "claude",
@@ -84,14 +84,15 @@ func TestRunBatch_ClaudePresetWorktreeEndToEnd(t *testing.T) {
 	defer cancel()
 	result, err := o.RunBatch(ctx, Request{Issues: []int{issueNumber}, Retries: 1, Model: "sonnet"})
 	if err != nil {
-		t.Fatalf("RunBatch: %v\nerror log:\n%s", err, errorLog.String())
+		logged, _ := eventLog.Read()
+		t.Fatalf("RunBatch: %v\nevents=%+v\nerror log:\n%s", err, logged, errorLog.String())
 	}
 	if result == nil || len(result.Runs) != 1 || result.Runs[0].Status != "success" {
 		logged, _ := eventLog.Read()
 		t.Fatalf("result = %+v, want one successful run\nevents=%+v\nerror log:\n%s", result, logged, errorLog.String())
 	}
-	if len(waits) != 0 {
-		t.Fatalf("await waits = %v, want none for a provider usage limit", waits)
+	if !reflect.DeepEqual(waits, []time.Duration{usageLimitPollInterval}) {
+		t.Fatalf("await waits = %v, want one ten-minute quota recovery poll", waits)
 	}
 
 	logged, err := eventLog.Read()
@@ -113,7 +114,7 @@ func TestRunBatch_ClaudePresetWorktreeEndToEnd(t *testing.T) {
 			retries++
 		}
 	}
-	if runID == "" || awaits != 0 || retries != 1 {
+	if runID == "" || awaits != 1 || retries != 0 {
 		t.Fatalf("run id %q, awaits %d, retries %d; events=%+v", runID, awaits, retries, logged)
 	}
 
@@ -131,9 +132,9 @@ func TestRunBatch_ClaudePresetWorktreeEndToEnd(t *testing.T) {
 		t.Fatalf("prompt argument = %q, want the rendered Task", prompt)
 	}
 	secondPrompt := strings.TrimRight(readFakeClaudeFile(t, stateDir, "launch-2.task"), "\n")
-	wantSecond := []string{"-p", "--output-format", "stream-json", "--verbose", "--name", "Sandman " + runID + ": ", "--model", "sonnet", secondPrompt}
+	wantSecond := []string{"-p", "--output-format", "stream-json", "--verbose", "--continue", "--name", "Sandman " + runID + ": ", "--model", "sonnet", secondPrompt}
 	if got := readFakeClaudeArgs(t, stateDir, 2); !reflect.DeepEqual(got, wantSecond) {
-		t.Fatalf("ordinary retry argv:\n got %q\nwant %q", got, wantSecond)
+		t.Fatalf("quota continuation argv:\n got %q\nwant %q", got, wantSecond)
 	}
 	for launch := 1; launch <= 2; launch++ {
 		env := readFakeClaudeFile(t, stateDir, "launch-"+string(rune('0'+launch))+".env")
@@ -168,6 +169,18 @@ func TestRunBatch_ClaudePresetWorktreeEndToEnd(t *testing.T) {
 	}
 }
 
+type claudeQuotaGitHubClient struct{ *contextRolloverGitHubClient }
+
+func (c *claudeQuotaGitHubClient) FindPRByBranch(ctx context.Context, branch string) (*github.PR, error) {
+	pr, err := c.contextRolloverGitHubClient.FindPRByBranch(ctx, branch)
+	if err == nil && pr != nil && !pr.Merged {
+		pr.State = "open"
+		head, _ := os.ReadFile(filepath.Join(c.stateDir, "head"))
+		pr.HeadRefOid = strings.TrimSpace(string(head))
+	}
+	return pr, err
+}
+
 func writeFakeClaudeCLI(t *testing.T, path, stateDir string) {
 	t.Helper()
 	script := strings.ReplaceAll(`#!/bin/sh
@@ -182,6 +195,7 @@ printf 'IS_SANDBOX=%s\nDISABLE_AUTOUPDATER=%s\nCLAUDE_CODE_DISABLE_NONESSENTIAL_
 cp .sandman/task.md "$state_dir/launch-$n.task"
 printf '%s\n' '{"type":"system","subtype":"init","session_id":"conv-1"}'
 if [ "$n" = 1 ]; then
+  git rev-parse HEAD > "$state_dir/head"
   printf '%s\n' '{"type":"result","subtype":"success","is_error":true,"result":"You'"'"'ve hit your session limit · resets 3pm"}'
   exit 1
 fi

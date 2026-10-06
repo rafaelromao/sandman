@@ -731,6 +731,44 @@ func TestBatchStartGate_PriorityWaiterHonoursStartDelay(t *testing.T) {
 // the gate must not throttle below the requested parallel. We assert that
 // the batch reaches the full requested parallelism (peak == parallel) and
 // never exceeds it.
+type parallelAdmissionBarrier struct {
+	mu                sync.Mutex
+	want, active, max int
+	allStarted        chan struct{}
+}
+
+func (f *parallelAdmissionBarrier) NewRunnable(issue *github.Issue, _ string, _ sandbox.Sandbox) Runnable {
+	return &parallelAdmissionRunnable{factory: f, issue: issue.Number}
+}
+
+type parallelAdmissionRunnable struct {
+	factory *parallelAdmissionBarrier
+	issue   int
+}
+
+func (r *parallelAdmissionRunnable) Run(ctx context.Context, _ prompt.IssueRenderer, _ string, _ prompt.RenderConfig) AgentRunResult {
+	f := r.factory
+	f.mu.Lock()
+	f.active++
+	if f.active > f.max {
+		f.max = f.active
+	}
+	if f.active == f.want {
+		close(f.allStarted)
+	}
+	f.mu.Unlock()
+	status := "success"
+	select {
+	case <-f.allStarted:
+	case <-ctx.Done():
+		status = "aborted"
+	}
+	f.mu.Lock()
+	f.active--
+	f.mu.Unlock()
+	return AgentRunResult{IssueNumber: r.issue, Status: status}
+}
+
 func TestRunBatch_StartGateUsesEffectiveParallelNotRawParallel(t *testing.T) {
 	requireContainerRuntime(t)
 
@@ -756,15 +794,7 @@ func TestRunBatch_StartGateUsesEffectiveParallelNotRawParallel(t *testing.T) {
 	// Auto mode (max=0) with capacity=2, parallel=4: the cap should not
 	// throttle below the requested parallel of 4 (effectiveParallelCap(4,2,0)
 	// = 4 in auto mode). The factory records peak active runs.
-	factory := &fakeRunnableFactory{
-		results: []AgentRunResult{
-			{IssueNumber: 1, Status: "success"},
-			{IssueNumber: 2, Status: "success"},
-			{IssueNumber: 3, Status: "success"},
-			{IssueNumber: 4, Status: "success"},
-		},
-		delays: []time.Duration{100 * time.Millisecond, 100 * time.Millisecond, 100 * time.Millisecond, 100 * time.Millisecond},
-	}
+	factory := &parallelAdmissionBarrier{want: 4, allStarted: make(chan struct{})}
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
 		Agent:             "test-agent",
@@ -780,7 +810,9 @@ func TestRunBatch_StartGateUsesEffectiveParallelNotRawParallel(t *testing.T) {
 		WithSandboxFactory(&freshSandboxFactory{}),
 	)
 
-	_, err := o.RunBatch(context.Background(), Request{
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err := o.RunBatch(ctx, Request{
 		Issues:               []int{1, 2, 3, 4},
 		Sandbox:              "podman",
 		Parallel:             4,
@@ -817,23 +849,16 @@ func TestRunBatch_ParallelEightCapacityFourAutoMode_PeakAndContainerCount(t *tes
 
 	issues := make(map[int]*github.Issue, 8)
 	prs := make(map[string]*github.PR, 8)
-	results := make([]AgentRunResult, 8)
-	delays := make([]time.Duration, 8)
 	for i := 1; i <= 8; i++ {
 		issues[i] = &github.Issue{Number: i, Title: fmt.Sprintf("Issue %d", i)}
 		branch := fmt.Sprintf("%d-issue-%d", i, i)
 		prs[branch] = &github.PR{Number: i, State: "closed", Merged: true, HeadRefName: branch}
-		results[i-1] = AgentRunResult{IssueNumber: i, Status: "success"}
-		delays[i-1] = 100 * time.Millisecond
 	}
 
 	client := &fakeGitHubClient{issues: issues, prs: prs}
 
 	starter := &fakeContainerStarter{}
-	factory := &fakeRunnableFactory{
-		results: results,
-		delays:  delays,
-	}
+	factory := &parallelAdmissionBarrier{want: 8, allStarted: make(chan struct{})}
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
 		Agent:             "test-agent",
@@ -849,7 +874,9 @@ func TestRunBatch_ParallelEightCapacityFourAutoMode_PeakAndContainerCount(t *tes
 		WithSandboxFactory(&freshSandboxFactory{}),
 	)
 
-	_, err := o.RunBatch(context.Background(), Request{
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err := o.RunBatch(ctx, Request{
 		Issues:               []int{1, 2, 3, 4, 5, 6, 7, 8},
 		Sandbox:              "podman",
 		Parallel:             8,
