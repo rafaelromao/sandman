@@ -37,7 +37,8 @@ func TestRecoverStaleRuns_EventLifecycleSurvivesSnapshotDivergence(t *testing.T)
 				if outcome != "success" && outcome != "failure" {
 					kind = "run." + outcome
 				}
-				if err := log.Log(events.Event{Type: kind, RunID: "row", Issue: 42, Timestamp: started.Add(time.Second), Payload: map[string]any{"status": outcome, "batch_id": "dead", "terminal_placeholder": outcome == "queued"}}); err != nil {
+				// The queued case deliberately uses a pre-existing untagged record.
+				if err := log.Log(events.Event{Type: kind, RunID: "row", Issue: 42, Timestamp: started.Add(time.Second), Payload: map[string]any{"status": outcome, "batch_id": "dead"}}); err != nil {
 					t.Fatal(err)
 				}
 			}

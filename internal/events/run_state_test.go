@@ -176,7 +176,7 @@ func TestProjectRunStates_QueuedThenStartedRunIsActive(t *testing.T) {
 	startedAt := queuedAt.Add(30 * time.Second)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.queued", Timestamp: queuedAt, RunID: "run-queued-started", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
+		{Type: "run.queued", Timestamp: queuedAt, RunID: "run-queued-started", Issue: 42, Payload: map[string]any{"branch": "42-fix", "initial_admission": true}},
 		{Type: "run.started", Timestamp: startedAt, RunID: "run-queued-started", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 	})
 
@@ -199,7 +199,7 @@ func TestProjectRunStates_QueuedThenContinuedRunIsActive(t *testing.T) {
 	continuedAt := queuedAt.Add(30 * time.Second)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.queued", Timestamp: queuedAt, RunID: "run-queued-continued", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
+		{Type: "run.queued", Timestamp: queuedAt, RunID: "run-queued-continued", Issue: 42, Payload: map[string]any{"branch": "42-fix", "initial_admission": true}},
 		{Type: "run.continued", Timestamp: continuedAt, RunID: "run-queued-continued", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 	})
 
@@ -223,7 +223,7 @@ func TestProjectRunStates_TerminalRunDurationExcludesQueuedWait(t *testing.T) {
 	finishedAt := startedAt.Add(5 * time.Minute)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.queued", Timestamp: queuedAt, RunID: "run-queued-started-finished", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
+		{Type: "run.queued", Timestamp: queuedAt, RunID: "run-queued-started-finished", Issue: 42, Payload: map[string]any{"branch": "42-fix", "initial_admission": true}},
 		{Type: "run.started", Timestamp: startedAt, RunID: "run-queued-started-finished", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-queued-started-finished", Issue: 42, Payload: map[string]any{"status": "success", "branch": "42-fix"}},
 	})
@@ -1214,7 +1214,7 @@ func TestProjectRunStates_CapacityContinuationDistinguishesInitialAdmission(t *t
 	for _, phase := range []string{"run.queued", "run.started", "run.continued"} {
 		t.Run(phase, func(t *testing.T) {
 			state := ProjectRunStates([]Event{
-				{Type: phase, RunID: "row", Issue: 42},
+				{Type: phase, RunID: "row", Issue: 42, Payload: map[string]any{"initial_admission": true}},
 				{Type: "run.capacity_queued", RunID: "row", Issue: 42, Payload: map[string]any{"gate": "usage-limit", "ready_continuation": true}},
 			})[0]
 			want := "waiting"
@@ -1231,7 +1231,7 @@ func TestProjectRunStates_CapacityContinuationDistinguishesInitialAdmission(t *t
 func TestProjectRunStates_InitialAdmissionIsUnfinished(t *testing.T) {
 	t.Parallel()
 	queuedAt := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
-	state := ProjectRunStates([]Event{{Type: "run.queued", Timestamp: queuedAt, RunID: "row", Issue: 42}})[0]
+	state := ProjectRunStates([]Event{{Type: "run.queued", Timestamp: queuedAt, RunID: "row", Issue: 42, Payload: map[string]any{"initial_admission": true}}})[0]
 	if state.IsTerminal() || !state.IsActive() || state.Status() != "queued" {
 		t.Fatalf("initial admission: terminal=%v active=%v status=%q, want unfinished queued", state.IsTerminal(), state.IsActive(), state.Status())
 	}

@@ -383,7 +383,7 @@ func TestRecoverableWaitingAdmissionRequiresNoInventedTask(t *testing.T) {
 	root := t.TempDir()
 	layout := paths.NewLayout(nil, root)
 	now := time.Now().UTC()
-	log := []events.Event{{Type: "run.queued", RunID: "initial", Issue: 42, Timestamp: now, Payload: map[string]any{"batch_id": "old"}}}
+	log := []events.Event{{Type: "run.queued", RunID: "initial", Issue: 42, Timestamp: now, Payload: map[string]any{"batch_id": "old", "initial_admission": true}}}
 	if err := daemon.RenewRunWait(layout.BatchDir("old"), daemon.RunWait{
 		Protocol: "run-wait/v1", RunID: "initial", BatchID: "old", Issue: 42, BaseBranch: "main", InitialAdmission: true, Ready: true, OperationID: "admission", Dependencies: []int{43},
 	}, now); err != nil {
@@ -600,7 +600,7 @@ func TestRecoveryRevalidatesTerminalityAndGraceUnderClaim(t *testing.T) {
 			if tc.initial {
 				kind = "run.queued"
 			}
-			log := &spyEventLog{events: []events.Event{{Type: kind, Timestamp: now, RunID: wait.RunID, Issue: 42, Payload: map[string]any{"batch_id": "old", "branch": wait.Branch, "base_branch": "main"}}}}
+			log := &spyEventLog{events: []events.Event{{Type: kind, Timestamp: now, RunID: wait.RunID, Issue: 42, Payload: map[string]any{"batch_id": "old", "branch": wait.Branch, "base_branch": "main", "initial_admission": tc.initial}}}}
 			if !tc.initial {
 				_ = log.Log(events.Event{Type: "run.await", Timestamp: now, RunID: wait.RunID, Issue: 42, Payload: map[string]any{"await_reason": "usage-limit", "usage_limit_deadline_unix_seconds": now.Add(5 * time.Hour).Unix()}})
 			}

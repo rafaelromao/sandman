@@ -98,31 +98,53 @@ attempts. Serialize writers for this PR; replace JSON atomically through a tempo
 file in the same directory and rename it into place.
 
 ```bash
+ci_budget_locked() {
+  # python3's advisory file lock works on both Linux and macOS.
+  python3 - "$ci_file" "$1" '<owner/repo>' '<N>' "$head_sha" <<'PY'
+import fcntl, json, os, pathlib, sys, tempfile, time
+path, mode, repository, pr, head = sys.argv[1:]
+path = pathlib.Path(path)
+with open(str(path) + ".lock", "a") as lock:
+    fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+    if path.exists():
+        budget = json.loads(path.read_text())
+    elif mode == "load":
+        budget = dict(repository=repository, pr=int(pr), head=head,
+                      deadline=int(time.time()) + 1800, attempts=0)
+    else:
+        raise SystemExit("CI_STATE_ERROR: missing reservation identity")
+    if not (budget.get("repository") == repository and budget.get("pr") == int(pr)
+            and budget.get("head") == head
+            and type(budget.get("deadline")) is int and budget["deadline"] > 0
+            and type(budget.get("attempts")) is int and 0 <= budget["attempts"] <= 3):
+        raise SystemExit("CI_STATE_ERROR: invalid budget")
+    if mode == "reserve":
+        if int(time.time()) >= budget["deadline"] or budget["attempts"] >= 3:
+            raise SystemExit("CI_FAILURE_UNRESOLVED: budget exhausted")
+        budget["attempts"] += 1
+    if not path.exists() or mode == "reserve":
+        fd, temporary = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
+        try:
+            with os.fdopen(fd, "w") as stream:
+                json.dump(budget, stream)
+            os.replace(temporary, path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+    print(budget["deadline"], budget["attempts"])
+PY
+}
 load_ci_budget() {
   head_sha=$(gh pr view <N> --repo <owner/repo> --json headRefOid --jq .headRefOid) || return 1
   [[ "$head_sha" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
   ci_file=".sandman/state/<N>-standalone-ci-${head_sha}.json"
   mkdir -p .sandman/state || return 1
-  if [ ! -e "$ci_file" ]; then
-    ci_tmp=$(mktemp "${ci_file}.XXXXXX") || return 1
-    jq -n --arg repository '<owner/repo>' --arg head "$head_sha" \
-      --argjson pr '<N>' --argjson deadline "$(( $(date +%s) + 1800 ))" \
-      '{repository:$repository,pr:$pr,head:$head,deadline:$deadline,attempts:0}' > "$ci_tmp" &&
-      mv "$ci_tmp" "$ci_file" || return 1
-  fi
-  jq -e --arg repository '<owner/repo>' --arg head "$head_sha" --argjson pr '<N>' \
-    '.repository == $repository and .pr == $pr and .head == $head and
-     (.deadline | type == "number") and .deadline > 0 and (.deadline | floor) == .deadline and
-     (.attempts | type == "number") and
-     .attempts >= 0 and .attempts <= 3 and (.attempts | floor) == .attempts' "$ci_file" >/dev/null || return 1
-  ci_deadline=$(jq -r .deadline "$ci_file")
-  ci_fix_attempts=$(jq -r .attempts "$ci_file")
+  ci_values=$(ci_budget_locked load) || return 1
+  read -r ci_deadline ci_fix_attempts <<< "$ci_values"
 }
 reserve_ci_fix() {
-  [ "$ci_fix_attempts" -lt 3 ] || return 1
-  ci_tmp=$(mktemp "${ci_file}.XXXXXX") || return 1
-  jq '.attempts += 1' "$ci_file" > "$ci_tmp" && mv "$ci_tmp" "$ci_file" || return 1
-  ci_fix_attempts=$((ci_fix_attempts + 1))
+  ci_values=$(ci_budget_locked reserve) || return 1
+  read -r ci_deadline ci_fix_attempts <<< "$ci_values"
 }
 load_ci_budget || { echo CI_STATE_ERROR; exit 1; }
 ```

@@ -55,6 +55,64 @@ func TestWaitingContract_PendingReviewOnCleanPRDoesNotResume(t *testing.T) {
 	}
 }
 
+func TestWaitingContract_DependentReadmittedAfterYieldingPrerequisite(t *testing.T) {
+	root := testenv.MkdirShort(t, "sm-yield-dep-")
+	t.Chdir(root)
+	initGitRepo(t, root)
+	client := &reviewWaitSchedulerGitHubClient{fakeGitHubClient: fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, State: "open"}, 43: {Number: 43, State: "closed"}, 44: {Number: 44, State: "closed"}},
+		prs:    map[string]*github.PR{"42-parent": {Number: 42, State: "open", HeadRefName: "42-parent", HeadRefOid: "current-sha", Body: "Closes #42", StatusCheckRollup: "pending"}, "43-next": mergedPR("43-next", "Closes #43"), "44-free": mergedPR("44-free", "Closes #44")},
+	}}
+	log := &spyEventLog{}
+	releasePoll := make(chan struct{})
+	var attempts atomic.Int32
+	factory := &controlledRunnableFactory{runnables: map[int]Runnable{
+		42: waitingRunnableFunction(func(context.Context) AgentRunResult {
+			attempts.Add(1)
+			return AgentRunResult{IssueNumber: 42, Status: "success", Branch: "42-parent"}
+		}),
+		43: waitingRunnableFunction(func(context.Context) AgentRunResult {
+			for _, state := range events.ProjectRunStates(log.snapshot()) {
+				if state.IssueNumber() == 42 && (!state.IsTerminal() || state.Status() != "success") {
+					t.Errorf("dependent admitted before prerequisite terminal success: %+v", state)
+				}
+			}
+			return AgentRunResult{IssueNumber: 43, Status: "success", Branch: "43-next"}
+		}),
+		44: waitingRunnableFunction(func(context.Context) AgentRunResult {
+			client.mu.Lock()
+			client.issues[42] = &github.Issue{Number: 42, State: "closed"}
+			client.prs["42-parent"] = mergedPR("42-parent", "Closes #42")
+			client.mu.Unlock()
+			close(releasePoll)
+			return AgentRunResult{IssueNumber: 44, Status: "success", Branch: "44-free"}
+		}),
+	}}
+	cfg := &config.Config{Agent: "opencode", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"opencode": config.BuiltInAgentPresets["opencode"].Agent("opencode")}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, log, WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(reviewWaitSchedulerSandboxFactory{}), WithRunSessionOpts(runSessionOptions{releaseAwaitCapacity: true, currentHead: func(string) (string, error) { return "current-sha", nil }, awaitWait: func(ctx context.Context, _ time.Duration) error {
+		select {
+		case <-releasePoll:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}}))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	result, err := o.RunBatch(ctx, Request{Issues: []int{42, 43, 44}, Parallel: 1, RunTS: "261006090000", RunShortID: "dependent", Branches: map[int]string{42: "42-parent", 43: "43-next", 44: "44-free"}, Dependencies: map[int][]int{43: {42}}})
+	if err != nil || result == nil || attempts.Load() != 1 {
+		t.Fatalf("yielded dependency never readmitted: result=%+v err=%v attempts=%d", result, err, attempts.Load())
+	}
+	for _, run := range result.Runs {
+		if run.Status != "success" {
+			t.Fatalf("dependent remained unfinished after parent success: %+v", run)
+		}
+	}
+	if countEventsByType(log.snapshot(), "run.await") == 0 {
+		t.Fatal("prerequisite never suspended")
+	}
+}
+
 type observedCleanupSandbox struct {
 	*contextRolloverSandbox
 	starts int

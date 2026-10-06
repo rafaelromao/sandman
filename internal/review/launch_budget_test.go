@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,5 +50,50 @@ func TestReviewerLaunchBudgetSurvivesDaemonRestart(t *testing.T) {
 	tickAndWait(t, d, context.Background())
 	if got := runner.calls.Load(); got != 4 {
 		t.Fatalf("fresh request failed to receive its own budget: launches=%d", got)
+	}
+}
+
+type launchBudgetRepoFailure struct{ launchBudgetGitHub }
+
+func (launchBudgetRepoFailure) RepoName(context.Context) (string, error) {
+	return "", errors.New("repository lookup unavailable")
+}
+
+func TestReviewerPreparationFailuresConsumeDurableBudget(t *testing.T) {
+	for _, failure := range []string{"agent", "model", "repository"} {
+		t.Run(failure, func(t *testing.T) {
+			root := t.TempDir()
+			t.Chdir(root)
+			gh := launchBudgetGitHub{&fakeGH{prFetch: map[int]*github.PR{17: {Number: 17, HeadRefOid: "head"}}}}
+			cfg := &config.Config{}
+			if failure != "agent" {
+				cfg.DefaultReviewAgent = "custom"
+			}
+			if failure == "repository" {
+				cfg.DefaultReviewModel = "model"
+			}
+			runner := &failureRunner{err: errors.New("agent must not launch")}
+			for attempt := 1; attempt <= 4; attempt++ {
+				d := New(root, gh, &prompt.Engine{}, runner, cfg, &lockedBuffer{}, 1, true, nil)
+				if failure == "repository" {
+					d.GitHub = launchBudgetRepoFailure{gh}
+				}
+				state, err := NewReviewStateStore(filepath.Join(root, "review-state.json"), 17, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = d.launchReview(context.Background(), 17, "", "request", "", "", "", "", nil, state, false)
+				if err == nil || (attempt == 4 && !strings.Contains(err.Error(), "REVIEW_LAUNCH_EXHAUSTED")) {
+					t.Fatalf("attempt=%d error=%v", attempt, err)
+				}
+				budget, readErr := reviewlaunch.Read(filepath.Join(root, "state"), 17, "request", "head")
+				if readErr != nil || budget.Attempts != min(attempt, 3) {
+					t.Fatalf("failure %s budget=%+v error=%v", failure, budget, readErr)
+				}
+			}
+			if runner.calls.Load() != 0 {
+				t.Fatal("preparation failure launched agent")
+			}
+		})
 	}
 }

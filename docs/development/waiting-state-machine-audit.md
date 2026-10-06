@@ -6,6 +6,10 @@
 > rules. The authoritative replacement is
 > [the run-state-machine contract](../architecture/run-state-machine.md).
 
+Compatibility note: current initial-admission events carry
+`initial_admission: true`. Untagged queued events in historical append-only logs
+retain terminal placeholder meaning; they are not migrated into active runs.
+
 ## Purpose and baseline
 
 This is a diagnostic report for operator confirmation, not an approved replacement

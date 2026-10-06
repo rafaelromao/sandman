@@ -59,7 +59,8 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 AgentRun lifecycle is folded exclusively from `events.jsonl` through
 `events.RunState`. Status, history, Portal, archive eligibility, completed-Run
 cleanup, and recovery share its terminality predicate. Initial `run.queued`
-admissions are unfinished; explicitly tagged skipped placeholders are distinct.
+admissions tagged `initial_admission: true` are unfinished; untagged historical
+records and explicit `terminal_placeholder` records remain terminal placeholders.
 A started `run.capacity_queued` continuation remains waiting. The event outcome,
 not artifact availability or a scheduling label, authorizes terminal operations.
 

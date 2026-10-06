@@ -118,9 +118,11 @@ func ProjectRunStates(events []Event) []RunState {
 				continue
 			}
 			state.Started = event
-			// Actual in-batch admission is unfinished. Explicit legacy skipped
-			// placeholders remain distinct for archive/recovery compatibility.
-			if terminal, _ := payloadBool(event.Payload, "terminal_placeholder"); terminal {
+			// New admission is explicitly unfinished. Untagged append-only
+			// historical rows retain their terminal placeholder interpretation.
+			initial, _ := payloadBool(event.Payload, "initial_admission")
+			terminal, _ := payloadBool(event.Payload, "terminal_placeholder")
+			if !initial || terminal {
 				finished := event
 				state.Finished = &finished
 			}

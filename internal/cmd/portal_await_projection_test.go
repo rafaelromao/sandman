@@ -166,7 +166,7 @@ func TestPortal_StartedCapacityContinuationStaysWaiting(t *testing.T) {
 	for _, prior := range []string{"run.queued", "run.started", "run.continued"} {
 		t.Run(prior, func(t *testing.T) {
 			state := events.ProjectRunStates([]events.Event{
-				{Type: prior, Timestamp: startedAt, RunID: "row", Issue: 42},
+				{Type: prior, Timestamp: startedAt, RunID: "row", Issue: 42, Payload: map[string]any{"initial_admission": true}},
 				{Type: "run.capacity_queued", Timestamp: startedAt.Add(time.Minute), RunID: "row", Issue: 42, Payload: map[string]any{"ready_continuation": true}},
 			})[0]
 			view := &portalRunsView{now: func() time.Time { return startedAt.Add(time.Hour) }}

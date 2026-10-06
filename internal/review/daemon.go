@@ -2299,15 +2299,15 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 		modelName = d.effectiveModel()
 	}
 	if agentName == "" {
-		return errors.New("review agent is not set; configure review_agent or agent in sandman config")
+		return d.recordLaunchFailure(ctx, triggerKey, state, errors.New("review agent is not set; configure review_agent or agent in sandman config"), pr.HeadRefOid)
 	}
 	if modelName == "" {
-		return errors.New("review model is not set; configure review_model or model in sandman config")
+		return d.recordLaunchFailure(ctx, triggerKey, state, errors.New("review model is not set; configure review_model or model in sandman config"), pr.HeadRefOid)
 	}
 
 	repoName, err := d.GitHub.RepoName(ctx)
 	if err != nil {
-		return fmt.Errorf("get repo name: %w", err)
+		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("get repo name: %w", err), pr.HeadRefOid)
 	}
 	d.logf("repo=%s agent=%s model=%s pr=%d", repoName, agentName, modelName, prNumber)
 

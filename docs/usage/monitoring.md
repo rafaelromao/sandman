@@ -59,7 +59,7 @@ Emitted when an agent run begins. `run.continued` carries the same fields as `ru
 | `review_timeout` | Effective delegated review response budget in integer seconds for this AgentRun. |
 
 #### `run.queued`
-Emitted for unfinished initial admission due to unresolved prerequisites or capacity. An unstarted row stays queued until execution or a terminal outcome. Explicit legacy skipped placeholders are tagged `terminal_placeholder`; a started run never returns to queued.
+Emitted with `initial_admission: true` for unfinished initial admission due to unresolved prerequisites or capacity. An unstarted row stays queued until execution or a terminal outcome. Untagged historical records and explicit `terminal_placeholder` records remain terminal skipped placeholders; a started run never returns to queued.
 
 | Field | Description |
 |-------|-------------|

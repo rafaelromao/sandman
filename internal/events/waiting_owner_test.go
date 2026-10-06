@@ -40,3 +40,12 @@ func TestTerminalRunRejectsStaleExecutionAdmission(t *testing.T) {
 		}
 	}
 }
+
+func TestLegacyQueuedPlaceholderRemainsTerminal(t *testing.T) {
+	at := time.Now().UTC()
+	legacy := Event{Type: "run.queued", RunID: "legacy", Issue: 42, Timestamp: at, Payload: map[string]any{"blocked_by": []int{7}}}
+	state := ProjectRunStates([]Event{legacy, {Type: "run.started", RunID: "legacy", Timestamp: at.Add(time.Minute)}})[0]
+	if !state.IsTerminal() || state.IsActive() || state.Status() != "queued" || state.Finished == nil || !state.Finished.Timestamp.Equal(at) {
+		t.Fatalf("historical placeholder revised by new fold: %+v", state)
+	}
+}

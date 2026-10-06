@@ -478,9 +478,10 @@ func (f *prFlowParallelSandboxFakeRunner) RunBatch(_ context.Context, req batch.
 					Issue:     spec.issue,
 					IssueRef:  intPtr(spec.issue),
 					Payload: map[string]any{
-						"blocked_by":  spec.blockedBy,
-						"issue_title": spec.title,
-						"batch_id":    batchID,
+						"initial_admission": true,
+						"blocked_by":        spec.blockedBy,
+						"issue_title":       spec.title,
+						"batch_id":          batchID,
 					},
 				})
 			}

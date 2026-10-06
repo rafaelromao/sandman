@@ -1803,6 +1803,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				queuedPayload["batch_id"] = issueBatchID
 			}
 			queuedType := "run.queued"
+			queuedPayload["initial_admission"] = true
 			if req.ReadyContinuations[num] {
 				queuedType = "run.capacity_queued"
 				queuedPayload["ready_continuation"] = true
@@ -1945,18 +1946,32 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			pendingBy := make([]int, 0, len(blockers))
 			for _, blocker := range blockers {
 				if err := issueCtx.Err(); err != nil {
+					if ctx.Err() == nil {
+						break
+					}
 					<-completed[blocker]
 				} else {
 					select {
 					case <-completed[blocker]:
 					case <-yielded[blocker]:
-						// This row cannot use the slot its blocker released. Defer
-						// its serial turn so later independent work can compete for it.
+						// Keep the dependent registered until its prerequisite's
+						// terminal transition. Only its serial turn is released;
+						// yielding must not return the dependent as queued.
 						advanceTurn()
-						<-completed[blocker]
+						select {
+						case <-completed[blocker]:
+						case <-issueCtx.Done():
+						}
 					case <-issueCtx.Done():
-						<-completed[blocker]
 					}
+				}
+				if issueCtx.Err() != nil {
+					if ctx.Err() == nil {
+						break
+					}
+					// Whole-batch abort also stops the prerequisite. Preserve its
+					// settled abort identity for the dependent's cascade evidence.
+					<-completed[blocker]
 				}
 				mu.Lock()
 				status := statuses[blocker]
