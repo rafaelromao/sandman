@@ -357,6 +357,66 @@ func TestDecideImplementationPRLifecycle_NonResolvedGates(t *testing.T) {
 	}
 }
 
+func TestDecideImplementationPRLifecycle_FailedAttemptsKeepExternalGates(t *testing.T) {
+	for _, status := range []string{"failure", "aborted"} {
+		t.Run(status+" pending CI", func(t *testing.T) {
+			d := decideImplementationPRLifecycle(implementationPRFacts{
+				pr: &github.PR{Number: 42, State: "open", StatusCheckRollup: "pending",
+					MergeStateStatus: "BLOCKED", HeadRefOid: "current-sha"},
+				headSHA:       "current-sha",
+				attemptStatus: status,
+			})
+			if !d.handled || d.action != lifecycleAwait || d.gate != lifecycleGatePending {
+				t.Fatalf("decision = %+v, want handled pending await", d)
+			}
+		})
+
+		t.Run(status+" request-scoped feedback", func(t *testing.T) {
+			d := decideImplementationPRLifecycle(implementationPRFacts{
+				pr: &github.PR{Number: 42, State: "open", StatusCheckRollup: "success",
+					ReviewDecision: "CHANGES_REQUESTED", MergeStateStatus: "CLEAN", HeadRefOid: "current-sha"},
+				headSHA:       "current-sha",
+				attemptStatus: status,
+				retainedEvidence: retainedReviewEvidence{
+					actionable: true,
+				},
+			})
+			if !d.handled || d.action != lifecycleResume || d.gate != lifecycleGate("actionable-feedback") {
+				t.Fatalf("decision = %+v, want handled feedback resume", d)
+			}
+		})
+
+		t.Run(status+" request-scoped approval", func(t *testing.T) {
+			d := decideImplementationPRLifecycle(implementationPRFacts{
+				pr: &github.PR{Number: 42, State: "open", StatusCheckRollup: "success",
+					ReviewDecision: "APPROVED", MergeStateStatus: "CLEAN", HeadRefOid: "current-sha"},
+				headSHA:       "current-sha",
+				attemptStatus: status,
+				retainedEvidence: retainedReviewEvidence{
+					outcome: retainedReviewApproval,
+				},
+			})
+			if !d.handled || d.action != lifecycleResume || d.gate != lifecycleGateReady {
+				t.Fatalf("decision = %+v, want handled approval resume", d)
+			}
+		})
+	}
+}
+
+func TestDecideImplementationPRLifecycle_ClosedPRFailsAfterFailedAttempt(t *testing.T) {
+	d := decideImplementationPRLifecycle(implementationPRFacts{
+		pr:            &github.PR{Number: 42, State: "closed", Merged: false},
+		headSHA:       "current-sha",
+		attemptStatus: "failure",
+	})
+	if !d.handled || d.action != lifecycleFailure || d.gate != lifecycleGateUnavailable {
+		t.Fatalf("decision = %+v, want handled closed failure", d)
+	}
+	if d.failureExtras["reason"] != "PULL_REQUEST_CLOSED" {
+		t.Fatalf("failure extras = %#v, want PULL_REQUEST_CLOSED", d.failureExtras)
+	}
+}
+
 func TestDecideImplementationPRLifecycle_EmptyPRHeadFailsIdle(t *testing.T) {
 	d := decideImplementationPRLifecycle(implementationPRFacts{
 		pr:      &github.PR{Number: 42, State: "open", MergeStateStatus: "CLEAN"},

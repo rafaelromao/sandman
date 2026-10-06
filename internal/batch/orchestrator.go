@@ -3911,7 +3911,7 @@ loop:
 			taskContent, _, _ := ReadTaskContent(taskPath)
 			alreadyResolved = hasExactTaskStatus(taskContent, "## Status: already resolved")
 			s.lifecycleAlreadyResolved = alreadyResolved
-			if s.issueNumber > 0 && !(alreadyResolved && s.mode != ModeContinue) && ctx.Err() == nil {
+			if s.issueNumber > 0 && ctx.Err() == nil {
 				hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
 				if gateStatus, extras, handled := s.handleLifecycleDecisionForAttempt(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady, result.Status); handled {
 					if isImplementorOwnedGateFailure(extras) {

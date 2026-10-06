@@ -84,7 +84,6 @@ type implementationPRFacts struct {
 	retainedEvidence retainedReviewEvidence
 	reviewRequested  bool
 	attemptStatus    string
-	alreadyResolved  bool
 	requireReview    bool
 }
 
@@ -176,15 +175,6 @@ func decideImplementationPRLifecycle(in implementationPRFacts) lifecycleDecision
 		}
 		return decision
 	case lifecycleGateUnavailable:
-		if in.alreadyResolved {
-			if strings.EqualFold(strings.TrimSpace(in.attemptStatus), "aborted") {
-				return lifecycleDecision{action: lifecycleAborted, gate: lifecycleGateUnavailable, handled: true}
-			}
-			return lifecycleDecision{action: lifecycleFailure, gate: lifecycleGateUnavailable, handled: true}
-		}
-		if attemptNeedsRetry(in.attemptStatus) {
-			return unhandled(gate)
-		}
 		// A non-open, non-merged PR is closed without a merge (B2.4): an
 		// irrecoverable policy outcome that can never await.
 		return lifecycleDecision{
@@ -251,7 +241,10 @@ func remediationBudgetFailureEvidence(gate string, evidence map[string]any, next
 }
 
 func decideRecoverableLifecycle(gate lifecycleGate, pr *github.PR, headSHA string, evidence retainedReviewEvidence, reviewRequested bool, attemptStatus string) lifecycleDecision {
-	if attemptNeedsRetry(attemptStatus) {
+	if attemptNeedsRetry(attemptStatus) &&
+		!activeWaitAuthorized(gate, pr, headSHA, reviewRequested) &&
+		!evidence.actionable && len(evidence.informalFeedback) == 0 &&
+		!(gate == lifecycleGateReady && evidence.outcome == retainedReviewApproval) {
 		return unhandled(gate)
 	}
 	// CI failures and merge conflicts are branch-owned work, not external work
@@ -507,7 +500,7 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 		gate = lifecycleGatePending
 	}
 	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.State), "open") {
-		if attemptNeedsRetry(attemptStatus) && !s.lifecycleAlreadyResolved {
+		if attemptNeedsRetry(attemptStatus) {
 			// Route failed attempts through the same pure decision before
 			// allowing the ordinary retry path. Unresolved open PRs select
 			// no lifecycle override, while the merged arm above remains
@@ -558,6 +551,12 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 	}
 
 	if gate == lifecycleGateNone {
+		if s.lifecycleAlreadyResolved && pr == nil {
+			// Preserve the verifier fallback for an already-resolved task with
+			// no pull request, while still routing observed PRs through the
+			// lifecycle decision above.
+			return "", nil, false
+		}
 		if attemptNeedsRetry(attemptStatus) {
 			return "", nil, false
 		}
@@ -632,10 +631,9 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 	// repository lookups.
 	var mergeFacts *mergedMergeFacts
 	decision := decideImplementationPRLifecycle(implementationPRFacts{
-		pr:              pr,
-		headSHA:         headSHA,
-		attemptStatus:   attemptStatus,
-		alreadyResolved: s.lifecycleAlreadyResolved,
+		pr:            pr,
+		headSHA:       headSHA,
+		attemptStatus: attemptStatus,
 	})
 	if decision.needMergeFacts {
 		if ctx.Err() != nil {
@@ -647,11 +645,10 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 			mergedWithoutClosingRef: merged && !pr.ClosesIssue(s.issueNumber),
 		}
 		decision = decideImplementationPRLifecycle(implementationPRFacts{
-			pr:              pr,
-			headSHA:         headSHA,
-			mergeFacts:      mergeFacts,
-			attemptStatus:   attemptStatus,
-			alreadyResolved: s.lifecycleAlreadyResolved,
+			pr:            pr,
+			headSHA:       headSHA,
+			mergeFacts:    mergeFacts,
+			attemptStatus: attemptStatus,
 		})
 		if ctx.Err() != nil {
 			return "aborted", nil, true
@@ -726,7 +723,6 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 		retainedEvidence: evidence,
 		reviewRequested:  reviewRequested,
 		attemptStatus:    attemptStatus,
-		alreadyResolved:  s.lifecycleAlreadyResolved,
 		requireReview:    strings.TrimSpace(s.renderCfg.ReviewCommand) != "",
 	})
 	if strings.EqualFold(pr.State, "open") && !evidence.stateError {

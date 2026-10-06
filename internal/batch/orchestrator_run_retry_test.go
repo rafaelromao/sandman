@@ -18,7 +18,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
-func TestRunSingle_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
+func TestRunSingle_ExternalGateAwaitPrecedesAgentRetry(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -37,8 +37,8 @@ func TestRunSingle_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
 	// The PR remains open with a pending external gate for the whole run.
-	// Agent failures still consume retries, while the third clean exit is
-	// terminal blocked state rather than another agent failure.
+	// A failed attempt must yield to the active external operation before
+	// generic retry handling.
 	pr := &github.PR{Number: 17, State: "open", HeadRefName: branch, HeadRefOid: "current-sha", MergeStateStatus: "BLOCKED", StatusCheckRollup: "pending"}
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}
@@ -87,11 +87,11 @@ func TestRunSingle_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 	if result.Status != "await" {
 		t.Fatalf("status = %q, want await (pending external gate must not become agent failure)", result.Status)
 	}
-	if result.RetriesTotal != 3 {
-		t.Fatalf("RetriesTotal = %d, want 3 (3 attempts: fail, fail, succeed)", result.RetriesTotal)
+	if result.RetriesTotal != 1 {
+		t.Fatalf("RetriesTotal = %d, want 1 (active external gate wins)", result.RetriesTotal)
 	}
-	if len(resultFactory.created) != 3 {
-		t.Fatalf("created runnables = %d, want 3 (3 attempts)", len(resultFactory.created))
+	if len(resultFactory.created) != 1 {
+		t.Fatalf("created runnables = %d, want 1 (active external gate wins)", len(resultFactory.created))
 	}
 
 	logs, err := eventLog.Read()
@@ -105,8 +105,11 @@ func TestRunSingle_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 			retryEvents = append(retryEvents, e)
 		}
 	}
-	if len(retryEvents) != 2 {
-		t.Fatalf("expected exactly 2 run.retry events (1→2 and 2→3 transitions for a 3-attempt run), got %d (events: %v)", len(retryEvents), logs)
+	if len(retryEvents) != 0 {
+		t.Fatalf("expected no run.retry events before active external wait, got %d (events: %v)", len(retryEvents), logs)
+	}
+	if len(retryEvents) == 0 {
+		return
 	}
 
 	// First retry: 1→2 transition, previous_status=failure (attempt 0 failed).
@@ -354,6 +357,65 @@ func TestRunSingle_AlreadyResolvedOpenPREndsFailure(t *testing.T) {
 	}
 }
 
+func TestRunSingle_AlreadyResolvedClosedUnmergedPRFailsThroughLifecycle(t *testing.T) {
+	workDir := t.TempDir()
+	t.Chdir(workDir)
+	branch := "42-fix-bug"
+	rtSandbox := &retrySandbox{workDir: filepath.Join(workDir, "worktree")}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
+	runnableFactory := &taskWritingRunnableFactory{
+		taskPath:    filepath.Join(workDir, "worktree", ".sandman", "task.md"),
+		result:      AgentRunResult{IssueNumber: 42, Status: "failure", Branch: branch},
+		taskContent: "## Status: already resolved",
+	}
+	o := NewOrchestrator(
+		&fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs: map[string]*github.PR{branch: {
+				Number: 17, State: "closed", Merged: false, HeadRefName: branch,
+			}},
+		},
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: rtSandbox}),
+		WithRunnableFactory(runnableFactory),
+	)
+	bc := BatchConfig{
+		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          3,
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, &retrySandboxFactory{sandbox: rtSandbox}, nil).Execute(context.Background(), RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+	})
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want closed-unmerged lifecycle failure", result.Status)
+	}
+	if runnableFactory.created != 1 {
+		t.Fatalf("runnable launches = %d, want one terminal lifecycle decision", runnableFactory.created)
+	}
+	logs, err := eventLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	finished := findEvent(logs, "run.finished")
+	if finished == nil {
+		t.Fatal("run.finished event not found")
+	}
+	if finished.Payload["reason"] != "PULL_REQUEST_CLOSED" {
+		t.Fatalf("finished payload = %#v, want PULL_REQUEST_CLOSED", finished.Payload)
+	}
+}
+
 // TestRunSingle_AlreadyResolvedConflictingPREndsFailure exercises the
 // Guard A path when the open PR is in CONFLICTING state. The state
 // doesn't change the guard's behaviour: any open PR blocks the
@@ -514,7 +576,7 @@ func TestRunSingle_AlreadyResolvedMergedPRStillSuccess(t *testing.T) {
 	}
 }
 
-func TestRunSingle_AlreadyResolvedMergedPRStillRunsFailingVerification(t *testing.T) {
+func TestRunSingle_AlreadyResolvedMergedPRLifecycleWinsOverFailingVerification(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 	branch := "42-fix-bug"
@@ -557,8 +619,8 @@ func TestRunSingle_AlreadyResolvedMergedPRStillRunsFailingVerification(t *testin
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure when merged already-resolved verification fails", result.Status)
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want lifecycle success when merged verification fails", result.Status)
 	}
 }
 
@@ -1157,7 +1219,7 @@ func TestRunSingle_RetryBannersUseRetriesBudgetAsDenominator(t *testing.T) {
 	// Closed PR + unmerged: every attempt's status flips to
 	// "failure" in the post-attempt check, so the orchestrator
 	// actually executes all 4 attempts (1 initial + 3 retries).
-	pr := &github.PR{Number: 17, State: "closed", Merged: false, HeadRefName: branch}
+	pr := &github.PR{Number: 17, State: "open", Merged: false, HeadRefName: branch, HeadRefOid: "current-sha", MergeStateStatus: "BLOCKED", StatusCheckRollup: "success"}
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}
 	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
