@@ -623,24 +623,7 @@ func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventLis
 			runs[i].Unavailable = true
 		}
 
-		// For completed archived rows, the saved log moved with the batch
-		// directory. Recompute the log path and URL from the index entry's
-		// recorded path, refresh the preview, and correct SourceExists.
-		if runs[i].Kind == "completed" && runs[i].Archived && idx != nil {
-			if entry := idx.ResolveBatchIdentity(locator.batchID); entry != nil {
-				location := entry.RunLocation(layout, runs[i].RunID)
-				archivedLogPath := location.LogPath()
-				runs[i].RunDir = location.Dir
-				runs[i].LogPath = archivedLogPath
-				runs[i].LogURL = v.portalLogDownloadURLForPath(repoRoot, archivedLogPath)
-				if info, err := os.Stat(filepath.Dir(archivedLogPath)); err == nil && info.IsDir() {
-					runs[i].SourceExists = true
-				} else {
-					runs[i].SourceExists = false
-				}
-				runs[i].Log = v.readPortalTextFile(archivedLogPath)
-			}
-		}
+		v.rehydrateArchivedRun(repoRoot, layout, idx, &runs[i], locator)
 	}
 	// Staleness signal for active rows: the saved-run-log mtime (with a
 	// StartedAt fallback). Computed here so every runFrom* constructor and
@@ -675,6 +658,30 @@ func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventLis
 	})
 
 	return runs, nil
+}
+
+// rehydrateArchivedRun restores the persisted location and preview for a
+// completed archived row. Archive readers use the index's recorded batch path
+// rather than reconstructing a location from the public ID.
+func (v *portalRunsView) rehydrateArchivedRun(repoRoot string, layout paths.Layout, idx *batchindex.Index, run *portalRun, locator runLocator) {
+	if idx == nil || run.Kind != "completed" || !run.Archived {
+		return
+	}
+	entry := idx.ResolveBatchIdentity(locator.batchID)
+	if entry == nil {
+		return
+	}
+	location := entry.RunLocation(layout, run.RunID)
+	archivedLogPath := location.LogPath()
+	run.RunDir = location.Dir
+	run.LogPath = archivedLogPath
+	run.LogURL = v.portalLogDownloadURLForPath(repoRoot, archivedLogPath)
+	if info, err := os.Stat(filepath.Dir(archivedLogPath)); err == nil && info.IsDir() {
+		run.SourceExists = true
+	} else {
+		run.SourceExists = false
+	}
+	run.Log = v.readPortalTextFile(archivedLogPath)
 }
 
 func seenIssuesForBatch(runStates []events.RunState, batch daemon.DeadBatch) map[int]struct{} {
