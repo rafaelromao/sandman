@@ -355,7 +355,7 @@ func TestRunBatch_InBatchBlockerStaysQueuedUntilBlockerTerminal(t *testing.T) {
 	}
 }
 
-func TestRunBatch_InBatchBlockerAborted_EmitsRunAborted(t *testing.T) {
+func TestRunBatch_MergedBlockerCompletesDespiteAbortedAgentAttempt(t *testing.T) {
 	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
@@ -402,42 +402,26 @@ func TestRunBatch_InBatchBlockerAborted_EmitsRunAborted(t *testing.T) {
 	waitForSignal(t, blockerStarted, "expected blocker to start")
 	waitForSignal(t, done, "expected batch to complete")
 
-	if len(factory.created) != 1 || factory.created[0] != 42 {
-		t.Fatalf("expected only blocker runnable to be created, got %v", factory.created)
+	if len(factory.created) != 2 || factory.created[0] != 42 || factory.created[1] != 100 {
+		t.Fatalf("expected blocker and dependent runnables, got %v", factory.created)
 	}
 
-	var abortedEvent *events.Event
 	var queuedEvent *events.Event
+	var blockerFinished *events.Event
 	for i := range spyLog.events {
 		e := spyLog.events[i]
 		if e.Type == "run.queued" && e.Issue == 100 {
 			queuedEvent = &e
 		}
-		if e.Type == "run.aborted" && e.Issue == 100 {
-			abortedEvent = &e
-		}
-		if e.Type == "run.started" && e.Issue == 100 {
-			t.Fatal("did not expect run.started for aborted dependent")
-		}
-		if e.Type == "run.blocked" && e.Issue == 100 {
-			t.Fatal("did not expect run.blocked for aborted dependent")
-		}
-		if e.Type == "run.await" && e.Issue == 100 {
-			t.Fatal("did not expect run.await for aborted dependent")
+		if e.Type == "run.finished" && e.Issue == 42 {
+			blockerFinished = &e
 		}
 	}
 	if queuedEvent == nil {
 		t.Fatal("expected run.queued for dependent")
 	}
-	if abortedEvent == nil {
-		t.Fatal("expected run.aborted event for dependent")
-	}
-	if abortedEvent.RunID != queuedEvent.RunID {
-		t.Fatalf("expected same RunID for queued and aborted, got %q vs %q", queuedEvent.RunID, abortedEvent.RunID)
-	}
-	abortedBy, ok := abortedEvent.Payload["aborted_by"].([]int)
-	if !ok || !reflect.DeepEqual(abortedBy, []int{42}) {
-		t.Fatalf("expected aborted_by [42], got %#v", abortedEvent.Payload["aborted_by"])
+	if blockerFinished == nil || blockerFinished.Payload["status"] != "success" {
+		t.Fatalf("expected merged blocker success, got %#v", blockerFinished)
 	}
 	if len(result.Runs) != 2 {
 		t.Fatalf("expected 2 runs, got %d", len(result.Runs))
@@ -446,8 +430,8 @@ func TestRunBatch_InBatchBlockerAborted_EmitsRunAborted(t *testing.T) {
 	for _, r := range result.Runs {
 		statuses[r.IssueNumber] = r.Status
 	}
-	if statuses[100] != "aborted" {
-		t.Fatalf("expected dependent aborted, got %q", statuses[100])
+	if statuses[42] != "success" || statuses[100] != "success" {
+		t.Fatalf("expected both runs to succeed, got %#v", statuses)
 	}
 	runs := events.ProjectRunStates(spyLog.events)
 	var depRun *events.RunState
@@ -460,7 +444,7 @@ func TestRunBatch_InBatchBlockerAborted_EmitsRunAborted(t *testing.T) {
 	if depRun == nil {
 		t.Fatal("expected projected run for dependent")
 	}
-	if depRun.Status() != "aborted" {
-		t.Fatalf("expected projected status aborted, got %q", depRun.Status())
+	if depRun.Status() != "success" {
+		t.Fatalf("expected projected status success, got %q", depRun.Status())
 	}
 }

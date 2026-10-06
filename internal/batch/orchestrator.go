@@ -2453,6 +2453,12 @@ type runSession struct {
 	// runSessionOptions.awaitResumeMax). It is the per-session cap state;
 	// re-invocation starts a fresh session and a fresh counter.
 	resumeCount int
+
+	// lifecyclePRSnapshot carries the last live PR observation made by the
+	// closing-reference guard into the authoritative lifecycle decision. This
+	// avoids a second lookup that could observe a different lifecycle state.
+	lifecyclePRSnapshot      *github.PR
+	lifecycleAlreadyResolved bool
 }
 
 func (s *runSession) worktreeDir() string {
@@ -2709,7 +2715,10 @@ func (s *runSession) withClosingReferenceGuard(ctx context.Context, branch strin
 		defer close(done)
 		wait := interval
 		for {
-			outcome := repairOpenPRClosingReference(guardCtx, s.deps.githubClient, branch, s.issueNumber, s.deps.errorLog)
+			outcome, observedPR := repairOpenPRClosingReferenceWithSnapshot(guardCtx, s.deps.githubClient, branch, s.issueNumber, s.deps.errorLog)
+			if observedPR != nil {
+				s.lifecyclePRSnapshot = observedPR
+			}
 			if outcome == closingGuardProtected || outcome == closingGuardTerminal {
 				return
 			}
@@ -2750,46 +2759,51 @@ const (
 // open. It rechecks after the edit because an edit that races a merge cannot
 // make GitHub auto-close the issue retroactively.
 func repairOpenPRClosingReference(ctx context.Context, client github.Client, branch string, issueNumber int, errorLog io.Writer) closingGuardOutcome {
+	outcome, _ := repairOpenPRClosingReferenceWithSnapshot(ctx, client, branch, issueNumber, errorLog)
+	return outcome
+}
+
+func repairOpenPRClosingReferenceWithSnapshot(ctx context.Context, client github.Client, branch string, issueNumber int, errorLog io.Writer) (closingGuardOutcome, *github.PR) {
 	pr, err := client.FindPRByBranch(ctx, branch)
 	if err != nil {
 		if github.IsRateLimited(err) {
-			return closingGuardTerminal
+			return closingGuardTerminal, nil
 		}
-		return closingGuardRetry
+		return closingGuardRetry, nil
 	}
 	if pr == nil {
-		return closingGuardAbsent
+		return closingGuardAbsent, nil
 	}
 	if !strings.EqualFold(pr.State, "open") || pr.Merged {
-		return closingGuardTerminal
+		return closingGuardTerminal, pr
 	}
 	body, changed := github.EnsureClosingReference(pr.Body, issueNumber)
 	if !changed {
-		return closingGuardProtected
+		return closingGuardProtected, pr
 	}
 	if err := client.EditPRBody(ctx, pr.Number, body); err != nil {
 		if errorLog != nil {
 			fmt.Fprintf(errorLog, "error: repair closing reference for PR #%d and issue %d: %v\n", pr.Number, issueNumber, err)
 		}
-		return closingGuardRetry
+		return closingGuardRetry, pr
 	}
 	updated, err := client.FindPRByBranch(ctx, branch)
 	if err != nil {
-		return closingGuardRetry
+		return closingGuardRetry, pr
 	}
 	if updated == nil {
-		return closingGuardAbsent
+		return closingGuardAbsent, pr
 	}
 	if updated.Merged || !strings.EqualFold(updated.State, "open") {
 		if errorLog != nil {
 			fmt.Fprintf(errorLog, "error: PR #%d merged while repairing closing reference for issue %d\n", pr.Number, issueNumber)
 		}
-		return closingGuardTerminal
+		return closingGuardTerminal, updated
 	}
 	if updated.ClosesIssue(issueNumber) {
-		return closingGuardProtected
+		return closingGuardProtected, updated
 	}
-	return closingGuardRetry
+	return closingGuardRetry, updated
 }
 
 // emitAwait writes a non-terminal run.await event and returns the
@@ -3320,6 +3334,7 @@ loop:
 			s.reviewRegistrationAttempted = false
 			s.reviewRegistrationObserved = false
 			s.reviewAttemptStartedAt = s.reviewNow()
+			s.lifecyclePRSnapshot = nil
 			result, abortedByHeartbeat = s.withHeartbeat(ctx, runID, attempt, logPath, wt, func() AgentRunResult {
 				return s.withClosingReferenceGuard(ctx, branch, func() AgentRunResult {
 					return runnable.Run(ctx, s.deps.renderer, s.agentCfg.Command, attemptRenderCfg)
@@ -3336,9 +3351,10 @@ loop:
 			taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
 			taskContent, _, _ := ReadTaskContent(taskPath)
 			alreadyResolved = hasExactTaskStatus(taskContent, "## Status: already resolved")
-			if s.issueNumber > 0 && !(alreadyResolved && s.mode != ModeContinue) && events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
+			s.lifecycleAlreadyResolved = alreadyResolved
+			if s.issueNumber > 0 && !(alreadyResolved && s.mode != ModeContinue) && ctx.Err() == nil {
 				hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
-				if gateStatus, extras, handled := s.handleLifecycleDecisionAfterAgent(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled {
+				if gateStatus, extras, handled := s.handleLifecycleDecisionForAttempt(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady, result.Status); handled {
 					if gateStatus == "success" || gateStatus == "failure" || gateStatus == "aborted" {
 						// A terminal lifecycle decision is authoritative. Do not
 						// let the legacy post-decision PR arbitration replace it.
@@ -3759,17 +3775,6 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	result, terminalExtras, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, s.mode != ModeContinue, func(attempt int, previous AgentRunResult) (prompt.RenderConfig, *AgentRunResult) {
 		attemptRenderCfg := s.renderCfg
 		if attempt > 0 {
-			// Pre-retry guard: if the PR was merged between attempts (e.g. the
-			// agent merged it on attempt 0 but exited non-zero due to a
-			// transient error), short-circuit to success without launching
-			// the agent again, resetting the branch, or re-rendering the
-			// prompt. The merged PR is the sole success signal for
-			// issue-driven runs (see #860). ModeContinue uses a different
-			// `prepareAttempt` closure (the prompt-only one) that does not
-			// contain this guard, so continuation replays are unaffected.
-			if checkPRMergedForIssue(ctx, s.deps.githubClient, branch, s.issueNumber) {
-				return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "success", Branch: branch, RetriesTotal: attempt}
-			}
 			taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
 			openPR, prLookupErr := findOpenPRByBranch(ctx, s.deps.githubClient, branch)
 			// Preserve the task content (or use the empty template if missing)

@@ -44,6 +44,10 @@ func (c *immutableMergedLookupClient) FindPRByBranch(context.Context, string) (*
 // runCleanGateCaseForIssue but parameterizing continuation so a fresh run and
 // a --continue can be compared with the identical PR facts.
 func runLifecycleCaseForIssue(t *testing.T, pr *github.PR, mode IssueMode, prevRunID string) (AgentRunResult, []events.Event, int) {
+	return runLifecycleCaseForIssueWithAttemptStatus(t, pr, mode, prevRunID, "success")
+}
+
+func runLifecycleCaseForIssueWithAttemptStatus(t *testing.T, pr *github.PR, mode IssueMode, prevRunID, attemptStatus string) (AgentRunResult, []events.Event, int) {
 	t.Helper()
 	if pr != nil && pr.HeadRefOid == "" {
 		pr.HeadRefOid = "current-sha"
@@ -68,7 +72,10 @@ func runLifecycleCaseForIssue(t *testing.T, pr *github.PR, mode IssueMode, prevR
 	}
 	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
 	factory := &fakeRunnableFactory{results: []AgentRunResult{
-		{IssueNumber: 42, Status: "success", Branch: gateTestBranch},
+		{IssueNumber: 42, Status: attemptStatus, Branch: gateTestBranch},
+		{IssueNumber: 42, Status: attemptStatus, Branch: gateTestBranch},
+		{IssueNumber: 42, Status: attemptStatus, Branch: gateTestBranch},
+		{IssueNumber: 42, Status: attemptStatus, Branch: gateTestBranch},
 	}}
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}},
@@ -115,6 +122,56 @@ func runLifecycleCaseForIssue(t *testing.T, pr *github.PR, mode IssueMode, prevR
 		t.Fatalf("read events: %v", err)
 	}
 	return result, logs, len(factory.created)
+}
+
+func TestLifecycle_VerifiedMergeWinsOverFailedAgentAttempt(t *testing.T) {
+	pr := &github.PR{
+		Number:      42,
+		State:       "merged",
+		Merged:      true,
+		Body:        "Closes #42",
+		HeadRefOid:  "current-sha",
+		HeadRefName: gateTestBranch,
+	}
+	result, logs, launches := runLifecycleCaseForIssueWithAttemptStatus(t, pr, ModeFresh, "", "failure")
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success", result.Status)
+	}
+	if launches != 1 {
+		t.Fatalf("agent launches = %d, want one completed attempt", launches)
+	}
+	if got := countEventsByType(logs, "run.retry"); got != 0 {
+		t.Fatalf("run.retry events = %d, want 0", got)
+	}
+	if got := finishedStatus(t, logs); got != "success" {
+		t.Fatalf("finished status = %q, want success", got)
+	}
+}
+
+func TestLifecycle_MergedWithoutClosingIntentFailsAfterFailedAgentAttempt(t *testing.T) {
+	pr := &github.PR{
+		Number:      42,
+		State:       "merged",
+		Merged:      true,
+		Body:        "Refs #42",
+		HeadRefOid:  "current-sha",
+		HeadRefName: gateTestBranch,
+	}
+	result, logs, launches := runLifecycleCaseForIssueWithAttemptStatus(t, pr, ModeFresh, "", "failure")
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure", result.Status)
+	}
+	if launches != 1 {
+		t.Fatalf("agent launches = %d, want one completed attempt", launches)
+	}
+	finished := findEvent(logs, "run.finished")
+	if finished == nil {
+		t.Fatal("run.finished event not found")
+	}
+	completion, ok := finished.Payload["completion"].(map[string]any)
+	if !ok || completion["reason"] != "merged-pr-missing-closing-reference" {
+		t.Fatalf("completion diagnostic = %#v, want missing-closing-reference", finished.Payload["completion"])
+	}
 }
 
 // finishedStatus is the terminal-status extraction helper: it looks up the last
@@ -640,7 +697,7 @@ func TestLifecycle_FreshRunKeepsVerifiedMergeBeforeLegacyArbitration(t *testing.
 	client := &immutableMergedLookupClient{
 		fakeGitHubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}}},
 		merged:           &github.PR{Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha"},
-		mergedCalls:      2,
+		mergedCalls:      1,
 		legacy:           &github.PR{Number: 17, State: "open", Body: "Refs #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
 	}
 	o := NewOrchestrator(client, &retryRenderer{result: "rendered prompt"}, nil, eventLog,
@@ -658,8 +715,8 @@ func TestLifecycle_FreshRunKeepsVerifiedMergeBeforeLegacyArbitration(t *testing.
 	if !started || result.Status != "success" {
 		t.Fatalf("result = (%t, %q), want started success", started, result.Status)
 	}
-	if client.calls != 2 {
-		t.Fatalf("PR lookups = %d, want closing guard plus lifecycle authority only", client.calls)
+	if client.calls != 1 {
+		t.Fatalf("PR lookups = %d, want one shared lifecycle observation", client.calls)
 	}
 	if client.legacyCalls != 0 {
 		t.Fatalf("legacy PR observations = %d, want 0", client.legacyCalls)
@@ -708,7 +765,7 @@ func TestLifecycle_FreshRunKeepsMergedFailureBeforeLegacyArbitration(t *testing.
 	client := &immutableMergedLookupClient{
 		fakeGitHubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}}},
 		merged:           &github.PR{Number: 17, State: "merged", Merged: true, Body: "Refs #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha"},
-		mergedCalls:      2,
+		mergedCalls:      1,
 		legacy:           &github.PR{Number: 17, State: "open", Body: "Closes #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
 	}
 	o := NewOrchestrator(client, &retryRenderer{result: "rendered prompt"}, nil, eventLog,
@@ -726,8 +783,8 @@ func TestLifecycle_FreshRunKeepsMergedFailureBeforeLegacyArbitration(t *testing.
 	if !started || result.Status != "failure" {
 		t.Fatalf("result = (%t, %q), want started failure", started, result.Status)
 	}
-	if client.calls != 2 {
-		t.Fatalf("PR lookups = %d, want closing guard plus lifecycle authority only", client.calls)
+	if client.calls != 1 {
+		t.Fatalf("PR lookups = %d, want one shared lifecycle observation", client.calls)
 	}
 	if client.legacyCalls != 0 {
 		t.Fatalf("legacy PR observations = %d, want 0", client.legacyCalls)
