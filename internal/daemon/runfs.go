@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -312,35 +313,34 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 	// per call so all events emitted by a single sweep share a coherent
 	// timestamp.
 	recoveredAt := time.Now().UTC()
-	emitOrphan := func(run events.RunState, issueNumber int) error {
-		var issueRef *int
-		if issueNumber > 0 {
-			ref := issueNumber
-			issueRef = &ref
+	emitOrphan := func(run events.RunState, issueNumber int) (bool, error) {
+		emitted, err := emitRecoveredAbort(baseDir, run, issueNumber, recoveredAt, log)
+		if err != nil {
+			return false, err
 		}
-		event := events.Event{
-			Type:      "run.aborted",
-			Timestamp: recoveredAt,
-			RunID:     run.RunID,
-			Issue:     issueNumber,
-			IssueRef:  issueRef,
-			Payload:   map[string]any{"recovered": true},
+		if emitted {
+			recovered++
+			recoveredRunIDs[run.RunID] = struct{}{}
 		}
-		if err := log.Log(event); err != nil {
-			return fmt.Errorf("log run.aborted for issue %d: %w", issueNumber, err)
-		}
-		recovered++
-		recoveredRunIDs[run.RunID] = struct{}{}
-		return nil
+		return emitted, nil
 	}
 	for _, batch := range dead {
 		latestTerminal := latestTerminalForIssues(batch.Manifest.Issues, byIssue)
 		for _, issueNumber := range batch.Manifest.Issues {
 			for _, run := range byIssue[issueNumber] {
-				if run.IsCapacityQueued() {
+				protected, suspended := waitRecovery(baseDir, run, recoveredAt)
+				if protected {
 					// The ready continuation is durably queued for a later
 					// scheduler admission. Preserve its worktree and event
 					// state so the next run command can rehydrate it.
+					continue
+				}
+				if suspended && run.BatchID() == filepath.Base(batch.RunDir) {
+					if _, ok := recoveredRunIDs[run.RunID]; !ok {
+						if _, err := emitOrphan(run, issueNumber); err != nil {
+							return recovered, len(dead), err
+						}
+					}
 					continue
 				}
 				if _, ok := recoveredRunIDs[run.RunID]; ok {
@@ -381,10 +381,13 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 				if !latestTerminal.IsZero() && !run.Started.Timestamp.After(latestTerminal) {
 					continue
 				}
-				if err := emitOrphan(run, issueNumber); err != nil {
+				emitted, err := emitOrphan(run, issueNumber)
+				if err != nil {
 					return recovered, len(dead), err
 				}
-				_ = UpdateRunManifestStatus(batch.RunDir, run.RunID, batchindex.RunManifestStatusAborted)
+				if emitted {
+					_ = UpdateRunManifestStatus(batch.RunDir, run.RunID, batchindex.RunManifestStatusAborted)
+				}
 			}
 		}
 	}
@@ -473,7 +476,7 @@ func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log even
 
 	var recovered int
 	for _, run := range runs {
-		if run.IsCapacityQueued() {
+		if protected, _ := waitRecovery(baseDir, run, recoveredAt); protected {
 			continue
 		}
 		// Diagnostics without a start/continuation are unknown lifecycle,
@@ -548,22 +551,47 @@ func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log even
 			continue
 		}
 
-		var issueRef *int
-		if issueNum > 0 {
-			issueRef = &issueNum
+		emitted, err := emitRecoveredAbort(baseDir, run, issueNum, recoveredAt, log)
+		if err != nil {
+			return recovered, err
 		}
-		event := events.Event{
-			Type:      "run.aborted",
-			Timestamp: recoveredAt,
-			RunID:     run.RunID,
-			Issue:     issueNum,
-			IssueRef:  issueRef,
-			Payload:   map[string]any{"recovered": true},
+		if emitted {
+			recovered++
 		}
-		if err := log.Log(event); err != nil {
-			return recovered, fmt.Errorf("log run.aborted for orphan %q: %w", run.RunID, err)
-		}
-		recovered++
 	}
 	return recovered, nil
+}
+
+// emitRecoveredAbort holds the same RunID claim as admission through the fresh
+// projection check and terminal append, fencing takeover during orphan recovery.
+func emitRecoveredAbort(baseDir string, run events.RunState, issueNumber int, recoveredAt time.Time, log events.EventLog) (bool, error) {
+	claim, err := ClaimRun(baseDir, run.RunID)
+	if errors.Is(err, ErrRunOwned) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer claim.Close()
+	latest, err := log.Read()
+	if err != nil {
+		return false, err
+	}
+	for _, current := range events.ProjectRunStates(latest) {
+		if current.RunID == run.RunID && (current.IsTerminal() || current.BatchID() != run.BatchID() || !current.Started.Timestamp.Equal(run.Started.Timestamp) || current.Status() != run.Status()) {
+			return false, nil
+		}
+	}
+	if protected, _ := waitRecoverySchedule(baseDir, run, recoveredAt); protected {
+		return false, nil
+	}
+	var issueRef *int
+	if issueNumber > 0 {
+		issueRef = &issueNumber
+	}
+	event := events.Event{Type: "run.aborted", Timestamp: recoveredAt, RunID: run.RunID, Issue: issueNumber, IssueRef: issueRef, Payload: map[string]any{"recovered": true}}
+	if err := log.Log(event); err != nil {
+		return false, fmt.Errorf("log run.aborted for orphan %q: %w", run.RunID, err)
+	}
+	return true, nil
 }

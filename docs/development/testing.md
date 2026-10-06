@@ -162,6 +162,14 @@ SANDMAN_RUN_SMOKE_E2E=1 SANDMAN_SMOKE_PREFETCH=1 SANDMAN_TEST_PROVIDERS=opencode
 
 ## E2E tests
 
+Lifecycle regression coverage follows the canonical
+[transition contract](../architecture/run-state-machine.md). Exercise composed
+CI → review → approval → occupied slot → merge; quota → recovery → CI/review;
+deferred admission → explicit abort; and ownerless wait → different-batch
+rehydration inside fixed grace. Assert emitted events and their CLI/Portal folds,
+fixed deadlines and repair counts, cumulative RunID duration, exclusive claims,
+held dependencies, terminal preservation, and launch-boundary quota revalidation.
+
 E2E tests exercise multi-session behavior such as continuing a previous run, batch orchestration, and subagent permission boundaries. They require the `e2e` build tag and are slower than smoke tests.
 
 Implementation pull-request lifecycle changes must keep the production-path

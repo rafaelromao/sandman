@@ -721,6 +721,12 @@ func (g *batchStartGate) AcquireAwaiting(ctx context.Context, opportunity awaitO
 }
 
 func (g *batchStartGate) acquire(ctx context.Context, waiter *batchStartWaiter) (awaitOpportunity, error) {
+	return g.acquireObserved(ctx, waiter, nil, 0)
+}
+
+// Keep the same queued waiter while observing lifecycle changes; observations
+// never claim execution capacity and do not change fairness opportunities.
+func (g *batchStartGate) acquireObserved(ctx context.Context, waiter *batchStartWaiter, observe func() error, interval time.Duration) (awaitOpportunity, error) {
 	acquired := false
 	defer func() {
 		if !acquired {
@@ -728,6 +734,11 @@ func (g *batchStartGate) acquire(ctx context.Context, waiter *batchStartWaiter) 
 		}
 	}()
 	for {
+		if observe != nil {
+			if err := observe(); err != nil {
+				return awaitOpportunity{}, err
+			}
+		}
 		wake, wait, opportunity, ok, err := g.tryAcquire(ctx, waiter)
 		if err != nil {
 			return awaitOpportunity{}, err
@@ -735,6 +746,9 @@ func (g *batchStartGate) acquire(ctx context.Context, waiter *batchStartWaiter) 
 		if ok {
 			acquired = true
 			return opportunity, nil
+		}
+		if observe != nil && (wait <= 0 || wait > interval) {
+			wait = interval
 		}
 		if err := waitForStartGate(ctx, wake, wait); err != nil {
 			return awaitOpportunity{}, err
@@ -1615,18 +1629,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	// launching another agent against the same exhausted quota only burns
 	// retries. Paused rows emit run.capacity_queued and stay non-terminal
 	// until resume via normal admission. RunBatch-local only.
-	var usageLimitMu sync.Mutex
-	usageLimitPaused := false
-	isUsageLimitPaused := func() bool {
-		usageLimitMu.Lock()
-		defer usageLimitMu.Unlock()
-		return usageLimitPaused
-	}
-	setUsageLimitPaused := func() {
-		usageLimitMu.Lock()
-		usageLimitPaused = true
-		usageLimitMu.Unlock()
-	}
+	quotaGate := newBatchQuotaGate()
 	failureCount := 0
 	abortedCount := 0
 	statuses := make(map[int]string, len(req.Issues))
@@ -1639,6 +1642,114 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 
 	batchIdentityResolver := newBatchIdentityResolver(o, ".")
 	issueBatchID := issueBatchIDForRequest(req)
+	claims := make(map[int]*daemon.RunClaim, len(ordered))
+	for _, num := range ordered {
+		id := strings.TrimSpace(req.RunIDs[num])
+		if id == "" {
+			id = buildRunID(num, req.RunTS, req.RunShortID)
+		}
+		claim, err := daemon.ClaimRun(layout.SandmanDir, id)
+		if err != nil {
+			for _, held := range claims {
+				_ = held.Close()
+			}
+			return nil, fmt.Errorf("claim run %s: %w", id, err)
+		}
+		claims[num] = claim
+	}
+	defer func() {
+		for _, claim := range claims {
+			_ = claim.Close()
+		}
+	}()
+	claimedStates := map[string]events.RunState{}
+	if o.eventLog != nil {
+		var err error
+		claimedStates, err = events.ReadRunStates(o.eventLog)
+		if err != nil {
+			return nil, fmt.Errorf("read lifecycle under run claims: %w", err)
+		}
+	}
+	recoveryRejected := map[int]bool{}
+	var waitOwnersMu sync.Mutex
+	var waitOwners []*waitOwner
+	trackWaitOwner := func(owner *waitOwner) {
+		waitOwnersMu.Lock()
+		waitOwners = append(waitOwners, owner)
+		waitOwnersMu.Unlock()
+	}
+	ownerPulse := func(id string) <-chan time.Time {
+		if o.runSessionOpts.waitOwnerPulse != nil {
+			return o.runSessionOpts.waitOwnerPulse(id)
+		}
+		return nil
+	}
+	defer func() {
+		for _, owner := range waitOwners {
+			owner.close()
+		}
+	}()
+	recoveryNow := func() time.Time {
+		if o.runSessionOpts.now != nil {
+			return o.runSessionOpts.now().UTC()
+		}
+		return time.Now().UTC()
+	}
+	for issue, recovery := range req.RecoveryWaits {
+		if claimedStates[recovery.RunID].IsTerminal() {
+			continue
+		}
+		state := claimedStates[recovery.RunID]
+		if !state.IsActive() || state.HasStarted() && !state.IsAwaiting() && !state.IsCapacityQueued() {
+			recoveryRejected[issue] = true
+			continue
+		}
+		current, err := daemon.ReadRunWait(layout.BatchDir(recovery.BatchID), recovery.RunID)
+		if os.IsNotExist(err) && !recovery.RecoveryEventAt.IsZero() {
+			if legacy, valid := legacyRecoveryWait(claimedStates[recovery.RunID]); valid && legacy.RecoveryEventAt.Equal(recovery.RecoveryEventAt) && legacy.RecoverableAt(recoveryNow()) {
+				current = legacy
+				err = daemon.RenewRunWait(layout.BatchDir(current.BatchID), current, recoveryNow())
+			}
+		}
+		if err != nil || current.Issue != issue {
+			recoveryRejected[issue] = true
+			continue
+		}
+		reconciled, changed, valid := reconcileRecoveryWait(current, claimedStates[recovery.RunID])
+		if !valid || !reconciled.RecoverableAt(recoveryNow()) {
+			recoveryRejected[issue] = true
+			continue
+		}
+		if changed {
+			if err := daemon.RenewRunWait(layout.BatchDir(current.BatchID), reconciled, recoveryNow()); err != nil {
+				recoveryRejected[issue] = true
+				continue
+			}
+			current = reconciled
+		}
+		newBatchID := issueBatchID
+		if newBatchID == "" {
+			newBatchID = batchIDFromRunID(current.RunID)
+			if newBatchID == "" {
+				newBatchID = current.RunID
+			}
+		}
+		current, err = daemon.TransferRunWait(layout.BatchDir(current.BatchID), layout.BatchDir(newBatchID), current.RunID, recoveryNow())
+		if err != nil {
+			recoveryRejected[issue] = true
+			continue
+		}
+		req.RecoveryWaits[issue] = current
+		if !current.InitialAdmission {
+			if req.ReadyContinuations == nil {
+				req.ReadyContinuations = map[int]bool{}
+			}
+			req.ReadyContinuations[issue] = current.Ready
+		}
+		if current.UsageLimitProbe && !claimedStates[current.RunID].IsTerminal() {
+			quotaGate.report(issue, AgentRunResult{Status: "await", UsageLimitReached: true}, true)
+		}
+	}
 
 	// Graceful shutdown: each per-session supervisor (spawned in
 	// execute / executePromptOnly) owns the signal/kill of its own
@@ -1679,7 +1790,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		if runID == "" {
 			runID = buildRunID(num, req.RunTS, req.RunShortID)
 		}
-		if o.eventLog != nil && (req.ReadyContinuations[num] || len(dependencies[num]) > 0 || (effectiveParallel > 0 && effectiveParallel < len(req.Issues))) {
+		recoveredWait, recovering := req.RecoveryWaits[num]
+		queueWriteFailed := false
+		if o.eventLog != nil && !recoveryRejected[num] && !claimedStates[runID].IsTerminal() && !(recovering && !recoveredWait.InitialAdmission && !recoveredWait.Ready) && (recovering && recoveredWait.InitialAdmission || req.ReadyContinuations[num] || len(dependencies[num]) > 0 || (effectiveParallel > 0 && effectiveParallel < len(req.Issues))) {
 			queuedPayload := map[string]any{"blocked_by": dependencies[num]}
 			if title, ok := req.IssueTitles[num]; ok && title != "" {
 				queuedPayload["issue_title"] = title
@@ -1690,6 +1803,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				queuedPayload["batch_id"] = issueBatchID
 			}
 			queuedType := "run.queued"
+			queuedPayload["initial_admission"] = true
 			if req.ReadyContinuations[num] {
 				queuedType = "run.capacity_queued"
 				queuedPayload["ready_continuation"] = true
@@ -1698,24 +1812,64 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				queuedPayload["previous_run_id"] = req.PreviousRunIDs[num]
 				queuedPayload["previous_run_batch_id"] = req.PreviousRunBatchIDs[num]
 			}
-			_ = o.eventLog.Log(events.Event{
+			if err := o.eventLog.Log(events.Event{
 				Type:      queuedType,
 				Timestamp: time.Now(),
 				RunID:     runID,
 				Issue:     num,
 				IssueRef:  issueRef(num),
 				Payload:   queuedPayload,
-			})
+			}); err != nil {
+				queueWriteFailed = true
+				fmt.Fprintf(o.errorLog, "persist admission ownership for run %s: %v\n", runID, err)
+			}
 		}
-		go func(idx, issueNum int, blockers []int, turn int, runID string) {
+		go func(idx, issueNum int, blockers []int, turn int, runID string, queueWriteFailed bool) {
 			defer wg.Done()
 			defer close(completed[issueNum])
+			defer quotaGate.retire(issueNum)
+			_, recoveringRow := req.RecoveryWaits[issueNum]
+			if claimedStates[runID].IsTerminal() {
+				state := claimedStates[runID]
+				mu.Lock()
+				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: state.Status(), Branch: state.Branch()}
+				statuses[issueNum] = state.Status()
+				mu.Unlock()
+				return
+			}
+			if recoveryRejected[issueNum] || queueWriteFailed {
+				o.logAborted(issueNum, runID, nil)
+				mu.Lock()
+				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted"}
+				statuses[issueNum] = "aborted"
+				abortedCount++
+				mu.Unlock()
+				return
+			}
 			yieldedCapacity := false
 
 			issueCtx, issueCancel := context.WithCancel(ctx)
 			coord.registerIssueCancel(issueNum, issueCancel)
 			defer coord.unregisterIssueCancel(issueNum)
 			defer issueCancel()
+			leaseFailure := func(err error) {
+				fmt.Fprintf(o.errorLog, "renew ownership for run %s: %v; aborting owned intent\n", runID, err)
+				issueCancel()
+				mu.Lock()
+				defer mu.Unlock()
+				// Active execution consumes cancellation through its ordinary abort
+				// path. Returned unfinished rows still belong to this batch.
+				if results[idx].Status != "" && !events.RunStatusFromPayload(results[idx].Status).IsTerminal() {
+					o.logAborted(issueNum, runID, nil)
+					results[idx].Status, statuses[issueNum] = "aborted", "aborted"
+					abortedCount++
+				}
+			}
+			rowTerminal := func() bool {
+				mu.Lock()
+				defer mu.Unlock()
+				return events.RunStatusFromPayload(results[idx].Status).IsTerminal()
+			}
 
 			// parentCtx is the RunBatch ctx — it is only
 			// cancelled by an external abort (e.g. parent ctx
@@ -1749,23 +1903,75 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				turnMu.Unlock()
 			}
 			defer advanceTurn()
+			if req.ReadyContinuations[issueNum] || recoveringRow && !req.RecoveryWaits[issueNum].InitialAdmission {
+				// Observation is slot-free. Started waiting rows compete through
+				// the start gate only when their selected action needs execution.
+				advanceTurn()
+			}
+			var initialOwner *waitOwner
+			if !claimedStates[runID].HasStarted() {
+				initialBatchID := issueBatchID
+				if initialBatchID == "" {
+					initialBatchID = batchIDFromRunID(runID)
+					if initialBatchID == "" {
+						initialBatchID = runID
+					}
+				}
+				initialBaseBranch := req.BaseBranches[issueNum]
+				if initialBaseBranch == "" {
+					initialBaseBranch = baseBranch
+				}
+				record := daemon.RunWait{Protocol: "run-wait/v1", RunID: runID, BatchID: initialBatchID, Issue: issueNum, Branch: req.Branches[issueNum], BaseBranch: initialBaseBranch, InitialAdmission: true, AdmissionMode: int(req.IssueMode(issueNum)), Dependencies: append([]int(nil), blockers...), ReuseSession: req.ReuseSession[issueNum], Ready: true, OperationID: "admission", PreviousRunID: req.PreviousRunIDs[issueNum], PreviousBatchID: req.PreviousRunBatchIDs[issueNum]}
+				var err error
+				initialOwner, err = newWaitOwnerWithFailure(layout.BatchDir(initialBatchID), record, recoveryNow, o.eventLog, ownerPulse(runID), leaseFailure)
+				if err != nil {
+					o.logAborted(issueNum, runID, nil)
+					mu.Lock()
+					results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted"}
+					statuses[issueNum] = "aborted"
+					abortedCount++
+					mu.Unlock()
+					return
+				}
+				trackWaitOwner(initialOwner)
+				defer func() {
+					if initialOwner != nil && rowTerminal() {
+						initialOwner.close()
+					}
+				}()
+			}
 
 			abortedBy := make([]int, 0, len(blockers))
 			stillBlockedBy := make([]int, 0, len(blockers))
+			pendingBy := make([]int, 0, len(blockers))
 			for _, blocker := range blockers {
 				if err := issueCtx.Err(); err != nil {
+					if ctx.Err() == nil {
+						break
+					}
 					<-completed[blocker]
 				} else {
 					select {
 					case <-completed[blocker]:
 					case <-yielded[blocker]:
-						// This row cannot use the slot its blocker released. Defer
-						// its serial turn so later independent work can compete for it.
+						// Keep the dependent registered until its prerequisite's
+						// terminal transition. Only its serial turn is released;
+						// yielding must not return the dependent as queued.
 						advanceTurn()
-						<-completed[blocker]
+						select {
+						case <-completed[blocker]:
+						case <-issueCtx.Done():
+						}
 					case <-issueCtx.Done():
-						<-completed[blocker]
 					}
+				}
+				if issueCtx.Err() != nil {
+					if ctx.Err() == nil {
+						break
+					}
+					// Whole-batch abort also stops the prerequisite. Preserve its
+					// settled abort identity for the dependent's cascade evidence.
+					<-completed[blocker]
 				}
 				mu.Lock()
 				status := statuses[blocker]
@@ -1776,15 +1982,25 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					abortedBy = append(abortedBy, blocker)
 				case blockerStatus.IsSuccess():
 					state, err := fetchIssueState(issueCtx, o.githubClient, blocker)
-					if err == nil && strings.EqualFold(state, "open") {
+					if err != nil || !strings.EqualFold(state, "closed") {
 						stillBlockedBy = append(stillBlockedBy, blocker)
 					}
 				case blockerStatus.IsTerminal() && !blockerStatus.IsSuccess():
 					stillBlockedBy = append(stillBlockedBy, blocker)
+				default:
+					// Unfinished or unknown prerequisite evidence cannot authorize
+					// execution. Keep this initial admission and its durable edges.
+					pendingBy = append(pendingBy, blocker)
 				}
-				// non-terminal statuses (running/queued/unknown/empty) intentionally
-				// fall through so the dependent proceeds; this guards against a
-				// blocker that wrote no status (e.g. panicked before writing).
+			}
+			if issueCtx.Err() != nil {
+				o.logAborted(issueNum, runID, abortedBy)
+				mu.Lock()
+				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
+				statuses[issueNum] = "aborted"
+				abortedCount++
+				mu.Unlock()
+				return
 			}
 			if len(abortedBy) > 0 {
 				res := AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
@@ -1803,6 +2019,13 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				mu.Lock()
 				results[idx] = res
 				statuses[issueNum] = res.Status
+				mu.Unlock()
+				return
+			}
+			if len(pendingBy) > 0 {
+				mu.Lock()
+				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), RunID: runID, Status: "queued", Branch: req.Branches[issueNum]}
+				statuses[issueNum] = "queued"
 				mu.Unlock()
 				return
 			}
@@ -1847,7 +2070,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				}
 			}
 			issueBaseBranch := baseBranch
-			if mode == ModeContinue {
+			if mode == ModeContinue || recoveringRow {
 				if perIssueBaseBranch, ok := req.BaseBranches[issueNum]; ok && strings.TrimSpace(perIssueBaseBranch) != "" {
 					issueBaseBranch = perIssueBaseBranch
 				}
@@ -1870,6 +2093,27 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				BatchID:             issueBatchID,
 				QualityRulesFile:    req.QualityRulesFile,
 			}
+			recovery, recovering := req.RecoveryWaits[issueNum]
+			if recovering && !recovery.InitialAdmission {
+				row.UsageLimitProbe = recovery.UsageLimitProbe
+				if recovery.UsageLimitProbe {
+					row.UsageLimitDeadline = recovery.OperationDeadline
+				}
+				if !recovery.Ready && claimedStates[runID].AwaitEvent != nil && o.eventLog != nil {
+					payload := cloneLifecycleExtras(claimedStates[runID].AwaitEvent.Payload)
+					payload["batch_id"], payload["recovered"] = issueBatchID, true
+					if err := o.eventLog.Log(events.Event{Type: "run.await", Timestamp: time.Now().UTC(), RunID: runID, Issue: issueNum, IssueRef: issueRef(issueNum), Payload: payload}); err != nil {
+						fmt.Fprintf(o.errorLog, "persist recovered wait ownership for run %s: %v\n", runID, err)
+						o.logAborted(issueNum, runID, nil)
+						mu.Lock()
+						results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted"}
+						statuses[issueNum] = "aborted"
+						abortedCount++
+						mu.Unlock()
+						return
+					}
+				}
+			}
 			bc := BatchConfig{
 				Cfg:                        cfg,
 				AgentName:                  agentName,
@@ -1889,6 +2133,54 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				DangerouslySkipPermissions: *dangerouslySkipPermissions,
 				StrandedReconcile:          strandedReconcile,
 			}
+			clock := func() time.Time {
+				if o.runSessionOpts.now != nil {
+					return o.runSessionOpts.now().UTC()
+				}
+				return time.Now().UTC()
+			}
+			waitBatchID := issueBatchID
+			if waitBatchID == "" {
+				waitBatchID = batchIDFromRunID(runID)
+				if waitBatchID == "" {
+					waitBatchID = runID
+				}
+			}
+			waitBranch := row.Branches[issueNum]
+			if waitBranch == "" {
+				waitBranch = claimedStates[runID].Branch()
+			}
+			ownerRecord := daemon.RunWait{
+				Protocol: "run-wait/v1", RunID: runID, BatchID: waitBatchID, Issue: issueNum,
+				Branch: waitBranch, BaseBranch: issueBaseBranch, InitialAdmission: !claimedStates[runID].HasStarted(), AdmissionMode: int(row.Mode), OperationID: "admission", Ready: true,
+				PreviousRunID: row.PreviousRunIDs[issueNum], PreviousBatchID: row.PreviousRunBatchIDs[issueNum],
+				Dependencies: append([]int(nil), blockers...),
+				ReuseSession: row.ReuseSession,
+			}
+			if recovering {
+				ownerRecord = recovery
+				ownerRecord.BatchID = waitBatchID
+			}
+			owner, ownerErr := newWaitOwnerWithFailure(layout.BatchDir(waitBatchID), ownerRecord, clock, o.eventLog, ownerPulse(runID), leaseFailure)
+			if ownerErr != nil {
+				o.logAborted(issueNum, runID, nil)
+				mu.Lock()
+				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted"}
+				statuses[issueNum] = "aborted"
+				abortedCount++
+				mu.Unlock()
+				return
+			}
+			trackWaitOwner(owner)
+			defer func() {
+				if rowTerminal() {
+					owner.close()
+				}
+			}()
+			if initialOwner != nil {
+				initialOwner.close()
+				initialOwner = nil
+			}
 			var res AgentRunResult
 			var started bool
 			awaitPoll := 0
@@ -1899,11 +2191,18 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				}
 			}()
 			executor := o.newRunExecutorWith(parentCtx, bc, policy.sandboxFactory, policy.containerAlloc, coord, coord, layout)
-			awaiting := req.ReadyContinuations[issueNum]
-			readyContinuation := awaiting
+			awaiting := req.ReadyContinuations[issueNum] || recovering && !recovery.InitialAdmission
+			readyContinuation := req.ReadyContinuations[issueNum]
 			var opportunity awaitOpportunity
 			waitForObservation := func() error {
 				interval := awaitPollInterval(o.runSessionOpts, awaitPoll)
+				if recovering && recovery.NextPollAt.After(clock()) {
+					interval = recovery.NextPollAt.Sub(clock())
+					recovering = false
+				}
+				if err := owner.checkpoint(row, false, interval); err != nil {
+					return err
+				}
 				awaitPoll++
 				awaitWait := o.runSessionOpts.awaitWait
 				if awaitWait == nil {
@@ -1912,6 +2211,32 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				return awaitWait(issueCtx, interval)
 			}
 			for {
+				if row.UsageLimitProbe {
+					status, extras, handled := executor.observeLifecycle(issueCtx, row)
+					if handled && (status == "success" || extras["reason"] == "PULL_REQUEST_CLOSED" || extras["completion"] != nil) {
+						res = executor.finishObserved(issueCtx, row, status, extras)
+						quotaGate.report(issueNum, res, true)
+						break
+					}
+					if recovering && recovery.NextPollAt.After(clock()) {
+						wait := o.runSessionOpts.awaitWait
+						if wait == nil {
+							wait = waitForAwaitPoll
+						}
+						if err := wait(issueCtx, recovery.NextPollAt.Sub(clock())); err != nil {
+							o.logAborted(issueNum, runID, nil)
+							res.Status = "aborted"
+							break
+						}
+						recovering = false
+					}
+				}
+				if row.UsageLimitProbe && !row.UsageLimitDeadline.IsZero() && !newRunSession(executor, row).runtimeNow().Before(row.UsageLimitDeadline) {
+					res = executor.finishObserved(issueCtx, row, "failure", map[string]any{"reason": "AGENT_USAGE_LIMIT", "next_action": "resume with available provider quota after the exhausted five-hour window"})
+					res.UsageLimitReached = true
+					quotaGate.report(issueNum, res, true)
+					break
+				}
 				if awaiting && !readyContinuation && !row.UsageLimitProbe {
 					status, extras, handled := executor.observeLifecycle(issueCtx, row)
 					if issueCtx.Err() != nil {
@@ -1927,6 +2252,14 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 						}
 						continue
 					}
+					if !handled {
+						status = "failure"
+						extras = lifecycleGateFailureEvidence(idleGateReason, idleGateNextAction, lifecycleGateNone, nil, "")
+					}
+					if status != "resume" {
+						res = executor.finishObserved(issueCtx, row, status, extras)
+						break
+					}
 					if o.eventLog != nil {
 						if err := logCapacityQueuedContinuation(o.eventLog, runID, issueNum, issueBatchID, row, extras, req.IssueTitles[issueNum]); err != nil {
 							if o.errorLog != nil {
@@ -1941,42 +2274,152 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 						}
 					}
 					readyContinuation = true
+					if err := owner.checkpoint(row, true, 0); err != nil {
+						o.logAborted(issueNum, runID, nil)
+						res.Status = "aborted"
+						break
+					}
 				}
-				if !row.UsageLimitProbe && isUsageLimitPaused() {
+				if !row.UsageLimitProbe && quotaGate.paused() {
 					extras := map[string]any{
 						"gate":        "usage-limit",
 						"reason":      "usage-limit-paused",
 						"next_action": "resume after provider usage limit resets; Sandman did not start another run while suspended",
 					}
-					if o.eventLog != nil {
+					if o.eventLog != nil && (!awaiting || readyContinuation) {
 						if err := logCapacityQueuedContinuation(o.eventLog, runID, issueNum, issueBatchID, row, extras, req.IssueTitles[issueNum]); err != nil {
 							if o.errorLog != nil {
 								fmt.Fprintf(o.errorLog, "warning: persist usage-limit pause for issue %d: %v\n", issueNum, err)
 							}
 						}
 					}
-					res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "queued", Branch: req.Branches[issueNum]}
-					break
+					advanceTurn()
+					if err := owner.checkpoint(row, !awaiting || readyContinuation, 0); err != nil {
+						o.logAborted(issueNum, runID, nil)
+						res.Status = "aborted"
+						break
+					}
+					var quotaTerminalStatus string
+					var quotaTerminalExtras map[string]any
+					quotaTerminal := errors.New("terminal observation during quota admission")
+					var quotaObserve func() error
+					if awaiting {
+						quotaObserve = func() error {
+							status, extras, handled := executor.observeLifecycle(issueCtx, row)
+							if issueCtx.Err() != nil {
+								return issueCtx.Err()
+							}
+							if handled && status == "await" && readyContinuation {
+								if err := executor.persistObservedAwait(issueCtx, row, extras); err != nil {
+									return err
+								}
+								readyContinuation = false
+								if err := owner.checkpoint(row, false, awaitPollInterval(o.runSessionOpts, awaitPoll)); err != nil {
+									return err
+								}
+							}
+							if handled && status != "resume" && status != "await" {
+								quotaTerminalStatus, quotaTerminalExtras = status, extras
+								return quotaTerminal
+							}
+							return nil
+						}
+					}
+					if err := quotaGate.waitObserved(issueCtx, quotaObserve, awaitPollInterval(o.runSessionOpts, awaitPoll)); err != nil {
+						if errors.Is(err, quotaTerminal) {
+							res = executor.finishObserved(issueCtx, row, quotaTerminalStatus, quotaTerminalExtras)
+							break
+						}
+						if issueCtx.Err() != nil {
+							o.logAborted(issueNum, runID, nil)
+							res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
+						} else {
+							res = executor.finishObserved(issueCtx, row, "failure", map[string]any{"reason": "AGENT_USAGE_LIMIT", "next_action": "resume with available provider quota after the exhausted recovery window"})
+						}
+						break
+					}
+					continue
 				}
 				var err error
-				if awaiting {
+				var admissionStatus string
+				var admissionExtras map[string]any
+				admissionChanged := errors.New("lifecycle changed during execution admission")
+				if awaiting && readyContinuation && !row.UsageLimitProbe {
+					observe := func() error {
+						status, extras, handled := executor.observeLifecycle(issueCtx, row)
+						if issueCtx.Err() != nil {
+							return issueCtx.Err()
+						}
+						if !handled {
+							status = "failure"
+							extras = lifecycleGateFailureEvidence(idleGateReason, idleGateNextAction, lifecycleGateNone, nil, "")
+						}
+						if status != "resume" {
+							admissionStatus, admissionExtras = status, extras
+							return admissionChanged
+						}
+						return nil
+					}
+					opportunity, err = startGate.acquireObserved(issueCtx, &batchStartWaiter{awaiting: true, lastChance: opportunity.lastChance, ordinaryStartsAtChance: opportunity.ordinaryStarts}, observe, awaitPollInterval(o.runSessionOpts, awaitPoll))
+				} else if awaiting {
 					opportunity, err = startGate.AcquireAwaiting(issueCtx, opportunity)
 				} else {
 					opportunity, err = startGate.AcquireWithOpportunity(issueCtx, false)
+				}
+				if errors.Is(err, admissionChanged) {
+					if admissionStatus == "await" {
+						if err := executor.persistObservedAwait(issueCtx, row, admissionExtras); err != nil {
+							o.logAborted(issueNum, runID, nil)
+							res.Status = "aborted"
+							break
+						}
+						readyContinuation = false
+						if err := waitForObservation(); err != nil {
+							o.logAborted(issueNum, runID, nil)
+							res.Status = "aborted"
+							break
+						}
+						continue
+					}
+					res = executor.finishObserved(issueCtx, row, admissionStatus, admissionExtras)
+					break
 				}
 				if err != nil {
 					o.logAborted(issueNum, runID, nil)
 					res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
 					break
 				}
+				// Quota can close while an ordinary row is blocked inside Acquire.
+				// Revalidate at the actual launch boundary, without pacing a start
+				// that never happened.
+				if !row.UsageLimitProbe && quotaGate.paused() {
+					startGate.ReleaseWithoutDelay()
+					continue
+				}
 				res, started = executor.Execute(issueCtx, row)
-				if res.UsageLimitReached {
-					setUsageLimitPaused()
+				if res.Branch != "" {
+					row.Branches = map[int]string{issueNum: res.Branch}
+				}
+				quotaGate.report(issueNum, res, row.UsageLimitProbe)
+				if !res.UsageLimitReached {
+					row.UsageLimitProbe = false
+					row.UsageLimitDeadline = time.Time{}
 				}
 				if started {
 					startGate.Release()
 				} else {
 					startGate.ReleaseWithoutDelay()
+				}
+				if res.Status == "await" && !o.runSessionOpts.releaseAwaitCapacity {
+					interval := awaitPollInterval(o.runSessionOpts, awaitPoll)
+					if res.UsageLimitReached {
+						row.UsageLimitProbe, row.UsageLimitDeadline = true, res.UsageLimitDeadline
+						interval = usageLimitPollInterval
+					}
+					if err := owner.checkpoint(row, false, interval); err != nil {
+						o.logAborted(issueNum, runID, nil)
+						res.Status = "aborted"
+					}
 				}
 				if res.Status != "await" || !o.runSessionOpts.releaseAwaitCapacity {
 					break
@@ -1988,6 +2431,13 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				advanceTurn()
 				if res.UsageLimitReached {
 					interval := usageLimitPollInterval
+					row.UsageLimitDeadline = res.UsageLimitDeadline
+					row.UsageLimitProbe = true
+					if err := owner.checkpoint(row, false, interval); err != nil {
+						o.logAborted(issueNum, runID, nil)
+						res.Status = "aborted"
+						break
+					}
 					awaitWait := o.runSessionOpts.awaitWait
 					if awaitWait == nil {
 						awaitWait = waitForAwaitPoll
@@ -2003,6 +2453,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					row.PreviousRunBatchIDs = map[int]string{issueNum: issueBatchID}
 					row.ReuseSession = true
 					row.UsageLimitProbe = true
+					row.UsageLimitDeadline = res.UsageLimitDeadline
 					row.UsageLimitWaited = usageLimitWaited
 					awaiting = true
 					readyContinuation = false
@@ -2022,6 +2473,10 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				continue
 			}
 			mu.Lock()
+			if issueCtx.Err() != nil && !events.RunStatusFromPayload(res.Status).IsTerminal() {
+				o.logAborted(issueNum, runID, nil)
+				res.Status = "aborted"
+			}
 			results[idx] = res
 			statuses[issueNum] = res.Status
 			resStatus := events.RunStatusFromPayload(res.Status)
@@ -2032,10 +2487,29 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				abortedCount++
 			}
 			mu.Unlock()
-		}(inputIndex[num], num, dependencies[num], turn, runID)
+		}(inputIndex[num], num, dependencies[num], turn, runID, queueWriteFailed)
 	}
 
 	wg.Wait()
+	if ctx.Err() != nil {
+		// The batch retains RunID claims through this final cancellation fence.
+		// A returned await/initial queue is still unfinished owned intent;
+		// preserve terminal siblings and prevent later grace-based reclamation.
+		for i := range results {
+			if events.RunStatusFromPayload(results[i].Status).IsTerminal() {
+				continue
+			}
+			issue := req.Issues[i]
+			id := strings.TrimSpace(req.RunIDs[issue])
+			if id == "" {
+				id = buildRunID(issue, req.RunTS, req.RunShortID)
+			}
+			o.logAborted(issue, id, nil)
+			results[i].Status = "aborted"
+			statuses[issue] = "aborted"
+			abortedCount++
+		}
+	}
 
 	if policy.mode == "docker" || policy.mode == "podman" {
 		for _, result := range results {
@@ -2373,6 +2847,8 @@ func expandPath(path string) (string, error) {
 // pointer to a value type, update runSingle / runPromptOnlySingle to share it
 // explicitly — otherwise serialisation will silently break.
 type runSessionOptions struct {
+	waitOwnerPulse             func(string) <-chan time.Time
+	now                        func() time.Time
 	baseBranchSync             func(repoPath, sourceBranch string) error
 	baseBranchSyncMu           *sync.Mutex
 	contextRolloverLiterals    []string
@@ -2425,6 +2901,8 @@ type runSession struct {
 	reuseSession               bool
 	usageLimitProbe            bool
 	usageLimitWaited           time.Duration
+	usageLimitDeadline         time.Time
+	usageLimitRestoreErr       error
 	identityResolver           *gitIdentityResolver
 	branches                   map[int]string
 	renderCfg                  prompt.RenderConfig
@@ -2988,6 +3466,10 @@ func (s *runSession) emitNormalizedTerminal(ctx context.Context, runID string, r
 // so worktree_state describes the actual on-disk result.
 func (s *runSession) finishTerminal(ctx context.Context, runID string, result AgentRunResult, extras map[string]any, wt sandbox.Sandbox, branch string) string {
 	result, extras = s.normalizeTerminalResult(result, extras)
+	return s.finishDecidedTerminal(ctx, runID, result, extras, wt, branch)
+}
+
+func (s *runSession) finishDecidedTerminal(ctx context.Context, runID string, result AgentRunResult, extras map[string]any, wt sandbox.Sandbox, branch string) string {
 	_, terminalStatus := terminalRunEvent(ctx, result.Status)
 	worktreeState := "preserved"
 	if terminalStatus == "success" && !s.review && (s.cfg == nil || s.cfg.EffectiveCleanupWorktrees()) {
@@ -3282,7 +3764,13 @@ func (s *runSession) runOnce(
 	var terminalExtras map[string]any
 loop:
 	for attempt := 0; attempt < attempts; attempt++ {
+		if ctx.Err() != nil {
+			result.Status = "aborted"
+			result.ContextExhausted = false
+			break loop
+		}
 		if attempt > 0 {
+			terminalExtras = nil
 			// Session reuse is a launch choice, not retry state. Retries and
 			// context-rollover recovery always start a fresh conversation.
 			s.reuseSession = false
@@ -3305,6 +3793,11 @@ loop:
 			}
 		}
 		attemptRenderCfg, errResult := prepareAttempt(attempt, result)
+		if ctx.Err() != nil {
+			result.Status = "aborted"
+			result.ContextExhausted = false
+			break loop
+		}
 		if errResult != nil {
 			return *errResult, nil, events.RunStatusFromPayload(errResult.Status).IsSuccess()
 		}
@@ -3405,6 +3898,16 @@ loop:
 			if s.issueNumber > 0 && !(alreadyResolved && s.mode != ModeContinue) && events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
 				hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
 				if gateStatus, extras, handled := s.handleLifecycleDecisionAfterAgent(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled {
+					if isImplementorOwnedGateFailure(extras) {
+						// A clean but incomplete handoff is owned work, not an
+						// external await or a separate lifecycle-resume budget.
+						// Use the configured ordinary retry budget to perform it.
+						result.Status = "failure"
+						terminalExtras = cloneLifecycleExtras(extras)
+						delete(terminalExtras, "await")
+						delete(terminalExtras, "gate")
+						continue loop
+					}
 					if gateStatus == "success" || gateStatus == "failure" || gateStatus == "aborted" {
 						// A terminal lifecycle decision is authoritative. Do not
 						// let the legacy post-decision PR arbitration replace it.
@@ -3412,18 +3915,7 @@ loop:
 						terminalExtras = mergeBlockerExtras(terminalExtras, extras)
 						break loop
 					}
-					gate, _ := extras["gate"].(string)
-					if gateStatus == "resume" && s.resumeCount >= s.resumeCapFor() {
-						// The external operation has produced an outcome but
-						// this session has exhausted its autonomous resume
-						// budget. Do not manufacture another wait for an
-						// already-resolved gate (issue #2743).
-						result.Status = "failure"
-						terminalExtras = remediationBudgetFailureEvidence(gate, extras,
-							"inspect the current pull-request remediation evidence and start a new run after advancing the pull-request head")
-						break loop
-					}
-					observe := gateStatus == "await" && (gate != gateReadyToMerge && gate != gateActionableFeedback || s.resumeCount >= s.resumeCapFor())
+					observe := gateStatus == "await"
 					if observe {
 						if !s.opts.foregroundLifecycle {
 							s.emitAwait(ctx, runID, result, extras)
@@ -3433,12 +3925,14 @@ loop:
 						s.emitAwait(ctx, runID, result, extras)
 						gateStatus, extras, _ = s.observeLifecycle(ctx, wt.WorkDir(), branch, logPath, runID, result, extras, hostPathsReady)
 					}
-					if resumePrompt, resume := s.resumePromptFromGate(ctx, wt, branch, runID, extras); resume {
-						s.reuseSession = true
-						s.previousRunIDs = map[int]string{s.issueNumber: runID}
-						s.previousRunBatchIDs = map[int]string{s.issueNumber: s.batchID}
-						attemptRenderCfg.TaskPrompt = resumePrompt
-						continue relaunch
+					if gateStatus == "resume" {
+						if resumePrompt, resume := s.resumePromptFromGate(ctx, wt, branch, runID, extras); resume {
+							s.reuseSession = true
+							s.previousRunIDs = map[int]string{s.issueNumber: runID}
+							s.previousRunBatchIDs = map[int]string{s.issueNumber: s.batchID}
+							attemptRenderCfg.TaskPrompt = resumePrompt
+							continue relaunch
+						}
 					}
 					if gateStatus == "resume" {
 						// An exhausted in-session resume budget ends the
@@ -3448,8 +3942,10 @@ loop:
 						// (issue #2743).
 						gate, _ := extras["gate"].(string)
 						gateStatus = "failure"
-						extras = remediationBudgetFailureEvidence(gate, extras,
-							"advance the pull-request head before requesting another remediation run")
+						if extras["reason"] != "REMEDIATION_STATE_ERROR" && extras["reason"] != "REMEDIATION_BUDGET_EXHAUSTED" {
+							extras = remediationBudgetFailureEvidence(gate, extras,
+								"advance the pull-request head before requesting another remediation run")
+						}
 					}
 					result.Status = gateStatus
 					terminalExtras = mergeBlockerExtras(terminalExtras, extras)
@@ -3580,7 +4076,9 @@ loop:
 				}
 			}
 		}
-		if s.shouldAwaitUsageLimit(result) {
+		if s.issueNumber > 0 && strategyFor(s.agentCfg.Preset, s.agentCfg.Command).AwaitsUsageLimit() && result.UsageLimitReached && !result.ContextExhausted && !events.RunStatusFromPayload(result.Status).IsSuccess() {
+			// Supported quota exhaustion is either a bounded external await
+			// or a terminal expired episode, never an ordinary retry burst.
 			break loop
 		}
 	}
@@ -3606,7 +4104,8 @@ func (s *runSession) shouldAwaitUsageLimit(result AgentRunResult) bool {
 		strategyFor(s.agentCfg.Preset, s.agentCfg.Command).AwaitsUsageLimit() &&
 		result.UsageLimitReached &&
 		!result.ContextExhausted &&
-		s.usageLimitWaited < usageLimitRetryWindow
+		!events.RunStatusFromPayload(result.Status).IsSuccess() &&
+		(s.usageLimitDeadline.IsZero() || s.runtimeNow().Before(s.usageLimitDeadline))
 }
 
 func (s *runSession) restoreHostPathsBeforeExternalGate(wt sandbox.Sandbox) bool {
@@ -3907,11 +4406,16 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	// await before waiting; the run stays active until the external gate
 	// resolves or the context is canceled.
 	if s.shouldAwaitUsageLimit(result) {
+		if s.usageLimitDeadline.IsZero() {
+			s.usageLimitDeadline = s.runtimeNow().Add(usageLimitRetryWindow)
+		}
+		result.UsageLimitDeadline = s.usageLimitDeadline
 		result.Status = s.emitAwait(ctx, runID, result, map[string]any{
-			"await_reason":                     "usage-limit",
-			"usage_limit_poll_seconds":         int(usageLimitPollInterval / time.Second),
-			"usage_limit_waited_seconds":       int(s.usageLimitWaited / time.Second),
-			"usage_limit_retry_window_seconds": int(usageLimitRetryWindow / time.Second),
+			"await_reason":                      "usage-limit",
+			"usage_limit_poll_seconds":          int(usageLimitPollInterval / time.Second),
+			"usage_limit_waited_seconds":        int(s.usageLimitWaited / time.Second),
+			"usage_limit_retry_window_seconds":  int(usageLimitRetryWindow / time.Second),
+			"usage_limit_deadline_unix_seconds": s.usageLimitDeadline.Unix(),
 		})
 		return result, true
 	}

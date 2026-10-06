@@ -2,8 +2,10 @@ package batch
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
@@ -23,6 +25,7 @@ type ReadyContinuation struct {
 	Branch             string
 	BaseBranch         string
 	IssueTitle         string
+	Wait               *daemon.RunWait
 }
 
 // FindReadyContinuations returns only the latest per-issue lifecycle states
@@ -41,18 +44,45 @@ func FindReadyContinuations(eventLog []events.Event, layout paths.Layout) []Read
 	ready := make([]ReadyContinuation, 0)
 	for _, state := range states {
 		issue := state.IssueNumber()
-		if issue <= 0 || latestRunByIssue[issue] != state.RunID || !state.IsCapacityQueued() {
+		if issue <= 0 || latestRunByIssue[issue] != state.RunID || !state.IsActive() || !(state.IsAwaiting() || state.IsCapacityQueued() || state.Status() == "queued") {
 			continue
 		}
 		event := state.CapacityQueuedEvent
-		if event == nil || !payloadBoolValue(event.Payload, "ready_continuation") {
-			continue
+		batchID := state.BatchID()
+		if state.IsCapacityQueued() && event != nil {
+			batchID = strings.TrimSpace(payloadStringValue(event.Payload, "batch_id"))
 		}
-		batchID := strings.TrimSpace(payloadStringValue(event.Payload, "batch_id"))
 		if batchID == "" {
 			batchID = state.BatchID()
 		}
 		if batchID != "" && daemon.IsRunActive(daemon.BatchDir(layout.SandmanDir, batchID)) {
+			continue
+		}
+		claim, claimErr := daemon.ClaimRun(layout.SandmanDir, state.RunID)
+		if claimErr != nil {
+			continue
+		}
+		_ = claim.Close()
+		wait, waitErr := daemon.ReadRunWait(layout.BatchDir(batchID), state.RunID)
+		if waitErr == nil {
+			var valid bool
+			wait, _, valid = reconcileRecoveryWait(wait, state)
+			if !valid {
+				continue
+			}
+			if wait.Issue != issue || !wait.RecoverableAt(time.Now().UTC()) {
+				continue
+			}
+			batchID = wait.BatchID
+			ready = append(ready, ReadyContinuation{IssueNumber: issue, RunID: state.RunID, PreviousRunID: state.RunID, PreviousRunBatchID: batchID,
+				BatchID: batchID, Branch: wait.Branch, BaseBranch: wait.BaseBranch, Wait: &wait})
+			continue
+		}
+		if !os.IsNotExist(waitErr) || !state.IsCapacityQueued() || event == nil || !payloadBoolValue(event.Payload, "ready_continuation") {
+			continue
+		}
+		legacyWait, valid := legacyRecoveryWait(state)
+		if !valid || !legacyWait.RecoverableAt(time.Now().UTC()) {
 			continue
 		}
 		previousRunID := strings.TrimSpace(payloadStringValue(event.Payload, "previous_run_id"))
@@ -72,9 +102,71 @@ func FindReadyContinuations(eventLog []events.Event, layout paths.Layout) []Read
 			Branch:             strings.TrimSpace(payloadStringValue(event.Payload, "branch")),
 			BaseBranch:         strings.TrimSpace(payloadStringValue(event.Payload, "base_branch")),
 			IssueTitle:         strings.TrimSpace(payloadStringValue(event.Payload, "issue_title")),
+			Wait:               &legacyWait,
 		})
 	}
 	return ready
+}
+
+// Events determine whether execution has started. Reconcile a sidecar left
+// between the authoritative await event and its schedule checkpoint.
+func reconcileRecoveryWait(record daemon.RunWait, state events.RunState) (daemon.RunWait, bool, bool) {
+	if !state.HasStarted() {
+		return record, false, true
+	}
+	previous := record
+	record.InitialAdmission, record.AdmissionMode = false, int(ModeContinue)
+	record.Branch = state.Branch()
+	record.PreviousRunID, record.PreviousBatchID = state.RunID, record.BatchID
+	record.Ready, record.UsageLimitProbe = state.IsCapacityQueued(), false
+	record.OperationID, record.OperationDeadline = "capacity", time.Time{}
+	if record.Ready && state.CapacityQueuedEvent != nil && (previous.InitialAdmission || !previous.Ready) {
+		record.LeaseExpiresAt = state.CapacityQueuedEvent.Timestamp.Add(daemon.RunRecoveryGrace)
+	}
+	if !record.Ready {
+		if state.AwaitEvent == nil {
+			return record, true, false
+		}
+		if state.AwaitReason() == "usage-limit" {
+			seconds, ok := lifecycleDeadlineSeconds(state.AwaitEvent.Payload["usage_limit_deadline_unix_seconds"])
+			if !ok || seconds <= 0 {
+				return record, true, false
+			}
+			record.UsageLimitProbe = true
+			record.OperationDeadline = time.Unix(seconds, 0)
+			record.OperationID = fmt.Sprintf("quota:%d", seconds)
+			record.NextPollAt = state.AwaitEvent.Timestamp.Add(usageLimitPollInterval)
+		} else if deadline, gate, ok := lifecycleDeadline(state.AwaitEvent.Payload); ok {
+			record.OperationDeadline = deadline
+			record.OperationID = fmt.Sprintf("%s:%d", gate, deadline.Unix())
+		} else {
+			return record, true, false
+		}
+	}
+	if !record.OperationDeadline.IsZero() && record.OperationDeadline.Before(record.LeaseExpiresAt) {
+		record.LeaseExpiresAt = record.OperationDeadline
+	}
+	changed := previous.InitialAdmission || previous.Ready != record.Ready || previous.UsageLimitProbe != record.UsageLimitProbe || previous.OperationID != record.OperationID || !previous.OperationDeadline.Equal(record.OperationDeadline)
+	if !changed {
+		record.NextPollAt = previous.NextPollAt
+	}
+	return record, changed, record.Branch != ""
+}
+
+func legacyRecoveryWait(state events.RunState) (daemon.RunWait, bool) {
+	event := state.CapacityQueuedEvent
+	if !state.IsCapacityQueued() || event == nil || event.Timestamp.IsZero() || !payloadBoolValue(event.Payload, "ready_continuation") {
+		return daemon.RunWait{}, false
+	}
+	record := daemon.RunWait{Protocol: "run-wait/v1", RunID: state.RunID, BatchID: state.BatchID(), Issue: state.IssueNumber(), Branch: state.Branch(), BaseBranch: strings.TrimSpace(payloadStringValue(event.Payload, "base_branch")), AdmissionMode: int(ModeContinue), Ready: true, OperationID: "capacity", LeaseExpiresAt: event.Timestamp.Add(daemon.RunRecoveryGrace), RecoveryEventAt: event.Timestamp}
+	if deadline, gate, ok := lifecycleDeadline(event.Payload); ok {
+		record.OperationDeadline = deadline
+		record.OperationID = fmt.Sprintf("%s:%d", gate, deadline.Unix())
+		if deadline.Before(record.LeaseExpiresAt) {
+			record.LeaseExpiresAt = deadline
+		}
+	}
+	return record, record.BatchID != "" && record.Branch != "" && record.BaseBranch != ""
 }
 
 // ApplyReadyContinuations adds restart-safe continuations to a request. The
@@ -90,6 +182,57 @@ func ApplyReadyContinuations(req *Request, ready []ReadyContinuation, layout pat
 		}
 		if req.IssueMode(continuation.IssueNumber) == ModeOverride {
 			continue
+		}
+		if continuation.Wait != nil {
+			if req.RecoveryWaits == nil {
+				req.RecoveryWaits = map[int]daemon.RunWait{}
+			}
+			req.RecoveryWaits[continuation.IssueNumber] = *continuation.Wait
+			if continuation.Wait.InitialAdmission {
+				issue := continuation.IssueNumber
+				if !requestContainsIssue(req.Issues, issue) {
+					req.Issues = append(req.Issues, issue)
+				}
+				if req.Mode == nil {
+					req.Mode = map[int]IssueMode{}
+				}
+				req.Mode[issue] = IssueMode(continuation.Wait.AdmissionMode)
+				if req.RunIDs == nil {
+					req.RunIDs = map[int]string{}
+				}
+				req.RunIDs[issue] = continuation.RunID
+				if req.Branches == nil {
+					req.Branches = map[int]string{}
+				}
+				req.Branches[issue] = continuation.Branch
+				if req.BaseBranches == nil {
+					req.BaseBranches = map[int]string{}
+				}
+				req.BaseBranches[issue] = continuation.BaseBranch
+				if req.ReuseSession == nil {
+					req.ReuseSession = map[int]bool{}
+				}
+				req.ReuseSession[issue] = continuation.Wait.ReuseSession
+				if len(continuation.Wait.Dependencies) > 0 {
+					if req.Dependencies == nil {
+						req.Dependencies = map[int][]int{}
+					}
+					req.Dependencies[issue] = append([]int(nil), continuation.Wait.Dependencies...)
+				}
+				if continuation.Wait.PreviousRunID != "" {
+					if req.PreviousRunIDs == nil {
+						req.PreviousRunIDs = map[int]string{}
+					}
+					req.PreviousRunIDs[issue] = continuation.Wait.PreviousRunID
+				}
+				if continuation.Wait.PreviousBatchID != "" {
+					if req.PreviousRunBatchIDs == nil {
+						req.PreviousRunBatchIDs = map[int]string{}
+					}
+					req.PreviousRunBatchIDs[issue] = continuation.Wait.PreviousBatchID
+				}
+				continue
+			}
 		}
 		if continuation.RunID == "" || continuation.PreviousRunID == "" || continuation.PreviousRunBatchID == "" || continuation.Branch == "" || continuation.BaseBranch == "" {
 			return fmt.Errorf("ready continuation for issue %d has incomplete identity", continuation.IssueNumber)
@@ -144,7 +287,7 @@ func ApplyReadyContinuations(req *Request, ready []ReadyContinuation, layout pat
 		req.PreviousRunIDs[issue] = continuation.PreviousRunID
 		req.PreviousRunBatchIDs[issue] = continuation.PreviousRunBatchID
 		req.RunIDs[issue] = continuation.RunID
-		req.ReadyContinuations[issue] = true
+		req.ReadyContinuations[issue] = continuation.Wait == nil || continuation.Wait.Ready
 		req.ReuseSession[issue] = true
 		req.Branches[issue] = continuation.Branch
 		req.BaseBranches[issue] = continuation.BaseBranch
