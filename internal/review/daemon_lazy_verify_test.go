@@ -64,14 +64,10 @@ func TestDaemon_LaunchReviewReturnsFastAndRecordsPending(t *testing.T) {
 		t.Fatalf("first tick should launch exactly 1 batch, got %d", runner.calls)
 	}
 
-	// The 3 × ListPRComments retry chain is gone. After this tick the
-	// per-PR fake's ListPRComments must have been called exactly once:
-	// one call from processPR's scan + zero from the (removed)
-	// inline verify. We also assert the comment count is at 1 here
-	// (a tighter bound would couple us to refactors of processPR's
-	// scan ordering).
+	// Initial publication posts directly; exact-match lookup is reserved
+	// for ambiguous retries and durable recovery.
 	if got := gh.commentCalls[7]; got != 1 {
-		t.Errorf("ListPRComments should be called exactly once during the first tick (no missing-comment retry chain), got %d calls", got)
+		t.Errorf("ListPRComments should be called once during the first tick for the trigger scan, got %d calls", got)
 	}
 
 	// Issue #1846 (S3) and #1849 (S6): launchReview owns MarkSeen
