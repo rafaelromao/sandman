@@ -168,7 +168,7 @@ These rules apply to every change-request an agent opens against this repository
 
 - **CI gate change** → update `.github/workflows/go.yml` and `.github/rulesets/main.json`.
 - **Versioning or SemVer rule change** → update this section and `CONTRIBUTING.md`.
-- **Repository-level agent-docs or domain-vocabulary change** → update `AGENTS.md`, `CONTEXT.md`, and the relevant `docs/development/` file.
+- **Repository-level agent-docs or domain-vocabulary change** → update `AGENTS.md`, `CONTEXT.md` (Sandman's legacy name for `GLOSSARY.md`), and the relevant `docs/development/` file.
 
 ### Feature branches
 
@@ -228,7 +228,7 @@ Use these repository-specific references when appropriate:
 
 - Issue tracker: `docs/agents/issue-tracker.md`
 - Triage labels: `docs/agents/triage-labels.md`
-- Domain vocabulary: `CONTEXT.md`
+- Domain vocabulary: `CONTEXT.md` (Sandman's legacy name for `GLOSSARY.md`)
 - ADRs: `docs/adr/`
 
 ## Preferred operating pattern
@@ -237,7 +237,7 @@ For most non-trivial tasks, follow this order:
 
 1. Read this file.
 2. Read only the narrowed code paths.
-3. Read `CONTEXT.md` or ADRs if domain or architectural intent matters.
+3. Read `CONTEXT.md` (Sandman's legacy name for `GLOSSARY.md`) or ADRs if domain or architectural intent matters.
 4. Make the smallest coherent change.
 5. Run formatting, vetting, and relevant tests.
 6. Summarize what changed, what was verified, and any remaining risk.
