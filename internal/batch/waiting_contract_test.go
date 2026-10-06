@@ -769,8 +769,10 @@ func TestWaitingContract_ParallelQuotaRecoveryReadmitsDeferredSibling(t *testing
 		"43-next": {Number: 43, State: "merged", Merged: true, HeadRefName: "43-next", Body: "Closes #43"}, "44-busy": {Number: 44, State: "merged", Merged: true, HeadRefName: "44-busy", Body: "Closes #44"},
 	}}}
 	var attempts atomic.Int32
+	busyStarted := make(chan struct{})
 	factory := &controlledRunnableFactory{runnables: map[int]Runnable{
 		44: waitingRunnableFunction(func(ctx context.Context) AgentRunResult {
+			close(busyStarted)
 			select {
 			case <-log.limited:
 			case <-ctx.Done():
@@ -778,8 +780,16 @@ func TestWaitingContract_ParallelQuotaRecoveryReadmitsDeferredSibling(t *testing
 			}
 			return AgentRunResult{IssueNumber: 44, Status: "success", Branch: "44-busy"}
 		}),
-		42: waitingRunnableFunction(func(context.Context) AgentRunResult {
+		42: waitingRunnableFunction(func(ctx context.Context) AgentRunResult {
 			if attempts.Add(1) == 1 {
+				// Occupy the other execution slot before closing quota admission.
+				// Otherwise row 44 can be deferred too, leaving row 43 waiting
+				// for 44 while quota recovery waits for row 43's deferral.
+				select {
+				case <-busyStarted:
+				case <-ctx.Done():
+					return AgentRunResult{Status: "aborted"}
+				}
 				return AgentRunResult{IssueNumber: 42, Status: "failure", Branch: "42-limit", UsageLimitReached: true}
 			}
 			client.mu.Lock()
