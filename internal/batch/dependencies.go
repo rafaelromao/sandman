@@ -22,6 +22,10 @@ type ResolvedBatch struct {
 	Issues  []int
 	Deps    map[int][]int
 	Blocked map[int][]int
+	// ParentChildren retains accepted discovery relationships, including
+	// children removed by closed-state filtering. Deps holds executable gates.
+	ParentChildren map[int][]int
+	IssueTitles    map[int]string
 }
 
 // DependencyResolver fetches BlockedBy relationships and resolves execution order.
@@ -39,60 +43,6 @@ func NewDependencyResolver(githubClient github.Client) *DependencyResolver {
 	}
 }
 
-// dependencyIssueFetchGroup de-duplicates FetchIssue calls across the
-// resolver's workers: the first caller for a given number fetches,
-// subsequent callers wait on the same in-flight call.
-type dependencyIssueFetchGroup struct {
-	mu       sync.Mutex
-	cache    map[int]*github.Issue
-	inFlight map[int]*dependencyIssueFetchCall
-}
-
-type dependencyIssueFetchCall struct {
-	done  chan struct{}
-	issue *github.Issue
-	err   error
-}
-
-func newDependencyIssueFetchGroup() *dependencyIssueFetchGroup {
-	return &dependencyIssueFetchGroup{
-		cache:    make(map[int]*github.Issue),
-		inFlight: make(map[int]*dependencyIssueFetchCall),
-	}
-}
-
-func (g *dependencyIssueFetchGroup) fetch(ctx context.Context, client github.Client, number int) (*github.Issue, error) {
-	g.mu.Lock()
-	if issue, ok := g.cache[number]; ok {
-		g.mu.Unlock()
-		return issue, nil
-	}
-	if call, ok := g.inFlight[number]; ok {
-		g.mu.Unlock()
-		select {
-		case <-call.done:
-			return call.issue, call.err
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}
-	call := &dependencyIssueFetchCall{done: make(chan struct{})}
-	g.inFlight[number] = call
-	g.mu.Unlock()
-
-	issue, err := client.FetchIssue(ctx, number)
-	g.mu.Lock()
-	call.issue = issue
-	call.err = err
-	if err == nil && issue != nil {
-		g.cache[number] = issue
-	}
-	delete(g.inFlight, number)
-	close(call.done)
-	g.mu.Unlock()
-	return issue, err
-}
-
 // Resolve produces a ResolvedBatch for the input issues. parentChildren
 // is the in-memory parent-to-children mapping synthesised by the
 // Specification resolver: each parent issue listed as a key is held
@@ -101,6 +51,10 @@ func (g *dependencyIssueFetchGroup) fetch(ctx context.Context, client github.Cli
 // are never persisted to GitHub. Pass nil when no parent-gate edges
 // apply (e.g. tests that do not exercise Specification expansion).
 func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeDeps bool, parentChildren map[int][]int) (*ResolvedBatch, error) {
+	return r.resolve(ctx, issues, includeDeps, parentChildren, newIssueFetchGroup())
+}
+
+func (r *DependencyResolver) resolve(ctx context.Context, issues []int, includeDeps bool, parentChildren map[int][]int, fetches *issueFetchGroup) (*ResolvedBatch, error) {
 	requested := uniqueIssues(issues)
 	if len(requested) == 0 {
 		return &ResolvedBatch{Deps: map[int][]int{}, Blocked: map[int][]int{}}, nil
@@ -119,7 +73,6 @@ func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeD
 		order = append(order, issue)
 	}
 
-	fetches := newDependencyIssueFetchGroup()
 	missing := map[int]struct{}{}
 
 	for len(queue) > 0 {
@@ -136,6 +89,9 @@ func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeD
 		issue, err := fetches.fetch(ctx, r.githubClient, issueNum)
 		if err != nil {
 			return nil, fmt.Errorf("fetch issue #%d: %w", issueNum, err)
+		}
+		if issue == nil {
+			return nil, fmt.Errorf("fetch issue #%d: not found", issueNum)
 		}
 
 		blockers := uniqueSortedIssues(issue.BlockedBy)
@@ -250,7 +206,7 @@ func mergeSyntheticBlockers(declared, synthetic []int, known map[int]struct{}) [
 // issue, a per-blocker error, or both nil when the blocker was not
 // found at all. Callers are responsible for translating a per-key error
 // into a missing-blocker entry.
-func fetchBlockersParallel(ctx context.Context, fetches *dependencyIssueFetchGroup, client github.Client, blockers []int, exclude int, maxWorkers int) map[int]fetchedBlocker {
+func fetchBlockersParallel(ctx context.Context, fetches *issueFetchGroup, client github.Client, blockers []int, exclude int, maxWorkers int) map[int]fetchedBlocker {
 	results := make(map[int]fetchedBlocker, len(blockers))
 	if len(blockers) == 0 {
 		return results

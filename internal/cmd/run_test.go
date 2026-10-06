@@ -896,7 +896,7 @@ func TestRun_AutomaticallyRehydratesReadyCapacityContinuation(t *testing.T) {
 	deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{
 		42: {Number: 42, State: "open", Title: "Fix bug"},
 	}}
-	started := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	started := time.Now().UTC().Add(-2 * time.Minute)
 	awaited := started.Add(time.Minute)
 	queued := awaited.Add(time.Minute)
 	deps.EventLog = &fakeEventLog{events: []events.Event{

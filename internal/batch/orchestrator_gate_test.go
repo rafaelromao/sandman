@@ -548,7 +548,7 @@ func TestExternalGate_RequestScopedApprovalResumesAfterReview(t *testing.T) {
 		}},
 	}
 	runOpts := gateTestRunOptions()
-	runOpts.awaitResumeMax = 1
+	runOpts.awaitResumeMax = 2 // Entry repair consumes an attempt too.
 	o := NewOrchestrator(
 		client,
 		&retryRenderer{result: "rendered prompt"},
@@ -913,8 +913,8 @@ func TestExternalGate_ValidRetainedRequestIsEvidenceOnly(t *testing.T) {
 	}
 
 	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
-	if !handled || status != "await" || extras["gate"] != string(lifecycleGatePending) {
-		t.Fatalf("retained evidence gate = (%q, %#v, %t), want active-CI await", status, extras, handled)
+	if !handled || status != "resume" || extras["gate"] != gateReviewTimeout {
+		t.Fatalf("retained evidence gate = (%q, %#v, %t), want bounded recovery of the earlier review deadline", status, extras, handled)
 	}
 	if _, ok := extras["review_request"].(map[string]any); !ok {
 		t.Fatalf("retained request evidence = %#v, want request-scoped payload", extras["review_request"])
@@ -1094,7 +1094,7 @@ func TestExternalGate_LiveFailedStatePrecedesActionableEvidence(t *testing.T) {
 		}},
 	}
 	runOpts := gateTestRunOptions()
-	runOpts.awaitResumeMax = 1
+	runOpts.awaitResumeMax = 2 // Entry repair consumes an attempt too.
 	o := NewOrchestrator(
 		client,
 		&retryRenderer{result: "rendered prompt"},
@@ -1329,8 +1329,8 @@ func TestExternalGate_CanonicalApprovalForOlderHeadDoesNotResume(t *testing.T) {
 		opts: gateTestRunOptions(),
 	}
 	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-stale-approval", "new-head")
-	if !handled || status == "resume" {
-		t.Fatalf("older-head approval = (%q, %#v, %t), want handled non-resume", status, extras, handled)
+	if !handled || status != "resume" || extras["gate"] != gateOwnedWorkRequired {
+		t.Fatalf("older-head approval = (%q, %#v, %t), want owned-work recovery without merge approval", status, extras, handled)
 	}
 }
 
@@ -1400,14 +1400,14 @@ func TestExternalGate_CanonicalRegistrationRejectsDifferentTriggerEvidence(t *te
 	// Issue #2743: rejected evidence authorizes nothing, and the failed
 	// gate has no other active resolver, so the run fails instead of
 	// waiting — while still carrying the valid diagnostic as evidence.
-	if !handled || status != "failure" {
-		t.Fatalf("different-trigger evidence = (%q, %#v, %t), want failure", status, extras, handled)
+	if !handled || status != "resume" {
+		t.Fatalf("different-trigger evidence = (%q, %#v, %t), want bounded timeout recovery", status, extras, handled)
 	}
-	if extras["reason"] != idleGateReason {
-		t.Fatalf("different-trigger reason = %v, want %q (no resume)", extras["reason"], idleGateReason)
+	if extras["reason"] != reviewTimeoutReason {
+		t.Fatalf("different-trigger reason = %v, want timeout rather than feedback", extras["reason"])
 	}
-	if _, ok := extras["gate"]; ok {
-		t.Fatalf("different-trigger failure carries gate: %#v", extras)
+	if extras["gate"] != gateReviewTimeout {
+		t.Fatalf("different-trigger evidence authorized feedback/merge: %#v", extras)
 	}
 	diagnostic, ok := extras["review_diagnostic"].(map[string]any)
 	if !ok || diagnostic["status"] != "valid" {
@@ -1436,14 +1436,14 @@ func TestExternalGate_CanonicalRegistrationRejectsEvidenceAfterTrustedDeadline(t
 	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
 	// Issue #2743: post-deadline feedback authorizes nothing, and the failed
 	// gate has no other active resolver, so the run fails instead of waiting.
-	if !handled || status != "failure" {
-		t.Fatalf("post-deadline feedback = (%q, %#v, %t), want failure", status, extras, handled)
+	if !handled || status != "resume" {
+		t.Fatalf("post-deadline feedback = (%q, %#v, %t), want bounded timeout recovery", status, extras, handled)
 	}
-	if extras["reason"] != idleGateReason {
-		t.Fatalf("post-deadline reason = %v, want %q (no resume)", extras["reason"], idleGateReason)
+	if extras["reason"] != reviewTimeoutReason {
+		t.Fatalf("post-deadline reason = %v, want timeout rather than feedback", extras["reason"])
 	}
-	if _, ok := extras["gate"]; ok {
-		t.Fatalf("post-deadline failure carries gate: %#v", extras)
+	if extras["gate"] != gateReviewTimeout {
+		t.Fatalf("post-deadline evidence authorized feedback: %#v", extras)
 	}
 }
 
@@ -1638,6 +1638,8 @@ func mutateReviewStateCounts(t *testing.T, workDir string, counts map[string]any
 }
 
 func pendingInformalGateSession() *runSession {
+	opts := gateTestRunOptions()
+	opts.now = func() time.Time { return time.Unix(2000, 0).UTC() }
 	return &runSession{
 		issueNumber: 42,
 		deps: runDeps{
@@ -1647,7 +1649,7 @@ func pendingInformalGateSession() *runSession {
 			}}},
 			errorLog: io.Discard,
 		},
-		opts: gateTestRunOptions(),
+		opts: opts,
 	}
 }
 
@@ -2341,14 +2343,14 @@ func TestExternalGate_ReviewTimeoutRetainsResponseCounters(t *testing.T) {
 	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
 		IssueNumber: 42, Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main",
 	})
-	if !started || result.Status != "await" {
-		t.Fatalf("counter result = (%t, %q), want started await", started, result.Status)
+	if !started || result.Status != "failure" {
+		t.Fatalf("counter result = (%t, %q), want bounded timeout recovery failure", started, result.Status)
 	}
 	logs, err := eventLog.Read()
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
-	awaitEvt := findEvent(logs, "run.await")
+	awaitEvt := findEvent(logs, "run.finished")
 	if awaitEvt == nil {
 		t.Fatalf("run.await event not found: %v", logs)
 	}
@@ -2631,8 +2633,8 @@ func TestExternalGate_MissingPRFailsWithPublicationNextAction(t *testing.T) {
 		opts: gateTestRunOptions(),
 	}
 	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, "missing-pr-branch", "", "run-test", "current-sha")
-	if !handled || status != "failure" || extras["reason"] != missingPRReason {
-		t.Fatalf("missing PR result = (%q, %#v, %t), want structured missing-PR failure", status, extras, handled)
+	if !handled || status != "resume" || extras["reason"] != missingPRReason {
+		t.Fatalf("missing PR result = (%q, %#v, %t), want bounded publication recovery", status, extras, handled)
 	}
 	if extras["branch"] != "missing-pr-branch" || extras["next_action"] != missingPRNextAction {
 		t.Fatalf("missing PR evidence = %#v, want branch and publication next action", extras)
@@ -2843,7 +2845,7 @@ func TestExternalGate_LateCurrentHeadApprovalResumesMergeWorkWithoutWaiting(t *t
 		}},
 	}
 	runOpts := gateTestRunOptions()
-	runOpts.awaitResumeMax = 1
+	runOpts.awaitResumeMax = 2 // Entry repair consumes an attempt too.
 	o := NewOrchestrator(
 		client,
 		&retryRenderer{result: "rendered prompt"},
@@ -2968,14 +2970,14 @@ func TestExternalGate_LateStaleApprovalFailsWithoutActiveRequest(t *testing.T) {
 				opts: gateTestRunOptions(),
 			}
 			status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
-			if !handled || status != "failure" {
-				t.Fatalf("late stale approval = (%q, %#v, %t), want failure", status, extras, handled)
+			if !handled || status != "resume" {
+				t.Fatalf("late stale approval = (%q, %#v, %t), want recovery without merge approval", status, extras, handled)
 			}
 			if extras["reason"] == nil {
 				t.Fatalf("late stale approval has no structured failure reason: %#v", extras)
 			}
-			if _, ok := extras["gate"]; ok {
-				t.Fatalf("late stale approval failure carries gate: %#v", extras)
+			if extras["gate"] == gateReadyToMerge || extras["gate"] == gateActionableFeedback {
+				t.Fatalf("stale approval authorized merge/feedback: %#v", extras)
 			}
 		})
 	}
@@ -3057,8 +3059,8 @@ func TestExternalGate_LateApprovalRejectsMissingClassification(t *testing.T) {
 		opts: gateTestRunOptions(),
 	}
 	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
-	if !handled || status != "failure" || extras["reason"] == nil {
-		t.Fatalf("missing classification result = (%q, %#v, %t), want structured failure", status, extras, handled)
+	if !handled || status != "resume" || extras["gate"] != gateReviewTimeout {
+		t.Fatalf("missing classification result = (%q, %#v, %t), want bounded timeout recovery without approval", status, extras, handled)
 	}
 }
 
@@ -3255,18 +3257,9 @@ func runCleanGateCaseForIssue(t *testing.T, issueState string, pr *github.PR) (A
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
 
 	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
-	factory := &fakeRunnableFactory{results: []AgentRunResult{
-		{
-			IssueNumber: 42,
-			Status:      "success",
-			Branch:      gateTestBranch,
-		},
-		{
-			IssueNumber: 42,
-			Status:      "success",
-			Branch:      gateTestBranch,
-		},
-	}}
+	factory := &controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{
+		result: AgentRunResult{IssueNumber: 42, Status: "success", Branch: gateTestBranch},
+	}}}
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, State: issueState, Title: "Fix bug"}},
 		prs:    map[string]*github.PR{gateTestBranch: pr},
@@ -3334,8 +3327,8 @@ func assertExternalGateTerminal(t *testing.T, logs []events.Event, wantStatus, g
 		if len(states) != 1 {
 			t.Fatalf("projected states = %d, want 1", len(states))
 		}
-		if got := states[0].Status(); got != "" {
-			t.Fatalf("projected status = %q, want empty (await is non-terminal)", got)
+		if got := states[0].Status(); got != "waiting" {
+			t.Fatalf("projected status = %q, want waiting (await is non-terminal)", got)
 		}
 		if states[0].AwaitEvent == nil {
 			t.Fatal("projected AwaitEvent is nil")

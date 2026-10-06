@@ -21,6 +21,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/reviewlaunch"
 	"github.com/rafaelromao/sandman/internal/runid"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/rafaelromao/sandman/internal/socketpath"
@@ -2154,7 +2155,15 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	// always target the same branch.
 	reviewBranch := reviewBranchName(prNumber, triggerKey)
 	preserveWorktree := false
+	var launchClaim *os.File
+	var lookupClaim *os.File
 	defer func() {
+		if lookupClaim != nil {
+			defer lookupClaim.Close()
+		}
+		if launchClaim != nil {
+			defer launchClaim.Close()
+		}
 		if rs != nil {
 			_ = rs.Close()
 		}
@@ -2176,9 +2185,52 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 		}
 	}()
 
+	// The request identity is known before a PR head can be observed. Keep
+	// this head-independent claim through publication and cleanup: branches,
+	// worktrees and decisions are request-scoped even when the PR head changes.
+	// It also fences bounded lookup failures under the unknown-head operation.
+	lookupClaim, err := reviewlaunch.ClaimLaunch(filepath.Join(d.BaseDir, "state"), prNumber, triggerKey, "")
+	if err != nil {
+		preserveWorktree = true
+		state.Release(triggerKey)
+		return fmt.Errorf("claim reviewer lookup budget: %w", err)
+	}
+	lookupBudget, err := reviewlaunch.Read(filepath.Join(d.BaseDir, "state"), prNumber, triggerKey, "")
+	if err != nil || lookupBudget.Attempts >= reviewlaunch.MaxAttempts {
+		state.Release(triggerKey)
+		if err != nil {
+			return fmt.Errorf("read reviewer lookup budget: %w", err)
+		}
+		return fmt.Errorf("REVIEW_LAUNCH_EXHAUSTED: request %s exhausted %d PR lookup failures", triggerKey, lookupBudget.Attempts)
+	}
 	pr, err := d.GitHub.FetchPR(ctx, prNumber)
 	if err != nil {
-		return fmt.Errorf("fetch PR: %w", err)
+		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("fetch PR: %w", err), "")
+	}
+	if pr == nil {
+		return d.recordLaunchFailure(ctx, triggerKey, state, errors.New("fetch PR: empty response"), "")
+	}
+	if pr != nil {
+		if strings.TrimSpace(pr.HeadRefOid) == "" {
+			launchClaim, lookupClaim = lookupClaim, nil
+		} else {
+			launchClaim, err = reviewlaunch.ClaimLaunch(filepath.Join(d.BaseDir, "state"), prNumber, triggerKey, pr.HeadRefOid)
+		}
+		if err != nil {
+			// Another daemon owns this exact request/head. Its artifacts must
+			// survive this losing worker's cleanup.
+			preserveWorktree = true
+			state.Release(triggerKey)
+			return fmt.Errorf("claim reviewer launch budget: %w", err)
+		}
+		budget, err := reviewlaunch.Read(filepath.Join(d.BaseDir, "state"), prNumber, triggerKey, pr.HeadRefOid)
+		if err != nil || budget.Attempts >= reviewlaunch.MaxAttempts {
+			state.Release(triggerKey)
+			if err != nil {
+				return fmt.Errorf("read reviewer launch budget: %w", err)
+			}
+			return fmt.Errorf("REVIEW_LAUNCH_EXHAUSTED: request %s exhausted %d launch failures", triggerKey, budget.Attempts)
+		}
 	}
 
 	// sandboxMode stays the effective resolution the rest of this
@@ -2224,14 +2276,14 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 		}); ok {
 			issue, fetchErr := fetcher.FetchIssue(ctx, linkedIssue)
 			if fetchErr != nil {
-				return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("fetch linked work item #%d for review prompt: %w", linkedIssue, fetchErr))
+				return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("fetch linked work item #%d for review prompt: %w", linkedIssue, fetchErr), pr.HeadRefOid)
 			} else if issue != nil {
 				acceptanceCriteria = issue.Body
 			} else {
-				return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("fetch linked work item #%d for review prompt: empty response", linkedIssue))
+				return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("fetch linked work item #%d for review prompt: empty response", linkedIssue), pr.HeadRefOid)
 			}
 		} else {
-			return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("fetch linked work item #%d for review prompt: client does not support issue content", linkedIssue))
+			return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("fetch linked work item #%d for review prompt: client does not support issue content", linkedIssue), pr.HeadRefOid)
 		}
 	}
 
@@ -2246,7 +2298,7 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	// trigger gets the bounded-retry budget instead of a full launch
 	// attempt on every tick.
 	if err := d.initPromptTemplate(); err != nil {
-		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("init review prompt template: %w", err))
+		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("init review prompt template: %w", err), pr.HeadRefOid)
 	}
 
 	rendered, err := d.Prompts.RenderReview(prompt.RenderConfig{
@@ -2266,7 +2318,7 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	// launch failure so the trigger gets the bounded-retry budget instead
 	// of being re-rendered on every tick (issue #2501).
 	if err != nil {
-		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("render review prompt: %w", err))
+		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("render review prompt: %w", err), pr.HeadRefOid)
 	}
 
 	agentName := ""
@@ -2276,15 +2328,15 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 		modelName = d.effectiveModel()
 	}
 	if agentName == "" {
-		return errors.New("review agent is not set; configure review_agent or agent in sandman config")
+		return d.recordLaunchFailure(ctx, triggerKey, state, errors.New("review agent is not set; configure review_agent or agent in sandman config"), pr.HeadRefOid)
 	}
 	if modelName == "" {
-		return errors.New("review model is not set; configure review_model or model in sandman config")
+		return d.recordLaunchFailure(ctx, triggerKey, state, errors.New("review model is not set; configure review_model or model in sandman config"), pr.HeadRefOid)
 	}
 
 	repoName, err := d.GitHub.RepoName(ctx)
 	if err != nil {
-		return fmt.Errorf("get repo name: %w", err)
+		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("get repo name: %w", err), pr.HeadRefOid)
 	}
 	d.logf("repo=%s agent=%s model=%s pr=%d", repoName, agentName, modelName, prNumber)
 
@@ -2329,7 +2381,7 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 		return errors.New("quota exhausted: usage limit reached")
 	}
 	if err != nil {
-		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("run batch: %w", err))
+		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("run batch: %w", err), pr.HeadRefOid)
 	}
 
 	// S3 post step (issue #1846): the agent writes
@@ -2342,7 +2394,21 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	// `else` branch only Releases the claim so the bounded-retry
 	// escape can re-process the comment if launchReview returned
 	// an error before any decision.md existed.
-	return d.postDecisionWithCleanup(ctx, prNumber, triggerKey, reviewRunFolder, state, &preserveWorktree)
+	postErr := d.postDecisionWithCleanup(ctx, prNumber, triggerKey, reviewRunFolder, state, &preserveWorktree)
+	if postErr != nil && ctx.Err() == nil {
+		info, statErr := os.Stat(d.reviewDecisionPath(prNumber, triggerKey))
+		if statErr != nil || info.IsDir() {
+			// No decision exists to publish. This is another failed launch,
+			// unlike recoverable publication of an already durable decision.
+			// Preserve pending publication state while bounding missing/unreadable
+			// decision attempts independently from publication recovery.
+			if _, err := reviewlaunch.RecordFailure(filepath.Join(d.BaseDir, "state"), prNumber, triggerKey, pr.HeadRefOid); err != nil {
+				return fmt.Errorf("persist reviewer decision-read budget: %w", err)
+			}
+			return postErr
+		}
+	}
+	return postErr
 }
 
 // postDecision implements the S3 post step (issue #1846):
@@ -2804,7 +2870,7 @@ func (d *Daemon) now() time.Time {
 // before MarkSeen by leaving the status untouched (matching the
 // "stays pending on cancellation" semantic pinned by issue
 // #1846).
-func (d *Daemon) recordLaunchFailure(ctx context.Context, commentID string, state *ReviewStateStore, cause error) error {
+func (d *Daemon) recordLaunchFailure(ctx context.Context, commentID string, state *ReviewStateStore, cause error, head ...string) error {
 	if state == nil {
 		return cause
 	}
@@ -2813,6 +2879,13 @@ func (d *Daemon) recordLaunchFailure(ctx context.Context, commentID string, stat
 		return cerr
 	}
 	attempts := ReadFailureAttempts(state, commentID) + 1
+	if len(head) > 0 {
+		budget, err := reviewlaunch.RecordFailure(filepath.Join(d.BaseDir, "state"), state.PR(), commentID, head[0])
+		if err != nil {
+			return fmt.Errorf("persist reviewer launch budget: %w", err)
+		}
+		attempts = budget.Attempts
+	}
 	backoff := d.effectiveLaunchBackoff(attempts)
 	stamp := d.now().Add(backoff)
 	if err := state.MarkSeenWithBudget(commentID, "failure", attempts, stamp); err != nil {

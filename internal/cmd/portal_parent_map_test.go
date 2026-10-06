@@ -882,14 +882,11 @@ func TestPortal_KindForRun_QueuedStateReturnsCompleted(t *testing.T) {
 	}
 }
 
-// TestPortal_MarkCompletedIfSocketDead_LeavesCompletedRowsAlone pins the
-// dead-socket reaper's invariant: a terminal row whose Kind is already
-// "completed" is not touched, even if its socket is dead. A regression
-// that always overwrites Kind would reanimate the row to "active".
-func TestPortal_MarkCompletedIfSocketDead_LeavesCompletedRowsAlone(t *testing.T) {
+// Dead socket cleanup must preserve event-derived lifecycle.
+func TestPortal_ClearDeadSocket_PreservesLifecycle(t *testing.T) {
 	v := &portalRunsView{}
 
-	t.Run("active run with dead socket flips to completed", func(t *testing.T) {
+	t.Run("active run with dead socket keeps lifecycle", func(t *testing.T) {
 		run := portalRun{Kind: "active"}
 		sockDir, err := os.MkdirTemp("", "sm-rmsd")
 		if err != nil {
@@ -902,16 +899,16 @@ func TestPortal_MarkCompletedIfSocketDead_LeavesCompletedRowsAlone(t *testing.T)
 		}
 		_ = ln.Close()
 
-		v.markCompletedIfSocketDead(&run, sockPath)
+		v.clearDeadSocket(&run, sockPath)
 
-		if run.Kind != "completed" {
-			t.Fatalf("Kind = %q, want %q", run.Kind, "completed")
+		if run.Kind != "active" || run.SocketPath != "" {
+			t.Fatalf("dead socket changed lifecycle: %+v", run)
 		}
 	})
 
 	t.Run("completed run is not touched by dead socket", func(t *testing.T) {
 		run := portalRun{Kind: "completed", Status: "success"}
-		v.markCompletedIfSocketDead(&run, "")
+		v.clearDeadSocket(&run, "")
 
 		if run.Kind != "completed" {
 			t.Fatalf("Kind = %q, want %q (reaper must not touch completed rows)", run.Kind, "completed")
@@ -1421,7 +1418,7 @@ func TestPortal_Compute_ActiveIndexEntryWithArchiveDir_NotArchived(t *testing.T)
 	}
 }
 
-func TestPortal_Compute_OrphanedActiveRunFromDeadBatch_Demoted(t *testing.T) {
+func TestPortal_Compute_OrphanedActiveRunFromDeadBatch_PreservesLifecycle(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -1469,18 +1466,18 @@ func TestPortal_Compute_OrphanedActiveRunFromDeadBatch_Demoted(t *testing.T) {
 		t.Fatalf("expected 1 row, got %d: %#v", len(runs), runs)
 	}
 	got := runs[0]
-	if got.Kind != "completed" {
-		t.Fatalf("Kind = %q, want %q (orphaned active row from dead batch must be demoted)", got.Kind, "completed")
+	if got.Kind != "active" {
+		t.Fatalf("Kind = %q, want active until recovery emits an event", got.Kind)
 	}
-	if got.Status != "aborted" {
-		t.Fatalf("Status = %q, want %q", got.Status, "aborted")
+	if got.Status != "running" || got.FinishedAt != nil {
+		t.Fatalf("event lifecycle changed: %+v", got)
 	}
 	if got.IssueNumber != 42 {
 		t.Fatalf("IssueNumber = %d, want 42", got.IssueNumber)
 	}
 }
 
-func TestPortal_Compute_DeadBatchWithStaleRunSock_StillDemoted(t *testing.T) {
+func TestPortal_Compute_DeadBatchWithStaleRunSock_PreservesLifecycle(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "p")
 	if err != nil {
 		t.Fatal(err)
@@ -1542,18 +1539,18 @@ func TestPortal_Compute_DeadBatchWithStaleRunSock_StillDemoted(t *testing.T) {
 		t.Fatalf("expected 1 row, got %d: %#v", len(runs), runs)
 	}
 	got := runs[0]
-	if got.Kind != "completed" {
-		t.Fatalf("Kind = %q, want %q (stale run.sock must not block demotion)", got.Kind, "completed")
+	if got.Kind != "active" {
+		t.Fatalf("Kind = %q, want active until recovery emits an event", got.Kind)
 	}
-	if got.Status != "aborted" {
-		t.Fatalf("Status = %q, want %q", got.Status, "aborted")
+	if got.Status != "running" || got.FinishedAt != nil {
+		t.Fatalf("event lifecycle changed: %+v", got)
 	}
 	if got.IssueNumber != 42 {
 		t.Fatalf("IssueNumber = %d, want 42", got.IssueNumber)
 	}
 }
 
-func TestPortal_Compute_DeadBatchQueuedRow_StaysQueued(t *testing.T) {
+func TestPortal_Compute_DeadBatchStartedCapacityRow_StaysWaiting(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -1569,20 +1566,30 @@ func TestPortal_Compute_DeadBatchQueuedRow_StaysQueued(t *testing.T) {
 		t.Fatalf("write dead manifest: %v", err)
 	}
 
-	runs := []portalRun{
-		{Key: "queued", RunID: "queued-run-42", Status: "queued", Kind: "active", BatchKey: deadBatchID, StartedAt: startedAt},
-		{Key: "running", RunID: "running-run-42", Status: "running", Kind: "active", BatchKey: deadBatchID, StartedAt: startedAt},
+	list := []events.Event{
+		{Type: "run.started", RunID: "queued-run-42", Issue: 42, Timestamp: startedAt, Payload: map[string]any{"batch_id": deadBatchID}},
+		{Type: "run.capacity_queued", RunID: "queued-run-42", Issue: 42, Timestamp: startedAt},
+		{Type: "run.started", RunID: "running-run-43", Issue: 43, Timestamp: startedAt, Payload: map[string]any{"batch_id": deadBatchID}},
 	}
-	got := (&portalRunsView{}).demoteOrphanedActiveRunsFromDeadBatches(repoRoot, runs)
-	if got[0].Kind != "active" || got[0].Status != "queued" {
-		t.Fatalf("queued row = %#v, want active/queued", got[0])
+	got, err := (&portalRunsView{}).computeFromEvents(repoRoot, list)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got[1].Kind != "completed" || got[1].Status != "aborted" {
-		t.Fatalf("running row = %#v, want completed/aborted", got[1])
+	if len(got) != 2 {
+		t.Fatalf("rows = %+v", got)
+	}
+	for _, row := range got {
+		want := "running"
+		if row.IssueNumber == 42 {
+			want = "waiting"
+		}
+		if row.Kind != "active" || row.Status != want || row.FinishedAt != nil {
+			t.Fatalf("row = %#v, want active/%s", row, want)
+		}
 	}
 }
 
-func TestPortal_Compute_LiveParentAndDeadReviewChild_DoesNotAggregateReviewing(t *testing.T) {
+func TestPortal_Compute_LiveParentAndDeadReviewChild_UsesEventLifecycle(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "p")
 	if err != nil {
 		t.Fatal(err)
@@ -1654,19 +1661,14 @@ func TestPortal_Compute_LiveParentAndDeadReviewChild_DoesNotAggregateReviewing(t
 	if parent == nil {
 		t.Fatalf("expected live parent row, got %#v", runs)
 	}
-	if parent.Status != "running" {
-		t.Fatalf("parent Status = %q, want %q", parent.Status, "running")
+	if parent.Status != "reviewing" {
+		t.Fatalf("parent Status = %q, want reviewing until recovery emits an event", parent.Status)
 	}
 	if review == nil {
 		t.Fatalf("expected review child row, got %#v", runs)
 	}
-	if review.Kind != "completed" || review.Status != "aborted" {
-		t.Fatalf("review child = %#v, want completed/aborted after demotion", review)
-	}
-	for _, run := range runs {
-		if run.IssueNumber == 1 && run.Status == "reviewing" {
-			t.Fatalf("unexpected reviewing row after demotion: %#v", run)
-		}
+	if review.Kind != "active" || review.Status != "reviewing" || review.FinishedAt != nil {
+		t.Fatalf("review child lifecycle was revised: %#v", review)
 	}
 }
 
@@ -1735,11 +1737,11 @@ func TestPortal_Compute_MultipleDeadBatches_IndependentIssueSets(t *testing.T) {
 		for i := range runs {
 			if runs[i].IssueNumber == b.issueNum {
 				found = true
-				if runs[i].Kind != "completed" {
-					t.Fatalf("issue %d: Kind = %q, want %q (orphaned row from dead batch must be demoted)", b.issueNum, runs[i].Kind, "completed")
+				if runs[i].Kind != "active" {
+					t.Fatalf("issue %d: Kind = %q, want active until recovery", b.issueNum, runs[i].Kind)
 				}
-				if runs[i].Status != "aborted" {
-					t.Fatalf("issue %d: Status = %q, want %q", b.issueNum, runs[i].Status, "aborted")
+				if runs[i].Status != "running" || runs[i].FinishedAt != nil {
+					t.Fatalf("issue %d lifecycle revised: %+v", b.issueNum, runs[i])
 				}
 			}
 		}

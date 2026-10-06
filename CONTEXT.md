@@ -25,7 +25,7 @@ A built-in command, config source, auth profile, and default model for a known A
 _Avoid_: Provider template, agent type.
 
 **AgentStrategy**:
-The per-preset behaviour bundle the run loop selects once per launch with `strategyFor(preset, command)` in `internal/batch/agent_strategy.go`: command flags (model, variant), the launch environment, session selection, output parsing, context-rollover detection, and usage-limit classification. Implementation AgentRuns use the ordinary bounded retry/failure path for usage limits; the review daemon may use the strategy's provider-wide quota recovery behavior for reviewer launches. Implementations are OpenCode, Claude, and passthrough (custom commands and preset-less providers). A custom command under a built-in preset keeps that preset's failure classification and environment rules but receives no injected flags, session selection, or parsing. No agent-name comparison may appear outside the selector and the preset and installer registries.
+The per-preset behaviour bundle the run loop selects once per launch with `strategyFor(preset, command)` in `internal/batch/agent_strategy.go`: command flags (model, variant), the launch environment, session selection, output parsing, context-rollover detection, and usage-limit classification. Recognised usage limits enter `run.await` with quota-reset polling (ten-minute polls for up to five hours, same-session resume); the review daemon uses the strategy's provider-wide quota recovery behavior for reviewer launches. Implementations are OpenCode, Claude, and passthrough (custom commands and preset-less providers). A custom command under a built-in preset keeps that preset's failure classification and environment rules but receives no injected flags, session selection, or parsing. No agent-name comparison may appear outside the selector and the preset and installer registries.
 _Avoid_: agent type switch, preset check.
 
 **Agent Provider**:
@@ -37,7 +37,7 @@ A built-in agent model identifier overridden via `sandman run --model`. Each Age
 _Avoid_: agent model, default model.
 
 **AgentRun**:
-One execution of an agent against one issue, producing commits on a branch. The unit of work within a batch.
+One logical execution against one work item, identified by RunID. Its lifecycle and terminality come exclusively from append-only events. Initial queued admission is unfinished; started work never returns to queued. Same RunID preserves accumulated active duration across waits and batches; new RunID starts fresh. Artifact availability and ownership cannot revise outcomes. See `docs/architecture/run-state-machine.md` for the full transition contract.
 _Avoid_: Run, job, task.
 
 **Prompt-only run**:
@@ -89,7 +89,7 @@ The master list at `.sandman/batches.json` recording every batch ever created wi
 _Avoid_: index, master index.
 
 **Run**:
-One folder under `.sandman/batches/<batch-id>/runs/<run-id>/` containing `run.json`, `run.log`, `session.json` for supported OpenCode runs, `run.sock`, and (for review runs) `review-state.json`. Identified by the per-row RunID produced by `runid.NewRunID`. Each Run represents a single AgentRun within a Batch. References ADR-0032.
+One folder under `.sandman/batches/<batch-id>/runs/<run-id>/` containing `run.json`, `run.log`, `session.json` for supported OpenCode runs, `run.sock`, and (for review runs) `review-state.json`. Identified by the per-row RunID produced by `runid.NewRunID`. Each Run represents a single AgentRun within a Batch. The Run may be archived or unavailable independently of AgentRun lifecycle. `run.json` is an atomic artifact manifest whose legacy `status` is a best-effort execution snapshot for inspection/compatibility; it never overrides or substitutes for events. References ADR-0032.
 _Avoid_: run folder, run directory.
 
 **OpenCode session identity**:
@@ -193,7 +193,7 @@ The maximum number of ContainerSandboxes Sandman may create for one Batch. `max_
 _Avoid_: isolated container toggle, fixed pool size.
 
 **Event**:
-A single structured log entry in the append-only JSONL event log (`.sandman/events.jsonl`). Examples: `run.started`, `run.continued`, `run.queued`, `run.capacity_queued`, `run.blocked`, `run.warning`, `run.finished`, `run.aborted`. A `run.queued` event is a terminal placeholder emitted when an issue waits on blockers or initial batch capacity. A `run.capacity_queued` event is non-terminal: external work has resolved, but the implementation continuation is waiting for a scheduler slot and can be rehydrated after restart.
+A single structured log entry in the append-only JSONL event log (`.sandman/events.jsonl`). Examples: `run.started`, `run.continued`, `run.queued`, `run.capacity_queued`, `run.blocked`, `run.warning`, `run.finished`, `run.aborted`. A `run.queued` event tagged `initial_admission: true` records unfinished initial admission while an AgentRun waits on prerequisites or batch capacity. Untagged historical records and explicit `terminal_placeholder` records retain terminal skipped-placeholder meaning. A `run.capacity_queued` event records non-terminal readiness: a started continuation remains Waiting until admitted and may be rehydrated within the fixed recovery grace. See `docs/architecture/run-state-machine.md` for the transition and ownership contract.
 _Avoid_: Log line, record.
 
 **Aborted**:
@@ -259,7 +259,7 @@ _Avoid_: Orphaned worktree, lost worktree.
 _See_: Branch, Worktree.
 
 **Archive**:
-The on-disk resting place for completed batch directories at `.sandman/archive/<batch-id>/`, populated by `sandman archive run <batch-id>` or by `sandman archive older-than <days>` for bulk archival of every dead batch whose manifest `CreatedAt` (or directory mtime when the manifest is missing) is older than the given cutoff. Archiving relocates the batch directory tree from `.sandman/batches/<batch-id>/` (its live-and-during-run home) to `.sandman/archive/<batch-id>/` so the batches directory stays scoped to currently-relevant batches. The daemon is forbidden from writing to an archived batch; the batch is treated as read-only historical state once moved. References ADR-0032.
+The on-disk resting place at `.sandman/archive/<batch-id>/`. `sandman archive run <run-id>` relocates one event-terminal Run to `archive/<batch-id>/runs/<run-id>/` while siblings stay live. `archive older-than <days>` selects event-terminal Runs using manifest creation metadata (or manifest mtime); `archive stale` first appends recovery events for eligible non-terminal work. `archive batch <batch-id>` moves the whole Batch only after its daemon is gone and all known AgentRuns are event-terminal. Index archive/unavailable states describe artifacts, never AgentRun outcomes. The daemon is forbidden from writing to an archived Batch. References ADR-0032.
 _Avoid_: trash, graveyard, old runs, retired runs.
 
 **Daemon Process**:
@@ -300,12 +300,12 @@ The in-flight portal status for an active review run (a run whose `run.started` 
 _Avoid_: reviewing status, review-in-progress. No secondary-row review chip.
 
 **Waiting**:
-The non-terminal runtime phase for an active implementation AgentRun whose current lifecycle phase is `run.await`. It is permitted only while a current-head CI operation is queued/running or a confirmed delegated-review request is within its deadline and has an automatic observer. A confirmed review request is already an ongoing external operation from successful delivery, even before the reviewer starts. A PR's existence, `REVIEW_REQUIRED`, `BLOCKED`, missing checks, a stale head, a failed lookup/state read, or an exhausted budget does not alone authorize waiting. Sandman must perform implementor-owned work (including branch publication, PR creation, feedback repair, and merge) rather than wait for it; without an active resolver, the run fails with a structured next action. Awaiting retains work and dependency ownership while releasing execution capacity. Historical await events remain available for diagnostics, but a later continuation, resume, or capacity-queue transition clears the current waiting phase. Portal aggregation remains distinct: an associated active review run promotes a non-terminal implementation row to `reviewing` whether the implementation is waiting, capacity-queued, or running.
+Non-terminal suspension after execution admission: an authorized current-head CI/review/quota operation is resolving, or the next action is ready but capacity/pacing delays execution. Readiness changes do not return a started AgentRun to queued. Waiting retains work/dependency/cancellation ownership while releasing execution capacity and freezing accumulated active duration. Same-RunID continuation resumes that total even in another batch. Transient observation may recheck only previously validated identity-bound evidence inside its original deadline. Explicit abort ends intent; an unclean exit gets five-minute ownerless recovery grace capped by the operation deadline. A linked active review may display Reviewing without changing this underlying lifecycle. See the canonical state-machine contract for every transition and fixed budget.
 _Avoid_: blocked, queued, or terminal external-gate status.
 
-**Capacity-queued continuation**:
-An active implementation whose external gate has resolved but which is waiting for a free scheduler slot. The append-only `run.capacity_queued` event distinguishes this runnable work from an external `run.await`, preserves its identity and worktree handoff, and enables automatic rehydration through normal run admission after a process restart. Before launch, Sandman revalidates the live pull-request head and request state.
-_Avoid_: waiting, terminal queue placeholder, manual `--continue` requirement.
+**Capacity-ready continuation**:
+A started implementation whose next action is ready but whose execution admission is delayed. It remains in the public Waiting lifecycle. `run.capacity_queued` is compatibility/readiness evidence, not a transition back to queued. Normal admission rehydrates valid ownerless intent within five-minute recovery grace and revalidates the live head/request before launch.
+_Avoid_: initial queue, terminal placeholder, manual `--continue` requirement.
 
 **Review-only (orphan)**:
 A portal issue group that contains only review child rows and no canonical implementation row. The portal renders the visible row with the explicit label `PR <prNumber> (#<issueNumber>)` (e.g. `PR 1508 (#1472)`) — the PR the review targeted is surfaced first, the linked issue is shown as a parenthesised reference. The row uses the review run's own `run_id` as the row identity (`data-run-key`) and does not fabricate implementation-run metadata such as `batchKey` or `issueTitle`. The row is expandable; the subject selector lists the real review runs so the user can inspect each one's log/events/details tabs.

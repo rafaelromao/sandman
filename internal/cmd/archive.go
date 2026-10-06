@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +11,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
+	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/spf13/cobra"
 )
@@ -57,10 +57,10 @@ func newArchiveRunCmd(deps Dependencies) *cobra.Command {
 	return &cobra.Command{
 		Use:   "run <runId>",
 		Short: "Archive a single row by its run id (per-row)",
-		Long:  "Move runs/<runId>/ from .sandman/batches/<batchId>/ to .sandman/archive/<batchId>/runs/<runId>/. The targeted row's run.json Status must be terminal; sibling rows and the batch daemon are left untouched. The CLI and the HTTP /api/runs/archive endpoint share this contract.",
+		Long:  "Move runs/<runId>/ from .sandman/batches/<batchId>/ to .sandman/archive/<batchId>/runs/<runId>/. The targeted AgentRun must have a terminal event projection; sibling rows and the batch daemon are left untouched. The CLI and HTTP endpoint share this contract.",
 		Args:  wrapArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runArchiveRun(cmd, args[0], deps.RepoRoot)
+			return runArchiveRun(cmd, args[0], deps.RepoRoot, deps.EventLog)
 		},
 	}
 }
@@ -73,10 +73,10 @@ func newArchiveBatchCmd(deps Dependencies) *cobra.Command {
 	return &cobra.Command{
 		Use:   "batch <batchId>",
 		Short: "Archive an entire batch directory (whole-batch)",
-		Long:  "Move the whole batch dir from .sandman/batches/<batchId>/ to .sandman/archive/<batchId>/. The batch daemon must be gone; sibling rows are not applicable. Whole-batch archive is not exposed via HTTP.",
+		Long:  "Move the whole batch dir from .sandman/batches/<batchId>/ to .sandman/archive/<batchId>/. The batch daemon must be gone and every AgentRun must have a terminal event projection. Whole-batch archive is not exposed via HTTP.",
 		Args:  wrapArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runArchiveBatch(cmd, args[0], probe, deps.RepoRoot)
+			return runArchiveBatch(cmd, args[0], probe, deps.RepoRoot, deps.EventLog)
 		},
 	}
 }
@@ -88,7 +88,7 @@ func newArchiveOlderThanCmd(deps Dependencies) *cobra.Command {
 		Long:  "Walk every run.json across all batches and archive each terminal row older than the cutoff. Already-archived rows are skipped. Sibling rows and live batch daemons are left untouched.",
 		Args:  wrapArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runArchiveOlderThan(cmd, args[0], deps.RepoRoot)
+			return runArchiveOlderThan(cmd, args[0], deps.RepoRoot, deps.EventLog)
 		},
 	}
 }
@@ -128,7 +128,7 @@ func runArchiveStale(cmd *cobra.Command, deps Dependencies) error {
 		if err := os.MkdirAll(layout.ArchiveDir, 0755); err != nil {
 			return fmt.Errorf("create archive dir: %w", err)
 		}
-		return archiveAllTerminalRows(cmd, idx, layout, repoRoot, &archived)
+		return archiveAllTerminalRows(cmd, idx, layout, repoRoot, &archived, deps.EventLog)
 	}); err != nil {
 		return fmt.Errorf("update batches index: %w", err)
 	}
@@ -141,7 +141,11 @@ func runArchiveStale(cmd *cobra.Command, deps Dependencies) error {
 // batches and archives each terminal row via daemon.ArchiveRow. It
 // honours per-row Runs records (already-archived rows are skipped)
 // and skips live batches entirely. The counter is updated in place.
-func archiveAllTerminalRows(cmd *cobra.Command, idx *batchindex.Index, layout paths.Layout, repoRoot string, archived *int) error {
+func archiveAllTerminalRows(cmd *cobra.Command, idx *batchindex.Index, layout paths.Layout, repoRoot string, archived *int, log events.EventLog) error {
+	states, err := events.ReadRunStates(log)
+	if err != nil {
+		return err
+	}
 	for i := range idx.Batches {
 		entry := &idx.Batches[i]
 		if daemon.IsRunActive(entry.Path) {
@@ -155,22 +159,13 @@ func archiveAllTerminalRows(cmd *cobra.Command, idx *batchindex.Index, layout pa
 			if rec := idx.RunRecordFor(entry.ID, runID); rec != nil && rec.Status == batchindex.RunRecordStatusArchived {
 				continue
 			}
-			manifestPath := filepath.Join(entry.Path, "runs", runID, "run.json")
-			data, err := os.ReadFile(manifestPath)
-			if err != nil {
-				continue
-			}
-			var manifest batchindex.RunManifest
-			if err := json.Unmarshal(data, &manifest); err != nil {
-				continue
-			}
-			if !isTerminalRunManifestStatusLocal(manifest.Status) {
+			if !states[runID].IsTerminal() {
 				continue
 			}
 			if idx.RunRecordFor(entry.ID, runID) == nil {
 				idx.AddRun(entry.ID, batchindex.RunRecord{RunID: runID, Status: batchindex.RunRecordStatusActive})
 			}
-			rec, err := daemon.ArchiveRow(repoRoot, entry, runID)
+			rec, err := daemon.ArchiveRow(repoRoot, entry, runID, log)
 			if err != nil {
 				var alreadyArchived *daemon.AlreadyArchivedError
 				if errors.As(err, &alreadyArchived) {
@@ -211,26 +206,12 @@ func listRunDirs(batchDir string) ([]string, error) {
 	return out, nil
 }
 
-// isTerminalRunManifestStatusLocal mirrors the package-private
-// isTerminalRunManifestStatus in portal.go without importing it, so
-// the bulk archive path can stay self-contained.
-func isTerminalRunManifestStatusLocal(s batchindex.RunManifestStatus) bool {
-	switch s {
-	case batchindex.RunManifestStatusSuccess,
-		batchindex.RunManifestStatusFailure,
-		batchindex.RunManifestStatusAborted,
-		batchindex.RunManifestStatusBlocked:
-		return true
-	}
-	return false
-}
-
 // runArchiveRun is the CLI per-row archive path. It validates the row
 // is terminal, dispatches to daemon.ArchiveRow, and writes the
 // resulting RunRecord into the entry's Runs slice. The targeted row's
-// run.json Status must be terminal; the batch daemon may be alive or
+// event projection must be terminal; the batch daemon may be alive or
 // dead (a sibling row keeps working either way).
-func runArchiveRun(cmd *cobra.Command, runID string, repoRoot string) error {
+func runArchiveRun(cmd *cobra.Command, runID string, repoRoot string, log events.EventLog) error {
 	if repoRoot == "" {
 		repoRoot = "."
 	}
@@ -251,7 +232,7 @@ func runArchiveRun(cmd *cobra.Command, runID string, repoRoot string) error {
 		if idx.RunRecordFor(entry.ID, runID) == nil {
 			idx.AddRun(entry.ID, batchindex.RunRecord{RunID: runID, Status: batchindex.RunRecordStatusActive})
 		}
-		rec, err := daemon.ArchiveRow(repoRoot, entry, runID)
+		rec, err := daemon.ArchiveRow(repoRoot, entry, runID, log)
 		if err != nil {
 			return err
 		}
@@ -271,7 +252,7 @@ func runArchiveRun(cmd *cobra.Command, runID string, repoRoot string) error {
 // runArchiveBatch is the CLI whole-batch archive path. It moves the
 // entire batch dir to .sandman/archive/<batchId>/, strips sockets,
 // and updates the entry's Status to archived. Not exposed via HTTP.
-func runArchiveBatch(cmd *cobra.Command, batchID string, probe runActivityProbe, repoRoot string) error {
+func runArchiveBatch(cmd *cobra.Command, batchID string, probe runActivityProbe, repoRoot string, log events.EventLog) error {
 	if repoRoot == "" {
 		repoRoot = "."
 	}
@@ -288,6 +269,30 @@ func runArchiveBatch(cmd *cobra.Command, batchID string, probe runActivityProbe,
 		}
 		if probe != nil && probe(entry.Path) {
 			return fmt.Errorf("batch %q is still active; stop the daemon before archiving", batchID)
+		}
+		states, err := events.ReadRunStates(log)
+		if err != nil {
+			return err
+		}
+		runIDs, err := listRunDirs(entry.Path)
+		if err != nil {
+			return err
+		}
+		for _, rec := range entry.Runs {
+			runIDs = append(runIDs, rec.RunID)
+		}
+		for _, state := range states {
+			if state.BatchID() == batchID || state.RunID == batchID {
+				runIDs = append(runIDs, state.RunID)
+			}
+		}
+		if len(runIDs) == 0 {
+			return fmt.Errorf("batch %q has no AgentRun lifecycle evidence", batchID)
+		}
+		for _, id := range runIDs {
+			if !states[id].IsTerminal() {
+				return &daemon.NonTerminalRowError{RunID: id}
+			}
 		}
 		if _, err := os.Stat(archivePath); err == nil {
 			return fmt.Errorf("archive %q already exists", batchID)
@@ -315,7 +320,7 @@ func runArchiveBatch(cmd *cobra.Command, batchID string, probe runActivityProbe,
 	return nil
 }
 
-func runArchiveOlderThan(cmd *cobra.Command, daysArg string, repoRoot string) error {
+func runArchiveOlderThan(cmd *cobra.Command, daysArg string, repoRoot string, log events.EventLog) error {
 	if repoRoot == "" {
 		repoRoot = "."
 	}
@@ -329,6 +334,10 @@ func runArchiveOlderThan(cmd *cobra.Command, daysArg string, repoRoot string) er
 	}
 
 	cutoff := time.Now().UTC().Add(-time.Duration(days) * 24 * time.Hour)
+	states, err := events.ReadRunStates(log)
+	if err != nil {
+		return err
+	}
 
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
 
@@ -366,13 +375,13 @@ func runArchiveOlderThan(cmd *cobra.Command, daysArg string, repoRoot string) er
 				if createdAt.IsZero() {
 					createdAt = info.ModTime()
 				}
-				if !createdAt.UTC().Before(cutoff) || !isTerminalRunManifestStatusLocal(manifest.Status) {
+				if !createdAt.UTC().Before(cutoff) || !states[runID].IsTerminal() {
 					continue
 				}
 				if idx.RunRecordFor(entry.ID, runID) == nil {
 					idx.AddRun(entry.ID, batchindex.RunRecord{RunID: runID, Status: batchindex.RunRecordStatusActive})
 				}
-				rec, err := daemon.ArchiveRow(repoRoot, entry, runID)
+				rec, err := daemon.ArchiveRow(repoRoot, entry, runID, log)
 				if err != nil {
 					var alreadyArchived *daemon.AlreadyArchivedError
 					if errors.As(err, &alreadyArchived) {

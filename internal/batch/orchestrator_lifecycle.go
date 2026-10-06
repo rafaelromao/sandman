@@ -85,6 +85,7 @@ type implementationPRFacts struct {
 	reviewRequested  bool
 	attemptStatus    string
 	alreadyResolved  bool
+	requireReview    bool
 }
 
 // lifecycleDecision is the outcome of decideImplementationPRLifecycle. The
@@ -169,7 +170,11 @@ func decideImplementationPRLifecycle(in implementationPRFacts) lifecycleDecision
 			completionFailure: true,
 		}
 	case lifecycleGateFailed, lifecycleGatePending, lifecycleGateReady:
-		return decideRecoverableLifecycle(gate, in.pr, in.headSHA, in.retainedEvidence, in.reviewRequested, in.attemptStatus)
+		decision := decideRecoverableLifecycle(gate, in.pr, in.headSHA, in.retainedEvidence, in.reviewRequested, in.attemptStatus)
+		if in.requireReview && decision.action == lifecycleResume && decision.gate == lifecycleGateReady && in.retainedEvidence.outcome != retainedReviewApproval {
+			return lifecycleRemediationDecision(gateReviewRequestRequired, "REVIEW_REQUEST_REQUIRED", "deliver a confirmed current-head delegated-review request and obtain request-scoped approval before merge work", in.pr, in.retainedEvidence.payload)
+		}
+		return decision
 	case lifecycleGateUnavailable:
 		if in.alreadyResolved {
 			if strings.EqualFold(strings.TrimSpace(in.attemptStatus), "aborted") {
@@ -183,9 +188,10 @@ func decideImplementationPRLifecycle(in implementationPRFacts) lifecycleDecision
 		// A non-open, non-merged PR is closed without a merge (B2.4): an
 		// irrecoverable policy outcome that can never await.
 		return lifecycleDecision{
-			action:  lifecycleFailure,
-			gate:    lifecycleGateUnavailable,
-			handled: true,
+			action:        lifecycleFailure,
+			gate:          lifecycleGateUnavailable,
+			handled:       true,
+			failureExtras: map[string]any{"reason": "PULL_REQUEST_CLOSED", "next_action": "publish a recoverable implementation pull request before continuing"},
 		}
 	default:
 		return unhandled(gate)
@@ -573,21 +579,24 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 		if ctx.Err() != nil {
 			return "aborted", nil, true
 		}
-		return "failure", map[string]any{
+		return "resume", map[string]any{
 			"reason":      missingPRReason,
 			"next_action": missingPRNextAction,
 			"branch":      branch,
+			"gate":        gateOwnedWorkRequired,
 		}, true
 	}
 	if refreshUnavailable {
-		if attemptNeedsRetry(attemptStatus) {
-			return "", nil, false
-		}
-		// A refresh the lifecycle explicitly requested has no safe fallback:
-		// without live pull-request facts there is no active resolver to
-		// wait on, so fail instead of parking the run (issue #2743).
+		// Re-observe only previously authorized evidence with its fixed
+		// identity/deadline; without it there is no safe pending fallback.
 		if ctx.Err() != nil {
 			return "aborted", nil, true
+		}
+		if status, extras, ok := s.priorObservation(runID, branch, worktreeHeadSHA); ok {
+			return status, extras, true
+		}
+		if attemptNeedsRetry(attemptStatus) {
+			return "", nil, false
 		}
 		return "failure", map[string]any{
 			"reason":       lookupGateReason,
@@ -597,13 +606,16 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 		}, true
 	}
 	if err != nil {
-		if attemptNeedsRetry(attemptStatus) {
-			return "", nil, false
-		}
-		// A failed gate lookup is not an external operation being resolved:
-		// fail instead of parking the run in waiting (issue #2743).
+		// Transport failure cannot create an operation. An already admitted
+		// bounded operation may be re-observed without renewing its deadline.
 		if ctx.Err() != nil {
 			return "aborted", nil, true
+		}
+		if status, extras, ok := s.priorObservation(runID, branch, worktreeHeadSHA); ok {
+			return status, extras, true
+		}
+		if attemptNeedsRetry(attemptStatus) {
+			return "", nil, false
 		}
 		return "failure", map[string]any{
 			"reason":       lookupGateReason,
@@ -661,6 +673,13 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 	// wait from it and verified completion never pays for the lookup.
 	reviewRequested := s.confirmedReviewRequestActive(ctx, workDir, pr, headSHA)
 	evidence := s.retainedLifecycleEvidence(ctx, workDir, pr, headSHA)
+	if exhausted, err := s.exhaustedReviewLaunch(evidence.payload, pr.Number, headSHA); err != nil || exhausted {
+		reason := "REVIEW_LAUNCH_EXHAUSTED"
+		if err != nil {
+			reason = "REVIEW_LAUNCH_STATE_ERROR"
+		}
+		return "failure", map[string]any{"reason": reason, "next_action": "repair reviewer launch prerequisites and deliver a new confirmed review request", "pull_request": pr.Number, "head_sha": headSHA}, true
+	}
 	if reviewRegistrationFailure {
 		// A delivered trigger whose durable identity could not be recorded is
 		// not a safe review wait: there is no restart-safe observer binding.
@@ -693,6 +712,13 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 		}
 		evidence.payload = mergeLifecycleDiagnostics(evidence.payload, ciEvidence)
 	}
+	if evidence.outcome == retainedReviewApproval || evidence.actionable || len(evidence.informalFeedback) > 0 {
+		if request, ok := evidence.payload["review_request"].(map[string]any); ok {
+			resolved := cloneLifecycleExtras(request)
+			resolved["operation_resolved"] = true
+			evidence.payload["review_request"] = resolved
+		}
+	}
 	decision = decideImplementationPRLifecycle(implementationPRFacts{
 		pr:               pr,
 		headSHA:          headSHA,
@@ -701,7 +727,34 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 		reviewRequested:  reviewRequested,
 		attemptStatus:    attemptStatus,
 		alreadyResolved:  s.lifecycleAlreadyResolved,
+		requireReview:    strings.TrimSpace(s.renderCfg.ReviewCommand) != "",
 	})
+	if strings.EqualFold(pr.State, "open") && !evidence.stateError {
+		deadlines := cloneLifecycleExtras(evidence.payload)
+		// A timely response resolves its request lifetime. Capacity latency
+		// after that response must not retroactively turn approval into timeout.
+		if evidence.outcome == retainedReviewApproval || evidence.actionable || len(evidence.informalFeedback) > 0 {
+			delete(deadlines, "review_request")
+		}
+		if deadline, gate, bounded := lifecycleDeadline(deadlines); bounded && !s.runtimeNow().Before(deadline) {
+			deadlines["gate"] = gate
+			deadlines["reason"] = lifecycleDeadlineReason(gate)
+			deadlines["next_action"] = lifecycleDeadlineNextAction(gate)
+			deadlines["pull_request"] = pr.Number
+			deadlines["head_sha"] = headSHA
+			deadlines = mergeLifecycleDiagnostics(deadlines, s.retainedReviewDiagnostics(ctx, workDir, branch, pr, headSHA))
+			return "resume", deadlines, true
+		}
+	}
+	if decision.action == lifecycleFailure && isImplementorOwnedGateFailure(decision.failureExtras) && !evidence.stateError && strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) {
+		previousGate := decision.gate
+		decision = lifecycleRemediationDecision(gateOwnedWorkRequired, idleGateReason, idleGateNextAction, pr, evidence.payload)
+		if strings.TrimSpace(s.renderCfg.ReviewCommand) != "" {
+			decision = lifecycleRemediationDecision(gateReviewRequestRequired, "REVIEW_REQUEST_REQUIRED", "deliver a confirmed current-head delegated-review request before yielding or attempting merge work", pr, evidence.payload)
+		}
+		decision.extras["external_gate"] = string(previousGate)
+		decision.extras["expected_head_sha"] = headSHA
+	}
 	if decision.action == lifecycleSuccess || decision.action == lifecycleFailure {
 		failureExtras := lifecycleFailureExtras(decision, s.issueNumber)
 		if decision.action == lifecycleFailure {
@@ -745,15 +798,6 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 		}
 		extras["next_action"] = nextAction
 		return "resume", extras, true
-	}
-	if status == "await" && decision.gate == lifecycleGatePending {
-		if deadline, deadlineGate, ok := lifecycleDeadline(extras); ok && !time.Now().Before(deadline) {
-			resume := cloneLifecycleExtras(extras)
-			resume["gate"] = deadlineGate
-			resume["reason"] = lifecycleDeadlineReason(deadlineGate)
-			resume["next_action"] = lifecycleDeadlineNextAction(deadlineGate)
-			return "resume", resume, true
-		}
 	}
 	return status, extras, true
 }
@@ -909,7 +953,7 @@ func (s *runSession) observeLifecycle(ctx context.Context, workDir, branch, logP
 		}
 		if status == "resume" {
 			gate, _ := nextExtras["gate"].(string)
-			if isResumeGate(gate) && s.resumeCount < s.resumeCapFor() {
+			if isResumeGate(gate) {
 				return status, nextExtras, true
 			}
 			// An exhausted in-session resume budget ends the observation
@@ -918,10 +962,6 @@ func (s *runSession) observeLifecycle(ctx context.Context, workDir, branch, logP
 				"inspect the current pull-request remediation evidence and start a new run after advancing the pull-request head"), true
 		}
 		if status == "await" {
-			gate, _ := nextExtras["gate"].(string)
-			if (gate == gateReadyToMerge || gate == gateActionableFeedback) && s.resumeCount < s.resumeCapFor() {
-				return status, nextExtras, true
-			}
 			s.emitAwait(ctx, runID, result, nextExtras)
 			continue
 		}
@@ -933,7 +973,8 @@ func lifecycleDeadline(extras map[string]any) (time.Time, string, bool) {
 	var deadline time.Time
 	var gate string
 	request, ok := extras["review_request"].(map[string]any)
-	if ok {
+	resolved, _ := request["operation_resolved"].(bool)
+	if ok && !resolved {
 		if seconds, ok := lifecycleDeadlineSeconds(request["deadline_unix_seconds"]); ok {
 			deadline, gate = time.Unix(seconds, 0), gateReviewTimeout
 		}
@@ -952,6 +993,8 @@ func lifecycleDeadline(extras map[string]any) (time.Time, string, bool) {
 
 func lifecycleDeadlineSeconds(value any) (int64, bool) {
 	switch typed := value.(type) {
+	case int:
+		return int64(typed), typed > 0
 	case int64:
 		return typed, typed > 0
 	case float64:
