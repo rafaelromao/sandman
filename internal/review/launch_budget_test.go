@@ -3,8 +3,10 @@ package review
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -93,6 +95,53 @@ func TestReviewerPreparationFailuresConsumeDurableBudget(t *testing.T) {
 			}
 			if runner.calls.Load() != 0 {
 				t.Fatal("preparation failure launched agent")
+			}
+		})
+	}
+}
+
+type launchBudgetLookupFailure struct {
+	launchBudgetGitHub
+	calls *atomic.Int32
+	empty bool
+}
+
+func (g launchBudgetLookupFailure) FetchPR(context.Context, int) (*github.PR, error) {
+	g.calls.Add(1)
+	if g.empty {
+		return nil, nil
+	}
+	return nil, errors.New("PR lookup unavailable")
+}
+
+func TestReviewerPRLookupBudgetSurvivesRepeatedRestart(t *testing.T) {
+	for _, empty := range []bool{false, true} {
+		t.Run(fmt.Sprintf("empty=%v", empty), func(t *testing.T) {
+			root := t.TempDir()
+			t.Chdir(root)
+			var calls atomic.Int32
+			gh := launchBudgetLookupFailure{launchBudgetGitHub: launchBudgetGitHub{&fakeGH{}}, calls: &calls, empty: empty}
+			runner := &failureRunner{err: errors.New("agent must not launch")}
+			for attempt := 1; attempt <= 5; attempt++ {
+				state, err := NewReviewStateStore(filepath.Join(root, fmt.Sprintf("review-state-%d.json", attempt)), 17, nil)
+				if err != nil || !state.TryClaim("request") {
+					t.Fatalf("re-entry could not claim trigger: %v", err)
+				}
+				d := New(root, gh, &prompt.Engine{}, runner, &config.Config{}, &lockedBuffer{}, 1, true, nil)
+				err = d.launchReview(context.Background(), 17, "", "request", "", "", "", "", nil, state, false)
+				if err == nil || (attempt > 3 && !strings.Contains(err.Error(), "REVIEW_LAUNCH_EXHAUSTED")) {
+					t.Fatalf("restart=%d error=%v", attempt, err)
+				}
+				if state.IsClaimed("request") {
+					t.Fatal("lookup failure retained trigger claim")
+				}
+				budget, readErr := reviewlaunch.Read(filepath.Join(root, "state"), 17, "request", "")
+				if readErr != nil || budget.Attempts != min(attempt, 3) {
+					t.Fatalf("unknown-head budget=%+v error=%v", budget, readErr)
+				}
+			}
+			if calls.Load() != 3 || runner.calls.Load() != 0 {
+				t.Fatalf("lookup calls=%d agent launches=%d, want three bounded lookups and no launch", calls.Load(), runner.calls.Load())
 			}
 		})
 	}

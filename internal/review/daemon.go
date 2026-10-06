@@ -2156,7 +2156,11 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	reviewBranch := reviewBranchName(prNumber, triggerKey)
 	preserveWorktree := false
 	var launchClaim *os.File
+	var lookupClaim *os.File
 	defer func() {
+		if lookupClaim != nil {
+			defer lookupClaim.Close()
+		}
 		if launchClaim != nil {
 			defer launchClaim.Close()
 		}
@@ -2181,18 +2185,45 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 		}
 	}()
 
+	// The request identity is known before a PR head can be observed. Fence
+	// and bound lookup failures under the durable unknown-head operation.
+	lookupClaim, err := reviewlaunch.ClaimLaunch(filepath.Join(d.BaseDir, "state"), prNumber, triggerKey, "")
+	if err != nil {
+		preserveWorktree = true
+		state.Release(triggerKey)
+		return fmt.Errorf("claim reviewer lookup budget: %w", err)
+	}
+	lookupBudget, err := reviewlaunch.Read(filepath.Join(d.BaseDir, "state"), prNumber, triggerKey, "")
+	if err != nil || lookupBudget.Attempts >= reviewlaunch.MaxAttempts {
+		state.Release(triggerKey)
+		if err != nil {
+			return fmt.Errorf("read reviewer lookup budget: %w", err)
+		}
+		return fmt.Errorf("REVIEW_LAUNCH_EXHAUSTED: request %s exhausted %d PR lookup failures", triggerKey, lookupBudget.Attempts)
+	}
 	pr, err := d.GitHub.FetchPR(ctx, prNumber)
 	if err != nil {
-		return fmt.Errorf("fetch PR: %w", err)
+		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("fetch PR: %w", err), "")
+	}
+	if pr == nil {
+		return d.recordLaunchFailure(ctx, triggerKey, state, errors.New("fetch PR: empty response"), "")
 	}
 	if pr != nil {
-		launchClaim, err = reviewlaunch.ClaimLaunch(filepath.Join(d.BaseDir, "state"), prNumber, triggerKey, pr.HeadRefOid)
+		if strings.TrimSpace(pr.HeadRefOid) == "" {
+			launchClaim, lookupClaim = lookupClaim, nil
+		} else {
+			launchClaim, err = reviewlaunch.ClaimLaunch(filepath.Join(d.BaseDir, "state"), prNumber, triggerKey, pr.HeadRefOid)
+		}
 		if err != nil {
 			// Another daemon owns this exact request/head. Its artifacts must
 			// survive this losing worker's cleanup.
 			preserveWorktree = true
 			state.Release(triggerKey)
 			return fmt.Errorf("claim reviewer launch budget: %w", err)
+		}
+		if lookupClaim != nil {
+			_ = lookupClaim.Close()
+			lookupClaim = nil
 		}
 		budget, err := reviewlaunch.Read(filepath.Join(d.BaseDir, "state"), prNumber, triggerKey, pr.HeadRefOid)
 		if err != nil || budget.Attempts >= reviewlaunch.MaxAttempts {
