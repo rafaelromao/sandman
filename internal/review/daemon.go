@@ -1061,10 +1061,12 @@ func (d *Daemon) loadPendingPosts() error {
 		marker, markerErr := readPendingPublicationMarker(runDir)
 		if markerErr == nil && marker.PR == entry.PR {
 			terminal := false
+			terminalStatus := ""
 			if stateErr == nil {
 				for _, sc := range state.SeenComments {
 					if sc.CommentID == marker.CommentID && shouldSkipDedupStatus(sc.Status) {
 						terminal = true
+						terminalStatus = sc.Status
 						break
 					}
 				}
@@ -1087,6 +1089,10 @@ func (d *Daemon) loadPendingPosts() error {
 					reviewState: reviewState,
 					body:        marker.Body,
 					since:       marker.Timestamp,
+				}
+			} else if terminalStatus == "success" {
+				if err := removePendingPublicationMarker(runDir); err != nil {
+					d.logf("remove acknowledged publication outbox %s: %v", runDir, err)
 				}
 			}
 		}
@@ -2835,6 +2841,14 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 			d.logf("PR #%d comment %s: upgrade publication outbox: %v; keeping entry for retry", prNumber, comment.ID, err)
 			return true
 		}
+		d.pendingPostMu.Lock()
+		if pending := d.pendingPost[prNumber]; pending != nil {
+			if current, ok := pending[triggerKey]; ok {
+				current.body = string(body)
+				pending[triggerKey] = current
+			}
+		}
+		d.pendingPostMu.Unlock()
 	}
 
 	// Honour ctx cancellation observed between ReadFile and the
