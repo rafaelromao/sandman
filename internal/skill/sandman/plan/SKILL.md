@@ -23,7 +23,7 @@ Turn issue context into a concise, behavior-first plan:
 ### 1. Gather context
 
 - Read the issue body, parent issue, and linked comments.
-- Read relevant repo docs, especially the project's domain glossary (`GLOSSARY.md` where present, `CONTEXT.md` in repos that still use the old name) and nearby ADRs (if present).
+- Read relevant repo docs, especially the project's domain glossary and nearby ADRs (if present).
 - Read sibling Sandman skills that frame the workflow, especially `sandman-implement` and `sandman-tdd`.
 - Use the repo's glossary and domain language so the plan matches existing terminology.
 
