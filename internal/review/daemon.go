@@ -2638,23 +2638,29 @@ func postWithRetry(ctx context.Context, d *Daemon, prNumber int, body string) er
 		if cerr := ctx.Err(); cerr != nil {
 			return cerr
 		}
-		alreadyPosted, err := publicationAlreadyPosted(ctx, d, prNumber, body)
-		if err != nil {
-			lastErr = err
-			if attempt < PostStepMaxAttempts {
-				backoff := d.effectivePostBackoffs()[attempt-1]
-				d.logf("PR #%d: publication lookup attempt %d/%d failed: %v; retrying in %v", prNumber, attempt, PostStepMaxAttempts, err, backoff)
-				select {
-				case <-time.After(backoff):
-					continue
-				case <-ctx.Done():
-					return ctx.Err()
+		// The first post belongs to this decision and must not be
+		// suppressed by an identical body from an older request. After
+		// a failed post, the remote result is ambiguous, so exact-match
+		// lookup protects retries from duplicating a comment.
+		if attempt > 1 {
+			alreadyPosted, err := publicationAlreadyPosted(ctx, d, prNumber, body)
+			if err != nil {
+				lastErr = err
+				if attempt < PostStepMaxAttempts {
+					backoff := d.effectivePostBackoffs()[attempt-1]
+					d.logf("PR #%d: publication lookup attempt %d/%d failed: %v; retrying in %v", prNumber, attempt, PostStepMaxAttempts, err, backoff)
+					select {
+					case <-time.After(backoff):
+						continue
+					case <-ctx.Done():
+						return ctx.Err()
+					}
 				}
+				continue
 			}
-			continue
-		}
-		if alreadyPosted {
-			return nil
+			if alreadyPosted {
+				return nil
+			}
 		}
 		if err := d.CommentPoster.PostComment(ctx, prNumber, body); err != nil {
 			lastErr = err

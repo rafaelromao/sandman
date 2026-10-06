@@ -214,6 +214,32 @@ func TestDaemon_AmbiguousPostResultUsesRemoteMatchBeforeRetry(t *testing.T) {
 	}
 }
 
+func TestDaemon_InitialPublicationPostsWhenPriorCommentHasSameBody(t *testing.T) {
+	const (
+		prNumber  = 2487
+		commentID = "c-prior-identical-body"
+		body      = "## Decision\n**APPROVED**\nunchanged decision\n"
+	)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: prNumber, State: "open"}},
+		comments: map[int][]github.PRComment{prNumber: {
+			{ID: commentID, Body: "/sandman review"},
+			{ID: "prior-publication", Body: body},
+		}},
+		prFetch: map[int]*github.PR{prNumber: {Number: prNumber, Title: "prior identical body", Body: "body"}},
+	}
+	runner := &decisionCapturingRunner{capturedRequest: &capturedRequest{}, body: body}
+	poster := &fakeCommentPoster{}
+	d, _, _ := newReviewLaunchTestDaemon(t, gh, runner, newReviewLaunchTestConfig())
+	d.CommentPoster = poster
+
+	tickAndWait(t, d, context.Background())
+
+	if poster.Calls() != 1 {
+		t.Fatalf("initial publication PostComment calls = %d, want 1 despite prior identical body", poster.Calls())
+	}
+}
+
 func TestDaemon_PublicationOutboxFailurePreservesWorktreeWithoutPosting(t *testing.T) {
 	const (
 		prNumber  = 2481

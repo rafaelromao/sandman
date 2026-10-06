@@ -64,10 +64,10 @@ func TestDaemon_LaunchReviewReturnsFastAndRecordsPending(t *testing.T) {
 		t.Fatalf("first tick should launch exactly 1 batch, got %d", runner.calls)
 	}
 
-	// The publication outbox performs one exact-match lookup before
-	// posting, in addition to processPR's trigger scan.
-	if got := gh.commentCalls[7]; got != 2 {
-		t.Errorf("ListPRComments should be called twice during the first tick (trigger scan plus outbox exact-match lookup), got %d calls", got)
+	// Initial publication posts directly; exact-match lookup is reserved
+	// for ambiguous retries and durable recovery.
+	if got := gh.commentCalls[7]; got != 1 {
+		t.Errorf("ListPRComments should be called once during the first tick for the trigger scan, got %d calls", got)
 	}
 
 	// Issue #1846 (S3) and #1849 (S6): launchReview owns MarkSeen
