@@ -806,7 +806,7 @@ func (s *runSession) lifecyclePRForBranch(ctx context.Context, branch, attemptSt
 	if s.lifecyclePRSnapshot != nil {
 		pr := s.lifecyclePRSnapshot
 		s.lifecyclePRSnapshot = nil
-		if attemptNeedsRetry(attemptStatus) || pr.Merged || strings.EqualFold(strings.TrimSpace(pr.State), "merged") {
+		if pr.Merged || strings.EqualFold(strings.TrimSpace(pr.State), "merged") {
 			return pr, nil
 		}
 	}
