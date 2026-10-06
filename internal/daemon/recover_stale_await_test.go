@@ -197,7 +197,10 @@ func TestRecoverStaleRuns_PreservesReadyCapacityContinuation(t *testing.T) {
 	}
 
 	before := events.ProjectRunStates(existing)[0]
-	if !before.IsActive() || before.IsAwaiting() || !before.IsCapacityQueued() || before.Status() != "queued" {
+	if err := RenewRunWait(batchDir, RunWait{Protocol: "run-wait/v1", RunID: runID, BatchID: batchID, Issue: 42, Branch: "42-fix", BaseBranch: "main", OperationID: "capacity", Ready: true}, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if !before.IsActive() || before.IsAwaiting() || !before.IsCapacityQueued() || before.Status() != "waiting" {
 		t.Fatalf("before recovery = active:%v awaiting:%v capacity-queued:%v status:%q", before.IsActive(), before.IsAwaiting(), before.IsCapacityQueued(), before.Status())
 	}
 	recovered, dirs, err := RecoverStaleRuns(baseDir, existing, eventLog)

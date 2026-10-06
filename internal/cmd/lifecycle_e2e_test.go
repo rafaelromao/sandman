@@ -243,8 +243,7 @@ func TestLifecycle_ArchiveRun_ArchivesTerminalRun(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	deps := newTestDeps(t)
-	deps.EventLog = &fakeEventLog{}
+	deps := terminalArchiveDeps(t, dir, "done-1")
 	cmd := NewArchiveCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)

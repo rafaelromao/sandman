@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,8 +24,8 @@ type reviewWaitSchedulerGitHubClient struct {
 }
 
 func (c *reviewWaitSchedulerGitHubClient) FindPRByBranch(ctx context.Context, branch string) (*github.PR, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	pr, err := c.fakeGitHubClient.FindPRByBranch(ctx, branch)
 	if pr == nil || err != nil {
 		return pr, err
@@ -33,6 +34,17 @@ func (c *reviewWaitSchedulerGitHubClient) FindPRByBranch(ctx context.Context, br
 	// released while another test actor advances the fake review lifecycle.
 	prSnapshot := *pr
 	return &prSnapshot, nil
+}
+
+func (c *reviewWaitSchedulerGitHubClient) FetchIssue(ctx context.Context, number int) (*github.Issue, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	issue, err := c.fakeGitHubClient.FetchIssue(ctx, number)
+	if issue == nil || err != nil {
+		return issue, err
+	}
+	snapshot := *issue
+	return &snapshot, nil
 }
 
 func (c *reviewWaitSchedulerGitHubClient) ListPRComments(context.Context, int) ([]github.PRComment, error) {
@@ -111,6 +123,9 @@ func (r *reviewWaitSchedulerRunnable) Run(ctx context.Context, _ prompt.IssueRen
 			pr.Merged = true
 			pr.Body = "Closes #1"
 		})
+		f.client.mu.Lock()
+		f.client.issues[1].State = "closed"
+		f.client.mu.Unlock()
 	case r.issue == 2:
 		select {
 		case <-f.independentStarted:
@@ -137,7 +152,7 @@ func TestRunBatch_ReadyAwaitedRowPrecedesQueuedIndependentWork(t *testing.T) {
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
-	client := &fakeGitHubClient{
+	client := &reviewWaitSchedulerGitHubClient{fakeGitHubClient: fakeGitHubClient{
 		issues: map[int]*github.Issue{
 			1: {Number: 1, Title: "Awaited"},
 			2: {Number: 2, Title: "Independent"},
@@ -145,23 +160,12 @@ func TestRunBatch_ReadyAwaitedRowPrecedesQueuedIndependentWork(t *testing.T) {
 			4: {Number: 4, Title: "Queued independent"},
 		},
 		prs: map[string]*github.PR{
+			"1-awaited":     {Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited", HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
 			"2-independent": {Number: 2, State: "merged", Merged: true, Body: "Closes #2", HeadRefName: "2-independent"},
 			"3-dependent":   {Number: 3, State: "merged", Merged: true, Body: "Closes #3", HeadRefName: "3-dependent"},
 			"4-independent": {Number: 4, State: "merged", Merged: true, Body: "Closes #4", HeadRefName: "4-independent"},
 		},
-		findPRSequence: map[string][]*github.PR{
-			"1-awaited": {
-				{Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited", HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
-				{Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited", HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
-				{Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited", HeadRefOid: "current-sha", StatusCheckRollup: "failure"},
-				{Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited", HeadRefOid: "current-sha", StatusCheckRollup: "failure"},
-				{Number: 1, State: "open", Body: "Closes #1", HeadRefName: "1-awaited", HeadRefOid: "current-sha", StatusCheckRollup: "failure"},
-				{Number: 1, State: "merged", Merged: true, Body: "Closes #1", HeadRefName: "1-awaited"},
-				{Number: 1, State: "merged", Merged: true, Body: "Closes #1", HeadRefName: "1-awaited"},
-				{Number: 1, State: "merged", Merged: true, Body: "Closes #1", HeadRefName: "1-awaited"},
-			},
-		},
-	}
+	}}
 	independentStarted := make(chan struct{})
 	allowIndependentFinish := make(chan struct{})
 	timerElapsed := make(chan struct{})
@@ -171,6 +175,14 @@ func TestRunBatch_ReadyAwaitedRowPrecedesQueuedIndependentWork(t *testing.T) {
 	factory := &awaitPriorityRunnableFactory{
 		independentStarted:     independentStarted,
 		allowIndependentFinish: allowIndependentFinish,
+		onFinish: func(issue, launches int) {
+			if issue == 1 && launches == 2 {
+				client.setPR("1-awaited", func(pr *github.PR) { pr.State, pr.Merged = "merged", true })
+				client.mu.Lock()
+				client.issues[1].State = "closed"
+				client.mu.Unlock()
+			}
+		},
 	}
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
 		Agent:          "test-agent",
@@ -188,6 +200,7 @@ func TestRunBatch_ReadyAwaitedRowPrecedesQueuedIndependentWork(t *testing.T) {
 			awaitWait: func(ctx context.Context, _ time.Duration) error {
 				select {
 				case <-timerElapsed:
+					client.setPR("1-awaited", func(pr *github.PR) { pr.StatusCheckRollup = "failure" })
 				case <-ctx.Done():
 					return ctx.Err()
 				}
@@ -439,6 +452,14 @@ func TestRunBatch_RecentAwaitingRowsDoNotStarveQueuedWork(t *testing.T) {
 // work starts while its dependent stays queued, and request-scoped approval
 // resumes the same implementation once a slot is free (issue #2743).
 func TestRunBatch_ConfirmedReviewReleasesSlotAndResumesAfterResponse(t *testing.T) {
+	testManagedApprovalAdmission(t, false)
+}
+
+func TestRunBatch_CIReviewApprovalOccupiedSlotMerge(t *testing.T) {
+	testManagedApprovalAdmission(t, true)
+}
+
+func testManagedApprovalAdmission(t *testing.T, initialCI bool) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	initGitRepo(t, dir)
@@ -465,6 +486,13 @@ func TestRunBatch_ConfirmedReviewReleasesSlotAndResumesAfterResponse(t *testing.
 		},
 	}
 	awaitEntered := make(chan struct{})
+	ciReady := make(chan struct{})
+	reviewWaiting := make(chan struct{})
+	var ciObserved atomic.Bool
+	var reviewOnce sync.Once
+	if initialCI {
+		client.setPR(implBranch, func(pr *github.PR) { pr.StatusCheckRollup = "pending" })
+	}
 	responseReady := make(chan struct{})
 	independentStarted := make(chan struct{})
 	allowIndependentDone := make(chan struct{})
@@ -496,6 +524,15 @@ func TestRunBatch_ConfirmedReviewReleasesSlotAndResumesAfterResponse(t *testing.
 				default:
 					close(awaitEntered)
 				}
+				if initialCI && ciObserved.CompareAndSwap(false, true) {
+					select {
+					case <-ciReady:
+						return nil
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+				reviewOnce.Do(func() { close(reviewWaiting) })
 				select {
 				case <-responseReady:
 					return nil
@@ -546,6 +583,21 @@ func TestRunBatch_ConfirmedReviewReleasesSlotAndResumesAfterResponse(t *testing.
 		t.Fatalf("independent work did not use the released slot: %v", factory.startsSnapshot())
 	}
 	states := events.ProjectRunStates(log.snapshot())
+	if initialCI {
+		firstAwait := findEvent(log.snapshot(), "run.await")
+		if firstAwait == nil || firstAwait.Payload["ci_wait"] == nil {
+			cancel()
+			t.Fatal("CI stage lacks fixed current-head operation evidence")
+		}
+		client.setPR(implBranch, func(pr *github.PR) { pr.StatusCheckRollup = "success" })
+		close(ciReady)
+		select {
+		case <-reviewWaiting:
+		case <-time.After(3 * time.Second):
+			cancel()
+			t.Fatal("CI resolution did not return to managed review observation")
+		}
+	}
 	var implAwaiting bool
 	for _, state := range states {
 		if state.IssueNumber() == 1 && state.IsAwaiting() {
@@ -587,8 +639,8 @@ func TestRunBatch_ConfirmedReviewReleasesSlotAndResumesAfterResponse(t *testing.
 			break
 		}
 	}
-	if readyState == nil || !readyState.IsActive() || readyState.IsAwaiting() || !readyState.IsCapacityQueued() || readyState.Status() != "queued" {
-		t.Fatalf("resolved continuation phase = %#v, want active capacity-queued state separate from external waiting", readyState)
+	if readyState == nil || !readyState.IsActive() || readyState.IsAwaiting() || !readyState.IsCapacityQueued() || readyState.Status() != "waiting" {
+		t.Fatalf("resolved continuation phase = %#v, want active waiting run with durable ready evidence", readyState)
 	}
 	if readyState.CapacityQueuedEvent == nil || readyState.CapacityQueuedEvent.Payload["ready_continuation"] != true {
 		t.Fatalf("resolved continuation is not durably marked ready: %#v", readyState.CapacityQueuedEvent)
@@ -640,6 +692,7 @@ type awaitPriorityRunnableFactory struct {
 	maxActive              int
 	independentStarted     chan struct{}
 	allowIndependentFinish <-chan struct{}
+	onFinish               func(int, int)
 }
 
 func (f *awaitPriorityRunnableFactory) NewRunnable(issue *github.Issue, _ string, _ sandbox.Sandbox) Runnable {
@@ -702,6 +755,12 @@ func (r *awaitPriorityRunnable) Run(ctx context.Context, _ prompt.IssueRenderer,
 	f := r.factory
 	f.mu.Lock()
 	f.starts = append(f.starts, r.issue)
+	launches := 0
+	for _, issue := range f.starts {
+		if issue == r.issue {
+			launches++
+		}
+	}
 	f.active++
 	if f.active > f.maxActive {
 		f.maxActive = f.active
@@ -724,6 +783,9 @@ func (r *awaitPriorityRunnable) Run(ctx context.Context, _ prompt.IssueRenderer,
 		case <-ctx.Done():
 			return AgentRunResult{IssueNumber: r.issue, Status: "aborted"}
 		}
+	}
+	if f.onFinish != nil {
+		f.onFinish(r.issue, launches)
 	}
 	return AgentRunResult{IssueNumber: r.issue, Status: "success"}
 }

@@ -28,6 +28,21 @@ export data.
 
 For a faster targeted loop while editing one package, run the smallest relevant `go test` command first, then finish with `make check` when the change is ready.
 
+For AgentRun lifecycle/artifact separation, the hermetic production-path coverage is:
+
+```bash
+go test ./internal/events ./internal/daemon ./internal/cmd -run 'AgentRunLifecycle|EventLifecycle|LifecycleIsNotInferred|EventAuthority|EventTerminality|RequiresEveryAgentRunTerminal|RecoverStaleRuns'
+```
+
+The CLI/Portal/archive/restart tracer bullet uses a real JSONL log and persisted
+index with a deliberately stale `run.json.status`. Divergence tests preserve
+event-terminal outcomes after artifact relocation/removal, abort dead active
+work despite successful snapshots, preserve capacity-queued continuations, and
+reject unknown lifecycle/read failures at archive and cleanup boundaries.
+Events own lifecycle; index records and filesystem probes own artifact
+location/availability. Snapshot identity/path validation still governs safe
+artifact reclamation.
+
 For OpenCode context rollover changes, the hermetic production-path coverage is:
 
 ```bash
@@ -147,16 +162,25 @@ SANDMAN_RUN_SMOKE_E2E=1 SANDMAN_SMOKE_PREFETCH=1 SANDMAN_TEST_PROVIDERS=opencode
 
 ## E2E tests
 
+Lifecycle regression coverage follows the canonical
+[transition contract](../architecture/run-state-machine.md). Exercise composed
+CI → review → approval → occupied slot → merge; quota → recovery → CI/review;
+deferred admission → explicit abort; and ownerless wait → different-batch
+rehydration inside fixed grace. Assert emitted events and their CLI/Portal folds,
+fixed deadlines and repair counts, cumulative RunID duration, exclusive claims,
+held dependencies, terminal preservation, and launch-boundary quota revalidation.
+
 E2E tests exercise multi-session behavior such as continuing a previous run, batch orchestration, and subagent permission boundaries. They require the `e2e` build tag and are slower than smoke tests.
 
 Implementation pull-request lifecycle changes must keep the production-path
 regression slice green with `go test ./internal/batch ./internal/cmd`. This
 slice covers merged completion precedence, recoverable awaits, continuation
 re-evaluation, retained review evidence, and portal projection. Wait admission
-is restricted to current-head CI queued/running or a confirmed in-deadline
+is restricted to current-head CI queued/running, a confirmed in-deadline
 delegated-review request (which counts as active from delivery, before the
-reviewer starts). The suite also pins failure for absent PRs, idle/generic
-gates, stale heads, lookup/state errors, and exhausted budgets; verified
+reviewer starts), or a recognised provider usage limit with quota-reset polling.
+The suite also pins failure for absent PRs, idle/generic
+gates, stale heads, lookup/state errors, and exhausted remediation budgets; verified
 request-scoped review outcomes resume implementor-owned repair or merge work.
 Scheduler coverage must show that legitimate awaits release execution
 capacity, keep dependents queued, and resume automatically when external work

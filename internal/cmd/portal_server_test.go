@@ -254,8 +254,8 @@ func TestPortal_RunsAPI_SynthesizesOnlyMissingDeadBatchMembers(t *testing.T) {
 			t.Fatalf("expected exactly 1 synthesized row for issue %d, got %d: %#v", issue, got, byIssue[issue])
 		}
 		run := byIssue[issue][0]
-		if run.Kind != "completed" || run.Status != "aborted" || run.BatchKey != "dead-1" {
-			t.Fatalf("expected issue %d to synthesize as dead-batch completed aborted row, got %#v", issue, run)
+		if run.Kind != "completed" || run.Status != "unknown" || run.FinishedAt != nil || run.BatchKey != "dead-1" {
+			t.Fatalf("expected issue %d to have unknown lifecycle, got %#v", issue, run)
 		}
 	}
 }
@@ -655,8 +655,8 @@ func TestPortal_LoadPortalRuns_ShowsQueuedIssuesFromEvents(t *testing.T) {
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 		{Type: "run.started", Timestamp: batchStartedAt.Add(1 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "1-fix"}},
 		{Type: "run.finished", Timestamp: batchStartedAt.Add(2 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"status": "success", "branch": "1-fix"}},
-		{Type: "run.queued", Timestamp: batchStartedAt.Add(1 * time.Minute), RunID: "run-2", Issue: 2, Payload: map[string]any{"blocked_by": []int{1}}},
-		{Type: "run.queued", Timestamp: batchStartedAt.Add(1 * time.Minute), RunID: "run-3", Issue: 3, Payload: map[string]any{}},
+		{Type: "run.queued", Timestamp: batchStartedAt.Add(1 * time.Minute), RunID: "run-2", Issue: 2, Payload: map[string]any{"blocked_by": []int{1}, "initial_admission": true}},
+		{Type: "run.queued", Timestamp: batchStartedAt.Add(1 * time.Minute), RunID: "run-3", Issue: 3, Payload: map[string]any{"initial_admission": true}},
 	})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
@@ -673,15 +673,12 @@ func TestPortal_LoadPortalRuns_ShowsQueuedIssuesFromEvents(t *testing.T) {
 	if run := byIssue[1]; run.Kind != "completed" || run.Status != "success" {
 		t.Fatalf("expected completed success run for issue 1, got kind=%q status=%q", run.Kind, run.Status)
 	}
-	// Queued runs render as completed/queued (see kindForRun, issue #1699):
-	// wait-state rows no longer borrow the active-row chrome even though
-	// the daemon has not picked them up yet. Status still tracks the
-	// wait state; only the Kind flipped from "active" to "completed".
-	if run := byIssue[2]; run.Kind != "completed" || run.Status != "queued" {
-		t.Fatalf("expected completed queued run for issue 2, got kind=%q status=%q", run.Kind, run.Status)
+	// Pending initial admission is unfinished even before the agent starts.
+	if run := byIssue[2]; run.Kind != "active" || run.Status != "queued" {
+		t.Fatalf("expected unfinished queued run for issue 2, got kind=%q status=%q", run.Kind, run.Status)
 	}
-	if run := byIssue[3]; run.Kind != "completed" || run.Status != "queued" {
-		t.Fatalf("expected completed queued run for issue 3, got kind=%q status=%q", run.Kind, run.Status)
+	if run := byIssue[3]; run.Kind != "active" || run.Status != "queued" {
+		t.Fatalf("expected unfinished queued run for issue 3, got kind=%q status=%q", run.Kind, run.Status)
 	}
 }
 
@@ -1192,7 +1189,7 @@ func TestPortal_QueuedOnlyRowHasActiveKindSoAbortRenders(t *testing.T) {
 	t.Cleanup(func() { _ = ln.Close() })
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.queued", Timestamp: batchStartedAt.Add(1 * time.Minute), RunID: "queued-run-42", Issue: 42, Payload: map[string]any{"branch": "42-fix", "blocked_by": []int{99}}},
+		{Type: "run.queued", Timestamp: batchStartedAt.Add(1 * time.Minute), RunID: "queued-run-42", Issue: 42, Payload: map[string]any{"branch": "42-fix", "blocked_by": []int{99}, "initial_admission": true}},
 	})
 
 	prev := portalStaleCleaner
@@ -1213,8 +1210,8 @@ func TestPortal_QueuedOnlyRowHasActiveKindSoAbortRenders(t *testing.T) {
 	if queuedRow == nil {
 		t.Fatalf("expected a queued row for issue 42, got runs: %#v", runs)
 	}
-	if queuedRow.Kind != "active" {
-		t.Fatalf("expected queued row to have Kind='active' so Abort button renders, got Kind=%q", queuedRow.Kind)
+	if queuedRow.Kind != "active" || queuedRow.FinishedAt != nil {
+		t.Fatalf("expected unfinished queued admission with live daemon: %+v", queuedRow)
 	}
 }
 
@@ -2427,7 +2424,7 @@ func TestPortal_DedupKeepsActiveBatchAndHistoricalRows(t *testing.T) {
 	addBatchToIndex(t, repoRoot, "active-1", runDir, []int{42})
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.queued", Timestamp: batchStartedAt.Add(11 * time.Minute), RunID: "queued-run-42", Issue: 42, Payload: map[string]any{}},
+		{Type: "run.queued", Timestamp: batchStartedAt.Add(11 * time.Minute), RunID: "queued-run-42", Issue: 42, Payload: map[string]any{"initial_admission": true}},
 		{Type: "run.blocked", Timestamp: batchStartedAt.Add(-3 * time.Minute), RunID: "blocked-run-42", Issue: 42, Payload: map[string]any{"blocked_by": []int{99}}},
 	})
 
@@ -2458,7 +2455,7 @@ func TestPortal_DedupKeepsActiveBatchAndHistoricalRows(t *testing.T) {
 		// event-fold projection path (runFromState); the
 		// live-instance constructor keeps Kind="active" because the
 		// daemon is genuinely still attached.
-		case run.Kind == "active" && run.Status == "queued":
+		case run.Kind == "active" && run.Status == "queued" && run.BatchKey == "active-1":
 			sawActiveQueued = true
 		// Historical blocked rows render as kind="completed" after
 		// issue #1699: kindForRun no longer borrows active-row chrome
@@ -2761,8 +2758,8 @@ func TestPortal_BatchWithMixedBlockedAndQueued_ShowsBlockedAndQueuedSeparately(t
 	if !ok {
 		t.Fatalf("expected row for issue 43, got %#v", runs)
 	}
-	if queued.Status != "queued" {
-		t.Fatalf("expected issue 43 status 'queued', got %q", queued.Status)
+	if queued.Status != "unknown" {
+		t.Fatalf("expected issue 43 unknown lifecycle without events, got %q", queued.Status)
 	}
 }
 
@@ -3989,15 +3986,15 @@ func TestPortal_OrphanActiveBatch_AllRowsRender(t *testing.T) {
 		{Type: "run.started", Timestamp: startedAt, RunID: batchID + "-1014", Issue: 1014,
 			Payload: map[string]any{"branch": "1014-fix", "batch_id": batchID}},
 		{Type: "run.queued", Timestamp: startedAt.Add(1 * time.Second), RunID: batchID + "-1016", Issue: 1016,
-			Payload: map[string]any{"batch_id": batchID, "issue_title": "Portal batch-id docs"}},
+			Payload: map[string]any{"batch_id": batchID, "issue_title": "Portal batch-id docs", "initial_admission": true}},
 		{Type: "run.queued", Timestamp: startedAt.Add(2 * time.Second), RunID: batchID + "-135", Issue: 135,
-			Payload: map[string]any{"batch_id": batchID, "issue_title": "Scaffold pinned rust BuildToolsPreset"}},
+			Payload: map[string]any{"batch_id": batchID, "issue_title": "Scaffold pinned rust BuildToolsPreset", "initial_admission": true}},
 		{Type: "run.queued", Timestamp: startedAt.Add(3 * time.Second), RunID: batchID + "-136", Issue: 136,
-			Payload: map[string]any{"batch_id": batchID, "issue_title": "Scaffold pinned java BuildToolsPreset"}},
+			Payload: map[string]any{"batch_id": batchID, "issue_title": "Scaffold pinned java BuildToolsPreset", "initial_admission": true}},
 		{Type: "run.queued", Timestamp: startedAt.Add(4 * time.Second), RunID: batchID + "-137", Issue: 137,
-			Payload: map[string]any{"batch_id": batchID, "issue_title": "Scaffold pinned ruby BuildToolsPreset"}},
+			Payload: map[string]any{"batch_id": batchID, "issue_title": "Scaffold pinned ruby BuildToolsPreset", "initial_admission": true}},
 		{Type: "run.queued", Timestamp: startedAt.Add(5 * time.Second), RunID: batchID + "-139", Issue: 139,
-			Payload: map[string]any{"batch_id": batchID, "issue_title": "Scaffold pinned elixir BuildToolsPreset"}},
+			Payload: map[string]any{"batch_id": batchID, "issue_title": "Scaffold pinned elixir BuildToolsPreset", "initial_admission": true}},
 	}
 	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
 	writePortalLog(t, logPath, ev)
@@ -4019,11 +4016,8 @@ func TestPortal_OrphanActiveBatch_AllRowsRender(t *testing.T) {
 		if !ok {
 			t.Fatalf("issue %d: no portal row returned", issue)
 		}
-		// Issue 1014 is genuinely running (run.started). All others
-		// are queued wait-state rows. After issue #1699, queued rows
-		// are kind="completed" rather than "active" — only the
-		// running row keeps the active row kind.
-		wantKind := "completed"
+		// Initial queued admissions are unfinished alongside executing rows.
+		wantKind := "active"
 		wantStatus := "queued"
 		if issue == 1014 {
 			wantKind = "active"
@@ -4094,9 +4088,9 @@ func TestPortal_QueuedAndTerminalSameIssue_NotCollapsed(t *testing.T) {
 		{Type: "run.finished", Timestamp: startedAt.Add(-1 * time.Hour).Add(1 * time.Minute), RunID: "old-1-1016", Issue: 1016,
 			Payload: map[string]any{"status": "aborted", "batch_id": "old-1"}},
 		{Type: "run.queued", Timestamp: startedAt, RunID: batchID + "-1016", Issue: 1016,
-			Payload: map[string]any{"batch_id": batchID, "issue_title": "Portal batch-id docs"}},
+			Payload: map[string]any{"batch_id": batchID, "issue_title": "Portal batch-id docs", "initial_admission": true}},
 		{Type: "run.queued", Timestamp: startedAt, RunID: batchID + "-135", Issue: 135,
-			Payload: map[string]any{"batch_id": batchID, "issue_title": "rust"}},
+			Payload: map[string]any{"batch_id": batchID, "issue_title": "rust", "initial_admission": true}},
 	})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: logPath})

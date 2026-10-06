@@ -115,11 +115,11 @@ POST /api/runs/archive
 {"runId": "<per-row RunID>"}
 ```
 
-The endpoint is strictly per-row: it accepts only the row RunID, validates the row's `run.json.Status` is terminal (success / failure / aborted / blocked), and returns:
+The endpoint is strictly per-row: it accepts only the row RunID, validates the AgentRun's event projection is terminal (including terminal queued placeholders), and returns:
 
 - empty `200` on success — the next `/api/runs` poll re-renders the row with the `Archived` chip and updates the log download URL to point at `.sandman/archive/<batchId>/runs/<runId>/run.log`
 - `409` with `{"error": "...", "archivePath": "..."}` when the row is already archived; the body echoes the existing archive path so the operator can inspect it
-- `409` with a non-terminal message when the row's `run.json.Status` is still `active`
+- `409` with a non-terminal message when the event lifecycle is active or unknown, including capacity-queued continuations
 - `404` when the row id does not resolve on disk or in the index
 
 The portal does not dispatch per-row vs whole-batch — the HTTP surface only exposes per-row archive. Whole-batch archive (`sandman archive batch <batchId>`) is a CLI-only subcommand.
@@ -170,7 +170,7 @@ Full snapshot and summary variants return `runs` as an array:
       "key": "<per-row RunID>",
       "runId": "<per-row RunID>",
       "kind": "issue|review|prompt",
-      "status": "running|waiting|queued|reviewing|success|failure|blocked|aborted|archived",
+      "status": "running|waiting|queued|reviewing|success|failure|blocked|aborted|unknown",
       "issueLabel": "#1234",
       "issueNumber": 1234,
       "branch": "feature-branch",
@@ -199,7 +199,7 @@ The single-row keyed lookup returns `run` (singular) instead of `runs`:
 
 Not all fields appear in every row. `lastOutputAt`, `socketPath`, and `logUrl` are omitted for terminal rows. `review`, `reviewCount`, and `reviewVerdict` are only present for rows that own child review runs.
 
-An active implementation row with a current `run.await` lifecycle event is shown as `waiting`. Waiting is non-terminal: its lifecycle details and event history remain available, and its duration stays frozen until an in-session `run.resumed` event returns the row to `running`. When external work resolves while capacity is occupied, `run.capacity_queued` clears the current waiting phase and projects the still-active continuation as `queued`; that ready state is durable across process restarts and is revalidated before it starts. Await and capacity-queue time are excluded from active duration. A separate continuation is a new run with a fresh clock. If an associated review run is active, the implementation aggregate is shown as `reviewing` whether its runtime phase is waiting, capacity-queued, or running; the individual implementation lifecycle and execution-capacity behavior remain independently observable in its event history. When review activity ends, the aggregate returns to the implementation's current status. `blocked` and terminal statuses retain their existing meanings.
+Started suspension is shown as **waiting**, including when external work has resolved and the next action is delayed by capacity. Readiness evidence does not return a started run to queued. Duration remains frozen through suspension and then adds to the same RunID's total, even after different-batch rehydration; a new RunID starts fresh. Initial admission remains unfinished queued. A linked active review may display **reviewing** independently of the implementation's running/waiting phase; terminal parents retain their outcome. Explicit abort ends all unfinished owned rows. See the canonical [state machine](../architecture/run-state-machine.md).
 
 ### `GET /api/runs/stream`
 

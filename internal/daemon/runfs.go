@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -295,13 +296,11 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 
 	runs := events.ProjectRunStates(eventsList)
 	byIssue := make(map[int][]events.RunState)
-	runsByID := make(map[string]events.RunState)
 	for _, run := range runs {
 		issue := run.IssueNumber()
 		if issue > 0 {
 			byIssue[issue] = append(byIssue[issue], run)
 		}
-		runsByID[run.RunID] = run
 	}
 
 	var recovered int
@@ -314,41 +313,40 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 	// per call so all events emitted by a single sweep share a coherent
 	// timestamp.
 	recoveredAt := time.Now().UTC()
-	emitOrphan := func(run events.RunState, issueNumber int) error {
-		var issueRef *int
-		if issueNumber > 0 {
-			ref := issueNumber
-			issueRef = &ref
+	emitOrphan := func(run events.RunState, issueNumber int) (bool, error) {
+		emitted, err := emitRecoveredAbort(baseDir, run, issueNumber, recoveredAt, log)
+		if err != nil {
+			return false, err
 		}
-		event := events.Event{
-			Type:      "run.aborted",
-			Timestamp: recoveredAt,
-			RunID:     run.RunID,
-			Issue:     issueNumber,
-			IssueRef:  issueRef,
-			Payload:   map[string]any{"recovered": true},
+		if emitted {
+			recovered++
+			recoveredRunIDs[run.RunID] = struct{}{}
 		}
-		if err := log.Log(event); err != nil {
-			return fmt.Errorf("log run.aborted for issue %d: %w", issueNumber, err)
-		}
-		recovered++
-		recoveredRunIDs[run.RunID] = struct{}{}
-		return nil
+		return emitted, nil
 	}
 	for _, batch := range dead {
 		latestTerminal := latestTerminalForIssues(batch.Manifest.Issues, byIssue)
 		for _, issueNumber := range batch.Manifest.Issues {
 			for _, run := range byIssue[issueNumber] {
-				if run.IsCapacityQueued() {
+				protected, suspended := waitRecovery(baseDir, run, recoveredAt)
+				if protected {
 					// The ready continuation is durably queued for a later
 					// scheduler admission. Preserve its worktree and event
 					// state so the next run command can rehydrate it.
 					continue
 				}
+				if suspended && run.BatchID() == filepath.Base(batch.RunDir) {
+					if _, ok := recoveredRunIDs[run.RunID]; !ok {
+						if _, err := emitOrphan(run, issueNumber); err != nil {
+							return recovered, len(dead), err
+						}
+					}
+					continue
+				}
 				if _, ok := recoveredRunIDs[run.RunID]; ok {
 					continue
 				}
-				if !run.IsActive() && run.Status() != "queued" && run.Status() != "blocked" {
+				if run.IsTerminal() || (run.Started.Type != "run.started" && run.Started.Type != "run.continued") {
 					continue
 				}
 				// Batch-identity guard: when the candidate run was
@@ -383,10 +381,13 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 				if !latestTerminal.IsZero() && !run.Started.Timestamp.After(latestTerminal) {
 					continue
 				}
-				if err := emitOrphan(run, issueNumber); err != nil {
+				emitted, err := emitOrphan(run, issueNumber)
+				if err != nil {
 					return recovered, len(dead), err
 				}
-				_ = UpdateRunManifestStatus(batch.RunDir, run.RunID, batchindex.RunManifestStatusAborted)
+				if emitted {
+					_ = UpdateRunManifestStatus(batch.RunDir, run.RunID, batchindex.RunManifestStatusAborted)
+				}
 			}
 		}
 	}
@@ -398,21 +399,6 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 	recovered += orphanRecovered
 
 	return recovered, len(dead), nil
-}
-
-// isSupersedingRun reports whether the RunState was created by a run.started
-// or run.continued event AND has not been subsequently aborted or cancelled.
-// A started run only truly supersedes an earlier placeholder when its work
-// actually completed; a started run that was aborted or cancelled left the
-// work undone, so the placeholder is still an orphan.
-func isSupersedingRun(r events.RunState) bool {
-	if r.Started.Type != "run.started" && r.Started.Type != "run.continued" {
-		return false
-	}
-	if r.Finished != nil && (r.Finished.Type == "run.aborted" || r.Finished.Type == "run.cancelled") {
-		return false
-	}
-	return true
 }
 
 // latestTerminalForIssues returns the latest real terminal timestamp
@@ -445,52 +431,9 @@ func latestTerminalForIssues(issues []int, byIssue map[int][]events.RunState) ti
 	return latest
 }
 
-// buildSupersededIssues returns a set of issue numbers for which a queued or
-// blocked run placeholder was superseded by a later started run (different
-// RunID) for the same issue. These are historical artifacts from a completed
-// batch, not orphans from a dead daemon, and should not be recovered. A
-// queued/blocked placeholder that was re-queued by a subsequent failed batch
-// does NOT count as superseded — only actual work (run.started) does.
-func buildSupersededIssues(runs []events.RunState) map[int]bool {
-	byIssue := make(map[int][]events.RunState)
-	for _, r := range runs {
-		if issue := r.IssueNumber(); issue > 0 {
-			byIssue[issue] = append(byIssue[issue], r)
-		}
-	}
-	superseded := make(map[int]bool)
-	for issue, sameIssue := range byIssue {
-		if len(sameIssue) < 2 {
-			continue
-		}
-		for _, s := range sameIssue {
-			if !s.IsActive() && (s.Status() == "queued" || s.Status() == "blocked") {
-				for _, other := range sameIssue {
-					if other.RunID == s.RunID {
-						continue
-					}
-					if !isSupersedingRun(other) {
-						continue
-					}
-					if other.Started.Timestamp.After(s.Started.Timestamp) {
-						superseded[issue] = true
-						break
-					}
-				}
-			}
-			if superseded[issue] {
-				break
-			}
-		}
-	}
-	return superseded
-}
-
 // recoverOrphanActiveRuns recovers active RunStates that have no matching
-// batch directory under <baseDir>/batches/. In addition to truly active runs,
-// queued and blocked runs are also recovered when no subsequent run.started
-// exists for the same issue (meaning the queued/blocked state was never
-// superseded by actual work — the batch was destroyed, not completed).
+// batch directory under <baseDir>/batches/. Artifact loss never revises an
+// existing terminal event, including queued and blocked placeholders.
 func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log events.EventLog, skipRunIDs map[string]struct{}, recoveredAt time.Time) (int, error) {
 	runs := events.ProjectRunStates(eventsList)
 
@@ -531,26 +474,18 @@ func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log even
 		batches = append(batches, batchInfo{dir: batchPath, manifest: manifest})
 	}
 
-	// Build a set of issue numbers where a queued/blocked placeholder was
-	// superseded by a later run (different RunID) for the same issue. These
-	// are historical artifacts from a completed batch, not orphans.
-	supersededIssues := buildSupersededIssues(runs)
-
 	var recovered int
 	for _, run := range runs {
-		if run.IsCapacityQueued() {
+		if protected, _ := waitRecovery(baseDir, run, recoveredAt); protected {
 			continue
 		}
-		if !run.IsActive() && run.Status() != "queued" && run.Status() != "blocked" {
+		// Diagnostics without a start/continuation are unknown lifecycle,
+		// not execution that recovery can declare aborted.
+		if run.IsTerminal() || (run.Started.Type != "run.started" && run.Started.Type != "run.continued") {
 			continue
 		}
 		if _, ok := skipRunIDs[run.RunID]; ok {
 			continue
-		}
-		if !run.IsActive() {
-			if issueNum := run.IssueNumber(); issueNum > 0 && supersededIssues[issueNum] {
-				continue
-			}
 		}
 
 		issueNum := run.IssueNumber()
@@ -616,22 +551,47 @@ func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log even
 			continue
 		}
 
-		var issueRef *int
-		if issueNum > 0 {
-			issueRef = &issueNum
+		emitted, err := emitRecoveredAbort(baseDir, run, issueNum, recoveredAt, log)
+		if err != nil {
+			return recovered, err
 		}
-		event := events.Event{
-			Type:      "run.aborted",
-			Timestamp: recoveredAt,
-			RunID:     run.RunID,
-			Issue:     issueNum,
-			IssueRef:  issueRef,
-			Payload:   map[string]any{"recovered": true},
+		if emitted {
+			recovered++
 		}
-		if err := log.Log(event); err != nil {
-			return recovered, fmt.Errorf("log run.aborted for orphan %q: %w", run.RunID, err)
-		}
-		recovered++
 	}
 	return recovered, nil
+}
+
+// emitRecoveredAbort holds the same RunID claim as admission through the fresh
+// projection check and terminal append, fencing takeover during orphan recovery.
+func emitRecoveredAbort(baseDir string, run events.RunState, issueNumber int, recoveredAt time.Time, log events.EventLog) (bool, error) {
+	claim, err := ClaimRun(baseDir, run.RunID)
+	if errors.Is(err, ErrRunOwned) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer claim.Close()
+	latest, err := log.Read()
+	if err != nil {
+		return false, err
+	}
+	for _, current := range events.ProjectRunStates(latest) {
+		if current.RunID == run.RunID && (current.IsTerminal() || current.BatchID() != run.BatchID() || !current.Started.Timestamp.Equal(run.Started.Timestamp) || current.Status() != run.Status()) {
+			return false, nil
+		}
+	}
+	if protected, _ := waitRecoverySchedule(baseDir, run, recoveredAt); protected {
+		return false, nil
+	}
+	var issueRef *int
+	if issueNumber > 0 {
+		issueRef = &issueNumber
+	}
+	event := events.Event{Type: "run.aborted", Timestamp: recoveredAt, RunID: run.RunID, Issue: issueNumber, IssueRef: issueRef, Payload: map[string]any{"recovered": true}}
+	if err := log.Log(event); err != nil {
+		return false, fmt.Errorf("log run.aborted for orphan %q: %w", run.RunID, err)
+	}
+	return true, nil
 }

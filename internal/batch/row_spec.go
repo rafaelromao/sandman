@@ -30,10 +30,15 @@ type RowSpec struct {
 	PreviousRunIDs      map[int]string
 	PreviousRunBatchIDs map[int]string
 	ReuseSession        bool
-	BaseBranch          string
-	ExternalBlockers    []int
-	RenderCfg           prompt.RenderConfig
-	OutputWriter        io.Writer
+	// UsageLimitProbe re-enters an agent session after a usage-limit poll.
+	// It bypasses PR lifecycle entry evaluation so the agent itself is probed.
+	UsageLimitProbe    bool
+	UsageLimitWaited   time.Duration
+	UsageLimitDeadline time.Time
+	BaseBranch         string
+	ExternalBlockers   []int
+	RenderCfg          prompt.RenderConfig
+	OutputWriter       io.Writer
 	// ID minting — issue-driven path.
 	RunTS      string
 	RunShortID string
@@ -181,7 +186,15 @@ func (o *Orchestrator) newRunExecutorWith(parentCtx context.Context, bc BatchCon
 // (per-issue for issue-driven, the RunBatch ctx for prompt-only).
 func (e *runExecutor) Execute(ctx context.Context, row RowSpec) (AgentRunResult, bool) {
 	s := newRunSession(e, row)
+	if s.usageLimitRestoreErr != nil {
+		return e.finishObserved(ctx, row, "failure", map[string]any{"reason": "QUOTA_RECOVERY_STATE_ERROR", "next_action": "repair persisted quota operation evidence before resuming", "recovery_error": s.usageLimitRestoreErr.Error()}), false
+	}
 	if row.IssueNumber > 0 {
+		if s.usageLimitProbe && !s.usageLimitDeadline.IsZero() && !s.runtimeNow().Before(s.usageLimitDeadline) {
+			result := e.finishObserved(ctx, row, "failure", map[string]any{"reason": "AGENT_USAGE_LIMIT", "next_action": "resume with available provider quota after the exhausted five-hour window"})
+			result.UsageLimitReached = true
+			return result, false
+		}
 		return s.execute(ctx)
 	}
 	return s.executePromptOnly(ctx)
@@ -205,7 +218,7 @@ func newRunSession(e *runExecutor, row RowSpec) *runSession {
 			renderCfg.ReviewTimeout = config.DefaultReviewTimeout
 		}
 	}
-	return &runSession{
+	session := &runSession{
 		deps:                       e.deps,
 		coord:                      e.coord,
 		commander:                  e.commander,
@@ -218,6 +231,9 @@ func newRunSession(e *runExecutor, row RowSpec) *runSession {
 		previousRunIDs:             row.PreviousRunIDs,
 		previousRunBatchIDs:        row.PreviousRunBatchIDs,
 		reuseSession:               row.ReuseSession,
+		usageLimitProbe:            row.UsageLimitProbe,
+		usageLimitWaited:           row.UsageLimitWaited,
+		usageLimitDeadline:         row.UsageLimitDeadline,
 		identityResolver:           bc.IdentityResolver,
 		branches:                   row.Branches,
 		renderCfg:                  renderCfg,
@@ -254,4 +270,8 @@ func newRunSession(e *runExecutor, row RowSpec) *runSession {
 		reviewRegistrationStore:    opts.reviewRegistrationStore,
 		reviewRegistrationNow:      opts.reviewRegistrationNow,
 	}
+	if session.usageLimitProbe && session.usageLimitDeadline.IsZero() {
+		session.usageLimitRestoreErr = session.restoreQuotaDeadline()
+	}
+	return session
 }

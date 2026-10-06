@@ -98,7 +98,14 @@ func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues(t *testing.T) {
 
 	_ = startSandmanRun(t, binPath, repoDir, ghShimDir, "run", "1", "2")
 
-	waitForPortalRunCountAndStatus(t, portalURL, 2, "active")
+	waitForPortalRun(t, portalURL, 1, func(run portalRun) bool {
+		return run.Kind == "active" && run.Status == "running"
+	})
+	// Initial admission is unfinished and remains cancellation-aware until
+	// the later run.started event admits execution.
+	waitForPortalRun(t, portalURL, 2, func(run portalRun) bool {
+		return run.Kind == "active" && run.Status == "queued" && run.FinishedAt == nil
+	})
 
 	logPath := filepath.Join(repoDir, ".sandman", "logs", "1.log")
 	for i := 0; i < 50; i++ {

@@ -404,7 +404,7 @@ func (s *runSession) reviewNow() time.Time {
 	if s.opts.reviewRegistrationNow != nil {
 		return s.opts.reviewRegistrationNow().UTC()
 	}
-	return time.Now().UTC()
+	return s.runtimeNow()
 }
 
 func (s *runSession) reviewRegistrationStoreForRead() reviewRegistrationStore {

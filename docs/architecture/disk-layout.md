@@ -38,7 +38,9 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 │   └── review.sock                     # review-daemon control socket
 ├── worktrees/<branch>/                 # per-run worktree (git)
 │   └── .sandman/task.md                # per-worktree rendered prompt
-└── state/                              # runtime sidecars (NEW in this PRD)
+└── state/                              # runtime sidecars
+    ├── run-claims/<RunID>.lock          # stable advisory RunID ownership claim
+    ├── waiting/<RunID>.json             # initial-admission schedule/lease (no Task required)
     ├── .prompt-version                 # SHA-256 of materialized prompt template
     ├── .built_with_sandman             # empty control file (badge sidecar)
     ├── <N>.head_sha                    # legacy implementor review compatibility sidecar
@@ -51,6 +53,50 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 ```
 
 ## Per-artifact table
+
+### Lifecycle contract
+
+AgentRun lifecycle is folded exclusively from `events.jsonl` through
+`events.RunState`. Status, history, Portal, archive eligibility, completed-Run
+cleanup, and recovery share its terminality predicate. Initial `run.queued`
+admissions tagged `initial_admission: true` are unfinished; untagged historical
+records and explicit `terminal_placeholder` records remain terminal placeholders.
+A started `run.capacity_queued` continuation remains waiting. The event outcome,
+not artifact availability or a scheduling label, authorizes terminal operations.
+
+Started suspension schedules live in `<batch>/runs/<RunID>/wait.json`; initial
+admissions use `state/waiting/<RunID>.json` without creating execution folders.
+Atomic leases preserve ownerless intent for five minutes capped by the operation
+deadline, while stable advisory claims fence ownership. Worktree-local
+`<PR>.ci_wait.json` and `<PR>.lifecycle-budget.json` keep fixed operation budgets.
+`<PR>.review-launch-<digest>.json` stores the three-attempt reviewer launch
+budget for an exact trigger revision and head. Its exhaustion is observable by
+the waiting implementation; publication retries do not consume that budget.
+Standalone CI uses `<PR>-standalone-ci-<head>.json` and retains prior-head records
+so workflow re-entry cannot reset their deadline or repair count.
+These files record ownership/readiness/timing only, never mutable lifecycle status.
+
+`batches.json` Batch/Run statuses (`active`, `archived`, `unavailable`) describe
+artifact location/availability, never execution outcome. Archiving relocates
+artifacts without rewriting events. Missing artifacts do not revise a terminal
+AgentRun. Socket liveness is process-ownership evidence, never completion;
+recovery appends `run.aborted` only for eligible non-terminal work and preserves
+terminal queued/blocked placeholders and capacity-queued continuations.
+
+`runs/<runID>/run.json` is an atomic artifact manifest and execution snapshot.
+Identity, branch, worktree, kind and timestamps support artifact lookup, age
+selection and ownership validation. Its existing `status` field is best-effort
+compatibility/inspection metadata written at start, finish and stale recovery;
+it may lag or disagree with events and is **never** a lifecycle fallback.
+An absent/unreadable manifest can prevent metadata-dependent artifact operations,
+but cannot change the event outcome. Absent events mean unknown lifecycle;
+event-read failures cannot authorize terminal-only operations. Portal rows with
+only artifact evidence show `unknown` without a fabricated finish time.
+
+Per-row archives live at `archive/<batchID>/runs/<runID>/` while sibling Runs
+remain in `batches/<batchID>/runs/`. Whole-batch archive moves the Batch only when
+its daemon is gone and all members known from directories, index records and
+event batch identity have terminal projections. See [Architecture Overview](overview.md#run-status-is-a-projection-not-a-record).
 
 | Path | Layout method | Writer | Reader | Cleanup owner | Lifecycle |
 |------|---------------|--------|--------|---------------|-----------|
