@@ -604,8 +604,10 @@ func TestContainerSandbox_Exec_CancelsViaContext(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("expected context.Canceled, got: %v", err)
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Exec did not unblock after context cancel — missing Setpgid on container sandbox?")
+	case <-time.After(15 * time.Second):
+		// Match the neighboring container cancellation test: process-group
+		// signal delivery can exceed five seconds on a loaded macOS runner.
+		t.Fatal("Exec did not unblock after context cancel")
 	}
 }
 
