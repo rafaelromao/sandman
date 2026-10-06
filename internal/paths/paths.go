@@ -56,7 +56,7 @@ func (l Layout) BatchDir(batchID string) string {
 // RunFolder returns the run folder inside a batch: .sandman/batches/<batchID>/runs/<runID>
 // This is where run.json, run.log, and run.sock live.
 func (l Layout) RunFolder(batchID, runID string) string {
-	return filepath.Join(l.BatchDir(batchID), "runs", runID)
+	return l.LocateBatch(batchID, "").Run(runID).Dir
 }
 
 // ReviewsDir returns the review-daemon directory: <repo>/.sandman/reviews
@@ -101,7 +101,7 @@ func (l Layout) PromptPath() string {
 
 // RunLogPath returns the run log file: <batchesDir>/<batchID>/runs/<runID>/run.log
 func (l Layout) RunLogPath(batchID, runID string) string {
-	return filepath.Join(l.RunFolder(batchID, runID), "run.log")
+	return l.LocateBatch(batchID, "").Run(runID).LogPath()
 }
 
 // RunSessionPath returns the OpenCode session metadata file for a Run.
@@ -121,12 +121,12 @@ func (l Layout) LegacyRunSessionPath(runID string) string {
 // to a deterministic short /tmp filesystem path so bind, dial, stat,
 // and cleanup all agree on the same effective path on every host.
 func (l Layout) RunSocketPath(batchID, runID string) string {
-	return socketpath.Path(filepath.Join(l.RunFolder(batchID, runID), "run.sock"))
+	return l.LocateBatch(batchID, "").Run(runID).SocketPath()
 }
 
 // RunManifestPath returns the run manifest file: <batchesDir>/<batchID>/runs/<runID>/run.json
 func (l Layout) RunManifestPath(batchID, runID string) string {
-	return filepath.Join(l.RunFolder(batchID, runID), "run.json")
+	return l.LocateBatch(batchID, "").Run(runID).ManifestPath()
 }
 
 // ReviewStatePath returns the per-run review state file: <batchesDir>/<batchID>/runs/<runID>/review-state.json
@@ -160,7 +160,7 @@ func (l Layout) RunConfigSnapshotDir(batchID, runID string) string {
 
 // BatchManifestPath returns the batch manifest file: <batchesDir>/<batchID>/batch.json
 func (l Layout) BatchManifestPath(batchID string) string {
-	return filepath.Join(l.BatchDir(batchID), "batch.json")
+	return l.LocateBatch(batchID, "").ManifestPath()
 }
 
 // BatchSocketPath returns the batch control socket address. For
@@ -170,7 +170,7 @@ func (l Layout) BatchManifestPath(batchID string) string {
 // deterministic short /tmp filesystem path so bind, dial, stat, and
 // cleanup all agree on the same effective path on every host.
 func (l Layout) BatchSocketPath(batchID string) string {
-	return socketpath.Path(filepath.Join(l.BatchDir(batchID), "batch.sock"))
+	return l.LocateBatch(batchID, "").SocketPath()
 }
 
 // BatchConfigSnapshotDir returns the per-batch config snapshot directory: <batchesDir>/<batchID>/config
