@@ -1183,8 +1183,8 @@ func TestProjectRunStates_StartedCapacityContinuationStaysWaiting(t *testing.T) 
 	}
 
 	queued := ProjectRunStates(events)[0]
-	if !queued.IsActive() || !queued.IsAwaiting() || !queued.IsCapacityQueued() {
-		t.Fatalf("capacity continuation = active:%v awaiting:%v capacity-queued:%v, want active/waiting/ready", queued.IsActive(), queued.IsAwaiting(), queued.IsCapacityQueued())
+	if !queued.IsActive() || queued.IsAwaiting() || !queued.IsCapacityQueued() {
+		t.Fatalf("capacity continuation = active:%v awaiting:%v capacity-queued:%v, want active capacity waiting without external await", queued.IsActive(), queued.IsAwaiting(), queued.IsCapacityQueued())
 	}
 	if queued.Status() != "waiting" || queued.Finished != nil {
 		t.Fatalf("capacity continuation status = %q finished=%v, want non-terminal waiting", queued.Status(), queued.Finished)
@@ -1221,7 +1221,7 @@ func TestProjectRunStates_CapacityContinuationDistinguishesInitialAdmission(t *t
 			if phase == "run.queued" {
 				want = "queued"
 			}
-			if state.Status() != want || !state.IsActive() || state.IsAwaiting() != (want == "waiting") {
+			if state.Status() != want || !state.IsActive() || state.IsAwaiting() || !state.IsCapacityQueued() {
 				t.Fatalf("after %s: status=%q active=%v awaiting=%v, want active %s", phase, state.Status(), state.IsActive(), state.IsAwaiting(), want)
 			}
 		})

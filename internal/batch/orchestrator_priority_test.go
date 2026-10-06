@@ -639,7 +639,7 @@ func testManagedApprovalAdmission(t *testing.T, initialCI bool) {
 			break
 		}
 	}
-	if readyState == nil || !readyState.IsActive() || !readyState.IsAwaiting() || !readyState.IsCapacityQueued() || readyState.Status() != "waiting" {
+	if readyState == nil || !readyState.IsActive() || readyState.IsAwaiting() || !readyState.IsCapacityQueued() || readyState.Status() != "waiting" {
 		t.Fatalf("resolved continuation phase = %#v, want active waiting run with durable ready evidence", readyState)
 	}
 	if readyState.CapacityQueuedEvent == nil || readyState.CapacityQueuedEvent.Payload["ready_continuation"] != true {

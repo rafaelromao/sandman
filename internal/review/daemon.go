@@ -2185,8 +2185,10 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 		}
 	}()
 
-	// The request identity is known before a PR head can be observed. Fence
-	// and bound lookup failures under the durable unknown-head operation.
+	// The request identity is known before a PR head can be observed. Keep
+	// this head-independent claim through publication and cleanup: branches,
+	// worktrees and decisions are request-scoped even when the PR head changes.
+	// It also fences bounded lookup failures under the unknown-head operation.
 	lookupClaim, err := reviewlaunch.ClaimLaunch(filepath.Join(d.BaseDir, "state"), prNumber, triggerKey, "")
 	if err != nil {
 		preserveWorktree = true
@@ -2220,10 +2222,6 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 			preserveWorktree = true
 			state.Release(triggerKey)
 			return fmt.Errorf("claim reviewer launch budget: %w", err)
-		}
-		if lookupClaim != nil {
-			_ = lookupClaim.Close()
-			lookupClaim = nil
 		}
 		budget, err := reviewlaunch.Read(filepath.Join(d.BaseDir, "state"), prNumber, triggerKey, pr.HeadRefOid)
 		if err != nil || budget.Attempts >= reviewlaunch.MaxAttempts {

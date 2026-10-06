@@ -4,16 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/reviewlaunch"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 type launchBudgetGitHub struct{ *fakeGH }
@@ -145,4 +148,98 @@ func TestReviewerPRLookupBudgetSurvivesRepeatedRestart(t *testing.T) {
 			}
 		})
 	}
+}
+
+type ownershipCommentPoster func(context.Context, int, string) error
+
+func (f ownershipCommentPoster) PostComment(ctx context.Context, pr int, body string) error {
+	return f(ctx, pr, body)
+}
+
+func TestReviewerRequestArtifactsStayExclusiveAcrossHeads(t *testing.T) {
+	root := testenv.MkdirShort(t, "sm-review-head-")
+	t.Chdir(root)
+	initReviewTestGitRepo(t, root)
+	base := filepath.Join(root, ".sandman")
+	cfg := &config.Config{DefaultReviewAgent: "custom", DefaultReviewModel: "model", WorktreeDir: filepath.Join(base, "worktrees")}
+	gh := &fakeGH{prFetch: map[int]*github.PR{17: {Number: 17, HeadRefOid: "H1"}}}
+	started, release := make(chan struct{}), make(chan struct{})
+	var calls, posts atomic.Int32
+	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
+		calls.Add(1)
+		path := filepath.Join(cfg.WorktreeDir, req.PromptConfig.Branch, "decision.md")
+		if err := os.WriteFile(path, []byte("H1 decision"), 0o600); err != nil {
+			return nil, err
+		}
+		close(started)
+		select {
+		case <-release:
+			return &batch.Result{}, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	})
+	d := New(base, launchBudgetGitHub{gh}, &prompt.Engine{}, runner, cfg, &lockedBuffer{}, 1, true, nil)
+	d.CommentPoster = ownershipCommentPoster(func(context.Context, int, string) error {
+		posts.Add(1)
+		claim, err := reviewlaunch.ClaimLaunch(filepath.Join(base, "state"), 17, "request", "")
+		if claim != nil {
+			_ = claim.Close()
+		}
+		if !errors.Is(err, reviewlaunch.ErrLaunchOwned) {
+			return fmt.Errorf("publication lost request ownership: %v", err)
+		}
+		return nil
+	})
+	branch := reviewBranchName(17, "request")
+	if err := os.MkdirAll(cfg.WorktreeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stageReviewWorktree(t, cfg.WorktreeDir, branch)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	folder, runID, session, state, err := d.prepareReviewRun(ctx, 17, "request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- d.launchReview(ctx, 17, "", "request", "", "", folder, runID, session, state, false) }()
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("H1 reviewer did not start")
+	}
+	gh.mu.Lock()
+	gh.prFetch[17] = &github.PR{Number: 17, HeadRefOid: "H2"}
+	gh.mu.Unlock()
+	second := New(base, launchBudgetGitHub{gh}, &prompt.Engine{}, runner, cfg, &lockedBuffer{}, 1, true, nil)
+	secondState, err := NewReviewStateStore(filepath.Join(base, "second-state.json"), 17, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = second.launchReview(ctx, 17, "", "request", "", "", "", "", nil, secondState, false)
+	if !errors.Is(err, reviewlaunch.ErrLaunchOwned) || calls.Load() != 1 || posts.Load() != 0 {
+		t.Fatalf("H2 overlapped H1 artifacts: error=%v launches=%d posts=%d", err, calls.Load(), posts.Load())
+	}
+	data, err := os.ReadFile(filepath.Join(cfg.WorktreeDir, branch, "decision.md"))
+	if err != nil || string(data) != "H1 decision" || !gitWorktreeHasBranch(t, cfg.WorktreeDir, branch) {
+		t.Fatalf("losing owner revised/deleted H1 artifacts: decision=%q error=%v", data, err)
+	}
+	close(release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("H1 publication/cleanup did not finish")
+	}
+	if posts.Load() != 1 || gitWorktreeHasBranch(t, cfg.WorktreeDir, branch) {
+		t.Fatal("owner did not finish publication and cleanup")
+	}
+	claim, err := reviewlaunch.ClaimLaunch(filepath.Join(base, "state"), 17, "request", "")
+	if err != nil {
+		t.Fatalf("request artifacts not released after cleanup: %v", err)
+	}
+	_ = claim.Close()
 }

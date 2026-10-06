@@ -156,7 +156,7 @@ func ProjectRunStates(events []Event) []RunState {
 			if state.Started.RunID == "" {
 				state.Started = event
 			}
-			state.awaiting = state.HasStarted()
+			state.awaiting = false
 			state.capacityQueued = true
 		case "run.resumed":
 			// run.resumed is a non-terminal event: it records that the
@@ -321,8 +321,8 @@ func ReadRunStates(log EventLog) (map[string]RunState, error) {
 	return states, nil
 }
 
-// IsAwaiting reports whether a started run is waiting for external progress
-// or execution capacity. It does not infer state from AwaitEvent alone because that
+// IsAwaiting reports whether a run is waiting for external progress.
+// It does not infer state from AwaitEvent alone because that
 // event remains available after a continuation or resume for diagnostics.
 func (r RunState) IsAwaiting() bool {
 	return r.IsActive() && r.awaiting
@@ -341,6 +341,9 @@ func (r RunState) Status() string {
 		return "waiting"
 	}
 	if r.IsCapacityQueued() {
+		if r.HasStarted() {
+			return "waiting"
+		}
 		return RunStatusQueued.String()
 	}
 	if r.IsActive() && r.Started.Type == "run.queued" {
