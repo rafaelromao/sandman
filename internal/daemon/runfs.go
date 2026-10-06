@@ -312,8 +312,6 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 		}
 	}
 
-	var recovered int
-	recoveredRunIDs := make(map[string]struct{})
 	// recoveredAt is the wall-clock time at which this recovery sweep
 	// started. It is stamped onto every synthesized run.aborted event
 	// so downstream consumers (portal Duration, archive --older-than,
@@ -322,6 +320,10 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 	// per call so all events emitted by a single sweep share a coherent
 	// timestamp.
 	recoveredAt := time.Now().UTC()
+	recoveredRunIDs, recovered, err := recoverPersistedBatchRuns(baseDir, layout, idx, dead, runs, recoveredAt, log)
+	if err != nil {
+		return 0, len(dead), err
+	}
 	emitOrphan := func(run events.RunState, issueNumber int) (bool, error) {
 		emitted, err := emitRecoveredAbort(baseDir, run, issueNumber, recoveredAt, log)
 		if err != nil {
@@ -334,34 +336,6 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 		return emitted, nil
 	}
 	for _, batch := range dead {
-		// A persisted row establishes exact physical ownership for every
-		// run kind, including prompt-only and orphan Review Runs. The issue
-		// window heuristics below remain the fallback for legacy batches.
-		for _, run := range runs {
-			if run.IsCapacityQueued() || run.IsTerminal() || (run.Started.Type != "run.started" && run.Started.Type != "run.continued") {
-				continue
-			}
-			if _, done := recoveredRunIDs[run.RunID]; done {
-				continue
-			}
-			if bid := run.BatchID(); bid != "" && !batchIdentityMatches(idx, layout, bid, batch.RunDir) {
-				continue
-			}
-			if !batch.Manifest.CreatedAt.IsZero() && run.Started.Timestamp.Before(batch.Manifest.CreatedAt) {
-				continue
-			}
-			manifest, err := ReadRunManifest(batch.RunDir, run.RunID)
-			if err != nil || manifest.RunID != run.RunID {
-				continue
-			}
-			emitted, err := emitOrphan(run, run.IssueNumber())
-			if err != nil {
-				return recovered, len(dead), err
-			}
-			if emitted {
-				_ = UpdateRunManifestStatus(batch.RunDir, run.RunID, batchindex.RunManifestStatusAborted)
-			}
-		}
 		latestTerminal := latestTerminalForIssues(batch.Manifest.Issues, byIssue)
 		for _, issueNumber := range batch.Manifest.Issues {
 			for _, run := range byIssue[issueNumber] {
@@ -437,6 +411,46 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 	recovered += orphanRecovered
 
 	return recovered, len(dead), nil
+}
+
+// recoverPersistedBatchRuns recovers active runs whose persisted manifests
+// establish exact ownership of a dead batch. This pass handles every run kind
+// before the legacy issue-window fallback so physical ownership remains the
+// authoritative boundary for relocated and multi-run batches.
+func recoverPersistedBatchRuns(baseDir string, layout paths.Layout, idx *batchindex.Index, dead []DeadBatch, runs []events.RunState, recoveredAt time.Time, log events.EventLog) (map[string]struct{}, int, error) {
+	recoveredRunIDs := make(map[string]struct{})
+	var recovered int
+	for _, batch := range dead {
+		for _, run := range runs {
+			if run.IsCapacityQueued() || run.IsTerminal() || (run.Started.Type != "run.started" && run.Started.Type != "run.continued") {
+				continue
+			}
+			if _, done := recoveredRunIDs[run.RunID]; done {
+				continue
+			}
+			if bid := run.BatchID(); bid != "" && !batchIdentityMatches(idx, layout, bid, batch.RunDir) {
+				continue
+			}
+			if !batch.Manifest.CreatedAt.IsZero() && run.Started.Timestamp.Before(batch.Manifest.CreatedAt) {
+				continue
+			}
+			manifest, err := ReadRunManifest(batch.RunDir, run.RunID)
+			if err != nil || manifest.RunID != run.RunID {
+				continue
+			}
+			emitted, err := emitRecoveredAbort(baseDir, run, run.IssueNumber(), recoveredAt, log)
+			if err != nil {
+				return nil, recovered, err
+			}
+			if !emitted {
+				continue
+			}
+			recovered++
+			recoveredRunIDs[run.RunID] = struct{}{}
+			_ = UpdateRunManifestStatus(batch.RunDir, run.RunID, batchindex.RunManifestStatusAborted)
+		}
+	}
+	return recoveredRunIDs, recovered, nil
 }
 
 // latestTerminalForIssues returns the latest real terminal timestamp
