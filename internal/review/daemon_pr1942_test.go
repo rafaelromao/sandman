@@ -89,7 +89,7 @@ func TestDaemon_PR1942_DecisionInWorktreeFallback(t *testing.T) {
 	if gotPR != prNumber {
 		t.Errorf("PostComment pr=%d, want %d", gotPR, prNumber)
 	}
-	wantBody := RedactBody(workBody)
+	wantBody := publicationBody(RedactBody(workBody), commentID)
 	if gotBody != wantBody {
 		t.Errorf("posted body mismatch:\n want=%q\n got =%q", wantBody, gotBody)
 	}

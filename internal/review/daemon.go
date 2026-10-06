@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -160,6 +161,8 @@ type pendingPostEntry struct {
 
 const pendingPublicationMarkerName = "pending-publication.json"
 
+const publicationIdentityPrefix = "<!-- sandman-publication:"
+
 type pendingPublicationMarker struct {
 	Version   int       `json:"version"`
 	PR        int       `json:"pr"`
@@ -167,6 +170,15 @@ type pendingPublicationMarker struct {
 	RunID     string    `json:"run_id"`
 	Body      string    `json:"body"`
 	Timestamp time.Time `json:"timestamp"`
+}
+
+// publicationBody keeps the rendered decision unchanged while adding an
+// invisible request identity. Body equality alone cannot distinguish a new
+// review from an older request with the same decision text during recovery.
+func publicationBody(redacted, triggerKey string) string {
+	identity := sha256.Sum256([]byte(triggerKey))
+	return strings.TrimRight(redacted, "\n") + "\n\n" +
+		publicationIdentityPrefix + fmt.Sprintf("%x", identity[:]) + " -->\n"
 }
 
 // Daemon polls the repo for /sandman review comments and launches review
@@ -2554,9 +2566,9 @@ func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, comm
 		*preserveWorktree = true
 	}
 
-	redacted := RedactBody(string(body))
+	redacted := publicationBody(RedactBody(string(body)), commentID)
 	if err := d.persistPublicationOutbox(reviewRunFolder, pendingPublicationMarker{
-		Version:   1,
+		Version:   2,
 		PR:        prNumber,
 		CommentID: commentID,
 		RunID:     filepath.Base(reviewRunFolder),
@@ -2901,9 +2913,9 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 			d.logf("PR #%d comment %s: rehydrate post read %s failed: %v; keeping entry for retry (issue #1847)", prNumber, comment.ID, decisionPath, err)
 			return true
 		}
-		body = []byte(RedactBody(string(body)))
+		body = []byte(publicationBody(RedactBody(string(body)), triggerKey))
 		if err := d.persistPublicationOutbox(filepath.Dir(entry.reviewState), pendingPublicationMarker{
-			Version:   1,
+			Version:   2,
 			PR:        prNumber,
 			CommentID: triggerKey,
 			RunID:     filepath.Base(filepath.Dir(entry.reviewState)),

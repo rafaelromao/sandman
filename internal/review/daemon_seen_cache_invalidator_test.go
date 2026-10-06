@@ -206,7 +206,7 @@ func TestDaemon_S3_HappyPath_PostsRedactedDecision(t *testing.T) {
 	if gotPR != prNumber {
 		t.Errorf("expected PostComment called with pr=%d, got %d", prNumber, gotPR)
 	}
-	wantBody := RedactBody("/sandman review please.\n/Sandman reply.\n/SANDMAN echo.\nplain sandman stays.\n")
+	wantBody := publicationBody(RedactBody("/sandman review please.\n/Sandman reply.\n/SANDMAN echo.\nplain sandman stays.\n"), reviewTriggerKey(gh.comments[prNumber][0]))
 	if gotBody != wantBody {
 		t.Errorf("posted body mismatch:\n want=%q\n got =%q", wantBody, gotBody)
 	}

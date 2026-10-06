@@ -107,8 +107,8 @@ func TestDaemon_PostFailure_RehydratesDurableDecisionAfterCleanup(t *testing.T) 
 	if err := json.Unmarshal(markerBytes, &marker); err != nil {
 		t.Fatalf("decode pending publication outbox: %v", err)
 	}
-	if marker.Body != RedactBody(body) {
-		t.Fatalf("pending outbox body = %q, want %q", marker.Body, RedactBody(body))
+	if marker.Body != publicationBody(RedactBody(body), marker.CommentID) {
+		t.Fatalf("pending outbox body = %q, want %q", marker.Body, publicationBody(RedactBody(body), marker.CommentID))
 	}
 
 	eventsBefore, err := os.ReadFile(filepath.Join(dir, "events.jsonl"))
@@ -128,8 +128,9 @@ func TestDaemon_PostFailure_RehydratesDurableDecisionAfterCleanup(t *testing.T) 
 		t.Fatalf("recovery tick PostComment calls = %d, want %d", poster.Calls(), PostStepMaxAttempts+1)
 	}
 	_, postedBody := poster.Captured()
-	if postedBody != body {
-		t.Fatalf("recovered body = %q, want %q", postedBody, body)
+	wantBody := publicationBody(RedactBody(body), reviewTriggerKey(gh.comments[prNumber][0]))
+	if postedBody != wantBody {
+		t.Fatalf("recovered body = %q, want %q", postedBody, wantBody)
 	}
 	if !d.IsTerminalSeen(prNumber, commentID) {
 		t.Fatal("recovered publication should mark the review trigger successful")
@@ -172,7 +173,7 @@ func TestDaemon_PublicationOutboxPersistsExactRedactedBodyBeforePost(t *testing.
 		if err := json.Unmarshal(data, &marker); err != nil {
 			return err
 		}
-		want := RedactBody(rawBody)
+		want := publicationBody(RedactBody(rawBody), marker.CommentID)
 		if marker.Body != want {
 			return fmt.Errorf("outbox body = %q, want %q", marker.Body, want)
 		}
@@ -183,8 +184,9 @@ func TestDaemon_PublicationOutboxPersistsExactRedactedBodyBeforePost(t *testing.
 		t.Fatalf("PostComment calls = %d, want 1", poster.Calls())
 	}
 	_, postedBody := poster.Captured()
-	if postedBody != RedactBody(rawBody) {
-		t.Fatalf("posted body = %q, want %q", postedBody, RedactBody(rawBody))
+	wantBody := publicationBody(RedactBody(rawBody), reviewTriggerKey(gh.comments[prNumber][0]))
+	if postedBody != wantBody {
+		t.Fatalf("posted body = %q, want %q", postedBody, wantBody)
 	}
 }
 
@@ -200,7 +202,7 @@ func TestDaemon_AmbiguousPostResultUsesRemoteMatchBeforeRetry(t *testing.T) {
 		prFetch:  map[int]*github.PR{prNumber: {Number: prNumber, Title: "ambiguous post", Body: "body"}},
 	}
 	runner := &decisionCapturingRunner{capturedRequest: &capturedRequest{}, body: body}
-	poster := &remoteAcceptThenErrorPoster{gh: gh, pr: prNumber, body: body}
+	poster := &remoteAcceptThenErrorPoster{gh: gh, pr: prNumber, body: publicationBody(RedactBody(body), reviewTriggerKey(gh.comments[prNumber][0]))}
 	d, _, _ := newReviewLaunchTestDaemon(t, gh, runner, newReviewLaunchTestConfig())
 	d.CommentPoster = poster
 
@@ -356,7 +358,7 @@ func TestDaemon_RemoteSuccessWithAcknowledgementFailureRecoversWithoutPost(t *te
 		t.Fatalf("pending outbox stat: %v", err)
 	}
 	gh.mu.Lock()
-	gh.comments[prNumber] = append(gh.comments[prNumber], github.PRComment{ID: "published", Body: body})
+	gh.comments[prNumber] = append(gh.comments[prNumber], github.PRComment{ID: "published", Body: publicationBody(RedactBody(body), reviewTriggerKey(trigger))})
 	gh.mu.Unlock()
 	reviewStateSave = previousSave
 
@@ -523,9 +525,12 @@ func TestDaemon_CancelAfterDurableDecision_RehydratesAfterRestart(t *testing.T) 
 	)
 	updatedAt := mustParseTime(t, "2026-07-06T13:00:06Z")
 	gh := &fakeGH{
-		prs:      []github.PR{{Number: prNumber, State: "open"}},
-		comments: map[int][]github.PRComment{prNumber: {{ID: commentID, Body: "/sandman review", CreatedAt: updatedAt, UpdatedAt: updatedAt}}},
-		prFetch:  map[int]*github.PR{prNumber: {Number: prNumber, Title: "restart cancellation", Body: "body"}},
+		prs: []github.PR{{Number: prNumber, State: "open"}},
+		comments: map[int][]github.PRComment{prNumber: {
+			{ID: commentID, Body: "/sandman review", CreatedAt: updatedAt, UpdatedAt: updatedAt},
+			{ID: "prior-publication", Body: body},
+		}},
+		prFetch: map[int]*github.PR{prNumber: {Number: prNumber, Title: "restart cancellation", Body: "body"}},
 	}
 	runner := &decisionCapturingRunner{capturedRequest: &capturedRequest{}, body: body}
 	poster := &fakeCommentPoster{}
@@ -725,8 +730,9 @@ func TestDaemon_RestartRehydratesDurableDecisionAfterCleanup(t *testing.T) {
 		t.Fatalf("restart recovery PostComment calls = %d, want %d", poster.Calls(), PostStepMaxAttempts+1)
 	}
 	_, postedBody := poster.Captured()
-	if postedBody != body {
-		t.Fatalf("restart recovered body = %q, want %q", postedBody, body)
+	wantBody := publicationBody(RedactBody(body), commentID)
+	if postedBody != wantBody {
+		t.Fatalf("restart recovered body = %q, want %q", postedBody, wantBody)
 	}
 	if !d2.IsTerminalSeen(prNumber, commentID) {
 		t.Fatal("restart recovery should mark the review trigger successful")
@@ -788,8 +794,9 @@ func TestDaemon_DecisionPersistenceFailurePreservesWorktreeForRecovery(t *testin
 		t.Fatalf("preserved-source recovery PostComment calls = %d, want %d", poster.Calls(), PostStepMaxAttempts+1)
 	}
 	_, postedBody := poster.Captured()
-	if postedBody != body {
-		t.Fatalf("preserved-source recovery body = %q, want %q", postedBody, body)
+	wantBody := publicationBody(RedactBody(body), commentID)
+	if postedBody != wantBody {
+		t.Fatalf("preserved-source recovery body = %q, want %q", postedBody, wantBody)
 	}
 	if !d2.IsTerminalSeen(prNumber, commentID) {
 		t.Fatal("preserved-source recovery should mark the review trigger successful")
