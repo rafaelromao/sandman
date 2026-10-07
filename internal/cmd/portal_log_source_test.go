@@ -81,6 +81,35 @@ func TestPortalLogSource_ResumeRejectsNonBoundaryCursor(t *testing.T) {
 	}
 }
 
+func TestPortalLogSource_SnapshotUsesExplicitRecordAlignedBoundedRange(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	var content strings.Builder
+	for i := 0; i < 40000; i++ {
+		content.WriteString("[run-1] record-")
+		content.WriteString(strings.Repeat("x", 8))
+		content.WriteByte('\n')
+	}
+	if err := os.WriteFile(path, []byte(content.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source, err := newPortalLogSource(path, "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+
+	snapshot, err := source.snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !snapshot.Bounded || snapshot.Start <= 0 || snapshot.Start != snapshot.Records[0].Start {
+		t.Fatalf("snapshot range = %#v, want explicit record-aligned bounded start", snapshot)
+	}
+	if snapshot.End != snapshot.Cursor.Offset {
+		t.Fatalf("snapshot end=%d cursor=%d, want same committed position", snapshot.End, snapshot.Cursor.Offset)
+	}
+}
+
 func TestPortalLogSource_ResumeRejectsCursorBeyondFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	if err := os.WriteFile(path, []byte("[run-1] first\n"), 0o644); err != nil {
@@ -132,5 +161,35 @@ func TestPortalLogSource_TerminalDrainAcceptsFinalUnterminatedRecord(t *testing.
 	}
 	if !changed || len(batch.Records) != 1 || batch.Records[0].Start != snapshot.End || batch.Records[0].Text != "final" {
 		t.Fatalf("terminal drain batch = %#v, changed=%t, want final unterminated record", batch, changed)
+	}
+}
+
+func TestStreamPortalSavedLog_UsesOneTerminalObservationForDrainAndEnd(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	if err := os.WriteFile(path, []byte("[run-1] first\n[run-1] final"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source, err := newPortalLogSource(path, "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+
+	var output strings.Builder
+	observations := 0
+	terminal := func() bool {
+		observations++
+		return observations >= 2
+	}
+	if err := streamPortalSavedLog(context.Background(), &output, source, nil, terminal); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), `"text":"final"`) {
+		t.Fatalf("final record missing from terminal stream: %s", output.String())
+	}
+	finalIndex := strings.Index(output.String(), `"text":"final"`)
+	endIndex := strings.Index(output.String(), "event: end\n")
+	if endIndex <= finalIndex {
+		t.Fatalf("terminal stream ended before final drain: %s", output.String())
 	}
 }

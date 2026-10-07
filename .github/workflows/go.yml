@@ -118,7 +118,15 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           test -n "$(command -v chromium)"
-          go test ./internal/cmd -run 'TestPortalTabRoundTrip|TestPortalRowReopen|TestPortalLogPane|TestPortalReviewSubjectSwitch_ReusesCachedParentPane|TestPortalStreamReconnect|TestPortalLogFreshness|TestPortalLogModel' -count=1 -v
+          set +e
+          output=$(go test ./internal/cmd -run 'TestPortalTabRoundTrip|TestPortalRowReopen|TestPortalLogPane|TestPortalReviewSubjectSwitch_ReusesCachedParentPane|TestPortalStream_|TestPortalLogFreshness|TestPortalLogModel' -count=1 -v 2>&1)
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          if [ "$status" -ne 0 ] || [[ "$output" == *"--- SKIP:"* ]]; then
+            echo "Portal continuity coverage failed or skipped"
+            exit 1
+          fi
 
       - name: Build
         run: go build -v ./...

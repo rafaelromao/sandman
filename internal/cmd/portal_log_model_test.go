@@ -57,6 +57,19 @@ if (!model.accept('run-1', { runId: 'run-1' }, 'pending', 1)) throw new Error('p
 if (model.text('run-1') !== 'same\nsame\n') throw new Error('pending state discarded retained records');
 if (!model.accept('run-1', { runId: 'run-1' }, 'unavailable', 1)) throw new Error('unavailable source state was not accepted');
 if (model.text('run-1') !== '') throw new Error('unavailable source retained stale records');
+
+const largeRecords = [];
+for (let i = 0; i < 4097; i++) {
+  largeRecords.push({ runId: 'large-run', generation, start: i, end: i + 1, text: 'line-' + i });
+}
+const large = {
+  runId: 'large-run', generation, start: 0, end: 4097,
+  cursor: { runId: 'large-run', generation, offset: 4097 }, records: largeRecords,
+};
+if (!model.accept('large-run', large, 'snapshot', 1)) throw new Error('large snapshot was not accepted');
+if (model.get('large-run').records.length !== 4096) throw new Error('retention bound was not enforced');
+if (model.text('large-run').indexOf('line-0') !== -1) throw new Error('retention silently retained the oldest record');
+if (model.text('large-run').indexOf('line-4096') === -1) throw new Error('retention dropped the newest record');
 console.log('PASS');
 `
 	runNodeScript(t, js)

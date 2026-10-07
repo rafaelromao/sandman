@@ -1,13 +1,15 @@
 (function (global) {
   // The rendered pane is disposable. This model is the continuity owner and
   // survives tab, subject, row, and connection changes.
+  const MAX_RETAINED_RECORDS = 4096;
+
   function create() {
     const byRun = new Map();
 
     function state(runID) {
       const key = String(runID || '');
       if (!byRun.has(key)) {
-        byRun.set(key, { runID: key, generation: '', cursor: null, records: [], identities: new Set(), epoch: 0, seeded: false, sourceState: 'unknown' });
+        byRun.set(key, { runID: key, generation: '', cursor: null, rangeStart: 0, records: [], identities: new Set(), epoch: 0, seeded: false, sourceState: 'unknown' });
       }
       return byRun.get(key);
     }
@@ -33,6 +35,7 @@
         model.sourceState = 'unavailable';
         model.generation = '';
         model.cursor = null;
+        model.rangeStart = 0;
         model.records = [];
         model.identities.clear();
         model.legacyText = '';
@@ -43,6 +46,7 @@
       if (kind === 'reset') {
         model.generation = generation;
         model.cursor = null;
+        model.rangeStart = 0;
         model.records = [];
         model.identities.clear();
         model.legacyText = '';
@@ -72,7 +76,9 @@
         model.generation = generation;
         model.records = [];
         model.identities.clear();
-        for (let i = 0; i < records.length; i++) {
+        const first = Math.max(0, records.length - MAX_RETAINED_RECORDS);
+        model.rangeStart = first < records.length ? Number(records[first].start) : incomingStart;
+        for (let i = first; i < records.length; i++) {
           const record = records[i];
           const identity = identities[i];
           if (model.identities.has(identity)) continue;
@@ -100,6 +106,12 @@
         model.records.push(record);
         accepted += 1;
       }
+      while (model.records.length > MAX_RETAINED_RECORDS) {
+        const removed = model.records.shift();
+        model.identities.delete(generation + ':' + removed.start + ':' + removed.end);
+      }
+      if (model.records.length) model.rangeStart = Number(model.records[0].start);
+      else model.rangeStart = incomingEnd;
       model.cursor = cursor;
       model.sourceState = 'available';
       return accepted > 0;

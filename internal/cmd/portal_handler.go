@@ -34,6 +34,7 @@ func newPortalHandler(repoRoot string) http.Handler {
 	mux.HandleFunc("/api/instances", h.handleInstances)
 	mux.HandleFunc("/api/runs", h.handleRuns)
 	mux.HandleFunc("/api/runs/stream", h.handleRunStream)
+	mux.HandleFunc("/api/runs/stream/legacy", h.handleLegacyRunStream)
 	mux.HandleFunc("/api/runs/abort", h.handleRunAbort)
 	mux.HandleFunc("/api/runs/archive", h.handleRunArchive)
 	mux.HandleFunc("/api/logs", h.handleLogs)
@@ -141,6 +142,28 @@ func (h *portalHandler) handleRunStream(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	servePortalRunStream(w, r, h.repoRoot)
+}
+
+func (h *portalHandler) handleLegacyRunStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	runKey := strings.TrimSpace(r.URL.Query().Get("runKey"))
+	if runKey == "" {
+		writeJSONError(w, "missing runKey", http.StatusBadRequest)
+		return
+	}
+	run, err := portalRunForKey(h.repoRoot, runKey)
+	if err != nil {
+		writeJSONError(w, "resolve run: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if run.SocketPath == "" {
+		writeJSONError(w, "run has no legacy socket", http.StatusNotFound)
+		return
+	}
+	serveLegacyPortalSocketStream(w, r, run)
 }
 
 func (h *portalHandler) handleRunAbort(w http.ResponseWriter, r *http.Request) {

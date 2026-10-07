@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 )
 
 const portalLogPollInterval = 100 * time.Millisecond
+const portalLogSnapshotLimit = 256 * 1024
 
 // portalLogCursor identifies a position in one Saved Run Log. Offset is the
 // raw byte end of the last accepted complete record, before display cleaning.
@@ -39,6 +41,7 @@ type portalLogBatch struct {
 	End        int64             `json:"end"`
 	Records    []portalLogRecord `json:"records"`
 	Cursor     portalLogCursor   `json:"cursor"`
+	Bounded    bool              `json:"bounded,omitempty"`
 	Reset      bool              `json:"reset,omitempty"`
 	Reason     string            `json:"reason,omitempty"`
 }
@@ -90,12 +93,31 @@ func (s *portalLogSource) snapshot() (portalLogBatch, error) {
 		return portalLogBatch{}, err
 	}
 	mark := info.Size()
-	records, end, err := s.records(0, mark, false)
+	start, err := s.snapshotStart(mark)
+	if err != nil {
+		return portalLogBatch{}, err
+	}
+	records, end, err := s.records(start, mark, false)
 	if err != nil {
 		return portalLogBatch{}, err
 	}
 	s.pos = end
-	return portalLogBatch{RunID: s.runID, Generation: s.gen, Start: 0, End: end, Records: records, Cursor: s.cursor()}, nil
+	return portalLogBatch{RunID: s.runID, Generation: s.gen, Start: start, End: end, Records: records, Cursor: s.cursor(), Bounded: start > 0}, nil
+}
+
+func (s *portalLogSource) snapshotStart(mark int64) (int64, error) {
+	if mark <= portalLogSnapshotLimit {
+		return 0, nil
+	}
+	candidate := mark - portalLogSnapshotLimit
+	window := make([]byte, mark-candidate)
+	if _, err := s.file.ReadAt(window, candidate); err != nil && !errors.Is(err, io.EOF) {
+		return 0, err
+	}
+	if newline := bytes.IndexByte(window, '\n'); newline >= 0 {
+		return candidate + int64(newline) + 1, nil
+	}
+	return 0, nil
 }
 
 func (s *portalLogSource) refreshPathIdentity() (bool, error) {
@@ -291,10 +313,16 @@ func streamPortalSavedLog(ctx context.Context, w io.Writer, source *portalLogSou
 			if statErr != nil || initial.Offset > info.Size() {
 				reset = true
 			} else {
-				source.pos = initial.Offset
-				_, end, err := source.records(0, source.pos, false)
-				if err != nil || end != source.pos {
+				retainedStart, startErr := source.snapshotStart(info.Size())
+				if startErr != nil || initial.Offset < retainedStart {
 					reset = true
+				}
+				source.pos = initial.Offset
+				if !reset {
+					_, end, err := source.records(0, source.pos, false)
+					if err != nil || end != source.pos {
+						reset = true
+					}
 				}
 			}
 		}
@@ -319,7 +347,12 @@ func streamPortalSavedLog(ctx context.Context, w io.Writer, source *portalLogSou
 			return ctx.Err()
 		default:
 		}
-		batch, changed, err := source.appendBatch(terminal())
+		// Observe lifecycle once and use that same observation for both the
+		// final drain and the end event. A second observation here can race a
+		// terminal transition and close the stream before its final fragment is
+		// accepted.
+		terminalNow := terminal()
+		batch, changed, err := source.appendBatch(terminalNow)
 		if err != nil {
 			return err
 		}
@@ -341,7 +374,7 @@ func streamPortalSavedLog(ctx context.Context, w io.Writer, source *portalLogSou
 				return err
 			}
 		}
-		if terminal() {
+		if terminalNow {
 			return writePortalLogEvent(w, "end", map[string]any{"runId": source.runID, "generation": source.gen, "cursor": source.cursor()}, "")
 		}
 		timer := time.NewTimer(portalLogPollInterval)

@@ -432,6 +432,7 @@ func TestPortalTabRoundTrip_DoesNotAppendHistoricalReplayAfterNewerSnapshot(t *t
 	const oldCommand = "09:25:07 old command"
 	const oldOutput = "09:27:15 old output"
 	const newOutput = "10:16:37 new live output"
+	const detailsOutput = "10:16:38 details live output"
 
 	run := map[string]any{
 		"key":         runID,
@@ -503,14 +504,43 @@ func TestPortalTabRoundTrip_DoesNotAppendHistoricalReplayAfterNewerSnapshot(t *t
            cursor: { runId: '`+runID+`', generation: 'saved-generation-1', offset: 3 },
            records: [{ runId: '`+runID+`', generation: 'saved-generation-1', start: 2, end: 3, text: '`+newOutput+`' }],
          }) });
-        setTimeout(function () {
-          window.__portalRunAllRafs();
-          var pre = document.querySelector('pre[data-scroll-key="`+runID+`"]');
-          var marker = document.createElement('pre');
-          marker.id = 'portal-tab-round-trip-order';
-          marker.textContent = JSON.stringify({ renderedLog: pre ? pre.getAttribute('data-rendered-log') || '' : '' });
-          document.body.appendChild(marker);
-        }, 20);
+         setTimeout(function () {
+           var detailsTab = document.querySelector('button[data-action="set-tab"][data-tab="details"]');
+           if (!detailsTab) throw new Error('details tab was not mounted');
+           detailsTab.click();
+           window.__portalRunAllRafs();
+           setTimeout(function () {
+             var secondLogTab = document.querySelector('button[data-action="set-tab"][data-tab="log"]');
+             if (!secondLogTab) throw new Error('log tab was not restored after details');
+             secondLogTab.click();
+             window.__portalRunAllRafs();
+             var replayAfterDetails = window.__portalStreams[2];
+             if (!replayAfterDetails) throw new Error('details return did not create a stream');
+             replayAfterDetails.dispatchEvent({ type: 'snapshot', data: JSON.stringify({
+               runId: '`+runID+`', generation: 'saved-generation-1', start: 0, end: 2,
+               cursor: { runId: '`+runID+`', generation: 'saved-generation-1', offset: 2 },
+               records: [
+                 { runId: '`+runID+`', generation: 'saved-generation-1', start: 0, end: 1, text: '`+currentCommand+`' },
+                 { runId: '`+runID+`', generation: 'saved-generation-1', start: 1, end: 2, text: '`+currentOutput+`' },
+               ],
+             }) });
+             replayAfterDetails.onmessage({ data: '`+oldCommand+`' });
+             replayAfterDetails.onmessage({ data: '`+oldOutput+`' });
+             replayAfterDetails.dispatchEvent({ type: 'append', data: JSON.stringify({
+               runId: '`+runID+`', generation: 'saved-generation-1', start: 3, end: 4,
+               cursor: { runId: '`+runID+`', generation: 'saved-generation-1', offset: 4 },
+               records: [{ runId: '`+runID+`', generation: 'saved-generation-1', start: 3, end: 4, text: '`+detailsOutput+`' }],
+             }) });
+             setTimeout(function () {
+               window.__portalRunAllRafs();
+               var pre = document.querySelector('pre[data-scroll-key="`+runID+`"]');
+               var marker = document.createElement('pre');
+               marker.id = 'portal-tab-round-trip-order';
+               marker.textContent = JSON.stringify({ renderedLog: pre ? pre.getAttribute('data-rendered-log') || '' : '' });
+               document.body.appendChild(marker);
+             }, 20);
+           }, 40);
+         }, 20);
       }, 40);
     }, 80);
   `)
@@ -523,7 +553,7 @@ func TestPortalTabRoundTrip_DoesNotAppendHistoricalReplayAfterNewerSnapshot(t *t
 	if err := json.Unmarshal([]byte(payload), &result); err != nil {
 		t.Fatalf("parse tab round-trip payload: %v\nraw=%s", err, payload)
 	}
-	want := currentCommand + "\n" + currentOutput + "\n" + newOutput + "\n"
+	want := currentCommand + "\n" + currentOutput + "\n" + newOutput + "\n" + detailsOutput + "\n"
 	if result.RenderedLog != want {
 		t.Fatalf("tab round-trip log = %q, want %q", result.RenderedLog, want)
 	}

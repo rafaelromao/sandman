@@ -516,11 +516,7 @@ coalescer.seedKnownLines('a', []);
 
 // Simulate the worst-case click-burst scenario: 100 SSE messages land
 // in a single event-loop tick so they all coalesce into one trailing
-// rAF callback. The coalescer's tail-most-first contract keeps the
-// most recent 16 lines (the cap) and drops the first 84 — the issue's
-// "tail matters most" framing explicitly permits this. The leading
-// flush + at-most-two-trailing-bursts pattern from the issue narrows
-// to a single flush for a single-tick burst.
+// rAF callback without dropping accepted records.
 for (let i = 0; i < 100; i++) coalescer.scheduleLine('a', 'line' + i);
 // Single tight rAF window: just fire the rAF.
 while (rafQueue.length) rafQueue.shift()();
@@ -546,13 +542,9 @@ console.log('PASS');
 	runStreamCoalescerScript(t, js)
 }
 
-// TestPortalPerf_StreamCoalescer_OverflowAtCapTailMostFirst
-// when the per-run buffer grows past cap, the trailing rAF
-// truncates the buffer to the most recent `cap` lines before calling
-// highlight. The oldest lines stay buffered only as long as the buffer
-// itself does; they are flushed first. The headline burst test (≤3 flushes)
-// still passes because no synchronous flush is scheduled on overflow.
-func TestPortalPerf_StreamCoalescer_OverflowAtCapTailMostFirst(t *testing.T) {
+// TestPortalPerf_StreamCoalescer_OverflowPreservesCompleteBurst verifies that a
+// burst larger than the old renderer cap remains complete until it is flushed.
+func TestPortalPerf_StreamCoalescer_OverflowPreservesCompleteBurst(t *testing.T) {
 	js := `
 const rafQueue = [];
 function fakeRaf(cb) { rafQueue.push(cb); }

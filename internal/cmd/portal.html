@@ -1983,15 +1983,13 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const pre = streamPreFor(runKey);
       if (!pre) return;
       const text = portalLogModel.text(runKey);
-      const html = SandmanPortalDiff.highlightTerminalLog(text);
-      while (pre.firstChild) pre.removeChild(pre.firstChild);
-      const scratch = document.createElement('div');
-      scratch.innerHTML = String(html || '');
-      const fragment = document.createDocumentFragment();
-      while (scratch.firstChild) fragment.appendChild(scratch.firstChild);
-      pre.appendChild(fragment);
-      pre.setAttribute('data-rendered-log', text);
-      pre.removeAttribute('data-rendering-log');
+      const sticky = portalScroll && portalScroll.isSticky && portalScroll.isSticky(runKey);
+      SandmanPortalDiff.fillTerminalPre(pre, text, {
+        renderTerminalContent: SandmanPortalDiff.highlightTerminalLog,
+        onComplete: function () {
+          if (sticky) pre.scrollTop = pre.scrollHeight;
+        },
+      });
     }
 
     // createStreamCoalescer batches legacy socket lines per run and flushes in

@@ -660,6 +660,8 @@
 
   function fillTerminalPre(pre, text, helpers) {
     const value = String(text == null ? '' : text);
+    const gen = (parseInt(pre.getAttribute('data-render-gen') || '0', 10) + 1) | 0;
+    pre.setAttribute('data-render-gen', String(gen));
     while (pre.firstChild) pre.removeChild(pre.firstChild);
     pre.setAttribute('data-rendering-log', value);
     if (value.length < ASYNC_CHUNK_THRESHOLD) {
@@ -675,10 +677,9 @@
       pre.appendChild(frag);
       pre.setAttribute('data-rendered-log', value);
       pre.removeAttribute('data-rendering-log');
+      if (helpers && typeof helpers.onComplete === 'function') helpers.onComplete();
       return;
     }
-    const gen = (parseInt(pre.getAttribute('data-render-gen') || '0', 10) + 1) | 0;
-    pre.setAttribute('data-render-gen', String(gen));
     const lines = value.split('\n');
     let lineIndex = 0;
     const htmlParts = [];
@@ -692,6 +693,7 @@
       if (lineIndex < lines.length) {
         global.setTimeout(processChunk, 0);
       } else {
+        if (String(gen) !== pre.getAttribute('data-render-gen')) return;
         const html = htmlParts.join('\n');
         const scratch = global.document.createElement('div');
         scratch.innerHTML = String(html || '');
@@ -705,6 +707,7 @@
         if (String(gen) !== pre.getAttribute('data-render-gen')) return;
         pre.setAttribute('data-rendered-log', value);
         pre.removeAttribute('data-rendering-log');
+        if (helpers && typeof helpers.onComplete === 'function') helpers.onComplete();
       }
     }
     global.setTimeout(processChunk, 0);
@@ -2029,6 +2032,7 @@
     getCounters,
     updateDetailPanelLog,
     updateDetailPanelEvents,
+    fillTerminalPre,
     subjectRunValue,
     subjectRunsFor,
     highlightJSON,

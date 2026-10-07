@@ -66,16 +66,7 @@ func servePortalRunStream(w http.ResponseWriter, r *http.Request, repoRoot strin
 		writeJSONError(w, "resolve run: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	logPath := portalLogSourcePath(run)
-	if logPath == "" {
-		if run.Kind == "active" && run.SocketPath != "" {
-			serveLegacyPortalSocketStream(w, r, run)
-			return
-		}
-	} else if _, statErr := os.Stat(logPath); errors.Is(statErr, os.ErrNotExist) && run.Kind == "active" && run.SocketPath != "" {
-		serveLegacyPortalSocketStream(w, r, run)
-		return
-	}
+	var logPath string
 	// Clear this response's write deadline so the server's 30s WriteTimeout
 	// does not sever a long-lived tail. Falls back silently if the writer
 	// does not support deadline control (ResponseController returns an
@@ -116,11 +107,6 @@ func servePortalRunStream(w http.ResponseWriter, r *http.Request, repoRoot strin
 		}
 	}()
 
-	if logPath == "" {
-		_ = writePortalLogEvent(locked, "unavailable", map[string]any{"runId": run.RunID, "reason": "missing-saved-log"}, "")
-		_ = writePortalLogEvent(locked, "end", map[string]any{"runId": run.RunID}, "")
-		return
-	}
 	var cursor *portalLogCursor
 	for _, encoded := range []string{r.Header.Get("Last-Event-ID"), r.URL.Query().Get("cursor")} {
 		if strings.TrimSpace(encoded) == "" {
@@ -138,6 +124,31 @@ func servePortalRunStream(w http.ResponseWriter, r *http.Request, repoRoot strin
 		break
 	}
 	for {
+		latest, observeErr := portalRunForKey(repoRoot, runKey)
+		if observeErr != nil {
+			_ = writePortalLogEvent(locked, "unavailable", map[string]any{"runId": run.RunID, "reason": observeErr.Error()}, "")
+			_ = writePortalLogEvent(locked, "end", map[string]any{"runId": run.RunID}, "")
+			return
+		}
+		logPath = portalLogSourcePath(latest)
+		if logPath == "" {
+			if portalLogTerminal(latest) {
+				_ = writePortalLogEvent(locked, "unavailable", map[string]any{"runId": latest.RunID, "reason": "missing-saved-log"}, "")
+				_ = writePortalLogEvent(locked, "end", map[string]any{"runId": latest.RunID}, "")
+				return
+			}
+			if err := writePortalLogEvent(locked, "pending", map[string]any{"runId": latest.RunID}, ""); err != nil {
+				return
+			}
+			timer := time.NewTimer(portalLogPollInterval)
+			select {
+			case <-r.Context().Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			continue
+		}
 		source, sourceErr := newPortalLogSource(logPath, run.RunID)
 		if sourceErr == nil {
 			terminal := func() bool {
@@ -151,7 +162,7 @@ func servePortalRunStream(w http.ResponseWriter, r *http.Request, repoRoot strin
 			_ = streamPortalSavedLog(r.Context(), locked, source, cursor, terminal)
 			return
 		}
-		if !errors.Is(sourceErr, os.ErrNotExist) || portalLogTerminal(run) {
+		if !errors.Is(sourceErr, os.ErrNotExist) || portalLogTerminal(latest) {
 			_ = writePortalLogEvent(locked, "unavailable", map[string]any{"runId": run.RunID, "reason": sourceErr.Error()}, "")
 			_ = writePortalLogEvent(locked, "end", map[string]any{"runId": run.RunID}, "")
 			return
