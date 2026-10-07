@@ -21,6 +21,8 @@ import (
 type registrationGitHubClient struct {
 	fakeGitHubClient
 	comments []github.PRComment
+	reviews  []github.PRReview
+	inline   []github.PRReviewComment
 }
 
 type registrationGateSnapshotClient struct {
@@ -81,6 +83,14 @@ func (s *registrationStoreStub) Read(path string) (reviewRequestRegistration, er
 
 func (c *registrationGitHubClient) ListPRComments(context.Context, int) ([]github.PRComment, error) {
 	return c.comments, nil
+}
+
+func (c *registrationGitHubClient) ListPRReviews(context.Context, int) ([]github.PRReview, error) {
+	return c.reviews, nil
+}
+
+func (c *registrationGitHubClient) ListPRReviewComments(context.Context, int) ([]github.PRReviewComment, error) {
+	return c.inline, nil
 }
 
 func TestReviewRegistration_RunSessionReceivesConfiguredSeams(t *testing.T) {
@@ -303,6 +313,90 @@ func TestReviewRegistration_ImportsValidatedLegacyObservationOnce(t *testing.T) 
 	}
 	if session.confirmedReviewRequestActive(context.Background(), workDir, pr, pr.HeadRefOid) {
 		t.Fatal("responded canonical observation remained an active request")
+	}
+}
+
+func TestReviewRegistration_ImportsEquivalentNumericAndURLTriggerIdentity(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments:         []github.PRComment{{ID: "1001", Body: "/sandman review", CreatedAt: now.Add(-time.Minute)}},
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+		reviewRegistrationNow:  func() time.Time { return now },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	pr := &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("register pending request: %v", err)
+	}
+	writeRespondedApprovalForCanonicalRequest(t, workDir, pr.Number)
+	statePath := paths.NewLayout(nil, workDir).PRReviewRequestStatePath(pr.Number)
+	stateData, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read legacy response: %v", err)
+	}
+	var state reviewWaitState
+	if err := json.Unmarshal(stateData, &state); err != nil {
+		t.Fatalf("decode legacy response: %v", err)
+	}
+	var classification map[string]any
+	if err := json.Unmarshal(state.Evidence.Classification, &classification); err != nil {
+		t.Fatalf("decode classification: %v", err)
+	}
+	request := classification["request"].(map[string]any)
+	boundary := classification["boundary_evidence"].(map[string]any)["request"].(map[string]any)
+	request["trigger_id"] = "https://github.com/owner/repo/pull/17#issuecomment-1001"
+	boundary["trigger_id"] = request["trigger_id"]
+	state.Evidence.Classification, err = json.Marshal(classification)
+	if err != nil {
+		t.Fatalf("encode equivalent-identity classification: %v", err)
+	}
+	if err := atomicfs.WriteAtomicJSON(statePath, state, 0o600); err != nil {
+		t.Fatalf("write equivalent-identity response: %v", err)
+	}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("import equivalent-identity response: %v", err)
+	}
+	evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
+	if evidence.outcome != retainedReviewApproval || evidence.payload == nil {
+		t.Fatalf("equivalent-identity lifecycle evidence = %#v, want approval", evidence)
+	}
+}
+
+func TestReviewRegistration_PersistsDirectCurrentHeadObservation(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments:         []github.PRComment{{ID: "1001", Body: "/sandman review", CreatedAt: now.Add(-time.Minute)}},
+		reviews:          []github.PRReview{{ID: "2001", State: "APPROVED", CommitID: "current-sha", CreatedAt: now.Add(time.Minute)}},
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+		reviewRegistrationNow:  func() time.Time { return now.Add(2 * time.Minute) },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	pr := &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("register pending request: %v", err)
+	}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("persist direct response: %v", err)
+	}
+	registration, err := readReviewRegistration(paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number), "owner/repo", pr, pr.HeadRefOid)
+	if err != nil {
+		t.Fatalf("read canonical registration: %v", err)
+	}
+	if registration.LegacyImported || registration.State.ObservedState != "responded" || registration.State.Evidence == nil {
+		t.Fatalf("direct canonical observation = %#v, want non-legacy responded evidence", registration)
+	}
+	if evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid); evidence.outcome != retainedReviewApproval {
+		t.Fatalf("direct canonical lifecycle evidence = %#v, want approval", evidence)
 	}
 }
 

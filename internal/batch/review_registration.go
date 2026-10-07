@@ -434,6 +434,21 @@ func (s *runSession) importLegacyReviewEvidence(ctx context.Context, workDir, re
 	if existing == nil || existing.State.Evidence != nil || existing.State.ObservedState != "" {
 		return nil
 	}
+	if comments, listErr := s.deps.githubClient.ListPRComments(ctx, pr.Number); listErr == nil {
+		if handoff, observeErr := s.observeCurrentReviewEvidence(ctx, existing.Request, pr, comments); observeErr == nil && handoff != nil {
+			canonical, canonicalErr := canonicalReviewRegistration(*existing, handoff, currentHead)
+			if canonicalErr != nil {
+				return canonicalErr
+			}
+			canonical.LegacyImported = false
+			if writeErr := writeReviewRegistration(s.reviewRegistrationStoreForRead(), registrationPath, *canonical, func() error {
+				return s.verifyCurrentReviewHead(ctx, pr, currentHead)
+			}); writeErr != nil {
+				return fmt.Errorf("persist observed review evidence: %w", writeErr)
+			}
+			return nil
+		}
+	}
 	artifacts, err := readReviewTimeoutArtifacts(workDir, repository, pr, currentHead)
 	if err != nil || artifacts == nil || !reviewRequestIdentityMatches(existing.Request, artifacts.Request) {
 		return nil

@@ -411,7 +411,6 @@ func validateReviewClassification(raw map[string]any, request reviewRequestEnvel
 		"repository":            request.Repository,
 		"pull_request":          request.PullRequest,
 		"head_sha":              request.HeadSHA,
-		"trigger_id":            request.TriggerID,
 		"trigger_prefix":        request.TriggerPrefix,
 		"trigger_created_at":    request.TriggerCreatedAt,
 		"deadline_at":           request.DeadlineAt,
@@ -420,6 +419,10 @@ func validateReviewClassification(raw map[string]any, request reviewRequestEnvel
 		if !classificationValueEqual(classificationRequest[key], want) {
 			return fmt.Errorf("review classification request %s does not match retained request", key)
 		}
+	}
+	classificationTriggerID, triggerIDOK := classificationRequest["trigger_id"].(string)
+	if !triggerIDOK || reviewTriggerIdentity(classificationTriggerID) != reviewTriggerIdentity(request.TriggerID) {
+		return fmt.Errorf("review classification request trigger_id does not match retained request")
 	}
 	if stringValue(raw, "observed_head_sha") != request.HeadSHA || !strings.EqualFold(strings.TrimSpace(currentHead), request.HeadSHA) {
 		return fmt.Errorf("review classification head does not match the retained request")
