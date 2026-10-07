@@ -10,8 +10,12 @@ import (
 )
 
 func (s *runSession) runtimeNow() time.Time {
-	if s.opts.now != nil {
-		return s.opts.now().UTC()
+	return s.opts.runtimeNow()
+}
+
+func (opts runSessionOptions) runtimeNow() time.Time {
+	if opts.now != nil {
+		return opts.now().UTC()
 	}
 	return time.Now().UTC()
 }

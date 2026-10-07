@@ -1128,3 +1128,50 @@ func TestWaitingContract_QuotaExpirySurvivesReconstructedExecutor(t *testing.T) 
 		t.Fatalf("expired reconstructed episode renewed/launched: result=%#v starts=%v", result, factory.created)
 	}
 }
+
+func TestWaitingContract_ExpiredQuotaProbeStillFinishesVerifiedMerge(t *testing.T) {
+	root := testenv.MkdirShort(t, "sm-wait-")
+	t.Chdir(root)
+	now := time.Now().UTC()
+	branch := "42-merged-quota"
+	log := &spyEventLog{}
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+		prs: map[string]*github.PR{branch: {
+			Number:      17,
+			State:       "merged",
+			Merged:      true,
+			Body:        "Closes #42",
+			HeadRefName: branch,
+			HeadRefOid:  "current-sha",
+		}},
+	}
+	factory := &controlledRunnableFactory{}
+	o := NewOrchestrator(client, &noopRenderer{}, nil, log,
+		WithErrorLog(io.Discard),
+		WithRunnableFactory(factory),
+		WithSandboxFactory(&freshSandboxFactory{}),
+		WithRunSessionOpts(runSessionOptions{currentHead: func(string) (string, error) { return "current-sha", nil }}),
+	)
+	e := o.newRunExecutor(context.Background(), BatchConfig{
+		Cfg:      &config.Config{},
+		AgentCfg: config.BuiltInAgentPresets["opencode"].Agent("opencode"),
+	}, &freshSandboxFactory{}, nil)
+	result, started := e.Execute(context.Background(), RowSpec{
+		IssueNumber:        42,
+		RunID:              "row",
+		Mode:               ModeContinue,
+		UsageLimitProbe:    true,
+		UsageLimitDeadline: now.Add(-time.Minute),
+		Branches:           map[int]string{42: branch},
+	})
+	if started || result.Status != "success" {
+		t.Fatalf("expired quota probe = (started=%t, result=%#v), want observation-only success", started, result)
+	}
+	if len(factory.created) != 0 {
+		t.Fatalf("expired quota probe launched agents: %v", factory.created)
+	}
+	if got := countEventsByType(log.snapshot(), "run.finished"); got != 1 {
+		t.Fatalf("run.finished events = %d, want one terminal observation", got)
+	}
+}

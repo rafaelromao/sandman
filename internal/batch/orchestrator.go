@@ -2263,7 +2263,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 						break
 					}
 					if o.eventLog != nil {
-						if err := logCapacityQueuedContinuation(o.eventLog, runID, issueNum, issueBatchID, row, extras, req.IssueTitles[issueNum]); err != nil {
+						if err := logCapacityQueuedContinuationAt(o.eventLog, executor.deps.runSessionOpts.runtimeNow(), runID, issueNum, issueBatchID, row, extras, req.IssueTitles[issueNum]); err != nil {
 							if o.errorLog != nil {
 								fmt.Fprintf(o.errorLog, "warning: persist ready continuation for issue %d: %v; keeping the run in its external wait\n", issueNum, err)
 							}
@@ -2289,7 +2289,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 						"next_action": "resume after provider usage limit resets; Sandman did not start another run while suspended",
 					}
 					if o.eventLog != nil && (!awaiting || readyContinuation) {
-						if err := logCapacityQueuedContinuation(o.eventLog, runID, issueNum, issueBatchID, row, extras, req.IssueTitles[issueNum]); err != nil {
+						if err := logCapacityQueuedContinuationAt(o.eventLog, executor.deps.runSessionOpts.runtimeNow(), runID, issueNum, issueBatchID, row, extras, req.IssueTitles[issueNum]); err != nil {
 							if o.errorLog != nil {
 								fmt.Fprintf(o.errorLog, "warning: persist usage-limit pause for issue %d: %v\n", issueNum, err)
 							}
@@ -3002,6 +3002,13 @@ type runSession struct {
 
 	modelProgress func()
 	usageLimit    func()
+
+	// lifecyclePRSnapshot carries the last live PR observation made by the
+	// closing-reference guard into the authoritative lifecycle decision. This
+	// avoids a second lookup that could observe a different lifecycle state.
+	lifecyclePRSnapshot      *github.PR
+	lifecycleAlreadyResolved bool
+	lifecycleTerminal        bool
 }
 
 func (s *runSession) worktreeDir() string {
@@ -3258,7 +3265,10 @@ func (s *runSession) withClosingReferenceGuard(ctx context.Context, branch strin
 		defer close(done)
 		wait := interval
 		for {
-			outcome := repairOpenPRClosingReference(guardCtx, s.deps.githubClient, branch, s.issueNumber, s.deps.errorLog)
+			outcome, observedPR := repairOpenPRClosingReferenceWithSnapshot(guardCtx, s.deps.githubClient, branch, s.issueNumber, s.deps.errorLog)
+			if observedPR != nil {
+				s.lifecyclePRSnapshot = observedPR
+			}
 			if outcome == closingGuardProtected || outcome == closingGuardTerminal {
 				return
 			}
@@ -3299,46 +3309,51 @@ const (
 // open. It rechecks after the edit because an edit that races a merge cannot
 // make GitHub auto-close the issue retroactively.
 func repairOpenPRClosingReference(ctx context.Context, client github.Client, branch string, issueNumber int, errorLog io.Writer) closingGuardOutcome {
+	outcome, _ := repairOpenPRClosingReferenceWithSnapshot(ctx, client, branch, issueNumber, errorLog)
+	return outcome
+}
+
+func repairOpenPRClosingReferenceWithSnapshot(ctx context.Context, client github.Client, branch string, issueNumber int, errorLog io.Writer) (closingGuardOutcome, *github.PR) {
 	pr, err := client.FindPRByBranch(ctx, branch)
 	if err != nil {
 		if github.IsRateLimited(err) {
-			return closingGuardTerminal
+			return closingGuardTerminal, nil
 		}
-		return closingGuardRetry
+		return closingGuardRetry, nil
 	}
 	if pr == nil {
-		return closingGuardAbsent
+		return closingGuardAbsent, nil
 	}
 	if !strings.EqualFold(pr.State, "open") || pr.Merged {
-		return closingGuardTerminal
+		return closingGuardTerminal, pr
 	}
 	body, changed := github.EnsureClosingReference(pr.Body, issueNumber)
 	if !changed {
-		return closingGuardProtected
+		return closingGuardProtected, pr
 	}
 	if err := client.EditPRBody(ctx, pr.Number, body); err != nil {
 		if errorLog != nil {
 			fmt.Fprintf(errorLog, "error: repair closing reference for PR #%d and issue %d: %v\n", pr.Number, issueNumber, err)
 		}
-		return closingGuardRetry
+		return closingGuardRetry, pr
 	}
 	updated, err := client.FindPRByBranch(ctx, branch)
 	if err != nil {
-		return closingGuardRetry
+		return closingGuardRetry, pr
 	}
 	if updated == nil {
-		return closingGuardAbsent
+		return closingGuardAbsent, pr
 	}
 	if updated.Merged || !strings.EqualFold(updated.State, "open") {
 		if errorLog != nil {
 			fmt.Fprintf(errorLog, "error: PR #%d merged while repairing closing reference for issue %d\n", pr.Number, issueNumber)
 		}
-		return closingGuardTerminal
+		return closingGuardTerminal, updated
 	}
 	if updated.ClosesIssue(issueNumber) {
-		return closingGuardProtected
+		return closingGuardProtected, updated
 	}
-	return closingGuardRetry
+	return closingGuardRetry, updated
 }
 
 // emitAwait writes a non-terminal run.await event and returns the
@@ -3760,6 +3775,7 @@ func (s *runSession) runOnce(
 	attempts := s.retries + 1
 	var result AgentRunResult
 	var abortedByHeartbeat bool
+	s.lifecycleTerminal = false
 
 	factory := s.deps.runnableFactory
 	if factory == nil {
@@ -3887,6 +3903,7 @@ loop:
 			s.reviewRegistrationAttempted = false
 			s.reviewRegistrationObserved = false
 			s.reviewAttemptStartedAt = s.reviewNow()
+			s.lifecyclePRSnapshot = nil
 			result, abortedByHeartbeat = s.withHeartbeat(ctx, runID, attempt, logPath, wt, func() AgentRunResult {
 				return s.withClosingReferenceGuard(ctx, branch, func() AgentRunResult {
 					return runnable.Run(ctx, s.deps.renderer, s.agentCfg.Command, attemptRenderCfg)
@@ -3903,9 +3920,10 @@ loop:
 			taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
 			taskContent, _, _ := ReadTaskContent(taskPath)
 			alreadyResolved = hasExactTaskStatus(taskContent, "## Status: already resolved")
-			if s.issueNumber > 0 && !(alreadyResolved && s.mode != ModeContinue) && events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
+			s.lifecycleAlreadyResolved = alreadyResolved
+			if s.issueNumber > 0 && ctx.Err() == nil {
 				hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
-				if gateStatus, extras, handled := s.handleLifecycleDecisionAfterAgent(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled {
+				if gateStatus, extras, handled := s.handleLifecycleDecisionForAttempt(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady, result.Status); handled {
 					if isImplementorOwnedGateFailure(extras) {
 						// A clean but incomplete handoff is owned work, not an
 						// external await or a separate lifecycle-resume budget.
@@ -3919,6 +3937,7 @@ loop:
 					if gateStatus == "success" || gateStatus == "failure" || gateStatus == "aborted" {
 						// A terminal lifecycle decision is authoritative. Do not
 						// let the legacy post-decision PR arbitration replace it.
+						s.lifecycleTerminal = true
 						result.Status = gateStatus
 						terminalExtras = mergeBlockerExtras(terminalExtras, extras)
 						break loop
@@ -3955,6 +3974,7 @@ loop:
 								"advance the pull-request head before requesting another remediation run")
 						}
 					}
+					s.lifecycleTerminal = gateStatus == "success" || gateStatus == "failure" || gateStatus == "aborted"
 					result.Status = gateStatus
 					terminalExtras = mergeBlockerExtras(terminalExtras, extras)
 					break loop
@@ -3969,6 +3989,7 @@ loop:
 			}
 			if events.RunStatusFromPayload(result.Status).IsSuccess() && mergedPRMissingClosingReference(ctx, s.deps.githubClient, branch, s.issueNumber) {
 				terminalExtras = mergeCompletionFailureExtras(terminalExtras, s.issueNumber)
+				s.lifecycleTerminal = true
 				result.Status = "failure"
 				break
 			}
@@ -4034,6 +4055,7 @@ loop:
 					prMerged := checkPRMergedForIssue(ctx, s.deps.githubClient, branch, s.issueNumber)
 					if events.RunStatusFromPayload(result.Status).IsSuccess() && mergedPRMissingClosingReference(ctx, s.deps.githubClient, branch, s.issueNumber) {
 						terminalExtras = mergeCompletionFailureExtras(terminalExtras, s.issueNumber)
+						s.lifecycleTerminal = true
 						result.Status = "failure"
 						break
 					}
@@ -4073,6 +4095,7 @@ loop:
 								gateStatus = "failure"
 								extras = lifecycleGateFailureEvidence("IMPLEMENTOR_ACTION_REQUIRED", "resume the implementation to complete current pull-request feedback or merge work", lifecycleGateNone, nil, "")
 							}
+							s.lifecycleTerminal = gateStatus == "success" || gateStatus == "failure" || gateStatus == "aborted"
 							result.Status = gateStatus
 							terminalExtras = mergeBlockerExtras(terminalExtras, extras)
 							break loop
@@ -4345,17 +4368,6 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	result, terminalExtras, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, s.mode != ModeContinue, func(attempt int, previous AgentRunResult) (prompt.RenderConfig, *AgentRunResult) {
 		attemptRenderCfg := s.renderCfg
 		if attempt > 0 {
-			// Pre-retry guard: if the PR was merged between attempts (e.g. the
-			// agent merged it on attempt 0 but exited non-zero due to a
-			// transient error), short-circuit to success without launching
-			// the agent again, resetting the branch, or re-rendering the
-			// prompt. The merged PR is the sole success signal for
-			// issue-driven runs (see #860). ModeContinue uses a different
-			// `prepareAttempt` closure (the prompt-only one) that does not
-			// contain this guard, so continuation replays are unaffected.
-			if checkPRMergedForIssue(ctx, s.deps.githubClient, branch, s.issueNumber) {
-				return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "success", Branch: branch, RetriesTotal: attempt}
-			}
 			taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
 			openPR, prLookupErr := findOpenPRByBranch(ctx, s.deps.githubClient, branch)
 			// Preserve the task content (or use the empty template if missing)
@@ -4413,7 +4425,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	// and skip terminal cleanup. The observation loop emitted the initial
 	// await before waiting; the run stays active until the external gate
 	// resolves or the context is canceled.
-	if s.shouldAwaitUsageLimit(result) {
+	if !s.lifecycleTerminal && s.shouldAwaitUsageLimit(result) {
 		if s.usageLimitDeadline.IsZero() {
 			s.usageLimitDeadline = s.runtimeNow().Add(usageLimitRetryWindow)
 		}

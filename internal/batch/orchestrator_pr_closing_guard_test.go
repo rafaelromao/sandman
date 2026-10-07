@@ -97,6 +97,7 @@ type prCreatingRunnable struct {
 	client *closingReferenceTestClient
 	branch string
 	pr     *github.PR
+	status string
 }
 
 func (r *prCreatingRunnable) Run(context.Context, prompt.IssueRenderer, string, prompt.RenderConfig) AgentRunResult {
@@ -107,7 +108,11 @@ func (r *prCreatingRunnable) Run(context.Context, prompt.IssueRenderer, string, 
 	case <-time.After(3 * time.Second):
 		return AgentRunResult{IssueNumber: 348, Status: "failure", Branch: r.branch}
 	}
-	return AgentRunResult{IssueNumber: 348, Status: "success", Branch: r.branch}
+	status := r.status
+	if status == "" {
+		status = "success"
+	}
+	return AgentRunResult{IssueNumber: 348, Status: status, Branch: r.branch}
 }
 
 type prCreatingRunnableFactory struct {
@@ -169,6 +174,57 @@ func TestRunBatch_RepairsNonClosingPRReferenceBeforeAgentMerges(t *testing.T) {
 	}
 	if body := client.body(); body != "Closes #348\n\nAcceptance evidence." {
 		t.Fatalf("PR body = %q, want repaired closing reference", body)
+	}
+}
+
+func TestRunBatch_RefreshesOpenClosingGuardSnapshotAfterFailedAttemptMerge(t *testing.T) {
+	workDir := t.TempDir()
+	t.Chdir(workDir)
+
+	const (
+		issueNumber = 348
+		prNumber    = 355
+		branch      = "348-acceptance"
+	)
+	pr := &github.PR{
+		Number:      prNumber,
+		State:       "open",
+		Body:        "Refs #348\n\nAcceptance evidence.",
+		HeadRefName: branch,
+	}
+	client := &closingReferenceTestClient{
+		fakeGitHubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{
+				issueNumber: {Number: issueNumber, Title: "Run final browser and visual acceptance on the complete app"},
+			},
+		},
+		repaired: make(chan struct{}),
+	}
+	runnable := &prCreatingRunnable{client: client, branch: branch, pr: pr, status: "failure"}
+	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(workDir, "worktree")}}
+	o := NewOrchestrator(
+		client,
+		&retryRenderer{result: "rendered prompt"},
+		&fakeConfigStore{config: &config.Config{
+			Agent:          "test-agent",
+			Sandbox:        "worktree",
+			WorktreeDir:    "worktrees",
+			Git:            config.GitConfig{BaseBranch: "main"},
+			AgentProviders: map[string]config.Agent{"test-agent": {Command: "echo hi"}},
+		}},
+		&spyEventLog{},
+		WithSandboxFactory(sbFactory),
+		WithRunnableFactory(&prCreatingRunnableFactory{runnable: runnable}),
+		WithClosingGuardTickInterval(10*time.Millisecond),
+		WithErrorLog(io.Discard),
+	)
+
+	result, err := o.RunBatch(context.Background(), Request{Issues: []int{issueNumber}, Retries: 0})
+	if err != nil {
+		t.Fatalf("RunBatch() error = %v (body %q)", err, client.body())
+	}
+	if len(result.Runs) != 1 || result.Runs[0].Status != "success" {
+		t.Fatalf("runs = %#v, want merged PR to succeed after failed attempt", result.Runs)
 	}
 }
 

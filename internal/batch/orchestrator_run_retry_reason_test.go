@@ -88,13 +88,12 @@ func TestRunSingle_EmitsRunRetryWithAgentFailedReason(t *testing.T) {
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
 
-	pr := &github.PR{Number: 17, State: "closed", Merged: false, HeadRefName: branch}
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}
 	o := NewOrchestrator(
 		&fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
-			prs:    map[string]*github.PR{branch: pr},
+			prs:    map[string]*github.PR{branch: nil},
 		},
 		&retryRenderer{result: "rendered prompt"},
 		nil,

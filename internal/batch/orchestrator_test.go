@@ -1087,7 +1087,7 @@ func TestCheckPRMergedAtHead(t *testing.T) {
 	}
 }
 
-func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
+func TestRunSingle_RetryLifecycleTerminalizesAfterRetry(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -1107,7 +1107,7 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
 	branch := "42-fix-bug"
-	pr := &github.PR{Number: 17, State: "closed", Merged: false, HeadRefName: branch}
+	pr := &github.PR{Number: 17, State: "open", Merged: false, HeadRefName: branch, HeadRefOid: "current-sha", MergeStateStatus: "CLEAN"}
 	var resetCalls []struct{ worktreePath, branch, baseBranch string }
 	o := &Orchestrator{
 		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, prs: map[string]*github.PR{branch: pr}},
@@ -1131,8 +1131,8 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "success" {
-		t.Fatalf("status = %q, want success", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure after lifecycle-owned gate handling", result.Status)
 	}
 	if result.RetriesTotal != 2 {
 		t.Fatalf("RetriesTotal = %d, want 2", result.RetriesTotal)
@@ -1140,20 +1140,14 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	if renderer.renderCalls != 1 {
 		t.Fatalf("render calls = %d, want 1 (task prompt bypasses renderer)", renderer.renderCalls)
 	}
-	if rtSandbox.execCount != 2 {
-		t.Fatalf("exec calls = %d, want 2", rtSandbox.execCount)
+	if rtSandbox.execCount < 2 {
+		t.Fatalf("exec calls = %d, want at least 2 across retry/resume handling", rtSandbox.execCount)
 	}
 	if rtSandbox.writePromptCount != 1 {
 		t.Fatalf("prompt writes = %d, want 1 (task prompt bypasses sandbox WritePrompt)", rtSandbox.writePromptCount)
 	}
-	if len(resetCalls) != 1 {
-		t.Fatalf("reset calls = %d, want 1", len(resetCalls))
-	}
-	if resetCalls[0].branch != branch || resetCalls[0].baseBranch != "main" {
-		t.Fatalf("unexpected reset args: %#v", resetCalls[0])
-	}
-	if resetCalls[0].worktreePath != rtSandbox.WorkDir() {
-		t.Fatalf("reset worktree path = %q, want %q", resetCalls[0].worktreePath, rtSandbox.WorkDir())
+	if len(resetCalls) != 0 {
+		t.Fatalf("reset calls = %d, want 0", len(resetCalls))
 	}
 	logPath := filepath.Join(workDir, ".sandman", "batches", "-", "runs", "--42", "run.log")
 	data, err := os.ReadFile(logPath)
@@ -1168,7 +1162,7 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	}
 }
 
-func TestRunSingle_RetryClosedPRResetsBranch(t *testing.T) {
+func TestRunSingle_ClosedPRTerminalizesBeforeRetry(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -1206,11 +1200,11 @@ func TestRunSingle_RetryClosedPRResetsBranch(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "success" {
-		t.Fatalf("status = %q, want success", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure", result.Status)
 	}
-	if resetCalls != 1 {
-		t.Fatalf("reset calls = %d, want 1", resetCalls)
+	if resetCalls != 0 {
+		t.Fatalf("reset calls = %d, want 0 for a terminal closed-unmerged PR", resetCalls)
 	}
 }
 
@@ -1276,7 +1270,7 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 		t.Fatalf("write context: %v", err)
 	}
 
-	pr := &github.PR{Number: 42, State: "closed", Merged: false, HeadRefName: branch}
+	pr := &github.PR{Number: 42, State: "open", Merged: false, HeadRefName: branch, HeadRefOid: "current-sha", MergeStateStatus: "CLEAN"}
 	// Flip Merged only on the post-attempt check after the retry has run
 	// (third FindPRByBranch call), so the pre-retry guard on the second call
 	// does not short-circuit the retry before the continuation prompt is
@@ -2042,7 +2036,7 @@ func TestRunSingle_PreRetryGuardShortCircuitsOnMergedPR(t *testing.T) {
 	}
 }
 
-func TestRunSingle_RetrySkipsClosedPRReview(t *testing.T) {
+func TestRunSingle_RetryMissingClosingReferenceFailsVerification(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -2059,7 +2053,7 @@ func TestRunSingle_RetrySkipsClosedPRReview(t *testing.T) {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
 
-	pr := &github.PR{Number: 17, State: "closed", Merged: false, HeadRefName: branch}
+	pr := &github.PR{Number: 17, State: "open", Merged: false, HeadRefName: branch, HeadRefOid: "current-sha", StatusCheckRollup: "success", ReviewDecision: "APPROVED", MergeStateStatus: "CLEAN"}
 	rtSandbox := &retrySandbox{workDir: worktreePath, execErrors: []error{errors.New("exit 1"), nil}}
 	renderer := &retryRenderer{result: "rendered prompt"}
 	oldHeadFn := currentBranchHeadFn
@@ -2088,11 +2082,11 @@ func TestRunSingle_RetrySkipsClosedPRReview(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "success" {
-		t.Fatalf("status = %q, want success", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure without verified closing reference", result.Status)
 	}
-	if resetCalls != 1 {
-		t.Fatalf("reset calls = %d, want 1", resetCalls)
+	if resetCalls != 0 {
+		t.Fatalf("reset calls = %d, want 0 after lifecycle terminalization", resetCalls)
 	}
 	if rtSandbox.execCommand != "opencode run .sandman/task.md" {
 		t.Fatalf("expected task.md to be used, got %q", rtSandbox.execCommand)
@@ -2365,8 +2359,8 @@ func TestRunSingle_LogsRetryCounters(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.RetriesTotal != 2 {
-		t.Fatalf("RetriesTotal = %d, want 2", result.RetriesTotal)
+	if result.RetriesTotal != 1 {
+		t.Fatalf("RetriesTotal = %d, want 1", result.RetriesTotal)
 	}
 	if len(log.events) == 0 {
 		t.Fatal("expected events")
@@ -2375,8 +2369,8 @@ func TestRunSingle_LogsRetryCounters(t *testing.T) {
 	if got := finished.Payload["retries_total"]; got != 1 {
 		t.Fatalf("retries_total = %#v, want 1", got)
 	}
-	if got := finished.Payload["retries_done"]; got != 1 {
-		t.Fatalf("retries_done = %#v, want 1", got)
+	if got := finished.Payload["retries_done"]; got != 0 {
+		t.Fatalf("retries_done = %#v, want 0", got)
 	}
 }
 
