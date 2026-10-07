@@ -503,6 +503,22 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 		gate = lifecycleGate(checkPRExternalGateForPR(pr, headSHA, true))
 	}
 	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.State), "open") {
+		if attemptNeedsRetry(attemptStatus) {
+			// Avoid side effects for an attempt that has no lifecycle evidence
+			// worth evaluating. This is admission filtering only: it does not
+			// select an action; the full decision below remains authoritative
+			// whenever an active operation or retained evidence is present.
+			reviewRequested := s.confirmedReviewRequestActive(ctx, workDir, pr, headSHA)
+			evidence := s.retainedLifecycleEvidence(ctx, workDir, pr, headSHA)
+			if !reviewRequested && !ciActive(pr, headSHA) &&
+				!strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "failure") &&
+				!strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "DIRTY") &&
+				!strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "CONFLICTING") &&
+				!evidence.actionable && len(evidence.informalFeedback) == 0 &&
+				!(evidence.outcome == retainedReviewApproval && gate == lifecycleGateReady) {
+				return "", nil, false
+			}
+		}
 		if hostPathsReady {
 			headSHA, worktreeHeadSHA, headReconcileErr = s.livePRHeadForLifecycle(ctx, workDir, branch, pr, worktreeHeadSHA, currentHeadErr)
 		}
