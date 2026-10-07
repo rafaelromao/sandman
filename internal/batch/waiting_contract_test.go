@@ -276,6 +276,23 @@ func TestWaitingContract_FailedQuotaProbeCannotReopenAdmission(t *testing.T) {
 	}
 }
 
+func TestWaitingContract_VerifiedQuotaProgressReopensOnlyThatBatchGate(t *testing.T) {
+	gate := newBatchQuotaGate()
+	gate.report(42, AgentRunResult{Status: "await", UsageLimitReached: true}, false)
+	if !gate.paused() {
+		t.Fatal("quota gate should start paused")
+	}
+	gate.modelProgress(42)
+	if gate.paused() {
+		t.Fatal("verified model progress should reopen sibling admission")
+	}
+	gate.modelProgress(42)
+	gate.report(42, AgentRunResult{Status: "await", UsageLimitReached: true}, false)
+	if !gate.paused() {
+		t.Fatal("later recognized provider limit should pause admission again")
+	}
+}
+
 func TestWaitingOwnerNilLogPreservesQuotaSchedule(t *testing.T) {
 	root := t.TempDir()
 	batchDir := filepath.Join(root, "batches", "batch")
@@ -828,6 +845,123 @@ func TestWaitingContract_ParallelQuotaRecoveryReadmitsDeferredSibling(t *testing
 	case <-log.deferred:
 	default:
 		t.Fatal("sibling never experienced quota deferral")
+	}
+}
+
+type midRunQuotaRecovery struct {
+	mu              sync.Mutex
+	attempts        int
+	progress        func()
+	firstLimit      chan<- struct{}
+	recoveryStarted chan<- struct{}
+	recoveryDone    chan<- struct{}
+	release         <-chan struct{}
+	client          *reviewWaitSchedulerGitHubClient
+	firstOnce       sync.Once
+	doneOnce        sync.Once
+}
+
+func (r *midRunQuotaRecovery) setQuotaSignals(progress, _ func()) {
+	r.mu.Lock()
+	r.progress = progress
+	r.mu.Unlock()
+}
+
+func (r *midRunQuotaRecovery) Run(ctx context.Context, _ prompt.IssueRenderer, _ string, _ prompt.RenderConfig) AgentRunResult {
+	r.mu.Lock()
+	r.attempts++
+	attempt := r.attempts
+	progress := r.progress
+	r.mu.Unlock()
+	if attempt == 1 {
+		r.firstOnce.Do(func() { close(r.firstLimit) })
+		return AgentRunResult{IssueNumber: 42, Branch: "42-recovery", Status: "failure", UsageLimitReached: true}
+	}
+	close(r.recoveryStarted)
+	if progress != nil {
+		progress()
+	}
+	select {
+	case <-r.release:
+		if r.client != nil {
+			r.client.mu.Lock()
+			r.client.prs["42-recovery"] = &github.PR{Number: 42, State: "merged", Merged: true, HeadRefName: "42-recovery", Body: "Closes #42"}
+			r.client.mu.Unlock()
+		}
+		r.doneOnce.Do(func() { close(r.recoveryDone) })
+		return AgentRunResult{IssueNumber: 42, Branch: "42-recovery", Status: "success"}
+	case <-ctx.Done():
+		return AgentRunResult{IssueNumber: 42, Branch: "42-recovery", Status: "aborted"}
+	}
+}
+
+type waitForSignalRunnable struct {
+	signal <-chan struct{}
+}
+
+func (r *waitForSignalRunnable) Run(ctx context.Context, _ prompt.IssueRenderer, _ string, _ prompt.RenderConfig) AgentRunResult {
+	select {
+	case <-r.signal:
+		return AgentRunResult{Status: "success"}
+	case <-ctx.Done():
+		return AgentRunResult{Status: "aborted"}
+	}
+}
+
+func TestWaitingContract_ModelProgressReadmitsSiblingBeforeRecoveryReturns(t *testing.T) {
+	root := testenv.MkdirShort(t, "sm-mid-quota-")
+	t.Chdir(root)
+	initGitRepo(t, root)
+	client := &reviewWaitSchedulerGitHubClient{fakeGitHubClient: fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, State: "closed"}, 43: {Number: 43, State: "closed"}, 44: {Number: 44, State: "closed"}},
+		prs: map[string]*github.PR{
+			"43-sibling": {Number: 43, State: "merged", Merged: true, HeadRefName: "43-sibling", Body: "Closes #43"},
+			"44-busy":    {Number: 44, State: "merged", Merged: true, HeadRefName: "44-busy", Body: "Closes #44"},
+		},
+	}}
+	firstLimit := make(chan struct{})
+	recoveryStarted := make(chan struct{})
+	recoveryDone := make(chan struct{})
+	releaseRecovery := make(chan struct{})
+	siblingStarted := make(chan struct{})
+	recovery := &midRunQuotaRecovery{firstLimit: firstLimit, recoveryStarted: recoveryStarted, recoveryDone: recoveryDone, release: releaseRecovery, client: client}
+	factory := &controlledRunnableFactory{runnables: map[int]Runnable{
+		42: recovery,
+		43: waitingRunnableFunction(func(context.Context) AgentRunResult {
+			close(siblingStarted)
+			return AgentRunResult{IssueNumber: 43, Branch: "43-sibling", Status: "success"}
+		}),
+		44: &waitForSignalRunnable{signal: firstLimit},
+	}}
+	cfg := &config.Config{Agent: "opencode", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"opencode": config.BuiltInAgentPresets["opencode"].Agent("opencode")}}
+	log := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, log, WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(&freshSandboxFactory{}), WithRunSessionOpts(runSessionOptions{releaseAwaitCapacity: true, awaitWait: func(context.Context, time.Duration) error { return nil }}))
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = o.RunBatch(context.Background(), Request{Issues: []int{44, 42, 43}, RunTS: "261007120000", RunShortID: "midquota", Parallel: 2, Branches: map[int]string{42: "42-recovery", 43: "43-sibling", 44: "44-busy"}, Dependencies: map[int][]int{43: {44}}})
+	}()
+	select {
+	case <-recoveryStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("quota recovery did not re-enter; events=%v", log.snapshot())
+	}
+	select {
+	case <-siblingStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("verified model progress did not readmit sibling before recovery returned")
+	}
+	select {
+	case <-recoveryDone:
+		t.Fatal("recovery returned before sibling was admitted")
+	default:
+	}
+	close(releaseRecovery)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("batch did not finish after recovery release")
 	}
 }
 

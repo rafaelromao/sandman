@@ -21,10 +21,12 @@ import (
 // Rendering removes the raw final `result` record from the log, so the
 // usage-limit rule is applied here, to the raw record, before rendering.
 type claudeOutput struct {
-	dst      io.Writer
-	progress func()
-	state    *claudeOutputState
-	buf      bytes.Buffer
+	dst           io.Writer
+	progress      func()
+	modelProgress func()
+	stdout        bool
+	state         *claudeOutputState
+	buf           bytes.Buffer
 }
 
 type claudeOutputState struct {
@@ -35,7 +37,7 @@ type claudeOutputState struct {
 
 func newClaudeOutputs() (outputParser, outputParser) {
 	state := &claudeOutputState{}
-	return &claudeOutput{state: state}, &claudeOutput{state: state}
+	return &claudeOutput{state: state, stdout: true}, &claudeOutput{state: state}
 }
 
 func (w *claudeOutput) setDestination(dst io.Writer) { w.dst = dst }
@@ -45,6 +47,8 @@ func (w *claudeOutput) setDestination(dst io.Writer) { w.dst = dst }
 // time, and a long tool call or long thinking emits only progress records, so
 // dropping them must still count as activity.
 func (w *claudeOutput) setProgress(progress func()) { w.progress = progress }
+
+func (w *claudeOutput) setModelProgress(progress func()) { w.modelProgress = progress }
 
 func (w *claudeOutput) Write(p []byte) (int, error) {
 	n, err := w.buf.Write(p)
@@ -103,6 +107,9 @@ func (w *claudeOutput) writeLine(line []byte, newline bool) error {
 		w.state.mu.Unlock()
 	}
 	recordType, _ := record["type"].(string)
+	if w.stdout && recordType == "assistant" && claudeAssistantHasText(record) && w.modelProgress != nil {
+		w.modelProgress()
+	}
 	if recordType == "result" && claudeUsageLimitLine(text) {
 		w.state.mu.Lock()
 		w.state.usageLimitReached = true
@@ -212,6 +219,17 @@ func claudeAssistantLines(record map[string]any) []string {
 		}
 	}
 	return lines
+}
+
+func claudeAssistantHasText(record map[string]any) bool {
+	for _, block := range claudeContentBlocks(record) {
+		if block["type"] == "text" {
+			if text, _ := block["text"].(string); strings.TrimSpace(text) != "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func claudeToolErrorLines(record map[string]any) []string {

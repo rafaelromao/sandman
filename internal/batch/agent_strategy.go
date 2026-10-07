@@ -79,6 +79,13 @@ type progressObserver interface {
 	setProgress(progress func())
 }
 
+// modelProgressObserver reports positive model output independently of the
+// human-readable log. Quota recovery must not infer provider health from
+// startup, tool, error, or usage-limit output.
+type modelProgressObserver interface {
+	setModelProgress(progress func())
+}
+
 // agentStrategies maps each built-in agent preset to its strategy
 // constructor. The constructor learns whether the launch runs the preset's
 // own command template: a custom command under a built-in preset keeps the

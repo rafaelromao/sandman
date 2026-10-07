@@ -28,6 +28,33 @@ type opencodeSequenceSandbox struct {
 	commands []string
 }
 
+func TestOpenCodeOutput_ModelProgressOnlyReportsPositiveStdoutText(t *testing.T) {
+	var out strings.Builder
+	stdout := newOpenCodeOutput(&out, nil, false)
+	stderr := newOpenCodeOutput(&out, nil, true)
+	progress := 0
+	stdout.setModelProgress(func() { progress++ })
+	stderr.setModelProgress(func() { progress++ })
+	stream := strings.Join([]string{
+		`{"type":"step_start"}`,
+		`{"type":"tool","tool":"bash","state":{"status":"completed"}}`,
+		`{"type":"error","error":{"message":"usage limit has been reached"}}`,
+		`{"type":"text","part":{"text":"provider recovered"}}`,
+	}, "\n") + "\n"
+	if _, err := stdout.Write([]byte(stream)); err != nil {
+		t.Fatal(err)
+	}
+	if progress != 1 {
+		t.Fatalf("stdout model progress calls = %d, want one", progress)
+	}
+	if _, err := stderr.Write([]byte(`{"type":"text","part":{"text":"stderr must not recover"}}` + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	if progress != 1 {
+		t.Fatalf("stderr model progress calls = %d, want unchanged", progress)
+	}
+}
+
 func (s *opencodeSequenceSandbox) Exec(ctx context.Context, command string, stdout, stderr io.Writer) error {
 	s.commands = append(s.commands, command)
 	result := s.results[0]

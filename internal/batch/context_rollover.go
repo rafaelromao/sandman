@@ -265,6 +265,7 @@ type usageLimitDetector struct {
 	rule      func(line string) bool
 	pending   string
 	triggered bool
+	onTrigger func()
 }
 
 func newUsageLimitDetector(rule func(line string) bool) *usageLimitDetector {
@@ -286,6 +287,12 @@ func (d *usageLimitDetector) Triggered() bool {
 	return d.triggered
 }
 
+func (d *usageLimitDetector) setTrigger(onTrigger func()) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.onTrigger = onTrigger
+}
+
 func (d *usageLimitDetector) consume(text string, final bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -301,7 +308,13 @@ func (d *usageLimitDetector) consume(text string, final bool) {
 	}
 	for _, line := range parts {
 		if d.rule != nil && d.rule(line) {
+			if d.triggered {
+				return
+			}
 			d.triggered = true
+			if d.onTrigger != nil {
+				d.onTrigger()
+			}
 			return
 		}
 	}

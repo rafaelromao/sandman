@@ -42,6 +42,8 @@ type AgentRun struct {
 	status                     string
 	contextExhausted           bool
 	usageLimitReached          bool
+	modelProgress              func()
+	usageLimit                 func()
 	cleanupError               error // distinct cleanup failure from context cancellation
 	contextRolloverLiterals    []string
 	env                        map[string]string
@@ -104,6 +106,11 @@ func (r *AgentRun) Prepare(renderer prompt.IssueRenderer, cfg prompt.RenderConfi
 // on the AgentRunResult (issue #2605 acceptance criterion #4).
 func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr io.Writer) error {
 	return r.execute(ctx, command, stdout, stderr, nil, nil)
+}
+
+func (r *AgentRun) setQuotaSignals(modelProgress, usageLimit func()) {
+	r.modelProgress = modelProgress
+	r.usageLimit = usageLimit
 }
 
 func (r *AgentRun) execute(ctx context.Context, command string, stdout, stderr io.Writer, parsedStdout, parsedStderr outputParser) error {
@@ -252,6 +259,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	var usageDetector *usageLimitDetector
 	if rule := strategy.UsageLimitRule(); rule != nil {
 		usageDetector = newUsageLimitDetector(rule)
+		usageDetector.setTrigger(r.usageLimit)
 	}
 	stdout := io.Writer(os.Stdout)
 	stderr := io.Writer(os.Stderr)
