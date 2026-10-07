@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 )
@@ -146,6 +147,81 @@ func TestPortal_AwaitEventShowsWaiting(t *testing.T) {
 	}
 	if len(got.Events) != 4 {
 		t.Fatalf("expected both await events in portal details, got %d events", len(got.Events))
+	}
+}
+
+func TestPortal_StartupPreservesAwaitingRunWithUnexpiredLease(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	batchID := "dead-await-portal"
+	runID := "run-await-portal-42"
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatalf("create batch directory: %v", err)
+	}
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: now.Add(-20 * time.Minute)}); err != nil {
+		t.Fatalf("write batch manifest: %v", err)
+	}
+	runDir := filepath.Join(batchDir, "runs", runID)
+	if err := batchindex.WriteManifest(runDir, batchindex.RunManifest{
+		RunID: runID, BatchID: batchID, Issue: 42,
+		Status: batchindex.RunManifestStatusActive, CreatedAt: now.Add(-19 * time.Minute),
+	}); err != nil {
+		t.Fatalf("write run manifest: %v", err)
+	}
+	addBatchToIndex(t, repoRoot, batchID, batchDir, []int{42})
+	if err := daemon.RenewRunWait(batchDir, daemon.RunWait{
+		Protocol: "run-wait/v1", RunID: runID, BatchID: batchID, Issue: 42,
+		Branch: "42-fix", BaseBranch: "main", OperationID: "ci:17:head",
+		OperationDeadline: now.Add(30 * time.Minute),
+	}, now); err != nil {
+		t.Fatalf("write awaiting snapshot: %v", err)
+	}
+	eventsPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
+	writePortalLog(t, eventsPath, []events.Event{
+		{Type: "run.started", RunID: runID, Issue: 42, Timestamp: now.Add(-19 * time.Minute), Payload: map[string]any{
+			"batch_id": batchID, "branch": "42-fix", "base_branch": "main",
+		}},
+		{Type: "run.await", RunID: runID, Issue: 42, Timestamp: now.Add(-10 * time.Minute), Payload: map[string]any{
+			"await_reason": "pending", "ci_wait": map[string]any{
+				"deadline_unix_seconds": now.Add(30 * time.Minute).Unix(),
+			},
+		}},
+	})
+
+	handler := newPortalHandler(repoRoot)
+	portal := handler.(*portalHandler)
+	portal.waitForStaleCleanup()
+	server := startPortalHTTPServer(t, handler)
+	runs := readPortalRuns(t, server.URL)
+	var got *portalRun
+	for i := range runs {
+		if runs[i].IssueNumber == 42 {
+			got = &runs[i]
+			break
+		}
+	}
+	if got == nil || got.Status != "waiting" || got.FinishedAt != nil {
+		t.Fatalf("portal row = %#v, want active waiting row", got)
+	}
+	logEvents, err := (&events.JSONLLogger{Path: eventsPath}).Read()
+	if err != nil {
+		t.Fatalf("read portal event log: %v", err)
+	}
+	for _, event := range logEvents {
+		if event.RunID == runID && event.Type == "run.aborted" {
+			t.Fatal("portal startup aborted an awaiting run with an unexpired lease")
+		}
+	}
+	manifest, err := batchindex.ReadManifest(runDir)
+	if err != nil {
+		t.Fatalf("read run manifest after portal startup: %v", err)
+	}
+	if manifest.Status != batchindex.RunManifestStatusActive {
+		t.Fatalf("run manifest status = %q, want active", manifest.Status)
 	}
 }
 
