@@ -3003,6 +3003,7 @@ type runSession struct {
 	// avoids a second lookup that could observe a different lifecycle state.
 	lifecyclePRSnapshot      *github.PR
 	lifecycleAlreadyResolved bool
+	lifecycleTerminal        bool
 }
 
 func (s *runSession) worktreeDir() string {
@@ -3769,6 +3770,7 @@ func (s *runSession) runOnce(
 	attempts := s.retries + 1
 	var result AgentRunResult
 	var abortedByHeartbeat bool
+	s.lifecycleTerminal = false
 
 	factory := s.deps.runnableFactory
 	if factory == nil {
@@ -3927,6 +3929,7 @@ loop:
 					if gateStatus == "success" || gateStatus == "failure" || gateStatus == "aborted" {
 						// A terminal lifecycle decision is authoritative. Do not
 						// let the legacy post-decision PR arbitration replace it.
+						s.lifecycleTerminal = true
 						result.Status = gateStatus
 						terminalExtras = mergeBlockerExtras(terminalExtras, extras)
 						break loop
@@ -3963,6 +3966,7 @@ loop:
 								"advance the pull-request head before requesting another remediation run")
 						}
 					}
+					s.lifecycleTerminal = gateStatus == "success" || gateStatus == "failure" || gateStatus == "aborted"
 					result.Status = gateStatus
 					terminalExtras = mergeBlockerExtras(terminalExtras, extras)
 					break loop
@@ -3977,6 +3981,7 @@ loop:
 			}
 			if events.RunStatusFromPayload(result.Status).IsSuccess() && mergedPRMissingClosingReference(ctx, s.deps.githubClient, branch, s.issueNumber) {
 				terminalExtras = mergeCompletionFailureExtras(terminalExtras, s.issueNumber)
+				s.lifecycleTerminal = true
 				result.Status = "failure"
 				break
 			}
@@ -4042,6 +4047,7 @@ loop:
 					prMerged := checkPRMergedForIssue(ctx, s.deps.githubClient, branch, s.issueNumber)
 					if events.RunStatusFromPayload(result.Status).IsSuccess() && mergedPRMissingClosingReference(ctx, s.deps.githubClient, branch, s.issueNumber) {
 						terminalExtras = mergeCompletionFailureExtras(terminalExtras, s.issueNumber)
+						s.lifecycleTerminal = true
 						result.Status = "failure"
 						break
 					}
@@ -4081,6 +4087,7 @@ loop:
 								gateStatus = "failure"
 								extras = lifecycleGateFailureEvidence("IMPLEMENTOR_ACTION_REQUIRED", "resume the implementation to complete current pull-request feedback or merge work", lifecycleGateNone, nil, "")
 							}
+							s.lifecycleTerminal = gateStatus == "success" || gateStatus == "failure" || gateStatus == "aborted"
 							result.Status = gateStatus
 							terminalExtras = mergeBlockerExtras(terminalExtras, extras)
 							break loop
@@ -4410,7 +4417,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	// and skip terminal cleanup. The observation loop emitted the initial
 	// await before waiting; the run stays active until the external gate
 	// resolves or the context is canceled.
-	if s.shouldAwaitUsageLimit(result) {
+	if !s.lifecycleTerminal && s.shouldAwaitUsageLimit(result) {
 		if s.usageLimitDeadline.IsZero() {
 			s.usageLimitDeadline = s.runtimeNow().Add(usageLimitRetryWindow)
 		}

@@ -502,6 +502,12 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 	if err == nil && pr != nil {
 		gate = lifecycleGate(checkPRExternalGateForPR(pr, headSHA, true))
 	}
+	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.State), "open") && hostPathsReady {
+		// Reconcile the local head before failed-attempt admission filtering so
+		// current-head review evidence cannot be rejected as stale.
+		headSHA, worktreeHeadSHA, headReconcileErr = s.livePRHeadForLifecycle(ctx, workDir, branch, pr, worktreeHeadSHA, currentHeadErr)
+		gate = lifecycleGate(checkPRExternalGateForPR(pr, headSHA, true))
+	}
 	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.State), "open") {
 		if attemptNeedsRetry(attemptStatus) {
 			// Avoid side effects for an attempt that has no lifecycle evidence
@@ -518,9 +524,6 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 				!(evidence.outcome == retainedReviewApproval && gate == lifecycleGateReady) {
 				return "", nil, false
 			}
-		}
-		if hostPathsReady {
-			headSHA, worktreeHeadSHA, headReconcileErr = s.livePRHeadForLifecycle(ctx, workDir, branch, pr, worktreeHeadSHA, currentHeadErr)
 		}
 		registrationErr := s.ensureReviewRegistrationForPR(ctx, workDir, pr, headSHA, runID)
 		headChanged := errors.Is(registrationErr, errReviewRegistrationHeadChanged)

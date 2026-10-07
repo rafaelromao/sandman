@@ -49,6 +49,10 @@ func runLifecycleCaseForIssue(t *testing.T, pr *github.PR, mode IssueMode, prevR
 }
 
 func runLifecycleCaseForIssueWithAttemptStatus(t *testing.T, pr *github.PR, mode IssueMode, prevRunID, attemptStatus string) (AgentRunResult, []events.Event, int) {
+	return runLifecycleCaseForIssueWithAttemptStatusAndUsage(t, pr, mode, prevRunID, attemptStatus, false)
+}
+
+func runLifecycleCaseForIssueWithAttemptStatusAndUsage(t *testing.T, pr *github.PR, mode IssueMode, prevRunID, attemptStatus string, usageLimit bool) (AgentRunResult, []events.Event, int) {
 	t.Helper()
 	if pr != nil && pr.HeadRefOid == "" {
 		pr.HeadRefOid = "current-sha"
@@ -73,10 +77,10 @@ func runLifecycleCaseForIssueWithAttemptStatus(t *testing.T, pr *github.PR, mode
 	}
 	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
 	factory := &fakeRunnableFactory{results: []AgentRunResult{
-		{IssueNumber: 42, Status: attemptStatus, Branch: gateTestBranch},
-		{IssueNumber: 42, Status: attemptStatus, Branch: gateTestBranch},
-		{IssueNumber: 42, Status: attemptStatus, Branch: gateTestBranch},
-		{IssueNumber: 42, Status: attemptStatus, Branch: gateTestBranch},
+		{IssueNumber: 42, Status: attemptStatus, UsageLimitReached: usageLimit, Branch: gateTestBranch},
+		{IssueNumber: 42, Status: attemptStatus, UsageLimitReached: usageLimit, Branch: gateTestBranch},
+		{IssueNumber: 42, Status: attemptStatus, UsageLimitReached: usageLimit, Branch: gateTestBranch},
+		{IssueNumber: 42, Status: attemptStatus, UsageLimitReached: usageLimit, Branch: gateTestBranch},
 	}}
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}},
@@ -161,6 +165,34 @@ func TestLifecycle_MergedWithoutClosingIntentFailsAfterFailedAgentAttempt(t *tes
 	result, logs, launches := runLifecycleCaseForIssueWithAttemptStatus(t, pr, ModeFresh, "", "failure")
 	if result.Status != "failure" {
 		t.Fatalf("status = %q, want failure", result.Status)
+	}
+	if launches != 1 {
+		t.Fatalf("agent launches = %d, want one completed attempt", launches)
+	}
+	finished := findEvent(logs, "run.finished")
+	if finished == nil {
+		t.Fatal("run.finished event not found")
+	}
+	completion, ok := finished.Payload["completion"].(map[string]any)
+	if !ok || completion["reason"] != "merged-pr-missing-closing-reference" {
+		t.Fatalf("completion diagnostic = %#v, want missing-closing-reference", finished.Payload["completion"])
+	}
+}
+
+func TestLifecycle_MergedWithoutClosingIntentUsageLimitRemainsTerminalFailure(t *testing.T) {
+	result, logs, launches := runLifecycleCaseForIssueWithAttemptStatusAndUsage(t, &github.PR{
+		Number:      42,
+		State:       "merged",
+		Merged:      true,
+		Body:        "Refs #42",
+		HeadRefOid:  "current-sha",
+		HeadRefName: gateTestBranch,
+	}, ModeFresh, "", "failure", true)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure", result.Status)
+	}
+	if !result.UsageLimitReached {
+		t.Fatal("usage-limit result flag was lost")
 	}
 	if launches != 1 {
 		t.Fatalf("agent launches = %d, want one completed attempt", launches)
