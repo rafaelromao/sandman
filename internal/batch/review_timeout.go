@@ -637,7 +637,7 @@ func validateClassificationSources(sources map[string]any, request reviewRequest
 			}
 			if key == "formal_reviews" {
 				state := strings.ToUpper(stringValue(evidence, "state"))
-				if state != "COMMENTED" && state != "APPROVED" && state != "CHANGES_REQUESTED" {
+				if state != "COMMENTED" && state != "APPROVED" && state != "CHANGES_REQUESTED" && state != "DISMISSED" {
 					return nil, nil, nil, fmt.Errorf("review classification formal source has invalid state")
 				}
 			}

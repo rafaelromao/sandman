@@ -439,6 +439,76 @@ func TestReviewRegistration_PersistsDirectCurrentHeadObservation(t *testing.T) {
 	}
 }
 
+func TestReviewRegistration_ReplacesEditedDecisionObservation(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	currentNow := now.Add(2 * time.Minute)
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments: []github.PRComment{
+			{ID: "1001", Body: "/sandman review", CreatedAt: now.Add(-time.Minute)},
+			{ID: "1002", Body: "## Decision\n\n**APPROVED**", CreatedAt: now.Add(time.Minute)},
+		},
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+		reviewRegistrationNow:  func() time.Time { return currentNow },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	pr := &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("register pending request: %v", err)
+	}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("persist initial approval: %v", err)
+	}
+	if evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid); evidence.outcome != retainedReviewApproval {
+		t.Fatalf("initial lifecycle evidence = %#v, want approval", evidence)
+	}
+
+	client.comments[1].Body = "## Decision\n\n**CHANGES_REQUESTED**"
+	currentNow = now.Add(4 * time.Minute)
+	evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
+	if evidence.outcome == retainedReviewApproval || evidence.payload != nil {
+		t.Fatalf("edited decision retained revoked approval: %#v", evidence)
+	}
+}
+
+func TestReviewRegistration_ReplacesDismissedApprovalObservation(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	currentNow := now.Add(2 * time.Minute)
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments:         []github.PRComment{{ID: "1001", Body: "/sandman review", CreatedAt: now.Add(-time.Minute)}},
+		reviews:          []github.PRReview{{ID: "2001", State: "APPROVED", CommitID: "current-sha", CreatedAt: now.Add(time.Minute)}},
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+		reviewRegistrationNow:  func() time.Time { return currentNow },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	pr := &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("register pending request: %v", err)
+	}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("persist initial approval: %v", err)
+	}
+	if evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid); evidence.outcome != retainedReviewApproval {
+		t.Fatalf("initial lifecycle evidence = %#v, want approval", evidence)
+	}
+
+	client.reviews[0].State = "DISMISSED"
+	currentNow = now.Add(4 * time.Minute)
+	evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
+	if evidence.outcome == retainedReviewApproval || evidence.payload != nil {
+		t.Fatalf("dismissed approval remained authoritative: %#v", evidence)
+	}
+}
+
 func TestReviewRegistration_AdvancesPastAcknowledgementToApproval(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-review-registration-")
 	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)

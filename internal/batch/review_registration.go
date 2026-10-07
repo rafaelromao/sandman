@@ -674,6 +674,9 @@ func canonicalObservationTimestamp(handoff *reviewTimeoutHandoff) string {
 	if handoff == nil {
 		return ""
 	}
+	if observedAt, err := time.Parse(time.RFC3339Nano, handoff.State.ObservedAt); err == nil {
+		return observedAt.UTC().Format(time.RFC3339Nano)
+	}
 	if handoff.Classification != nil {
 		if sources, ok := objectValue(handoff.Classification.Raw, "sources"); ok {
 			var latest time.Time
