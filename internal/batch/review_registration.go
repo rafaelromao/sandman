@@ -85,9 +85,10 @@ func readFileReviewRegistration(path string) (reviewRequestRegistration, error) 
 func preserveReviewRegistration(existing, next reviewRequestRegistration) bool {
 	if reviewTriggerIdentity(existing.Request.TriggerID) == reviewTriggerIdentity(next.Request.TriggerID) {
 		// Legacy imports are immutable, but runtime observations may advance the
-		// same generation as newer current-head evidence arrives.
-		if existing.LegacyImported || next.LegacyImported {
-			return existing.State.ObservedState != "" || next.State.ObservedState == ""
+		// same generation as newer current-head evidence arrives. A legacy-marked
+		// candidate is never allowed to replace an existing canonical record.
+		if next.LegacyImported {
+			return existing.LegacyImported || existing.State.ObservedState != "" || next.State.ObservedState == ""
 		}
 		if next.State.ObservedState == "" {
 			return true
@@ -441,7 +442,7 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 }
 
 func (s *runSession) importLegacyReviewEvidence(ctx context.Context, workDir, repository string, pr *github.PR, currentHead, registrationPath string, existing *reviewRequestRegistration) error {
-	if existing == nil || existing.LegacyImported {
+	if existing == nil {
 		return nil
 	}
 	if comments, listErr := s.deps.githubClient.ListPRComments(ctx, pr.Number); listErr == nil {
@@ -458,6 +459,12 @@ func (s *runSession) importLegacyReviewEvidence(ctx context.Context, workDir, re
 			}
 			return nil
 		}
+	}
+	if existing.LegacyImported {
+		// The legacy generation has already crossed the migration boundary. Its
+		// sidecars are audit-only, but current GitHub evidence may still advance
+		// the runtime-owned generation.
+		return nil
 	}
 	if existing.State.ObservedState != "" {
 		// A runtime observation is authoritative for this generation. If the

@@ -93,6 +93,45 @@ func (c *registrationGitHubClient) ListPRReviewComments(context.Context, int) ([
 	return c.inline, nil
 }
 
+func migratePendingReviewGeneration(t *testing.T, workDir string, prNumber int) reviewRequestRegistration {
+	t.Helper()
+	layout := paths.NewLayout(nil, workDir)
+	registration, err := readFileReviewRegistration(layout.PRReviewRegistrationPath(prNumber))
+	if err != nil {
+		t.Fatalf("read canonical pending registration: %v", err)
+	}
+	requestData, err := json.MarshalIndent(registration.Request, "", "  ")
+	if err != nil {
+		t.Fatalf("encode legacy review request: %v", err)
+	}
+	state := registration.State
+	state.State = "pending"
+	state.Lifecycle = "started"
+	state.Reason = "pending"
+	state.ObservedState = ""
+	state.ObservedReason = ""
+	state.ObservedAt = ""
+	state.Evidence = nil
+	state.ElapsedSeconds = intPointer(0)
+	stateData, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		t.Fatalf("encode legacy pending state: %v", err)
+	}
+	if err := os.WriteFile(layout.PRReviewRequestPath(prNumber), requestData, 0o600); err != nil {
+		t.Fatalf("write legacy review request: %v", err)
+	}
+	if err := os.WriteFile(layout.PRReviewRequestStatePath(prNumber), stateData, 0o600); err != nil {
+		t.Fatalf("write legacy pending state: %v", err)
+	}
+	if err := os.WriteFile(layout.PRHeadShaPath(prNumber), []byte(registration.Request.HeadSHA+"\n"), 0o600); err != nil {
+		t.Fatalf("write legacy review head: %v", err)
+	}
+	if err := os.Remove(layout.PRReviewRegistrationPath(prNumber)); err != nil {
+		t.Fatalf("remove canonical registration for migration: %v", err)
+	}
+	return registration
+}
+
 func TestReviewRegistration_RunSessionReceivesConfiguredSeams(t *testing.T) {
 	store := &registrationStoreStub{}
 	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
@@ -468,6 +507,115 @@ func TestReviewRegistration_AdvancesPastAcknowledgementToFeedback(t *testing.T) 
 	}
 	if session.confirmedReviewRequestActive(context.Background(), workDir, pr, pr.HeadRefOid) {
 		t.Fatal("actionable feedback remained an active review request")
+	}
+}
+
+func TestReviewRegistration_MigratedPendingGenerationAdvancesToApproval(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	currentNow := now
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments:         []github.PRComment{{ID: "1001", Body: "/sandman review", CreatedAt: now.Add(-time.Minute)}},
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+		reviewRegistrationNow:  func() time.Time { return currentNow },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	pr := &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("register pending request: %v", err)
+	}
+	before := migratePendingReviewGeneration(t, workDir, pr.Number)
+
+	currentNow = now.Add(time.Minute)
+	if evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid); evidence.payload != nil {
+		t.Fatalf("pending migration produced lifecycle payload: %#v", evidence)
+	}
+	client.reviews = []github.PRReview{{ID: "2001", State: "APPROVED", CommitID: "current-sha", CreatedAt: now.Add(2 * time.Minute)}}
+	currentNow = now.Add(3 * time.Minute)
+	evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
+	if evidence.outcome != retainedReviewApproval || evidence.payload == nil {
+		t.Fatalf("migrated pending approval evidence = %#v, want current-head approval", evidence)
+	}
+	registration, err := readReviewRegistration(paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number), "owner/repo", pr, pr.HeadRefOid)
+	if err != nil {
+		t.Fatalf("read advanced migrated registration: %v", err)
+	}
+	if registration.LegacyImported || registration.Request.DeadlineUnixSeconds != before.Request.DeadlineUnixSeconds {
+		t.Fatalf("migrated generation = %#v, want runtime evidence and original deadline", registration)
+	}
+}
+
+func TestReviewRegistration_MigratedPendingGenerationAdvancesToFeedback(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	currentNow := now
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments:         []github.PRComment{{ID: "1001", Body: "/sandman review", CreatedAt: now.Add(-time.Minute)}},
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+		reviewRegistrationNow:  func() time.Time { return currentNow },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	pr := &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("register pending request: %v", err)
+	}
+	migratePendingReviewGeneration(t, workDir, pr.Number)
+	currentNow = now.Add(time.Minute)
+	_ = session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
+
+	client.comments = append(client.comments, github.PRComment{
+		ID:        "1002",
+		Body:      "Please update internal/batch/review_registration.go before merging",
+		CreatedAt: now.Add(2 * time.Minute),
+	})
+	currentNow = now.Add(3 * time.Minute)
+	evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
+	if len(evidence.informalFeedback) == 0 || evidence.payload == nil {
+		t.Fatalf("migrated pending feedback evidence = %#v, want retained feedback", evidence)
+	}
+}
+
+func TestReviewRegistration_ImportsOnTimeEvidenceWhenObservedAtOrAfterDeadline(t *testing.T) {
+	for _, observation := range []struct {
+		name string
+		now  time.Duration
+	}{
+		{name: "at deadline", now: 10 * time.Minute},
+		{name: "after deadline", now: 11 * time.Minute},
+	} {
+		t.Run(observation.name, func(t *testing.T) {
+			workDir := testenv.MkdirShort(t, "sm-review-registration-")
+			registeredAt := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+			currentNow := registeredAt
+			client := &registrationGitHubClient{
+				fakeGitHubClient: fakeGitHubClient{},
+				comments:         []github.PRComment{{ID: "1001", Body: "/sandman review", CreatedAt: registeredAt.Add(-time.Minute)}},
+				reviews:          []github.PRReview{{ID: "2001", State: "APPROVED", CommitID: "current-sha", CreatedAt: registeredAt.Add(10 * time.Minute)}},
+			}
+			session := &runSession{
+				deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+				renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 600},
+				reviewRegistrationNow:  func() time.Time { return currentNow },
+				reviewAttemptStartedAt: registeredAt.Add(-2 * time.Minute),
+			}
+			pr := &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}
+			if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+				t.Fatalf("register pending request: %v", err)
+			}
+			currentNow = registeredAt.Add(observation.now)
+			evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
+			if evidence.outcome != retainedReviewApproval || evidence.payload == nil {
+				t.Fatalf("late observation evidence = %#v, want on-time approval", evidence)
+			}
+		})
 	}
 }
 

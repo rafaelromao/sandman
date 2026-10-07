@@ -20,9 +20,6 @@ func (s *runSession) observeCurrentReviewEvidence(ctx context.Context, request r
 	}
 	deadline := time.Unix(int64(request.DeadlineUnixSeconds), 0).UTC()
 	now := s.reviewNow()
-	if !now.Before(deadline) {
-		return nil, nil
-	}
 
 	nextTrigger := latestReviewObservationTrigger(comments, request, start, deadline)
 	windowEnd := time.Time{}
