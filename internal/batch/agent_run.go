@@ -151,6 +151,12 @@ func (r *AgentRun) execute(ctx context.Context, command string, stdout, stderr i
 		if observer, ok := parser.(progressObserver); ok {
 			observer.setProgress(touchLog)
 		}
+		if observer, ok := parser.(modelProgressObserver); ok {
+			observer.setModelProgress(r.modelProgress)
+		}
+		if observer, ok := parser.(usageLimitObserver); ok {
+			observer.setUsageLimit(r.usageLimit)
+		}
 	}
 	if parsedStdout != nil {
 		parsedStdout.setDestination(combinedOut)

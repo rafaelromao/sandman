@@ -86,6 +86,12 @@ type modelProgressObserver interface {
 	setModelProgress(progress func())
 }
 
+// usageLimitObserver reports a strategy-owned usage-limit record before the
+// parser renders it into human-readable output.
+type usageLimitObserver interface {
+	setUsageLimit(onUsageLimit func())
+}
+
 // agentStrategies maps each built-in agent preset to its strategy
 // constructor. The constructor learns whether the launch runs the preset's
 // own command template: a custom command under a built-in preset keeps the

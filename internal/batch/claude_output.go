@@ -24,6 +24,7 @@ type claudeOutput struct {
 	dst           io.Writer
 	progress      func()
 	modelProgress func()
+	usageLimit    func()
 	stdout        bool
 	state         *claudeOutputState
 	buf           bytes.Buffer
@@ -49,6 +50,8 @@ func (w *claudeOutput) setDestination(dst io.Writer) { w.dst = dst }
 func (w *claudeOutput) setProgress(progress func()) { w.progress = progress }
 
 func (w *claudeOutput) setModelProgress(progress func()) { w.modelProgress = progress }
+
+func (w *claudeOutput) setUsageLimit(onUsageLimit func()) { w.usageLimit = onUsageLimit }
 
 func (w *claudeOutput) Write(p []byte) (int, error) {
 	n, err := w.buf.Write(p)
@@ -112,8 +115,13 @@ func (w *claudeOutput) writeLine(line []byte, newline bool) error {
 	}
 	if recordType == "result" && claudeUsageLimitLine(text) {
 		w.state.mu.Lock()
+		alreadyReached := w.state.usageLimitReached
 		w.state.usageLimitReached = true
+		onUsageLimit := w.usageLimit
 		w.state.mu.Unlock()
+		if !alreadyReached && onUsageLimit != nil {
+			onUsageLimit()
+		}
 	}
 	var lines []string
 	switch recordType {
