@@ -448,6 +448,18 @@ func (r RunState) DurationAt(at time.Time) time.Duration {
 	return duration.Round(time.Second)
 }
 
+// ExecutionClock returns the completed active duration and the start of the
+// current active segment. A zero segment start means the run is waiting,
+// capacity-queued, or terminal, so callers must keep the returned baseline
+// frozen instead of interpolating from a lifecycle start timestamp.
+func (r RunState) ExecutionClock() (time.Duration, time.Time) {
+	baseline := r.activeDuration.Round(time.Second)
+	if r.Finished != nil || r.awaiting || r.capacityQueued {
+		return baseline, time.Time{}
+	}
+	return baseline, r.activeSince
+}
+
 func (r *RunState) accumulateActiveUntil(at time.Time) {
 	if r.awaiting || r.activeSince.IsZero() {
 		return
