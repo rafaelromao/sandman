@@ -484,14 +484,25 @@ func TestPortalTabRoundTrip_DoesNotAppendHistoricalReplayAfterNewerSnapshot(t *t
         if (!logTab) throw new Error('log tab was not restored');
         logTab.click();
         window.__portalRunAllRafs();
-        var replay = window.__portalStreams[1];
-        if (!replay || typeof replay.onmessage !== 'function') throw new Error('tab return did not create a stream');
-        replay.onmessage({ data: '`+oldCommand+`' });
-        replay.onmessage({ data: '`+oldOutput+`' });
-        replay.onmessage({ data: '`+currentCommand+`' });
-        replay.onmessage({ data: '`+currentOutput+`' });
-        replay.dispatchEvent({ type: 'replay-complete' });
-        replay.onmessage({ data: '`+newOutput+`' });
+         var replay = window.__portalStreams[1];
+         if (!replay || typeof replay.onmessage !== 'function') throw new Error('tab return did not create a stream');
+         replay.dispatchEvent({ type: 'snapshot', data: JSON.stringify({
+           runId: '`+runID+`', generation: 'saved-generation-1', start: 0, end: 2,
+           cursor: { runId: '`+runID+`', generation: 'saved-generation-1', offset: 2 },
+           records: [
+             { runId: '`+runID+`', generation: 'saved-generation-1', start: 0, end: 1, text: '`+currentCommand+`' },
+             { runId: '`+runID+`', generation: 'saved-generation-1', start: 1, end: 2, text: '`+currentOutput+`' },
+           ],
+         }) });
+         // Legacy replay text must not mutate a stream after the structured
+         // Saved Run Log snapshot has established the source contract.
+         replay.onmessage({ data: '`+oldCommand+`' });
+         replay.onmessage({ data: '`+oldOutput+`' });
+         replay.dispatchEvent({ type: 'append', data: JSON.stringify({
+           runId: '`+runID+`', generation: 'saved-generation-1', start: 2, end: 3,
+           cursor: { runId: '`+runID+`', generation: 'saved-generation-1', offset: 3 },
+           records: [{ runId: '`+runID+`', generation: 'saved-generation-1', start: 2, end: 3, text: '`+newOutput+`' }],
+         }) });
         setTimeout(function () {
           window.__portalRunAllRafs();
           var pre = document.querySelector('pre[data-scroll-key="`+runID+`"]');

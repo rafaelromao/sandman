@@ -2152,6 +2152,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const pre = streamPreFor(run.key);
       let cachedLog = '';
       let awaitingReplayCheckpoint = false;
+      let structuredStream = false;
       if (pre) {
         cachedLog = pre.getAttribute('data-rendered-log') || '';
         awaitingReplayCheckpoint = pre.getAttribute('data-stream-replay-pending') === '1';
@@ -2227,6 +2228,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         if (!isCurrentStream()) return;
         let payload;
         try { payload = JSON.parse(ev.data || '{}'); } catch (_err) { return; }
+        structuredStream = true;
         if (kind === 'reset') payload.generation = payload.generation || (portalLogModel.get(subjectID).generation || '');
         if (portalLogModel.accept(subjectID, payload, kind, epoch)) renderAuthoritativeLog(subjectID);
       }
@@ -2248,6 +2250,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       }
       src.onmessage = function (ev) {
         if (!isCurrentStream()) return;
+        if (structuredStream) return;
         if (awaitingReplayCheckpoint) {
           // Search for the cached suffix as a contiguous sequence. KMP keeps
           // this linear in replay size and handles repeated lines without
