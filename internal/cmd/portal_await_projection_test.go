@@ -11,6 +11,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 // TestPortal_AwaitEventShowsWaiting verifies that when a run has a current
@@ -222,6 +223,29 @@ func TestPortal_StartupPreservesAwaitingRunWithUnexpiredLease(t *testing.T) {
 	}
 	if manifest.Status != batchindex.RunManifestStatusActive {
 		t.Fatalf("run manifest status = %q, want active", manifest.Status)
+	}
+}
+
+func TestPortal_LiveReviewKeepsRunningAndReviewingPresentation(t *testing.T) {
+	started := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	runs := (&portalRunsView{}).aggregateReviewChildren(paths.NewLayout(nil, t.TempDir()), []portalRun{
+		{IssueNumber: 42, RunID: "impl-42", Key: "impl-42", Kind: "active", Status: "running", StartedAt: started},
+		{IssueNumber: 42, RunID: "review-42", Key: "review-42", Kind: "active", Status: "reviewing", Review: true, StartedAt: started.Add(time.Minute)},
+	})
+	var implementation, review *portalRun
+	for i := range runs {
+		switch runs[i].RunID {
+		case "impl-42":
+			implementation = &runs[i]
+		case "review-42":
+			review = &runs[i]
+		}
+	}
+	if implementation == nil || implementation.Status != "reviewing" || !implementation.ReviewLive {
+		t.Fatalf("live review aggregate changed implementation presentation: %#v", implementation)
+	}
+	if review == nil || review.Status != "reviewing" {
+		t.Fatalf("live review row presentation changed: %#v", review)
 	}
 }
 

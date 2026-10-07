@@ -506,6 +506,32 @@ func TestRunBatchRehydratesExternalAwaitAfterRestart(t *testing.T) {
 	}
 }
 
+func TestExplicitAbortPreventsAwaitRecovery(t *testing.T) {
+	root := t.TempDir()
+	layout := paths.NewLayout(nil, root)
+	now := time.Now().UTC()
+	log := &spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "row", Issue: 42, Timestamp: now.Add(-2 * time.Minute), Payload: map[string]any{
+			"batch_id": "old", "branch": "42-fix", "base_branch": "main",
+		}},
+		{Type: "run.await", RunID: "row", Issue: 42, Timestamp: now.Add(-time.Minute), Payload: map[string]any{
+			"await_reason": "pending", "batch_id": "old", "branch": "42-fix",
+		}},
+	}}
+	if err := daemon.RenewRunWait(layout.BatchDir("old"), daemon.RunWait{
+		Protocol: "run-wait/v1", RunID: "row", BatchID: "old", Issue: 42,
+		Branch: "42-fix", BaseBranch: "main", OperationID: "ci:17:head", OperationDeadline: now.Add(time.Hour),
+	}, now); err != nil {
+		t.Fatalf("write awaiting snapshot: %v", err)
+	}
+	if err := log.Log(events.Event{Type: "run.aborted", RunID: "row", Issue: 42, Timestamp: now}); err != nil {
+		t.Fatalf("append explicit abort: %v", err)
+	}
+	if ready := FindReadyContinuations(log.snapshot(), layout); len(ready) != 0 {
+		t.Fatalf("explicitly aborted await was rehydrated: %#v", ready)
+	}
+}
+
 func TestRunBatchRehydratesReadyContinuationAfterRestart(t *testing.T) {
 	workDir := t.TempDir()
 	t.Chdir(workDir)
