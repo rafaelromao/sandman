@@ -140,6 +140,7 @@ func TestClaudeOutput_ModelProgressOnlyReportsPositiveAssistantText(t *testing.T
 		`{"type":"system","subtype":"init","model":"sonnet"}`,
 		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}`,
 		`{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":"failed"}]}}`,
+		`{"type":"assistant","error":"rate_limit","message":{"content":[{"type":"text","text":"You've hit your session limit"}]}}`,
 		`{"type":"assistant","message":{"content":[{"type":"text","text":"provider recovered"}]}}`,
 		claudeUsageLimitResult,
 	}, "\n") + "\n"

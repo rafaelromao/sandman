@@ -230,6 +230,9 @@ func claudeAssistantLines(record map[string]any) []string {
 }
 
 func claudeAssistantHasText(record map[string]any) bool {
+	if claudeAssistantHasError(record) {
+		return false
+	}
 	for _, block := range claudeContentBlocks(record) {
 		if block["type"] == "text" {
 			if text, _ := block["text"].(string); strings.TrimSpace(text) != "" {
@@ -238,6 +241,17 @@ func claudeAssistantHasText(record map[string]any) bool {
 		}
 	}
 	return false
+}
+
+func claudeAssistantHasError(record map[string]any) bool {
+	errorValue, ok := record["error"]
+	if !ok || errorValue == nil {
+		return false
+	}
+	if message, ok := errorValue.(string); ok {
+		return strings.TrimSpace(message) != ""
+	}
+	return true
 }
 
 func claudeToolErrorLines(record map[string]any) []string {

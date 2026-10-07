@@ -138,6 +138,7 @@ func TestAgentRun_ClaudeWiresQuotaSignalsThroughRawParser(t *testing.T) {
 	root := t.TempDir()
 	progressSeen := make(chan struct{})
 	limitSeen := make(chan struct{})
+	allowPositive := make(chan struct{})
 	releaseLimit := make(chan struct{})
 	releaseDone := make(chan struct{})
 	var progressCalls, limitCalls int
@@ -145,6 +146,8 @@ func TestAgentRun_ClaudeWiresQuotaSignalsThroughRawParser(t *testing.T) {
 	sb := &fakeSandbox{
 		workDir: filepath.Join(root, "worktree"),
 		execFunc: func(_ context.Context, _ string, stdout, _ io.Writer) error {
+			_, _ = io.WriteString(stdout, `{"type":"assistant","error":"rate_limit","message":{"content":[{"type":"text","text":"You've hit your session limit"}]}}`+"\n")
+			<-allowPositive
 			_, _ = io.WriteString(stdout, `{"type":"assistant","message":{"content":[{"type":"text","text":"provider recovered"}]}}`+"\n")
 			<-releaseLimit
 			_, _ = io.WriteString(stdout, claudeUsageLimitResult+"\n")
@@ -157,16 +160,22 @@ func TestAgentRun_ClaudeWiresQuotaSignalsThroughRawParser(t *testing.T) {
 	agent := config.BuiltInAgentPresets["claude"].Agent("claude")
 	run.setQuotaSignals(func() {
 		progressCalls++
-		close(progressSeen)
+		progressSeen <- struct{}{}
 	}, func() {
 		limitCalls++
-		close(limitSeen)
+		limitSeen <- struct{}{}
 	})
 
 	done := make(chan AgentRunResult, 1)
 	go func() {
 		done <- run.Run(context.Background(), &spyRenderer{result: "task"}, agent.Command, prompt.RenderConfig{})
 	}()
+	select {
+	case <-progressSeen:
+		t.Fatal("error-marked assistant output reopened quota admission")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(allowPositive)
 	select {
 	case <-progressSeen:
 	case <-time.After(5 * time.Second):
