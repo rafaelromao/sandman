@@ -12,6 +12,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
@@ -171,6 +172,79 @@ func TestLifecycle_MergedWithoutClosingIntentFailsAfterFailedAgentAttempt(t *tes
 	completion, ok := finished.Payload["completion"].(map[string]any)
 	if !ok || completion["reason"] != "merged-pr-missing-closing-reference" {
 		t.Fatalf("completion diagnostic = %#v, want missing-closing-reference", finished.Payload["completion"])
+	}
+}
+
+func TestLifecycle_FailedAttemptDecidesPendingCIBeforeRetry(t *testing.T) {
+	for _, status := range []string{"failure", "aborted"} {
+		t.Run(status, func(t *testing.T) {
+			result, logs, launches := runLifecycleCaseForIssueWithAttemptStatus(t, &github.PR{
+				Number:            42,
+				State:             "open",
+				HeadRefOid:        "current-sha",
+				HeadRefName:       gateTestBranch,
+				StatusCheckRollup: "pending",
+				MergeStateStatus:  "BLOCKED",
+			}, ModeFresh, "", status)
+			if result.Status != "await" {
+				t.Fatalf("status = %q, want await", result.Status)
+			}
+			if launches != 1 {
+				t.Fatalf("agent launches = %d, want one completed attempt", launches)
+			}
+			if got := countEventsByType(logs, "run.retry"); got != 0 {
+				t.Fatalf("run.retry events = %d, want 0", got)
+			}
+			assertExternalGateTerminal(t, logs, "await", string(lifecycleGatePending))
+		})
+	}
+}
+
+func TestLifecycle_FailedAttemptsLoadRetainedReviewEvidenceBeforeRetry(t *testing.T) {
+	cases := []struct {
+		name           string
+		writeState     func(*testing.T, string)
+		reviewDecision string
+		wantGate       lifecycleGate
+	}{
+		{name: "actionable feedback", writeState: func(t *testing.T, workDir string) {
+			writeInformalRespondedClassification(t, workDir, "Please fix the race in internal/socketpath/socketpath.go.")
+		}, reviewDecision: "REVIEW_REQUIRED", wantGate: lifecycleGate(gateActionableFeedback)},
+		{name: "approval", writeState: writeCurrentHeadApprovalClassification, reviewDecision: "APPROVED", wantGate: lifecycleGateReady},
+	}
+	for _, tc := range cases {
+		for _, attemptStatus := range []string{"failure", "aborted"} {
+			t.Run(tc.name+"/"+attemptStatus, func(t *testing.T) {
+				workDir := testenv.MkdirShort(t, "sm-orch-")
+				tc.writeState(t, workDir)
+				session := &runSession{
+					issueNumber: 42,
+					deps: runDeps{
+						githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+							Number:            17,
+							State:             "open",
+							HeadRefName:       gateTestBranch,
+							HeadRefOid:        "current-sha",
+							StatusCheckRollup: "success",
+							ReviewDecision:    tc.reviewDecision,
+							MergeStateStatus:  "CLEAN",
+						}}},
+						errorLog: io.Discard,
+					},
+					opts: runSessionOptions{
+						currentHead: func(string) (string, error) { return "current-sha", nil },
+					},
+					renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+				}
+				status, extras, handled := session.handleLifecycleDecisionForAttempt(context.Background(), workDir, gateTestBranch, "", "run-test", true, attemptStatus)
+				if !handled || status != "resume" {
+					t.Fatalf("lifecycle result = (%q, %#v, %t), want handled resume", status, extras, handled)
+				}
+				if got, _ := extras["gate"].(string); got != string(tc.wantGate) {
+					t.Fatalf("resume gate = %q, want %q", got, tc.wantGate)
+				}
+			})
+		}
 	}
 }
 
@@ -359,6 +433,30 @@ func TestDecideImplementationPRLifecycle_NonResolvedGates(t *testing.T) {
 
 func TestDecideImplementationPRLifecycle_FailedAttemptsKeepExternalGates(t *testing.T) {
 	for _, status := range []string{"failure", "aborted"} {
+		t.Run(status+" CI failure", func(t *testing.T) {
+			d := decideImplementationPRLifecycle(implementationPRFacts{
+				pr: &github.PR{Number: 42, State: "open", StatusCheckRollup: "failure",
+					MergeStateStatus: "CLEAN", HeadRefOid: "current-sha"},
+				headSHA:       "current-sha",
+				attemptStatus: status,
+			})
+			if !d.handled || d.action != lifecycleResume || d.gate != lifecycleGate("ci-failure") {
+				t.Fatalf("decision = %+v, want handled CI remediation resume", d)
+			}
+		})
+
+		t.Run(status+" merge conflict", func(t *testing.T) {
+			d := decideImplementationPRLifecycle(implementationPRFacts{
+				pr: &github.PR{Number: 42, State: "open", StatusCheckRollup: "success",
+					MergeStateStatus: "CONFLICTING", HeadRefOid: "current-sha"},
+				headSHA:       "current-sha",
+				attemptStatus: status,
+			})
+			if !d.handled || d.action != lifecycleResume || d.gate != lifecycleGate("merge-conflict") {
+				t.Fatalf("decision = %+v, want handled conflict remediation resume", d)
+			}
+		})
+
 		t.Run(status+" pending CI", func(t *testing.T) {
 			d := decideImplementationPRLifecycle(implementationPRFacts{
 				pr: &github.PR{Number: 42, State: "open", StatusCheckRollup: "pending",

@@ -241,20 +241,20 @@ func remediationBudgetFailureEvidence(gate string, evidence map[string]any, next
 }
 
 func decideRecoverableLifecycle(gate lifecycleGate, pr *github.PR, headSHA string, evidence retainedReviewEvidence, reviewRequested bool, attemptStatus string) lifecycleDecision {
-	if attemptNeedsRetry(attemptStatus) &&
-		!activeWaitAuthorized(gate, pr, headSHA, reviewRequested) &&
-		!evidence.actionable && len(evidence.informalFeedback) == 0 &&
-		!(gate == lifecycleGateReady && evidence.outcome == retainedReviewApproval) {
-		return unhandled(gate)
-	}
 	// CI failures and merge conflicts are branch-owned work, not external work
 	// that can make progress while the agent waits. Handle these typed facts
-	// before the legacy gate/evidence compatibility rules below.
+	// before the failed-attempt guard and legacy gate/evidence rules below.
 	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "failure") {
 		return lifecycleRemediationDecision("ci-failure", "CI_FAILURE", "inspect current-head CI with gh pr checks and repair the failing checks", pr, evidence.payload)
 	}
 	if pr != nil && (strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "DIRTY") || strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "CONFLICTING")) {
 		return lifecycleRemediationDecision("merge-conflict", "MERGE_CONFLICT", "rebase or merge the base branch, resolve conflicts, and push a new head", pr, evidence.payload)
+	}
+	if attemptNeedsRetry(attemptStatus) &&
+		!activeWaitAuthorized(gate, pr, headSHA, reviewRequested) &&
+		!evidence.actionable && len(evidence.informalFeedback) == 0 &&
+		!(gate == lifecycleGateReady && evidence.outcome == retainedReviewApproval) {
+		return unhandled(gate)
 	}
 	if evidence.stateError && gate != lifecycleGateFailed {
 		// Corrupt retained review state authorizes no wait on its own. When
@@ -499,18 +499,22 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 		}
 		gate = lifecycleGatePending
 	}
+	if err == nil && pr != nil {
+		gate = lifecycleGate(checkPRExternalGateForPR(pr, headSHA, true))
+	}
 	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.State), "open") {
 		if attemptNeedsRetry(attemptStatus) {
-			// Route failed attempts through the same pure decision before
-			// allowing the ordinary retry path. Unresolved open PRs select
-			// no lifecycle override, while the merged arm above remains
-			// authoritative regardless of agent status.
-			decision := decideImplementationPRLifecycle(implementationPRFacts{
-				pr:            pr,
-				headSHA:       headSHA,
-				attemptStatus: attemptStatus,
-			})
-			if !decision.handled {
+			// Failed attempts must load request-scoped evidence before the ordinary
+			// retry path is considered. This early probe is only an admission check;
+			// the complete lifecycle decision below remains authoritative.
+			earlyReviewRequested := s.confirmedReviewRequestActive(ctx, workDir, pr, headSHA)
+			earlyEvidence := s.retainedLifecycleEvidence(ctx, workDir, pr, headSHA)
+			if !earlyReviewRequested && !ciActive(pr, headSHA) &&
+				!strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "failure") &&
+				!strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "DIRTY") &&
+				!strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "CONFLICTING") &&
+				!earlyEvidence.actionable && len(earlyEvidence.informalFeedback) == 0 &&
+				!(earlyEvidence.outcome == retainedReviewApproval && gate == lifecycleGateReady) {
 				return "", nil, false
 			}
 		}
