@@ -360,7 +360,7 @@ func TestDaemon_S4_RehydratePost_HappyPath(t *testing.T) {
 	if gotPR != prNumber {
 		t.Errorf("PostComment prNumber=%d, want %d", gotPR, prNumber)
 	}
-	wantBody := RedactBody(body)
+	wantBody := publicationBody(RedactBody(body), commentID)
 	if gotBody != wantBody {
 		t.Errorf("posted body mismatch:\n want=%q\n got =%q", wantBody, gotBody)
 	}

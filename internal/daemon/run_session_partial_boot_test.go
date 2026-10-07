@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/events"
 )
 
@@ -51,12 +52,19 @@ func TestRunSession_Prepare_BatchesIndexInvalid_FailsBeforeSocket(t *testing.T) 
 		t.Fatalf("batch.sock should not exist after failed Prepare, stat err=%v", err)
 	}
 
-	// Stale recovery must not crash on the retained partial directory and
-	// must not emit a run.aborted when no run.started exists.
+	// Location discovery must surface an unreadable index rather than guess
+	// ownership. Repairing it exposes the retained, unindexed partial batch.
 	eventLog := &recordingEventLog{}
-	if recovered, _, err := RecoverStaleRuns(baseDir, nil, eventLog); err != nil {
-		t.Fatalf("RecoverStaleRuns on partial dir: %v", err)
-	} else if recovered != 0 {
+	if recovered, _, err := RecoverStaleRuns(baseDir, nil, eventLog); err == nil || recovered != 0 {
+		t.Fatalf("recovery with invalid index = %d, %v", recovered, err)
+	}
+	if _, err := FindDeadRunBatches(baseDir); err == nil {
+		t.Fatal("discovery must report invalid index")
+	}
+	if err := (&batchindex.Index{Version: batchindex.IndexVersion}).Save(indexPath); err != nil {
+		t.Fatal(err)
+	}
+	if recovered, _, err := RecoverStaleRuns(baseDir, nil, eventLog); err != nil || recovered != 0 {
 		t.Fatalf("expected 0 recovered with no events, got %d", recovered)
 	}
 	// FindDeadRunBatches should still return the partial batch as dead.
