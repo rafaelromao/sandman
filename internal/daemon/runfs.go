@@ -425,6 +425,12 @@ func recoverPersistedBatchRuns(baseDir string, layout paths.Layout, idx *batchin
 			if run.IsCapacityQueued() || run.IsTerminal() || (run.Started.Type != "run.started" && run.Started.Type != "run.continued") {
 				continue
 			}
+			// A persisted awaiting run can outlive its coordinator. Check its
+			// lease before treating the dead batch as stale; emitRecoveredAbort
+			// repeats the check under the terminalization claim for races.
+			if protected, _ := waitRecovery(baseDir, run, recoveredAt); protected {
+				continue
+			}
 			if _, done := recoveredRunIDs[run.RunID]; done {
 				continue
 			}

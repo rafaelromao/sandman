@@ -432,6 +432,106 @@ func TestExternalWaitRehydratesWithinFixedGrace(t *testing.T) {
 	}
 }
 
+func TestRunBatchRehydratesExternalAwaitAfterRestart(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	initGitRepo(t, root)
+	cfg := &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}
+	layout := paths.NewLayout(cfg, root)
+	now := time.Now().UTC()
+	const (
+		issue    = 42
+		runID    = "260929120000-abcd-42"
+		oldBatch = "260929120000-abcd-42"
+		branch   = "42-wait"
+	)
+	log := &spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: runID, Issue: issue, Timestamp: now.Add(-10 * time.Minute), Payload: map[string]any{
+			"batch_id": oldBatch, "branch": branch, "base_branch": "main",
+		}},
+		{Type: "run.await", RunID: runID, Issue: issue, Timestamp: now.Add(-9 * time.Minute), Payload: map[string]any{
+			"await_reason": "pending", "batch_id": oldBatch, "branch": branch,
+			"ci_wait": map[string]any{"deadline_unix_seconds": now.Add(30 * time.Minute).Unix()},
+		}},
+	}}
+	if err := daemon.RenewRunWait(layout.BatchDir(oldBatch), daemon.RunWait{
+		Protocol: "run-wait/v1", RunID: runID, BatchID: oldBatch, Issue: issue,
+		Branch: branch, BaseBranch: "main", OperationID: "ci:17:head", OperationDeadline: now.Add(30 * time.Minute),
+	}, now); err != nil {
+		t.Fatalf("write awaiting snapshot: %v", err)
+	}
+	taskPath := filepath.Join(layout.WorktreeDir, branch, ".sandman", "task.md")
+	if err := os.MkdirAll(filepath.Dir(taskPath), 0755); err != nil {
+		t.Fatalf("create preserved worktree: %v", err)
+	}
+	if err := os.WriteFile(taskPath, []byte("# Task\n\nResume the implementation.\n"), 0600); err != nil {
+		t.Fatalf("write preserved Task: %v", err)
+	}
+	ready := FindReadyContinuations(log.snapshot(), layout)
+	if len(ready) != 1 || ready[0].Wait == nil || ready[0].Wait.Ready {
+		t.Fatalf("external await was not discovered for restart: %#v", ready)
+	}
+	request := Request{}
+	if err := ApplyReadyContinuations(&request, ready, layout, 1800); err != nil {
+		t.Fatalf("rehydrate external await: %v", err)
+	}
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{issue: {Number: issue, State: "open", Title: "Waiting issue"}},
+		prs:    map[string]*github.PR{branch: {Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: branch}},
+	}
+	factory := &controlledRunnableFactory{runnables: map[int]Runnable{}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, log,
+		WithErrorLog(io.Discard), WithRunnableFactory(factory), WithRunSessionOpts(runSessionOptions{
+			baseBranchSync: func(string, string) error { return nil },
+			currentHead:    func(string) (string, error) { return "current-sha", nil },
+		}))
+	result, err := o.RunBatch(context.Background(), request)
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if result == nil || len(result.Runs) != 1 || result.Runs[0].Status != "success" || len(factory.created) != 0 {
+		t.Fatalf("rehydrated await result=%+v launches=%v; merged continuation should finish without relaunch", result, factory.created)
+	}
+	recovered := request.RecoveryWaits[issue]
+	if recovered.BatchID == oldBatch || !recovered.LeaseExpiresAt.After(now) {
+		t.Fatalf("restart did not renew transferred lease: %+v", recovered)
+	}
+	persisted, err := daemon.ReadRunWait(layout.BatchDir(recovered.BatchID), runID)
+	if err != nil || !persisted.LeaseExpiresAt.After(now) {
+		t.Fatalf("renewed lease was not persisted: record=%+v error=%v", persisted, err)
+	}
+	state := events.ProjectRunStates(log.snapshot())[0]
+	if !state.IsTerminal() || state.Status() != "success" {
+		t.Fatalf("rehydrated await did not reach terminal success: %+v", state)
+	}
+}
+
+func TestExplicitAbortPreventsAwaitRecovery(t *testing.T) {
+	root := t.TempDir()
+	layout := paths.NewLayout(nil, root)
+	now := time.Now().UTC()
+	log := &spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "row", Issue: 42, Timestamp: now.Add(-2 * time.Minute), Payload: map[string]any{
+			"batch_id": "old", "branch": "42-fix", "base_branch": "main",
+		}},
+		{Type: "run.await", RunID: "row", Issue: 42, Timestamp: now.Add(-time.Minute), Payload: map[string]any{
+			"await_reason": "pending", "batch_id": "old", "branch": "42-fix",
+		}},
+	}}
+	if err := daemon.RenewRunWait(layout.BatchDir("old"), daemon.RunWait{
+		Protocol: "run-wait/v1", RunID: "row", BatchID: "old", Issue: 42,
+		Branch: "42-fix", BaseBranch: "main", OperationID: "ci:17:head", OperationDeadline: now.Add(time.Hour),
+	}, now); err != nil {
+		t.Fatalf("write awaiting snapshot: %v", err)
+	}
+	if err := log.Log(events.Event{Type: "run.aborted", RunID: "row", Issue: 42, Timestamp: now}); err != nil {
+		t.Fatalf("append explicit abort: %v", err)
+	}
+	if ready := FindReadyContinuations(log.snapshot(), layout); len(ready) != 0 {
+		t.Fatalf("explicitly aborted await was rehydrated: %#v", ready)
+	}
+}
+
 func TestRunBatchRehydratesReadyContinuationAfterRestart(t *testing.T) {
 	workDir := t.TempDir()
 	t.Chdir(workDir)
