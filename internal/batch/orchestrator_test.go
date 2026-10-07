@@ -2971,7 +2971,7 @@ func TestRunBatch_PreservesSuccessfulRunWhenContextCancelsLate(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 		cancel()
 	}()
 

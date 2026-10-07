@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -2469,6 +2470,15 @@ func TestCLIClient_ZeroValueRemainsUsable(t *testing.T) {
 }
 
 func processExists(pid int) bool {
+	if runtime.GOOS == "linux" {
+		data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+		if err == nil {
+			fields := strings.Fields(string(data))
+			if len(fields) >= 3 && fields[2] == "Z" {
+				return false
+			}
+		}
+	}
 	err := syscall.Kill(pid, 0)
 	return err == nil || errors.Is(err, syscall.EPERM)
 }

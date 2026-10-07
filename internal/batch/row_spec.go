@@ -105,6 +105,8 @@ type runDeps struct {
 	errorLog                 io.Writer
 	runSessionOpts           runSessionOptions
 	verifyPath               VerifyPathFunc
+	quotaProgress            func(int)
+	quotaLimit               func(int)
 }
 
 // runCoordination is the narrow interface the elevated executor uses for the
@@ -276,10 +278,20 @@ func newRunSession(e *runExecutor, row RowSpec) *runSession {
 		reviewFocus:                row.ReviewFocus,
 		portalHidden:               row.PortalHidden,
 		qualityRulesFile:           row.QualityRulesFile,
-		parentCtx:                  e.parentCtx,
-		opts:                       opts,
-		reviewRegistrationStore:    opts.reviewRegistrationStore,
-		reviewRegistrationNow:      opts.reviewRegistrationNow,
+		modelProgress: func() {
+			if e.deps.quotaProgress != nil {
+				e.deps.quotaProgress(row.IssueNumber)
+			}
+		},
+		usageLimit: func() {
+			if e.deps.quotaLimit != nil {
+				e.deps.quotaLimit(row.IssueNumber)
+			}
+		},
+		parentCtx:               e.parentCtx,
+		opts:                    opts,
+		reviewRegistrationStore: opts.reviewRegistrationStore,
+		reviewRegistrationNow:   opts.reviewRegistrationNow,
 	}
 	if session.usageLimitProbe && session.usageLimitDeadline.IsZero() {
 		session.usageLimitRestoreErr = session.restoreQuotaDeadline()

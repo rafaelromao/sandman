@@ -62,6 +62,33 @@ func (g *batchQuotaGate) report(issue int, result AgentRunResult, wasProbe bool)
 	g.wake = make(chan struct{})
 }
 
+// modelProgress clears only the recovery owner's pause. It is called from a
+// selected agent strategy while that attempt is still running, so eligible
+// siblings can acquire capacity without waiting for the owner to return.
+func (g *batchQuotaGate) modelProgress(issue int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.failed {
+		return
+	}
+	if _, ok := g.limited[issue]; ok {
+		delete(g.limited, issue)
+		close(g.wake)
+		g.wake = make(chan struct{})
+	}
+}
+
+func (g *batchQuotaGate) limit(issue int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.failed || g.limited[issue] {
+		return
+	}
+	g.limited[issue] = true
+	close(g.wake)
+	g.wake = make(chan struct{})
+}
+
 func (g *batchQuotaGate) wait(ctx context.Context) error {
 	return g.waitObserved(ctx, nil, 0)
 }

@@ -316,6 +316,9 @@ func TestPortal_AwaitDurationPausesAndResumes(t *testing.T) {
 	if row.Duration != "5m0s" {
 		t.Fatalf("waiting duration = %q, want frozen 5m0s", row.Duration)
 	}
+	if row.ActiveDurationSeconds != 300 || row.ExecutionSince != nil {
+		t.Fatalf("waiting execution clock = (%d, %v), want completed 300s with no active segment", row.ActiveDurationSeconds, row.ExecutionSince)
+	}
 	view.now = func() time.Time { return awaitAt.Add(3 * time.Hour) }
 	row = view.runFromState(repoRoot, awaiting, nil, nil, nil, nil)
 	if row.Duration != "5m0s" {
@@ -331,5 +334,8 @@ func TestPortal_AwaitDurationPausesAndResumes(t *testing.T) {
 	row = view.runFromState(repoRoot, resumed, nil, nil, nil, nil)
 	if row.Duration != "12m0s" {
 		t.Fatalf("resumed duration = %q, want 12m0s", row.Duration)
+	}
+	if row.ActiveDurationSeconds != 300 || row.ExecutionSince == nil || !row.ExecutionSince.Equal(resumedAt) {
+		t.Fatalf("resumed execution clock = (%d, %v), want 300s since %v", row.ActiveDurationSeconds, row.ExecutionSince, resumedAt)
 	}
 }

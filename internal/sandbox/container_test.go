@@ -141,6 +141,33 @@ func TestContainerRuntime_Start_UsesIndefiniteIdleCommand(t *testing.T) {
 	}
 }
 
+func TestContainerRuntime_Start_EnablesOrphanReapingForBothRuntimes(t *testing.T) {
+	for _, runtimeName := range []string{"docker", "podman"} {
+		t.Run(runtimeName, func(t *testing.T) {
+			rt := NewContainerRuntime(runtimeName)
+			var captured []string
+			rt.execFn = func(name string, arg ...string) *exec.Cmd {
+				captured = append([]string{name}, arg...)
+				return exec.Command("echo", "abc123")
+			}
+
+			if _, err := rt.Start("alpine", ".", StartOptions{}); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			foundInit := false
+			for _, arg := range captured {
+				if arg == "--init" {
+					foundInit = true
+					break
+				}
+			}
+			if !foundInit {
+				t.Fatalf("runtime start args %v do not enable orphan reaping", captured)
+			}
+		})
+	}
+}
+
 func TestContainerRuntime_Start_SetsContainerUser(t *testing.T) {
 	rt := NewContainerRuntime("docker")
 	var captured []string
