@@ -573,6 +573,18 @@ func TestDecideImplementationPRLifecycle_ActiveResolutionGatesWaiting(t *testing
 	}
 }
 
+func TestDecideImplementationPRLifecycle_PendingReviewOnReadyPRStillAwaits(t *testing.T) {
+	d := decideImplementationPRLifecycle(implementationPRFacts{
+		pr: &github.PR{Number: 42, State: "open", StatusCheckRollup: "success",
+			ReviewDecision: "APPROVED", MergeStateStatus: "CLEAN", HeadRefOid: "current-sha"},
+		headSHA:         "current-sha",
+		reviewRequested: true,
+	})
+	if !d.handled || d.action != lifecycleAwait || d.gate != lifecycleGateReady {
+		t.Fatalf("pending review on ready PR = %+v, want await on ready gate", d)
+	}
+}
+
 func TestDecideImplementationPRLifecycle_NilPRUnhandled(t *testing.T) {
 	d := decideImplementationPRLifecycle(implementationPRFacts{headSHA: "current-sha"})
 	if d.handled || d.gate != lifecycleGateNone {

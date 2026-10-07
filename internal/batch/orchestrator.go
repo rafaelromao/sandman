@@ -2261,7 +2261,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 						break
 					}
 					if o.eventLog != nil {
-						if err := logCapacityQueuedContinuation(o.eventLog, runID, issueNum, issueBatchID, row, extras, req.IssueTitles[issueNum]); err != nil {
+						if err := logCapacityQueuedContinuationAt(o.eventLog, executor.deps.runSessionOpts.runtimeNow(), runID, issueNum, issueBatchID, row, extras, req.IssueTitles[issueNum]); err != nil {
 							if o.errorLog != nil {
 								fmt.Fprintf(o.errorLog, "warning: persist ready continuation for issue %d: %v; keeping the run in its external wait\n", issueNum, err)
 							}
@@ -2287,7 +2287,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 						"next_action": "resume after provider usage limit resets; Sandman did not start another run while suspended",
 					}
 					if o.eventLog != nil && (!awaiting || readyContinuation) {
-						if err := logCapacityQueuedContinuation(o.eventLog, runID, issueNum, issueBatchID, row, extras, req.IssueTitles[issueNum]); err != nil {
+						if err := logCapacityQueuedContinuationAt(o.eventLog, executor.deps.runSessionOpts.runtimeNow(), runID, issueNum, issueBatchID, row, extras, req.IssueTitles[issueNum]); err != nil {
 							if o.errorLog != nil {
 								fmt.Fprintf(o.errorLog, "warning: persist usage-limit pause for issue %d: %v\n", issueNum, err)
 							}

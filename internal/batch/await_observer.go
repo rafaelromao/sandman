@@ -78,6 +78,10 @@ func awaitPollInterval(opts runSessionOptions, poll int) time.Duration {
 }
 
 func logCapacityQueuedContinuation(log events.EventLog, runID string, issue int, batchID string, row RowSpec, extras map[string]any, issueTitle string) error {
+	return logCapacityQueuedContinuationAt(log, time.Now(), runID, issue, batchID, row, extras, issueTitle)
+}
+
+func logCapacityQueuedContinuationAt(log events.EventLog, timestamp time.Time, runID string, issue int, batchID string, row RowSpec, extras map[string]any, issueTitle string) error {
 	if log == nil {
 		return nil
 	}
@@ -107,7 +111,7 @@ func logCapacityQueuedContinuation(log events.EventLog, runID string, issue int,
 	}
 	return log.Log(events.Event{
 		Type:      "run.capacity_queued",
-		Timestamp: time.Now(),
+		Timestamp: timestamp,
 		RunID:     runID,
 		Issue:     issue,
 		IssueRef:  issueRef(issue),

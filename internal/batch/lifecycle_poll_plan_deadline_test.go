@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"context"
 	"reflect"
 	"testing"
 	"time"
@@ -164,5 +165,29 @@ func TestLifecycleDeadline_FloatDecoding(t *testing.T) {
 	}
 	if _, _, ok := lifecycleDeadline(bad); ok {
 		t.Fatal("non-integer float deadline should be rejected")
+	}
+}
+
+func TestObserveLifecycleUsesInjectedClockForDeadline(t *testing.T) {
+	deadline := time.Now().Add(time.Hour).Truncate(time.Second)
+	waits := 0
+	s := &runSession{
+		opts: runSessionOptions{
+			now:               func() time.Time { return deadline.Add(time.Hour) },
+			lifecyclePollPlan: []time.Duration{0},
+			lifecycleWait: func(context.Context, time.Duration) error {
+				waits++
+				return errLifecycleObservationTestStop
+			},
+		},
+	}
+	status, extras, handled := s.observeLifecycle(context.Background(), "", "", "", "run", AgentRunResult{}, map[string]any{
+		"review_request": map[string]any{"deadline_unix_seconds": deadline.Unix()},
+	}, true)
+	if !handled || status != "resume" {
+		t.Fatalf("observation = (%q, %#v, %t), want injected-clock deadline resume", status, extras, handled)
+	}
+	if waits != 0 {
+		t.Fatalf("lifecycle waits = %d, want no wait after injected deadline", waits)
 	}
 }

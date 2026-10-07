@@ -923,7 +923,7 @@ func (s *runSession) waitForLifecyclePoll(ctx context.Context, interval time.Dur
 func (s *runSession) observeLifecycle(ctx context.Context, workDir, branch, logPath, runID string, result AgentRunResult, extras map[string]any, hostPathsReady bool) (string, map[string]any, bool) {
 	plan := s.lifecyclePollIntervals(extras)
 	for index := 0; ; index++ {
-		if deadline, gate, ok := lifecycleDeadline(extras); ok && !time.Now().Before(deadline) {
+		if deadline, gate, ok := lifecycleDeadline(extras); ok && !s.runtimeNow().Before(deadline) {
 			resume := cloneLifecycleExtras(extras)
 			resume["gate"] = gate
 			resume["reason"] = lifecycleDeadlineReason(gate)
