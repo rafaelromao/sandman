@@ -489,7 +489,7 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 		headSHA = ""
 	}
 	var headReconcileErr error
-	pr, err := s.lifecyclePRForBranch(ctx, branch, attemptStatus)
+	pr, err := s.lifecyclePRForBranch(ctx, branch)
 	gate := lifecycleGateNone
 	refreshUnavailable := false
 	reviewRegistrationFailure := false
@@ -503,21 +503,6 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 		gate = lifecycleGate(checkPRExternalGateForPR(pr, headSHA, true))
 	}
 	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.State), "open") {
-		if attemptNeedsRetry(attemptStatus) {
-			// Failed attempts must load request-scoped evidence before the ordinary
-			// retry path is considered. This early probe is only an admission check;
-			// the complete lifecycle decision below remains authoritative.
-			earlyReviewRequested := s.confirmedReviewRequestActive(ctx, workDir, pr, headSHA)
-			earlyEvidence := s.retainedLifecycleEvidence(ctx, workDir, pr, headSHA)
-			if !earlyReviewRequested && !ciActive(pr, headSHA) &&
-				!strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "failure") &&
-				!strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "DIRTY") &&
-				!strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "CONFLICTING") &&
-				!earlyEvidence.actionable && len(earlyEvidence.informalFeedback) == 0 &&
-				!(earlyEvidence.outcome == retainedReviewApproval && gate == lifecycleGateReady) {
-				return "", nil, false
-			}
-		}
 		if hostPathsReady {
 			headSHA, worktreeHeadSHA, headReconcileErr = s.livePRHeadForLifecycle(ctx, workDir, branch, pr, worktreeHeadSHA, currentHeadErr)
 		}
@@ -802,7 +787,7 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 	return status, extras, true
 }
 
-func (s *runSession) lifecyclePRForBranch(ctx context.Context, branch, attemptStatus string) (*github.PR, error) {
+func (s *runSession) lifecyclePRForBranch(ctx context.Context, branch string) (*github.PR, error) {
 	if s.lifecyclePRSnapshot != nil {
 		pr := s.lifecyclePRSnapshot
 		s.lifecyclePRSnapshot = nil
