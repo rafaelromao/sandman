@@ -121,6 +121,38 @@ func TestRunExecutorLifecycleContract(t *testing.T) {
 	}
 }
 
+func TestRunSessionLinkedReviewEventsPreserveIssueMetadata(t *testing.T) {
+	log := &spyEventLog{}
+	session := &runSession{
+		deps:        runDeps{eventLog: log},
+		baseBranch:  "main",
+		review:      true,
+		issueNumber: 42,
+		prNumber:    73,
+		reviewFocus: "correctness",
+	}
+
+	session.emitStarted(nil, "review", "run")
+	session.mode = ModeContinue
+	session.emitStarted(nil, "review", "run")
+
+	if len(log.events) != 2 {
+		t.Fatalf("events = %d, want 2", len(log.events))
+	}
+	wantTypes := []string{"run.started", "run.continued"}
+	for i, event := range log.events {
+		if event.Type != wantTypes[i] {
+			t.Errorf("event %d type = %q, want %q", i, event.Type, wantTypes[i])
+		}
+		if event.Issue != 0 || event.IssueRef != nil {
+			t.Errorf("event %d changed prompt-only issue identity: %+v", i, event)
+		}
+		if event.Payload["review"] != true || event.Payload["pr_number"] != 73 || event.Payload["issue_number"] != 42 {
+			t.Errorf("event %d metadata = %#v", i, event.Payload)
+		}
+	}
+}
+
 type lifecycleRunnableFactory struct {
 	t          *testing.T
 	client     *lifecycleGitHubClient

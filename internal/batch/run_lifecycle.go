@@ -346,6 +346,11 @@ func (s *runSession) emitStarted(issue *github.Issue, branch, runID string) {
 			payload["review"] = true
 			payload["pr_number"] = s.prNumber
 			payload["review_focus"] = s.reviewFocus
+			if s.issueNumber > 0 {
+				// Linked reviews stay prompt-only, but retain their issue
+				// association for portal/event consumers.
+				payload["issue_number"] = s.issueNumber
+			}
 		}
 		if s.portalHidden {
 			payload["portal_hidden"] = true

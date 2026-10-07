@@ -134,6 +134,16 @@ printf 'agent-complete\n'
 				if len(states) != 1 || states[0].Status() != want || len(states[0].Retries) != bc.Retries {
 					t.Fatalf("lifecycle projection: %+v", states)
 				}
+				if kind == "review" {
+					for _, event := range evs {
+						if event.Type != "run.started" && event.Type != "run.continued" {
+							continue
+						}
+						if event.Issue != 0 || event.IssueRef != nil || event.Payload["issue_number"] != float64(42) {
+							t.Fatalf("linked review event lost prompt-only issue metadata: %+v", event)
+						}
+					}
+				}
 				log, err := os.ReadFile(o.layout.RunLogPath(row.BatchID, runID))
 				if err != nil || !strings.Contains(string(log), "["+runID+"]") || !strings.Contains(string(log), "agent-ready") || strings.Contains(string(log), "unexpected completion") {
 					t.Fatalf("saved log=%q error=%v", log, err)
