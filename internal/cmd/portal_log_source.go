@@ -274,7 +274,10 @@ func portalLogSourcePath(run portalRun) string {
 }
 
 func portalLogTerminal(run portalRun) bool {
-	return run.Kind != "active" || isTerminalStatus(run.Status)
+	// Kind describes the Portal row shape, not lifecycle. In particular, a
+	// queued or waiting row may not be active while its event-derived run is
+	// still unfinished. Only terminal lifecycle outcomes authorize end.
+	return isTerminalStatus(run.Status)
 }
 
 func streamPortalSavedLog(ctx context.Context, w io.Writer, source *portalLogSource, initial *portalLogCursor, terminal func() bool) error {

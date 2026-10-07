@@ -143,7 +143,8 @@ func servePortalRunStream(w http.ResponseWriter, r *http.Request, repoRoot strin
 			terminal := func() bool {
 				latest, err := portalRunForKey(repoRoot, runKey)
 				if err != nil {
-					return portalLogTerminal(run)
+					// Lifecycle observation failures are unknown, not terminal.
+					return false
 				}
 				return portalLogTerminal(latest)
 			}
