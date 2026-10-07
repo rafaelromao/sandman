@@ -245,7 +245,14 @@ func (s *runSession) confirmedReviewRequestActive(ctx context.Context, workDir s
 			return false
 		}
 		if registration.State.ObservedState != "" {
-			return false
+			handoff, handoffErr := canonicalReviewHandoff(registration, currentHead)
+			if handoffErr != nil || handoff == nil {
+				return false
+			}
+			if handoff.Outcome != retainedReviewPending || handoff.hasActionableFeedback() {
+				return false
+			}
+			return handoff.Classification == nil || len(handoff.Classification.informalFeedbackEvidenceFor(handoff.Request, handoff.Classification.WindowEnd)) == 0
 		}
 		return true
 	} else if err != nil && !isReviewRegistrationNotExist(err) {
@@ -268,10 +275,10 @@ func (s *runSession) loadCanonicalReviewRegistration(ctx context.Context, workDi
 		if importErr := s.importLegacyReviewEvidence(ctx, workDir, repository, pr, currentHead, path, registration); importErr != nil {
 			return nil, importErr
 		}
-		if registration.State.ObservedState == "" {
-			if refreshed, refreshErr := readReviewRegistrationWithStore(store, path, repository, pr, currentHead); refreshErr == nil {
-				registration = refreshed
-			}
+		if refreshed, refreshErr := readReviewRegistrationWithStore(store, path, repository, pr, currentHead); refreshErr == nil {
+			registration = refreshed
+		} else {
+			return nil, refreshErr
 		}
 		return registration, nil
 	}

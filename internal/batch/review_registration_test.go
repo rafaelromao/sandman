@@ -400,6 +400,77 @@ func TestReviewRegistration_PersistsDirectCurrentHeadObservation(t *testing.T) {
 	}
 }
 
+func TestReviewRegistration_AdvancesPastAcknowledgementToApproval(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	currentNow := now.Add(2 * time.Minute)
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments:         []github.PRComment{{ID: "1001", Body: "/sandman review", CreatedAt: now.Add(-time.Minute)}},
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+		reviewRegistrationNow:  func() time.Time { return currentNow },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	pr := &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("register pending request: %v", err)
+	}
+	client.comments = append(client.comments, github.PRComment{ID: "1002", Body: "Review is in progress", CreatedAt: now.Add(time.Minute)})
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("persist acknowledgement: %v", err)
+	}
+	if !session.confirmedReviewRequestActive(context.Background(), workDir, pr, pr.HeadRefOid) {
+		t.Fatal("acknowledgement ended the active review request")
+	}
+
+	client.reviews = []github.PRReview{{ID: "2001", State: "APPROVED", CommitID: "current-sha", CreatedAt: now.Add(3 * time.Minute)}}
+	currentNow = now.Add(4 * time.Minute)
+	evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
+	if evidence.outcome != retainedReviewApproval || evidence.payload == nil {
+		t.Fatalf("later approval evidence = %#v, want current-head approval", evidence)
+	}
+}
+
+func TestReviewRegistration_AdvancesPastAcknowledgementToFeedback(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	currentNow := now.Add(2 * time.Minute)
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments:         []github.PRComment{{ID: "1001", Body: "/sandman review", CreatedAt: now.Add(-time.Minute)}},
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+		reviewRegistrationNow:  func() time.Time { return currentNow },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	pr := &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("register pending request: %v", err)
+	}
+	client.comments = append(client.comments, github.PRComment{ID: "1002", Body: "Review is in progress", CreatedAt: now.Add(time.Minute)})
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("persist acknowledgement: %v", err)
+	}
+	if !session.confirmedReviewRequestActive(context.Background(), workDir, pr, pr.HeadRefOid) {
+		t.Fatal("acknowledgement ended the active review request")
+	}
+
+	client.comments = append(client.comments, github.PRComment{ID: "1003", Body: "Please update internal/batch/review_registration.go before merging", CreatedAt: now.Add(3 * time.Minute)})
+	currentNow = now.Add(4 * time.Minute)
+	evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
+	if len(evidence.informalFeedback) == 0 || evidence.payload == nil {
+		t.Fatalf("later feedback evidence = %#v, want retained feedback", evidence)
+	}
+	if session.confirmedReviewRequestActive(context.Background(), workDir, pr, pr.HeadRefOid) {
+		t.Fatal("actionable feedback remained an active review request")
+	}
+}
+
 func TestRetainedLifecycleEvidence_ImportsLegacyWhenCanonicalIsAbsent(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-review-registration-")
 	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)

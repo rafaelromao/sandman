@@ -104,6 +104,32 @@ func TestSyncInstallsAndRunsVersionedReviewWait(t *testing.T) {
 	}
 }
 
+func TestSyncInstallsStatelessManagedReviewRequest(t *testing.T) {
+	home := t.TempDir()
+	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/sandman review"}); err != nil {
+		t.Fatalf("sync skill: %v", err)
+	}
+
+	path := filepath.Join(home, ".agents", "skills", embeddedSkillRoot, "review-request", "SKILL.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read managed review request skill: %v", err)
+	}
+	content := string(data)
+	for _, required := range []string{
+		"name: sandman-review-request",
+		"Post exactly `/sandman review`",
+		"Do not create, edit, or delete review state files",
+	} {
+		if !strings.Contains(content, required) {
+			t.Errorf("managed review request skill missing %q", required)
+		}
+	}
+	if strings.Contains(content, "sandman-pr-review") {
+		t.Fatal("managed review request skill invokes standalone review composition")
+	}
+}
+
 func TestSyncInstallsVersionedReviewTriggerGuard(t *testing.T) {
 	home := t.TempDir()
 	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/sandman review"}); err != nil {

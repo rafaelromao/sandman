@@ -74,8 +74,8 @@ The run is NOT considered successful (and `## Status: already resolved` MUST NOT
 - **`mergeable: CONFLICTING`** — the branch's open PR is in a conflict state with the base branch.
 - **Unpushed commits** — `git log @{u}..HEAD` (or `git log origin/{{BASE_BRANCH}}..HEAD` for a new branch) is non-empty; the local branch has commits the remote does not.
 - **Unresolved AC blocker** — any acceptance criterion in the issue body is unmet, contested, or marked blocked by another open issue.
-- **PR not approved** — an open PR exists for the branch AND the PR does not have Approval (`reviewDecision !== 'APPROVED'` AND no informal approval per `sandman-pr-review` Step 6 case C). The orchestrator must not declare the run successful while review is unresolved.
-- **PR not approved for the current diff** — even when `reviewDecision` or a top-level comment shows an old APPROVED, the approval is stale if it was posted against a prior head SHA (issue #2309). The approval must be against the head SHA recorded at the last `{{REVIEW_COMMAND}}` post — see `sandman-pr-review` Step 6 Case C's approval-recency gate.
+- **PR not approved** — an open PR exists for the branch AND the managed request has no current-head approval. The orchestrator must not declare the run successful while review is unresolved.
+- **PR not approved for the current diff** — even when a pull-request-wide decision or top-level comment shows an old APPROVED, the approval is stale if it was posted against a prior head SHA (issue #2309). Approval must be current to the head recorded at the last `{{REVIEW_COMMAND}}` request.
 - **Unanswered `/sandman review` trigger** — an open PR exists for the branch AND the most recent top-level comment is an implementor `{{REVIEW_COMMAND}}` trigger that has not yet received a response (no formal review, no inline file comment, no other top-level body from a non-agent author). An older APPROVED comment sitting below an unanswered trigger is not sufficient; the trigger is a fresh request and must be answered before the run is considered approved.
 
 Re-check this block immediately before writing `## Status: already resolved`. If any condition is true, abort the marker and address the underlying problem (close orphan PR, back-merge, push commits, or resolve the blocker).
@@ -141,9 +141,9 @@ The Required Skill Chain defines specific tools for each review type:
 |------|-------------------|-------|
 | Plan approval (TDD) | Subagent review + consensus | Only step that explicitly requires subagent review |
 | Self-review | `sandman-code-review` skill in self-review context |
-| PR review | `sandman-pr-review` skill | **Must NOT use subagent**
+| Managed PR review | `sandman-review-request` skill | Stateless delivery; **must NOT use subagent**
 
-**PR review is the only step where subagent review is banned.** Use the `sandman-pr-review` skill instead. Subagent review is recommended for plan approval.
+**PR review is the only step where subagent review is banned.** Use the managed request skill for this Sandman-created worktree. Subagent review is recommended for plan approval.
 
 ### Examples of Banned Questions
 
@@ -172,19 +172,19 @@ Load `sandman-implement` first; it owns the end-to-end implement workflow (TDD, 
 - `sandman-tdd` for planning, subagent-reviewed plan consensus, vertical red-green TDD, and refactor-after-green.
 - `sandman-code-review` for self-review.
 - `sandman-back-merge` before PR creation, with no rebase and no force-push.
-- `sandman-review-request` for managed review trigger delivery. It is stateless and must not write managed lifecycle state. The standalone `sandman-pr-review` facade is not invoked from a managed lifecycle path.
+- `sandman-review-request` for managed review trigger delivery. It is stateless and must not write managed lifecycle state.
 - `sandman-pr-merge` only if the PR is fully approved, required checks are green, and GitHub reports it mergeable.
 
 ## Required Order
 
 1. Complete checklist items in order: Create branch, Plan, Implement, PR-Review, PR-Merge.
-2. For plan-approval, use subagent review. For self-review, use `sandman-code-review` skill in self-review context. Managed PR delivery uses `sandman-review-request`; the standalone `sandman-pr-review` facade is not part of the managed path. Subagent review is banned for PR review. Proceed after consensus/completion. Do not ask the user.
-3. **PR creation is not PR review.** A PR existing does not mean it has been reviewed or is ready to merge. Before loading `sandman-pr-merge`, the agent MUST confirm that `sandman-pr-review` was actually executed and produced a reviewed/approved state. If the last completed step is "PR Created" and the PR is not approved or not mergeable, the agent MUST call `sandman-pr-review` before `sandman-pr-merge` — do not skip the review step. If any merge gate is false or ambiguous, call `sandman-pr-review` and continue the review loop instead of reporting blockers to the user.
-4. **PR-Review is `[x]` only when the PR has Approval against the current diff.** `PR-Review` cannot be marked complete on the basis of exhausted review passes, timeouts, or zero reviewer responses. The check is a concrete signal: the PR has Approval (`reviewDecision === 'APPROVED'` OR informal approval per `sandman-pr-review` Step 6 case C) **and that approval was posted against the current head SHA** (issue #2309). An APPROVED comment from a prior SHA is stale — the prior approval was issued against a different diff and does not authorize merging the current one. Until a fresh Approval is observed against the head SHA recorded at the last `{{REVIEW_COMMAND}}` post, leave the checkbox unchecked and keep the review loop open — even if every other item is checked. Marking `PR-Review` `[x]` on a stale approval is the failure mode that strands a run at PR-Merge after a back-merge with no path forward.
+2. For plan-approval, use subagent review. For self-review, use `sandman-code-review` skill in self-review context. Managed PR delivery uses `sandman-review-request`. Subagent review is banned for PR review. Proceed after consensus/completion. Do not ask the user.
+3. **PR creation is not PR review.** A PR existing does not mean it has been reviewed or is ready to merge. Before loading `sandman-pr-merge`, the agent MUST confirm that the managed request produced a reviewed/approved state. If the last completed step is "PR Created" and the PR is not approved or not mergeable, re-enter the managed request path before `sandman-pr-merge` — do not skip the review step. If any merge gate is false or ambiguous, continue that path instead of reporting blockers to the user.
+4. **PR-Review is `[x]` only when the managed request has Approval against the current diff.** `PR-Review` cannot be marked complete on the basis of exhausted review waits, timeouts, or zero reviewer responses. Approval must be current to the head SHA recorded at the last `{{REVIEW_COMMAND}}` request (issue #2309); an approval from a prior SHA is stale and does not authorize merging the current diff.
 5. If `PR-Review` completes with full approval and all merge gates are true, load and run `sandman-pr-merge`.
-6. If a `sandman-pr-review` pass times out or returns without approval, do not mark `PR-Review` complete and do not advance to `PR-Merge` on the next retry. Re-enter `sandman-pr-review` and keep the review loop open until approval is observed or a stop condition is reached.
-7. **A new commit resets the review pass counter.** If the agent pushed a new commit to the PR branch (head SHA changed) after the last review post, the prior exhausted pass budget is stale — the reviewer is being asked to evaluate a new diff. Re-enter `sandman-pr-review` with a fresh 10-pass budget for the new SHA, regardless of how many passes the prior SHA consumed. This applies intra- and inter-session: any SHA change restarts the counter.
-8. **On retry, the prior pass budget does not carry over.** Each new agent session (e.g., `sandman run --continue` or any re-entry of the run) starts with a fresh 10-pass budget for `sandman-pr-review` — the in-session pass counter is not persisted across sessions. Treat any prior `[x] PR-Review` in `.sandman/task.md` as untrusted state from a prior session: re-verify the PR has Approval NOW before accepting the box as complete. If no Approval is observed, uncheck the box and re-enter `sandman-pr-review`.
+6. If the applicable review path times out or returns without approval, do not mark `PR-Review` complete and do not advance to `PR-Merge` on the next retry. Re-enter the same managed request path or standalone compatibility path and keep review open until approval is observed or a stop condition is reached.
+7. **A new commit resets the review pass counter.** If the agent pushed a new commit to the PR branch (head SHA changed) after the last review post, the prior exhausted pass budget is stale — the reviewer is being asked to evaluate a new diff. Start a fresh review request for the new SHA; standalone callers receive a fresh 10-pass budget. This applies intra- and inter-session: any SHA change restarts the counter.
+8. **On retry, prior review budget does not carry over.** Each new agent session revalidates approval against the current head before accepting the review step as complete. If no approval is observed, re-enter the applicable managed request path or standalone compatibility path.
 
 ## Completion Requirements
 

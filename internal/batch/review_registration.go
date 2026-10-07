@@ -84,10 +84,20 @@ func readFileReviewRegistration(path string) (reviewRequestRegistration, error) 
 
 func preserveReviewRegistration(existing, next reviewRequestRegistration) bool {
 	if reviewTriggerIdentity(existing.Request.TriggerID) == reviewTriggerIdentity(next.Request.TriggerID) {
-		// A pending generation may be enriched once with its first validated
-		// observation. Once evidence is present, later same-trigger writes are
-		// audit-only and must not replace the canonical observation.
-		return existing.State.ObservedState != "" || next.State.ObservedState == ""
+		// Legacy imports are immutable, but runtime observations may advance the
+		// same generation as newer current-head evidence arrives.
+		if existing.LegacyImported || next.LegacyImported {
+			return existing.State.ObservedState != "" || next.State.ObservedState == ""
+		}
+		if next.State.ObservedState == "" {
+			return true
+		}
+		if existing.State.ObservedState == "" {
+			return false
+		}
+		existingAt, existingErr := time.Parse(time.RFC3339Nano, existing.State.ObservedAt)
+		nextAt, nextErr := time.Parse(time.RFC3339Nano, next.State.ObservedAt)
+		return existingErr == nil && (nextErr != nil || !nextAt.After(existingAt))
 	}
 	existingAt, existingErr := time.Parse(time.RFC3339Nano, existing.Request.TriggerCreatedAt)
 	nextAt, nextErr := time.Parse(time.RFC3339Nano, next.Request.TriggerCreatedAt)
@@ -431,7 +441,7 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 }
 
 func (s *runSession) importLegacyReviewEvidence(ctx context.Context, workDir, repository string, pr *github.PR, currentHead, registrationPath string, existing *reviewRequestRegistration) error {
-	if existing == nil || existing.State.Evidence != nil || existing.State.ObservedState != "" {
+	if existing == nil || existing.LegacyImported {
 		return nil
 	}
 	if comments, listErr := s.deps.githubClient.ListPRComments(ctx, pr.Number); listErr == nil {
@@ -448,6 +458,12 @@ func (s *runSession) importLegacyReviewEvidence(ctx context.Context, workDir, re
 			}
 			return nil
 		}
+	}
+	if existing.State.ObservedState != "" {
+		// A runtime observation is authoritative for this generation. If the
+		// current response surfaces do not yield newer evidence, never fall back
+		// to mutable legacy sidecars.
+		return nil
 	}
 	artifacts, err := readReviewTimeoutArtifacts(workDir, repository, pr, currentHead)
 	if err != nil || artifacts == nil || !reviewRequestIdentityMatches(existing.Request, artifacts.Request) {
