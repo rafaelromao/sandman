@@ -2191,6 +2191,8 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				}
 			}()
 			executor := o.newRunExecutorWith(parentCtx, bc, policy.sandboxFactory, policy.containerAlloc, coord, coord, layout)
+			executor.deps.quotaProgress = quotaGate.modelProgress
+			executor.deps.quotaLimit = quotaGate.limit
 			awaiting := req.ReadyContinuations[issueNum] || recovering && !recovery.InitialAdmission
 			readyContinuation := req.ReadyContinuations[issueNum]
 			var opportunity awaitOpportunity
@@ -2997,6 +2999,9 @@ type runSession struct {
 	// runSessionOptions.awaitResumeMax). It is the per-session cap state;
 	// re-invocation starts a fresh session and a fresh counter.
 	resumeCount int
+
+	modelProgress func()
+	usageLimit    func()
 
 	// lifecyclePRSnapshot carries the last live PR observation made by the
 	// closing-reference guard into the authoritative lifecycle decision. This
@@ -3890,6 +3895,9 @@ loop:
 				agentRun.previousBatchID = s.previousRunBatchIDs[s.issueNumber]
 				agentRun.reuseSession = s.reuseSession
 				agentRun.sessionWarning = s.deps.errorLog
+			}
+			if reporter, ok := runnable.(interface{ setQuotaSignals(func(), func()) }); ok {
+				reporter.setQuotaSignals(s.modelProgress, s.usageLimit)
 			}
 
 			s.reviewRegistrationAttempted = false

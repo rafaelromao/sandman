@@ -41,6 +41,11 @@ type portalRun struct {
 	StartedAt   time.Time  `json:"startedAt"`
 	FinishedAt  *time.Time `json:"finishedAt,omitempty"`
 	Duration    string     `json:"duration,omitempty"`
+	// ActiveDurationSeconds is the event-derived completed active baseline.
+	// ExecutionSince is present only while the projected run is executing; the
+	// browser may interpolate from that pair but never from StartedAt.
+	ActiveDurationSeconds int64      `json:"activeDurationSeconds"`
+	ExecutionSince        *time.Time `json:"executionSince,omitempty"`
 	// LastOutputAt is the staleness signal for active runs: the mtime of
 	// the run-folder log (<batchDir>/runs/<runID>/run.log, opened with
 	// O_APPEND during AgentRun.Execute), falling back to StartedAt when no
@@ -1983,6 +1988,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	if issueLabel == "" {
 		issueLabel = runID
 	}
+	activeDurationSeconds, executionSince := executionClockForPortal(runState)
 
 	status := v.statusOrDefault(runState.Status(), runState.IsActive() || (runState.Status() == "" && activeSocket), runState.IsReview())
 	if runState.Status() == "waiting" && !runState.IsReview() {
@@ -2013,28 +2019,30 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		batchKey = owner.ID
 	}
 	portalRun := portalRun{
-		Key:             runID,
-		RunID:           runID,
-		Kind:            v.kindForRun(runState),
-		Status:          status,
-		IssueLabel:      issueLabel,
-		IssueNumber:     issueNumber,
-		IssueTitle:      v.issueTitleFromPayload(runState.Started.Payload),
-		Branch:          branch,
-		StartedAt:       startedAt,
-		FinishedAt:      finishedAt,
-		Duration:        v.durationForRun(runState),
-		LogPath:         logPath,
-		LogURL:          v.portalLogDownloadURLForPath(repoRoot, logPath),
-		Log:             logContent,
-		Events:          eventsByRun[runID],
-		Review:          runState.IsReview(),
-		Reason:          reasonForRun(runState),
-		RetriesTotal:    runState.RetriesTotal(),
-		RetriesDone:     runState.RetriesDone(),
-		Attempts:        v.attemptsForRun(runState),
-		LastRetryReason: runState.LastRetryReason(),
-		BatchKey:        batchKey,
+		Key:                   runID,
+		RunID:                 runID,
+		Kind:                  v.kindForRun(runState),
+		Status:                status,
+		IssueLabel:            issueLabel,
+		IssueNumber:           issueNumber,
+		IssueTitle:            v.issueTitleFromPayload(runState.Started.Payload),
+		Branch:                branch,
+		StartedAt:             startedAt,
+		FinishedAt:            finishedAt,
+		Duration:              v.durationForRun(runState),
+		ActiveDurationSeconds: activeDurationSeconds,
+		ExecutionSince:        executionSince,
+		LogPath:               logPath,
+		LogURL:                v.portalLogDownloadURLForPath(repoRoot, logPath),
+		Log:                   logContent,
+		Events:                eventsByRun[runID],
+		Review:                runState.IsReview(),
+		Reason:                reasonForRun(runState),
+		RetriesTotal:          runState.RetriesTotal(),
+		RetriesDone:           runState.RetriesDone(),
+		Attempts:              v.attemptsForRun(runState),
+		LastRetryReason:       runState.LastRetryReason(),
+		BatchKey:              batchKey,
 	}
 	if review {
 		portalRun.PRNumber = prNumber
@@ -2128,6 +2136,14 @@ func (v *portalRunsView) attemptsForRun(runState events.RunState) int {
 		}
 	}
 	return runState.LiveAttempt()
+}
+
+func executionClockForPortal(runState events.RunState) (int64, *time.Time) {
+	baseline, since := runState.ExecutionClock()
+	if since.IsZero() {
+		return int64(baseline / time.Second), nil
+	}
+	return int64(baseline / time.Second), &since
 }
 
 // attemptsAndLastRetryReasonFromEvents computes the live attempt signals
