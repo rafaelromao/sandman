@@ -1,0 +1,56 @@
+=== error ===
+<nil>
+
+=== results (1) ===
+--- result[0] ---
+IssueNumber: 42
+Issue: 42
+Status: aborted
+RetriesTotal: 1
+Branch: 42-fix-bug
+WorktreePath: 
+Review: false
+RunID: 
+
+=== events (partitioned by RunID, emission order) ===
+## RunID: 260618113825-abcd-42
+<ts>	run.started	{"agent":"test-agent","base_branch":"main","batch_id":"260618113825-abcd","branch":"42-fix-bug","container_capacity":0,"container_capacity_set":false,"issue_title":"Fix bug","max_containers":0,"max_containers_set":false,"model":"test-model","parallel":1,"prompt_args":{"EXTRA":"value"},"prompt_source_type":"prompt","prompt_source_value":"inline","retries":0,"review_timeout":1800,"sandbox":"worktree","start_delay":0,"variant":"test-variant"}
+<ts>	run.aborted	{"base_branch":"main","branch":"42-fix-bug","retries_done":0,"retries_total":0,"status":"aborted","worktree_state":"preserved"}
+
+=== run.log ===
+<none>
+
+=== manifest ===
+{
+  "runID": "260618113825-abcd-42",
+  "batchId": "260618113825-abcd",
+  "issue": 42,
+  "branch": "42-fix-bug",
+  "baseBranch": "main",
+  "worktreePath": "<tmp>/wt",
+  "kind": "issue",
+  "createdAt": "0001-01-01T00:00:00Z",
+  "status": "aborted"
+}
+=== prompts ===
+[
+  {
+    "Branch": "",
+    "PromptFlag": "inline",
+    "TemplateFlag": "",
+    "PromptFile": ".sandman/prompt.md",
+    "RenderedPromptFile": ".sandman/task.md",
+    "TaskPrompt": "perform task",
+    "ContextRecovery": false,
+    "ReviewCommand": "",
+    "ReviewCommandSet": false,
+    "ReviewTimeout": 1800,
+    "PromptArgs": {
+      "EXTRA": "value"
+    },
+    "ReviewPromptFile": ""
+  }
+]
+
+=== branch resets ===
+0

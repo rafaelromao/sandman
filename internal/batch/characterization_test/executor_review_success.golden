@@ -1,0 +1,57 @@
+=== error ===
+<nil>
+
+=== results (1) ===
+--- result[0] ---
+IssueNumber: 0
+Issue: <nil>
+Status: success
+RetriesTotal: 1
+Branch: test-prompt-only
+WorktreePath: 
+Review: true
+RunID: 260618113825-abcd-PR73
+
+=== events (partitioned by RunID, emission order) ===
+## RunID: 260618113825-abcd-PR73
+<ts>	run.started	{"agent":"test-agent","base_branch":"main","batch_id":"260618113825-abcd","branch":"test-prompt-only","container_capacity":0,"container_capacity_set":false,"max_containers":0,"max_containers_set":false,"model":"test-model","parallel":1,"portal_hidden":true,"pr_number":73,"prompt_args":{"EXTRA":"value"},"prompt_source_type":"prompt","retries":0,"review":true,"review_focus":"correctness","review_timeout":1800,"sandbox":"worktree","start_delay":0,"variant":"test-variant"}
+<ts>	run.finished	{"base_branch":"main","branch":"test-prompt-only","portal_hidden":true,"pr_number":73,"retries_done":0,"retries_total":0,"review":true,"review_focus":"correctness","status":"success","worktree_state":"preserved"}
+
+=== run.log ===
+<none>
+
+=== manifest ===
+{
+  "runID": "260618113825-abcd-PR73",
+  "batchId": "260618113825-abcd",
+  "branch": "test-prompt-only",
+  "baseBranch": "main",
+  "worktreePath": "<tmp>/wt",
+  "kind": "review",
+  "createdAt": "0001-01-01T00:00:00Z",
+  "pr": 73,
+  "portalHidden": true,
+  "status": "success"
+}
+=== prompts ===
+[
+  {
+    "Branch": "",
+    "PromptFlag": "inline",
+    "TemplateFlag": "",
+    "PromptFile": ".sandman/prompt.md",
+    "RenderedPromptFile": ".sandman/task.md",
+    "TaskPrompt": "perform task",
+    "ContextRecovery": false,
+    "ReviewCommand": "",
+    "ReviewCommandSet": false,
+    "ReviewTimeout": 1800,
+    "PromptArgs": {
+      "EXTRA": "value"
+    },
+    "ReviewPromptFile": ""
+  }
+]
+
+=== branch resets ===
+0

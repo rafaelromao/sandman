@@ -19,10 +19,10 @@ import (
 // runSingleRow / runPromptOnlyRow take a RowSpec instead of the historical
 // 28-/27-positional-argument packers (wayfinder map #2226, #2228).
 //
-// Path discrimination is implicit, matching today's runSession: issue-driven
-// when IssueNumber>0 (RunTS/RunShortID carry the ID components); prompt-only /
-// review otherwise (BatchTS/BatchShortID/RunID carry them; Review/PRNumber/
-// ReviewFocus set for review runs).
+// Path discrimination is implicit, matching today's runSession: review rows
+// remain prompt-only even when IssueNumber carries a linked issue; ordinary
+// issue rows use RunTS/RunShortID while prompt-only/review rows use
+// BatchTS/BatchShortID/RunID.
 type RowSpec struct {
 	IssueNumber         int
 	Mode                IssueMode
@@ -126,9 +126,9 @@ type runCoordination interface {
 }
 
 // RunExecutor is the elevated seam for one AgentRun's lifecycle behind a
-// single method (wayfinder #2233). Path is implicit — issue-driven when
-// IssueNumber>0, prompt-only/review otherwise — matching today's
-// discrimination via issueNumber and the review/prNumber fields.
+// single method (wayfinder #2233). Path is implicit — Review rows are
+// prompt-only even when they carry a linked IssueNumber; all other rows with
+// an issue number are issue-driven.
 type RunExecutor interface {
 	Execute(ctx context.Context, row RowSpec) (AgentRunResult, bool)
 }
@@ -182,8 +182,8 @@ func (o *Orchestrator) newRunExecutorWith(parentCtx context.Context, bc BatchCon
 	}
 }
 
-// Execute dispatches one row through the issue-driven or prompt-only
-// lifecycle, discriminated by row.IssueNumber>0. parentCtx (the RunBatch ctx)
+// Execute runs one row through the shared lifecycle. Input policies are
+// discriminated by the row's Review policy and IssueNumber. parentCtx (the RunBatch ctx)
 // is batch-constant and held on the executor; ctx is the per-row ctx
 // (per-issue for issue-driven, the RunBatch ctx for prompt-only).
 func (e *runExecutor) Execute(ctx context.Context, row RowSpec) (AgentRunResult, bool) {
@@ -191,7 +191,7 @@ func (e *runExecutor) Execute(ctx context.Context, row RowSpec) (AgentRunResult,
 	if s.usageLimitRestoreErr != nil {
 		return e.finishObserved(ctx, row, "failure", map[string]any{"reason": "QUOTA_RECOVERY_STATE_ERROR", "next_action": "repair persisted quota operation evidence before resuming", "recovery_error": s.usageLimitRestoreErr.Error()}), false
 	}
-	if row.IssueNumber > 0 {
+	if s.isIssueDriven() {
 		if s.usageLimitProbe && !s.usageLimitDeadline.IsZero() && !s.runtimeNow().Before(s.usageLimitDeadline) {
 			// Quota expiry is not a terminal lifecycle authority. Re-observe the
 			// pull request first so verified completion still wins without
@@ -210,7 +210,7 @@ func (e *runExecutor) Execute(ctx context.Context, row RowSpec) (AgentRunResult,
 		}
 		return s.execute(ctx)
 	}
-	return s.executePromptOnly(ctx)
+	return s.execute(ctx)
 }
 
 // newRunSession builds a runSession from the elevated seam's inputs. It
