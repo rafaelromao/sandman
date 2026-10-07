@@ -2287,17 +2287,15 @@ func (v *portalRunsView) filterPortalLogByRunID(text string, runID string) strin
 	return strings.TrimSpace(strings.Join(filtered, "\n"))
 }
 
-// resolveRunLog is the single source of truth for the portal's saved-vs-
-// live log decision. The Log field on a portalRun is rendered by either
-// the saved run file (.sandman/batches/<batch-id>/runs/<run-id>/run.log,
-// read via readPortalTextFile) or by the live attach stream coming off
-// the still-connectable batch.sock (read via readPortalSocketOutput).
+// resolveRunLog is the single source of truth for the portal's Saved Run Log
+// snapshot. The socket tail remains only as a pre-artifact compatibility
+// fallback for an active run whose writer has not created run.log yet.
 //
 // Policy (issue #1730, revised in #2140):
 //   - No active batch matched (active == nil) → saved log.
 //   - Active row (runState is non-terminal, i.e. IsActive() true) →
-//     live wins if non-empty, else saved. The socket is the source of
-//     truth while the run is still in flight.
+//     saved wins whenever it exists; live output is only a pre-artifact
+//     compatibility fallback.
 //   - Terminal row (runState.Finished != nil, i.e. !IsActive()) →
 //     saved log wins, even when the batch daemon socket is still
 //     connectable. The Saved Run Log is the authoritative record of
@@ -2318,9 +2316,7 @@ func (v *portalRunsView) filterPortalLogByRunID(text string, runID string) strin
 //     never wrote a run.log would then render the wrong run's live
 //     stream under its own row (issue #2140).
 //
-// `loadSaved` lazily reads the per-run run.log; the helper only invokes
-// it on the saved-wins path so the live-wins branch avoids a needless
-// filesystem read on every poll. `runState` carries the event-fold
+// `loadSaved` reads the per-run run.log. `runState` carries the event-fold
 // information needed to know whether the row is terminal and whether
 // it is a review. `active` is nil for the historical /
 // event-only path, non-nil when an active batch is matched.
@@ -2329,10 +2325,23 @@ func (v *portalRunsView) resolveRunLog(loadSaved func() string, runState events.
 		return loadSaved()
 	}
 	if runState.IsActive() {
+		// The Saved Run Log is the Portal source whenever it exists. Keep the
+		// socket tail only as a pre-artifact compatibility fallback for a run
+		// whose writer has not created run.log yet.
+		saved := loadSaved()
+		if active.Dir != "" && active.RunID != "" {
+			logPath := (paths.BatchLocation{ID: active.BatchID, Dir: active.Dir}).Run(active.RunID).LogPath()
+			if info, err := os.Stat(logPath); err == nil && !info.IsDir() {
+				return saved
+			}
+		}
+		if strings.TrimSpace(saved) != "" {
+			return saved
+		}
 		if live := strings.TrimSpace(stripLogLabels(active.LiveOutput)); live != "" {
 			return live
 		}
-		return loadSaved()
+		return saved
 	}
 	// Terminal row: saved log is authoritative. Do NOT fall back to
 	// active.LiveOutput — when `active` is a batch-level instance its
@@ -2747,10 +2756,6 @@ func (v *portalRunsView) readPortalTextFile(path string) string {
 			logPortalViewDegrade("read-log:"+path, "read saved log %q: %v", path, err)
 		}
 		return ""
-	}
-	if len(data) > portalReadLimit {
-		tail := data[len(data)-portalReadLimit:]
-		return stripLogLabels(v.cleanPortalText("[truncated]\n" + string(tail)))
 	}
 	return stripLogLabels(v.cleanPortalText(string(data)))
 }

@@ -2980,14 +2980,10 @@ func TestPortal_BatchKeyForActive_FallbackChain(t *testing.T) {
 	}
 }
 
-// TestPortal_ResolveRunLog_PrefersLiveForNonTerminal pins the slice-1
-// (prefactor) contract for portalRunsView.resolveRunLog: a non-terminal
-// state with non-empty active live output returns the live output, not
-// the saved log. This locks in the pre-fix behaviour so the refactor
-// pin the red-stays-green contract here; a separate test will cover the green path.
-// that flips the terminal-row branch via
-// TestPortal_RunFromState_CompletedKeepsSavedLogWhenBatchSocketAlive.
-func TestPortal_ResolveRunLog_PrefersLiveForNonTerminal(t *testing.T) {
+// TestPortal_ResolveRunLog_PrefersSavedForNonTerminal uses the Saved Run Log
+// for active rows whenever the writer has created it, keeping snapshots and
+// the structured stream on one source.
+func TestPortal_ResolveRunLog_PrefersSavedForNonTerminal(t *testing.T) {
 	startedAt := time.Now().Add(-1 * time.Minute)
 	runState := events.RunState{
 		RunID: "260618113825-abcd-active-1",
@@ -3003,9 +2999,8 @@ func TestPortal_ResolveRunLog_PrefersLiveForNonTerminal(t *testing.T) {
 	savedLog := "12:00:00 saved line\n"
 
 	got := (&portalRunsView{}).resolveRunLog(func() string { return savedLog }, runState, active)
-	wantLive := strings.TrimSpace(stripLogLabels(active.LiveOutput))
-	if got != wantLive {
-		t.Fatalf("resolveRunLog = %q, want stripped live output %q", got, wantLive)
+	if got != savedLog {
+		t.Fatalf("resolveRunLog = %q, want saved log %q", got, savedLog)
 	}
 }
 
@@ -3154,13 +3149,9 @@ func TestPortal_ResolveRunLog_TerminalReviewPrefersSavedLog(t *testing.T) {
 	}
 }
 
-// TestPortal_ResolveRunLog_ActiveReviewPrefersLive pins the streaming
-// contract for non-terminal review rows: an active review row
-// (runState.Finished == nil) with a non-empty live socket returns the
-// live output, NOT the saved log. Issue #1730 must not regress the
-// active path. Mirrors TestPortal_ResolveRunLog_PrefersLiveForNonTerminal
-// but with a review payload.
-func TestPortal_ResolveRunLog_ActiveReviewPrefersLive(t *testing.T) {
+// TestPortal_ResolveRunLog_ActiveReviewPrefersSaved keeps active review rows
+// on the same Saved Run Log source as their structured stream.
+func TestPortal_ResolveRunLog_ActiveReviewPrefersSaved(t *testing.T) {
 	startedAt := time.Now().Add(-1 * time.Minute)
 	runState := events.RunState{
 		RunID: "260618113825-abcd-active-review",
@@ -3179,9 +3170,8 @@ func TestPortal_ResolveRunLog_ActiveReviewPrefersLive(t *testing.T) {
 	savedLog := "12:00:00 saved review line\n"
 
 	got := (&portalRunsView{}).resolveRunLog(func() string { return savedLog }, runState, active)
-	wantLive := strings.TrimSpace(stripLogLabels(active.LiveOutput))
-	if got != wantLive {
-		t.Fatalf("resolveRunLog for active review = %q, want stripped live output %q (issue #1730 must preserve active streaming)", got, wantLive)
+	if got != savedLog {
+		t.Fatalf("resolveRunLog for active review = %q, want saved log %q", got, savedLog)
 	}
 }
 

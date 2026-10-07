@@ -4162,6 +4162,8 @@ sandbox.fetch = function () { return Promise.reject(new Error('fetch unavailable
 sandbox.window.SandmanPortalState = null;
 sandbox.window.SandmanPortalScroll = null;
 sandbox.window.SandmanPortalDiff = null;
+const portalLogJS = fs.readFileSync(htmlPath.replace(/portal\.html$/, 'portal_log.js'), 'utf8');
+vm.runInNewContext(portalLogJS, sandbox, { filename: htmlPath.replace(/portal\.html$/, 'portal_log.js') });
 sandbox.setInterval = function () { return 0; };
 sandbox.clearInterval = function () {};
 sandbox.setTimeout = function () { return 0; };

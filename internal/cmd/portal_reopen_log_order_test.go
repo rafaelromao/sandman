@@ -419,3 +419,101 @@ func TestPortalRowReopen_AcceptsLiveOutputWhenCachedSuffixIsMissingFromReplay(t 
 		t.Fatalf("reopened log = %q, want cached log followed by live output %q", result.RenderedLog, want)
 	}
 }
+
+// TestPortalTabRoundTrip_DoesNotAppendHistoricalReplayAfterNewerSnapshot is
+// the production-page reproduction for the original report. The tab buttons
+// tear down and recreate the stream while the cached log pane remains newer
+// than the broadcaster replay. Text-only deduplication cannot distinguish the
+// historical records from new output, so this must fail on the baseline.
+func TestPortalTabRoundTrip_DoesNotAppendHistoricalReplayAfterNewerSnapshot(t *testing.T) {
+	const runID = "261007101600-08ee-2772"
+	const currentCommand = "10:09:32 current command"
+	const currentOutput = "10:16:22 current output"
+	const oldCommand = "09:25:07 old command"
+	const oldOutput = "09:27:15 old output"
+	const newOutput = "10:16:37 new live output"
+
+	run := map[string]any{
+		"key":         runID,
+		"runId":       runID,
+		"kind":        "active",
+		"status":      "running",
+		"issueLabel":  "#2772",
+		"issueNumber": 2772,
+		"batchKey":    runID,
+		"socketPath":  "/tmp/" + runID + ".sock",
+		"log":         currentCommand + "\n" + currentOutput + "\n",
+	}
+	runsJSON, err := json.Marshal([]map[string]any{run})
+	if err != nil {
+		t.Fatalf("marshal runs: %v", err)
+	}
+	stateJSON := `{"expandedRunKey":"` + runID + `","tabs":{"` + runID + `":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
+
+	page := buildPortalReproPage(t, stateJSON, runsJSON, `
+    window.__portalRafQueue = [];
+    window.requestAnimationFrame = function (cb) { window.__portalRafQueue.push(cb); return window.__portalRafQueue.length; };
+    window.__portalRunAllRafs = function () {
+      while (window.__portalRafQueue.length) {
+        var cb = window.__portalRafQueue.shift();
+        if (typeof cb === 'function') cb(performance.now());
+      }
+    };
+    window.__portalStreams = [];
+    window.EventSource = function (url) {
+      this.url = url;
+      this.readyState = 1;
+      this.closed = false;
+      this.listeners = {};
+      this.addEventListener = function (type, fn) { this.listeners[type] = fn; };
+      this.dispatchEvent = function (event) {
+        if (this.listeners[event.type]) this.listeners[event.type](event);
+      };
+      this.close = function () { this.closed = true; this.readyState = 2; };
+      window.__portalStreams.push(this);
+    };
+    setTimeout(function () {
+      window.__portalRunAllRafs();
+      var row = document.querySelector('tr[data-run-key="`+runID+`"]');
+      var eventsTab = row && document.querySelector('button[data-action="set-tab"][data-tab="events"]');
+      if (!row || !eventsTab || window.__portalStreams.length !== 1) throw new Error('initial log view was not mounted');
+      eventsTab.click();
+      window.__portalRunAllRafs();
+      setTimeout(function () {
+        var logTab = document.querySelector('button[data-action="set-tab"][data-tab="log"]');
+        if (!logTab) throw new Error('log tab was not restored');
+        logTab.click();
+        window.__portalRunAllRafs();
+        var replay = window.__portalStreams[1];
+        if (!replay || typeof replay.onmessage !== 'function') throw new Error('tab return did not create a stream');
+        replay.onmessage({ data: '`+oldCommand+`' });
+        replay.onmessage({ data: '`+oldOutput+`' });
+        replay.onmessage({ data: '`+currentCommand+`' });
+        replay.onmessage({ data: '`+currentOutput+`' });
+        replay.dispatchEvent({ type: 'replay-complete' });
+        replay.onmessage({ data: '`+newOutput+`' });
+        setTimeout(function () {
+          window.__portalRunAllRafs();
+          var pre = document.querySelector('pre[data-scroll-key="`+runID+`"]');
+          var marker = document.createElement('pre');
+          marker.id = 'portal-tab-round-trip-order';
+          marker.textContent = JSON.stringify({ renderedLog: pre ? pre.getAttribute('data-rendered-log') || '' : '' });
+          document.body.appendChild(marker);
+        }, 20);
+      }, 40);
+    }, 80);
+  `)
+
+	dom, _ := runPortalChromium(t, page)
+	payload := extractPortalMarker(t, dom, "portal-tab-round-trip-order")
+	var result struct {
+		RenderedLog string `json:"renderedLog"`
+	}
+	if err := json.Unmarshal([]byte(payload), &result); err != nil {
+		t.Fatalf("parse tab round-trip payload: %v\nraw=%s", err, payload)
+	}
+	want := currentCommand + "\n" + currentOutput + "\n" + newOutput + "\n"
+	if result.RenderedLog != want {
+		t.Fatalf("tab round-trip log = %q, want %q", result.RenderedLog, want)
+	}
+}

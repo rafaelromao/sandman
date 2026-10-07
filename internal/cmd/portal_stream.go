@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -28,12 +29,10 @@ var portalStreamReadTimeout = 30 * time.Second
 // a quiet agent. Set well below the typical 30s HTTP idle timeout.
 var portalStreamHeartbeat = 15 * time.Second
 
-// servePortalRunStream bridges a live run's Control Socket (run.sock) to an
-// HTTP Server-Sent Events stream. The daemon's Broadcaster
-// (daemon/broadcaster.go) replays its buffered output on connect, then
-// tails live output, so the browser receives history + tail in one
-// connection — replacing the per-poll 64KB socket snapshot used by
-// /api/runs (see readPortalSocketOutput in portal_runs_view.go).
+// servePortalRunStream exposes the Saved Run Log as an HTTP Server-Sent Events
+// stream. It sends position-bearing snapshot/append records from one open file
+// descriptor; the Control Socket remains only as a pre-artifact compatibility
+// fallback until the saved writer creates run.log.
 //
 // Lifecycle:
 //   - client disconnects (r.Context done) → the connection is force-closed,
@@ -43,9 +42,8 @@ var portalStreamHeartbeat = 15 * time.Second
 //   - a read stalls past portalStreamReadTimeout → the loop re-arms and
 //     continues; it is a safety net, not a hard stop.
 //
-// Each source line is emitted as its own SSE event so the client can append
-// incrementally; ANSI and other control bytes are stripped server-side to
-// match the cleaned run.log contract from cleanPortalText.
+// Saved records are emitted in structured batches so the client can resume by
+// raw byte cursor; ANSI and labels are stripped after positions are assigned.
 //
 // The server's global WriteTimeout (30s) would otherwise cut the stream at
 // 30s; http.NewResponseController clears this response's write deadline so
@@ -68,21 +66,16 @@ func servePortalRunStream(w http.ResponseWriter, r *http.Request, repoRoot strin
 		writeJSONError(w, "resolve run: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if run.Kind != "active" || run.SocketPath == "" {
-		writeJSONError(w, fmt.Sprintf("run %q is not active", runKey), http.StatusConflict)
+	logPath := portalLogSourcePath(run)
+	if logPath == "" {
+		if run.Kind == "active" && run.SocketPath != "" {
+			serveLegacyPortalSocketStream(w, r, run)
+			return
+		}
+	} else if _, statErr := os.Stat(logPath); errors.Is(statErr, os.ErrNotExist) && run.Kind == "active" && run.SocketPath != "" {
+		serveLegacyPortalSocketStream(w, r, run)
 		return
 	}
-
-	conn, err := net.DialTimeout("unix", run.SocketPath, portalReadTimeout)
-	if err != nil {
-		writeJSONError(w, fmt.Sprintf("could not connect to the agent daemon for run %q", runKey), http.StatusBadGateway)
-		return
-	}
-	defer conn.Close()
-	if _, err := conn.Write([]byte{daemon.PortalStreamHandshake}); err != nil {
-		return
-	}
-
 	// Clear this response's write deadline so the server's 30s WriteTimeout
 	// does not sever a long-lived tail. Falls back silently if the writer
 	// does not support deadline control (ResponseController returns an
@@ -98,19 +91,112 @@ func servePortalRunStream(w http.ResponseWriter, r *http.Request, repoRoot strin
 	w.WriteHeader(http.StatusOK)
 	_ = rc.Flush()
 
-	// Force-close the socket on client disconnect so a blocking ReadString
-	// returns immediately instead of stranding the goroutine.
+	// The heartbeat and saved-log source share the response writer.
+	var writeMu sync.Mutex
+	locked := &portalLockedWriter{ResponseWriter: w, mu: &writeMu}
+	heartbeat := time.NewTicker(portalStreamHeartbeat)
+	defer heartbeat.Stop()
+	heartbeatStop := make(chan struct{})
+	heartbeatDone := make(chan struct{})
+	defer func() {
+		close(heartbeatStop)
+		<-heartbeatDone
+	}()
+	go func() {
+		defer close(heartbeatDone)
+		for {
+			select {
+			case <-heartbeatStop:
+				return
+			case <-heartbeat.C:
+				if _, werr := locked.Write([]byte(": keepalive\n\n")); werr != nil {
+					return
+				}
+			}
+		}
+	}()
+
+	if logPath == "" {
+		_ = writePortalLogEvent(locked, "unavailable", map[string]any{"runId": run.RunID, "reason": "missing-saved-log"}, "")
+		_ = writePortalLogEvent(locked, "end", map[string]any{"runId": run.RunID}, "")
+		return
+	}
+	var cursor *portalLogCursor
+	for _, encoded := range []string{r.Header.Get("Last-Event-ID"), r.URL.Query().Get("cursor")} {
+		if strings.TrimSpace(encoded) == "" {
+			continue
+		}
+		decoded, decodeErr := decodePortalLogCursor(encoded)
+		if decodeErr == nil {
+			cursor = &decoded
+		} else {
+			// Keep an invalid identity explicit so the source emits reset plus
+			// a coherent replacement snapshot instead of silently joining it.
+			invalid := portalLogCursor{}
+			cursor = &invalid
+		}
+		break
+	}
+	for {
+		source, sourceErr := newPortalLogSource(logPath, run.RunID)
+		if sourceErr == nil {
+			terminal := func() bool {
+				latest, err := portalRunForKey(repoRoot, runKey)
+				if err != nil {
+					return portalLogTerminal(run)
+				}
+				return portalLogTerminal(latest)
+			}
+			_ = streamPortalSavedLog(r.Context(), locked, source, cursor, terminal)
+			return
+		}
+		if !errors.Is(sourceErr, os.ErrNotExist) || portalLogTerminal(run) {
+			_ = writePortalLogEvent(locked, "unavailable", map[string]any{"runId": run.RunID, "reason": sourceErr.Error()}, "")
+			_ = writePortalLogEvent(locked, "end", map[string]any{"runId": run.RunID}, "")
+			return
+		}
+		if err := writePortalLogEvent(locked, "pending", map[string]any{"runId": run.RunID}, ""); err != nil {
+			return
+		}
+		timer := time.NewTimer(portalLogPollInterval)
+		select {
+		case <-r.Context().Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
+}
+
+type portalLockedWriter struct {
+	http.ResponseWriter
+	mu *sync.Mutex
+}
+
+// serveLegacyPortalSocketStream keeps attach compatibility for a short
+// pre-artifact window. Once run.log exists, Portal records always come from
+// portalLogSource and never use broadcaster offsets as saved-log cursors.
+func serveLegacyPortalSocketStream(w http.ResponseWriter, r *http.Request, run portalRun) {
+	conn, err := net.DialTimeout("unix", run.SocketPath, portalReadTimeout)
+	if err != nil {
+		writeJSONError(w, fmt.Sprintf("could not connect to the agent daemon for run %q", run.Key), http.StatusBadGateway)
+		return
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte{daemon.PortalStreamHandshake}); err != nil {
+		return
+	}
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Time{})
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	_ = rc.Flush()
 	go func() {
 		<-r.Context().Done()
 		_ = conn.Close()
 	}()
-
-	br := bufio.NewReader(conn)
-	// http.ResponseWriter is not safe for concurrent writes. The heartbeat
-	// goroutine and the main read loop both write to it; serialize them via
-	// this mutex so concurrent Fprintf/Flush calls don't race (caught by
-	// `-race` in CI). The mutex also protects against the http server's
-	// own internal flush during finishRequest racing with our flush.
 	var writeMu sync.Mutex
 	heartbeat := time.NewTicker(portalStreamHeartbeat)
 	defer heartbeat.Stop()
@@ -128,26 +214,24 @@ func servePortalRunStream(w http.ResponseWriter, r *http.Request, repoRoot strin
 				return
 			case <-heartbeat.C:
 				writeMu.Lock()
-				if _, werr := fmt.Fprintf(w, ": keepalive\n\n"); werr != nil {
-					writeMu.Unlock()
+				_, writeErr := fmt.Fprint(w, ": keepalive\n\n")
+				if flusher, ok := w.(http.Flusher); ok {
+					flusher.Flush()
+				}
+				writeMu.Unlock()
+				if writeErr != nil {
 					return
 				}
-				_ = rc.Flush()
-				writeMu.Unlock()
 			}
 		}
 	}()
+	br := bufio.NewReader(conn)
 	for {
-		select {
-		case <-r.Context().Done():
-			return
-		default:
-		}
 		_ = conn.SetReadDeadline(time.Now().Add(portalStreamReadTimeout))
 		line, readErr := br.ReadString('\n')
 		if line == daemon.PortalReplayBoundary {
 			writeMu.Lock()
-			if _, werr := fmt.Fprint(w, "event: replay-complete\ndata: replay-complete\n\n"); werr != nil {
+			if _, err := fmt.Fprint(w, "event: replay-complete\ndata: replay-complete\n\n"); err != nil {
 				writeMu.Unlock()
 				return
 			}
@@ -155,9 +239,8 @@ func servePortalRunStream(w http.ResponseWriter, r *http.Request, repoRoot strin
 			writeMu.Unlock()
 		}
 		if line != "" && lineBelongsToRun(line, run.RunID) {
-			cleaned := cleanPortalStreamLine(line)
 			writeMu.Lock()
-			if _, werr := fmt.Fprintf(w, "data: %s\n\n", cleaned); werr != nil {
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", cleanPortalStreamLine(line)); err != nil {
 				writeMu.Unlock()
 				return
 			}
@@ -165,13 +248,29 @@ func servePortalRunStream(w http.ResponseWriter, r *http.Request, repoRoot strin
 			writeMu.Unlock()
 		}
 		if readErr != nil {
-			// A timeout is a transient read deadline expiry, not a reason
-			// to end the stream; anything else (EOF, closed) ends it.
 			if netErr := (*net.OpError)(nil); errors.As(readErr, &netErr) && netErr.Timeout() {
 				continue
 			}
 			return
 		}
+	}
+}
+
+func (w *portalLockedWriter) Write(data []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n, err := w.ResponseWriter.Write(data)
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+	return n, err
+}
+
+func (w *portalLockedWriter) Flush() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
 	}
 }
 
