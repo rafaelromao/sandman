@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -26,9 +27,10 @@ var errReviewRegistrationHeadChanged = errors.New("review registration head chan
 var implementationReviewPollPlan = []int{120, 60, 60, 30}
 
 type reviewRequestRegistration struct {
-	Protocol string                `json:"protocol"`
-	Request  reviewRequestEnvelope `json:"request"`
-	State    reviewWaitState       `json:"state"`
+	Protocol       string                `json:"protocol"`
+	LegacyImported bool                  `json:"legacy_imported,omitempty"`
+	Request        reviewRequestEnvelope `json:"request"`
+	State          reviewWaitState       `json:"state"`
 }
 
 type reviewRegistrationStore interface {
@@ -81,8 +83,11 @@ func readFileReviewRegistration(path string) (reviewRequestRegistration, error) 
 }
 
 func preserveReviewRegistration(existing, next reviewRequestRegistration) bool {
-	if existing.Request.TriggerID == next.Request.TriggerID {
-		return true
+	if reviewTriggerIdentity(existing.Request.TriggerID) == reviewTriggerIdentity(next.Request.TriggerID) {
+		// A pending generation may be enriched once with its first validated
+		// observation. Once evidence is present, later same-trigger writes are
+		// audit-only and must not replace the canonical observation.
+		return existing.State.ObservedState != "" || next.State.ObservedState == ""
 	}
 	existingAt, existingErr := time.Parse(time.RFC3339Nano, existing.Request.TriggerCreatedAt)
 	nextAt, nextErr := time.Parse(time.RFC3339Nano, next.Request.TriggerCreatedAt)
@@ -175,7 +180,7 @@ func validateReviewRegistration(registration reviewRequestRegistration, reposito
 		return fmt.Errorf("review registration confirmation timestamp is invalid")
 	}
 	startedAt, err := time.Parse(time.RFC3339Nano, request.StartedAt)
-	if err != nil || startedAt.Before(confirmedAt) || startedAt.Unix() != int64(request.StartedUnixSeconds) {
+	if err != nil || startedAt.Before(confirmedAt) || (!registration.LegacyImported && startedAt.Unix() != int64(request.StartedUnixSeconds)) {
 		return fmt.Errorf("review registration start timestamp is invalid")
 	}
 	if request.StartedUnixSeconds < 0 || request.DeadlineUnixSeconds <= 0 || request.EffectiveTimeout <= 0 || request.DeadlineUnixSeconds != request.StartedUnixSeconds+request.EffectiveTimeout || request.DeadlineAt != fmt.Sprintf("unix:%d", request.DeadlineUnixSeconds) || len(request.PollPlan) == 0 {
@@ -196,11 +201,47 @@ func validateReviewRegistration(registration reviewRequestRegistration, reposito
 	if state.ElapsedSeconds == nil || *state.ElapsedSeconds != 0 {
 		return fmt.Errorf("review registration initial elapsed time is invalid")
 	}
-	if state.Evidence != nil {
-		return fmt.Errorf("review registration initial state has evidence")
-	}
 	if strings.TrimSpace(state.ObservedHeadSHA) == "" || !strings.EqualFold(state.ObservedHeadSHA, request.HeadSHA) {
 		return fmt.Errorf("review registration observed head does not match the request")
+	}
+	if err := validateCanonicalReviewObservation(request, state); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateCanonicalReviewObservation(request reviewRequestEnvelope, state reviewWaitState) error {
+	if state.ObservedState == "" {
+		if state.Evidence != nil || state.ObservedReason != "" || state.ObservedAt != "" {
+			return fmt.Errorf("review registration has incomplete observation metadata")
+		}
+		return nil
+	}
+	if state.ObservedState != "responded" && state.ObservedState != "timed_out" {
+		return fmt.Errorf("review registration observation state is invalid")
+	}
+	if strings.TrimSpace(state.ObservedReason) == "" || strings.TrimSpace(state.ObservedAt) == "" {
+		return fmt.Errorf("review registration observation metadata is incomplete")
+	}
+	if _, err := time.Parse(time.RFC3339Nano, state.ObservedAt); err != nil {
+		return fmt.Errorf("review registration observation timestamp is invalid")
+	}
+	if state.Evidence == nil {
+		return fmt.Errorf("review registration observation is missing evidence")
+	}
+	counts, err := responseCountsFromState(state, true)
+	if err != nil {
+		return fmt.Errorf("review registration observation counts are invalid: %w", err)
+	}
+	classification, err := decodeReviewClassification(state.Evidence, request, request.HeadSHA)
+	if err != nil {
+		return fmt.Errorf("review registration observation classification is invalid: %w", err)
+	}
+	if classification != nil && counts != classification.ResponseCounts {
+		return fmt.Errorf("review registration observation counts do not match classification")
+	}
+	if state.ObservedState == "responded" && classification == nil {
+		return fmt.Errorf("responded review registration observation is missing classification")
 	}
 	return nil
 }
@@ -284,7 +325,7 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 			if !currentGeneration {
 				return fmt.Errorf("%w: existing review registration is bound to a different pull-request head", errReviewRegistrationHeadChanged)
 			}
-			return nil
+			return s.importLegacyReviewEvidence(ctx, workDir, repository, pr, currentHead, registrationPath, &existing)
 		}
 		existingTriggerAt, parseErr := time.Parse(time.RFC3339Nano, existing.Request.TriggerCreatedAt)
 		if parseErr != nil || !trigger.CreatedAt.After(existingTriggerAt) {
@@ -344,6 +385,7 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 		PullRequest:         pr.Number,
 		HeadSHA:             strings.TrimSpace(currentHead),
 		TriggerID:           trigger.ID,
+		TriggerIdentity:     reviewTriggerIdentity(trigger.ID),
 		TriggerPrefix:       prefix,
 		TriggerCreatedAt:    trigger.CreatedAt.UTC().Format(time.RFC3339Nano),
 		ConfirmedAt:         confirmedAt.Format(time.RFC3339Nano),
@@ -388,9 +430,36 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 	return nil
 }
 
+func (s *runSession) importLegacyReviewEvidence(ctx context.Context, workDir, repository string, pr *github.PR, currentHead, registrationPath string, existing *reviewRequestRegistration) error {
+	if existing == nil || existing.State.Evidence != nil || existing.State.ObservedState != "" {
+		return nil
+	}
+	artifacts, err := readReviewTimeoutArtifacts(workDir, repository, pr, currentHead)
+	if err != nil || artifacts == nil || !reviewRequestIdentityMatches(existing.Request, artifacts.Request) {
+		return nil
+	}
+	handoff, err := reviewTimeoutHandoffFromArtifacts(artifacts, currentHead)
+	if err != nil || handoff == nil {
+		return nil
+	}
+	canonical, err := canonicalReviewRegistration(*existing, handoff, currentHead)
+	if err != nil {
+		return nil
+	}
+	if err := writeReviewRegistration(s.reviewRegistrationStoreForRead(), registrationPath, *canonical, func() error {
+		return s.verifyCurrentReviewHead(ctx, pr, currentHead)
+	}); err != nil {
+		return fmt.Errorf("import legacy review evidence: %w", err)
+	}
+	return nil
+}
+
 func validateReviewRegistrationGeneration(registration reviewRequestRegistration, repository string, pr *github.PR) error {
 	if strings.TrimSpace(registration.Request.HeadSHA) == "" {
 		return fmt.Errorf("review registration generation has no head")
+	}
+	if identity := reviewTriggerIdentity(registration.Request.TriggerID); registration.Request.TriggerIdentity != "" && registration.Request.TriggerIdentity != identity {
+		return fmt.Errorf("review registration trigger identity does not match trigger")
 	}
 	shapePR := *pr
 	shapePR.HeadRefOid = registration.Request.HeadSHA
@@ -444,7 +513,7 @@ func legacyReviewRequestMatchesTrigger(workDir string, prNumber int, triggerID s
 	if err := json.Unmarshal(data, &request); err != nil {
 		return false, false
 	}
-	return true, request.TriggerID == triggerID
+	return true, reviewTriggerIdentity(request.TriggerID) == reviewTriggerIdentity(triggerID)
 }
 
 func legacyReviewTriggerHasDifferentHead(workDir string, prNumber int, triggerID, currentHead string) bool {
@@ -459,7 +528,7 @@ func legacyReviewTriggerHasDifferentHead(workDir string, prNumber int, triggerID
 	if err := json.Unmarshal(data, &request); err != nil {
 		return false
 	}
-	return request.TriggerID == triggerID && strings.TrimSpace(request.HeadSHA) != "" && !strings.EqualFold(request.HeadSHA, strings.TrimSpace(currentHead))
+	return reviewTriggerIdentity(request.TriggerID) == reviewTriggerIdentity(triggerID) && strings.TrimSpace(request.HeadSHA) != "" && !strings.EqualFold(request.HeadSHA, strings.TrimSpace(currentHead))
 }
 
 func inspectLegacyReviewRegistration(workDir, repository string, pr *github.PR, currentHead string) (*reviewRequestRegistration, bool, bool, error) {
@@ -496,14 +565,136 @@ func inspectLegacyReviewRegistration(workDir, repository string, pr *github.PR, 
 		Request:  artifacts.Request,
 		State:    artifacts.State,
 	}
-	if err := validateReviewRegistration(registration, repository, pr, currentHead); err != nil {
+	if err := validateReviewRequest(artifacts.Request, artifacts.State, string(headData), repository, pr, currentHead); err != nil {
 		return nil, true, false, nil
 	}
-	return &registration, true, true, nil
+	handoff, err := reviewTimeoutHandoffFromArtifacts(artifacts, currentHead)
+	if err != nil {
+		return nil, true, false, nil
+	}
+	canonical, err := canonicalReviewRegistration(registration, handoff, currentHead)
+	if err != nil {
+		return nil, true, false, nil
+	}
+	return canonical, true, true, nil
+}
+
+func canonicalReviewRegistration(registration reviewRequestRegistration, handoff *reviewTimeoutHandoff, currentHead string) (*reviewRequestRegistration, error) {
+	registration.Request.TriggerIdentity = reviewTriggerIdentity(registration.Request.TriggerID)
+	state := registration.State
+	state.State = "pending"
+	state.Lifecycle = "started"
+	state.Reason = "pending"
+	state.ObservedHeadSHA = registration.Request.HeadSHA
+	state.ElapsedSeconds = intPointer(0)
+	state.ObservedState = ""
+	state.ObservedReason = ""
+	state.ObservedAt = ""
+	state.Evidence = nil
+	if handoff != nil {
+		state.ObservedState = handoff.State.State
+		state.ObservedReason = handoff.State.Reason
+		state.ObservedAt = canonicalObservationTimestamp(handoff)
+		state.Evidence = cloneReviewWaitEvidence(handoff.State.Evidence)
+	}
+	canonical := reviewRequestRegistration{Protocol: reviewRegistrationProtocol, LegacyImported: true, Request: registration.Request, State: state}
+	if err := validateReviewRegistration(canonical, registration.Request.Repository, &github.PR{Number: registration.Request.PullRequest, HeadRefOid: currentHead}, currentHead); err != nil {
+		return nil, err
+	}
+	return &canonical, nil
+}
+
+func intPointer(value int) *int {
+	return &value
+}
+
+func cloneReviewWaitEvidence(evidence *reviewWaitEvidence) *reviewWaitEvidence {
+	if evidence == nil {
+		return nil
+	}
+	clone := &reviewWaitEvidence{Classification: append(json.RawMessage(nil), evidence.Classification...)}
+	if evidence.ResponseCounts != nil {
+		counts := *evidence.ResponseCounts
+		clone.ResponseCounts = &persistedReviewResponseCounts{}
+		if counts.TopLevel != nil {
+			value := *counts.TopLevel
+			clone.ResponseCounts.TopLevel = &value
+		}
+		if counts.FormalReviews != nil {
+			value := *counts.FormalReviews
+			clone.ResponseCounts.FormalReviews = &value
+		}
+		if counts.Inline != nil {
+			value := *counts.Inline
+			clone.ResponseCounts.Inline = &value
+		}
+	}
+	return clone
+}
+
+func canonicalObservationTimestamp(handoff *reviewTimeoutHandoff) string {
+	if handoff == nil {
+		return ""
+	}
+	if handoff.Classification != nil {
+		if sources, ok := objectValue(handoff.Classification.Raw, "sources"); ok {
+			var latest time.Time
+			for _, sourceName := range []string{"top_level", "formal_reviews", "inline_comments"} {
+				records, ok := mapArray(sources[sourceName])
+				if !ok {
+					continue
+				}
+				for _, record := range records {
+					at, err := time.Parse(time.RFC3339Nano, stringValue(record, "response_timestamp"))
+					if err == nil && at.After(latest) {
+						latest = at
+					}
+				}
+			}
+			if !latest.IsZero() {
+				return latest.UTC().Format(time.RFC3339Nano)
+			}
+		}
+	}
+	if handoff.State.State == "timed_out" {
+		return time.Unix(int64(handoff.Request.DeadlineUnixSeconds), 0).UTC().Format(time.RFC3339Nano)
+	}
+	return handoff.Request.StartedAt
 }
 
 func reviewTriggerMatchesRequest(request reviewRequestEnvelope, trigger reviewTrigger) bool {
-	return request.TriggerID == trigger.ID
+	return reviewTriggerIdentity(request.TriggerID) == reviewTriggerIdentity(trigger.ID)
+}
+
+func reviewTriggerIdentity(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "raw:"
+	}
+	if parsed, err := url.Parse(id); err == nil {
+		if strings.HasPrefix(parsed.Fragment, "issuecomment-") {
+			commentID := strings.TrimPrefix(parsed.Fragment, "issuecomment-")
+			if isDecimal(commentID) {
+				return "comment:" + commentID
+			}
+		}
+	}
+	if isDecimal(id) {
+		return "comment:" + id
+	}
+	return "raw:" + id
+}
+
+func isDecimal(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *runSession) ensureReviewRegistrationForPR(ctx context.Context, workDir string, pr *github.PR, currentHead, runID string) error {
