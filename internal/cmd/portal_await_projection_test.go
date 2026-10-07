@@ -8,8 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 // TestPortal_AwaitEventShowsWaiting verifies that when a run has a current
@@ -149,6 +151,104 @@ func TestPortal_AwaitEventShowsWaiting(t *testing.T) {
 	}
 }
 
+func TestPortal_StartupPreservesAwaitingRunWithUnexpiredLease(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	batchID := "dead-await-portal"
+	runID := "run-await-portal-42"
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatalf("create batch directory: %v", err)
+	}
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: now.Add(-20 * time.Minute)}); err != nil {
+		t.Fatalf("write batch manifest: %v", err)
+	}
+	runDir := filepath.Join(batchDir, "runs", runID)
+	if err := batchindex.WriteManifest(runDir, batchindex.RunManifest{
+		RunID: runID, BatchID: batchID, Issue: 42,
+		Status: batchindex.RunManifestStatusActive, CreatedAt: now.Add(-19 * time.Minute),
+	}); err != nil {
+		t.Fatalf("write run manifest: %v", err)
+	}
+	addBatchToIndex(t, repoRoot, batchID, batchDir, []int{42})
+	if err := daemon.RenewRunWait(batchDir, daemon.RunWait{
+		Protocol: "run-wait/v1", RunID: runID, BatchID: batchID, Issue: 42,
+		Branch: "42-fix", BaseBranch: "main", OperationID: "ci:17:head",
+		OperationDeadline: now.Add(30 * time.Minute),
+	}, now); err != nil {
+		t.Fatalf("write awaiting snapshot: %v", err)
+	}
+	eventsPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
+	writePortalLog(t, eventsPath, []events.Event{
+		{Type: "run.started", RunID: runID, Issue: 42, Timestamp: now.Add(-19 * time.Minute), Payload: map[string]any{
+			"batch_id": batchID, "branch": "42-fix", "base_branch": "main",
+		}},
+		{Type: "run.await", RunID: runID, Issue: 42, Timestamp: now.Add(-10 * time.Minute), Payload: map[string]any{
+			"await_reason": "pending", "ci_wait": map[string]any{
+				"deadline_unix_seconds": now.Add(30 * time.Minute).Unix(),
+			},
+		}},
+	})
+
+	handler := newPortalHandler(repoRoot)
+	portal := handler.(*portalHandler)
+	portal.waitForStaleCleanup()
+	server := startPortalHTTPServer(t, handler)
+	runs := readPortalRuns(t, server.URL)
+	var got *portalRun
+	for i := range runs {
+		if runs[i].IssueNumber == 42 {
+			got = &runs[i]
+			break
+		}
+	}
+	if got == nil || got.Status != "waiting" || got.FinishedAt != nil {
+		t.Fatalf("portal row = %#v, want active waiting row", got)
+	}
+	logEvents, err := (&events.JSONLLogger{Path: eventsPath}).Read()
+	if err != nil {
+		t.Fatalf("read portal event log: %v", err)
+	}
+	for _, event := range logEvents {
+		if event.RunID == runID && event.Type == "run.aborted" {
+			t.Fatal("portal startup aborted an awaiting run with an unexpired lease")
+		}
+	}
+	manifest, err := batchindex.ReadManifest(runDir)
+	if err != nil {
+		t.Fatalf("read run manifest after portal startup: %v", err)
+	}
+	if manifest.Status != batchindex.RunManifestStatusActive {
+		t.Fatalf("run manifest status = %q, want active", manifest.Status)
+	}
+}
+
+func TestPortal_LiveReviewKeepsRunningAndReviewingPresentation(t *testing.T) {
+	started := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	runs := (&portalRunsView{}).aggregateReviewChildren(paths.NewLayout(nil, t.TempDir()), []portalRun{
+		{IssueNumber: 42, RunID: "impl-42", Key: "impl-42", Kind: "active", Status: "running", StartedAt: started},
+		{IssueNumber: 42, RunID: "review-42", Key: "review-42", Kind: "active", Status: "reviewing", Review: true, StartedAt: started.Add(time.Minute)},
+	})
+	var implementation, review *portalRun
+	for i := range runs {
+		switch runs[i].RunID {
+		case "impl-42":
+			implementation = &runs[i]
+		case "review-42":
+			review = &runs[i]
+		}
+	}
+	if implementation == nil || implementation.Status != "reviewing" || !implementation.ReviewLive {
+		t.Fatalf("live review aggregate changed implementation presentation: %#v", implementation)
+	}
+	if review == nil || review.Status != "reviewing" {
+		t.Fatalf("live review row presentation changed: %#v", review)
+	}
+}
+
 func TestPortal_WaitingBadgeHasDedicatedStyle(t *testing.T) {
 	html, err := os.ReadFile("portal.html")
 	if err != nil {
@@ -157,6 +257,42 @@ func TestPortal_WaitingBadgeHasDedicatedStyle(t *testing.T) {
 	source := string(html)
 	if !strings.Contains(source, ".badge.waiting {") || !strings.Contains(source, ".badge.waiting .dot {") {
 		t.Fatal("expected portal to style waiting badges distinctly")
+	}
+}
+
+func TestPortal_StartedCapacityContinuationStaysWaiting(t *testing.T) {
+	t.Parallel()
+	startedAt := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	for _, prior := range []string{"run.queued", "run.started", "run.continued"} {
+		t.Run(prior, func(t *testing.T) {
+			state := events.ProjectRunStates([]events.Event{
+				{Type: prior, Timestamp: startedAt, RunID: "row", Issue: 42, Payload: map[string]any{"initial_admission": true}},
+				{Type: "run.capacity_queued", Timestamp: startedAt.Add(time.Minute), RunID: "row", Issue: 42, Payload: map[string]any{"ready_continuation": true}},
+			})[0]
+			view := &portalRunsView{now: func() time.Time { return startedAt.Add(time.Hour) }}
+			row := view.runFromState(t.TempDir(), state, nil, nil, nil, nil)
+			want := "waiting"
+			if prior == "run.queued" {
+				want = "queued"
+			}
+			if row.Status != want || row.FinishedAt != nil {
+				t.Fatalf("after %s: status=%q finished=%v, want non-terminal %s", prior, row.Status, row.FinishedAt, want)
+			}
+		})
+	}
+}
+
+func TestPortal_CapacityDelayReplacesExternalAwaitPhase(t *testing.T) {
+	started := time.Now().UTC().Add(-time.Hour)
+	state := events.ProjectRunStates([]events.Event{
+		{Type: "run.started", RunID: "row", Issue: 42, Timestamp: started},
+		{Type: "run.await", RunID: "row", Issue: 42, Timestamp: started.Add(time.Minute), Payload: map[string]any{"await_reason": "pending"}},
+		{Type: "run.capacity_queued", RunID: "row", Issue: 42, Timestamp: started.Add(2 * time.Minute), Payload: map[string]any{"ready_continuation": true}},
+	})[0]
+	view := &portalRunsView{now: func() time.Time { return started.Add(time.Hour) }}
+	row := view.runFromState(t.TempDir(), state, nil, nil, nil, nil)
+	if state.IsAwaiting() || !state.IsCapacityQueued() || state.AwaitEvent == nil || row.Kind != "active" || row.Status != "waiting" || row.FinishedAt != nil || row.Duration != time.Minute.String() {
+		t.Fatalf("capacity transition retained old phase or revised lifecycle: state=%+v row=%+v", state, row)
 	}
 }
 
@@ -180,6 +316,9 @@ func TestPortal_AwaitDurationPausesAndResumes(t *testing.T) {
 	if row.Duration != "5m0s" {
 		t.Fatalf("waiting duration = %q, want frozen 5m0s", row.Duration)
 	}
+	if row.ActiveDurationSeconds != 300 || row.ExecutionSince != nil {
+		t.Fatalf("waiting execution clock = (%d, %v), want completed 300s with no active segment", row.ActiveDurationSeconds, row.ExecutionSince)
+	}
 	view.now = func() time.Time { return awaitAt.Add(3 * time.Hour) }
 	row = view.runFromState(repoRoot, awaiting, nil, nil, nil, nil)
 	if row.Duration != "5m0s" {
@@ -195,5 +334,8 @@ func TestPortal_AwaitDurationPausesAndResumes(t *testing.T) {
 	row = view.runFromState(repoRoot, resumed, nil, nil, nil, nil)
 	if row.Duration != "12m0s" {
 		t.Fatalf("resumed duration = %q, want 12m0s", row.Duration)
+	}
+	if row.ActiveDurationSeconds != 300 || row.ExecutionSince == nil || !row.ExecutionSince.Equal(resumedAt) {
+		t.Fatalf("resumed execution clock = (%d, %v), want 300s since %v", row.ActiveDurationSeconds, row.ExecutionSince, resumedAt)
 	}
 }

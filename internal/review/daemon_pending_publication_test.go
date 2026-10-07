@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,8 +13,39 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/batchindex"
+	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
 )
+
+type outboxObservingPoster struct {
+	base  *fakeCommentPoster
+	check func() error
+}
+
+func (p *outboxObservingPoster) PostComment(ctx context.Context, prNumber int, body string) error {
+	if err := p.check(); err != nil {
+		return err
+	}
+	return p.base.PostComment(ctx, prNumber, body)
+}
+
+type remoteAcceptThenErrorPoster struct {
+	gh    *fakeGH
+	pr    int
+	body  string
+	calls int
+}
+
+func (p *remoteAcceptThenErrorPoster) PostComment(context.Context, int, string) error {
+	p.calls++
+	if p.calls == 1 {
+		p.gh.mu.Lock()
+		p.gh.comments[p.pr] = append(p.gh.comments[p.pr], github.PRComment{ID: "accepted", Body: p.body})
+		p.gh.mu.Unlock()
+		return errors.New("remote response lost")
+	}
+	return nil
+}
 
 func TestDaemon_PostFailure_RehydratesDurableDecisionAfterCleanup(t *testing.T) {
 	const (
@@ -67,6 +99,17 @@ func TestDaemon_PostFailure_RehydratesDurableDecisionAfterCleanup(t *testing.T) 
 	if entry.runDir != filepath.Dir(runDecisionPath) {
 		t.Fatalf("pending decision source = %q, want durable run folder %q", entry.runDir, filepath.Dir(runDecisionPath))
 	}
+	markerBytes, err := os.ReadFile(filepath.Join(filepath.Dir(runDecisionPath), pendingPublicationMarkerName))
+	if err != nil {
+		t.Fatalf("read pending publication outbox: %v", err)
+	}
+	var marker pendingPublicationMarker
+	if err := json.Unmarshal(markerBytes, &marker); err != nil {
+		t.Fatalf("decode pending publication outbox: %v", err)
+	}
+	if marker.Body != publicationBody(RedactBody(body), marker.CommentID) {
+		t.Fatalf("pending outbox body = %q, want %q", marker.Body, publicationBody(RedactBody(body), marker.CommentID))
+	}
 
 	eventsBefore, err := os.ReadFile(filepath.Join(dir, "events.jsonl"))
 	if err != nil && !os.IsNotExist(err) {
@@ -85,8 +128,9 @@ func TestDaemon_PostFailure_RehydratesDurableDecisionAfterCleanup(t *testing.T) 
 		t.Fatalf("recovery tick PostComment calls = %d, want %d", poster.Calls(), PostStepMaxAttempts+1)
 	}
 	_, postedBody := poster.Captured()
-	if postedBody != body {
-		t.Fatalf("recovered body = %q, want %q", postedBody, body)
+	wantBody := publicationBody(RedactBody(body), reviewTriggerKey(gh.comments[prNumber][0]))
+	if postedBody != wantBody {
+		t.Fatalf("recovered body = %q, want %q", postedBody, wantBody)
 	}
 	if !d.IsTerminalSeen(prNumber, commentID) {
 		t.Fatal("recovered publication should mark the review trigger successful")
@@ -96,6 +140,301 @@ func TestDaemon_PostFailure_RehydratesDurableDecisionAfterCleanup(t *testing.T) 
 	}
 	if string(eventsAfter) != string(eventsBefore) {
 		t.Fatalf("publication recovery changed events.jsonl: before=%q after=%q", string(eventsBefore), string(eventsAfter))
+	}
+}
+
+func TestDaemon_PublicationOutboxPersistsExactRedactedBodyBeforePost(t *testing.T) {
+	const (
+		prNumber  = 2480
+		commentID = "c-outbox-body"
+		rawBody   = "## Decision\n/sandman review stays redacted\n"
+	)
+	gh := &fakeGH{
+		prs:      []github.PR{{Number: prNumber, State: "open"}},
+		comments: map[int][]github.PRComment{prNumber: {{ID: commentID, Body: "/sandman review"}}},
+		prFetch:  map[int]*github.PR{prNumber: {Number: prNumber, Title: "outbox body", Body: "body"}},
+	}
+	runner := &decisionCapturingRunner{capturedRequest: &capturedRequest{}, body: rawBody}
+	poster := &fakeCommentPoster{}
+	d, dir, _ := newReviewLaunchTestDaemon(t, gh, runner, newReviewLaunchTestConfig())
+	d.CommentPoster = &outboxObservingPoster{base: poster, check: func() error {
+		matches, err := filepath.Glob(filepath.Join(dir, "batches", "*", "runs", "*", pendingPublicationMarkerName))
+		if err != nil {
+			return err
+		}
+		if len(matches) != 1 {
+			return fmt.Errorf("outbox matches = %d, want 1", len(matches))
+		}
+		data, err := os.ReadFile(matches[0])
+		if err != nil {
+			return err
+		}
+		var marker pendingPublicationMarker
+		if err := json.Unmarshal(data, &marker); err != nil {
+			return err
+		}
+		want := publicationBody(RedactBody(rawBody), marker.CommentID)
+		if marker.Body != want {
+			return fmt.Errorf("outbox body = %q, want %q", marker.Body, want)
+		}
+		return nil
+	}}
+	tickAndWait(t, d, context.Background())
+	if poster.Calls() != 1 {
+		t.Fatalf("PostComment calls = %d, want 1", poster.Calls())
+	}
+	_, postedBody := poster.Captured()
+	wantBody := publicationBody(RedactBody(rawBody), reviewTriggerKey(gh.comments[prNumber][0]))
+	if postedBody != wantBody {
+		t.Fatalf("posted body = %q, want %q", postedBody, wantBody)
+	}
+}
+
+func TestDaemon_AmbiguousPostResultUsesRemoteMatchBeforeRetry(t *testing.T) {
+	const (
+		prNumber  = 2486
+		commentID = "c-ambiguous-post"
+		body      = "## Decision\n**APPROVED**\nambiguous post\n"
+	)
+	gh := &fakeGH{
+		prs:      []github.PR{{Number: prNumber, State: "open"}},
+		comments: map[int][]github.PRComment{prNumber: {{ID: commentID, Body: "/sandman review"}}},
+		prFetch:  map[int]*github.PR{prNumber: {Number: prNumber, Title: "ambiguous post", Body: "body"}},
+	}
+	runner := &decisionCapturingRunner{capturedRequest: &capturedRequest{}, body: body}
+	poster := &remoteAcceptThenErrorPoster{gh: gh, pr: prNumber, body: publicationBody(RedactBody(body), reviewTriggerKey(gh.comments[prNumber][0]))}
+	d, _, _ := newReviewLaunchTestDaemon(t, gh, runner, newReviewLaunchTestConfig())
+	d.CommentPoster = poster
+
+	tickAndWait(t, d, context.Background())
+
+	if poster.calls != 1 {
+		t.Fatalf("PostComment calls = %d, want 1 after remote exact match", poster.calls)
+	}
+	if !d.IsTerminalSeen(prNumber, reviewTriggerKey(gh.comments[prNumber][0])) {
+		t.Fatal("ambiguous remote success should terminalize the trigger")
+	}
+}
+
+func TestDaemon_InitialPublicationPostsWhenPriorCommentHasSameBody(t *testing.T) {
+	const (
+		prNumber  = 2487
+		commentID = "c-prior-identical-body"
+		body      = "## Decision\n**APPROVED**\nunchanged decision\n"
+	)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: prNumber, State: "open"}},
+		comments: map[int][]github.PRComment{prNumber: {
+			{ID: commentID, Body: "/sandman review"},
+			{ID: "prior-publication", Body: body},
+		}},
+		prFetch: map[int]*github.PR{prNumber: {Number: prNumber, Title: "prior identical body", Body: "body"}},
+	}
+	runner := &decisionCapturingRunner{capturedRequest: &capturedRequest{}, body: body}
+	poster := &fakeCommentPoster{}
+	d, _, _ := newReviewLaunchTestDaemon(t, gh, runner, newReviewLaunchTestConfig())
+	d.CommentPoster = poster
+
+	tickAndWait(t, d, context.Background())
+
+	if poster.Calls() != 1 {
+		t.Fatalf("initial publication PostComment calls = %d, want 1 despite prior identical body", poster.Calls())
+	}
+}
+
+func TestDaemon_PublicationOutboxFailurePreservesWorktreeWithoutPosting(t *testing.T) {
+	const (
+		prNumber  = 2481
+		commentID = "c-outbox-failure"
+	)
+	gh := &fakeGH{
+		prs:      []github.PR{{Number: prNumber, State: "open"}},
+		comments: map[int][]github.PRComment{prNumber: {{ID: commentID, Body: "/sandman review"}}},
+		prFetch:  map[int]*github.PR{prNumber: {Number: prNumber, Title: "outbox failure", Body: "body"}},
+	}
+	runner := &decisionCapturingRunner{capturedRequest: &capturedRequest{}, body: "decision"}
+	poster := &fakeCommentPoster{}
+	d, _, worktreeDir := newReviewLaunchTestDaemon(t, gh, runner, newReviewLaunchTestConfig())
+	d.CommentPoster = poster
+	d.persistPublication = func(string, pendingPublicationMarker) error {
+		return errors.New("outbox unavailable")
+	}
+	branch := reviewBranchName(prNumber, commentID)
+	stageReviewWorktree(t, worktreeDir, branch)
+
+	tickAndWait(t, d, context.Background())
+
+	if poster.Calls() != 0 {
+		t.Fatalf("PostComment calls = %d, want 0 when outbox persistence fails", poster.Calls())
+	}
+	if !gitWorktreeHasBranch(t, worktreeDir, branch) {
+		t.Fatal("outbox persistence failure must preserve the review worktree")
+	}
+	if _, ok := d.peekPendingPost(prNumber, reviewTriggerKey(gh.comments[prNumber][0])); !ok {
+		t.Fatal("outbox persistence failure must retain a pending publication")
+	}
+	tickAndWait(t, d, context.Background())
+	if poster.Calls() != 0 {
+		t.Fatalf("PostComment calls after repeated outbox failure = %d, want 0", poster.Calls())
+	}
+}
+
+func TestDaemon_RehydrateExactOutboxMatchAcknowledgesWithoutDuplicatePost(t *testing.T) {
+	const (
+		prNumber  = 2482
+		commentID = "c-outbox-match"
+		body      = "## Decision\n**APPROVED**\npersisted body\n"
+	)
+	trigger := github.PRComment{ID: commentID, Body: "/sandman review"}
+	gh := &fakeGH{
+		prs:      []github.PR{{Number: prNumber, State: "open"}},
+		comments: map[int][]github.PRComment{prNumber: {trigger, {ID: "published", Body: body}}},
+		prFetch:  map[int]*github.PR{prNumber: {Number: prNumber, Title: "outbox match", Body: "body"}},
+	}
+	runner := &capturedRequest{}
+	poster := &fakeCommentPoster{}
+	d, dir, _ := newReviewLaunchTestDaemon(t, gh, runner, newReviewLaunchTestConfig())
+	batchID := "outbox-match-batch"
+	seedPriorReviewEntry(t, dir, batchID, prNumber, commentID, "pending")
+	writeDecisionForTest(t, dir, batchID, prNumber, commentID, "mutated decision body")
+	runID := deriveReviewRowID(batchID, prNumber)
+	runDir := filepath.Join(dir, "batches", batchID, "runs", runID)
+	if err := writePendingPublicationMarker(runDir, pendingPublicationMarker{
+		Version:   1,
+		PR:        prNumber,
+		CommentID: reviewTriggerKey(trigger),
+		Body:      body,
+		Timestamp: time.Now(),
+	}); err != nil {
+		t.Fatalf("write outbox: %v", err)
+	}
+	d.CommentPoster = poster
+
+	tickAndWait(t, d, context.Background())
+
+	if runner.Calls() != 0 {
+		t.Fatalf("recovery RunBatch calls = %d, want 0", runner.Calls())
+	}
+	if poster.Calls() != 0 {
+		t.Fatalf("duplicate PostComment calls = %d, want 0", poster.Calls())
+	}
+	if !d.IsTerminalSeen(prNumber, reviewTriggerKey(trigger)) {
+		t.Fatal("exact remote match should acknowledge the trigger")
+	}
+	if _, err := os.Stat(filepath.Join(runDir, pendingPublicationMarkerName)); !os.IsNotExist(err) {
+		t.Fatalf("outbox removal err = %v, want file removed", err)
+	}
+}
+
+func TestDaemon_RemoteSuccessWithAcknowledgementFailureRecoversWithoutPost(t *testing.T) {
+	const (
+		prNumber  = 2483
+		commentID = "c-ack-failure"
+		body      = "## Decision\n**CHANGES_REQUESTED**\nack failure\n"
+	)
+	trigger := github.PRComment{ID: commentID, Body: "/sandman review"}
+	gh := &fakeGH{
+		prs:      []github.PR{{Number: prNumber, State: "open"}},
+		comments: map[int][]github.PRComment{prNumber: {trigger}},
+		prFetch:  map[int]*github.PR{prNumber: {Number: prNumber, Title: "ack failure", Body: "body"}},
+	}
+	runner := &decisionCapturingRunner{capturedRequest: &capturedRequest{}, body: body}
+	poster := &fakeCommentPoster{}
+	d1, dir, worktreeDir := newReviewLaunchTestDaemon(t, gh, runner, newReviewLaunchTestConfig())
+	d1.CommentPoster = poster
+	stageReviewWorktree(t, worktreeDir, reviewBranchName(prNumber, commentID))
+	previousSave := reviewStateSave
+	reviewStateSave = func(*ReviewStateStore) error { return errors.New("acknowledgement unavailable") }
+	t.Cleanup(func() { reviewStateSave = previousSave })
+
+	tickAndWait(t, d1, context.Background())
+	if poster.Calls() != 1 {
+		t.Fatalf("initial PostComment calls = %d, want 1", poster.Calls())
+	}
+	batchID := findReviewBatchID(t, dir)
+	runID := findReviewRunID(t, dir)
+	markerPath := filepath.Join(dir, "batches", batchID, "runs", runID, pendingPublicationMarkerName)
+	if _, err := os.Stat(markerPath); err != nil {
+		t.Fatalf("pending outbox stat: %v", err)
+	}
+	gh.mu.Lock()
+	gh.comments[prNumber] = append(gh.comments[prNumber], github.PRComment{ID: "published", Body: publicationBody(RedactBody(body), reviewTriggerKey(trigger))})
+	gh.mu.Unlock()
+	reviewStateSave = previousSave
+
+	d2 := New(dir, gh, d1.Prompts, runner, d1.Config, &lockedBuffer{}, 0, false, poster)
+	d2.PollInterval = 0
+	d2.postBackoffs = []time.Duration{0, 0, 0, 0, 0}
+	tickAndWait(t, d2, context.Background())
+
+	if runner.Calls() != 1 {
+		t.Fatalf("recovery RunBatch calls = %d, want 1", runner.Calls())
+	}
+	if poster.Calls() != 1 {
+		t.Fatalf("recovery duplicate PostComment calls = %d, want 1 total", poster.Calls())
+	}
+	if !d2.IsTerminalSeen(prNumber, reviewTriggerKey(trigger)) {
+		t.Fatal("recovery should acknowledge the already-published body")
+	}
+}
+
+func TestDaemon_PendingPublicationDoesNotConsumeCapacityForAnotherPR(t *testing.T) {
+	const (
+		pendingPR    = 2484
+		pendingID    = "c-pending-capacity"
+		launchPR     = 2485
+		launchID     = "c-launch-capacity"
+		pendingBody  = "pending publication body"
+		launchedBody = "launched publication body"
+	)
+	pendingTrigger := github.PRComment{ID: pendingID, Body: "/sandman review"}
+	launchTrigger := github.PRComment{ID: launchID, Body: "/sandman review"}
+	gh := &fakeGH{
+		prs: []github.PR{{Number: pendingPR, State: "open"}, {Number: launchPR, State: "open"}},
+		comments: map[int][]github.PRComment{
+			pendingPR: {pendingTrigger},
+			launchPR:  {launchTrigger},
+		},
+		prFetch: map[int]*github.PR{
+			pendingPR: {Number: pendingPR, Title: "pending capacity", Body: "body"},
+			launchPR:  {Number: launchPR, Title: "launch capacity", Body: "body"},
+		},
+	}
+	runner := &decisionCapturingRunner{capturedRequest: &capturedRequest{}, body: launchedBody}
+	poster := &fakeCommentPoster{}
+	d, dir, _ := newReviewLaunchTestDaemon(t, gh, runner, &config.Config{
+		DefaultReviewAgent:    "opencode",
+		DefaultReviewModel:    "m",
+		DefaultReviewParallel: 1,
+	})
+	d.CommentPoster = poster
+	batchID := "pending-capacity-batch"
+	seedPriorReviewEntry(t, dir, batchID, pendingPR, pendingID, "pending")
+	runID := deriveReviewRowID(batchID, pendingPR)
+	runDir := filepath.Join(dir, "batches", batchID, "runs", runID)
+	if err := writePendingPublicationMarker(runDir, pendingPublicationMarker{
+		Version:   1,
+		PR:        pendingPR,
+		CommentID: reviewTriggerKey(pendingTrigger),
+		Body:      pendingBody,
+		Timestamp: time.Now(),
+	}); err != nil {
+		t.Fatalf("write pending outbox: %v", err)
+	}
+	if err := d.InvalidatePendingPosts(); err != nil {
+		t.Fatalf("rehydrate pending outbox: %v", err)
+	}
+
+	tickAndWait(t, d, context.Background())
+
+	if runner.Calls() != 1 {
+		t.Fatalf("RunBatch calls = %d, want only the other PR to launch", runner.Calls())
+	}
+	if poster.Calls() != 2 {
+		t.Fatalf("PostComment calls = %d, want pending recovery plus other PR publication", poster.Calls())
+	}
+	if d.IsSlotHeld(pendingPR) {
+		t.Fatal("pending publication must not hold a review slot")
 	}
 }
 
@@ -186,9 +525,12 @@ func TestDaemon_CancelAfterDurableDecision_RehydratesAfterRestart(t *testing.T) 
 	)
 	updatedAt := mustParseTime(t, "2026-07-06T13:00:06Z")
 	gh := &fakeGH{
-		prs:      []github.PR{{Number: prNumber, State: "open"}},
-		comments: map[int][]github.PRComment{prNumber: {{ID: commentID, Body: "/sandman review", CreatedAt: updatedAt, UpdatedAt: updatedAt}}},
-		prFetch:  map[int]*github.PR{prNumber: {Number: prNumber, Title: "restart cancellation", Body: "body"}},
+		prs: []github.PR{{Number: prNumber, State: "open"}},
+		comments: map[int][]github.PRComment{prNumber: {
+			{ID: commentID, Body: "/sandman review", CreatedAt: updatedAt, UpdatedAt: updatedAt},
+			{ID: "prior-publication", Body: body},
+		}},
+		prFetch: map[int]*github.PR{prNumber: {Number: prNumber, Title: "restart cancellation", Body: "body"}},
 	}
 	runner := &decisionCapturingRunner{capturedRequest: &capturedRequest{}, body: body}
 	poster := &fakeCommentPoster{}
@@ -388,8 +730,9 @@ func TestDaemon_RestartRehydratesDurableDecisionAfterCleanup(t *testing.T) {
 		t.Fatalf("restart recovery PostComment calls = %d, want %d", poster.Calls(), PostStepMaxAttempts+1)
 	}
 	_, postedBody := poster.Captured()
-	if postedBody != body {
-		t.Fatalf("restart recovered body = %q, want %q", postedBody, body)
+	wantBody := publicationBody(RedactBody(body), commentID)
+	if postedBody != wantBody {
+		t.Fatalf("restart recovered body = %q, want %q", postedBody, wantBody)
 	}
 	if !d2.IsTerminalSeen(prNumber, commentID) {
 		t.Fatal("restart recovery should mark the review trigger successful")
@@ -451,8 +794,9 @@ func TestDaemon_DecisionPersistenceFailurePreservesWorktreeForRecovery(t *testin
 		t.Fatalf("preserved-source recovery PostComment calls = %d, want %d", poster.Calls(), PostStepMaxAttempts+1)
 	}
 	_, postedBody := poster.Captured()
-	if postedBody != body {
-		t.Fatalf("preserved-source recovery body = %q, want %q", postedBody, body)
+	wantBody := publicationBody(RedactBody(body), commentID)
+	if postedBody != wantBody {
+		t.Fatalf("preserved-source recovery body = %q, want %q", postedBody, wantBody)
 	}
 	if !d2.IsTerminalSeen(prNumber, commentID) {
 		t.Fatal("preserved-source recovery should mark the review trigger successful")

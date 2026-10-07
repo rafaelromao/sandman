@@ -128,6 +128,36 @@ func TestClaudeOutput_DroppedRecordsReportProgress(t *testing.T) {
 	}
 }
 
+func TestClaudeOutput_ModelProgressOnlyReportsPositiveAssistantText(t *testing.T) {
+	stdout, stderr := newClaudeOutputs()
+	var out bytes.Buffer
+	stdout.setDestination(&out)
+	stderr.setDestination(&out)
+	progress := 0
+	stdout.(interface{ setModelProgress(func()) }).setModelProgress(func() { progress++ })
+	stderr.(interface{ setModelProgress(func()) }).setModelProgress(func() { progress++ })
+	stream := strings.Join([]string{
+		`{"type":"system","subtype":"init","model":"sonnet"}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}`,
+		`{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":"failed"}]}}`,
+		`{"type":"assistant","error":"rate_limit","message":{"content":[{"type":"text","text":"You've hit your session limit"}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"provider recovered"}]}}`,
+		claudeUsageLimitResult,
+	}, "\n") + "\n"
+	if _, err := stdout.Write([]byte(stream)); err != nil {
+		t.Fatal(err)
+	}
+	if progress != 1 {
+		t.Fatalf("model progress calls = %d, want one positive stdout assistant text signal", progress)
+	}
+	if _, err := stderr.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"stderr must not recover"}]}}` + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	if progress != 1 {
+		t.Fatalf("stderr model progress calls = %d, want unchanged", progress)
+	}
+}
+
 // The idle-timeout heartbeat watches run.log's modification time. A long tool
 // call emits only heartbeat records, which the renderer drops, so they must
 // still advance the log's modification time.

@@ -62,7 +62,7 @@ func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Con
 		return nil, fmt.Errorf("resolve repo path: %w", err)
 	}
 
-	args := []string{"run", "-d", "--rm"}
+	args := []string{"run", "-d", "--rm", "--init"}
 	cleanup := func() {}
 	mountedTargets := map[string]bool{}
 

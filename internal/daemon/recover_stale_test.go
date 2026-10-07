@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,6 +23,68 @@ func (r *recordingEventLog) Log(event events.Event) error {
 }
 
 func (r *recordingEventLog) Read() ([]events.Event, error) { return nil, nil }
+
+type orphanRecoveryLog struct {
+	*recordingEventLog
+	read func() ([]events.Event, error)
+}
+
+func (l orphanRecoveryLog) Read() ([]events.Event, error) { return l.read() }
+
+func TestRecoverOrphanFencesTakeoverAndRechecksProjection(t *testing.T) {
+	for _, scenario := range []string{"claim-held", "new-owner", "same-batch-continuation", "terminal", "read-failure"} {
+		t.Run(scenario, func(t *testing.T) {
+			root := t.TempDir()
+			now := time.Now().UTC()
+			initial := []events.Event{{Type: "run.started", RunID: "orphan", Issue: 42, Timestamp: now.Add(-time.Hour), Payload: map[string]any{"batch_id": "old"}}}
+			captured := &recordingEventLog{}
+			readErr := errors.New("projection unavailable")
+			log := orphanRecoveryLog{captured, func() ([]events.Event, error) {
+				claim, err := ClaimRun(root, "orphan")
+				if claim != nil {
+					_ = claim.Close()
+				}
+				if !errors.Is(err, ErrRunOwned) {
+					t.Fatalf("recovery did not retain exclusive claim: %v", err)
+				}
+				latest := append([]events.Event(nil), initial...)
+				switch scenario {
+				case "new-owner", "same-batch-continuation":
+					batch := "old"
+					if scenario == "new-owner" {
+						batch = "new"
+					}
+					latest = append(latest, events.Event{Type: "run.continued", RunID: "orphan", Issue: 42, Timestamp: now, Payload: map[string]any{"batch_id": batch}})
+				case "terminal":
+					latest = append(latest, events.Event{Type: "run.finished", RunID: "orphan", Timestamp: now, Payload: map[string]any{"status": "success"}})
+				case "read-failure":
+					return nil, readErr
+				}
+				return latest, nil
+			}}
+			count, _, err := RecoverStaleRuns(root, initial, log)
+			if scenario == "read-failure" {
+				if !errors.Is(err, readErr) {
+					t.Fatalf("read failure not propagated: %v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			want := 0
+			if scenario == "claim-held" {
+				want = 1
+			}
+			if count != want || len(captured.logged) != want {
+				t.Fatalf("recovered=%d events=%+v want=%d", count, captured.logged, want)
+			}
+			claim, err := ClaimRun(root, "orphan")
+			if err != nil {
+				t.Fatalf("recovery leaked claim: %v", err)
+			}
+			_ = claim.Close()
+		})
+	}
+}
 
 func writeManifestFile(t *testing.T, runDir string, manifest BatchManifest) {
 	t.Helper()

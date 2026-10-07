@@ -83,6 +83,7 @@ printf 'agent-complete\n'
 					row.IssueNumber, row.RunTS, row.RunShortID, row.RunID = 42, orchTestRunTS, orchTestRunShortID, ""
 					branch, runKind = "42-lifecycle", batchindex.KindIssue
 				} else if kind == "review" {
+					row.IssueNumber = 42 // linked review metadata must not select issue policy
 					row.Review, row.PRNumber, row.ReviewFocus = true, 73, "correctness"
 					row.RunID = orchTestRunTS + "-" + orchTestRunShortID + "-PR73"
 					row.RenderCfg.TaskPrompt = "# Task\n\nReview PR73 for correctness"

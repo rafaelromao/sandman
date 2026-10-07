@@ -42,6 +42,8 @@ type AgentRun struct {
 	status                     string
 	contextExhausted           bool
 	usageLimitReached          bool
+	modelProgress              func()
+	usageLimit                 func()
 	cleanupError               error // distinct cleanup failure from context cancellation
 	contextRolloverLiterals    []string
 	env                        map[string]string
@@ -106,6 +108,11 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 	return r.execute(ctx, command, stdout, stderr, nil, nil)
 }
 
+func (r *AgentRun) setQuotaSignals(modelProgress, usageLimit func()) {
+	r.modelProgress = modelProgress
+	r.usageLimit = usageLimit
+}
+
 func (r *AgentRun) execute(ctx context.Context, command string, stdout, stderr io.Writer, parsedStdout, parsedStderr outputParser) error {
 	runFolder := r.runFolder
 	if runFolder == "" {
@@ -143,6 +150,12 @@ func (r *AgentRun) execute(ctx context.Context, command string, stdout, stderr i
 	for _, parser := range []outputParser{parsedStdout, parsedStderr} {
 		if observer, ok := parser.(progressObserver); ok {
 			observer.setProgress(touchLog)
+		}
+		if observer, ok := parser.(modelProgressObserver); ok {
+			observer.setModelProgress(r.modelProgress)
+		}
+		if observer, ok := parser.(usageLimitObserver); ok {
+			observer.setUsageLimit(r.usageLimit)
 		}
 	}
 	if parsedStdout != nil {
@@ -252,6 +265,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	var usageDetector *usageLimitDetector
 	if rule := strategy.UsageLimitRule(); rule != nil {
 		usageDetector = newUsageLimitDetector(rule)
+		usageDetector.setTrigger(r.usageLimit)
 	}
 	stdout := io.Writer(os.Stdout)
 	stderr := io.Writer(os.Stderr)

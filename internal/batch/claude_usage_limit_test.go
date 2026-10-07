@@ -25,10 +25,11 @@ func TestUsageLimitAwait_ClaudeResumesSameConversationWithContinue(t *testing.T)
 	sb := &claudeUsageLimitSandbox{workDir: filepath.Join(root, "worktree"), failures: 1}
 	log := &spyEventLog{}
 	var waits []time.Duration
-	client := &fakeGitHubClient{
+	client := &reviewWaitSchedulerGitHubClient{fakeGitHubClient: fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, Title: "Claude usage limit", State: "closed"}},
-		prs:    map[string]*github.PR{branch: {Number: 7, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: branch}},
-	}
+		prs:    map[string]*github.PR{branch: {Number: 7, State: "open", Body: "Closes #42", HeadRefName: branch}},
+	}}
+	sb.onSuccess = func() { client.setPR(branch, func(pr *github.PR) { pr.State, pr.Merged = "merged", true }) }
 	cfg := &config.Config{
 		Agent:          "claude",
 		DefaultAgent:   "claude",
@@ -114,8 +115,9 @@ func TestUsageLimitAwait_ExcludesCustomClaudeCommand(t *testing.T) {
 }
 
 type claudeUsageLimitSandbox struct {
-	workDir  string
-	failures int
+	workDir   string
+	failures  int
+	onSuccess func()
 
 	mu       sync.Mutex
 	attempts int
@@ -138,6 +140,9 @@ func (s *claudeUsageLimitSandbox) Exec(_ context.Context, command string, stdout
 		return errors.New("exit status 1")
 	}
 	_, _ = io.WriteString(stdout, `{"type":"result","subtype":"success","is_error":false,"result":"done"}`+"\n")
+	if s.onSuccess != nil {
+		s.onSuccess()
+	}
 	return nil
 }
 

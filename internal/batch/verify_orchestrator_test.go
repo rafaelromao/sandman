@@ -216,6 +216,7 @@ func TestRunSingle_AlreadyResolved_AllAbstainNoOpenPRSucceeds(t *testing.T) {
 	o := NewOrchestrator(
 		&fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs:    map[string]*github.PR{branch: nil},
 		},
 		&retryRenderer{result: "rendered prompt"},
 		nil,

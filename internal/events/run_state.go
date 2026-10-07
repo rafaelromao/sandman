@@ -17,6 +17,9 @@ type RunState struct {
 	// included in elapsed duration.
 	activeDuration time.Duration
 	activeSince    time.Time
+	// ownerBatchID is folded from accepted lifecycle evidence in append order.
+	// Terminal observation retains ownership without starting a new time segment.
+	ownerBatchID string
 	// AwaitEvent records the most recent run.await event for a run that
 	// is awaiting external progress (CI, review, decision publication).
 	// When set, the run is active (Finished is nil) and the event's
@@ -74,48 +77,63 @@ func ProjectRunStates(events []Event) []RunState {
 		state := getOrCreate(event.RunID)
 		switch event.Type {
 		case "run.started":
+			if state.IsTerminal() {
+				continue
+			}
+			state.accumulateActiveUntil(event.Timestamp)
 			state.Started = event
 			state.Finished = nil
 			state.awaiting = false
 			state.capacityQueued = false
-			state.activeDuration = 0
 			state.activeSince = event.Timestamp
 		case "run.continued":
-			previousBatchID := state.BatchID()
-			continuedBatchID, _ := payloadString(event.Payload, "batch_id")
-			// Multiple continuations for the same Batch belong to one run timer;
-			// a continuation from another Batch starts a fresh duration.
-			sameBatchContinuation := state.Finished == nil &&
-				previousBatchID != "" &&
-				continuedBatchID != "" &&
-				previousBatchID == continuedBatchID
-			if sameBatchContinuation {
-				state.accumulateActiveUntil(event.Timestamp)
-			} else {
-				state.activeDuration = 0
+			if state.IsTerminal() {
+				continue
 			}
+			// RunID, not batch ownership, identifies the execution clock.
+			// Paused segments are already closed and cannot count as active time.
+			state.accumulateActiveUntil(event.Timestamp)
 			state.Started = event
 			state.Finished = nil
 			state.awaiting = false
 			state.capacityQueued = false
 			state.activeSince = event.Timestamp
 		case "run.blocked":
-			state.Started = event
+			if state.IsTerminal() {
+				continue
+			}
+			state.accumulateActiveUntil(event.Timestamp)
+			if !state.HasStarted() {
+				state.Started = event
+			}
 			finished := event
 			state.Finished = &finished
 			state.awaiting = false
 			state.capacityQueued = false
-			state.activeDuration = 0
 			state.activeSince = time.Time{}
 		case "run.queued":
+			if state.HasStarted() || state.IsTerminal() {
+				// A stale admission event cannot return execution to its initial
+				// queue or replace an existing terminal decision.
+				continue
+			}
 			state.Started = event
-			finished := event
-			state.Finished = &finished
+			// New admission is explicitly unfinished. Untagged append-only
+			// historical rows retain their terminal placeholder interpretation.
+			initial, _ := payloadBool(event.Payload, "initial_admission")
+			terminal, _ := payloadBool(event.Payload, "terminal_placeholder")
+			if !initial || terminal {
+				finished := event
+				state.Finished = &finished
+			}
 			state.awaiting = false
 			state.capacityQueued = false
 			state.activeDuration = 0
 			state.activeSince = time.Time{}
 		case "run.await":
+			if state.IsTerminal() {
+				continue
+			}
 			// run.await is a non-terminal event: it records that the run
 			// is awaiting external progress (CI, review, decision
 			// publication) without consuming retries or holding capacity.
@@ -126,14 +144,18 @@ func ProjectRunStates(events []Event) []RunState {
 			state.awaiting = true
 			state.capacityQueued = false
 		case "run.capacity_queued":
-			// This non-terminal phase is distinct from both external waiting
-			// and the terminal run.queued placeholder. The external operation
-			// has resolved; the ready continuation is durably waiting for
-			// scheduler capacity and may be rehydrated after a restart.
+			if state.IsTerminal() {
+				continue
+			}
+			// Persist scheduler readiness without returning a started run to
+			// its initial queue. A started continuation stays waiting until
+			// execution resumes; an unstarted row remains queued for admission.
 			state.accumulateActiveUntil(event.Timestamp)
 			queuedEvent := event
 			state.CapacityQueuedEvent = &queuedEvent
-			state.Finished = nil
+			if state.Started.RunID == "" {
+				state.Started = event
+			}
 			state.awaiting = false
 			state.capacityQueued = true
 		case "run.resumed":
@@ -152,18 +174,30 @@ func ProjectRunStates(events []Event) []RunState {
 				state.capacityQueued = false
 			}
 		case "run.finished", "run.aborted", "run.cancelled":
+			if state.IsTerminal() {
+				continue
+			}
 			state.accumulateActiveUntil(event.Timestamp)
 			finished := event
 			state.Finished = &finished
 			state.awaiting = false
 			state.capacityQueued = false
 		case "run.retry":
+			if state.IsTerminal() {
+				continue
+			}
 			state.Retries = append(state.Retries, event)
-			if state.awaiting {
+			if state.awaiting || state.capacityQueued {
 				state.activeSince = event.Timestamp
 			}
 			state.awaiting = false
 			state.capacityQueued = false
+		}
+		switch event.Type {
+		case "run.started", "run.continued", "run.queued", "run.await", "run.capacity_queued", "run.blocked", "run.finished", "run.aborted", "run.cancelled":
+			if id, ok := payloadString(event.Payload, "batch_id"); ok && id != "" {
+				state.ownerBatchID = id
+			}
 		}
 	}
 
@@ -257,11 +291,17 @@ func (r RunState) IsActive() bool {
 }
 
 // IsTerminal is the lifecycle completion predicate for all readers and artifact
-// operations. Completion comes from a terminal event, not a status label: both
-// a terminal placeholder and a capacity-queued continuation are labelled queued.
+// operations. Completion comes from a terminal event, not a status label:
+// unstarted placeholders and ready admissions can both be labelled queued.
 // The zero state (no lifecycle evidence) is never terminal.
 func (r RunState) IsTerminal() bool {
 	return r.Finished != nil
+}
+
+// HasStarted reports actual execution admission, never an initial queue or an
+// artifact snapshot. It remains true through external and capacity waits.
+func (r RunState) HasStarted() bool {
+	return r.Started.Type == "run.started" || r.Started.Type == "run.continued"
 }
 
 // ReadRunStates reads the authoritative event projection, keyed by RunID.
@@ -281,8 +321,8 @@ func ReadRunStates(log EventLog) (map[string]RunState, error) {
 	return states, nil
 }
 
-// IsAwaiting reports whether the current lifecycle phase is an external
-// await. It does not infer current state from AwaitEvent alone because that
+// IsAwaiting reports whether a run is waiting for external progress.
+// It does not infer state from AwaitEvent alone because that
 // event remains available after a continuation or resume for diagnostics.
 func (r RunState) IsAwaiting() bool {
 	return r.IsActive() && r.awaiting
@@ -294,10 +334,19 @@ func (r RunState) IsCapacityQueued() bool {
 	return r.IsActive() && r.capacityQueued
 }
 
-// Status returns the terminal status from the finished event, or "queued"
-// while a resolved continuation is waiting for execution capacity.
+// Status returns the terminal status, or the waiting/admission status of a
+// durable capacity continuation. Once started, a run never returns to queued.
 func (r RunState) Status() string {
+	if r.IsAwaiting() {
+		return "waiting"
+	}
 	if r.IsCapacityQueued() {
+		if r.HasStarted() {
+			return "waiting"
+		}
+		return RunStatusQueued.String()
+	}
+	if r.IsActive() && r.Started.Type == "run.queued" {
 		return RunStatusQueued.String()
 	}
 	return runStatusFromFinished(r.Finished).String()
@@ -330,7 +379,7 @@ func runStatusFromFinished(finished *Event) RunStatus {
 
 // Branch returns the run branch from the first event that recorded one.
 func (r RunState) Branch() string {
-	if r.CapacityQueuedEvent != nil {
+	if r.IsCapacityQueued() && r.CapacityQueuedEvent != nil {
 		if branch, ok := payloadString(r.CapacityQueuedEvent.Payload, "branch"); ok && branch != "" {
 			return branch
 		}
@@ -346,10 +395,18 @@ func (r RunState) Branch() string {
 	return ""
 }
 
-// BatchID returns the batch identifier from the started event payload.
+// BatchID returns the current event-derived owner, including slot-free finishes.
 func (r RunState) BatchID() string {
-	if r.CapacityQueuedEvent != nil {
+	if r.ownerBatchID != "" {
+		return r.ownerBatchID
+	}
+	if r.IsCapacityQueued() && r.CapacityQueuedEvent != nil {
 		if id, ok := payloadString(r.CapacityQueuedEvent.Payload, "batch_id"); ok && id != "" {
+			return id
+		}
+	}
+	if r.IsAwaiting() && r.AwaitEvent != nil {
+		if id, ok := payloadString(r.AwaitEvent.Payload, "batch_id"); ok && id != "" {
 			return id
 		}
 	}
@@ -389,6 +446,18 @@ func (r RunState) DurationAt(at time.Time) time.Duration {
 		duration += at.Sub(r.activeSince)
 	}
 	return duration.Round(time.Second)
+}
+
+// ExecutionClock returns the completed active duration and the start of the
+// current active segment. A zero segment start means the run is waiting,
+// capacity-queued, or terminal, so callers must keep the returned baseline
+// frozen instead of interpolating from a lifecycle start timestamp.
+func (r RunState) ExecutionClock() (time.Duration, time.Time) {
+	baseline := r.activeDuration.Round(time.Second)
+	if r.Finished != nil || r.awaiting || r.capacityQueued {
+		return baseline, time.Time{}
+	}
+	return baseline, r.activeSince
 }
 
 func (r *RunState) accumulateActiveUntil(at time.Time) {

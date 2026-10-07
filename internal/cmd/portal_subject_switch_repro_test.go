@@ -480,7 +480,7 @@ func TestPortalSummaryPoll_UsesIfNoneMatchAndKeepsRowsOn304(t *testing.T) {
           status: 200,
           headers: { get: function (name) { return name === 'ETag' ? '"etag-1"' : ''; } },
           json: async function () {
-            return { runs: [{ key: 'r1', runId: 'r1', kind: 'active', status: 'running', issueLabel: '#1', issueNumber: 1, startedAt: new Date(Date.now() - 61000).toISOString(), lastOutputAt: new Date().toISOString(), duration: '0s', archived: false, unavailable: false, sourceExists: true }] };
+             return { runs: [{ key: 'r1', runId: 'r1', kind: 'active', status: 'running', issueLabel: '#1', issueNumber: 1, startedAt: new Date(Date.now() - 61000).toISOString(), executionSince: new Date(Date.now() - 61000).toISOString(), activeDurationSeconds: 0, lastOutputAt: new Date().toISOString(), duration: '0s', archived: false, unavailable: false, sourceExists: true }] };
           },
           text: async function () { return ''; },
         };

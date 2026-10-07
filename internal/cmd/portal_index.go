@@ -315,7 +315,7 @@ func portalSummarySourceKey(repoRoot string, runStates []events.RunState, active
 		}
 		activeFingerprint[i] = summaryActiveFingerprint{
 			portalActiveRun: active,
-			LastOutputAt:    portalLastOutputAt((&portalRunsView{}).portalLogPathForRun(repoRoot, runLocator{batchID: batchID, runID: runID}), startedAt),
+			LastOutputAt:    portalLastOutputAt(portalSummaryLogPath(repoRoot, batchesIndex, active, batchID, runID), startedAt),
 		}
 	}
 	payload, err := json.Marshal(struct {
@@ -336,8 +336,19 @@ func portalSummarySourceKey(repoRoot string, runStates []events.RunState, active
 	return hex.EncodeToString(sum[:]), nil
 }
 
+func portalSummaryLogPath(repoRoot string, idx *batchindex.Index, active portalActiveRun, batchID, runID string) string {
+	if dir := persistedRunDir(repoRoot, idx, batchID, runID); dir != "" {
+		return (paths.RunLocation{ID: runID, Dir: dir}).LogPath()
+	}
+	if active.Dir != "" {
+		return (paths.BatchLocation{Dir: active.Dir}).Run(runID).LogPath()
+	}
+	return paths.NewLayout(nil, repoRoot).RunLogPath(batchID, runID)
+}
+
 func portalReviewEvidence(repoRoot string, runStates []events.RunState, idx *batchindex.Index) []portalReviewEvidenceFingerprint {
 	runDirs := make(map[string]struct{})
+	layout := paths.NewLayout(nil, repoRoot)
 	if idx != nil {
 		for i := range idx.Batches {
 			batch := &idx.Batches[i]
@@ -348,27 +359,20 @@ func portalReviewEvidence(repoRoot string, runStates []events.RunState, idx *bat
 				if record.RunID == "" {
 					continue
 				}
-				runDir := filepath.Join(batch.Path, "runs", record.RunID)
-				if record.ArchivePath != "" {
-					runDir = record.ArchivePath
-					if !filepath.IsAbs(runDir) {
-						runDir = filepath.Join(repoRoot, runDir)
-					}
-				}
+				runDir := batch.RunLocation(layout, record.RunID).Dir
 				runDirs[runDir] = struct{}{}
 			}
-			entries, err := os.ReadDir(filepath.Join(batch.Path, "runs"))
+			entries, err := os.ReadDir(batch.Location(layout).RunsDir())
 			if err != nil {
 				continue
 			}
 			for _, entry := range entries {
 				if entry.IsDir() {
-					runDirs[filepath.Join(batch.Path, "runs", entry.Name())] = struct{}{}
+					runDirs[batch.RunLocation(layout, entry.Name()).Dir] = struct{}{}
 				}
 			}
 		}
 	}
-	layout := paths.NewLayout(nil, repoRoot)
 	for _, runState := range runStates {
 		if !runState.IsReview() || runState.RunID == "" {
 			continue

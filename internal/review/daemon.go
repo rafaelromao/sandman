@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +22,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/reviewlaunch"
 	"github.com/rafaelromao/sandman/internal/runid"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/rafaelromao/sandman/internal/socketpath"
@@ -153,15 +155,30 @@ type pendingPostEntry struct {
 	commentID   string
 	runDir      string    // absolute path to <batch>/runs/<rowID>
 	reviewState string    // absolute path to <runDir>/review-state.json
+	body        string    // exact redacted publication body, when outboxed
 	since       time.Time // when the trigger entered `pending` on disk
 }
 
 const pendingPublicationMarkerName = "pending-publication.json"
 
+const publicationIdentityPrefix = "<!-- sandman-publication:"
+
 type pendingPublicationMarker struct {
+	Version   int       `json:"version"`
 	PR        int       `json:"pr"`
 	CommentID string    `json:"comment_id"`
+	RunID     string    `json:"run_id"`
+	Body      string    `json:"body"`
 	Timestamp time.Time `json:"timestamp"`
+}
+
+// publicationBody keeps the rendered decision unchanged while adding an
+// invisible request identity. Body equality alone cannot distinguish a new
+// review from an older request with the same decision text during recovery.
+func publicationBody(redacted, triggerKey string) string {
+	identity := sha256.Sum256([]byte(triggerKey))
+	return strings.TrimRight(redacted, "\n") + "\n\n" +
+		publicationIdentityPrefix + fmt.Sprintf("%x", identity[:]) + " -->\n"
 }
 
 // Daemon polls the repo for /sandman review comments and launches review
@@ -237,6 +254,10 @@ type Daemon struct {
 	// production default is atomicfs.WriteAtomic; the seam lets tests
 	// exercise the cleanup contract when durable persistence fails.
 	persistDecision func(path string, body []byte) error
+	// persistPublication is the atomic publication-outbox writer. The
+	// production default is writePendingPublicationMarker; the seam
+	// lets tests exercise the no-post-before-durability contract.
+	persistPublication func(path string, marker pendingPublicationMarker) error
 	// postBackoffs is the per-attempt sleep schedule used by
 	// postWithRetry. It defaults to the package-level
 	// postStepBackoffs when nil; tests inject a zero-length slice
@@ -1053,25 +1074,38 @@ func (d *Daemon) loadPendingPosts() error {
 		marker, markerErr := readPendingPublicationMarker(runDir)
 		if markerErr == nil && marker.PR == entry.PR {
 			terminal := false
+			terminalStatus := ""
 			if stateErr == nil {
 				for _, sc := range state.SeenComments {
 					if sc.CommentID == marker.CommentID && shouldSkipDedupStatus(sc.Status) {
 						terminal = true
+						terminalStatus = sc.Status
 						break
 					}
 				}
 			}
 			if !terminal {
-				if decisionDir, ok := d.decisionSourceDir(entry.PR, marker.CommentID, runDir); ok {
-					if _, ok := d.pendingPost[entry.PR]; !ok {
-						d.pendingPost[entry.PR] = map[string]pendingPostEntry{}
+				decisionDir := runDir
+				if marker.Body == "" {
+					var ok bool
+					decisionDir, ok = d.decisionSourceDir(entry.PR, marker.CommentID, runDir)
+					if !ok {
+						continue
 					}
-					d.pendingPost[entry.PR][marker.CommentID] = pendingPostEntry{
-						commentID:   marker.CommentID,
-						runDir:      decisionDir,
-						reviewState: reviewState,
-						since:       marker.Timestamp,
-					}
+				}
+				if _, ok := d.pendingPost[entry.PR]; !ok {
+					d.pendingPost[entry.PR] = map[string]pendingPostEntry{}
+				}
+				d.pendingPost[entry.PR][marker.CommentID] = pendingPostEntry{
+					commentID:   marker.CommentID,
+					runDir:      decisionDir,
+					reviewState: reviewState,
+					body:        marker.Body,
+					since:       marker.Timestamp,
+				}
+			} else if terminalStatus == "success" {
+				if err := removePendingPublicationMarker(runDir); err != nil {
+					d.logf("remove acknowledged publication outbox %s: %v", runDir, err)
 				}
 			}
 		}
@@ -1095,6 +1129,9 @@ func (d *Daemon) loadPendingPosts() error {
 			}
 			if _, ok := d.pendingPost[entry.PR]; !ok {
 				d.pendingPost[entry.PR] = map[string]pendingPostEntry{}
+			}
+			if _, ok := d.pendingPost[entry.PR][sc.CommentID]; ok {
+				continue
 			}
 			d.pendingPost[entry.PR][sc.CommentID] = pendingPostEntry{
 				commentID:   sc.CommentID,
@@ -1695,6 +1732,30 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		}
 	}
 
+	// A durable publication outbox takes precedence over terminal-cache
+	// filtering. Acknowledgement may have succeeded remotely while the
+	// local state write or outbox removal failed; recovery must inspect
+	// that body before any launch decision can discard the trigger.
+	d.pendingPostMu.Lock()
+	pendingKeys := make(map[string]bool, len(d.pendingPost[prNumber]))
+	for key := range d.pendingPost[prNumber] {
+		pendingKeys[key] = true
+	}
+	d.pendingPostMu.Unlock()
+	if len(pendingKeys) > 0 {
+		remaining := make([]unseenTrigger, 0, len(triggers))
+		for _, trigger := range triggers {
+			if pendingKeys[trigger.key] && d.tryRehydratePost(ctx, prNumber, trigger.comment) {
+				continue
+			}
+			remaining = append(remaining, trigger)
+		}
+		triggers = remaining
+		if len(triggers) == 0 {
+			return nil
+		}
+	}
+
 	// Cross-run dedup: read terminal-seen membership from the
 	// per-process in-memory cache populated at construction
 	// (issue #1480). ADR-0034 §3 accepts the rename-loser
@@ -2154,7 +2215,15 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	// always target the same branch.
 	reviewBranch := reviewBranchName(prNumber, triggerKey)
 	preserveWorktree := false
+	var launchClaim *os.File
+	var lookupClaim *os.File
 	defer func() {
+		if lookupClaim != nil {
+			defer lookupClaim.Close()
+		}
+		if launchClaim != nil {
+			defer launchClaim.Close()
+		}
 		if rs != nil {
 			_ = rs.Close()
 		}
@@ -2176,9 +2245,52 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 		}
 	}()
 
+	// The request identity is known before a PR head can be observed. Keep
+	// this head-independent claim through publication and cleanup: branches,
+	// worktrees and decisions are request-scoped even when the PR head changes.
+	// It also fences bounded lookup failures under the unknown-head operation.
+	lookupClaim, err := reviewlaunch.ClaimLaunch(filepath.Join(d.BaseDir, "state"), prNumber, triggerKey, "")
+	if err != nil {
+		preserveWorktree = true
+		state.Release(triggerKey)
+		return fmt.Errorf("claim reviewer lookup budget: %w", err)
+	}
+	lookupBudget, err := reviewlaunch.Read(filepath.Join(d.BaseDir, "state"), prNumber, triggerKey, "")
+	if err != nil || lookupBudget.Attempts >= reviewlaunch.MaxAttempts {
+		state.Release(triggerKey)
+		if err != nil {
+			return fmt.Errorf("read reviewer lookup budget: %w", err)
+		}
+		return fmt.Errorf("REVIEW_LAUNCH_EXHAUSTED: request %s exhausted %d PR lookup failures", triggerKey, lookupBudget.Attempts)
+	}
 	pr, err := d.GitHub.FetchPR(ctx, prNumber)
 	if err != nil {
-		return fmt.Errorf("fetch PR: %w", err)
+		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("fetch PR: %w", err), "")
+	}
+	if pr == nil {
+		return d.recordLaunchFailure(ctx, triggerKey, state, errors.New("fetch PR: empty response"), "")
+	}
+	if pr != nil {
+		if strings.TrimSpace(pr.HeadRefOid) == "" {
+			launchClaim, lookupClaim = lookupClaim, nil
+		} else {
+			launchClaim, err = reviewlaunch.ClaimLaunch(filepath.Join(d.BaseDir, "state"), prNumber, triggerKey, pr.HeadRefOid)
+		}
+		if err != nil {
+			// Another daemon owns this exact request/head. Its artifacts must
+			// survive this losing worker's cleanup.
+			preserveWorktree = true
+			state.Release(triggerKey)
+			return fmt.Errorf("claim reviewer launch budget: %w", err)
+		}
+		budget, err := reviewlaunch.Read(filepath.Join(d.BaseDir, "state"), prNumber, triggerKey, pr.HeadRefOid)
+		if err != nil || budget.Attempts >= reviewlaunch.MaxAttempts {
+			state.Release(triggerKey)
+			if err != nil {
+				return fmt.Errorf("read reviewer launch budget: %w", err)
+			}
+			return fmt.Errorf("REVIEW_LAUNCH_EXHAUSTED: request %s exhausted %d launch failures", triggerKey, budget.Attempts)
+		}
 	}
 
 	// sandboxMode stays the effective resolution the rest of this
@@ -2224,14 +2336,14 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 		}); ok {
 			issue, fetchErr := fetcher.FetchIssue(ctx, linkedIssue)
 			if fetchErr != nil {
-				return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("fetch linked work item #%d for review prompt: %w", linkedIssue, fetchErr))
+				return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("fetch linked work item #%d for review prompt: %w", linkedIssue, fetchErr), pr.HeadRefOid)
 			} else if issue != nil {
 				acceptanceCriteria = issue.Body
 			} else {
-				return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("fetch linked work item #%d for review prompt: empty response", linkedIssue))
+				return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("fetch linked work item #%d for review prompt: empty response", linkedIssue), pr.HeadRefOid)
 			}
 		} else {
-			return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("fetch linked work item #%d for review prompt: client does not support issue content", linkedIssue))
+			return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("fetch linked work item #%d for review prompt: client does not support issue content", linkedIssue), pr.HeadRefOid)
 		}
 	}
 
@@ -2246,7 +2358,7 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	// trigger gets the bounded-retry budget instead of a full launch
 	// attempt on every tick.
 	if err := d.initPromptTemplate(); err != nil {
-		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("init review prompt template: %w", err))
+		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("init review prompt template: %w", err), pr.HeadRefOid)
 	}
 
 	rendered, err := d.Prompts.RenderReview(prompt.RenderConfig{
@@ -2266,7 +2378,7 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	// launch failure so the trigger gets the bounded-retry budget instead
 	// of being re-rendered on every tick (issue #2501).
 	if err != nil {
-		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("render review prompt: %w", err))
+		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("render review prompt: %w", err), pr.HeadRefOid)
 	}
 
 	agentName := ""
@@ -2276,15 +2388,15 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 		modelName = d.effectiveModel()
 	}
 	if agentName == "" {
-		return errors.New("review agent is not set; configure review_agent or agent in sandman config")
+		return d.recordLaunchFailure(ctx, triggerKey, state, errors.New("review agent is not set; configure review_agent or agent in sandman config"), pr.HeadRefOid)
 	}
 	if modelName == "" {
-		return errors.New("review model is not set; configure review_model or model in sandman config")
+		return d.recordLaunchFailure(ctx, triggerKey, state, errors.New("review model is not set; configure review_model or model in sandman config"), pr.HeadRefOid)
 	}
 
 	repoName, err := d.GitHub.RepoName(ctx)
 	if err != nil {
-		return fmt.Errorf("get repo name: %w", err)
+		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("get repo name: %w", err), pr.HeadRefOid)
 	}
 	d.logf("repo=%s agent=%s model=%s pr=%d", repoName, agentName, modelName, prNumber)
 
@@ -2329,7 +2441,7 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 		return errors.New("quota exhausted: usage limit reached")
 	}
 	if err != nil {
-		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("run batch: %w", err))
+		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("run batch: %w", err), pr.HeadRefOid)
 	}
 
 	// S3 post step (issue #1846): the agent writes
@@ -2342,7 +2454,21 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	// `else` branch only Releases the claim so the bounded-retry
 	// escape can re-process the comment if launchReview returned
 	// an error before any decision.md existed.
-	return d.postDecisionWithCleanup(ctx, prNumber, triggerKey, reviewRunFolder, state, &preserveWorktree)
+	postErr := d.postDecisionWithCleanup(ctx, prNumber, triggerKey, reviewRunFolder, state, &preserveWorktree)
+	if postErr != nil && ctx.Err() == nil {
+		info, statErr := os.Stat(d.reviewDecisionPath(prNumber, triggerKey))
+		if statErr != nil || info.IsDir() {
+			// No decision exists to publish. This is another failed launch,
+			// unlike recoverable publication of an already durable decision.
+			// Preserve pending publication state while bounding missing/unreadable
+			// decision attempts independently from publication recovery.
+			if _, err := reviewlaunch.RecordFailure(filepath.Join(d.BaseDir, "state"), prNumber, triggerKey, pr.HeadRefOid); err != nil {
+				return fmt.Errorf("persist reviewer decision-read budget: %w", err)
+			}
+			return postErr
+		}
+	}
+	return postErr
 }
 
 // postDecision implements the S3 post step (issue #1846):
@@ -2395,7 +2521,7 @@ func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, comm
 			// falls through to the launch path. The seen cache
 			// is NOT marked terminal-seen so the trigger stays
 			// visible to subsequent ticks.
-			d.registerPendingPost(prNumber, commentID, d.reviewWorktreePath(prNumber, commentID), reviewRunFolder)
+			d.registerPendingPost(prNumber, commentID, d.reviewWorktreePath(prNumber, commentID), reviewRunFolder, "")
 			return fmt.Errorf("missing %s: %w", decisionPath, err)
 		}
 		return fmt.Errorf("stat %s: %w", decisionPath, err)
@@ -2407,7 +2533,7 @@ func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, comm
 				d.logf("PR #%d: mark %s pending: %v", prNumber, commentID, markErr)
 			}
 		}
-		d.registerPendingPost(prNumber, commentID, d.reviewWorktreePath(prNumber, commentID), reviewRunFolder)
+		d.registerPendingPost(prNumber, commentID, d.reviewWorktreePath(prNumber, commentID), reviewRunFolder, "")
 		return fmt.Errorf("%s is a directory", decisionPath)
 	}
 
@@ -2440,22 +2566,43 @@ func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, comm
 		*preserveWorktree = true
 	}
 
+	redacted := publicationBody(RedactBody(string(body)), commentID)
+	if err := d.persistPublicationOutbox(reviewRunFolder, pendingPublicationMarker{
+		Version:   2,
+		PR:        prNumber,
+		CommentID: commentID,
+		RunID:     filepath.Base(reviewRunFolder),
+		Body:      redacted,
+		Timestamp: d.now(),
+	}); err != nil {
+		d.logf("PR #%d: persist publication outbox failed: %v; preserving the review worktree", prNumber, err)
+		if preserveWorktree != nil {
+			*preserveWorktree = true
+		}
+		if state != nil {
+			if markErr := state.MarkSeen(commentID, "pending"); markErr != nil {
+				d.logf("PR #%d: mark %s pending after outbox failure: %v", prNumber, commentID, markErr)
+			}
+		}
+		// Keep the entry body empty so rehydration must first commit the
+		// outbox before it can make a later remote call.
+		d.registerPendingPost(prNumber, commentID, decisionDir, reviewRunFolder, "")
+		return fmt.Errorf("persist publication outbox: %w", err)
+	}
 	// Honour ctx cancellation observed between RunBatch returning
-	// and the post step. The decision is already durable, so retain
-	// it as a pending publication instead of allowing cleanup to
+	// and the post step. The decision and exact publication body are
+	// already durable, so retain them instead of allowing cleanup to
 	// make the trigger eligible for a second reviewer run.
 	if cerr := ctx.Err(); cerr != nil {
 		d.logf("PR #%d: ctx cancelled before post; retaining durable decision for publication recovery", prNumber)
-		d.recordPendingPublication(prNumber, commentID, decisionDir, reviewRunFolder, state, preserveWorktree)
+		d.recordPendingPublication(prNumber, commentID, decisionDir, reviewRunFolder, redacted, state, preserveWorktree)
 		return cerr
 	}
-
-	redacted := RedactBody(string(body))
 	postErr := postWithRetry(ctx, d, prNumber, redacted)
 	if postErr != nil {
 		if cerr := ctx.Err(); cerr != nil {
 			d.logf("PR #%d: ctx cancelled during post; retaining durable decision for publication recovery", prNumber)
-			d.recordPendingPublication(prNumber, commentID, decisionDir, reviewRunFolder, state, preserveWorktree)
+			d.recordPendingPublication(prNumber, commentID, decisionDir, reviewRunFolder, redacted, state, preserveWorktree)
 			return cerr
 		}
 		// Post failed after the retry budget. Fall back to the
@@ -2471,7 +2618,7 @@ func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, comm
 		// MarkTerminalSeen because those represent "the agent did
 		// not produce a review", not "the post could not land".
 		d.logf("PR #%d: post failed after %d attempts (last err: %v); registering as pending for rehydrate (issue #1891)", prNumber, PostStepMaxAttempts, postErr)
-		d.recordPendingPublication(prNumber, commentID, decisionDir, reviewRunFolder, state, preserveWorktree)
+		d.recordPendingPublication(prNumber, commentID, decisionDir, reviewRunFolder, redacted, state, preserveWorktree)
 		return fmt.Errorf("post decision: %w", postErr)
 	}
 
@@ -2482,8 +2629,12 @@ func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, comm
 	}
 	if state != nil {
 		if err := state.MarkSeen(commentID, "success"); err != nil {
+			d.registerPendingPost(prNumber, commentID, decisionDir, reviewRunFolder, redacted)
 			return fmt.Errorf("mark %s success: %w", commentID, err)
 		}
+	}
+	if err := removePendingPublicationMarker(reviewRunFolder); err != nil {
+		d.logf("PR #%d: remove publication outbox: %v", prNumber, err)
 	}
 	return nil
 }
@@ -2498,6 +2649,30 @@ func postWithRetry(ctx context.Context, d *Daemon, prNumber int, body string) er
 	for attempt := 1; attempt <= PostStepMaxAttempts; attempt++ {
 		if cerr := ctx.Err(); cerr != nil {
 			return cerr
+		}
+		// The first post belongs to this decision and must not be
+		// suppressed by an identical body from an older request. After
+		// a failed post, the remote result is ambiguous, so exact-match
+		// lookup protects retries from duplicating a comment.
+		if attempt > 1 {
+			alreadyPosted, err := publicationAlreadyPosted(ctx, d, prNumber, body)
+			if err != nil {
+				lastErr = err
+				if attempt < PostStepMaxAttempts {
+					backoff := d.effectivePostBackoffs()[attempt-1]
+					d.logf("PR #%d: publication lookup attempt %d/%d failed: %v; retrying in %v", prNumber, attempt, PostStepMaxAttempts, err, backoff)
+					select {
+					case <-time.After(backoff):
+						continue
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+				continue
+			}
+			if alreadyPosted {
+				return nil
+			}
 		}
 		if err := d.CommentPoster.PostComment(ctx, prNumber, body); err != nil {
 			lastErr = err
@@ -2524,6 +2699,19 @@ func postWithRetry(ctx context.Context, d *Daemon, prNumber int, body string) er
 	return lastErr
 }
 
+func publicationAlreadyPosted(ctx context.Context, d *Daemon, prNumber int, body string) (bool, error) {
+	comments, err := d.GitHub.ListPRComments(ctx, prNumber)
+	if err != nil {
+		return false, fmt.Errorf("list comments for publication recovery: %w", err)
+	}
+	for _, comment := range comments {
+		if comment.Body == body {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // effectivePostBackoffs returns the backoff schedule used by
 // postWithRetry. When d.postBackoffs is set (by tests), it wins;
 // otherwise the package-level postStepBackoffs is used (production).
@@ -2542,6 +2730,16 @@ func (d *Daemon) persistDecisionFile(path string, body []byte) error {
 		return d.persistDecision(path, body)
 	}
 	return atomicfs.WriteAtomic(path, body, 0644)
+}
+
+func (d *Daemon) persistPublicationOutbox(reviewRunFolder string, marker pendingPublicationMarker) error {
+	if strings.TrimSpace(reviewRunFolder) == "" {
+		return errors.New("empty review run folder")
+	}
+	if d.persistPublication != nil {
+		return d.persistPublication(pendingPublicationMarkerPath(reviewRunFolder), marker)
+	}
+	return writePendingPublicationMarker(reviewRunFolder, marker)
 }
 
 func pendingPublicationMarkerPath(reviewRunFolder string) string {
@@ -2583,17 +2781,7 @@ func removePendingPublicationMarker(reviewRunFolder string) error {
 // it only after decisionDir contains a durable decision. If state persistence
 // fails, retain the worktree as an additional recovery source rather than
 // allowing cleanup to remove it.
-func (d *Daemon) recordPendingPublication(prNumber int, commentID, decisionDir, reviewRunFolder string, state *ReviewStateStore, preserveWorktree *bool) {
-	if err := writePendingPublicationMarker(reviewRunFolder, pendingPublicationMarker{
-		PR:        prNumber,
-		CommentID: commentID,
-		Timestamp: d.now(),
-	}); err != nil {
-		d.logf("PR #%d: write pending publication marker: %v", prNumber, err)
-		if preserveWorktree != nil {
-			*preserveWorktree = true
-		}
-	}
+func (d *Daemon) recordPendingPublication(prNumber int, commentID, decisionDir, reviewRunFolder, body string, state *ReviewStateStore, preserveWorktree *bool) {
 	if state != nil {
 		if err := state.MarkSeen(commentID, "pending"); err != nil {
 			d.logf("PR #%d: mark %s pending: %v", prNumber, commentID, err)
@@ -2602,7 +2790,7 @@ func (d *Daemon) recordPendingPublication(prNumber int, commentID, decisionDir, 
 			}
 		}
 	}
-	d.registerPendingPost(prNumber, commentID, decisionDir, reviewRunFolder)
+	d.registerPendingPost(prNumber, commentID, decisionDir, reviewRunFolder, body)
 }
 
 // registerPendingPost registers (prNumber, commentID) in the
@@ -2616,7 +2804,7 @@ func (d *Daemon) recordPendingPublication(prNumber int, commentID, decisionDir, 
 // otherwise the worktree); the run folder path is where
 // review-state.json lives. Both are recorded so the next tick's
 // processPR can pick the trigger up after a daemon restart.
-func (d *Daemon) registerPendingPost(prNumber int, commentID, decisionDir, reviewRunFolder string) {
+func (d *Daemon) registerPendingPost(prNumber int, commentID, decisionDir, reviewRunFolder, body string) {
 	d.pendingPostMu.Lock()
 	defer d.pendingPostMu.Unlock()
 	if _, ok := d.pendingPost[prNumber]; !ok {
@@ -2626,6 +2814,7 @@ func (d *Daemon) registerPendingPost(prNumber int, commentID, decisionDir, revie
 		commentID:   commentID,
 		runDir:      decisionDir,
 		reviewState: d.ReviewStatePath(reviewRunFolder),
+		body:        body,
 		since:       d.now(),
 	}
 }
@@ -2675,12 +2864,37 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 	}
 	d.pendingPostMu.Unlock()
 
-	decisionPath := filepath.Join(entry.runDir, "decision.md")
-	info, statErr := os.Stat(decisionPath)
-	if statErr != nil {
-		if os.IsNotExist(statErr) {
-			// Stale entry: drop and fall through to launch.
-			d.logf("PR #%d comment %s: rehydrate entry stale, decision.md missing at tick time, falling through to launch (issue #1847)", prNumber, comment.ID)
+	body := []byte(entry.body)
+	if entry.body == "" {
+		decisionPath := filepath.Join(entry.runDir, "decision.md")
+		info, statErr := os.Stat(decisionPath)
+		if statErr != nil {
+			if os.IsNotExist(statErr) {
+				// Stale entry: drop and fall through to launch.
+				d.logf("PR #%d comment %s: rehydrate entry stale, decision.md missing at tick time, falling through to launch (issue #1847)", prNumber, comment.ID)
+				d.pendingPostMu.Lock()
+				delete(d.pendingPost[prNumber], triggerKey)
+				if len(d.pendingPost[prNumber]) == 0 {
+					delete(d.pendingPost, prNumber)
+				}
+				d.pendingPostMu.Unlock()
+				return false
+			}
+			// Read failed for some other reason (perm denied, IO).
+			// Keep the entry; the next tick retries. Do NOT proceed
+			// to launch because the existing post is still better
+			// than re-running the agent.
+			d.logf("PR #%d comment %s: rehydrate post stat %s failed: %v; keeping entry for retry (issue #1847)", prNumber, comment.ID, decisionPath, statErr)
+			return true
+		}
+		if !info.Mode().IsRegular() {
+			// Issue #1949: a directory at decision.md is treated as
+			// missing. The launch path's ClearReviewArtifacts defer
+			// will remove the worktree directory and the next
+			// postDecision observes a clean slate. Keep the entry
+			// drop-and-fallthrough to launch, mirroring the missing
+			// branch.
+			d.logf("PR #%d comment %s: rehydrate entry stale, decision.md is not a regular file at tick time, falling through to launch (issue #1949)", prNumber, comment.ID)
 			d.pendingPostMu.Lock()
 			delete(d.pendingPost[prNumber], triggerKey)
 			if len(d.pendingPost[prNumber]) == 0 {
@@ -2689,37 +2903,36 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 			d.pendingPostMu.Unlock()
 			return false
 		}
-		// Read failed for some other reason (perm denied, IO).
-		// Keep the entry; the next tick retries. Do NOT proceed
-		// to launch because the existing post is still better
-		// than re-running the agent.
-		d.logf("PR #%d comment %s: rehydrate post stat %s failed: %v; keeping entry for retry (issue #1847)", prNumber, comment.ID, decisionPath, statErr)
-		return true
-	}
-	if !info.Mode().IsRegular() {
-		// Issue #1949: a directory at decision.md is treated as
-		// missing. The launch path's ClearReviewArtifacts defer
-		// will remove the worktree directory and the next
-		// postDecision observes a clean slate. Keep the entry
-		// drop-and-fallthrough to launch, mirroring the missing
-		// branch.
-		d.logf("PR #%d comment %s: rehydrate entry stale, decision.md is not a regular file at tick time, falling through to launch (issue #1949)", prNumber, comment.ID)
+		var err error
+		body, err = os.ReadFile(decisionPath)
+		if err != nil {
+			// Read failed for some other reason (perm denied, IO).
+			// Keep the entry; the next tick retries. Do NOT proceed
+			// to launch because the existing post is still better
+			// than re-running the agent.
+			d.logf("PR #%d comment %s: rehydrate post read %s failed: %v; keeping entry for retry (issue #1847)", prNumber, comment.ID, decisionPath, err)
+			return true
+		}
+		body = []byte(publicationBody(RedactBody(string(body)), triggerKey))
+		if err := d.persistPublicationOutbox(filepath.Dir(entry.reviewState), pendingPublicationMarker{
+			Version:   2,
+			PR:        prNumber,
+			CommentID: triggerKey,
+			RunID:     filepath.Base(filepath.Dir(entry.reviewState)),
+			Body:      string(body),
+			Timestamp: d.now(),
+		}); err != nil {
+			d.logf("PR #%d comment %s: upgrade publication outbox: %v; keeping entry for retry", prNumber, comment.ID, err)
+			return true
+		}
 		d.pendingPostMu.Lock()
-		delete(d.pendingPost[prNumber], triggerKey)
-		if len(d.pendingPost[prNumber]) == 0 {
-			delete(d.pendingPost, prNumber)
+		if pending := d.pendingPost[prNumber]; pending != nil {
+			if current, ok := pending[triggerKey]; ok {
+				current.body = string(body)
+				pending[triggerKey] = current
+			}
 		}
 		d.pendingPostMu.Unlock()
-		return false
-	}
-	body, err := os.ReadFile(decisionPath)
-	if err != nil {
-		// Read failed for some other reason (perm denied, IO).
-		// Keep the entry; the next tick retries. Do NOT proceed
-		// to launch because the existing post is still better
-		// than re-running the agent.
-		d.logf("PR #%d comment %s: rehydrate post read %s failed: %v; keeping entry for retry (issue #1847)", prNumber, comment.ID, decisionPath, err)
-		return true
 	}
 
 	// Honour ctx cancellation observed between ReadFile and the
@@ -2731,19 +2944,16 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 		return true
 	}
 
-	redacted := RedactBody(string(body))
-	if err := d.CommentPoster.PostComment(ctx, prNumber, redacted); err != nil {
-		if cerr := ctx.Err(); cerr != nil {
-			// Ctx cancelled DURING post: leave entry; the next
-			// daemon's rehydrate walker re-attempts.
-			d.logf("PR #%d comment %s: ctx cancelled during rehydrate post; leaving entry untouched (issue #1847)", prNumber, comment.ID)
-			return true
-		}
-		// Post failed for a non-ctx reason: log, keep the entry
-		// so the next tick retries. Do NOT MarkSeen; the
-		// rehydrate entry is the source of truth and the
-		// next tick re-attempts the post.
-		d.logf("PR #%d comment %s: rehydrate post failed: %v; keeping entry for next-tick retry (issue #1847)", prNumber, comment.ID, err)
+	alreadyPosted, lookupErr := publicationAlreadyPosted(ctx, d, prNumber, string(body))
+	if lookupErr != nil {
+		d.logf("PR #%d comment %s: rehydrate publication lookup failed: %v; keeping entry", prNumber, comment.ID, lookupErr)
+		return true
+	}
+	if !alreadyPosted {
+		lookupErr = d.CommentPoster.PostComment(ctx, prNumber, string(body))
+	}
+	if lookupErr != nil {
+		d.logf("PR #%d comment %s: rehydrate post failed: %v; keeping entry for next-tick retry (issue #1847)", prNumber, comment.ID, lookupErr)
 		return true
 	}
 
@@ -2804,7 +3014,7 @@ func (d *Daemon) now() time.Time {
 // before MarkSeen by leaving the status untouched (matching the
 // "stays pending on cancellation" semantic pinned by issue
 // #1846).
-func (d *Daemon) recordLaunchFailure(ctx context.Context, commentID string, state *ReviewStateStore, cause error) error {
+func (d *Daemon) recordLaunchFailure(ctx context.Context, commentID string, state *ReviewStateStore, cause error, head ...string) error {
 	if state == nil {
 		return cause
 	}
@@ -2813,6 +3023,13 @@ func (d *Daemon) recordLaunchFailure(ctx context.Context, commentID string, stat
 		return cerr
 	}
 	attempts := ReadFailureAttempts(state, commentID) + 1
+	if len(head) > 0 {
+		budget, err := reviewlaunch.RecordFailure(filepath.Join(d.BaseDir, "state"), state.PR(), commentID, head[0])
+		if err != nil {
+			return fmt.Errorf("persist reviewer launch budget: %w", err)
+		}
+		attempts = budget.Attempts
+	}
 	backoff := d.effectiveLaunchBackoff(attempts)
 	stamp := d.now().Add(backoff)
 	if err := state.MarkSeenWithBudget(commentID, "failure", attempts, stamp); err != nil {

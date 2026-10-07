@@ -51,14 +51,14 @@ func TestUsageLimitAwaitResumesSameSessionWithIdleTimeoutDisabled(t *testing.T) 
 	}
 }
 
-func TestUsageLimitAwaitRetriesAfterFiveHours(t *testing.T) {
+func TestUsageLimitAwaitFailsAfterFiveHours(t *testing.T) {
 	result, sandbox, log, waits := runUsageLimitBatch(t, 31, 0, 1)
 
 	if result.Runs[0].Status != "failure" {
 		t.Fatalf("status = %q, want failure after the fresh retry has no merged PR", result.Runs[0].Status)
 	}
-	if got := sandbox.attemptCount(); got != 32 {
-		t.Fatalf("agent attempts = %d, want 32", got)
+	if got := sandbox.attemptCount(); got != 30 {
+		t.Fatalf("agent attempts = %d, want initial plus 29 in-deadline probes", got)
 	}
 	if len(waits) != 30 {
 		t.Fatalf("await waits = %d, want 30", len(waits))
@@ -72,14 +72,14 @@ func TestUsageLimitAwaitRetriesAfterFiveHours(t *testing.T) {
 	if !strings.Contains(commands[1], "--session 'usage-limit-session'") {
 		t.Fatalf("commands = %q, want the poll to reuse the OpenCode session", commands)
 	}
-	if strings.Contains(commands[31], "--session") {
-		t.Fatalf("commands = %q, want retry to start a fresh session", commands)
+	if !strings.Contains(commands[len(commands)-1], "--session") {
+		t.Fatalf("commands = %q, want no fresh ordinary retry at quota expiry", commands)
 	}
 	if got := countEventsByType(log.snapshot(), "run.await"); got != 30 {
 		t.Fatalf("run.await events = %d, want 30", got)
 	}
-	if got := countEventsByType(log.snapshot(), "run.retry"); got != 1 {
-		t.Fatalf("run.retry events = %d, want 1", got)
+	if got := countEventsByType(log.snapshot(), "run.retry"); got != 0 {
+		t.Fatalf("run.retry events = %d, want zero at quota expiry", got)
 	}
 }
 
@@ -124,12 +124,16 @@ func runUsageLimitBatch(t *testing.T, failures, idleTimeout, retries int) (*Resu
 	sb := &usageLimitRetrySandbox{workDir: filepath.Join(root, "worktree"), failures: failures}
 	log := &spyEventLog{}
 	var waits []time.Duration
-	client := &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Usage limit", State: "closed"}}}
+	client := &reviewWaitSchedulerGitHubClient{fakeGitHubClient: fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "Usage limit", State: "closed"}},
+		prs:    map[string]*github.PR{branch: {Number: 7, State: "open", Body: "Closes #42", HeadRefName: branch}},
+	}}
 	// A continued session needs a merged PR to finish successfully. A timeout
 	// test omits it so the ordinary retry reaches a fresh agent launch.
 	if failures < 31 {
-		client.prs = map[string]*github.PR{branch: {Number: 7, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: branch}}
+		sb.onSuccess = func() { client.setPR(branch, func(pr *github.PR) { pr.State, pr.Merged = "merged", true }) }
 	}
+	clockNow := time.Now().UTC()
 	cfg := &config.Config{
 		Agent:          "opencode",
 		DefaultAgent:   "opencode",
@@ -144,8 +148,10 @@ func runUsageLimitBatch(t *testing.T, failures, idleTimeout, retries int) (*Resu
 		WithRunnableFactory(&usageLimitRetryRunnableFactory{}),
 		WithRunSessionOpts(runSessionOptions{
 			releaseAwaitCapacity: true,
+			now:                  func() time.Time { return clockNow },
 			awaitWait: func(_ context.Context, delay time.Duration) error {
 				waits = append(waits, delay)
+				clockNow = clockNow.Add(delay)
 				return nil
 			},
 		}),
@@ -168,8 +174,9 @@ func runUsageLimitBatch(t *testing.T, failures, idleTimeout, retries int) (*Resu
 }
 
 type usageLimitRetrySandbox struct {
-	workDir  string
-	failures int
+	workDir   string
+	failures  int
+	onSuccess func()
 
 	mu       sync.Mutex
 	attempts int
@@ -190,6 +197,9 @@ func (s *usageLimitRetrySandbox) Exec(_ context.Context, command string, stdout,
 	if attempt <= s.failures {
 		_, _ = io.WriteString(stderr, "Error: The usage limit has been reached\n")
 		return errors.New("OpenCode usage limit")
+	}
+	if s.onSuccess != nil {
+		s.onSuccess()
 	}
 	return nil
 }

@@ -117,8 +117,9 @@ func TestPortalRunsView_ResolveFromRowID_FallbackByRunManifest(t *testing.T) {
 	}
 }
 
-// Parsed BatchID not in the index surfaces the typed not-found error.
-func TestPortalRunsView_ResolveFromRowID_FallbackBatchIdNotInIndex(t *testing.T) {
+// Physical ownership wins over a stale BatchID inside a row manifest, matching
+// the archive endpoint's resolution of the same AgentRun.
+func TestPortalRunsView_ResolveFromRowID_FallbackIgnoresStaleManifestBatchID(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -151,14 +152,7 @@ func TestPortalRunsView_ResolveFromRowID_FallbackBatchIdNotInIndex(t *testing.T)
 	}
 
 	batch, err := (&portalRunsView{}).resolveBatchFromRowID(idx, perRowID)
-	if batch != nil {
-		t.Fatalf("expected nil batch when parsed BatchID is not in index, got %#v", batch)
-	}
-	if err == nil {
-		t.Fatalf("expected typed not-found error when parsed BatchID is not in index, got nil")
-	}
-	var notFound *portalBatchNotFoundError
-	if !errors.As(err, &notFound) {
-		t.Fatalf("expected *portalBatchNotFoundError, got %T (%v)", err, err)
+	if err != nil || batch == nil || batch.ID != publicBatchID || batch.Path != batchDir {
+		t.Fatalf("physical owner = %#v, %v", batch, err)
 	}
 }

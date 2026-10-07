@@ -6,6 +6,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
@@ -54,6 +55,7 @@ type Request struct {
 	// ReadyContinuations marks rows restored from durable capacity-queue
 	// evidence. They enter the scheduler's awaited priority queue immediately.
 	ReadyContinuations map[int]bool
+	RecoveryWaits      map[int]daemon.RunWait
 	// ReuseSession opts an individual continued row into exact OpenCode
 	// session reuse. Runtime-owned relaunches set the equivalent on the row.
 	ReuseSession map[int]bool
@@ -188,16 +190,17 @@ type Result struct {
 // at write time in `emitTerminal` in `internal/batch/orchestrator.go`,
 // where the `retries_done` payload key is set to `RetriesTotal - 1`.
 type AgentRunResult struct {
-	IssueNumber       int
-	Issue             *int
-	Status            string
-	RetriesTotal      int
-	Branch            string
-	WorktreePath      string
-	Review            bool
-	RunID             string
-	ContextExhausted  bool
-	UsageLimitReached bool
+	UsageLimitDeadline time.Time `json:"-"`
+	IssueNumber        int
+	Issue              *int
+	Status             string
+	RetriesTotal       int
+	Branch             string
+	WorktreePath       string
+	Review             bool
+	RunID              string
+	ContextExhausted   bool
+	UsageLimitReached  bool
 	// CleanupError records a failure during process cleanup after context
 	// cancellation. When non-nil, the orchestrator must not mark the run as
 	// terminal until the error is recorded in the event log, satisfying

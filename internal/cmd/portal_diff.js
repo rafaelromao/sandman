@@ -1675,9 +1675,11 @@
     // startedAt is anchored on run.started) and the terminal path uses
     // the server-stamped Finished - Started.
     if (run && (run.status === 'queued' || run.status === 'blocked')) return '—';
-    const startedAt = Date.parse(run && run.startedAt || '');
-    if (!Number.isFinite(startedAt)) return run && run.duration || '—';
-    let seconds = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+    const executionSince = Date.parse(run && run.executionSince || '');
+    if (!Number.isFinite(executionSince)) return run && run.duration || '—';
+    const baseline = Number(run && run.activeDurationSeconds);
+    if (!Number.isFinite(baseline) || baseline < 0) return run && run.duration || '—';
+    let seconds = Math.max(0, Math.round(baseline + (Date.now() - executionSince) / 1000));
     const hours = Math.floor(seconds / 3600);
     seconds %= 3600;
     const minutes = Math.floor(seconds / 60);

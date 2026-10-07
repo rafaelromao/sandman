@@ -1253,8 +1253,8 @@ func TestPortal_Compute_CompletedRunWithDeadBatchDir_ReportsSourceExists(t *test
 		t.Fatalf("expected 1 row, got %d: %#v", len(runs), runs)
 	}
 	got := runs[0]
-	if got.BatchKey != filepath.Base(runDir) {
-		t.Fatalf("BatchKey = %q, want %q", got.BatchKey, filepath.Base(runDir))
+	if got.BatchKey != runID {
+		t.Fatalf("BatchKey = %q, want public ID %q", got.BatchKey, runID)
 	}
 	if !got.SourceExists {
 		t.Fatalf("SourceExists = false, want true (per-run source directory exists under %s)", filepath.Base(runDir))
@@ -1550,7 +1550,7 @@ func TestPortal_Compute_DeadBatchWithStaleRunSock_PreservesLifecycle(t *testing.
 	}
 }
 
-func TestPortal_Compute_DeadBatchQueuedRow_StaysQueued(t *testing.T) {
+func TestPortal_Compute_DeadBatchStartedCapacityRow_StaysWaiting(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -1581,7 +1581,7 @@ func TestPortal_Compute_DeadBatchQueuedRow_StaysQueued(t *testing.T) {
 	for _, row := range got {
 		want := "running"
 		if row.IssueNumber == 42 {
-			want = "queued"
+			want = "waiting"
 		}
 		if row.Kind != "active" || row.Status != want || row.FinishedAt != nil {
 			t.Fatalf("row = %#v, want active/%s", row, want)

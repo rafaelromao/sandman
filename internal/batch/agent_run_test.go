@@ -11,6 +11,7 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
@@ -94,6 +95,7 @@ type fakeSandbox struct {
 	execError              error
 	execStdout             string
 	execStderr             string
+	execFunc               func(context.Context, string, io.Writer, io.Writer) error
 	process                *fakeProcess
 	stopCalled             bool
 	stopError              error
@@ -118,7 +120,11 @@ func (f *fakeSandbox) Exec(ctx context.Context, command string, stdout, stderr i
 	stdoutStr := f.execStdout
 	stderrStr := f.execStderr
 	execErr := f.execError
+	execFunc := f.execFunc
 	f.mu.Unlock()
+	if execFunc != nil {
+		return execFunc(ctx, command, stdout, stderr)
+	}
 	if stdout != nil && stdoutStr != "" {
 		stdout.Write([]byte(stdoutStr))
 	}
@@ -126,6 +132,72 @@ func (f *fakeSandbox) Exec(ctx context.Context, command string, stdout, stderr i
 		stderr.Write([]byte(stderrStr))
 	}
 	return execErr
+}
+
+func TestAgentRun_ClaudeWiresQuotaSignalsThroughRawParser(t *testing.T) {
+	root := t.TempDir()
+	progressSeen := make(chan struct{})
+	limitSeen := make(chan struct{})
+	allowPositive := make(chan struct{})
+	releaseLimit := make(chan struct{})
+	releaseDone := make(chan struct{})
+	var progressCalls, limitCalls int
+
+	sb := &fakeSandbox{
+		workDir: filepath.Join(root, "worktree"),
+		execFunc: func(_ context.Context, _ string, stdout, _ io.Writer) error {
+			_, _ = io.WriteString(stdout, `{"type":"assistant","error":"rate_limit","message":{"content":[{"type":"text","text":"You've hit your session limit"}]}}`+"\n")
+			<-allowPositive
+			_, _ = io.WriteString(stdout, `{"type":"assistant","message":{"content":[{"type":"text","text":"provider recovered"}]}}`+"\n")
+			<-releaseLimit
+			_, _ = io.WriteString(stdout, claudeUsageLimitResult+"\n")
+			<-releaseDone
+			return errors.New("exit status 1")
+		},
+	}
+	run := NewAgentRunWithLayout(&github.Issue{Number: 42, Title: "Claude quota"}, "42-claude", sb, paths.NewLayout(&config.Config{}, root))
+	run.preset = "claude"
+	agent := config.BuiltInAgentPresets["claude"].Agent("claude")
+	run.setQuotaSignals(func() {
+		progressCalls++
+		progressSeen <- struct{}{}
+	}, func() {
+		limitCalls++
+		limitSeen <- struct{}{}
+	})
+
+	done := make(chan AgentRunResult, 1)
+	go func() {
+		done <- run.Run(context.Background(), &spyRenderer{result: "task"}, agent.Command, prompt.RenderConfig{})
+	}()
+	select {
+	case <-progressSeen:
+		t.Fatal("error-marked assistant output reopened quota admission")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(allowPositive)
+	select {
+	case <-progressSeen:
+	case <-time.After(5 * time.Second):
+		t.Fatal("model progress callback was not delivered before execution returned")
+	}
+	if progressCalls != 1 {
+		t.Fatalf("model progress callbacks = %d, want 1", progressCalls)
+	}
+	close(releaseLimit)
+	select {
+	case <-limitSeen:
+	case <-time.After(5 * time.Second):
+		t.Fatal("usage-limit callback was not delivered from the raw Claude result")
+	}
+	if limitCalls != 1 {
+		t.Fatalf("usage-limit callbacks = %d, want 1", limitCalls)
+	}
+	close(releaseDone)
+	result := <-done
+	if !result.UsageLimitReached {
+		t.Fatalf("result did not retain usage-limit classification: %+v", result)
+	}
 }
 func (f *fakeSandbox) ExecInteractive(ctx context.Context, command string) error {
 	f.mu.Lock()

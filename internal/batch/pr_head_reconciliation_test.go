@@ -105,6 +105,36 @@ func TestLifecycleDecision_AdvancedPRHeadFastForwardsBeforeCurrentApprovalResume
 	}
 }
 
+func TestLifecycleDecision_FailedAttemptReconcilesBeforeCurrentApprovalResume(t *testing.T) {
+	for _, attemptStatus := range []string{"failure", "aborted"} {
+		t.Run(attemptStatus, func(t *testing.T) {
+			workDir, branch, oldHead, remoteHead := worktreeWithAdvancedPRHead(t)
+			ignoreSandmanState(t, workDir)
+			writeCurrentHeadApprovalClassification(t, workDir)
+			replaceReviewArtifactHead(t, workDir, "current-sha", remoteHead)
+			writeCanonicalRegistrationForTest(t, workDir)
+
+			session := &runSession{
+				issueNumber: 42,
+				deps: runDeps{
+					githubClient: &fakeGitHubClient{prs: map[string]*github.PR{branch: {
+						Number: 17, State: "open", HeadRefName: branch, HeadRefOid: remoteHead,
+						StatusCheckRollup: "success", MergeStateStatus: "CLEAN",
+					}}},
+					errorLog: io.Discard,
+				},
+			}
+			status, extras, handled := session.handleLifecycleDecisionForAttempt(context.Background(), workDir, branch, "", "run-failed-head-advance", true, attemptStatus)
+			if !handled || status != "resume" || extras["gate"] != gateReadyToMerge {
+				t.Fatalf("failed-attempt lifecycle = (%q, %#v, %t), want resume/ready-to-merge", status, extras, handled)
+			}
+			if got := runGit(t, workDir, "rev-parse", "HEAD")[:40]; got != remoteHead {
+				t.Fatalf("worktree HEAD = %q, want live PR head %q (old was %q)", got, remoteHead, oldHead)
+			}
+		})
+	}
+}
+
 func TestLifecycleDecision_DirtyStaleWorktreeGetsActionableResumeWithoutOverwrite(t *testing.T) {
 	workDir, branch, oldHead, remoteHead := worktreeWithAdvancedPRHead(t)
 	ignoreSandmanState(t, workDir)

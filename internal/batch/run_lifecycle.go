@@ -19,7 +19,7 @@ import (
 // execute owns the resources and persistence for every row. Mode-specific
 // inputs, retry preparation, and metadata remain private session policies.
 func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
-	issueDriven := s.issueNumber > 0
+	issueDriven := s.isIssueDriven()
 	// Re-entry can inherit an awaited endpoint even if preparation fails before
 	// this invocation starts one. Only a legitimate await transfers ownership
 	// back to the batch; all other returns (and panics) close the endpoint.
@@ -141,12 +141,17 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		}
 		// Provider quota recovery is non-terminal and retains the per-run
 		// endpoint for the batch-owned polling continuation.
-		if s.shouldAwaitUsageLimit(result) {
+		if !s.lifecycleTerminal && s.shouldAwaitUsageLimit(result) {
+			if s.usageLimitDeadline.IsZero() {
+				s.usageLimitDeadline = s.runtimeNow().Add(usageLimitRetryWindow)
+			}
+			result.UsageLimitDeadline = s.usageLimitDeadline
 			result.Status = s.emitAwait(ctx, runID, result, map[string]any{
-				"await_reason":                     "usage-limit",
-				"usage_limit_poll_seconds":         int(usageLimitPollInterval / time.Second),
-				"usage_limit_waited_seconds":       int(s.usageLimitWaited / time.Second),
-				"usage_limit_retry_window_seconds": int(usageLimitRetryWindow / time.Second),
+				"await_reason":                      "usage-limit",
+				"usage_limit_poll_seconds":          int(usageLimitPollInterval / time.Second),
+				"usage_limit_waited_seconds":        int(s.usageLimitWaited / time.Second),
+				"usage_limit_retry_window_seconds":  int(usageLimitRetryWindow / time.Second),
+				"usage_limit_deadline_unix_seconds": s.usageLimitDeadline.Unix(),
 			})
 		}
 		if result.Status == "await" {
@@ -161,8 +166,12 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	return result, true
 }
 
+func (s *runSession) isIssueDriven() bool {
+	return s.issueNumber > 0 && !s.review
+}
+
 func (s *runSession) prepareInputs(ctx context.Context) (*github.Issue, string, AgentRunResult, bool) {
-	if s.issueNumber <= 0 {
+	if !s.isIssueDriven() {
 		return nil, s.branches[0], AgentRunResult{}, true
 	}
 	_ = s.runLogWriter()
@@ -182,7 +191,7 @@ func (s *runSession) prepareInputs(ctx context.Context) (*github.Issue, string, 
 }
 
 func (s *runSession) logLifecycleError(level, reason string, err error) {
-	if s.issueNumber > 0 {
+	if s.isIssueDriven() {
 		fmt.Fprintf(s.deps.errorLog, "%s: %s for issue %d: %v\n", level, reason, s.issueNumber, err)
 	} else {
 		fmt.Fprintf(s.deps.errorLog, "%s: %s for prompt-only run: %v\n", level, reason, err)
@@ -197,7 +206,7 @@ func (s *runSession) lifecycleEarlyFailure(reason, branch, runID string, err err
 	} else {
 		s.logLifecycleError("error", reason, err)
 	}
-	if s.issueNumber > 0 {
+	if s.isIssueDriven() {
 		s.emitEarlyFailure(reason, branch, err)
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}
 	}
@@ -210,7 +219,7 @@ func (s *runSession) startExtras(ctx context.Context, branch string, sandboxStar
 			s.logLifecycleError("warn", "copy quality rules into review worktree", err)
 		}
 	}
-	if s.issueNumber <= 0 {
+	if !s.isIssueDriven() {
 		return AgentRunResult{}, true
 	}
 	s.coord.firstSandboxStart(sandboxStarted)
@@ -231,7 +240,7 @@ func (s *runSession) initialRunManifest(branch string, wt sandbox.Sandbox) (stri
 	batchDir := s.deps.layout.BatchDir(s.batchID)
 	manifestBatchID := s.batchID
 	kind := batchindex.KindIssue
-	if s.issueNumber > 0 {
+	if s.isIssueDriven() {
 		runID = s.issueRunID()
 		if s.batchID == "" {
 			// Legacy issue callers write directly beneath BatchesDir without
@@ -267,7 +276,7 @@ func (s *runSession) initialRunManifest(branch string, wt sandbox.Sandbox) (stri
 		CreatedAt:    time.Now(),
 		Status:       batchindex.RunManifestStatusActive,
 	}
-	if s.issueNumber <= 0 {
+	if !s.isIssueDriven() {
 		manifest.PR = s.prNumber
 		manifest.PortalHidden = s.portalHidden
 	}
@@ -275,7 +284,7 @@ func (s *runSession) initialRunManifest(branch string, wt sandbox.Sandbox) (stri
 }
 
 func (s *runSession) persistStartExtras(batchDir string, manifest batchindex.RunManifest) (AgentRunResult, bool) {
-	if s.issueNumber > 0 || !s.portalHidden {
+	if s.isIssueDriven() || !s.portalHidden {
 		return AgentRunResult{}, true
 	}
 	batchManifest, err := daemon.ReadManifest(batchDir)
@@ -322,12 +331,12 @@ func (s *runSession) emitStarted(issue *github.Issue, branch, runID string) {
 	}
 	if s.mode == ModeContinue {
 		previousKey := 0
-		if s.issueNumber > 0 {
+		if s.isIssueDriven() {
 			previousKey = s.issueNumber
 		}
 		payload["previous_run_id"] = s.previousRunIDs[previousKey]
 	}
-	if s.issueNumber > 0 {
+	if s.isIssueDriven() {
 		payload["issue_title"] = issue.Title
 		if promptSourceValue != "" && s.mode != ModeContinue {
 			payload["prompt_source_value"] = promptSourceValue
@@ -370,7 +379,7 @@ func (s *runSession) emitStarted(issue *github.Issue, branch, runID string) {
 		RunID:     runID,
 		Payload:   payload,
 	}
-	if s.issueNumber > 0 {
+	if s.isIssueDriven() {
 		event.Issue = s.issueNumber
 		event.IssueRef = issueRef(s.issueNumber)
 	}

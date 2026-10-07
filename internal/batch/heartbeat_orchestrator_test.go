@@ -146,7 +146,7 @@ func findEvent(snapshot []events.Event, t string) *events.Event {
 	return nil
 }
 
-func TestRunBatch_KillsStuckRunAfterIdleTimeout(t *testing.T) {
+func TestRunBatch_VerifiedMergeWinsAfterIdleTimeout(t *testing.T) {
 	if os.Getenv("CI") != "" && !testenv.FullRegression() {
 		t.Skip("flaky in CI: socket path sensitivity and timing issues with fake process")
 	}
@@ -173,8 +173,8 @@ func TestRunBatch_KillsStuckRunAfterIdleTimeout(t *testing.T) {
 	if result == nil || len(result.Runs) != 1 {
 		t.Fatalf("expected one run, got %#v", result)
 	}
-	if result.Runs[0].Status != "aborted" {
-		t.Errorf("status = %q, want aborted", result.Runs[0].Status)
+	if result.Runs[0].Status != "success" {
+		t.Errorf("status = %q, want success from verified merge", result.Runs[0].Status)
 	}
 	if !proc.killObserved() {
 		t.Error("expected process.Kill to be called by heartbeat")

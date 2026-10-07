@@ -9,6 +9,22 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 )
 
+// finishObserved applies an authoritative terminal observation without acquiring
+// execution capacity or starting an agent/container. Cleanup uses the resolved
+// sandbox policy; observation never re-arbitrates the selected lifecycle action.
+func (e *runExecutor) finishObserved(ctx context.Context, row RowSpec, status string, extras map[string]any) AgentRunResult {
+	session := newRunSession(e, row)
+	branch := row.Branches[row.IssueNumber]
+	factory := e.sbFactory
+	if factory == nil {
+		factory = defaultSandboxFactory{}
+	}
+	wt := factory.NewSandbox(".", session.worktreeDir(), branch, row.BaseBranch, nil)
+	result := AgentRunResult{IssueNumber: row.IssueNumber, Issue: issueRef(row.IssueNumber), Status: status, Branch: branch}
+	result.Status = session.finishDecidedTerminal(ctx, session.issueRunID(), result, extras, wt, branch)
+	return result
+}
+
 // observeLifecycle rechecks an awaiting continuation without acquiring an
 // execution slot or starting a sandbox. A resolved gate can therefore be
 // durably queued before the scheduler waits for capacity.
@@ -32,6 +48,18 @@ func (e *runExecutor) observeLifecycle(ctx context.Context, row RowSpec) (string
 	return session.handleLifecycleDecision(ctx, workDir, branch, session.runLogPathFor(runID), runID, true)
 }
 
+func (e *runExecutor) persistObservedAwait(ctx context.Context, row RowSpec, extras map[string]any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if e.deps.eventLog == nil {
+		return nil
+	}
+	payload := cloneLifecycleExtras(extras)
+	payload["await"], payload["branch"], payload["base_branch"], payload["batch_id"] = true, row.Branches[row.IssueNumber], row.BaseBranch, row.BatchID
+	return e.deps.eventLog.Log(events.Event{Type: "run.await", Timestamp: newRunSession(e, row).runtimeNow(), RunID: row.RunID, Issue: row.IssueNumber, IssueRef: issueRef(row.IssueNumber), Payload: payload})
+}
+
 func (s *runSession) issueRunID() string {
 	if s.runID == "" {
 		s.runID = buildRunID(s.issueNumber, s.runTS, s.runShortID)
@@ -50,6 +78,10 @@ func awaitPollInterval(opts runSessionOptions, poll int) time.Duration {
 }
 
 func logCapacityQueuedContinuation(log events.EventLog, runID string, issue int, batchID string, row RowSpec, extras map[string]any, issueTitle string) error {
+	return logCapacityQueuedContinuationAt(log, time.Now(), runID, issue, batchID, row, extras, issueTitle)
+}
+
+func logCapacityQueuedContinuationAt(log events.EventLog, timestamp time.Time, runID string, issue int, batchID string, row RowSpec, extras map[string]any, issueTitle string) error {
 	if log == nil {
 		return nil
 	}
@@ -79,7 +111,7 @@ func logCapacityQueuedContinuation(log events.EventLog, runID string, issue int,
 	}
 	return log.Log(events.Event{
 		Type:      "run.capacity_queued",
-		Timestamp: time.Now(),
+		Timestamp: timestamp,
 		RunID:     runID,
 		Issue:     issue,
 		IssueRef:  issueRef(issue),
