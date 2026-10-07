@@ -191,6 +191,17 @@ func (e *runExecutor) Execute(ctx context.Context, row RowSpec) (AgentRunResult,
 	}
 	if row.IssueNumber > 0 {
 		if s.usageLimitProbe && !s.usageLimitDeadline.IsZero() && !s.runtimeNow().Before(s.usageLimitDeadline) {
+			// Quota expiry is not a terminal lifecycle authority. Re-observe the
+			// pull request first so verified completion still wins without
+			// reacquiring an execution slot.
+			if ctx.Err() == nil {
+				if status, extras, handled := e.observeLifecycle(ctx, row); handled &&
+					(status == "success" || status == "failure" || status == "aborted") {
+					result := e.finishObserved(ctx, row, status, extras)
+					result.UsageLimitReached = true
+					return result, false
+				}
+			}
 			result := e.finishObserved(ctx, row, "failure", map[string]any{"reason": "AGENT_USAGE_LIMIT", "next_action": "resume with available provider quota after the exhausted five-hour window"})
 			result.UsageLimitReached = true
 			return result, false

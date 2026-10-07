@@ -12,6 +12,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
@@ -44,6 +45,14 @@ func (c *immutableMergedLookupClient) FindPRByBranch(context.Context, string) (*
 // runCleanGateCaseForIssue but parameterizing continuation so a fresh run and
 // a --continue can be compared with the identical PR facts.
 func runLifecycleCaseForIssue(t *testing.T, pr *github.PR, mode IssueMode, prevRunID string) (AgentRunResult, []events.Event, int) {
+	return runLifecycleCaseForIssueWithAttemptStatus(t, pr, mode, prevRunID, "success")
+}
+
+func runLifecycleCaseForIssueWithAttemptStatus(t *testing.T, pr *github.PR, mode IssueMode, prevRunID, attemptStatus string) (AgentRunResult, []events.Event, int) {
+	return runLifecycleCaseForIssueWithAttemptStatusAndUsage(t, pr, mode, prevRunID, attemptStatus, false)
+}
+
+func runLifecycleCaseForIssueWithAttemptStatusAndUsage(t *testing.T, pr *github.PR, mode IssueMode, prevRunID, attemptStatus string, usageLimit bool) (AgentRunResult, []events.Event, int) {
 	t.Helper()
 	if pr != nil && pr.HeadRefOid == "" {
 		pr.HeadRefOid = "current-sha"
@@ -68,7 +77,10 @@ func runLifecycleCaseForIssue(t *testing.T, pr *github.PR, mode IssueMode, prevR
 	}
 	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
 	factory := &fakeRunnableFactory{results: []AgentRunResult{
-		{IssueNumber: 42, Status: "success", Branch: gateTestBranch},
+		{IssueNumber: 42, Status: attemptStatus, UsageLimitReached: usageLimit, Branch: gateTestBranch},
+		{IssueNumber: 42, Status: attemptStatus, UsageLimitReached: usageLimit, Branch: gateTestBranch},
+		{IssueNumber: 42, Status: attemptStatus, UsageLimitReached: usageLimit, Branch: gateTestBranch},
+		{IssueNumber: 42, Status: attemptStatus, UsageLimitReached: usageLimit, Branch: gateTestBranch},
 	}}
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}},
@@ -115,6 +127,157 @@ func runLifecycleCaseForIssue(t *testing.T, pr *github.PR, mode IssueMode, prevR
 		t.Fatalf("read events: %v", err)
 	}
 	return result, logs, len(factory.created)
+}
+
+func TestLifecycle_VerifiedMergeWinsOverFailedAgentAttempt(t *testing.T) {
+	pr := &github.PR{
+		Number:      42,
+		State:       "merged",
+		Merged:      true,
+		Body:        "Closes #42",
+		HeadRefOid:  "current-sha",
+		HeadRefName: gateTestBranch,
+	}
+	result, logs, launches := runLifecycleCaseForIssueWithAttemptStatus(t, pr, ModeFresh, "", "failure")
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success", result.Status)
+	}
+	if launches != 1 {
+		t.Fatalf("agent launches = %d, want one completed attempt", launches)
+	}
+	if got := countEventsByType(logs, "run.retry"); got != 0 {
+		t.Fatalf("run.retry events = %d, want 0", got)
+	}
+	if got := finishedStatus(t, logs); got != "success" {
+		t.Fatalf("finished status = %q, want success", got)
+	}
+}
+
+func TestLifecycle_MergedWithoutClosingIntentFailsAfterFailedAgentAttempt(t *testing.T) {
+	pr := &github.PR{
+		Number:      42,
+		State:       "merged",
+		Merged:      true,
+		Body:        "Refs #42",
+		HeadRefOid:  "current-sha",
+		HeadRefName: gateTestBranch,
+	}
+	result, logs, launches := runLifecycleCaseForIssueWithAttemptStatus(t, pr, ModeFresh, "", "failure")
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure", result.Status)
+	}
+	if launches != 1 {
+		t.Fatalf("agent launches = %d, want one completed attempt", launches)
+	}
+	finished := findEvent(logs, "run.finished")
+	if finished == nil {
+		t.Fatal("run.finished event not found")
+	}
+	completion, ok := finished.Payload["completion"].(map[string]any)
+	if !ok || completion["reason"] != "merged-pr-missing-closing-reference" {
+		t.Fatalf("completion diagnostic = %#v, want missing-closing-reference", finished.Payload["completion"])
+	}
+}
+
+func TestLifecycle_MergedWithoutClosingIntentUsageLimitRemainsTerminalFailure(t *testing.T) {
+	result, logs, launches := runLifecycleCaseForIssueWithAttemptStatusAndUsage(t, &github.PR{
+		Number:      42,
+		State:       "merged",
+		Merged:      true,
+		Body:        "Refs #42",
+		HeadRefOid:  "current-sha",
+		HeadRefName: gateTestBranch,
+	}, ModeFresh, "", "failure", true)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure", result.Status)
+	}
+	if !result.UsageLimitReached {
+		t.Fatal("usage-limit result flag was lost")
+	}
+	if launches != 1 {
+		t.Fatalf("agent launches = %d, want one completed attempt", launches)
+	}
+	finished := findEvent(logs, "run.finished")
+	if finished == nil {
+		t.Fatal("run.finished event not found")
+	}
+	completion, ok := finished.Payload["completion"].(map[string]any)
+	if !ok || completion["reason"] != "merged-pr-missing-closing-reference" {
+		t.Fatalf("completion diagnostic = %#v, want missing-closing-reference", finished.Payload["completion"])
+	}
+}
+
+func TestLifecycle_FailedAttemptDecidesPendingCIBeforeRetry(t *testing.T) {
+	for _, status := range []string{"failure", "aborted"} {
+		t.Run(status, func(t *testing.T) {
+			result, logs, launches := runLifecycleCaseForIssueWithAttemptStatus(t, &github.PR{
+				Number:            42,
+				State:             "open",
+				HeadRefOid:        "current-sha",
+				HeadRefName:       gateTestBranch,
+				StatusCheckRollup: "pending",
+				MergeStateStatus:  "BLOCKED",
+			}, ModeFresh, "", status)
+			if result.Status != "await" {
+				t.Fatalf("status = %q, want await", result.Status)
+			}
+			if launches != 1 {
+				t.Fatalf("agent launches = %d, want one completed attempt", launches)
+			}
+			if got := countEventsByType(logs, "run.retry"); got != 0 {
+				t.Fatalf("run.retry events = %d, want 0", got)
+			}
+			assertExternalGateTerminal(t, logs, "await", string(lifecycleGatePending))
+		})
+	}
+}
+
+func TestLifecycle_FailedAttemptsLoadRetainedReviewEvidenceBeforeRetry(t *testing.T) {
+	cases := []struct {
+		name           string
+		writeState     func(*testing.T, string)
+		reviewDecision string
+		wantGate       lifecycleGate
+	}{
+		{name: "actionable feedback", writeState: func(t *testing.T, workDir string) {
+			writeInformalRespondedClassification(t, workDir, "Please fix the race in internal/socketpath/socketpath.go.")
+		}, reviewDecision: "REVIEW_REQUIRED", wantGate: lifecycleGate(gateActionableFeedback)},
+		{name: "approval", writeState: writeCurrentHeadApprovalClassification, reviewDecision: "APPROVED", wantGate: lifecycleGateReady},
+	}
+	for _, tc := range cases {
+		for _, attemptStatus := range []string{"failure", "aborted"} {
+			t.Run(tc.name+"/"+attemptStatus, func(t *testing.T) {
+				workDir := testenv.MkdirShort(t, "sm-orch-")
+				tc.writeState(t, workDir)
+				session := &runSession{
+					issueNumber: 42,
+					deps: runDeps{
+						githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+							Number:            17,
+							State:             "open",
+							HeadRefName:       gateTestBranch,
+							HeadRefOid:        "current-sha",
+							StatusCheckRollup: "success",
+							ReviewDecision:    tc.reviewDecision,
+							MergeStateStatus:  "CLEAN",
+						}}},
+						errorLog: io.Discard,
+					},
+					opts: runSessionOptions{
+						currentHead: func(string) (string, error) { return "current-sha", nil },
+					},
+					renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+				}
+				status, extras, handled := session.handleLifecycleDecisionForAttempt(context.Background(), workDir, gateTestBranch, "", "run-test", true, attemptStatus)
+				if !handled || status != "resume" {
+					t.Fatalf("lifecycle result = (%q, %#v, %t), want handled resume", status, extras, handled)
+				}
+				if got, _ := extras["gate"].(string); got != string(tc.wantGate) {
+					t.Fatalf("resume gate = %q, want %q", got, tc.wantGate)
+				}
+			})
+		}
+	}
 }
 
 // finishedStatus is the terminal-status extraction helper: it looks up the last
@@ -300,6 +463,90 @@ func TestDecideImplementationPRLifecycle_NonResolvedGates(t *testing.T) {
 	}
 }
 
+func TestDecideImplementationPRLifecycle_FailedAttemptsKeepExternalGates(t *testing.T) {
+	for _, status := range []string{"failure", "aborted"} {
+		t.Run(status+" CI failure", func(t *testing.T) {
+			d := decideImplementationPRLifecycle(implementationPRFacts{
+				pr: &github.PR{Number: 42, State: "open", StatusCheckRollup: "failure",
+					MergeStateStatus: "CLEAN", HeadRefOid: "current-sha"},
+				headSHA:       "current-sha",
+				attemptStatus: status,
+			})
+			if !d.handled || d.action != lifecycleResume || d.gate != lifecycleGate("ci-failure") {
+				t.Fatalf("decision = %+v, want handled CI remediation resume", d)
+			}
+		})
+
+		t.Run(status+" merge conflict", func(t *testing.T) {
+			d := decideImplementationPRLifecycle(implementationPRFacts{
+				pr: &github.PR{Number: 42, State: "open", StatusCheckRollup: "success",
+					MergeStateStatus: "CONFLICTING", HeadRefOid: "current-sha"},
+				headSHA:       "current-sha",
+				attemptStatus: status,
+			})
+			if !d.handled || d.action != lifecycleResume || d.gate != lifecycleGate("merge-conflict") {
+				t.Fatalf("decision = %+v, want handled conflict remediation resume", d)
+			}
+		})
+
+		t.Run(status+" pending CI", func(t *testing.T) {
+			d := decideImplementationPRLifecycle(implementationPRFacts{
+				pr: &github.PR{Number: 42, State: "open", StatusCheckRollup: "pending",
+					MergeStateStatus: "BLOCKED", HeadRefOid: "current-sha"},
+				headSHA:       "current-sha",
+				attemptStatus: status,
+			})
+			if !d.handled || d.action != lifecycleAwait || d.gate != lifecycleGatePending {
+				t.Fatalf("decision = %+v, want handled pending await", d)
+			}
+		})
+
+		t.Run(status+" request-scoped feedback", func(t *testing.T) {
+			d := decideImplementationPRLifecycle(implementationPRFacts{
+				pr: &github.PR{Number: 42, State: "open", StatusCheckRollup: "success",
+					ReviewDecision: "CHANGES_REQUESTED", MergeStateStatus: "CLEAN", HeadRefOid: "current-sha"},
+				headSHA:       "current-sha",
+				attemptStatus: status,
+				retainedEvidence: retainedReviewEvidence{
+					actionable: true,
+				},
+			})
+			if !d.handled || d.action != lifecycleResume || d.gate != lifecycleGate("actionable-feedback") {
+				t.Fatalf("decision = %+v, want handled feedback resume", d)
+			}
+		})
+
+		t.Run(status+" request-scoped approval", func(t *testing.T) {
+			d := decideImplementationPRLifecycle(implementationPRFacts{
+				pr: &github.PR{Number: 42, State: "open", StatusCheckRollup: "success",
+					ReviewDecision: "APPROVED", MergeStateStatus: "CLEAN", HeadRefOid: "current-sha"},
+				headSHA:       "current-sha",
+				attemptStatus: status,
+				retainedEvidence: retainedReviewEvidence{
+					outcome: retainedReviewApproval,
+				},
+			})
+			if !d.handled || d.action != lifecycleResume || d.gate != lifecycleGateReady {
+				t.Fatalf("decision = %+v, want handled approval resume", d)
+			}
+		})
+	}
+}
+
+func TestDecideImplementationPRLifecycle_ClosedPRFailsAfterFailedAttempt(t *testing.T) {
+	d := decideImplementationPRLifecycle(implementationPRFacts{
+		pr:            &github.PR{Number: 42, State: "closed", Merged: false},
+		headSHA:       "current-sha",
+		attemptStatus: "failure",
+	})
+	if !d.handled || d.action != lifecycleFailure || d.gate != lifecycleGateUnavailable {
+		t.Fatalf("decision = %+v, want handled closed failure", d)
+	}
+	if d.failureExtras["reason"] != "PULL_REQUEST_CLOSED" {
+		t.Fatalf("failure extras = %#v, want PULL_REQUEST_CLOSED", d.failureExtras)
+	}
+}
+
 func TestDecideImplementationPRLifecycle_EmptyPRHeadFailsIdle(t *testing.T) {
 	d := decideImplementationPRLifecycle(implementationPRFacts{
 		pr:      &github.PR{Number: 42, State: "open", MergeStateStatus: "CLEAN"},
@@ -355,6 +602,18 @@ func TestDecideImplementationPRLifecycle_ActiveResolutionGatesWaiting(t *testing
 	})
 	if !expired.handled || expired.action != lifecycleFailure || expired.failureExtras["reason"] != reviewTimeoutReason {
 		t.Fatalf("expired decision = %+v, want handled review-timeout failure", expired)
+	}
+}
+
+func TestDecideImplementationPRLifecycle_PendingReviewOnReadyPRStillAwaits(t *testing.T) {
+	d := decideImplementationPRLifecycle(implementationPRFacts{
+		pr: &github.PR{Number: 42, State: "open", StatusCheckRollup: "success",
+			ReviewDecision: "APPROVED", MergeStateStatus: "CLEAN", HeadRefOid: "current-sha"},
+		headSHA:         "current-sha",
+		reviewRequested: true,
+	})
+	if !d.handled || d.action != lifecycleAwait || d.gate != lifecycleGateReady {
+		t.Fatalf("pending review on ready PR = %+v, want await on ready gate", d)
 	}
 }
 
@@ -640,7 +899,7 @@ func TestLifecycle_FreshRunKeepsVerifiedMergeBeforeLegacyArbitration(t *testing.
 	client := &immutableMergedLookupClient{
 		fakeGitHubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}}},
 		merged:           &github.PR{Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha"},
-		mergedCalls:      2,
+		mergedCalls:      1,
 		legacy:           &github.PR{Number: 17, State: "open", Body: "Refs #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
 	}
 	o := NewOrchestrator(client, &retryRenderer{result: "rendered prompt"}, nil, eventLog,
@@ -658,8 +917,8 @@ func TestLifecycle_FreshRunKeepsVerifiedMergeBeforeLegacyArbitration(t *testing.
 	if !started || result.Status != "success" {
 		t.Fatalf("result = (%t, %q), want started success", started, result.Status)
 	}
-	if client.calls != 2 {
-		t.Fatalf("PR lookups = %d, want closing guard plus lifecycle authority only", client.calls)
+	if client.calls != 1 {
+		t.Fatalf("PR lookups = %d, want one shared lifecycle observation", client.calls)
 	}
 	if client.legacyCalls != 0 {
 		t.Fatalf("legacy PR observations = %d, want 0", client.legacyCalls)
@@ -708,7 +967,7 @@ func TestLifecycle_FreshRunKeepsMergedFailureBeforeLegacyArbitration(t *testing.
 	client := &immutableMergedLookupClient{
 		fakeGitHubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}}},
 		merged:           &github.PR{Number: 17, State: "merged", Merged: true, Body: "Refs #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha"},
-		mergedCalls:      2,
+		mergedCalls:      1,
 		legacy:           &github.PR{Number: 17, State: "open", Body: "Closes #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
 	}
 	o := NewOrchestrator(client, &retryRenderer{result: "rendered prompt"}, nil, eventLog,
@@ -726,8 +985,8 @@ func TestLifecycle_FreshRunKeepsMergedFailureBeforeLegacyArbitration(t *testing.
 	if !started || result.Status != "failure" {
 		t.Fatalf("result = (%t, %q), want started failure", started, result.Status)
 	}
-	if client.calls != 2 {
-		t.Fatalf("PR lookups = %d, want closing guard plus lifecycle authority only", client.calls)
+	if client.calls != 1 {
+		t.Fatalf("PR lookups = %d, want one shared lifecycle observation", client.calls)
 	}
 	if client.legacyCalls != 0 {
 		t.Fatalf("legacy PR observations = %d, want 0", client.legacyCalls)

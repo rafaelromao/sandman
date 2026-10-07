@@ -23,6 +23,7 @@ const (
 	lifecycleFailure
 	lifecycleAwait
 	lifecycleResume
+	lifecycleAborted
 )
 
 // lifecycleGate mirrors the string gates that checkPRExternalGateForPR emits
@@ -82,6 +83,7 @@ type implementationPRFacts struct {
 	mergeFacts       *mergedMergeFacts
 	retainedEvidence retainedReviewEvidence
 	reviewRequested  bool
+	attemptStatus    string
 	requireReview    bool
 }
 
@@ -167,7 +169,7 @@ func decideImplementationPRLifecycle(in implementationPRFacts) lifecycleDecision
 			completionFailure: true,
 		}
 	case lifecycleGateFailed, lifecycleGatePending, lifecycleGateReady:
-		decision := decideRecoverableLifecycle(gate, in.pr, in.headSHA, in.retainedEvidence, in.reviewRequested)
+		decision := decideRecoverableLifecycle(gate, in.pr, in.headSHA, in.retainedEvidence, in.reviewRequested, in.attemptStatus)
 		if in.requireReview && decision.action == lifecycleResume && decision.gate == lifecycleGateReady && in.retainedEvidence.outcome != retainedReviewApproval {
 			return lifecycleRemediationDecision(gateReviewRequestRequired, "REVIEW_REQUEST_REQUIRED", "deliver a confirmed current-head delegated-review request and obtain request-scoped approval before merge work", in.pr, in.retainedEvidence.payload)
 		}
@@ -238,15 +240,21 @@ func remediationBudgetFailureEvidence(gate string, evidence map[string]any, next
 	return extras
 }
 
-func decideRecoverableLifecycle(gate lifecycleGate, pr *github.PR, headSHA string, evidence retainedReviewEvidence, reviewRequested bool) lifecycleDecision {
+func decideRecoverableLifecycle(gate lifecycleGate, pr *github.PR, headSHA string, evidence retainedReviewEvidence, reviewRequested bool, attemptStatus string) lifecycleDecision {
 	// CI failures and merge conflicts are branch-owned work, not external work
 	// that can make progress while the agent waits. Handle these typed facts
-	// before the legacy gate/evidence compatibility rules below.
+	// before the failed-attempt guard and legacy gate/evidence rules below.
 	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "failure") {
 		return lifecycleRemediationDecision("ci-failure", "CI_FAILURE", "inspect current-head CI with gh pr checks and repair the failing checks", pr, evidence.payload)
 	}
 	if pr != nil && (strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "DIRTY") || strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "CONFLICTING")) {
 		return lifecycleRemediationDecision("merge-conflict", "MERGE_CONFLICT", "rebase or merge the base branch, resolve conflicts, and push a new head", pr, evidence.payload)
+	}
+	if attemptNeedsRetry(attemptStatus) &&
+		!activeWaitAuthorized(gate, pr, headSHA, reviewRequested) &&
+		!evidence.actionable && len(evidence.informalFeedback) == 0 &&
+		!(gate == lifecycleGateReady && evidence.outcome == retainedReviewApproval) {
+		return unhandled(gate)
 	}
 	if evidence.stateError && gate != lifecycleGateFailed {
 		// Corrupt retained review state authorizes no wait on its own. When
@@ -376,6 +384,11 @@ func decideRecoverableLifecycle(gate lifecycleGate, pr *github.PR, headSHA strin
 	}
 }
 
+func attemptNeedsRetry(status string) bool {
+	status = strings.TrimSpace(strings.ToLower(status))
+	return status != "" && status != "success"
+}
+
 // activeWaitAuthorized reports whether an external operation is actively
 // resolving the pull-request gate: CI is queued or running on the current
 // head, or a confirmed review request is in-deadline.
@@ -433,6 +446,8 @@ func lifecycleStatusRepr(d lifecycleDecision) string {
 		return "await"
 	case lifecycleResume:
 		return "resume"
+	case lifecycleAborted:
+		return "aborted"
 	default:
 		return ""
 	}
@@ -457,10 +472,14 @@ func lifecycleFailureExtras(d lifecycleDecision, issueNumber int) map[string]any
 // the lifecycle decision point. It gathers live PR facts and retained review
 // evidence, while event and prompt writing remain adapter concerns.
 func (s *runSession) handleLifecycleDecisionAfterAgent(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool) (string, map[string]any, bool) {
-	return s.handleLifecycleDecision(ctx, workDir, branch, logPath, runID, hostPathsReady)
+	return s.handleLifecycleDecisionForAttempt(ctx, workDir, branch, logPath, runID, hostPathsReady, "success")
 }
 
 func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool) (string, map[string]any, bool) {
+	return s.handleLifecycleDecisionForAttempt(ctx, workDir, branch, logPath, runID, hostPathsReady, "success")
+}
+
+func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool, attemptStatus string) (string, map[string]any, bool) {
 	if s.deps.githubClient == nil {
 		return "", nil, false
 	}
@@ -470,7 +489,7 @@ func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branc
 		headSHA = ""
 	}
 	var headReconcileErr error
-	pr, err := lookupPRForExternalGate(ctx, s.deps.githubClient, branch)
+	pr, err := s.lifecyclePRForBranch(ctx, branch)
 	gate := lifecycleGateNone
 	refreshUnavailable := false
 	reviewRegistrationFailure := false
@@ -480,9 +499,31 @@ func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branc
 		}
 		gate = lifecycleGatePending
 	}
+	if err == nil && pr != nil {
+		gate = lifecycleGate(checkPRExternalGateForPR(pr, headSHA, true))
+	}
+	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.State), "open") && hostPathsReady {
+		// Reconcile the local head before failed-attempt admission filtering so
+		// current-head review evidence cannot be rejected as stale.
+		headSHA, worktreeHeadSHA, headReconcileErr = s.livePRHeadForLifecycle(ctx, workDir, branch, pr, worktreeHeadSHA, currentHeadErr)
+		gate = lifecycleGate(checkPRExternalGateForPR(pr, headSHA, true))
+	}
 	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.State), "open") {
-		if hostPathsReady {
-			headSHA, worktreeHeadSHA, headReconcileErr = s.livePRHeadForLifecycle(ctx, workDir, branch, pr, worktreeHeadSHA, currentHeadErr)
+		if attemptNeedsRetry(attemptStatus) {
+			// Avoid side effects for an attempt that has no lifecycle evidence
+			// worth evaluating. This is admission filtering only: it does not
+			// select an action; the full decision below remains authoritative
+			// whenever an active operation or retained evidence is present.
+			reviewRequested := s.confirmedReviewRequestActive(ctx, workDir, pr, headSHA)
+			evidence := s.retainedLifecycleEvidence(ctx, workDir, pr, headSHA)
+			if !reviewRequested && !ciActive(pr, headSHA) &&
+				!strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "failure") &&
+				!strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "DIRTY") &&
+				!strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "CONFLICTING") &&
+				!evidence.actionable && len(evidence.informalFeedback) == 0 &&
+				!(evidence.outcome == retainedReviewApproval && gate == lifecycleGateReady) {
+				return "", nil, false
+			}
 		}
 		registrationErr := s.ensureReviewRegistrationForPR(ctx, workDir, pr, headSHA, runID)
 		headChanged := errors.Is(registrationErr, errReviewRegistrationHeadChanged)
@@ -518,6 +559,15 @@ func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branc
 	}
 
 	if gate == lifecycleGateNone {
+		if s.lifecycleAlreadyResolved && pr == nil {
+			// Preserve the verifier fallback for an already-resolved task with
+			// no pull request, while still routing observed PRs through the
+			// lifecycle decision above.
+			return "", nil, false
+		}
+		if attemptNeedsRetry(attemptStatus) {
+			return "", nil, false
+		}
 		if strings.EqualFold(strings.TrimSpace(s.issueState), "closed") {
 			// A closed work item with no PR has no pending publication or
 			// external operation to resolve. Preserve the existing closed
@@ -552,6 +602,9 @@ func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branc
 		if status, extras, ok := s.priorObservation(runID, branch, worktreeHeadSHA); ok {
 			return status, extras, true
 		}
+		if attemptNeedsRetry(attemptStatus) {
+			return "", nil, false
+		}
 		return "failure", map[string]any{
 			"reason":       lookupGateReason,
 			"next_action":  lookupGateNextAction,
@@ -568,6 +621,9 @@ func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branc
 		if status, extras, ok := s.priorObservation(runID, branch, worktreeHeadSHA); ok {
 			return status, extras, true
 		}
+		if attemptNeedsRetry(attemptStatus) {
+			return "", nil, false
+		}
 		return "failure", map[string]any{
 			"reason":       lookupGateReason,
 			"next_action":  lookupGateNextAction,
@@ -583,8 +639,9 @@ func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branc
 	// repository lookups.
 	var mergeFacts *mergedMergeFacts
 	decision := decideImplementationPRLifecycle(implementationPRFacts{
-		pr:      pr,
-		headSHA: headSHA,
+		pr:            pr,
+		headSHA:       headSHA,
+		attemptStatus: attemptStatus,
 	})
 	if decision.needMergeFacts {
 		if ctx.Err() != nil {
@@ -596,9 +653,10 @@ func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branc
 			mergedWithoutClosingRef: merged && !pr.ClosesIssue(s.issueNumber),
 		}
 		decision = decideImplementationPRLifecycle(implementationPRFacts{
-			pr:         pr,
-			headSHA:    headSHA,
-			mergeFacts: mergeFacts,
+			pr:            pr,
+			headSHA:       headSHA,
+			mergeFacts:    mergeFacts,
+			attemptStatus: attemptStatus,
 		})
 		if ctx.Err() != nil {
 			return "aborted", nil, true
@@ -672,6 +730,7 @@ func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branc
 		mergeFacts:       mergeFacts,
 		retainedEvidence: evidence,
 		reviewRequested:  reviewRequested,
+		attemptStatus:    attemptStatus,
 		requireReview:    strings.TrimSpace(s.renderCfg.ReviewCommand) != "",
 	})
 	if strings.EqualFold(pr.State, "open") && !evidence.stateError {
@@ -745,6 +804,17 @@ func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branc
 		return "resume", extras, true
 	}
 	return status, extras, true
+}
+
+func (s *runSession) lifecyclePRForBranch(ctx context.Context, branch string) (*github.PR, error) {
+	if s.lifecyclePRSnapshot != nil {
+		pr := s.lifecyclePRSnapshot
+		s.lifecyclePRSnapshot = nil
+		if pr.Merged || strings.EqualFold(strings.TrimSpace(pr.State), "merged") {
+			return pr, nil
+		}
+	}
+	return lookupPRForExternalGate(ctx, s.deps.githubClient, branch)
 }
 
 func cloneLifecycleExtras(extras map[string]any) map[string]any {
@@ -857,7 +927,7 @@ func (s *runSession) waitForLifecyclePoll(ctx context.Context, interval time.Dur
 func (s *runSession) observeLifecycle(ctx context.Context, workDir, branch, logPath, runID string, result AgentRunResult, extras map[string]any, hostPathsReady bool) (string, map[string]any, bool) {
 	plan := s.lifecyclePollIntervals(extras)
 	for index := 0; ; index++ {
-		if deadline, gate, ok := lifecycleDeadline(extras); ok && !time.Now().Before(deadline) {
+		if deadline, gate, ok := lifecycleDeadline(extras); ok && !s.runtimeNow().Before(deadline) {
 			resume := cloneLifecycleExtras(extras)
 			resume["gate"] = gate
 			resume["reason"] = lifecycleDeadlineReason(gate)
@@ -874,7 +944,7 @@ func (s *runSession) observeLifecycle(ctx context.Context, workDir, branch, logP
 			}
 			return "aborted", nil, true
 		}
-		status, nextExtras, handled := s.handleLifecycleDecisionAfterAgent(ctx, workDir, branch, logPath, runID, hostPathsReady)
+		status, nextExtras, handled := s.handleLifecycleDecisionForAttempt(ctx, workDir, branch, logPath, runID, hostPathsReady, result.Status)
 		if !handled {
 			if ctx.Err() != nil {
 				return "aborted", nil, true
