@@ -492,6 +492,14 @@ func TestRunBatchRehydratesExternalAwaitAfterRestart(t *testing.T) {
 	if result == nil || len(result.Runs) != 1 || result.Runs[0].Status != "success" || len(factory.created) != 0 {
 		t.Fatalf("rehydrated await result=%+v launches=%v; merged continuation should finish without relaunch", result, factory.created)
 	}
+	recovered := request.RecoveryWaits[issue]
+	if recovered.BatchID == oldBatch || !recovered.LeaseExpiresAt.After(now) {
+		t.Fatalf("restart did not renew transferred lease: %+v", recovered)
+	}
+	persisted, err := daemon.ReadRunWait(layout.BatchDir(recovered.BatchID), runID)
+	if err != nil || !persisted.LeaseExpiresAt.After(now) {
+		t.Fatalf("renewed lease was not persisted: record=%+v error=%v", persisted, err)
+	}
 	state := events.ProjectRunStates(log.snapshot())[0]
 	if !state.IsTerminal() || state.Status() != "success" {
 		t.Fatalf("rehydrated await did not reach terminal success: %+v", state)
