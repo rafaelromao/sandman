@@ -9,6 +9,116 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 )
 
+func TestRecoverStaleRuns_PreservesAwaitingRunWithUnexpiredLease(t *testing.T) {
+	baseDir := t.TempDir()
+	now := time.Now().UTC()
+	createdAt := now.Add(-20 * time.Minute)
+	started := createdAt.Add(time.Minute)
+	awaited := now.Add(-10 * time.Minute)
+	batchID := "dead-await-lease"
+	runID := "run-await-lease-42"
+	batchDir := filepath.Join(baseDir, "batches", batchID)
+	writeManifestFile(t, batchDir, BatchManifest{Issues: []int{42}, CreatedAt: createdAt})
+	runDir := filepath.Join(batchDir, "runs", runID)
+	if err := batchindex.WriteManifest(runDir, batchindex.RunManifest{
+		RunID: runID, BatchID: batchID, Issue: 42,
+		Status: batchindex.RunManifestStatusActive, CreatedAt: started,
+	}); err != nil {
+		t.Fatalf("write run manifest: %v", err)
+	}
+	if err := RenewRunWait(batchDir, RunWait{
+		Protocol: "run-wait/v1", RunID: runID, BatchID: batchID, Issue: 42,
+		Branch: "42-fix", BaseBranch: "main", OperationID: "ci:17:head",
+		OperationDeadline: now.Add(30 * time.Minute),
+	}, now); err != nil {
+		t.Fatalf("write awaiting snapshot: %v", err)
+	}
+
+	eventLog := &recordingEventLog{}
+	existing := []events.Event{
+		{Type: "run.started", RunID: runID, Issue: 42, Timestamp: started, Payload: map[string]any{
+			"batch_id": batchID, "branch": "42-fix", "base_branch": "main",
+		}},
+		{Type: "run.await", RunID: runID, Issue: 42, Timestamp: awaited, Payload: map[string]any{
+			"await_reason": "pending", "ci_wait": map[string]any{
+				"deadline_unix_seconds": now.Add(30 * time.Minute).Unix(),
+			},
+		}},
+	}
+
+	recovered, dirs, err := RecoverStaleRuns(baseDir, existing, eventLog)
+	if err != nil {
+		t.Fatalf("RecoverStaleRuns: %v", err)
+	}
+	if recovered != 0 || dirs != 1 || len(eventLog.logged) != 0 {
+		t.Fatalf("recovery = (%d, %d), events=%v; unexpired await must be preserved", recovered, dirs, eventLog.logged)
+	}
+	manifest, err := batchindex.ReadManifest(runDir)
+	if err != nil {
+		t.Fatalf("read run manifest after recovery: %v", err)
+	}
+	if manifest.Status != batchindex.RunManifestStatusActive {
+		t.Fatalf("run manifest status = %q, want active", manifest.Status)
+	}
+	state := events.ProjectRunStates(existing)[0]
+	if state.IsTerminal() || !state.IsAwaiting() {
+		t.Fatalf("awaiting state changed during recovery: terminal=%v awaiting=%v status=%q", state.IsTerminal(), state.IsAwaiting(), state.Status())
+	}
+}
+
+func TestRecoverStaleRuns_AbortsAwaitingRunWithExpiredLease(t *testing.T) {
+	baseDir := t.TempDir()
+	now := time.Now().UTC()
+	createdAt := now.Add(-20 * time.Minute)
+	started := createdAt.Add(time.Minute)
+	awaited := now.Add(-10 * time.Minute)
+	batchID := "dead-await-expired"
+	runID := "run-await-expired-42"
+	batchDir := filepath.Join(baseDir, "batches", batchID)
+	writeManifestFile(t, batchDir, BatchManifest{Issues: []int{42}, CreatedAt: createdAt})
+	runDir := filepath.Join(batchDir, "runs", runID)
+	if err := batchindex.WriteManifest(runDir, batchindex.RunManifest{
+		RunID: runID, BatchID: batchID, Issue: 42,
+		Status: batchindex.RunManifestStatusActive, CreatedAt: started,
+	}); err != nil {
+		t.Fatalf("write run manifest: %v", err)
+	}
+	if err := RenewRunWait(batchDir, RunWait{
+		Protocol: "run-wait/v1", RunID: runID, BatchID: batchID, Issue: 42,
+		Branch: "42-fix", BaseBranch: "main", OperationID: "ci:17:head",
+		OperationDeadline: now.Add(-time.Minute),
+	}, now.Add(-10*time.Minute)); err != nil {
+		t.Fatalf("write expired awaiting snapshot: %v", err)
+	}
+
+	eventLog := &recordingEventLog{}
+	existing := []events.Event{
+		{Type: "run.started", RunID: runID, Issue: 42, Timestamp: started, Payload: map[string]any{
+			"batch_id": batchID, "branch": "42-fix", "base_branch": "main",
+		}},
+		{Type: "run.await", RunID: runID, Issue: 42, Timestamp: awaited, Payload: map[string]any{
+			"await_reason": "pending", "ci_wait": map[string]any{
+				"deadline_unix_seconds": now.Add(-time.Minute).Unix(),
+			},
+		}},
+	}
+
+	recovered, _, err := RecoverStaleRuns(baseDir, existing, eventLog)
+	if err != nil {
+		t.Fatalf("RecoverStaleRuns: %v", err)
+	}
+	if recovered != 1 || len(eventLog.logged) != 1 || eventLog.logged[0].Type != "run.aborted" {
+		t.Fatalf("recovery = %d, events=%v; expired await must abort", recovered, eventLog.logged)
+	}
+	manifest, err := batchindex.ReadManifest(runDir)
+	if err != nil {
+		t.Fatalf("read run manifest after recovery: %v", err)
+	}
+	if manifest.Status != batchindex.RunManifestStatusAborted {
+		t.Fatalf("run manifest status = %q, want aborted", manifest.Status)
+	}
+}
+
 // TestRecoverStaleRuns_RecoversAwaitingRun proves a dead awaited run becomes
 // one recovered run.aborted, updates its manifest, and no longer projects as waiting.
 func TestRecoverStaleRuns_RecoversAwaitingRun(t *testing.T) {

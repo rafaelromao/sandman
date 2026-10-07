@@ -42,24 +42,48 @@ func TestPortalDiffRefreshLiveTimeCells_UpdatesDurationAndStalenessWithoutFullRe
 	js := `const body = makeMockBody();
 const realNow = Date.now;
 try {
-  Date.now = () => 1700000050000;
+  Date.now = () => 1700003600000;
   const run = {
     key: 'active', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1',
-    startedAt: new Date(1700000000000).toISOString(),
-    lastOutputAt: new Date(1700000000000).toISOString(),
-    duration: '50s',
+    startedAt: new Date(1700003000000).toISOString(),
+    lastOutputAt: new Date(1700003550000).toISOString(),
+    duration: '5m',
+    activeDurationSeconds: 300,
+    executionSince: new Date(1700003570000).toISOString(),
   };
   const created = SandmanPortalDiff.insertRunRow(body, run, { helpers, expandedKey: null });
   const durationCell = created.row.querySelector('[data-cell="duration"]');
-  if (durationCell.querySelector('.duration-value').textContent !== '50s') throw new Error('expected initial server duration');
+  if (durationCell.querySelector('.duration-value').textContent !== '5m') throw new Error('expected initial server duration');
   if (durationCell.querySelector('.stale-line')) throw new Error('run should not be stale at 50s');
 
-  Date.now = () => 1700000130000;
+  Date.now = () => 1700003600000;
   SandmanPortalDiff.refreshLiveTimeCells(body, [run]);
 
-  if (durationCell.querySelector('.duration-value').textContent !== '2m10s') throw new Error('expected duration to advance on an unchanged summary poll');
-  const stale = durationCell.querySelector('.stale-line');
-  if (!stale || stale.textContent !== 'stale · 2m 10s') throw new Error('expected stale time to advance on an unchanged summary poll');
+  if (durationCell.querySelector('.duration-value').textContent !== '5m30s') throw new Error('expected accumulated duration plus current active segment, got ' + durationCell.querySelector('.duration-value').textContent);
+  console.log('PASS');
+} finally {
+  Date.now = realNow;
+}
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffRefreshLiveTimeCells_WaitingReviewingRowStaysFrozen(t *testing.T) {
+	js := `const body = makeMockBody();
+const realNow = Date.now;
+try {
+  Date.now = () => 1700003600000;
+  const run = {
+    key: 'waiting', kind: 'active', status: 'reviewing', issueLabel: '#42', runId: 'r42',
+    reviewLive: true, startedAt: new Date(1700000000000).toISOString(),
+    duration: '5m', activeDurationSeconds: 300,
+  };
+  const created = SandmanPortalDiff.insertRunRow(body, run, { helpers, expandedKey: null });
+  const durationCell = created.row.querySelector('[data-cell="duration"]');
+  Date.now = () => 1700007200000;
+  SandmanPortalDiff.refreshLiveTimeCells(body, [run]);
+  const text = durationCell.querySelector('.duration-value').textContent;
+  if (text !== '5m') throw new Error('waiting reviewing row must remain frozen at 5m, got ' + text);
   console.log('PASS');
 } finally {
   Date.now = realNow;
@@ -1507,13 +1531,13 @@ const startedAt = new Date(Date.now() - 30*60*1000).toISOString();
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 
-const runRun = { key: 'r', kind: 'active', status: 'running', issueLabel: '#1', runId: 'r1', startedAt, duration: '' };
+const runRun = { key: 'r', kind: 'active', status: 'running', issueLabel: '#1', runId: 'r1', startedAt, executionSince: startedAt, activeDurationSeconds: 0, duration: '' };
 SandmanPortalDiff.insertRunRow(body, runRun, opts);
 SandmanPortalDiff.refreshLiveTimeCells(body, [runRun]);
 const runValue = body.children[0].querySelector('[data-cell="duration"]').querySelector('.duration-value');
 if (!/^30m/.test(runValue.textContent)) throw new Error('expected running row duration to tick to ~30m, got ' + JSON.stringify(runValue.textContent));
 
-const runRev = { key: 'v', kind: 'active', status: 'reviewing', review: true, prNumber: 42, issueLabel: 'PR42', runId: 'v1', startedAt, duration: '' };
+const runRev = { key: 'v', kind: 'active', status: 'reviewing', review: true, prNumber: 42, issueLabel: 'PR42', runId: 'v1', startedAt, executionSince: startedAt, activeDurationSeconds: 0, duration: '' };
 SandmanPortalDiff.insertRunRow(body, runRev, opts);
 SandmanPortalDiff.refreshLiveTimeCells(body, [runRun, runRev]);
 const revValue = body.children[1].querySelector('[data-cell="duration"]').querySelector('.duration-value');

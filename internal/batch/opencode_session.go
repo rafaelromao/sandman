@@ -90,11 +90,12 @@ func priorOpenCodeSession(layout paths.Layout, batchID, runID string) (opencodeS
 }
 
 type opencodeOutput struct {
-	dst     io.Writer
-	warning io.Writer
-	capture *opencodeSessionCapture
-	stderr  bool
-	buf     bytes.Buffer
+	dst           io.Writer
+	warning       io.Writer
+	capture       *opencodeSessionCapture
+	stderr        bool
+	modelProgress func()
+	buf           bytes.Buffer
 }
 
 type opencodeSessionCapture struct {
@@ -192,6 +193,9 @@ func (w *opencodeOutput) writeLine(line []byte, newline bool) error {
 		}
 	case "text":
 		if text := eventText(event); text != "" {
+			if !w.stderr && w.modelProgress != nil && strings.TrimSpace(text) != "" {
+				w.modelProgress()
+			}
 			return w.writeText(text)
 		}
 	case "tool", "tool_use", "tool_result":
@@ -657,4 +661,8 @@ func (w *opencodeOutput) SessionNotFound() bool {
 // once the run's output chain is assembled.
 func (w *opencodeOutput) setDestination(dst io.Writer) {
 	w.dst = dst
+}
+
+func (w *opencodeOutput) setModelProgress(progress func()) {
+	w.modelProgress = progress
 }
