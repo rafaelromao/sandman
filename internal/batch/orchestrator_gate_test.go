@@ -548,7 +548,7 @@ func TestExternalGate_RequestScopedApprovalResumesAfterReview(t *testing.T) {
 		}},
 	}
 	runOpts := gateTestRunOptions()
-	runOpts.awaitResumeMax = 2 // Entry repair consumes an attempt too.
+	runOpts.awaitResumeMax = 1
 	o := NewOrchestrator(
 		client,
 		&retryRenderer{result: "rendered prompt"},
@@ -1094,7 +1094,7 @@ func TestExternalGate_LiveFailedStatePrecedesActionableEvidence(t *testing.T) {
 		}},
 	}
 	runOpts := gateTestRunOptions()
-	runOpts.awaitResumeMax = 2 // Entry repair consumes an attempt too.
+	runOpts.awaitResumeMax = 1
 	o := NewOrchestrator(
 		client,
 		&retryRenderer{result: "rendered prompt"},
@@ -2845,7 +2845,7 @@ func TestExternalGate_LateCurrentHeadApprovalResumesMergeWorkWithoutWaiting(t *t
 		}},
 	}
 	runOpts := gateTestRunOptions()
-	runOpts.awaitResumeMax = 2 // Entry repair consumes an attempt too.
+	runOpts.awaitResumeMax = 1
 	o := NewOrchestrator(
 		client,
 		&retryRenderer{result: "rendered prompt"},

@@ -15,7 +15,7 @@ func (s *runSession) exhaustedReviewLaunch(extras map[string]any, pr int, head s
 	}
 	trigger, _ := request["trigger_id"].(string)
 	requestHead, _ := request["head_sha"].(string)
-	if trigger == "" || !strings.EqualFold(requestHead, head) || remediationNumber(request["pull_request"]) != pr {
+	if trigger == "" || !strings.EqualFold(requestHead, head) || lifecycleNumber(request["pull_request"]) != pr {
 		return false, nil
 	}
 	keys := []string{trigger}

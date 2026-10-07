@@ -3476,6 +3476,17 @@ func (s *runSession) emitNormalizedTerminal(ctx context.Context, runID string, r
 		event.Payload["portal_hidden"] = true
 	}
 	for k, v := range extras {
+		// Await/resume evidence may reach a terminal adapter after observation
+		// or a legacy session cap. Keep the cause as diagnostics, not readiness.
+		if k == "await" || k == "await_reason" {
+			continue
+		}
+		if k == "gate" {
+			if _, present := extras["external_gate"]; !present {
+				event.Payload["external_gate"] = v
+			}
+			continue
+		}
 		event.Payload[k] = v
 	}
 	_ = s.deps.eventLog.Log(event)
@@ -3969,10 +3980,8 @@ loop:
 						// (issue #2743).
 						gate, _ := extras["gate"].(string)
 						gateStatus = "failure"
-						if extras["reason"] != "REMEDIATION_STATE_ERROR" && extras["reason"] != "REMEDIATION_BUDGET_EXHAUSTED" {
-							extras = remediationBudgetFailureEvidence(gate, extras,
-								"advance the pull-request head before requesting another remediation run")
-						}
+						extras = remediationBudgetFailureEvidence(gate, extras,
+							"inspect the current pull-request remediation evidence and continue in a fresh session")
 					}
 					s.lifecycleTerminal = gateStatus == "success" || gateStatus == "failure" || gateStatus == "aborted"
 					result.Status = gateStatus

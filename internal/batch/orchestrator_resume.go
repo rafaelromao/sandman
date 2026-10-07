@@ -151,12 +151,14 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 }
 
 func (s *runSession) prepareEntryResume(ctx context.Context, wt sandbox.Sandbox, branch, runID string, extras map[string]any) (AgentRunResult, bool, bool) {
-	evidence := s.resumeEvidenceFor(ctx, branch, extras)
-	if err := s.reserveRemediation(ctx, wt.WorkDir(), evidence); err != nil {
-		result := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: 1}
-		result.Status = s.finishTerminal(ctx, runID, result, remediationReservationFailure(evidence, err), wt, branch)
+	if ctx.Err() != nil {
+		result := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "aborted", Branch: branch, RetriesTotal: 1}
+		result.Status = s.finishTerminal(ctx, runID, result, nil, wt, branch)
 		return result, true, true
 	}
+	// Entry is not an in-session relaunch. Historical head/request counters
+	// cannot consume this session's existing resume allowance.
+	evidence := s.resumeEvidenceFor(ctx, branch, extras)
 	taskContent, _, _ := ReadTaskContent(filepath.Join(wt.WorkDir(), ".sandman", "task.md"))
 	s.renderCfg.TaskPrompt = s.resumePromptFor(taskContent, evidence, s.renderCfg.ReviewTimeout)
 	return AgentRunResult{}, false, false
@@ -180,7 +182,7 @@ func (s *runSession) resumeCapFor() int {
 // particular, when the per-session resume cap is exhausted the gate
 // terminalizes as failure instead of entering another wait.
 func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbox, branch, runID string, extras map[string]any) (string, bool) {
-	if s.deps.githubClient == nil {
+	if s.deps.githubClient == nil || ctx.Err() != nil || s.resumeCount >= s.resumeCapFor() {
 		return "", false
 	}
 	gate, _ := extras["gate"].(string)
@@ -188,12 +190,6 @@ func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbo
 		return "", false
 	}
 	evidence := s.resumeEvidenceFor(ctx, branch, extras)
-	if err := s.reserveRemediation(ctx, wt.WorkDir(), evidence); err != nil {
-		for key, value := range remediationReservationFailure(evidence, err) {
-			extras[key] = value
-		}
-		return "", false
-	}
 	if ctx.Err() != nil {
 		return "", false
 	}

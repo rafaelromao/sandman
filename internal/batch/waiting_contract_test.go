@@ -180,10 +180,17 @@ func TestWaitingContract_ManagedCleanPRRequiresDelegatedApproval(t *testing.T) {
 	}
 }
 
-func TestWaitingContract_RepairBudgetSurvivesExecutorReentry(t *testing.T) {
+func TestWaitingContract_FreshRepairAllowanceAcrossExecutorReentry(t *testing.T) {
 	root := testenv.MkdirShort(t, "sm-wait-")
 	t.Chdir(root)
 	worktree := filepath.Join(root, "worktree")
+	budgetPath := filepath.Join(worktree, ".sandman", "state", "17.lifecycle-budget.json")
+	if err := os.MkdirAll(filepath.Dir(budgetPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(budgetPath, []byte("obsolete corrupt repair budget"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	factory := &controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{
 		result: AgentRunResult{IssueNumber: 42, Status: "success", Branch: gateTestBranch},
 	}}}
@@ -213,8 +220,39 @@ func TestWaitingContract_RepairBudgetSurvivesExecutorReentry(t *testing.T) {
 			t.Fatalf("exhausted repair status=%q", result.Status)
 		}
 	}
-	if len(factory.created) != 1 {
-		t.Fatalf("same-head repair launches across executor re-entry=%d, want one durable allowed attempt", len(factory.created))
+	if len(factory.created) != 4 {
+		t.Fatalf("same-head repair launches across executor re-entry=%d, want entry plus one legacy relaunch per session", len(factory.created))
+	}
+	for _, event := range log.snapshot() {
+		if event.Type != "run.finished" {
+			continue
+		}
+		if event.Payload["reason"] != "REMEDIATION_BUDGET_EXHAUSTED" || event.Payload["await"] != nil || event.Payload["gate"] != nil {
+			t.Fatalf("legacy exhausted-session failure lost terminal semantics: %+v", event)
+		}
+	}
+}
+
+func TestWaitingContract_TerminalObservationDropsActiveWaitMarkers(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	log := &spyEventLog{}
+	o := NewOrchestrator(nil, nil, nil, log, WithErrorLog(io.Discard))
+	executor := o.newRunExecutor(context.Background(), BatchConfig{}, &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: root}}, nil)
+	result := executor.finishObserved(context.Background(), RowSpec{IssueNumber: 42, RunID: "terminal-observation", Branches: map[int]string{42: "42-work"}}, "failure", map[string]any{
+		"reason": "REMEDIATION_BUDGET_EXHAUSTED", "await": true, "await_reason": "ci-failure", "gate": "ci-failure", "head_sha": "head",
+	})
+	finished := findEvent(log.snapshot(), "run.finished")
+	if result.Status != "failure" || finished == nil {
+		t.Fatalf("observed failure was not terminalized: result=%+v events=%+v", result, log.snapshot())
+	}
+	for _, key := range []string{"await", "await_reason", "gate"} {
+		if _, present := finished.Payload[key]; present {
+			t.Fatalf("terminal failure retained active %s marker: %+v", key, finished)
+		}
+	}
+	if finished.Payload["external_gate"] != "ci-failure" || finished.Payload["head_sha"] != "head" {
+		t.Fatalf("terminal failure discarded diagnostic evidence: %+v", finished)
 	}
 }
 
@@ -237,17 +275,17 @@ func TestWaitingContract_QuotaProbeWithoutDeadlineFailsClosed(t *testing.T) {
 	}
 }
 
-func TestWaitingContract_CancelledRemediationPreservesBudget(t *testing.T) {
+func TestWaitingContract_CancelledRemediationDoesNotResume(t *testing.T) {
 	root := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	s := &runSession{}
-	err := s.reserveRemediation(ctx, root, map[string]any{"gate": gateReadyToMerge, "pull_request": 17, "head_sha": "head"})
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("reservation error=%v, want cancellation", err)
+	s := &runSession{deps: runDeps{githubClient: &fakeGitHubClient{}}}
+	_, resume := s.resumePromptFromGate(ctx, &fakeSandbox{workDir: root}, "branch", "run", map[string]any{"gate": gateReadyToMerge, "pull_request": 17, "head_sha": "head"})
+	if resume || s.resumeCount != 0 {
+		t.Fatal("cancelled repair resumed or consumed the session allowance")
 	}
 	if _, err := os.Stat(filepath.Join(root, ".sandman", "state", "17.lifecycle-budget.json")); !os.IsNotExist(err) {
-		t.Fatalf("cancelled reservation changed budget: %v", err)
+		t.Fatalf("cancelled repair created a historical budget: %v", err)
 	}
 }
 

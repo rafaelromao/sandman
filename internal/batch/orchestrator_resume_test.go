@@ -18,10 +18,9 @@ import (
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
-// When re-evaluation shows CI failure after resume from await, the runtime
-// relaunches bounded remediation work; exhausting that budget terminalizes
-// instead of waiting again without a remaining resolver budget.
-func TestRunSingle_ModeContinueCIFailureExhaustsRemediationAsFailure(t *testing.T) {
+// Historical head-local counts cannot consume a new session's repair launches.
+// Entry plus the legacy three in-session relaunches remain executable.
+func TestRunSingle_ModeContinueCIFailureIgnoresHistoricalRepairBudget(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 
@@ -47,27 +46,29 @@ func TestRunSingle_ModeContinueCIFailureExhaustsRemediationAsFailure(t *testing.
 	}
 
 	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
-	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
-		{IssueNumber: 42, Status: "success", Branch: branch},
-		{IssueNumber: 42, Status: "success", Branch: branch},
-		{IssueNumber: 42, Status: "success", Branch: branch},
-		{IssueNumber: 42, Status: "success", Branch: branch},
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+		prs: map[string]*github.PR{branch: {
+			Number: 17, State: "open", HeadRefName: branch, HeadRefOid: "current-sha",
+			StatusCheckRollup: "failure", ReviewDecision: "APPROVED", MergeStateStatus: "BLOCKED",
+		}},
+	}
+	launches := 0
+	resultFactory := &controlledRunnableFactory{runnables: map[int]Runnable{
+		42: waitingRunnableFunction(func(context.Context) AgentRunResult {
+			launches++
+			if launches == 4 {
+				client.prs[branch] = &github.PR{Number: 17, State: "merged", Merged: true, HeadRefName: branch, Body: "Closes #42"}
+			}
+			if launches > 4 {
+				t.Fatal("launched again after verified completion")
+			}
+			return AgentRunResult{IssueNumber: 42, Status: "success", Branch: branch}
+		}),
 	}}
 	spyLog := &spyEventLog{}
 	o := &Orchestrator{
-		githubClient: &fakeGitHubClient{
-			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
-			// PR now has CI failure after resume from await
-			prs: map[string]*github.PR{branch: {
-				Number:            17,
-				State:             "open",
-				HeadRefName:       branch,
-				HeadRefOid:        "current-sha",
-				StatusCheckRollup: "failure",
-				ReviewDecision:    "APPROVED",
-				MergeStateStatus:  "BLOCKED",
-			}},
-		},
+		githubClient:    client,
 		renderer:        &retryRenderer{result: "rendered prompt"},
 		sandboxFactory:  sbFactory,
 		eventLog:        spyLog,
@@ -87,25 +88,29 @@ func TestRunSingle_ModeContinueCIFailureExhaustsRemediationAsFailure(t *testing.
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure after bounded CI remediation is exhausted", result.Status)
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success after CI repair despite historical remediation_attempts=3", result.Status)
 	}
-	if got := len(resultFactory.created); got != 0 {
-		t.Fatalf("agent launches = %d, want no launch after durable budget exhaustion", got)
-	}
-	if len(resultFactory.configs) != 0 {
-		t.Fatal("exhausted durable budget prepared an agent prompt")
+	if launches != 4 {
+		t.Fatalf("agent launches = %d, want entry plus three legacy relaunches", launches)
 	}
 	logs, err := spyLog.Read()
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
 	if got := countEventsByType(logs, "run.await"); got != 0 {
-		t.Fatalf("run.await events = %d, want 0 after remediation budget exhaustion", got)
+		t.Fatalf("run.await events = %d, want 0 for self-owned repair", got)
+	}
+	if got := countEventsByType(logs, "run.retry"); got != 0 {
+		t.Fatalf("run.retry events = %d, want 0 for lifecycle resumes", got)
 	}
 	finished := findEvent(logs, "run.finished")
-	if finished == nil || finished.Payload["reason"] != "REMEDIATION_BUDGET_EXHAUSTED" {
-		t.Fatalf("finished event = %#v, want remediation-budget failure", finished)
+	if finished == nil || finished.Payload["status"] != "success" {
+		t.Fatalf("finished event = %#v, want verified success", finished)
+	}
+	retained, err := readCIWaitRegistration(filepath.Join(worktreePath, ".sandman", "state", "17.ci_wait.json"))
+	if err != nil || retained.DeadlineUnixSeconds != registration.DeadlineUnixSeconds {
+		t.Fatalf("repair renewed the CI observation deadline: registration=%+v err=%v", retained, err)
 	}
 }
 
@@ -328,7 +333,7 @@ func TestEntryReevaluation_ModeContinueTopLevelApprovalResumesAgentWithEvidence(
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
 			currentHead:       func(string) (string, error) { return "current-sha", nil },
-			awaitResumeMax:    2,
+			awaitResumeMax:    1,
 			lifecyclePollPlan: []time.Duration{0},
 			lifecycleWait: func(context.Context, time.Duration) error {
 				return errLifecycleObservationTestStop
@@ -681,7 +686,7 @@ func TestRunSingle_PendingGatePollFailureWithActionableFeedbackResumesAgent(t *t
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
 			currentHead:       func(string) (string, error) { return "current-sha", nil },
-			awaitResumeMax:    2,
+			awaitResumeMax:    1,
 			lifecyclePollPlan: []time.Duration{0},
 			lifecycleWait: func(context.Context, time.Duration) error {
 				return errLifecycleObservationTestStop
@@ -765,7 +770,7 @@ func TestRunSingle_CIFailurePrecedesActionableEvidenceAndExhaustsBudget(t *testi
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
 			currentHead:       func(string) (string, error) { return "current-sha", nil },
-			awaitResumeMax:    2,
+			awaitResumeMax:    1,
 			lifecyclePollPlan: []time.Duration{0},
 			lifecycleWait: func(context.Context, time.Duration) error {
 				return errLifecycleObservationTestStop
@@ -844,7 +849,7 @@ func TestEntryReevaluation_ModeContinueInformalFeedbackResumesAgentWithEvidence(
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
 			currentHead:       func(string) (string, error) { return "current-sha", nil },
-			awaitResumeMax:    2,
+			awaitResumeMax:    1,
 			lifecyclePollPlan: []time.Duration{0},
 			lifecycleWait: func(context.Context, time.Duration) error {
 				return errLifecycleObservationTestStop
@@ -1019,7 +1024,7 @@ func TestRunSingle_InformalFeedbackResumesWithinSameAttempt(t *testing.T) {
 		runnableFactory: resultFactory,
 		runSessionOpts: runSessionOptions{
 			currentHead:       func(string) (string, error) { return "current-sha", nil },
-			awaitResumeMax:    2,
+			awaitResumeMax:    1,
 			lifecyclePollPlan: []time.Duration{0},
 			lifecycleWait: func(context.Context, time.Duration) error {
 				return errLifecycleObservationTestStop

@@ -38,7 +38,7 @@ func (s *runSession) ciWaitEvidence(workDir string, pr *github.PR, headSHA strin
 	}
 	path := filepath.Join(paths.NewLayout(nil, workDir).StateDir, fmt.Sprintf("%d.ci_wait.json", pr.Number))
 	var evidence map[string]any
-	err := withRemediationLock(context.Background(), path, func() error {
+	err := withOperationLock(context.Background(), path, func() error {
 		registration, err := readCIWaitRegistration(path)
 		if err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("read CI wait state: %w", err)
