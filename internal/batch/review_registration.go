@@ -168,7 +168,7 @@ func validateReviewRegistration(registration reviewRequestRegistration, reposito
 	if strings.TrimSpace(request.HeadSHA) == "" || !strings.EqualFold(request.HeadSHA, strings.TrimSpace(currentHead)) || !strings.EqualFold(request.HeadSHA, strings.TrimSpace(pr.HeadRefOid)) {
 		return fmt.Errorf("review registration head does not match the current pull request")
 	}
-	if strings.TrimSpace(request.TriggerID) == "" || strings.TrimSpace(request.TriggerPrefix) == "" || strings.TrimSpace(request.TriggerCreatedAt) == "" || strings.TrimSpace(request.ConfirmedAt) == "" || strings.TrimSpace(request.StartedAt) == "" || strings.TrimSpace(request.DeadlineAt) == "" {
+	if strings.TrimSpace(request.TriggerID) == "" || request.TriggerIdentity != reviewTriggerIdentity(request.TriggerID) || strings.TrimSpace(request.TriggerPrefix) == "" || strings.TrimSpace(request.TriggerCreatedAt) == "" || strings.TrimSpace(request.ConfirmedAt) == "" || strings.TrimSpace(request.StartedAt) == "" || strings.TrimSpace(request.DeadlineAt) == "" {
 		return fmt.Errorf("review registration identity or timing is incomplete")
 	}
 	triggerAt, err := time.Parse(time.RFC3339Nano, request.TriggerCreatedAt)
@@ -180,7 +180,7 @@ func validateReviewRegistration(registration reviewRequestRegistration, reposito
 		return fmt.Errorf("review registration confirmation timestamp is invalid")
 	}
 	startedAt, err := time.Parse(time.RFC3339Nano, request.StartedAt)
-	if err != nil || startedAt.Before(confirmedAt) || (!registration.LegacyImported && startedAt.Unix() != int64(request.StartedUnixSeconds)) {
+	if err != nil || startedAt.Before(confirmedAt) || startedAt.Unix() != int64(request.StartedUnixSeconds) {
 		return fmt.Errorf("review registration start timestamp is invalid")
 	}
 	if request.StartedUnixSeconds < 0 || request.DeadlineUnixSeconds <= 0 || request.EffectiveTimeout <= 0 || request.DeadlineUnixSeconds != request.StartedUnixSeconds+request.EffectiveTimeout || request.DeadlineAt != fmt.Sprintf("unix:%d", request.DeadlineUnixSeconds) || len(request.PollPlan) == 0 {

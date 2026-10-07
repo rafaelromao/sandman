@@ -139,6 +139,19 @@ func reviewTimeoutArtifactsPresentForPR(workDir string, prNumber int) bool {
 		return false
 	}
 	layout := paths.NewLayout(nil, workDir)
+	for _, path := range []string{layout.PRReviewRequestPath(prNumber), layout.PRReviewRequestStatePath(prNumber), layout.PRHeadShaPath(prNumber), layout.PRReviewRegistrationPath(prNumber)} {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func reviewLifecycleArtifactsPresentForPR(workDir string, prNumber int) bool {
+	if strings.TrimSpace(workDir) == "" || prNumber <= 0 {
+		return false
+	}
+	layout := paths.NewLayout(nil, workDir)
 	for _, path := range []string{layout.PRReviewRequestPath(prNumber), layout.PRReviewRequestStatePath(prNumber), layout.PRReviewRegistrationPath(prNumber)} {
 		if _, err := os.Stat(path); err == nil {
 			return true

@@ -149,7 +149,7 @@ func (s *runSession) retainedLifecycleEvidence(ctx context.Context, workDir stri
 		return retainedReviewEvidence{}
 	}
 	injectedStore := s.reviewRegistrationStore != nil || s.opts.reviewRegistrationStore != nil
-	if !reviewTimeoutArtifactsPresentForPR(workDir, pr.Number) && !injectedStore {
+	if !reviewLifecycleArtifactsPresentForPR(workDir, pr.Number) && !injectedStore {
 		return retainedReviewEvidence{}
 	}
 	repository, err := s.deps.githubClient.RepoName(ctx)
