@@ -222,9 +222,11 @@ waiting for the reset. Sandman recognises the limit on the final stream-json
 contains one of these messages: `hit your session limit`, `hit your weekly
 limit`, `hit your Opus limit`, `hit your Sonnet limit`, or `Fable limit reached`.
 The run then emits `run.await` with `await_reason: usage-limit`, probes every
-ten minutes for up to five hours, and resumes the same conversation with
-`--continue`. The five-hour deadline is absolute and durable; expiry fails
-explicitly rather than beginning an ordinary retry burst. Spend and budget limits (`monthly spend limit`,
+ten minutes for five hours of accumulated completed polling, and resumes the
+same conversation with `--continue`. Re-entry/restart preserves consumed polling;
+capacity delay and downtime consume none. After the final boundary probe,
+configured ordinary fresh-session retries remain available. The expected
+exhaustion timestamp is diagnostic, not a hard deadline. Spend and budget limits (`monthly spend limit`,
 `shared budget`, ...) are not awaited. The review daemon applies the same rule
 to `review_agent: claude` and enters its daemon-wide quota pause.
 

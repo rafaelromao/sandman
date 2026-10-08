@@ -11,8 +11,14 @@ Run status is derived from the append-only event log. Do not add mutable status 
 The canonical [AgentRun state machine](../architecture/run-state-machine.md)
 defines every lifecycle/admission transition. Initial queues are unfinished;
 started capacity-ready work remains waiting. Same RunID keeps its duration and
-current ownership across batches. Persist operation deadlines and repair counts
-without resetting them on executor re-entry. RunID claims fence lease renewal,
+current ownership across batches. Preserve managed CI/review hard deadlines and
+completed quota polling across executor re-entry. Quota exhaustion estimates are
+diagnostic, not schedule/ownership deadlines; downtime and capacity delay consume
+no polling allowance. Keep the historical three in-session relaunches (entry
+excluded), standalone CI's 60-minute/three-fix invocation-local bounds, and
+configured ordinary retries. Obsolete cumulative repair ledgers cannot deny
+execution. See the [AFK exit baseline](afk-exit-regression-baseline.md) when
+evaluating added exit conditions. RunID claims fence lease renewal,
 takeover and terminal cancellation; lease/schedule data is not a status record.
 Tests must cover composed quota → recovery → CI/review and wait → restart/abort
 paths, including concurrent launch-boundary admission revalidation.

@@ -76,7 +76,16 @@ Compatibility/readiness evidence that runnable work is awaiting admission, inclu
 | `previous_run_id`, `previous_run_batch_id` | Prior Run identity, used to restore runtime-owned continuation context |
 | `reuse_session` | `true` when the continuation may reuse its supported agent session |
 | `gate`, `reason`, `next_action` | Resolved lifecycle evidence that made the continuation runnable |
+| `usage_limit_probe` | `true` when the ready continuation is a quota recovery probe |
+| `usage_limit_waited_seconds` | Accumulated completed quota polling, restored into executor and scheduler; capacity delay and downtime do not count |
+| `usage_limit_deadline_unix_seconds` | Recomputed expected quota exhaustion timestamp, diagnostic only; not an admission, operation, or ownership cutoff |
 | `review_request`, `ci_wait` | Optional request-scoped review or CI evidence |
+
+Quota schedules use stable `quota:<RunID>` operation identity and no hard
+operation deadline. Their diagnostic estimates do not shorten the five-minute
+ownerless grace; normalizing legacy schedules does not extend existing grace.
+Missing/invalid polling accounting disables additional quota waits while
+permitting configured bounded ordinary execution.
 
 #### `run.blocked`
 Emitted when one or more `BlockedBy` issues are not satisfied at the dependent start decision. For in-batch blockers the two-part gate applies: the blocker must both have reached terminal batch status `success` and be `closed` on GitHub; a successful but still `open` in-batch blocker produces terminal `run.blocked` with the open blocker named, and no agent is launched or wait state added. External blockers are gated on `closed` alone. Failed and `blocked` blockers also produce `run.blocked`; an `aborted` blocker cascades as `run.aborted` instead. See `CONTEXT.md` BlockedBy / In-batch blocker for the canonical gate definition.
@@ -134,10 +143,11 @@ Emitted when an agent run completes.
 | `reason` | Short string built from the error returned by the selection phase. |
 | `blocker` | Optional dependency blocker classification and upstream issue list. |
 | `completion` | Completion diagnostic used when a merged pull request needs closing-reference repair. |
+| `external_gate` | Retained terminal gate diagnostic; terminal payloads strip active `await`, `await_reason`, and `gate` fields. |
 | `review_request` | Present for retained delegated-review outcomes; retains the confirmed request identity, current head, deadline, budget, elapsed time, response counters, validated request-scoped classification, outcome, and next action. |
 
 #### `run.await`
-Emitted when an issue-driven run ends its agent session while an external operation is actively resolving: current-head CI is queued/running, a delegated-review request has been confirmed and remains within its deadline, or a built-in agent hit its provider usage limit. A confirmed review request counts as ongoing from successful delivery, even before the reviewer starts. A provider usage limit counts as ongoing because the quota window resets externally: the run probes every ten minutes for up to five hours and resumes the same session. A PR's existence, generic `pending` label, `REVIEW_REQUIRED`, `BLOCKED`, absent checks, stale head, or failed lookup/state read cannot alone authorize an await. Agent-owned work is resumed or fails with a structured next action instead of being parked. A legitimate await is non-terminal and does not consume an agent retry. Pending current-head CI carries a durable, non-renewing 30-minute per-head deadline in `ci_wait`; a review request carries its confirmed request identity and deadline. The row keeps dependency ownership while the scheduler releases execution capacity between observations. When external work finishes, the run resumes on an available slot (or remains capacity-queued until one frees); it does not require manual continuation.
+Emitted when an issue-driven run ends its agent session while an external operation is actively resolving: current-head CI is queued/running, a delegated-review request has been confirmed and remains within its deadline, or a built-in agent hit its provider usage limit. A confirmed review request counts as ongoing from successful delivery, even before the reviewer starts. A provider usage limit counts as ongoing because the quota window resets externally: the run probes at ten-minute intervals for five hours of accumulated completed polling and resumes the same session. The final boundary probe and configured ordinary fresh-session retries remain available. A PR's existence, generic `pending` label, `REVIEW_REQUIRED`, `BLOCKED`, absent checks, stale head, or failed lookup/state read cannot alone authorize an await. Agent-owned work is resumed or fails with a structured next action instead of being parked. A legitimate await is non-terminal and does not consume an agent retry. Pending managed current-head CI carries a durable, non-renewing 30-minute per-head deadline in `ci_wait`; a review request carries its confirmed request identity and deadline. The row keeps dependency ownership while the scheduler releases execution capacity between observations. When external work finishes, the run resumes on an available slot (or remains capacity-queued until one frees); it does not require manual continuation. Standalone CI retains its separate 60-minute/three-fix per-current-head invocation-local bounds.
 
 The run timer pauses for every suspension, including ready-but-capacity-delayed work. Resume/continuation adds another active segment to the same RunID's total, even across batches. Waiting and ownerless recovery are excluded. Only a new RunID starts a fresh clock. Verified terminal decisions require no execution slot.
 
@@ -150,12 +160,16 @@ The run timer pauses for every suspension, including ready-but-capacity-delayed 
 | `base_branch` | Base branch name |
 | `retries_total` | Total retry attempts configured |
 | `review_request` | Present for retained delegated-review outcomes; retains the confirmed request identity, current head, deadline, validated request-scoped classification, outcome, and next action |
-| `ci_wait` | Present for current-head CI waits; records the PR/head identity, durable deadline, and same-head remediation attempts |
+| `ci_wait` | Present for current-head CI waits; records the PR/head identity, durable managed CI deadline, and diagnostic same-head remediation attempts |
 
 #### `run.resumed`
 Emitted when the runtime relaunches the agent session in-session. Review feedback uses `reason: "feedback"`; a current-head approval with green CI and clean mergeability uses `reason: "approval"`; bounded external remediation uses `reason: "CI_WAIT_TIMEOUT"`, `"CI_FAILURE"`, or `"MERGE_CONFLICT"`. Non-terminal: the run stays active, keeps its RunID, and does not consume a retry.
 
 Entry re-evaluation (session start) relaunches with the same evidence but is recorded as `run.continued` by the existing continuation flow — `run.resumed` marks only in-session relaunches.
+
+Implementation permits three in-session lifecycle relaunches in addition to
+entry. A fresh executor gets a fresh allowance; legacy cumulative repair ledgers
+and retained same-head remediation counts cannot veto its launch.
 
 | Field | Description |
 |-------|-------------|
@@ -166,7 +180,7 @@ Entry re-evaluation (session start) relaunches with the same evidence but is rec
 | `retries_total` | Total retry attempts configured |
 | `run_id` | RunID continuity marker (equals the event's own `run_id`; the resume keeps the RunID) |
 | `review_request` | Present for retained delegated-review outcomes; request-scoped review evidence attached to the resumed session |
-| `ci_wait` | Present for CI deadline, CI failure, and merge-conflict remediation; records the current PR/head identity, durable deadline, and same-head remediation attempts |
+| `ci_wait` | Present for CI deadline, CI failure, and merge-conflict remediation; records the current PR/head identity, durable managed CI deadline, and diagnostic same-head remediation attempts |
 
 #### Implementation pull-request lifecycle
 At a clean agent exit, the runtime consults the pull request once and applies one
@@ -177,7 +191,7 @@ missing closing reference produces `failure` with completion diagnostics.
 Only an actively resolving current-head CI operation, a confirmed, in-deadline
 delegated-review request, or a recognised provider usage limit produces `run.await` without consuming an agent retry.
 A review request is active from successful trigger confirmation, even before a
-review run starts. A usage limit is active because the provider quota window resets externally: the run polls every ten minutes for up to five hours and resumes the same session, then follows the ordinary retry path. Pending current-head CI is bounded by its durable per-head
+review run starts. A usage limit is active because the provider quota window resets externally: the run accumulates completed ten-minute polling intervals up to five hours, retains its final boundary probe, and then follows the configured ordinary fresh-session retry path. Pending managed current-head CI is bounded by its durable per-head
 deadline; a new head is the only reset boundary. The logical row keeps its
 dependents queued while execution capacity is released between observations.
 When the review produces request-scoped feedback or approval, the implementation
@@ -186,7 +200,7 @@ resumes on an available slot to repair or merge; if capacity is full,
 through normal run admission after a process restart. It revalidates the live
 head/request before launch. Deadline expiry,
 unsupported gates, missing PR publication, stale heads, lookup/state errors, and
-exhausted remediation budgets cannot prolong waiting: the runtime resumes
+the exhausted historical in-session relaunch allowance cannot prolong waiting: the runtime resumes
 implementor-owned work where possible or terminalizes with a structured failure
 and next action. A continuation or in-session relaunch re-evaluates the same
 facts. Retained review records are evidence only and cannot override verified
