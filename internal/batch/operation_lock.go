@@ -45,11 +45,3 @@ func withOperationLock(ctx context.Context, path string, fn func() error) error 
 		}
 	}
 }
-
-func lifecycleNumber(value any) int {
-	if n, ok := value.(int); ok {
-		return n
-	}
-	n, _ := lifecycleDeadlineSeconds(value)
-	return int(n)
-}

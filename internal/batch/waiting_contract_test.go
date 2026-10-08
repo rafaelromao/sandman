@@ -2,7 +2,10 @@ package batch
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -17,7 +20,6 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
-	"github.com/rafaelromao/sandman/internal/reviewlaunch"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
@@ -399,22 +401,53 @@ func TestWaitingContract_RenewalFailureStopsActiveExecution(t *testing.T) {
 	}
 }
 
-func TestWaitingContract_ReviewerLaunchExhaustionIsRequestScoped(t *testing.T) {
-	layout := paths.NewLayout(nil, t.TempDir())
-	for i := 0; i < 3; i++ {
-		if _, err := reviewlaunch.RecordFailure(layout.StateDir, 17, "request", "head"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	s := &runSession{deps: runDeps{layout: layout}}
-	for _, tc := range []struct {
-		trigger, head string
-		want          bool
-	}{{"request", "head", true}, {"new-request", "head", false}, {"request", "new-head", false}} {
-		exhausted, err := s.exhaustedReviewLaunch(map[string]any{"review_request": map[string]any{"trigger_id": tc.trigger, "head_sha": tc.head, "pull_request": 17}}, 17, tc.head)
-		if err != nil || exhausted != tc.want {
-			t.Fatalf("request %s/%s exhaustion=%v error=%v, want %v", tc.trigger, tc.head, exhausted, err, tc.want)
-		}
+func TestWaitingContract_ReviewerLaunchHistoryCannotPreemptApproval(t *testing.T) {
+	for _, corrupt := range []bool{false, true} {
+		t.Run(fmt.Sprintf("corrupt=%v", corrupt), func(t *testing.T) {
+			root := testenv.MkdirShort(t, "sm-review-history-")
+			t.Chdir(root)
+			worktree := filepath.Join(root, "worktree")
+			writeCurrentHeadApprovalClassification(t, worktree)
+			data, err := os.ReadFile(filepath.Join(worktree, ".sandman", "state", "17.review_request.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var request reviewRequestEnvelope
+			if err := json.Unmarshal(data, &request); err != nil {
+				t.Fatal(err)
+			}
+			layout := paths.NewLayout(nil, root)
+			if err := os.MkdirAll(layout.StateDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			key := sha256.Sum256([]byte(request.TriggerID + "\x00" + "current-sha"))
+			legacy := fmt.Sprintf(`{"protocol":"review-launch/v1","pull_request":17,"trigger":%q,"head_sha":"current-sha","attempts":3}`, request.TriggerID)
+			if corrupt {
+				legacy = "obsolete corrupt launch budget"
+			}
+			if err := os.WriteFile(filepath.Join(layout.StateDir, fmt.Sprintf("17.review-launch-%x.json", key)), []byte(legacy), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			client := &fakeGitHubClient{
+				issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+				prs:    map[string]*github.PR{gateTestBranch: {Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha", StatusCheckRollup: "success", ReviewDecision: "APPROVED", MergeStateStatus: "CLEAN"}},
+			}
+			launches := 0
+			factory := &controlledRunnableFactory{runnables: map[int]Runnable{42: waitingRunnableFunction(func(context.Context) AgentRunResult {
+				launches++
+				client.prs[gateTestBranch] = &github.PR{Number: 17, State: "merged", Merged: true, HeadRefName: gateTestBranch, Body: "Closes #42"}
+				return AgentRunResult{IssueNumber: 42, Status: "success", Branch: gateTestBranch}
+			})}}
+			sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktree}}
+			log := &spyEventLog{}
+			o := NewOrchestrator(client, &noopRenderer{}, nil, log, WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(sbFactory), WithRunSessionOpts(gateTestRunOptions()))
+			result, _ := o.newRunExecutor(context.Background(), BatchConfig{Cfg: &config.Config{WorktreeDir: "worktrees"}, AgentCfg: config.Agent{Command: "true"}, IdentityResolver: noopIdentityResolver()}, sbFactory, nil).Execute(context.Background(), RowSpec{
+				IssueNumber: 42, Mode: ModeContinue, RunID: "approved", Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main", RenderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+			})
+			if result.Status != "success" || launches != 1 {
+				t.Fatalf("launch history preempted approved merge work: result=%+v launches=%d events=%+v", result, launches, log.snapshot())
+			}
+		})
 	}
 }
 
