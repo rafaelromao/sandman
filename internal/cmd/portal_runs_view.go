@@ -2741,6 +2741,16 @@ func (v *portalRunsView) readPortalTextFile(path string) string {
 		}
 		return ""
 	}
+	// This is only the pre-stream placeholder. The structured Saved Run Log
+	// source owns continuity and supplies the explicit range once the pane
+	// attaches; keep the compatibility payload bounded as well.
+	if len(data) > portalLogSnapshotLimit {
+		start := len(data) - portalLogSnapshotLimit
+		if newline := bytes.IndexByte(data[start:], '\n'); newline >= 0 {
+			start += newline + 1
+		}
+		data = data[start:]
+	}
 	return stripLogLabels(v.cleanPortalText(string(data)))
 }
 

@@ -13,21 +13,37 @@
   // Keyed by subject run-id; bounded by clearing on overflow.
   const logPaneCache = new Map();
   const LOG_PANE_CACHE_LIMIT = 8;
+  const LOG_PANE_CACHE_BYTES = 2 * 1024 * 1024;
+  let logPaneCacheBytes = 0;
   const shellCommands = 'gh|git|go|npm|yarn|node|npx|ls|echo|cat|make|mkdir|rm|cp|mv|find|grep|sed|awk|curl|wget|pwd|cd|printf|tar|unzip|jq|chmod|ln|whoami|sort|head|tail|less|more|touch|ssh|scp';
   const actionVerbs = 'Read|Edit|Glob|Skill|Bash|Write|Task|Grep|Search|Apply patch|Todos';
   function takeCachedLogPane(subjectValue) {
     const pane = logPaneCache.get(subjectValue);
-    if (pane) logPaneCache.delete(subjectValue);
+    if (pane) {
+      logPaneCache.delete(subjectValue);
+      logPaneCacheBytes -= Number(pane.getAttribute('data-cache-bytes') || 0);
+    }
     return pane || null;
   }
   function storeCachedLogPane(subjectValue, pane) {
     if (!subjectValue || !pane) return;
-    if (logPaneCache.has(subjectValue)) logPaneCache.delete(subjectValue);
-    if (logPaneCache.size >= LOG_PANE_CACHE_LIMIT) {
-      const oldestKey = logPaneCache.keys().next().value;
-      if (oldestKey !== undefined) logPaneCache.delete(oldestKey);
+    if (logPaneCache.has(subjectValue)) {
+      const previous = logPaneCache.get(subjectValue);
+      logPaneCache.delete(subjectValue);
+      logPaneCacheBytes -= Number(previous.getAttribute('data-cache-bytes') || 0);
     }
+    const bytes = (pane.textContent || '').length;
+    if (bytes > LOG_PANE_CACHE_BYTES) return;
+    while (logPaneCache.size >= LOG_PANE_CACHE_LIMIT || logPaneCacheBytes + bytes > LOG_PANE_CACHE_BYTES) {
+      const oldestKey = logPaneCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      const oldest = logPaneCache.get(oldestKey);
+      logPaneCache.delete(oldestKey);
+      logPaneCacheBytes -= Number(oldest.getAttribute('data-cache-bytes') || 0);
+    }
+    pane.setAttribute('data-cache-bytes', String(bytes));
     logPaneCache.set(subjectValue, pane);
+    logPaneCacheBytes += bytes;
   }
 
   // tokenizeForCache builds the rendered log pane (section + pre) for a

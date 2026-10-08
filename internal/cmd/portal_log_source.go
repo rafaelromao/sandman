@@ -64,6 +64,7 @@ type portalLogSource struct {
 	pos         int64
 	historyHash string
 	modTime     time.Time
+	changeToken string
 }
 
 func newPortalLogSource(path, runID string) (*portalLogSource, error) {
@@ -80,7 +81,7 @@ func newPortalLogSource(path, runID string) (*portalLogSource, error) {
 		return nil, err
 	}
 	identity := portalLogGeneration(info)
-	return &portalLogSource{path: path, runID: runID, file: f, identity: identity, gen: identity, modTime: info.ModTime()}, nil
+	return &portalLogSource{path: path, runID: runID, file: f, identity: identity, gen: identity, modTime: info.ModTime(), changeToken: portalLogChangeToken(info)}, nil
 }
 
 func (s *portalLogSource) Close() error {
@@ -110,6 +111,7 @@ func (s *portalLogSource) snapshot() (portalLogBatch, error) {
 	}
 	s.pos = end
 	s.modTime = info.ModTime()
+	s.changeToken = portalLogChangeToken(info)
 	s.historyHash, err = portalLogPrefixHash(s.file, end)
 	if err != nil {
 		return portalLogBatch{}, err
@@ -156,6 +158,8 @@ func (s *portalLogSource) refreshPathIdentity() (bool, error) {
 	s.gen = generation
 	s.pos = 0
 	s.historyHash = ""
+	s.modTime = info.ModTime()
+	s.changeToken = portalLogChangeToken(info)
 	return true, nil
 }
 
@@ -180,12 +184,13 @@ func (s *portalLogSource) appendBatch(terminal bool) (portalLogBatch, bool, erro
 		s.pos = 0
 		s.historyHash = ""
 		s.modTime = info.ModTime()
+		s.changeToken = portalLogChangeToken(info)
 		return portalLogBatch{RunID: s.runID, Generation: s.gen, Reset: true, Reason: "source-truncated"}, true, nil
 	}
 	// Do not re-hash the complete retained prefix while the file is idle. A
 	// changed size or modification time still validates the old prefix before
 	// accepting new bytes, while the no-output poll remains O(1).
-	changedOnDisk := info.Size() != s.pos || !info.ModTime().Equal(s.modTime)
+	changedOnDisk := info.Size() != s.pos || !info.ModTime().Equal(s.modTime) || portalLogChangeToken(info) != s.changeToken
 	if s.historyHash != "" && changedOnDisk {
 		currentHash, hashErr := portalLogPrefixHash(s.file, s.pos)
 		if hashErr != nil {
@@ -200,6 +205,7 @@ func (s *portalLogSource) appendBatch(terminal bool) (portalLogBatch, bool, erro
 	}
 	if info.Size() == s.pos {
 		s.modTime = info.ModTime()
+		s.changeToken = portalLogChangeToken(info)
 		if terminal {
 			// A final unterminated fragment is a record once lifecycle state says
 			// the writer has flushed and the AgentRun is terminal.
@@ -228,6 +234,7 @@ func (s *portalLogSource) appendBatch(terminal bool) (portalLogBatch, bool, erro
 	}
 	s.pos = end
 	s.modTime = info.ModTime()
+	s.changeToken = portalLogChangeToken(info)
 	s.historyHash, err = portalLogPrefixHash(s.file, end)
 	if err != nil {
 		return portalLogBatch{}, false, err
@@ -262,6 +269,33 @@ func portalLogPrefixHash(file *os.File, limit int64) (string, error) {
 		}
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+// portalLogChangeToken supplements size and mtime with the filesystem change
+// time where the platform exposes one. It catches truncate-and-regrow writes
+// whose size and caller-controlled mtime happen to match the accepted prefix;
+// the full prefix hash below still decides whether the source can continue.
+func portalLogChangeToken(info os.FileInfo) string {
+	if info == nil || info.Sys() == nil {
+		return ""
+	}
+	sys := reflect.ValueOf(info.Sys())
+	for sys.Kind() == reflect.Pointer {
+		if sys.IsNil() {
+			return ""
+		}
+		sys = sys.Elem()
+	}
+	if sys.Kind() != reflect.Struct {
+		return ""
+	}
+	for _, name := range []string{"Ctim", "Ctimespec", "Ctime", "ChangeTime", "ChangeTimeNano"} {
+		field := sys.FieldByName(name)
+		if field.IsValid() && field.CanInterface() {
+			return fmt.Sprintf("%s=%v", name, field.Interface())
+		}
+	}
+	return ""
 }
 
 func (s *portalLogSource) records(start, limit int64, includePartial bool) ([]portalLogRecord, int64, error) {
@@ -389,6 +423,10 @@ func streamPortalSavedLog(ctx context.Context, w io.Writer, source *portalLogSou
 		} else {
 			info, statErr := source.file.Stat()
 			if statErr != nil || initial.Offset > info.Size() {
+				reset = true
+			} else if initial.Offset > 0 && initial.History == "" {
+				// A cursor without a prefix proof cannot distinguish a valid
+				// continuation from a rewritten file after Portal restarted.
 				reset = true
 			} else {
 				retainedStart, startErr := source.snapshotStart(info.Size())

@@ -1991,15 +1991,23 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       pre.setAttribute('data-log-range-end', String(range.end));
       pre.setAttribute('data-log-retained-bytes', String(range.retainedBytes));
       pre.setAttribute('data-log-truncated', range.truncated ? '1' : '0');
+      // Do not cancel a chunked projection for every accepted append. The
+      // model has already committed the records; let the current projection
+      // finish, then append the model's newer suffix in one pass.
+      if (pre.getAttribute('data-rendering-log')) return;
       const sticky = portalScroll && portalScroll.isSticky && portalScroll.isSticky(runKey);
-      const canAppend = !pre.getAttribute('data-rendering-log')
-        && previousGeneration === range.generation
+      const canAppend = previousGeneration === range.generation
         && text.length > previous.length
         && text.startsWith(previous);
       const helpers = {
         renderTerminalContent: SandmanPortalDiff.highlightTerminalLog,
         onComplete: function () {
           if (sticky) pre.scrollTop = pre.scrollHeight;
+          if (streamPreFor(runKey) !== pre) return;
+          const current = portalLogModel.text(runKey);
+          if (current !== pre.getAttribute('data-rendered-log')) {
+            window.setTimeout(function () { renderAuthoritativeLog(runKey); }, 0);
+          }
         },
       };
       if (canAppend && typeof SandmanPortalDiff.appendTerminalPre === 'function') {
@@ -2016,6 +2024,9 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       if (typeof portalLogModel !== 'undefined' && runID) {
         const model = portalLogModel.get(runID);
         if (model && model.cursor) return portalLogModel.text(runID);
+        // A Saved Run Log is the only authority for this pane. Do not render
+        // the summary/detail copy while its structured stream is pending.
+        if (run.logPath) return '';
       }
       return run.log && String(run.log).trim() ? run.log : '';
     }

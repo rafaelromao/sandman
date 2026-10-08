@@ -193,6 +193,43 @@ func TestPortalLogSource_ResetsWhenFileIsTruncated(t *testing.T) {
 	}
 }
 
+func TestPortalLogSource_ResetsWhenHistoryChangesWithStableSizeAndMtime(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	old := []byte("[run-1] old\n")
+	newContent := []byte("[run-1] new\n")
+	if len(old) != len(newContent) {
+		t.Fatalf("test fixtures must have equal sizes: %d != %d", len(old), len(newContent))
+	}
+	if err := os.WriteFile(path, old, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source, err := newPortalLogSource(path, "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	if _, err := source.snapshot(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, newContent, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	batch, changed, err := source.appendBatch(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || !batch.Reset || batch.Reason != "source-rewritten" {
+		t.Fatalf("same-size rewrite with stable mtime was not made explicit: batch=%#v changed=%t", batch, changed)
+	}
+}
+
 func TestPortalLogSource_ResumeRejectsRewrittenHistoryAfterRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	if err := os.WriteFile(path, []byte("[run-1] old\n"), 0o644); err != nil {
