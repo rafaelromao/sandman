@@ -15,7 +15,6 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
-	"github.com/rafaelromao/sandman/internal/reviewlaunch"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
@@ -237,8 +236,8 @@ func TestDaemon_LaunchFailureBackoff_RegressionFiveFailures(t *testing.T) {
 
 		// Each tick launches one RunBatch (since failure is
 		// retryable).
-		if got := runner.calls.Load(); got != int32(min(tickN, reviewlaunch.MaxAttempts)) {
-			t.Fatalf("after tick %d: RunBatch calls = %d, want bounded launch count %d", tickN, got, min(tickN, reviewlaunch.MaxAttempts))
+		if got := runner.calls.Load(); got != int32(tickN) {
+			t.Fatalf("after tick %d: RunBatch calls = %d, want %d retryable launches", tickN, got, tickN)
 		}
 		// The seen cache must NOT mark the comment terminal-seen
 		// at any point — the S6 retryable contract holds.
@@ -260,10 +259,8 @@ func TestDaemon_LaunchFailureBackoff_RegressionFiveFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload review state: %v", err)
 	}
-	_ = cs // Per-run snapshots remain distinct from the request-level budget.
-	budget, err := reviewlaunch.Read(filepath.Join(dir, "state"), prNumber, commentID, "")
-	if err != nil || budget.Attempts != reviewlaunch.MaxAttempts {
-		t.Fatalf("unknown-head request budget=%+v error=%v", budget, err)
+	if got := ReadFailureAttempts(cs, commentID); got != 1 {
+		t.Errorf("ReadFailureAttempts after five failures = %d, want historical per-launch count 1", got)
 	}
 
 	// The production schedule (read via the public helper) must

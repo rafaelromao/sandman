@@ -104,7 +104,7 @@ func logCapacityQueuedContinuationAt(log events.EventLog, timestamp time.Time, r
 		"reuse_session":         true,
 		"issue_title":           issueTitle,
 	}
-	for _, key := range []string{"gate", "reason", "next_action", "review_request", "ci_wait", "pull_request", "head_sha"} {
+	for _, key := range []string{"gate", "reason", "next_action", "review_request", "ci_wait", "pull_request", "head_sha", "usage_limit_probe", "usage_limit_waited_seconds", "usage_limit_deadline_unix_seconds"} {
 		if value, ok := extras[key]; ok {
 			payload[key] = value
 		}

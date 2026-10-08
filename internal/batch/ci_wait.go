@@ -38,7 +38,7 @@ func (s *runSession) ciWaitEvidence(workDir string, pr *github.PR, headSHA strin
 	}
 	path := filepath.Join(paths.NewLayout(nil, workDir).StateDir, fmt.Sprintf("%d.ci_wait.json", pr.Number))
 	var evidence map[string]any
-	err := withRemediationLock(context.Background(), path, func() error {
+	err := withOperationLock(context.Background(), path, func() error {
 		registration, err := readCIWaitRegistration(path)
 		if err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("read CI wait state: %w", err)
@@ -67,7 +67,7 @@ func (s *runSession) ciWaitEvidence(workDir string, pr *github.PR, headSHA strin
 }
 
 func ciWaitEvidenceFromRegistration(registration ciWaitRegistration, prNumber int) (map[string]any, error) {
-	if registration.Protocol != ciWaitProtocol || registration.PullRequest != prNumber || registration.HeadSHA == "" || registration.RemediationAttempts < 0 || registration.DeadlineUnixSeconds <= registration.StartedUnixSeconds || registration.EffectiveTimeoutSecs <= 0 || registration.DeadlineUnixSeconds-registration.StartedUnixSeconds != registration.EffectiveTimeoutSecs {
+	if registration.Protocol != ciWaitProtocol || registration.PullRequest != prNumber || registration.HeadSHA == "" || registration.DeadlineUnixSeconds <= registration.StartedUnixSeconds || registration.EffectiveTimeoutSecs <= 0 || registration.DeadlineUnixSeconds-registration.StartedUnixSeconds != registration.EffectiveTimeoutSecs {
 		return nil, fmt.Errorf("CI wait state is invalid")
 	}
 	return map[string]any{

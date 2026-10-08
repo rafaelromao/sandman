@@ -2,7 +2,10 @@ package batch
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -17,7 +20,6 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
-	"github.com/rafaelromao/sandman/internal/reviewlaunch"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
@@ -180,10 +182,17 @@ func TestWaitingContract_ManagedCleanPRRequiresDelegatedApproval(t *testing.T) {
 	}
 }
 
-func TestWaitingContract_RepairBudgetSurvivesExecutorReentry(t *testing.T) {
+func TestWaitingContract_FreshRepairAllowanceAcrossExecutorReentry(t *testing.T) {
 	root := testenv.MkdirShort(t, "sm-wait-")
 	t.Chdir(root)
 	worktree := filepath.Join(root, "worktree")
+	budgetPath := filepath.Join(worktree, ".sandman", "state", "17.lifecycle-budget.json")
+	if err := os.MkdirAll(filepath.Dir(budgetPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(budgetPath, []byte("obsolete corrupt repair budget"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	factory := &controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{
 		result: AgentRunResult{IssueNumber: 42, Status: "success", Branch: gateTestBranch},
 	}}}
@@ -213,41 +222,53 @@ func TestWaitingContract_RepairBudgetSurvivesExecutorReentry(t *testing.T) {
 			t.Fatalf("exhausted repair status=%q", result.Status)
 		}
 	}
-	if len(factory.created) != 1 {
-		t.Fatalf("same-head repair launches across executor re-entry=%d, want one durable allowed attempt", len(factory.created))
+	if len(factory.created) != 4 {
+		t.Fatalf("same-head repair launches across executor re-entry=%d, want entry plus one legacy relaunch per session", len(factory.created))
+	}
+	for _, event := range log.snapshot() {
+		if event.Type != "run.finished" {
+			continue
+		}
+		if event.Payload["reason"] != "REMEDIATION_BUDGET_EXHAUSTED" || event.Payload["await"] != nil || event.Payload["gate"] != nil {
+			t.Fatalf("legacy exhausted-session failure lost terminal semantics: %+v", event)
+		}
 	}
 }
 
-func TestWaitingContract_QuotaProbeWithoutDeadlineFailsClosed(t *testing.T) {
+func TestWaitingContract_TerminalObservationDropsActiveWaitMarkers(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
 	log := &spyEventLog{}
-	factory := &controlledRunnableFactory{runnables: map[int]Runnable{}}
-	o := NewOrchestrator(&fakeGitHubClient{}, &noopRenderer{}, nil, log,
-		WithErrorLog(io.Discard), WithRunnableFactory(factory))
-	result, started := o.newRunExecutor(context.Background(), BatchConfig{}, nil, nil).Execute(context.Background(), RowSpec{
-		IssueNumber: 42, RunID: "missing-quota", UsageLimitProbe: true,
+	o := NewOrchestrator(nil, nil, nil, log, WithErrorLog(io.Discard))
+	executor := o.newRunExecutor(context.Background(), BatchConfig{}, &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: root}}, nil)
+	result := executor.finishObserved(context.Background(), RowSpec{IssueNumber: 42, RunID: "terminal-observation", Branches: map[int]string{42: "42-work"}}, "failure", map[string]any{
+		"reason": "REMEDIATION_BUDGET_EXHAUSTED", "await": true, "await_reason": "ci-failure", "gate": "ci-failure", "head_sha": "head",
 	})
-	if started || result.Status != "failure" || len(factory.created) != 0 {
-		t.Fatalf("invalid recovery launched: result=%+v started=%v launches=%v", result, started, factory.created)
-	}
 	finished := findEvent(log.snapshot(), "run.finished")
-	if finished == nil || finished.Payload["reason"] != "QUOTA_RECOVERY_STATE_ERROR" {
-		t.Fatalf("missing structured recovery failure: %+v", finished)
+	if result.Status != "failure" || finished == nil {
+		t.Fatalf("observed failure was not terminalized: result=%+v events=%+v", result, log.snapshot())
+	}
+	for _, key := range []string{"await", "await_reason", "gate"} {
+		if _, present := finished.Payload[key]; present {
+			t.Fatalf("terminal failure retained active %s marker: %+v", key, finished)
+		}
+	}
+	if finished.Payload["external_gate"] != "ci-failure" || finished.Payload["head_sha"] != "head" {
+		t.Fatalf("terminal failure discarded diagnostic evidence: %+v", finished)
 	}
 }
 
-func TestWaitingContract_CancelledRemediationPreservesBudget(t *testing.T) {
+func TestWaitingContract_CancelledRemediationDoesNotResume(t *testing.T) {
 	root := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	s := &runSession{}
-	err := s.reserveRemediation(ctx, root, map[string]any{"gate": gateReadyToMerge, "pull_request": 17, "head_sha": "head"})
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("reservation error=%v, want cancellation", err)
+	s := &runSession{deps: runDeps{githubClient: &fakeGitHubClient{}}}
+	_, resume := s.resumePromptFromGate(ctx, &fakeSandbox{workDir: root}, "branch", "run", map[string]any{"gate": gateReadyToMerge, "pull_request": 17, "head_sha": "head"})
+	if resume || s.resumeCount != 0 {
+		t.Fatal("cancelled repair resumed or consumed the session allowance")
 	}
 	if _, err := os.Stat(filepath.Join(root, ".sandman", "state", "17.lifecycle-budget.json")); !os.IsNotExist(err) {
-		t.Fatalf("cancelled reservation changed budget: %v", err)
+		t.Fatalf("cancelled repair created a historical budget: %v", err)
 	}
 }
 
@@ -264,15 +285,20 @@ func TestWaitingContract_CancelledQuotaOwnerWakesSiblings(t *testing.T) {
 	}
 }
 
-func TestWaitingContract_FailedQuotaProbeCannotReopenAdmission(t *testing.T) {
+func TestWaitingContract_FailedQuotaProbeRetiresOnlyItsOwnPause(t *testing.T) {
 	gate := newBatchQuotaGate()
 	gate.report(42, AgentRunResult{Status: "await", UsageLimitReached: true}, false)
+	gate.report(43, AgentRunResult{Status: "await", UsageLimitReached: true}, false)
 	gate.report(42, AgentRunResult{Status: "failure"}, true)
 	gate.retire(42)
+	if !gate.paused() {
+		t.Fatal("failed owner cleared another active quota pause")
+	}
+	gate.modelProgress(43)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := gate.wait(ctx); !errors.Is(err, errQuotaUnavailable) {
-		t.Fatalf("failed probe authorized unverified quota recovery: %v", err)
+	if err := gate.wait(ctx); err != nil {
+		t.Fatalf("retired failure prevented another owner's verified recovery: %v", err)
 	}
 }
 
@@ -307,7 +333,7 @@ func TestWaitingOwnerNilLogPreservesQuotaSchedule(t *testing.T) {
 		t.Fatal(err)
 	}
 	record, err := daemon.ReadRunWait(batchDir, "row")
-	if err != nil || record.InitialAdmission || !record.UsageLimitProbe || !record.OperationDeadline.Equal(deadline) {
+	if err != nil || record.InitialAdmission || !record.UsageLimitProbe || !record.OperationDeadline.IsZero() || record.OperationID != "quota:row" || !record.LeaseExpiresAt.Equal(now.Add(daemon.RunRecoveryGrace)) {
 		t.Fatalf("nil logger lost runtime-derived quota schedule: %+v err=%v", record, err)
 	}
 }
@@ -361,22 +387,53 @@ func TestWaitingContract_RenewalFailureStopsActiveExecution(t *testing.T) {
 	}
 }
 
-func TestWaitingContract_ReviewerLaunchExhaustionIsRequestScoped(t *testing.T) {
-	layout := paths.NewLayout(nil, t.TempDir())
-	for i := 0; i < 3; i++ {
-		if _, err := reviewlaunch.RecordFailure(layout.StateDir, 17, "request", "head"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	s := &runSession{deps: runDeps{layout: layout}}
-	for _, tc := range []struct {
-		trigger, head string
-		want          bool
-	}{{"request", "head", true}, {"new-request", "head", false}, {"request", "new-head", false}} {
-		exhausted, err := s.exhaustedReviewLaunch(map[string]any{"review_request": map[string]any{"trigger_id": tc.trigger, "head_sha": tc.head, "pull_request": 17}}, 17, tc.head)
-		if err != nil || exhausted != tc.want {
-			t.Fatalf("request %s/%s exhaustion=%v error=%v, want %v", tc.trigger, tc.head, exhausted, err, tc.want)
-		}
+func TestWaitingContract_ReviewerLaunchHistoryCannotPreemptApproval(t *testing.T) {
+	for _, corrupt := range []bool{false, true} {
+		t.Run(fmt.Sprintf("corrupt=%v", corrupt), func(t *testing.T) {
+			root := testenv.MkdirShort(t, "sm-review-history-")
+			t.Chdir(root)
+			worktree := filepath.Join(root, "worktree")
+			writeCurrentHeadApprovalClassification(t, worktree)
+			data, err := os.ReadFile(filepath.Join(worktree, ".sandman", "state", "17.review_request.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var request reviewRequestEnvelope
+			if err := json.Unmarshal(data, &request); err != nil {
+				t.Fatal(err)
+			}
+			layout := paths.NewLayout(nil, root)
+			if err := os.MkdirAll(layout.StateDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			key := sha256.Sum256([]byte(request.TriggerID + "\x00" + "current-sha"))
+			legacy := fmt.Sprintf(`{"protocol":"review-launch/v1","pull_request":17,"trigger":%q,"head_sha":"current-sha","attempts":3}`, request.TriggerID)
+			if corrupt {
+				legacy = "obsolete corrupt launch budget"
+			}
+			if err := os.WriteFile(filepath.Join(layout.StateDir, fmt.Sprintf("17.review-launch-%x.json", key)), []byte(legacy), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			client := &reviewWaitSchedulerGitHubClient{comments: []github.PRComment{}, fakeGitHubClient: fakeGitHubClient{
+				issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+				prs:    map[string]*github.PR{gateTestBranch: {Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha", StatusCheckRollup: "success", ReviewDecision: "APPROVED", MergeStateStatus: "CLEAN", Body: "Closes #42"}},
+			}}
+			launches := 0
+			factory := &controlledRunnableFactory{runnables: map[int]Runnable{42: waitingRunnableFunction(func(context.Context) AgentRunResult {
+				launches++
+				client.setPR(gateTestBranch, func(pr *github.PR) { pr.State, pr.Merged = "merged", true })
+				return AgentRunResult{IssueNumber: 42, Status: "success", Branch: gateTestBranch}
+			})}}
+			sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktree}}
+			log := &spyEventLog{}
+			o := NewOrchestrator(client, &noopRenderer{}, nil, log, WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(sbFactory), WithRunSessionOpts(gateTestRunOptions()))
+			result, _ := o.newRunExecutor(context.Background(), BatchConfig{Cfg: &config.Config{WorktreeDir: "worktrees"}, AgentCfg: config.Agent{Command: "true"}, IdentityResolver: noopIdentityResolver()}, sbFactory, nil).Execute(context.Background(), RowSpec{
+				IssueNumber: 42, Mode: ModeContinue, RunID: "approved", Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main", RenderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+			})
+			if result.Status != "success" || launches != 1 {
+				t.Fatalf("launch history preempted approved merge work: result=%+v launches=%d events=%+v", result, launches, log.snapshot())
+			}
+		})
 	}
 }
 
@@ -1045,8 +1102,8 @@ func TestWaitingContract_QuotaRevalidatedAfterStartGate(t *testing.T) {
 	}}
 	log := &spyEventLog{}
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
-		Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"},
-		AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}},
+		Agent: "opencode", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{"opencode": config.BuiltInAgentPresets["opencode"].Agent("opencode")},
 	}}, log, WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(&freshSandboxFactory{}),
 		WithRunSessionOpts(runSessionOptions{startWaiterQueued: func(bool) {
 			<-limitedStarted
@@ -1054,9 +1111,11 @@ func TestWaitingContract_QuotaRevalidatedAfterStartGate(t *testing.T) {
 			releaseOnce.Do(func() { close(releaseLimit) })
 		}}))
 	done := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	go func() {
 		defer close(done)
-		_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42, 43, 44}, Branches: map[int]string{42: "42-limit", 43: "43-busy", 44: "44-next"}, Parallel: 2})
+		_, _ = o.RunBatch(ctx, Request{Issues: []int{42, 43, 44}, Branches: map[int]string{42: "42-limit", 43: "43-busy", 44: "44-next"}, Parallel: 2})
 	}()
 	// Persistence of the rejected admission is the deterministic boundary;
 	// release the unrelated occupied slot only once the paused row is recorded.
@@ -1064,6 +1123,12 @@ func TestWaitingContract_QuotaRevalidatedAfterStartGate(t *testing.T) {
 	for countEventsByType(log.snapshot(), "run.capacity_queued") == 0 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
+	if countEventsByType(log.snapshot(), "run.capacity_queued") == 0 {
+		cancel()
+		close(releaseBusy)
+		t.Fatal("active quota pause did not reject the queued start")
+	}
+	cancel()
 	close(releaseBusy)
 	select {
 	case <-done:
@@ -1110,22 +1175,22 @@ func TestWaitingContract_QuotaRecoveryRestoresCIObservation(t *testing.T) {
 	}
 }
 
-func TestWaitingContract_QuotaExpirySurvivesReconstructedExecutor(t *testing.T) {
+func TestWaitingContract_ConsumedQuotaPollingStillPermitsOrdinaryRetries(t *testing.T) {
 	root := testenv.MkdirShort(t, "sm-wait-")
 	t.Chdir(root)
 	now := time.Now().UTC()
 	log := &spyEventLog{events: []events.Event{
 		{Type: "run.started", RunID: "row", Issue: 42},
-		{Type: "run.await", RunID: "row", Issue: 42, Payload: map[string]any{"await_reason": "usage-limit", "usage_limit_deadline_unix_seconds": now.Add(-time.Minute).Unix()}},
+		{Type: "run.await", RunID: "row", Issue: 42, Payload: map[string]any{"await_reason": "usage-limit", "usage_limit_waited_seconds": 18000, "usage_limit_deadline_unix_seconds": now.Add(-time.Minute).Unix()}},
 	}}
-	factory := &controlledRunnableFactory{}
-	o := NewOrchestrator(&fakeGitHubClient{}, &noopRenderer{}, nil, log, WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(&freshSandboxFactory{}))
+	factory := &controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Branch: "42-limit", Status: "failure", UsageLimitReached: true}}}}
+	o := NewOrchestrator(&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "closed"}}}, &noopRenderer{}, nil, log, WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(&freshSandboxFactory{}))
 	e := o.newRunExecutor(context.Background(), BatchConfig{
-		Cfg: &config.Config{}, AgentCfg: config.BuiltInAgentPresets["opencode"].Agent("opencode"),
+		Cfg: &config.Config{}, AgentCfg: config.BuiltInAgentPresets["opencode"].Agent("opencode"), IdentityResolver: noopIdentityResolver(), Retries: 1,
 	}, &freshSandboxFactory{}, nil)
 	result, _ := e.Execute(context.Background(), RowSpec{IssueNumber: 42, RunID: "row", Mode: ModeContinue, UsageLimitProbe: true, Branches: map[int]string{42: "42-limit"}})
-	if result.Status != "failure" || len(factory.created) != 0 || !result.UsageLimitReached {
-		t.Fatalf("expired reconstructed episode renewed/launched: result=%#v starts=%v", result, factory.created)
+	if result.Status != "failure" || len(factory.created) != 2 || !result.UsageLimitReached || countEventsByType(log.snapshot(), "run.await") != 1 || countEventsByType(log.snapshot(), "run.retry") != 1 {
+		t.Fatalf("consumed polling renewed waiting or vetoed ordinary retries: result=%#v starts=%v events=%+v", result, factory.created, log.snapshot())
 	}
 }
 

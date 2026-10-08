@@ -77,6 +77,16 @@ type RunWait struct {
 	RecoveryEventAt   time.Time `json:"-"` // event-only compatibility provenance
 }
 
+// Quota is bounded by accounted polling, not a wall-clock exhaustion estimate.
+// Normalize older snapshots without changing their existing recovery grace.
+func normalizeQuotaWait(record RunWait) RunWait {
+	if record.UsageLimitProbe {
+		record.OperationID = "quota:" + record.RunID
+		record.OperationDeadline = time.Time{}
+	}
+	return record
+}
+
 func (w RunWait) RecoverableAt(now time.Time) bool {
 	return !w.LeaseExpiresAt.IsZero() && now.Before(w.LeaseExpiresAt) &&
 		(w.OperationDeadline.IsZero() || now.Before(w.OperationDeadline))
@@ -176,12 +186,16 @@ func ReadRunWait(batchDir, runID string) (RunWait, error) {
 	if err := json.Unmarshal(data, &record); err != nil {
 		return record, err
 	}
-	return record, validateRunWait(batchDir, runID, record)
+	if err := validateRunWait(batchDir, runID, record); err != nil {
+		return record, err
+	}
+	return normalizeQuotaWait(record), nil
 }
 
 // RenewRunWait may renew a live owner's lease, but never changes a continuing
 // operation's fixed deadline. A newly selected operation has a different ID.
 func RenewRunWait(batchDir string, record RunWait, now time.Time) error {
+	record = normalizeQuotaWait(record)
 	if old, err := ReadRunWait(batchDir, record.RunID); err == nil && old.OperationID == record.OperationID && !old.OperationDeadline.Equal(record.OperationDeadline) {
 		return fmt.Errorf("waiting operation deadline cannot be renewed")
 	} else if err != nil && !os.IsNotExist(err) {
@@ -209,6 +223,7 @@ func TransferRunWait(oldBatchDir, newBatchDir, runID string, now time.Time) (Run
 }
 
 func writeRunWait(batchDir string, record RunWait, now time.Time) error {
+	record = normalizeQuotaWait(record)
 	record.LeaseExpiresAt = now.Add(RunRecoveryGrace)
 	if !record.OperationDeadline.IsZero() && record.OperationDeadline.Before(record.LeaseExpiresAt) {
 		record.LeaseExpiresAt = record.OperationDeadline

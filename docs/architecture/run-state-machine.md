@@ -25,6 +25,8 @@ queued → running ⇄ waiting → success / failure / aborted
 - `success`, `failure`, `blocked`, and `aborted` are terminal. `blocked` belongs
   exclusively to dependency outcomes. A terminal outcome cannot be replaced by
   stale scheduler/readiness evidence or artifact availability.
+  Terminal `run.finished` payloads carry no active `await`, `await_reason`, or
+  `gate` markers; retained gate diagnostics use `external_gate`.
 - `unknown` means insufficient lifecycle evidence; no artifact or dead socket
   may invent a completion.
 - `reviewing` is a Portal aggregate label for a non-terminal implementation with
@@ -80,8 +82,8 @@ absent checks, nonexistent publication, stale evidence, or a failed lookup alone
 does not establish one.
 
 Transient observation failures may retry an already-established identity-valid
-operation within its original deadline and bounded recovery budget. Without
-prior valid evidence, fail explicitly. No poll, lookup retry, admission delay,
+CI/review operation within its original deadline and bounded recovery budget.
+Without prior valid evidence, fail explicitly. No poll, lookup retry, admission delay,
 executor reconstruction, or restart renews an operation's authorized lifetime.
 
 When managed review is enabled, merge work requires confirmed delegated
@@ -99,21 +101,34 @@ alternate lifecycle authority.
 
 | Operation | Budget | Reset boundary |
 | --- | --- | --- |
-| CI, managed and standalone | **30 minutes** per PR head | New head |
+| Managed CI | **30 minutes** per PR head, durable hard deadline | New head |
+| Standalone CI | **60 minutes** and at most **three fixes** per current head within an invocation | New head or fresh invocation |
 | Delegated review | Configured `review_timeout`; default 1,800 seconds, minimum 240 seconds | New confirmed request |
-| Implementation provider quota | **Five-hour absolute episode deadline**, ten-minute polls | Verified recovery followed by a new quota episode |
-| Autonomous repair/resume | Default **three attempts** for the relevant head/operation | New corresponding head/request |
-| Missing publication/review delivery | Configured ordinary retry budget | A new work/recovery episode, never scheduler re-entry |
+| Implementation provider quota | **Five hours of accumulated completed polling**, ten-minute intervals, then final boundary probe and configured ordinary retries | Verified recovery followed by a new quota episode; re-entry/restart preserves consumed polling |
+| Implementation lifecycle relaunch | Default **three in-session relaunches**, entry excluded | Fresh executor session |
+| Ordinary execution retry | Configured retry budget, including owned publication/review delivery recovery | Ordinary retry policy |
 | Ownerless recovery | **Five minutes**, capped by an existing operation deadline | Live owner renewal, never repeated discovery |
 
-CI, review, and quota lifetimes are independent. The earlier expired operation
-selects bounded remediation even if another operation remains active. Exhausted
-remediation fails explicitly; it must not create a new wait or replenish itself
-by constructing another executor.
+CI and review retain independent hard deadlines. The earlier expired operation
+selects bounded remediation even if another operation remains active. The
+historical in-session relaunch cap and ordinary retries bound owned work;
+persisted same-head remediation counts are diagnostic, not cumulative launch
+reservations. Obsolete implementation, reviewer-launch, and standalone CI budget
+files cannot veto executable work. Standalone same-head polling preserves its
+invocation-local window/count; a changed head resets both.
 
-Quota expiry produces a structured usage-limit failure rather than another
-immediate ordinary retry burst. Quota recovery preserves supported agent session
-reuse; generic failure and context rollover remain fresh-session retries. Custom
+Quota accounting restores consumed polling into both the executor session and
+batch scheduler. Only completed polling intervals count; cancellation, capacity
+delay, and process downtime do not. Re-entry cannot create another five-hour
+allowance. The recomputed expected exhaustion timestamp is diagnostic: it is
+neither an admission nor ownership cutoff. Quota schedules use stable
+`quota:<RunID>` operation identity with no hard operation deadline.
+
+After the allowance is consumed, the final boundary probe and configured
+fresh-session ordinary retries remain available. Missing, malformed, or
+unreadable accounting disables further quota waits while permitting bounded
+ordinary execution. Quota recovery preserves supported agent session reuse;
+generic failure and context rollover remain fresh-session retries. Custom
 commands keep their documented eligibility boundaries; arbitrary auth,
 configuration, and non-resettable spend/budget errors are not external waits.
 
@@ -129,8 +144,16 @@ before launch. Verified recovery clears the relevant gate and automatically
 readmits eligible siblings. After recovery, a later CI/review wait returns to
 ordinary observation; quota-probe mode must not leak into it.
 
-Reviewer launch failures have bounded request-level outcomes visible to the
-waiting parent. Durable decision-publication recovery does not require a duplicate
+Failed or terminal quota owners retire their own admission pause. Other active
+owners still pause admission; siblings establish their own outcomes rather than
+inheriting failure from an exhausted probe. Yielding execution retains unfinished
+queued/await intent until admission is permitted.
+
+Reviewer launch failures retain the existing 10/20/40/60-second capped backoff,
+request/head advisory artifact claims, and durable single-publication recovery,
+without a cumulative three-launch gate or a new reviewer request-age cutoff.
+The waiting parent's configured request deadline remains unchanged.
+Durable decision-publication recovery does not require a duplicate
 reviewer launch. Stopping the reviewer daemon preserves recoverable requests and
 publications. Implementation abort ends its own lifecycle without rewriting the
 separate review run's outcome. Expired parent requests cannot reopen an exhausted
@@ -147,6 +170,8 @@ Atomic run-owned schedule/lease evidence and an exclusive advisory RunID claim
 support recovery. A live owner renews the lease. Unclean exit releases the claim,
 but valid intent remains recoverable for five minutes, capped by its existing
 operation deadline. Repeated discovery does not extend grace.
+Quota diagnostic estimates do not cap grace. Legacy quota schedules normalize
+on reads and live-owner writes without renewing existing ownerless grace.
 
 Normal `sandman run` admission automatically discovers and re-enters valid
 ownerless waiting/ready/initial intent without requiring `--continue`. This uses
