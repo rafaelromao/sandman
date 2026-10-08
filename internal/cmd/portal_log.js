@@ -2,6 +2,8 @@
   // The rendered pane is disposable. This model is the continuity owner and
   // survives tab, subject, row, and connection changes.
   const MAX_RETAINED_RECORDS = 4096;
+  const MAX_RETAINED_BYTES = 1024 * 1024;
+  const MAX_RETAINED_RUNS = 64;
 
   function create() {
     const byRun = new Map();
@@ -9,7 +11,24 @@
     function state(runID) {
       const key = String(runID || '');
       if (!byRun.has(key)) {
-        byRun.set(key, { runID: key, generation: '', cursor: null, rangeStart: 0, records: [], identities: new Set(), epoch: 0, seeded: false, sourceState: 'unknown' });
+        if (byRun.size >= MAX_RETAINED_RUNS) {
+          const oldest = byRun.keys().next().value;
+          if (oldest !== undefined) byRun.delete(oldest);
+        }
+        byRun.set(key, {
+          runID: key,
+          generation: '',
+          cursor: null,
+          rangeStart: 0,
+          rangeEnd: 0,
+          retainedBytes: 0,
+          truncated: false,
+          records: [],
+          identities: new Set(),
+          epoch: 0,
+          seeded: false,
+          sourceState: 'unknown',
+        });
       }
       return byRun.get(key);
     }
@@ -33,12 +52,6 @@
       }
       if (kind === 'unavailable') {
         model.sourceState = 'unavailable';
-        model.generation = '';
-        model.cursor = null;
-        model.rangeStart = 0;
-        model.records = [];
-        model.identities.clear();
-        model.legacyText = '';
         return true;
       }
       const generation = String(payload.generation || '');
@@ -47,6 +60,9 @@
         model.generation = generation;
         model.cursor = null;
         model.rangeStart = 0;
+        model.rangeEnd = 0;
+        model.retainedBytes = 0;
+        model.truncated = true;
         model.records = [];
         model.identities.clear();
         model.legacyText = '';
@@ -72,12 +88,26 @@
       }
       if (expected !== incomingEnd) return false;
       if (kind === 'snapshot') {
-        if (model.cursor && model.generation === generation && incomingEnd < Number(model.cursor.offset || 0)) return false;
+        if (model.cursor && model.generation === generation) {
+          const currentOffset = Number(model.cursor.offset || 0);
+          if (incomingEnd < currentOffset || incomingStart > currentOffset) return false;
+        }
         model.generation = generation;
         model.records = [];
         model.identities.clear();
-        const first = Math.max(0, records.length - MAX_RETAINED_RECORDS);
+        let first = records.length;
+        let retainedBytes = 0;
+        while (first > 0 && first > records.length - MAX_RETAINED_RECORDS) {
+          const candidate = records[first - 1];
+          const candidateBytes = Math.max(0, Number(candidate.end) - Number(candidate.start));
+          if (retainedBytes + candidateBytes > MAX_RETAINED_BYTES && first < records.length) break;
+          retainedBytes += candidateBytes;
+          first -= 1;
+        }
         model.rangeStart = first < records.length ? Number(records[first].start) : incomingStart;
+        model.rangeEnd = incomingEnd;
+        model.retainedBytes = retainedBytes;
+        model.truncated = !!payload.bounded || first > 0;
         for (let i = first; i < records.length; i++) {
           const record = records[i];
           const identity = identities[i];
@@ -104,14 +134,24 @@
         if (model.identities.has(identity)) continue;
         model.identities.add(identity);
         model.records.push(record);
+        model.retainedBytes += Math.max(0, Number(record.end) - Number(record.start));
         accepted += 1;
       }
       while (model.records.length > MAX_RETAINED_RECORDS) {
         const removed = model.records.shift();
         model.identities.delete(generation + ':' + removed.start + ':' + removed.end);
+        model.retainedBytes -= Math.max(0, Number(removed.end) - Number(removed.start));
+        model.truncated = true;
+      }
+      while (model.records.length > 0 && model.retainedBytes > MAX_RETAINED_BYTES) {
+        const removed = model.records.shift();
+        model.identities.delete(generation + ':' + removed.start + ':' + removed.end);
+        model.retainedBytes -= Math.max(0, Number(removed.end) - Number(removed.start));
+        model.truncated = true;
       }
       if (model.records.length) model.rangeStart = Number(model.records[0].start);
       else model.rangeStart = incomingEnd;
+      model.rangeEnd = incomingEnd;
       model.cursor = cursor;
       model.sourceState = 'available';
       return accepted > 0;
@@ -142,7 +182,20 @@
       return state(runID);
     }
 
-    return { seed, accept, text, cursor, setEpoch, get };
+    function range(runID) {
+      const model = state(runID);
+      return {
+        runID: model.runID,
+        generation: model.generation,
+        start: model.rangeStart,
+        end: model.rangeEnd,
+        retainedBytes: model.retainedBytes,
+        truncated: model.truncated,
+        sourceState: model.sourceState,
+      };
+    }
+
+    return { seed, accept, text, cursor, setEpoch, get, range };
   }
 
   global.SandmanPortalLog = { create };

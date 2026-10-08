@@ -1983,13 +1983,41 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const pre = streamPreFor(runKey);
       if (!pre) return;
       const text = portalLogModel.text(runKey);
+      const range = portalLogModel.range(runKey);
+      const previousGeneration = pre.getAttribute('data-log-generation') || '';
+      const previous = pre.getAttribute('data-rendered-log') || '';
+      pre.setAttribute('data-log-generation', range.generation || '');
+      pre.setAttribute('data-log-range-start', String(range.start));
+      pre.setAttribute('data-log-range-end', String(range.end));
+      pre.setAttribute('data-log-retained-bytes', String(range.retainedBytes));
+      pre.setAttribute('data-log-truncated', range.truncated ? '1' : '0');
       const sticky = portalScroll && portalScroll.isSticky && portalScroll.isSticky(runKey);
-      SandmanPortalDiff.fillTerminalPre(pre, text, {
+      const canAppend = !pre.getAttribute('data-rendering-log')
+        && previousGeneration === range.generation
+        && text.length > previous.length
+        && text.startsWith(previous);
+      const helpers = {
         renderTerminalContent: SandmanPortalDiff.highlightTerminalLog,
         onComplete: function () {
           if (sticky) pre.scrollTop = pre.scrollHeight;
         },
-      });
+      };
+      if (canAppend && typeof SandmanPortalDiff.appendTerminalPre === 'function') {
+        SandmanPortalDiff.appendTerminalPre(pre, previous, text.slice(previous.length), helpers);
+        helpers.onComplete();
+      } else {
+        SandmanPortalDiff.fillTerminalPre(pre, text, helpers);
+      }
+    }
+
+    function logTextForRun(run) {
+      if (!run) return '';
+      const runID = run.runId || run.key;
+      if (typeof portalLogModel !== 'undefined' && runID) {
+        const model = portalLogModel.get(runID);
+        if (model && model.cursor) return portalLogModel.text(runID);
+      }
+      return run.log && String(run.log).trim() ? run.log : '';
     }
 
     // createStreamCoalescer batches legacy socket lines per run and flushes in
@@ -2139,7 +2167,8 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     }
 
     function startRunStream(run) {
-      if (!run || run.kind !== 'active' || !run.socketPath) return;
+      const status = String(run && run.status || '').trim().toLowerCase();
+      if (!run || status === 'queued' || status === 'blocked' || (!run.logPath && !run.socketPath)) return;
       if (streamSources[run.key]) return;
       const subjectID = run.runId || run.key;
       const streamState = typeof state !== 'undefined' ? state : run;
@@ -2149,11 +2178,9 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const backendKey = run.backendKey || run.key;
       const pre = streamPreFor(run.key);
       let cachedLog = '';
-      let awaitingReplayCheckpoint = false;
       let structuredStream = false;
       if (pre) {
         cachedLog = pre.getAttribute('data-rendered-log') || '';
-        awaitingReplayCheckpoint = pre.getAttribute('data-stream-replay-pending') === '1';
         if (!cachedLog) {
           while (pre.firstChild) pre.removeChild(pre.firstChild);
           pre.setAttribute('data-rendered-log', '');
@@ -2196,24 +2223,6 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         portalLogModel.seed(subjectID, cachedLog);
         if (portalLogModel.get(subjectID).cursor) renderAuthoritativeLog(subjectID);
       }
-      const cachedLineList = cachedLog.split('\n').filter(Boolean);
-      // A single cached line is not a safe replay boundary: identical output
-      // can occur earlier in the broadcaster's history, followed by older
-      // lines that would then be appended after this newer cached tail. Match
-      // an ordered suffix window instead. The window is bounded so reconnect
-      // cost does not grow with the full lifetime of a long-running log.
-      const replayCheckpointLines = cachedLineList.slice(-16);
-      awaitingReplayCheckpoint = awaitingReplayCheckpoint && replayCheckpointLines.length > 0;
-      const replayCheckpointPrefix = new Array(replayCheckpointLines.length).fill(0);
-      for (let i = 1, matched = 0; i < replayCheckpointLines.length; i++) {
-        while (matched > 0 && replayCheckpointLines[i] !== replayCheckpointLines[matched]) {
-          matched = replayCheckpointPrefix[matched - 1];
-        }
-        if (replayCheckpointLines[i] === replayCheckpointLines[matched]) matched += 1;
-        replayCheckpointPrefix[i] = matched;
-      }
-      let replayCheckpointMatched = 0;
-      streamCoalescer.seedKnownLines(run.key, cachedLineList);
       streamCoalescer.clearBuffer(run.key);
       let streamURL = streamPath + '?runKey=' + encodeURIComponent(backendKey);
       const cursorParam = typeof portalLogModel !== 'undefined' ? portalLogModel.cursor(subjectID) : '';
@@ -2237,35 +2246,15 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         src.addEventListener('pending', function (ev) { acceptStructured('pending', ev); });
         src.addEventListener('unavailable', function (ev) { acceptStructured('unavailable', ev); });
         src.addEventListener('end', function () { if (isCurrentStream()) src.close(); });
-        src.addEventListener('replay-complete', function () {
-          if (!awaitingReplayCheckpoint) return;
-          // The daemon marks the end of its bounded replay. If the cached
-          // suffix was not present, retain the pane and begin appending only
-          // subsequent live output instead of waiting forever.
-          awaitingReplayCheckpoint = false;
-          if (pre) pre.removeAttribute('data-stream-replay-pending');
-        });
       }
       src.onmessage = function (ev) {
         if (!isCurrentStream()) return;
         if (structuredStream) return;
-        if (awaitingReplayCheckpoint) {
-          // Search for the cached suffix as a contiguous sequence. KMP keeps
-          // this linear in replay size and handles repeated lines without
-          // mistaking an earlier occurrence for the handoff boundary.
-          while (replayCheckpointMatched > 0
-            && ev.data !== replayCheckpointLines[replayCheckpointMatched]) {
-            replayCheckpointMatched = replayCheckpointPrefix[replayCheckpointMatched - 1];
-          }
-          if (ev.data === replayCheckpointLines[replayCheckpointMatched]) {
-            replayCheckpointMatched += 1;
-          }
-          if (replayCheckpointMatched === replayCheckpointLines.length) {
-            awaitingReplayCheckpoint = false;
-            if (pre) pre.removeAttribute('data-stream-replay-pending');
-          }
-          return;
-        }
+        // The primary endpoint is structured and therefore never reaches this
+        // path. It remains only for the explicitly legacy socket endpoint;
+        // that endpoint has no byte cursor and must not be mixed with a saved
+        // log pane that already has model-owned state.
+        if (run.logPath || (typeof portalLogModel !== 'undefined' && portalLogModel.get(subjectID).cursor)) return;
         streamCoalescer.scheduleLine(run.key, ev.data);
         if (state.streamReconnectAttempts) delete state.streamReconnectAttempts[run.key];
       };
@@ -2309,8 +2298,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
 
     function stopAllRunStreams() {
       for (const key of Object.keys(streamSources)) {
-        streamSources[key].close();
-        delete streamSources[key];
+        stopRunStream(key);
       }
       streamingKeys.clear();
     }
@@ -2334,7 +2322,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       // either the detail fetch or the async render is in flight. That preserves
       // the daemon tail in order without forcing a reconnect that can race the
       // refreshed snapshot.
-      const wantStream = run && tab === 'log' && run.kind === 'active' && run.socketPath;
+      const wantStream = run && tab === 'log' && !isWaitStateRun(run) && (run.logPath || run.socketPath);
       for (const openKey of Object.keys(streamSources)) {
         if (openKey !== runKey) {
           // Subject switch: any buffered (not-yet-flushed) lines for the
@@ -3011,6 +2999,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           statusClass: statusClass,
           renderRunMeta: renderRunMeta,
           renderTerminalContent: renderTerminalContent,
+          logTextForRun: logTextForRun,
           isRunAbortable: isRunAbortable,
           isRunArchivable: isRunArchivable,
           highlightJSON: SandmanPortalDiff.highlightJSON,
@@ -3214,10 +3203,19 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           // would preserve the stale cached beginning (hasLog=true) while the
           // stream attaches; the daemon's 64 KB tail-replay would then create
           // the same gap the forceFetch was meant to close.
-          const useDetailLog = !!forceFetch && !!(detail && detail.log);
-          state.runs[idx] = {
-            ...existing,
-            log: (useDetailLog || !hasLog) ? detail.log : existing.log,
+           const model = typeof portalLogModel !== 'undefined' && detail
+             ? portalLogModel.get(detail.runId || detail.key)
+             : null;
+           const modelOwnsLog = !!(model && model.cursor);
+           state.runs[idx] = {
+             ...existing,
+            // The saved-log stream owns continuity. Detail text is only an
+            // initial placeholder when no model-backed pane exists; it must
+            // never replace an accepted range during a reconnect or terminal
+            // transition.
+            log: modelOwnsLog
+              ? existing.log
+              : ((forceFetch && detail.log) ? detail.log : (existing.log || detail.log)),
             events: detail.events || existing.events,
             logUrl: detail.logUrl,
           };

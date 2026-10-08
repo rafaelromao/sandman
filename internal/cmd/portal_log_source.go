@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +26,7 @@ type portalLogCursor struct {
 	RunID      string `json:"runId"`
 	Generation string `json:"generation"`
 	Offset     int64  `json:"offset"`
+	History    string `json:"history,omitempty"`
 }
 
 type portalLogRecord struct {
@@ -53,11 +56,14 @@ type portalLogStreamEvent struct {
 }
 
 type portalLogSource struct {
-	path  string
-	runID string
-	file  *os.File
-	gen   string
-	pos   int64
+	path        string
+	runID       string
+	file        *os.File
+	identity    string
+	gen         string
+	pos         int64
+	historyHash string
+	modTime     time.Time
 }
 
 func newPortalLogSource(path, runID string) (*portalLogSource, error) {
@@ -73,7 +79,8 @@ func newPortalLogSource(path, runID string) (*portalLogSource, error) {
 		_ = f.Close()
 		return nil, err
 	}
-	return &portalLogSource{path: path, runID: runID, file: f, gen: portalLogGeneration(info)}, nil
+	identity := portalLogGeneration(info)
+	return &portalLogSource{path: path, runID: runID, file: f, identity: identity, gen: identity, modTime: info.ModTime()}, nil
 }
 
 func (s *portalLogSource) Close() error {
@@ -84,7 +91,7 @@ func (s *portalLogSource) Close() error {
 }
 
 func (s *portalLogSource) cursor() portalLogCursor {
-	return portalLogCursor{RunID: s.runID, Generation: s.gen, Offset: s.pos}
+	return portalLogCursor{RunID: s.runID, Generation: s.gen, Offset: s.pos, History: s.historyHash}
 }
 
 func (s *portalLogSource) snapshot() (portalLogBatch, error) {
@@ -102,6 +109,11 @@ func (s *portalLogSource) snapshot() (portalLogBatch, error) {
 		return portalLogBatch{}, err
 	}
 	s.pos = end
+	s.modTime = info.ModTime()
+	s.historyHash, err = portalLogPrefixHash(s.file, end)
+	if err != nil {
+		return portalLogBatch{}, err
+	}
 	return portalLogBatch{RunID: s.runID, Generation: s.gen, Start: start, End: end, Records: records, Cursor: s.cursor(), Bounded: start > 0}, nil
 }
 
@@ -131,7 +143,7 @@ func (s *portalLogSource) refreshPathIdentity() (bool, error) {
 		return false, err
 	}
 	generation := portalLogGeneration(info)
-	if generation == s.gen {
+	if generation == s.identity {
 		return false, nil
 	}
 	file, err := os.Open(s.path)
@@ -140,8 +152,10 @@ func (s *portalLogSource) refreshPathIdentity() (bool, error) {
 	}
 	_ = s.file.Close()
 	s.file = file
+	s.identity = generation
 	s.gen = generation
 	s.pos = 0
+	s.historyHash = ""
 	return true, nil
 }
 
@@ -158,9 +172,34 @@ func (s *portalLogSource) appendBatch(terminal bool) (portalLogBatch, bool, erro
 		return portalLogBatch{}, false, err
 	}
 	if info.Size() < s.pos {
+		currentHash, hashErr := portalLogPrefixHash(s.file, info.Size())
+		if hashErr != nil {
+			return portalLogBatch{}, false, hashErr
+		}
+		s.gen = portalLogGeneration(info) + ":truncated:" + currentHash
+		s.pos = 0
+		s.historyHash = ""
+		s.modTime = info.ModTime()
 		return portalLogBatch{RunID: s.runID, Generation: s.gen, Reset: true, Reason: "source-truncated"}, true, nil
 	}
+	// Do not re-hash the complete retained prefix while the file is idle. A
+	// changed size or modification time still validates the old prefix before
+	// accepting new bytes, while the no-output poll remains O(1).
+	changedOnDisk := info.Size() != s.pos || !info.ModTime().Equal(s.modTime)
+	if s.historyHash != "" && changedOnDisk {
+		currentHash, hashErr := portalLogPrefixHash(s.file, s.pos)
+		if hashErr != nil {
+			return portalLogBatch{}, false, hashErr
+		}
+		if currentHash != s.historyHash {
+			s.gen = portalLogGeneration(info) + ":rewrite:" + currentHash
+			s.pos = 0
+			s.historyHash = ""
+			return portalLogBatch{RunID: s.runID, Generation: s.gen, Reset: true, Reason: "source-rewritten"}, true, nil
+		}
+	}
 	if info.Size() == s.pos {
+		s.modTime = info.ModTime()
 		if terminal {
 			// A final unterminated fragment is a record once lifecycle state says
 			// the writer has flushed and the AgentRun is terminal.
@@ -170,6 +209,11 @@ func (s *portalLogSource) appendBatch(terminal bool) (portalLogBatch, bool, erro
 			}
 			if len(records) > 0 {
 				s.pos = end
+				s.historyHash, err = portalLogPrefixHash(s.file, end)
+				if err != nil {
+					return portalLogBatch{}, false, err
+				}
+				s.modTime = info.ModTime()
 				return portalLogBatch{RunID: s.runID, Generation: s.gen, Start: records[0].Start, End: end, Records: records, Cursor: s.cursor()}, true, nil
 			}
 		}
@@ -183,7 +227,41 @@ func (s *portalLogSource) appendBatch(terminal bool) (portalLogBatch, bool, erro
 		return portalLogBatch{}, false, nil
 	}
 	s.pos = end
+	s.modTime = info.ModTime()
+	s.historyHash, err = portalLogPrefixHash(s.file, end)
+	if err != nil {
+		return portalLogBatch{}, false, err
+	}
 	return portalLogBatch{RunID: s.runID, Generation: s.gen, Start: records[0].Start, End: end, Records: records, Cursor: s.cursor()}, true, nil
+}
+
+func portalLogPrefixHash(file *os.File, limit int64) (string, error) {
+	if limit < 0 {
+		return "", errors.New("negative portal log hash limit")
+	}
+	hash := sha256.New()
+	buffer := make([]byte, 32*1024)
+	for offset := int64(0); offset < limit; {
+		want := int64(len(buffer))
+		if remaining := limit - offset; remaining < want {
+			want = remaining
+		}
+		n, err := file.ReadAt(buffer[:want], offset)
+		if n > 0 {
+			_, _ = hash.Write(buffer[:n])
+			offset += int64(n)
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) && offset == limit {
+				break
+			}
+			return "", err
+		}
+		if n == 0 {
+			return "", io.ErrUnexpectedEOF
+		}
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func (s *portalLogSource) records(start, limit int64, includePartial bool) ([]portalLogRecord, int64, error) {
@@ -299,7 +377,7 @@ func portalLogTerminal(run portalRun) bool {
 	// Kind describes the Portal row shape, not lifecycle. In particular, a
 	// queued or waiting row may not be active while its event-derived run is
 	// still unfinished. Only terminal lifecycle outcomes authorize end.
-	return isTerminalStatus(run.Status)
+	return run.Terminal
 }
 
 func streamPortalSavedLog(ctx context.Context, w io.Writer, source *portalLogSource, initial *portalLogCursor, terminal func() bool) error {
@@ -322,6 +400,18 @@ func streamPortalSavedLog(ctx context.Context, w io.Writer, source *portalLogSou
 					_, end, err := source.records(0, source.pos, false)
 					if err != nil || end != source.pos {
 						reset = true
+					}
+				}
+				if !reset && initial.History != "" {
+					actual, hashErr := portalLogPrefixHash(source.file, source.pos)
+					if hashErr != nil || actual != initial.History {
+						reset = true
+					}
+				}
+				if !reset {
+					source.historyHash = initial.History
+					if source.historyHash == "" {
+						source.historyHash, _ = portalLogPrefixHash(source.file, source.pos)
 					}
 				}
 			}

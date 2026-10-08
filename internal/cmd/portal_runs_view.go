@@ -35,6 +35,7 @@ type portalRun struct {
 	RunID       string     `json:"runId"`
 	Kind        string     `json:"kind"`
 	Status      string     `json:"status"`
+	Terminal    bool       `json:"-"`
 	IssueLabel  string     `json:"issueLabel"`
 	IssueNumber int        `json:"issueNumber,omitempty"`
 	Branch      string     `json:"branch,omitempty"`
@@ -1723,10 +1724,12 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 			run.BatchIssues = append([]int(nil), active.IssueNumbers...)
 		}
 		if state.Finished == nil {
-			if live := strings.TrimSpace(stripLogLabels(liveOutput)); live != "" {
-				run.Log = v.filterPortalLogByRunID(liveOutput, state.RunID)
-			} else {
-				run.Log = v.readPortalTextFile(run.LogPath)
+			// The Saved Run Log is the sole Portal log source. Live socket
+			// output is an attach mechanism only and may be ahead of the
+			// persisted writer or use a different byte prefix.
+			run.Log = v.readPortalTextFile(run.LogPath)
+			if strings.TrimSpace(run.Log) == "" {
+				run.Log = QueuedMarker
 			}
 			return run
 		}
@@ -1921,10 +1924,13 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		SocketPath:  match.instance.SocketPath,
 		LogPath:     logPath,
 		LogURL:      logURL,
-		Log:         stripLogLabels(match.instance.LiveOutput),
+		Log:         v.readPortalTextFile(logPath),
 		Events:      eventsByRun[eventKey],
 		BatchKey:    batchKeyForActive(match.instance),
 		RunDir:      activeRunDir(match.instance),
+	}
+	if strings.TrimSpace(run.Log) == "" {
+		run.Log = QueuedMarker
 	}
 	// Populate the live attempt signals from the raw event list when
 	// there is no matched RunState to query (the state-absent branch of
@@ -2023,6 +2029,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		RunID:                 runID,
 		Kind:                  v.kindForRun(runState),
 		Status:                status,
+		Terminal:              runState.IsTerminal(),
 		IssueLabel:            issueLabel,
 		IssueNumber:           issueNumber,
 		IssueTitle:            v.issueTitleFromPayload(runState.Started.Payload),
@@ -2321,33 +2328,10 @@ func (v *portalRunsView) filterPortalLogByRunID(text string, runID string) strin
 // it is a review. `active` is nil for the historical /
 // event-only path, non-nil when an active batch is matched.
 func (v *portalRunsView) resolveRunLog(loadSaved func() string, runState events.RunState, active *portalActiveRun) string {
-	if active == nil {
-		return loadSaved()
-	}
-	if runState.IsActive() {
-		// The Saved Run Log is the Portal source whenever it exists. Keep the
-		// socket tail only as a pre-artifact compatibility fallback for a run
-		// whose writer has not created run.log yet.
-		saved := loadSaved()
-		if active.Dir != "" && active.RunID != "" {
-			logPath := (paths.BatchLocation{ID: active.BatchID, Dir: active.Dir}).Run(active.RunID).LogPath()
-			if info, err := os.Stat(logPath); err == nil && !info.IsDir() {
-				return saved
-			}
-		}
-		if strings.TrimSpace(saved) != "" {
-			return saved
-		}
-		if live := strings.TrimSpace(stripLogLabels(active.LiveOutput)); live != "" {
-			return live
-		}
-		return saved
-	}
-	// Terminal row: saved log is authoritative. Do NOT fall back to
-	// active.LiveOutput — when `active` is a batch-level instance its
-	// live stream belongs to sibling runs, not this terminal one (issue
-	// #2140). Return whatever the saved log contains (possibly empty) and
-	// let the caller substitute a placeholder.
+	_ = runState
+	_ = active
+	// The Saved Run Log is authoritative for every lifecycle state. Socket
+	// output remains an attach mechanism, not a second snapshot source.
 	return loadSaved()
 }
 

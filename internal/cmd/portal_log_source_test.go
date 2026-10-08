@@ -130,6 +130,100 @@ func TestPortalLogSource_ResumeRejectsCursorBeyondFile(t *testing.T) {
 	}
 }
 
+func TestPortalLogSource_ResetsWhenHistoryIsRewrittenAndRegrown(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	if err := os.WriteFile(path, []byte("[run-1] old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source, err := newPortalLogSource(path, "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	snapshot, err := source.snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(path, []byte("[run-1] new\n[run-1] tail\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	batch, changed, err := source.appendBatch(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || !batch.Reset || batch.Reason != "source-rewritten" {
+		t.Fatalf("rewrite was not made explicit: batch=%#v changed=%t", batch, changed)
+	}
+	if batch.Generation == snapshot.Generation {
+		t.Fatalf("rewritten source reused generation %q", batch.Generation)
+	}
+
+	var output strings.Builder
+	if err := streamPortalSavedLog(context.Background(), &output, source, &snapshot.Cursor, func() bool { return true }); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "event: reset") || !strings.Contains(output.String(), "new") || !strings.Contains(output.String(), "tail") {
+		t.Fatalf("rewritten source did not produce coherent replacement: %s", output.String())
+	}
+}
+
+func TestPortalLogSource_ResetsWhenFileIsTruncated(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	if err := os.WriteFile(path, []byte("[run-1] old\n[run-1] tail\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source, err := newPortalLogSource(path, "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	if _, err := source.snapshot(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("[run-1] new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	batch, changed, err := source.appendBatch(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || !batch.Reset || batch.Reason != "source-truncated" {
+		t.Fatalf("truncation was not made explicit: batch=%#v changed=%t", batch, changed)
+	}
+}
+
+func TestPortalLogSource_ResumeRejectsRewrittenHistoryAfterRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	if err := os.WriteFile(path, []byte("[run-1] old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	original, err := newPortalLogSource(path, "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := original.snapshot()
+	_ = original.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("[run-1] rewritten\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := newPortalLogSource(path, "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	var output strings.Builder
+	if err := streamPortalSavedLog(context.Background(), &output, restarted, &snapshot.Cursor, func() bool { return true }); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "event: reset") || !strings.Contains(output.String(), "rewritten") {
+		t.Fatalf("restart joined rewritten history without reset: %s", output.String())
+	}
+}
+
 func TestPortalLogSource_TerminalDrainAcceptsFinalUnterminatedRecord(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	if err := os.WriteFile(path, []byte("[run-1] first\n"), 0o644); err != nil {

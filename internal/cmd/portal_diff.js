@@ -40,7 +40,9 @@
     const subjectValue = subjectRunValue(run);
     if (!subjectValue) return null;
     if (logPaneCache.has(subjectValue)) return logPaneCache.get(subjectValue) || null;
-    const log = run && run.log && String(run.log).trim() ? run.log : '';
+    const log = helpers && typeof helpers.logTextForRun === 'function'
+      ? helpers.logTextForRun(run)
+      : (run && run.log && String(run.log).trim() ? run.log : '');
     if (!log) return null;
     const content = global.document.createElement('div');
     buildLogContent(content, run, helpers);
@@ -70,7 +72,9 @@
       if (!run) continue;
       const subjectValue = subjectRunValue(run);
       if (!subjectValue) continue;
-      const log = run.log && String(run.log).trim();
+      const log = helpers && typeof helpers.logTextForRun === 'function'
+        ? helpers.logTextForRun(run)
+        : (run.log && String(run.log).trim() ? run.log : '');
       if (!log) continue;
       const ts = Date.parse(run.lastOutputAt || run.startedAt || '') || 0;
       candidates.push({ run, subjectValue, kind: run.kind === 'active' ? 0 : 1, ts });
@@ -647,7 +651,9 @@
   }
 
   function buildLogPre(run, helpers) {
-    const log = run.log && String(run.log).trim() ? run.log : '';
+    const log = helpers && typeof helpers.logTextForRun === 'function'
+      ? helpers.logTextForRun(run)
+      : (run.log && String(run.log).trim() ? run.log : '');
     const pre = global.document.createElement('pre');
     pre.classList.add('terminal-log');
     pre.setAttribute('data-scroll-key', run.key);
@@ -1249,7 +1255,6 @@
   function buildLogContent(content, run, helpers) {
     const section = global.document.createElement('section');
     section.classList.add('detail-box', 'tab-pane', 'fill');
-    const log = run.log && String(run.log).trim() ? run.log : '';
     const pre = buildLogPre(run, helpers);
     section.appendChild(pre);
     content.appendChild(section);
@@ -1444,7 +1449,9 @@
       if (opts.streamingKeys && opts.streamingKeys.has(subjectRun.key) && content.querySelector('pre[data-scroll-key]')) {
         return;
       }
-      const newLog = subjectRun.log && String(subjectRun.log).trim() ? subjectRun.log : '';
+      const newLog = opts.helpers && typeof opts.helpers.logTextForRun === 'function'
+        ? opts.helpers.logTextForRun(subjectRun)
+        : (subjectRun.log && String(subjectRun.log).trim() ? subjectRun.log : '');
       let pre = content.querySelector('pre[data-scroll-key]');
       const renderedSubjectFp = content.getAttribute('data-rendered-subject-fingerprint') || '';
       const renderedSubjectValue = renderedSubjectFp ? renderedSubjectFp.split('|')[0] : '';
@@ -2033,6 +2040,7 @@
     updateDetailPanelLog,
     updateDetailPanelEvents,
     fillTerminalPre,
+    appendTerminalPre,
     subjectRunValue,
     subjectRunsFor,
     highlightJSON,

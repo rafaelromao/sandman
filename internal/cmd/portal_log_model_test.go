@@ -46,6 +46,12 @@ const malformed = {
   records: [{ runId: 'run-1', generation, start: 9, end: 12, text: 'bad cursor' }]
 };
 if (model.accept('run-1', malformed, 'append', 1)) throw new Error('incoherent cursor was silently accepted');
+const disconnectedSnapshot = {
+  runId: 'run-1', generation, start: 10, end: 12,
+  cursor: { runId: 'run-1', generation, offset: 12 },
+  records: [{ runId: 'run-1', generation, start: 10, end: 12, text: 'disconnected' }]
+};
+if (model.accept('run-1', disconnectedSnapshot, 'snapshot', 1)) throw new Error('disconnected snapshot replaced accepted range');
 const wrongRun = {
   runId: 'other-run', generation, start: 9, end: 12,
   cursor: { runId: 'other-run', generation, offset: 12 },
@@ -56,7 +62,7 @@ if (model.text('run-1') !== 'same\nsame\n') throw new Error('record multiplicity
 if (!model.accept('run-1', { runId: 'run-1' }, 'pending', 1)) throw new Error('pending source state was not accepted');
 if (model.text('run-1') !== 'same\nsame\n') throw new Error('pending state discarded retained records');
 if (!model.accept('run-1', { runId: 'run-1' }, 'unavailable', 1)) throw new Error('unavailable source state was not accepted');
-if (model.text('run-1') !== '') throw new Error('unavailable source retained stale records');
+if (model.text('run-1') !== 'same\nsame\n') throw new Error('unavailable observation discarded accepted records');
 
 const largeRecords = [];
 for (let i = 0; i < 4097; i++) {
@@ -70,6 +76,11 @@ if (!model.accept('large-run', large, 'snapshot', 1)) throw new Error('large sna
 if (model.get('large-run').records.length !== 4096) throw new Error('retention bound was not enforced');
 if (model.text('large-run').indexOf('line-0') !== -1) throw new Error('retention silently retained the oldest record');
 if (model.text('large-run').indexOf('line-4096') === -1) throw new Error('retention dropped the newest record');
+const range = model.range('large-run');
+if (!range.truncated || range.start !== 1 || range.end !== 4097) throw new Error('retention boundary was not explicit: ' + JSON.stringify(range));
+if (range.retainedBytes !== 4096) throw new Error('retained byte count was not tracked: ' + JSON.stringify(range));
+for (let i = 0; i < 64; i++) model.get('evicted-' + i);
+if (model.get('run-1').cursor) throw new Error('bounded model map retained an evicted run');
 console.log('PASS');
 `
 	runNodeScript(t, js)

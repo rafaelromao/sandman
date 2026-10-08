@@ -126,9 +126,17 @@ func servePortalRunStream(w http.ResponseWriter, r *http.Request, repoRoot strin
 	for {
 		latest, observeErr := portalRunForKey(repoRoot, runKey)
 		if observeErr != nil {
-			_ = writePortalLogEvent(locked, "unavailable", map[string]any{"runId": run.RunID, "reason": observeErr.Error()}, "")
-			_ = writePortalLogEvent(locked, "end", map[string]any{"runId": run.RunID}, "")
-			return
+			if err := writePortalLogEvent(locked, "pending", map[string]any{"runId": run.RunID, "reason": observeErr.Error()}, ""); err != nil {
+				return
+			}
+			timer := time.NewTimer(portalLogPollInterval)
+			select {
+			case <-r.Context().Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			continue
 		}
 		logPath = portalLogSourcePath(latest)
 		if logPath == "" {

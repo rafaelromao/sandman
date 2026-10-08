@@ -1427,7 +1427,7 @@ func TestPortal_RunFromState_CompletedKeepsSavedLogWhenBatchSocketAlive(t *testi
 	}
 }
 
-func TestPortal_Compute_ActiveRunRefreshesLiveSocketLog(t *testing.T) {
+func TestPortal_Compute_ActiveRunUsesSavedLog(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "p")
 	if err != nil {
 		t.Fatal(err)
@@ -1498,11 +1498,11 @@ func TestPortal_Compute_ActiveRunRefreshesLiveSocketLog(t *testing.T) {
 	if first.Kind != "active" || first.Status != "running" {
 		t.Fatalf("expected active running row, got %#v", first)
 	}
-	if !strings.Contains(first.Log, "first live line") {
-		t.Fatalf("expected live socket output on first poll, got %q", first.Log)
+	if !strings.Contains(first.Log, "stale file line") {
+		t.Fatalf("expected saved log output on first poll, got %q", first.Log)
 	}
-	if strings.Contains(first.Log, "stale file line") {
-		t.Fatalf("expected stale saved log to stay hidden, got %q", first.Log)
+	if strings.Contains(first.Log, "first live line") {
+		t.Fatalf("unexpected broadcaster output in saved log view, got %q", first.Log)
 	}
 
 	liveMu.Lock()
@@ -1520,11 +1520,11 @@ func TestPortal_Compute_ActiveRunRefreshesLiveSocketLog(t *testing.T) {
 	if second.Kind != first.Kind || second.Status != first.Status || second.IssueLabel != first.IssueLabel {
 		t.Fatalf("expected non-log state to stay stable, first=%#v second=%#v", first, second)
 	}
-	if !strings.Contains(second.Log, "second live line") {
-		t.Fatalf("expected refreshed live socket output on second poll, got %q", second.Log)
+	if !strings.Contains(second.Log, "stale file line") {
+		t.Fatalf("expected saved log output on second poll, got %q", second.Log)
 	}
-	if second.Log == first.Log {
-		t.Fatalf("expected live log to change between polls, got %q", second.Log)
+	if second.Log != first.Log {
+		t.Fatalf("saved log changed from broadcaster-only refresh, first=%q second=%q", first.Log, second.Log)
 	}
 }
 
@@ -1564,7 +1564,7 @@ func TestPortal_RunFromActiveBatchIssue_MixedBatchCarriesBatchIssues(t *testing.
 	}
 }
 
-func TestPortal_RunFromActiveBatchIssue_LiveMixedBatchFiltersSiblingLogs(t *testing.T) {
+func TestPortal_RunFromActiveBatchIssue_PreArtifactUsesPendingMarker(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -1605,26 +1605,13 @@ func TestPortal_RunFromActiveBatchIssue_LiveMixedBatchFiltersSiblingLogs(t *test
 		}
 		run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, issue, state, nil, nil, liveOutput, nil, nil)
 
-		ownTimestamp := fmt.Sprintf("18:51:0%d", issue%10)
-		if !strings.Contains(run.Log, ownTimestamp) {
-			t.Fatalf("issue %d: expected own timestamp %q in log, got:\n%s", issue, ownTimestamp, run.Log)
-		}
-		for _, other := range []int{860, 854} {
-			if other == issue {
-				continue
-			}
-			otherTimestamp := fmt.Sprintf("18:51:0%d", other%10)
-			if strings.Contains(run.Log, otherTimestamp) {
-				t.Fatalf("issue %d: log leaked sibling timestamp %q:\n%s", issue, otherTimestamp, run.Log)
-			}
-		}
-		if strings.Contains(run.Log, "[") {
-			t.Fatalf("issue %d: log should not contain any '[label]' prefixes, got:\n%s", issue, run.Log)
+		if run.Log != QueuedMarker {
+			t.Fatalf("issue %d: expected pending marker before saved log creation, got %q", issue, run.Log)
 		}
 	}
 }
 
-func TestPortal_RunFromActiveBatchIssue_SingleIssueLiveRowKeepsFullOutput(t *testing.T) {
+func TestPortal_RunFromActiveBatchIssue_SingleIssueUsesPendingMarker(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -1663,13 +1650,8 @@ func TestPortal_RunFromActiveBatchIssue_SingleIssueLiveRowKeepsFullOutput(t *tes
 
 	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, state, nil, nil, liveOutput, nil, nil)
 
-	for _, want := range []string{"09:00:00 only me here", "09:00:01 still me"} {
-		if !strings.Contains(run.Log, want) {
-			t.Fatalf("expected single-issue live row to keep %q in log, got:\n%s", want, run.Log)
-		}
-	}
-	if strings.Contains(run.Log, "[") {
-		t.Fatalf("single-issue live row log should not contain any '[label]' prefixes, got:\n%s", run.Log)
+	if run.Log != QueuedMarker {
+		t.Fatalf("expected pending marker before saved log creation, got %q", run.Log)
 	}
 }
 
@@ -3269,12 +3251,9 @@ func TestPortal_ResolveRunLog_TerminalIssueRowIgnoresBatchLiveOutput(t *testing.
 	}
 }
 
-// TestPortal_ResolveRunLog_EmptySavedFallsBackToLive pins the slice-1
-// contract for portalRunsView.resolveRunLog: when the saved log is
-// empty, an active row falls back to the live output (so the portal
-// can show something meaningful during the very first seconds of a
-// run before the log file exists).
-func TestPortal_ResolveRunLog_EmptySavedFallsBackToLive(t *testing.T) {
+// TestPortal_ResolveRunLog_EmptySavedDoesNotUseLive pins the Saved Run Log
+// authority: an active socket is an attach mechanism, not a second snapshot.
+func TestPortal_ResolveRunLog_EmptySavedDoesNotUseLive(t *testing.T) {
 	startedAt := time.Now().Add(-1 * time.Minute)
 	runState := events.RunState{
 		RunID: "260618113825-abcd-active-1",
@@ -3289,9 +3268,8 @@ func TestPortal_ResolveRunLog_EmptySavedFallsBackToLive(t *testing.T) {
 	}
 
 	got := (&portalRunsView{}).resolveRunLog(func() string { return "" }, runState, active)
-	wantLive := strings.TrimSpace(stripLogLabels(active.LiveOutput))
-	if got != wantLive {
-		t.Fatalf("resolveRunLog with empty saved = %q, want live %q", got, wantLive)
+	if got != "" {
+		t.Fatalf("resolveRunLog with empty saved = %q, want empty saved source", got)
 	}
 }
 

@@ -422,7 +422,8 @@ func TestPortal_RunStream_SavedLogSnapshotAndCursorResume(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(runDir, "run.json"), manifest, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(runDir, "run.log"), []byte("["+runID+"] first\n["+runID+"] same\n"), 0o644); err != nil {
+	largePrefix := strings.Repeat("["+runID+"] old\n", 30000)
+	if err := os.WriteFile(filepath.Join(runDir, "run.log"), []byte(largePrefix+"["+runID+"] first\n["+runID+"] same\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	idx := &batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{{ID: "saved", Path: filepath.Dir(filepath.Dir(runDir)), Kind: "batch", Status: "completed", Issues: []int{42}}}}
@@ -473,7 +474,7 @@ func TestPortal_RunStream_SavedLogSnapshotAndCursorResume(t *testing.T) {
 		return body, id
 	}
 	first, cursor := request("", "")
-	if !strings.Contains(first, "event: snapshot") || !strings.Contains(first, `"text":"first"`) || !strings.Contains(first, `"text":"same"`) {
+	if !strings.Contains(first, "event: snapshot") || !strings.Contains(first, `"bounded":true`) || !strings.Contains(first, `"text":"first"`) || !strings.Contains(first, `"text":"same"`) {
 		t.Fatalf("saved stream did not emit the authoritative snapshot: %s", first)
 	}
 	if cursor == "" {
@@ -489,6 +490,13 @@ func TestPortal_RunStream_SavedLogSnapshotAndCursorResume(t *testing.T) {
 	withConflictingURLCursor, _ := request(cursor, "&cursor=malformed")
 	if strings.Contains(withConflictingURLCursor, "event: reset") || strings.Contains(withConflictingURLCursor, "event: snapshot") {
 		t.Fatalf("valid Last-Event-ID did not take precedence over URL cursor: %s", withConflictingURLCursor)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "run.log"), []byte("["+runID+"] rewritten\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rewritten, _ := request(cursor, "")
+	if !strings.Contains(rewritten, "event: reset") || !strings.Contains(rewritten, `"text":"rewritten"`) {
+		t.Fatalf("rewritten saved log did not force an explicit replacement: %s", rewritten)
 	}
 }
 
