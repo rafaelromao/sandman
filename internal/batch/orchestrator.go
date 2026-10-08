@@ -3988,6 +3988,14 @@ loop:
 			if s.isIssueDriven() && ctx.Err() == nil {
 				hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
 				if gateStatus, extras, handled := s.handleLifecycleDecisionForAttempt(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady, result.Status); handled {
+					if result.UsageLimitReached && !result.ContextExhausted && (gateStatus == "resume" || gateStatus == "await") {
+						// A provider refusal did not perform the selected PR work.
+						// Leave non-terminal gate arbitration to quota recovery and,
+						// after its polling allowance, configured ordinary retries.
+						// Authoritative terminal decisions (including merged success)
+						// still take precedence below.
+						break relaunch
+					}
 					if isImplementorOwnedGateFailure(extras) {
 						// A clean but incomplete handoff is owned work, not an
 						// external await or a separate lifecycle-resume budget.

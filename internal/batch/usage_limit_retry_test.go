@@ -52,6 +52,67 @@ func TestUsageLimitAwaitResumesSameSessionWithIdleTimeoutDisabled(t *testing.T) 
 	}
 }
 
+func TestUsageLimitDuringPRRemediationRetainsQuotaRecovery(t *testing.T) {
+	for _, gate := range []string{"ci-failure", "merge-conflict", "pending-ci"} {
+		t.Run(gate, func(t *testing.T) {
+			result, sb, log, waits := runUsageLimitBatchCase(t, 2, 0, 1, true, 0, gate)
+			if result.Runs[0].Status != "success" || sb.attemptCount() != 3 {
+				t.Fatalf("repair did not resume after provider recovery: result=%+v attempts=%d", result, sb.attemptCount())
+			}
+			if len(waits) != 2 || waits[0] != usageLimitPollInterval || waits[1] != usageLimitPollInterval {
+				t.Fatalf("provider refusal spent lifecycle launches instead of quota polling: waits=%v events=%+v", waits, log.snapshot())
+			}
+			if countEventsByType(log.snapshot(), "run.resumed") != 0 || countEventsByType(log.snapshot(), "run.retry") != 0 {
+				t.Fatalf("quota refusal consumed repair/ordinary retries: %+v", log.snapshot())
+			}
+			commands := sb.commandsSnapshot()
+			for _, command := range commands[1:] {
+				if !strings.Contains(command, "--session 'usage-limit-session'") {
+					t.Fatalf("quota recovery lost repair conversation: %s", command)
+				}
+			}
+			for _, event := range log.snapshot() {
+				if event.Type == "run.await" && event.Payload["await_reason"] != "usage-limit" {
+					t.Fatalf("quota refusal mislabeled as PR gate waiting: %+v", event)
+				}
+			}
+		})
+	}
+}
+
+func TestUsageLimitDuringCIRemediationPreservesOrdinaryRetryBounds(t *testing.T) {
+	for _, retries := range []int{0, 1, 2} {
+		t.Run(fmt.Sprintf("retries=%d", retries), func(t *testing.T) {
+			result, sb, log, waits := runUsageLimitBatchCase(t, 99, 0, retries, false, 0, "ci-failure")
+			if result.Runs[0].Status != "failure" || sb.attemptCount() != 31+retries || len(waits) != 30 || countEventsByType(log.snapshot(), "run.retry") != retries || countEventsByType(log.snapshot(), "run.resumed") != 0 {
+				t.Fatalf("CI gate bypassed quota/retry bounds: result=%+v attempts=%d waits=%d events=%+v", result, sb.attemptCount(), len(waits), log.snapshot())
+			}
+		})
+	}
+}
+
+func TestUsageLimitDuringCIRemediationCompletesAfterFinalFreshRetry(t *testing.T) {
+	result, sb, log, waits := runUsageLimitBatchCase(t, 31, 0, 1, true, 0, "ci-failure")
+	commands := sb.commandsSnapshot()
+	if result.Runs[0].Status != "success" || sb.attemptCount() != 32 || len(waits) != 30 || countEventsByType(log.snapshot(), "run.retry") != 1 || strings.Contains(commands[len(commands)-1], "--session") {
+		t.Fatalf("final ordinary retry could not repair CI: result=%+v attempts=%d waits=%d commands=%v", result, sb.attemptCount(), len(waits), commands)
+	}
+}
+
+func TestUsageLimitDuringCIRemediationCancellationStopsRecovery(t *testing.T) {
+	result, sb, log, waits := runUsageLimitBatchCase(t, 99, 0, 1, false, 2, "ci-failure")
+	if result.Runs[0].Status != "aborted" || sb.attemptCount() != 2 || len(waits) != 1 || countEventsByType(log.snapshot(), "run.retry") != 0 || countEventsByType(log.snapshot(), "run.resumed") != 0 {
+		t.Fatalf("cancellation launched more repair work: result=%+v attempts=%d waits=%d events=%+v", result, sb.attemptCount(), len(waits), log.snapshot())
+	}
+}
+
+func TestUsageLimitDoesNotOverrideVerifiedMergedCompletion(t *testing.T) {
+	result, sb, log, waits := runUsageLimitBatchCase(t, 1, 0, 1, false, 0, "merged-during-quota")
+	if result.Runs[0].Status != "success" || sb.attemptCount() != 1 || len(waits) != 0 || countEventsByType(log.snapshot(), "run.await") != 0 {
+		t.Fatalf("provider refusal overrode completion: result=%+v attempts=%d waits=%v", result, sb.attemptCount(), waits)
+	}
+}
+
 func TestUsageLimitAwaitRetriesAfterFiveHours(t *testing.T) {
 	result, sandbox, log, waits := runUsageLimitBatch(t, 31, 0, 1)
 
@@ -149,7 +210,7 @@ func runUsageLimitBatch(t *testing.T, failures, idleTimeout, retries int) (*Resu
 	return runUsageLimitBatchCase(t, failures, idleTimeout, retries, false, 0)
 }
 
-func runUsageLimitBatchCase(t *testing.T, failures, idleTimeout, retries int, finishOnSuccess bool, cancelOnAttempt int) (*Result, *usageLimitRetrySandbox, *spyEventLog, []time.Duration) {
+func runUsageLimitBatchCase(t *testing.T, failures, idleTimeout, retries int, finishOnSuccess bool, cancelOnAttempt int, gate ...string) (*Result, *usageLimitRetrySandbox, *spyEventLog, []time.Duration) {
 	t.Helper()
 	root := t.TempDir()
 	t.Chdir(root)
@@ -172,6 +233,20 @@ func runUsageLimitBatchCase(t *testing.T, failures, idleTimeout, retries int, fi
 		issues: map[int]*github.Issue{42: {Number: 42, Title: "Usage limit", State: "closed"}},
 		prs:    map[string]*github.PR{branch: {Number: 7, State: "open", Body: "Closes #42", HeadRefName: branch}},
 	}}
+	if len(gate) > 0 {
+		pr := client.prs[branch]
+		pr.HeadRefOid = "current-sha"
+		switch gate[0] {
+		case "ci-failure":
+			pr.StatusCheckRollup = "failure"
+		case "merge-conflict":
+			pr.StatusCheckRollup, pr.MergeStateStatus = "success", "DIRTY"
+		case "pending-ci":
+			pr.StatusCheckRollup = "pending"
+		case "merged-during-quota":
+			sb.onAttempt = func(int) { client.setPR(branch, func(pr *github.PR) { pr.State, pr.Merged = "merged", true }) }
+		}
+	}
 	// A continued session needs a merged PR to finish successfully. A timeout
 	// test omits it so the ordinary retry reaches a fresh agent launch.
 	if failures < 31 || finishOnSuccess {
@@ -186,19 +261,23 @@ func runUsageLimitBatchCase(t *testing.T, failures, idleTimeout, retries int, fi
 		Git:            config.GitConfig{BaseBranch: "main"},
 		AgentProviders: map[string]config.Agent{"opencode": config.BuiltInAgentPresets["opencode"].Agent("opencode")},
 	}
+	opts := runSessionOptions{
+		releaseAwaitCapacity: true,
+		now:                  func() time.Time { return clockNow },
+		awaitWait: func(_ context.Context, delay time.Duration) error {
+			waits = append(waits, delay)
+			clockNow = clockNow.Add(delay)
+			return nil
+		},
+	}
+	if len(gate) > 0 {
+		opts.currentHead = func(string) (string, error) { return "current-sha", nil }
+	}
 	o := NewOrchestrator(client, &retryRenderer{result: "# Task\n\nRetry safely."}, &fakeConfigStore{config: cfg}, log,
 		WithErrorLog(io.Discard),
 		WithSandboxFactory(&usageLimitRetrySandboxFactory{sandbox: sb}),
 		WithRunnableFactory(&usageLimitRetryRunnableFactory{}),
-		WithRunSessionOpts(runSessionOptions{
-			releaseAwaitCapacity: true,
-			now:                  func() time.Time { return clockNow },
-			awaitWait: func(_ context.Context, delay time.Duration) error {
-				waits = append(waits, delay)
-				clockNow = clockNow.Add(delay)
-				return nil
-			},
-		}),
+		WithRunSessionOpts(opts),
 	)
 	result, err := o.RunBatch(ctx, Request{
 		Issues:            []int{42},
