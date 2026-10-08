@@ -115,10 +115,9 @@ func TestPortalRowReopen_PreservesQueuedStreamTailBeforeReplay(t *testing.T) {
 	}
 }
 
-// TestPortalRowReopen_DiscardsStaleReplayBeforeCachedSuffix covers the real
-// production boundary: the portal cache holds the newest 64 KiB while a new
-// SSE connection replays the broadcaster's older, larger history. Replays
-// before the cached suffix must not be appended after it.
+// TestPortalRowReopen_UsesStructuredSnapshotInsteadOfTextReplay covers the
+// production boundary where a reopened pane receives a bounded Saved Run Log
+// snapshot. Legacy text delivery must not mutate the model-owned pane.
 func TestPortalRowReopen_DiscardsStaleReplayBeforeCachedSuffix(t *testing.T) {
 	const runID = "260901131553-08ee-444"
 	const cachedStart = "13:18:46 $ gh run view current --log"
@@ -136,6 +135,7 @@ func TestPortalRowReopen_DiscardsStaleReplayBeforeCachedSuffix(t *testing.T) {
 		"issueNumber": 444,
 		"batchKey":    "260901131553-08ee-444+24",
 		"socketPath":  "/tmp/" + runID + ".sock",
+		"logPath":     "/tmp/" + runID + ".log",
 		"log":         cachedStart + "\n" + cachedEnd + "\n",
 	}
 	runsJSON, err := json.Marshal([]map[string]any{run})
@@ -162,8 +162,13 @@ func TestPortalRowReopen_DiscardsStaleReplayBeforeCachedSuffix(t *testing.T) {
       this.url = url;
       this.readyState = 1;
       this.closed = false;
+      this.listeners = {};
       this.onmessage = null;
       this.onerror = null;
+      this.addEventListener = function (type, fn) { this.listeners[type] = fn; };
+      this.dispatchEvent = function (event) {
+        if (this.listeners[event.type]) this.listeners[event.type](event);
+      };
       this.close = function () {
         this.closed = true;
         this.readyState = 2;
@@ -186,13 +191,19 @@ func TestPortalRowReopen_DiscardsStaleReplayBeforeCachedSuffix(t *testing.T) {
       if (!replayStream || typeof replayStream.onmessage !== 'function') {
         throw new Error('reopened active row did not create a replacement stream');
       }
-      // The reconnect begins before the pane's 64 KiB cached suffix, reaches
-      // that suffix, then carries genuinely new live output.
-      replayStream.onmessage({ data: '`+staleFirst+`' });
-      replayStream.onmessage({ data: '`+staleSecond+`' });
-      replayStream.onmessage({ data: '`+cachedStart+`' });
-      replayStream.onmessage({ data: '`+cachedEnd+`' });
-      replayStream.onmessage({ data: '`+liveTail+`' });
+       // Legacy replay is not a source position and must be ignored once the
+       // structured Saved Run Log stream is selected.
+       replayStream.onmessage({ data: '`+staleFirst+`' });
+       replayStream.onmessage({ data: '`+staleSecond+`' });
+       replayStream.dispatchEvent({ type: 'snapshot', data: JSON.stringify({
+         runId: '`+runID+`', generation: 'saved-generation-1', start: 0, end: 3,
+         cursor: { runId: '`+runID+`', generation: 'saved-generation-1', offset: 3 },
+         records: [
+           { runId: '`+runID+`', generation: 'saved-generation-1', start: 0, end: 1, text: '`+cachedStart+`' },
+           { runId: '`+runID+`', generation: 'saved-generation-1', start: 1, end: 2, text: '`+cachedEnd+`' },
+           { runId: '`+runID+`', generation: 'saved-generation-1', start: 2, end: 3, text: '`+liveTail+`' },
+         ],
+       }) });
       setTimeout(function () {
         window.__portalRunAllRafs();
         var pre = document.querySelector('pre[data-scroll-key="`+runID+`"]');
@@ -229,10 +240,8 @@ func TestPortalRowReopen_DiscardsStaleReplayBeforeCachedSuffix(t *testing.T) {
 	}
 }
 
-// TestPortalRowReopen_DoesNotAcceptAnEarlierRepeatedLineAsReplayCheckpoint
-// covers a replay that contains a duplicate of a cached line before reaching
-// the cached suffix. The duplicate must not release the replay gate early,
-// or following historical lines are appended after the newer cached log.
+// TestPortalRowReopen_PreservesStructuredRecordOrder covers repeated display
+// text without using text equality as a replay boundary.
 func TestPortalRowReopen_DoesNotAcceptAnEarlierRepeatedLineAsReplayCheckpoint(t *testing.T) {
 	const runID = "260924114000-08ee-555"
 	const repeatedLine = "12:30:00 $ cargo test -p host"
@@ -249,6 +258,7 @@ func TestPortalRowReopen_DoesNotAcceptAnEarlierRepeatedLineAsReplayCheckpoint(t 
 		"issueNumber": 555,
 		"batchKey":    "260924114000-08ee-555+7",
 		"socketPath":  "/tmp/" + runID + ".sock",
+		"logPath":     "/tmp/" + runID + ".log",
 		"log":         repeatedLine + "\n" + cachedTail + "\n",
 	}
 	runsJSON, err := json.Marshal([]map[string]any{run})
@@ -274,8 +284,13 @@ func TestPortalRowReopen_DoesNotAcceptAnEarlierRepeatedLineAsReplayCheckpoint(t 
       this.url = url;
       this.readyState = 1;
       this.closed = false;
+      this.listeners = {};
       this.onmessage = null;
       this.onerror = null;
+      this.addEventListener = function (type, fn) { this.listeners[type] = fn; };
+      this.dispatchEvent = function (event) {
+        if (this.listeners[event.type]) this.listeners[event.type](event);
+      };
       this.close = function () {
         this.closed = true;
         this.readyState = 2;
@@ -298,14 +313,23 @@ func TestPortalRowReopen_DoesNotAcceptAnEarlierRepeatedLineAsReplayCheckpoint(t 
       if (!replayStream || typeof replayStream.onmessage !== 'function') {
         throw new Error('reopened active row did not create a replacement stream');
       }
-      // This earlier occurrence is text-identical to a cached line, but the
-      // replay has not reached the cached suffix yet. The later occurrence
-      // starts the real overlap.
-      replayStream.onmessage({ data: '`+repeatedLine+`' });
-      replayStream.onmessage({ data: '`+staleLine+`' });
-      replayStream.onmessage({ data: '`+repeatedLine+`' });
-      replayStream.onmessage({ data: '`+cachedTail+`' });
-      replayStream.onmessage({ data: '`+liveTail+`' });
+       // Legacy text callbacks cannot establish novelty. Structured record
+       // positions preserve the repeated text and append order explicitly.
+       replayStream.onmessage({ data: '`+staleLine+`' });
+       replayStream.dispatchEvent({ type: 'snapshot', data: JSON.stringify({
+         runId: '`+runID+`', generation: 'saved-generation-1', start: 0, end: 3,
+         cursor: { runId: '`+runID+`', generation: 'saved-generation-1', offset: 3 },
+         records: [
+           { runId: '`+runID+`', generation: 'saved-generation-1', start: 0, end: 1, text: '`+repeatedLine+`' },
+           { runId: '`+runID+`', generation: 'saved-generation-1', start: 1, end: 2, text: '`+repeatedLine+`' },
+           { runId: '`+runID+`', generation: 'saved-generation-1', start: 2, end: 3, text: '`+cachedTail+`' },
+         ],
+       }) });
+       replayStream.dispatchEvent({ type: 'append', data: JSON.stringify({
+         runId: '`+runID+`', generation: 'saved-generation-1', start: 3, end: 4,
+         cursor: { runId: '`+runID+`', generation: 'saved-generation-1', offset: 4 },
+         records: [{ runId: '`+runID+`', generation: 'saved-generation-1', start: 3, end: 4, text: '`+liveTail+`' }],
+       }) });
       setTimeout(function () {
         window.__portalRunAllRafs();
         var pre = document.querySelector('pre[data-scroll-key="`+runID+`"]');
@@ -329,7 +353,7 @@ func TestPortalRowReopen_DoesNotAcceptAnEarlierRepeatedLineAsReplayCheckpoint(t 
 	if err := json.Unmarshal([]byte(payload), &result); err != nil {
 		t.Fatalf("parse repeated-checkpoint payload: %v\nraw=%s", err, payload)
 	}
-	want := repeatedLine + "\n" + cachedTail + "\n" + liveTail + "\n"
+	want := repeatedLine + "\n" + repeatedLine + "\n" + cachedTail + "\n" + liveTail + "\n"
 	if result.RenderedLog != want {
 		t.Fatalf("reopened log = %q, want %q (streams=%d)", result.RenderedLog, want, result.StreamCount)
 	}
@@ -351,6 +375,7 @@ func TestPortalRowReopen_AcceptsLiveOutputWhenCachedSuffixIsMissingFromReplay(t 
 		"issueNumber": 556,
 		"batchKey":    "260926104500-08ee-556+1",
 		"socketPath":  "/tmp/" + runID + ".sock",
+		"logPath":     "/tmp/" + runID + ".log",
 		"log":         cachedHead + "\n" + cachedTail + "\n",
 	}
 	runsJSON, err := json.Marshal([]map[string]any{run})
@@ -370,10 +395,11 @@ func TestPortalRowReopen_AcceptsLiveOutputWhenCachedSuffixIsMissingFromReplay(t 
     };
     window.__portalStreams = [];
     window.EventSource = function (url) {
-      this.url = url;
-      this.readyState = 1;
-      this.listeners = {};
-      this.close = function () { this.readyState = 2; };
+       this.url = url;
+       this.readyState = 1;
+       this.listeners = {};
+       this.onmessage = null;
+       this.close = function () { this.readyState = 2; };
       this.addEventListener = function (type, fn) { this.listeners[type] = fn; };
       this.dispatchEvent = function (event) {
         if (this.listeners[event.type]) this.listeners[event.type](event);
@@ -392,9 +418,20 @@ func TestPortalRowReopen_AcceptsLiveOutputWhenCachedSuffixIsMissingFromReplay(t 
 
       var replayStream = window.__portalStreams[1];
       if (!replayStream) throw new Error('reopened active row did not create a replacement stream');
-      replayStream.onmessage({ data: '`+replayLine+`' });
-      replayStream.dispatchEvent({ type: 'replay-complete' });
-      replayStream.onmessage({ data: '`+liveLine+`' });
+       replayStream.onmessage({ data: '`+replayLine+`' });
+       replayStream.dispatchEvent({ type: 'snapshot', data: JSON.stringify({
+         runId: '`+runID+`', generation: 'saved-generation-1', start: 0, end: 2,
+         cursor: { runId: '`+runID+`', generation: 'saved-generation-1', offset: 2 },
+         records: [
+           { runId: '`+runID+`', generation: 'saved-generation-1', start: 0, end: 1, text: '`+cachedHead+`' },
+           { runId: '`+runID+`', generation: 'saved-generation-1', start: 1, end: 2, text: '`+cachedTail+`' },
+         ],
+       }) });
+       replayStream.dispatchEvent({ type: 'append', data: JSON.stringify({
+         runId: '`+runID+`', generation: 'saved-generation-1', start: 2, end: 3,
+         cursor: { runId: '`+runID+`', generation: 'saved-generation-1', offset: 3 },
+         records: [{ runId: '`+runID+`', generation: 'saved-generation-1', start: 2, end: 3, text: '`+liveLine+`' }],
+       }) });
       setTimeout(function () {
         window.__portalRunAllRafs();
         var pre = document.querySelector('pre[data-scroll-key="`+runID+`"]');
