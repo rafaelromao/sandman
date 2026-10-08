@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -28,33 +29,69 @@ func (g launchBudgetGitHub) FetchPR(_ context.Context, number int) (*github.PR, 
 	return &pr, nil
 }
 
-func TestReviewerLaunchBudgetSurvivesDaemonRestart(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	gh := &fakeGH{
-		prs:      []github.PR{{Number: 17, State: "open", HeadRefOid: "current-head"}},
-		comments: map[int][]github.PRComment{17: {{ID: "request", Body: "/sandman review", CreatedAt: time.Now().UTC()}}},
-		prFetch:  map[int]*github.PR{17: {Number: 17, State: "open", HeadRefOid: "current-head"}},
+func writeObsoleteReviewerBudget(t *testing.T, root, trigger, head string, corrupt bool) {
+	t.Helper()
+	if head == "" {
+		head = "unknown-head"
 	}
-	runner := &failureRunner{err: errors.New("reviewer cannot launch")}
-	for i := 0; i < 5; i++ {
-		d := New(dir, launchBudgetGitHub{gh}, &prompt.Engine{}, runner, &config.Config{DefaultReviewAgent: "opencode", DefaultReviewModel: "opencode/foo"}, &lockedBuffer{}, 1, true, nil)
-		d.launchBackoff = func(int) time.Duration { return 0 }
-		tickAndWait(t, d, context.Background())
+	key := sha256.Sum256([]byte(trigger + "\x00" + strings.ToLower(head)))
+	path := filepath.Join(root, "state", fmt.Sprintf("17.review-launch-%x.json", key))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if got := runner.calls.Load(); got != 3 {
-		t.Fatalf("review launches across restart=%d, want three bounded failures", got)
+	data := fmt.Sprintf(`{"protocol":"review-launch/v1","pull_request":17,"trigger":%q,"head_sha":%q,"attempts":3}`, trigger, head)
+	if corrupt {
+		data = "obsolete corrupt launch budget"
 	}
-	budget, err := reviewlaunch.Read(filepath.Join(dir, "state"), 17, "request", "current-head")
-	if err != nil || budget.Attempts != 3 {
-		t.Fatalf("durable request budget=%+v error=%v", budget, err)
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	gh.comments[17] = append(gh.comments[17], github.PRComment{ID: "new-request", Body: "/sandman review", CreatedAt: time.Now().UTC().Add(time.Second)})
-	d := New(dir, launchBudgetGitHub{gh}, &prompt.Engine{}, runner, &config.Config{DefaultReviewAgent: "opencode", DefaultReviewModel: "opencode/foo"}, &lockedBuffer{}, 1, true, nil)
-	d.launchBackoff = func(int) time.Duration { return 0 }
-	tickAndWait(t, d, context.Background())
-	if got := runner.calls.Load(); got != 4 {
-		t.Fatalf("fresh request failed to receive its own budget: launches=%d", got)
+}
+
+func TestReviewerLaunchRecoveryAcrossDaemonRestart(t *testing.T) {
+	for _, failureKind := range []string{"launch", "missing-decision"} {
+		for _, corrupt := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/corrupt=%v", failureKind, corrupt), func(t *testing.T) {
+				dir := testenv.MkdirShort(t, "sm-review-retry-")
+				t.Chdir(dir)
+				writeObsoleteReviewerBudget(t, dir, "request", "", corrupt)
+				writeObsoleteReviewerBudget(t, dir, "request", "current-head", corrupt)
+				gh := &fakeGH{
+					prs:      []github.PR{{Number: 17, State: "open", HeadRefOid: "current-head"}},
+					comments: map[int][]github.PRComment{17: {{ID: "request", Body: "/sandman review", CreatedAt: time.Now().UTC()}}},
+					prFetch:  map[int]*github.PR{17: {Number: 17, State: "open", HeadRefOid: "current-head"}},
+				}
+				var calls, posts atomic.Int32
+				runner := batchFunc(func(_ context.Context, req batch.Request) (*batch.Result, error) {
+					if calls.Add(1) <= 5 {
+						if failureKind == "launch" {
+							return nil, errors.New("temporary reviewer launch failure")
+						}
+						return &batch.Result{}, nil
+					}
+					return &batch.Result{}, writeDecisionToWorktree(req, "APPROVED")
+				})
+				cfg := &config.Config{DefaultReviewAgent: "opencode", DefaultReviewModel: "opencode/foo", WorktreeDir: filepath.Join(dir, "worktrees")}
+				for i := 0; i < 7; i++ {
+					d := New(dir, launchBudgetGitHub{gh}, &prompt.Engine{}, runner, cfg, &lockedBuffer{}, 1, true, nil)
+					d.launchBackoff = func(int) time.Duration { return 0 }
+					d.CommentPoster = ownershipCommentPoster(func(_ context.Context, pr int, body string) error {
+						count := posts.Add(1)
+						gh.mu.Lock()
+						gh.comments[pr] = append(gh.comments[pr], github.PRComment{ID: fmt.Sprintf("publication-%d", count), Body: body, CreatedAt: time.Now().UTC()})
+						gh.mu.Unlock()
+						return nil
+					})
+					tickAndWait(t, d, context.Background())
+					if i < 5 && d.IsTerminalSeen(17, "request") {
+						t.Fatal("retryable launch failure marked request terminal")
+					}
+				}
+				if calls.Load() != 6 || posts.Load() != 1 {
+					t.Fatalf("review never recovered or published twice: launches=%d posts=%d", calls.Load(), posts.Load())
+				}
+			})
+		}
 	}
 }
 
@@ -64,7 +101,7 @@ func (launchBudgetRepoFailure) RepoName(context.Context) (string, error) {
 	return "", errors.New("repository lookup unavailable")
 }
 
-func TestReviewerPreparationFailuresConsumeDurableBudget(t *testing.T) {
+func TestReviewerPreparationFailuresRemainRetryable(t *testing.T) {
 	for _, failure := range []string{"agent", "model", "repository"} {
 		t.Run(failure, func(t *testing.T) {
 			root := t.TempDir()
@@ -88,12 +125,11 @@ func TestReviewerPreparationFailuresConsumeDurableBudget(t *testing.T) {
 					t.Fatal(err)
 				}
 				err = d.launchReview(context.Background(), 17, "", "request", "", "", "", "", nil, state, false)
-				if err == nil || (attempt == 4 && !strings.Contains(err.Error(), "REVIEW_LAUNCH_EXHAUSTED")) {
+				if err == nil || strings.Contains(err.Error(), "REVIEW_LAUNCH_EXHAUSTED") {
 					t.Fatalf("attempt=%d error=%v", attempt, err)
 				}
-				budget, readErr := reviewlaunch.Read(filepath.Join(root, "state"), 17, "request", "head")
-				if readErr != nil || budget.Attempts != min(attempt, 3) {
-					t.Fatalf("failure %s budget=%+v error=%v", failure, budget, readErr)
+				if got := ReadFailureAttempts(state, "request"); got != attempt {
+					t.Fatalf("failure %s attempt diagnostics=%d, want %d", failure, got, attempt)
 				}
 			}
 			if runner.calls.Load() != 0 {
@@ -117,7 +153,7 @@ func (g launchBudgetLookupFailure) FetchPR(context.Context, int) (*github.PR, er
 	return nil, errors.New("PR lookup unavailable")
 }
 
-func TestReviewerPRLookupBudgetSurvivesRepeatedRestart(t *testing.T) {
+func TestReviewerPRLookupFailuresRemainRetryableAcrossRestart(t *testing.T) {
 	for _, empty := range []bool{false, true} {
 		t.Run(fmt.Sprintf("empty=%v", empty), func(t *testing.T) {
 			root := t.TempDir()
@@ -132,19 +168,18 @@ func TestReviewerPRLookupBudgetSurvivesRepeatedRestart(t *testing.T) {
 				}
 				d := New(root, gh, &prompt.Engine{}, runner, &config.Config{}, &lockedBuffer{}, 1, true, nil)
 				err = d.launchReview(context.Background(), 17, "", "request", "", "", "", "", nil, state, false)
-				if err == nil || (attempt > 3 && !strings.Contains(err.Error(), "REVIEW_LAUNCH_EXHAUSTED")) {
+				if err == nil || strings.Contains(err.Error(), "REVIEW_LAUNCH_EXHAUSTED") {
 					t.Fatalf("restart=%d error=%v", attempt, err)
 				}
 				if state.IsClaimed("request") {
 					t.Fatal("lookup failure retained trigger claim")
 				}
-				budget, readErr := reviewlaunch.Read(filepath.Join(root, "state"), 17, "request", "")
-				if readErr != nil || budget.Attempts != min(attempt, 3) {
-					t.Fatalf("unknown-head budget=%+v error=%v", budget, readErr)
+				if got := ReadFailureAttempts(state, "request"); got != 1 {
+					t.Fatalf("unknown-head failure diagnostics=%d, want one per reconstructed run", got)
 				}
 			}
-			if calls.Load() != 3 || runner.calls.Load() != 0 {
-				t.Fatalf("lookup calls=%d agent launches=%d, want three bounded lookups and no launch", calls.Load(), runner.calls.Load())
+			if calls.Load() != 5 || runner.calls.Load() != 0 {
+				t.Fatalf("lookup calls=%d agent launches=%d, want five retryable lookups and no launch", calls.Load(), runner.calls.Load())
 			}
 		})
 	}

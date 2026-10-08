@@ -104,21 +104,14 @@ func (o *waitOwner) checkpoint(row RowSpec, ready bool, nextPoll time.Duration) 
 		}
 		if state.AwaitReason() == "usage-limit" {
 			record.UsageLimitProbe = true
-			record.OperationDeadline = row.UsageLimitDeadline
-			if record.OperationDeadline.IsZero() {
-				if seconds, ok := lifecycleDeadlineSeconds(state.AwaitEvent.Payload["usage_limit_deadline_unix_seconds"]); ok {
-					record.OperationDeadline = time.Unix(seconds, 0)
-				}
-			}
-			record.OperationID = fmt.Sprintf("quota:%d", record.OperationDeadline.Unix())
+			record.OperationID, record.OperationDeadline = "quota:"+row.RunID, time.Time{}
 		}
 	}
-	if ready {
+	if ready && !record.UsageLimitProbe {
 		record.OperationID, record.OperationDeadline = "capacity", time.Time{}
 	}
-	if o.log == nil && row.UsageLimitProbe {
-		record.OperationDeadline = row.UsageLimitDeadline
-		record.OperationID = fmt.Sprintf("quota:%d", row.UsageLimitDeadline.Unix())
+	if row.UsageLimitProbe {
+		record.OperationID, record.OperationDeadline = "quota:"+row.RunID, time.Time{}
 	}
 	if err := daemon.RenewRunWait(o.batchDir, record, o.now()); err != nil {
 		return err

@@ -67,7 +67,7 @@ comments=$(echo "$pr_data" | jq -r '.comments')
 
 #### Step 2: Wait for CI to pass
 
-The CI wait has a 30-minute budget per PR head SHA in both managed and standalone workflows. A failed check gets at most 3 fix-and-push attempts for that SHA; after the budget or attempts are exhausted, record `CI_TIMEOUT` or `CI_FAILURE_UNRESOLVED` in `.sandman/task.md` and the run log with the exact failure and next executable action, then leave the PR open for the next run. Polling, capacity delay, continuation and restart do not renew the existing head's deadline or repair budget. Review-request deadlines remain independent.
+Standalone CI has a 60-minute budget per PR head SHA and at most 3 fix-and-push attempts for the current head within this invocation. After that window or those attempts are exhausted, record `CI_TIMEOUT` or `CI_FAILURE_UNRESOLVED` in `.sandman/task.md` and the run log with the exact failure and next executable action, then leave the PR open for the next run. A fresh standalone invocation receives its own allowance; obsolete persisted CI repair-budget files do not authorize or prevent execution. Managed CI keeps its independent durable 30-minute deadline per head. Review-request deadlines remain independent.
 
 When the task's Runtime Context says the session is running inside a
 Sandman-created worktree, do not hold the agent process open while checks are
@@ -89,62 +89,38 @@ are implementor-owned repair work: fix/back-merge them rather than waiting.
 Missing checks, stale heads, empty gate data, and lookup errors do not prove
 that CI is resolving and must not be presented as a wait.
 
-Standalone runs restore a durable record for the exact repository, PR and head
-before polling. Use `.sandman/state/<PR>-standalone-ci-<head>.json`; keep old-head
-records so returning to an earlier head cannot replenish its budget. An unreadable
-or invalid record fails with `CI_STATE_ERROR`, rather than starting a fresh budget.
-Only an absent record for a previously unseen head receives a deadline and zero
-attempts. Serialize writers for this PR; replace JSON atomically through a temporary
-file in the same directory and rename it into place.
+Standalone runs keep the CI window and fix count in the current invocation.
+Re-observing the same head preserves both; a changed head starts a new window and
+counter. Confirm the live head before polling. Existing review-request artifacts
+retain their separate identity and deadline rules.
 
 ```bash
-ci_budget_locked() {
-  # python3's advisory file lock works on both Linux and macOS.
-  python3 - "$ci_file" "$1" '<owner/repo>' '<N>' "$head_sha" <<'PY'
-import fcntl, json, os, pathlib, sys, tempfile, time
-path, mode, repository, pr, head = sys.argv[1:]
-path = pathlib.Path(path)
-with open(str(path) + ".lock", "a") as lock:
-    fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-    if path.exists():
-        budget = json.loads(path.read_text())
-    elif mode == "load":
-        budget = dict(repository=repository, pr=int(pr), head=head,
-                      deadline=int(time.time()) + 1800, attempts=0)
-    else:
-        raise SystemExit("CI_STATE_ERROR: missing reservation identity")
-    if not (budget.get("repository") == repository and budget.get("pr") == int(pr)
-            and budget.get("head") == head
-            and type(budget.get("deadline")) is int and budget["deadline"] > 0
-            and type(budget.get("attempts")) is int and 0 <= budget["attempts"] <= 3):
-        raise SystemExit("CI_STATE_ERROR: invalid budget")
-    if mode == "reserve":
-        if int(time.time()) >= budget["deadline"] or budget["attempts"] >= 3:
-            raise SystemExit("CI_FAILURE_UNRESOLVED: budget exhausted")
-        budget["attempts"] += 1
-    if not path.exists() or mode == "reserve":
-        fd, temporary = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
-        try:
-            with os.fdopen(fd, "w") as stream:
-                json.dump(budget, stream)
-            os.replace(temporary, path)
-        finally:
-            if os.path.exists(temporary):
-                os.unlink(temporary)
-    print(budget["deadline"], budget["attempts"])
-PY
-}
+ci_budget_head=""
+ci_deadline=0
+ci_fix_attempts=0
 load_ci_budget() {
-  head_sha=$(gh pr view <N> --repo <owner/repo> --json headRefOid --jq .headRefOid) || return 1
-  [[ "$head_sha" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
-  ci_file=".sandman/state/<N>-standalone-ci-${head_sha}.json"
-  mkdir -p .sandman/state || return 1
-  ci_values=$(ci_budget_locked load) || return 1
-  read -r ci_deadline ci_fix_attempts <<< "$ci_values"
+  local fetched_head
+  fetched_head=$(gh pr view <N> --repo <owner/repo> --json headRefOid --jq .headRefOid) || return 1
+  [[ "$fetched_head" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
+  if [ "$ci_budget_head" != "$fetched_head" ]; then
+    ci_budget_head="$fetched_head"
+    ci_deadline=$(( $(date +%s) + 3600 ))
+    ci_fix_attempts=0
+  fi
+  head_sha="$fetched_head"
+}
+check_ci_deadline() {
+  if [ "$(date +%s)" -ge "$ci_deadline" ]; then
+    echo CI_TIMEOUT
+    return 1
+  fi
 }
 reserve_ci_fix() {
-  ci_values=$(ci_budget_locked reserve) || return 1
-  read -r ci_deadline ci_fix_attempts <<< "$ci_values"
+  if [ "$ci_fix_attempts" -ge 3 ]; then
+    echo CI_FAILURE_UNRESOLVED
+    return 1
+  fi
+  ci_fix_attempts=$((ci_fix_attempts + 1))
 }
 load_ci_budget || { echo CI_STATE_ERROR; exit 1; }
 ```
@@ -179,9 +155,7 @@ fi
 # no "pending" remains (with "fail" taking priority).
 while true; do
   load_ci_budget || { echo CI_STATE_ERROR; exit 1; }
-  if [ "$(date +%s)" -ge "$ci_deadline" ]; then
-    echo CI_TIMEOUT; exit 1
-  fi
+  check_ci_deadline || exit 1
   states=$(gh pr checks <N> --repo <owner/repo> --json name,state \
     --jq '.[] | select(.state != "SKIPPED") | .state' 2>/dev/null)
   if [ -z "$states" ]; then sleep 20; continue; fi

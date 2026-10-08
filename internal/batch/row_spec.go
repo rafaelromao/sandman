@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"time"
 
@@ -189,24 +190,28 @@ func (o *Orchestrator) newRunExecutorWith(parentCtx context.Context, bc BatchCon
 func (e *runExecutor) Execute(ctx context.Context, row RowSpec) (AgentRunResult, bool) {
 	s := newRunSession(e, row)
 	if s.usageLimitRestoreErr != nil {
-		return e.finishObserved(ctx, row, "failure", map[string]any{"reason": "QUOTA_RECOVERY_STATE_ERROR", "next_action": "repair persisted quota operation evidence before resuming", "recovery_error": s.usageLimitRestoreErr.Error()}), false
+		// Unavailable accounting cannot authorize another quota window, but
+		// it cannot remove the historical ordinary recovery attempts either.
+		s.usageLimitWaited = usageLimitRetryWindow
+		s.reuseSession = false
+		if s.deps.errorLog != nil {
+			fmt.Fprintf(s.deps.errorLog, "warning: quota recovery accounting unavailable; continuing without additional quota waits: %v\n", s.usageLimitRestoreErr)
+		}
 	}
 	if s.isIssueDriven() {
-		if s.usageLimitProbe && !s.usageLimitDeadline.IsZero() && !s.runtimeNow().Before(s.usageLimitDeadline) {
-			// Quota expiry is not a terminal lifecycle authority. Re-observe the
-			// pull request first so verified completion still wins without
-			// reacquiring an execution slot.
+		if s.usageLimitProbe {
+			// A quota probe is not a terminal lifecycle authority. Verified
+			// completion still wins without another agent/container launch.
 			if ctx.Err() == nil {
 				if status, extras, handled := e.observeLifecycle(ctx, row); handled &&
-					(status == "success" || status == "failure" || status == "aborted") {
+					(status == "success" || extras["reason"] == "PULL_REQUEST_CLOSED" || extras["completion"] != nil) {
 					result := e.finishObserved(ctx, row, status, extras)
 					result.UsageLimitReached = true
 					return result, false
 				}
 			}
-			result := e.finishObserved(ctx, row, "failure", map[string]any{"reason": "AGENT_USAGE_LIMIT", "next_action": "resume with available provider quota after the exhausted five-hour window"})
-			result.UsageLimitReached = true
-			return result, false
+			// The estimate does not veto the final quota probe or the
+			// configured ordinary retry path. Poll accounting governs waits.
 		}
 		return s.execute(ctx)
 	}
@@ -293,8 +298,8 @@ func newRunSession(e *runExecutor, row RowSpec) *runSession {
 		reviewRegistrationStore: opts.reviewRegistrationStore,
 		reviewRegistrationNow:   opts.reviewRegistrationNow,
 	}
-	if session.usageLimitProbe && session.usageLimitDeadline.IsZero() {
-		session.usageLimitRestoreErr = session.restoreQuotaDeadline()
+	if session.usageLimitProbe {
+		session.usageLimitRestoreErr = session.restoreQuotaAccounting()
 	}
 	return session
 }

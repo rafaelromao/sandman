@@ -2,9 +2,13 @@ package daemon
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/rafaelromao/sandman/internal/atomicfs"
+	"github.com/rafaelromao/sandman/internal/events"
 )
 
 func TestRunWait_ClaimAndFixedRecoveryWindow(t *testing.T) {
@@ -43,6 +47,42 @@ func TestRunWait_ClaimAndFixedRecoveryWindow(t *testing.T) {
 	defer claim.Close()
 }
 
+func TestRunWait_LegacyQuotaEstimateCannotShortenExistingRecoveryGrace(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now().UTC()
+	batchDir := filepath.Join(root, "batches", "batch")
+	path := filepath.Join(batchDir, "runs", "row", "wait.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	record := RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "batch", Issue: 42, Branch: "42-fix", BaseBranch: "main", UsageLimitProbe: true, OperationID: "quota:old-estimate", OperationDeadline: now.Add(-time.Minute), LeaseExpiresAt: now.Add(4 * time.Minute)}
+	if err := atomicfs.WriteAtomicJSON(path, record, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	states := events.ProjectRunStates([]events.Event{
+		{Type: "run.started", RunID: "row", Issue: 42, Timestamp: now.Add(-2 * time.Minute), Payload: map[string]any{"batch_id": "batch", "branch": "42-fix"}},
+		{Type: "run.await", RunID: "row", Issue: 42, Timestamp: now.Add(-time.Minute), Payload: map[string]any{"await_reason": "usage-limit", "usage_limit_waited_seconds": 600}},
+	})
+	claim, err := ClaimRun(root, "row")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer claim.Close()
+	for _, at := range []time.Time{now, now.Add(2 * time.Minute)} {
+		protected, suspended := waitRecoverySchedule(root, states[0], at)
+		if !protected || !suspended {
+			t.Fatalf("expired diagnostic estimate vetoed recoverable quota work at %v", at)
+		}
+		saved, err := ReadRunWait(batchDir, "row")
+		if err != nil || !saved.OperationDeadline.IsZero() || saved.OperationID != "quota:row" || !saved.LeaseExpiresAt.Equal(record.LeaseExpiresAt) {
+			t.Fatalf("quota discovery renewed grace or retained hard estimate: saved=%+v error=%v", saved, err)
+		}
+	}
+	if protected, _ := waitRecoverySchedule(root, states[0], record.LeaseExpiresAt); protected {
+		t.Fatal("quota discovery renewed expired ownerless grace")
+	}
+}
+
 func TestInitialWaitRejectsForeignBatchOwnership(t *testing.T) {
 	root := t.TempDir()
 	now := time.Now().UTC()
@@ -58,7 +98,7 @@ func TestInitialWaitRejectsForeignBatchOwnership(t *testing.T) {
 	}
 }
 
-func TestRunWait_BatchHandoffPreservesOperationAndSchedule(t *testing.T) {
+func TestRunWait_BatchHandoffPreservesQuotaScheduleAndGrace(t *testing.T) {
 	for _, initial := range []bool{true, false} {
 		t.Run(map[bool]string{true: "initial", false: "started"}[initial], func(t *testing.T) {
 			root := t.TempDir()
@@ -77,11 +117,11 @@ func TestRunWait_BatchHandoffPreservesOperationAndSchedule(t *testing.T) {
 				t.Fatal(err)
 			}
 			moved, err := ReadRunWait(newDir, "row")
-			if err != nil || moved.BatchID != "new" || moved.Ready || !moved.UsageLimitProbe || !moved.OperationDeadline.Equal(record.OperationDeadline) || !moved.NextPollAt.Equal(record.NextPollAt) || moved.OperationID != record.OperationID || !moved.LeaseExpiresAt.Equal(record.OperationDeadline) {
-				t.Fatalf("handoff changed fixed intent: moved=%+v err=%v", moved, err)
+			if err != nil || moved.BatchID != "new" || moved.Ready || !moved.UsageLimitProbe || !moved.OperationDeadline.IsZero() || !moved.NextPollAt.Equal(record.NextPollAt) || moved.OperationID != "quota:row" || !moved.LeaseExpiresAt.Equal(now.Add(time.Minute+RunRecoveryGrace)) {
+				t.Fatalf("handoff lost quota intent or retained a hard estimate: moved=%+v err=%v", moved, err)
 			}
-			if _, err := TransferRunWait(newDir, oldDir, "row", record.OperationDeadline); err == nil {
-				t.Fatal("expired operation received another recovery window")
+			if _, err := TransferRunWait(newDir, oldDir, "row", moved.LeaseExpiresAt); err == nil {
+				t.Fatal("expired recovery grace received another window")
 			}
 		})
 	}

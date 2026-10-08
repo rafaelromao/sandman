@@ -2,20 +2,16 @@ package batch
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"time"
 )
 
-var errQuotaUnavailable = errors.New("provider quota recovery exhausted")
-
 // batchQuotaGate governs admission, not lifecycle. Deferred rows retain their
 // logical owner, cancel registration and dependency channels while this gate
-// is held. Recovery wakes them; expiry fails them without another agent launch.
+// is held. Recovery or retirement wakes them to establish their own outcomes.
 type batchQuotaGate struct {
 	mu      sync.Mutex
 	limited map[int]bool
-	failed  bool
 	wake    chan struct{}
 }
 
@@ -26,7 +22,7 @@ func newBatchQuotaGate() *batchQuotaGate {
 func (g *batchQuotaGate) paused() bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.failed || len(g.limited) > 0
+	return len(g.limited) > 0
 }
 
 // A cancelled or otherwise terminal row no longer owns a recovery episode.
@@ -50,12 +46,10 @@ func (g *batchQuotaGate) report(issue int, result AgentRunResult, wasProbe bool)
 	case result.UsageLimitReached && result.Status == "await":
 		g.limited[issue] = true
 	case result.UsageLimitReached && result.Status == "failure":
-		g.failed = true
 		delete(g.limited, issue)
 	case wasProbe && !result.UsageLimitReached && result.Status == "await":
 		delete(g.limited, issue)
 	case wasProbe && result.Status == "failure":
-		g.failed = true
 		delete(g.limited, issue)
 	}
 	close(g.wake)
@@ -68,9 +62,6 @@ func (g *batchQuotaGate) report(issue int, result AgentRunResult, wasProbe bool)
 func (g *batchQuotaGate) modelProgress(issue int) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.failed {
-		return
-	}
 	if _, ok := g.limited[issue]; ok {
 		delete(g.limited, issue)
 		close(g.wake)
@@ -81,7 +72,7 @@ func (g *batchQuotaGate) modelProgress(issue int) {
 func (g *batchQuotaGate) limit(issue int) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.failed || g.limited[issue] {
+	if g.limited[issue] {
 		return
 	}
 	g.limited[issue] = true
@@ -110,11 +101,8 @@ func (g *batchQuotaGate) waitObserved(ctx context.Context, observe func() error,
 			}
 		}
 		g.mu.Lock()
-		failed, paused, wake := g.failed, len(g.limited) > 0, g.wake
+		paused, wake := len(g.limited) > 0, g.wake
 		g.mu.Unlock()
-		if failed {
-			return errQuotaUnavailable
-		}
 		if !paused {
 			return ctx.Err()
 		}

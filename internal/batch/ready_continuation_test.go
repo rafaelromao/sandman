@@ -243,7 +243,7 @@ func TestRecoveryReconcilesChangedExternalOperation(t *testing.T) {
 		probe    bool
 		deadline time.Time
 	}{
-		{"quota", map[string]any{"await_reason": "usage-limit", "usage_limit_deadline_unix_seconds": now.Add(5 * time.Hour).Unix()}, true, now.Add(5 * time.Hour).Truncate(time.Second)},
+		{"quota", map[string]any{"await_reason": "usage-limit", "usage_limit_waited_seconds": 0, "usage_limit_deadline_unix_seconds": now.Add(5 * time.Hour).Unix()}, true, time.Time{}},
 		{"review", map[string]any{"review_request": map[string]any{"deadline_unix_seconds": now.Add(30 * time.Minute).Unix()}}, false, now.Add(30 * time.Minute).Truncate(time.Second)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

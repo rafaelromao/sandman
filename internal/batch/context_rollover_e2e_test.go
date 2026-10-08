@@ -308,5 +308,8 @@ func (c *contextRolloverGitHubClient) FindPRByBranch(ctx context.Context, branch
 			Body:        "Closes #42",
 		}, nil
 	}
-	return &github.PR{Number: 42, State: "closed", HeadRefName: branch}, nil
+	// The exhausted attempt has only local work; it has not published a PR.
+	// A closed-unmerged PR would be a real retained terminal policy outcome,
+	// unrelated to the context rollover this fixture is exercising.
+	return nil, nil
 }

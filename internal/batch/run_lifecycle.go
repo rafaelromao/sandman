@@ -142,9 +142,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		// Provider quota recovery is non-terminal and retains the per-run
 		// endpoint for the batch-owned polling continuation.
 		if !s.lifecycleTerminal && s.shouldAwaitUsageLimit(result) {
-			if s.usageLimitDeadline.IsZero() {
-				s.usageLimitDeadline = s.runtimeNow().Add(usageLimitRetryWindow)
-			}
+			s.usageLimitDeadline = s.runtimeNow().Add(usageLimitRetryWindow - s.usageLimitWaited)
 			result.UsageLimitDeadline = s.usageLimitDeadline
 			result.Status = s.emitAwait(ctx, runID, result, map[string]any{
 				"await_reason":                      "usage-limit",

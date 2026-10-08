@@ -15,9 +15,25 @@ dependents to start before their prerequisite terminalizes.
 
 Keep logical row ownership until a terminal lifecycle result, but release the
 execution slot between external observations. Persist CI wait identity,
-deadline, and remediation attempts per pull-request head. CI and review keep
-independent deadlines; the earlier deadline controls the next remediation.
-Only CI, CI-deadline, and merge-conflict remediation consume the CI budget.
+deadline, and diagnostic remediation attempts per pull-request head. Managed CI
+keeps its 30-minute hard deadline; delegated review keeps its configured
+confirmed-request deadline. The earlier deadline controls the next remediation.
+Bound owned work by the historical three in-session lifecycle relaunches (entry
+excluded) and configured ordinary retries, rather than durable cumulative repair
+exhaustion. A fresh executor gets a fresh relaunch allowance; old repair ledgers
+cannot reject its entry. Standalone CI retains 60 minutes and three fixes per
+current head within one invocation.
+
+Recognized implementation quota waits retain five hours of accumulated completed
+ten-minute polling across re-entry/restart, followed by the final boundary probe
+and configured fresh-session ordinary retries. Capacity delay and downtime do
+not consume polling. Persisted expected exhaustion is diagnostic, not a hard
+operation deadline. Quota recovery retains the same five-minute ownerless grace;
+normalizing legacy estimates does not renew that grace. Reviewer launches retain
+backoff, request/head artifact claims, and durable decision publication without
+a cumulative three-launch exhaustion gate. These boundaries restore the
+[pre-week exit baseline](../development/afk-exit-regression-baseline.md).
+
 When an external poll interval elapses, the awaiting row joins a FIFO priority
 queue when its opportunity is eligible. A row that received an execution chance
 less than 10 minutes ago yields to ordinary queued rows unless no ordinary row
@@ -30,8 +46,10 @@ delay.
 ## Consequences
 
 Independent rows can use released capacity while dependents remain queued.
-External waits are bounded and restart-safe. A same-head remediation budget can
-terminalize deterministically instead of polling forever. Eligible awaited rows
+External waits remain bounded and restart-safe, independently of repair launch
+counts. Terminal exits still follow historical retry, in-session relaunch,
+review-pass, timeout, authentication, conflict, and verification rules; durable
+repair bookkeeping adds no new terminal prerequisite. Eligible awaited rows
 resume promptly while logical dependency ownership remains held until the row's
 terminal lifecycle outcome; the cooldown prevents a group of awaiting rows from
 starving ordinary queued work.
