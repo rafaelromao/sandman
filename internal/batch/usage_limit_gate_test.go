@@ -10,7 +10,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
-func TestUsageLimitGate_UnrecoverableQuotaDoesNotLaunchDeferredRuns(t *testing.T) {
+func TestUsageLimitGate_TerminalFailureDoesNotAssignSiblingOutcome(t *testing.T) {
 	dir := testenv.MkdirShort(t, "sm-usage-gate-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
@@ -18,8 +18,9 @@ func TestUsageLimitGate_UnrecoverableQuotaDoesNotLaunchDeferredRuns(t *testing.T
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
 			42: {Number: 42, Title: "First"},
-			43: {Number: 43, Title: "Second"},
+			43: {Number: 43, Title: "Second", State: "closed"},
 		},
+		prs: map[string]*github.PR{"43-second": {Number: 17, State: "merged", Merged: true, Body: "Closes #43"}},
 	}
 	spyLog := &spyEventLog{}
 	factory := &controlledRunnableFactory{
@@ -41,13 +42,8 @@ func TestUsageLimitGate_UnrecoverableQuotaDoesNotLaunchDeferredRuns(t *testing.T
 	if result == nil {
 		t.Fatal("result is nil")
 	}
-	for _, id := range factory.created {
-		if id == 43 {
-			t.Fatalf("issue 43 runnable created despite usage-limit gate; created=%v", factory.created)
-		}
-	}
-	if len(factory.created) != 1 || factory.created[0] != 42 {
-		t.Fatalf("created=%v, want [42]", factory.created)
+	if len(factory.created) != 2 || factory.created[0] != 42 || factory.created[1] != 43 {
+		t.Fatalf("created=%v, want each independent row to establish its own outcome", factory.created)
 	}
 	var paused *AgentRunResult
 	for i := range result.Runs {
@@ -58,31 +54,18 @@ func TestUsageLimitGate_UnrecoverableQuotaDoesNotLaunchDeferredRuns(t *testing.T
 	if paused == nil {
 		t.Fatal("no result for issue 43")
 	}
-	if paused.Status != "failure" {
-		t.Fatalf("exhausted quota status=%q, want failure without another launch", paused.Status)
+	if paused.Status != "success" {
+		t.Fatalf("independent sibling status=%q, want its verified merged success", paused.Status)
 	}
 	snap := spyLog.snapshot()
 	foundAwait := false
-	foundQueued := false
 	for _, e := range snap {
 		if e.Issue == 43 && e.Type == "run.await" {
 			foundAwait = true
 		}
-		if e.Issue == 43 && e.Type == "run.capacity_queued" {
-			foundQueued = true
-			if e.Payload["ready_continuation"] != true {
-				t.Fatalf("capacity_queued missing ready_continuation: %#v", e.Payload)
-			}
-			if e.Payload["reason"] != "usage-limit-paused" && e.Payload["gate"] != "usage-limit" {
-				t.Fatalf("capacity_queued missing usage-limit reason/gate: %#v", e.Payload)
-			}
-		}
 	}
 	if foundAwait {
 		t.Fatal("paused row must not emit run.await")
-	}
-	if !foundQueued {
-		t.Fatalf("expected run.capacity_queued for issue 43, got %v", snap)
 	}
 	states := events.ProjectRunStates(snap)
 	var st *events.RunState
@@ -94,7 +77,7 @@ func TestUsageLimitGate_UnrecoverableQuotaDoesNotLaunchDeferredRuns(t *testing.T
 	if st == nil {
 		t.Fatal("no RunState for issue 43")
 	}
-	if !st.IsTerminal() || st.Status() != "failure" {
-		t.Fatalf("exhausted quota retained live admission: active=%v queued=%v status=%q", st.IsActive(), st.IsCapacityQueued(), st.Status())
+	if !st.IsTerminal() || st.Status() != "success" {
+		t.Fatalf("sibling lost its own verified outcome: active=%v queued=%v status=%q", st.IsActive(), st.IsCapacityQueued(), st.Status())
 	}
 }

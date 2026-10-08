@@ -46,19 +46,19 @@ func TestRunSingle_ModeContinueCIFailureIgnoresHistoricalRepairBudget(t *testing
 	}
 
 	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
-	client := &fakeGitHubClient{
+	client := &reviewWaitSchedulerGitHubClient{comments: []github.PRComment{}, fakeGitHubClient: fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
 		prs: map[string]*github.PR{branch: {
 			Number: 17, State: "open", HeadRefName: branch, HeadRefOid: "current-sha",
-			StatusCheckRollup: "failure", ReviewDecision: "APPROVED", MergeStateStatus: "BLOCKED",
+			StatusCheckRollup: "failure", ReviewDecision: "APPROVED", MergeStateStatus: "BLOCKED", Body: "Closes #42",
 		}},
-	}
+	}}
 	launches := 0
 	resultFactory := &controlledRunnableFactory{runnables: map[int]Runnable{
 		42: waitingRunnableFunction(func(context.Context) AgentRunResult {
 			launches++
 			if launches == 4 {
-				client.prs[branch] = &github.PR{Number: 17, State: "merged", Merged: true, HeadRefName: branch, Body: "Closes #42"}
+				client.setPR(branch, func(pr *github.PR) { pr.State, pr.Merged = "merged", true })
 			}
 			if launches > 4 {
 				t.Fatal("launched again after verified completion")

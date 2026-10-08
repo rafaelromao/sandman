@@ -3,6 +3,7 @@ package batch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -51,14 +52,14 @@ func TestUsageLimitAwaitResumesSameSessionWithIdleTimeoutDisabled(t *testing.T) 
 	}
 }
 
-func TestUsageLimitAwaitFailsAfterFiveHours(t *testing.T) {
+func TestUsageLimitAwaitRetriesAfterFiveHours(t *testing.T) {
 	result, sandbox, log, waits := runUsageLimitBatch(t, 31, 0, 1)
 
 	if result.Runs[0].Status != "failure" {
 		t.Fatalf("status = %q, want failure after the fresh retry has no merged PR", result.Runs[0].Status)
 	}
-	if got := sandbox.attemptCount(); got != 30 {
-		t.Fatalf("agent attempts = %d, want initial plus 29 in-deadline probes", got)
+	if got := sandbox.attemptCount(); got != 32 {
+		t.Fatalf("agent attempts = %d, want initial plus 30 probes and one fresh ordinary retry", got)
 	}
 	if len(waits) != 30 {
 		t.Fatalf("await waits = %d, want 30", len(waits))
@@ -72,14 +73,43 @@ func TestUsageLimitAwaitFailsAfterFiveHours(t *testing.T) {
 	if !strings.Contains(commands[1], "--session 'usage-limit-session'") {
 		t.Fatalf("commands = %q, want the poll to reuse the OpenCode session", commands)
 	}
-	if !strings.Contains(commands[len(commands)-1], "--session") {
-		t.Fatalf("commands = %q, want no fresh ordinary retry at quota expiry", commands)
+	if strings.Contains(commands[len(commands)-1], "--session") {
+		t.Fatalf("commands = %q, want the ordinary retry to start a fresh session", commands)
 	}
 	if got := countEventsByType(log.snapshot(), "run.await"); got != 30 {
 		t.Fatalf("run.await events = %d, want 30", got)
 	}
-	if got := countEventsByType(log.snapshot(), "run.retry"); got != 0 {
-		t.Fatalf("run.retry events = %d, want zero at quota expiry", got)
+	if got := countEventsByType(log.snapshot(), "run.retry"); got != 1 {
+		t.Fatalf("run.retry events = %d, want the historical ordinary retry at quota expiry", got)
+	}
+}
+
+func TestUsageLimitAwaitCanFinishOnFreshRetryAfterFiveHours(t *testing.T) {
+	result, sb, log, waits := runUsageLimitBatchCase(t, 31, 0, 1, true, 0)
+	if result.Runs[0].Status != "success" || sb.attemptCount() != 32 || len(waits) != 30 || countEventsByType(log.snapshot(), "run.retry") != 1 {
+		t.Fatalf("fresh retry could not finish: result=%+v attempts=%d waits=%d events=%+v", result, sb.attemptCount(), len(waits), log.snapshot())
+	}
+	commands := sb.commandsSnapshot()
+	if strings.Contains(commands[len(commands)-1], "--session") {
+		t.Fatal("ordinary retry reused the quota-limited conversation")
+	}
+}
+
+func TestUsageLimitAwaitKeepsConfiguredOrdinaryRetryBoundary(t *testing.T) {
+	for _, retries := range []int{0, 1, 2} {
+		t.Run(fmt.Sprintf("retries=%d", retries), func(t *testing.T) {
+			result, sb, log, waits := runUsageLimitBatch(t, 99, 0, retries)
+			if result.Runs[0].Status != "failure" || sb.attemptCount() != 31+retries || len(waits) != 30 || countEventsByType(log.snapshot(), "run.retry") != retries {
+				t.Fatalf("quota changed ordinary retry boundary: result=%+v attempts=%d waits=%d retries=%d", result, sb.attemptCount(), len(waits), countEventsByType(log.snapshot(), "run.retry"))
+			}
+		})
+	}
+}
+
+func TestUsageLimitAwaitCancellationPreventsFreshRetry(t *testing.T) {
+	result, sb, log, waits := runUsageLimitBatchCase(t, 99, 0, 1, false, 31)
+	if result.Runs[0].Status != "aborted" || sb.attemptCount() != 31 || len(waits) != 30 || countEventsByType(log.snapshot(), "run.retry") != 0 {
+		t.Fatalf("cancelled quota recovery launched retry: result=%+v attempts=%d waits=%d events=%+v", result, sb.attemptCount(), len(waits), log.snapshot())
 	}
 }
 
@@ -116,12 +146,26 @@ func TestUsageLimitAwaitExcludesCustomOpenCodePreset(t *testing.T) {
 
 func runUsageLimitBatch(t *testing.T, failures, idleTimeout, retries int) (*Result, *usageLimitRetrySandbox, *spyEventLog, []time.Duration) {
 	t.Helper()
+	return runUsageLimitBatchCase(t, failures, idleTimeout, retries, false, 0)
+}
+
+func runUsageLimitBatchCase(t *testing.T, failures, idleTimeout, retries int, finishOnSuccess bool, cancelOnAttempt int) (*Result, *usageLimitRetrySandbox, *spyEventLog, []time.Duration) {
+	t.Helper()
 	root := t.TempDir()
 	t.Chdir(root)
 	initGitRepo(t, root)
 
 	const branch = "42-usage-limit"
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 	sb := &usageLimitRetrySandbox{workDir: filepath.Join(root, "worktree"), failures: failures}
+	if cancelOnAttempt > 0 {
+		sb.onAttempt = func(attempt int) {
+			if attempt == cancelOnAttempt {
+				cancel()
+			}
+		}
+	}
 	log := &spyEventLog{}
 	var waits []time.Duration
 	client := &reviewWaitSchedulerGitHubClient{fakeGitHubClient: fakeGitHubClient{
@@ -130,7 +174,7 @@ func runUsageLimitBatch(t *testing.T, failures, idleTimeout, retries int) (*Resu
 	}}
 	// A continued session needs a merged PR to finish successfully. A timeout
 	// test omits it so the ordinary retry reaches a fresh agent launch.
-	if failures < 31 {
+	if failures < 31 || finishOnSuccess {
 		sb.onSuccess = func() { client.setPR(branch, func(pr *github.PR) { pr.State, pr.Merged = "merged", true }) }
 	}
 	clockNow := time.Now().UTC()
@@ -156,7 +200,7 @@ func runUsageLimitBatch(t *testing.T, failures, idleTimeout, retries int) (*Resu
 			},
 		}),
 	)
-	result, err := o.RunBatch(context.Background(), Request{
+	result, err := o.RunBatch(ctx, Request{
 		Issues:            []int{42},
 		Branches:          map[int]string{42: branch},
 		Agent:             "opencode",
@@ -177,6 +221,7 @@ type usageLimitRetrySandbox struct {
 	workDir   string
 	failures  int
 	onSuccess func()
+	onAttempt func(int)
 
 	mu       sync.Mutex
 	attempts int
@@ -193,6 +238,9 @@ func (s *usageLimitRetrySandbox) Exec(_ context.Context, command string, stdout,
 	attempt := s.attempts
 	s.commands = append(s.commands, command)
 	s.mu.Unlock()
+	if s.onAttempt != nil {
+		s.onAttempt(attempt)
+	}
 	_, _ = io.WriteString(stdout, `{"type":"text","sessionID":"usage-limit-session","part":{"text":"working"}}`+"\n")
 	if attempt <= s.failures {
 		_, _ = io.WriteString(stderr, "Error: The usage limit has been reached\n")

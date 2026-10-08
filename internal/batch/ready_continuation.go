@@ -123,20 +123,19 @@ func reconcileRecoveryWait(record daemon.RunWait, state events.RunState) (daemon
 	if record.Ready && state.CapacityQueuedEvent != nil && (previous.InitialAdmission || !previous.Ready) {
 		record.LeaseExpiresAt = state.CapacityQueuedEvent.Timestamp.Add(daemon.RunRecoveryGrace)
 	}
-	if !record.Ready {
+	if evidence := quotaPollingEvidence(state); evidence != nil {
+		record.UsageLimitProbe = true
+		record.OperationID, record.OperationDeadline = "quota:"+state.RunID, time.Time{}
+		if record.Ready {
+			record.NextPollAt = state.CapacityQueuedEvent.Timestamp
+		} else {
+			record.NextPollAt = state.AwaitEvent.Timestamp.Add(usageLimitPollInterval)
+		}
+	} else if !record.Ready {
 		if state.AwaitEvent == nil {
 			return record, true, false
 		}
-		if state.AwaitReason() == "usage-limit" {
-			seconds, ok := lifecycleDeadlineSeconds(state.AwaitEvent.Payload["usage_limit_deadline_unix_seconds"])
-			if !ok || seconds <= 0 {
-				return record, true, false
-			}
-			record.UsageLimitProbe = true
-			record.OperationDeadline = time.Unix(seconds, 0)
-			record.OperationID = fmt.Sprintf("quota:%d", seconds)
-			record.NextPollAt = state.AwaitEvent.Timestamp.Add(usageLimitPollInterval)
-		} else if deadline, gate, ok := lifecycleDeadline(state.AwaitEvent.Payload); ok {
+		if deadline, gate, ok := lifecycleDeadline(state.AwaitEvent.Payload); ok {
 			record.OperationDeadline = deadline
 			record.OperationID = fmt.Sprintf("%s:%d", gate, deadline.Unix())
 		} else {
@@ -159,7 +158,11 @@ func legacyRecoveryWait(state events.RunState) (daemon.RunWait, bool) {
 		return daemon.RunWait{}, false
 	}
 	record := daemon.RunWait{Protocol: "run-wait/v1", RunID: state.RunID, BatchID: state.BatchID(), Issue: state.IssueNumber(), Branch: state.Branch(), BaseBranch: strings.TrimSpace(payloadStringValue(event.Payload, "base_branch")), AdmissionMode: int(ModeContinue), Ready: true, OperationID: "capacity", LeaseExpiresAt: event.Timestamp.Add(daemon.RunRecoveryGrace), RecoveryEventAt: event.Timestamp}
-	if deadline, gate, ok := lifecycleDeadline(event.Payload); ok {
+	if payloadBoolValue(event.Payload, "usage_limit_probe") {
+		record.UsageLimitProbe = true
+		record.OperationID = "quota:" + state.RunID
+		record.NextPollAt = event.Timestamp
+	} else if deadline, gate, ok := lifecycleDeadline(event.Payload); ok {
 		record.OperationDeadline = deadline
 		record.OperationID = fmt.Sprintf("%s:%d", gate, deadline.Unix())
 		if deadline.Before(record.LeaseExpiresAt) {

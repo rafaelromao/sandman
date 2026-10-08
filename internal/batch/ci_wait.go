@@ -67,7 +67,7 @@ func (s *runSession) ciWaitEvidence(workDir string, pr *github.PR, headSHA strin
 }
 
 func ciWaitEvidenceFromRegistration(registration ciWaitRegistration, prNumber int) (map[string]any, error) {
-	if registration.Protocol != ciWaitProtocol || registration.PullRequest != prNumber || registration.HeadSHA == "" || registration.RemediationAttempts < 0 || registration.DeadlineUnixSeconds <= registration.StartedUnixSeconds || registration.EffectiveTimeoutSecs <= 0 || registration.DeadlineUnixSeconds-registration.StartedUnixSeconds != registration.EffectiveTimeoutSecs {
+	if registration.Protocol != ciWaitProtocol || registration.PullRequest != prNumber || registration.HeadSHA == "" || registration.DeadlineUnixSeconds <= registration.StartedUnixSeconds || registration.EffectiveTimeoutSecs <= 0 || registration.DeadlineUnixSeconds-registration.StartedUnixSeconds != registration.EffectiveTimeoutSecs {
 		return nil, fmt.Errorf("CI wait state is invalid")
 	}
 	return map[string]any{

@@ -1827,7 +1827,16 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		go func(idx, issueNum int, blockers []int, turn int, runID string, queueWriteFailed bool) {
 			defer wg.Done()
 			defer close(completed[issueNum])
-			defer quotaGate.retire(issueNum)
+			defer func() {
+				mu.Lock()
+				terminal := events.RunStatusFromPayload(results[idx].Status).IsTerminal()
+				mu.Unlock()
+				// Returning an await leaves logical ownership alive. Only a
+				// terminal owner or explicit batch cancellation releases its pause.
+				if terminal || ctx.Err() != nil {
+					quotaGate.retire(issueNum)
+				}
+			}()
 			_, recoveringRow := req.RecoveryWaits[issueNum]
 			if claimedStates[runID].IsTerminal() {
 				state := claimedStates[runID]
@@ -2097,7 +2106,15 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			if recovering && !recovery.InitialAdmission {
 				row.UsageLimitProbe = recovery.UsageLimitProbe
 				if recovery.UsageLimitProbe {
-					row.UsageLimitDeadline = recovery.OperationDeadline
+					evidence := quotaPollingEvidence(claimedStates[runID])
+					if waited, ok := quotaPollingWaited(evidence["usage_limit_waited_seconds"]); ok {
+						row.UsageLimitWaited = waited
+					} else {
+						row.UsageLimitWaited = usageLimitRetryWindow
+					}
+					if seconds, ok := lifecycleDeadlineSeconds(evidence["usage_limit_deadline_unix_seconds"]); ok {
+						row.UsageLimitDeadline = time.Unix(seconds, 0)
+					}
 				}
 				if !recovery.Ready && claimedStates[runID].AwaitEvent != nil && o.eventLog != nil {
 					payload := cloneLifecycleExtras(claimedStates[runID].AwaitEvent.Payload)
@@ -2184,7 +2201,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			var res AgentRunResult
 			var started bool
 			awaitPoll := 0
-			var usageLimitWaited time.Duration
+			usageLimitWaited := row.UsageLimitWaited
 			defer func() {
 				if err := coord.stopCommandServer(issueNum); err != nil {
 					fmt.Fprintf(o.errorLog, "error: stop command server for issue %d: %v\n", issueNum, err)
@@ -2196,6 +2213,26 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			awaiting := req.ReadyContinuations[issueNum] || recovering && !recovery.InitialAdmission
 			readyContinuation := req.ReadyContinuations[issueNum]
 			var opportunity awaitOpportunity
+			markQuotaProbeReady := func() error {
+				row.UsageLimitProbe = true
+				row.UsageLimitWaited = min(usageLimitWaited, usageLimitRetryWindow)
+				row.UsageLimitDeadline = clock().Add(max(0, usageLimitRetryWindow-row.UsageLimitWaited))
+				extras := map[string]any{
+					"gate": "usage-limit", "reason": "quota-probe-ready", "next_action": "recheck provider availability and continue through configured ordinary retries when polling is consumed",
+					"usage_limit_probe": true, "usage_limit_waited_seconds": int(row.UsageLimitWaited / time.Second), "usage_limit_deadline_unix_seconds": row.UsageLimitDeadline.Unix(),
+				}
+				if err := logCapacityQueuedContinuationAt(o.eventLog, clock(), runID, issueNum, issueBatchID, row, extras, req.IssueTitles[issueNum]); err != nil {
+					// Failed accounting cannot renew a quota allowance or veto
+					// the already available ordinary recovery attempts.
+					usageLimitWaited, row.UsageLimitWaited = usageLimitRetryWindow, usageLimitRetryWindow
+					row.ReuseSession = false
+					if o.errorLog != nil {
+						fmt.Fprintf(o.errorLog, "warning: persist completed quota poll for run %s; continuing without further quota waits: %v\n", runID, err)
+					}
+				}
+				awaiting, readyContinuation = true, true
+				return owner.checkpoint(row, true, 0)
+			}
 			waitForObservation := func() error {
 				interval := awaitPollInterval(o.runSessionOpts, awaitPoll)
 				if recovering && recovery.NextPollAt.After(clock()) {
@@ -2221,23 +2258,24 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 						break
 					}
 					if recovering && recovery.NextPollAt.After(clock()) {
+						interval := recovery.NextPollAt.Sub(clock())
 						wait := o.runSessionOpts.awaitWait
 						if wait == nil {
 							wait = waitForAwaitPoll
 						}
-						if err := wait(issueCtx, recovery.NextPollAt.Sub(clock())); err != nil {
+						if err := wait(issueCtx, interval); err != nil {
+							o.logAborted(issueNum, runID, nil)
+							res.Status = "aborted"
+							break
+						}
+						usageLimitWaited += interval
+						if err := markQuotaProbeReady(); err != nil {
 							o.logAborted(issueNum, runID, nil)
 							res.Status = "aborted"
 							break
 						}
 						recovering = false
 					}
-				}
-				if row.UsageLimitProbe && !row.UsageLimitDeadline.IsZero() && !newRunSession(executor, row).runtimeNow().Before(row.UsageLimitDeadline) {
-					res = executor.finishObserved(issueCtx, row, "failure", map[string]any{"reason": "AGENT_USAGE_LIMIT", "next_action": "resume with available provider quota after the exhausted five-hour window"})
-					res.UsageLimitReached = true
-					quotaGate.report(issueNum, res, true)
-					break
 				}
 				if awaiting && !readyContinuation && !row.UsageLimitProbe {
 					status, extras, handled := executor.observeLifecycle(issueCtx, row)
@@ -2299,6 +2337,16 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					if err := owner.checkpoint(row, !awaiting || readyContinuation, 0); err != nil {
 						o.logAborted(issueNum, runID, nil)
 						res.Status = "aborted"
+						break
+					}
+					if !o.runSessionOpts.releaseAwaitCapacity {
+						// Yielding executors return unfinished intent to their
+						// caller; an active quota owner still blocks new launches.
+						status := "queued"
+						if awaiting {
+							status = "await"
+						}
+						res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: status, Branch: row.Branches[issueNum]}
 						break
 					}
 					var quotaTerminalStatus string
@@ -2406,6 +2454,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				if !res.UsageLimitReached {
 					row.UsageLimitProbe = false
 					row.UsageLimitDeadline = time.Time{}
+					usageLimitWaited, row.UsageLimitWaited = 0, 0
 				}
 				if started {
 					startGate.Release()
@@ -2457,8 +2506,12 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					row.UsageLimitProbe = true
 					row.UsageLimitDeadline = res.UsageLimitDeadline
 					row.UsageLimitWaited = usageLimitWaited
+					if err := markQuotaProbeReady(); err != nil {
+						o.logAborted(issueNum, runID, nil)
+						res.Status = "aborted"
+						break
+					}
 					awaiting = true
-					readyContinuation = false
 					continue
 				}
 				if err := waitForObservation(); err != nil {
@@ -4116,9 +4169,9 @@ loop:
 				}
 			}
 		}
-		if s.isIssueDriven() && strategyFor(s.agentCfg.Preset, s.agentCfg.Command).AwaitsUsageLimit() && result.UsageLimitReached && !result.ContextExhausted && !events.RunStatusFromPayload(result.Status).IsSuccess() {
-			// Supported quota exhaustion is either a bounded external await
-			// or a terminal expired episode, never an ordinary retry burst.
+		if s.shouldAwaitUsageLimit(result) {
+			// An admitted quota wait preserves ordinary retries. Once the
+			// polling allowance is consumed, those fresh attempts remain usable.
 			break loop
 		}
 	}
@@ -4145,7 +4198,7 @@ func (s *runSession) shouldAwaitUsageLimit(result AgentRunResult) bool {
 		result.UsageLimitReached &&
 		!result.ContextExhausted &&
 		!events.RunStatusFromPayload(result.Status).IsSuccess() &&
-		(s.usageLimitDeadline.IsZero() || s.runtimeNow().Before(s.usageLimitDeadline))
+		s.usageLimitWaited >= 0 && s.usageLimitWaited < usageLimitRetryWindow
 }
 
 func (s *runSession) restoreHostPathsBeforeExternalGate(wt sandbox.Sandbox) bool {
