@@ -1048,6 +1048,16 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       content-visibility: auto;
       contain-intrinsic-size: 0 500px;
     }
+    .log-retention-notice {
+      flex: 0 0 auto;
+      margin: 0 18px;
+      padding: 7px 10px;
+      border: 1px solid color-mix(in oklch, var(--warning) 34%, var(--border));
+      border-radius: 6px;
+      background: color-mix(in oklch, var(--warning) 9%, var(--surface-2));
+      color: var(--warning);
+      font-size: 12px;
+    }
     .json-key { color: var(--accent); }
     .json-string { color: color-mix(in oklch, var(--warning) 65%, var(--text)); }
     .json-number { color: color-mix(in oklch, var(--success) 55%, var(--text)); }
@@ -1979,18 +1989,50 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       return runsBody.querySelector('pre[data-scroll-key="' + CSS.escape(runKey) + '"]');
     }
 
+    function syncLogRetentionNotice(pre, range) {
+      const section = pre.parentNode;
+      if (!section || typeof section.querySelector !== 'function') return;
+      const current = section.querySelector('.log-retention-notice');
+      if (!range.truncated) {
+        if (current && current.parentNode) current.parentNode.removeChild(current);
+        return;
+      }
+      const message = 'Showing the most recent retained log range; earlier output is unavailable.';
+      if (current) {
+        if (current.textContent !== message) current.textContent = message;
+        return;
+      }
+      const notice = document.createElement('div');
+      notice.className = 'log-retention-notice';
+      notice.setAttribute('role', 'status');
+      notice.setAttribute('aria-live', 'polite');
+      notice.textContent = message;
+      section.insertBefore(notice, pre);
+    }
+
     function renderAuthoritativeLog(runKey) {
       const pre = streamPreFor(runKey);
       if (!pre) return;
       const text = portalLogModel.text(runKey);
       const range = portalLogModel.range(runKey);
       const previousGeneration = pre.getAttribute('data-log-generation') || '';
+      const previousRangeStart = pre.getAttribute('data-log-range-start') || '';
+      const previousRangeEnd = pre.getAttribute('data-log-range-end') || '';
+      const previousRetainedBytes = pre.getAttribute('data-log-retained-bytes') || '';
+      const previousTruncated = pre.getAttribute('data-log-truncated') || '';
       const previous = pre.getAttribute('data-rendered-log') || '';
       pre.setAttribute('data-log-generation', range.generation || '');
       pre.setAttribute('data-log-range-start', String(range.start));
       pre.setAttribute('data-log-range-end', String(range.end));
       pre.setAttribute('data-log-retained-bytes', String(range.retainedBytes));
       pre.setAttribute('data-log-truncated', range.truncated ? '1' : '0');
+      syncLogRetentionNotice(pre, range);
+      if (previousGeneration === (range.generation || '')
+        && previousRangeStart === String(range.start)
+        && previousRangeEnd === String(range.end)
+        && previousRetainedBytes === String(range.retainedBytes)
+        && previousTruncated === (range.truncated ? '1' : '0')
+        && previous === text) return;
       // Do not cancel a chunked projection for every accepted append. The
       // model has already committed the records; let the current projection
       // finish, then append the model's newer suffix in one pass.
