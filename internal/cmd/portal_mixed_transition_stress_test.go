@@ -118,12 +118,18 @@ func TestPortalMixedTransitionStress(t *testing.T) {
 		}
 		flusher.Flush()
 		// Closing every first connection forces the browser's native
-		// EventSource reconnect; the replacement connection remains open until
-		// the page changes subject or the test server shuts down.
+		// EventSource reconnect. The replacement connection ends explicitly
+		// after its append so Chromium can finish the dump-dom test process.
 		if connection%2 == 1 {
 			return
 		}
-		<-r.Context().Done()
+		if err := writePortalLogEvent(w, "end", map[string]any{
+			"runId": runID, "generation": appendBatch.Generation, "cursor": appendBatch.Cursor,
+		}, encodePortalLogCursor(appendBatch.Cursor)); err != nil {
+			t.Errorf("write stress end: %v", err)
+			return
+		}
+		flusher.Flush()
 	}))
 	defer server.Close()
 
