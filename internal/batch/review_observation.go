@@ -42,7 +42,9 @@ func (s *runSession) observeCurrentReviewEvidence(ctx context.Context, request r
 	}
 
 	formalReviews := make([]map[string]any, 0)
+	formalReviewsObserved := false
 	if lister, ok := s.deps.githubClient.(github.PRReviewLister); ok {
+		formalReviewsObserved = true
 		reviews, listErr := lister.ListPRReviews(ctx, pr.Number)
 		if listErr != nil {
 			return nil, listErr
@@ -56,7 +58,9 @@ func (s *runSession) observeCurrentReviewEvidence(ctx context.Context, request r
 	}
 
 	inlineComments := make([]map[string]any, 0)
+	inlineCommentsObserved := false
 	if lister, ok := s.deps.githubClient.(github.PRReviewCommentLister); ok {
+		inlineCommentsObserved = true
 		inline, listErr := lister.ListPRReviewComments(ctx, pr.Number)
 		if listErr != nil {
 			return nil, listErr
@@ -71,7 +75,7 @@ func (s *runSession) observeCurrentReviewEvidence(ctx context.Context, request r
 	sortReviewObservationSources(topLevel)
 	sortReviewObservationSources(formalReviews)
 	sortReviewObservationSources(inlineComments)
-	if len(topLevel)+len(formalReviews)+len(inlineComments) == 0 {
+	if len(topLevel)+len(formalReviews)+len(inlineComments) == 0 && (!formalReviewsObserved || !inlineCommentsObserved) {
 		return nil, nil
 	}
 
@@ -89,7 +93,10 @@ func (s *runSession) observeCurrentReviewEvidence(ctx context.Context, request r
 		}
 	}
 	formalDecision := "none"
-	decision := "responded"
+	decision := "pending"
+	if len(topLevel)+len(formalReviews)+len(inlineComments) > 0 {
+		decision = "responded"
+	}
 	if len(requestedChanges) > 0 {
 		formalDecision = "changes_requested"
 		decision = "changes_requested"

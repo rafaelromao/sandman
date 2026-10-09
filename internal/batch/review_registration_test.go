@@ -307,6 +307,7 @@ func TestReviewRegistration_ImportsValidatedLegacyObservationOnce(t *testing.T) 
 	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
 		t.Fatalf("import responded observation: %v", err)
 	}
+	client.reviews = []github.PRReview{{ID: "2001", State: "APPROVED", CommitID: "current-sha", CreatedAt: now.Add(time.Minute)}}
 	after, err := readFileReviewRegistration(registrationPath)
 	if err != nil {
 		t.Fatalf("read imported registration: %v", err)
@@ -400,6 +401,7 @@ func TestReviewRegistration_ImportsEquivalentNumericAndURLTriggerIdentity(t *tes
 	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
 		t.Fatalf("import equivalent-identity response: %v", err)
 	}
+	client.reviews = []github.PRReview{{ID: "2001", State: "APPROVED", CommitID: "current-sha", CreatedAt: now.Add(time.Minute)}}
 	evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
 	if evidence.outcome != retainedReviewApproval || evidence.payload == nil {
 		t.Fatalf("equivalent-identity lifecycle evidence = %#v, want approval", evidence)
@@ -506,6 +508,59 @@ func TestReviewRegistration_ReplacesDismissedApprovalObservation(t *testing.T) {
 	evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
 	if evidence.outcome == retainedReviewApproval || evidence.payload != nil {
 		t.Fatalf("dismissed approval remained authoritative: %#v", evidence)
+	}
+}
+
+func TestReviewRegistration_EmptySnapshotClearsDeletedApproval(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	currentNow := now.Add(2 * time.Minute)
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments:         []github.PRComment{{ID: "1001", Body: "/sandman review", CreatedAt: now.Add(-time.Minute)}},
+		reviews:          []github.PRReview{{ID: "2001", State: "APPROVED", CommitID: "current-sha", CreatedAt: now.Add(time.Minute)}},
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+		reviewRegistrationNow:  func() time.Time { return currentNow },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	pr := &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("register pending request: %v", err)
+	}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("persist initial approval: %v", err)
+	}
+	registrationPath := paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number)
+	before, err := readReviewRegistration(registrationPath, "owner/repo", pr, pr.HeadRefOid)
+	if err != nil {
+		t.Fatalf("read initial registration: %v", err)
+	}
+
+	client.reviews = nil
+	currentNow = now.Add(4 * time.Minute)
+	evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
+	if evidence.outcome == retainedReviewApproval || evidence.payload != nil {
+		t.Fatalf("deleted approval remained authoritative: %#v", evidence)
+	}
+	after, err := readReviewRegistration(registrationPath, "owner/repo", pr, pr.HeadRefOid)
+	if err != nil {
+		t.Fatalf("read cleared registration: %v", err)
+	}
+	if after.Request.DeadlineUnixSeconds != before.Request.DeadlineUnixSeconds {
+		t.Fatalf("empty observation reset deadline from %d to %d", before.Request.DeadlineUnixSeconds, after.Request.DeadlineUnixSeconds)
+	}
+	if after.State.ObservedState != "responded" || after.State.Evidence == nil {
+		t.Fatalf("empty observation = %#v, want persisted pending evidence", after.State)
+	}
+	classification, err := decodeReviewClassification(after.State.Evidence, after.Request, pr.HeadRefOid)
+	if err != nil {
+		t.Fatalf("decode empty observation: %v", err)
+	}
+	if classification.Decision != "pending" || classification.FormalDecision != "none" {
+		t.Fatalf("empty observation classification = %#v, want pending/no formal decision", classification)
 	}
 }
 
