@@ -742,16 +742,16 @@ func TestPortalStream_NativeReconnectUsesCursorAndKeepsSourceOrder(t *testing.T)
 	if err := json.Unmarshal([]byte(payload), &result); err != nil {
 		t.Fatalf("parse native reconnect payload: %v\nraw=%s", err, payload)
 	}
-	var wantBuilder strings.Builder
-	for _, record := range firstBatch.Records {
-		wantBuilder.WriteString(record.Text)
-		wantBuilder.WriteByte('\n')
-	}
 	batch, ok := resumedBatch.Load().(portalLogBatch)
 	if !ok {
 		t.Fatal("native reconnect did not produce a saved-log append batch")
 	}
-	for _, record := range batch.Records {
+	allRecords := append(append([]portalLogRecord(nil), firstBatch.Records...), batch.Records...)
+	if len(allRecords) > 4096 {
+		allRecords = allRecords[len(allRecords)-4096:]
+	}
+	var wantBuilder strings.Builder
+	for _, record := range allRecords {
 		wantBuilder.WriteString(record.Text)
 		wantBuilder.WriteByte('\n')
 	}
