@@ -2283,7 +2283,8 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         if (portalLogModel.get(subjectID).cursor) renderAuthoritativeLog(subjectID);
       }
       streamCoalescer.clearBuffer(run.key);
-      let streamURL = streamPath + '?runKey=' + encodeURIComponent(backendKey);
+      const streamQuerySeparator = streamPath.indexOf('?') >= 0 ? '&' : '?';
+      let streamURL = streamPath + streamQuerySeparator + 'runKey=' + encodeURIComponent(backendKey);
       const cursorParam = typeof portalLogModel !== 'undefined' ? portalLogModel.cursor(subjectID) : '';
       if (cursorParam) streamURL += '&cursor=' + encodeURIComponent(cursorParam);
       const src = new EventSource(streamURL);
