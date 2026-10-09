@@ -187,8 +187,11 @@ git commit -m "refactor: self-review fixes"
 
 ### 8. Delegate review
 
-- Load the `sandman-pr-review` skill
-- Run the delegated review loop on the PR
+- In a Sandman-created worktree, load the `sandman-review-request` skill and
+  deliver one stateless review request. The runtime owns observation, waiting,
+  evidence validation, and re-entry.
+- Outside a Sandman-created worktree, load the `sandman-pr-review` compatibility
+  skill and run its standalone review loop.
 - Address all review feedback from the PR, including requests, suggestions, recommendations, and nits, unless there is a strong reason to ignore a specific item.
 - If you do ignore feedback, explain why in the PR thread before continuing.
 - Stop when the PR Review Agent approves or after max passes

@@ -33,6 +33,7 @@ type reviewRequestEnvelope struct {
 	PullRequest         int    `json:"pull_request"`
 	HeadSHA             string `json:"head_sha"`
 	TriggerID           string `json:"trigger_id"`
+	TriggerIdentity     string `json:"trigger_identity"`
 	TriggerPrefix       string `json:"trigger_prefix"`
 	TriggerCreatedAt    string `json:"trigger_created_at"`
 	ConfirmedAt         string `json:"confirmed_at"`
@@ -74,6 +75,9 @@ type reviewWaitState struct {
 	State               string              `json:"state"`
 	Lifecycle           string              `json:"lifecycle"`
 	ObservedHeadSHA     string              `json:"observed_head_sha"`
+	ObservedState       string              `json:"observed_state,omitempty"`
+	ObservedReason      string              `json:"observed_reason,omitempty"`
+	ObservedAt          string              `json:"observed_at,omitempty"`
 	ElapsedSeconds      *int                `json:"elapsed_seconds"`
 	Reason              string              `json:"reason"`
 	Evidence            *reviewWaitEvidence `json:"evidence"`
@@ -131,6 +135,19 @@ func reviewTimeoutArtifactsPresent(workDir string) bool {
 }
 
 func reviewTimeoutArtifactsPresentForPR(workDir string, prNumber int) bool {
+	if strings.TrimSpace(workDir) == "" || prNumber <= 0 {
+		return false
+	}
+	layout := paths.NewLayout(nil, workDir)
+	for _, path := range []string{layout.PRReviewRequestPath(prNumber), layout.PRReviewRequestStatePath(prNumber), layout.PRHeadShaPath(prNumber), layout.PRReviewRegistrationPath(prNumber)} {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func reviewLifecycleArtifactsPresentForPR(workDir string, prNumber int) bool {
 	if strings.TrimSpace(workDir) == "" || prNumber <= 0 {
 		return false
 	}
@@ -342,6 +359,9 @@ func reviewClassificationResponseCounts(raw map[string]any) (reviewResponseCount
 }
 
 func retainedReviewClassificationOutcome(classification *reviewClassification, request reviewRequestEnvelope) retainedReviewOutcome {
+	if classification == nil {
+		return retainedReviewPending
+	}
 	if classification != nil &&
 		classification.RequestState == "active" &&
 		classification.Decision == "approved" &&
@@ -391,7 +411,6 @@ func validateReviewClassification(raw map[string]any, request reviewRequestEnvel
 		"repository":            request.Repository,
 		"pull_request":          request.PullRequest,
 		"head_sha":              request.HeadSHA,
-		"trigger_id":            request.TriggerID,
 		"trigger_prefix":        request.TriggerPrefix,
 		"trigger_created_at":    request.TriggerCreatedAt,
 		"deadline_at":           request.DeadlineAt,
@@ -400,6 +419,10 @@ func validateReviewClassification(raw map[string]any, request reviewRequestEnvel
 		if !classificationValueEqual(classificationRequest[key], want) {
 			return fmt.Errorf("review classification request %s does not match retained request", key)
 		}
+	}
+	classificationTriggerID, triggerIDOK := classificationRequest["trigger_id"].(string)
+	if !triggerIDOK || reviewTriggerIdentity(classificationTriggerID) != reviewTriggerIdentity(request.TriggerID) {
+		return fmt.Errorf("review classification request trigger_id does not match retained request")
 	}
 	if stringValue(raw, "observed_head_sha") != request.HeadSHA || !strings.EqualFold(strings.TrimSpace(currentHead), request.HeadSHA) {
 		return fmt.Errorf("review classification head does not match the retained request")
@@ -614,7 +637,7 @@ func validateClassificationSources(sources map[string]any, request reviewRequest
 			}
 			if key == "formal_reviews" {
 				state := strings.ToUpper(stringValue(evidence, "state"))
-				if state != "COMMENTED" && state != "APPROVED" && state != "CHANGES_REQUESTED" {
+				if state != "COMMENTED" && state != "APPROVED" && state != "CHANGES_REQUESTED" && state != "DISMISSED" {
 					return nil, nil, nil, fmt.Errorf("review classification formal source has invalid state")
 				}
 			}
@@ -873,9 +896,15 @@ func reviewRequestIdentityMatches(canonical, candidate reviewRequestEnvelope) bo
 		canonical.Repository == candidate.Repository &&
 		canonical.PullRequest == candidate.PullRequest &&
 		strings.EqualFold(strings.TrimSpace(canonical.HeadSHA), strings.TrimSpace(candidate.HeadSHA)) &&
-		canonical.TriggerID == candidate.TriggerID &&
+		reviewTriggerIdentity(canonical.TriggerID) == reviewTriggerIdentity(candidate.TriggerID) &&
 		canonical.TriggerPrefix == candidate.TriggerPrefix &&
-		canonical.TriggerCreatedAt == candidate.TriggerCreatedAt
+		sameReviewTimestamp(canonical.TriggerCreatedAt, candidate.TriggerCreatedAt)
+}
+
+func sameReviewTimestamp(left, right string) bool {
+	leftAt, leftErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(left))
+	rightAt, rightErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(right))
+	return leftErr == nil && rightErr == nil && leftAt.Equal(rightAt)
 }
 
 // reviewEvidenceWithinCanonicalDeadline prevents a compatibility request with

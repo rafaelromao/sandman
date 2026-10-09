@@ -1,6 +1,6 @@
 ---
 name: sandman
-description: Routes to Sandman modes for planning, work-item implementation, test-driven development, code review, change-request review, back-merge, and change-request merge workflows. Use when user mentions sandman or asks for plan, implement, tdd, code-review, pr-review, back-merge, or pr-merge modes.
+description: Routes to Sandman modes for planning, work-item implementation, test-driven development, code review, managed review request delivery, change-request review, back-merge, and change-request merge workflows. Use when user mentions sandman or asks for plan, implement, tdd, code-review, review-request, pr-review, back-merge, or pr-merge modes.
 ---
 
 # Sandman
@@ -14,6 +14,7 @@ sandman plan
 sandman implement
 sandman tdd
 sandman code-review
+sandman review-request
 sandman pr-review
 sandman back-merge
 sandman pr-merge
@@ -25,6 +26,7 @@ sandman pr-merge
 - `implement` -> `sandman-implement`
 - `tdd` -> `sandman-tdd`
 - `code-review` -> `sandman-code-review` (self-review or daemon-review context)
+- `review-request` -> `sandman-review-request` (managed stateless delivery)
 - `pr-review` -> `sandman-pr-review`
 - `back-merge` -> `sandman-back-merge`
 - `pr-merge` -> `sandman-pr-merge`
