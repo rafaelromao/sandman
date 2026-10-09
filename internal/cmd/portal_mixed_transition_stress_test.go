@@ -150,7 +150,22 @@ func servePortalStressStream(w http.ResponseWriter, r *http.Request, source *por
 	}
 	initial, err := decodePortalLogCursor(encoded)
 	if err != nil {
-		return fmt.Errorf("decode cursor request=%d header=%q query=%q: %w", request, r.Header.Get("Last-Event-ID"), r.URL.Query().Get("cursor"), err)
+		reader, openErr := newPortalLogSource(source.path, source.runID)
+		if openErr != nil {
+			return openErr
+		}
+		defer reader.Close()
+		batch, snapshotErr := reader.snapshot()
+		if snapshotErr != nil {
+			return snapshotErr
+		}
+		source.mu.Lock()
+		source.records = append([]portalLogRecord(nil), batch.Records...)
+		source.mu.Unlock()
+		if err := writePortalLogEvent(w, "reset", batch, ""); err != nil {
+			return err
+		}
+		return writePortalLogEvent(w, "snapshot", batch, encodePortalLogCursor(batch.Cursor))
 	}
 	reader, err := newPortalLogSource(source.path, source.runID)
 	if err != nil {
