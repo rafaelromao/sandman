@@ -343,7 +343,7 @@ func TestPortalMixedTransitionStress(t *testing.T) {
     }
     // Let the large initial snapshot complete and exercise one native
     // EventSource reconnect before rapid tab and row transitions begin.
-    setTimeout(stressRunActions, 1000);
+    setTimeout(stressRunActions, 3000);
   `)
 	page = strings.Replace(page, `const streamPath = "/api/runs/stream";`, `const streamPath = "`+server.URL+`/api/runs/stream?cursor=invalid-original-cursor";`, 1)
 
