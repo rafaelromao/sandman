@@ -2283,7 +2283,9 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         if (portalLogModel.get(subjectID).cursor) renderAuthoritativeLog(subjectID);
       }
       streamCoalescer.clearBuffer(run.key);
-      const streamURLObject = new URL(streamPath, window.location.href);
+      const streamBaseURL = typeof window !== 'undefined' && window.location
+        ? window.location.href : 'http://localhost/';
+      const streamURLObject = new URL(streamPath, streamBaseURL);
       streamURLObject.searchParams.set('runKey', backendKey);
       const cursorParam = typeof portalLogModel !== 'undefined' ? portalLogModel.cursor(subjectID) : '';
       if (cursorParam) streamURLObject.searchParams.set('cursor', cursorParam);
