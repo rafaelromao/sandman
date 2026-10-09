@@ -36,7 +36,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	if !ok {
 		return errResult, false
 	}
-	if s.mode != ModeContinue {
+	if s.mode != ModeContinue && !s.opts.repairHost {
 		if err := syncBaseBranch(s.deps.runSessionOpts, s.deps.sandboxFactory, ".", s.baseBranch); err != nil {
 			return s.lifecycleEarlyFailure("sync base branch", branch, s.runID, err), false
 		}
@@ -208,7 +208,7 @@ func (s *runSession) lifecycleEarlyFailure(reason, branch, runID string, err err
 		s.emitEarlyFailure(reason, branch, err)
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}
 	}
-	return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: runID}
+	return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: runID, OperationalError: fmt.Errorf("%s: %w", reason, err)}
 }
 
 func (s *runSession) startExtras(ctx context.Context, branch string, sandboxStarted time.Time) (AgentRunResult, bool) {
