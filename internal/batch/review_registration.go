@@ -449,16 +449,15 @@ func (s *runSession) importLegacyReviewEvidence(ctx context.Context, workDir, re
 		if artifacts, artifactErr := readReviewTimeoutArtifacts(workDir, repository, pr, currentHead); artifactErr == nil && artifacts != nil && reviewRequestIdentityMatches(existing.Request, artifacts.Request) {
 			if handoff, handoffErr := reviewTimeoutHandoffFromArtifacts(artifacts, currentHead); handoffErr == nil && handoff != nil {
 				canonical, canonicalErr := canonicalReviewRegistration(*existing, handoff, currentHead)
-				if canonicalErr != nil {
-					return canonicalErr
+				if canonicalErr == nil {
+					canonical.LegacyImported = false
+					if writeErr := writeReviewRegistration(s.reviewRegistrationStoreForRead(), registrationPath, *canonical, func() error {
+						return s.verifyCurrentReviewHead(ctx, pr, currentHead)
+					}); writeErr != nil {
+						return fmt.Errorf("persist legacy review evidence: %w", writeErr)
+					}
+					return nil
 				}
-				canonical.LegacyImported = false
-				if writeErr := writeReviewRegistration(s.reviewRegistrationStoreForRead(), registrationPath, *canonical, func() error {
-					return s.verifyCurrentReviewHead(ctx, pr, currentHead)
-				}); writeErr != nil {
-					return fmt.Errorf("persist legacy review evidence: %w", writeErr)
-				}
-				return nil
 			}
 		}
 	}
