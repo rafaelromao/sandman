@@ -14,6 +14,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
@@ -49,6 +50,7 @@ type healthRepairState struct {
 	Deadline       time.Time                `json:"deadline,omitempty"`
 	NextAttempt    time.Time                `json:"next_attempt,omitempty"`
 	Outcome        string                   `json:"outcome,omitempty"`
+	OwnerlessSince time.Time                `json:"ownerless_since,omitempty"`
 }
 
 func (d *Daemon) healthStatePath() string { return filepath.Join(d.reviewsDir(), "health-repair.json") }
@@ -94,7 +96,7 @@ func requestHealthKey(pr int, trigger string) string {
 
 func (d *Daemon) observeHealthFailure(ctx context.Context, key, operation string, pr int, err error) {
 	runner, ok := d.Runner.(repairRunner)
-	if !ok || err == nil || ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+	if !ok || err == nil || ctx.Err() != nil || errors.Is(err, context.Canceled) ||
 		errors.Is(err, batch.ErrAborted) || errors.Is(err, errReviewDeferred) || errors.Is(err, reviewlaunch.ErrLaunchOwned) ||
 		github.IsRateLimited(err) || d.isQuotaError(err) || d.isQuotaPaused() {
 		return
@@ -142,7 +144,40 @@ func (d *Daemon) startHealthRepair(ctx context.Context, runner repairRunner) {
 			}
 			if lifecycle, found := states[state.RunID]; found {
 				if !lifecycle.IsTerminal() {
-					return fmt.Errorf("repair %s has nonterminal lifecycle; await owner or recover stale lifecycle before another launch", state.RunID)
+					if state.OwnerlessSince.IsZero() {
+						state.OwnerlessSince = d.now()
+					}
+					grace := state.OwnerlessSince.Add(5 * time.Minute)
+					if state.Deadline.Before(grace) {
+						grace = state.Deadline
+					}
+					if d.now().Before(grace) {
+						return nil
+					}
+					// Under the execution claim, let the shared recovery path
+					// validate live sockets/manifests and reread terminal events
+					// under the RunID claim. Limit its candidates to this repair.
+					raw, err := d.healthEvents.Read()
+					if err != nil {
+						return err
+					}
+					var owned []events.Event
+					for _, event := range raw {
+						if event.RunID == state.RunID {
+							owned = append(owned, event)
+						}
+					}
+					if _, _, err := daemon.RecoverStaleRuns(d.BaseDir, owned, d.healthEvents); err != nil {
+						return fmt.Errorf("recover ownerless repair: %w", err)
+					}
+					states, err = events.ReadRunStates(d.healthEvents)
+					if err != nil {
+						return err
+					}
+					if !states[state.RunID].IsTerminal() {
+						return fmt.Errorf("repair %s retains live ownership; refusing another launch", state.RunID)
+					}
+					d.logf("health repair %s: recovered expired ownerless execution", state.RunID)
 				}
 			} else if d.now().Before(state.Deadline) {
 				return nil
@@ -168,6 +203,7 @@ func (d *Daemon) startHealthRepair(ctx context.Context, runner repairRunner) {
 		state.Deadline = d.now().Add(healthRepairTimeout)
 		state.NextAttempt = state.Deadline.Add(healthRepairCooldown(state.Attempts))
 		state.AttemptPending = true
+		state.OwnerlessSince = time.Time{}
 		state.Outcome = "reserved"
 		deadline = state.Deadline
 		req = batch.Request{Agent: d.effectiveAgent(), Model: d.effectiveModel(), Variant: d.effectiveVariant(), VariantSet: true,

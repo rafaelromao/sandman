@@ -81,7 +81,7 @@ func TestDaemonHealthRepairStrandedFailureLaunchesRealIndependentAdapter(t *test
 }
 
 func TestDaemonHealthRepairExcludesNormalWaitsAndCancellation(t *testing.T) {
-	for _, err := range []error{context.Canceled, context.DeadlineExceeded, batch.ErrAborted, errReviewDeferred, reviewlaunch.ErrLaunchOwned,
+	for _, err := range []error{context.Canceled, batch.ErrAborted, errReviewDeferred, reviewlaunch.ErrLaunchOwned,
 		&github.RateLimitError{Err: errors.New("API rate limit exceeded")}, errors.New("Error: The usage limit has been reached")} {
 		t.Run(err.Error(), func(t *testing.T) {
 			runner := &healthRunner{}
@@ -133,6 +133,61 @@ func TestDaemonHealthRepairAuthenticationReobservesBeforeProcessing(t *testing.T
 	}
 	if d.authenticatedLogin != "sandman" || gh.listCalls != 1 || len(readHealthState(t, d).Failures) != 0 {
 		t.Fatal("original authentication must be reobserved before progress")
+	}
+}
+
+func TestDaemonHealthRepairOperationTimeoutIsNotOperatorCancellation(t *testing.T) {
+	gh := &fakeGH{listErr: context.DeadlineExceeded}
+	runner := &healthRunner{}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{DefaultReviewAgent: "opencode", DefaultReviewModel: "openai/configured"})
+	if err := d.tick(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("operation timeout lost: %v", err)
+	}
+	d.inFlight.Wait()
+	if len(runner.requests()) != 1 {
+		t.Fatal("live daemon must repair an operation-local timeout")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_ = d.tick(ctx)
+	d.inFlight.Wait()
+	if len(runner.requests()) != 1 {
+		t.Fatal("operator cancellation must not launch another repair")
+	}
+}
+
+func TestDaemonHealthRepairOwnerlessGraceIsNotRenewed(t *testing.T) {
+	gh := &fakeGH{listErr: errors.New("remote broken")}
+	runner := &healthRunner{}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{DefaultReviewAgent: "opencode", DefaultReviewModel: "openai/configured"})
+	now := time.Now()
+	firstObservation := now
+	d.Clock = func() time.Time { return now }
+	id := "261009123456-abcd-prompt-health-repair"
+	if err := d.withHealthState(func(state *healthRepairState) error {
+		*state = healthRepairState{Version: 1, Failures: map[string]healthFailure{"scan-list": {Operation: "list open PRs", Evidence: gh.listErr.Error()}}, Attempts: 1, RunID: id, AttemptPending: true, Deadline: now.Add(30 * time.Minute), NextAttempt: now}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	log := &events.JSONLLogger{Path: filepath.Join(d.BaseDir, "events.jsonl")}
+	if err := log.Log(events.Event{Type: "run.started", RunID: id, Timestamp: now}); err != nil {
+		t.Fatal(err)
+	}
+	for _, elapsed := range []time.Duration{0, 4 * time.Minute} {
+		now = firstObservation.Add(elapsed)
+		_ = d.tick(context.Background())
+		d.inFlight.Wait()
+		if len(runner.requests()) != 0 || !readHealthState(t, d).OwnerlessSince.Equal(firstObservation) {
+			t.Fatal("restart observation must preserve original ownerless grace")
+		}
+	}
+	now = firstObservation.Add(5 * time.Minute)
+	_ = d.tick(context.Background())
+	d.inFlight.Wait()
+	states, err := events.ReadRunStates(log)
+	if err != nil || states[id].Status() != "aborted" || len(runner.requests()) != 1 {
+		t.Fatalf("expired grace did not settle and resume bounded repair: %+v %v", states[id], err)
 	}
 }
 
@@ -341,11 +396,14 @@ func TestDaemonHealthRepairRestartReservationUsesEventLifecycle(t *testing.T) {
 			_ = d.tick(context.Background())
 			d.inFlight.Wait()
 			want := 1
-			if mode == "running" {
-				want = 0
-			}
 			if len(runner.requests()) != want {
 				t.Fatalf("%s restart launches=%d want=%d", mode, len(runner.requests()), want)
+			}
+			if mode == "running" {
+				states, err := events.ReadRunStates(d.healthEvents)
+				if err != nil || states[id].Status() != "aborted" {
+					t.Fatalf("orphan lifecycle not safely settled: %+v %v", states[id], err)
+				}
 			}
 		})
 	}
