@@ -101,7 +101,7 @@ alternate lifecycle authority.
 
 | Operation | Budget | Reset boundary |
 | --- | --- | --- |
-| Managed CI | **30 minutes** per PR head, durable hard deadline | New head |
+| Managed CI | **30 minutes** per identified current-head check execution, durable hard deadline | New head or verified same-head CI rerun |
 | Standalone CI | **60 minutes** and at most **three fixes** per current head within an invocation | New head or fresh invocation |
 | Delegated review | Configured `review_timeout`; default 1,800 seconds, minimum 240 seconds | New confirmed request |
 | Implementation provider quota | **Five hours of accumulated completed polling**, ten-minute intervals, then final boundary probe and configured ordinary retries | Verified recovery followed by a new quota episode; re-entry/restart preserves consumed polling |

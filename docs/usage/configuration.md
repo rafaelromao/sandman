@@ -218,8 +218,10 @@ Use this list when an OpenCode provider introduces new context-exhaustion wordin
 
 Delegated review and current-head CI waits retain logical row ownership but
 release the execution slot between observations. Review uses its confirmed
-request deadline; CI uses an independent durable 30-minute deadline per pull
-request head. A new head resets only the CI generation. Dependents remain held
+request deadline; CI uses an independent durable 30-minute deadline per identified
+current-head check execution. A new head or verified same-head rerun starts a new
+CI generation; observing or restarting the same execution preserves its deadline.
+Dependents remain held
 while the prerequisite awaits external progress; a deadline expiry, CI failure,
 or merge conflict resumes remediation work. Implementation recovery retains
 three in-session lifecycle relaunches in addition to entry and configured ordinary

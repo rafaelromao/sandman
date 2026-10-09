@@ -3,6 +3,7 @@ package github
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -233,6 +234,37 @@ type statusCheckRun struct {
 	Conclusion string `json:"conclusion"`
 	Status     string `json:"status"`
 	State      string `json:"state"`
+	DetailsURL string `json:"detailsUrl"`
+}
+
+// ciExecutionIDFromJSON identifies the current check executions from their
+// provider execution links. Status changes and API ordering are not new work;
+// rerun job links are. Legacy or incomplete observations cannot renew a wait.
+func ciExecutionIDFromJSON(raw json.RawMessage) string {
+	var checks []statusCheckRun
+	if err := json.Unmarshal(raw, &checks); err != nil || len(checks) == 0 {
+		return ""
+	}
+	links := make(map[string]struct{})
+	for _, check := range checks {
+		if check.Status == "" {
+			return ""
+		}
+		link := strings.TrimSpace(check.DetailsURL)
+		if link == "" {
+			return ""
+		}
+		links[link] = struct{}{}
+	}
+	if len(links) == 0 {
+		return ""
+	}
+	ordered := make([]string, 0, len(links))
+	for link := range links {
+		ordered = append(ordered, link)
+	}
+	sort.Strings(ordered)
+	return fmt.Sprintf("checks:%x", sha256.Sum256([]byte(strings.Join(ordered, "\x00"))))
 }
 
 // rollupStateFromJSON converts the raw `gh pr list --json
@@ -632,6 +664,7 @@ func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, err
 		ReviewDecision:     payload.ReviewDecision,
 		MergeStateStatus:   payload.MergeStateStatus,
 		StatusCheckRollup:  rollupStateFromJSON(payload.StatusCheckRollup),
+		CIExecutionID:      ciExecutionIDFromJSON(payload.StatusCheckRollup),
 	}, nil
 }
 

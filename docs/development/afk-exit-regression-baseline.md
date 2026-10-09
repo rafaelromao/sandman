@@ -14,7 +14,7 @@ remains historical evidence.
 | --- | --- | --- |
 | Implementation recovery | Three in-session lifecycle relaunches, entry excluded; fresh executor gets a fresh allowance; configured ordinary retries | Durable per-head/request repair exhaustion and entry-launch reservation; obsolete `lifecycle-budget.json` cannot veto execution |
 | Reviewer recovery | 10/20/40/60-second capped launch backoff, request/head advisory artifact claims, durable single decision publication; parent's configured request deadline | Cumulative three-launch gate, including unknown-head preparation failures; no new reviewer request-age cutoff |
-| Managed CI | Durable 30-minute hard deadline per head; new head resets the CI generation | Cumulative remediation count as a launch prerequisite |
+| Managed CI | Durable 30-minute hard deadline per current-head check execution; new head or verified rerun starts a new CI generation; same-execution observation/restart preserves its deadline | Cumulative remediation count as a launch prerequisite; expired prior execution forcing repeated repair of an actively resolving rerun |
 | Standalone CI | 60 minutes and three fixes per current head within an invocation; same-head polling preserves both; new head or fresh invocation resets | 30-minute tightening and persisted standalone reservation ledgers |
 | Implementation quota | Five hours of accumulated completed ten-minute polling, final boundary probe, configured fresh-session ordinary retries | Absolute wall-clock expiry consuming downtime/capacity delay or preempting ordinary retries; sibling failure inherited solely from another quota owner |
 

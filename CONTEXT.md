@@ -48,6 +48,15 @@ _Avoid_: synthetic issue run.
 The historical bound on implementation recovery within one executor session: three relaunches in addition to entry. A fresh executor has a fresh allowance; persisted head/request repair counts do not form a cumulative launch budget. Ordinary agent retries and the ten-pass review loop retain their separate bounds.
 _Avoid_: durable repair budget, cumulative remediation exhaustion.
 
+**CI wait generation**:
+A bounded managed CI observation operation identified by pull request, current
+head, and the stable set of provider check-execution links. The same execution
+keeps its thirty-minute deadline across status changes, polling, and restart.
+A verified same-head rerun has new execution links and starts a new bounded
+generation; an old expired wait cannot force repeated remediation while that
+rerun resolves. Legacy head-only records bind once to a known execution.
+Unavailable execution identity cannot renew an identified generation.
+
 **Quota polling allowance**:
 Five hours of accumulated completed ten-minute polling for a recognized implementation provider limit. Re-entry and restart preserve consumed polling; capacity delay, process downtime, and cancelled intervals consume none. Expected wall-clock exhaustion is a diagnostic estimate, not an operation deadline or ownership cutoff. The final boundary probe and configured fresh-session ordinary retries remain available; missing or invalid accounting disables additional waits while permitting bounded execution. Implementation pauses are batch-local; reviewer recovery remains daemon-wide.
 _Avoid_: absolute quota deadline, fresh allowance on re-entry.

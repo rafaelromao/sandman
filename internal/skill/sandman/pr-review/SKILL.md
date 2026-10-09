@@ -67,7 +67,7 @@ comments=$(echo "$pr_data" | jq -r '.comments')
 
 #### Step 2: Wait for CI to pass
 
-Standalone CI has a 60-minute budget per PR head SHA and at most 3 fix-and-push attempts for the current head within this invocation. After that window or those attempts are exhausted, record `CI_TIMEOUT` or `CI_FAILURE_UNRESOLVED` in `.sandman/task.md` and the run log with the exact failure and next executable action, then leave the PR open for the next run. A fresh standalone invocation receives its own allowance; obsolete persisted CI repair-budget files do not authorize or prevent execution. Managed CI keeps its independent durable 30-minute deadline per head. Review-request deadlines remain independent.
+Standalone CI has a 60-minute budget per PR head SHA and at most 3 fix-and-push attempts for the current head within this invocation. After that window or those attempts are exhausted, record `CI_TIMEOUT` or `CI_FAILURE_UNRESOLVED` in `.sandman/task.md` and the run log with the exact failure and next executable action, then leave the PR open for the next run. A fresh standalone invocation receives its own allowance; obsolete persisted CI repair-budget files do not authorize or prevent execution. Managed CI keeps its independent durable 30-minute deadline per identified current-head check execution. A verified same-head CI rerun starts a new bounded wait; re-observation and restart of the same execution preserve its deadline. Review-request deadlines remain independent.
 
 When the task's Runtime Context says the session is running inside a
 Sandman-created worktree, do not hold the agent process open while checks are

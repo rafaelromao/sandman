@@ -68,8 +68,11 @@ Started suspension schedules live in `<batch>/runs/<RunID>/wait.json`; initial
 admissions use `state/waiting/<RunID>.json` without creating execution folders.
 Atomic leases preserve ownerless intent for five minutes capped by a hard
 operation deadline, while stable advisory claims fence ownership. Worktree-local
-`<PR>.ci_wait.json` retains managed CI identity and its fixed 30-minute per-head
-deadline; remediation counts are diagnostic, not cumulative repair reservations.
+`<PR>.ci_wait.json` retains managed CI head and check-execution identity with a
+fixed 30-minute deadline per execution. Re-observation and restart preserve it;
+new rerun execution links create a new bounded generation. Legacy head-only
+records bind once when that identity is available. Remediation counts are
+diagnostic, not cumulative repair reservations.
 Legacy `<PR>.lifecycle-budget.json`, `<PR>.review-launch-<digest>.json`, and
 `<PR>-standalone-ci-<head>.json` budget ledgers are obsolete and ignored for
 execution admission. Standalone CI keeps its 60-minute window and three-fix
