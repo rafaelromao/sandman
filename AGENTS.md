@@ -16,7 +16,10 @@ abort ends every unfinished owned phase without further retries/probes/launches.
 Terminal decisions require no execution slot. Adapters must consume the selected
 action, never re-infer it from a gate string.
 
-Retained bounds: managed CI 30 minutes per head; standalone CI 60 minutes and
+Retained bounds: managed CI 30 minutes per identified current-head check execution;
+an observed rerun starts a new bounded operation while re-observation/restart of
+the same execution preserves its deadline. Legacy head-only evidence binds once
+when execution identity becomes available. Standalone CI 60 minutes and
 three fixes per current head within one invocation; review configured request
 deadline (default 1800/minimum 240 seconds). Implementation allows three
 in-session lifecycle relaunches in addition to entry; a fresh executor gets a

@@ -728,6 +728,11 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 	})
 	if strings.EqualFold(pr.State, "open") && !evidence.stateError {
 		deadlines := cloneLifecycleExtras(evidence.payload)
+		// A completed CI operation cannot time out unrelated review/merge work.
+		// Only currently resolving checks carry a CI wait deadline.
+		if !ciActive(pr, headSHA) {
+			delete(deadlines, "ci_wait")
+		}
 		// A timely response resolves its request lifetime. Capacity latency
 		// after that response must not retroactively turn approval into timeout.
 		if evidence.outcome == retainedReviewApproval || evidence.actionable || len(evidence.informalFeedback) > 0 {
