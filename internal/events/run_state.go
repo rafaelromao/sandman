@@ -17,6 +17,9 @@ type RunState struct {
 	// included in elapsed duration.
 	activeDuration time.Duration
 	activeSince    time.Time
+	// firstStartedAt identifies this RunID's first execution admission. Started
+	// retains the latest admission event for ownership, recovery and metadata.
+	firstStartedAt time.Time
 	// ownerBatchID is folded from accepted lifecycle evidence in append order.
 	// Terminal observation retains ownership without starting a new time segment.
 	ownerBatchID string
@@ -81,6 +84,9 @@ func ProjectRunStates(events []Event) []RunState {
 				continue
 			}
 			state.accumulateActiveUntil(event.Timestamp)
+			if state.firstStartedAt.IsZero() {
+				state.firstStartedAt = event.Timestamp
+			}
 			state.Started = event
 			state.Finished = nil
 			state.awaiting = false
@@ -93,6 +99,9 @@ func ProjectRunStates(events []Event) []RunState {
 			// RunID, not batch ownership, identifies the execution clock.
 			// Paused segments are already closed and cannot count as active time.
 			state.accumulateActiveUntil(event.Timestamp)
+			if state.firstStartedAt.IsZero() {
+				state.firstStartedAt = event.Timestamp
+			}
 			state.Started = event
 			state.Finished = nil
 			state.awaiting = false
@@ -428,6 +437,16 @@ func (r RunState) Duration() time.Duration {
 		return 0
 	}
 	return r.DurationAt(r.Finished.Timestamp)
+}
+
+// StartedAt returns the first execution admission for this RunID, independent
+// of subsequent continuation ownership. Unstarted placeholders retain their
+// admission timestamp, including projections constructed without folded events.
+func (r RunState) StartedAt() time.Time {
+	if !r.firstStartedAt.IsZero() {
+		return r.firstStartedAt
+	}
+	return r.Started.Timestamp
 }
 
 // DurationAt returns the active execution time observed at at. An awaiting
