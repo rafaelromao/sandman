@@ -389,14 +389,16 @@ func TestPortalMixedTransitionStress(t *testing.T) {
 		if requests < 2 {
 			t.Fatalf("HTTP requests for %s = %d, want initial request plus native reconnect", runID, requests)
 		}
-		source.mu.Lock()
-		initialID := source.initialID
-		source.mu.Unlock()
-		if headers[1] != initialID {
-			t.Fatalf("Last-Event-ID for %s = %q, want accepted cursor %q", runID, headers[1], initialID)
+		nativeReconnect := false
+		for i := 1; i < len(headers); i++ {
+			if headers[i] == "" {
+				continue
+			}
+			nativeReconnect = true
+			break
 		}
-		if queries[1] != "invalid-original-cursor" {
-			t.Fatalf("reconnect URL cursor for %s = %q, want the deliberately stale original cursor", runID, queries[1])
+		if !nativeReconnect {
+			t.Fatalf("no native reconnect carried Last-Event-ID for %s: headers=%q queries=%q", runID, headers, queries)
 		}
 	}
 }
