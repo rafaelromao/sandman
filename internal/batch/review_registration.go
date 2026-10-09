@@ -445,7 +445,7 @@ func (s *runSession) importLegacyReviewEvidence(ctx context.Context, workDir, re
 	if existing == nil {
 		return nil
 	}
-	if existing.State.ObservedState == "" {
+	if !existing.LegacyImported && existing.State.ObservedState == "" {
 		if artifacts, artifactErr := readReviewTimeoutArtifacts(workDir, repository, pr, currentHead); artifactErr == nil && artifacts != nil && reviewRequestIdentityMatches(existing.Request, artifacts.Request) {
 			if handoff, handoffErr := reviewTimeoutHandoffFromArtifacts(artifacts, currentHead); handoffErr == nil && handoff != nil {
 				canonical, canonicalErr := canonicalReviewRegistration(*existing, handoff, currentHead)
