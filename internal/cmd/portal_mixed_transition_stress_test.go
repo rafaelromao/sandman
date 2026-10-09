@@ -341,7 +341,9 @@ func TestPortalMixedTransitionStress(t *testing.T) {
       marker.textContent = JSON.stringify({oracle: window.__stressOracle, rendered: stressRendered, model: stressModel, actions: window.__stressActionCounts});
       document.body.appendChild(marker);
     }
-    setTimeout(stressRunActions, 120);
+    // Let the large initial snapshot complete and exercise one native
+    // EventSource reconnect before rapid tab and row transitions begin.
+    setTimeout(stressRunActions, 1000);
   `)
 	page = strings.Replace(page, `const streamPath = "/api/runs/stream";`, `const streamPath = "`+server.URL+`/api/runs/stream?cursor=invalid-original-cursor";`, 1)
 
