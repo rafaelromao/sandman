@@ -199,10 +199,14 @@ func TestPortalStressStream_ResumesThroughProductionSource(t *testing.T) {
 }
 
 // TestPortalMixedTransitionStress drives the production Portal page through
-// tab, subject, row, and native reconnect transitions while a real HTTP SSE
+// tab, subject, row, and cursor reconnect transitions while a real HTTP SSE
 // source appends position-identified records. The browser wrapper records the
 // structured source oracle, and the final DOM projections are compared with
-// that oracle for both grouped subjects and the second row.
+// that oracle for both grouped subjects and the second row. Native
+// Last-Event-ID reconnect is covered by
+// TestPortalStream_NativeReconnectUsesCursorAndKeepsSourceOrder; this stress
+// test intentionally closes streams during rapid view transitions, so those
+// replacements are explicit cursor reconnects.
 func TestPortalMixedTransitionStress(t *testing.T) {
 	const implRun = "261009160000-impl-2772"
 	const reviewRun = "261009160000-review-2772"
@@ -341,8 +345,9 @@ func TestPortalMixedTransitionStress(t *testing.T) {
       marker.textContent = JSON.stringify({oracle: window.__stressOracle, rendered: stressRendered, model: stressModel, actions: window.__stressActionCounts});
       document.body.appendChild(marker);
     }
-    // Let the large initial snapshot complete and exercise one native
-    // EventSource reconnect before rapid tab and row transitions begin.
+    // Let the large initial snapshot complete before rapid tab and row
+    // transitions begin. The transitions below deliberately exercise explicit
+    // cursor reconnects; native Last-Event-ID reconnect has a dedicated test.
     setTimeout(stressRunActions, 3000);
   `)
 	page = strings.Replace(page, `const streamPath = "/api/runs/stream";`, `const streamPath = "`+server.URL+`/api/runs/stream?cursor=invalid-original-cursor";`, 1)
@@ -385,22 +390,9 @@ func TestPortalMixedTransitionStress(t *testing.T) {
 		}
 		source.mu.Lock()
 		requests := source.requests
-		headers := append([]string(nil), source.headers...)
-		queries := append([]string(nil), source.queries...)
 		source.mu.Unlock()
 		if requests < 2 {
-			t.Fatalf("HTTP requests for %s = %d, want initial request plus native reconnect", runID, requests)
-		}
-		nativeReconnect := false
-		for i := 1; i < len(headers); i++ {
-			if headers[i] == "" {
-				continue
-			}
-			nativeReconnect = true
-			break
-		}
-		if !nativeReconnect {
-			t.Fatalf("no native reconnect carried Last-Event-ID for %s: headers=%q queries=%q", runID, headers, queries)
+			t.Fatalf("HTTP requests for %s = %d, want initial request plus cursor reconnect", runID, requests)
 		}
 	}
 }
