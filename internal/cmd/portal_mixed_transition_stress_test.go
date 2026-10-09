@@ -353,7 +353,12 @@ func TestPortalMixedTransitionStress(t *testing.T) {
 	for runID, source := range sources {
 		want := source.expected()
 		if got := portalStressRecordsText(result.Oracle[runID]); got != want {
-			t.Fatalf("browser source oracle for %s = %q, want HTTP source range %q", runID, got, want)
+			source.mu.Lock()
+			requests := source.requests
+			headers := append([]string(nil), source.headers...)
+			queries := append([]string(nil), source.queries...)
+			source.mu.Unlock()
+			t.Fatalf("browser source oracle for %s = %q, want HTTP source range %q (requests=%d headers=%q queries=%q)", runID, got, want, requests, headers, queries)
 		}
 		if got := result.Rendered[runID]; got != want {
 			t.Fatalf("DOM log for %s = %q, want source range %q", runID, got, want)
