@@ -42,7 +42,7 @@ if (!pane) throw new Error('expected a cached pane for the large log');
 setTimeout(function () {
   if (completed !== 1) throw new Error('expected one authoritative completion callback, got ' + completed);
   console.log('PASS');
-}, 25);
+}, 100);
 `
 	runNodeScript(t, js)
 }

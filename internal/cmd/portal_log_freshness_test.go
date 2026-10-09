@@ -166,6 +166,7 @@ const sandbox = {
   streamSources: {},
   loadingDetailKeys: new Set(),
   streamPath: '/api/runs/stream',
+  URL: URL,
   EventSource: function (url) { events.push(['new', url]); this.close = function () { events.push(['close']); }; },
   findRunByIdentity: function () { return run; },
   isWaitStateRun: function () { return false; },
