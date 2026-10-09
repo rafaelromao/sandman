@@ -60,9 +60,9 @@ func writeTimedOutReviewRequest(t *testing.T, workDir string) {
   "head_sha": "current-sha",
   "trigger_id": "https://github.com/owner/repo/pull/17#issuecomment-1001",
   "trigger_prefix": "/sandman review",
-  "trigger_created_at": "2026-08-13T10:00:00Z",
-  "confirmed_at": "2026-08-13T10:00:00Z",
-  "started_at": "2026-08-13T10:00:00Z",
+  "trigger_created_at": "1970-01-01T00:16:40Z",
+  "confirmed_at": "1970-01-01T00:16:40Z",
+  "started_at": "1970-01-01T00:16:40Z",
   "deadline_at": "unix:2800",
   "started_unix_seconds": 1000,
   "deadline_unix_seconds": 2800,
@@ -83,9 +83,9 @@ func writeTimedOutReviewRequest(t *testing.T, workDir string) {
   "head_sha": "current-sha",
   "trigger_id": "https://github.com/owner/repo/pull/17#issuecomment-1001",
   "trigger_prefix": "/sandman review",
-  "trigger_created_at": "2026-08-13T10:00:00Z",
-  "confirmed_at": "2026-08-13T10:00:00Z",
-  "started_at": "2026-08-13T10:00:00Z",
+  "trigger_created_at": "1970-01-01T00:16:40Z",
+  "confirmed_at": "1970-01-01T00:16:40Z",
+  "started_at": "1970-01-01T00:16:40Z",
   "deadline_at": "unix:2800",
   "started_unix_seconds": 1000,
   "effective_timeout_seconds": 1800,
@@ -122,6 +122,7 @@ func writeCanonicalRegistrationForTest(t *testing.T, workDir string) {
 	if err := json.Unmarshal(requestData, &request); err != nil {
 		t.Fatalf("decode review request for canonical registration: %v", err)
 	}
+	request.TriggerIdentity = reviewTriggerIdentity(request.TriggerID)
 	elapsed := 0
 	registration := reviewRequestRegistration{
 		Protocol: reviewRegistrationProtocol,
@@ -2015,6 +2016,7 @@ func TestExternalGate_GreenCIWithPendingReviewKeepsReviewDeadline(t *testing.T) 
 		PullRequest:         17,
 		HeadSHA:             "current-sha",
 		TriggerID:           "https://github.com/owner/repo/pull/17#issuecomment-1001",
+		TriggerIdentity:     "comment:1001",
 		TriggerPrefix:       "/sandman review",
 		TriggerCreatedAt:    deadline.Add(-30 * time.Minute).Format(time.RFC3339),
 		ConfirmedAt:         deadline.Add(-30 * time.Minute).Format(time.RFC3339),
