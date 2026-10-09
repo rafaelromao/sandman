@@ -150,7 +150,7 @@ func servePortalStressStream(w http.ResponseWriter, r *http.Request, source *por
 	}
 	initial, err := decodePortalLogCursor(encoded)
 	if err != nil {
-		return err
+		return fmt.Errorf("decode cursor request=%d header=%q query=%q: %w", request, r.Header.Get("Last-Event-ID"), r.URL.Query().Get("cursor"), err)
 	}
 	reader, err := newPortalLogSource(source.path, source.runID)
 	if err != nil {
