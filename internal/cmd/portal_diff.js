@@ -673,7 +673,13 @@
     const pre = global.document.createElement('pre');
     pre.classList.add('terminal-log');
     pre.setAttribute('data-scroll-key', run.key);
-    fillTerminalPre(pre, log, helpers);
+    const renderHelpers = Object.assign({}, helpers || {});
+    if (helpers && typeof helpers.onLogRenderComplete === 'function') {
+      renderHelpers.onComplete = function () {
+        helpers.onLogRenderComplete(run, pre);
+      };
+    }
+    fillTerminalPre(pre, log, renderHelpers);
     return pre;
   }
 

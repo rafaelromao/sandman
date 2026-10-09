@@ -627,7 +627,6 @@ func TestPortalTabRoundTrip_DoesNotAppendHistoricalReplayAfterNewerSnapshot(t *t
 // an old text replay, and render the one structured append exactly once.
 func TestPortalStream_NativeReconnectUsesCursorAndKeepsSourceOrder(t *testing.T) {
 	const runID = "261008101600-native-2772"
-	const generation = "saved-generation-native"
 	const currentCommand = "10:09:32 current command"
 	const currentOutput = "10:16:22 current output"
 	const newOutput = "10:16:37 new live output"
@@ -638,11 +637,23 @@ func TestPortalStream_NativeReconnectUsesCursorAndKeepsSourceOrder(t *testing.T)
 	if err := os.WriteFile(logPath, []byte(history+first), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	firstStart := int64(len(history))
-	firstEnd := firstStart + int64(len(first))
+	source, err := newPortalLogSource(logPath, runID)
+	if err != nil {
+		t.Fatalf("open saved-log source: %v", err)
+	}
+	defer source.Close()
+	firstBatch, err := source.snapshot()
+	if err != nil {
+		t.Fatalf("read saved-log snapshot: %v", err)
+	}
+	if !firstBatch.Bounded || firstBatch.End != int64(len(history)+len(first)) {
+		t.Fatalf("saved-log snapshot = bounded %v, end %d; want bounded snapshot ending at %d", firstBatch.Bounded, firstBatch.End, len(history)+len(first))
+	}
 
 	var connections atomic.Int32
 	var lastEventID atomic.Value
+	var lastQueryCursor atomic.Value
+	var resumedBatch atomic.Value
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Cache-Control", "no-store")
@@ -655,20 +666,12 @@ func TestPortalStream_NativeReconnectUsesCursorAndKeepsSourceOrder(t *testing.T)
 		}
 		connection := connections.Add(1)
 		lastEventID.Store(r.Header.Get("Last-Event-ID"))
+		lastQueryCursor.Store(r.URL.Query().Get("cursor"))
 		_, _ = fmt.Fprint(w, "retry: 50\n\n")
 		flusher.Flush()
 		switch connection {
 		case 1:
-			batch := portalLogBatch{
-				RunID: runID, Generation: generation, Start: firstStart, End: firstEnd,
-				Bounded: true,
-				Records: []portalLogRecord{
-					{RunID: runID, Generation: generation, Start: firstStart, End: firstStart + int64(len("["+runID+"] "+currentCommand+"\n")), Text: currentCommand},
-					{RunID: runID, Generation: generation, Start: firstStart + int64(len("["+runID+"] "+currentCommand+"\n")), End: firstEnd, Text: currentOutput},
-				},
-				Cursor: portalLogCursor{RunID: runID, Generation: generation, Offset: firstEnd},
-			}
-			if err := writePortalLogEvent(w, "snapshot", batch, encodePortalLogCursor(batch.Cursor)); err != nil {
+			if err := writePortalLogEvent(w, "snapshot", firstBatch, encodePortalLogCursor(firstBatch.Cursor)); err != nil {
 				t.Errorf("write initial snapshot: %v", err)
 			}
 		case 2:
@@ -683,19 +686,24 @@ func TestPortalStream_NativeReconnectUsesCursorAndKeepsSourceOrder(t *testing.T)
 				t.Errorf("append fixture record: write=%v close=%v", writeErr, closeErr)
 				return
 			}
+			batch, changed, appendErr := source.appendBatch(false)
+			if appendErr != nil || !changed {
+				t.Errorf("read production append batch: changed=%v err=%v", changed, appendErr)
+				return
+			}
+			if batch.Generation != firstBatch.Generation || batch.Start != firstBatch.End {
+				t.Errorf("production append range = generation %q start %d; want generation %q start %d", batch.Generation, batch.Start, firstBatch.Generation, firstBatch.End)
+				return
+			}
+			resumedBatch.Store(batch)
 			// A legacy text replay on the resumed connection must not be merged
 			// into a structured stream that already owns the pane.
 			_, _ = fmt.Fprint(w, "data: 09:25:07 old replay\n\n")
 			flusher.Flush()
-			appendBatch := portalLogBatch{
-				RunID: runID, Generation: generation, Start: firstEnd, End: firstEnd + int64(len("["+runID+"] "+newOutput+"\n")),
-				Records: []portalLogRecord{{RunID: runID, Generation: generation, Start: firstEnd, End: firstEnd + int64(len("["+runID+"] "+newOutput+"\n")), Text: newOutput}},
-				Cursor:  portalLogCursor{RunID: runID, Generation: generation, Offset: firstEnd + int64(len("["+runID+"] "+newOutput+"\n"))},
-			}
-			if err := writePortalLogEvent(w, "append", appendBatch, encodePortalLogCursor(appendBatch.Cursor)); err != nil {
+			if err := writePortalLogEvent(w, "append", batch, encodePortalLogCursor(batch.Cursor)); err != nil {
 				t.Errorf("write resumed append: %v", err)
 			}
-			_ = writePortalLogEvent(w, "end", map[string]any{"runId": runID, "generation": generation}, "")
+			_ = writePortalLogEvent(w, "end", map[string]any{"runId": runID, "generation": batch.Generation, "cursor": batch.Cursor}, "")
 		}
 	}))
 	defer server.Close()
@@ -734,7 +742,20 @@ func TestPortalStream_NativeReconnectUsesCursorAndKeepsSourceOrder(t *testing.T)
 	if err := json.Unmarshal([]byte(payload), &result); err != nil {
 		t.Fatalf("parse native reconnect payload: %v\nraw=%s", err, payload)
 	}
-	want := currentCommand + "\n" + currentOutput + "\n" + newOutput + "\n"
+	var wantBuilder strings.Builder
+	for _, record := range firstBatch.Records {
+		wantBuilder.WriteString(record.Text)
+		wantBuilder.WriteByte('\n')
+	}
+	batch, ok := resumedBatch.Load().(portalLogBatch)
+	if !ok {
+		t.Fatal("native reconnect did not produce a saved-log append batch")
+	}
+	for _, record := range batch.Records {
+		wantBuilder.WriteString(record.Text)
+		wantBuilder.WriteByte('\n')
+	}
+	want := wantBuilder.String()
 	if result.RenderedLog != want {
 		t.Fatalf("native reconnect log = %q, want %q", result.RenderedLog, want)
 	}
@@ -744,7 +765,10 @@ func TestPortalStream_NativeReconnectUsesCursorAndKeepsSourceOrder(t *testing.T)
 	if connections.Load() != 2 {
 		t.Fatalf("EventSource connections = %d, want initial request plus one native reconnect", connections.Load())
 	}
-	if got, _ := lastEventID.Load().(string); got == "" {
-		t.Fatal("native reconnect did not send Last-Event-ID")
+	if got, _ := lastEventID.Load().(string); got != encodePortalLogCursor(firstBatch.Cursor) {
+		t.Fatalf("native reconnect Last-Event-ID = %q, want accepted snapshot cursor %q", got, encodePortalLogCursor(firstBatch.Cursor))
+	}
+	if got, _ := lastQueryCursor.Load().(string); got != "" {
+		t.Fatalf("native reconnect reused an unexpected URL cursor %q; Last-Event-ID must be the resume authority", got)
 	}
 }

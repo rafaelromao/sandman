@@ -85,3 +85,85 @@ console.log('PASS');
 `
 	runNodeScript(t, js)
 }
+
+// TestPortalLogModel_FixedSeedTransitionStress exercises the production model
+// through the same source-oracle transitions used by tab, subject, and
+// reconnect navigation. The oracle deliberately includes repeated text and
+// blank records; only raw record positions establish identity.
+func TestPortalLogModel_FixedSeedTransitionStress(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	logPath := filepath.Join(filepath.Dir(currentFile), "portal_log.js")
+	js := `
+const logModuleSource = fs.readFileSync(` + "`" + logPath + "`" + `, 'utf8');
+vm.runInThisContext(logModuleSource, { filename: 'portal_log.js' });
+const model = SandmanPortalLog.create();
+const generation = 'stress-generation';
+const runs = {
+  'impl-run': { offset: 0, records: [], epoch: 0 },
+  'review-run': { offset: 0, records: [], epoch: 0 },
+};
+function nextRandom() {
+  nextRandom.seed = (nextRandom.seed * 1664525 + 1013904223) >>> 0;
+  return nextRandom.seed;
+}
+nextRandom.seed = 2772;
+function batch(runID, records, start, end) {
+  return {
+    runId: runID, generation, start, end,
+    cursor: { runId: runID, generation, offset: end }, records,
+  };
+}
+function sourceSnapshot(runID) {
+  const source = runs[runID];
+  return batch(runID, source.records, 0, source.offset);
+}
+function sourceAppend(runID, record) {
+  const source = runs[runID];
+  const start = source.offset;
+  const end = start + record.text.length + 1;
+  const value = { runId: runID, generation, start, end, text: record.text };
+  source.records.push(value);
+  source.offset = end;
+  return batch(runID, [value], start, end);
+}
+for (const runID of Object.keys(runs)) {
+  const source = runs[runID];
+  for (const text of ['same', '', 'same']) sourceAppend(runID, { text });
+  if (!model.accept(runID, sourceSnapshot(runID), 'snapshot', 1)) throw new Error('initial snapshot rejected for ' + runID);
+  source.epoch = 1;
+}
+for (let transition = 0; transition < 50; transition++) {
+  const runID = (nextRandom() & 1) === 0 ? 'impl-run' : 'review-run';
+  const source = runs[runID];
+  source.epoch++;
+  model.setEpoch(runID, source.epoch);
+  const action = nextRandom() % 4;
+  if (action === 0) {
+    const append = sourceAppend(runID, { text: (transition % 3 === 0) ? 'same' : 'live-' + transition });
+    if (!model.accept(runID, append, 'append', source.epoch)) throw new Error('append rejected at transition ' + transition);
+  } else if (action === 1) {
+    if (!model.accept(runID, sourceSnapshot(runID), 'snapshot', source.epoch)) throw new Error('snapshot rejected at transition ' + transition);
+  } else if (action === 2) {
+    const last = source.records[source.records.length - 1];
+    const duplicate = batch(runID, [last], last.start, last.end);
+    if (model.accept(runID, duplicate, 'append', source.epoch)) throw new Error('duplicate identity accepted at transition ' + transition);
+  } else {
+    const stale = sourceAppend(runID, { text: 'stale-' + transition });
+    if (model.accept(runID, stale, 'append', source.epoch - 1)) throw new Error('stale epoch accepted at transition ' + transition);
+    source.records.pop();
+    source.offset = stale.start;
+  }
+  for (const checkID of Object.keys(runs)) {
+    const expected = runs[checkID].records.map(function (record) { return record.text; }).join('\n') + '\n';
+    if (model.text(checkID) !== expected) throw new Error('oracle mismatch after transition ' + transition + ' for ' + checkID);
+    const range = model.range(checkID);
+    if (range.end !== runs[checkID].offset) throw new Error('cursor mismatch after transition ' + transition + ' for ' + checkID);
+  }
+}
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}

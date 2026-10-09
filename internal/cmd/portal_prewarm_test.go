@@ -20,6 +20,33 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+// TestPortalPerf_LogPaneBuildNotifiesAuthoritativeProjectionAfterChunking
+// keeps a pane rebuild from becoming a one-shot stale projection. The live
+// model can accept a final append while the initial >16 KiB fill is queued;
+// buildLogPre must notify the authoritative owner when that fill completes so
+// it can project the newer model range.
+func TestPortalPerf_LogPaneBuildNotifiesAuthoritativeProjectionAfterChunking(t *testing.T) {
+	js := `const log = Array.from({ length: 1200 }, function (_, i) { return 'record-' + i + '-' + 'x'.repeat(20); }).join('\n') + '\n';
+let completed = 0;
+const run = { key: 'evicted-run', runId: 'evicted-run', kind: 'active', status: 'running', issueLabel: '#2772', log: log };
+const pane = sandbox.SandmanPortalDiff.tokenizeForCache(run, {
+  logTextForRun: function () { return log; },
+  renderTerminalContent: helpers.renderTerminalContent,
+  onLogRenderComplete: function (completedRun, pre) {
+    if (completedRun !== run) throw new Error('completion callback received the wrong run');
+    if (pre.getAttribute('data-rendered-log') !== log) throw new Error('chunked pane did not finish with its source log');
+    completed++;
+  },
+});
+if (!pane) throw new Error('expected a cached pane for the large log');
+setTimeout(function () {
+  if (completed !== 1) throw new Error('expected one authoritative completion callback, got ' + completed);
+  console.log('PASS');
+}, 25);
+`
+	runNodeScript(t, js)
+}
+
 // TestPortalPerf_PrewarmLogPaneCache_TokenizeNoOpWhenCached is the
 // idempotence contract for tokenizeForCache: a second call with the same
 // subject returns the same node (no rebuild) and does not start another

@@ -2010,6 +2010,14 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       section.insertBefore(notice, pre);
     }
 
+    function onAuthoritativeLogRenderComplete(runKey, pre) {
+      if (streamPreFor(runKey) !== pre) return;
+      const current = portalLogModel.text(runKey);
+      if (current !== pre.getAttribute('data-rendered-log')) {
+        window.setTimeout(function () { renderAuthoritativeLog(runKey); }, 0);
+      }
+    }
+
     function renderAuthoritativeLog(runKey) {
       const pre = streamPreFor(runKey);
       if (!pre) return;
@@ -2045,11 +2053,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         renderTerminalContent: SandmanPortalDiff.highlightTerminalLog,
         onComplete: function () {
           if (sticky) pre.scrollTop = pre.scrollHeight;
-          if (streamPreFor(runKey) !== pre) return;
-          const current = portalLogModel.text(runKey);
-          if (current !== pre.getAttribute('data-rendered-log')) {
-            window.setTimeout(function () { renderAuthoritativeLog(runKey); }, 0);
-          }
+          onAuthoritativeLogRenderComplete(runKey, pre);
         },
       };
       if (canAppend && typeof SandmanPortalDiff.appendTerminalPre === 'function') {
@@ -3053,6 +3057,10 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           renderRunMeta: renderRunMeta,
           renderTerminalContent: renderTerminalContent,
           logTextForRun: logTextForRun,
+          onLogRenderComplete: function (run, pre) {
+            const runKey = run && (run.runId || run.key);
+            if (runKey) onAuthoritativeLogRenderComplete(runKey, pre);
+          },
           isRunAbortable: isRunAbortable,
           isRunArchivable: isRunArchivable,
           highlightJSON: SandmanPortalDiff.highlightJSON,
