@@ -119,7 +119,7 @@ jobs:
         run: |
           test -n "$(command -v chromium)"
           set +e
-          output=$(go test ./internal/cmd -run 'TestPortalTabRoundTrip|TestPortalRowReopen|TestPortalLogPane|TestPortalReviewSubjectSwitch_ReusesCachedParentPane|TestPortalStream_|TestPortalLogFreshness|TestPortalLogModel' -count=1 -v 2>&1)
+          output=$(go test ./internal/cmd -run 'TestPortalTabRoundTrip|TestPortalRowReopen|TestPortalLogPane|TestPortalReviewSubjectSwitch_ReusesCachedParentPane|TestPortalStream_|TestPortalLogFreshness|TestPortalLogModel|TestPortalMixedTransitionStress' -count=1 -v 2>&1)
           status=$?
           set -e
           printf '%s\n' "$output"
