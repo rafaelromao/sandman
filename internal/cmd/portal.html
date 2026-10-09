@@ -2012,6 +2012,8 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
 
     function onAuthoritativeLogRenderComplete(runKey, pre) {
       if (streamPreFor(runKey) !== pre) return;
+      const model = portalLogModel.get(runKey);
+      if (!model.cursor) return;
       const current = portalLogModel.text(runKey);
       if (current !== pre.getAttribute('data-rendered-log')) {
         window.setTimeout(function () { renderAuthoritativeLog(runKey); }, 0);
