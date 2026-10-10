@@ -9,6 +9,9 @@ The installed folder mirrors the local Sandman skill and includes routed subskil
 - implement
 - tdd
 - code-review (self-review and daemon-review contexts)
+- run (standalone implementation, review-cycle, and merge composition)
+- review-request (stateless trigger delivery)
+- review-cycle (standalone in-memory review observation)
 - pr-review
 - back-merge
 - pr-merge
@@ -19,17 +22,21 @@ The installed folder mirrors the local Sandman skill and includes routed subskil
 
 ## Using the skills directly
 
-You can also load `sandman-implement`, `sandman-code-review`, and `sandman-pr-review` directly in OpenCode or Claude Code for a local run without `sandman run`. Use `sandman-code-review` in self-review context for an implementor's own changes; the review daemon uses its daemon-review context with supplied pull-request information and writes the reviewer decision artifact without managing the pull request. The same autonomous workflow, guardrails, and terminal conditions apply; the skills do not wait for operator input.
+You can load `sandman-run` directly in OpenCode or Claude Code for the
+standalone workflow without a host `sandman` binary. It composes
+`sandman-implement`, `sandman-review-cycle`, and `sandman-pr-merge` in that
+order. The focused `sandman-review-request` capability delivers one guarded
+request; `sandman-review-cycle` owns standalone CI, observation, feedback, and
+re-request behavior. `sandman-pr-review` remains a compatibility facade over
+the cycle. The shared skills form an AFK workflow and do not wait for operator
+input.
 
-The managed implementor-side review handoff is an AFK workflow: after a
-current-head review request is confirmed, that request is active even before
-the reviewer starts. The runtime retains logical row ownership, releases the
-execution slot and container lease, holds dependents, observes the request, and
-resumes the implementation when matching current-request evidence arrives and
-capacity is available. The managed agent exits before polling; standalone
-`sandman-pr-review` keeps its own bounded observer loop. Invalid or stale
-evidence cannot approve or resume managed work, and cancellation produces an
-aborted run that can be recovered from durable request state.
+Managed implementation uses `sandman-review-request` only for delivery. After
+confirmation, the runtime owns observation, evidence, waiting, resume, and
+terminal decisions. The durable request state remains runtime-owned, including
+matching current-request evidence. Standalone `sandman-run` keeps review-cycle state in memory
+for its session; a restart reconstructs from live pull-request state and does
+not import or trust managed lifecycle artifacts.
 
 ## Claude Code discovery
 
@@ -53,18 +60,19 @@ effective delegated review response budget in seconds. It is deliberately not
 written into the globally shared skill tree, so repositories with different
 policies cannot overwrite one another's active run context.
 
-Standalone use of `sandman-pr-review` uses the versioned
-`pr-review/review-wait-v1.sh` entry point for one confirmed request. Managed
-implementation runs yield before invoking that poller; runtime observation is
-the sole managed lifecycle authority. The request envelope identifies the pull
-request, current head, confirmed trigger, effective timeout, and absolute
-deadline. The command returns one structured
+Standalone use of `sandman-review-cycle` uses the versioned portable observer
+entry point for one confirmed request and retains the request envelope only in
+the active session. Managed implementation runs use the runtime's canonical
+request record and do not invoke the standalone cycle. The request envelope
+identifies the pull request, current head, confirmed trigger, effective timeout,
+and absolute deadline. The command returns one structured
 JSON result (`pending`, `responded`, `timed_out`, or `unavailable`). A responded
 result carries both the preserved raw snapshot and an additive
 `review-classification/v1` object scoped to the confirmed trigger and current
 head. The classification records the active request window, source evidence,
 canonical timestamps, head status, and formal requested-changes precedence for
-the existing approval and feedback rules. Its state sidecar lives beside the
-request under the repository's `.sandman/state/` directory.
+the existing approval and feedback rules. Its temporary transport is discarded
+when the standalone session ends; it is not a restart or managed lifecycle
+record.
 
 If Sandman detects local edits under `~/.agents/skills/sandman/`, it asks before overwriting in a TTY. In non-interactive mode it fails instead of silently replacing those edits. Built-in containers mount this tree at `/.agents/skills/sandman/`, and the helper is invoked through `sh`, so the wait does not depend on a host `sandman` binary.
