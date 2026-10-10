@@ -39,7 +39,7 @@ func (f *managedLifecycleFactory) NewRunnable(issue *github.Issue, branch string
 	f.mu.Unlock()
 
 	_ = os.MkdirAll(filepath.Join(sb.WorkDir(), ".sandman"), 0o755)
-	_ = os.WriteFile(filepath.Join(sb.WorkDir(), ".sandman", "task.md"), []byte("# Task\n\nContinue the managed lifecycle.\n"), 0o600)
+	_ = atomicfs.WriteAtomic(filepath.Join(sb.WorkDir(), ".sandman", "task.md"), []byte("# Task\n\nContinue the managed lifecycle.\n"), 0o600)
 	if issue.Number == 42 {
 		switch attempt {
 		case 1:
@@ -110,7 +110,7 @@ func seedManagedReviewRequest(workDir, trigger string) {
 			return
 		}
 		data = []byte(strings.ReplaceAll(string(data), "issuecomment-2002", "issuecomment-"+trigger))
-		_ = os.WriteFile(path, data, 0o600)
+		_ = atomicfs.WriteAtomic(path, data, 0o600)
 	}
 	data, err := os.ReadFile(filepath.Join(workDir, ".sandman", "state", "17.review_request.json"))
 	if err != nil {
@@ -221,7 +221,7 @@ func TestManagedReviewLifecycle_ProductionPathRecoversAndReleasesDependency(t *t
 		},
 	}}
 	log := &events.JSONLLogger{Path: filepath.Join(root, ".sandman", "events.jsonl")}
-	factory := &managedLifecycleFactory{client: client}
+	factory := &managedLifecycleFactory{client: client, renewFeedback: true}
 	request := managedLifecycleRequest()
 
 	first, err := managedLifecycleOrchestrator(client, log, factory).RunBatch(context.Background(), request)
@@ -258,21 +258,38 @@ func TestManagedReviewLifecycle_ProductionPathRecoversAndReleasesDependency(t *t
 	}
 
 	workDir := filepath.Join(root, ".sandman", "worktrees", gateTestBranch)
+	writeInformalRespondedClassification(t, workDir, "Please fix the race in internal/socketpath/socketpath.go.")
+	syncCanonicalState(t, workDir)
+	feedbackBatch, err := managedLifecycleOrchestrator(client, log, factory).RunBatch(context.Background(), continued)
+	if err != nil {
+		t.Fatalf("feedback continuation batch: %v result=%+v", err, feedbackBatch)
+	}
+	if runByIssue(feedbackBatch, 42).Status != "await" || factory.launches(42) != 2 {
+		t.Fatalf("feedback continuation = %+v launches=%d", feedbackBatch, factory.launches(42))
+	}
+	registration, err = readFileReviewRegistration(filepath.Join(workDir, ".sandman", "state", "17.review_registration.json"))
+	if err != nil || registration.Request.TriggerID != "https://github.com/owner/repo/pull/17#issuecomment-1002" {
+		t.Fatalf("renewed canonical review registration = %+v, err=%v", registration, err)
+	}
+	renewedEvents, err := log.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	renewed := Request{}
+	if err := ApplyReadyContinuations(&renewed, FindReadyContinuations(renewedEvents, layout), layout, 1800); err != nil {
+		t.Fatalf("apply renewed continuation: %v", err)
+	}
 	writeCurrentHeadApprovalClassification(t, workDir)
 	syncCanonicalState(t, workDir)
-	secondBatch, err := managedLifecycleOrchestrator(client, log, factory).RunBatch(context.Background(), continued)
-	if err != nil {
-		t.Fatalf("approval continuation batch: %v result=%+v", err, secondBatch)
-	}
-	second := runByIssue(secondBatch, 42)
-	if second.Status != "success" || factory.launches(42) != 2 {
-		t.Fatalf("approval and merge continuation = %+v launches=%d", second, factory.launches(42))
+	approvalBatch, err := managedLifecycleOrchestrator(client, log, factory).RunBatch(context.Background(), renewed)
+	if err != nil || runByIssue(approvalBatch, 42).Status != "success" || factory.launches(42) != 3 {
+		t.Fatalf("approval continuation = %+v launches=%d err=%v", approvalBatch, factory.launches(42), err)
 	}
 	final, err := managedLifecycleOrchestrator(client, log, factory).RunBatch(context.Background(), continued)
 	if err != nil || runByIssue(final, 42).Status != "success" || runByIssue(final, 43).Status != "success" {
 		t.Fatalf("terminal statuses = %+v, err=%v, want parent and dependent success", final.Runs, err)
 	}
-	if factory.launches(42) != 2 || factory.launches(43) != 1 {
+	if factory.launches(42) != 3 || factory.launches(43) != 1 {
 		t.Fatalf("launches = parent %d dependent %d, want parent work followed by one dependent release", factory.launches(42), factory.launches(43))
 	}
 
@@ -286,11 +303,11 @@ func TestManagedReviewLifecycle_ProductionPathRecoversAndReleasesDependency(t *t
 			parentEvents = append(parentEvents, event)
 		}
 	}
-	if got := countEventsByType(parentEvents, "run.await"); got != 2 {
-		t.Fatalf("parent await events = %d, want initial wait plus restart recovery projection", got)
+	if got := countEventsByType(parentEvents, "run.await"); got != 4 {
+		t.Fatalf("parent await events = %d, want initial, restart, feedback, and approval waits", got)
 	}
-	if got := countEventsByType(parentEvents, "run.continued"); got != 1 {
-		t.Fatalf("parent continuation events = %d, want one approval re-entry", got)
+	if got := countEventsByType(parentEvents, "run.continued"); got != 2 {
+		t.Fatalf("parent continuation events = %d, want feedback and approval re-entry", got)
 	}
 	if got := countEventsByType(parentEvents, "run.retry"); got != 0 {
 		t.Fatalf("parent retry events = %d, want zero lifecycle retries", got)
