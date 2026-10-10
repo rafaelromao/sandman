@@ -1,7 +1,7 @@
 # Portal Log Continuity Evidence
 
 This record is the completion evidence for the Saved Run Log continuity change.
-The implementation revision is `e2404095ac1c54bdc043b0a7a35323e7c3da763b`.
+The implementation revision is `b94856efb1ce2bf49b6be94e93b197db78f33a73`.
 
 ## Verification Artifacts
 
@@ -65,7 +65,7 @@ gate.
 
 ## Measured Performance
 
-The source benchmark reported the following on Linux (`e2404095`, Go 1.25.0,
+The source benchmark reported the following on Linux (`b94856ef`, Go 1.25.0,
 Intel i7-7700K):
 
 | Measurement | Result |
