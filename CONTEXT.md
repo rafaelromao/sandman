@@ -126,6 +126,17 @@ merge and unverifiable completion are terminal failures. Terminal `blocked` is
 reserved for dependency outcomes. References ADR-0048.
 _Avoid_: external blocker, terminal review wait, CI retry.
 
+**Managed review lifecycle**:
+The runtime-owned sequence for an implementation pull request: confirm one
+current-head review request, await without consuming a generic retry, resume
+the same RunID for actionable feedback, renew the request after the changes
+are pushed, resume for current-head approval and green checks, verify the
+merge, then admit dependents. Restart rehydrates the event and wait records;
+explicit abort terminalizes owned work and revokes continuation. Request/head
+validation makes canonical evidence authoritative and keeps stale legacy
+evidence diagnostic-only.
+_Avoid_: review retry loop, approval shortcut, restart reset.
+
 **Informal feedback**:
 A retained top-level or inline review response with concrete code feedback that is classified mechanically (code anchor: backtick span, file path, file+line, line reference, or diff hunk line, after boilerplate-only phrasing is excluded) as request-scoped lifecycle evidence. Informal feedback is request-scoped: only current-head responses inside the active request window, without the trigger prefix, produce it; stale, unknown, superseded, trigger, and formal-precedence-bearing responses do not. It is handed to a resumed run as `informal_feedback` inside the retained `review_request` and can only turn a recoverable pending lifecycle into the shared `actionable-feedback` await (bounded by the per-session resume cap) — it never authorizes a merge, approves a request, overrides formal review decisions, or consumes retry budget. References ADR-0052.
 _Avoid_: informal approval, comment classification.
@@ -318,7 +329,7 @@ _Avoid_: reviewing status, review-in-progress. No secondary-row review chip.
 
 **Waiting**:
 Non-terminal suspension after execution admission: an authorized current-head CI/review/quota operation is resolving, or the next action is ready but capacity/pacing delays execution. Readiness changes do not return a started AgentRun to queued. Waiting retains work/dependency/cancellation ownership while releasing execution capacity and freezing accumulated active duration. Same-RunID continuation resumes that total even in another batch. Transient CI/review observation may recheck only previously validated identity-bound evidence inside its original hard deadline; quota uses its completed polling allowance. Explicit abort ends intent; an unclean exit gets five-minute ownerless recovery grace capped by an existing hard operation deadline, never by a quota exhaustion estimate. A linked active review may display Reviewing without changing this underlying lifecycle. See the canonical state-machine contract for every transition and retained bound.
-_Avoid_: blocked, queued, or terminal external-gate status.
+_Avoid_: blocked, queued, or terminal managed-wait status.
 
 **Capacity-ready continuation**:
 A started implementation whose next action is ready but whose execution admission is delayed. It remains in the public Waiting lifecycle. `run.capacity_queued` is compatibility/readiness evidence, not a transition back to queued. Normal admission rehydrates valid ownerless intent within five-minute recovery grace and revalidates the live head/request before launch.
