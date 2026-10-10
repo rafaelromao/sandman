@@ -29,6 +29,9 @@ func (f repairSandboxFactory) NewSandbox(string, string, string, string, sandbox
 // repairs. Admission/attempt ownership belongs to its caller; execution uses the
 // ordinary prompt-only lifecycle with a reserved identity and no retries.
 func (o *Orchestrator) RunRepair(ctx context.Context, req Request, cfg *config.Config) (*Result, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(req.Issues) != 0 || req.Review || req.IssueNumber != 0 || req.PRNumber != 0 {
 		return nil, fmt.Errorf("repair requires prompt-only input without issue or review metadata")
 	}
@@ -83,6 +86,9 @@ func (o *Orchestrator) RunRepair(ctx context.Context, req Request, cfg *config.C
 	}
 	session := daemon.NewRunSession(layout.SandmanDir, batchID)
 	defer session.Close()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := session.Prepare(daemon.BatchManifest{BatchId: batchID, CreatedAt: time.Now(), RunKind: "prompt-only", PortalHidden: req.PortalHidden, Issues: []int{}}); err != nil {
 		return nil, fmt.Errorf("prepare repair artifacts: %w", err)
 	}
@@ -108,6 +114,9 @@ func (o *Orchestrator) RunRepair(ctx context.Context, req Request, cfg *config.C
 		WithHeartbeatTickInterval(o.heartbeatTickInterval))
 	coord := newBatchCoordinator(req.PhaseWriter)
 	skipPermissions := req.DangerouslySkipPermissions != nil && *req.DangerouslySkipPermissions
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return repair.runPromptOnly(ctx, cfg, agentName, agentCfg, nil, sbFactory, nil,
 		req, "", 0, 1, 0, resolveRunIdleTimeout(req, cfg), "worktree", 0, false, 0, false,
 		skipPermissions, false, coord, layout)

@@ -121,6 +121,20 @@ func TestRunRepairRejectsIssueAndReviewInput(t *testing.T) {
 	}
 }
 
+func TestRunRepairCancelledBeforeAdmissionDoesNotPrepare(t *testing.T) {
+	dir := testenv.MkdirShort(t, "repair-aborted-")
+	t.Chdir(dir)
+	o := NewOrchestrator(nil, nil, nil, nil)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := o.RunRepair(ctx, Request{RunID: "repair-aborted", PromptConfig: prompt.RenderConfig{PromptFlag: "repair"}}, &config.Config{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation lost: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".sandman")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cancelled admission prepared artifacts: %v", err)
+	}
+}
+
 func TestPromptOnlyOperationalStartupDiagnostic(t *testing.T) {
 	dir := testenv.MkdirShort(t, "repair-fail-")
 	t.Chdir(dir)
