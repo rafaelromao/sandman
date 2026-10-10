@@ -26,6 +26,8 @@ type managedLifecycleFactory struct {
 	launch        map[int]int
 	started       []int
 	renewFeedback bool
+	legacyOnly    bool
+	staleLegacy   bool
 }
 
 func (f *managedLifecycleFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
@@ -44,6 +46,13 @@ func (f *managedLifecycleFactory) NewRunnable(issue *github.Issue, branch string
 		switch attempt {
 		case 1:
 			seedManagedReviewRequest(sb.WorkDir(), "1001")
+			if f.legacyOnly {
+				registrationPath := filepath.Join(sb.WorkDir(), ".sandman", "state", "17.review_registration.json")
+				_ = os.Remove(registrationPath)
+				if f.staleLegacy {
+					_ = atomicfs.WriteAtomic(filepath.Join(sb.WorkDir(), ".sandman", "state", "17.head_sha"), []byte("stale-sha\n"), 0o600)
+				}
+			}
 		case 2:
 			if f.renewFeedback {
 				f.client.setPR(branch, func(pr *github.PR) {
@@ -419,6 +428,75 @@ func TestManagedReviewLifecycle_FeedbackResumesAndRenewsRequest(t *testing.T) {
 	}
 	if countEventsByType(parentEvents, "run.continued") != 2 || countEventsByType(parentEvents, "run.retry") != 0 {
 		t.Fatalf("feedback lifecycle events = %+v", parentEvents)
+	}
+}
+
+func TestManagedReviewLifecycle_MigratesValidLegacyEvidenceBeforeResume(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	initGitRepo(t, root)
+	client := &reviewWaitSchedulerGitHubClient{fakeGitHubClient: fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Parent"}},
+		prs: map[string]*github.PR{
+			gateTestBranch: {Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha", Body: "Closes #42", StatusCheckRollup: "success", MergeStateStatus: "BLOCKED"},
+		},
+	}}
+	log := &events.JSONLLogger{Path: filepath.Join(root, ".sandman", "events.jsonl")}
+	factory := &managedLifecycleFactory{client: client, legacyOnly: true}
+	request := Request{Issues: []int{42}, RunTS: "261010120003", RunShortID: "migration", Branches: map[int]string{42: gateTestBranch}}
+
+	first, err := managedLifecycleOrchestrator(client, log, factory).RunBatch(context.Background(), request)
+	if err != nil || runByIssue(first, 42).Status != "await" {
+		t.Fatalf("legacy migration initial batch = %+v, err=%v", first, err)
+	}
+	workDir := filepath.Join(root, ".sandman", "worktrees", gateTestBranch)
+	registrationPath := filepath.Join(workDir, ".sandman", "state", "17.review_registration.json")
+	registration, err := readFileReviewRegistration(registrationPath)
+	if err != nil {
+		t.Fatalf("read migrated registration: %v", err)
+	}
+	if !registration.LegacyImported || registration.Request.TriggerID != "https://github.com/owner/repo/pull/17#issuecomment-1001" || registration.Request.DeadlineUnixSeconds <= registration.Request.StartedUnixSeconds {
+		t.Fatalf("migrated registration = %+v, want preserved identity and deadline", registration)
+	}
+
+	layout := paths.NewLayout(&config.Config{WorktreeDir: ".sandman/worktrees"}, root)
+	eventsBefore, err := log.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	continued := Request{}
+	if err := ApplyReadyContinuations(&continued, FindReadyContinuations(eventsBefore, layout), layout, 1800); err != nil {
+		t.Fatalf("apply migrated continuation: %v", err)
+	}
+	writeCurrentHeadApprovalClassification(t, workDir)
+	syncCanonicalState(t, workDir)
+	resumed, err := managedLifecycleOrchestrator(client, log, factory).RunBatch(context.Background(), continued)
+	if err != nil || runByIssue(resumed, 42).Status != "success" || factory.launches(42) != 2 {
+		t.Fatalf("migrated approval continuation = %+v launches=%d err=%v", resumed, factory.launches(42), err)
+	}
+}
+
+func TestManagedReviewLifecycle_RejectsStaleLegacyEvidence(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	initGitRepo(t, root)
+	client := &reviewWaitSchedulerGitHubClient{fakeGitHubClient: fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Parent"}},
+		prs: map[string]*github.PR{
+			gateTestBranch: {Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha", Body: "Closes #42", StatusCheckRollup: "success", MergeStateStatus: "CLEAN"},
+		},
+	}}
+	log := &events.JSONLLogger{Path: filepath.Join(root, ".sandman", "events.jsonl")}
+	factory := &managedLifecycleFactory{client: client, legacyOnly: true, staleLegacy: true}
+	result, err := managedLifecycleOrchestrator(client, log, factory).RunBatch(context.Background(), Request{
+		Issues: []int{42}, RunTS: "261010120004", RunShortID: "stale-migration", Branches: map[int]string{42: gateTestBranch},
+	})
+	if err == nil || runByIssue(result, 42).Status != "failure" {
+		t.Fatalf("stale legacy evidence = %+v, err=%v, want owned failure", result, err)
+	}
+	registrationPath := filepath.Join(root, ".sandman", "worktrees", gateTestBranch, ".sandman", "state", "17.review_registration.json")
+	if _, err := os.Stat(registrationPath); !os.IsNotExist(err) {
+		t.Fatalf("stale legacy evidence was promoted to canonical state: %v", err)
 	}
 }
 

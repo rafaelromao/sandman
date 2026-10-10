@@ -130,6 +130,43 @@ func TestSyncInstallsStatelessManagedReviewRequest(t *testing.T) {
 	}
 }
 
+func TestSyncPreservesManagedAndStandaloneCompositionBoundaries(t *testing.T) {
+	home := t.TempDir()
+	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/sandman review"}); err != nil {
+		t.Fatalf("sync skill: %v", err)
+	}
+
+	root := filepath.Join(home, ".agents", "skills", embeddedSkillRoot)
+	read := func(relative string) string {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relative)))
+		if err != nil {
+			t.Fatalf("read synced %s: %v", relative, err)
+		}
+		return string(data)
+	}
+	managed := read("review-request/SKILL.md")
+	cycle := read("review-cycle/SKILL.md")
+	facade := read("pr-review/SKILL.md")
+	standalone := read("run/SKILL.md")
+	if !strings.Contains(managed, "Post exactly one `/sandman review`") || strings.Contains(managed, "sandman-review-cycle") || strings.Contains(managed, ".sandman/state/") {
+		t.Fatal("synced managed request is not one-shot and stateless")
+	}
+	if !strings.Contains(cycle, "live in memory") || !strings.Contains(cycle, "fresh standalone invocation") || strings.Contains(cycle, ".sandman/state/") || strings.Contains(cycle, "sandman-pr-review") {
+		t.Fatal("synced standalone cycle trusts managed lifecycle state")
+	}
+	facadeLower := strings.ToLower(facade)
+	if !strings.Contains(facadeLower, "sandman-review-cycle") || !strings.Contains(facadeLower, "delegates") {
+		t.Fatal("synced compatibility entrypoint does not delegate to the standalone cycle")
+	}
+	implementation := strings.Index(standalone, "sandman-implement")
+	review := strings.Index(standalone, "sandman-review-cycle")
+	merge := strings.Index(standalone, "sandman-pr-merge")
+	if implementation < 0 || review < 0 || merge < 0 || implementation >= review || review >= merge || strings.Contains(standalone, "internal/prompt") || strings.Contains(standalone, ".sandman/events.jsonl") {
+		t.Fatal("synced standalone workflow does not own its task contract and composition")
+	}
+}
+
 func TestSyncInstallsConfiguredManagedReviewCommand(t *testing.T) {
 	home := t.TempDir()
 	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/oc review"}); err != nil {
