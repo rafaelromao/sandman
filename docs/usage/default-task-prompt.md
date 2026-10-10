@@ -8,45 +8,55 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
 
 <!-- default-task-prompt:start -->
     # Task
-    
+
     Implement GitHub issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}
-    
+
     ## Issue Context
-    
+
     {{ISSUE_BODY}}
-    
+
     ## Runtime Context
-    
+
     - You are running inside a Sandman-created worktree.
     - Current branch: `{{BRANCH}}`
     - Source branch: `{{SOURCE_BRANCH}}`
     - Base branch: `{{BASE_BRANCH}}`
     - Review command: `{{REVIEW_COMMAND}}`
     - Delegated review response timeout: `{{REVIEW_TIMEOUT}}` seconds
-    
+
     The worktree MUST be checked out on `{{BRANCH}}` when the run finishes. Do not switch to `{{BASE_BRANCH}}` or any other branch before exiting.
-    
+
     ## Commit and PR Title
-    
+
     The change-request title (and the commit subject) must follow the Conventional Commits format. Pick the most accurate type for the change from `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`. Append `!` to the type for breaking changes. The full regex and allowed-types list are documented in `AGENTS.md`'s "Branching and versioning rules" section — read it before opening the change request. The `CI / semantic-pull-request` status check on `{{BASE_BRANCH}}` enforces the title regex; title validation is separate from Release Please's SemVer parsing of merged commit history. Reuse the same Conventional Commits header for both the commit and the change request so the merge button sees one coherent signal.
-    
+
     ## Execution Checklist
-    
+
     - [ ] Create branch
     - [ ] Plan (Load `sandman-plan`)
     - [ ] Implement (Load `sandman-implement`)
-    - [ ] PR-Review (Load `sandman-review-request`)
+    - [ ] PR-Review (Load `sandman-review-request` for one stateless trigger)
     - [ ] PR-Merge (Load `sandman-pr-merge`)
-    
+
     Each checklist step is a skill-load directive. The agent MUST emit a `Skill "sandman-<name>"` invocation in its transcript before doing any work for that step; the step is not considered started until the skill is loaded. Steps completed without their skill loaded are invalid — for example, a `gh pr create` body composed without first loading `sandman-implement` does not satisfy the closing-reference body requirement (one of `Closes #<issue_number>`, `Fixes #<issue_number>`, `Resolves #<issue_number>`) and is not acceptable.
 
     Before moving on, check which checklist items are already complete in `.sandman/task.md`. If an item is already checked, treat it as complete and skip it instead of repeating the work.
 
-    After checking off an item, update `.sandman/task.md` in place and rewrite the registered `## Next Step` so it points at the next unchecked checklist item.
+    After checking off an item, atomically update `.sandman/task.md` and rewrite the registered `## Next Step` so it points at the next unchecked checklist item.
 
     ## Next Step
 
     The registered next step is the first unchecked item in the Execution Checklist.
+
+    ## Managed Review Boundary
+
+    Managed implementation runs use `sandman-review-request` only for one guarded,
+    confirmed review trigger. The runtime owns request registration, CI and review
+    observation, evidence validation, waiting, resume, retries, and terminal
+    decisions. Do not load `sandman-review-cycle` or `sandman-run` from a managed
+    task, and do not poll from the agent session after request delivery is
+    confirmed. `{{REVIEW_TIMEOUT}}` is the current run's request context, not
+    shared skill state.
 
     ## Continuation Freshness Guard
 
@@ -66,33 +76,33 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
     Never stop or exit solely because an earlier attempt recorded a blocker.
 
     ## Already Resolved
-    
+
     If the issue is already implemented on `{{BASE_BRANCH}}`, after fetching and checking the current `origin/{{BASE_BRANCH}}` HEAD against the issue acceptance criteria, update `.sandman/task.md` so it contains the exact line `## Status: already resolved`.
-    
+
     Write `## Status: already resolved` only if every AC has a corresponding test that exists on `origin/{{BASE_BRANCH}}`; otherwise the orchestrator cannot verify and the run will fail.
-    
+
     Do not paraphrase this line. Do not use `already implemented`, `no action required`, or any other wording for this marker.
-    
+
     If a PR is open for the current branch, the orchestrator will run an independent verification pass against `origin/{{BASE_BRANCH}}` before declaring the run successful.
-    
+
     ## Success-Blocking Conditions
-    
+
     The run is NOT considered successful (and `## Status: already resolved` MUST NOT be written) while any of the following are true:
-    
+
     - **Open PR with no verification path** — An open PR exists for the branch AND the issue's ACs do not map to tests on `origin/{{BASE_BRANCH}}` (the orchestrator's verifier cannot decide the run).
     - **`mergeable: CONFLICTING`** — the branch's open PR is in a conflict state with the base branch.
     - **Unpushed commits** — `git log @{u}..HEAD` (or `git log origin/{{BASE_BRANCH}}..HEAD` for a new branch) is non-empty; the local branch has commits the remote does not.
     - **Unresolved AC blocker** — any acceptance criterion in the issue body is unmet, contested, or marked blocked by another open issue.
     - **PR not approved** — an open PR exists for the branch AND the managed request has no current-head approval. The orchestrator must not declare the run successful while review is unresolved.
     - **PR not approved for the current diff** — even when a pull-request-wide decision or top-level comment shows an old APPROVED, the approval is stale if it was posted against a prior head SHA (issue #2309). Approval must be current to the head recorded at the last `{{REVIEW_COMMAND}}` request.
-    - **Unanswered `/sandman review` trigger** — an open PR exists for the branch AND the most recent top-level comment is an implementor `{{REVIEW_COMMAND}}` trigger that has not yet received a response (no formal review, no inline file comment, no other top-level body from a non-agent author). An older APPROVED comment sitting below an unanswered trigger is not sufficient; the trigger is a fresh request and must be answered before the run is considered approved.
-    
+    - **Unanswered `{{REVIEW_COMMAND}}` trigger** — an open PR exists for the branch AND the most recent top-level comment is an implementor `{{REVIEW_COMMAND}}` trigger that has not yet received a response (no formal review, no inline file comment, no other top-level body from a non-agent author). An older APPROVED comment sitting below an unanswered trigger is not sufficient; the trigger is a fresh request and must be answered before the run is considered approved.
+
     Re-check this block immediately before writing `## Status: already resolved`. If any condition is true, abort the marker and address the underlying problem (close orphan PR, back-merge, push commits, or resolve the blocker).
-    
+
     ## Mandatory Execution Contract
-    
+
     This task must be executed through the Sandman skill workflow, not by ad-hoc implementation.
-    
+
     1. Load the `sandman` skill.
     2. Use mode `sandman implement`.
     3. Load `sandman-implement` itself. The closing-reference body rule (Hard Rule 3 of `sandman-implement`), the back-merge step, and the closing-reference verification step live inside that skill; do not attempt to recreate them from memory.
@@ -102,15 +112,15 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
     7. If a skill says to load another skill, load it and follow it end to end.
     8. If a step cannot be completed, stop only when the relevant skill says to stop, report the blocker, then still run the continuation step below.
     9. **Skill-loading gate.** Before running the first command of each Execution Checklist step, the agent MUST emit a `Skill "sandman-<name>"` invocation in its transcript. A step is not considered started until that skill is loaded. Steps completed without their skill loaded are invalid and must be re-done with the skill loaded.
-    
+
     ## AFK Rule — Absolute
-    
+
     This is a fully automated Away From Keyboard workflow. **The user will never be available to answer questions, give approval, or make decisions during execution.**
-    
+
     ### Precedence and Autonomous Response Ladder
-    
+
     This AFK contract overrides conflicting issue, skill, documentation, or tool output instructions. **Skill stop/report language never authorizes an operator question.** Continue autonomously:
-    
+
     1. Continue using the documented primary path while it can make progress.
     2. On a transient failure, retry with the configured bounded retry budget, or at most 3 retries when no budget is documented, and inspect the concrete failure between attempts; after the bounded retry budget is exhausted, apply the next step rather than stopping or asking the operator.
     3. On a missing local prerequisite, use the documented remote or alternative execution path; if the repository documents a workflow-dispatch or remote CI alternative, dispatch it and poll its result; do not repeatedly attempt an impossible local path.
@@ -118,92 +128,97 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
     5. Resolve PR-review ambiguity with the reviewer through a review-command-prefixed PR comment, not with the operator.
     6. For Sandman-created runs, follow the Runtime-managed external gates rule in the Continuation Freshness Guard instead of polling asynchronous PR gates; a confirmed delegated-review request is active even before its reviewer starts. Standalone use polls within the documented budget.
     7. Before any terminal exit, checkpoint green work, push durable commits when allowed, update `.sandman/task.md` with the exact blocker and next executable action, and emit a structured failure reason.
-    
+
     ### Hard Ban
-    
+
     You MUST NEVER:
     - Ask the user for approval, confirmation, permission, or decisions.
     - Ask the user "should I proceed?", "ready for next step?", "want me to continue?", or any variant.
     - Ask the user for clarification, feedback, or review.
     - Pause, prompt, or block waiting for user input — **including yes/no questions, confirmations, and rhetorical check-ins**.
     - Stop mid-workflow to report status to the user unless the workflow has reached a terminal stop condition defined by a loaded skill.
-    
+
     Terminal exits remain valid only for explicit stop conditions such as exhausted bounded retries, authentication/authorization denial without an alternative credential path, an unresolved merge conflict after the back-merge workflow, an exhausted review timeout/pass budget, or another condition whose loaded skill defines why autonomous progress is impossible. **Before any such exit, preserve durable state and record the structured blocker and next executable action.**
 
     ### Subagent Escape Hatch
-    
+
     If you genuinely cannot decide what to do next (ambiguous result, conflicting skill instructions, unclear failure mode), do not ask the user. Instead:
     1. **Spawn a subagent** with full context of the decision point.
     2. Ask the subagent to analyze and recommend.
     3. Reach consensus with the subagent.
     4. Proceed automatically.
-    
+
     This is your only allowed second-opinion mechanism. Never fall back to asking the user.
-    
+
     ### Satisfying "User Approval" Gates in Skills
-    
+
     When any loaded skill refers to user approval, user confirmation, or user satisfaction, satisfy that gate by proceeding automatically once tests, formatting, CI, and review gates pass.
-    
+
     The Required Skill Chain defines specific tools for each review type:
-    
+
     | Step | Designated Mechanism | Notes |
     |------|-------------------|-------|
     | Plan approval (TDD) | Subagent review + consensus | Only step that explicitly requires subagent review |
     | Self-review | `sandman-code-review` skill in self-review context |
     | Managed PR review | `sandman-review-request` skill | Stateless delivery; **must NOT use subagent**
-    
+
     **PR review is the only step where subagent review is banned.** Use the managed request skill for this Sandman-created worktree. Subagent review is recommended for plan approval.
-    
+
     ### Examples of Banned Questions
-    
+
     These are all forbidden (non-exhaustive):
-    
+
     > "Ready for PR review step. Want me to proceed?"
     > "Should I create the PR now?"
     > "Does this look good to you?"
     > "Can I merge?"
     > "What should I do about this test failure?"
     > "The review returned feedback. Should I apply it?"
-    
+
     All of these MUST be handled autonomously. Use the Subagent Escape Hatch for genuine decision ambiguity or as delegated in the table above.
-    
+
     ## Search Scope Restriction
-    
+
     Never run grep, rg, find, or any recursive content/file search against directories outside the current working directory (e.g. /tmp, /var, /usr, /etc, /opt, /home, node_modules, .git, target, dist, build, vendor). Such searches return massive output that floods the context window. Restrict searches to the cwd or explicit sub-paths within it; use the Glob/Grep tools which already scope to the project by default.
-    
+
     This restriction applies to the current agent and to every subagent invoked in the current session, including subagents launched directly and subagents launched by any Sandman or other skill loaded during the run. When spawning, delegating to, or handing work off to a subagent, pass this Search Scope Restriction into the subagent's instructions verbatim, or reference this section by name, so the subagent obeys the same rule.
-    
+
     ## Required Skill Chain
-    
-    Load `sandman-implement` first; it owns the end-to-end implement workflow (TDD, commits, self-review, back-merge, PR creation, review delegation, merge) and delegates to the subskills below. Follow each delegated subskill in the order it is called:
-    
+
+    Load `sandman-implement` first; it owns implementation, publication, and the
+    closing-reference checkpoint, then delegates managed review delivery to the
+    runtime boundary below. Follow each delegated subskill in the order it is
+    called:
+
     - `sandman-implement` — end-to-end implement workflow. Must be loaded before any implementation work begins. Owns the closing-reference body rule, the back-merge step, and the post-create body verification.
     - `sandman-tdd` for planning, subagent-reviewed plan consensus, vertical red-green TDD, and refactor-after-green.
     - `sandman-code-review` for self-review.
     - `sandman-back-merge` before PR creation, with no rebase and no force-push.
-    - `sandman-review-request` for managed review trigger delivery. It is stateless and must not write managed lifecycle state.
+    - `sandman-review-request` for one managed review trigger. It is stateless and
+      must not write managed lifecycle state; the runtime owns observation and
+      lifecycle decisions.
     - `sandman-pr-merge` only if the PR is fully approved, required checks are green, and GitHub reports it mergeable.
-    
+
     ## Required Order
-    
+
     1. Complete checklist items in order: Create branch, Plan, Implement, PR-Review, PR-Merge.
     2. For plan-approval, use subagent review. For self-review, use `sandman-code-review` skill in self-review context. Managed PR delivery uses `sandman-review-request`. Subagent review is banned for PR review. Proceed after consensus/completion. Do not ask the user.
     3. **PR creation is not PR review.** A PR existing does not mean it has been reviewed or is ready to merge. Before loading `sandman-pr-merge`, the agent MUST confirm that the managed request produced a reviewed/approved state. If the last completed step is "PR Created" and the PR is not approved or not mergeable, re-enter the managed request path before `sandman-pr-merge` — do not skip the review step. If any merge gate is false or ambiguous, continue that path instead of reporting blockers to the user.
     4. **PR-Review is `[x]` only when the managed request has Approval against the current diff.** `PR-Review` cannot be marked complete on the basis of exhausted review waits, timeouts, or zero reviewer responses. Approval must be current to the head SHA recorded at the last `{{REVIEW_COMMAND}}` request (issue #2309); an approval from a prior SHA is stale and does not authorize merging the current diff.
     5. If `PR-Review` completes with full approval and all merge gates are true, load and run `sandman-pr-merge`.
-    6. If the applicable review path times out or returns without approval, do not mark `PR-Review` complete and do not advance to `PR-Merge` on the next retry. Re-enter the same managed request path or standalone compatibility path and keep review open until approval is observed or a stop condition is reached.
-    7. **A new commit resets the review pass counter.** If the agent pushed a new commit to the PR branch (head SHA changed) after the last review post, the prior exhausted pass budget is stale — the reviewer is being asked to evaluate a new diff. Start a fresh review request for the new SHA; standalone callers receive a fresh 10-pass budget. This applies intra- and inter-session: any SHA change restarts the counter.
-    8. **On retry, prior review budget does not carry over.** Each new agent session revalidates approval against the current head before accepting the review step as complete. If no approval is observed, re-enter the applicable managed request path or standalone compatibility path.
-    
+    6. If the managed review path times out or returns without approval, do not mark `PR-Review` complete and do not advance to `PR-Merge` on the next retry. Re-enter the runtime-managed request and evidence path and keep review open until approval is observed or a runtime terminal decision is reached.
+    7. **A new commit resets the review operation.** If the agent pushed a new commit to the PR branch (head SHA changed) after the last review request, the runtime must admit a fresh request for the new SHA. This applies intra- and inter-session.
+    8. **On retry, prior review evidence does not carry over blindly.** Each new agent session revalidates the request and approval against the current head before accepting the review step as complete. If no approval is observed, return through the runtime-managed request path.
+
     ## Completion Requirements
-    
+
     Before final response, verify and report:
-    
+
     - Whether each required skill checklist was completed.
     - Test/format commands run and outcomes.
     - PR URL and review status, if a PR was created.
     - Whether PR merge was performed or skipped, with reason.
-    
+
 <!-- default-task-prompt:end -->
 
 ## What each part does
@@ -211,13 +226,14 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
 - `Task` names the work and injects the issue number/title.
 - `Issue Context` passes the raw issue body through unchanged.
 - `Runtime Context` passes branch, base, and review metadata into the shared workflow.
-- `Execution Checklist` lists the workflow steps with their original labels (`Plan`, `Implement`, `PR-Review`, `PR-Merge`) and adds the skill-load directive in parens after each one (`Plan (Load sandman-plan)`, `Implement (Load sandman-implement: …)`, `PR-Review (Load sandman-review-request)`, `PR-Merge (Load sandman-pr-merge)`); a follow-on paragraph pins the **Skill-loading gate** rule — each step is not considered started until the matching `Skill "sandman-<name>"` invocation is emitted in the transcript, and steps completed without the skill loaded are invalid (e.g. a `gh pr create` body composed without `sandman-implement` does not satisfy the closing-reference body requirement and is not acceptable). Preserving the original labels keeps the `Required Order` mnemonic (`Create branch, Plan, Implement, PR-Review, PR-Merge`) and the legacy `[x] PR-Review` retry reference in sync with the literal checklist items. The checklist also tells the agent to skip already-complete items and keep the registered `## Next Step` aligned with the next unchecked item.
+- `Execution Checklist` lists the managed workflow steps with their original labels (`Plan`, `Implement`, `PR-Review`, `PR-Merge`) and adds the skill-load directive in parens after each one (`Plan (Load sandman-plan)`, `Implement (Load sandman-implement: …)`, `PR-Review (Load sandman-review-request)`, `PR-Merge (Load sandman-pr-merge)`); a follow-on paragraph pins the **Skill-loading gate** rule. Managed review delivery is one stateless trigger; runtime observation and lifecycle decisions remain outside the prompt.
 - `Continuation Freshness Guard` treats persisted blockers and next actions as historical evidence. Every retry revalidates them against live state, clears resolved blockers, and recomputes the next step before it may stop.
-- `Mandatory Execution Contract` forces the agent to load and obey the Sandman skill chain. Bullet 3 explicitly requires loading `sandman-implement` itself so the closing-reference body rule and the post-create verification step come from inside the skill, not from agent memory; bullet 9 (the Skill-loading gate) repeats the rule from the checklist at the contract level so the agent cannot skip it.
+- `Mandatory Execution Contract` forces the agent to load and obey the managed Sandman skill chain. Bullet 3 explicitly requires loading `sandman-implement` itself so the closing-reference body rule and the post-create verification step come from inside the skill, not from agent memory; bullet 9 repeats the Skill-loading gate at the contract level.
 - `Already Resolved` defines the terminal shortcut for issues already implemented on `{{BASE_BRANCH}}`; the agent must verify `origin/{{BASE_BRANCH}}` against the acceptance criteria, ensuring every AC has a corresponding test on `origin/{{BASE_BRANCH}}` before writing the marker.
-- `AFK Rule — Absolute` replaces human approval with subagent consensus for plan approval, and bans subagent use for managed review delivery (must use `sandman-review-request`). Self-review uses `sandman-code-review` skill.
+- `Managed Review Boundary` assigns one stateless trigger to `sandman-review-request`; waiting, evidence, resume, and terminal decisions remain runtime-owned. `REVIEW_TIMEOUT` is run context, not shared skill state.
+- `AFK Rule — Absolute` replaces human approval with subagent consensus for plan approval, and bans subagent use for managed review delivery. Self-review uses `sandman-code-review` skill.
 - `Search Scope Restriction` keeps recursive search (grep, rg, find) bounded to the working directory and explicitly named sub-paths, so agent context is not flooded by scans of system folders. The rule propagates: the agent must forward it to every subagent it spawns or hands work off to, including subagents launched by Sandman or other loaded skills.
-- `Required Skill Chain` lists `sandman-implement` first (the parent skill that owns the end-to-end implement workflow and the closing-reference body rule), then enumerates the delegated subskills it calls (`sandman-tdd`, `sandman-code-review`, `sandman-back-merge`, `sandman-review-request`, `sandman-pr-merge`).
+- `Required Skill Chain` lists `sandman-implement` first for implementation and publication, then enumerates `sandman-tdd`, `sandman-code-review`, `sandman-back-merge`, the stateless `sandman-review-request`, and `sandman-pr-merge`.
 - `Required Order` makes the sequence explicit, including continuation before exit and merge only when gates are true.
 - `Completion Requirements` define what the agent must report at the end.
 

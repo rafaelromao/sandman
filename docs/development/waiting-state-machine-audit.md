@@ -506,9 +506,9 @@ need confirmation so future tickets and tests cannot encode contradictory paths.
    across executor calls and restart.
 7. Turn the diagnostic overlays into permanent production-path regressions;
    cover cross-products rather than each feature in isolation.
-8. Verify event fold, terminal summary, Portal/API, dependency gating, resource
-   capacity, session reuse, and restart on the same emitted traces. Then publish
-   the change and complete delegated `sandman-pr-review`.
+    8. Verify event fold, terminal summary, Portal/API, dependency gating, resource
+       capacity, session reuse, and restart on the same emitted traces. Then publish
+       the change and complete the delegated review operation.
 
 Essential end-to-end sequences: CI → review → approval → occupied slot → merge;
 quota → recovery → pending CI; concurrent quota → blocked admission → recovery;

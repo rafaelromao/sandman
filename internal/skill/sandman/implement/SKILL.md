@@ -1,11 +1,14 @@
 ---
 name: sandman-implement
-description: Automates the full work-item implementation workflow from branch creation to change-request merge in the current repository's codebase. Use when user says sandman implement, wants to implement an open work item end-to-end, or mentions automating the implement workflow.
+description: Runs the implementation capability from branch creation through verified pull-request publication. Use when a composed workflow needs implementation, testing, self-review, and publication without delegating the standalone review cycle.
 ---
 
-# implement
+# Implementation Capability
 
-End-to-end automation for implementing an open work item in the current repository's codebase.
+Implementation and pull-request publication for an open work item. A caller
+may compose this capability with `sandman-review-cycle` and `sandman-pr-merge`.
+`sandman-review-request` is a separate stateless capability; this capability
+does not own the iterative review loop.
 
 ## Scope
 
@@ -27,9 +30,9 @@ You need to follow all steps in this workflow. Make sure you have gone through a
 
 2. **You must commit at meaningful milestones, not only at the very end.** Within a single vertical slice, accumulate the slice's RED→GREEN cycles as uncommitted work — committing after every test produces noisy, undebuggable history. The slice ends with a single commit once the slice is fully green. Across slices, commit one commit per vertical slice. Commit before any step where you might be interrupted — before delegating review, before requesting review, before any action that hands control to another agent. Uncommitted work in the working tree is at risk: if the run is interrupted, retried, or reset, anything that has not been committed is lost. Commits are your durable checkpoint.
 
-3. **You must reach the PR-created state in every run, even with partial implementation.** Only a merged PR counts as success; an open PR is the durable artifact that lets the next run pick up where this one left off. If you cannot complete all vertical slices in the plan within the run's context window, that is not a reason to keep iterating on TDD — it is a reason to commit what you have, create the PR with a closing-reference body that links back to the implementor's open work item (one of `Closes #<issue_number>`, `Fixes #<issue_number>`, or `Resolves #<issue_number>`), and let the review loop surface the gaps. An open PR with partial implementation is recoverable: the next run continues from the same branch. No PR at all means the work lives only in the local working tree, and the next run starts over from a clean branch.
+3. **You must reach the PR-created state in every run, even with partial implementation.** Only a merged PR counts as success; an open PR is the durable artifact that lets the next run pick up where this one left off. If you cannot complete all vertical slices in the plan within the run's context window, that is not a reason to keep iterating on TDD — it is a reason to commit what you have, create the PR with the platform's exact closing-reference body for the implementor's open work item, and let the review loop surface the gaps. An open PR with partial implementation is recoverable: the next run continues from the same branch. No PR at all means the work lives only in the local working tree, and the next run starts over from a clean branch.
 
-    **Closing-reference body is mandatory.** The PR body MUST contain a line of the exact shape `(Closes|Fixes|Resolves) #<issue_number>` so the tracker auto-closes the linked work item when the change request merges. Phrases like `issue #<n>` buried in prose, `Refs #<n>`, `See #<n>`, `Related to #<n>`, or `Part of #<n>` are NOT closing references — they leave the work item open after merge. A change request whose body does not match the closing-reference shape is not acceptable and must not be created.
+**Closing-reference body is mandatory.** The PR body MUST contain the platform's exact closing-reference line for the selected work item so the work item closes when the change request merges. A reference buried in prose or using a non-closing keyword is not acceptable and must not be created.
 
 4. **Never stage Sandman runtime state.** The `.sandman/` directory holds runtime files (config, prompt, Dockerfile, reviews, the per-run task document). It is intentionally gitignored and is untracked by `sandman init`'s pre-commit guard. Do not run `git add` (with or without `-f`) on any path under `.sandman/`, and do not commit changes that include such paths. The pre-commit hook installed by `sandman init` will reject any commit that attempts to put a `.sandman/` path back into the index, but treat that as a last line of defense: do not stage it in the first place. Other Sandman-managed worktrees may not yet have the hook installed, and a force-pushed history rewrite can resurrect ignored paths.
 
@@ -164,37 +167,36 @@ git commit -m "refactor: self-review fixes"
    ```bash
    git push -u origin <branch>
    ```
-2. Build the closing-reference body. The body MUST contain a line of the exact shape `(Closes|Fixes|Resolves) #<issue_number>` so the tracker auto-closes the linked work item on merge. The recommended body is exactly that single line:
+2. Build the closing-reference body. The body MUST contain the platform's exact closing-reference line for the selected work item. The recommended body is exactly that single line:
 
    ```bash
-   BODY="Closes #<issue_number>"
+   BODY="<platform-closing-reference-for-selected-work-item>"
    ```
 
-   `Closes`, `Fixes`, and `Resolves` are all accepted closing keywords on GitHub. Do NOT use `Refs`, `See`, `Related to`, `Part of`, or any other phrasing — those do not auto-close the issue, and a change request that does not auto-close its work item is not acceptable.
-3. Create the change request with that body. The PR title must use the same Conventional Commits shape as the commit subject from step 4 (same `<type>(<scope>)?:` header; same subject). The title is gated by the CI status check that scans for Conventional Commits, so do not bypass the format with the literal issue title.
+   Use the platform's accepted closing-reference form. Do not use a non-closing reference or explanatory prose in its place; a change request that does not auto-close its work item is not acceptable.
+3. Create the change request with that body. The PR title must use the same Conventional Commits shape as the commit subject from step 4 (same `<type>(<scope>)?:` header; same subject). The title is gated by the CI status check that scans for Conventional Commits, so do not bypass the format with the literal work-item title.
 
    ```bash
    gh pr create --title "$COMMIT_HEADER" --body "$BODY"
    ```
-4. Verify the body that landed on the PR. Pull it back from the tracker and confirm it matches the closing-reference shape — do not trust that the create call succeeded, because the API may accept variants silently.
+4. Verify the body that landed on the PR. Pull it back from the change-request service and confirm it matches the closing-reference shape — do not trust that the create call succeeded, because the API may accept variants silently.
 
    ```bash
    gh pr view <new-pr-number> --json body --jq -r .body
    ```
 
-   The first non-empty line of the returned body MUST match `^(Closes|Fixes|Resolves) #<issue_number>\s*$`. If it does not — for example, the body is a long description with only `issue #<n>` buried in prose — update the body in place so it is exactly `Closes #<issue_number>` (or `Fixes` / `Resolves`), then re-verify. If the body still cannot be made to match after one re-edit attempt, do not delegate review: persist the exact body, structured blocker, and next executable action in `.sandman/task.md` and the run log, then exit this attempt with a structured failure reason so the next run continues from the durable blocker.
+   The first non-empty line of the returned body MUST match the platform's closing-reference form. If it does not, update the body so it contains exactly that closing reference, then re-verify. If the body still cannot be made to match after one re-edit attempt, do not delegate review: persist the exact body, structured blocker, and next executable action in `.sandman/task.md` and the run log, then exit this attempt with a structured failure reason so the next run continues from the durable blocker.
 5. Capture the PR URL and number.
 
-### 8. Delegate review
+### 8. Verified publication checkpoint
 
-- In a Sandman-created worktree, load the `sandman-review-request` skill and
-  deliver one stateless review request. The runtime owns observation, waiting,
-  evidence validation, and re-entry.
-- Outside a Sandman-created worktree, load the `sandman-pr-review` compatibility
-  skill and run its standalone review loop.
-- Address all review feedback from the PR, including requests, suggestions, recommendations, and nits, unless there is a strong reason to ignore a specific item.
-- If you do ignore feedback, explain why in the PR thread before continuing.
-- Stop when the PR Review Agent approves or after max passes
+- Stop this capability only after the branch is pushed, the pull request exists,
+  its closing reference is verified, and `.sandman/task.md` records the
+  PR-created checkpoint plus the next action.
+- Do not load the review-cycle or merge capabilities from this capability. The
+  composing workflow selects the next capability after publication.
+- A partial implementation or open pull request is durable progress. Leave the
+  exact blocker and next executable action for the next standalone session.
 
 ## Checklist
 
@@ -206,5 +208,5 @@ git commit -m "refactor: self-review fixes"
 - [ ] Implementation committed
 - [ ] Self-review performed and fixes committed
 - [ ] Base branch merged into current branch with `sandman-back-merge`
-- [ ] PR created with a closing-reference body that links back to the implementor's open work item, and verified post-create that the body matches `^(Closes|Fixes|Resolves) #<issue_number>\s*$` (Hard Rule 3 — even with partial implementation)
-- [ ] Delegate review completed
+- [ ] PR created with a closing-reference body that links back to the implementor's open work item, and verified post-create that the body matches the platform's closing-reference form (Hard Rule 3 — even with partial implementation)
+- [ ] PR-created checkpoint recorded for the composing workflow
