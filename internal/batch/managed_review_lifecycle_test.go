@@ -342,6 +342,7 @@ func TestManagedReviewLifecycle_FeedbackResumesAndRenewsRequest(t *testing.T) {
 	if err != nil || runByIssue(first, 42).Status != "await" {
 		t.Fatalf("initial feedback batch = %+v, err=%v", first, err)
 	}
+	initialState := lifecycleState(t, log, 42)
 
 	layout := paths.NewLayout(&config.Config{WorktreeDir: ".sandman/worktrees"}, root)
 	initialEvents, err := log.Read()
@@ -361,6 +362,10 @@ func TestManagedReviewLifecycle_FeedbackResumesAndRenewsRequest(t *testing.T) {
 	if err != nil || runByIssue(feedback, 42).Status != "await" || factory.launches(42) != 2 {
 		t.Fatalf("feedback continuation = %+v launches=%d err=%v", feedback, factory.launches(42), err)
 	}
+	feedbackState := lifecycleState(t, log, 42)
+	if feedbackState.RunID != initialState.RunID {
+		t.Fatalf("feedback continuation changed RunID: initial=%q feedback=%q", initialState.RunID, feedbackState.RunID)
+	}
 	registration, err := readFileReviewRegistration(filepath.Join(workDir, ".sandman", "state", "17.review_registration.json"))
 	if err != nil || registration.Request.TriggerID != "https://github.com/owner/repo/pull/17#issuecomment-1002" {
 		t.Fatalf("renewed canonical registration = %+v, err=%v", registration, err)
@@ -379,6 +384,10 @@ func TestManagedReviewLifecycle_FeedbackResumesAndRenewsRequest(t *testing.T) {
 	final, err := orchestrator.RunBatch(context.Background(), renewed)
 	if err != nil || runByIssue(final, 42).Status != "success" || factory.launches(42) != 3 {
 		t.Fatalf("renewed approval continuation = %+v launches=%d err=%v", final, factory.launches(42), err)
+	}
+	finalState := lifecycleState(t, log, 42)
+	if finalState.RunID != initialState.RunID {
+		t.Fatalf("approval continuation changed RunID: initial=%q final=%q", initialState.RunID, finalState.RunID)
 	}
 
 	allEvents, err := log.Read()
@@ -503,7 +512,6 @@ func TestManagedReviewLifecycle_CancellationRevokesRecoveryIntent(t *testing.T) 
 	initGitRepo(t, root)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	log := &cancelOnAwaitLog{cancel: cancel}
 	client := &reviewWaitSchedulerGitHubClient{fakeGitHubClient: fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, State: "open"}, 43: {Number: 43, State: "open"}},
 		prs: map[string]*github.PR{
@@ -511,6 +519,11 @@ func TestManagedReviewLifecycle_CancellationRevokesRecoveryIntent(t *testing.T) 
 			"43-dependent": {Number: 43, State: "open", HeadRefName: "43-dependent", HeadRefOid: "dependent-sha", StatusCheckRollup: "success", MergeStateStatus: "CLEAN"},
 		},
 	}}
+	observationsAtCancel := -1
+	log := &cancelOnAwaitLog{
+		cancel:  cancel,
+		onAwait: func() { observationsAtCancel = client.observationCount() },
+	}
 	factory := &managedLifecycleFactory{client: client}
 	result, err := managedLifecycleOrchestrator(client, log, factory).RunBatch(ctx, Request{
 		Issues: []int{42, 43}, RunTS: "261010120001", RunShortID: "cancel",
@@ -521,6 +534,9 @@ func TestManagedReviewLifecycle_CancellationRevokesRecoveryIntent(t *testing.T) 
 	}
 	if factory.launches(42) != 1 || factory.launches(43) != 0 || countEventsByType(log.snapshot(), "run.retry") != 0 {
 		t.Fatalf("cancellation caused extra work: parent launches=%d dependent launches=%d retries=%d", factory.launches(42), factory.launches(43), countEventsByType(log.snapshot(), "run.retry"))
+	}
+	if observationsAtCancel < 0 || client.observationCount() != observationsAtCancel {
+		t.Fatalf("cancellation performed a later external probe: at-cancel=%d final=%d", observationsAtCancel, client.observationCount())
 	}
 	state := runStateForIssue(t, log.snapshot(), 42)
 	if !state.IsTerminal() || state.Status() != "aborted" {
