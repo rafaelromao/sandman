@@ -548,7 +548,11 @@ If `mergeStateStatus == "DIRTY"`:
 
 1. Stop polling for review feedback. The PR is unmergeable until the conflict is resolved; reviewer comments posted on a DIRTY PR do not produce a usable review.
 2. Load `sandman-back-merge` (see the `sandman-back-merge` skill). Run it on the current branch. It performs the disciplined 3-way merge of the base branch into the working branch and resolves conflicts without history rewrites.
-3. If back-merge succeeds, push the updated branch with `git push`. Update `temporary cycle head record` with the new head SHA so Step 3's stale-request check sees the new commit and re-evaluates.
+3. If back-merge succeeds, push the updated branch with `git push`. Preserve the
+   confirmed request envelope and its matching `temporary cycle head record`;
+   do not rewrite either record to the new head. Step 1 observes the live head
+   change, Step 3 marks the old request stale, and Step 4 replaces both records
+   atomically only after a fresh guarded request is confirmed.
 4. Restart from Step 1 — a fresh CI run will be triggered by the push, and the review agent may have already posted feedback on the prior SHA that the next request result should classify.
 5. If back-merge fails to resolve conflicts (e.g. semantic conflict, merge helper rejected a hunk), exit the loop with a distinct `REVIEW_CONFLICT_UNRESOLVED` reason in `.sandman/task.md` and the run log. This is **never** a `REVIEW_TIMEOUT`. It is also **never** a silent success — the PR remains unmergeable and a future run must continue from this state.
 

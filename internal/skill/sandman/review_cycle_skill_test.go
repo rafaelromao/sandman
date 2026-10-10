@@ -145,10 +145,17 @@ func TestReviewCycleRefreshesDirtyStateAfterBackMerge(t *testing.T) {
 		"mergeStateStatus=$(printf '%s' \"$pr_data\" | jq -r '.mergeStateStatus')",
 		"head_sha=\"$headRefOid\"",
 		"echo REVIEW_CONFLICT_UNRESOLVED",
+		"confirmed request envelope",
+		"do not rewrite either record to the new head",
+		"both records",
+		"fresh guarded request is confirmed",
 	} {
 		if !strings.Contains(text, required) {
 			t.Errorf("DIRTY recovery contract missing %q", required)
 		}
+	}
+	if strings.Contains(text, "Update `temporary cycle head record` with the new head SHA") {
+		t.Fatal("DIRTY recovery must not invalidate the confirmed request pair")
 	}
 	if strings.Contains(text, "Back-merge failed or unresolved conflicts — CI still blocked. Continuing to poll.") {
 		t.Fatal("DIRTY recovery must not continue with stale PR state after a failed back-merge")
