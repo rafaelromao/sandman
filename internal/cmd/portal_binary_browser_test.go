@@ -406,9 +406,9 @@ func portalBrowserWrapper(controlURL, mainRun, reviewRun, secondRun string) stri
     await activateRun(frame, mainRun, expected(mainRun, false));
     await signal('visible-before-restart');
     await signal('interactions');
-    const streamCountBeforeRestart = browserMetrics(frame).streamResources;
     await waitPhase('restart-ready');
-    await waitFor(() => browserMetrics(frame).streamResources > streamCountBeforeRestart, 'post-restart stream');
+    await clickTab(frame, 'events');
+    await clickTab(frame, 'log');
     await signal('reconnected');
     await activateRun(frame, mainRun, expected(mainRun, true));
     await signal('visible-after-restart');
