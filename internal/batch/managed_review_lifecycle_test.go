@@ -234,18 +234,19 @@ func TestManagedReviewLifecycle_ProductionPathRecoversAndReleasesDependency(t *t
 		t.Fatalf("restart changed parent RunID: %+v", continued)
 	}
 
-	writeCurrentHeadApprovalClassification(t, filepath.Join(root, ".sandman", "worktrees", gateTestBranch))
-	syncCanonicalState(t, filepath.Join(root, ".sandman", "worktrees", gateTestBranch))
+	workDir := filepath.Join(root, ".sandman", "worktrees", gateTestBranch)
+	writeCurrentHeadApprovalClassification(t, workDir)
+	syncCanonicalState(t, workDir)
 	second := executeManagedParent(client, log, factory, continued)
 	if second.Status != "success" || factory.launches(42) != 2 {
-		t.Fatalf("approval and merge continuation status=%q launches=%d", second.Status, factory.launches(42))
+		t.Fatalf("approval and merge continuation = %+v launches=%d", second, factory.launches(42))
 	}
 	final, err := managedLifecycleOrchestrator(client, log, factory).RunBatch(context.Background(), continued)
 	if err != nil || runByIssue(final, 42).Status != "success" || runByIssue(final, 43).Status != "success" {
 		t.Fatalf("terminal statuses = %+v, err=%v, want parent and dependent success", final.Runs, err)
 	}
-	if factory.launches(42) != 2 {
-		t.Fatalf("parent launches = %d, want initial and merge work only", factory.launches(42))
+	if factory.launches(42) != 2 || factory.launches(43) != 1 {
+		t.Fatalf("launches = parent %d dependent %d, want parent work followed by one dependent release", factory.launches(42), factory.launches(43))
 	}
 
 	allEvents, err := log.Read()
