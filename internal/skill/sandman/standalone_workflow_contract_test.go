@@ -157,3 +157,30 @@ func TestImplementSkillStopsAtPullRequestPublication(t *testing.T) {
 		}
 	}
 }
+
+func TestStandaloneRunRestartTrustsNoManagedState(t *testing.T) {
+	flat := strings.Join(strings.Fields(readSkillFile(t, "run/SKILL.md")), " ")
+	for _, required := range []string{
+		"A restart begins from the live pull request and starts a fresh standalone cycle",
+		"it does not import or trust managed lifecycle artifacts",
+		"must not write managed runtime state, review registrations, or managed terminal outcomes",
+		"do not translate them into managed runtime events or terminal state",
+		"does not require the prompt package",
+	} {
+		if !strings.Contains(flat, required) {
+			t.Errorf("sandman-run restart contract missing %q", required)
+		}
+	}
+}
+
+func TestManagedImplementLoadsOnlyStatelessRequestDelivery(t *testing.T) {
+	flat := strings.Join(strings.Fields(readSkillFile(t, "implement/SKILL.md")), " ")
+	for _, required := range []string{
+		"`sandman-review-request` is a separate stateless capability",
+		"this capability does not own the iterative review loop",
+	} {
+		if !strings.Contains(strings.ToLower(flat), strings.ToLower(required)) {
+			t.Errorf("managed implementation boundary missing %q", required)
+		}
+	}
+}
