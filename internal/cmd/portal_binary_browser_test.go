@@ -123,6 +123,7 @@ func TestPortalBuiltBinaryBrowserContinuity(t *testing.T) {
 	control.mu.Lock()
 	control.appendAt["before-restart"] = time.Now()
 	control.mu.Unlock()
+	waitPortalBrowserSignal(t, control, "visible-before-restart")
 	waitPortalBrowserSignal(t, control, "interactions")
 
 	if err := portalCmd.Process.Kill(); err != nil {
