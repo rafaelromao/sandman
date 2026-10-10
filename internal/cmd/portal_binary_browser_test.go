@@ -30,6 +30,7 @@ type portalBinaryBrowserControl struct {
 	phase     string
 	error     string
 	signals   chan string
+	history   []string
 	appendAt  map[string]time.Time
 	signalAt  map[string]time.Time
 }
@@ -70,6 +71,7 @@ func TestPortalBuiltBinaryBrowserContinuity(t *testing.T) {
 			name := r.URL.Query().Get("name")
 			control.mu.Lock()
 			control.signalAt[name] = time.Now()
+			control.history = append(control.history, name)
 			if name == "error" {
 				control.error = r.URL.Query().Get("detail")
 			}
@@ -310,7 +312,6 @@ func portalBrowserWrapper(controlURL, mainRun, reviewRun, secondRun string) stri
     frame.style.width = '1280px';
     frame.style.height = '800px';
     frame.src = await get('/portal');
-    await new Promise((resolve, reject) => { frame.onload = resolve; frame.onerror = reject; });
     await waitFor(() => frame.contentDocument.querySelector('tr[data-run-key="' + mainRun + '"]'), 'main row');
     return frame;
   }
@@ -532,7 +533,11 @@ func waitPortalBrowserSignal(t *testing.T, control *portalBinaryBrowserControl, 
 			t.Fatalf("browser signal = %q, want %q", got, want)
 		}
 	case <-time.After(20 * time.Second):
-		t.Fatalf("timed out waiting for browser signal %q", want)
+		control.mu.RLock()
+		history := append([]string(nil), control.history...)
+		phase, browserError := control.phase, control.error
+		control.mu.RUnlock()
+		t.Fatalf("timed out waiting for browser signal %q: history=%v phase=%q error=%q", want, history, phase, browserError)
 	}
 }
 
