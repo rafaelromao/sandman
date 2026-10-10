@@ -2902,6 +2902,8 @@ func expandPath(path string) (string, error) {
 // pointer to a value type, update runSingle / runPromptOnlySingle to share it
 // explicitly — otherwise serialisation will silently break.
 type runSessionOptions struct {
+	// repairHost skips git preparation only for the independent repair adapter.
+	repairHost                 bool
 	waitOwnerPulse             func(string) <-chan time.Time
 	now                        func() time.Time
 	baseBranchSync             func(repoPath, sourceBranch string) error
@@ -3225,10 +3227,16 @@ func hasExactTaskStatus(taskContent, status string) bool {
 // semantics (was orchestrator.go:1965-1974 in the applyOverrideAndIdentity
 // era; byte-identical in the characterization net).
 func (s *runSession) startOptsFor(branch string) (sandbox.SandboxStart, AgentRunResult, bool) {
+	if s.opts.repairHost {
+		return sandbox.SandboxStart{}, AgentRunResult{}, true
+	}
 	identity, err := s.identityResolver.resolve()
 	if err != nil {
 		fmt.Fprintf(s.deps.errorLog, "error: resolve git identity for issue %d: %v\n", s.issueNumber, err)
 		result := AgentRunResult{Status: "failure", Branch: branch}
+		if !s.isIssueDriven() {
+			result.OperationalError = fmt.Errorf("resolve git identity: %w", err)
+		}
 		if s.issueNumber > 0 {
 			result.IssueNumber = s.issueNumber
 			result.Issue = issueRef(s.issueNumber)
@@ -3556,7 +3564,7 @@ func (s *runSession) finishTerminal(ctx context.Context, runID string, result Ag
 func (s *runSession) finishDecidedTerminal(ctx context.Context, runID string, result AgentRunResult, extras map[string]any, wt sandbox.Sandbox, branch string) string {
 	_, terminalStatus := terminalRunEvent(ctx, result.Status)
 	worktreeState := "preserved"
-	if terminalStatus == "success" && !s.review && (s.cfg == nil || s.cfg.EffectiveCleanupWorktrees()) {
+	if terminalStatus == "success" && !s.review && !s.opts.repairHost && (s.cfg == nil || s.cfg.EffectiveCleanupWorktrees()) {
 		restoreErr := wt.RestoreHostPaths()
 		if restoreErr != nil && s.deps.errorLog != nil {
 			fmt.Fprintf(s.deps.errorLog, "warning: restore host paths for succeeded run %d: %v\n", s.issueNumber, restoreErr)
@@ -4462,6 +4470,9 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 	}
 	result, started := o.newRunExecutorWith(ctx, bc, sbFactory, containerAlloc, coord, commander, layout).Execute(ctx, row)
 	if !started {
+		if result.OperationalError != nil {
+			return &Result{Runs: []AgentRunResult{result}}, fmt.Errorf("prompt-only run failed: %w", result.OperationalError)
+		}
 		return &Result{Runs: []AgentRunResult{result}}, fmt.Errorf("prompt-only run failed")
 	}
 	resultStatus := events.RunStatusFromPayload(result.Status)

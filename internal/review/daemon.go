@@ -19,6 +19,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
+	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
@@ -284,6 +285,9 @@ type Daemon struct {
 	quotaPaused        bool
 	quotaPausedUntil   time.Time
 	quotaLastProbe     time.Time
+	// Guarded by the health-state advisory lock; reused for restart lifecycle
+	// observation rather than opening a new event-log descriptor every tick.
+	healthEvents *events.JSONLLogger
 }
 
 // effectiveLaunchBackoff returns the launch-failure backoff for
@@ -1377,20 +1381,36 @@ func (d *Daemon) Stop() error {
 // any in-flight RunBatch call. When a Trigger channel is wired, the
 // initial scan is skipped so tests can drive ticks explicitly.
 func (d *Daemon) Run(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer func() {
+		cancel()
+		d.inFlight.Wait()
+	}()
 	login, err := d.GitHub.AuthenticatedLogin(ctx)
 	if err != nil {
-		return fmt.Errorf("authenticated GitHub login: %w", err)
+		if _, recoverable := d.Runner.(repairRunner); !recoverable {
+			return fmt.Errorf("authenticated GitHub login: %w", err)
+		}
+		d.logf("authenticated GitHub login: %v", err)
+		d.observeHealthFailure(ctx, "authentication", "authenticated GitHub login", 0, err)
 	}
 	d.authenticatedLogin = strings.TrimSpace(login)
-	if d.authenticatedLogin == "" {
-		return fmt.Errorf("authenticated GitHub login is empty")
+	if d.authenticatedLogin == "" && err == nil {
+		err = errors.New("authenticated GitHub login is empty")
+		if _, recoverable := d.Runner.(repairRunner); !recoverable {
+			return err
+		}
+		d.logf("%v", err)
+		d.observeHealthFailure(ctx, "authentication", "authenticated GitHub login", 0, err)
+	}
+	if err == nil && d.authenticatedLogin != "" {
+		d.resolveHealthOperation("authentication")
 	}
 
 	if err := d.StartSocket(); err != nil {
 		return err
 	}
 	defer d.Stop()
-	defer d.inFlight.Wait()
 
 	if d.Config != nil {
 		effectiveAgent := d.effectiveAgent()
@@ -1443,6 +1463,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 // tick performs one full scan over open PRs. It serializes via a single
 // semaphore so concurrent trigger signals are dropped while a scan runs.
 func (d *Daemon) tick(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if d.isRateLimited() {
 		return nil
 	}
@@ -1452,6 +1475,18 @@ func (d *Daemon) tick(ctx context.Context) error {
 	default:
 		d.logf("scan: previous tick still running, skipping")
 		return nil
+	}
+	if _, recoverable := d.Runner.(repairRunner); recoverable && d.authenticatedLogin == "" {
+		login, err := d.GitHub.AuthenticatedLogin(ctx)
+		if err == nil && strings.TrimSpace(login) == "" {
+			err = errors.New("authenticated GitHub login is empty")
+		}
+		if err != nil {
+			d.observeHealthFailure(ctx, "authentication", "authenticated GitHub login", 0, err)
+			return fmt.Errorf("authenticated GitHub login: %w", err)
+		}
+		d.authenticatedLogin = strings.TrimSpace(login)
+		d.resolveHealthOperation("authentication")
 	}
 
 	if d.isQuotaPaused() {
@@ -1468,16 +1503,20 @@ func (d *Daemon) tick(ctx context.Context) error {
 		}
 	}
 	if err := d.refreshSeenCacheIfChanged(); err != nil {
+		d.observeHealthFailure(ctx, "scan-cache", "refresh review state cache", 0, err)
 		return fmt.Errorf("refresh review state cache: %w", err)
 	}
+	d.resolveHealthOperation("scan-cache")
 
 	prs, err := d.GitHub.ListOpenPRs(ctx)
 	if err != nil {
 		if github.IsRateLimited(err) {
 			d.deferForRateLimit()
 		}
+		d.observeHealthFailure(ctx, "scan-list", "list open PRs", 0, err)
 		return fmt.Errorf("list open PRs: %w", err)
 	}
+	d.resolveHealthOperation("scan-list")
 
 	var wg sync.WaitGroup
 	for _, pr := range prs {
@@ -1518,6 +1557,9 @@ func (d *Daemon) deferForRateLimit() {
 // when its conversation changes, so a stable token means the previous comment
 // snapshot remains valid for trigger discovery.
 func (d *Daemon) shouldReadComments(pr github.PR) bool {
+	if d.hasHealthFailure(pr.Number) {
+		return true
+	}
 	if pr.UpdatedAt.IsZero() {
 		return true
 	}
@@ -1610,7 +1652,15 @@ func hasMarkdownHeading(body, heading string) bool {
 // Acceptance criteria #1 and #3 from issue #1224:
 //   - No code path creates `.sandman/reviews/<PR>/`
 //   - `review-state.json` lives at `<batch>/runs/<run>/review-state.json`
-func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
+func (d *Daemon) processPR(ctx context.Context, prNumber int) (operationErr error) {
+	defer func() {
+		key := fmt.Sprintf("comments:%d", prNumber)
+		if operationErr != nil {
+			d.observeHealthFailure(ctx, key, "observe review requests", prNumber, operationErr)
+		} else {
+			d.resolveHealthOperation(key)
+		}
+	}()
 	comments, err := d.GitHub.ListPRComments(ctx, prNumber)
 	if err != nil {
 		return fmt.Errorf("list comments: %w", err)
@@ -1843,6 +1893,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	reviewRunFolder, perRowRunID, rs, state, prepErr := d.prepareReviewRun(ctx, prNumber, newest.key)
 	if prepErr != nil {
 		d.logf("prepare review run for PR #%d comment %s: %v", prNumber, comment.ID, prepErr)
+		d.observeHealthFailure(ctx, requestHealthKey(prNumber, newest.key), "prepare review run", prNumber, prepErr)
 		d.releasePRSlot(prNumber)
 		return nil
 	}
@@ -2207,7 +2258,15 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 	return d.launchReviewRevision(ctx, prNumber, focus, commentID, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs, state, priorReviewExists, "")
 }
 
-func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, triggerKey, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID string, rs *daemon.RunSession, state *ReviewStateStore, priorReviewExists bool, priorReviewContext string) error {
+func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, triggerKey, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID string, rs *daemon.RunSession, state *ReviewStateStore, priorReviewExists bool, priorReviewContext string) (operationErr error) {
+	defer func() {
+		key := requestHealthKey(prNumber, triggerKey)
+		if operationErr != nil {
+			d.observeHealthFailure(ctx, key, "launch review", prNumber, fmt.Errorf("request %s run %s artifacts %s worktree %s: %w", triggerKey, perRowRunID, reviewRunFolder, d.reviewWorktreePath(prNumber, triggerKey), operationErr))
+		} else {
+			d.resolveHealthOperation(key)
+		}
+	}()
 	// We compute the review branch name up-front so the cleanup defer
 	// has it available on every exit path, including early errors
 	// before RunBatch runs. The same value is reused in the
@@ -2425,6 +2484,13 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 		return errors.New("quota exhausted: usage limit reached")
 	}
 	if err != nil {
+		if result != nil {
+			for _, run := range result.Runs {
+				if run.OperationalError != nil {
+					err = fmt.Errorf("%w: %w", err, run.OperationalError)
+				}
+			}
+		}
 		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("run batch: %w", err))
 	}
 
@@ -2472,7 +2538,15 @@ func (d *Daemon) postDecision(ctx context.Context, prNumber int, commentID, revi
 	return d.postDecisionWithCleanup(ctx, prNumber, commentID, reviewRunFolder, state, nil)
 }
 
-func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, commentID, reviewRunFolder string, state *ReviewStateStore, preserveWorktree *bool) error {
+func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, commentID, reviewRunFolder string, state *ReviewStateStore, preserveWorktree *bool) (operationErr error) {
+	defer func() {
+		key := requestHealthKey(prNumber, commentID)
+		if operationErr != nil {
+			d.observeHealthFailure(ctx, key, "publish review decision", prNumber, operationErr)
+		} else {
+			d.resolveHealthOperation(key)
+		}
+	}()
 	decisionPath := d.reviewDecisionPath(prNumber, commentID)
 	info, err := os.Stat(decisionPath)
 	if err != nil {
@@ -2855,6 +2929,7 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 			// to launch because the existing post is still better
 			// than re-running the agent.
 			d.logf("PR #%d comment %s: rehydrate post stat %s failed: %v; keeping entry for retry (issue #1847)", prNumber, comment.ID, decisionPath, statErr)
+			d.observeHealthFailure(ctx, requestHealthKey(prNumber, triggerKey), "stat pending review decision", prNumber, statErr)
 			return true
 		}
 		if !info.Mode().IsRegular() {
@@ -2881,6 +2956,7 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 			// to launch because the existing post is still better
 			// than re-running the agent.
 			d.logf("PR #%d comment %s: rehydrate post read %s failed: %v; keeping entry for retry (issue #1847)", prNumber, comment.ID, decisionPath, err)
+			d.observeHealthFailure(ctx, requestHealthKey(prNumber, triggerKey), "read pending review decision", prNumber, err)
 			return true
 		}
 		body = []byte(publicationBody(RedactBody(string(body)), triggerKey))
@@ -2893,6 +2969,7 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 			Timestamp: d.now(),
 		}); err != nil {
 			d.logf("PR #%d comment %s: upgrade publication outbox: %v; keeping entry for retry", prNumber, comment.ID, err)
+			d.observeHealthFailure(ctx, requestHealthKey(prNumber, triggerKey), "upgrade pending publication outbox", prNumber, err)
 			return true
 		}
 		d.pendingPostMu.Lock()
@@ -2917,6 +2994,7 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 	alreadyPosted, lookupErr := publicationAlreadyPosted(ctx, d, prNumber, string(body))
 	if lookupErr != nil {
 		d.logf("PR #%d comment %s: rehydrate publication lookup failed: %v; keeping entry", prNumber, comment.ID, lookupErr)
+		d.observeHealthFailure(ctx, requestHealthKey(prNumber, triggerKey), "observe pending review publication", prNumber, lookupErr)
 		return true
 	}
 	if !alreadyPosted {
@@ -2924,6 +3002,7 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 	}
 	if lookupErr != nil {
 		d.logf("PR #%d comment %s: rehydrate post failed: %v; keeping entry for next-tick retry (issue #1847)", prNumber, comment.ID, lookupErr)
+		d.observeHealthFailure(ctx, requestHealthKey(prNumber, triggerKey), "publish pending review decision", prNumber, lookupErr)
 		return true
 	}
 
@@ -2940,10 +3019,12 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 		// a fresh launch in the interim (the entry acts as the
 		// source of truth until the store can be opened).
 		d.logf("PR #%d comment %s: open review-state for MarkSeen failed: %v; keeping entry and seen-cache untouched (issue #1847)", prNumber, comment.ID, storeErr)
+		d.observeHealthFailure(ctx, requestHealthKey(prNumber, triggerKey), "open pending review state", prNumber, storeErr)
 		return true
 	}
 	if err := store.MarkSeen(triggerKey, "success"); err != nil {
 		d.logf("PR #%d comment %s: MarkSeen(success) failed in rehydrate branch: %v; keeping entry (issue #1847)", prNumber, comment.ID, err)
+		d.observeHealthFailure(ctx, requestHealthKey(prNumber, triggerKey), "acknowledge pending review publication", prNumber, err)
 		return true
 	}
 	if err := removePendingPublicationMarker(filepath.Dir(entry.reviewState)); err != nil {
@@ -2957,6 +3038,7 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 		delete(d.pendingPost, prNumber)
 	}
 	d.pendingPostMu.Unlock()
+	d.resolveHealthOperation(requestHealthKey(prNumber, triggerKey))
 	return true
 }
 

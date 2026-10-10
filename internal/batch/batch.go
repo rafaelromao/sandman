@@ -190,6 +190,8 @@ type Result struct {
 // at write time in `emitTerminal` in `internal/batch/orchestrator.go`,
 // where the `retries_done` payload key is set to `RetriesTotal - 1`.
 type AgentRunResult struct {
+	// OperationalError preserves preparation diagnostics for prompt-only callers.
+	OperationalError   error     `json:"-"`
 	UsageLimitDeadline time.Time `json:"-"`
 	IssueNumber        int
 	Issue              *int
