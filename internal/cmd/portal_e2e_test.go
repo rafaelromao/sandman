@@ -874,11 +874,10 @@ func createPromptOnlyRunSocket(t *testing.T, repoDir, runName string, issueNumbe
 }
 
 // createMixedBatchRunSocket reproduces the exact mixed-batch shape from
-// issues 854/860: a single run directory whose batch.json lists both
-// issues and whose batch.sock streams prefixed lines for each. It writes
-// to the socket only — no saved run.log file is created — so the
-// assertion exercises the live-socket filter path, not the saved-file
-// reader.
+// issues 854/860: a single run directory whose batch.json lists both issues
+// and whose batch.sock streams prefixed lines for each. Per-RunID saved logs
+// are also created because the Portal's authoritative log path is the saved
+// artifact; the socket remains available for attach compatibility coverage.
 func createMixedBatchRunSocket(t *testing.T, repoDir, runName string) string {
 	t.Helper()
 
@@ -893,6 +892,21 @@ func createMixedBatchRunSocket(t *testing.T, repoDir, runName string) string {
 	}
 	if err := daemon.WriteManifest(batchDir, manifest); err != nil {
 		t.Fatalf("write manifest: %v", err)
+	}
+	for _, issue := range []int{860, 854} {
+		runID := fmt.Sprintf("%s-%d", runName, issue)
+		runDir := filepath.Join(batchDir, "runs", runID)
+		if err := os.MkdirAll(runDir, 0o755); err != nil {
+			t.Fatalf("create run directory for issue %d: %v", issue, err)
+		}
+		runManifest := fmt.Sprintf(`{"runID":%q,"batchId":%q,"kind":"issue","status":"running","issue":%d}`, runID, runName, issue)
+		if err := os.WriteFile(filepath.Join(runDir, "run.json"), []byte(runManifest), 0o644); err != nil {
+			t.Fatalf("write run manifest for issue %d: %v", issue, err)
+		}
+		log := fmt.Sprintf("[%s] 18:51:0%d saved artifact\n", runID, issue%10)
+		if err := os.WriteFile(filepath.Join(runDir, "run.log"), []byte(log), 0o644); err != nil {
+			t.Fatalf("write saved log for issue %d: %v", issue, err)
+		}
 	}
 
 	ln, err := net.Listen("unix", filepath.Join(batchDir, "batch.sock"))
