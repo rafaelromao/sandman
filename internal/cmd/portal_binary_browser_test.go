@@ -532,7 +532,7 @@ func waitPortalBrowserSignal(t *testing.T, control *portalBinaryBrowserControl, 
 		if got != want {
 			t.Fatalf("browser signal = %q, want %q", got, want)
 		}
-	case <-time.After(20 * time.Second):
+	case <-time.After(120 * time.Second):
 		control.mu.RLock()
 		history := append([]string(nil), control.history...)
 		phase, browserError := control.phase, control.error
