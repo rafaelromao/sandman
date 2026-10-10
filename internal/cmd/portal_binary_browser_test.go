@@ -127,7 +127,12 @@ func TestPortalBuiltBinaryBrowserContinuity(t *testing.T) {
 	control.mu.Unlock()
 	waitPortalBrowserSignal(t, control, "visible-before-restart")
 	waitPortalBrowserSignal(t, control, "interactions")
-
+	appendPortalBrowserLog(t, logPaths[mainRun], "["+mainRun+"] 10:00:02 live-after-restart\n")
+	appendPortalBrowserLog(t, logPaths[reviewRun], "["+reviewRun+"] 10:00:02 live-after-restart\n")
+	appendPortalBrowserLog(t, logPaths[secondRun], "["+secondRun+"] 10:00:02 live-after-restart\n")
+	control.mu.Lock()
+	control.appendAt["after-restart"] = time.Now()
+	control.mu.Unlock()
 	if err := portalCmd.Process.Kill(); err != nil {
 		t.Fatalf("stop Portal for forced reconnect: %v", err)
 	}
@@ -135,14 +140,15 @@ func TestPortalBuiltBinaryBrowserContinuity(t *testing.T) {
 	portalCmd = startPortalBrowserBinary(t, binPath, repoDir, port)
 	waitPortalBrowserReady(t, initialURL)
 	control.mu.Lock()
-	control.appendAt["after-restart"] = time.Now()
 	control.phase = "restart-ready"
 	control.mu.Unlock()
 	waitPortalBrowserSignal(t, control, "reconnected")
-	appendPortalBrowserLog(t, logPaths[mainRun], "["+mainRun+"] 10:00:02 live-after-restart\n")
-	appendPortalBrowserLog(t, logPaths[reviewRun], "["+reviewRun+"] 10:00:02 live-after-restart\n")
-	appendPortalBrowserLog(t, logPaths[secondRun], "["+secondRun+"] 10:00:02 live-after-restart\n")
+	control.mu.Lock()
+	control.phase = "logs-ready"
+	control.mu.Unlock()
 
+	waitPortalBrowserSignal(t, control, "visible-after-restart")
+	waitPortalBrowserSignal(t, control, "metrics")
 	waitPortalBrowserSignal(t, control, "done")
 	select {
 	case err := <-browserDone:
@@ -208,6 +214,7 @@ func TestPortalBuiltBinaryBrowserContinuity(t *testing.T) {
 func createPortalBinaryBrowserFixture(t *testing.T, repoDir string) (string, string, string, map[string]string) {
 	t.Helper()
 	batchID := "binary-browser-2772"
+	createdAt := time.Now()
 	mainRun := batchID + "-impl"
 	reviewRun := batchID + "-review"
 	secondRun := batchID + "-second"
@@ -215,7 +222,7 @@ func createPortalBinaryBrowserFixture(t *testing.T, repoDir string) (string, str
 	if err := os.MkdirAll(batchDir, 0o755); err != nil {
 		t.Fatalf("create browser batch: %v", err)
 	}
-	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{Issues: []int{2772, 2773}, CreatedAt: time.Now()}); err != nil {
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{Issues: []int{2772, 2773}, CreatedAt: createdAt}); err != nil {
 		t.Fatalf("write browser batch manifest: %v", err)
 	}
 	logPaths := map[string]string{}
@@ -258,9 +265,9 @@ func createPortalBinaryBrowserFixture(t *testing.T, repoDir string) (string, str
 	}
 	logger := &events.JSONLLogger{Path: filepath.Join(repoDir, ".sandman", "events.jsonl")}
 	for _, event := range []events.Event{
-		{Type: "run.started", Timestamp: time.Now(), RunID: mainRun, Issue: 2772, Payload: map[string]any{"batch_id": batchID, "branch": "binary-browser-2772"}},
-		{Type: "run.started", Timestamp: time.Now().Add(time.Second), RunID: reviewRun, Issue: 2772, Payload: map[string]any{"batch_id": batchID, "review": true, "pr_number": 42, "branch": "binary-browser-2772"}},
-		{Type: "run.started", Timestamp: time.Now().Add(2 * time.Second), RunID: secondRun, Issue: 2773, Payload: map[string]any{"batch_id": batchID, "branch": "binary-browser-2773"}},
+		{Type: "run.started", Timestamp: createdAt, RunID: mainRun, Issue: 2772, Payload: map[string]any{"batch_id": batchID, "branch": "binary-browser-2772"}},
+		{Type: "run.started", Timestamp: createdAt.Add(time.Second), RunID: reviewRun, Issue: 2772, Payload: map[string]any{"batch_id": batchID, "review": true, "pr_number": 42, "branch": "binary-browser-2772"}},
+		{Type: "run.started", Timestamp: createdAt.Add(2 * time.Second), RunID: secondRun, Issue: 2773, Payload: map[string]any{"batch_id": batchID, "branch": "binary-browser-2773"}},
 	} {
 		if err := logger.Log(event); err != nil {
 			t.Fatalf("write browser event: %v", err)
@@ -341,6 +348,9 @@ func portalBrowserWrapper(controlURL, mainRun, reviewRun, secondRun string) stri
     const pre = frame.contentDocument.querySelector('pre[data-scroll-key="' + key + '"]');
     return pre ? pre.getAttribute('data-rendered-log') || '' : '';
   }
+  function modelText(frame, key) {
+    return frame.contentWindow.eval('portalLogModel.text(' + JSON.stringify(key) + ')');
+  }
   async function assertLog(frame, key, want) {
     await waitFor(() => logText(frame, key) === want, 'complete log ' + key);
     if (logText(frame, key) !== want) throw new Error('log mismatch for ' + key);
@@ -410,13 +420,10 @@ func portalBrowserWrapper(controlURL, mainRun, reviewRun, secondRun string) stri
     await clickTab(frame, 'events');
     await clickTab(frame, 'log');
     await signal('reconnected');
-    await activateRun(frame, mainRun, expected(mainRun, true));
-    await signal('visible-after-restart');
-    await activateSubject(frame, reviewRun, expected(reviewRun, true));
-    await activateRun(frame, secondRun, expected(secondRun, true));
-    await activateRun(frame, mainRun, expected(mainRun, true));
+    await waitPhase('logs-ready');
     frame = await loadPortal();
     await activateRun(frame, mainRun, expected(mainRun, true));
+    await signal('visible-after-restart');
     await activateSubject(frame, reviewRun, expected(reviewRun, true));
     await activateRun(frame, secondRun, expected(secondRun, true));
     await activateRun(frame, mainRun, expected(mainRun, true));
@@ -429,9 +436,9 @@ func portalBrowserWrapper(controlURL, mainRun, reviewRun, secondRun string) stri
     marker.id = 'portal-binary-browser-marker';
     marker.textContent = JSON.stringify({
       logs: {
-        main: logText(frame, mainRun),
-        review: logText(frame, reviewRun),
-        second: logText(frame, secondRun),
+        main: modelText(frame, mainRun),
+        review: modelText(frame, reviewRun),
+        second: modelText(frame, secondRun),
       },
       metrics,
       subject: 'subject-switched',
