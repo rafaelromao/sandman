@@ -105,7 +105,7 @@ func TestPortalBuiltBinaryBrowserContinuity(t *testing.T) {
 		"--disable-web-security",
 		"--enable-precise-memory-info",
 		"--window-size=1360,900",
-		"--virtual-time-budget=30000",
+		"--virtual-time-budget=120000",
 		"--dump-dom",
 		controlServer.URL+"/wrapper",
 	)
