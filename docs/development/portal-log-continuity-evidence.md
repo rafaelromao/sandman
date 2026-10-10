@@ -59,8 +59,8 @@ gate.
 | AC-23 | `portal_stream_replay_test.go` removed; production source/model/HTTP tests retained | PASS |
 | AC-24 | `.github/workflows/go.yml`, Portal browser gate; Chromium required and skips fail | PASS |
 | AC-25 | `go test ./internal/cmd -count=1`; current PR CI checks; release tiers remain before-release validation | PASS |
-| AC-26 | `TestPortal_E2E_BuiltBinarySavedLogReconnect`; implementation-revision binary reload/reconnect/restart fixture; embedded Portal assets are served by the built binary | PASS |
-| AC-27 | `BenchmarkPortalLogSourceAppendCost`, `BenchmarkPortalLogSourceIdlePollCost`, `TestPortalLogModel_BoundedRetentionMetrics`, and `TestPortalPerf_LongTaskProfile_*` | PASS |
+| AC-26 | `TestPortal_E2E_BuiltBinarySavedLogReconnect`, `TestPortalBuiltBinaryBrowserContinuity`; implementation-revision binary uses one stable browser endpoint through a forced backend outage, same-port restart, cursor reconnect, reload, row reopen, and subject switching; embedded Portal assets are served by the built binary | PASS |
+| AC-27 | `BenchmarkPortalLogSourceAppendCost`, `BenchmarkPortalLogSourceIdlePollCost`, `TestPortalLogModel_BoundedRetentionMetrics`, `TestPortalPerf_LongTaskProfile_*`, and `TestPortalBuiltBinaryBrowserContinuity`; browser fixture asserts retained bytes stay bounded and post-restart live visibility is sub-second | PASS |
 | AC-28 | This tracked evidence matrix and the linked CI/build artifacts | PASS |
 
 ## Measured Performance
@@ -85,7 +85,11 @@ measurement; the actual browser continuity and DOM/source-oracle assertions
 are covered by the no-skip Linux CI gate.
 
 The unchanged-file tail path is explicitly guarded by `info.Size() == s.pos` and
-does not hash the prefix. The controlled browser fixture reports live updates
-through the structured source/model path, and the Linux gate verifies that the
-complete source range remains visible after 50 mixed transitions and forced
-reconnects.
+does not hash the prefix. The built-binary browser fixture uses a saved log over
+256 KiB, compares the authoritative rendered DOM text with the model and source
+oracle, and records 262,053 retained bytes with 3045 DOM nodes and four stream
+resources in the current local run. Its forced same-endpoint restart measured
+229-438 ms from the post-restart append to visible DOM text across two runs; the
+test fails at one second. The Linux gate verifies that the complete source range
+remains visible after mixed transitions, row reopen, subject switching, reload,
+and forced reconnect.

@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,6 +37,43 @@ type portalBinaryBrowserControl struct {
 	signalAt  map[string]time.Time
 }
 
+type portalBinaryBrowserProxy struct {
+	mu        sync.RWMutex
+	target    string
+	available bool
+	server    *httptest.Server
+}
+
+func newPortalBinaryBrowserProxy(t *testing.T, target string) *portalBinaryBrowserProxy {
+	t.Helper()
+	proxy := &portalBinaryBrowserProxy{target: target, available: true}
+	proxy.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxy.mu.RLock()
+		currentTarget := proxy.target
+		available := proxy.available
+		proxy.mu.RUnlock()
+		if !available {
+			http.Error(w, "Portal backend restarting", http.StatusServiceUnavailable)
+			return
+		}
+		targetURL, err := url.Parse(currentTarget)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		httpProxy := httputil.NewSingleHostReverseProxy(targetURL)
+		httpProxy.ServeHTTP(w, r)
+	}))
+	t.Cleanup(proxy.server.Close)
+	return proxy
+}
+
+func (p *portalBinaryBrowserProxy) SetAvailable(available bool) {
+	p.mu.Lock()
+	p.available = available
+	p.mu.Unlock()
+}
+
 func TestPortalBuiltBinaryBrowserContinuity(t *testing.T) {
 	if _, err := exec.LookPath("chromium"); err != nil {
 		t.Skip("chromium not on PATH; focused Linux CI installs it")
@@ -47,7 +86,9 @@ func TestPortalBuiltBinaryBrowserContinuity(t *testing.T) {
 	initRunIntegrationRepo(t, repoDir)
 	mainRun, reviewRun, secondRun, logPaths := createPortalBinaryBrowserFixture(t, repoDir)
 	port := freePortalBrowserPort(t)
-	initialURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	backendURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	proxy := newPortalBinaryBrowserProxy(t, backendURL)
+	initialURL := proxy.server.URL
 	control := &portalBinaryBrowserControl{
 		portalURL: initialURL,
 		signals:   make(chan string, 8),
@@ -89,7 +130,7 @@ func TestPortalBuiltBinaryBrowserContinuity(t *testing.T) {
 	defer controlServer.Close()
 
 	portalCmd := startPortalBrowserBinary(t, binPath, repoDir, port)
-	waitPortalBrowserReady(t, initialURL)
+	waitPortalBrowserReady(t, backendURL)
 	t.Cleanup(func() {
 		if portalCmd.Process != nil {
 			_ = portalCmd.Process.Kill()
@@ -127,28 +168,27 @@ func TestPortalBuiltBinaryBrowserContinuity(t *testing.T) {
 	control.mu.Unlock()
 	waitPortalBrowserSignal(t, control, "visible-before-restart")
 	waitPortalBrowserSignal(t, control, "interactions")
+	proxy.SetAvailable(false)
 	if err := portalCmd.Process.Kill(); err != nil {
 		t.Fatalf("stop Portal for forced reconnect: %v", err)
 	}
 	_ = portalCmd.Wait()
-	restartPort := freePortalBrowserPort(t)
-	restartURL := fmt.Sprintf("http://127.0.0.1:%d", restartPort)
-	portalCmd = startPortalBrowserBinary(t, binPath, repoDir, restartPort)
-	waitPortalBrowserReady(t, restartURL)
+	portalCmd = startPortalBrowserBinary(t, binPath, repoDir, port)
+	waitPortalBrowserReady(t, backendURL)
 	appendPortalBrowserLog(t, logPaths[mainRun], "["+mainRun+"] 10:00:02 live-after-restart\n")
 	appendPortalBrowserLog(t, logPaths[reviewRun], "["+reviewRun+"] 10:00:02 live-after-restart\n")
 	appendPortalBrowserLog(t, logPaths[secondRun], "["+secondRun+"] 10:00:02 live-after-restart\n")
+	proxy.SetAvailable(true)
 	control.mu.Lock()
-	control.portalURL = restartURL
 	control.appendAt["after-restart"] = time.Now()
 	control.phase = "restart-ready"
 	control.mu.Unlock()
-	waitPortalBrowserSignal(t, control, "reconnected")
+	waitPortalBrowserSignal(t, control, "reconnect-started")
 	control.mu.Lock()
 	control.phase = "logs-ready"
 	control.mu.Unlock()
-
 	waitPortalBrowserSignal(t, control, "visible-after-restart")
+	waitPortalBrowserSignal(t, control, "reconnected")
 	waitPortalBrowserSignal(t, control, "metrics")
 	waitPortalBrowserSignal(t, control, "done")
 	select {
@@ -189,9 +229,9 @@ func TestPortalBuiltBinaryBrowserContinuity(t *testing.T) {
 		got  string
 		want string
 	}{
-		{name: "main", got: result.Logs.Main, want: portalBinaryExpectedLog(mainRun, true)},
-		{name: "review", got: result.Logs.Review, want: portalBinaryExpectedLog(reviewRun, true)},
-		{name: "second", got: result.Logs.Second, want: portalBinaryExpectedLog(secondRun, true)},
+		{name: "main", got: result.Logs.Main, want: portalBinaryExpectedLog(mainRun, true, true)},
+		{name: "review", got: result.Logs.Review, want: portalBinaryExpectedLog(reviewRun, true, true)},
+		{name: "second", got: result.Logs.Second, want: portalBinaryExpectedLog(secondRun, true, true)},
 	} {
 		if check.got != check.want {
 			t.Fatalf("built-binary %s log mismatch: got %q, want %q", check.name, check.got, check.want)
@@ -202,15 +242,15 @@ func TestPortalBuiltBinaryBrowserContinuity(t *testing.T) {
 		got  string
 		want string
 	}{
-		{name: "main DOM", got: result.DOMLogs.Main, want: portalBinaryExpectedLog(mainRun, true)},
-		{name: "review DOM", got: result.DOMLogs.Review, want: portalBinaryExpectedLog(reviewRun, true)},
-		{name: "second DOM", got: result.DOMLogs.Second, want: portalBinaryExpectedLog(secondRun, true)},
+		{name: "main DOM", got: result.DOMLogs.Main, want: portalBinaryExpectedLog(mainRun, true, true)},
+		{name: "review DOM", got: result.DOMLogs.Review, want: portalBinaryExpectedLog(reviewRun, true, true)},
+		{name: "second DOM", got: result.DOMLogs.Second, want: portalBinaryExpectedLog(secondRun, true, true)},
 	} {
 		if check.got != check.want {
 			t.Fatalf("built-binary %s log mismatch: got %q, want %q", check.name, check.got, check.want)
 		}
 	}
-	if result.Metrics.DOMNodes <= 0 || result.Metrics.PreCount <= 0 || result.Metrics.RenderedLogBytes <= 0 || result.Metrics.RetainedBytes <= 0 || result.Metrics.StreamResources <= 0 {
+	if result.Metrics.DOMNodes <= 0 || result.Metrics.PreCount <= 0 || result.Metrics.RenderedLogBytes <= 0 || result.Metrics.RetainedBytes <= 0 || result.Metrics.RetainedBytes > portalLogSnapshotLimit || result.Metrics.StreamResources <= 0 {
 		t.Fatalf("invalid built-binary browser metrics: %+v", result.Metrics)
 	}
 	t.Logf("built-binary browser retention metrics: dom_nodes=%d pre_count=%d rendered_log_bytes=%d retained_bytes=%d heap_used_bytes=%d stream_resources=%d", result.Metrics.DOMNodes, result.Metrics.PreCount, result.Metrics.RenderedLogBytes, result.Metrics.RetainedBytes, result.Metrics.HeapUsedBytes, result.Metrics.StreamResources)
@@ -224,7 +264,7 @@ func TestPortalBuiltBinaryBrowserContinuity(t *testing.T) {
 	afterLatency := control.signalAt["visible-after-restart"].Sub(control.appendAt["after-restart"])
 	metricsLine := control.signalAt["metrics"]
 	control.mu.RUnlock()
-	if beforeLatency <= 0 || afterLatency <= 0 || metricsLine.IsZero() {
+	if beforeLatency <= 0 || afterLatency <= 0 || afterLatency >= time.Second || metricsLine.IsZero() {
 		t.Fatalf("browser measurements were not recorded: before=%s after=%s metrics=%v", beforeLatency, afterLatency, !metricsLine.IsZero())
 	}
 	t.Logf("built binary continuity measurements: append_to_visible_before_restart=%s append_to_visible_after_restart=%s", beforeLatency, afterLatency)
@@ -297,20 +337,37 @@ func createPortalBinaryBrowserFixture(t *testing.T, repoDir string) (string, str
 
 func portalBinaryInitialLog(runID string) string {
 	var log strings.Builder
-	for i := 0; i < 32; i++ {
-		fmt.Fprintf(&log, "[%s] 09:59:%02d history-%02d\n", runID, i, i)
+	for i := 0; i < 6000; i++ {
+		fmt.Fprintf(&log, "[%s] 09:59:%02d history-%05d %s\n", runID, i%60, i, strings.Repeat("x", 40))
 	}
 	fmt.Fprintf(&log, "[%s] 10:00:00 initial\n", runID)
 	return log.String()
 }
 
-func portalBinaryExpectedLog(runID string, afterRestart bool) string {
-	var log strings.Builder
-	for i := 0; i < 32; i++ {
-		fmt.Fprintf(&log, "09:59:%02d history-%02d\n", i, i)
+func portalBinaryExpectedLog(runID string, afterRestart, reloaded bool) string {
+	raw := portalBinaryInitialLog(runID)
+	if reloaded {
+		raw += "[" + runID + "] 10:00:01 live-before-restart\n"
+		if afterRestart {
+			raw += "[" + runID + "] 10:00:02 live-after-restart\n"
+		}
 	}
-	log.WriteString("10:00:00 initial\n10:00:01 live-before-restart\n")
-	if afterRestart {
+	if len(raw) > portalLogSnapshotLimit {
+		candidate := len(raw) - portalLogSnapshotLimit
+		raw = raw[candidate+strings.IndexByte(raw[candidate:], '\n')+1:]
+		if !reloaded {
+			raw = raw[strings.IndexByte(raw, '\n')+1:]
+		}
+	}
+	var log strings.Builder
+	for _, line := range strings.Split(strings.TrimSuffix(raw, "\n"), "\n") {
+		log.WriteString(strings.TrimPrefix(line, "["+runID+"] "))
+		log.WriteByte('\n')
+	}
+	if !reloaded {
+		log.WriteString("10:00:01 live-before-restart\n")
+	}
+	if afterRestart && !reloaded {
 		log.WriteString("10:00:02 live-after-restart\n")
 	}
 	return log.String()
@@ -352,24 +409,42 @@ func portalBrowserWrapper(controlURL, mainRun, reviewRun, secondRun string) stri
     row(frame, key).click();
     await sleep(250);
   }
+  async function reopenRun(frame, key) {
+    await clickRow(frame, key);
+    await clickRow(frame, key);
+    await clickTab(frame, 'log');
+  }
   async function clickTab(frame, tab) {
     await waitFor(() => frame.contentDocument.querySelector('button[data-action="set-tab"][data-tab="' + tab + '"]'), tab + ' tab');
     frame.contentDocument.querySelector('button[data-action="set-tab"][data-tab="' + tab + '"]').click();
     await sleep(250);
   }
-  function expected(runID, afterRestart) {
-    const lines = [];
-    for (let i = 0; i < 32; i++) {
-      lines.push('09:59:' + String(i).padStart(2, '0') + ' history-' + String(i).padStart(2, '0'));
+  function expected(runID, afterRestart, reloaded) {
+    const rawLines = [];
+    for (let i = 0; i < 6000; i++) {
+      rawLines.push('[' + runID + '] 09:59:' + String(i % 60).padStart(2, '0') + ' history-' + String(i).padStart(5, '0') + ' ' + 'x'.repeat(40));
     }
-    lines.push('10:00:00 initial');
-    lines.push('10:00:01 live-before-restart');
-    if (afterRestart) lines.push('10:00:02 live-after-restart');
+    rawLines.push('[' + runID + '] 10:00:00 initial');
+    if (reloaded) {
+      rawLines.push('[' + runID + '] 10:00:01 live-before-restart');
+      if (afterRestart) rawLines.push('[' + runID + '] 10:00:02 live-after-restart');
+    }
+    let raw = rawLines.join('\n') + '\n';
+    if (raw.length > 256 * 1024) {
+      raw = raw.slice(raw.length - 256 * 1024);
+      raw = raw.slice(raw.indexOf('\n') + 1);
+      if (!reloaded) raw = raw.slice(raw.indexOf('\n') + 1);
+    }
+    const lines = raw.trimEnd().split('\n').map(line => line.slice(('[' + runID + '] ').length));
+    if (!reloaded) {
+      lines.push('10:00:01 live-before-restart');
+      if (afterRestart) lines.push('10:00:02 live-after-restart');
+    }
     return lines.join('\n') + '\n';
   }
   function logText(frame, key) {
     const pre = frame.contentDocument.querySelector('pre[data-scroll-key="' + key + '"]');
-    return pre ? pre.getAttribute('data-rendered-log') || '' : '';
+    return pre ? pre.textContent || '' : '';
   }
   function modelText(frame, key) {
     return frame.contentWindow.eval('portalLogModel.text(' + JSON.stringify(key) + ')');
@@ -386,8 +461,8 @@ func portalBrowserWrapper(controlURL, mainRun, reviewRun, secondRun string) stri
     await clickTab(frame, 'log');
     await assertLog(frame, key, want);
   }
-  async function activateSubject(frame, value, want) {
-    await activateRun(frame, mainRun, value === mainRun ? want : expected(mainRun, want.indexOf('live-after-restart') >= 0));
+  async function activateSubject(frame, value, want, mainWant) {
+    await activateRun(frame, mainRun, value === mainRun ? want : (mainWant || expected(mainRun, want.indexOf('live-after-restart') >= 0)));
     const select = frame.contentDocument.querySelector('select[data-action="set-subject"]');
     if (!select) throw new Error('subject selector missing');
     if (select.value !== value) {
@@ -401,7 +476,7 @@ func portalBrowserWrapper(controlURL, mainRun, reviewRun, secondRun string) stri
   function browserMetrics(frame) {
     const doc = frame.contentDocument;
     const pres = Array.from(doc.querySelectorAll('pre[data-scroll-key]'));
-    const renderedLogBytes = pres.reduce((sum, pre) => sum + (pre.getAttribute('data-rendered-log') || '').length, 0);
+    const renderedLogBytes = pres.reduce((sum, pre) => sum + (pre.textContent || '').length, 0);
     const retainedBytes = pres.reduce((sum, pre) => sum + Number(pre.getAttribute('data-log-retained-bytes') || 0), 0);
     const framePerformance = frame.contentWindow.performance;
     const streamResources = framePerformance.getEntriesByType('resource').filter(entry => entry.name.indexOf('/api/runs/stream') >= 0).length;
@@ -442,17 +517,20 @@ func portalBrowserWrapper(controlURL, mainRun, reviewRun, secondRun string) stri
     await waitPhase('restart-ready');
     await clickTab(frame, 'events');
     await clickTab(frame, 'log');
-    await signal('reconnected');
+    await signal('reconnect-started');
     await waitPhase('logs-ready');
-    frame = await loadPortal();
-    await activateRun(frame, mainRun, expected(mainRun, true));
-    const domLogs = { main: logText(frame, mainRun), review: '', second: '' };
+    await reopenRun(frame, mainRun);
+    await assertLog(frame, mainRun, expected(mainRun, true, false));
     await signal('visible-after-restart');
-    await activateSubject(frame, reviewRun, expected(reviewRun, true));
+    await signal('reconnected');
+    frame = await loadPortal();
+    await activateRun(frame, mainRun, expected(mainRun, true, true));
+    const domLogs = { main: logText(frame, mainRun), review: '', second: '' };
+    await activateSubject(frame, reviewRun, expected(reviewRun, true, true), expected(mainRun, true, true));
     domLogs.review = logText(frame, reviewRun);
-    await activateRun(frame, secondRun, expected(secondRun, true));
+    await activateRun(frame, secondRun, expected(secondRun, true, true));
     domLogs.second = logText(frame, secondRun);
-    await activateRun(frame, mainRun, expected(mainRun, true));
+    await activateRun(frame, mainRun, expected(mainRun, true, true));
     const metrics = browserMetrics(frame);
     if (metrics.domNodes <= 0 || metrics.preCount <= 0 || metrics.renderedLogBytes <= 0 || metrics.retainedBytes <= 0) {
       throw new Error('invalid browser retention metrics: ' + JSON.stringify(metrics));
@@ -473,8 +551,9 @@ func portalBrowserWrapper(controlURL, mainRun, reviewRun, secondRun string) stri
     document.body.appendChild(marker);
     await signal('done');
   } catch (err) {
-    document.body.setAttribute('data-browser-error', String(err && err.stack || err));
-    await fetch(control + '/signal?name=error&detail=' + encodeURIComponent(String(err && err.stack || err)));
+    const detail = String(err && err.stack || err);
+    document.body.setAttribute('data-browser-error', detail);
+    await fetch(control + '/signal?name=error&detail=' + encodeURIComponent(detail));
     return;
   }
 })();
