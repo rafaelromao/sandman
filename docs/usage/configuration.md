@@ -190,7 +190,7 @@ See [Sandbox Modes](sandbox-modes.md) for detailed scheduling behavior.
 |-----|---------|-------------|
 | `run_idle_timeout` | `3600` | Seconds of inactivity before the heartbeat watchdog aborts the run. `0` disables the watchdog |
 
-`run_idle_timeout` detects a stalled agent and records `run.idle_timeout` before ending its attempt. Supported OpenCode/Claude resettable usage limits instead enter waiting, release capacity, and reuse the conversation at ten-minute polls. One absolute five-hour episode deadline survives scheduling and restart; expiry reports structured usage-limit failure without spending another ordinary retry burst. Recovery reopens batch admission. The watchdog is independent of this budget; `--run-idle-timeout` overrides it for one invocation. See the [state-machine contract](../architecture/run-state-machine.md).
+`run_idle_timeout` detects a stalled agent and records `run.idle_timeout` before ending its attempt. Supported OpenCode/Claude resettable usage limits instead enter waiting, release capacity, and reuse the conversation at ten-minute polls. The five-hour allowance counts completed polling intervals across re-entry and restart; capacity delay and process downtime consume none. After the final boundary probe, configured ordinary fresh-session retries remain available. Missing or invalid accounting disables further quota waits while permitting bounded execution. Expected exhaustion is an estimate, not an admission or ownership deadline. Recovery reopens batch admission; a failed quota owner retires only its own pause. The watchdog is independent of this allowance; `--run-idle-timeout` overrides it for one invocation. See the [state-machine contract](../architecture/run-state-machine.md).
 
 ## Worktree cleanup
 
@@ -218,11 +218,18 @@ Use this list when an OpenCode provider introduces new context-exhaustion wordin
 
 Delegated review and current-head CI waits retain logical row ownership but
 release the execution slot between observations. Review uses its confirmed
-request deadline; CI uses an independent durable 30-minute deadline per pull
-request head. A new head resets only the CI generation. Dependents remain held
+request deadline; CI uses an independent durable 30-minute deadline per identified
+current-head check execution. A new head or verified same-head rerun starts a new
+CI generation; observing or restarting the same execution preserves its deadline.
+Dependents remain held
 while the prerequisite awaits external progress; a deadline expiry, CI failure,
-or merge conflict resumes remediation work, while exhausted same-head CI
-remediation terminalizes as failure.
+or merge conflict resumes remediation work. Implementation recovery retains
+three in-session lifecycle relaunches in addition to entry and configured ordinary
+retries; old cumulative repair ledgers cannot prevent a fresh executor from acting.
+Standalone CI instead permits 60 minutes and three fixes per current head within
+one invocation, resetting on a new head or fresh invocation. Reviewer launch
+failures retain backoff and publication recovery without a three-launch gate;
+the ten-pass review loop and configured request deadline retain their bounds.
 
 ## CLI config commands
 

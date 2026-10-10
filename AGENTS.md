@@ -16,14 +16,25 @@ abort ends every unfinished owned phase without further retries/probes/launches.
 Terminal decisions require no execution slot. Adapters must consume the selected
 action, never re-infer it from a gate string.
 
-Fixed budgets: CI 30 minutes per head (managed and standalone), review configured
-request deadline (default 1800/minimum 240 seconds), recognized implementation
-quota absolute five-hour episode with ten-minute polling, and three durable
-repair attempts per relevant head/request. Re-entry and restart renew none.
+Retained bounds: managed CI 30 minutes per identified current-head check execution;
+an observed rerun starts a new bounded operation while re-observation/restart of
+the same execution preserves its deadline. Legacy head-only evidence binds once
+when execution identity becomes available. Standalone CI 60 minutes and
+three fixes per current head within one invocation; review configured request
+deadline (default 1800/minimum 240 seconds). Implementation allows three
+in-session lifecycle relaunches in addition to entry; a fresh executor gets a
+fresh allowance, ignoring obsolete cumulative repair ledgers. Reviewer launches
+retain backoff and artifact claims without a three-launch exhaustion gate.
+Recognized implementation quota allows five hours of accumulated completed
+ten-minute polling, preserved across re-entry/restart; capacity delay and downtime
+consume none. Its exhaustion estimate is diagnostic, not an operation deadline;
+the final probe and configured fresh-session ordinary retries remain available.
 Implementation quota gates are batch-local; reviewer gates remain daemon-wide.
 RunID advisory claims and atomic ownership/schedule leases preserve valid
 ownerless intent for five minutes, capped by its operation deadline. Normal
 admission rehydrates within grace; explicit terminal abort cannot be reclaimed.
+Quota schedules have no hard operation deadline and retain the same recovery
+grace; missing/invalid accounting disables further quota waits, not bounded execution.
 Managed merge work requires confirmed current-request/current-head delegated
 approval; a pending request on a CLEAN PR stays waiting.
 

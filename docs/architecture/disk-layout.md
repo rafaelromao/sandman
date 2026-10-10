@@ -66,14 +66,28 @@ not artifact availability or a scheduling label, authorizes terminal operations.
 
 Started suspension schedules live in `<batch>/runs/<RunID>/wait.json`; initial
 admissions use `state/waiting/<RunID>.json` without creating execution folders.
-Atomic leases preserve ownerless intent for five minutes capped by the operation
-deadline, while stable advisory claims fence ownership. Worktree-local
-`<PR>.ci_wait.json` and `<PR>.lifecycle-budget.json` keep fixed operation budgets.
-`<PR>.review-launch-<digest>.json` stores the three-attempt reviewer launch
-budget for an exact trigger revision and head. Its exhaustion is observable by
-the waiting implementation; publication retries do not consume that budget.
-Standalone CI uses `<PR>-standalone-ci-<head>.json` and retains prior-head records
-so workflow re-entry cannot reset their deadline or repair count.
+Atomic leases preserve ownerless intent for five minutes capped by a hard
+operation deadline, while stable advisory claims fence ownership. Worktree-local
+`<PR>.ci_wait.json` retains managed CI head and check-execution identity with a
+fixed 30-minute deadline per execution. Re-observation and restart preserve it;
+new rerun execution links create a new bounded generation. Legacy head-only
+records bind once when that identity is available. Remediation counts are
+diagnostic, not cumulative repair reservations.
+Legacy `<PR>.lifecycle-budget.json`, `<PR>.review-launch-<digest>.json`, and
+`<PR>-standalone-ci-<head>.json` budget ledgers are obsolete and ignored for
+execution admission. Standalone CI keeps its 60-minute window and three-fix
+allowance per current head within one invocation. Reviewer request/head advisory
+artifact claims and durable decision-publication evidence remain authoritative
+for exclusivity and publication recovery.
+
+Ready quota probes persist completed polling in `run.capacity_queued` metadata:
+`usage_limit_probe`, `usage_limit_waited_seconds`, and
+`usage_limit_deadline_unix_seconds`. The last field is a recomputed expected
+exhaustion estimate, not a hard deadline. Quota `wait.json` schedules use stable
+`quota:<RunID>` operation identity and zero `OperationDeadline`. Legacy quota
+estimates normalize during reads and live-owner writes without extending existing
+ownerless grace. Missing/invalid accounting disables additional quota waits but
+allows configured bounded ordinary execution.
 These files record ownership/readiness/timing only, never mutable lifecycle status.
 
 `batches.json` Batch/Run statuses (`active`, `archived`, `unavailable`) describe

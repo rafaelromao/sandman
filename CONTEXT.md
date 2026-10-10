@@ -44,6 +44,23 @@ _Avoid_: Run, job, task.
 A Batch execution that runs without fetching a GitHub Issue. Also called a no-issue run. Prompt-only runs use a `<slug>-<timestamp>` branch name and carry a null issue in events and result output; human-facing summaries label them `prompt-only`.
 _Avoid_: synthetic issue run.
 
+**Lifecycle relaunch allowance**:
+The historical bound on implementation recovery within one executor session: three relaunches in addition to entry. A fresh executor has a fresh allowance; persisted head/request repair counts do not form a cumulative launch budget. Ordinary agent retries and the ten-pass review loop retain their separate bounds.
+_Avoid_: durable repair budget, cumulative remediation exhaustion.
+
+**CI wait generation**:
+A bounded managed CI observation operation identified by pull request, current
+head, and the stable set of provider check-execution links. The same execution
+keeps its thirty-minute deadline across status changes, polling, and restart.
+A verified same-head rerun has new execution links and starts a new bounded
+generation; an old expired wait cannot force repeated remediation while that
+rerun resolves. Legacy head-only records bind once to a known execution.
+Unavailable execution identity cannot renew an identified generation.
+
+**Quota polling allowance**:
+Five hours of accumulated completed ten-minute polling for a recognized implementation provider limit. Re-entry and restart preserve consumed polling; capacity delay, process downtime, and cancelled intervals consume none. Expected wall-clock exhaustion is a diagnostic estimate, not an operation deadline or ownership cutoff. The final boundary probe and configured fresh-session ordinary retries remain available; missing or invalid accounting disables additional waits while permitting bounded execution. Implementation pauses are batch-local; reviewer recovery remains daemon-wide.
+_Avoid_: absolute quota deadline, fresh allowance on re-entry.
+
 **DependencyResolver**:
 The component that fetches issues, extracts their BlockedBy relationships, validates the dependency graph (detecting cycles and missing blockers), and produces a topologically sorted ResolvedBatch.
 _Avoid_: scheduler, planner.
@@ -300,7 +317,7 @@ The in-flight portal status for an active review run (a run whose `run.started` 
 _Avoid_: reviewing status, review-in-progress. No secondary-row review chip.
 
 **Waiting**:
-Non-terminal suspension after execution admission: an authorized current-head CI/review/quota operation is resolving, or the next action is ready but capacity/pacing delays execution. Readiness changes do not return a started AgentRun to queued. Waiting retains work/dependency/cancellation ownership while releasing execution capacity and freezing accumulated active duration. Same-RunID continuation resumes that total even in another batch. Transient observation may recheck only previously validated identity-bound evidence inside its original deadline. Explicit abort ends intent; an unclean exit gets five-minute ownerless recovery grace capped by the operation deadline. A linked active review may display Reviewing without changing this underlying lifecycle. See the canonical state-machine contract for every transition and fixed budget.
+Non-terminal suspension after execution admission: an authorized current-head CI/review/quota operation is resolving, or the next action is ready but capacity/pacing delays execution. Readiness changes do not return a started AgentRun to queued. Waiting retains work/dependency/cancellation ownership while releasing execution capacity and freezing accumulated active duration. Same-RunID continuation resumes that total even in another batch. Transient CI/review observation may recheck only previously validated identity-bound evidence inside its original hard deadline; quota uses its completed polling allowance. Explicit abort ends intent; an unclean exit gets five-minute ownerless recovery grace capped by an existing hard operation deadline, never by a quota exhaustion estimate. A linked active review may display Reviewing without changing this underlying lifecycle. See the canonical state-machine contract for every transition and retained bound.
 _Avoid_: blocked, queued, or terminal external-gate status.
 
 **Capacity-ready continuation**:

@@ -4,6 +4,8 @@ The canonical [AgentRun state machine](../architecture/run-state-machine.md)
 contains the required transition table, budgets, ownership, cancellation and
 recovery rules. The [waiting audit](waiting-state-machine-audit.md) records the
 historical defects and superseded contracts that motivated those rules.
+The [AFK exit baseline](afk-exit-regression-baseline.md) inventories historical
+exit boundaries retained and this week's added restrictions removed.
 
 These pages are for contributors changing Sandman itself. If you want to use Sandman, start with [Get Started](../get-started/README.md) and [Using Sandman](../usage/README.md).
 

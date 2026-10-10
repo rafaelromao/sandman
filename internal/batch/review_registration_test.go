@@ -21,6 +21,8 @@ import (
 type registrationGitHubClient struct {
 	fakeGitHubClient
 	comments []github.PRComment
+	reviews  []github.PRReview
+	inline   []github.PRReviewComment
 }
 
 type registrationGateSnapshotClient struct {
@@ -83,6 +85,53 @@ func (c *registrationGitHubClient) ListPRComments(context.Context, int) ([]githu
 	return c.comments, nil
 }
 
+func (c *registrationGitHubClient) ListPRReviews(context.Context, int) ([]github.PRReview, error) {
+	return c.reviews, nil
+}
+
+func (c *registrationGitHubClient) ListPRReviewComments(context.Context, int) ([]github.PRReviewComment, error) {
+	return c.inline, nil
+}
+
+func migratePendingReviewGeneration(t *testing.T, workDir string, prNumber int) reviewRequestRegistration {
+	t.Helper()
+	layout := paths.NewLayout(nil, workDir)
+	registration, err := readFileReviewRegistration(layout.PRReviewRegistrationPath(prNumber))
+	if err != nil {
+		t.Fatalf("read canonical pending registration: %v", err)
+	}
+	requestData, err := json.MarshalIndent(registration.Request, "", "  ")
+	if err != nil {
+		t.Fatalf("encode legacy review request: %v", err)
+	}
+	state := registration.State
+	state.State = "pending"
+	state.Lifecycle = "started"
+	state.Reason = "pending"
+	state.ObservedState = ""
+	state.ObservedReason = ""
+	state.ObservedAt = ""
+	state.Evidence = nil
+	state.ElapsedSeconds = intPointer(0)
+	stateData, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		t.Fatalf("encode legacy pending state: %v", err)
+	}
+	if err := os.WriteFile(layout.PRReviewRequestPath(prNumber), requestData, 0o600); err != nil {
+		t.Fatalf("write legacy review request: %v", err)
+	}
+	if err := os.WriteFile(layout.PRReviewRequestStatePath(prNumber), stateData, 0o600); err != nil {
+		t.Fatalf("write legacy pending state: %v", err)
+	}
+	if err := os.WriteFile(layout.PRHeadShaPath(prNumber), []byte(registration.Request.HeadSHA+"\n"), 0o600); err != nil {
+		t.Fatalf("write legacy review head: %v", err)
+	}
+	if err := os.Remove(layout.PRReviewRegistrationPath(prNumber)); err != nil {
+		t.Fatalf("remove canonical registration for migration: %v", err)
+	}
+	return registration
+}
+
 func TestReviewRegistration_RunSessionReceivesConfiguredSeams(t *testing.T) {
 	store := &registrationStoreStub{}
 	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
@@ -96,6 +145,25 @@ func TestReviewRegistration_RunSessionReceivesConfiguredSeams(t *testing.T) {
 	}
 	if !session.reviewNow().Equal(now) {
 		t.Fatalf("run session clock = %s, want %s", session.reviewNow(), now)
+	}
+}
+
+func TestReviewTriggerIdentity_NormalizesCommentIDAndURL(t *testing.T) {
+	tests := []struct {
+		name string
+		id   string
+		want string
+	}{
+		{name: "numeric id", id: "1001", want: "comment:1001"},
+		{name: "comment url", id: "https://github.com/owner/repo/pull/42#issuecomment-1001", want: "comment:1001"},
+		{name: "opaque id", id: " trigger-1001 ", want: "raw:trigger-1001"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := reviewTriggerIdentity(tt.id); got != tt.want {
+				t.Fatalf("reviewTriggerIdentity(%q) = %q, want %q", tt.id, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -140,7 +208,7 @@ func TestReviewRegistration_RegistersOnePendingCurrentHeadRecord(t *testing.T) {
 	if record.Protocol != reviewRegistrationProtocol {
 		t.Fatalf("registration protocol = %q, want %q", record.Protocol, reviewRegistrationProtocol)
 	}
-	if record.Request.PullRequest != pr.Number || record.Request.HeadSHA != "current-sha" || record.Request.TriggerID != "trigger-1001" {
+	if record.Request.PullRequest != pr.Number || record.Request.HeadSHA != "current-sha" || record.Request.TriggerID != "trigger-1001" || record.Request.TriggerIdentity != "raw:trigger-1001" {
 		t.Fatalf("registration identity = %#v", record.Request)
 	}
 	if record.Request.DeadlineUnixSeconds != int(registeredAt.Unix())+600 {
@@ -201,6 +269,598 @@ func TestReviewRegistration_RegistersOnePendingCurrentHeadRecord(t *testing.T) {
 	}
 	if read.Request.TriggerID != "trigger-1002" || read.Request.DeadlineUnixSeconds != int(registeredAt.Unix())+200+600 {
 		t.Fatalf("newer-trigger registration = %#v", read)
+	}
+}
+
+func TestReviewRegistration_ImportsValidatedLegacyObservationOnce(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments: []github.PRComment{{
+			ID:        "trigger-canonical-import",
+			Body:      "/sandman review",
+			CreatedAt: now.Add(-time.Minute),
+		}},
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+		reviewRegistrationNow:  func() time.Time { return now },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	pr := &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("register pending request: %v", err)
+	}
+	registrationPath := paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number)
+	before, err := readFileReviewRegistration(registrationPath)
+	if err != nil {
+		t.Fatalf("read pending registration: %v", err)
+	}
+	writeRespondedApprovalForCanonicalRequest(t, workDir, pr.Number)
+	if artifacts, artifactErr := readReviewTimeoutArtifacts(workDir, "owner/repo", pr, pr.HeadRefOid); artifactErr != nil {
+		t.Fatalf("validate legacy observation: %v", artifactErr)
+	} else if _, handoffErr := reviewTimeoutHandoffFromArtifacts(artifacts, pr.HeadRefOid); handoffErr != nil {
+		t.Fatalf("decode legacy observation: %v", handoffErr)
+	}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("import responded observation: %v", err)
+	}
+	client.reviews = []github.PRReview{{ID: "2001", State: "APPROVED", CommitID: "current-sha", CreatedAt: now.Add(time.Minute)}}
+	after, err := readFileReviewRegistration(registrationPath)
+	if err != nil {
+		t.Fatalf("read imported registration: %v", err)
+	}
+	if after.Request.DeadlineUnixSeconds != before.Request.DeadlineUnixSeconds {
+		t.Fatalf("import reset deadline from %d to %d", before.Request.DeadlineUnixSeconds, after.Request.DeadlineUnixSeconds)
+	}
+	if after.State.ObservedState != "responded" || after.State.Evidence == nil {
+		t.Fatalf("canonical observation = %#v, want responded evidence", after.State)
+	}
+	originalEvidence := string(after.State.Evidence.Classification)
+	statePath := paths.NewLayout(nil, workDir).PRReviewRequestStatePath(pr.Number)
+	legacy, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read legacy state: %v", err)
+	}
+	legacy = []byte(strings.Replace(string(legacy), `"decision":"approved"`, `"decision":"responded"`, 1))
+	if err := os.WriteFile(statePath, legacy, 0o600); err != nil {
+		t.Fatalf("mutate legacy state: %v", err)
+	}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("re-read canonical request: %v", err)
+	}
+	unchanged, err := readFileReviewRegistration(registrationPath)
+	if err != nil {
+		t.Fatalf("read canonical registration after legacy mutation: %v", err)
+	}
+	if got := string(unchanged.State.Evidence.Classification); got != originalEvidence {
+		t.Fatalf("legacy mutation changed canonical evidence to %q", got)
+	}
+	for _, path := range []string{
+		paths.NewLayout(nil, workDir).PRReviewRequestPath(pr.Number),
+		paths.NewLayout(nil, workDir).PRReviewRequestStatePath(pr.Number),
+		paths.NewLayout(nil, workDir).PRHeadShaPath(pr.Number),
+	} {
+		if err := os.Remove(path); err != nil {
+			t.Fatalf("remove legacy artifact %q: %v", path, err)
+		}
+	}
+	evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
+	if evidence.outcome != retainedReviewApproval || evidence.payload == nil {
+		t.Fatalf("canonical lifecycle evidence = %#v, want current-head approval", evidence)
+	}
+	if session.confirmedReviewRequestActive(context.Background(), workDir, pr, pr.HeadRefOid) {
+		t.Fatal("responded canonical observation remained an active request")
+	}
+}
+
+func TestReviewRegistration_ImportsEquivalentNumericAndURLTriggerIdentity(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments:         []github.PRComment{{ID: "1001", Body: "/sandman review", CreatedAt: now.Add(-time.Minute)}},
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+		reviewRegistrationNow:  func() time.Time { return now },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	pr := &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("register pending request: %v", err)
+	}
+	writeRespondedApprovalForCanonicalRequest(t, workDir, pr.Number)
+	statePath := paths.NewLayout(nil, workDir).PRReviewRequestStatePath(pr.Number)
+	stateData, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read legacy response: %v", err)
+	}
+	var state reviewWaitState
+	if err := json.Unmarshal(stateData, &state); err != nil {
+		t.Fatalf("decode legacy response: %v", err)
+	}
+	var classification map[string]any
+	if err := json.Unmarshal(state.Evidence.Classification, &classification); err != nil {
+		t.Fatalf("decode classification: %v", err)
+	}
+	request := classification["request"].(map[string]any)
+	boundary := classification["boundary_evidence"].(map[string]any)["request"].(map[string]any)
+	request["trigger_id"] = "https://github.com/owner/repo/pull/17#issuecomment-1001"
+	boundary["trigger_id"] = request["trigger_id"]
+	state.Evidence.Classification, err = json.Marshal(classification)
+	if err != nil {
+		t.Fatalf("encode equivalent-identity classification: %v", err)
+	}
+	if err := atomicfs.WriteAtomicJSON(statePath, state, 0o600); err != nil {
+		t.Fatalf("write equivalent-identity response: %v", err)
+	}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("import equivalent-identity response: %v", err)
+	}
+	client.reviews = []github.PRReview{{ID: "2001", State: "APPROVED", CommitID: "current-sha", CreatedAt: now.Add(time.Minute)}}
+	evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
+	if evidence.outcome != retainedReviewApproval || evidence.payload == nil {
+		t.Fatalf("equivalent-identity lifecycle evidence = %#v, want approval", evidence)
+	}
+}
+
+func TestReviewRegistration_PersistsDirectCurrentHeadObservation(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments:         []github.PRComment{{ID: "1001", Body: "/sandman review", CreatedAt: now.Add(-time.Minute)}},
+		reviews:          []github.PRReview{{ID: "2001", State: "APPROVED", CommitID: "current-sha", CreatedAt: now.Add(time.Minute)}},
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+		reviewRegistrationNow:  func() time.Time { return now.Add(2 * time.Minute) },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	pr := &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("register pending request: %v", err)
+	}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("persist direct response: %v", err)
+	}
+	registration, err := readReviewRegistration(paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number), "owner/repo", pr, pr.HeadRefOid)
+	if err != nil {
+		t.Fatalf("read canonical registration: %v", err)
+	}
+	if registration.LegacyImported || registration.State.ObservedState != "responded" || registration.State.Evidence == nil {
+		t.Fatalf("direct canonical observation = %#v, want non-legacy responded evidence", registration)
+	}
+	if evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid); evidence.outcome != retainedReviewApproval {
+		t.Fatalf("direct canonical lifecycle evidence = %#v, want approval", evidence)
+	}
+}
+
+func TestReviewRegistration_ReplacesEditedDecisionObservation(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	currentNow := now.Add(2 * time.Minute)
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments: []github.PRComment{
+			{ID: "1001", Body: "/sandman review", CreatedAt: now.Add(-time.Minute)},
+			{ID: "1002", Body: "## Decision\n\n**APPROVED**", CreatedAt: now.Add(time.Minute)},
+		},
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+		reviewRegistrationNow:  func() time.Time { return currentNow },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	pr := &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("register pending request: %v", err)
+	}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("persist initial approval: %v", err)
+	}
+	if evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid); evidence.outcome != retainedReviewApproval {
+		t.Fatalf("initial lifecycle evidence = %#v, want approval", evidence)
+	}
+
+	client.comments[1].Body = "## Decision\n\n**CHANGES_REQUESTED**"
+	currentNow = now.Add(4 * time.Minute)
+	evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
+	if evidence.outcome == retainedReviewApproval || evidence.payload != nil {
+		t.Fatalf("edited decision retained revoked approval: %#v", evidence)
+	}
+}
+
+func TestReviewRegistration_ReplacesDismissedApprovalObservation(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	currentNow := now.Add(2 * time.Minute)
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments:         []github.PRComment{{ID: "1001", Body: "/sandman review", CreatedAt: now.Add(-time.Minute)}},
+		reviews:          []github.PRReview{{ID: "2001", State: "APPROVED", CommitID: "current-sha", CreatedAt: now.Add(time.Minute)}},
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+		reviewRegistrationNow:  func() time.Time { return currentNow },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	pr := &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("register pending request: %v", err)
+	}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("persist initial approval: %v", err)
+	}
+	if evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid); evidence.outcome != retainedReviewApproval {
+		t.Fatalf("initial lifecycle evidence = %#v, want approval", evidence)
+	}
+
+	client.reviews[0].State = "DISMISSED"
+	currentNow = now.Add(4 * time.Minute)
+	evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
+	if evidence.outcome == retainedReviewApproval || evidence.payload != nil {
+		t.Fatalf("dismissed approval remained authoritative: %#v", evidence)
+	}
+}
+
+func TestReviewRegistration_EmptySnapshotClearsDeletedApproval(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	currentNow := now.Add(2 * time.Minute)
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments:         []github.PRComment{{ID: "1001", Body: "/sandman review", CreatedAt: now.Add(-time.Minute)}},
+		reviews:          []github.PRReview{{ID: "2001", State: "APPROVED", CommitID: "current-sha", CreatedAt: now.Add(time.Minute)}},
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+		reviewRegistrationNow:  func() time.Time { return currentNow },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	pr := &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("register pending request: %v", err)
+	}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("persist initial approval: %v", err)
+	}
+	registrationPath := paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number)
+	before, err := readReviewRegistration(registrationPath, "owner/repo", pr, pr.HeadRefOid)
+	if err != nil {
+		t.Fatalf("read initial registration: %v", err)
+	}
+
+	client.reviews = nil
+	currentNow = now.Add(4 * time.Minute)
+	evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
+	if evidence.outcome == retainedReviewApproval || evidence.payload != nil {
+		t.Fatalf("deleted approval remained authoritative: %#v", evidence)
+	}
+	after, err := readReviewRegistration(registrationPath, "owner/repo", pr, pr.HeadRefOid)
+	if err != nil {
+		t.Fatalf("read cleared registration: %v", err)
+	}
+	if after.Request.DeadlineUnixSeconds != before.Request.DeadlineUnixSeconds {
+		t.Fatalf("empty observation reset deadline from %d to %d", before.Request.DeadlineUnixSeconds, after.Request.DeadlineUnixSeconds)
+	}
+	if after.State.ObservedState != "responded" || after.State.Evidence == nil {
+		t.Fatalf("empty observation = %#v, want persisted pending evidence", after.State)
+	}
+	classification, err := decodeReviewClassification(after.State.Evidence, after.Request, pr.HeadRefOid)
+	if err != nil {
+		t.Fatalf("decode empty observation: %v", err)
+	}
+	if classification.Decision != "pending" || classification.FormalDecision != "none" {
+		t.Fatalf("empty observation classification = %#v, want pending/no formal decision", classification)
+	}
+}
+
+func TestReviewRegistration_AdvancesPastAcknowledgementToApproval(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	currentNow := now.Add(2 * time.Minute)
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments:         []github.PRComment{{ID: "1001", Body: "/sandman review", CreatedAt: now.Add(-time.Minute)}},
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+		reviewRegistrationNow:  func() time.Time { return currentNow },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	pr := &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("register pending request: %v", err)
+	}
+	client.comments = append(client.comments, github.PRComment{ID: "1002", Body: "Review is in progress", CreatedAt: now.Add(time.Minute)})
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("persist acknowledgement: %v", err)
+	}
+	if !session.confirmedReviewRequestActive(context.Background(), workDir, pr, pr.HeadRefOid) {
+		t.Fatal("acknowledgement ended the active review request")
+	}
+
+	client.reviews = []github.PRReview{{ID: "2001", State: "APPROVED", CommitID: "current-sha", CreatedAt: now.Add(3 * time.Minute)}}
+	currentNow = now.Add(4 * time.Minute)
+	evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
+	if evidence.outcome != retainedReviewApproval || evidence.payload == nil {
+		t.Fatalf("later approval evidence = %#v, want current-head approval", evidence)
+	}
+}
+
+func TestReviewRegistration_AdvancesPastAcknowledgementToFeedback(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	currentNow := now.Add(2 * time.Minute)
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments:         []github.PRComment{{ID: "1001", Body: "/sandman review", CreatedAt: now.Add(-time.Minute)}},
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+		reviewRegistrationNow:  func() time.Time { return currentNow },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	pr := &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("register pending request: %v", err)
+	}
+	client.comments = append(client.comments, github.PRComment{ID: "1002", Body: "Review is in progress", CreatedAt: now.Add(time.Minute)})
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("persist acknowledgement: %v", err)
+	}
+	if !session.confirmedReviewRequestActive(context.Background(), workDir, pr, pr.HeadRefOid) {
+		t.Fatal("acknowledgement ended the active review request")
+	}
+
+	client.comments = append(client.comments, github.PRComment{ID: "1003", Body: "Please update internal/batch/review_registration.go before merging", CreatedAt: now.Add(3 * time.Minute)})
+	currentNow = now.Add(4 * time.Minute)
+	evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
+	if len(evidence.informalFeedback) == 0 || evidence.payload == nil {
+		t.Fatalf("later feedback evidence = %#v, want retained feedback", evidence)
+	}
+	if session.confirmedReviewRequestActive(context.Background(), workDir, pr, pr.HeadRefOid) {
+		t.Fatal("actionable feedback remained an active review request")
+	}
+}
+
+func TestReviewRegistration_MigratedPendingGenerationAdvancesToApproval(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	currentNow := now
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments:         []github.PRComment{{ID: "1001", Body: "/sandman review", CreatedAt: now.Add(-time.Minute)}},
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+		reviewRegistrationNow:  func() time.Time { return currentNow },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	pr := &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("register pending request: %v", err)
+	}
+	before := migratePendingReviewGeneration(t, workDir, pr.Number)
+
+	currentNow = now.Add(time.Minute)
+	if evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid); evidence.payload != nil {
+		t.Fatalf("pending migration produced lifecycle payload: %#v", evidence)
+	}
+	client.reviews = []github.PRReview{{ID: "2001", State: "APPROVED", CommitID: "current-sha", CreatedAt: now.Add(2 * time.Minute)}}
+	currentNow = now.Add(3 * time.Minute)
+	evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
+	if evidence.outcome != retainedReviewApproval || evidence.payload == nil {
+		t.Fatalf("migrated pending approval evidence = %#v, want current-head approval", evidence)
+	}
+	registration, err := readReviewRegistration(paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number), "owner/repo", pr, pr.HeadRefOid)
+	if err != nil {
+		t.Fatalf("read advanced migrated registration: %v", err)
+	}
+	if registration.LegacyImported || registration.Request.DeadlineUnixSeconds != before.Request.DeadlineUnixSeconds {
+		t.Fatalf("migrated generation = %#v, want runtime evidence and original deadline", registration)
+	}
+}
+
+func TestReviewRegistration_MigratedPendingGenerationIgnoresLaterLegacyApproval(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	currentNow := now
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments:         []github.PRComment{{ID: "1001", Body: "/sandman review", CreatedAt: now.Add(-time.Minute)}},
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+		reviewRegistrationNow:  func() time.Time { return currentNow },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	pr := &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("register pending request: %v", err)
+	}
+	migratePendingReviewGeneration(t, workDir, pr.Number)
+
+	currentNow = now.Add(time.Minute)
+	if evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid); evidence.payload != nil {
+		t.Fatalf("pending migration produced lifecycle payload: %#v", evidence)
+	}
+
+	writeRespondedApprovalForCanonicalRequest(t, workDir, pr.Number)
+	currentNow = now.Add(3 * time.Minute)
+	evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
+	if evidence.outcome == retainedReviewApproval || evidence.payload != nil {
+		t.Fatalf("later legacy approval authorized lifecycle resume: %#v", evidence)
+	}
+}
+
+func TestReviewRegistration_MigratedPendingGenerationAdvancesToFeedback(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	currentNow := now
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments:         []github.PRComment{{ID: "1001", Body: "/sandman review", CreatedAt: now.Add(-time.Minute)}},
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+		reviewRegistrationNow:  func() time.Time { return currentNow },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	pr := &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("register pending request: %v", err)
+	}
+	migratePendingReviewGeneration(t, workDir, pr.Number)
+	currentNow = now.Add(time.Minute)
+	_ = session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
+
+	client.comments = append(client.comments, github.PRComment{
+		ID:        "1002",
+		Body:      "Please update internal/batch/review_registration.go before merging",
+		CreatedAt: now.Add(2 * time.Minute),
+	})
+	currentNow = now.Add(3 * time.Minute)
+	evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
+	if len(evidence.informalFeedback) == 0 || evidence.payload == nil {
+		t.Fatalf("migrated pending feedback evidence = %#v, want retained feedback", evidence)
+	}
+}
+
+func TestReviewRegistration_ImportsOnTimeEvidenceWhenObservedAtOrAfterDeadline(t *testing.T) {
+	for _, observation := range []struct {
+		name string
+		now  time.Duration
+	}{
+		{name: "at deadline", now: 10 * time.Minute},
+		{name: "after deadline", now: 11 * time.Minute},
+	} {
+		t.Run(observation.name, func(t *testing.T) {
+			workDir := testenv.MkdirShort(t, "sm-review-registration-")
+			registeredAt := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+			currentNow := registeredAt
+			client := &registrationGitHubClient{
+				fakeGitHubClient: fakeGitHubClient{},
+				comments:         []github.PRComment{{ID: "1001", Body: "/sandman review", CreatedAt: registeredAt.Add(-time.Minute)}},
+				reviews:          []github.PRReview{{ID: "2001", State: "APPROVED", CommitID: "current-sha", CreatedAt: registeredAt.Add(10 * time.Minute)}},
+			}
+			session := &runSession{
+				deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+				renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 600},
+				reviewRegistrationNow:  func() time.Time { return currentNow },
+				reviewAttemptStartedAt: registeredAt.Add(-2 * time.Minute),
+			}
+			pr := &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}
+			if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+				t.Fatalf("register pending request: %v", err)
+			}
+			currentNow = registeredAt.Add(observation.now)
+			evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
+			if evidence.outcome != retainedReviewApproval || evidence.payload == nil {
+				t.Fatalf("late observation evidence = %#v, want on-time approval", evidence)
+			}
+		})
+	}
+}
+
+func TestRetainedLifecycleEvidence_ImportsLegacyWhenCanonicalIsAbsent(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments: []github.PRComment{{
+			ID:        "trigger-canonical-lifecycle-import",
+			Body:      "/sandman review",
+			CreatedAt: now.Add(-time.Minute),
+		}},
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+		reviewRegistrationNow:  func() time.Time { return now },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	pr := &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("register pending request: %v", err)
+	}
+	writeRespondedApprovalForCanonicalRequest(t, workDir, pr.Number)
+	canonicalPath := paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number)
+	if err := os.Remove(canonicalPath); err != nil {
+		t.Fatalf("remove canonical registration: %v", err)
+	}
+
+	evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
+	if evidence.outcome != retainedReviewApproval || evidence.payload == nil {
+		t.Fatalf("lifecycle evidence = %#v, want imported current-head approval", evidence)
+	}
+	if _, err := readFileReviewRegistration(canonicalPath); err != nil {
+		t.Fatalf("legacy evidence was not imported canonically: %v", err)
+	}
+	if session.confirmedReviewRequestActive(context.Background(), workDir, pr, pr.HeadRefOid) {
+		t.Fatal("responded imported observation remained an active request")
+	}
+}
+
+func TestRetainedLifecycleEvidence_RejectsInvalidLegacyWithoutCanonicalAuthority(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments: []github.PRComment{{
+			ID:        "trigger-invalid-legacy",
+			Body:      "/sandman review",
+			CreatedAt: now.Add(-time.Minute),
+		}},
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+		reviewRegistrationNow:  func() time.Time { return now },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	pr := &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("register pending request: %v", err)
+	}
+	writeRespondedApprovalForCanonicalRequest(t, workDir, pr.Number)
+	canonicalPath := paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number)
+	if err := os.Remove(canonicalPath); err != nil {
+		t.Fatalf("remove canonical registration: %v", err)
+	}
+	statePath := paths.NewLayout(nil, workDir).PRReviewRequestStatePath(pr.Number)
+	state, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read legacy state: %v", err)
+	}
+	state = []byte(strings.Replace(string(state), `"observed_head_sha": "current-sha"`, `"observed_head_sha": "stale-sha"`, 1))
+	if err := os.WriteFile(statePath, state, 0o600); err != nil {
+		t.Fatalf("write stale legacy state: %v", err)
+	}
+
+	evidence := session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
+	if !evidence.present || !evidence.stateError || evidence.outcome == retainedReviewApproval {
+		t.Fatalf("invalid legacy evidence = %#v, want diagnostic-only state error", evidence)
+	}
+	if _, err := os.Stat(canonicalPath); !os.IsNotExist(err) {
+		t.Fatalf("invalid legacy evidence created canonical record, stat error = %v", err)
+	}
+	if session.confirmedReviewRequestActive(context.Background(), workDir, pr, pr.HeadRefOid) {
+		t.Fatal("invalid legacy evidence authorized an active request")
 	}
 }
 

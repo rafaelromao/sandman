@@ -108,42 +108,37 @@ func (s *runSession) retainedReviewDiagnostics(ctx context.Context, workDir, bra
 	if err != nil {
 		return s.invalidRetainedReviewDiagnostic(branch, err)
 	}
-	registration, err := readReviewRegistrationWithStore(s.reviewRegistrationStoreForRead(), paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number), repository, pr, currentHead)
+	registration, err := s.loadCanonicalReviewRegistration(ctx, workDir, repository, pr, currentHead)
 	if err == nil {
-		return reviewRegistrationDiagnostic(registration)
+		handoff, handoffErr := canonicalReviewHandoff(registration, currentHead)
+		if handoffErr != nil {
+			return s.invalidRetainedReviewDiagnostic(branch, handoffErr)
+		}
+		if handoff == nil {
+			return reviewRegistrationDiagnostic(registration)
+		}
+		diagnostics := map[string]any{
+			"review_diagnostic": map[string]any{
+				"status":  "valid",
+				"outcome": string(handoff.Outcome),
+			},
+		}
+		payload := handoff.payload()
+		if request, ok := payload["review_request"]; ok {
+			diagnostics["review_request"] = request
+		}
+		return diagnostics
 	}
 	if !isReviewRegistrationNotExist(err) {
 		// A canonical record exists but is not valid. It wins over legacy
 		// sidecars as evidence, while the live PR gate remains authoritative.
 		return s.invalidRetainedReviewDiagnostic(branch, err)
 	}
-	artifacts, err := readReviewTimeoutArtifacts(workDir, repository, pr, currentHead)
-	if err != nil {
-		return s.invalidRetainedReviewDiagnostic(branch, err)
-	}
-	handoff, err := reviewTimeoutHandoffFromArtifacts(artifacts, currentHead)
-	if err != nil {
-		return s.invalidRetainedReviewDiagnostic(branch, err)
-	}
-	if handoff == nil {
-		return map[string]any{
-			"review_diagnostic": map[string]any{
-				"status": "pending",
-				"state":  artifacts.State.State,
-			},
-		}
-	}
-	payload := handoff.payload()
-	diagnostics := map[string]any{
+	return map[string]any{
 		"review_diagnostic": map[string]any{
-			"status":  "valid",
-			"outcome": string(handoff.Outcome),
+			"status": "pending",
 		},
 	}
-	if request, ok := payload["review_request"]; ok {
-		diagnostics["review_request"] = request
-	}
-	return diagnostics
 }
 
 // retainedLifecycleEvidence decodes the latest retained review record without
@@ -154,29 +149,29 @@ func (s *runSession) retainedLifecycleEvidence(ctx context.Context, workDir stri
 		return retainedReviewEvidence{}
 	}
 	injectedStore := s.reviewRegistrationStore != nil || s.opts.reviewRegistrationStore != nil
-	if !reviewTimeoutArtifactsPresentForPR(workDir, pr.Number) && !injectedStore {
+	if !reviewLifecycleArtifactsPresentForPR(workDir, pr.Number) && !injectedStore {
 		return retainedReviewEvidence{}
 	}
 	repository, err := s.deps.githubClient.RepoName(ctx)
 	if err != nil {
 		return retainedReviewEvidence{present: true, stateError: true}
 	}
-	canonicalPath := paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number)
-	registration, err := readReviewRegistrationWithStore(s.reviewRegistrationStoreForRead(), canonicalPath, repository, pr, currentHead)
+	registration, err := s.loadCanonicalReviewRegistration(ctx, workDir, repository, pr, currentHead)
 	if err == nil {
-		diagnostic := reviewRegistrationDiagnostic(registration)
 		evidence := retainedReviewEvidence{
 			present: true,
-			payload: map[string]any{"review_request": diagnostic["review_request"]},
 		}
-		artifacts, artifactErr := readReviewTimeoutArtifacts(workDir, repository, pr, currentHead)
-		if artifactErr != nil || artifacts == nil || !reviewRequestIdentityMatches(registration.Request, artifacts.Request) {
-			return evidence
-		}
-		handoff, handoffErr := reviewTimeoutHandoffFromArtifacts(artifacts, currentHead)
+		handoff, handoffErr := canonicalReviewHandoff(registration, currentHead)
 		if handoffErr != nil || handoff == nil {
+			if handoffErr != nil {
+				evidence.stateError = true
+			} else if registration != nil && !registration.LegacyImported {
+				diagnostic := reviewRegistrationDiagnostic(registration)
+				evidence.payload = map[string]any{"review_request": diagnostic["review_request"]}
+			}
 			return evidence
 		}
+		evidence.outcome = handoff.Outcome
 		if !reviewEvidenceWithinCanonicalDeadline(handoff, registration.Request) {
 			return evidence
 		}
@@ -202,7 +197,11 @@ func (s *runSession) retainedLifecycleEvidence(ctx context.Context, workDir stri
 				return evidence
 			}
 		default:
-			return evidence
+			if handoff.Outcome == retainedReviewTimeout {
+				evidence.payload = handoff.payload()
+			} else {
+				return evidence
+			}
 		}
 		if evidence.payload != nil {
 			if evidence.outcome == retainedReviewApproval {
@@ -220,75 +219,15 @@ func (s *runSession) retainedLifecycleEvidence(ctx context.Context, workDir stri
 		}
 		return retainedReviewEvidence{present: true, stateError: true}
 	}
-	if injectedStore && !reviewTimeoutArtifactsPresentForPR(workDir, pr.Number) {
-		return retainedReviewEvidence{}
-	}
-	artifacts, err := readReviewTimeoutArtifacts(workDir, repository, pr, currentHead)
-	if err != nil {
-		if retainedEvidenceIsStale(err) {
-			return retainedReviewEvidence{present: true}
-		}
-		return retainedReviewEvidence{present: true, stateError: true}
-	}
-	handoff, err := reviewTimeoutHandoffFromArtifacts(artifacts, currentHead)
-	if err != nil {
-		if retainedEvidenceIsStale(err) {
-			return retainedReviewEvidence{present: true}
-		}
-		return retainedReviewEvidence{present: true, stateError: true}
-	}
-	if handoff == nil {
-		return retainedReviewEvidence{present: true, outcome: retainedReviewPending}
-	}
-	evidence := retainedReviewEvidence{
-		present:    true,
-		outcome:    handoff.Outcome,
-		actionable: handoff.hasActionableFeedback(),
-	}
-	evidenceGate := gateReviewTimeout
-	switch {
-	case evidence.actionable:
-		evidence.payload = handoff.payloadFor(gateActionableFeedback, actionableFeedbackReason, actionableFeedbackNextAction)
-		evidenceGate = gateActionableFeedback
-	case handoff.Classification != nil:
-		evidence.informalFeedback = handoff.Classification.informalFeedbackEvidenceFor(handoff.Request, handoff.Classification.WindowEnd)
-		if len(evidence.informalFeedback) > 0 {
-			evidence.payload = handoff.payloadFor(gateActionableFeedback, informalFeedbackReason, informalFeedbackNextAction)
-			evidenceGate = gateActionableFeedback
-			if request, ok := evidence.payload["review_request"].(map[string]any); ok {
-				request["informal_feedback"] = evidence.informalFeedback
-			}
-		} else if handoff.Outcome == retainedReviewApproval {
-			evidence.payload = handoff.payloadFor(gateReadyToMerge, "REVIEW_APPROVED", "revalidate current-head approval, CI, and mergeability, then execute the normal pull-request merge gate")
-			evidenceGate = gateReadyToMerge
-			if request, ok := evidence.payload["review_request"].(map[string]any); ok {
-				request["outcome"] = "approved"
-				request["review_decision_approval"] = handoff.Classification.reviewDecisionApprovalEvidenceFor(handoff.Request, handoff.Classification.WindowEnd)
-			}
-		}
-	case handoff.Outcome == retainedReviewApproval:
-		evidence.payload = handoff.payloadFor(gateReadyToMerge, "REVIEW_APPROVED", "revalidate current-head approval, CI, and mergeability, then execute the normal pull-request merge gate")
-		evidenceGate = gateReadyToMerge
-		if request, ok := evidence.payload["review_request"].(map[string]any); ok {
-			request["outcome"] = "approved"
-			request["reason"] = "REVIEW_APPROVED"
-			request["next_action"] = "revalidate current-head approval, CI, and mergeability, then execute the normal pull-request merge gate"
-		}
-	default:
-		evidence.payload = handoff.payload()
-	}
-	if evidence.payload != nil {
-		evidence.payload["gate"] = evidenceGate
-		evidence.payload["await"] = true
-	}
-	return evidence
+	return retainedReviewEvidence{}
 }
 
 // confirmedReviewRequestActive reports whether a confirmed delegated-review
 // request is actively resolving for this pull request at the current head. It
-// validates the canonical runtime-owned registration first and falls back to
-// legacy review-wait artifacts; either must match repository, pull request,
-// and head, remain in the pending wait state, and stay within its deadline. A
+// validates the canonical runtime-owned registration after importing one
+// matching legacy generation when necessary. The canonical record must match
+// repository, pull request, and head, remain in the pending wait state, and
+// stay within its deadline. A
 // requested review counts as an ongoing external operation even before the
 // review run starts (issue #2743). Stale, mismatched, expired, corrupt, or
 // otherwise unusable records never authorize waiting.
@@ -301,22 +240,20 @@ func (s *runSession) confirmedReviewRequestActive(ctx context.Context, workDir s
 		return false
 	}
 	now := s.reviewNow().Unix()
-	if registration, err := readReviewRegistrationWithStore(s.reviewRegistrationStoreForRead(), paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number), repository, pr, currentHead); err == nil && registration != nil {
+	if registration, err := s.loadCanonicalReviewRegistration(ctx, workDir, repository, pr, currentHead); err == nil && registration != nil {
 		if registration.State.State != "pending" || int64(registration.Request.DeadlineUnixSeconds) <= now {
 			return false
 		}
-		// The canonical registration records a confirmed handoff. A matching
-		// legacy observation may show that this operation has since resolved;
-		// do not keep treating the initial pending registration as active once
-		// the review has responded or timed out.
-		artifacts, artifactErr := readReviewTimeoutArtifacts(workDir, repository, pr, currentHead)
-		if artifactErr == nil && artifacts != nil && reviewRequestIdentityMatches(registration.Request, artifacts.Request) {
-			return artifacts.State.State == "pending" && int64(artifacts.Request.DeadlineUnixSeconds) > now
+		if registration.State.ObservedState != "" {
+			handoff, handoffErr := canonicalReviewHandoff(registration, currentHead)
+			if handoffErr != nil || handoff == nil {
+				return false
+			}
+			if handoff.Outcome != retainedReviewPending || handoff.hasActionableFeedback() {
+				return false
+			}
+			return handoff.Classification == nil || len(handoff.Classification.informalFeedbackEvidenceFor(handoff.Request, handoff.Classification.WindowEnd)) == 0
 		}
-		// Legacy response artifacts that are absent, malformed, stale, or
-		// mismatched cannot resolve a valid canonical pending request. Only a
-		// validated matching response/timeout changes this confirmed operation
-		// out of the pending state.
 		return true
 	} else if err != nil && !isReviewRegistrationNotExist(err) {
 		// A canonical record exists but is not valid. It wins over legacy
@@ -324,11 +261,77 @@ func (s *runSession) confirmedReviewRequestActive(ctx context.Context, workDir s
 		// authority from an older artifact.
 		return false
 	}
-	artifacts, err := readReviewTimeoutArtifacts(workDir, repository, pr, currentHead)
-	if err != nil || artifacts == nil {
-		return false
+	return false
+}
+
+// loadCanonicalReviewRegistration is the only lifecycle boundary that may
+// read legacy review artifacts. A valid legacy generation is imported once;
+// after that, lifecycle decisions never fall back to mutable sidecars.
+func (s *runSession) loadCanonicalReviewRegistration(ctx context.Context, workDir, repository string, pr *github.PR, currentHead string) (*reviewRequestRegistration, error) {
+	path := paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number)
+	store := s.reviewRegistrationStoreForRead()
+	registration, err := readReviewRegistrationWithStore(store, path, repository, pr, currentHead)
+	if err == nil {
+		if importErr := s.importLegacyReviewEvidence(ctx, workDir, repository, pr, currentHead, path, registration); importErr != nil {
+			return nil, importErr
+		}
+		if refreshed, refreshErr := readReviewRegistrationWithStore(store, path, repository, pr, currentHead); refreshErr == nil {
+			registration = refreshed
+		} else {
+			return nil, refreshErr
+		}
+		return registration, nil
 	}
-	return artifacts.State.State == "pending" && int64(artifacts.Request.DeadlineUnixSeconds) > now
+	if !isReviewRegistrationNotExist(err) {
+		return nil, err
+	}
+	if !reviewTimeoutArtifactsPresentForPR(workDir, pr.Number) {
+		return nil, err
+	}
+	legacy, present, valid, inspectErr := inspectLegacyReviewRegistration(workDir, repository, pr, currentHead)
+	if inspectErr != nil {
+		return nil, inspectErr
+	}
+	if !present {
+		return nil, err
+	}
+	if !valid || legacy == nil {
+		return nil, fmt.Errorf("legacy review artifacts are invalid")
+	}
+	if writeErr := writeReviewRegistration(store, path, *legacy, func() error {
+		return s.verifyCurrentReviewHead(ctx, pr, currentHead)
+	}); writeErr != nil {
+		return nil, fmt.Errorf("migrate legacy review registration: %w", writeErr)
+	}
+	return readReviewRegistrationWithStore(store, path, repository, pr, currentHead)
+}
+
+func canonicalReviewHandoff(registration *reviewRequestRegistration, currentHead string) (*reviewTimeoutHandoff, error) {
+	if registration == nil || registration.State.Evidence == nil {
+		return nil, nil
+	}
+	if err := validateCanonicalReviewObservation(registration.Request, registration.State); err != nil {
+		return nil, err
+	}
+	classification, err := decodeReviewClassification(registration.State.Evidence, registration.Request, currentHead)
+	if err != nil {
+		return nil, err
+	}
+	counts, err := responseCountsFromState(registration.State, true)
+	if err != nil {
+		return nil, err
+	}
+	outcome := retainedReviewClassificationOutcome(classification, registration.Request)
+	if classification == nil && registration.State.ObservedState == "timed_out" {
+		outcome = retainedReviewTimeout
+	}
+	return &reviewTimeoutHandoff{
+		Request:        registration.Request,
+		State:          registration.State,
+		ResponseCounts: counts,
+		Classification: classification,
+		Outcome:        outcome,
+	}, nil
 }
 
 func retainedEvidenceIsStale(err error) bool {

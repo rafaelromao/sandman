@@ -24,6 +24,13 @@ Individual archive moves only an event-terminal Run. Whole-batch archive additio
 
 The event types are documented in [Monitoring](../usage/monitoring.md#event-log).
 
+External-wait bounds and execution allowances are distinct. Managed CI/review
+keep hard deadlines; standalone CI retains its 60-minute/three-fix invocation-local
+bounds. Implementation relaunches are session-local, not cumulative repair
+reservations. Quota preserves completed polling across restart, with a diagnostic
+exhaustion estimate and unchanged ownerless grace. See the canonical state machine
+and [AFK exit baseline](../development/afk-exit-regression-baseline.md).
+
 ## Top-down dependency injection at the command boundary
 
 `cmd.Dependencies` is the single composition root. It owns the wiring between the concrete adapters (`gh` CLI client, file-backed config store, JSONL event store, Docker / Podman container starter,…) and the in-process interfaces they implement. The orchestrator only knows about interfaces and does not construct a concrete dependency.

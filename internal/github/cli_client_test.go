@@ -352,6 +352,37 @@ func TestCLIClient_FindPRByBranch_StatusCheckRollupArrayAllSuccess(t *testing.T)
 	}
 }
 
+func TestCLIClientCIRerunIdentityChangesOnlyWithExecution(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `[{"number":17,"state":"open","headRefOid":"same-head","statusCheckRollup":[{"status":"COMPLETED","conclusion":"CANCELLED","detailsUrl":"https://github.com/o/r/actions/runs/1/job/10"}]}]`},
+		{output: `[{"number":17,"state":"open","headRefOid":"same-head","statusCheckRollup":[{"status":"QUEUED","detailsUrl":"https://github.com/o/r/actions/runs/1/job/11"}]}]`},
+		{output: `[{"number":17,"state":"open","headRefOid":"same-head","statusCheckRollup":[{"status":"IN_PROGRESS","detailsUrl":"https://github.com/o/r/actions/runs/1/job/11"}]}]`},
+		{output: `[{"number":17,"state":"open","headRefOid":"same-head","statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS","detailsUrl":"https://github.com/o/r/actions/runs/1/job/11"}]}]`},
+	}}
+	client := &CLIClient{runner: runner}
+	var ids []string
+	for range 4 {
+		pr, err := client.FindPRByBranch(context.Background(), "branch")
+		if err != nil || pr == nil || pr.CIExecutionID == "" {
+			t.Fatalf("execution identity missing: pr=%+v error=%v", pr, err)
+		}
+		ids = append(ids, pr.CIExecutionID)
+	}
+	if ids[0] == ids[1] || ids[1] != ids[2] || ids[2] != ids[3] {
+		t.Fatalf("same-head rerun identity changed with status or retained old execution: %v", ids)
+	}
+	a := ciExecutionIDFromJSON([]byte(`[{"status":"QUEUED","detailsUrl":"job/1"},{"status":"COMPLETED","detailsUrl":"job/2"}]`))
+	b := ciExecutionIDFromJSON([]byte(`[{"status":"COMPLETED","detailsUrl":"job/2"},{"status":"IN_PROGRESS","detailsUrl":"job/1"}]`))
+	if a == "" || a != b {
+		t.Fatalf("API ordering/status renewed execution: %q %q", a, b)
+	}
+	for _, raw := range []string{`"pending"`, `[]`, `[{"state":"PENDING"}]`, `[{"status":"IN_PROGRESS"}]`, `[{"status":"COMPLETED","detailsUrl":"job/1"},{"state":"PENDING"}]`} {
+		if got := ciExecutionIDFromJSON([]byte(raw)); got != "" {
+			t.Fatalf("incomplete observation fabricated identity: %s => %s", raw, got)
+		}
+	}
+}
+
 func TestCLIClient_FindPRByBranch_StatusContextFailure(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":21,"state":"open","headRefName":"legacy-status","statusCheckRollup":[{"__typename":"StatusContext","context":"legacy-ci","state":"FAILURE"}]}]`}}}
 	client := &CLIClient{runner: runner}

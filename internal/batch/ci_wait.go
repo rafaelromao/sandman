@@ -26,6 +26,7 @@ type ciWaitRegistration struct {
 	Protocol             string `json:"protocol"`
 	PullRequest          int    `json:"pull_request"`
 	HeadSHA              string `json:"head_sha"`
+	ExecutionID          string `json:"execution_id,omitempty"`
 	StartedUnixSeconds   int64  `json:"started_unix_seconds"`
 	DeadlineUnixSeconds  int64  `json:"deadline_unix_seconds"`
 	EffectiveTimeoutSecs int64  `json:"effective_timeout_seconds"`
@@ -38,17 +39,27 @@ func (s *runSession) ciWaitEvidence(workDir string, pr *github.PR, headSHA strin
 	}
 	path := filepath.Join(paths.NewLayout(nil, workDir).StateDir, fmt.Sprintf("%d.ci_wait.json", pr.Number))
 	var evidence map[string]any
-	err := withRemediationLock(context.Background(), path, func() error {
+	err := withOperationLock(context.Background(), path, func() error {
 		registration, err := readCIWaitRegistration(path)
 		if err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("read CI wait state: %w", err)
 		}
-		if os.IsNotExist(err) || !strings.EqualFold(registration.HeadSHA, headSHA) {
+		if err == nil {
+			if _, validationErr := ciWaitEvidenceFromRegistration(registration, pr.Number); validationErr != nil {
+				return validationErr
+			}
+		}
+		// A real rerun is a new external operation even on the same head.
+		// Bind legacy head-only state once when execution identity is available;
+		// subsequent observations/restarts of that execution retain its deadline.
+		newExecution := ciActive(pr, headSHA) && pr.CIExecutionID != "" && registration.ExecutionID != pr.CIExecutionID
+		if os.IsNotExist(err) || !strings.EqualFold(registration.HeadSHA, headSHA) || newExecution {
 			now := s.runtimeNow()
 			registration = ciWaitRegistration{
 				Protocol:             ciWaitProtocol,
 				PullRequest:          pr.Number,
 				HeadSHA:              headSHA,
+				ExecutionID:          pr.CIExecutionID,
 				StartedUnixSeconds:   now.Unix(),
 				DeadlineUnixSeconds:  now.Add(ciWaitTimeout).Unix(),
 				EffectiveTimeoutSecs: int64(ciWaitTimeout / time.Second),
@@ -67,20 +78,22 @@ func (s *runSession) ciWaitEvidence(workDir string, pr *github.PR, headSHA strin
 }
 
 func ciWaitEvidenceFromRegistration(registration ciWaitRegistration, prNumber int) (map[string]any, error) {
-	if registration.Protocol != ciWaitProtocol || registration.PullRequest != prNumber || registration.HeadSHA == "" || registration.RemediationAttempts < 0 || registration.DeadlineUnixSeconds <= registration.StartedUnixSeconds || registration.EffectiveTimeoutSecs <= 0 || registration.DeadlineUnixSeconds-registration.StartedUnixSeconds != registration.EffectiveTimeoutSecs {
+	if registration.Protocol != ciWaitProtocol || registration.PullRequest != prNumber || registration.HeadSHA == "" || registration.DeadlineUnixSeconds <= registration.StartedUnixSeconds || registration.EffectiveTimeoutSecs <= 0 || registration.DeadlineUnixSeconds-registration.StartedUnixSeconds != registration.EffectiveTimeoutSecs {
 		return nil, fmt.Errorf("CI wait state is invalid")
 	}
-	return map[string]any{
-		"ci_wait": map[string]any{
-			"protocol":                  registration.Protocol,
-			"pull_request":              registration.PullRequest,
-			"head_sha":                  registration.HeadSHA,
-			"started_unix_seconds":      registration.StartedUnixSeconds,
-			"deadline_unix_seconds":     registration.DeadlineUnixSeconds,
-			"effective_timeout_seconds": registration.EffectiveTimeoutSecs,
-			"remediation_attempts":      registration.RemediationAttempts,
-		},
-	}, nil
+	wait := map[string]any{
+		"protocol":                  registration.Protocol,
+		"pull_request":              registration.PullRequest,
+		"head_sha":                  registration.HeadSHA,
+		"started_unix_seconds":      registration.StartedUnixSeconds,
+		"deadline_unix_seconds":     registration.DeadlineUnixSeconds,
+		"effective_timeout_seconds": registration.EffectiveTimeoutSecs,
+		"remediation_attempts":      registration.RemediationAttempts,
+	}
+	if registration.ExecutionID != "" {
+		wait["execution_id"] = registration.ExecutionID
+	}
+	return map[string]any{"ci_wait": wait}, nil
 }
 
 func readCIWaitRegistration(path string) (ciWaitRegistration, error) {

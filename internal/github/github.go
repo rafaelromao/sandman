@@ -37,9 +37,12 @@ type PR struct {
 	// review submitted or where the merge state is still being computed).
 	// The T4 cheap-gate oracle reads these to decide whether to defer to T1
 	// (Approved + CLEAN + green checks) or abstain (any other state).
-	ReviewDecision     string
-	MergeStateStatus   string
-	StatusCheckRollup  string
+	ReviewDecision    string
+	MergeStateStatus  string
+	StatusCheckRollup string
+	// CIExecutionID identifies the observed check executions independently of
+	// their status. A rerun can change this identity without changing the head.
+	CIExecutionID      string
 	linkedIssueNumber  int
 	linkedIssueNumbers []int
 }
@@ -150,6 +153,7 @@ type PRReview struct {
 	ID          string
 	Body        string
 	State       string
+	CommitID    string
 	AuthorLogin string
 	CreatedAt   time.Time
 }
@@ -162,6 +166,7 @@ type PRReviewComment struct {
 	Body        string
 	Path        string
 	Line        int
+	CommitID    string
 	AuthorLogin string
 	CreatedAt   time.Time
 }

@@ -167,7 +167,8 @@ Lifecycle regression coverage follows the canonical
 CI → review → approval → occupied slot → merge; quota → recovery → CI/review;
 deferred admission → explicit abort; and ownerless wait → different-batch
 rehydration inside fixed grace. Assert emitted events and their CLI/Portal folds,
-fixed deadlines and repair counts, cumulative RunID duration, exclusive claims,
+managed CI/review hard deadlines, session-local relaunch and invocation-local
+standalone CI bounds, completed quota polling, cumulative RunID duration, exclusive claims,
 held dependencies, terminal preservation, and launch-boundary quota revalidation.
 
 E2E tests exercise multi-session behavior such as continuing a previous run, batch orchestration, and subagent permission boundaries. They require the `e2e` build tag and are slower than smoke tests.
@@ -180,13 +181,27 @@ is restricted to current-head CI queued/running, a confirmed in-deadline
 delegated-review request (which counts as active from delivery, before the
 reviewer starts), or a recognised provider usage limit with quota-reset polling.
 The suite also pins failure for absent PRs, idle/generic
-gates, stale heads, lookup/state errors, and exhausted remediation budgets; verified
+gates, stale heads, lookup/state errors, and the historical exhausted in-session
+relaunch allowance; verified
 request-scoped review outcomes resume implementor-owned repair or merge work.
 Scheduler coverage must show that legitimate awaits release execution
 capacity, keep dependents queued, and resume automatically when external work
 resolves and a slot is available. Portal aggregation remains `Reviewing` while
 an associated review run is active, whether the implementation's runtime phase
 is waiting or running.
+
+The [AFK exit baseline](afk-exit-regression-baseline.md) distinguishes retained
+historical exits from removed cumulative restrictions. Regression coverage must
+show that stale/exhausted/corrupt repair ledgers cannot veto fresh execution;
+reviewer failures remain retryable beyond three launches with backoff and single
+publication; standalone CI permits pending checks after 30 but before 60 minutes,
+preserves same-head counters, and resets on a new head or fresh invocation.
+Quota coverage must include completed-poll accounting across executor/scheduler
+reconstruction, downtime/capacity clock jumps, the final boundary probe, zero and
+positive configured ordinary retries, invalid-accounting fallback, independent
+sibling outcomes, and cancellation. Quota estimate normalization must preserve
+existing recovery grace; CI/review hard deadlines remain enforced. Terminal
+failure payloads carry no active `await`, `await_reason`, or `gate` markers.
 
 ```bash
 SANDMAN_TEST_PROVIDERS=opencode \

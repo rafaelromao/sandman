@@ -2000,7 +2000,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	if runState.Status() == "waiting" && !runState.IsReview() {
 		status = "waiting"
 	}
-	startedAt := runState.Started.Timestamp
+	startedAt := runState.StartedAt()
 	var finishedAt *time.Time
 	if runState.Finished != nil {
 		finishedAt = &runState.Finished.Timestamp
