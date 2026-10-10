@@ -84,6 +84,23 @@ sandman run --continue 42
 
 Reuses the existing branch for issue #42 and the stored `.sandman/task.md` from its worktree. Tunables (agent, model, parallel, retries, sandbox, container tunables, review command) come from current CLI flags / config defaults; `--prompt` and `--template` supplied alongside `--continue` do not replace the stored task, which remains the prompt source for the continued run.
 
+## Managed review lifecycle
+
+With the default review command, `sandman run` delivers one guarded review
+request and then owns the rest of the lifecycle. A parent run waits after the
+request is confirmed, releasing execution capacity while the request is
+observed. Current-head feedback resumes the same RunID for implementation;
+after the changes are pushed, a new request starts a fresh review deadline.
+Current-head approval plus green checks resumes merge work. A verified merge
+finishes the parent without another agent launch, and dependents are admitted
+only after the parent's terminal success and closure are both observed.
+
+Restart recovery reads the event log and wait record, revalidates the live
+pull request and request-scoped evidence, and re-enters the same RunID. An
+explicit abort ends the unfinished parent and its dependents and leaves no
+recoverable continuation. Legacy review evidence is imported only when its
+request and head match; the canonical record then becomes authoritative.
+
 ## Cleaning up
 
 ```bash

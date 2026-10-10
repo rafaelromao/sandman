@@ -573,13 +573,17 @@ func TestWaitingContract_DependentInitialAdmissionSurvivesReturnedAwait(t *testi
 
 type cancelOnAwaitLog struct {
 	spyEventLog
-	cancel context.CancelFunc
+	cancel  context.CancelFunc
+	onAwait func()
 }
 
 func (l *cancelOnAwaitLog) Log(event events.Event) error {
 	err := l.spyEventLog.Log(event)
 	if event.Type == "run.await" {
 		l.cancel()
+		if l.onAwait != nil {
+			l.onAwait()
+		}
 	}
 	return err
 }

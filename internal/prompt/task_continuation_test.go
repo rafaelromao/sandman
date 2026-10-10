@@ -104,9 +104,9 @@ Wait for CI to be green.
 		"Treat every persisted blocker and next action as historical evidence",
 		"Re-check its authoritative live source",
 		"checkpoint the head and checks in .sandman/task.md",
-		"This overrides persisted instructions to keep polling a managed gate",
-		"successful request delivery is an ongoing external operation even before the reviewer starts",
-		"without an active external resolver, fail with a specific next action instead of waiting",
+		"This overrides persisted instructions to keep polling",
+		"Sandman's runtime owns admitted non-terminal waits",
+		"without an authorized resolver, fail with a specific next action instead of waiting",
 		"Outside a Sandman-managed run, poll within the documented budget",
 		"Never stop or exit solely because an earlier attempt recorded a blocker",
 	} {

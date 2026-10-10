@@ -19,13 +19,15 @@ import (
 
 type reviewWaitSchedulerGitHubClient struct {
 	fakeGitHubClient
-	mu       sync.RWMutex
-	comments []github.PRComment
+	mu           sync.RWMutex
+	comments     []github.PRComment
+	observations int
 }
 
 func (c *reviewWaitSchedulerGitHubClient) FindPRByBranch(ctx context.Context, branch string) (*github.PR, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.observations++
 	pr, err := c.fakeGitHubClient.FindPRByBranch(ctx, branch)
 	if pr == nil || err != nil {
 		return pr, err
@@ -37,8 +39,9 @@ func (c *reviewWaitSchedulerGitHubClient) FindPRByBranch(ctx context.Context, br
 }
 
 func (c *reviewWaitSchedulerGitHubClient) FetchIssue(ctx context.Context, number int) (*github.Issue, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.observations++
 	issue, err := c.fakeGitHubClient.FetchIssue(ctx, number)
 	if issue == nil || err != nil {
 		return issue, err
@@ -48,8 +51,9 @@ func (c *reviewWaitSchedulerGitHubClient) FetchIssue(ctx context.Context, number
 }
 
 func (c *reviewWaitSchedulerGitHubClient) ListPRComments(context.Context, int) ([]github.PRComment, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.observations++
 	if c.comments == nil {
 		return []github.PRComment{{
 			ID:        "https://github.com/owner/repo/pull/17#issuecomment-1001",
@@ -58,6 +62,12 @@ func (c *reviewWaitSchedulerGitHubClient) ListPRComments(context.Context, int) (
 		}}, nil
 	}
 	return append([]github.PRComment(nil), c.comments...), nil
+}
+
+func (c *reviewWaitSchedulerGitHubClient) observationCount() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.observations
 }
 
 func (c *reviewWaitSchedulerGitHubClient) setPR(branch string, mutate func(*github.PR)) {
