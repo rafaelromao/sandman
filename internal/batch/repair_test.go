@@ -177,9 +177,13 @@ func TestRunRepairCancellationWaitsForProcess(t *testing.T) {
 	log := &spyEventLog{}
 	factory := &repairRunnableFactory{}
 	writer := &repairStartWriter{started: make(chan struct{})}
-	cfg := &config.Config{Agent: "configured", Sandbox: "docker", AgentProviders: map[string]config.Agent{"configured": {Command: "printf 'started\\n'; sleep 60"}}}
+	// Replace the shell with the long-lived process so platform-specific shell
+	// child handling cannot keep output pipes open after cancellation. Ignore
+	// TERM to exercise bounded escalation as well as the sole process waiter.
+	cfg := &config.Config{Agent: "configured", Sandbox: "docker", AgentProviders: map[string]config.Agent{"configured": {Command: "trap '' TERM; printf 'started\\n'; exec sleep 60"}}}
 	o := NewOrchestrator(nil, &noopRenderer{}, &fakeConfigStore{config: cfg}, log,
-		WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(forbiddenRepairSandboxFactory{t}))
+		WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(forbiddenRepairSandboxFactory{t}),
+		WithRunSessionOpts(runSessionOptions{killTimeout: 50 * time.Millisecond}))
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	type outcome struct {
@@ -187,7 +191,17 @@ func TestRunRepairCancellationWaitsForProcess(t *testing.T) {
 		err    error
 	}
 	done := make(chan outcome, 1)
+	finished := make(chan struct{})
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-finished:
+		case <-time.After(5 * time.Second):
+			t.Error("repair did not stop after cleanup cancellation")
+		}
+	})
 	go func() {
+		defer close(finished)
 		result, err := o.RunRepair(ctx, Request{RunID: "repair-cancel", OutputWriter: writer, PromptConfig: prompt.RenderConfig{TaskPrompt: "repair"}}, cfg)
 		done <- outcome{result, err}
 	}()

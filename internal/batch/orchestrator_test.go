@@ -7460,6 +7460,8 @@ type fakeContainerStarter struct {
 	startCount      int
 	startImage      string
 	startDelay      time.Duration
+	startStarted    chan<- struct{}
+	startRelease    <-chan struct{}
 	startOpts       sandbox.StartOptions
 	container       sandbox.Container
 	containers      []sandbox.Container
@@ -7487,6 +7489,8 @@ func (f *fakeContainerStarter) Start(image, repoPath string, opts sandbox.StartO
 
 	startCount := f.startCount
 	startDelay := f.startDelay
+	startStarted := f.startStarted
+	startRelease := f.startRelease
 	startErr := f.err
 	containers := append([]sandbox.Container(nil), f.containers...)
 	container := f.container
@@ -7494,6 +7498,12 @@ func (f *fakeContainerStarter) Start(image, repoPath string, opts sandbox.StartO
 	f.startOpts = opts
 	f.mu.Unlock()
 
+	if startStarted != nil {
+		startStarted <- struct{}{}
+	}
+	if startRelease != nil {
+		<-startRelease
+	}
 	if startDelay > 0 {
 		time.Sleep(startDelay)
 	}
@@ -8177,6 +8187,7 @@ func TestRunBatch_PreservesStartOrderWhenStartCapacityIsOne(t *testing.T) {
 
 func TestRunBatch_StartFailureWakesQueuedWaiters(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir)
 	dockerPath := filepath.Join(dir, "docker")
 	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
 		t.Fatalf("write docker: %v", err)
@@ -8190,33 +8201,58 @@ func TestRunBatch_StartFailureWakesQueuedWaiters(t *testing.T) {
 			3: {Number: 3, Title: "Three"},
 		},
 	}
-	starter := &fakeContainerStarter{startDelay: 50 * time.Millisecond, err: errors.New("start failed")}
+	started := make(chan struct{}, 3)
+	queued := make(chan struct{}, 3)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	starter := &fakeContainerStarter{startStarted: started, startRelease: release, err: errors.New("start failed")}
 	factory := &fakeContainerRuntimeFactory{starter: starter}
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
 		WithContainerRuntimeFactory(factory),
 		WithRunnableFactory(&fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 1, Status: "success"}, {IssueNumber: 2, Status: "success"}, {IssueNumber: 3, Status: "success"}}}),
 		WithSandboxFactory(&trackingSandboxFactory{}),
+		WithRunSessionOpts(runSessionOptions{startWaiterQueued: func(bool) { queued <- struct{}{} }}),
 	)
 
 	errCh := make(chan error, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	finished := make(chan struct{})
+	t.Cleanup(func() {
+		cancel()
+		releaseOnce.Do(func() { close(release) })
+		select {
+		case <-finished:
+		case <-time.After(5 * time.Second):
+			t.Error("batch did not stop after cleanup cancellation")
+		}
+	})
 	go func() {
-		_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3}, Sandbox: "docker", Parallel: 3, ContainerCapacity: 2, ContainerCapacitySet: true, MaxContainers: 1, MaxContainersSet: true})
+		defer close(finished)
+		_, err := o.RunBatch(ctx, Request{Issues: []int{1, 2, 3}, Sandbox: "docker", Parallel: 3, ContainerCapacity: 2, ContainerCapacitySet: true, MaxContainers: 1, MaxContainersSet: true})
 		errCh <- err
 	}()
 
+	// Hold the first startup until the batch is active, then fail it. Every
+	// subsequent startup proves another queued waiter was woken by the failure.
+	waitForSignal(t, started, "expected first container startup")
+	waitForSignal(t, queued, "expected a queued admission before the startup fails")
+	releaseOnce.Do(func() { close(release) })
+	waitForSignal(t, started, "expected second waiter to retry container startup")
+	waitForSignal(t, started, "expected third waiter to retry container startup")
 	select {
 	case err := <-errCh:
 		if err == nil {
 			t.Fatal("expected start failure to be returned")
 		}
-	case <-time.After(250 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		t.Fatal("expected queued waiters to wake up after container start failure")
 	}
 }
 
 func TestRunBatch_ContainerCapacityOneStartsOneContainerPerConcurrentRun(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir)
 	dockerPath := filepath.Join(dir, "docker")
 	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\n"), 0755); err != nil {
 		t.Fatalf("write docker: %v", err)
