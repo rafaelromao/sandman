@@ -3,12 +3,14 @@
 package cmd
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -67,6 +69,208 @@ func TestPortal_E2E_TwoLiveRuns(t *testing.T) {
 	}
 	if len(runKeys) != 2 {
 		t.Fatalf("expected 2 distinct run keys, got %v", runKeys)
+	}
+}
+
+// TestPortal_E2E_BuiltBinarySavedLogReconnect verifies the shipped binary's
+// embedded Portal page and Saved Run Log endpoint across page reload, forced
+// SSE reconnect, and a Portal process restart. The cursor captured before each
+// reconnect must resume only the next appended record.
+func TestPortal_E2E_BuiltBinarySavedLogReconnect(t *testing.T) {
+	binPath := buildSandmanBinary(t)
+	repoDir := shortTempDir(t)
+	t.Chdir(repoDir)
+	initRunIntegrationRepo(t, repoDir)
+	ghShimDir := shortTempDir(t)
+	writeFakeGHShim(t, ghShimDir)
+	prependPath(t, ghShimDir)
+
+	runID := "binary-continuity-2772"
+	batchDir := createPromptOnlyRunSocket(t, repoDir, runID, 2772)
+	runDir := filepath.Join(batchDir, "runs", runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatalf("create run directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "run.json"), []byte(`{"runID":"`+runID+`","batchId":"`+runID+`","kind":"issue","status":"running","issue":2772}`), 0o644); err != nil {
+		t.Fatalf("write run manifest: %v", err)
+	}
+	logPath := filepath.Join(runDir, "run.log")
+	if err := os.WriteFile(logPath, []byte("[binary-continuity-2772] 10:00:00 initial\n"), 0o644); err != nil {
+		t.Fatalf("write initial saved log: %v", err)
+	}
+	logger := &events.JSONLLogger{Path: filepath.Join(repoDir, ".sandman", "events.jsonl")}
+	if err := logger.Log(events.Event{Type: "run.started", Timestamp: time.Now(), RunID: runID, Issue: 2772, Payload: map[string]any{"batch_id": runID}}); err != nil {
+		t.Fatalf("write run.started event: %v", err)
+	}
+
+	start := func() (string, *exec.Cmd) {
+		url, cmd := startPortalBinaryProcess(t, binPath, repoDir, ghShimDir)
+		waitForPortalReady(t, url)
+		return url, cmd
+	}
+	portalURL, portalCmd := start()
+	stop := func(cmd *exec.Cmd) {
+		if cmd != nil && cmd.Process != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	}
+	t.Cleanup(func() { stop(portalCmd) })
+	waitForRunCount(t, portalURL, 1)
+
+	assertPortalAsset := func(url string) {
+		resp, err := http.Get(url + "/")
+		if err != nil {
+			t.Fatalf("reload Portal page: %v", err)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("read Portal page: %v", err)
+		}
+		if !strings.Contains(string(body), "SandmanPortalLog") {
+			t.Fatal("built binary page did not load the embedded Portal log model")
+		}
+	}
+	assertPortalAsset(portalURL)
+	runs := fetchPortalRuns(t, portalURL)
+	if len(runs) != 1 {
+		t.Fatalf("expected one continuity run, got %d", len(runs))
+	}
+	runKey := runs[0].Key
+
+	initialResponse := openPortalBinaryStream(t, portalURL, runKey, "")
+	initialBlock := readPortalSSEBlock(t, initialResponse.Body, "snapshot")
+	initialResponse.Body.Close()
+	cursor := sseBlockID(initialBlock)
+	if cursor == "" {
+		t.Fatalf("initial snapshot did not provide a cursor: %q", initialBlock)
+	}
+	appendSavedLog(t, logPath, "[binary-continuity-2772] 10:00:01 forced reconnect\n")
+
+	reconnectResponse := openPortalBinaryStream(t, portalURL, runKey, cursor)
+	reconnectBlock := readPortalSSEBlock(t, reconnectResponse.Body, "append")
+	reconnectResponse.Body.Close()
+	cursor = sseBlockID(reconnectBlock)
+	if !strings.Contains(reconnectBlock, "forced reconnect") || cursor == "" {
+		t.Fatalf("forced reconnect block = %q", reconnectBlock)
+	}
+
+	stop(portalCmd)
+	portalURL, portalCmd = start()
+	assertPortalAsset(portalURL)
+	appendSavedLog(t, logPath, "[binary-continuity-2772] 10:00:02 after restart\n")
+	restartedResponse := openPortalBinaryStream(t, portalURL, runKey, cursor)
+	restartedBlock := readPortalSSEBlock(t, restartedResponse.Body, "append")
+	restartedResponse.Body.Close()
+	if !strings.Contains(restartedBlock, "after restart") {
+		t.Fatalf("restart reconnect block = %q", restartedBlock)
+	}
+}
+
+func startPortalBinaryProcess(t *testing.T, binPath, repoDir, ghBinDir string) (string, *exec.Cmd) {
+	t.Helper()
+	cmd := exec.Command(binPath, "portal", "--port", "0")
+	cmd.Dir = repoDir
+	cmd.Env = append(os.Environ(),
+		"PATH="+ghBinDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"GH_TOKEN=fake",
+		"GITHUB_TOKEN=fake",
+	)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start portal: %v", err)
+	}
+	urlCh := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 256)
+		for {
+			n, err := stdout.Read(buf)
+			if err != nil {
+				return
+			}
+			if idx := strings.Index(string(buf[:n]), "http://"); idx >= 0 {
+				url := strings.TrimSpace(string(buf[idx:n]))
+				urlCh <- strings.TrimRight(url, "\r\n")
+				return
+			}
+		}
+	}()
+	select {
+	case url := <-urlCh:
+		return url, cmd
+	case <-time.After(10 * time.Second):
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		t.Fatal("portal did not start within 10s")
+		return "", nil
+	}
+}
+
+func openPortalBinaryStream(t *testing.T, baseURL, runKey, cursor string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, baseURL+"/api/runs/stream?runKey="+url.QueryEscape(runKey), nil)
+	if err != nil {
+		t.Fatalf("create stream request: %v", err)
+	}
+	if cursor != "" {
+		req.Header.Set("Last-Event-ID", cursor)
+	}
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("stream status = %d, want 200", resp.StatusCode)
+	}
+	return resp
+}
+
+func readPortalSSEBlock(t *testing.T, body io.Reader, wantEvent string) string {
+	t.Helper()
+	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	var lines []string
+	seenEvent := false
+	for scanner.Scan() {
+		line := scanner.Text()
+		lines = append(lines, line)
+		if line == "event: "+wantEvent {
+			seenEvent = true
+		}
+		if line == "" && seenEvent {
+			return strings.Join(lines, "\n")
+		}
+	}
+	t.Fatalf("SSE stream ended before %q: %s", wantEvent, strings.Join(lines, "\n"))
+	return ""
+}
+
+func sseBlockID(block string) string {
+	for _, line := range strings.Split(block, "\n") {
+		if strings.HasPrefix(line, "id: ") {
+			return strings.TrimPrefix(line, "id: ")
+		}
+	}
+	return ""
+}
+
+func appendSavedLog(t *testing.T, path, text string) {
+	t.Helper()
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("open saved log for append: %v", err)
+	}
+	if _, err := file.WriteString(text); err != nil {
+		_ = file.Close()
+		t.Fatalf("append saved log: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close saved log: %v", err)
 	}
 }
 
@@ -670,11 +874,10 @@ func createPromptOnlyRunSocket(t *testing.T, repoDir, runName string, issueNumbe
 }
 
 // createMixedBatchRunSocket reproduces the exact mixed-batch shape from
-// issues 854/860: a single run directory whose batch.json lists both
-// issues and whose batch.sock streams prefixed lines for each. It writes
-// to the socket only — no saved run.log file is created — so the
-// assertion exercises the live-socket filter path, not the saved-file
-// reader.
+// issues 854/860: a single run directory whose batch.json lists both issues
+// and whose batch.sock streams prefixed lines for each. Per-RunID saved logs
+// are also created because the Portal's authoritative log path is the saved
+// artifact; the socket remains available for attach compatibility coverage.
 func createMixedBatchRunSocket(t *testing.T, repoDir, runName string) string {
 	t.Helper()
 
@@ -689,6 +892,21 @@ func createMixedBatchRunSocket(t *testing.T, repoDir, runName string) string {
 	}
 	if err := daemon.WriteManifest(batchDir, manifest); err != nil {
 		t.Fatalf("write manifest: %v", err)
+	}
+	for _, issue := range []int{860, 854} {
+		runID := fmt.Sprintf("%s-%d", runName, issue)
+		runDir := filepath.Join(batchDir, "runs", runID)
+		if err := os.MkdirAll(runDir, 0o755); err != nil {
+			t.Fatalf("create run directory for issue %d: %v", issue, err)
+		}
+		runManifest := fmt.Sprintf(`{"runID":%q,"batchId":%q,"kind":"issue","status":"running","issue":%d}`, runID, runName, issue)
+		if err := os.WriteFile(filepath.Join(runDir, "run.json"), []byte(runManifest), 0o644); err != nil {
+			t.Fatalf("write run manifest for issue %d: %v", issue, err)
+		}
+		log := fmt.Sprintf("[%s] 18:51:0%d saved artifact\n", runID, issue%10)
+		if err := os.WriteFile(filepath.Join(runDir, "run.log"), []byte(log), 0o644); err != nil {
+			t.Fatalf("write saved log for issue %d: %v", issue, err)
+		}
 	}
 
 	ln, err := net.Listen("unix", filepath.Join(batchDir, "batch.sock"))

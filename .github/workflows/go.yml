@@ -94,6 +94,40 @@ jobs:
           test "$(podman info --format '{{.Host.OCIRuntime.Name}}')" = "runc"
           podman run --rm alpine true
 
+      - name: Install Chromium
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: |
+          if command -v chromium >/dev/null 2>&1; then
+            echo "Chromium already installed: $(chromium --version)"
+            exit 0
+          fi
+          sudo env DEBIAN_FRONTEND=noninteractive timeout --signal=TERM --kill-after=30s 3m bash -e -c '
+            apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+            apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o DPkg::Lock::Timeout=120 install -y --no-install-recommends chromium
+          '
+          command -v chromium
+
+      - name: Set up Node.js for Portal tests
+        if: runner.os == 'Linux'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Portal browser continuity tests
+        if: runner.os == 'Linux'
+        run: |
+          test -n "$(command -v chromium)"
+          set +e
+          output=$(go test ./internal/cmd -run 'TestPortalTabRoundTrip|TestPortalRowReopen|TestPortalLogPane|TestPortalReviewSubjectSwitch_ReusesCachedParentPane|TestPortalStream_|TestPortalLogFreshness|TestPortalLogModel|TestPortalMixedTransitionStress|TestPortalBuiltBinaryBrowserContinuity' -count=1 -v 2>&1)
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          if [ "$status" -ne 0 ] || [[ "$output" == *"--- SKIP:"* ]]; then
+            echo "Portal continuity coverage failed or skipped"
+            exit 1
+          fi
+
       - name: Build
         run: go build -v ./...
 

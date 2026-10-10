@@ -13,21 +13,37 @@
   // Keyed by subject run-id; bounded by clearing on overflow.
   const logPaneCache = new Map();
   const LOG_PANE_CACHE_LIMIT = 8;
+  const LOG_PANE_CACHE_BYTES = 2 * 1024 * 1024;
+  let logPaneCacheBytes = 0;
   const shellCommands = 'gh|git|go|npm|yarn|node|npx|ls|echo|cat|make|mkdir|rm|cp|mv|find|grep|sed|awk|curl|wget|pwd|cd|printf|tar|unzip|jq|chmod|ln|whoami|sort|head|tail|less|more|touch|ssh|scp';
   const actionVerbs = 'Read|Edit|Glob|Skill|Bash|Write|Task|Grep|Search|Apply patch|Todos';
   function takeCachedLogPane(subjectValue) {
     const pane = logPaneCache.get(subjectValue);
-    if (pane) logPaneCache.delete(subjectValue);
+    if (pane) {
+      logPaneCache.delete(subjectValue);
+      logPaneCacheBytes -= Number(pane.getAttribute('data-cache-bytes') || 0);
+    }
     return pane || null;
   }
   function storeCachedLogPane(subjectValue, pane) {
     if (!subjectValue || !pane) return;
-    if (logPaneCache.has(subjectValue)) logPaneCache.delete(subjectValue);
-    if (logPaneCache.size >= LOG_PANE_CACHE_LIMIT) {
-      const oldestKey = logPaneCache.keys().next().value;
-      if (oldestKey !== undefined) logPaneCache.delete(oldestKey);
+    if (logPaneCache.has(subjectValue)) {
+      const previous = logPaneCache.get(subjectValue);
+      logPaneCache.delete(subjectValue);
+      logPaneCacheBytes -= Number(previous.getAttribute('data-cache-bytes') || 0);
     }
+    const bytes = (pane.textContent || '').length;
+    if (bytes > LOG_PANE_CACHE_BYTES) return;
+    while (logPaneCache.size >= LOG_PANE_CACHE_LIMIT || logPaneCacheBytes + bytes > LOG_PANE_CACHE_BYTES) {
+      const oldestKey = logPaneCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      const oldest = logPaneCache.get(oldestKey);
+      logPaneCache.delete(oldestKey);
+      logPaneCacheBytes -= Number(oldest.getAttribute('data-cache-bytes') || 0);
+    }
+    pane.setAttribute('data-cache-bytes', String(bytes));
     logPaneCache.set(subjectValue, pane);
+    logPaneCacheBytes += bytes;
   }
 
   // tokenizeForCache builds the rendered log pane (section + pre) for a
@@ -40,7 +56,9 @@
     const subjectValue = subjectRunValue(run);
     if (!subjectValue) return null;
     if (logPaneCache.has(subjectValue)) return logPaneCache.get(subjectValue) || null;
-    const log = run && run.log && String(run.log).trim() ? run.log : '';
+    const log = helpers && typeof helpers.logTextForRun === 'function'
+      ? helpers.logTextForRun(run)
+      : (run && run.log && String(run.log).trim() ? run.log : '');
     if (!log) return null;
     const content = global.document.createElement('div');
     buildLogContent(content, run, helpers);
@@ -70,7 +88,9 @@
       if (!run) continue;
       const subjectValue = subjectRunValue(run);
       if (!subjectValue) continue;
-      const log = run.log && String(run.log).trim();
+      const log = helpers && typeof helpers.logTextForRun === 'function'
+        ? helpers.logTextForRun(run)
+        : (run.log && String(run.log).trim() ? run.log : '');
       if (!log) continue;
       const ts = Date.parse(run.lastOutputAt || run.startedAt || '') || 0;
       candidates.push({ run, subjectValue, kind: run.kind === 'active' ? 0 : 1, ts });
@@ -647,11 +667,19 @@
   }
 
   function buildLogPre(run, helpers) {
-    const log = run.log && String(run.log).trim() ? run.log : '';
+    const log = helpers && typeof helpers.logTextForRun === 'function'
+      ? helpers.logTextForRun(run)
+      : (run.log && String(run.log).trim() ? run.log : '');
     const pre = global.document.createElement('pre');
     pre.classList.add('terminal-log');
     pre.setAttribute('data-scroll-key', run.key);
-    fillTerminalPre(pre, log, helpers);
+    const renderHelpers = Object.assign({}, helpers || {});
+    if (helpers && typeof helpers.onLogRenderComplete === 'function') {
+      renderHelpers.onComplete = function () {
+        helpers.onLogRenderComplete(run, pre);
+      };
+    }
+    fillTerminalPre(pre, log, renderHelpers);
     return pre;
   }
 
@@ -660,6 +688,8 @@
 
   function fillTerminalPre(pre, text, helpers) {
     const value = String(text == null ? '' : text);
+    const gen = (parseInt(pre.getAttribute('data-render-gen') || '0', 10) + 1) | 0;
+    pre.setAttribute('data-render-gen', String(gen));
     while (pre.firstChild) pre.removeChild(pre.firstChild);
     pre.setAttribute('data-rendering-log', value);
     if (value.length < ASYNC_CHUNK_THRESHOLD) {
@@ -675,10 +705,9 @@
       pre.appendChild(frag);
       pre.setAttribute('data-rendered-log', value);
       pre.removeAttribute('data-rendering-log');
+      if (helpers && typeof helpers.onComplete === 'function') helpers.onComplete();
       return;
     }
-    const gen = (parseInt(pre.getAttribute('data-render-gen') || '0', 10) + 1) | 0;
-    pre.setAttribute('data-render-gen', String(gen));
     const lines = value.split('\n');
     let lineIndex = 0;
     const htmlParts = [];
@@ -692,6 +721,7 @@
       if (lineIndex < lines.length) {
         global.setTimeout(processChunk, 0);
       } else {
+        if (String(gen) !== pre.getAttribute('data-render-gen')) return;
         const html = htmlParts.join('\n');
         const scratch = global.document.createElement('div');
         scratch.innerHTML = String(html || '');
@@ -705,6 +735,7 @@
         if (String(gen) !== pre.getAttribute('data-render-gen')) return;
         pre.setAttribute('data-rendered-log', value);
         pre.removeAttribute('data-rendering-log');
+        if (helpers && typeof helpers.onComplete === 'function') helpers.onComplete();
       }
     }
     global.setTimeout(processChunk, 0);
@@ -1246,7 +1277,6 @@
   function buildLogContent(content, run, helpers) {
     const section = global.document.createElement('section');
     section.classList.add('detail-box', 'tab-pane', 'fill');
-    const log = run.log && String(run.log).trim() ? run.log : '';
     const pre = buildLogPre(run, helpers);
     section.appendChild(pre);
     content.appendChild(section);
@@ -1441,7 +1471,9 @@
       if (opts.streamingKeys && opts.streamingKeys.has(subjectRun.key) && content.querySelector('pre[data-scroll-key]')) {
         return;
       }
-      const newLog = subjectRun.log && String(subjectRun.log).trim() ? subjectRun.log : '';
+      const newLog = opts.helpers && typeof opts.helpers.logTextForRun === 'function'
+        ? opts.helpers.logTextForRun(subjectRun)
+        : (subjectRun.log && String(subjectRun.log).trim() ? subjectRun.log : '');
       let pre = content.querySelector('pre[data-scroll-key]');
       const renderedSubjectFp = content.getAttribute('data-rendered-subject-fingerprint') || '';
       const renderedSubjectValue = renderedSubjectFp ? renderedSubjectFp.split('|')[0] : '';
@@ -2029,6 +2061,8 @@
     getCounters,
     updateDetailPanelLog,
     updateDetailPanelEvents,
+    fillTerminalPre,
+    appendTerminalPre,
     subjectRunValue,
     subjectRunsFor,
     highlightJSON,

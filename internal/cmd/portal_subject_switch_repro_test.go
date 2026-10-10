@@ -43,6 +43,19 @@ func loadPortalReproAssets(t *testing.T) (string, string, string, string) {
 	return string(html), string(stateJS), string(scrollJS), string(diffJS)
 }
 
+func loadPortalLogAsset(t *testing.T) string {
+	t.Helper()
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(currentFile), "portal_log.js"))
+	if err != nil {
+		t.Fatalf("read portal log model: %v", err)
+	}
+	return string(data)
+}
+
 func buildPortalReproPage(t *testing.T, stateJSON string, runsJSON []byte, body string) string {
 	t.Helper()
 	html, stateJS, scrollJS, diffJS := loadPortalReproAssets(t)
@@ -51,6 +64,7 @@ func buildPortalReproPage(t *testing.T, stateJSON string, runsJSON []byte, body 
 	page = strings.ReplaceAll(page, "{{.PortalStateJS}}", stateJS)
 	page = strings.ReplaceAll(page, "{{.PortalScrollJS}}", scrollJS)
 	page = strings.ReplaceAll(page, "{{.PortalDiffJS}}", diffJS)
+	page = strings.ReplaceAll(page, "{{.PortalLogJS}}", loadPortalLogAsset(t))
 	page = strings.ReplaceAll(page, "{{.ThemeOptionsHTML}}", `<option value="sandman">Sandman</option>`)
 	page = strings.ReplaceAll(page, "{{.RefreshPath}}", "/api/runs")
 	page = strings.ReplaceAll(page, "{{.PortalAbortSupported}}", "false")
@@ -443,6 +457,7 @@ func TestPortalSummaryPoll_UsesIfNoneMatchAndKeepsRowsOn304(t *testing.T) {
 	page = strings.ReplaceAll(page, "{{.PortalStateJS}}", stateJS)
 	page = strings.ReplaceAll(page, "{{.PortalScrollJS}}", scrollJS)
 	page = strings.ReplaceAll(page, "{{.PortalDiffJS}}", diffJS)
+	page = strings.ReplaceAll(page, "{{.PortalLogJS}}", loadPortalLogAsset(t))
 	page = strings.ReplaceAll(page, "{{.ThemeOptionsHTML}}", `<option value="sandman">Sandman</option>`)
 	page = strings.ReplaceAll(page, "{{.RefreshPath}}", "/api/runs")
 	page = strings.ReplaceAll(page, "{{.PortalAbortSupported}}", "false")

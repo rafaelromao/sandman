@@ -1,0 +1,435 @@
+package cmd
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+type portalInterleavingWriter struct {
+	output   strings.Builder
+	injected bool
+}
+
+func (w *portalInterleavingWriter) Write(data []byte) (int, error) {
+	n, err := w.output.Write(data)
+	if !w.injected {
+		w.injected = true
+		_, _ = w.output.WriteString(": keepalive\n\n")
+	}
+	return n, err
+}
+
+func (w *portalInterleavingWriter) Flush() {}
+
+func TestWritePortalLogEvent_EmitsAtomicSSEFrame(t *testing.T) {
+	w := &portalInterleavingWriter{}
+	if err := writePortalLogEvent(w, "append", map[string]string{"runId": "run-1"}, "cursor-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	const frame = "id: cursor-1\nevent: append\ndata: {\"runId\":\"run-1\"}\n\n"
+	if got, want := w.output.String(), frame+": keepalive\n\n"; got != want {
+		t.Fatalf("SSE frame interleaved with heartbeat: got %q, want %q", got, want)
+	}
+}
+
+func TestPortalLogSource_SnapshotAndTailShareRawPositions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	initial := "[run-1] 10:00:00 same\r\n[run-1] 10:00:01 same\n[run-1] \n"
+	if err := os.WriteFile(path, []byte(initial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source, err := newPortalLogSource(path, "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	snapshot, err := source.snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Records) != 3 {
+		t.Fatalf("snapshot records = %d, want 3", len(snapshot.Records))
+	}
+	if snapshot.Records[0].Text != "10:00:00 same" || snapshot.Records[1].Text != "10:00:01 same" || snapshot.Records[2].Text != "" {
+		t.Fatalf("snapshot text = %#v, want cleaned repeated and blank records", snapshot.Records)
+	}
+	if snapshot.Records[0].Start != 0 || snapshot.Records[0].End != int64(len("[run-1] 10:00:00 same\r\n")) {
+		t.Fatalf("first raw range = [%d,%d), want record-aligned byte range", snapshot.Records[0].Start, snapshot.Records[0].End)
+	}
+	if snapshot.Cursor.Offset != snapshot.End || snapshot.End != int64(len(initial)) {
+		t.Fatalf("snapshot cursor = %#v, end=%d, file size=%d", snapshot.Cursor, snapshot.End, len(initial))
+	}
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("[run-1] 10:00:02 same\n"); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	_ = f.Close()
+
+	batch, changed, err := source.appendBatch(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || len(batch.Records) != 1 {
+		t.Fatalf("tail batch = %#v, changed=%t, want one appended record", batch, changed)
+	}
+	if batch.Records[0].Start != snapshot.End || batch.Records[0].Text != "10:00:02 same" {
+		t.Fatalf("tail record = %#v, want contiguous raw position and repeated text", batch.Records[0])
+	}
+}
+
+func TestPortalLogSource_ResumeRejectsNonBoundaryCursor(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	if err := os.WriteFile(path, []byte("[run-1] first\n[run-1] second\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source, err := newPortalLogSource(path, "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	_, end, err := source.records(0, 5, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if end == 5 {
+		t.Fatal("test cursor unexpectedly landed on a record boundary")
+	}
+	_, boundaryEnd, err := source.records(0, int64(len("[run-1] first\n")), false)
+	if err != nil || boundaryEnd != int64(len("[run-1] first\n")) {
+		t.Fatalf("expected first record boundary, got end=%d err=%v", boundaryEnd, err)
+	}
+}
+
+func TestPortalLogSource_SnapshotUsesExplicitRecordAlignedBoundedRange(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	var content strings.Builder
+	for i := 0; i < 40000; i++ {
+		content.WriteString("[run-1] record-")
+		content.WriteString(strings.Repeat("x", 8))
+		content.WriteByte('\n')
+	}
+	if err := os.WriteFile(path, []byte(content.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source, err := newPortalLogSource(path, "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+
+	snapshot, err := source.snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !snapshot.Bounded || snapshot.Start <= 0 || snapshot.Start != snapshot.Records[0].Start {
+		t.Fatalf("snapshot range = %#v, want explicit record-aligned bounded start", snapshot)
+	}
+	if snapshot.End != snapshot.Cursor.Offset {
+		t.Fatalf("snapshot end=%d cursor=%d, want same committed position", snapshot.End, snapshot.Cursor.Offset)
+	}
+}
+
+func TestPortalLogSource_ResumeRejectsCursorBeyondFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	if err := os.WriteFile(path, []byte("[run-1] first\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source, err := newPortalLogSource(path, "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	initial := &portalLogCursor{RunID: "run-1", Generation: source.gen, Offset: int64(len("[run-1] first\n")) + 1}
+	var output strings.Builder
+	if err := streamPortalSavedLog(context.Background(), &output, source, initial, func() bool { return true }); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "event: reset") || !strings.Contains(output.String(), "event: snapshot") {
+		t.Fatalf("out-of-range cursor did not produce reset and snapshot: %s", output.String())
+	}
+}
+
+func TestPortalLogSource_ResetsWhenHistoryIsRewrittenAndRegrown(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	if err := os.WriteFile(path, []byte("[run-1] old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source, err := newPortalLogSource(path, "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	snapshot, err := source.snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(path, []byte("[run-1] new\n[run-1] tail\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	batch, changed, err := source.appendBatch(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || !batch.Reset || batch.Reason != "source-rewritten" {
+		t.Fatalf("rewrite was not made explicit: batch=%#v changed=%t", batch, changed)
+	}
+	if batch.Generation == snapshot.Generation {
+		t.Fatalf("rewritten source reused generation %q", batch.Generation)
+	}
+
+	var output strings.Builder
+	if err := streamPortalSavedLog(context.Background(), &output, source, &snapshot.Cursor, func() bool { return true }); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "event: reset") || !strings.Contains(output.String(), "new") || !strings.Contains(output.String(), "tail") {
+		t.Fatalf("rewritten source did not produce coherent replacement: %s", output.String())
+	}
+}
+
+func TestPortalLogSource_ResetsWhenFileIsTruncated(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	if err := os.WriteFile(path, []byte("[run-1] old\n[run-1] tail\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source, err := newPortalLogSource(path, "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	if _, err := source.snapshot(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("[run-1] new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	batch, changed, err := source.appendBatch(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || !batch.Reset || batch.Reason != "source-truncated" {
+		t.Fatalf("truncation was not made explicit: batch=%#v changed=%t", batch, changed)
+	}
+}
+
+func TestPortalLogSource_ResetsWhenHistoryChangesWithStableSizeAndMtime(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	old := []byte("[run-1] old\n")
+	newContent := []byte("[run-1] new\n")
+	if len(old) != len(newContent) {
+		t.Fatalf("test fixtures must have equal sizes: %d != %d", len(old), len(newContent))
+	}
+	if err := os.WriteFile(path, old, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source, err := newPortalLogSource(path, "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	if _, err := source.snapshot(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, newContent, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	batch, changed, err := source.appendBatch(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || !batch.Reset || batch.Reason != "source-rewritten" {
+		t.Fatalf("same-size rewrite with stable mtime was not made explicit: batch=%#v changed=%t", batch, changed)
+	}
+}
+
+func TestPortalLogSource_ResumeRejectsRewrittenHistoryAfterRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	if err := os.WriteFile(path, []byte("[run-1] old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	original, err := newPortalLogSource(path, "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := original.snapshot()
+	_ = original.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("[run-1] rewritten\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := newPortalLogSource(path, "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	var output strings.Builder
+	if err := streamPortalSavedLog(context.Background(), &output, restarted, &snapshot.Cursor, func() bool { return true }); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "event: reset") || !strings.Contains(output.String(), "rewritten") {
+		t.Fatalf("restart joined rewritten history without reset: %s", output.String())
+	}
+}
+
+func TestPortalLogSource_TerminalDrainAcceptsFinalUnterminatedRecord(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	if err := os.WriteFile(path, []byte("[run-1] first\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source, err := newPortalLogSource(path, "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	snapshot, err := source.snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("[run-1] final"); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	batch, changed, err := source.appendBatch(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || len(batch.Records) != 1 || batch.Records[0].Start != snapshot.End || batch.Records[0].Text != "final" {
+		t.Fatalf("terminal drain batch = %#v, changed=%t, want final unterminated record", batch, changed)
+	}
+}
+
+func TestStreamPortalSavedLog_UsesOneTerminalObservationForDrainAndEnd(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	if err := os.WriteFile(path, []byte("[run-1] first\n[run-1] final"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source, err := newPortalLogSource(path, "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+
+	var output strings.Builder
+	observations := 0
+	terminal := func() bool {
+		observations++
+		return observations >= 2
+	}
+	if err := streamPortalSavedLog(context.Background(), &output, source, nil, terminal); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), `"text":"final"`) {
+		t.Fatalf("final record missing from terminal stream: %s", output.String())
+	}
+	finalIndex := strings.Index(output.String(), `"text":"final"`)
+	endIndex := strings.Index(output.String(), "event: end\n")
+	if endIndex <= finalIndex {
+		t.Fatalf("terminal stream ended before final drain: %s", output.String())
+	}
+}
+
+// BenchmarkPortalLogSourceAppendCost measures the changed-file path that
+// validates the accepted prefix before emitting a new append. The benchmark
+// intentionally keeps the full-prefix hash in the timed region: this is the
+// cost that must remain visible in the completion evidence for large logs.
+func BenchmarkPortalLogSourceAppendCost(b *testing.B) {
+	for _, size := range []int{64 * 1024, 256 * 1024, 1024 * 1024} {
+		b.Run(fmt.Sprintf("prefix-%dKiB", size/1024), func(b *testing.B) {
+			dir := b.TempDir()
+			path := filepath.Join(dir, "run.log")
+			line := "[run-1] " + strings.Repeat("x", 96) + "\n"
+			initial := strings.Repeat(line, size/len(line)+1)
+			for i := 0; i < b.N; i++ {
+				if err := os.WriteFile(path, []byte(initial), 0o644); err != nil {
+					b.Fatal(err)
+				}
+				source, err := newPortalLogSource(path, "run-1")
+				if err != nil {
+					b.Fatal(err)
+				}
+				if _, err := source.snapshot(); err != nil {
+					_ = source.Close()
+					b.Fatal(err)
+				}
+				file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+				if err != nil {
+					_ = source.Close()
+					b.Fatal(err)
+				}
+				if _, err := file.WriteString("[run-1] live update\n"); err != nil {
+					_ = file.Close()
+					_ = source.Close()
+					b.Fatal(err)
+				}
+				if err := file.Close(); err != nil {
+					_ = source.Close()
+					b.Fatal(err)
+				}
+				b.StartTimer()
+				batch, changed, err := source.appendBatch(false)
+				b.StopTimer()
+				if err != nil {
+					_ = source.Close()
+					b.Fatal(err)
+				}
+				if !changed || len(batch.Records) != 1 {
+					_ = source.Close()
+					b.Fatalf("append batch = %#v, changed=%t", batch, changed)
+				}
+				if err := source.Close(); err != nil {
+					b.Fatal(err)
+				}
+			}
+			b.ReportMetric(float64(len(initial)), "prefix-bytes")
+		})
+	}
+}
+
+func BenchmarkPortalLogSourceIdlePollCost(b *testing.B) {
+	dir := b.TempDir()
+	path := filepath.Join(dir, "run.log")
+	line := "[run-1] " + strings.Repeat("x", 96) + "\n"
+	if err := os.WriteFile(path, []byte(strings.Repeat(line, 256*1024/len(line)+1)), 0o644); err != nil {
+		b.Fatal(err)
+	}
+	source, err := newPortalLogSource(path, "run-1")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer source.Close()
+	if _, err := source.snapshot(); err != nil {
+		b.Fatal(err)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, changed, err := source.appendBatch(false); err != nil || changed {
+			b.Fatalf("idle append batch = changed:%t err:%v", changed, err)
+		}
+	}
+}

@@ -516,11 +516,7 @@ coalescer.seedKnownLines('a', []);
 
 // Simulate the worst-case click-burst scenario: 100 SSE messages land
 // in a single event-loop tick so they all coalesce into one trailing
-// rAF callback. The coalescer's tail-most-first contract keeps the
-// most recent 16 lines (the cap) and drops the first 84 — the issue's
-// "tail matters most" framing explicitly permits this. The leading
-// flush + at-most-two-trailing-bursts pattern from the issue narrows
-// to a single flush for a single-tick burst.
+// rAF callback without dropping accepted records.
 for (let i = 0; i < 100; i++) coalescer.scheduleLine('a', 'line' + i);
 // Single tight rAF window: just fire the rAF.
 while (rafQueue.length) rafQueue.shift()();
@@ -546,13 +542,9 @@ console.log('PASS');
 	runStreamCoalescerScript(t, js)
 }
 
-// TestPortalPerf_StreamCoalescer_OverflowAtCapTailMostFirst
-// when the per-run buffer grows past cap, the trailing rAF
-// truncates the buffer to the most recent `cap` lines before calling
-// highlight. The oldest lines stay buffered only as long as the buffer
-// itself does; they are flushed first. The headline burst test (≤3 flushes)
-// still passes because no synchronous flush is scheduled on overflow.
-func TestPortalPerf_StreamCoalescer_OverflowAtCapTailMostFirst(t *testing.T) {
+// TestPortalPerf_StreamCoalescer_OverflowPreservesCompleteBurst verifies that a
+// burst larger than the old renderer cap remains complete until it is flushed.
+func TestPortalPerf_StreamCoalescer_OverflowPreservesCompleteBurst(t *testing.T) {
 	js := `
 const rafQueue = [];
 function fakeRaf(cb) { rafQueue.push(cb); }
@@ -583,9 +575,8 @@ const coalescer = createStreamCoalescer({
 coalescer._debug.enableCounters();
 coalescer.seedKnownLines('a', []);
 
-// Schedule 6 distinct lines into a cap=4 coalescer. No sync flush on
-// overflow — only the trailing rAF drains, and it must keep the most
-// recent 4 lines (tail-most-first).
+// Schedule 6 distinct lines into one animation-frame batch. No sync flush
+// occurs while queuing, and the trailing rAF must retain the complete burst.
 coalescer.scheduleLine('a', 'A1');
 coalescer.scheduleLine('a', 'A2');
 coalescer.scheduleLine('a', 'A3');
@@ -599,12 +590,13 @@ while (rafQueue.length) rafQueue.shift()();
 
 if (coalescer._debug.flushCount() !== 1) throw new Error('expected exactly 1 flush after rAF drain, got ' + coalescer._debug.flushCount());
 if (highlightCalls.length !== 1) throw new Error('expected 1 highlight call after flush, got ' + highlightCalls.length);
-// Tail-most-first: the highlight input should contain the last 4 lines (A3-A6), not the first ones.
+// The highlight input must contain every accepted line in source order.
+if (highlightCalls[0].indexOf('A1') < 0) throw new Error('expected complete burst to include A1, got ' + JSON.stringify(highlightCalls[0]));
+if (highlightCalls[0].indexOf('A2') < 0) throw new Error('expected complete burst to include A2, got ' + JSON.stringify(highlightCalls[0]));
 if (highlightCalls[0].indexOf('A4') < 0) throw new Error('expected tail-most-first highlight to include A4, got ' + JSON.stringify(highlightCalls[0]));
 if (highlightCalls[0].indexOf('A3') < 0) throw new Error('expected tail-most-first highlight to include A3, got ' + JSON.stringify(highlightCalls[0]));
 if (highlightCalls[0].indexOf('A6') < 0) throw new Error('expected tail-most-first highlight to include A6, got ' + JSON.stringify(highlightCalls[0]));
-// data-rendered-log mirrors only the tail (oldest line dropped from a single batch).
-if (pre.dataRendered !== 'A3\nA4\nA5\nA6\n') throw new Error('expected data-rendered-log to hold only tail 4 lines, got ' + JSON.stringify(pre.dataRendered));
+if (pre.dataRendered !== 'A1\nA2\nA3\nA4\nA5\nA6\n') throw new Error('expected data-rendered-log to hold complete burst, got ' + JSON.stringify(pre.dataRendered));
 console.log('PASS');
 `
 	runStreamCoalescerScript(t, js)

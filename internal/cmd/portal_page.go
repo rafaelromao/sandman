@@ -35,6 +35,7 @@ type portalPageData struct {
 	PortalStateJS         template.JS
 	PortalScrollJS        template.JS
 	PortalDiffJS          template.JS
+	PortalLogJS           template.JS
 	PortalAbortSupported  bool
 	QueuedMarker          template.JS
 }
@@ -54,6 +55,7 @@ func buildPortalPageData(repoRoot string) (*portalPageData, error) {
 		PortalStateJS:         portalStateJS,
 		PortalScrollJS:        portalScrollJS,
 		PortalDiffJS:          portalDiffJS,
+		PortalLogJS:           portalLogJS,
 		PortalAbortSupported:  portalAbortSupported(),
 		QueuedMarker:          template.JS(strconv.Quote(QueuedMarker)),
 	}, nil

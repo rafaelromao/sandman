@@ -125,7 +125,7 @@ func TestPortal_RunStream_BridgesControlSocketToSSE(t *testing.T) {
 	runKey := readPortalRuns(t, server.URL)[0].Key
 	getPortalRunsIndex(repoRoot).Invalidate()
 
-	req, _ := http.NewRequest(http.MethodGet, server.URL+"/api/runs/stream?runKey="+url.QueryEscape(runKey), nil)
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/api/runs/stream/legacy?runKey="+url.QueryEscape(runKey), nil)
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -190,6 +190,82 @@ func TestPortal_RunStream_BridgesControlSocketToSSE(t *testing.T) {
 		if events[i] != w {
 			t.Fatalf("event %d: got %q, want %q (ANSI/control bytes must be stripped)", i, events[i], w)
 		}
+	}
+}
+
+func TestPortal_RunStream_CutsOverFromPendingToSavedLog(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runID := "PR-pending"
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", runID)
+	runFolder := filepath.Join(batchDir, "runs", runID)
+	if err := os.MkdirAll(runFolder, 0755); err != nil {
+		t.Fatal(err)
+	}
+	runManifestData, _ := json.Marshal(batchindex.RunManifest{Issue: 42})
+	if err := os.WriteFile(filepath.Join(runFolder, "run.json"), runManifestData, 0644); err != nil {
+		t.Fatal(err)
+	}
+	idx := &batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{{ID: runID, Path: batchDir, Kind: "batch", Status: "active", Issues: []int{42}}}}
+	if err := idx.Save(filepath.Join(repoRoot, ".sandman", "batches.json")); err != nil {
+		t.Fatal(err)
+	}
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{{
+		Type: "run.started", Timestamp: time.Now(), RunID: runID, Issue: 42,
+		Payload: map[string]any{"branch": "pending-PR", "review": true, "pr_number": 42},
+	}})
+	broadcaster := daemon.NewBroadcaster()
+	controlSocket := daemon.NewControlSocketWithName(runFolder, "run.sock", broadcaster)
+	if err := controlSocket.Start(); err != nil {
+		t.Fatalf("start run control socket: %v", err)
+	}
+	t.Cleanup(func() { _ = controlSocket.Stop() })
+
+	handler := &portalHandler{repoRoot: repoRoot, runsIndex: getPortalRunsIndex(repoRoot)}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/runs/stream", handler.handleRunStream)
+	handler.handler = mux
+	server := startPortalHTTPServer(t, handler)
+	defer server.Close()
+	runKey := runID
+	resp, err := (&http.Client{}).Get(server.URL + "/api/runs/stream?runKey=" + url.QueryEscape(runKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	reader := bufio.NewReader(resp.Body)
+	readEvent := func() (string, string, error) {
+		kind, data := "", ""
+		for {
+			line, readErr := reader.ReadString('\n')
+			if readErr != nil {
+				return kind, data, readErr
+			}
+			switch {
+			case strings.HasPrefix(line, "event: "):
+				kind = strings.TrimSpace(strings.TrimPrefix(line, "event: "))
+			case strings.HasPrefix(line, "data: "):
+				data = strings.TrimSpace(strings.TrimPrefix(line, "data: "))
+			case line == "\n":
+				return kind, data, nil
+			}
+		}
+	}
+	kind, data, err := readEvent()
+	if err != nil || kind != "pending" {
+		t.Fatalf("initial saved-log state = %q data=%q, err=%v; want pending", kind, data, err)
+	}
+	if err := os.WriteFile(filepath.Join(runFolder, "run.log"), []byte("["+runID+"] 12:00:00 created after attach\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	kind, data, err = readEvent()
+	if err != nil || kind != "snapshot" {
+		t.Fatalf("post-creation state = %q data=%q err=%v; want structured snapshot", kind, data, err)
+	}
+	if !strings.Contains(data, "created after attach") {
+		t.Fatalf("post-creation snapshot did not contain saved output: %s", data)
 	}
 }
 
@@ -284,10 +360,10 @@ func TestPortal_RunStream_EmitsHeartbeatOnIdleSocket(t *testing.T) {
 	t.Fatalf("expected at least 3 heartbeat comments within 5s, got %d (idle bridge silently disconnected)", keepalives)
 }
 
-// TestPortal_RunStream_RejectsNonActiveRun asserts the endpoint refuses to
-// stream a terminal run (no live socket) with 409, and a missing runKey
-// with 400.
-func TestPortal_RunStream_RejectsNonActiveRun(t *testing.T) {
+// TestPortal_RunStream_CompletedRunReturnsExplicitUnavailable asserts a
+// terminal run without a saved artifact gets a coherent SSE response, while
+// a missing runKey remains a 400 error.
+func TestPortal_RunStream_CompletedRunReturnsExplicitUnavailable(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -314,17 +390,114 @@ func TestPortal_RunStream_RejectsNonActiveRun(t *testing.T) {
 		}
 	})
 
-	t.Run("completed run is not streamable", func(t *testing.T) {
+	t.Run("completed run reports unavailable source", func(t *testing.T) {
 		runKey := readPortalRuns(t, server.URL)[0].Key
 		resp, err := http.Get(server.URL + "/api/runs/stream?runKey=" + url.QueryEscape(runKey))
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusConflict {
-			t.Fatalf("expected 409 for a completed run, got %d", resp.StatusCode)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 for a completed run's explicit unavailable stream, got %d", resp.StatusCode)
 		}
 	})
+}
+
+func TestPortal_RunStream_SavedLogSnapshotAndCursorResume(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runID := "260618113825-saved-42"
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(2 * time.Minute)
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "saved", "runs", runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := json.Marshal(batchindex.RunManifest{Issue: 42})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "run.json"), manifest, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	largePrefix := strings.Repeat("["+runID+"] old\n", 30000)
+	if err := os.WriteFile(filepath.Join(runDir, "run.log"), []byte(largePrefix+"["+runID+"] first\n["+runID+"] same\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	idx := &batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{{ID: "saved", Path: filepath.Dir(filepath.Dir(runDir)), Kind: "batch", Status: "completed", Issues: []int{42}}}}
+	idxPath := filepath.Join(repoRoot, ".sandman", "batches.json")
+	if err := os.MkdirAll(filepath.Dir(idxPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.Save(idxPath); err != nil {
+		t.Fatal(err)
+	}
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "42-fix"}},
+	})
+
+	handler := newPortalHandler(repoRoot)
+	server := startPortalHTTPServer(t, handler)
+	defer server.Close()
+	runKey := readPortalRuns(t, server.URL)[0].Key
+	request := func(header, query string) (string, string) {
+		req, err := http.NewRequest(http.MethodGet, server.URL+"/api/runs/stream?runKey="+url.QueryEscape(runKey)+query, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if header != "" {
+			req.Header.Set("Last-Event-ID", header)
+		}
+		resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("saved log stream status = %d", resp.StatusCode)
+		}
+		data, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := string(data)
+		id := ""
+		for _, line := range strings.Split(body, "\n") {
+			if strings.HasPrefix(line, "id: ") {
+				id = strings.TrimPrefix(line, "id: ")
+				break
+			}
+		}
+		return body, id
+	}
+	first, cursor := request("", "")
+	if !strings.Contains(first, "event: snapshot") || !strings.Contains(first, `"bounded":true`) || !strings.Contains(first, `"text":"first"`) || !strings.Contains(first, `"text":"same"`) {
+		t.Fatalf("saved stream did not emit the authoritative snapshot: %s", first)
+	}
+	if cursor == "" {
+		t.Fatalf("saved snapshot did not emit an SSE cursor: %s", first)
+	}
+	resumed, _ := request(cursor, "")
+	if strings.Contains(resumed, "event: snapshot") || strings.Contains(resumed, "event: append") {
+		t.Fatalf("valid Last-Event-ID replayed saved records: %s", resumed)
+	}
+	if !strings.Contains(resumed, "event: end") {
+		t.Fatalf("resumed terminal stream did not end coherently: %s", resumed)
+	}
+	withConflictingURLCursor, _ := request(cursor, "&cursor=malformed")
+	if strings.Contains(withConflictingURLCursor, "event: reset") || strings.Contains(withConflictingURLCursor, "event: snapshot") {
+		t.Fatalf("valid Last-Event-ID did not take precedence over URL cursor: %s", withConflictingURLCursor)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "run.log"), []byte("["+runID+"] rewritten\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rewritten, _ := request(cursor, "")
+	if !strings.Contains(rewritten, "event: reset") || !strings.Contains(rewritten, `"text":"rewritten"`) {
+		t.Fatalf("rewritten saved log did not force an explicit replacement: %s", rewritten)
+	}
 }
 
 // readSSEEvents reads "data: <line>\n\n" frames until EOF, returning the
@@ -441,7 +614,7 @@ func TestPortal_RunStream_FiltersCrossRunBleed(t *testing.T) {
 		t.Fatalf("expected resolved RunID %q, got %q", runIDA, matched.RunID)
 	}
 
-	req, _ := http.NewRequest(http.MethodGet, server.URL+"/api/runs/stream?runKey="+url.QueryEscape(wantRunKey), nil)
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/api/runs/stream/legacy?runKey="+url.QueryEscape(wantRunKey), nil)
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
