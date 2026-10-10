@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -322,5 +323,85 @@ func TestStreamPortalSavedLog_UsesOneTerminalObservationForDrainAndEnd(t *testin
 	endIndex := strings.Index(output.String(), "event: end\n")
 	if endIndex <= finalIndex {
 		t.Fatalf("terminal stream ended before final drain: %s", output.String())
+	}
+}
+
+// BenchmarkPortalLogSourceAppendCost measures the changed-file path that
+// validates the accepted prefix before emitting a new append. The benchmark
+// intentionally keeps the full-prefix hash in the timed region: this is the
+// cost that must remain visible in the completion evidence for large logs.
+func BenchmarkPortalLogSourceAppendCost(b *testing.B) {
+	for _, size := range []int{64 * 1024, 256 * 1024, 1024 * 1024} {
+		b.Run(fmt.Sprintf("prefix-%dKiB", size/1024), func(b *testing.B) {
+			dir := b.TempDir()
+			path := filepath.Join(dir, "run.log")
+			line := "[run-1] " + strings.Repeat("x", 96) + "\n"
+			initial := strings.Repeat(line, size/len(line)+1)
+			for i := 0; i < b.N; i++ {
+				if err := os.WriteFile(path, []byte(initial), 0o644); err != nil {
+					b.Fatal(err)
+				}
+				source, err := newPortalLogSource(path, "run-1")
+				if err != nil {
+					b.Fatal(err)
+				}
+				if _, err := source.snapshot(); err != nil {
+					_ = source.Close()
+					b.Fatal(err)
+				}
+				file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+				if err != nil {
+					_ = source.Close()
+					b.Fatal(err)
+				}
+				if _, err := file.WriteString("[run-1] live update\n"); err != nil {
+					_ = file.Close()
+					_ = source.Close()
+					b.Fatal(err)
+				}
+				if err := file.Close(); err != nil {
+					_ = source.Close()
+					b.Fatal(err)
+				}
+				b.StartTimer()
+				batch, changed, err := source.appendBatch(false)
+				b.StopTimer()
+				if err != nil {
+					_ = source.Close()
+					b.Fatal(err)
+				}
+				if !changed || len(batch.Records) != 1 {
+					_ = source.Close()
+					b.Fatalf("append batch = %#v, changed=%t", batch, changed)
+				}
+				if err := source.Close(); err != nil {
+					b.Fatal(err)
+				}
+			}
+			b.ReportMetric(float64(len(initial)), "prefix-bytes")
+		})
+	}
+}
+
+func BenchmarkPortalLogSourceIdlePollCost(b *testing.B) {
+	dir := b.TempDir()
+	path := filepath.Join(dir, "run.log")
+	line := "[run-1] " + strings.Repeat("x", 96) + "\n"
+	if err := os.WriteFile(path, []byte(strings.Repeat(line, 256*1024/len(line)+1)), 0o644); err != nil {
+		b.Fatal(err)
+	}
+	source, err := newPortalLogSource(path, "run-1")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer source.Close()
+	if _, err := source.snapshot(); err != nil {
+		b.Fatal(err)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, changed, err := source.appendBatch(false); err != nil || changed {
+			b.Fatalf("idle append batch = changed:%t err:%v", changed, err)
+		}
 	}
 }

@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"encoding/json"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -173,4 +175,46 @@ for (const runID of Object.keys(actionCounts)) {
 console.log('PASS');
 `
 	runNodeScript(t, js)
+}
+
+func TestPortalLogModel_BoundedRetentionMetrics(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	logPath := filepath.Join(filepath.Dir(currentFile), "portal_log.js")
+	js := `
+const fs = require('fs');
+const vm = require('vm');
+const source = fs.readFileSync(` + "`" + logPath + "`" + `, 'utf8');
+vm.runInThisContext(source, { filename: 'portal_log.js' });
+if (typeof global.gc !== 'function') throw new Error('gc unavailable');
+global.gc();
+const before = process.memoryUsage().heapUsed;
+const model = SandmanPortalLog.create();
+const records = [];
+for (let i = 0; i < 100000; i++) records.push({ runId: 'metrics-run', generation: 'g1', start: i, end: i + 1, text: 'line-' + i });
+if (!model.accept('metrics-run', { runId: 'metrics-run', generation: 'g1', start: 0, end: 100000, cursor: { runId: 'metrics-run', generation: 'g1', offset: 100000 }, records }, 'snapshot', 1)) throw new Error('metrics snapshot rejected');
+global.gc();
+const after = process.memoryUsage().heapUsed;
+const range = model.range('metrics-run');
+process.stdout.write(JSON.stringify({ retainedRecords: model.get('metrics-run').records.length, retainedBytes: range.retainedBytes, heapDeltaBytes: after - before }));
+`
+	cmd := exec.Command("node", "--expose-gc", "-e", js)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("metrics script failed: %v\n%s", err, out)
+	}
+	var metrics struct {
+		RetainedRecords int `json:"retainedRecords"`
+		RetainedBytes   int `json:"retainedBytes"`
+		HeapDeltaBytes  int `json:"heapDeltaBytes"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(out))), &metrics); err != nil {
+		t.Fatalf("parse metrics %q: %v", out, err)
+	}
+	t.Logf("model retention metrics: retained_records=%d retained_bytes=%d heap_delta_bytes=%d", metrics.RetainedRecords, metrics.RetainedBytes, metrics.HeapDeltaBytes)
+	if metrics.RetainedRecords != 4096 || metrics.RetainedBytes <= 0 || metrics.HeapDeltaBytes <= 0 {
+		t.Fatalf("unexpected retention metrics: %+v", metrics)
+	}
 }

@@ -303,6 +303,7 @@ process.stdout.write(JSON.stringify({ scenario: 'subject_switch', flushed: flush
 	if sumMs, ok := got["sumMs"].(float64); !ok || sumMs >= 50 {
 		t.Fatalf("expected sumMs < 50 for subject switch, got %v", got["sumMs"])
 	}
+	writeLongTaskBaseline(t, "subject_switch", int(got["count"].(float64)), got["maxMs"].(float64), got["sumMs"].(float64), got["endToEndMs"].(float64), 0, 0)
 }
 
 func TestPortalPerf_LongTaskProfile_Abort(t *testing.T) {
