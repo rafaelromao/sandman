@@ -27,10 +27,16 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
-      - uses: actions/checkout@v4
-        if: steps.release-please.outputs.release_created == 'true'
+      - name: Checkout release automation
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
+      - name: Refresh pending release branch
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: sh scripts/refresh_release_pr.sh
       - uses: actions/setup-go@v5
         if: steps.release-please.outputs.release_created == 'true'
         with:

@@ -14,6 +14,13 @@ binary installation ([#2392](https://github.com/rafaelromao/sandman/issues/2392)
    `release-please-config.json` and `.release-please-manifest.json`, then opens
    or updates a release change request when the commit history contains a
    release-bearing change.
+   The workflow then refreshes any pending release branch from current `main`,
+   even when Release Please reports that its generated release content is
+   unchanged. This includes merged test, documentation, and CI repairs without
+   changing their SemVer effect. The refresh uses the release credential and
+   an expected-head guard; conflicts or concurrent head changes fail visibly
+   instead of force-updating the branch. A branch that already contains `main`
+   is left alone, so an unchanged run does not restart validation unnecessarily.
 3. Review the generated release change request. It is the authorization point
    for the next version and release notes. Release Please branch updates run the
    exhaustive `Full Regression - Linux` suite and the focused `Native
