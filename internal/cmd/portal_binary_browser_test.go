@@ -127,19 +127,20 @@ func TestPortalBuiltBinaryBrowserContinuity(t *testing.T) {
 	control.mu.Unlock()
 	waitPortalBrowserSignal(t, control, "visible-before-restart")
 	waitPortalBrowserSignal(t, control, "interactions")
-	appendPortalBrowserLog(t, logPaths[mainRun], "["+mainRun+"] 10:00:02 live-after-restart\n")
-	appendPortalBrowserLog(t, logPaths[reviewRun], "["+reviewRun+"] 10:00:02 live-after-restart\n")
-	appendPortalBrowserLog(t, logPaths[secondRun], "["+secondRun+"] 10:00:02 live-after-restart\n")
-	control.mu.Lock()
-	control.appendAt["after-restart"] = time.Now()
-	control.mu.Unlock()
 	if err := portalCmd.Process.Kill(); err != nil {
 		t.Fatalf("stop Portal for forced reconnect: %v", err)
 	}
 	_ = portalCmd.Wait()
-	portalCmd = startPortalBrowserBinary(t, binPath, repoDir, port)
-	waitPortalBrowserReady(t, initialURL)
+	restartPort := freePortalBrowserPort(t)
+	restartURL := fmt.Sprintf("http://127.0.0.1:%d", restartPort)
+	portalCmd = startPortalBrowserBinary(t, binPath, repoDir, restartPort)
+	waitPortalBrowserReady(t, restartURL)
+	appendPortalBrowserLog(t, logPaths[mainRun], "["+mainRun+"] 10:00:02 live-after-restart\n")
+	appendPortalBrowserLog(t, logPaths[reviewRun], "["+reviewRun+"] 10:00:02 live-after-restart\n")
+	appendPortalBrowserLog(t, logPaths[secondRun], "["+secondRun+"] 10:00:02 live-after-restart\n")
 	control.mu.Lock()
+	control.portalURL = restartURL
+	control.appendAt["after-restart"] = time.Now()
 	control.phase = "restart-ready"
 	control.mu.Unlock()
 	waitPortalBrowserSignal(t, control, "reconnected")
@@ -166,6 +167,11 @@ func TestPortalBuiltBinaryBrowserContinuity(t *testing.T) {
 			Review string `json:"review"`
 			Second string `json:"second"`
 		} `json:"logs"`
+		DOMLogs struct {
+			Main   string `json:"main"`
+			Review string `json:"review"`
+			Second string `json:"second"`
+		} `json:"domLogs"`
 		Metrics struct {
 			DOMNodes         int `json:"domNodes"`
 			PreCount         int `json:"preCount"`
@@ -186,6 +192,19 @@ func TestPortalBuiltBinaryBrowserContinuity(t *testing.T) {
 		{name: "main", got: result.Logs.Main, want: portalBinaryExpectedLog(mainRun, true)},
 		{name: "review", got: result.Logs.Review, want: portalBinaryExpectedLog(reviewRun, true)},
 		{name: "second", got: result.Logs.Second, want: portalBinaryExpectedLog(secondRun, true)},
+	} {
+		if check.got != check.want {
+			t.Fatalf("built-binary %s log mismatch: got %q, want %q", check.name, check.got, check.want)
+		}
+	}
+	for _, check := range []struct {
+		name string
+		got  string
+		want string
+	}{
+		{name: "main DOM", got: result.DOMLogs.Main, want: portalBinaryExpectedLog(mainRun, true)},
+		{name: "review DOM", got: result.DOMLogs.Review, want: portalBinaryExpectedLog(reviewRun, true)},
+		{name: "second DOM", got: result.DOMLogs.Second, want: portalBinaryExpectedLog(secondRun, true)},
 	} {
 		if check.got != check.want {
 			t.Fatalf("built-binary %s log mismatch: got %q, want %q", check.name, check.got, check.want)
@@ -316,10 +335,14 @@ func portalBrowserWrapper(controlURL, mainRun, reviewRun, secondRun string) stri
     throw new Error('timed out waiting for ' + label);
   }
   async function loadPortal() {
-    const frame = document.querySelector('iframe') || document.body.appendChild(document.createElement('iframe'));
+    const previous = document.querySelector('iframe');
+    if (previous) previous.remove();
+    const frame = document.body.appendChild(document.createElement('iframe'));
     frame.style.width = '1280px';
     frame.style.height = '800px';
+    const loaded = new Promise(resolve => frame.addEventListener('load', resolve, { once: true }));
     frame.src = await get('/portal');
+    await loaded;
     await waitFor(() => frame.contentDocument.querySelector('tr[data-run-key="' + mainRun + '"]'), 'main row');
     return frame;
   }
@@ -423,9 +446,12 @@ func portalBrowserWrapper(controlURL, mainRun, reviewRun, secondRun string) stri
     await waitPhase('logs-ready');
     frame = await loadPortal();
     await activateRun(frame, mainRun, expected(mainRun, true));
+    const domLogs = { main: logText(frame, mainRun), review: '', second: '' };
     await signal('visible-after-restart');
     await activateSubject(frame, reviewRun, expected(reviewRun, true));
+    domLogs.review = logText(frame, reviewRun);
     await activateRun(frame, secondRun, expected(secondRun, true));
+    domLogs.second = logText(frame, secondRun);
     await activateRun(frame, mainRun, expected(mainRun, true));
     const metrics = browserMetrics(frame);
     if (metrics.domNodes <= 0 || metrics.preCount <= 0 || metrics.renderedLogBytes <= 0 || metrics.retainedBytes <= 0) {
@@ -440,6 +466,7 @@ func portalBrowserWrapper(controlURL, mainRun, reviewRun, secondRun string) stri
         review: modelText(frame, reviewRun),
         second: modelText(frame, secondRun),
       },
+      domLogs,
       metrics,
       subject: 'subject-switched',
     });
