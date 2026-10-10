@@ -1,17 +1,17 @@
 # Portal Log Continuity Evidence
 
 This record is the completion evidence for the Saved Run Log continuity change.
-The implementation revision is `b94856efb1ce2bf49b6be94e93b197db78f33a73`.
+The implementation revision is `385c35a24c3798996556203fb2e23a50c449fa8d`.
 
 ## Verification Artifacts
 
-- Focused Linux CI browser gate: [run 38003922454](https://github.com/rafaelromao/sandman/actions/runs/38003922454), 17 PASS, 0 FAIL, 0 SKIP.
+- Focused Linux CI browser gate: [run 38057359271](https://github.com/rafaelromao/sandman/actions/runs/38057359271), 19 PASS, 0 FAIL, 0 SKIP, including the strengthened built-binary browser fixture.
 - Current-head PR checks: [PR #2773](https://github.com/rafaelromao/sandman/pull/2773), Ubuntu, macOS, GoReleaser, and semantic title validation all PASS.
-- Built-binary continuity: `go test -tags e2e ./internal/cmd -run '^TestPortal_E2E_BuiltBinarySavedLogReconnect$' -count=1 -v` passed in 0.707s. The test builds the binary from the implementation revision, reloads the embedded page, forces an SSE reconnect, restarts the Portal process, reloads the page again, and resumes from the prior cursor.
+- Built-binary continuity: `go test ./internal/cmd -run '^TestPortalBuiltBinaryBrowserContinuity$' -count=1 -v` passed locally. The test builds the binary from the implementation revision, uses one stable endpoint through a backend outage and same-port restart, verifies cursor reconnect and row reopening, then reloads the embedded page and checks the complete DOM range.
 - Source update benchmark: `go test ./internal/cmd -run '^$' -bench '^BenchmarkPortalLogSource(AppendCost|IdlePollCost)$' -benchmem -benchtime=5x` measures changed-file validation, including the full accepted-prefix SHA-256 hash in `portalLogSource.appendBatch`, and the unchanged-file idle path.
 - Frontend measurement: `go test ./internal/cmd -run 'TestPortalPerf_LongTaskProfile_' -count=1 -v` records cold open, warm open, row switch, subject switch, and abort/archive long-task metrics through the production `portal_diff.js` path.
 
-The local browser prerequisite was unavailable in this worktree. Browser results in this record therefore refer to the required no-skip Linux CI gate, not to skipped local tests.
+The local Chromium prerequisite was available in this worktree; browser results therefore include both the local built-binary run and the required no-skip Linux CI gate.
 
 ## Baseline Reproduction
 
@@ -35,9 +35,9 @@ gate.
 | AC | Evidence | Result |
 |---|---|---|
 | AC-01 | `TestPortalMixedTransitionStress`; `TestPortalLogModel_UsesRecordPositionsNotDisplayedText` | PASS |
-| AC-02 | `TestPortalLogSource_SnapshotAndTailShareRawPositions`; `TestPortalStream_NativeReconnectUsesCursorAndKeepsSourceOrder` | PASS |
+| AC-02 | `TestPortalLogSource_SnapshotAndTailShareRawPositions`; `TestPortalStream_NativeReconnectUsesCursorAndKeepsSourceOrder`; `TestWritePortalLogEvent_EmitsAtomicSSEFrame` | PASS |
 | AC-03 | `TestPortalLogSource_SnapshotAndTailShareRawPositions`; source append tests | PASS |
-| AC-04 | `TestPortalStream_NativeReconnectUsesCursorAndKeepsSourceOrder`; cursor validation tests | PASS |
+| AC-04 | `TestPortalStream_NativeReconnectUsesCursorAndKeepsSourceOrder`; `TestWritePortalLogEvent_EmitsAtomicSSEFrame`; cursor validation tests | PASS |
 | AC-05 | `TestPortalLogSource_ResumeRejectsCursorBeyondFile`; reset/replacement tests | PASS |
 | AC-06 | `TestPortalLogSource_ResetsWhenHistoryIsRewrittenAndRegrown`; truncation and restart tests | PASS |
 | AC-07 | `TestPortalLogSource_SnapshotAndTailShareRawPositions`; repeated/blank/ANSI source tests | PASS |

@@ -9,6 +9,34 @@ import (
 	"testing"
 )
 
+type portalInterleavingWriter struct {
+	output   strings.Builder
+	injected bool
+}
+
+func (w *portalInterleavingWriter) Write(data []byte) (int, error) {
+	n, err := w.output.Write(data)
+	if !w.injected {
+		w.injected = true
+		_, _ = w.output.WriteString(": keepalive\n\n")
+	}
+	return n, err
+}
+
+func (w *portalInterleavingWriter) Flush() {}
+
+func TestWritePortalLogEvent_EmitsAtomicSSEFrame(t *testing.T) {
+	w := &portalInterleavingWriter{}
+	if err := writePortalLogEvent(w, "append", map[string]string{"runId": "run-1"}, "cursor-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	const frame = "id: cursor-1\nevent: append\ndata: {\"runId\":\"run-1\"}\n\n"
+	if got, want := w.output.String(), frame+": keepalive\n\n"; got != want {
+		t.Fatalf("SSE frame interleaved with heartbeat: got %q, want %q", got, want)
+	}
+}
+
 func TestPortalLogSource_SnapshotAndTailShareRawPositions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	initial := "[run-1] 10:00:00 same\r\n[run-1] 10:00:01 same\n[run-1] \n"

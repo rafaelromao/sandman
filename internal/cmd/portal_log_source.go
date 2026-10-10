@@ -385,8 +385,9 @@ func decodePortalLogCursor(value string) (portalLogCursor, error) {
 }
 
 func writePortalLogEvent(w io.Writer, event string, payload any, id string) error {
+	var frame bytes.Buffer
 	if id != "" {
-		if _, err := fmt.Fprintf(w, "id: %s\n", id); err != nil {
+		if _, err := fmt.Fprintf(&frame, "id: %s\n", id); err != nil {
 			return err
 		}
 	}
@@ -394,7 +395,10 @@ func writePortalLogEvent(w io.Writer, event string, payload any, id string) erro
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data); err != nil {
+	if _, err := fmt.Fprintf(&frame, "event: %s\ndata: %s\n\n", event, data); err != nil {
+		return err
+	}
+	if _, err := w.Write(frame.Bytes()); err != nil {
 		return err
 	}
 	if f, ok := w.(interface{ Flush() }); ok {
