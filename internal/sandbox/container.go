@@ -233,7 +233,11 @@ func (c *runningContainer) Stop() error {
 		defer c.cleanup()
 	}
 	if out, err := boundedContainerCommand(c.execFn, c.binary, "stop", c.id); err != nil {
-		return fmt.Errorf("stop container: %w\n%s", err, out)
+		stopErr := fmt.Errorf("stop container: %w\n%s", err, out)
+		if removeOut, removeErr := boundedContainerCommand(c.execFn, c.binary, "rm", "-f", c.id); removeErr != nil {
+			return errors.Join(stopErr, fmt.Errorf("remove container: %w\n%s", removeErr, removeOut))
+		}
+		return stopErr
 	}
 	return nil
 }

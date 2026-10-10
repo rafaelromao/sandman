@@ -592,10 +592,15 @@ type pooledContainer struct {
 	ready     bool
 	startErr  error
 	dead      bool
+	stopping  bool
 }
 
 type containerAliveChecker interface {
 	Alive() (bool, error)
+}
+
+type containerContextAliveChecker interface {
+	AliveContext(context.Context) (bool, error)
 }
 
 type containerPool struct {
@@ -1074,8 +1079,14 @@ func (p *containerPool) Acquire(ctx context.Context) (*containerLease, error) {
 			p.mu.Unlock()
 			return nil, err
 		}
-		if p.pruneDeadLocked() {
+		if p.pruneDeadLocked(ctx) {
 			continue
+		}
+		// Inspection is an external command. Cancellation observed during it
+		// cannot grant a lease or invalidate a live sibling's container.
+		if err := ctx.Err(); err != nil {
+			p.mu.Unlock()
+			return nil, err
 		}
 
 		if best := p.pickReadyLocked(); best != nil {
@@ -1101,7 +1112,7 @@ func (p *containerPool) Acquire(ctx context.Context) (*containerLease, error) {
 
 		container, err := p.starter.Start(ctx, p.image, p.repoPath, p.startOpts)
 		if ctx.Err() != nil {
-			err = ctx.Err()
+			err = errors.Join(ctx.Err(), err)
 		}
 		// Startup owns this reservation until its command and cleanup finish.
 		// It has not yet published the container to any other row.
@@ -1110,6 +1121,11 @@ func (p *containerPool) Acquire(ctx context.Context) (*containerLease, error) {
 		}
 
 		p.mu.Lock()
+		if err == nil && ctx.Err() != nil {
+			p.mu.Unlock()
+			err = errors.Join(ctx.Err(), container.Stop())
+			p.mu.Lock()
+		}
 		if err != nil {
 			entry.startErr = err
 			entry.active--
@@ -1156,51 +1172,65 @@ func (p *containerPool) hasPendingCapacityLocked() bool {
 func (p *containerPool) releaseShared(entry *pooledContainer) {
 	p.mu.Lock()
 	entry.active--
-	if entry.dead && entry.active == 0 {
-		if entry.container != nil {
-			_ = entry.container.Stop()
-		}
-		p.removeShared(entry)
+	if entry.dead && entry.active == 0 && !entry.stopping {
+		p.stopDeadLocked(entry)
 	}
 	p.cond.Broadcast()
 	p.mu.Unlock()
 }
 
-func (p *containerPool) pruneDeadLocked() bool {
+func (p *containerPool) pruneDeadLocked(ctx context.Context) bool {
 	changed := false
-	kept := p.shared[:0]
-	for _, entry := range p.shared {
-		if entry.dead {
-			if entry.active == 0 {
+	// Commands never hold the pool mutex: a caller must be able to cancel
+	// independently of another row's inspection or cleanup. Entries remain
+	// counted while cleanup runs, and dead is monotonic under the mutex.
+	entries := append([]*pooledContainer(nil), p.shared...)
+	for _, entry := range entries {
+		if entry.ready && !entry.dead {
+			p.mu.Unlock()
+			alive := containerAliveContext(ctx, entry.container)
+			p.mu.Lock()
+			if ctx.Err() != nil {
+				return changed
+			}
+			if !alive && !entry.dead {
+				entry.dead = true
 				changed = true
-				if entry.container != nil {
-					_ = entry.container.Stop()
-				}
-				continue
 			}
-			kept = append(kept, entry)
-			continue
 		}
-		if entry.ready && !containerAlive(entry.container) {
-			entry.dead = true
+		if entry.dead && entry.active == 0 && !entry.stopping {
+			p.stopDeadLocked(entry)
 			changed = true
-			if entry.active == 0 {
-				if entry.container != nil {
-					_ = entry.container.Stop()
-				}
-				continue
-			}
 		}
-		kept = append(kept, entry)
 	}
 	if changed {
-		p.shared = kept
 		p.cond.Broadcast()
 	}
 	return changed
 }
 
+// stopDeadLocked retains the counted entry until cleanup finishes. Exactly
+// one caller owns Stop; callers enter and leave with the mutex held.
+func (p *containerPool) stopDeadLocked(entry *pooledContainer) {
+	entry.stopping = true
+	p.mu.Unlock()
+	if entry.container != nil {
+		_ = entry.container.Stop()
+	}
+	p.mu.Lock()
+	p.removeShared(entry)
+	p.cond.Broadcast()
+}
+
 func containerAlive(container sandbox.Container) bool {
+	return containerAliveContext(context.Background(), container)
+}
+
+func containerAliveContext(ctx context.Context, container sandbox.Container) bool {
+	if checker, ok := container.(containerContextAliveChecker); ok {
+		alive, err := checker.AliveContext(ctx)
+		return err == nil && alive
+	}
 	checker, ok := container.(containerAliveChecker)
 	if !ok {
 		return true

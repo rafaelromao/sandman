@@ -37,9 +37,6 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	}
 	issue, branch, errResult, ok := s.prepareInputs(ctx)
 	if !ok {
-		if ctx.Err() != nil {
-			return s.lifecycleEarlyAbort(ctx, branch), false
-		}
 		return errResult, false
 	}
 	if ctx.Err() != nil {
@@ -47,6 +44,9 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	}
 	if s.mode != ModeContinue && !s.opts.repairHost {
 		if err := syncBaseBranch(s.deps.runSessionOpts, s.deps.sandboxFactory, ".", s.baseBranch); err != nil {
+			if ctx.Err() != nil {
+				return s.lifecycleEarlyAbort(ctx, branch), false
+			}
 			return s.lifecycleEarlyFailure("sync base branch", branch, s.runID, err), false
 		}
 	}
@@ -76,6 +76,9 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		return errResult, false
 	}
 	if err := wt.Start(opts); err != nil {
+		if ctx.Err() != nil {
+			return s.lifecycleEarlyAbort(ctx, branch), false
+		}
 		return s.lifecycleEarlyFailure("start sandbox", branch, s.runID, err), false
 	}
 	// Register restoration immediately: even start extras or later persistence
@@ -184,8 +187,12 @@ func (s *runSession) isIssueDriven() bool {
 }
 
 func (s *runSession) lifecycleEarlyAbort(ctx context.Context, branch string) AgentRunResult {
-	result := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "aborted", Branch: branch, RunID: s.runID, Review: s.review}
-	result.Status = s.emitNormalizedTerminal(ctx, s.runID, result, nil)
+	runID := s.runID
+	if s.isIssueDriven() {
+		runID = s.issueRunID()
+	}
+	result := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "aborted", Branch: branch, RunID: runID, Review: s.review}
+	result.Status = s.emitNormalizedTerminal(ctx, runID, result, nil)
 	return result
 }
 
@@ -196,6 +203,9 @@ func (s *runSession) prepareInputs(ctx context.Context) (*github.Issue, string, 
 	_ = s.runLogWriter()
 	issue, err := fetchIssueContent(ctx, s.deps.githubClient, s.issueNumber)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, "", s.lifecycleEarlyAbort(ctx, s.branches[s.issueNumber]), false
+		}
 		result := s.lifecycleEarlyFailure("fetch issue", s.branches[s.issueNumber], s.runID, err)
 		// Fetch failure historically omits the branch in the returned result.
 		result.Branch = ""

@@ -108,6 +108,52 @@ func TestContainerRuntime_CancelBuildWithDescendantPipeHolder(t *testing.T) {
 	}
 }
 
+func TestRunningContainer_CancelInspectWaitsForCommand(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "inspect")
+	cmd := exec.Command("sh", "-c", `printf '%s' $$ > "$1"; exec sleep 60`, "sh", marker)
+	c := &runningContainer{id: "shared", binary: "docker", execFn: func(string, ...string) *exec.Cmd { return cmd }}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := c.AliveContext(ctx); done <- err }()
+	waitRuntimeMarker(t, marker)
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) || cmd.ProcessState == nil {
+			t.Fatalf("inspect not canceled and waited: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("inspect ignored cancellation")
+	}
+}
+
+func TestRunningContainer_StopIsBoundedAndRemovesAfterTimeout(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "stop")
+	cmd := exec.Command("sh", "-c", `printf '%s' $$ > "$1"; exec sleep 60`, "sh", marker)
+	removed, cleaned := false, false
+	c := &runningContainer{id: "owned", binary: "docker", cleanup: func() { cleaned = true }, execFn: func(_ string, args ...string) *exec.Cmd {
+		if args[0] == "stop" {
+			return cmd
+		}
+		if len(args) == 3 && args[0] == "rm" && args[1] == "-f" && args[2] == "owned" {
+			removed = true
+		}
+		return exec.Command("true")
+	}}
+	done := make(chan error, 1)
+	go func() { done <- c.Stop() }()
+	waitRuntimeMarker(t, marker)
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) || cmd.ProcessState == nil || !removed || !cleaned {
+			t.Fatalf("stop not bounded, waited, and cleaned: err=%v removed=%v cleaned=%v", err, removed, cleaned)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("stop command remained unbounded")
+	}
+}
+
 func testCancelContainerStartup(t *testing.T, phase string) {
 	t.Helper()
 	dir := t.TempDir()

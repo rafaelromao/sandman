@@ -1713,7 +1713,7 @@ func TestRunSingle_PreservesStartedWorktreeForBlockedRun(t *testing.T) {
 	}
 }
 
-func TestRunSingle_PreservesStartedWorktreeWhenBlockerRecheckFails(t *testing.T) {
+func TestRunSingle_PreparationAbortPreservesExistingWorktree(t *testing.T) {
 	workDir := t.TempDir()
 	t.Chdir(workDir)
 	branch := "42-fix-bug"
@@ -1737,14 +1737,14 @@ func TestRunSingle_PreservesStartedWorktreeWhenBlockerRecheckFails(t *testing.T)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	result, started := o.runSingle(ctx, ctx, 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", []int{7}, 0, 0, 0, 0, "", 0, false, 0, false, false, false, "", "")
-	if started || result.Status != "failure" {
-		t.Fatalf("result = (%q, started=%v), want failure and not started", result.Status, started)
+	if started || result.Status != "aborted" {
+		t.Fatalf("result = (%q, started=%v), want aborted and not started", result.Status, started)
 	}
-	if sb.stopCalled {
-		t.Fatal("failed blocker recheck must preserve its started worktree")
+	if sb.startCalled || sb.stopCalled {
+		t.Fatal("preparation abort must not start or stop the existing worktree")
 	}
 	if _, err := os.Stat(worktreePath); err != nil {
-		t.Fatalf("failed-recheck worktree was removed: %v", err)
+		t.Fatalf("preserved worktree was removed: %v", err)
 	}
 }
 
@@ -7528,7 +7528,7 @@ func (f *fakeContainerStarter) Start(ctx context.Context, image, repoPath string
 }
 
 type fakeContainerRuntimeFactory struct {
-	starter *fakeContainerStarter
+	starter sandbox.ContainerStarter
 }
 
 func (f *fakeContainerRuntimeFactory) New(binary string) sandbox.ContainerStarter {
