@@ -7471,7 +7471,7 @@ type fakeContainerStarter struct {
 	buildImageCount int
 }
 
-func (f *fakeContainerStarter) BuildImage(repoPath string) (string, error) {
+func (f *fakeContainerStarter) BuildImage(ctx context.Context, repoPath string) (string, error) {
 	f.buildImageCount++
 	if f.buildImageErr != nil {
 		return "", f.buildImageErr
@@ -7482,7 +7482,7 @@ func (f *fakeContainerStarter) BuildImage(repoPath string) (string, error) {
 	return "sandman-custom:latest", nil
 }
 
-func (f *fakeContainerStarter) Start(image, repoPath string, opts sandbox.StartOptions) (sandbox.Container, error) {
+func (f *fakeContainerStarter) Start(ctx context.Context, image, repoPath string, opts sandbox.StartOptions) (sandbox.Container, error) {
 	f.mu.Lock()
 	f.startCalled = true
 	f.startCount++
@@ -7502,10 +7502,18 @@ func (f *fakeContainerStarter) Start(image, repoPath string, opts sandbox.StartO
 		startStarted <- struct{}{}
 	}
 	if startRelease != nil {
-		<-startRelease
+		select {
+		case <-startRelease:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 	if startDelay > 0 {
-		time.Sleep(startDelay)
+		select {
+		case <-time.After(startDelay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 	if startErr != nil {
 		return nil, startErr
@@ -8326,14 +8334,18 @@ type blockingContainerStarter struct {
 	count   atomic.Int32
 }
 
-func (s *blockingContainerStarter) BuildImage(string) (string, error) {
+func (s *blockingContainerStarter) BuildImage(context.Context, string) (string, error) {
 	return "test:latest", nil
 }
 
-func (s *blockingContainerStarter) Start(string, string, sandbox.StartOptions) (sandbox.Container, error) {
+func (s *blockingContainerStarter) Start(ctx context.Context, _ string, _ string, _ sandbox.StartOptions) (sandbox.Container, error) {
 	id := s.count.Add(1)
 	s.started <- struct{}{}
-	<-s.release
+	select {
+	case <-s.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	return &fakeContainerForOrchestrator{id: fmt.Sprintf("container-%d", id)}, nil
 }
 
@@ -8352,7 +8364,7 @@ func TestContainerPool_CapacityOneStartsContainersConcurrently(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			lease, err := pool.Acquire()
+			lease, err := pool.Acquire(t.Context())
 			if err != nil {
 				t.Errorf("acquire: %v", err)
 				return
@@ -8428,7 +8440,7 @@ func TestContainerPool_RespectsCapacityAndMaxUnderContention(t *testing.T) {
 	for i := 0; i < acquirers; i++ {
 		go func() {
 			defer wg.Done()
-			lease, err := pool.Acquire()
+			lease, err := pool.Acquire(t.Context())
 			if err != nil {
 				t.Errorf("acquire failed: %v", err)
 				return

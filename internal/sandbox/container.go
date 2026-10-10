@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"io"
@@ -21,8 +22,8 @@ type Container interface {
 
 // ContainerStarter is the interface for starting containers.
 type ContainerStarter interface {
-	Start(image, repoPath string, opts StartOptions) (Container, error)
-	BuildImage(repoPath string) (string, error)
+	Start(ctx context.Context, image, repoPath string, opts StartOptions) (Container, error)
+	BuildImage(ctx context.Context, repoPath string) (string, error)
 }
 
 // ConfigMount represents a bind mount from a resolved host path to a container path.
@@ -56,7 +57,7 @@ func NewContainerRuntime(binary string) *ContainerRuntime {
 }
 
 // Start launches a new container with the given image and repo mount.
-func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Container, error) {
+func (r *ContainerRuntime) Start(ctx context.Context, image, repoPath string, opts StartOptions) (Container, error) {
 	absRepo, err := filepath.Abs(repoPath)
 	if err != nil {
 		return nil, fmt.Errorf("resolve repo path: %w", err)
@@ -148,7 +149,7 @@ func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Con
 // The tag is scoped to the repo path and Dockerfile contents to prevent
 // collisions when sandman manages multiple repositories concurrently while
 // still rebuilding when the scaffold changes.
-func (r *ContainerRuntime) BuildImage(repoPath string) (string, error) {
+func (r *ContainerRuntime) BuildImage(ctx context.Context, repoPath string) (string, error) {
 	dockerfile := paths.NewLayout(&config.Config{}, repoPath).DockerfilePath()
 	if _, err := os.Stat(dockerfile); err != nil {
 		if os.IsNotExist(err) {

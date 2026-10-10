@@ -570,7 +570,7 @@ func (l *containerLease) Release() {
 }
 
 type containerAllocator interface {
-	Acquire() (*containerLease, error)
+	Acquire(context.Context) (*containerLease, error)
 }
 
 type sandboxExecutionPolicy struct {
@@ -1060,10 +1060,20 @@ func newContainerPool(starter sandbox.ContainerStarter, image, repoPath string, 
 	return p
 }
 
-func (p *containerPool) Acquire() (*containerLease, error) {
+func (p *containerPool) Acquire(ctx context.Context) (*containerLease, error) {
+	stop := context.AfterFunc(ctx, func() {
+		p.mu.Lock()
+		p.cond.Broadcast()
+		p.mu.Unlock()
+	})
+	defer stop()
 	p.mu.Lock()
 
 	for {
+		if err := ctx.Err(); err != nil {
+			p.mu.Unlock()
+			return nil, err
+		}
 		if p.pruneDeadLocked() {
 			continue
 		}
@@ -1089,7 +1099,15 @@ func (p *containerPool) Acquire() (*containerLease, error) {
 		p.shared = append(p.shared, entry)
 		p.mu.Unlock()
 
-		container, err := p.starter.Start(p.image, p.repoPath, p.startOpts)
+		container, err := p.starter.Start(ctx, p.image, p.repoPath, p.startOpts)
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		// Startup owns this reservation until its command and cleanup finish.
+		// It has not yet published the container to any other row.
+		if err != nil && container != nil {
+			err = errors.Join(err, container.Stop())
+		}
 
 		p.mu.Lock()
 		if err != nil {
@@ -2672,7 +2690,7 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(ctx context.Context, cfg *c
 		containerFactory = defaultContainerRuntimeFactory{}
 	}
 	starter := containerFactory.New(sandboxMode)
-	image, err := starter.BuildImage(".")
+	image, err := starter.BuildImage(ctx, ".")
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("build container image: %w", err)

@@ -32,9 +32,18 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		}
 	}()
 
+	if ctx.Err() != nil {
+		return s.lifecycleEarlyAbort(ctx, s.branches[s.issueNumber]), false
+	}
 	issue, branch, errResult, ok := s.prepareInputs(ctx)
 	if !ok {
+		if ctx.Err() != nil {
+			return s.lifecycleEarlyAbort(ctx, branch), false
+		}
 		return errResult, false
+	}
+	if ctx.Err() != nil {
+		return s.lifecycleEarlyAbort(ctx, branch), false
 	}
 	if s.mode != ModeContinue && !s.opts.repairHost {
 		if err := syncBaseBranch(s.deps.runSessionOpts, s.deps.sandboxFactory, ".", s.baseBranch); err != nil {
@@ -44,12 +53,18 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	sandboxStarted := time.Now()
 	var container sandbox.Container
 	if s.containerAlloc != nil {
-		lease, err := s.containerAlloc.Acquire()
+		lease, err := s.containerAlloc.Acquire(ctx)
 		if err != nil {
+			if ctx.Err() != nil {
+				return s.lifecycleEarlyAbort(ctx, branch), false
+			}
 			return s.lifecycleEarlyFailure("acquire container", branch, s.runID, err), false
 		}
 		defer lease.Release()
 		container = lease.container
+	}
+	if ctx.Err() != nil {
+		return s.lifecycleEarlyAbort(ctx, branch), false
 	}
 
 	wt := s.sbFactory.NewSandbox(".", s.worktreeDir(), branch, s.baseBranch, container)
@@ -166,6 +181,12 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 
 func (s *runSession) isIssueDriven() bool {
 	return s.issueNumber > 0 && !s.review
+}
+
+func (s *runSession) lifecycleEarlyAbort(ctx context.Context, branch string) AgentRunResult {
+	result := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "aborted", Branch: branch, RunID: s.runID, Review: s.review}
+	result.Status = s.emitNormalizedTerminal(ctx, s.runID, result, nil)
+	return result
 }
 
 func (s *runSession) prepareInputs(ctx context.Context) (*github.Issue, string, AgentRunResult, bool) {
