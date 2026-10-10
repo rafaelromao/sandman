@@ -118,8 +118,8 @@ func TestSyncInstallsStatelessManagedReviewRequest(t *testing.T) {
 	content := string(data)
 	for _, required := range []string{
 		"name: sandman-review-request",
-		"Post exactly `/sandman review`",
-		"Do not create, edit, or delete review state files",
+		"Post exactly one `/sandman review`",
+		"Do not create, edit, or delete review state",
 	} {
 		if !strings.Contains(content, required) {
 			t.Errorf("managed review request skill missing %q", required)
@@ -142,7 +142,7 @@ func TestSyncInstallsConfiguredManagedReviewCommand(t *testing.T) {
 		t.Fatalf("read managed review request skill: %v", err)
 	}
 	content := string(data)
-	if !strings.Contains(content, "Post exactly `/oc review`") {
+	if !strings.Contains(content, "Post exactly one `/oc review`") {
 		t.Fatalf("managed review request skill does not render configured command: %s", content)
 	}
 	if strings.Contains(content, "{{REVIEW_COMMAND}}") || strings.Contains(content, "Post exactly `/sandman review`") {
@@ -161,9 +161,9 @@ func TestSyncInstallsVersionedReviewTriggerGuard(t *testing.T) {
 	if _, err := os.Stat(helper); err != nil {
 		t.Fatalf("synced trigger guard helper missing: %v", err)
 	}
-	data, err := os.ReadFile(filepath.Join(root, "pr-review", "SKILL.md"))
+	data, err := os.ReadFile(filepath.Join(root, "review-cycle", "SKILL.md"))
 	if err != nil {
-		t.Fatalf("read synced pr-review skill: %v", err)
+		t.Fatalf("read synced review-cycle skill: %v", err)
 	}
 	text := string(data)
 	for _, want := range []string{"review-trigger-guard-v1.sh", "/sandman review", "review-trigger/v1"} {
@@ -329,7 +329,7 @@ func TestSyncInstallsIssueClosingGuardInImplementSkill(t *testing.T) {
 	}
 	text := string(data)
 
-	if !strings.Contains(text, "(Closes|Fixes|Resolves) #<issue_number>") {
+	if !strings.Contains(text, "platform's exact closing-reference line") {
 		t.Fatal("expected implement skill to mention closing-reference format")
 	}
 	if !strings.Contains(text, "closing-reference body") {

@@ -39,6 +39,13 @@ When `--tool-version` is omitted, `init` uses the preset resolver's interactive 
 
 Run an AFK agent for selected GitHub issues.
 
+This CLI command is the managed runtime entrypoint. It owns registration,
+waiting, resume, evidence, and terminal decisions; it does not invoke the
+standalone `sandman-run` skill. To run the capability-composed workflow
+directly in OpenCode or Claude Code, load `sandman-run`. That standalone
+entrypoint composes `sandman-implement`, `sandman-review-cycle`, and
+`sandman-pr-merge`, with review-cycle state held in memory for the session.
+
 ```bash
 sandman run [issue...] [flags]
 ```

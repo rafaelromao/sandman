@@ -163,6 +163,14 @@ Custom keys can be passed at runtime using the `--prompt-arg KEY=VALUE` flag on 
 
 See [Sandman Skills](skills.md) for the shared workflow details.
 
+The default task prompt is managed-run specific: it loads
+`sandman-review-request` for one stateless trigger and leaves observation,
+waiting, resume, and terminal decisions to the runtime. Direct standalone
+agent use should load `sandman-run`, which composes implementation,
+`sandman-review-cycle`, and merge. Standalone cycle state is in memory only;
+after a restart it starts again from live pull-request state and does not trust
+managed lifecycle artifacts.
+
 `sandman run --continue` uses current CLI flags / config defaults for tunables (agent, model, parallel, retries, sandbox, container tunables, review command, review timeout, etc.) and replays only the worktree identity from the prior run: the preserved branch, the stored base branch (because the worktree was cut from it), the prior run id, the `.sandman/task.md` contents, and the issue mode. Before replay, Sandman places one canonical continuation freshness guard after all persisted task state so blockers, next actions, and the delegated review timeout must be revalidated. CLI overrides on the `--continue` invocation still win over both config defaults and stored values. When no task file exists, an empty task template is used with a warning on stderr.
 
 ## Container scheduling configuration

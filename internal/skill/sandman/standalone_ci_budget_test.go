@@ -16,7 +16,7 @@ func standaloneCISnippets(t *testing.T) (string, string) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash unavailable")
 	}
-	data, err := os.ReadFile("pr-review/SKILL.md")
+	data, err := os.ReadFile("review-cycle/SKILL.md")
 	if err != nil {
 		t.Fatal(err)
 	}
