@@ -1403,6 +1403,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.logf("%v", err)
 		d.observeHealthFailure(ctx, "authentication", "authenticated GitHub login", 0, err)
 	}
+	if err == nil && d.authenticatedLogin != "" {
+		d.resolveHealthOperation("authentication")
+	}
 
 	if err := d.StartSocket(); err != nil {
 		return err

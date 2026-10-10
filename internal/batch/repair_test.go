@@ -236,6 +236,37 @@ func TestRunRepairForcesOneFailedAttempt(t *testing.T) {
 	}
 }
 
+func TestRunRepairTaskPromptKeepsTemplateBracesLiteral(t *testing.T) {
+	dir := testenv.MkdirShort(t, "repair-literal-")
+	t.Chdir(dir)
+	if err := os.MkdirAll(".sandman", 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("opencode", []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > literal-launch.txt\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	log := &spyEventLog{}
+	factory := &repairRunnableFactory{}
+	cfg := &config.Config{DefaultAgent: "configured", Sandbox: "podman",
+		AgentProviders: map[string]config.Agent{"configured": {Preset: "opencode", Model: "provider/repair-model"}}}
+	o := NewOrchestrator(nil, &noopRenderer{}, &fakeConfigStore{config: cfg}, log,
+		WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(forbiddenRepairSandboxFactory{t}))
+	literal := "diagnose missing substitution keys: {{UNKNOWN_KEY}} and verify"
+	req := Request{RunID: "261009123456-abcd-prompt-literal", PromptConfig: prompt.RenderConfig{TaskPrompt: literal}}
+	result, err := o.RunRepair(t.Context(), req, cfg)
+	if err != nil {
+		t.Fatalf("literal TaskPrompt must not fail template rendering: %v", err)
+	}
+	if len(result.Runs) != 1 || result.Runs[0].Status != "success" {
+		t.Fatalf("result: %+v", result)
+	}
+	data, err := os.ReadFile(filepath.Join(factory.run.runFolder, "task.md"))
+	if err != nil || !strings.Contains(string(data), "{{UNKNOWN_KEY}}") {
+		t.Fatalf("literal braces lost: %q %v", data, err)
+	}
+}
+
 func TestRunRepairRenderedPromptUsesReservedArtifacts(t *testing.T) {
 	dir := testenv.MkdirShort(t, "repair-render-")
 	t.Chdir(dir)

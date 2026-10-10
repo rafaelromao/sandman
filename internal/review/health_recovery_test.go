@@ -124,7 +124,7 @@ func TestDaemonHealthRepairAuthenticationReobservesBeforeProcessing(t *testing.T
 	if len(runner.requests()) != 1 || gh.listCalls != 0 {
 		t.Fatal("broken authentication must be repaired before scanning")
 	}
-	if !strings.Contains(runner.requests()[0].PromptConfig.PromptFlag, gh.authenticatedLoginErr.Error()) {
+	if !strings.Contains(runner.requests()[0].PromptConfig.TaskPrompt, gh.authenticatedLoginErr.Error()) {
 		t.Fatal("authentication diagnostic missing")
 	}
 	gh.authenticatedLoginErr = nil
@@ -433,7 +433,7 @@ func TestDaemonHealthRepairStrandedStartupResumesOriginalRequest(t *testing.T) {
 	if len(runner.requests()) != 1 {
 		t.Fatalf("expected stranded startup repair; logs=%s", logs.String())
 	}
-	if !strings.Contains(runner.requests()[0].PromptConfig.PromptFlag, "fatal: not a git repository: (null)") {
+	if !strings.Contains(runner.requests()[0].PromptConfig.TaskPrompt, "fatal: not a git repository: (null)") {
 		t.Fatal("startup diagnostic lost")
 	}
 	if d.IsTerminalSeen(17, "stranded") {
@@ -496,8 +496,75 @@ func TestDaemonHealthRepairListFailure(t *testing.T) {
 		t.Fatalf("repair configuration = %+v", req)
 	}
 	for _, evidence := range []string{"list open PRs", gh.listErr.Error(), dir, "events.jsonl", "diagnose", "verify", "review progress"} {
-		if !strings.Contains(strings.ToLower(req.PromptConfig.PromptFlag), strings.ToLower(evidence)) {
-			t.Errorf("repair prompt missing %q: %s", evidence, req.PromptConfig.PromptFlag)
+		if !strings.Contains(strings.ToLower(req.PromptConfig.TaskPrompt), strings.ToLower(evidence)) {
+			t.Errorf("repair prompt missing %q: %s", evidence, req.PromptConfig.TaskPrompt)
 		}
+	}
+}
+
+func TestDaemonHealthRepairPromptKeepsTemplateBracesLiteral(t *testing.T) {
+	malformed := errors.New("missing substitution keys: {{UNKNOWN_KEY}}")
+	gh := &fakeGH{listErr: malformed}
+	runner := &healthRunner{}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{DefaultReviewAgent: "opencode", DefaultReviewModel: "openai/configured"})
+	if err := d.tick(context.Background()); err == nil {
+		t.Fatal("malformed template failure must stay observable")
+	}
+	d.inFlight.Wait()
+	reqs := runner.requests()
+	if len(reqs) != 1 {
+		t.Fatalf("repair launches = %d, want 1", len(reqs))
+	}
+	req := reqs[0]
+	if req.PromptConfig.PromptFlag != "" {
+		t.Fatalf("diagnostic must not use template PromptFlag: %q", req.PromptConfig.PromptFlag)
+	}
+	if !strings.Contains(req.PromptConfig.TaskPrompt, "{{UNKNOWN_KEY}}") {
+		t.Fatalf("literal evidence lost: %q", req.PromptConfig.TaskPrompt)
+	}
+}
+
+func TestDaemonHealthRepairStartupResolvesAuthentication(t *testing.T) {
+	gh := &fakeGH{}
+	runner := &healthRunner{}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{DefaultReviewAgent: "opencode", DefaultReviewModel: "openai/configured"})
+	exhausted := healthRepairState{Version: 1, Attempts: healthRepairAttempts,
+		Failures: map[string]healthFailure{"authentication": {Operation: "authenticated GitHub login", Evidence: "old credential failure", ObservedAt: time.Now()}}}
+	data, err := json.Marshal(exhausted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(d.healthStatePath()), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(d.healthStatePath(), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	d.Trigger = make(chan struct{}, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after cancel")
+	}
+	d.inFlight.Wait()
+	state := readHealthState(t, d)
+	if _, ok := state.Failures["authentication"]; ok {
+		t.Fatalf("startup login did not retire authentication: %+v", state.Failures)
+	}
+	gh.listErr = errors.New("new remote failure")
+	if err := d.tick(context.Background()); err == nil {
+		t.Fatal("new failure must stay observable")
+	}
+	d.inFlight.Wait()
+	if len(runner.requests()) != 1 {
+		t.Fatalf("verified startup recovery must allow fresh episode, launches=%d", len(runner.requests()))
 	}
 }

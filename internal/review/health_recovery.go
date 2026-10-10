@@ -208,7 +208,7 @@ func (d *Daemon) startHealthRepair(ctx context.Context, runner repairRunner) {
 		deadline = state.Deadline
 		req = batch.Request{Agent: d.effectiveAgent(), Model: d.effectiveModel(), Variant: d.effectiveVariant(), VariantSet: true,
 			RunID: state.RunID, RunDir: filepath.Join(d.BaseDir, "batches", state.RunID),
-			PromptConfig: prompt.RenderConfig{PromptFlag: d.healthRepairPrompt(state)}, OutputWriter: d.Broadcaster}
+			PromptConfig: prompt.RenderConfig{TaskPrompt: d.healthRepairPrompt(state)}, OutputWriter: d.Broadcaster}
 		return nil
 	})
 	if err != nil || req.RunID == "" {
