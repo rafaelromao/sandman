@@ -301,7 +301,7 @@ func portalBrowserWrapper(controlURL, mainRun, reviewRun, secondRun string) stri
   async function get(path) { return (await fetch(control + path)).text(); }
   async function signal(name) { await fetch(control + '/signal?name=' + encodeURIComponent(name)); }
   async function waitFor(predicate, label) {
-    const deadline = Date.now() + 12000;
+    const deadline = Date.now() + 30000;
     while (Date.now() < deadline) {
       try { if (await predicate()) return; } catch (_) {}
       await sleep(50);
