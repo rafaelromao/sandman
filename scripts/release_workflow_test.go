@@ -270,6 +270,25 @@ func TestReleaseWorkflowUsesCredentialThatTriggersReleasePRChecks(t *testing.T) 
 	}
 }
 
+func TestReleaseWorkflowRefreshesUnchangedPendingBranch(t *testing.T) {
+	release := readRepositoryFile(t, "../.github/workflows/release.yml")
+	checkout := strings.Index(release, "name: Checkout release automation")
+	refresh := strings.Index(release, "name: Refresh pending release branch")
+	setupGo := strings.Index(release, "uses: actions/setup-go@v5")
+	if checkout < 0 || refresh < checkout || setupGo < refresh {
+		t.Fatal("release branch refresh must run after checkout and before release publication")
+	}
+	block := release[checkout:setupGo]
+	for _, required := range []string{"GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}", "run: sh scripts/refresh_release_pr.sh", "timeout-minutes: 5", "persist-credentials: false"} {
+		if !strings.Contains(block, required) {
+			t.Errorf("release refresh missing %q", required)
+		}
+	}
+	if strings.Contains(block, "if:") {
+		t.Fatal("release refresh must also run when release content is unchanged")
+	}
+}
+
 func TestReleaseValidationWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 	for _, path := range []string{
 		"../.github/workflows/full-regression-linux.yml",

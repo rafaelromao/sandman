@@ -8271,10 +8271,13 @@ func TestRunBatch_ContainerCapacityOneStartsOneContainerPerConcurrentRun(t *test
 	}
 	starter := &fakeContainerStarter{}
 	factory := &fakeContainerRuntimeFactory{starter: starter}
-	runnables := &fakeRunnableFactory{
-		results: []AgentRunResult{{IssueNumber: 1, Status: "success"}, {IssueNumber: 2, Status: "success"}},
-		delays:  []time.Duration{50 * time.Millisecond, 50 * time.Millisecond},
-	}
+	started1, started2 := make(chan struct{}), make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	runnables := &controlledRunnableFactory{runnables: map[int]Runnable{
+		1: &controlledRunnable{result: AgentRunResult{IssueNumber: 1, Status: "success"}, started: started1, release: release},
+		2: &controlledRunnable{result: AgentRunResult{IssueNumber: 2, Status: "success"}, started: started2, release: release},
+	}}
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
 		WithContainerRuntimeFactory(factory),
@@ -8282,8 +8285,29 @@ func TestRunBatch_ContainerCapacityOneStartsOneContainerPerConcurrentRun(t *test
 		WithSandboxFactory(&freshSandboxFactory{}),
 	)
 
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2}, Sandbox: "docker", Parallel: 2, ContainerCapacity: 1, ContainerCapacitySet: true})
-	if err != nil {
+	ctx, cancel := context.WithCancel(t.Context())
+	finished := make(chan struct{})
+	errCh := make(chan error, 1)
+	t.Cleanup(func() {
+		cancel()
+		releaseOnce.Do(func() { close(release) })
+		select {
+		case <-finished:
+		case <-time.After(5 * time.Second):
+			t.Error("batch did not stop after cleanup cancellation")
+		}
+	})
+	go func() {
+		defer close(finished)
+		_, err := o.RunBatch(ctx, Request{Issues: []int{1, 2}, Sandbox: "docker", Parallel: 2, ContainerCapacity: 1, ContainerCapacitySet: true})
+		errCh <- err
+	}()
+	// Neither row can release its slot until both have started. The assertion
+	// therefore tests concurrent capacity instead of a 50 ms scheduling window.
+	waitForSignal(t, started1, "expected issue 1 to start concurrently")
+	waitForSignal(t, started2, "expected issue 2 to start concurrently")
+	releaseOnce.Do(func() { close(release) })
+	if err := <-errCh; err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
