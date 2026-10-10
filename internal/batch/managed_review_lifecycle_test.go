@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/config"
@@ -20,10 +21,11 @@ import (
 )
 
 type managedLifecycleFactory struct {
-	client  *reviewWaitSchedulerGitHubClient
-	mu      sync.Mutex
-	launch  map[int]int
-	started []int
+	client        *reviewWaitSchedulerGitHubClient
+	mu            sync.Mutex
+	launch        map[int]int
+	started       []int
+	renewFeedback bool
 }
 
 func (f *managedLifecycleFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
@@ -43,6 +45,31 @@ func (f *managedLifecycleFactory) NewRunnable(issue *github.Issue, branch string
 		case 1:
 			seedManagedReviewRequest(sb.WorkDir(), "1001")
 		case 2:
+			if f.renewFeedback {
+				f.client.setPR(branch, func(pr *github.PR) {
+					pr.StatusCheckRollup = "success"
+					pr.ReviewDecision = "REVIEW_REQUIRED"
+					pr.MergeStateStatus = "BLOCKED"
+				})
+				f.client.mu.Lock()
+				now := time.Now().UTC()
+				f.client.comments = []github.PRComment{
+					{ID: "https://github.com/owner/repo/pull/17#issuecomment-1001", Body: "/sandman review", CreatedAt: now.Add(-time.Second)},
+					{ID: "https://github.com/owner/repo/pull/17#issuecomment-1002", Body: "/sandman review follow-up", CreatedAt: now},
+				}
+				f.client.mu.Unlock()
+				seedManagedReviewRequest(sb.WorkDir(), "1002")
+			} else {
+				f.client.setPR(branch, func(pr *github.PR) {
+					pr.State = "merged"
+					pr.Merged = true
+					pr.Body = "Closes #42"
+				})
+				f.client.mu.Lock()
+				f.client.issues[42].State = "closed"
+				f.client.mu.Unlock()
+			}
+		case 3:
 			f.client.setPR(branch, func(pr *github.PR) {
 				pr.State = "merged"
 				pr.Merged = true
@@ -85,6 +112,30 @@ func seedManagedReviewRequest(workDir, trigger string) {
 		data = []byte(strings.ReplaceAll(string(data), "issuecomment-2002", "issuecomment-"+trigger))
 		_ = os.WriteFile(path, data, 0o600)
 	}
+	data, err := os.ReadFile(filepath.Join(workDir, ".sandman", "state", "17.review_request.json"))
+	if err != nil {
+		return
+	}
+	var request reviewRequestEnvelope
+	if json.Unmarshal(data, &request) != nil {
+		return
+	}
+	stateData, err := os.ReadFile(filepath.Join(workDir, ".sandman", "state", "17.review_request.json.state"))
+	if err != nil {
+		return
+	}
+	var state reviewWaitState
+	if json.Unmarshal(stateData, &state) != nil {
+		return
+	}
+	request.TriggerIdentity = reviewTriggerIdentity(request.TriggerID)
+	if atomicfs.WriteAtomicJSON(filepath.Join(workDir, ".sandman", "state", "17.review_registration.json"), reviewRequestRegistration{
+		Protocol: reviewRegistrationProtocol,
+		Request:  request,
+		State:    state,
+	}, 0o600) != nil {
+		return
+	}
 }
 
 func managedLifecycleOptions() runSessionOptions {
@@ -106,34 +157,6 @@ func managedLifecycleOrchestrator(client *reviewWaitSchedulerGitHubClient, log e
 		WithSandboxFactory(reviewWaitSchedulerSandboxFactory{}),
 		WithRunnableFactory(factory),
 		WithRunSessionOpts(managedLifecycleOptions()))
-}
-
-func executeManagedParent(client *reviewWaitSchedulerGitHubClient, log events.EventLog, factory *managedLifecycleFactory, request Request) AgentRunResult {
-	cfg := &config.Config{WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, log,
-		WithErrorLog(io.Discard),
-		WithSandboxFactory(reviewWaitSchedulerSandboxFactory{}),
-		WithRunnableFactory(factory),
-		WithRunSessionOpts(managedLifecycleOptions()))
-	sbFactory := reviewWaitSchedulerSandboxFactory{}
-	result, _ := o.newRunExecutor(context.Background(), BatchConfig{
-		Cfg: cfg, AgentName: "test-agent", AgentCfg: config.Agent{Command: "true"},
-		IdentityResolver: noopIdentityResolver(), Retries: 3,
-	}, sbFactory, nil).Execute(context.Background(), RowSpec{
-		IssueNumber:         42,
-		Mode:                request.IssueMode(42),
-		RunID:               request.RunIDs[42],
-		RunTS:               request.RunTS,
-		RunShortID:          request.RunShortID,
-		Branches:            request.Branches,
-		PreviousRunIDs:      request.PreviousRunIDs,
-		PreviousRunBatchIDs: request.PreviousRunBatchIDs,
-		ReuseSession:        request.ReuseSession[42],
-		BaseBranch:          request.BaseBranches[42],
-		BatchID:             request.PreviousRunBatchIDs[42],
-		RenderCfg:           prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
-	})
-	return result
 }
 
 func managedLifecycleRequest() Request {
@@ -237,7 +260,11 @@ func TestManagedReviewLifecycle_ProductionPathRecoversAndReleasesDependency(t *t
 	workDir := filepath.Join(root, ".sandman", "worktrees", gateTestBranch)
 	writeCurrentHeadApprovalClassification(t, workDir)
 	syncCanonicalState(t, workDir)
-	second := executeManagedParent(client, log, factory, continued)
+	secondBatch, err := managedLifecycleOrchestrator(client, log, factory).RunBatch(context.Background(), continued)
+	if err != nil {
+		t.Fatalf("approval continuation batch: %v result=%+v", err, secondBatch)
+	}
+	second := runByIssue(secondBatch, 42)
 	if second.Status != "success" || factory.launches(42) != 2 {
 		t.Fatalf("approval and merge continuation = %+v launches=%d", second, factory.launches(42))
 	}
@@ -259,8 +286,8 @@ func TestManagedReviewLifecycle_ProductionPathRecoversAndReleasesDependency(t *t
 			parentEvents = append(parentEvents, event)
 		}
 	}
-	if got := countEventsByType(parentEvents, "run.await"); got != 1 {
-		t.Fatalf("parent await events = %d, want one managed request wait", got)
+	if got := countEventsByType(parentEvents, "run.await"); got != 2 {
+		t.Fatalf("parent await events = %d, want initial wait plus restart recovery projection", got)
 	}
 	if got := countEventsByType(parentEvents, "run.continued"); got != 1 {
 		t.Fatalf("parent continuation events = %d, want one approval re-entry", got)
@@ -295,6 +322,80 @@ func TestManagedReviewLifecycle_ProductionPathRecoversAndReleasesDependency(t *t
 	}
 }
 
+func TestManagedReviewLifecycle_FeedbackResumesAndRenewsRequest(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	initGitRepo(t, root)
+	client := &reviewWaitSchedulerGitHubClient{fakeGitHubClient: fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Parent"}},
+		prs: map[string]*github.PR{
+			gateTestBranch: {Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha", Body: "Closes #42", StatusCheckRollup: "success", MergeStateStatus: "BLOCKED"},
+		},
+	}}
+	log := &events.JSONLLogger{Path: filepath.Join(root, ".sandman", "events.jsonl")}
+	factory := &managedLifecycleFactory{client: client, renewFeedback: true}
+	orchestrator := managedLifecycleOrchestrator(client, log, factory)
+
+	first, err := orchestrator.RunBatch(context.Background(), Request{
+		Issues: []int{42}, RunTS: "261010120002", RunShortID: "feedback", Branches: map[int]string{42: gateTestBranch},
+	})
+	if err != nil || runByIssue(first, 42).Status != "await" {
+		t.Fatalf("initial feedback batch = %+v, err=%v", first, err)
+	}
+
+	layout := paths.NewLayout(&config.Config{WorktreeDir: ".sandman/worktrees"}, root)
+	initialEvents, err := log.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready := FindReadyContinuations(initialEvents, layout)
+	continued := Request{}
+	if err := ApplyReadyContinuations(&continued, ready, layout, 1800); err != nil {
+		t.Fatalf("apply feedback continuation: %v", err)
+	}
+	workDir := filepath.Join(root, ".sandman", "worktrees", gateTestBranch)
+	writeInformalRespondedClassification(t, workDir, "Please fix the race in internal/socketpath/socketpath.go.")
+	syncCanonicalState(t, workDir)
+
+	feedback, err := orchestrator.RunBatch(context.Background(), continued)
+	if err != nil || runByIssue(feedback, 42).Status != "await" || factory.launches(42) != 2 {
+		t.Fatalf("feedback continuation = %+v launches=%d err=%v", feedback, factory.launches(42), err)
+	}
+	registration, err := readFileReviewRegistration(filepath.Join(workDir, ".sandman", "state", "17.review_registration.json"))
+	if err != nil || registration.Request.TriggerID != "https://github.com/owner/repo/pull/17#issuecomment-1002" {
+		t.Fatalf("renewed canonical registration = %+v, err=%v", registration, err)
+	}
+
+	renewedEvents, err := log.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	renewed := Request{}
+	if err := ApplyReadyContinuations(&renewed, FindReadyContinuations(renewedEvents, layout), layout, 1800); err != nil {
+		t.Fatalf("apply renewed continuation: %v", err)
+	}
+	writeCurrentHeadApprovalClassification(t, workDir)
+	syncCanonicalState(t, workDir)
+	final, err := orchestrator.RunBatch(context.Background(), renewed)
+	if err != nil || runByIssue(final, 42).Status != "success" || factory.launches(42) != 3 {
+		t.Fatalf("renewed approval continuation = %+v launches=%d err=%v", final, factory.launches(42), err)
+	}
+
+	allEvents, err := log.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentEvents := make([]events.Event, 0)
+	for _, event := range allEvents {
+		if event.Issue == 42 {
+			parentEvents = append(parentEvents, event)
+		}
+	}
+	if countEventsByType(parentEvents, "run.continued") != 2 || countEventsByType(parentEvents, "run.retry") != 0 {
+		t.Fatalf("feedback lifecycle events = %+v", parentEvents)
+	}
+}
+
 func syncCanonicalState(t *testing.T, workDir string) {
 	t.Helper()
 	layout := paths.NewLayout(nil, workDir)
@@ -312,16 +413,88 @@ func syncCanonicalState(t *testing.T, workDir string) {
 		t.Fatalf("decode observed review state: %v", err)
 	}
 	state.TriggerID = registration.Request.TriggerID
+	state.Protocol = registration.Request.Protocol
+	state.Repository = registration.Request.Repository
+	state.PullRequest = registration.Request.PullRequest
+	state.TriggerPrefix = registration.Request.TriggerPrefix
+	state.TriggerCreatedAt = registration.Request.TriggerCreatedAt
+	state.ConfirmedAt = registration.Request.ConfirmedAt
+	state.StartedAt = registration.Request.StartedAt
+	state.DeadlineAt = registration.Request.DeadlineAt
+	state.StartedUnixSeconds = registration.Request.StartedUnixSeconds
+	state.EffectiveTimeout = registration.Request.EffectiveTimeout
+	state.DeadlineUnixSeconds = registration.Request.DeadlineUnixSeconds
+	state.PollPlan = append([]int(nil), registration.Request.PollPlan...)
 	state.HeadSHA = registration.Request.HeadSHA
 	state.ObservedHeadSHA = registration.Request.HeadSHA
+	state.State = "pending"
+	state.Lifecycle = "started"
+	state.Reason = "pending"
+	elapsed := 0
+	state.ElapsedSeconds = &elapsed
 	if state.Evidence != nil {
-		trigger := strings.TrimPrefix(registration.Request.TriggerID, "https://github.com/owner/repo/pull/17#issuecomment-")
-		state.Evidence.Classification = json.RawMessage(strings.ReplaceAll(string(state.Evidence.Classification), "issuecomment-1001", "issuecomment-"+trigger))
+		state.ObservedState = "responded"
+		state.ObservedReason = "responded"
+		state.ObservedAt = registration.Request.ConfirmedAt
+		state.Evidence.Classification = normalizeReviewClassification(t, state.Evidence.Classification, registration.Request)
 	}
 	registration.State = state
 	if err := atomicfs.WriteAtomicJSON(registrationPath, registration, 0o600); err != nil {
 		t.Fatalf("persist canonical observed review state: %v", err)
 	}
+}
+
+func normalizeReviewClassification(t *testing.T, raw json.RawMessage, request reviewRequestEnvelope) json.RawMessage {
+	t.Helper()
+	var classification map[string]any
+	if err := json.Unmarshal(raw, &classification); err != nil {
+		t.Fatalf("decode review classification: %v", err)
+	}
+	var visit func(map[string]any)
+	visit = func(values map[string]any) {
+		for key, value := range values {
+			switch key {
+			case "repository":
+				values[key] = request.Repository
+			case "pull_request":
+				values[key] = request.PullRequest
+			case "head_sha":
+				values[key] = request.HeadSHA
+			case "trigger_id":
+				values[key] = request.TriggerID
+			case "trigger_prefix":
+				values[key] = request.TriggerPrefix
+			case "trigger_created_at", "start":
+				values[key] = request.TriggerCreatedAt
+			case "confirmed_at", "started_at":
+				values[key] = request.ConfirmedAt
+			case "deadline_at":
+				values[key] = request.DeadlineAt
+			case "deadline_unix_seconds":
+				values[key] = request.DeadlineUnixSeconds
+			case "started_unix_seconds":
+				values[key] = request.StartedUnixSeconds
+			case "response_timestamp":
+				values[key] = request.ConfirmedAt
+			}
+			if nested, ok := value.(map[string]any); ok {
+				visit(nested)
+			}
+			if nested, ok := value.([]any); ok {
+				for _, item := range nested {
+					if nestedMap, ok := item.(map[string]any); ok {
+						visit(nestedMap)
+					}
+				}
+			}
+		}
+	}
+	visit(classification)
+	encoded, err := json.Marshal(classification)
+	if err != nil {
+		t.Fatalf("encode review classification: %v", err)
+	}
+	return encoded
 }
 
 func TestManagedReviewLifecycle_CancellationRevokesRecoveryIntent(t *testing.T) {
@@ -332,18 +505,22 @@ func TestManagedReviewLifecycle_CancellationRevokesRecoveryIntent(t *testing.T) 
 	defer cancel()
 	log := &cancelOnAwaitLog{cancel: cancel}
 	client := &reviewWaitSchedulerGitHubClient{fakeGitHubClient: fakeGitHubClient{
-		issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
-		prs:    map[string]*github.PR{gateTestBranch: {Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha", StatusCheckRollup: "pending"}},
+		issues: map[int]*github.Issue{42: {Number: 42, State: "open"}, 43: {Number: 43, State: "open"}},
+		prs: map[string]*github.PR{
+			gateTestBranch: {Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha", StatusCheckRollup: "pending"},
+			"43-dependent": {Number: 43, State: "open", HeadRefName: "43-dependent", HeadRefOid: "dependent-sha", StatusCheckRollup: "success", MergeStateStatus: "CLEAN"},
+		},
 	}}
 	factory := &managedLifecycleFactory{client: client}
 	result, err := managedLifecycleOrchestrator(client, log, factory).RunBatch(ctx, Request{
-		Issues: []int{42}, RunTS: "261010120001", RunShortID: "cancel", Branches: map[int]string{42: gateTestBranch},
+		Issues: []int{42, 43}, RunTS: "261010120001", RunShortID: "cancel",
+		Branches: map[int]string{42: gateTestBranch, 43: "43-dependent"}, Dependencies: map[int][]int{43: {42}},
 	})
 	if result == nil || runByIssue(result, 42).Status != "aborted" {
 		t.Fatalf("cancelled managed run = %+v, err=%v", result, err)
 	}
-	if factory.launches(42) != 1 || countEventsByType(log.snapshot(), "run.retry") != 0 {
-		t.Fatalf("cancellation caused extra work: launches=%d retries=%d", factory.launches(42), countEventsByType(log.snapshot(), "run.retry"))
+	if factory.launches(42) != 1 || factory.launches(43) != 0 || countEventsByType(log.snapshot(), "run.retry") != 0 {
+		t.Fatalf("cancellation caused extra work: parent launches=%d dependent launches=%d retries=%d", factory.launches(42), factory.launches(43), countEventsByType(log.snapshot(), "run.retry"))
 	}
 	state := runStateForIssue(t, log.snapshot(), 42)
 	if !state.IsTerminal() || state.Status() != "aborted" {
@@ -351,5 +528,10 @@ func TestManagedReviewLifecycle_CancellationRevokesRecoveryIntent(t *testing.T) 
 	}
 	if ready := FindReadyContinuations(log.snapshot(), paths.NewLayout(&config.Config{WorktreeDir: ".sandman/worktrees"}, root)); len(ready) != 0 {
 		t.Fatalf("cancelled run remained recoverable: %+v", ready)
+	}
+	for _, event := range log.snapshot() {
+		if event.Issue == 43 && event.Type == "run.started" {
+			t.Fatalf("dependent was admitted after cancellation: %+v", event)
+		}
 	}
 }
