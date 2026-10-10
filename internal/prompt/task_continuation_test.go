@@ -38,8 +38,8 @@ The worktree MUST be checked out on '1193-slice-2-uniform-log-prefix-always-runi
 
 - [x] Create branch
 - [x] Plan (sandman-plan)
-- [x] Implement (sandman-implement: execute TDD + commit + self-review + back-merge + create PR + delegate review)
-- [ ] PR-Review (sandman-pr-review)
+- [x] Implement (sandman-implement: execute TDD + commit + self-review + back-merge + create PR)
+- [ ] PR-Review (sandman-review-request for one stateless trigger)
 - [ ] PR-Merge (sandman-pr-merge)
 
 After completing each item, update '.sandman/task.md' in place by checking that item off.

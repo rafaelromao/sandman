@@ -44,20 +44,21 @@ evidence is diagnostics-only and leaves observation active. Explicit
 cancellation produces the normal aborted outcome and does not launch a
 dependent.
 
-After a configured trigger is posted and confirmed for the current head, that
-delivery is an ongoing external operation even before the reviewer agent starts.
-The managed runtime owns the confirmed request record, releases implementation
-capacity, observes the request, and resumes the same implementation when
-current request-scoped evidence arrives and a slot is available. The managed
-agent checkpoints and exits before any polling loop; it never waits inside its
-execution slot. Re-entering with the same trigger reuses that request; a later
-confirmed trigger is a new request, even on the same pull request. Standalone
-use of `sandman-pr-review` invokes the versioned `review-wait-v1.sh` entry point.
-It returns structured transport state and raw response evidence plus a
+After a configured trigger is posted and confirmed for the current head, the
+managed runtime owns the canonical request record, observation, evidence,
+waiting, resume, and terminal decision. The managed agent does not invoke the
+standalone cycle. A standalone `sandman-run` session instead invokes
+`sandman-review-request` through `sandman-review-cycle`, keeps cycle state in
+memory, and starts fresh from live pull-request state after a restart. It
+returns structured transport state and raw response evidence plus a
 request-scoped `review-classification/v1` envelope. That envelope preserves the
 existing top-level, formal-review, and inline sources while associating them
 with one trigger and head; existing approval and feedback rules consume it
 without adding natural-language inference.
+
+`{{REVIEW_COMMAND}}` is substituted from repository configuration when the
+shared skills are synchronized. `{{REVIEW_TIMEOUT}}` is supplied per managed
+run or standalone session and is never shared global skill state.
 
 When it sees a matching comment authored by the GitHub user authenticated to the daemon, it launches a review AgentRun and posts the result back to the pull request. Requests from other users are ignored. Use direct review for manual or CI-driven reviews that should not be tied to the daemon's authenticated user.
 
@@ -134,7 +135,7 @@ The file is preserved across re-runs of `sandman init`. When it is missing, the 
 
 ### Reviewer versus implementor roles
 
-The default prompt requires the `sandman-code-review` skill for daemon reviews and explicitly forbids `sandman-pr-review`, which owns the implementor-side review loop (posting `/sandman review` and driving iterative approval). The daemon reviewer is **read-only**: it reports mergeability or CI problems as findings but never fixes code, pushes, merges, posts GitHub comments, or requests another review. Keep that boundary when you edit the template — a review prompt that tells the reviewer to orchestrate the pull request will conflict with the daemon's own posting workflow.
+The default prompt requires the `sandman-code-review` skill for daemon reviews and explicitly forbids `sandman-pr-review`, `sandman-review-cycle`, and `sandman-run`. `sandman-pr-review` is only a compatibility facade over the standalone cycle; the daemon reviewer is **read-only** and must not enter either standalone workflow. It reports mergeability or CI problems as findings but never fixes code, pushes, merges, posts GitHub comments, or requests another review. Keep that boundary when you edit the template — a review prompt that tells the reviewer to orchestrate the pull request will conflict with the daemon's own posting workflow.
 
 The template must not contain stray `{{...}}` literals beyond the placeholders above: an unknown key fails the render and the review is not launched.
 

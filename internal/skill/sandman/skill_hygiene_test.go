@@ -154,7 +154,7 @@ func TestSkills_NoOperatorResponseDirectives(t *testing.T) {
 }
 
 func allowlistedSkillCommunication(path, text string, loc []int) bool {
-	if path != "pr-review/SKILL.md" {
+	if path != "pr-review/SKILL.md" && path != "review-cycle/SKILL.md" {
 		return false
 	}
 	lineStart := strings.LastIndex(text[:loc[0]], "\n") + 1
@@ -189,13 +189,13 @@ func TestSkills_DirectiveAllowlistIsReviewerScoped(t *testing.T) {
 	}{
 		{
 			name: "reviewer clarification",
-			path: "pr-review/SKILL.md",
+			path: "review-cycle/SKILL.md",
 			text: "ask the reviewer to clarify with {{REVIEW_COMMAND}}",
 			want: true,
 		},
 		{
 			name: "operator clarification",
-			path: "pr-review/SKILL.md",
+			path: "review-cycle/SKILL.md",
 			text: "ask the user for clarification with {{REVIEW_COMMAND}}",
 			want: false,
 		},
@@ -219,7 +219,7 @@ func TestSkills_DirectiveAllowlistIsReviewerScoped(t *testing.T) {
 }
 
 func TestSkills_ReviewerClarificationUsesReviewCommand(t *testing.T) {
-	text, ok := readSkillMarkdown(t)["pr-review/SKILL.md"]
+	text, ok := readSkillMarkdown(t)["review-cycle/SKILL.md"]
 	if !ok {
 		t.Fatal("expected pr-review/SKILL.md")
 	}
@@ -294,8 +294,8 @@ func TestReviewLifecycleDocumentationDescribesBoundedWait(t *testing.T) {
 		}
 	}
 
-	prReview := readSkillMarkdown(t)["pr-review/SKILL.md"]
-	for _, phrase := range []string{"Sandman waits for the review response", "final interval repeats", "responses are kept", "Explicit cancellation aborts"} {
+	prReview := readSkillMarkdown(t)["review-cycle/SKILL.md"]
+	for _, phrase := range []string{"configured observation plan", "final interval repeats", "kept for inspection", "REVIEW_TIMEOUT"} {
 		if !strings.Contains(prReview, phrase) {
 			t.Errorf("pr-review skill must describe managed lifecycle waits with %q", phrase)
 		}
@@ -322,12 +322,12 @@ func TestSkills_AutonomousRecoveryLaddersRemainExplicit(t *testing.T) {
 			"Do not run `grep`, `rg`, or `find`",
 			"`.sandman/task.md` and the run log",
 		},
-		"pr-review/SKILL.md": {
+		"review-cycle/SKILL.md": {
 			".sandman/task.md",
 			"reviewer-directed clarification",
 			"60-minute budget per PR head SHA",
-			"Sandman-created worktree",
-			"enter waiting, release its execution slot, and resume",
+			"fresh standalone invocation",
+			"live in memory",
 			"at most 3 fix-and-push attempts",
 			"ci_deadline",
 			"ci_fix_attempts",
@@ -726,14 +726,14 @@ func TestSkills_ImplementSkillStillReadable(t *testing.T) {
 		t.Errorf("%s has no non-empty frontmatter description line", target)
 		return
 	}
-	if !strings.Contains(text, "End-to-end automation for implementing") {
-		t.Errorf("%s missing the entry-point signal phrase %q", target, "End-to-end automation for implementing")
+	if !strings.Contains(text, "Implementation and pull-request publication") {
+		t.Errorf("%s missing the entry-point signal phrase %q", target, "Implementation and pull-request publication")
 	}
 	if h1Line == "" {
 		t.Errorf("%s has no H1 heading", target)
 		return
 	}
-	if !strings.HasPrefix(strings.TrimSpace(h1Line), "# implement") {
-		t.Errorf("%s H1 %q does not start with the literal entry-point heading %q", target, h1Line, "# implement")
+	if !strings.HasPrefix(strings.TrimSpace(h1Line), "# Implementation Capability") {
+		t.Errorf("%s H1 %q does not start with the literal entry-point heading %q", target, h1Line, "# Implementation Capability")
 	}
 }

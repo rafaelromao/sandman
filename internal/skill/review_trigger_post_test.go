@@ -22,7 +22,7 @@ const (
 func TestSyncReviewPost_PersistsConfirmedPrimaryTrigger(t *testing.T) {
 	root, skillText := installRenderedPRReviewSkill(t)
 	workDir := t.TempDir()
-	stateDir := filepath.Join(workDir, ".sandman", "state")
+	stateDir := filepath.Join(workDir, "cycle-state")
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		t.Fatalf("create state directory: %v", err)
 	}
@@ -62,10 +62,50 @@ func TestSyncReviewPost_PersistsConfirmedPrimaryTrigger(t *testing.T) {
 	assertPostCount(t, postMarker, 1)
 }
 
+func TestReviewRequestFirstDeliveryAllowsMissingFutureEnvelope(t *testing.T) {
+	home := t.TempDir()
+	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: reviewPrefix}); err != nil {
+		t.Fatalf("sync skill: %v", err)
+	}
+	root := filepath.Join(home, ".agents", "skills", embeddedSkillRoot)
+	guard := filepath.Join(root, "pr-review", "review-trigger-guard-v1.sh")
+	if err := os.WriteFile(guard, []byte("#!/bin/sh\nprintf '%s\\n' '{\"protocol\":\"review-trigger/v1\",\"decision\":\"allow\",\"reason\":\"no-prior-request\"}'\n"), 0o700); err != nil {
+		t.Fatalf("write guard shim: %v", err)
+	}
+	bin := t.TempDir()
+	gh := filepath.Join(bin, "gh")
+	ghScript := `#!/bin/sh
+case "$*" in
+  *"--json state,headRefOid"*) printf '%s\n' '{"state":"OPEN","headRefOid":"abc123"}' ;;
+  *"pr comment"*) printf '%s\n' 'https://github.com/owner/repo/pull/42#issuecomment-1001' ;;
+  *) printf '%s\n' '{"headRefOid":"abc123","comments":[{"url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","createdAt":"2026-08-11T18:00:01Z"}]}' ;;
+esac
+`
+	if err := os.WriteFile(gh, []byte(ghScript), 0o700); err != nil {
+		t.Fatalf("write gh shim: %v", err)
+	}
+	requestFile := filepath.Join(t.TempDir(), "future-request.json")
+	cmd := exec.Command("sh", filepath.Join(root, "review-request", "review-request-v1.sh"),
+		"--repository", reviewRepository, "--pull-request", reviewPullRequest,
+		"--head-sha", reviewHeadSHA, "--trigger-prefix", reviewPrefix,
+		"--request-file", requestFile)
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "SANDMAN_SKILL_ROOT="+root)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("first review request refused: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), `"protocol":"review-request/v1"`) || !strings.Contains(string(output), `"state":"confirmed"`) {
+		t.Fatalf("unexpected first request envelope: %s", output)
+	}
+	if _, err := os.Stat(requestFile); !os.IsNotExist(err) {
+		t.Fatalf("stateless request delivery created future envelope: %v", err)
+	}
+}
+
 func TestSyncReviewPost_BlocksUnansweredTriggerBeforePost(t *testing.T) {
 	root, skillText := installRenderedPRReviewSkill(t)
 	workDir := t.TempDir()
-	stateDir := filepath.Join(workDir, ".sandman", "state")
+	stateDir := filepath.Join(workDir, "cycle-state")
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		t.Fatalf("create state directory: %v", err)
 	}
@@ -109,7 +149,7 @@ func TestSyncReviewPost_BlocksUnansweredTriggerBeforePost(t *testing.T) {
 func TestSyncReviewPost_UpdatesExistingEnvelopeForFollowUp(t *testing.T) {
 	root, skillText := installRenderedPRReviewSkill(t)
 	workDir := t.TempDir()
-	stateDir := filepath.Join(workDir, ".sandman", "state")
+	stateDir := filepath.Join(workDir, "cycle-state")
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		t.Fatalf("create state directory: %v", err)
 	}
@@ -152,7 +192,8 @@ func TestSyncReviewPost_UpdatesExistingEnvelopeForFollowUp(t *testing.T) {
 	var after map[string]any
 	readJSONFile(t, requestFile, &after)
 	for key, value := range beforeOnDisk {
-		if key == "trigger_id" || key == "trigger_created_at" {
+		switch key {
+		case "trigger_id", "trigger_created_at", "confirmed_at", "started_unix_seconds", "started_at", "deadline_at", "deadline_unix_seconds":
 			continue
 		}
 		if !reflect.DeepEqual(after[key], value) {
@@ -161,6 +202,12 @@ func TestSyncReviewPost_UpdatesExistingEnvelopeForFollowUp(t *testing.T) {
 	}
 	if after["trigger_id"] != followUpTriggerURL || after["trigger_created_at"] != "2026-08-11T18:02:01Z" {
 		t.Fatalf("follow-up trigger identity = %#v", after)
+	}
+	if after["confirmed_at"] != "2026-08-11T18:02:02Z" || after["effective_timeout_seconds"] != float64(1800) {
+		t.Fatalf("follow-up deadline context = %#v", after)
+	}
+	if after["deadline_unix_seconds"] == beforeOnDisk["deadline_unix_seconds"] || after["started_unix_seconds"] == beforeOnDisk["started_unix_seconds"] {
+		t.Fatalf("follow-up retained the previous deadline: before=%#v after=%#v", beforeOnDisk, after)
 	}
 
 	head, err := os.ReadFile(headFile)
@@ -181,9 +228,9 @@ func installRenderedPRReviewSkill(t *testing.T) (string, string) {
 		t.Fatalf("sync skill: %v", err)
 	}
 	root := filepath.Join(home, ".agents", "skills", embeddedSkillRoot)
-	data, err := os.ReadFile(filepath.Join(root, "pr-review", "SKILL.md"))
+	data, err := os.ReadFile(filepath.Join(root, "review-cycle", "SKILL.md"))
 	if err != nil {
-		t.Fatalf("read synced pr-review skill: %v", err)
+		t.Fatalf("read synced review-cycle skill: %v", err)
 	}
 	return root, string(data)
 }
@@ -196,7 +243,7 @@ func reviewGuardBlock(t *testing.T, skillText, requestFile, headFile string) str
 func reviewPrimaryPostBlock(t *testing.T, skillText, requestFile, headFile string) string {
 	t.Helper()
 	return strings.Join([]string{
-		renderReviewBashBlock(t, skillText, "trigger_url=$(gh pr comment", requestFile, headFile),
+		renderReviewBashBlock(t, skillText, "request_result=$(sh \"$skill_root/review-request/review-request-v1.sh\"", requestFile, headFile),
 		renderReviewBashBlock(t, skillText, "review_timeout=${REVIEW_TIMEOUT:-1800}", requestFile, headFile),
 	}, "\n")
 }
@@ -231,6 +278,8 @@ func reviewHarnessScript(root, firstBlock, secondBlock string) string {
 	return strings.Join([]string{
 		"set -eu",
 		"export SANDMAN_SKILL_ROOT=" + shellQuote(root),
+		"cycle_request_file=\"$CYCLE_REQUEST_FILE\"",
+		"cycle_head_file=\"$CYCLE_HEAD_FILE\"",
 		"head_sha=" + reviewHeadSHA,
 		"record() { printf '%s\\n' \"$*\" >&2; return 1; }",
 		firstBlock,
@@ -243,6 +292,8 @@ func reviewBlockedHarnessScript(root, guardBlock string) string {
 	return strings.Join([]string{
 		"set -eu",
 		"export SANDMAN_SKILL_ROOT=" + shellQuote(root),
+		"cycle_request_file=\"$CYCLE_REQUEST_FILE\"",
+		"cycle_head_file=\"$CYCLE_HEAD_FILE\"",
 		"head_sha=" + reviewHeadSHA,
 		"record() { printf '%s\\n' \"$*\" > \"$GUARD_RECORD_MARKER\"; exit 0; }",
 		guardBlock,
@@ -252,11 +303,25 @@ func reviewBlockedHarnessScript(root, guardBlock string) string {
 
 func runReviewHarness(t *testing.T, script, workDir, bin, root, postMarker string) {
 	t.Helper()
+	requester := filepath.Join(root, "review-request", "review-request-v1.sh")
+	requesterScript := `#!/bin/sh
+printf x >> "$POST_MARKER"
+if [ -f "$CYCLE_REQUEST_FILE" ]; then
+  printf '%s\n' '{"comment_url":"https://github.com/owner/repo/pull/42#issuecomment-1002","created_at":"2026-08-11T18:02:01Z","confirmed_at":"2026-08-11T18:02:02Z"}'
+else
+  printf '%s\n' '{"comment_url":"https://github.com/owner/repo/pull/42#issuecomment-1001","created_at":"2026-08-11T18:00:01Z","confirmed_at":"2026-08-11T18:00:02Z"}'
+fi
+`
+	if err := os.WriteFile(requester, []byte(requesterScript), 0o700); err != nil {
+		t.Fatalf("write review request shim: %v", err)
+	}
 	cmd := exec.Command("sh", "-c", script)
 	cmd.Dir = workDir
 	cmd.Env = append(os.Environ(),
 		"PATH="+bin+":"+os.Getenv("PATH"),
 		"SANDMAN_SKILL_ROOT="+root,
+		"CYCLE_REQUEST_FILE="+filepath.Join(workDir, "cycle-state", "42.review_request.json"),
+		"CYCLE_HEAD_FILE="+filepath.Join(workDir, "cycle-state", "42.head_sha"),
 		"POST_MARKER="+postMarker,
 		"GUARD_RECORD_MARKER="+postMarker+".guard",
 	)
