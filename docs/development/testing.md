@@ -190,6 +190,15 @@ resolves and a slot is available. Portal aggregation remains `Reviewing` while
 an associated review run is active, whether the implementation's runtime phase
 is waiting or running.
 
+`TestManagedReviewLifecycle_ProductionPathRecoversAndReleasesDependency` in
+`internal/batch` is the focused vertical slice for request delivery, waiting,
+restart recovery, same-RunID continuation, verified merge observation, and
+dependent release. Its cancellation companion verifies that explicit abort
+terminalizes the run and revokes recovery. Durable review publication and
+canonical evidence migration remain covered at their daemon and registration
+seams; run those focused package suites without cache when changing either
+boundary.
+
 The [AFK exit baseline](afk-exit-regression-baseline.md) distinguishes retained
 historical exits from removed cumulative restrictions. Regression coverage must
 show that stale/exhausted/corrupt repair ledgers cannot veto fresh execution;

@@ -46,6 +46,13 @@ directly in OpenCode or Claude Code, load `sandman-run`. That standalone
 entrypoint composes `sandman-implement`, `sandman-review-cycle`, and
 `sandman-pr-merge`, with review-cycle state held in memory for the session.
 
+Managed waiting is event-backed and restart-safe: `sandman run --continue`
+rehydrates the same RunID and validates the current pull-request head before
+resuming. A verified merge is terminal without another execution slot, while
+dependent rows remain held until dependency closure is confirmed. Use
+`sandman clean --stale` only for dead ownership; an explicit abort is final and
+does not create a continuation.
+
 ```bash
 sandman run [issue...] [flags]
 ```

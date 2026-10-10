@@ -38,6 +38,11 @@ matching current-request evidence. Standalone `sandman-run` keeps review-cycle s
 for its session; a restart reconstructs from live pull-request state and does
 not import or trust managed lifecycle artifacts.
 
+The compatibility `sandman-pr-review` entrypoint delegates to the same
+standalone review-cycle contract. This keeps standalone composition
+implementation-first, review-cycle-second, and merge-last, while managed runs
+load only stateless request delivery.
+
 ## Claude Code discovery
 
 Claude Code discovers skills only as `~/.claude/skills/<name>/SKILL.md`, one level deep. Skill sync therefore also creates symlinks into the shared folder:
