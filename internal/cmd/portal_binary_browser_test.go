@@ -134,13 +134,14 @@ func TestPortalBuiltBinaryBrowserContinuity(t *testing.T) {
 	_ = portalCmd.Wait()
 	portalCmd = startPortalBrowserBinary(t, binPath, repoDir, port)
 	waitPortalBrowserReady(t, initialURL)
-	appendPortalBrowserLog(t, logPaths[mainRun], "["+mainRun+"] 10:00:02 live-after-restart\n")
-	appendPortalBrowserLog(t, logPaths[reviewRun], "["+reviewRun+"] 10:00:02 live-after-restart\n")
-	appendPortalBrowserLog(t, logPaths[secondRun], "["+secondRun+"] 10:00:02 live-after-restart\n")
 	control.mu.Lock()
 	control.appendAt["after-restart"] = time.Now()
 	control.phase = "restart-ready"
 	control.mu.Unlock()
+	waitPortalBrowserSignal(t, control, "reconnected")
+	appendPortalBrowserLog(t, logPaths[mainRun], "["+mainRun+"] 10:00:02 live-after-restart\n")
+	appendPortalBrowserLog(t, logPaths[reviewRun], "["+reviewRun+"] 10:00:02 live-after-restart\n")
+	appendPortalBrowserLog(t, logPaths[secondRun], "["+secondRun+"] 10:00:02 live-after-restart\n")
 
 	waitPortalBrowserSignal(t, control, "done")
 	select {
@@ -405,7 +406,10 @@ func portalBrowserWrapper(controlURL, mainRun, reviewRun, secondRun string) stri
     await activateRun(frame, mainRun, expected(mainRun, false));
     await signal('visible-before-restart');
     await signal('interactions');
+    const streamCountBeforeRestart = browserMetrics(frame).streamResources;
     await waitPhase('restart-ready');
+    await waitFor(() => browserMetrics(frame).streamResources > streamCountBeforeRestart, 'post-restart stream');
+    await signal('reconnected');
     await activateRun(frame, mainRun, expected(mainRun, true));
     await signal('visible-after-restart');
     await activateSubject(frame, reviewRun, expected(reviewRun, true));
