@@ -18,16 +18,19 @@ import (
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
+	"github.com/rafaelromao/sandman/internal/skill"
 )
 
 type managedLifecycleFactory struct {
-	client        *reviewWaitSchedulerGitHubClient
-	mu            sync.Mutex
-	launch        map[int]int
-	started       []int
-	renewFeedback bool
-	legacyOnly    bool
-	staleLegacy   bool
+	client         *reviewWaitSchedulerGitHubClient
+	mu             sync.Mutex
+	launch         map[int]int
+	started        []int
+	renewFeedback  bool
+	legacyOnly     bool
+	staleLegacy    bool
+	installedSkill string
+	tasks          map[int][]string
 }
 
 func (f *managedLifecycleFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
@@ -89,17 +92,47 @@ func (f *managedLifecycleFactory) NewRunnable(issue *github.Issue, branch string
 			f.client.mu.Unlock()
 		}
 	}
-	return &managedLifecycleRunnable{factory: f, issue: issue.Number, branch: branch, attempt: attempt}
+	return &managedLifecycleRunnable{factory: f, issue: issue.Number, title: issue.Title, body: issue.Body, branch: branch, attempt: attempt}
 }
 
 type managedLifecycleRunnable struct {
 	factory *managedLifecycleFactory
 	issue   int
+	title   string
+	body    string
 	branch  string
 	attempt int
 }
 
-func (r *managedLifecycleRunnable) Run(context.Context, prompt.IssueRenderer, string, prompt.RenderConfig) AgentRunResult {
+func (r *managedLifecycleRunnable) Run(_ context.Context, renderer prompt.IssueRenderer, _ string, renderCfg prompt.RenderConfig) AgentRunResult {
+	task := renderCfg.TaskPrompt
+	if task == "" {
+		var err error
+		task, err = renderer.Render(renderCfg, prompt.IssueData{
+			Number:       r.issue,
+			Title:        r.title,
+			Body:         r.body,
+			SourceBranch: r.branch,
+			BaseBranch:   "main",
+		})
+		if err != nil {
+			return AgentRunResult{IssueNumber: r.issue, Status: "failure", Branch: r.branch}
+		}
+	}
+	r.factory.mu.Lock()
+	if r.factory.tasks == nil {
+		r.factory.tasks = make(map[int][]string)
+	}
+	r.factory.tasks[r.issue] = append(r.factory.tasks[r.issue], task)
+	installedSkill := r.factory.installedSkill
+	r.factory.mu.Unlock()
+	if installedSkill != "" {
+		data, err := os.ReadFile(installedSkill)
+		content := string(data)
+		if err != nil || !strings.Contains(content, "name: sandman-review-request") || strings.Contains(content, "sandman-review-cycle") {
+			return AgentRunResult{IssueNumber: r.issue, Status: "failure", Branch: r.branch}
+		}
+	}
 	return AgentRunResult{IssueNumber: r.issue, Status: "success", Branch: r.branch}
 }
 
@@ -161,7 +194,7 @@ func managedLifecycleOrchestrator(client *reviewWaitSchedulerGitHubClient, log e
 		Git:            config.GitConfig{BaseBranch: "main"},
 		AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}},
 	}
-	return NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, log,
+	return NewOrchestrator(client, &prompt.Engine{}, &fakeConfigStore{config: cfg}, log,
 		WithErrorLog(io.Discard),
 		WithSandboxFactory(reviewWaitSchedulerSandboxFactory{}),
 		WithRunnableFactory(factory),
@@ -176,6 +209,33 @@ func managedLifecycleRequest() Request {
 		Parallel:     1,
 		Branches:     map[int]string{42: gateTestBranch, 43: "43-dependent"},
 		Dependencies: map[int][]int{43: {42}},
+		PromptConfig: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+	}
+}
+
+func assertManagedTaskContract(t *testing.T, task string) {
+	t.Helper()
+	start := strings.Index(task, "## Managed Review Boundary")
+	if start < 0 {
+		t.Fatalf("managed task omitted its managed review boundary:\n%s", task)
+	}
+	end := strings.Index(task[start:], "## Continuation Freshness Guard")
+	if end < 0 {
+		t.Fatalf("managed task omitted its continuation boundary:\n%s", task)
+	}
+	boundary := task[start : start+end]
+	for _, required := range []string{
+		"## Managed Review Boundary",
+		"sandman-review-request",
+		"runtime owns request registration",
+		"Do not load `sandman-review-cycle` or `sandman-run`",
+	} {
+		if !strings.Contains(boundary, required) {
+			t.Errorf("managed task missing %q:\n%s", required, task)
+		}
+	}
+	if !strings.Contains(task, "/sandman review") {
+		t.Errorf("managed task omitted the configured review command:\n%s", task)
 	}
 }
 
@@ -230,7 +290,15 @@ func TestManagedReviewLifecycle_ProductionPathRecoversAndReleasesDependency(t *t
 		},
 	}}
 	log := &events.JSONLLogger{Path: filepath.Join(root, ".sandman", "events.jsonl")}
-	factory := &managedLifecycleFactory{client: client, renewFeedback: true}
+	installedHome := filepath.Join(root, "agent-home")
+	if err := skill.Sync(skill.SyncOptions{HomeDir: installedHome, ReviewCommand: "/sandman review"}); err != nil {
+		t.Fatalf("sync installed skills: %v", err)
+	}
+	factory := &managedLifecycleFactory{
+		client:         client,
+		renewFeedback:  true,
+		installedSkill: filepath.Join(installedHome, ".agents", "skills", "sandman", "review-request", "SKILL.md"),
+	}
 	request := managedLifecycleRequest()
 
 	first, err := managedLifecycleOrchestrator(client, log, factory).RunBatch(context.Background(), request)
@@ -240,6 +308,10 @@ func TestManagedReviewLifecycle_ProductionPathRecoversAndReleasesDependency(t *t
 	if runByIssue(first, 42).Status != "await" || runByIssue(first, 43).Status != "queued" {
 		t.Fatalf("initial statuses = %+v, want parent await and dependent queued", first.Runs)
 	}
+	factory.mu.Lock()
+	initialTask := factory.tasks[42][0]
+	factory.mu.Unlock()
+	assertManagedTaskContract(t, initialTask)
 	parent := lifecycleState(t, log, 42)
 	if parent.RunID == "" || factory.launches(42) != 1 {
 		t.Fatalf("initial lifecycle = %+v launches=%d", parent, factory.launches(42))

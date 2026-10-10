@@ -167,6 +167,64 @@ func TestSyncPreservesManagedAndStandaloneCompositionBoundaries(t *testing.T) {
 	}
 }
 
+func TestStandaloneRestartReconstructsWithoutManagedState(t *testing.T) {
+	repo := t.TempDir()
+	managedFiles := map[string]string{
+		".sandman/events.jsonl":                      "managed terminal event\n",
+		".sandman/state/17.review_registration.json": "managed review registration\n",
+		".sandman/state/17.review_request.json":      "managed review request\n",
+		".sandman/task.md":                           "managed task checkpoint\n",
+	}
+	before := make(map[string][]byte, len(managedFiles))
+	for relative, content := range managedFiles {
+		path := filepath.Join(repo, filepath.FromSlash(relative))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("create managed state directory: %v", err)
+		}
+		data := []byte(content)
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatalf("write managed artifact %s: %v", relative, err)
+		}
+		before[relative] = data
+	}
+
+	home := t.TempDir()
+	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/sandman review"}); err != nil {
+		t.Fatalf("sync skill: %v", err)
+	}
+	standalonePath := filepath.Join(home, ".agents", "skills", embeddedSkillRoot, "run", "SKILL.md")
+	data, err := os.ReadFile(standalonePath)
+	if err != nil {
+		t.Fatalf("read installed standalone skill: %v", err)
+	}
+	text := string(data)
+	for _, required := range []string{
+		"restart begins from the live pull\nrequest",
+		"fresh standalone cycle",
+		"does not import or trust\nmanaged lifecycle artifacts",
+		"must not write managed runtime state",
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("standalone restart contract missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"internal/prompt", ".sandman/events.jsonl", ".sandman/state/"} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("standalone restart contract depends on managed artifact %q", forbidden)
+		}
+	}
+
+	for relative, want := range before {
+		got, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(relative)))
+		if err != nil {
+			t.Fatalf("read managed artifact %s after standalone restart: %v", relative, err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("standalone restart changed managed artifact %s", relative)
+		}
+	}
+}
+
 func TestSyncInstallsConfiguredManagedReviewCommand(t *testing.T) {
 	home := t.TempDir()
 	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/oc review"}); err != nil {
