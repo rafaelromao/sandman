@@ -92,6 +92,12 @@ resumes review-request work. Reviewer process exit alone is not approval; stale,
 unknown, mismatched, or superseded approval cannot authorize a merge. Explicitly
 disabled managed review retains its configuration contract.
 
+The complete managed sequence is request confirmation -> waiting -> current-head
+feedback resume -> renewed request -> approval resume -> verified merge ->
+dependent admission. Re-entry preserves the RunID and active duration; an
+explicit abort ends owned intent. Durable publication and canonical evidence
+are recovery inputs, not alternate lifecycle authorities.
+
 Verified merged completion wins over retained review or quota signals. A merged
 PR without required closing intent is a structured failure. The already-resolved
 exception requires the existing live verification path; Task prose is not an

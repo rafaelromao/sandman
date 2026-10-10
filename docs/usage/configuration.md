@@ -239,6 +239,12 @@ one invocation, resetting on a new head or fresh invocation. Reviewer launch
 failures retain backoff and publication recovery without a three-launch gate;
 the ten-pass review loop and configured request deadline retain their bounds.
 
+The request deadline belongs to one confirmed trigger. A feedback resume can
+renew review with a new trigger and deadline, while a continuation of the same
+trigger keeps its original deadline across restart. Invalid or mismatched
+evidence cannot authorize merge; the canonical registration is the runtime's
+source for the current request and head.
+
 ## CLI config commands
 
 Use `sandman config get` and `sandman config set` to read and write individual fields:

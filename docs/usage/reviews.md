@@ -56,6 +56,15 @@ existing top-level, formal-review, and inline sources while associating them
 with one trigger and head; existing approval and feedback rules consume it
 without adding natural-language inference.
 
+The managed sequence is request, wait, current-head feedback resume, renewed
+request, current-head approval, merge verification, and dependent release.
+Waiting preserves the RunID and dependency ownership while releasing execution
+capacity; it does not consume a generic retry. A restart rehydrates the event
+and wait records, while cancellation terminalizes unfinished owned rows and
+prevents later probes or launches. Failed publication is recovered from the
+durable redacted decision body, and legacy evidence is accepted only at the
+validated request/head boundary.
+
 `{{REVIEW_COMMAND}}` is substituted from repository configuration when the
 shared skills are synchronized. `{{REVIEW_TIMEOUT}}` is supplied per managed
 run or standalone session and is never shared global skill state.
