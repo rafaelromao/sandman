@@ -26,18 +26,23 @@ func runContainerCommand(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
 		return nil, err
 	}
 	done, supervised := make(chan struct{}), make(chan struct{})
+	var cancellation error
 	go func() {
 		defer close(supervised)
 		select {
 		case <-ctx.Done():
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			cancellation = ctx.Err()
 		case <-done:
+			cancellation = ctx.Err()
+		}
+		if cancellation != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		}
 	}()
 	err := cmd.Wait()
 	close(done)
 	<-supervised
-	return out.Bytes(), errors.Join(ctx.Err(), err)
+	return out.Bytes(), errors.Join(cancellation, err)
 }
 
 func boundedContainerCommand(execFn func(string, ...string) *exec.Cmd, binary string, args ...string) ([]byte, error) {

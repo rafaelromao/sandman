@@ -75,13 +75,11 @@ func (r *ContainerRuntime) Start(ctx context.Context, image, repoPath string, op
 	name := "sandman-" + rand.Text()
 	args := []string{"run", "-d", "--rm", "--init", "--name", name}
 	cleanup := func() {}
-	runAttempted, published := false, false
+	runAttempted, created, published := false, false, false
 	defer func() {
 		if !published {
 			if runAttempted {
-				if out, err := boundedContainerCommand(r.execFn, r.binary, "rm", "-f", name); err != nil {
-					retErr = errors.Join(retErr, fmt.Errorf("remove partial container %s: %w\n%s", name, err, out))
-				}
+				retErr = errors.Join(retErr, r.removePartialContainer(name, !created && ctx.Err() != nil))
 			}
 			cleanup()
 		}
@@ -146,12 +144,16 @@ func (r *ContainerRuntime) Start(ctx context.Context, image, repoPath string, op
 	}
 	args = append(args, "-v", absRepo+":/workspace", image, "tail", "-f", "/dev/null")
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	runAttempted = true
 	out, err := runContainerCommand(ctx, r.execFn(r.binary, args...))
 	if err != nil {
 		return nil, fmt.Errorf("start container: %w\n%s", err, out)
 	}
 	id := strings.TrimSpace(string(out))
+	created = true
 
 	if opts.RemoteScheme == "https" {
 		if setupOut, setupErr := runContainerCommand(ctx, r.execFn(r.binary, "exec", id, "gh", "auth", "setup-git")); setupErr != nil {

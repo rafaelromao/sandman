@@ -248,6 +248,42 @@ func TestContainerPool_CancellationAfterGrantDoesNotRevokeSibling(t *testing.T) 
 	sibling.Release()
 }
 
+func TestContainerPool_UnresolvedCleanupPreventsReplacementButPreservesSibling(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	container := &fakeContainerForOrchestrator{id: "live-sibling"}
+	starts := 0
+	cleanupErr := &sandbox.ContainerCleanupError{Name: "pending", Err: errors.New("cleanup deadline exceeded")}
+	starter := &cancellationStarter{start: func(context.Context) (sandbox.Container, error) {
+		starts++
+		if starts == 1 {
+			return container, nil
+		}
+		cancel()
+		return nil, cleanupErr
+	}}
+	pool := newContainerPool(starter, "img", ".", sandbox.StartOptions{}, 1, 0)
+	defer pool.Close()
+	sibling, err := pool.Acquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := pool.Acquire(ctx)
+	if lease != nil || !errors.Is(err, cleanupErr) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("unresolved startup cleanup not surfaced: lease=%v err=%v", lease, err)
+	}
+	lease, err = pool.Acquire(t.Context())
+	if lease != nil || !errors.Is(err, cleanupErr) || starts != 2 {
+		t.Fatalf("unsafe replacement or indefinite wait after unresolved cleanup: starts=%d err=%v", starts, err)
+	}
+	sibling.Release()
+	continued, err := pool.Acquire(t.Context())
+	if err != nil || continued.container.ID() != "live-sibling" || container.stopCalled {
+		t.Fatalf("unresolved cleanup revoked published sibling: %v", err)
+	}
+	continued.Release()
+}
+
 type blockingInspectContainer struct {
 	fakeContainerForOrchestrator
 	inspecting chan struct{}

@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -56,6 +57,10 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		lease, err := s.containerAlloc.Acquire(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
+				var cleanupErr *sandbox.ContainerCleanupError
+				if errors.As(err, &cleanupErr) {
+					s.logLifecycleError("error", "container cleanup after abort", err)
+				}
 				return s.lifecycleEarlyAbort(ctx, branch), false
 			}
 			return s.lifecycleEarlyFailure("acquire container", branch, s.runID, err), false

@@ -21,7 +21,7 @@ func waitRuntimeMarker(t *testing.T, marker string) {
 	tick := time.NewTicker(time.Millisecond)
 	defer tick.Stop()
 	for {
-		if _, err := os.Stat(marker); err == nil {
+		if data, err := os.ReadFile(marker); err == nil && len(data) > 0 {
 			return
 		}
 		select {
@@ -68,11 +68,15 @@ func TestContainerRuntime_CancelBuildWaitsForCommand(t *testing.T) {
 }
 
 func TestContainerRuntime_CancelStartupCleansPartialContainer(t *testing.T) {
-	testCancelContainerStartup(t, "run")
+	testCancelContainerStartup(t, "run", false)
 }
 
 func TestContainerRuntime_CancelAuthenticationCleansContainer(t *testing.T) {
-	testCancelContainerStartup(t, "exec")
+	testCancelContainerStartup(t, "exec", false)
+}
+
+func TestContainerRuntime_CancelStartupWaitsForLateNameRegistration(t *testing.T) {
+	testCancelContainerStartup(t, "run", true)
 }
 
 func TestContainerRuntime_CancelBuildWithDescendantPipeHolder(t *testing.T) {
@@ -105,6 +109,84 @@ func TestContainerRuntime_CancelBuildWithDescendantPipeHolder(t *testing.T) {
 	}
 	if cmd.ProcessState == nil {
 		t.Fatal("direct child was not waited on")
+	}
+}
+
+func TestContainerRuntime_CancelBuildCompletionRaceKillsOutputDetachedHelper(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".sandman"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".sandman", "Dockerfile"), []byte("FROM scratch\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 30 {
+		marker := filepath.Join(dir, fmt.Sprintf("child-%d", i))
+		cmd := exec.Command("sh", "-c", `sleep 60 >/dev/null 2>&1 & printf '%s' $! > "$1.tmp"; mv "$1.tmp" "$1"; exit 0`, "sh", marker)
+		rt := NewContainerRuntime("docker")
+		rt.execFn = func(string, ...string) *exec.Cmd { return cmd }
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() { _, err := rt.BuildImage(ctx, dir); done <- err }()
+		waitRuntimeMarker(t, marker)
+		cancel()
+		err := <-done
+		data, _ := os.ReadFile(marker)
+		pid, parseErr := strconv.Atoi(string(data))
+		if parseErr != nil || pid <= 0 {
+			t.Fatalf("invalid helper identity: %q", data)
+		}
+		// Completion may legitimately win. Always clean up that fixture; for a
+		// cancellation outcome, shutdown must already have killed the helper.
+		if errors.Is(err, context.Canceled) {
+			deadline := time.Now().Add(time.Second)
+			for {
+				state, psErr := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+				if psErr != nil || strings.TrimSpace(string(state)) == "" || strings.HasPrefix(strings.TrimSpace(string(state)), "Z") {
+					break
+				}
+				if time.Now().After(deadline) {
+					_ = syscall.Kill(pid, syscall.SIGKILL)
+					t.Fatal("cancellation outcome left an output-detached helper running")
+				}
+				time.Sleep(time.Millisecond)
+			}
+		}
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+	}
+}
+
+func TestContainerRuntime_CancelStartupUnobservedCreationReportsCleanupDeadline(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "started")
+	cmd := exec.Command("sh", "-c", `printf '%s' $$ > "$1"; exec sleep 60`, "sh", marker)
+	rt := NewContainerRuntime("podman")
+	removed := false
+	rt.execFn = func(_ string, args ...string) *exec.Cmd {
+		switch args[0] {
+		case "run":
+			return cmd
+		case "inspect":
+			return exec.Command("sh", "-c", "echo 'Error: No such container' >&2; exit 1")
+		default:
+			removed = true
+			// A successful rm of an absent name cannot prove cleanup succeeded.
+			return exec.Command("true")
+		}
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := rt.Start(ctx, "img", ".", StartOptions{}); done <- err }()
+	waitRuntimeMarker(t, marker)
+	cancel()
+	select {
+	case err := <-done:
+		var cleanupErr *ContainerCleanupError
+		if !errors.Is(err, context.Canceled) || !errors.As(err, &cleanupErr) || !errors.Is(err, context.DeadlineExceeded) || removed {
+			t.Fatalf("unobserved creation incorrectly declared clean: removed=%v err=%v", removed, err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("partial-container reconciliation remained unbounded")
 	}
 }
 
@@ -154,7 +236,7 @@ func TestRunningContainer_StopIsBoundedAndRemovesAfterTimeout(t *testing.T) {
 	}
 }
 
-func testCancelContainerStartup(t *testing.T, phase string) {
+func testCancelContainerStartup(t *testing.T, phase string, delayedRegistration bool) {
 	t.Helper()
 	dir := t.TempDir()
 	gitconfig := filepath.Join(dir, "gitconfig")
@@ -166,6 +248,7 @@ func testCancelContainerStartup(t *testing.T, phase string) {
 	rt := NewContainerRuntime("docker")
 	var startupName, mountedConfig string
 	var removal []string
+	inspections, registered := 0, false
 	rt.execFn = func(_ string, args ...string) *exec.Cmd {
 		if args[0] == "run" {
 			for i, arg := range args {
@@ -181,6 +264,14 @@ func testCancelContainerStartup(t *testing.T, phase string) {
 			return cmd
 		}
 		if args[0] == "run" {
+			return exec.Command("echo", "created-id")
+		}
+		if args[0] == "inspect" && delayedRegistration {
+			inspections++
+			if inspections == 1 {
+				return exec.Command("sh", "-c", "echo 'Error: No such container' >&2; exit 1")
+			}
+			registered = true
 			return exec.Command("echo", "created-id")
 		}
 		removal = append([]string(nil), args...)
@@ -212,6 +303,9 @@ func testCancelContainerStartup(t *testing.T, phase string) {
 	}
 	if startupName == "" || len(removal) != 3 || removal[0] != "rm" || removal[1] != "-f" || removal[2] != startupName {
 		t.Errorf("partial container not removed by its reserved identity: name=%q removal=%v", startupName, removal)
+	}
+	if delayedRegistration && (!registered || inspections < 2) {
+		t.Error("cleanup accepted absence before late name registration")
 	}
 	if mountedConfig == gitconfig || mountedConfig == "" {
 		t.Fatal("expected temporary mounted git configuration")

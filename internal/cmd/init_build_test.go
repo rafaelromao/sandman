@@ -287,7 +287,7 @@ func TestSmoke_AllPresetImagesExposeRuntimeTools(t *testing.T) {
 					t.Fatalf("build %s preset image: %v", tt.preset, err)
 				}
 			}
-			container, err := sandbox.NewContainerRuntime(runtime).Start(tag, t.TempDir(), sandbox.StartOptions{UserID: fmt.Sprintf("%d", os.Getuid())})
+			container, err := sandbox.NewContainerRuntime(runtime).Start(t.Context(), tag, t.TempDir(), sandbox.StartOptions{UserID: fmt.Sprintf("%d", os.Getuid())})
 			if err != nil {
 				t.Fatalf("start %s preset container: %v", tt.preset, err)
 			}

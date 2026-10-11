@@ -611,9 +611,10 @@ type containerPool struct {
 	capacity      int
 	maxContainers int
 
-	mu     sync.Mutex
-	cond   *sync.Cond
-	shared []*pooledContainer
+	mu         sync.Mutex
+	cond       *sync.Cond
+	shared     []*pooledContainer
+	cleanupErr error
 }
 
 type batchStartGate struct {
@@ -1095,6 +1096,11 @@ func (p *containerPool) Acquire(ctx context.Context) (*containerLease, error) {
 			p.mu.Unlock()
 			return &containerLease{container: container, release: func() { p.releaseShared(best) }}, nil
 		}
+		if p.cleanupErr != nil {
+			err := p.cleanupErr
+			p.mu.Unlock()
+			return nil, err
+		}
 
 		if p.hasPendingCapacityLocked() {
 			p.cond.Wait()
@@ -1129,7 +1135,13 @@ func (p *containerPool) Acquire(ctx context.Context) (*containerLease, error) {
 		if err != nil {
 			entry.startErr = err
 			entry.active--
-			if entry.active == 0 {
+			var unresolved *sandbox.ContainerCleanupError
+			if errors.As(err, &unresolved) {
+				// The daemon may still create this identity. Retain its counted
+				// reservation and fail further provisioning rather than replacing
+				// it unsafely or leaving live waiters blocked indefinitely.
+				p.cleanupErr = errors.Join(p.cleanupErr, err)
+			} else if entry.active == 0 {
 				p.removeShared(entry)
 			}
 			p.cond.Broadcast()
