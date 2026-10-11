@@ -140,23 +140,23 @@ func requirePortalContinuityTool(t *testing.T, name string) string {
 }
 
 type portalContinuityBrowserResult struct {
-	InitialLog          string  `json:"initialLog"`
-	InitialStart        int64   `json:"initialStart"`
-	InitialEnd          int64   `json:"initialEnd"`
-	InitialGeneration   string  `json:"initialGeneration"`
-	InitialCursor       string  `json:"initialCursor"`
-	VisibleLog          string  `json:"visibleLog"`
-	FinalStart          int64   `json:"finalStart"`
-	FinalEnd            int64   `json:"finalEnd"`
-	FinalGeneration     string  `json:"finalGeneration"`
-	StressTransitions   int     `json:"stressTransitions"`
-	MaxWarmTransitionMs float64 `json:"maxWarmTransitionMs"`
-	WarmTransitionMs []float64 `json:"warmTransitionMs"`
-	LiveUpdateMs        float64 `json:"liveUpdateMs"`
-	ModelCacheBytes     int     `json:"modelCacheBytes"`
-	ModelRuns           int     `json:"modelRuns"`
-	DOMLogNodes         int     `json:"domLogNodes"`
-	Error               string  `json:"error"`
+	InitialLog          string    `json:"initialLog"`
+	InitialStart        int64     `json:"initialStart"`
+	InitialEnd          int64     `json:"initialEnd"`
+	InitialGeneration   string    `json:"initialGeneration"`
+	InitialCursor       string    `json:"initialCursor"`
+	VisibleLog          string    `json:"visibleLog"`
+	FinalStart          int64     `json:"finalStart"`
+	FinalEnd            int64     `json:"finalEnd"`
+	FinalGeneration     string    `json:"finalGeneration"`
+	StressTransitions   int       `json:"stressTransitions"`
+	MaxWarmTransitionMs float64   `json:"maxWarmTransitionMs"`
+	WarmTransitionMs    []float64 `json:"warmTransitionMs"`
+	LiveUpdateMs        float64   `json:"liveUpdateMs"`
+	ModelCacheBytes     int       `json:"modelCacheBytes"`
+	ModelRuns           int       `json:"modelRuns"`
+	DOMLogNodes         int       `json:"domLogNodes"`
+	Error               string    `json:"error"`
 }
 
 type portalContinuityStreamStatus struct {
