@@ -1,215 +1,274 @@
 package cmd
 
 import (
-	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/rafaelromao/sandman/internal/daemon"
+	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/paths"
 )
 
-// portalStreamReadTimeout caps a blocking read on the bridged Control
-// Socket. A tail is normally expected to produce output or EOF well within
-// this window; the deadline is a safety net so a wedged daemon cannot hold
-// the stream (and its goroutine) open forever. The browser's EventSource
-// reconnects transparently if the stream ends.
-var portalStreamReadTimeout = 30 * time.Second
-
-// portalStreamHeartbeat is the cadence at which the SSE bridge emits a
-// `: keepalive` SSE comment when no data has flowed through the bridged
-// Control Socket. SSE comments are ignored by the browser's onmessage
-// handler but keep the TCP connection warm so intermediate proxies and
-// the browser's own idle reaper do not silently close a healthy tail of
-// a quiet agent. Set well below the typical 30s HTTP idle timeout.
 var portalStreamHeartbeat = 15 * time.Second
 
-// servePortalRunStream bridges a live run's Control Socket (run.sock) to an
-// HTTP Server-Sent Events stream. The daemon's Broadcaster
-// (daemon/broadcaster.go) replays its buffered output on connect, then
-// tails live output, so the browser receives history + tail in one
-// connection — replacing the per-poll 64KB socket snapshot used by
-// /api/runs (see readPortalSocketOutput in portal_runs_view.go).
-//
-// Lifecycle:
-//   - client disconnects (r.Context done) → the connection is force-closed,
-//     which unblocks the read loop and the handler returns.
-//   - daemon closes the socket (run finished/aborted) → the read returns
-//     EOF and the stream ends cleanly.
-//   - a read stalls past portalStreamReadTimeout → the loop re-arms and
-//     continues; it is a safety net, not a hard stop.
-//
-// Each source line is emitted as its own SSE event so the client can append
-// incrementally; ANSI and other control bytes are stripped server-side to
-// match the cleaned run.log contract from cleanPortalText.
-//
-// The server's global WriteTimeout (30s) would otherwise cut the stream at
-// 30s; http.NewResponseController clears this response's write deadline so
-// the tail can run as long as the run is live, without weakening the
-// timeout for the rest of the portal's handlers.
+const portalLogPollInterval = 200 * time.Millisecond
+const portalLogResolveInterval = time.Second
+
+var portalSavedLogRegistry = newPortalLogRegistry()
+
+type portalLogTicker interface {
+	Chan() <-chan time.Time
+	Stop()
+}
+
+type portalWallLogTicker struct{ *time.Ticker }
+
+func (t portalWallLogTicker) Chan() <-chan time.Time { return t.C }
+
+// The resolved run, relocation resolver, fresh lifecycle predicate and ticker
+// are the HTTP seam shared by production and real EventSource fixtures. Neither
+// a portal status label nor EOF/socket state can authorize a terminal drain.
+type portalLogStreamOptions struct {
+	Resolve   func(context.Context) (portalRun, error)
+	Terminal  func(context.Context) (bool, error)
+	NewTicker func() portalLogTicker
+	Registry  *portalLogRegistry
+	Scope     string
+}
+
 func servePortalRunStream(w http.ResponseWriter, r *http.Request, repoRoot string) {
 	runKey := strings.TrimSpace(r.URL.Query().Get("runKey"))
 	if runKey == "" {
 		writeJSONError(w, "missing runKey", http.StatusBadRequest)
 		return
 	}
-
-	run, err := portalRunForKey(repoRoot, runKey)
+	idx := getPortalRunsIndex(repoRoot)
+	run, err := idx.FindByKey(r.Context(), runKey)
 	if err != nil {
+		status := http.StatusInternalServerError
 		var abortErr *portalAbortError
 		if errors.As(err, &abortErr) {
-			writeJSONError(w, abortErr.Error(), abortErr.status)
-			return
+			status = abortErr.status
 		}
-		writeJSONError(w, "resolve run: "+err.Error(), http.StatusInternalServerError)
+		writeJSONError(w, err.Error(), status)
 		return
 	}
-	if run.Kind != "active" || run.SocketPath == "" {
-		writeJSONError(w, fmt.Sprintf("run %q is not active", runKey), http.StatusConflict)
+	if err := validatePortalSavedLogPath(repoRoot, run); err != nil {
+		writeJSONError(w, "invalid saved log source", http.StatusConflict)
 		return
 	}
+	servePortalLogStream(w, r, run, portalLogStreamOptions{
+		Scope: repoRoot,
+		Resolve: func(ctx context.Context) (portalRun, error) {
+			// Only path disappearance invokes the full artifact resolver. Normal
+			// idle ticks do not hydrate the view, index or any daemon socket.
+			idx.Invalidate()
+			relocated, err := idx.FindByKey(ctx, runKey)
+			if err == nil {
+				err = validatePortalSavedLogPath(repoRoot, relocated)
+			}
+			return relocated, err
+		},
+		Terminal: portalSavedLogTerminal(repoRoot, run.RunID),
+	})
+}
 
-	conn, err := net.DialTimeout("unix", run.SocketPath, portalReadTimeout)
-	if err != nil {
-		writeJSONError(w, fmt.Sprintf("could not connect to the agent daemon for run %q", runKey), http.StatusBadGateway)
-		return
+func validatePortalSavedLogPath(repoRoot string, run portalRun) error {
+	if run.RunID == "" {
+		return fmt.Errorf("missing RunID")
 	}
-	defer conn.Close()
-	if _, err := conn.Write([]byte{daemon.PortalStreamHandshake}); err != nil {
-		return
+	if run.LogPath == "" {
+		return nil
 	}
+	layout := paths.NewLayout(nil, repoRoot)
+	if err := validateOwnedPath(run.LogPath, layout.BatchesDir, layout.ArchiveDir); err != nil {
+		return err
+	}
+	if filepath.Base(run.LogPath) != "run.log" || filepath.Base(filepath.Dir(run.LogPath)) != run.RunID || filepath.Base(filepath.Dir(filepath.Dir(run.LogPath))) != "runs" {
+		return fmt.Errorf("saved log identity does not match RunID")
+	}
+	return nil
+}
 
-	// Clear this response's write deadline so the server's 30s WriteTimeout
-	// does not sever a long-lived tail. Falls back silently if the writer
-	// does not support deadline control (ResponseController returns an
-	// error only when the underlying connection cannot set a deadline,
-	// which is not fatal for a local portal).
+// Stat on every observation, fold fresh authoritative events only when they
+// change. This is independent of cached Portal metadata and socket liveness.
+func portalSavedLogTerminal(repoRoot, runID string) func(context.Context) (bool, error) {
+	path := paths.NewLayout(nil, repoRoot).EventsLogPath
+	var previous os.FileInfo
+	var terminal bool
+	return func(ctx context.Context) (bool, error) {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			previous, terminal = nil, false
+			return false, err
+		}
+		if previous != nil && os.SameFile(previous, info) && previous.Size() == info.Size() && previous.ModTime().Equal(info.ModTime()) {
+			return terminal, nil
+		}
+		// Use a read-only, promptly closed descriptor. JSONLLogger owns a
+		// long-lived writable handle and quarantine sidecars, neither of which
+		// belongs to an HTTP subscription. The canonical event fold still owns
+		// the lifecycle decision, including legacy queued/abort semantics.
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return false, err
+		}
+		var list []events.Event
+		for _, line := range bytes.Split(data, []byte{'\n'}) {
+			var event events.Event
+			if json.Unmarshal(line, &event) == nil {
+				list = append(list, event)
+			}
+		}
+		terminal = false
+		for _, state := range events.ProjectRunStates(list) {
+			if state.RunID == runID {
+				terminal = state.IsTerminal()
+				break
+			}
+		}
+		previous = info
+		return terminal, nil
+	}
+}
+
+func servePortalLogStream(w http.ResponseWriter, r *http.Request, run portalRun, opts portalLogStreamOptions) {
+	if opts.Registry == nil {
+		opts.Registry = portalSavedLogRegistry
+	}
+	if opts.NewTicker == nil {
+		opts.NewTicker = func() portalLogTicker { return portalWallLogTicker{time.NewTicker(portalLogPollInterval)} }
+	}
+	// Header presence takes precedence even if empty or invalid. Never fall
+	// back to the original URL cursor after a failed native reconnection proof.
+	resume := r.URL.Query().Get("cursor")
+	if values, present := r.Header[http.CanonicalHeaderKey("Last-Event-ID")]; present {
+		resume = "invalid-header"
+		if len(values) == 1 && values[0] != "" {
+			resume = values[0]
+		}
+	}
+	source := newPortalLogSource(run.RunID, run.LogPath, resume, opts.Registry, opts.Scope)
+	defer source.Close()
+	ticker := opts.NewTicker()
+	defer ticker.Stop()
+	heartbeat := time.NewTicker(portalStreamHeartbeat)
+	defer heartbeat.Stop()
 	rc := http.NewResponseController(w)
 	_ = rc.SetWriteDeadline(time.Time{})
-
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
-	_ = rc.Flush()
-
-	// Force-close the socket on client disconnect so a blocking ReadString
-	// returns immediately instead of stranding the goroutine.
-	go func() {
-		<-r.Context().Done()
-		_ = conn.Close()
-	}()
-
-	br := bufio.NewReader(conn)
-	// http.ResponseWriter is not safe for concurrent writes. The heartbeat
-	// goroutine and the main read loop both write to it; serialize them via
-	// this mutex so concurrent Fprintf/Flush calls don't race (caught by
-	// `-race` in CI). The mutex also protects against the http server's
-	// own internal flush during finishRequest racing with our flush.
-	var writeMu sync.Mutex
-	heartbeat := time.NewTicker(portalStreamHeartbeat)
-	defer heartbeat.Stop()
-	heartbeatStop := make(chan struct{})
-	heartbeatDone := make(chan struct{})
-	defer func() {
-		close(heartbeatStop)
-		<-heartbeatDone
-	}()
-	go func() {
-		defer close(heartbeatDone)
-		for {
-			select {
-			case <-heartbeatStop:
-				return
-			case <-heartbeat.C:
-				writeMu.Lock()
-				if _, werr := fmt.Fprintf(w, ": keepalive\n\n"); werr != nil {
-					writeMu.Unlock()
-					return
-				}
-				_ = rc.Flush()
-				writeMu.Unlock()
+	if err := rc.Flush(); err != nil {
+		return
+	}
+	emit := func(frame *portalLogFrame) bool {
+		data, err := json.Marshal(frame)
+		if err != nil {
+			return false
+		}
+		if frame.Cursor != "" && frame.Type != "pending" && frame.Type != "unavailable" {
+			if _, err := fmt.Fprintf(w, "id: %s\n", frame.Cursor); err != nil {
+				return false
 			}
 		}
-	}()
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+			return false
+		}
+		return rc.Flush() == nil
+	}
+	var pending bool
+	now, nextResolve := time.Now(), time.Time{}
 	for {
+		if r.Context().Err() != nil {
+			return
+		}
+		terminal := false
+		if opts.Terminal != nil {
+			// Read errors fail closed: continuing to tail is safe, ending is not.
+			observed, err := opts.Terminal(r.Context())
+			terminal = err == nil && observed
+		}
+		frame, err := source.Poll(terminal)
+		// Probe relocation immediately on disappearance, then back off while
+		// missing. Pending startup must not rehydrate the full Portal view and
+		// sockets at the much faster file-tail cadence.
+		if os.IsNotExist(err) && opts.Resolve != nil && (terminal || !pending || !now.Before(nextResolve)) {
+			nextResolve = now.Add(portalLogResolveInterval)
+			if relocated, resolveErr := opts.Resolve(r.Context()); resolveErr == nil && relocated.RunID == run.RunID {
+				source.path = relocated.LogPath
+				frame, err = source.Poll(terminal)
+			}
+		}
+		if err != nil {
+			source.Suspend()
+			kind, reason := "pending", "source-missing"
+			if !os.IsNotExist(err) {
+				reason = "source-unreadable"
+			}
+			if terminal {
+				kind = "unavailable"
+			}
+			if !pending || terminal {
+				if !emit(&portalLogFrame{Type: kind, RunID: run.RunID, Generation: source.generation, Start: source.end, End: source.end, Records: []portalLogRecord{}, Cursor: source.cursor, Reason: reason}) {
+					return
+				}
+			}
+			pending = true
+		} else {
+			pending = false
+			if frame != nil && !emit(frame) {
+				return
+			}
+		}
+		if terminal {
+			emit(&portalLogFrame{Type: "end", RunID: run.RunID, Generation: source.generation, Start: source.end, End: source.end, Records: []portalLogRecord{}, Cursor: source.cursor})
+			return
+		}
 		select {
 		case <-r.Context().Done():
 			return
-		default:
-		}
-		_ = conn.SetReadDeadline(time.Now().Add(portalStreamReadTimeout))
-		line, readErr := br.ReadString('\n')
-		if line == daemon.PortalReplayBoundary {
-			writeMu.Lock()
-			if _, werr := fmt.Fprint(w, "event: replay-complete\ndata: replay-complete\n\n"); werr != nil {
-				writeMu.Unlock()
+		case tick, open := <-ticker.Chan():
+			if !open {
 				return
 			}
-			_ = rc.Flush()
-			writeMu.Unlock()
-		}
-		if line != "" && lineBelongsToRun(line, run.RunID) {
-			cleaned := cleanPortalStreamLine(line)
-			writeMu.Lock()
-			if _, werr := fmt.Fprintf(w, "data: %s\n\n", cleaned); werr != nil {
-				writeMu.Unlock()
+			now = tick
+		case <-heartbeat.C:
+			now = time.Now()
+			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil || rc.Flush() != nil {
 				return
 			}
-			_ = rc.Flush()
-			writeMu.Unlock()
-		}
-		if readErr != nil {
-			// A timeout is a transient read deadline expiry, not a reason
-			// to end the stream; anything else (EOF, closed) ends it.
-			if netErr := (*net.OpError)(nil); errors.As(readErr, &netErr) && netErr.Timeout() {
-				continue
-			}
-			return
 		}
 	}
 }
 
-// lineBelongsToRun reports whether a raw socket line was produced by the
-// requested run. Lines written by a daemon in a mixed batch are tagged
-// with a `[<runID>] ` prefix; lines without that prefix cannot be
-// attributed to any run and must not leak into the per-run stream. The
-// check strips ANSI escapes from the head of the line first so a label
-// wrapped in colour codes (e.g. `\x1b[32m[<runID>]\x1b[0m ...`) still
-// matches; without that, an ANSI wrapper would let sibling output slip
-// past the filter.
+// Retained for existing socket/cleaning compatibility tests. Saved Run Log
+// records are already private to one RunID and must not be text-filtered.
 func lineBelongsToRun(line, runID string) bool {
 	if runID == "" {
 		return false
 	}
 	stripped := portalANSISequence.ReplaceAllString(line, "")
 	prefix := "[" + runID + "]"
-	if !strings.HasPrefix(stripped, prefix) {
-		return false
-	}
-	// Reject lines that match only because a longer runID happens to
-	// share the row's runID as a prefix (e.g. row "run-1" would
-	// otherwise claim "[run-12] ..." lines). The character after the
-	// closing bracket must be the canonical `[<runID>] ` space
-	// delimiter defined in CONTEXT.md.
-	rest := stripped[len(prefix):]
-	if rest == "" {
-		return false
-	}
-	return rest[0] == ' '
+	return strings.HasPrefix(stripped, prefix+" ")
 }
 
-// cleanPortalStreamLine strips ANSI escapes and the trailing newline and
-// removes control bytes other than tab, matching the run.log contract from
-// cleanPortalText so a streamed line renders identically to a polled one.
 func cleanPortalStreamLine(line string) string {
 	line = portalANSISequence.ReplaceAllString(line, "")
-	line = strings.TrimRight(line, "\r\n")
+	line = strings.TrimSuffix(line, "\n")
+	line = strings.TrimSuffix(line, "\r")
 	line = stripLogLabel(line)
 	return strings.Map(func(r rune) rune {
 		if r == '\t' {
