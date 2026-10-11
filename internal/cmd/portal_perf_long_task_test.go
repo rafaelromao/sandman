@@ -260,7 +260,7 @@ const content1 = detailRow.querySelector('.detail-content');
 let loadCalls = 0;
 let stopCalls = 0;
 sandbox.loadRunDetail = function () { loadCalls += 1; };
-sandbox.stopRunStream = function () { stopCalls += 1; };
+sandbox.logSubscription.select = function () { stopCalls += 1; };
 const opts2 = { helpers, stopGroups, expandedKey: 'PR42', tabs: { 'PR42': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
 const totalStart = performance.now();
 recorder.start();
@@ -289,7 +289,7 @@ process.stdout.write(JSON.stringify({ scenario: 'subject_switch', flushed: flush
 		t.Fatalf("expected loadRunDetail to be called, got %v", got["loadCalls"])
 	}
 	if stopCalls, ok := got["stopCalls"].(float64); !ok || stopCalls < 1 {
-		t.Fatalf("expected stopRunStream to be called, got %v", got["stopCalls"])
+		t.Fatalf("expected shared subscription teardown, got %v", got["stopCalls"])
 	}
 	if mutations, ok := got["mutations"].(float64); !ok || mutations < 1 {
 		t.Fatalf("expected DOM mutations from subject switch, got %v", got["mutations"])
@@ -689,7 +689,8 @@ sandbox.isWaitStateRun = function () { return false; };
 sandbox.summarizeReviewGroup = function (group) { return { source: group && group[0] || null }; };
 sandbox.loadRunDetail = function () {};
 sandbox.findRunRowByIdentity = function () { return null; };
-sandbox.stopRunStream = function () {};
+sandbox.logSubscription = { select: function () {} };
+sandbox.navigationVersion = 0;
 sandbox.persistPortalViewState = function () {};
 sandbox.render = function () {};
 sandbox.requestAnimationFrame = function (cb) { sandbox.__rafQueue.push(cb); return sandbox.__rafQueue.length; };
@@ -709,7 +710,7 @@ sandbox.__rafQueue = [];
 var renderScheduled = false;
 var renderCallback = null;
 function perfDispatchSubjectSelect(prevRunKey, nextRunKey, nextTab) {
-  if (prevRunKey) sandbox.stopRunStream(prevRunKey);
+  if (prevRunKey) sandbox.logSubscription.select(null);
   if (nextTab && !sandbox.state.tabs[nextRunKey]) sandbox.state.tabs[nextRunKey] = nextTab;
   sandbox.state.expandedRunKey = nextRunKey;
   sandbox.persistPortalViewState();

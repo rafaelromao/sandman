@@ -51,6 +51,7 @@ func buildPortalReproPage(t *testing.T, stateJSON string, runsJSON []byte, body 
 	page = strings.ReplaceAll(page, "{{.PortalStateJS}}", stateJS)
 	page = strings.ReplaceAll(page, "{{.PortalScrollJS}}", scrollJS)
 	page = strings.ReplaceAll(page, "{{.PortalDiffJS}}", diffJS)
+	page = strings.ReplaceAll(page, "{{.PortalLogJS}}", string(portalLogJS))
 	page = strings.ReplaceAll(page, "{{.ThemeOptionsHTML}}", `<option value="sandman">Sandman</option>`)
 	page = strings.ReplaceAll(page, "{{.RefreshPath}}", "/api/runs")
 	page = strings.ReplaceAll(page, "{{.PortalAbortSupported}}", "false")
@@ -94,8 +95,27 @@ func buildPortalReproPage(t *testing.T, stateJSON string, runsJSON []byte, body 
         text: async function () { return ''; },
       };
     };
+    // Legacy layout fixtures have a separate saved-source transport fixture.
+    // Tests of continuity supply their own structured EventSource instead.
+    window.__portalSavedRuns = %s;
+    window.EventSource = function (url) {
+      var self = this;
+      this.url = url;
+      this.readyState = 1;
+      this.close = function () { self.readyState = 2; };
+      var key = new URL(url, 'http://localhost').searchParams.get('runKey');
+      var run = window.__portalSavedRuns.find(function (r) { return r.backendKey === key || r.key === key || r.runId === key; });
+      if (!run) return;
+      var text = String(run.log || '').replace(/\n$/, '');
+      var end = new TextEncoder().encode(text).length + (text ? 1 : 0);
+      var snapshot = { type: 'snapshot', runId: run.runId || run.key, generation: 'fixture-' + (run.runId || run.key), start: 0, end: end,
+        records: text ? [{ start: 0, end: end, text: text }] : [], cursor: 'fixture-' + end };
+      setTimeout(function () {
+        if (self.readyState === 1 && self.onmessage) self.onmessage({ data: JSON.stringify(snapshot) });
+      }, 0);
+    };
 %s
-    const apiPath = "/api/runs";`, PortalStateStorageKeyPrefix, strconv.Quote(stateJSON), string(runsJSON), body)
+    const apiPath = "/api/runs";`, PortalStateStorageKeyPrefix, strconv.Quote(stateJSON), string(runsJSON), string(runsJSON), body)
 	page = strings.Replace(page, "<script>\n    const apiPath = \"/api/runs\";", injection, 1)
 	return page
 }
@@ -367,12 +387,13 @@ func TestPortalLogPane_SubjectSwitchReusesCachedPane(t *testing.T) {
 	stateJSON := `{"expandedRunKey":"260618113825-abcd-1","tabs":{"260618113825-abcd-1":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
 
 	page := buildPortalReproPage(t, stateJSON, runsJSON, `
-    setTimeout(function () {
+    setTimeout(function startPaneRoundTrip() {
       var select = document.querySelector('select[data-action="set-subject"]');
       if (!select) throw new Error('missing subject selector');
       var detail = document.querySelector('tr.detail-row[data-detail-for="260618113825-abcd-1"] .detail-content');
       var parentPre1 = detail && detail.querySelector('pre[data-scroll-key]');
       if (!parentPre1) throw new Error('expected parent log pane initially');
+      if (parentPre1.getAttribute('data-rendering-log') || parentPre1.textContent.indexOf('parent log line 1') === -1) { setTimeout(startPaneRoundTrip, 10); return; }
       var parentFirstChild = parentPre1.firstChild;
 
       select.value = 'PR42';
@@ -443,6 +464,7 @@ func TestPortalSummaryPoll_UsesIfNoneMatchAndKeepsRowsOn304(t *testing.T) {
 	page = strings.ReplaceAll(page, "{{.PortalStateJS}}", stateJS)
 	page = strings.ReplaceAll(page, "{{.PortalScrollJS}}", scrollJS)
 	page = strings.ReplaceAll(page, "{{.PortalDiffJS}}", diffJS)
+	page = strings.ReplaceAll(page, "{{.PortalLogJS}}", string(portalLogJS))
 	page = strings.ReplaceAll(page, "{{.ThemeOptionsHTML}}", `<option value="sandman">Sandman</option>`)
 	page = strings.ReplaceAll(page, "{{.RefreshPath}}", "/api/runs")
 	page = strings.ReplaceAll(page, "{{.PortalAbortSupported}}", "false")
@@ -752,8 +774,8 @@ func TestPortalRefresh_LocksRowIdentityAcrossMixedBatchPayloads(t *testing.T) {
 	if !strings.Contains(result.MetaText, "Batch: "+batchID) || !strings.Contains(result.MetaText, "Run: "+runID) {
 		t.Fatalf("expected batch/run metadata on refreshed row, got %#v", result)
 	}
-	if !strings.Contains(result.DetailText, "refreshed mixed log line 1") || strings.Contains(result.DetailText, "initial mixed log line 1") {
-		t.Fatalf("expected refreshed detail text only, got %#v", result)
+	if result.DetailText != result.InitialDetailText {
+		t.Fatalf("metadata refresh changed the authoritative saved-log range, got %#v", result)
 	}
 	if result.FetchCalls < 2 {
 		t.Fatalf("expected initial render plus refresh fetches, got %#v", result)
@@ -1666,9 +1688,10 @@ func TestPortalReviewSubjectSwitch_ReusesCachedParentPaneAcrossRoundTrip(t *test
       }
       setTimeout(function () { waitForChildPane(deadline); }, 10);
     }
-    setTimeout(function () {
+    setTimeout(function startParentRoundTrip() {
       var pre = document.querySelector('pre[data-scroll-key]');
       if (!pre) throw new Error('missing initial parent log pre');
+      if (pre.getAttribute('data-rendering-log') || pre.textContent.indexOf('parent log line 1') === -1) { setTimeout(startParentRoundTrip, 10); return; }
       window.__initialPre = pre;
       window.__initialFirstChild = pre.firstChild;
       window.__beforeChildCalls = window.__hlCalls;
@@ -1746,7 +1769,9 @@ func TestPortalSubjectSwitch_IgnoresEmptySelectionChange(t *testing.T) {
       var select = document.querySelector('select[data-action="set-subject"]');
       if (!select) throw new Error('missing subject selector');
       select.value = '';
+      var before = window.__portalFetchCalls;
       select.dispatchEvent(new Event('change', { bubbles: true }));
+      window.__emptyChangeAddedFetch = window.__portalFetchCalls - before;
     }, 50);
     setTimeout(function () {
       var select = document.querySelector('select[data-action="set-subject"]');
@@ -1762,6 +1787,7 @@ func TestPortalSubjectSwitch_IgnoresEmptySelectionChange(t *testing.T) {
         detailText: detail && detail.textContent,
         expandedRunKey: stored && stored.expandedRunKey,
         fetchCalls: window.__portalFetchCalls || 0,
+        changeFetchCalls: window.__emptyChangeAddedFetch,
       });
       document.body.appendChild(marker);
     }, 360);
@@ -1770,10 +1796,11 @@ func TestPortalSubjectSwitch_IgnoresEmptySelectionChange(t *testing.T) {
 	dom, _ := runPortalChromium(t, page)
 	payload := extractPortalMarker(t, dom, "portal-empty-subject")
 	var result struct {
-		SubjectValue   string `json:"subjectValue"`
-		DetailText     string `json:"detailText"`
-		ExpandedRunKey string `json:"expandedRunKey"`
-		FetchCalls     int    `json:"fetchCalls"`
+		SubjectValue     string `json:"subjectValue"`
+		DetailText       string `json:"detailText"`
+		ExpandedRunKey   string `json:"expandedRunKey"`
+		FetchCalls       int    `json:"fetchCalls"`
+		ChangeFetchCalls int    `json:"changeFetchCalls"`
 	}
 	if err := json.Unmarshal([]byte(payload), &result); err != nil {
 		t.Fatalf("parse empty-subject payload: %v\nraw=%s", err, payload)
@@ -1787,7 +1814,7 @@ func TestPortalSubjectSwitch_IgnoresEmptySelectionChange(t *testing.T) {
 	if result.ExpandedRunKey != "260618113825-abcd-1" {
 		t.Fatalf("expected blank subject change to leave expanded state unchanged, got %#v", result)
 	}
-	if result.FetchCalls > 2 {
+	if result.ChangeFetchCalls != 0 {
 		t.Fatalf("expected blank subject change not to trigger extra fetch, got %#v", result)
 	}
 }
@@ -1825,6 +1852,7 @@ func TestPortalRefreshHydratesRestoredExpandedRunDetail(t *testing.T) {
 	stateJSON := `{"expandedRunKey":"` + runID + `","tabs":{"` + runID + `":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
 
 	page := buildPortalReproPage(t, stateJSON, summaryRunsJSON, `
+    window.__portalSavedRuns = [`+string(detailRunJSON)+`];
     window.__portalFetchCalls = 0;
     window.fetch = async function (input) {
       window.__portalFetchCalls += 1;
@@ -1933,6 +1961,7 @@ func TestPortalReviewSubjectSwitch_HydratesSelectedSubjectDetail(t *testing.T) {
 	stateJSON := `{"expandedRunKey":"260618113825-abcd-1","tabs":{"260618113825-abcd-1":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
 
 	page := buildPortalReproPage(t, stateJSON, runsJSON, `
+    window.__portalSavedRuns = [`+string(parentDetailJSON)+`, `+string(childDetailJSON)+`];
     window.__portalFetchCalls = 0;
     window.fetch = async function (input) {
       window.__portalFetchCalls += 1;
@@ -2033,6 +2062,7 @@ func TestPortalSubjectSwitch_ContinuationRowExposesPreviousRun(t *testing.T) {
 	stateJSON := `{"expandedRunKey":"new-run","tabs":{"new-run":"log","old-run":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
 
 	page := buildPortalReproPage(t, stateJSON, runsJSON, `
+    window.__portalSavedRuns = [`+string(previousDetailJSON)+`];
     window.fetch = async function (input) {
       window.__portalFetchCalls += 1;
       var url = String(input || '');

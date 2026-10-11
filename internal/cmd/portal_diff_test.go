@@ -1203,16 +1203,13 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-// TestPortalDiffUpdateDetailContent_StreamedLogIsShieldedFromPoll pins the
-// seam that lets a live SSE stream own a Log <pre>: while a run's key is in
-// opts.streamingKeys, the poll path (updateDetailContent) must not touch
-// the streamed pre, even as run.log changes. Once the key is removed, the
-// poll resumes authority and reconciles the log normally.
-func TestPortalDiffUpdateDetailContent_StreamedLogIsShieldedFromPoll(t *testing.T) {
+// Metadata has no log authority, including when the stream is disconnected.
+func TestPortalDiffUpdateDetailContent_ModelLogIsShieldedFromMetadata(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', kind: 'active', status: 'running', issueLabel: '#42', runId: 'r1', log: 'first line' };
-const streamingKeys = new Set();
-const opts = { helpers, stopGroups: new Set(), expandedKey: 'a', tabs: { a: 'log' }, streamingKeys };
+const accepted = helpers.logState(run);
+helpers.logState = () => accepted;
+const opts = { helpers, stopGroups: new Set(), expandedKey: 'a', tabs: { a: 'log' } };
 SandmanPortalDiff.diffRuns(body, [run], opts);
 const detailRow = body.querySelector('tr.detail-row[data-detail-for="a"]');
 if (!detailRow) throw new Error('expected a detail row for the expanded run');
@@ -1220,35 +1217,28 @@ const pre = detailRow.querySelector('pre[data-scroll-key]');
 if (!pre) throw new Error('expected a log pre for the expanded run');
 const before = pre.getAttribute('data-rendered-log') || '';
 
-// Stream takes ownership; a poll with a longer log must NOT clobber the pre.
-streamingKeys.add('a');
+// A poll with a longer metadata log must NOT clobber the accepted range.
 SandmanPortalDiff.resetCounters();
 SandmanPortalDiff.diffRuns(body, [Object.assign({}, run, { log: 'first line\nsecond line' })], opts);
 const guarded = pre.getAttribute('data-rendered-log') || '';
 if (guarded !== before) throw new Error('streamed log pre was clobbered by poll (before=' + JSON.stringify(before) + ', after=' + JSON.stringify(guarded) + ')');
 
-// Stream releases; the poll resumes and appends the new line.
-streamingKeys.delete('a');
+// Closing the subscription does not transfer authority to metadata.
 SandmanPortalDiff.diffRuns(body, [Object.assign({}, run, { log: 'first line\nsecond line' })], opts);
 const resumed = pre.getAttribute('data-rendered-log') || '';
-if (resumed === before) throw new Error('poll did not resume updating the log after the stream released it');
-if (!/second line/.test(resumed)) throw new Error('resumed log missing the new line, got ' + JSON.stringify(resumed));
+if (resumed !== before || pre.textContent !== accepted.text) throw new Error('disconnected model log was changed by metadata');
 console.log('PASS');
 `
 	runNodeScript(t, js)
 }
 
-// TestPortalDiffUpdateDetailContent_ReviewSubjectStreamShieldsPane extends the
-// contract pinned by TestPortalDiffUpdateDetailContent_StreamedLogIsShieldedFromPoll
-// to the grouped-review subject case. While a review run is the streaming subject
-// (streamingKeys holds the review key), the poll path must not overwrite its
-// <pre>. Once the key is removed, the poll resumes and reconciles normally.
-func TestPortalDiffUpdateDetailContent_ReviewSubjectStreamShieldsPane(t *testing.T) {
+func TestPortalDiffUpdateDetailContent_ReviewSubjectModelShieldsPane(t *testing.T) {
 	js := `const body = makeMockBody();
 const parent = { key: 'impl-1', runId: 'impl-1', kind: 'active', status: 'running', issueLabel: '#1', issueNumber: 1, log: 'impl line 1' };
 const review = { key: 'PR42', runId: 'PR42', kind: 'active', status: 'reviewing', issueLabel: 'PR42', issueNumber: 1, prNumber: 42, review: true, log: 'review line 1' };
-const streamingKeys = new Set();
-const opts = { helpers, stopGroups: new Set(), runs: [parent, review], visibleRuns: [parent], expandedKey: 'PR42', tabs: { PR42: 'log' }, streamingKeys };
+const accepted = helpers.logState(review);
+helpers.logState = () => accepted;
+const opts = { helpers, stopGroups: new Set(), runs: [parent, review], visibleRuns: [parent], expandedKey: 'PR42', tabs: { PR42: 'log' } };
 SandmanPortalDiff.diffRuns(body, [parent], opts);
 const parentDetail = body.querySelector('tr.detail-row[data-detail-for="impl-1"]');
 if (!parentDetail) throw new Error('expected detail row keyed by parent impl-1');
@@ -1257,19 +1247,15 @@ if (!reviewPre) throw new Error('expected review pane keyed by data-scroll-key=P
 const before = reviewPre.getAttribute('data-rendered-log') || '';
 if (before !== 'review line 1') throw new Error('initial review pane wrong, got: ' + JSON.stringify(before));
 
-// Stream takes ownership; a poll with a longer review.log must NOT clobber the pre.
-streamingKeys.add('PR42');
+// A longer review.log in metadata is diagnostic-only.
 SandmanPortalDiff.resetCounters();
 SandmanPortalDiff.diffRuns(body, [parent], Object.assign({}, opts, { runs: [parent, Object.assign({}, review, { log: 'review line 1\nreview line 2' })] }));
 const guarded = reviewPre.getAttribute('data-rendered-log') || '';
 if (guarded !== before) throw new Error('streamed review pane was clobbered by poll (before=' + JSON.stringify(before) + ', after=' + JSON.stringify(guarded) + ')');
 
-// Stream releases; the poll resumes and appends the new line.
-streamingKeys.delete('PR42');
 SandmanPortalDiff.diffRuns(body, [parent], Object.assign({}, opts, { runs: [parent, Object.assign({}, review, { log: 'review line 1\nreview line 2' })] }));
 const resumed = reviewPre.getAttribute('data-rendered-log') || '';
-if (resumed === before) throw new Error('poll did not resume updating the review log after the stream released it');
-if (!/review line 2/.test(resumed)) throw new Error('resumed log missing the new line, got ' + JSON.stringify(resumed));
+if (resumed !== before || reviewPre.textContent !== accepted.text) throw new Error('review range was changed by metadata');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -1800,127 +1786,6 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffUpdateDetailLog_AppendPreservesExistingNodes(t *testing.T) {
-	js := `const body = makeMockBody();
-const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'line 1' };
-const stopGroups = new Set();
-const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
-SandmanPortalDiff.diffRuns(body, [run1], opts);
-const detailRow = body.children[1];
-const pre1 = detailRow.querySelector('pre[data-scroll-key]');
-if (!pre1) throw new Error('expected log pre');
-const firstChildren = pre1.children.slice();
-SandmanPortalDiff.resetCounters();
-const run2 = Object.assign({}, run1, { log: 'line 1\nline 2' });
-SandmanPortalDiff.diffRuns(body, [run2], opts);
-const pre2 = detailRow.querySelector('pre[data-scroll-key]');
-if (pre2 !== pre1) throw new Error('pre identity must be preserved on append');
-if (pre2.children.length <= firstChildren.length) throw new Error('append should grow the children list, got ' + pre2.children.length + ' vs ' + firstChildren.length);
-for (let i = 0; i < firstChildren.length; i += 1) {
-  if (pre2.children[i] !== firstChildren[i]) throw new Error('original child node ' + i + ' was replaced during append');
-}
-if (pre2.textContent !== 'line 1\nline 2') throw new Error('appended text should appear in pre, got ' + JSON.stringify(pre2.textContent));
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
-func TestPortalDiffUpdateDetailLog_AppendRehighlightsTrailingToken(t *testing.T) {
-	js := `const body = makeMockBody();
-const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'http://example/' };
-const stopGroups = new Set();
-const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
-SandmanPortalDiff.diffRuns(body, [run1], opts);
-const detailRow = body.children[1];
-const pre1 = detailRow.querySelector('pre[data-scroll-key]');
-if (!pre1) throw new Error('expected log pre');
-const lastChildBefore = pre1.children[pre1.children.length - 1];
-const beforeText = lastChildBefore._textContent;
-if (beforeText !== 'http://example/') throw new Error('expected last span to hold the URL, got ' + JSON.stringify(beforeText));
-SandmanPortalDiff.resetCounters();
-const run2 = Object.assign({}, run1, { log: 'http://example/running' });
-SandmanPortalDiff.diffRuns(body, [run2], opts);
-const pre2 = detailRow.querySelector('pre[data-scroll-key]');
-if (pre2 !== pre1) throw new Error('pre identity should be preserved');
-if (pre2.textContent !== 'http://example/running') throw new Error('expected pre text to include the suffix, got ' + JSON.stringify(pre2.textContent));
-const lastBefore = pre2.children[pre2.children.length - 2];
-if (!lastBefore || lastBefore._textContent !== 'http://example/') throw new Error('expected the original URL span to be preserved, got ' + JSON.stringify(lastBefore && lastBefore._textContent));
-const lastAfter = pre2.children[pre2.children.length - 1];
-if (!lastAfter || lastAfter._textContent !== 'running') throw new Error('expected the suffix to be appended as a new node, got ' + JSON.stringify(lastAfter && lastAfter._textContent));
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
-func TestPortalDiffUpdateDetailLog_AppendAfterNewlineIsTreatedAsBoundary(t *testing.T) {
-	js := `const body = makeMockBody();
-const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'line 1\n' };
-const stopGroups = new Set();
-const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
-SandmanPortalDiff.diffRuns(body, [run1], opts);
-const detailRow = body.children[1];
-const pre1 = detailRow.querySelector('pre[data-scroll-key]');
-if (!pre1) throw new Error('expected log pre');
-const firstChildren = pre1.children.slice();
-SandmanPortalDiff.resetCounters();
-const run2 = Object.assign({}, run1, { log: 'line 1\nline 2\n' });
-SandmanPortalDiff.diffRuns(body, [run2], opts);
-const pre2 = detailRow.querySelector('pre[data-scroll-key]');
-if (pre2 !== pre1) throw new Error('pre identity must be preserved');
-if (pre2.textContent !== 'line 1\nline 2\n') throw new Error('expected pre to include the new line, got ' + JSON.stringify(pre2.textContent));
-for (let i = 0; i < firstChildren.length; i += 1) {
-  if (pre2.children[i] !== firstChildren[i]) throw new Error('original child node ' + i + ' was replaced during append');
-}
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
-func TestPortalDiffUpdateDetailLog_AppendRebuildsOnInlineTokenExtension(t *testing.T) {
-	js := `const body = makeMockBody();
-const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'foo running' };
-const stopGroups = new Set();
-const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
-SandmanPortalDiff.diffRuns(body, [run1], opts);
-const detailRow = body.children[1];
-const pre1 = detailRow.querySelector('pre[data-scroll-key]');
-if (!pre1) throw new Error('expected log pre');
-const firstChildren = pre1.children.slice();
-SandmanPortalDiff.resetCounters();
-const run2 = Object.assign({}, run1, { log: 'foo runningx' });
-SandmanPortalDiff.diffRuns(body, [run2], opts);
-const pre2 = detailRow.querySelector('pre[data-scroll-key]');
-if (pre2 !== pre1) throw new Error('pre identity should be preserved');
-if (pre2.textContent !== 'foo runningx') throw new Error('expected pre to contain the combined text, got ' + JSON.stringify(pre2.textContent));
-const allText = pre2.children.map(c => c._textContent != null ? c._textContent : (c.textContent != null ? c.textContent : '')).join('');
-if (allText.indexOf('foo ') !== allText.lastIndexOf('foo ')) throw new Error('foo prefix should not be duplicated, got ' + allText);
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
-func TestPortalDiffUpdateDetailLog_InlineAppendPreservesEarlierLines(t *testing.T) {
-	js := `const body = makeMockBody();
-const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'line 1\nfoo running' };
-const stopGroups = new Set();
-const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
-SandmanPortalDiff.diffRuns(body, [run1], opts);
-const detailRow = body.children[1];
-const pre1 = detailRow.querySelector('pre[data-scroll-key]');
-if (!pre1) throw new Error('expected log pre');
-const firstChild = pre1.children[0];
-SandmanPortalDiff.resetCounters();
-const run2 = Object.assign({}, run1, { log: 'line 1\nfoo runningx' });
-SandmanPortalDiff.diffRuns(body, [run2], opts);
-const pre2 = detailRow.querySelector('pre[data-scroll-key]');
-if (pre2 !== pre1) throw new Error('pre identity should be preserved');
-if (pre2.textContent !== 'line 1\nfoo runningx') throw new Error('expected pre to contain the combined text, got ' + JSON.stringify(pre2.textContent));
-if (pre2.children[0] !== firstChild) throw new Error('earlier-line span should be preserved across an inline append');
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
 func TestPortalDiffUpdateDetailLog_RewriteReplacesNodes(t *testing.T) {
 	js := `const body = makeMockBody();
 const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'line 1' };
@@ -1942,86 +1807,6 @@ for (const c of firstChildren) {
 }
 if (reused !== 0) throw new Error('rewrite should not reuse old child nodes, got ' + reused + ' reused');
 if (pre2.textContent !== 'replacement') throw new Error('replacement log should appear in pre, got ' + JSON.stringify(pre2.textContent));
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
-func TestPortalDiffUpdateDetailPanelLog_AppendExtendsLog(t *testing.T) {
-	js := `const body = makeMockBody();
-const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'line 1\nline 2' };
-const stopGroups = new Set();
-const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
-SandmanPortalDiff.diffRuns(body, [run1], opts);
-const detailRow = body.children[1];
-const pre = detailRow.querySelector('pre[data-scroll-key]');
-if (!pre) throw new Error('expected log pre');
-if (pre.getAttribute('data-rendered-log') !== 'line 1\nline 2') throw new Error('expected initial log');
-SandmanPortalDiff.resetCounters();
-SandmanPortalDiff.updateDetailPanelLog(body, 'a', 'line 1\nline 2\nline 3', helpers);
-if (pre.getAttribute('data-rendered-log') !== 'line 1\nline 2\nline 3') throw new Error('expected updated log attr, got ' + pre.getAttribute('data-rendered-log'));
-if (pre.textContent !== 'line 1\nline 2\nline 3') throw new Error('expected appended text in pre, got ' + JSON.stringify(pre.textContent));
-const counters = SandmanPortalDiff.getCounters();
-if (counters.mutations === 0) throw new Error('expected mutations on append');
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
-func TestPortalDiffUpdateDetailPanelLog_TruncationFallsBackToReload(t *testing.T) {
-	js := `const body = makeMockBody();
-const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'line 1\nline 2\nline 3' };
-const stopGroups = new Set();
-const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
-SandmanPortalDiff.diffRuns(body, [run1], opts);
-const detailRow = body.children[1];
-const pre = detailRow.querySelector('pre[data-scroll-key]');
-if (!pre) throw new Error('expected log pre');
-const firstChildren = pre.children.slice();
-SandmanPortalDiff.resetCounters();
-SandmanPortalDiff.updateDetailPanelLog(body, 'a', 'line 1', helpers);
-if (pre.getAttribute('data-rendered-log') !== 'line 1') throw new Error('expected truncated log attr');
-if (pre.textContent !== 'line 1') throw new Error('expected truncated text in pre, got ' + JSON.stringify(pre.textContent));
-let reused = 0;
-for (const c of firstChildren) {
-  if (pre.children.indexOf(c) !== -1) reused += 1;
-}
-if (reused > 0) throw new Error('truncation should fall back to full reload, not append');
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
-func TestPortalDiffUpdateDetailPanelLog_NoOpWhenDetailNotOpen(t *testing.T) {
-	js := `const body = makeMockBody();
-const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'line 1\nline 2' };
-const stopGroups = new Set();
-const opts = { helpers, stopGroups, expandedKey: null };
-SandmanPortalDiff.diffRuns(body, [run1], opts);
-SandmanPortalDiff.resetCounters();
-SandmanPortalDiff.updateDetailPanelLog(body, 'a', '', helpers);
-const counters = SandmanPortalDiff.getCounters();
-if (counters.mutations !== 0) throw new Error('no mutations expected when log is empty and no detail row, got ' + counters.mutations);
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
-func TestPortalDiffUpdateDetailPanelLog_PlaceholderFollowedByRealLog(t *testing.T) {
-	js := `const body = makeMockBody();
-const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: '' };
-const stopGroups = new Set();
-const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
-SandmanPortalDiff.diffRuns(body, [run1], opts);
-const detailRow = body.children[1];
-const pre = detailRow.querySelector('pre[data-scroll-key]');
-if (!pre) throw new Error('expected log pre');
-	if (pre.getAttribute('data-rendered-log') !== '') throw new Error('expected empty');
-if (pre.textContent !== '') throw new Error('expected empty text, got ' + JSON.stringify(pre.textContent));
-SandmanPortalDiff.resetCounters();
-SandmanPortalDiff.updateDetailPanelLog(body, 'a', 'real log line', helpers);
-if (pre.getAttribute('data-rendered-log') !== 'real log line') throw new Error('expected real log attr');
-if (pre.textContent !== 'real log line') throw new Error('expected real log text, got ' + JSON.stringify(pre.textContent));
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -2068,53 +1853,6 @@ const run2 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', run
 SandmanPortalDiff.resetCounters();
 SandmanPortalDiff.diffRuns(body, [run2], opts);
 if (pre.textContent !== 'real log line') throw new Error('expected real log text, got ' + JSON.stringify(pre.textContent));
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
-func TestPortalDiffUpdateDetailLog_PreservesLiveReviewLogAfterCompletion(t *testing.T) {
-	js := `const body = makeMockBody();
-const activeRun = { key: 'PR17', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR17', runId: 'PR17', log: 'review output line 1\nreview output line 2' };
-const stopGroups = new Set();
-const opts = { helpers, stopGroups, expandedKey: 'PR17', tabs: { PR17: 'log' } };
-SandmanPortalDiff.diffRuns(body, [activeRun], opts);
-const detailRow = body.children[1];
-const pre = detailRow.querySelector('pre[data-scroll-key]');
-if (!pre) throw new Error('expected log pre');
-if (pre.textContent !== 'review output line 1\nreview output line 2') throw new Error('expected live review log, got ' + JSON.stringify(pre.textContent));
-const completedRun = { key: 'PR17', kind: 'completed', status: 'success', review: true, issueLabel: 'PR17', runId: 'PR17', log: 'saved review log\nmore review output' };
-SandmanPortalDiff.resetCounters();
-SandmanPortalDiff.diffRuns(body, [completedRun], opts);
-if (pre.textContent === 'No log file yet.') throw new Error('completion should not wipe live review log');
-if (pre.textContent !== 'review output line 1\nreview output line 2') throw new Error('expected live review log to remain visible, got ' + JSON.stringify(pre.textContent));
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
-func TestPortalDiffUpdateDetailPanelLog_PreservesScrollPosition(t *testing.T) {
-	js := `const body = makeMockBody();
-const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', log: 'line 1' };
-const stopGroups = new Set();
-const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' } };
-SandmanPortalDiff.diffRuns(body, [run1], opts);
-const detailRow = body.children[1];
-const pre = detailRow.querySelector('pre[data-scroll-key]');
-if (!pre) throw new Error('expected log pre');
-pre.scrollTop = 50;
-pre.scrollHeight = 200;
-pre.clientHeight = 100;
-SandmanPortalDiff.resetCounters();
-SandmanPortalDiff.updateDetailPanelLog(body, 'a', 'line 1\nline 2', helpers);
-if (pre.scrollTop !== 50) throw new Error('scroll position not preserved, got ' + pre.scrollTop);
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
-func TestPortalDiffUpdateDetailPanelLog_ExportedFunction(t *testing.T) {
-	js := `if (typeof SandmanPortalDiff.updateDetailPanelLog !== 'function') throw new Error('updateDetailPanelLog not exported');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -3021,7 +2759,7 @@ func TestPortalDiffHighlightTerminalLog_StripsANSISequences(t *testing.T) {
 	runNodeScript(t, js)
 }
 
-func TestPortalHTMLAppendStreamLine_RendersHighlightedHTML(t *testing.T) {
+func TestPortalHTMLLogModelProjectsAcceptedSourceRange(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("locate test file")
@@ -3032,15 +2770,12 @@ func TestPortalHTMLAppendStreamLine_RendersHighlightedHTML(t *testing.T) {
 		t.Fatalf("read %s: %v", htmlPath, err)
 	}
 	content := string(data)
-	// Per #1563 the SSE path now coalesces pending lines and feeds the
-	// joined batch into highlightTerminalLog once per rAF, instead of
-	// tokenizing line-by-line. The old per-line marker
-	// `SandmanPortalDiff.highlightTerminalLog(line + '\n')` is no longer
-	// the source-of-truth for SSE rendering — the coalescer's flush is.
+	// The saved-log model owns source positions and acknowledges frames before
+	// the renderer projects accepted records into the mounted pane.
 	wantMarkers := []string{
-		"function appendStreamLine(runKey, line)",
-		"SandmanPortalDiff.highlightTerminalLog(joined)",
-		"createStreamCoalescer(",
+		"function projectRunLog(runId, logState)",
+		"portalDiff.projectLogState(pre, logState, prewarmHelpers",
+		"logSubscription.select(wanted ? run : null)",
 	}
 	for _, want := range wantMarkers {
 		if !strings.Contains(content, want) {
@@ -3050,6 +2785,11 @@ func TestPortalHTMLAppendStreamLine_RendersHighlightedHTML(t *testing.T) {
 	for _, forbidden := range []string{"highlightTerminalText(", "term-protected"} {
 		if strings.Contains(content, forbidden) {
 			t.Fatalf("page must no longer contain %q after the Prism-backed SSE change\n%s", forbidden, content[:min(1200, len(content))])
+		}
+	}
+	for _, forbidden := range []string{"function appendStreamLine(runKey, line)", "data-stream-replay-pending", "replayCheckpointLines"} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("page must not use text/DOM replay authority %q", forbidden)
 		}
 	}
 }
@@ -3267,6 +3007,18 @@ const isRunArchivable = (run) => {
 const helpers = {
   escapeHTML, formatTime, formatDuration, formatBranch, formatIssueTitle, formatSource,
   statusClass, renderStatusBadge, renderRunMeta, renderTerminalContent, isRunAbortable, isRunArchivable,
+};
+// Component-only fixtures provide explicit replacement views. Transport tests
+// override this adapter with the production store and positional frames.
+const fixtureViews = new WeakMap();
+let fixtureIncarnation = 0;
+helpers.logState = function(run) {
+  if (!fixtureViews.has(run)) {
+    const text = String(run.log || '');
+    fixtureViews.set(run, { runId: run.runId || run.key, generation: 'fixture', incarnation: ++fixtureIncarnation,
+      start: 0, end: text.length, text, records: text ? [{ start: 0, end: text.length, text }] : [], status: 'available' });
+  }
+  return fixtureViews.get(run);
 };
 `
 }
@@ -3669,6 +3421,7 @@ const source = fs.readFileSync(helperPath, 'utf8');
 	sandbox.globalThis = sandbox;
 	sandbox.document = documentRef;
 	sandbox.HTMLElement = function() {};
+	vm.runInNewContext(fs.readFileSync(helperPath.replace(/portal_diff\.js$/, 'portal_log.js'), 'utf8'), sandbox);
 	// Wire the production renderRunMeta from portal.html into the sandbox so
 	// tests that pass helpers into SandmanPortalDiff.insertRunRow /
 	// diffRuns actually exercise the live function instead of the
@@ -4172,6 +3925,8 @@ sandbox.requestAnimationFrame = function () {};
 sandbox.window.requestAnimationFrame = sandbox.requestAnimationFrame;
 sandbox.Intl = Intl;
 sandbox.window.Intl = Intl;
+const portalLogSource = fs.readFileSync(require('path').join(require('path').dirname(htmlPath), 'portal_log.js'), 'utf8');
+vm.runInNewContext(portalLogSource, sandbox, { filename: 'portal_log.js' });
 // Wire the production renderRunMeta from portal.html into the test sandbox
 // so tests that call helpers.renderRunMeta actually exercise the live
 // function instead of the sharedMockHelpers() mock. The scriptBody for
@@ -4190,59 +3945,6 @@ if (renderRunMetaMatch) {
 vm.runInNewContext(scriptBody + '\n' + ` + "`" + js + "`" + `, Object.assign({}, sandbox, { helpers: sandbox.helpers }), { filename: htmlPath });
 `
 	cmd := exec.Command("node", "-e", prefix)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("script failed: %v\n%s", err, out)
-	}
-	if !strings.Contains(string(out), "PASS") {
-		t.Logf("script output: %s", out)
-	}
-}
-
-// runStreamCoalescerScript extracts the production
-// `function createStreamCoalescer(opts) { ... }` body from
-// `internal/cmd/portal.html` and runs the supplied JS test fragment in a
-// vm sandbox where the production function is bound to `createStreamCoalescer`.
-// This keeps the streaming-coalescer tests anchored to the real production
-// coalescer (mirroring how `runPortalHTMLScript` extracts `renderRunMeta`)
-// instead of duplicating the production logic into the test source. The
-// sandbox wires a controllable `requestAnimationFrame` and stubs
-// `SandmanPortalDiff.highlightTerminalLog` so tests can drive flushes
-// deterministically. The `_debug.flushCount` counter on the coalescer is
-// what tests assert against for coalescing behavior.
-//
-// The user-supplied `js` is concatenated directly to the prefix
-// (matching the established `runNodeScript` pattern) without
-// template-literal wrapping or escaping. Tests must avoid writing a
-// stray backtick in their source — the established convention across
-// the rest of this file.
-func runStreamCoalescerScript(t *testing.T, js string) {
-	t.Helper()
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("locate test file")
-	}
-	htmlPath := filepath.Join(filepath.Dir(currentFile), "portal.html")
-	prefix := sharedMockHelpers() + sharedMockBody() + `
-const fs = require('fs');
-const vm = require('vm');
-const htmlPath = ` + "`" + htmlPath + "`" + `;
-const src = fs.readFileSync(htmlPath, 'utf8');
-const factoryMatch = src.match(/function createStreamCoalescer\(opts\) \{[\s\S]*?^\s{4}\}/m);
-if (!factoryMatch) {
-  process.stderr.write('createStreamCoalescer body not found in portal.html\\n');
-  process.exit(2);
-}
-const factoryCtx = vm.createContext({});
-vm.runInContext(factoryMatch[0] + '\nthis.createStreamCoalescer = createStreamCoalescer;', factoryCtx, { filename: htmlPath });
-const createStreamCoalescer = factoryCtx.createStreamCoalescer;
-if (typeof createStreamCoalescer !== 'function') {
-  process.stderr.write('createStreamCoalescer not a function after vm.runInContext\\n');
-  process.exit(2);
-}
-globalThis.createStreamCoalescer = createStreamCoalescer;
-`
-	cmd := exec.Command("node", "-e", prefix+js)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("script failed: %v\n%s", err, out)

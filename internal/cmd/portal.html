@@ -28,6 +28,7 @@ var _self=void 0!==typeof window&&void 0!==typeof window&&void 0!==typeof docume
 var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","yaml","ruby","elixir","markup","clike"];
 })();
   </script>
+  <script>{{.PortalLogJS}}</script>
   <script>{{.PortalDiffJS}}</script>
   <style>
     :root {
@@ -1761,7 +1762,6 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     const errorBanner = document.getElementById('error-banner');
     const summaryPill = document.getElementById('summary-pill');
     const abortSupported = {{.PortalAbortSupported}};
-    const queuedMarker = {{.QueuedMarker}};
     const portalState = window.SandmanPortalState;
     if (portalState && portalState.configure) {
       portalState.configure({ storageKey: "{{.PortalStateStorageKey}}" });
@@ -1866,6 +1866,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       isRunAbortable: isRunAbortable,
       isRunArchivable: isRunArchivable,
       highlightJSON: portalDiff && portalDiff.highlightJSON ? portalDiff.highlightJSON : null,
+      logState: function (run) { return logStore.get(run.runId); },
     };
     function scheduleLogPanePrewarm() {
       if (prewarmScheduled) return;
@@ -1910,23 +1911,23 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       loading: true,
     };
 
-    // Live log streaming. Only the single expanded run's Log tab is ever
-    // streamed; reconcileRunStreams() (called from render()) opens an SSE
-    // connection when an active run is expanded on the Log tab and closes
-    // it on collapse, tab switch, or when the run goes terminal. The stream
-    // bridges the daemon's Control Socket, so the browser tails live output
-    // instead of re-reading a 64KB snapshot every poll.
-    const streamingKeys = new Set();
-    const streamSources = {};
-    const streamCoalescer = createStreamCoalescer({
-      rAF: function (cb) { return window.requestAnimationFrame(cb); },
-      preFor: function (runKey) { return streamPreFor(runKey); },
-      portalScroll: portalScroll,
-      doc: document,
-      cap: 16,
+    const logStore = window.SandmanPortalLog.createStore();
+    const logProjection = window.SandmanPortalLog.createProjection({
+      store: logStore,
+      schedule: function (cb) { window.requestAnimationFrame(cb); },
+      project: projectRunLog,
     });
+    const logSubscription = window.SandmanPortalLog.createSubscription({
+      store: logStore,
+      path: streamPath,
+      openSource: function (url) { return new EventSource(url); },
+      onChange: function (runId) { logProjection.schedule(runId); },
+    });
+    // Read-only inspection uses the same production owner as the renderer.
+    window.sandmanPortalLogs = { get: logStore.get, stats: logStore.stats, subscription: logSubscription.inspect };
     const detailLoadingCounts = new Map();
     const loadingDetailKeys = new Set();
+    let navigationVersion = 0;
 
     function setDetailLoadingState(panel, loading) {
       if (!panel) return;
@@ -1940,6 +1941,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     }
 
     function syncDetailLoadingState(runKey) {
+      if (subjectTabKey(state.expandedRunKey) !== subjectTabKey(runKey)) return;
       const run = findRunByIdentity(runKey);
       const detailKey = run && run.key ? run.key : runKey;
       const detail = runsBody.querySelector('tr.detail-row[data-detail-for="' + CSS.escape(detailKey) + '"]');
@@ -1977,344 +1979,26 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       return runsBody.querySelector('pre[data-scroll-key="' + CSS.escape(runKey) + '"]');
     }
 
-    // createStreamCoalescer buffers SSE lines per run, deduplicates against
-    // the run's known-lines set, and flushes in a single rAF callback.
-    // Each flush tokenizes the joined batch through `highlight` once and
-    // appends the highlighted result to the run's <pre> via a single
-    // DocumentFragment. The factory is the only path that mutates the
-    // streaming <pre> from SSE traffic (replacing the per-line
-    // appendStreamLine scratch-and-walk pattern, which used to run on the
-    // main thread on every SSE message and could land between a user
-    // click and its rAF render, adding long-task latency).
-    //
-    // opts:
-    //   rAF         — injected scheduler (production: window.requestAnimationFrame)
-    //   highlight   — tokenize function (production: joined => SandmanPortalDiff.highlightTerminalLog(joined))
-    //   preFor      — resolver to the run's <pre> (production: streamPreFor)
-    //   portalScroll— sticky-bottom helper (production: window.SandmanPortalScroll)
-    //   doc         — document injection for createDocumentFragment (production: document)
-    //   cap         — buffer cap (default 16); overflow trips a synchronous flush
-    function createStreamCoalescer(opts) {
-      const rAF = opts && opts.rAF ? opts.rAF : function (cb) { return (window.requestAnimationFrame || function (c) { setTimeout(c, 16); })(cb); };
-      const highlight = opts && opts.highlight ? opts.highlight : function (joined) { return SandmanPortalDiff.highlightTerminalLog(joined); };
-      const preFor = opts && opts.preFor ? opts.preFor : function (runKey) { return streamPreFor(runKey); };
-      const portalScrollRef = opts && opts.portalScroll ? opts.portalScroll : portalScroll;
-      const docRef = opts && opts.doc ? opts.doc : document;
-      const cap = opts && typeof opts.cap === 'number' && opts.cap > 0 ? opts.cap : 16;
-      const buffers = {}; // runKey -> Array<string> (FIFO order)
-      const scheduled = {}; // runKey -> true if a trailing rAF is queued
-      const knownByRun = {}; // runKey -> Set<string>
-      const blockedByRun = {}; // runKey -> true while the log pane is rendering
-      const debug = { enabled: false, flushes: 0 };
-
-      function getKnown(runKey) {
-        if (!knownByRun[runKey]) knownByRun[runKey] = new Set();
-        return knownByRun[runKey];
-      }
-
-      function getBuffer(runKey) {
-        if (!buffers[runKey]) buffers[runKey] = [];
-        return buffers[runKey];
-      }
-
-      function flushRun(runKey) {
-        const buf = buffers[runKey];
-        if (!buf || buf.length === 0) return 0;
-        if (blockedByRun[runKey]) {
-          scheduled[runKey] = false;
-          return 0;
-        }
-        const pre = preFor(runKey);
-        if (!pre) {
-          // No pre attached (e.g. detail row torn down); drop the buffer
-          // to avoid unbounded growth until a pre materialises.
-          buffers[runKey] = [];
-          return 0;
-        }
-        // Tail-most-first: if the buffer grew past cap, keep the most
-        // recent `cap` lines. The tail of a live stream is what
-        // matters most; the leading rAF or a follow-up rAF handles
-        // older lines if needed.
-        let toFlush;
-        let trimmed = 0;
-        if (buf.length > cap) {
-          trimmed = buf.length - cap;
-          toFlush = buf.slice(trimmed);
-        } else {
-          toFlush = buf;
-        }
-        const joined = toFlush.join('\n') + '\n';
-        const html = highlight(joined);
-        const frag = docRef.createDocumentFragment();
-        const scratch = docRef.createElement('div');
-        scratch.innerHTML = html;
-        while (scratch.firstChild) frag.appendChild(scratch.firstChild);
-        pre.appendChild(frag);
-        const known = getKnown(runKey);
-        for (let i = 0; i < toFlush.length; i++) known.add(toFlush[i]);
-        const previous = pre.getAttribute('data-rendered-log') || '';
-        pre.setAttribute('data-rendered-log', previous + joined);
-        if (portalScrollRef && portalScrollRef.isSticky && portalScrollRef.isSticky(runKey)) {
-          pre.scrollTop = pre.scrollHeight;
-        }
-        if (debug.enabled) debug.flushes += 1;
-        const drained = buf.length;
-        buffers[runKey] = [];
-        scheduled[runKey] = false;
-        if (trimmed > 0 && debug.enabled) console.warn('coalescer: trimmed ' + trimmed + ' lines from buffer past cap=' + cap);
-        return drained;
-      }
-
-      function scheduleRaf(runKey) {
-        if (scheduled[runKey]) return;
-        scheduled[runKey] = true;
-        rAF(function () { flushRun(runKey); });
-      }
-
-      function scheduleLine(runKey, line) {
-        const known = getKnown(runKey);
-        if (known.has(line)) return;
-        // Dedup within the same buffered batch.
-        const buf = getBuffer(runKey);
-        if (buf.indexOf(line) !== -1) return;
-        buf.push(line);
-        known.add(line);
-        if (blockedByRun[runKey]) return;
-        // Do not sync-flush on overflow; the trailing rAF will flush the
-        // buffered batch in one highlight + DocumentFragment append, with
-        // tail-only truncation if the buffer has grown past cap. The
-        // 100-message burst still yields <=3 flushes because messages
-        // arriving within one event-loop task coalesce into the same rAF.
-        scheduleRaf(runKey);
-      }
-
-      function setBlocked(runKey, blocked) {
-        if (!runKey) return;
-        blockedByRun[runKey] = !!blocked;
-        if (!blockedByRun[runKey] && pendingSize(runKey) > 0) {
-          scheduleRaf(runKey);
-        }
-      }
-
-      function clearBuffer(runKey) {
-        buffers[runKey] = [];
-        scheduled[runKey] = false;
-      }
-
-      function seedKnownLines(runKey, lines) {
-        const known = getKnown(runKey);
-        known.clear();
-        for (let i = 0; i < (lines || []).length; i++) known.add(lines[i]);
-      }
-
-      function pendingSize(runKey) {
-        const buf = buffers[runKey];
-        return buf ? buf.length : 0;
-      }
-
-      return {
-        scheduleLine: scheduleLine,
-        flushPending: function (runKey) { return flushRun(runKey); },
-        clearBuffer: clearBuffer,
-        seedKnownLines: seedKnownLines,
-        pendingSize: pendingSize,
-        setBlocked: setBlocked,
-        _debug: {
-          enableCounters: function () { debug.enabled = true; },
-          flushCount: function () { return debug.flushes; },
-          resetCounters: function () { debug.flushes = 0; },
-        },
-      };
-    }
-
-    function appendStreamLine(runKey, line) {
-      // Coalescer is the only path that mutates the streaming <pre>.
-      // appendStreamLine is kept as a thin shim for any pre-existing
-      // callers (e.g. tests or inline hot-reload hooks) so they still
-      // route into the rAF-coalesced flush path.
-      streamCoalescer.scheduleLine(runKey, line);
-    }
-
-    function startRunStream(run) {
-      if (!run || run.kind !== 'active' || !run.socketPath) return;
-      if (streamSources[run.key]) return;
-      const backendKey = run.backendKey || run.key;
+    function projectRunLog(runId, logState) {
+      const run = findRunByIdentity(state.expandedRunKey);
+      if (!run || run.runId !== runId || (state.tabs[runId] || 'log') !== 'log') return;
       const pre = streamPreFor(run.key);
-      let cachedLog = '';
-      let awaitingReplayCheckpoint = false;
-      if (pre) {
-        cachedLog = pre.getAttribute('data-rendered-log') || '';
-        awaitingReplayCheckpoint = pre.getAttribute('data-stream-replay-pending') === '1';
-        if (!cachedLog) {
-          while (pre.firstChild) pre.removeChild(pre.firstChild);
-          pre.setAttribute('data-rendered-log', '');
-        }
-        // Strip the queued-marker placeholder that the polled snapshot
-        // may carry at the head of this pane. The marker is the
-        // server-side fallback for state-less active batch issues — it is
-        // stamped into run.Log before any run.started event has been
-        // projected, then carried verbatim into the next polled snapshot.
-        // Once the live SSE stream takes ownership here, the marker is
-        // stale and would otherwise sit at the head of the live log view
-        // until the next poll refresh catches up. Removing it on stream
-        // open keeps the SSE tail clean without waiting for the next
-        // poll cycle.
-        if (cachedLog.startsWith(queuedMarker)) {
-          cachedLog = cachedLog.slice(queuedMarker.length);
-          if (cachedLog.startsWith('\n')) cachedLog = cachedLog.slice(1);
-          pre.setAttribute('data-rendered-log', cachedLog);
-          // Mirror the data-rendered-log trim into the DOM. Drop the
-          // leading child and the separating "\n" node.
-          const firstChild = pre.firstChild;
-          if (firstChild) {
-            const firstText = firstChild.textContent || '';
-            if (firstText.startsWith(queuedMarker)) {
-              const stripped = firstText.slice(queuedMarker.length);
-              if (stripped.length === 0) {
-                pre.removeChild(firstChild);
-                const next = pre.firstChild;
-                if (next && next.textContent === '\n') {
-                  pre.removeChild(next);
-                }
-              } else {
-                firstChild.textContent = stripped;
-              }
-            }
-          }
-        }
-      }
-      const cachedLineList = cachedLog.split('\n').filter(Boolean);
-      // A single cached line is not a safe replay boundary: identical output
-      // can occur earlier in the broadcaster's history, followed by older
-      // lines that would then be appended after this newer cached tail. Match
-      // an ordered suffix window instead. The window is bounded so reconnect
-      // cost does not grow with the full lifetime of a long-running log.
-      const replayCheckpointLines = cachedLineList.slice(-16);
-      awaitingReplayCheckpoint = awaitingReplayCheckpoint && replayCheckpointLines.length > 0;
-      const replayCheckpointPrefix = new Array(replayCheckpointLines.length).fill(0);
-      for (let i = 1, matched = 0; i < replayCheckpointLines.length; i++) {
-        while (matched > 0 && replayCheckpointLines[i] !== replayCheckpointLines[matched]) {
-          matched = replayCheckpointPrefix[matched - 1];
-        }
-        if (replayCheckpointLines[i] === replayCheckpointLines[matched]) matched += 1;
-        replayCheckpointPrefix[i] = matched;
-      }
-      let replayCheckpointMatched = 0;
-      streamCoalescer.seedKnownLines(run.key, cachedLineList);
-      streamCoalescer.clearBuffer(run.key);
-      const src = new EventSource(streamPath + '?runKey=' + encodeURIComponent(backendKey));
-      if (typeof src.addEventListener === 'function') {
-        src.addEventListener('replay-complete', function () {
-          if (!awaitingReplayCheckpoint) return;
-          // The daemon marks the end of its bounded replay. If the cached
-          // suffix was not present, retain the pane and begin appending only
-          // subsequent live output instead of waiting forever.
-          awaitingReplayCheckpoint = false;
-          if (pre) pre.removeAttribute('data-stream-replay-pending');
-        });
-      }
-      src.onmessage = function (ev) {
-        if (awaitingReplayCheckpoint) {
-          // Search for the cached suffix as a contiguous sequence. KMP keeps
-          // this linear in replay size and handles repeated lines without
-          // mistaking an earlier occurrence for the handoff boundary.
-          while (replayCheckpointMatched > 0
-            && ev.data !== replayCheckpointLines[replayCheckpointMatched]) {
-            replayCheckpointMatched = replayCheckpointPrefix[replayCheckpointMatched - 1];
-          }
-          if (ev.data === replayCheckpointLines[replayCheckpointMatched]) {
-            replayCheckpointMatched += 1;
-          }
-          if (replayCheckpointMatched === replayCheckpointLines.length) {
-            awaitingReplayCheckpoint = false;
-            if (pre) pre.removeAttribute('data-stream-replay-pending');
-          }
-          return;
-        }
-        streamCoalescer.scheduleLine(run.key, ev.data);
-        if (state.streamReconnectAttempts) delete state.streamReconnectAttempts[run.key];
-      };
-      src.onerror = function () {
-        // EventSource fires onerror for both transient network errors
-        // (readyState 0 — CONNECTING, browser will auto-reconnect) and
-        // permanent closes (readyState 2 — CLOSED). Stopping the stream
-        // on every error kills the browser's native auto-reconnect, so a
-        // single transient blip permanently silences the live log until
-        // the user manually re-selects the row. Only tear down when the
-        // source is fully closed.
-        if (src.readyState === 2) {
-          const reconnectAttempts = state.streamReconnectAttempts || (state.streamReconnectAttempts = {});
-          const attempts = reconnectAttempts[run.key] || 0;
-          const delay = Math.min(15000, 500 * Math.pow(2, attempts));
-          stopRunStream(run.key);
-          // A 304 summary poll does not render, so without this explicit
-          // render there is no path back through reconcileRunStreams() to
-          // replace a source closed by the bridge. Reconciliation rechecks
-          // the active subject and selected tab before opening anything.
-          reconnectAttempts[run.key] = attempts + 1;
-          setTimeout(scheduleRender, delay);
-        }
-      };
-      streamSources[run.key] = src;
-      streamingKeys.add(run.key);
+      if (!pre) return;
+      portalDiff.projectLogState(pre, logState, prewarmHelpers, function () {
+        if (portalScroll && portalScroll.isSticky(run.key) && streamPreFor(run.key) === pre) pre.scrollTop = pre.scrollHeight;
+      });
     }
 
-    function stopRunStream(runKey) {
-      const src = streamSources[runKey];
-      if (src) {
-        src.close();
-        delete streamSources[runKey];
-      }
-      streamingKeys.delete(runKey);
-      if (state.streamReconnectAttempts) delete state.streamReconnectAttempts[runKey];
-    }
-
-    function stopAllRunStreams() {
-      for (const key of Object.keys(streamSources)) {
-        streamSources[key].close();
-        delete streamSources[key];
-      }
-      streamingKeys.clear();
-    }
-
-    // reconcileRunStreams keeps the SSE lifecycle in step with the view:
-    // stream the expanded run only when it is active and the Log tab is
-    // selected; close otherwise. Called from render() after each poll.
+    // Saved-log snapshots are streamed for historical as well as live runs.
+    // Metadata requests and rendering never gate transport acknowledgement.
     function reconcileRunStreams() {
       const key = state.expandedRunKey;
-      if (!key) { stopAllRunStreams(); return; }
       const run = findRunByIdentity(key);
-      if (isWaitStateRun(run)) { stopAllRunStreams(); return; }
-      const runKey = run ? run.key : key;
-      const subjectKey = isWaitStateRun(run) ? '' : (subjectRunIdentity(run) || key);
+      const subjectKey = subjectRunIdentity(run) || key;
       const tab = state.tabs[subjectKey] || state.tabs[key] || 'log';
-      const pre = streamPreFor(runKey);
-      const renderingLog = pre ? pre.getAttribute('data-rendering-log') || '' : '';
-      const detailLoading = loadingDetailKeys.has(subjectKey);
-      streamCoalescer.setBlocked(runKey, detailLoading || !!renderingLog);
-      // Keep the socket open across refreshes, but hold back live appends while
-      // either the detail fetch or the async render is in flight. That preserves
-      // the daemon tail in order without forcing a reconnect that can race the
-      // refreshed snapshot.
-      const wantStream = run && tab === 'log' && run.kind === 'active' && run.socketPath;
-      for (const openKey of Object.keys(streamSources)) {
-        if (openKey !== runKey) {
-          // Subject switch: any buffered (not-yet-flushed) lines for the
-          // previous run must not leak onto the new run's <pre>.
-          streamCoalescer.clearBuffer(openKey);
-          stopRunStream(openKey);
-        }
-      }
-      if (wantStream) {
-        startRunStream(run);
-      } else {
-        stopRunStream(runKey);
-      }
-      if (!detailLoading && !renderingLog && streamSources[runKey]) {
-        const renderedLog = pre ? pre.getAttribute('data-rendered-log') || '' : '';
-        streamCoalescer.seedKnownLines(runKey, renderedLog.split('\n').filter(Boolean));
-        streamCoalescer.flushPending(runKey);
-      }
+      const wanted = run && run.runId && !isWaitStateRun(run) && tab === 'log';
+      logSubscription.select(wanted ? run : null);
+      if (wanted) projectRunLog(run.runId, logStore.get(run.runId));
     }
 
     function syncFilterToggleButtons() {
@@ -2976,6 +2660,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           isRunAbortable: isRunAbortable,
           isRunArchivable: isRunArchivable,
           highlightJSON: SandmanPortalDiff.highlightJSON,
+          logState: prewarmHelpers.logState,
         },
         abortReservations: abortReservations,
         abortSupported: abortSupported,
@@ -2984,7 +2669,6 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         tabs: state.tabs,
         runs: state.runs,
         visibleRuns: filtered,
-        streamingKeys: streamingKeys,
         loadingDetailKeys: loadingDetailKeys,
       };
       if (!state.runs.length) {
@@ -3085,13 +2769,10 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         }
         const payload = await res.json();
         const nextRuns = Array.isArray(payload.runs) ? payload.runs.map(normalizeRunIdentity) : [];
-        // Merge existing detail (log/events) into the summary payload so expanded
-        // runs keep their content across polls without a full re-fetch.
+        // Preserve metadata/events across summary polls. Log position is owned
+        // exclusively by logStore, never by a detail or summary text payload.
         for (const next of nextRuns) {
           const existing = prevRuns.find((r) => r && (r.key === next.key || r.runId === next.runId));
-          if (existing && existing.log && !next.log) {
-            next.log = existing.log;
-          }
           if (existing && existing.events && !next.events) {
             next.events = existing.events;
           }
@@ -3123,13 +2804,8 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
 	        const expandedKey = state.expandedRunKey;
 	        const prevExpanded = prevRuns.find((r) => r && (r.key === expandedKey || r.runId === expandedKey));
 	        const nextExpanded = state.runs.find((r) => r && (r.key === expandedKey || r.runId === expandedKey));
-	        // Detect an active->completed transition for the expanded run and
-	        // force-fetch the detail. The summary endpoint blanks Log for
-	        // transport (portalSummaryRuns) and the poll merge above preserves
-	        // the streamed content, so without forceFetch the loadRunDetail
-	        // early-return at the hasLog guard would skip the detail call and
-	        // the final saved run.log (which may contain lines written after
-	        // the SSE socket closed) would never replace the stale snapshot.
+	        // Refresh final metadata/events on lifecycle closure. The saved-log
+	        // subscription independently drains its final records before end.
 	        const justFinished = !!(prevExpanded && nextExpanded
 	          && prevExpanded.kind === 'active'
 	          && nextExpanded.kind !== 'active');
@@ -3147,6 +2823,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     }
 
     async function loadRunDetail(runKey, opts) {
+      const requestNavigation = navigationVersion;
       const run = findRunByIdentity(runKey);
       if (!run) return;
       if (isWaitStateRun(run)) return;
@@ -3156,10 +2833,9 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const subjectKey = subjectTabKey(runKey);
       if (currentTab === 'details' && !forceFetch) return;
       if (loadingDetailKeys.has(subjectKey)) return;
-      const hasLog = run.log && String(run.log).trim();
       const hasEvents = Object.prototype.hasOwnProperty.call(run, 'events');
       if (currentTab === 'events' && hasEvents && run.kind !== 'active') return;
-      if (currentTab !== 'events' && hasLog && !forceFetch) return;
+      if (currentTab !== 'events' && hasEvents && !forceFetch) return;
       setDetailLoading(runKey, true);
       scheduleRender();
       try {
@@ -3168,18 +2844,12 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         const payload = await res.json();
         if (!payload || !payload.run) return;
         const detail = normalizeRunIdentity(payload.run);
+        if (detail.runId !== run.runId || state.expandedRunKey !== subjectKey || requestNavigation !== navigationVersion) return;
         const idx = state.runs.findIndex((r) => r && (r.key === detail.key || r.runId === detail.runId));
         if (idx >= 0) {
           const existing = state.runs[idx];
-          // When forceFetch initiated a fresh detail fetch and the API
-          // returned a non-empty log, use it. Without this, the merge below
-          // would preserve the stale cached beginning (hasLog=true) while the
-          // stream attaches; the daemon's 64 KB tail-replay would then create
-          // the same gap the forceFetch was meant to close.
-          const useDetailLog = !!forceFetch && !!(detail && detail.log);
           state.runs[idx] = {
             ...existing,
-            log: (useDetailLog || !hasLog) ? detail.log : existing.log,
             events: detail.events || existing.events,
             logUrl: detail.logUrl,
           };
@@ -3213,14 +2883,9 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       }
       if (isWaitStateRun(run)) return;
       const subjectKey = subjectRunIdentity(run) || runKey;
+      navigationVersion += 1;
+      logSubscription.select(null);
       if (state.expandedRunKey === subjectKey) {
-        const streamKey = run && run.key ? run.key : subjectKey;
-        // Preserve a live tail before the scheduled render detaches this pane
-        // into the per-subject cache. Otherwise its pending rAF can find no
-        // mounted <pre> and drop entries that the next stream replay omits.
-        stopRunStream(streamKey);
-        streamCoalescer.setBlocked(streamKey, false);
-        streamCoalescer.flushPending(streamKey);
         state.expandedRunKey = null;
       } else {
         state.expandedRunKey = subjectKey;
@@ -3230,8 +2895,9 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       if (opening) {
         loadRunDetail(state.expandedRunKey, { forceFetch: true });
       }
+      const openingNavigation = navigationVersion;
       scheduleRender(() => {
-        if (opening) {
+        if (opening && navigationVersion === openingNavigation && state.expandedRunKey === subjectKey) {
           const row = findRunRowByIdentity(state.expandedRunKey);
           if (row) {
             row.scrollIntoView({ behavior: 'instant', block: 'nearest' });
@@ -3269,6 +2935,8 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           const tab = button.getAttribute('data-tab') || 'log';
           const currentKey = state.expandedRunKey || runKey;
           const subjectKey = subjectTabKey(currentKey);
+          navigationVersion += 1;
+          logSubscription.select(null);
           state.tabs[subjectKey] = tab;
           state.expandedRunKey = subjectKey;
           persistPortalViewState();
@@ -3308,18 +2976,8 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
 	      if (!state.tabs[nextRunKey]) {
 	        state.tabs[nextRunKey] = currentTab;
 	      }
-	      if (currentRunKey) {
-	        stopRunStream(currentRunKey);
-	        // Drain any lines buffered for the outgoing subject before the
-	        // subject-switch render moves its pane to the per-subject cache.
-	        // stopRunStream only closes the SSE source, so an un-flushed
-	        // rAF would later drop those lines when the cache has detached
-	        // the pane from runsBody — visible as missing leading segments
-	        // on the next visit to that subject. Flushing now preserves the
-	        // full stream tail in the cached pane while keeping the new
-	        // subject's pre unaffected.
-	        streamCoalescer.flushPending(currentRunKey);
-	      }
+	      navigationVersion += 1;
+	      logSubscription.select(null);
 	      state.expandedRunKey = nextRunKey;
 	      persistPortalViewState();
 	      loadRunDetail(nextRunKey);
@@ -3368,7 +3026,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       });
     }
 
-    window.addEventListener('pagehide', stopAllRunStreams);
+    window.addEventListener('pagehide', logSubscription.stop);
 
     refresh();
     restartPolling();

@@ -1,6 +1,7 @@
 (function (global) {
   const rowData = new WeakMap();
   const detailData = new WeakMap();
+  const logViews = new WeakMap();
   let mutationCount = 0;
   let innerHTMLAssignmentCount = 0;
 
@@ -40,8 +41,8 @@
     const subjectValue = subjectRunValue(run);
     if (!subjectValue) return null;
     if (logPaneCache.has(subjectValue)) return logPaneCache.get(subjectValue) || null;
-    const log = run && run.log && String(run.log).trim() ? run.log : '';
-    if (!log) return null;
+    const state = helpers.logState && helpers.logState(run);
+    if (!state || !state.records.length) return null;
     const content = global.document.createElement('div');
     buildLogContent(content, run, helpers);
     const pane = content.firstChild;
@@ -70,8 +71,8 @@
       if (!run) continue;
       const subjectValue = subjectRunValue(run);
       if (!subjectValue) continue;
-      const log = run.log && String(run.log).trim();
-      if (!log) continue;
+      const state = helpers.logState && helpers.logState(run);
+      if (!state || !state.records.length) continue;
       const ts = Date.parse(run.lastOutputAt || run.startedAt || '') || 0;
       candidates.push({ run, subjectValue, kind: run.kind === 'active' ? 0 : 1, ts });
     }
@@ -647,23 +648,27 @@
   }
 
   function buildLogPre(run, helpers) {
-    const log = run.log && String(run.log).trim() ? run.log : '';
     const pre = global.document.createElement('pre');
     pre.classList.add('terminal-log');
     pre.setAttribute('data-scroll-key', run.key);
-    fillTerminalPre(pre, log, helpers);
+    projectLogState(pre, helpers.logState && helpers.logState(run), helpers);
     return pre;
   }
 
   const ASYNC_CHUNK_THRESHOLD = 16 * 1024;
   const CHUNK_SIZE_LINES = 100;
+  const CHUNK_SIZE_CHARS = 16 * 1024;
 
-  function fillTerminalPre(pre, text, helpers) {
+  function fillTerminalPre(pre, text, helpers, complete, appendText) {
     const value = String(text == null ? '' : text);
-    while (pre.firstChild) pre.removeChild(pre.firstChild);
+    const renderText = appendText == null ? value : appendText;
+    // Even a synchronous replacement must retire an older async render.
+    const gen = (parseInt(pre.getAttribute('data-render-gen') || '0', 10) + 1) | 0;
+    pre.setAttribute('data-render-gen', String(gen));
+    if (appendText == null) while (pre.firstChild) pre.removeChild(pre.firstChild);
     pre.setAttribute('data-rendering-log', value);
-    if (value.length < ASYNC_CHUNK_THRESHOLD) {
-      const html = helpers.renderTerminalContent(value);
+    if (renderText.length < ASYNC_CHUNK_THRESHOLD) {
+      const html = helpers.renderTerminalContent(renderText);
       const scratch = global.document.createElement('div');
       scratch.innerHTML = String(html || '');
       const frag = global.document.createDocumentFragment();
@@ -675,24 +680,37 @@
       pre.appendChild(frag);
       pre.setAttribute('data-rendered-log', value);
       pre.removeAttribute('data-rendering-log');
+      if (complete) complete();
       return;
     }
-    const gen = (parseInt(pre.getAttribute('data-render-gen') || '0', 10) + 1) | 0;
-    pre.setAttribute('data-render-gen', String(gen));
-    const lines = value.split('\n');
+    const lines = renderText.split('\n');
     let lineIndex = 0;
+    let lineOffset = 0;
     const htmlParts = [];
     function processChunk() {
       if (String(gen) !== pre.getAttribute('data-render-gen')) return;
-      const end = Math.min(lineIndex + CHUNK_SIZE_LINES, lines.length);
-      while (lineIndex < end) {
-        htmlParts.push(helpers.renderTerminalContent(lines[lineIndex]));
-        lineIndex++;
+      let renderedLines = 0;
+      let renderedChars = 0;
+      while (lineIndex < lines.length && renderedLines < CHUNK_SIZE_LINES && renderedChars < CHUNK_SIZE_CHARS) {
+        const line = lines[lineIndex];
+        const remaining = line.length - lineOffset;
+        if (remaining > 0) {
+          const count = Math.min(remaining, CHUNK_SIZE_CHARS - renderedChars);
+          htmlParts.push(helpers.renderTerminalContent(line.slice(lineOffset, lineOffset + count)));
+          lineOffset += count;
+          renderedChars += count;
+        }
+        if (lineOffset >= line.length) {
+          lineIndex++;
+          lineOffset = 0;
+          renderedLines++;
+          if (lineIndex < lines.length) htmlParts.push('\n');
+        }
       }
       if (lineIndex < lines.length) {
         global.setTimeout(processChunk, 0);
       } else {
-        const html = htmlParts.join('\n');
+        const html = htmlParts.join('');
         const scratch = global.document.createElement('div');
         scratch.innerHTML = String(html || '');
         const frag = global.document.createDocumentFragment();
@@ -705,9 +723,44 @@
         if (String(gen) !== pre.getAttribute('data-render-gen')) return;
         pre.setAttribute('data-rendered-log', value);
         pre.removeAttribute('data-rendering-log');
+        if (complete) complete();
       }
     }
     global.setTimeout(processChunk, 0);
+  }
+
+  function projectLogState(pre, state, helpers, complete) {
+    const previous = logViews.get(pre);
+    const current = state || { runId: '', generation: '', incarnation: 0, start: 0, end: 0, records: [], text: '', status: 'pending' };
+    const section = pre.parentNode;
+    const notice = section && section.querySelector && section.querySelector('[data-log-notice]');
+    if (notice) {
+      notice.textContent = current.unavailable || current.status === 'unavailable' ? 'Saved log unavailable: ' + (current.reason || 'source unavailable')
+        : current.status === 'pending' ? 'Waiting for saved log.'
+        : current.truncated ? 'Retained saved-log bytes [' + current.start + ', ' + current.end + '). Earlier records are outside the retained range.' : '';
+    }
+    if (previous && previous.runId === current.runId && previous.generation === current.generation
+      && previous.incarnation === current.incarnation && previous.start === current.start && previous.end === current.end) return false;
+    logViews.set(pre, current);
+    const commitView = function () {
+      if (logViews.get(pre) !== current) return;
+      pre.setAttribute('data-log-run-id', current.runId);
+      pre.setAttribute('data-log-generation', current.generation);
+      pre.setAttribute('data-log-start', String(current.start));
+      pre.setAttribute('data-log-end', String(current.end));
+      pre.setAttribute('data-log-cursor', current.cursor || '');
+      if (complete) complete();
+    };
+    const canAppend = previous && pre.getAttribute('data-rendering-log') === null
+      && previous.runId === current.runId && previous.generation === current.generation
+      && previous.incarnation === current.incarnation && previous.start === current.start && previous.end < current.end;
+    if (canAppend) {
+      const suffix = current.records.filter(record => record.start >= previous.end).map(record => record.text + '\n').join('');
+      fillTerminalPre(pre, current.text, helpers, commitView, suffix);
+    } else {
+      fillTerminalPre(pre, current.text, helpers, commitView);
+    }
+    return true;
   }
 
   function highlightJSON(text) {
@@ -972,84 +1025,6 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
-  function appendTerminalPre(pre, oldLog, newSuffix, helpers) {
-    if (!newSuffix) return;
-    if (appendStartsAtBoundary(oldLog, newSuffix)) {
-      const html = helpers.renderTerminalContent(newSuffix);
-      if (!html) return;
-      const scratch = global.document.createElement('div');
-      scratch.innerHTML = html;
-      const nodes = Array.from(scratch.childNodes);
-      for (const node of nodes) pre.appendChild(node);
-      pre.setAttribute('data-rendered-log', oldLog + newSuffix);
-      pre.removeAttribute('data-rendering-log');
-      return;
-    }
-    const lastNewline = oldLog.lastIndexOf('\n');
-    const partialLastLine = lastNewline >= 0 ? oldLog.slice(lastNewline + 1) : oldLog;
-    if (!partialLastLine) {
-      fillTerminalPre(pre, oldLog + newSuffix, helpers);
-      return;
-    }
-    const combined = partialLastLine + newSuffix;
-    const html = helpers.renderTerminalContent(combined);
-    if (!html) return;
-    const scratch = global.document.createElement('div');
-    scratch.innerHTML = html;
-    const newNodes = Array.from(scratch.childNodes);
-    const startIdx = findPartialLineStart(pre, partialLastLine);
-    if (startIdx < 0) {
-      fillTerminalPre(pre, oldLog + newSuffix, helpers);
-      return;
-    }
-    while (pre.childNodes.length > startIdx) {
-      pre.removeChild(pre.lastChild);
-    }
-    for (const node of newNodes) pre.appendChild(node);
-    pre.setAttribute('data-rendered-log', oldLog + newSuffix);
-    pre.removeAttribute('data-rendering-log');
-  }
-
-  function findPartialLineStart(pre, partialLastLine) {
-    if (!partialLastLine) return -1;
-    const nodes = Array.from(pre.childNodes);
-    let acc = '';
-    for (let i = nodes.length - 1; i >= 0; i -= 1) {
-      acc = nodeText(nodes[i]) + acc;
-      if (acc.length >= partialLastLine.length) {
-        return i;
-      }
-    }
-    return -1;
-  }
-
-  function nodeText(node) {
-    if (!node) return '';
-    if (node.nodeType === 3) {
-      return node._textContent != null ? String(node._textContent) : String(node.textContent || '');
-    }
-    if (node._textContent != null) return String(node._textContent);
-    let text = '';
-    if (node.childNodes) {
-      for (const c of node.childNodes) text += nodeText(c);
-    } else if (node.children) {
-      for (const c of node.children) text += nodeText(c);
-    }
-    return text;
-  }
-
-  function appendStartsAtBoundary(oldLog, suffix) {
-    if (!suffix) return true;
-    if (isBoundary(suffix.charAt(0))) return true;
-    if (oldLog && isBoundary(oldLog.charAt(oldLog.length - 1))) return true;
-    return false;
-  }
-
-  function isBoundary(ch) {
-    if (ch === '\n' || ch === ' ' || ch === '\t') return true;
-    return /[.,;:!?()[\]{}"'`/\\]/.test(ch);
-  }
-
   function eventsFingerprint(run) {
     const events = Array.isArray(run.events) ? run.events : [];
     if (!events.length) return '';
@@ -1246,9 +1221,13 @@
   function buildLogContent(content, run, helpers) {
     const section = global.document.createElement('section');
     section.classList.add('detail-box', 'tab-pane', 'fill');
-    const log = run.log && String(run.log).trim() ? run.log : '';
+    const notice = global.document.createElement('div');
+    notice.setAttribute('data-log-notice', '1');
+    notice.classList.add('meta-line');
+    section.appendChild(notice);
     const pre = buildLogPre(run, helpers);
     section.appendChild(pre);
+    projectLogState(pre, helpers.logState && helpers.logState(run), helpers);
     content.appendChild(section);
   }
 
@@ -1432,16 +1411,6 @@
     const content = detailRow.querySelector('.detail-content');
     if (!content) return;
     if (tabName === 'log') {
-      // While the Log tab is being fed by a live SSE stream
-      // (opts.streamingKeys), the stream owns this <pre>; the poll path
-      // must not overwrite it with its 64KB socket snapshot every 2s.
-      // Shield by the SUBJECT key: streamingKeys holds the subject (the
-      // entity whose pane is mounted), which for a grouped review differs
-      // from the parent visible row's key (run.key).
-      if (opts.streamingKeys && opts.streamingKeys.has(subjectRun.key) && content.querySelector('pre[data-scroll-key]')) {
-        return;
-      }
-      const newLog = subjectRun.log && String(subjectRun.log).trim() ? subjectRun.log : '';
       let pre = content.querySelector('pre[data-scroll-key]');
       const renderedSubjectFp = content.getAttribute('data-rendered-subject-fingerprint') || '';
       const renderedSubjectValue = renderedSubjectFp ? renderedSubjectFp.split('|')[0] : '';
@@ -1484,29 +1453,9 @@
         }
       }
       if (pre) {
-        const oldLog = pre.getAttribute('data-rendered-log') || '';
-        const renderingLog = pre.getAttribute('data-rendering-log') || '';
-        if (renderingLog === newLog) {
-          content.setAttribute('data-rendered-subject-fingerprint', subjectFp);
-          return;
-        }
-        if (oldLog === newLog) {
-          content.setAttribute('data-rendered-subject-fingerprint', subjectFp);
-          return;
-        }
-        if (renderedSubjectFp === subjectFp && oldLog && !newLog) {
-          return;
-        }
-        if (oldRun && oldRun.kind === 'active' && run.kind !== 'active' && oldLog && newLog && newLog !== oldLog && !String(newLog).startsWith(oldLog)) {
-          return;
-        }
-        if (oldLog && newLog.length >= oldLog.length && newLog.startsWith(oldLog)) {
-          appendTerminalPre(pre, oldLog, newLog.slice(oldLog.length), opts.helpers);
-        } else {
-          fillTerminalPre(pre, newLog, opts.helpers);
-        }
+        const changed = projectLogState(pre, opts.helpers.logState && opts.helpers.logState(subjectRun), opts.helpers);
         content.setAttribute('data-rendered-subject-fingerprint', subjectFp);
-        mutationCount += 1;
+        if (changed) mutationCount += 1;
         return;
       }
       while (content.firstChild) content.removeChild(content.firstChild);
@@ -1801,9 +1750,6 @@
   function cacheLogPaneBeforeRemove(detailRow) {
     const pre = detailRow.querySelector('pre[data-scroll-key]');
     if (!pre) return;
-    if (pre.getAttribute('data-rendered-log')) {
-      pre.setAttribute('data-stream-replay-pending', '1');
-    }
     // The fingerprint attr lives on the grandparent .detail-content (the
     // pre is wrapped in a .detail-box section). Walk up at most two levels
     // to find a node that carries the fingerprint, then use that node as
@@ -1818,7 +1764,8 @@
     const fp = node.getAttribute('data-rendered-subject-fingerprint') || '';
     const subjectValue = fp.split('|')[0];
     if (!subjectValue) return;
-    storeCachedLogPane(subjectValue, node);
+    const pane = pre.parentNode && pre.parentNode !== node ? pre.parentNode : pre;
+    storeCachedLogPane(subjectValue, pane);
   }
 
   function removeRunRow(body, key) {
@@ -1972,24 +1919,6 @@
     };
   }
 
-  function updateDetailPanelLog(body, runKey, newLog, helpers) {
-    const detailRow = body.querySelector('tr.detail-row[data-detail-for="' + runKey + '"]');
-    if (!detailRow) return;
-    const pre = detailRow.querySelector('pre[data-scroll-key]');
-    if (!pre) return;
-    const renderedLog = newLog && String(newLog).trim() ? newLog : '';
-    const oldLog = pre.getAttribute('data-rendered-log') || '';
-    const renderingLog = pre.getAttribute('data-rendering-log') || '';
-    if (renderingLog === renderedLog) return;
-    if (oldLog === renderedLog) return;
-    if (oldLog && renderedLog.length >= oldLog.length && renderedLog.startsWith(oldLog)) {
-      appendTerminalPre(pre, oldLog, renderedLog.slice(oldLog.length), helpers);
-    } else {
-      fillTerminalPre(pre, renderedLog, helpers);
-    }
-    mutationCount += 1;
-  }
-
   function updateDetailPanelEvents(body, runKey, events, helpers) {
     const detailRow = body.querySelector('tr.detail-row[data-detail-for="' + runKey + '"]');
     if (!detailRow) return;
@@ -2027,7 +1956,7 @@
     getDetailData,
     resetCounters,
     getCounters,
-    updateDetailPanelLog,
+    projectLogState,
     updateDetailPanelEvents,
     subjectRunValue,
     subjectRunsFor,

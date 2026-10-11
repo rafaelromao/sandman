@@ -63,6 +63,8 @@ const stubRow = {
 };
 const sandbox = {
   console: console,
+  navigationVersion: 0,
+  logSubscription: { select: function () {} },
   state: {
     expandedRunKey: null,
     runs: [{ key: 'r1', runId: 'r1', kind: 'completed', status: 'success', issueLabel: '#1', issueNumber: 1 }],

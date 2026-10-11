@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -13,17 +12,18 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/rafaelromao/sandman/internal/daemon"
+	"github.com/rafaelromao/sandman/internal/events"
 )
 
-// TestPortalLogContinuityBrowser_TabRoundTrips is the issue #2772 baseline:
-// execute the embedded production page and its real tab handlers over HTTP,
-// with native fetch/EventSource/rAF and a source-backed snapshot/replay mismatch.
+// TestPortalLogContinuityBrowser_TabRoundTrips drives the issue #2772 actual
+// tab paths and a forced native EventSource reconnect through the production
+// saved-log endpoint and embedded page.
 // Unlike buildPortalReproPage/runPortalChromium, it substitutes no browser APIs
 // and does not load a file:// page or extract/redefine production functions.
 func TestPortalLogContinuityBrowser_TabRoundTrips(t *testing.T) {
@@ -47,32 +47,71 @@ func TestPortalLogContinuityBrowser_TabRoundTrips(t *testing.T) {
 			// The handler argument is the transport seam for the subsequent
 			// saved-log/structured-frame implementation. Keep the page, browser
 			// actions, append-only artifact and complete-sequence oracle intact.
-			server := httptest.NewServer(fixture.handler(http.HandlerFunc(fixture.serveLegacyStream)))
+			registry := newPortalLogRegistry()
+			t.Cleanup(registry.Close)
+			server := httptest.NewServer(fixture.handler(fixture.savedLogStream(registry)))
 			defer server.Close()
 			result := runPortalContinuityBrowser(t, chromium, server.URL, fixture.results)
 			if result.Error != "" {
 				t.Fatalf("actual-page browser reproduction: %s", result.Error)
 			}
 			status := fixture.status()
-			if status.Connections != 2 || status.Closed < 1 || !status.ReplayComplete || status.Error != "" {
-				t.Fatalf("did not exercise a closed stream and replacement replay: %+v", status)
+			if status.Connections != 55 || status.Closed < 54 || status.Error != "" {
+				t.Fatalf("did not exercise native reconnect plus repeated tab replacements: %+v", status)
+			}
+			if len(status.ResumeCursors) != 55 || status.ResumeCursors[0] != "" || status.ResumeCursors[1] != "" {
+				t.Fatalf("expected fresh URL cursors only for initial/native streams: %+v", status.ResumeCursors)
+			}
+			if len(status.LastEventIDs) != 55 || status.LastEventIDs[1] != result.InitialCursor {
+				t.Fatalf("native EventSource reconnect did not send its last received source cursor: %+v", status.LastEventIDs)
+			}
+			for i := 2; i < len(status.ResumeCursors); i++ {
+				if status.ResumeCursors[i] == "" {
+					t.Fatalf("tab stream %d did not resume from accepted position: %+v", i+1, status.ResumeCursors)
+				}
+			}
+			if result.StressTransitions != 50 || status.SummaryNotModified == 0 {
+				t.Fatalf("actual page did not settle 50 mixed transitions under unchanged 304 polls: transitions=%d 304s=%d", result.StressTransitions, status.SummaryNotModified)
+			}
+			if result.MaxWarmTransitionMs >= 1000 || result.LiveUpdateMs >= 1000 {
+				t.Fatalf("Portal exceeded sub-second warm/live responsiveness: warm-max=%.1fms live=%.1fms samples=%v", result.MaxWarmTransitionMs, result.LiveUpdateMs, result.WarmTransitionMs)
+			}
+			if result.ModelCacheBytes > 8*1024*1024 || result.ModelRuns > 16 || result.DOMLogNodes > 1000 {
+				t.Fatalf("Portal continuity retention is not bounded: model=%d bytes/%d runs, DOM nodes=%d", result.ModelCacheBytes, result.ModelRuns, result.DOMLogNodes)
 			}
 			initial := fixture.readRange(t, fixture.snapshotStart, fixture.initialEnd)
 			if result.InitialLog != initial {
-				t.Fatalf("initial production Log pane differs from the saved 64 KiB suffix: %s", portalContinuityDifference(result.InitialLog, initial))
+				t.Fatalf("initial production Log pane differs from the saved 256 KiB retained range: %s", portalContinuityDifference(result.InitialLog, initial))
+			}
+			if result.InitialStart != fixture.snapshotStart || result.InitialEnd != fixture.initialEnd || result.InitialGeneration == "" {
+				t.Fatalf("initial accepted range does not identify the saved source: %+v", result)
 			}
 			info, err := os.Stat(fixture.run.LogPath)
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := fixture.readRange(t, fixture.snapshotStart, info.Size())
-			t.Logf("saved run.log=%d bytes; metadata suffix=[%d,%d); replacement replay=[%d,%d); HTTP streams=%d",
-				info.Size(), fixture.snapshotStart, fixture.initialEnd, fixture.replayStart, fixture.initialEnd, status.Connections)
+			sourceFile, err := os.Open(fixture.run.LogPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			finalStart, err := portalLogRetainedStart(sourceFile, info.Size())
+			_ = sourceFile.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := fixture.readRange(t, finalStart, info.Size())
+			t.Logf("saved run.log=%d bytes; accepted source range=[%d,%d); streams=%d; 304 polls=%d; warm max=%.1fms; live=%.1fms; model=%d bytes/%d runs; DOM nodes=%d",
+				info.Size(), finalStart, info.Size(), status.Connections, status.SummaryNotModified,
+				result.MaxWarmTransitionMs, result.LiveUpdateMs, result.ModelCacheBytes, result.ModelRuns, result.DOMLogNodes)
 			// Compare every visible byte, including padding, newlines and all
 			// records. Short labels below are diagnostics, never the oracle.
 			if result.VisibleLog != want {
 				t.Fatalf("Log -> %s -> Log violates saved-source continuity: %s\nvisible records: %s\nsource suffix + appended records: %s",
 					tab, portalContinuityDifference(result.VisibleLog, want), portalContinuityLabels(result.VisibleLog), portalContinuityLabels(want))
+			}
+			if result.FinalStart != finalStart || result.FinalEnd != info.Size() || result.FinalGeneration != result.InitialGeneration {
+				t.Fatalf("final DOM range/generation differs from source: final=[%d,%d) generation=%q, source=[%d,%d) generation=%q",
+					result.FinalStart, result.FinalEnd, result.FinalGeneration, finalStart, info.Size(), result.InitialGeneration)
 			}
 		})
 	}
@@ -80,6 +119,15 @@ func TestPortalLogContinuityBrowser_TabRoundTrips(t *testing.T) {
 
 func requirePortalContinuityTool(t *testing.T, name string) string {
 	t.Helper()
+	if name == "chromium" {
+		if configured := strings.TrimSpace(os.Getenv("SANDMAN_PORTAL_CHROMIUM")); configured != "" {
+			path, err := exec.LookPath(configured)
+			if err != nil {
+				t.Fatalf("SANDMAN_PORTAL_CHROMIUM is not executable: %v", err)
+			}
+			return path
+		}
+	}
 	path, err := exec.LookPath(name)
 	if err == nil {
 		return path
@@ -92,16 +140,32 @@ func requirePortalContinuityTool(t *testing.T, name string) string {
 }
 
 type portalContinuityBrowserResult struct {
-	InitialLog string `json:"initialLog"`
-	VisibleLog string `json:"visibleLog"`
-	Error      string `json:"error"`
+	InitialLog          string  `json:"initialLog"`
+	InitialStart        int64   `json:"initialStart"`
+	InitialEnd          int64   `json:"initialEnd"`
+	InitialGeneration   string  `json:"initialGeneration"`
+	InitialCursor       string  `json:"initialCursor"`
+	VisibleLog          string  `json:"visibleLog"`
+	FinalStart          int64   `json:"finalStart"`
+	FinalEnd            int64   `json:"finalEnd"`
+	FinalGeneration     string  `json:"finalGeneration"`
+	StressTransitions   int     `json:"stressTransitions"`
+	MaxWarmTransitionMs float64 `json:"maxWarmTransitionMs"`
+	WarmTransitionMs []float64 `json:"warmTransitionMs"`
+	LiveUpdateMs        float64 `json:"liveUpdateMs"`
+	ModelCacheBytes     int     `json:"modelCacheBytes"`
+	ModelRuns           int     `json:"modelRuns"`
+	DOMLogNodes         int     `json:"domLogNodes"`
+	Error               string  `json:"error"`
 }
 
 type portalContinuityStreamStatus struct {
-	Connections    int    `json:"connections"`
-	Closed         int    `json:"closed"`
-	ReplayComplete bool   `json:"replayComplete"`
-	Error          string `json:"error,omitempty"`
+	Connections        int      `json:"connections"`
+	Closed             int      `json:"closed"`
+	ResumeCursors      []string `json:"resumeCursors"`
+	LastEventIDs       []string `json:"lastEventIds"`
+	SummaryNotModified int      `json:"summaryNotModified"`
+	Error              string   `json:"error,omitempty"`
 }
 
 type portalLogContinuityFixture struct {
@@ -111,16 +175,11 @@ type portalLogContinuityFixture struct {
 	driver        []byte
 	initialEnd    int64
 	snapshotStart int64
-	replayStart   int64
 	liveText      string
 	writer        *os.File
-	replay        chan struct{}
-	live          chan struct{}
 	results       chan portalContinuityBrowserResult
 	mu            sync.Mutex
 	streamStatus  portalContinuityStreamStatus
-	replayOnce    sync.Once
-	liveOnce      sync.Once
 }
 
 func newPortalLogContinuityFixture(t *testing.T, tab string, driver []byte) *portalLogContinuityFixture {
@@ -129,7 +188,7 @@ func newPortalLogContinuityFixture(t *testing.T, tab string, driver []byte) *por
 	const recordBytes = 8 * 1024
 	f := &portalLogContinuityFixture{
 		repoRoot: t.TempDir(), tab: tab, driver: driver,
-		replay: make(chan struct{}), live: make(chan struct{}), results: make(chan portalContinuityBrowserResult, 1),
+		results:  make(chan portalContinuityBrowserResult, 1),
 		liveText: "10:16:37 new live output\n10:16:38 second live output\n",
 	}
 	runDir := filepath.Join(f.repoRoot, ".sandman", "batches", "261007090000-b277", "runs", runID)
@@ -177,12 +236,15 @@ func newPortalLogContinuityFixture(t *testing.T, tab string, driver []byte) *por
 		t.Fatal(err)
 	}
 	f.initialEnd = int64(source.Len())
-	if f.initialEnd <= daemon.MaxBufferSize {
-		t.Fatal("saved-log fixture must exceed the production 256 KiB replay limit")
+	if f.initialEnd <= portalLogRetainedBytes {
+		t.Fatal("saved-log fixture must exceed the production 256 KiB retained-range limit")
 	}
-	f.snapshotStart = f.initialEnd - portalReadLimit
-	f.replayStart = f.initialEnd - daemon.MaxBufferSize
+	f.snapshotStart = f.initialEnd - portalLogRetainedBytes
 	f.run.Log = f.readRange(t, f.snapshotStart, f.initialEnd)
+	eventLog := &events.JSONLLogger{Path: filepath.Join(f.repoRoot, ".sandman", "events.jsonl")}
+	if err := eventLog.Log(events.Event{Type: "run.started", Timestamp: time.Now(), RunID: runID, Issue: 2772}); err != nil {
+		t.Fatal(err)
+	}
 	return f
 }
 
@@ -232,6 +294,16 @@ func (f *portalLogContinuityFixture) handler(stream http.Handler) http.Handler {
 	mux.HandleFunc("/api/runs", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
+		if r.URL.Query().Get("summary") == "1" {
+			w.Header().Set("ETag", `"continuity-fixture"`)
+			if r.Header.Get("If-None-Match") == `"continuity-fixture"` {
+				f.mu.Lock()
+				f.streamStatus.SummaryNotModified++
+				f.mu.Unlock()
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+		}
 		if r.URL.Query().Get("runKey") != "" {
 			_ = json.NewEncoder(w).Encode(map[string]any{"run": f.run})
 		} else {
@@ -239,17 +311,7 @@ func (f *portalLogContinuityFixture) handler(stream http.Handler) http.Handler {
 			_ = json.NewEncoder(w).Encode(map[string]any{"runs": []portalRun{f.run}})
 		}
 	})
-	mux.HandleFunc("/api/runs/stream", func(w http.ResponseWriter, r *http.Request) {
-		f.mu.Lock()
-		f.streamStatus.Connections++
-		f.mu.Unlock()
-		defer func() {
-			f.mu.Lock()
-			f.streamStatus.Closed++
-			f.mu.Unlock()
-		}()
-		stream.ServeHTTP(w, r)
-	})
+	mux.Handle("/api/runs/stream", f.trackStream(stream))
 	mux.HandleFunc("/__test/driver.js", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/javascript")
 		_, _ = w.Write(f.driver)
@@ -262,20 +324,28 @@ func (f *portalLogContinuityFixture) handler(stream http.Handler) http.Handler {
 	mux.HandleFunc("/__test/status", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(f.status())
 	})
-	mux.HandleFunc("/__test/replay", func(w http.ResponseWriter, r *http.Request) {
-		f.replayOnce.Do(func() { close(f.replay) })
-		w.WriteHeader(http.StatusNoContent)
+	mux.HandleFunc("/__test/source", func(w http.ResponseWriter, r *http.Request) {
+		start, startErr := strconv.ParseInt(r.URL.Query().Get("start"), 10, 64)
+		end, endErr := strconv.ParseInt(r.URL.Query().Get("end"), 10, 64)
+		if startErr != nil || endErr != nil || start < 0 || end < start {
+			http.Error(w, "invalid source range", http.StatusBadRequest)
+			return
+		}
+		text, err := f.rawRange(start, end)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write(text)
 	})
 	mux.HandleFunc("/__test/append", func(w http.ResponseWriter, r *http.Request) {
-		f.liveOnce.Do(func() {
-			_, err := io.WriteString(f.writer, f.liveText)
-			if err != nil {
-				f.mu.Lock()
-				f.streamStatus.Error = err.Error()
-				f.mu.Unlock()
-			}
-			close(f.live)
-		})
+		f.mu.Lock()
+		_, err := io.WriteString(f.writer, f.liveText)
+		if err != nil {
+			f.streamStatus.Error = err.Error()
+		}
+		f.mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("/__test/result", func(w http.ResponseWriter, r *http.Request) {
@@ -290,94 +360,70 @@ func (f *portalLogContinuityFixture) handler(stream http.Handler) http.Handler {
 	return mux
 }
 
-func (f *portalLogContinuityFixture) serveLegacyStream(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("runKey") != f.run.Key {
-		http.Error(w, "unknown fixture run", http.StatusNotFound)
-		return
-	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-store")
-	rc := http.NewResponseController(w)
-	_, _ = io.WriteString(w, ": saved-log fixture connected\n\n")
-	_ = rc.Flush()
-	if f.status().Connections == 1 {
-		// Isolate tab reattachment from the separately reported first-attach
-		// bug: the initial subscription is idle, leaving metadata intact.
-		_, _ = io.WriteString(w, "event: replay-complete\ndata: replay-complete\n\n")
-		_ = rc.Flush()
-		<-r.Context().Done()
-		return
-	}
-	select {
-	case <-r.Context().Done():
-		return
-	case <-f.replay:
-	}
-	if err := f.sendLegacyRange(w, r, f.replayStart, f.initialEnd, true); err != nil {
-		f.recordStreamError(r, err)
-		return
-	}
-	_, _ = io.WriteString(w, "event: replay-complete\ndata: replay-complete\n\n")
-	if err := rc.Flush(); err != nil {
-		f.recordStreamError(r, err)
-		return
-	}
-	f.mu.Lock()
-	f.streamStatus.ReplayComplete = true
-	f.mu.Unlock()
-	select {
-	case <-r.Context().Done():
-		return
-	case <-f.live:
-	}
-	if err := f.sendLegacyRange(w, r, f.initialEnd, f.initialEnd+int64(len(f.liveText)), false); err != nil {
-		f.recordStreamError(r, err)
-		return
-	}
-	// Keep native EventSource open; EOF would introduce an unrelated reconnect.
-	<-r.Context().Done()
-}
-
-func (f *portalLogContinuityFixture) recordStreamError(r *http.Request, err error) {
-	if r.Context().Err() == nil {
+func (f *portalLogContinuityFixture) trackStream(stream http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
-		f.streamStatus.Error = err.Error()
+		f.streamStatus.Connections++
+		f.streamStatus.ResumeCursors = append(f.streamStatus.ResumeCursors, r.URL.Query().Get("cursor"))
 		f.mu.Unlock()
+		defer func() {
+			f.mu.Lock()
+			f.streamStatus.Closed++
+			f.mu.Unlock()
+		}()
+		f.mu.Lock()
+		dropSnapshot := f.streamStatus.Connections == 1
+		f.streamStatus.LastEventIDs = append(f.streamStatus.LastEventIDs, r.Header.Get("Last-Event-ID"))
+		f.mu.Unlock()
+		if dropSnapshot {
+			ctx, cancel := context.WithCancel(r.Context())
+			defer cancel()
+			stream.ServeHTTP(&portalContinuityDropWriter{ResponseWriter: w, cancel: cancel}, r.WithContext(ctx))
+			return
+		}
+		stream.ServeHTTP(w, r)
+	})
+}
+
+// portalContinuityDropWriter forces a real HTTP disconnect immediately after
+// the first snapshot has been flushed. Chromium's native EventSource must
+// reconnect with the received SSE id rather than a test-injected callback.
+type portalContinuityDropWriter struct {
+	http.ResponseWriter
+	cancel  context.CancelFunc
+	dropped bool
+}
+
+func (w *portalContinuityDropWriter) Write(p []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(p)
+	if !w.dropped && bytes.Contains(p, []byte(`"type":"snapshot"`)) {
+		w.dropped = true
+		_ = http.NewResponseController(w.ResponseWriter).Flush()
+		w.cancel()
+	}
+	return n, err
+}
+
+func (w *portalContinuityDropWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
 	}
 }
 
-func (f *portalLogContinuityFixture) sendLegacyRange(w http.ResponseWriter, r *http.Request, start, end int64, paced bool) error {
-	data, err := f.rawRange(start, end)
-	if err != nil {
-		return err
-	}
-	reader := bufio.NewReader(bytes.NewReader(data))
-	rc := http.NewResponseController(w)
-	for {
-		line, err := reader.ReadString('\n')
-		if err == io.EOF && line == "" {
-			return nil
+func (w *portalContinuityDropWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+func (f *portalLogContinuityFixture) savedLogStream(registry *portalLogRegistry) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("runKey") != f.run.Key {
+			http.Error(w, "unknown fixture run", http.StatusNotFound)
+			return
 		}
-		if err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(w, "data: %s\n\n", cleanPortalStreamLine(line)); err != nil {
-			return err
-		}
-		if err := rc.Flush(); err != nil {
-			return err
-		}
-		if paced {
-			// Avoid the independent burst/coalescer-loss bug obscuring tab order.
-			timer := time.NewTimer(40 * time.Millisecond)
-			select {
-			case <-r.Context().Done():
-				timer.Stop()
-				return r.Context().Err()
-			case <-timer.C:
-			}
-		}
-	}
+		servePortalLogStream(w, r, f.run, portalLogStreamOptions{
+			Scope:    f.repoRoot,
+			Registry: registry,
+			Terminal: func(context.Context) (bool, error) { return false, nil },
+		})
+	})
 }
 
 func runPortalContinuityBrowser(t *testing.T, chromium, url string, results <-chan portalContinuityBrowserResult) portalContinuityBrowserResult {
