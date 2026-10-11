@@ -239,6 +239,7 @@ func TestReleaseWorkflowUsesCredentialThatTriggersReleasePRChecks(t *testing.T) 
 	for _, required := range []string{
 		`"context": "CI / build (ubuntu-latest)"`,
 		`"context": "CI / build (macos-latest)"`,
+		`"context": "CI / portal-continuity-browser"`,
 		`"context": "CI / semantic-pull-request"`,
 	} {
 		if !strings.Contains(ruleset, required) {
@@ -458,6 +459,35 @@ func TestCIWorkflowKeepsOptInSuitesDisabled(t *testing.T) {
 		if !strings.Contains(workflow, required) {
 			t.Errorf("regular CI workflow missing Podman runtime configuration %q", required)
 		}
+	}
+}
+
+func TestLinuxCIGatesPortalLogContinuityOnRequiredBrowserCoverage(t *testing.T) {
+	workflow := readRepositoryFile(t, "../.github/workflows/go.yml")
+	ruleset := readRepositoryFile(t, "../.github/rulesets/main.json")
+	browserTests := readRepositoryFile(t, "../internal/cmd/portal_log_continuity_browser_test.go")
+	for _, required := range []string{
+		"portal-continuity-browser:\n    runs-on: ubuntu-latest",
+		"uses: actions/setup-node@v4",
+		"node-version: 22",
+		"uses: browser-actions/setup-chrome@v2",
+		"name: Portal continuity browser gate",
+		`SANDMAN_REQUIRE_PORTAL_BROWSER: "1"`,
+		"SANDMAN_PORTAL_CHROMIUM: ${{ steps.setup-chrome.outputs.chrome-path }}",
+		"go test ./internal/cmd -run '^TestPortalLogContinuityBrowser_' -count=1 -timeout=10m",
+		"SANDMAN_REQUIRE_PORTAL_BROWSER: ${{ runner.os == 'Linux' && '1' || '0' }}",
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("CI workflow is missing required Portal browser gate contract %q", required)
+		}
+	}
+	if !strings.Contains(ruleset, `"context": "CI / portal-continuity-browser"`) {
+		t.Fatal("main ruleset must require the Portal continuity browser status")
+	}
+	if !strings.Contains(browserTests, "func TestPortalLogContinuityBrowser_TabRoundTrips") ||
+		!strings.Contains(browserTests, `for _, tab := range []string{"events", "details"}`) ||
+		!strings.Contains(readRepositoryFile(t, "../internal/cmd/portal_subject_switch_repro_test.go"), "func TestPortalReviewSubjectSwitch_PreservesPendingPerRunOutputAcrossRoundTrip") {
+		t.Fatal("Linux CI must include actual-page tab continuity and pending per-RunID subject round-trip cases")
 	}
 }
 

@@ -57,6 +57,9 @@ generation; an old expired wait cannot force repeated remediation while that
 rerun resolves. Legacy head-only records bind once to a known execution.
 Unavailable execution identity cannot renew an identified generation.
 
+**Portal continuity browser check**:
+A required Linux CI status that exercises saved Portal logs through a real browser page across navigation, subject switches, reconnects, and reload. It runs separately from the default build matrix so the branch rules can require it explicitly.
+
 **Quota polling allowance**:
 Five hours of accumulated completed ten-minute polling for a recognized implementation provider limit. Re-entry and restart preserve consumed polling; capacity delay, process downtime, and cancelled intervals consume none. Expected wall-clock exhaustion is a diagnostic estimate, not an operation deadline or ownership cutoff. The final boundary probe and configured fresh-session ordinary retries remain available; missing or invalid accounting disables additional waits while permitting bounded execution. Implementation pauses are batch-local; reviewer recovery remains daemon-wide.
 _Avoid_: absolute quota deadline, fresh allowance on re-entry.

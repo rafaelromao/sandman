@@ -41,18 +41,20 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-// TestPortalPerf_PrewarmLogPaneCache_TokenizeSkipsEmptyLog verifies that
-// runs with empty or whitespace-only logs are not added to the cache.
-func TestPortalPerf_PrewarmLogPaneCache_TokenizeSkipsEmptyLog(t *testing.T) {
-	js := `const blankRun = { key: 'a', kind: 'active', status: 'running', issueLabel: '#1', runId: 'r1', log: '   \n\n  ' };
+// Empty source state is not warmed, but positioned blank records are real data.
+func TestPortalPerf_PrewarmLogPaneCache_PreservesBlankRecordsAndSkipsMissingRange(t *testing.T) {
+	js := `const blankRun = { key: 'a', kind: 'active', status: 'running', issueLabel: '#1', runId: 'r1' };
+const store = sandbox.SandmanPortalLog.createStore();
+store.accept('r1', store.begin('r1'), { type: 'snapshot', runId: 'r1', generation: 'g', start: 0, end: 5,
+  records: [{ start: 0, end: 1, text: '' }, { start: 1, end: 2, text: '' }, { start: 2, end: 5, text: '  ' }], cursor: 'c5' });
+helpers.logState = run => store.get(run.runId);
 const pane = sandbox.SandmanPortalDiff.tokenizeForCache(blankRun, helpers);
-if (pane) throw new Error('expected tokenizeForCache to return null for blank log, got pane');
-if (sandbox.SandmanPortalDiff.getLogPaneCacheSize() !== 0) throw new Error('expected cache size to stay at 0 for blank log, got ' + sandbox.SandmanPortalDiff.getLogPaneCacheSize());
-if (sandbox.SandmanPortalDiff.hasLogPaneCached('r1')) throw new Error('expected subjectKey r1 NOT to be cached for blank log');
+if (!pane || pane.querySelector('pre[data-scroll-key]').textContent !== '\n\n  \n') throw new Error('blank records lost while warming');
+if (!sandbox.SandmanPortalDiff.hasLogPaneCached('r1')) throw new Error('blank record range was not cached');
 const noLogRun = { key: 'b', kind: 'active', status: 'running', issueLabel: '#2', runId: 'r2' };
 const pane2 = sandbox.SandmanPortalDiff.tokenizeForCache(noLogRun, helpers);
 if (pane2) throw new Error('expected tokenizeForCache to return null for missing log, got pane');
-if (sandbox.SandmanPortalDiff.getLogPaneCacheSize() !== 0) throw new Error('expected cache size to stay at 0 for missing log, got ' + sandbox.SandmanPortalDiff.getLogPaneCacheSize());
+if (sandbox.SandmanPortalDiff.getLogPaneCacheSize() !== 1) throw new Error('missing source range changed cache size');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -296,6 +298,7 @@ const prewarmHelpers = {
   escapeHTML: function(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); },
   renderTerminalContent: function(text) { return portalDiff.highlightTerminalLog(text); },
   highlightJSON: portalDiff.highlightJSON,
+  logState: helpers.logState,
 };
 function scheduleLogPanePrewarm() {
   if (prewarmScheduled) return;
