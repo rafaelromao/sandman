@@ -284,6 +284,51 @@ func TestContainerPool_UnresolvedCleanupPreventsReplacementButPreservesSibling(t
 	continued.Release()
 }
 
+func TestContainerPool_FailedStopOfUnpublishedRuntimeContainerPreventsReplacement(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "runtime")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\ncase \"$1\" in\nrun) printf unpublished;;\nstop|rm) exit 1;;\ninspect) printf true;;\nesac\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	created, err := sandbox.NewContainerRuntime(binary).Start(t.Context(), "img", dir, sandbox.StartOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	siblingContainer := &fakeContainerForOrchestrator{id: "live-sibling"}
+	starts := 0
+	starter := &cancellationStarter{start: func(context.Context) (sandbox.Container, error) {
+		starts++
+		if starts == 1 {
+			return siblingContainer, nil
+		}
+		cancel()
+		return created, nil
+	}}
+	pool := newContainerPool(starter, "img", ".", sandbox.StartOptions{}, 1, 0)
+	defer pool.Close()
+	sibling, err := pool.Acquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := pool.Acquire(ctx)
+	var unresolved *sandbox.ContainerCleanupError
+	if lease != nil || !errors.Is(err, context.Canceled) || !errors.As(err, &unresolved) {
+		t.Fatalf("production unpublished cleanup failure not retained: lease=%v err=%v", lease, err)
+	}
+	lease, err = pool.Acquire(t.Context())
+	if lease != nil || !errors.As(err, &unresolved) || starts != 2 {
+		t.Fatalf("replacement admitted after failed production removal: starts=%d err=%v", starts, err)
+	}
+	sibling.Release()
+	continued, err := pool.Acquire(t.Context())
+	if err != nil || continued.container != siblingContainer || siblingContainer.stopCalled {
+		t.Fatalf("failed unpublished cleanup affected live sibling: %v", err)
+	}
+	continued.Release()
+}
+
 type blockingInspectContainer struct {
 	fakeContainerForOrchestrator
 	inspecting chan struct{}
