@@ -570,7 +570,7 @@ func (l *containerLease) Release() {
 }
 
 type containerAllocator interface {
-	Acquire() (*containerLease, error)
+	Acquire(context.Context) (*containerLease, error)
 }
 
 type sandboxExecutionPolicy struct {
@@ -592,10 +592,15 @@ type pooledContainer struct {
 	ready     bool
 	startErr  error
 	dead      bool
+	stopping  bool
 }
 
 type containerAliveChecker interface {
 	Alive() (bool, error)
+}
+
+type containerContextAliveChecker interface {
+	AliveContext(context.Context) (bool, error)
 }
 
 type containerPool struct {
@@ -606,9 +611,10 @@ type containerPool struct {
 	capacity      int
 	maxContainers int
 
-	mu     sync.Mutex
-	cond   *sync.Cond
-	shared []*pooledContainer
+	mu         sync.Mutex
+	cond       *sync.Cond
+	shared     []*pooledContainer
+	cleanupErr error
 }
 
 type batchStartGate struct {
@@ -1060,12 +1066,28 @@ func newContainerPool(starter sandbox.ContainerStarter, image, repoPath string, 
 	return p
 }
 
-func (p *containerPool) Acquire() (*containerLease, error) {
+func (p *containerPool) Acquire(ctx context.Context) (*containerLease, error) {
+	stop := context.AfterFunc(ctx, func() {
+		p.mu.Lock()
+		p.cond.Broadcast()
+		p.mu.Unlock()
+	})
+	defer stop()
 	p.mu.Lock()
 
 	for {
-		if p.pruneDeadLocked() {
+		if err := ctx.Err(); err != nil {
+			p.mu.Unlock()
+			return nil, err
+		}
+		if p.pruneDeadLocked(ctx) {
 			continue
+		}
+		// Inspection is an external command. Cancellation observed during it
+		// cannot grant a lease or invalidate a live sibling's container.
+		if err := ctx.Err(); err != nil {
+			p.mu.Unlock()
+			return nil, err
 		}
 
 		if best := p.pickReadyLocked(); best != nil {
@@ -1073,6 +1095,11 @@ func (p *containerPool) Acquire() (*containerLease, error) {
 			container := best.container
 			p.mu.Unlock()
 			return &containerLease{container: container, release: func() { p.releaseShared(best) }}, nil
+		}
+		if p.cleanupErr != nil {
+			err := p.cleanupErr
+			p.mu.Unlock()
+			return nil, err
 		}
 
 		if p.hasPendingCapacityLocked() {
@@ -1089,13 +1116,32 @@ func (p *containerPool) Acquire() (*containerLease, error) {
 		p.shared = append(p.shared, entry)
 		p.mu.Unlock()
 
-		container, err := p.starter.Start(p.image, p.repoPath, p.startOpts)
+		container, err := p.starter.Start(ctx, p.image, p.repoPath, p.startOpts)
+		if ctx.Err() != nil {
+			err = errors.Join(ctx.Err(), err)
+		}
+		// Startup owns this reservation until its command and cleanup finish.
+		// It has not yet published the container to any other row.
+		if err != nil && container != nil {
+			err = errors.Join(err, container.Stop())
+		}
 
 		p.mu.Lock()
+		if err == nil && ctx.Err() != nil {
+			p.mu.Unlock()
+			err = errors.Join(ctx.Err(), container.Stop())
+			p.mu.Lock()
+		}
 		if err != nil {
 			entry.startErr = err
 			entry.active--
-			if entry.active == 0 {
+			var unresolved *sandbox.ContainerCleanupError
+			if errors.As(err, &unresolved) {
+				// The daemon may still create this identity. Retain its counted
+				// reservation and fail further provisioning rather than replacing
+				// it unsafely or leaving live waiters blocked indefinitely.
+				p.cleanupErr = errors.Join(p.cleanupErr, err)
+			} else if entry.active == 0 {
 				p.removeShared(entry)
 			}
 			p.cond.Broadcast()
@@ -1138,51 +1184,73 @@ func (p *containerPool) hasPendingCapacityLocked() bool {
 func (p *containerPool) releaseShared(entry *pooledContainer) {
 	p.mu.Lock()
 	entry.active--
-	if entry.dead && entry.active == 0 {
-		if entry.container != nil {
-			_ = entry.container.Stop()
-		}
-		p.removeShared(entry)
+	if entry.dead && entry.active == 0 && !entry.stopping {
+		p.stopDeadLocked(entry)
 	}
 	p.cond.Broadcast()
 	p.mu.Unlock()
 }
 
-func (p *containerPool) pruneDeadLocked() bool {
+func (p *containerPool) pruneDeadLocked(ctx context.Context) bool {
 	changed := false
-	kept := p.shared[:0]
-	for _, entry := range p.shared {
-		if entry.dead {
-			if entry.active == 0 {
+	// Commands never hold the pool mutex: a caller must be able to cancel
+	// independently of another row's inspection or cleanup. Entries remain
+	// counted while cleanup runs, and dead is monotonic under the mutex.
+	entries := append([]*pooledContainer(nil), p.shared...)
+	for _, entry := range entries {
+		if entry.ready && !entry.dead {
+			p.mu.Unlock()
+			alive := containerAliveContext(ctx, entry.container)
+			p.mu.Lock()
+			if ctx.Err() != nil {
+				return changed
+			}
+			if !alive && !entry.dead {
+				entry.dead = true
 				changed = true
-				if entry.container != nil {
-					_ = entry.container.Stop()
-				}
-				continue
 			}
-			kept = append(kept, entry)
-			continue
 		}
-		if entry.ready && !containerAlive(entry.container) {
-			entry.dead = true
+		if entry.dead && entry.active == 0 && !entry.stopping {
+			p.stopDeadLocked(entry)
 			changed = true
-			if entry.active == 0 {
-				if entry.container != nil {
-					_ = entry.container.Stop()
-				}
-				continue
-			}
 		}
-		kept = append(kept, entry)
 	}
 	if changed {
-		p.shared = kept
 		p.cond.Broadcast()
 	}
 	return changed
 }
 
+// stopDeadLocked retains the counted entry until cleanup finishes. Exactly
+// one caller owns Stop; callers enter and leave with the mutex held.
+func (p *containerPool) stopDeadLocked(entry *pooledContainer) {
+	entry.stopping = true
+	p.mu.Unlock()
+	var err error
+	if entry.container != nil {
+		err = entry.container.Stop()
+	}
+	p.mu.Lock()
+	var unresolved *sandbox.ContainerCleanupError
+	if errors.As(err, &unresolved) {
+		// A failed inspection does not establish daemon-side removal. Keep
+		// this reservation counted just like unresolved startup cleanup.
+		p.cleanupErr = errors.Join(p.cleanupErr, err)
+	} else {
+		p.removeShared(entry)
+	}
+	p.cond.Broadcast()
+}
+
 func containerAlive(container sandbox.Container) bool {
+	return containerAliveContext(context.Background(), container)
+}
+
+func containerAliveContext(ctx context.Context, container sandbox.Container) bool {
+	if checker, ok := container.(containerContextAliveChecker); ok {
+		alive, err := checker.AliveContext(ctx)
+		return err == nil && alive
+	}
 	checker, ok := container.(containerAliveChecker)
 	if !ok {
 		return true
@@ -2672,7 +2740,7 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(ctx context.Context, cfg *c
 		containerFactory = defaultContainerRuntimeFactory{}
 	}
 	starter := containerFactory.New(sandboxMode)
-	image, err := starter.BuildImage(".")
+	image, err := starter.BuildImage(ctx, ".")
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("build container image: %w", err)
