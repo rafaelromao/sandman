@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -329,6 +330,139 @@ func TestContainerPool_FailedStopOfUnpublishedRuntimeContainerPreventsReplacemen
 	continued.Release()
 }
 
+type unresolvedPublishedContainer struct {
+	id           string
+	inspectFails atomic.Bool
+	cleanupErr   error
+	stopCount    atomic.Int32
+	stopStarted  chan struct{}
+	stopRelease  <-chan struct{}
+}
+
+func (c *unresolvedPublishedContainer) ID() string { return c.id }
+
+func (c *unresolvedPublishedContainer) Alive() (bool, error) {
+	if c.inspectFails.Load() {
+		return false, errors.New("inspection unavailable")
+	}
+	return true, nil
+}
+
+func (c *unresolvedPublishedContainer) Stop() error {
+	if c.stopCount.Add(1) == 1 && c.stopStarted != nil {
+		close(c.stopStarted)
+	}
+	if c.stopRelease != nil {
+		<-c.stopRelease
+	}
+	return c.cleanupErr
+}
+
+func TestContainerPool_PruningUnresolvedPublishedCleanupRetainsCapacity(t *testing.T) {
+	cleanupErr := &sandbox.ContainerCleanupError{Name: "published", Err: errors.New("stop and removal failed")}
+	container := &unresolvedPublishedContainer{id: "published", cleanupErr: cleanupErr}
+	starter := &fakeContainerStarter{container: container}
+	pool := newContainerPool(starter, "img", ".", sandbox.StartOptions{}, 1, 1)
+	defer pool.Close()
+	lease, err := pool.Acquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease.Release()
+	container.inspectFails.Store(true)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		lease, err := pool.Acquire(ctx)
+		if lease != nil {
+			lease.Release()
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, cleanupErr) {
+			t.Fatalf("unresolved published cleanup admitted replacement: err=%v starts=%d", err, starter.startCount)
+		}
+	case <-time.After(2 * time.Second):
+		cancel()
+		<-done
+		t.Fatal("unresolved published cleanup left acquisition blocked")
+	}
+	if starter.startCount != 1 || container.stopCount.Load() != 1 {
+		t.Fatalf("unresolved reservation replaced or cleanup retried: starts=%d stops=%d", starter.startCount, container.stopCount.Load())
+	}
+}
+
+func TestContainerPool_FinalLeaseUnresolvedCleanupWakesWaitersAndPreservesSibling(t *testing.T) {
+	cleanupErr := &sandbox.ContainerCleanupError{Name: "published", Err: errors.New("stop and removal failed")}
+	releaseStop := make(chan struct{})
+	var once sync.Once
+	defer once.Do(func() { close(releaseStop) })
+	container := &unresolvedPublishedContainer{id: "published", cleanupErr: cleanupErr, stopStarted: make(chan struct{}), stopRelease: releaseStop}
+	healthy := &fakeContainerForOrchestrator{id: "healthy"}
+	starter := &fakeContainerStarter{containers: []sandbox.Container{container, healthy}}
+	pool := newContainerPool(starter, "img", ".", sandbox.StartOptions{}, 1, 2)
+	defer func() {
+		once.Do(func() { close(releaseStop) })
+		_ = pool.Close()
+	}()
+	owner, err := pool.Acquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sibling, err := pool.Acquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sibling.Release()
+	container.inspectFails.Store(true)
+	// This acquisition marks the first container dead while its owner still
+	// holds the final lease, and grants available healthy sibling capacity.
+	sibling, err = pool.Acquire(t.Context())
+	if err != nil || sibling.container != healthy || container.stopCount.Load() != 0 {
+		t.Fatalf("published owner cleaned before final release: err=%v stops=%d", err, container.stopCount.Load())
+	}
+	defer sibling.Release()
+	released := make(chan struct{})
+	go func() { owner.Release(); close(released) }()
+	waitForSignal(t, container.stopStarted, "final lease cleanup entered")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	observed := &observedAcquireContext{Context: ctx, checked: make(chan struct{})}
+	done := make(chan error, 1)
+	go func() {
+		lease, err := pool.Acquire(observed)
+		if lease != nil {
+			lease.Release()
+		}
+		done <- err
+	}()
+	waitForSignal(t, observed.checked, "waiter entered during final cleanup")
+	once.Do(func() { close(releaseStop) })
+	waitForSignal(t, released, "final lease cleanup completed")
+	select {
+	case err := <-done:
+		if !errors.Is(err, cleanupErr) {
+			t.Fatalf("unresolved final cleanup granted replacement: err=%v starts=%d", err, starter.startCount)
+		}
+	case <-time.After(2 * time.Second):
+		cancel()
+		<-done
+		t.Fatal("final cleanup did not wake waiting acquisition")
+	}
+	if starter.startCount != 2 || container.stopCount.Load() != 1 || healthy.stopCalled {
+		t.Fatalf("cleanup overprovisioned or revoked sibling: starts=%d stops=%d healthy-stopped=%v", starter.startCount, container.stopCount.Load(), healthy.stopCalled)
+	}
+	sibling.Release()
+	continued, err := pool.Acquire(t.Context())
+	if err != nil || continued.container != healthy || healthy.stopCalled {
+		t.Fatalf("healthy sibling could not continue: %v", err)
+	}
+	continued.Release()
+}
+
 type blockingInspectContainer struct {
 	fakeContainerForOrchestrator
 	inspecting chan struct{}
@@ -530,11 +664,13 @@ func TestRunBatch_CancelImageBuildReleasesConfig(t *testing.T) {
 
 type startupOrderedContentClient struct {
 	fakeGitHubClient
-	startup <-chan struct{}
+	startup        <-chan struct{}
+	contentStarted chan struct{}
 }
 
 func (c *startupOrderedContentClient) FetchIssueContent(ctx context.Context, number int) (*github.Issue, error) {
 	if number != 1 {
+		close(c.contentStarted)
 		select {
 		case <-c.startup:
 		case <-ctx.Done():
@@ -567,7 +703,7 @@ func TestRunBatch_CancelWaitingRowAllowsSiblingSuccess(t *testing.T) {
 		}
 	}}
 	log := &spyEventLog{}
-	client := &startupOrderedContentClient{startup: started, fakeGitHubClient: fakeGitHubClient{issues: map[int]*github.Issue{
+	client := &startupOrderedContentClient{startup: started, contentStarted: make(chan struct{}), fakeGitHubClient: fakeGitHubClient{issues: map[int]*github.Issue{
 		1: {Number: 1, Title: "One"}, 2: {Number: 2, Title: "Two"},
 	}, prs: map[string]*github.PR{
 		"1-one": {Number: 1, State: "closed", Merged: true, HeadRefName: "1-one"},
@@ -595,6 +731,7 @@ func TestRunBatch_CancelWaitingRowAllowsSiblingSuccess(t *testing.T) {
 		done <- err
 	}()
 	waitForSignal(t, started, "first row startup")
+	waitForSignal(t, client.contentStarted, "waiting row preparation entered")
 	if err := o.AbortIssue(2); err != nil {
 		t.Fatalf("abort waiting row: %v", err)
 	}

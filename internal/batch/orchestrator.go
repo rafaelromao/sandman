@@ -1226,11 +1226,19 @@ func (p *containerPool) pruneDeadLocked(ctx context.Context) bool {
 func (p *containerPool) stopDeadLocked(entry *pooledContainer) {
 	entry.stopping = true
 	p.mu.Unlock()
+	var err error
 	if entry.container != nil {
-		_ = entry.container.Stop()
+		err = entry.container.Stop()
 	}
 	p.mu.Lock()
-	p.removeShared(entry)
+	var unresolved *sandbox.ContainerCleanupError
+	if errors.As(err, &unresolved) {
+		// A failed inspection does not establish daemon-side removal. Keep
+		// this reservation counted just like unresolved startup cleanup.
+		p.cleanupErr = errors.Join(p.cleanupErr, err)
+	} else {
+		p.removeShared(entry)
+	}
 	p.cond.Broadcast()
 }
 
