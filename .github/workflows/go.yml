@@ -65,6 +65,19 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Chrome for Portal continuity tests
+        if: runner.os == 'Linux'
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: stable
+          install-dependencies: true
+
       - name: Install Podman
         if: runner.os == 'Linux'
         timeout-minutes: 5
@@ -111,6 +124,13 @@ jobs:
             exit 1
           fi
 
+      - name: Portal continuity browser gate
+        if: runner.os == 'Linux'
+        env:
+          SANDMAN_REQUIRE_PORTAL_BROWSER: "1"
+          SANDMAN_PORTAL_CHROMIUM: ${{ steps.setup-chrome.outputs.chrome-path }}
+        run: go test ./internal/cmd -run '^TestPortalLogContinuityBrowser_' -count=1 -timeout=10m
+
       - name: Test
         env:
           GH_TOKEN: ${{ github.token }}
@@ -118,4 +138,6 @@ jobs:
           SANDMAN_RUN_SMOKE_E2E: "0"
           SANDMAN_RUN_AGENT_E2E: "0"
           SANDMAN_E2E_GATES: ""
+          SANDMAN_REQUIRE_PORTAL_BROWSER: ${{ runner.os == 'Linux' && '1' || '0' }}
+          SANDMAN_PORTAL_CHROMIUM: ${{ steps.setup-chrome.outputs.chrome-path }}
         run: go test -race -v ./...

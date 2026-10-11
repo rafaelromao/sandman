@@ -461,6 +461,30 @@ func TestCIWorkflowKeepsOptInSuitesDisabled(t *testing.T) {
 	}
 }
 
+func TestLinuxCIGatesPortalLogContinuityOnRequiredBrowserCoverage(t *testing.T) {
+	workflow := readRepositoryFile(t, "../.github/workflows/go.yml")
+	browserTests := readRepositoryFile(t, "../internal/cmd/portal_log_continuity_browser_test.go")
+	for _, required := range []string{
+		"uses: actions/setup-node@v4",
+		"node-version: 22",
+		"uses: browser-actions/setup-chrome@v2",
+		"name: Portal continuity browser gate",
+		"if: runner.os == 'Linux'",
+		`SANDMAN_REQUIRE_PORTAL_BROWSER: "1"`,
+		"SANDMAN_PORTAL_CHROMIUM: ${{ steps.setup-chrome.outputs.chrome-path }}",
+		"go test ./internal/cmd -run '^TestPortalLogContinuityBrowser_' -count=1 -timeout=10m",
+		"SANDMAN_REQUIRE_PORTAL_BROWSER: ${{ runner.os == 'Linux' && '1' || '0' }}",
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("CI workflow is missing required Portal browser gate contract %q", required)
+		}
+	}
+	if !strings.Contains(browserTests, "func TestPortalLogContinuityBrowser_TabRoundTrips") ||
+		!strings.Contains(browserTests, `for _, tab := range []string{"events", "details"}`) {
+		t.Fatal("focused browser command must select the actual-page Events and Details continuity cases")
+	}
+}
+
 func TestPodmanInstallIsBoundedAcrossLinuxWorkflows(t *testing.T) {
 	for _, workflowPath := range []string{
 		"../.github/workflows/go.yml",
