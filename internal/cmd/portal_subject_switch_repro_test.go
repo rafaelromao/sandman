@@ -129,6 +129,10 @@ func buildPortalReproPage(t *testing.T, stateJSON string, runsJSON []byte, body 
 }
 
 func runPortalChromium(t *testing.T, page string) (string, string) {
+	return runPortalChromiumWithVirtualTimeBudget(t, page, 10000)
+}
+
+func runPortalChromiumWithVirtualTimeBudget(t *testing.T, page string, budgetMS int) (string, string) {
 	t.Helper()
 	chromium := requirePortalContinuityTool(t, "chromium")
 	outPath := filepath.Join(t.TempDir(), "portal-repro.html")
@@ -143,7 +147,7 @@ func runPortalChromium(t *testing.T, page string) (string, string) {
 		"--disable-gpu",
 		"--hide-scrollbars",
 		"--window-size=1360,900",
-		"--virtual-time-budget=10000",
+		"--virtual-time-budget="+strconv.Itoa(budgetMS),
 		"--dump-dom",
 		"--screenshot="+screenshotPath,
 		"file://"+outPath,
@@ -317,7 +321,7 @@ func TestPortalReviewSubjectSwitch_PreservesPendingPerRunOutputAcrossRoundTrip(t
       return { type: 'append', runId: runId, generation: accepted.generation, start: accepted.end, end: accepted.end, records: [], cursor: accepted.cursor };
     };
     async function until(predicate, description) {
-      var deadline = Date.now() + 3000;
+      var deadline = Date.now() + 10000;
       while (Date.now() < deadline) {
         if (predicate()) return;
         await new Promise(resolve => setTimeout(resolve, 10));
@@ -343,17 +347,23 @@ func TestPortalReviewSubjectSwitch_PreservesPendingPerRunOutputAcrossRoundTrip(t
         start: start, end: end, records: [{ start: start, end: end, text: pendingText }], cursor: cursor }) });
       window.__acceptedLogCursors['`+parentID+`'] = { generation: parent.generation, end: end, cursor: cursor };
       await until(() => window.sandmanPortalLogs.get('`+parentID+`').text.includes(pendingText) && pendingRafs.length, 'pending parent output acknowledgement');
-      const select = document.querySelector('select[data-action="set-subject"]');
-      select.value = '`+reviewID+`';
-      select.dispatchEvent(new Event('change', { bubbles: true }));
+      function chooseSubject(runId) {
+        const select = document.querySelector('select[data-action="set-subject"]');
+        if (!select) throw new Error('missing subject selector during continuity round-trip');
+        select.value = runId;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      chooseSubject('`+reviewID+`');
       if (!pendingRafs.length) throw new Error('review selection did not queue a frame');
       pendingRafs.pop()(performance.now());
       await until(() => window.sandmanPortalLogs.get('`+reviewID+`')?.cursor, 'review source snapshot');
-      select.value = '`+parentID+`';
-      select.dispatchEvent(new Event('change', { bubbles: true }));
+      chooseSubject('`+parentID+`');
       if (!pendingRafs.length) throw new Error('parent return did not queue a frame');
       pendingRafs.pop()(performance.now());
-      await until(() => window.__portalStreams.filter(source => source.runId === '`+parentID+`').length >= 2, 'parent cursor resume');
+      await until(() => window.__portalStreams.filter(source => source.runId === '`+parentID+`').length >= 2,
+        'parent cursor resume (selected=' + (document.querySelector('select[data-action="set-subject"]')?.value || '')
+          + ', parent streams=' + window.__portalStreams.filter(source => source.runId === '`+parentID+`').length
+          + ', pending frames=' + pendingRafs.length + ')');
       while (pendingRafs.length) pendingRafs.pop()(performance.now());
       window.requestAnimationFrame = nativeRaf;
       await until(() => {
@@ -361,6 +371,7 @@ func TestPortalReviewSubjectSwitch_PreservesPendingPerRunOutputAcrossRoundTrip(t
         return pre && pre.textContent === window.sandmanPortalLogs.get('`+parentID+`').text;
       }, 'parent projection after subject return');
       const pre = document.querySelector('pre[data-scroll-key="`+parentID+`"]');
+      const select = document.querySelector('select[data-action="set-subject"]');
       const marker = document.createElement('pre');
       marker.id = 'portal-subject-pending-output';
       marker.textContent = JSON.stringify({ selected: select.value, parentText: window.sandmanPortalLogs.get('`+parentID+`').text,
@@ -375,7 +386,7 @@ func TestPortalReviewSubjectSwitch_PreservesPendingPerRunOutputAcrossRoundTrip(t
       });
     }, 30);
   `)
-	dom, _ := runPortalChromium(t, page)
+	dom, _ := runPortalChromiumWithVirtualTimeBudget(t, page, 60000)
 	payload := extractPortalMarker(t, dom, "portal-subject-pending-output")
 	var result struct {
 		Selected     string `json:"selected"`

@@ -86,12 +86,14 @@ Sandman publishes four GoReleaser targets that match the four Unix platforms Ope
 
 | Platform | Build + unit (race) | Podman-backed regression | Native Compatibility boundary |
 |----------|---------------------|--------------------------|-------------------------------|
-| Linux amd64 | `CI / build (ubuntu-latest)` (PR + push to `main`) | `Full Regression - Linux` (release-please branch + dispatch) | n/a |
+| Linux amd64 | `CI / build (ubuntu-latest)` + `CI / portal-continuity-browser` (PR + push to `main`) | `Full Regression - Linux` (release-please branch + dispatch) | n/a |
 | Linux arm64 | (no PR-time matrix entry today; covered by the released archive) | n/a | `Native Compatibility / (linux/arm64)` on `ubuntu-24.04-arm` (release-please branch + dispatch) |
 | macOS amd64 (Intel) | n/a (covered transitively by `CI / build (macos-latest)` arm64 today) | n/a — release-please does not run Podman on macOS after #2459 | `Native Compatibility / (darwin/amd64)` on `macos-15-intel` (release-please branch + dispatch) |
 | macOS arm64 (Apple Silicon) | `CI / build (macos-latest)` (PR + push to `main`) | n/a | `Native Compatibility / (darwin/arm64)` on `macos-14` (release-please branch + dispatch) |
 
 The ordinary `CI` workflow runs the default untagged suite on the `ubuntu-latest` and `macos-latest` runners. It explicitly leaves `SANDMAN_TEST_PROVIDERS`, `SANDMAN_E2E_GATES`, `SANDMAN_RUN_SMOKE_E2E`, and `SANDMAN_RUN_AGENT_E2E` disabled, so pull requests do not run opt-in smoke or E2E scenarios.
+
+The required `CI / portal-continuity-browser` job provisions Node and Chromium on Linux and runs the actual-page Portal log continuity browser scenarios. Its separate required status keeps the browser gate visible in branch protection on pull requests and pushes to `main`.
 
 Release Please branch updates add two release-validation workflows:
 

@@ -37,6 +37,34 @@ jobs:
             exit 1
           fi
 
+  portal-continuity-browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Chrome for Portal continuity tests
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: stable
+          install-dependencies: true
+
+      - name: Portal continuity browser gate
+        env:
+          SANDMAN_REQUIRE_PORTAL_BROWSER: "1"
+          SANDMAN_PORTAL_CHROMIUM: ${{ steps.setup-chrome.outputs.chrome-path }}
+        run: go test ./internal/cmd -run '^TestPortalLogContinuityBrowser_' -count=1 -timeout=10m
+
   goreleaser:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
@@ -123,13 +151,6 @@ jobs:
             gofmt -l .
             exit 1
           fi
-
-      - name: Portal continuity browser gate
-        if: runner.os == 'Linux'
-        env:
-          SANDMAN_REQUIRE_PORTAL_BROWSER: "1"
-          SANDMAN_PORTAL_CHROMIUM: ${{ steps.setup-chrome.outputs.chrome-path }}
-        run: go test ./internal/cmd -run '^TestPortalLogContinuityBrowser_' -count=1 -timeout=10m
 
       - name: Test
         env:
