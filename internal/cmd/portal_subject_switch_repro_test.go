@@ -98,6 +98,7 @@ func buildPortalReproPage(t *testing.T, stateJSON string, runsJSON []byte, body 
     // Legacy layout fixtures have a separate saved-source transport fixture.
     // Tests of continuity supply their own structured EventSource instead.
     window.__portalSavedRuns = %s;
+    window.__portalStreams = [];
     window.EventSource = function (url) {
       var self = this;
       this.url = url;
@@ -106,12 +107,19 @@ func buildPortalReproPage(t *testing.T, stateJSON string, runsJSON []byte, body 
       var key = new URL(url, 'http://localhost').searchParams.get('runKey');
       var run = window.__portalSavedRuns.find(function (r) { return r.backendKey === key || r.key === key || r.runId === key; });
       if (!run) return;
+      this.runId = run.runId || run.key;
+      window.__portalStreams.push(this);
       var text = String(run.log || '').replace(/\n$/, '');
       var end = new TextEncoder().encode(text).length + (text ? 1 : 0);
       var snapshot = { type: 'snapshot', runId: run.runId || run.key, generation: 'fixture-' + (run.runId || run.key), start: 0, end: end,
         records: text ? [{ start: 0, end: end, text: text }] : [], cursor: 'fixture-' + end };
+      var resume = new URL(url, 'http://localhost').searchParams.get('cursor') || '';
+      var frame = typeof window.__portalNextFrame === 'function'
+        ? window.__portalNextFrame(this.runId, resume, snapshot)
+        : snapshot;
+      if (frame === null) return;
       setTimeout(function () {
-        if (self.readyState === 1 && self.onmessage) self.onmessage({ data: JSON.stringify(snapshot) });
+        if (self.readyState === 1 && self.onmessage) self.onmessage({ data: JSON.stringify(frame) });
       }, 0);
     };
 %s
@@ -122,16 +130,14 @@ func buildPortalReproPage(t *testing.T, stateJSON string, runsJSON []byte, body 
 
 func runPortalChromium(t *testing.T, page string) (string, string) {
 	t.Helper()
-	if _, err := exec.LookPath("chromium"); err != nil {
-		t.Skip("chromium not on PATH; skipping portal repro")
-	}
+	chromium := requirePortalContinuityTool(t, "chromium")
 	outPath := filepath.Join(t.TempDir(), "portal-repro.html")
 	screenshotPath := filepath.Join(t.TempDir(), "portal-repro.png")
 	if err := os.WriteFile(outPath, []byte(page), 0o644); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
 	cmd := exec.Command(
-		"chromium",
+		chromium,
 		"--headless",
 		"--no-sandbox",
 		"--disable-gpu",
@@ -284,6 +290,109 @@ func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *test
 	}
 	if result.FetchCalls < 2 || result.ChangeCalls < 1 {
 		t.Fatalf("expected change + refresh path to run, got %#v", result)
+	}
+}
+
+func TestPortalReviewSubjectSwitch_PreservesPendingPerRunOutputAcrossRoundTrip(t *testing.T) {
+	const parentID = "260618113825-abcd-1"
+	const reviewID = "PR42"
+	runs := []map[string]any{
+		{"key": parentID, "runId": parentID, "kind": "active", "status": "reviewing", "issueLabel": "#1", "issueNumber": 1, "reviewCount": 1, "log": "parent saved record"},
+		{"key": reviewID, "runId": reviewID, "kind": "completed", "status": "success", "issueLabel": "PR42", "issueNumber": 1, "prNumber": 42, "review": true, "log": "review saved record"},
+	}
+	runsJSON, err := json.Marshal(runs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateJSON := `{"expandedRunKey":"` + parentID + `","tabs":{"` + parentID + `":"log","PR42":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
+	page := buildPortalReproPage(t, stateJSON, runsJSON, `
+    window.__acceptedLogCursors = {};
+    window.__portalNextFrame = function (runId, cursor, snapshot) {
+      if (!cursor) {
+        window.__acceptedLogCursors[runId] = { generation: snapshot.generation, end: snapshot.end, cursor: snapshot.cursor };
+        return snapshot;
+      }
+      var accepted = window.__acceptedLogCursors[runId];
+      if (!accepted || cursor !== accepted.cursor) throw new Error('resumed with a cursor not accepted for ' + runId);
+      return { type: 'append', runId: runId, generation: accepted.generation, start: accepted.end, end: accepted.end, records: [], cursor: accepted.cursor };
+    };
+    async function until(predicate, description) {
+      var deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        if (predicate()) return;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      throw new Error('timed out waiting for ' + description);
+    }
+    setTimeout(function () {
+      (async function () {
+      await until(() => {
+        const state = window.sandmanPortalLogs.get('`+parentID+`');
+        return state && state.cursor && document.querySelector('pre[data-scroll-key="`+parentID+`"]');
+      }, 'parent source snapshot');
+      const parent = window.sandmanPortalLogs.get('`+parentID+`');
+      const nativeRaf = window.requestAnimationFrame.bind(window);
+      const pendingRafs = [];
+      window.requestAnimationFrame = function (callback) { pendingRafs.push(callback); return pendingRafs.length; };
+      const parentStream = window.__portalStreams.find(source => source.runId === '`+parentID+`' && source.readyState === 1);
+      const pendingText = 'parent output delivered while review is selected';
+      const start = window.sandmanPortalLogs.get('`+parentID+`').end;
+      const end = start + new TextEncoder().encode(pendingText).length + 1;
+      const cursor = 'fixture-' + end;
+      parentStream.onmessage({ data: JSON.stringify({ type: 'append', runId: '`+parentID+`', generation: parent.generation,
+        start: start, end: end, records: [{ start: start, end: end, text: pendingText }], cursor: cursor }) });
+      window.__acceptedLogCursors['`+parentID+`'] = { generation: parent.generation, end: end, cursor: cursor };
+      await until(() => window.sandmanPortalLogs.get('`+parentID+`').text.includes(pendingText) && pendingRafs.length, 'pending parent output acknowledgement');
+      const select = document.querySelector('select[data-action="set-subject"]');
+      select.value = '`+reviewID+`';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      if (!pendingRafs.length) throw new Error('review selection did not queue a frame');
+      pendingRafs.pop()(performance.now());
+      await until(() => window.sandmanPortalLogs.get('`+reviewID+`')?.cursor, 'review source snapshot');
+      select.value = '`+parentID+`';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      if (!pendingRafs.length) throw new Error('parent return did not queue a frame');
+      pendingRafs.pop()(performance.now());
+      await until(() => window.__portalStreams.filter(source => source.runId === '`+parentID+`').length >= 2, 'parent cursor resume');
+      while (pendingRafs.length) pendingRafs.pop()(performance.now());
+      window.requestAnimationFrame = nativeRaf;
+      await until(() => {
+        const pre = document.querySelector('pre[data-scroll-key="`+parentID+`"]');
+        return pre && pre.textContent === window.sandmanPortalLogs.get('`+parentID+`').text;
+      }, 'parent projection after subject return');
+      const pre = document.querySelector('pre[data-scroll-key="`+parentID+`"]');
+      const marker = document.createElement('pre');
+      marker.id = 'portal-subject-pending-output';
+      marker.textContent = JSON.stringify({ selected: select.value, parentText: window.sandmanPortalLogs.get('`+parentID+`').text,
+        reviewText: window.sandmanPortalLogs.get('`+reviewID+`').text, paneText: pre.textContent,
+        parentCursor: window.sandmanPortalLogs.get('`+parentID+`').cursor, reviewCursor: window.sandmanPortalLogs.get('`+reviewID+`').cursor });
+      document.body.appendChild(marker);
+      })().catch(function (error) {
+        const marker = document.createElement('pre');
+        marker.id = 'portal-subject-pending-output';
+        marker.textContent = JSON.stringify({ error: String(error && error.stack || error) });
+        document.body.appendChild(marker);
+      });
+    }, 30);
+  `)
+	dom, _ := runPortalChromium(t, page)
+	payload := extractPortalMarker(t, dom, "portal-subject-pending-output")
+	var result struct {
+		Selected     string `json:"selected"`
+		ParentText   string `json:"parentText"`
+		ReviewText   string `json:"reviewText"`
+		PaneText     string `json:"paneText"`
+		ParentCursor string `json:"parentCursor"`
+		ReviewCursor string `json:"reviewCursor"`
+		Error        string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(payload), &result); err != nil {
+		t.Fatalf("parse subject continuity payload: %v\nraw=%s", err, payload)
+	}
+	if result.Error != "" || result.Selected != parentID || result.ParentCursor == "" || result.ReviewCursor == "" ||
+		result.ParentText != "parent saved record\nparent output delivered while review is selected\n" ||
+		result.ReviewText != "review saved record\n" || result.PaneText != result.ParentText {
+		t.Fatalf("subject round-trip mixed or lost per-RunID output: %+v", result)
 	}
 }
 

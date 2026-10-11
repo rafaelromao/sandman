@@ -163,9 +163,41 @@ while (chunks.length) {
   chunks.shift()();
   chunksRun++;
 }
+
 if (chunksRun < 10) throw new Error('large source record was rendered as one blocking task: ' + chunksRun);
 if (pre.textContent !== store.get('long').text) throw new Error('byte-chunked record changed content');
 if (pre.getAttribute('data-log-end') !== String(store.get('long').end)) throw new Error('byte-chunked DOM range was not committed');
+console.log('PASS');
+`)
+}
+
+func TestPortalLogProjection_PaneCacheEvictionRebuildsFromAuthoritativeRunModel(t *testing.T) {
+	runNodeScript(t, `
+const store = sandbox.SandmanPortalLog.createStore();
+function install(runId, text) {
+  const epoch = store.begin(runId);
+  const size = Buffer.byteLength(text) + 1;
+  store.accept(runId, epoch, { type: 'snapshot', runId, generation: 'g-' + runId, start: 0, end: size,
+    records: [{ start: 0, end: size, text }], cursor: 'cursor-' + runId });
+  return { key: runId, runId, kind: 'active', status: 'running', log: 'stale metadata must not render' };
+}
+helpers.logState = run => store.get(run.runId);
+const sourceRun = install('parent', 'parent record\nretained record');
+const body = makeMockBody();
+const opts = { helpers, expandedKey: 'parent', tabs: { parent: 'log' } };
+SandmanPortalDiff.diffRuns(body, [sourceRun], opts);
+const firstPane = body.children[1].querySelector('pre[data-scroll-key]');
+SandmanPortalDiff.diffRuns(body, [sourceRun], { ...opts, tabs: { parent: 'details' } });
+for (let i = 0; i < 9; i++) {
+  const run = install('other-' + i, 'independent-' + i);
+  SandmanPortalDiff.tokenizeForCache(run, helpers);
+}
+if (SandmanPortalDiff.hasLogPaneCached('parent')) throw new Error('parent pane should be evicted from the bounded view cache');
+SandmanPortalDiff.diffRuns(body, [sourceRun], opts);
+const rebuilt = body.children[1].querySelector('pre[data-scroll-key]');
+if (!rebuilt || rebuilt === firstPane) throw new Error('evicted pane was not rebuilt from model state');
+if (rebuilt.textContent !== store.get('parent').text || rebuilt.textContent.indexOf('stale metadata') !== -1) throw new Error('cache miss lost or replaced authoritative records');
+if (rebuilt.getAttribute('data-log-start') !== '0' || rebuilt.getAttribute('data-log-end') !== String(store.get('parent').end)) throw new Error('rebuilt DOM range differs from model');
 console.log('PASS');
 `)
 }

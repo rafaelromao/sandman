@@ -38,15 +38,33 @@ console.log('PASS');
 }
 
 func TestPortalPerf_ChunkedSizeBoundariesAndWarmNavigationPreserveCompleteRange(t *testing.T) {
-	for _, size := range []int{4 * 1024, 20 * 1024, 64 * 1024, 256 * 1024, 320 * 1024} {
+	for _, size := range []int{
+		4 * 1024,
+		15 * 1024,
+		15*1024 + 1,
+		16*1024 - 1,
+		16 * 1024,
+		16*1024 + 1,
+		20 * 1024,
+		63 * 1024,
+		64*1024 - 1,
+		64 * 1024,
+		64*1024 + 1,
+		255 * 1024,
+		256*1024 - 1,
+		256 * 1024,
+		256*1024 + 1,
+		320 * 1024,
+	} {
 		t.Run(strconv.Itoa(size), func(t *testing.T) {
 			runNodeScript(t, `
 const store = sandbox.SandmanPortalLog.createStore();
 const epoch = store.begin('review');
 const size = `+strconv.Itoa(size)+`;
-// One complete oversized source record is retained by the explicit exception.
-const text = 'review record\n'.repeat(Math.ceil(size / 14));
-store.accept('review', epoch, { type: 'snapshot', runId: 'review', generation: 'g', start: 0, end: text.length + 1, records: [{ start: 0, end: text.length + 1, text }], cursor: 'end' });
+// The source range is exact; a single complete oversized record has the
+// documented retention exception.
+const text = 'x'.repeat(size - 1);
+store.accept('review', epoch, { type: 'snapshot', runId: 'review', generation: 'g', start: 0, end: size, records: [{ start: 0, end: size, text }], cursor: 'end' });
 helpers.logState = run => store.get(run.runId);
 const run = { key: 'review', runId: 'review', kind: 'active', status: 'reviewing' };
 const body = makeMockBody();

@@ -480,8 +480,9 @@ func TestLinuxCIGatesPortalLogContinuityOnRequiredBrowserCoverage(t *testing.T) 
 		}
 	}
 	if !strings.Contains(browserTests, "func TestPortalLogContinuityBrowser_TabRoundTrips") ||
-		!strings.Contains(browserTests, `for _, tab := range []string{"events", "details"}`) {
-		t.Fatal("focused browser command must select the actual-page Events and Details continuity cases")
+		!strings.Contains(browserTests, `for _, tab := range []string{"events", "details"}`) ||
+		!strings.Contains(readRepositoryFile(t, "../internal/cmd/portal_subject_switch_repro_test.go"), "func TestPortalReviewSubjectSwitch_PreservesPendingPerRunOutputAcrossRoundTrip") {
+		t.Fatal("Linux CI must include actual-page tab continuity and pending per-RunID subject round-trip cases")
 	}
 }
 

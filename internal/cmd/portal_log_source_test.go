@@ -45,6 +45,70 @@ func TestPortalLogSource_SnapshotTailSharesRawBoundary(t *testing.T) {
 	}
 }
 
+func TestPortalLogSource_SplitANSISequenceAndOversizedCRLFRecordKeepPositions(t *testing.T) {
+	t.Run("escape sequence split across file writes", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "run.log")
+		if err := os.WriteFile(path, nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+		appendSavedLog(t, path, "prefix \x1b[3")
+		source := newPortalLogSource("row", path, "", testPortalLogRegistry(t), "")
+		defer source.Close()
+		first, err := source.Poll(false)
+		if err != nil || first.Type != "snapshot" || first.Start != 0 || first.End != 0 || len(first.Records) != 0 {
+			t.Fatalf("partial escape must remain outside the committed record range: %#v, %v", first, err)
+		}
+		appendSavedLog(t, path, "2mgreen\x1b[0m suffix\r\n")
+		frame, err := source.Poll(false)
+		if err != nil || frame.Type != "append" || frame.Start != first.End || !reflect.DeepEqual(recordTexts(frame), []string{"prefix green suffix"}) {
+			t.Fatalf("completed split escape = %#v, %v", frame, err)
+		}
+	})
+
+	t.Run("one oversized CRLF record is retained whole", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "run.log")
+		long := strings.Repeat("long-record-", 25*1024)
+		raw := "prior\r\n" + long + "\r\n"
+		if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+			t.Fatal(err)
+		}
+		source := newPortalLogSource("row", path, "", testPortalLogRegistry(t), "")
+		defer source.Close()
+		frame, err := source.Poll(false)
+		start := int64(len("prior\r\n"))
+		if err != nil || frame.Start != start || frame.End != int64(len(raw)) || frame.Reason != "oversized-record" || !reflect.DeepEqual(recordTexts(frame), []string{long}) {
+			t.Fatalf("oversized CRLF record range/text = %#v, %v", frame, err)
+		}
+	})
+}
+
+func TestPortalLogSource_RepeatedSixteenLineBlocksKeepRecordMultiplicity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.log")
+	var block []string
+	for i := 0; i < 16; i++ {
+		block = append(block, fmt.Sprintf("23:59:%02d repeated line %02d", i, i))
+	}
+	raw := strings.Join(append(append([]string(nil), block...), block...), "\n") + "\n"
+	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	source := newPortalLogSource("row", path, "", testPortalLogRegistry(t), "")
+	defer source.Close()
+	frame, err := source.Poll(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := append(append([]string(nil), block...), block...)
+	if frame.Type != "snapshot" || !reflect.DeepEqual(recordTexts(frame), want) || len(frame.Records) != 32 {
+		t.Fatalf("repeated 16-line blocks lost records: got %q, want %q", recordTexts(frame), want)
+	}
+	for i := range frame.Records {
+		if i > 0 && frame.Records[i-1].End != frame.Records[i].Start {
+			t.Fatalf("record positions are not contiguous at %d: previous=%#v current=%#v", i, frame.Records[i-1], frame.Records[i])
+		}
+	}
+}
+
 func TestPortalLogSource_ReplacementAfterUnlinkAndRegistryEviction(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.log")
 	if err := os.WriteFile(path, []byte("same\n"), 0600); err != nil {
