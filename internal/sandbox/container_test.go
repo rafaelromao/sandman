@@ -96,7 +96,7 @@ func TestContainerRuntime_Start_MountsGitConfig(t *testing.T) {
 		return exec.Command("echo", "abc123")
 	}
 
-	_, err := rt.Start("alpine", ".", StartOptions{GitConfigPath: "/home/user/.gitconfig"})
+	_, err := rt.Start(t.Context(), "alpine", ".", StartOptions{GitConfigPath: "/home/user/.gitconfig"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestContainerRuntime_Start_UsesIndefiniteIdleCommand(t *testing.T) {
 		return exec.Command("echo", "abc123")
 	}
 
-	_, err := rt.Start("alpine", ".", StartOptions{})
+	_, err := rt.Start(t.Context(), "alpine", ".", StartOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestContainerRuntime_Start_EnablesOrphanReapingForBothRuntimes(t *testing.T
 				return exec.Command("echo", "abc123")
 			}
 
-			if _, err := rt.Start("alpine", ".", StartOptions{}); err != nil {
+			if _, err := rt.Start(t.Context(), "alpine", ".", StartOptions{}); err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			foundInit := false
@@ -176,7 +176,7 @@ func TestContainerRuntime_Start_SetsContainerUser(t *testing.T) {
 		return exec.Command("echo", "abc123")
 	}
 
-	_, err := rt.Start("alpine", ".", StartOptions{UserID: "1000"})
+	_, err := rt.Start(t.Context(), "alpine", ".", StartOptions{UserID: "1000"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestContainerRuntime_Start_DoesNotSetUserForPodman(t *testing.T) {
 		return exec.Command("echo", "abc123")
 	}
 
-	_, err := rt.Start("alpine", ".", StartOptions{UserID: "1000"})
+	_, err := rt.Start(t.Context(), "alpine", ".", StartOptions{UserID: "1000"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -271,7 +271,7 @@ func TestContainerMount_RendersBuiltInAgentPaths(t *testing.T) {
 				return exec.Command("echo", "abc123")
 			}
 
-			_, err := rt.Start("alpine", ".", StartOptions{
+			_, err := rt.Start(t.Context(), "alpine", ".", StartOptions{
 				AgentConfigDirs:  expandedDirs,
 				AgentConfigFiles: expandedFiles,
 			})
@@ -345,7 +345,7 @@ func TestContainerRuntime_Start_MountsAgentConfigFiles(t *testing.T) {
 		return exec.Command("echo", "abc123")
 	}
 
-	_, err = rt.Start("alpine", ".", StartOptions{AgentConfigFiles: []string{configFile}})
+	_, err = rt.Start(t.Context(), "alpine", ".", StartOptions{AgentConfigFiles: []string{configFile}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -372,7 +372,7 @@ func TestContainerRuntime_Start_SkipsMissingAgentConfigDirs(t *testing.T) {
 	}
 
 	missingDir := "/nonexistent/path/for/sandman-test"
-	_, err := rt.Start("alpine", ".", StartOptions{AgentConfigDirs: []string{missingDir}})
+	_, err := rt.Start(t.Context(), "alpine", ".", StartOptions{AgentConfigDirs: []string{missingDir}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -393,7 +393,7 @@ func TestContainerRuntime_Start_SkipsMissingAgentConfigFiles(t *testing.T) {
 	}
 
 	missingFile := "/nonexistent/path/for/sandman-test.json"
-	_, err := rt.Start("alpine", ".", StartOptions{AgentConfigFiles: []string{missingFile}})
+	_, err := rt.Start(t.Context(), "alpine", ".", StartOptions{AgentConfigFiles: []string{missingFile}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -428,7 +428,7 @@ func TestContainerRuntime_Start_MountsAgentConfigDirs(t *testing.T) {
 		return exec.Command("echo", "abc123")
 	}
 
-	_, err = rt.Start("alpine", ".", StartOptions{AgentConfigDirs: []string{configDir, localDir}})
+	_, err = rt.Start(t.Context(), "alpine", ".", StartOptions{AgentConfigDirs: []string{configDir, localDir}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -459,7 +459,7 @@ func TestContainerRuntime_Start_MountsConfigTmpfs(t *testing.T) {
 		return exec.Command("echo", "abc123")
 	}
 
-	_, err := rt.Start("alpine", ".", StartOptions{UserID: "1000"})
+	_, err := rt.Start(t.Context(), "alpine", ".", StartOptions{UserID: "1000"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -497,7 +497,7 @@ func TestContainerRuntime_Start_SkipsTmpfsForMountedRootConfigDirs(t *testing.T)
 		return exec.Command("echo", "abc123")
 	}
 
-	_, err := rt.Start("alpine", ".", StartOptions{ConfigMounts: []ConfigMount{{Source: "/tmp/config", Target: "/.config"}, {Source: "/tmp/cache", Target: "/.cache"}}})
+	_, err := rt.Start(t.Context(), "alpine", ".", StartOptions{ConfigMounts: []ConfigMount{{Source: "/tmp/config", Target: "/.config"}, {Source: "/tmp/cache", Target: "/.cache"}}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -544,7 +544,7 @@ func TestContainerRuntime_Start_RewritesMountedGitConfigCopy(t *testing.T) {
 		return exec.Command("echo", "abc123")
 	}
 
-	container, err := rt.Start("alpine", repoDir, StartOptions{GitConfigPath: gitConfig})
+	container, err := rt.Start(t.Context(), "alpine", repoDir, StartOptions{GitConfigPath: gitConfig})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -595,7 +595,7 @@ func TestContainerRuntime_Start_MountsSSHForSSHRemotes(t *testing.T) {
 		return exec.Command("echo", "abc123")
 	}
 
-	_, err = rt.Start("alpine", ".", StartOptions{SSH: true})
+	_, err = rt.Start(t.Context(), "alpine", ".", StartOptions{SSH: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -624,7 +624,7 @@ func TestContainerRuntime_Start_RunsGhAuthSetupGitForHTTPS(t *testing.T) {
 		return exec.Command("true")
 	}
 
-	_, err := rt.Start("alpine", ".", StartOptions{RemoteScheme: "https"})
+	_, err := rt.Start(t.Context(), "alpine", ".", StartOptions{RemoteScheme: "https"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -740,7 +740,7 @@ func TestContainerRuntime_Start_ReturnsErrorWhenGhAuthFails(t *testing.T) {
 		return exec.Command("true")
 	}
 
-	_, err := rt.Start("alpine", ".", StartOptions{RemoteScheme: "https"})
+	_, err := rt.Start(t.Context(), "alpine", ".", StartOptions{RemoteScheme: "https"})
 	if err == nil {
 		t.Fatal("expected error when gh auth setup-git fails")
 	}
@@ -784,7 +784,7 @@ func TestContainerRuntime_BuildImage_ResolvesSandmanDockerfile(t *testing.T) {
 		return exec.Command("echo", "success")
 	}
 
-	tag, err := rt.BuildImage(dir)
+	tag, err := rt.BuildImage(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -822,7 +822,7 @@ func TestContainerRuntime_BuildImage_BuildsFromDockerfile(t *testing.T) {
 		return exec.Command("echo", "success")
 	}
 
-	tag, err := rt.BuildImage(dir)
+	tag, err := rt.BuildImage(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -856,7 +856,7 @@ func TestContainerRuntime_BuildImage_BuildsFromDockerfile(t *testing.T) {
 func TestContainerRuntime_BuildImage_MissingDockerfile(t *testing.T) {
 	dir := t.TempDir()
 	rt := NewContainerRuntime("docker")
-	_, err := rt.BuildImage(dir)
+	_, err := rt.BuildImage(t.Context(), dir)
 	if err == nil {
 		t.Fatal("expected error for missing .sandman/Dockerfile")
 	}
@@ -880,7 +880,7 @@ func TestContainerRuntime_BuildImage_BuildFailure(t *testing.T) {
 		return exec.Command("false")
 	}
 
-	_, err := rt.BuildImage(dir)
+	_, err := rt.BuildImage(t.Context(), dir)
 	if err == nil {
 		t.Fatal("expected error when build fails")
 	}
@@ -1207,7 +1207,7 @@ func TestContainerRuntime_Start_UsesConfigMounts(t *testing.T) {
 		return exec.Command("echo", "abc123")
 	}
 
-	_, err = rt.Start("alpine", ".", StartOptions{
+	_, err = rt.Start(t.Context(), "alpine", ".", StartOptions{
 		ConfigMounts:     mounts,
 		AgentConfigDirs:  []string{"/should/not/be/mounted"},
 		AgentConfigFiles: []string{"/should/not/be/mounted.json"},

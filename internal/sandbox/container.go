@@ -1,7 +1,10 @@
 package sandbox
 
 import (
+	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -20,9 +23,11 @@ type Container interface {
 }
 
 // ContainerStarter is the interface for starting containers.
+// Implementations must honor cancellation and finish command shutdown and
+// partial-resource cleanup before returning; callers retain capacity until then.
 type ContainerStarter interface {
-	Start(image, repoPath string, opts StartOptions) (Container, error)
-	BuildImage(repoPath string) (string, error)
+	Start(ctx context.Context, image, repoPath string, opts StartOptions) (Container, error)
+	BuildImage(ctx context.Context, repoPath string) (string, error)
 }
 
 // ConfigMount represents a bind mount from a resolved host path to a container path.
@@ -56,14 +61,29 @@ func NewContainerRuntime(binary string) *ContainerRuntime {
 }
 
 // Start launches a new container with the given image and repo mount.
-func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Container, error) {
+func (r *ContainerRuntime) Start(ctx context.Context, image, repoPath string, opts StartOptions) (_ Container, retErr error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	absRepo, err := filepath.Abs(repoPath)
 	if err != nil {
 		return nil, fmt.Errorf("resolve repo path: %w", err)
 	}
 
-	args := []string{"run", "-d", "--rm", "--init"}
+	// Reserve an identity before run: the daemon may create the container even
+	// when cancellation prevents the CLI from returning its ID.
+	name := "sandman-" + rand.Text()
+	args := []string{"run", "-d", "--rm", "--init", "--name", name}
 	cleanup := func() {}
+	runAttempted, created, published := false, false, false
+	defer func() {
+		if !published {
+			if runAttempted {
+				retErr = errors.Join(retErr, r.removePartialContainer(name, !created && ctx.Err() != nil))
+			}
+			cleanup()
+		}
+	}()
 	mountedTargets := map[string]bool{}
 
 	if opts.UserID != "" {
@@ -124,23 +144,27 @@ func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Con
 	}
 	args = append(args, "-v", absRepo+":/workspace", image, "tail", "-f", "/dev/null")
 
-	cmd := r.execFn(r.binary, args...)
-	out, err := cmd.CombinedOutput()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	runAttempted = true
+	out, err := runContainerCommand(ctx, r.execFn(r.binary, args...))
 	if err != nil {
-		cleanup()
 		return nil, fmt.Errorf("start container: %w\n%s", err, out)
 	}
 	id := strings.TrimSpace(string(out))
+	created = true
 
 	if opts.RemoteScheme == "https" {
-		setupCmd := r.execFn(r.binary, "exec", id, "gh", "auth", "setup-git")
-		if setupOut, setupErr := setupCmd.CombinedOutput(); setupErr != nil {
-			cleanup()
-			_ = r.execFn(r.binary, "stop", id).Run()
+		if setupOut, setupErr := runContainerCommand(ctx, r.execFn(r.binary, "exec", id, "gh", "auth", "setup-git")); setupErr != nil {
 			return nil, fmt.Errorf("gh auth setup-git: %w\n%s", setupErr, setupOut)
 		}
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	published = true
 	return &runningContainer{id: id, binary: r.binary, execFn: r.execFn, cleanup: cleanup}, nil
 }
 
@@ -148,7 +172,10 @@ func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Con
 // The tag is scoped to the repo path and Dockerfile contents to prevent
 // collisions when sandman manages multiple repositories concurrently while
 // still rebuilding when the scaffold changes.
-func (r *ContainerRuntime) BuildImage(repoPath string) (string, error) {
+func (r *ContainerRuntime) BuildImage(ctx context.Context, repoPath string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	dockerfile := paths.NewLayout(&config.Config{}, repoPath).DockerfilePath()
 	if _, err := os.Stat(dockerfile); err != nil {
 		if os.IsNotExist(err) {
@@ -170,8 +197,7 @@ func (r *ContainerRuntime) BuildImage(repoPath string) (string, error) {
 	tag := fmt.Sprintf("sandman-custom-%x:latest", h[:8])
 
 	args := []string{"build", "-t", tag, "-f", dockerfile, repoPath}
-	cmd := r.execFn(r.binary, args...)
-	out, err := cmd.CombinedOutput()
+	out, err := runContainerCommand(ctx, r.execFn(r.binary, args...))
 	if err != nil {
 		return "", fmt.Errorf("build image from .sandman/Dockerfile: %w\n%s", err, out)
 	}
@@ -191,8 +217,13 @@ func (c *runningContainer) ID() string {
 }
 
 func (c *runningContainer) Alive() (bool, error) {
-	cmd := c.execFn(c.binary, "inspect", "-f", "{{.State.Running}}", c.id)
-	out, err := cmd.CombinedOutput()
+	return c.AliveContext(context.Background())
+}
+
+func (c *runningContainer) AliveContext(ctx context.Context) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, containerCleanupTimeout)
+	defer cancel()
+	out, err := runContainerCommand(ctx, c.execFn(c.binary, "inspect", "-f", "{{.State.Running}}", c.id))
 	if err != nil {
 		return false, fmt.Errorf("inspect container: %w\n%s", err, out)
 	}
@@ -203,9 +234,12 @@ func (c *runningContainer) Stop() error {
 	if c.cleanup != nil {
 		defer c.cleanup()
 	}
-	cmd := c.execFn(c.binary, "stop", c.id)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("stop container: %w\n%s", err, out)
+	if out, err := boundedContainerCommand(c.execFn, c.binary, "stop", c.id); err != nil {
+		stopErr := fmt.Errorf("stop container: %w\n%s", err, out)
+		if removeOut, removeErr := boundedContainerCommand(c.execFn, c.binary, "rm", "-f", c.id); removeErr != nil && (errors.Is(removeErr, context.DeadlineExceeded) || !containerNotFound(removeOut)) {
+			return errors.Join(stopErr, &ContainerCleanupError{Name: c.id, Err: fmt.Errorf("remove container: %w\n%s", removeErr, removeOut)})
+		}
+		return stopErr
 	}
 	return nil
 }

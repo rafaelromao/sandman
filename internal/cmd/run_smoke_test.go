@@ -689,7 +689,7 @@ func preflightSmokeContainer(t *testing.T, runtime, imageTag, repoDir, homeDir, 
 	defer cleanup()
 
 	rt := sandbox.NewContainerRuntime(runtime)
-	container, err := rt.Start(imageTag, repoDir, startOpts)
+	container, err := rt.Start(t.Context(), imageTag, repoDir, startOpts)
 	if err != nil {
 		t.Skipf("skip %s smoke: container start unavailable: %v", provider, err)
 	}
