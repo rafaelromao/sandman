@@ -215,7 +215,7 @@ func TestPortalBuiltBinary_BrowserContinuityReloadsAndRecoversAfterRestart(t *te
 	}
 	assetHash := sha256.Sum256([]byte(portalLogJS))
 
-	baseURL, stopServer := startPortalBinary(t, binaryPath, fixture.repoRoot)
+	baseURL, stopServer := startPortalLogBinary(t, binaryPath, fixture.repoRoot)
 	releaseSocket := preparePortalBinaryRepository(t, fixture)
 	defer releaseSocket()
 	addReviewRunToPortalBinaryFixture(t, fixture)
@@ -264,7 +264,7 @@ func TestPortalBuiltBinary_BrowserContinuityReloadsAndRecoversAfterRestart(t *te
 	// Restarting the Portal invalidates its process-local cursor proof. The old
 	// cursor must yield an explicit reset, after which a fresh browser page loads
 	// the same authoritative retained range from the restarted executable.
-	baseURL, stopServer = startPortalBinary(t, binaryPath, fixture.repoRoot)
+	baseURL, stopServer = startPortalLogBinary(t, binaryPath, fixture.repoRoot)
 	defer stopServer()
 	proxy = httptest.NewServer(fixture.binaryHandler(baseURL))
 	defer proxy.Close()
@@ -406,7 +406,7 @@ func addReviewRunToPortalBinaryFixture(t *testing.T, fixture *portalLogContinuit
 	}
 }
 
-func startPortalBinary(t *testing.T, binaryPath, repoRoot string) (string, func()) {
+func startPortalLogBinary(t *testing.T, binaryPath, repoRoot string) (string, func()) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
