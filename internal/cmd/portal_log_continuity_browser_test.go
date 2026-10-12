@@ -139,7 +139,13 @@ func TestPortalLogContinuityBrowser_DurationSortUsesActiveGroupedDuration(t *tes
 		"issueNumber": 42, "issueLabel": "PR42", "startedAt": now.Add(-90 * time.Minute).Format(time.RFC3339),
 		"duration": "90m", "activeDurationSeconds": 0, "executionSince": now.Add(-90 * time.Minute).Format(time.RFC3339),
 	}
-	runsJSON, err := json.Marshal([]map[string]any{waitingParent, activeParent, groupedReview})
+	waitingWithoutBaseline := map[string]any{
+		"key": "waiting-no-baseline", "runId": "waiting-no-baseline", "kind": "active", "status": "reviewing",
+		"waiting": true, "issueNumber": 44, "issueLabel": "#44",
+		"startedAt": now.Add(-3 * time.Hour).Format(time.RFC3339), "duration": "—",
+		"executionSince": now.Add(-3 * time.Hour).Format(time.RFC3339),
+	}
+	runsJSON, err := json.Marshal([]map[string]any{waitingParent, activeParent, groupedReview, waitingWithoutBaseline})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,8 +176,8 @@ func TestPortalLogContinuityBrowser_DurationSortUsesActiveGroupedDuration(t *tes
 	if err := json.Unmarshal([]byte(extractPortalMarker(t, dom, "portal-active-duration-sort")), &result); err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Order) != 2 || result.Order[0] != "active-parent" || result.Order[1] != "waiting-parent" {
-		t.Fatalf("duration sort order = %#v, want the 40m active parent before the 10m waiting parent", result.Order)
+	if len(result.Order) != 3 || result.Order[0] != "active-parent" || result.Order[1] != "waiting-parent" || result.Order[2] != "waiting-no-baseline" {
+		t.Fatalf("duration sort order = %#v, want 40m active, 10m waiting, then waiting without baseline", result.Order)
 	}
 	if result.WaitingDuration != "10m" || result.ReviewChildVisible {
 		t.Fatalf("grouped waiting row = duration %q, review child visible %v; want parent duration 10m and grouped child hidden", result.WaitingDuration, result.ReviewChildVisible)

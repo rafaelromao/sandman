@@ -2271,9 +2271,12 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const status = String(run && run.status || '').trim().toLowerCase();
       if (status === 'queued' || status === 'blocked') return 0;
       const baseline = Number(run && run.activeDurationSeconds);
+      const waiting = !!(run && run.waiting) || status === 'waiting';
+      if (waiting) {
+        return Number.isFinite(baseline) && baseline >= 0 ? baseline * 1000 : 0;
+      }
       if (Number.isFinite(baseline) && baseline >= 0) {
-        const waiting = !!(run && run.waiting) || status === 'waiting';
-        const executionSince = waiting ? NaN : Date.parse(run && run.executionSince || '');
+        const executionSince = Date.parse(run && run.executionSince || '');
         const activeSegment = Number.isFinite(executionSince)
           ? Math.max(0, Date.now() - executionSince)
           : 0;
