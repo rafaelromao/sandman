@@ -355,11 +355,11 @@ func TestPortalReviewSubjectSwitch_PreservesPendingPerRunOutputAcrossRoundTrip(t
       }
       chooseSubject('`+reviewID+`');
       if (!pendingRafs.length) throw new Error('review selection did not queue a frame');
-      pendingRafs.pop()(performance.now());
+      while (pendingRafs.length) pendingRafs.pop()(performance.now());
       await until(() => window.sandmanPortalLogs.get('`+reviewID+`')?.cursor, 'review source snapshot');
       chooseSubject('`+parentID+`');
       if (!pendingRafs.length) throw new Error('parent return did not queue a frame');
-      pendingRafs.pop()(performance.now());
+      while (pendingRafs.length) pendingRafs.pop()(performance.now());
       await until(() => window.__portalStreams.filter(source => source.runId === '`+parentID+`').length >= 2,
         'parent cursor resume (selected=' + (document.querySelector('select[data-action="set-subject"]')?.value || '')
           + ', parent streams=' + window.__portalStreams.filter(source => source.runId === '`+parentID+`').length
