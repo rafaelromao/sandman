@@ -32,6 +32,13 @@ type fakeWorktreeForContainer struct {
 	restoreHostPathsCalled bool
 }
 
+func testContainerSandboxPaths(t *testing.T) (string, string) {
+	t.Helper()
+	repoPath := t.TempDir()
+	worktreePath := filepath.Join(repoPath, ".sandman", "worktrees", "branch")
+	return repoPath, worktreePath
+}
+
 func (f *fakeWorktreeForContainer) Start(opts SandboxStart) error {
 	f.startCalled = true
 	f.startOpts = opts
@@ -277,9 +284,10 @@ func TestContainerSandbox_WritePrompt_DelegatesToWorktree(t *testing.T) {
 }
 
 func TestContainerSandbox_Exec_RunsContainerExec(t *testing.T) {
-	wt := &fakeWorktreeForContainer{workDir: "/host/repo/.sandman/worktrees/branch"}
+	repoPath, worktreePath := testContainerSandboxPaths(t)
+	wt := &fakeWorktreeForContainer{workDir: worktreePath}
 	ctr := &fakeContainer{id: "abc123"}
-	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
+	sb := NewContainerSandbox(wt, ctr, "docker", repoPath)
 
 	var captured []string
 	prev := ExecCommandFn
@@ -326,12 +334,16 @@ func TestContainerSandbox_Exec_RunsContainerExec(t *testing.T) {
 	if !strings.Contains(captured[8], "echo hello") {
 		t.Errorf("expected command to contain original command echo hello, got %q", captured[8])
 	}
+	if !strings.Contains(captured[8], "SANDMAN_GIT_GUARD_DIR") || !strings.Contains(captured[8], "/workspace/.sandman/agent-bin") {
+		t.Errorf("expected command to install the shared-worktree Git guard, got %q", captured[8])
+	}
 }
 
 func TestContainerSandbox_Exec_ReturnsErrorOnStartFailure(t *testing.T) {
-	wt := &fakeWorktreeForContainer{workDir: "/host/repo/.sandman/worktrees/branch"}
+	repoPath, worktreePath := testContainerSandboxPaths(t)
+	wt := &fakeWorktreeForContainer{workDir: worktreePath}
 	ctr := &fakeContainer{id: "abc123"}
-	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
+	sb := NewContainerSandbox(wt, ctr, "docker", repoPath)
 
 	prev := ExecCommandFn
 	defer func() { ExecCommandFn = prev }()
@@ -394,9 +406,10 @@ func TestSharedContainerSandbox_Stop_DoesNotStopContainer(t *testing.T) {
 }
 
 func TestContainerSandbox_ExecInteractive_RunsContainerExec(t *testing.T) {
-	wt := &fakeWorktreeForContainer{workDir: "/host/repo/.sandman/worktrees/branch"}
+	repoPath, worktreePath := testContainerSandboxPaths(t)
+	wt := &fakeWorktreeForContainer{workDir: worktreePath}
 	ctr := &fakeContainer{id: "abc123"}
-	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
+	sb := NewContainerSandbox(wt, ctr, "docker", repoPath)
 
 	var captured []string
 	prev := ExecCommandFn
@@ -431,12 +444,16 @@ func TestContainerSandbox_ExecInteractive_RunsContainerExec(t *testing.T) {
 	if captured[5] != "abc123" {
 		t.Errorf("expected container id abc123, got %q", captured[5])
 	}
+	if !strings.Contains(captured[8], "SANDMAN_GIT_GUARD_DIR") || !strings.Contains(captured[8], "/workspace/.sandman/agent-bin") {
+		t.Errorf("expected interactive command to install the shared-worktree Git guard, got %q", captured[8])
+	}
 }
 
 func TestContainerSandbox_ExecInteractive_ReturnsErrorOnStartFailure(t *testing.T) {
-	wt := &fakeWorktreeForContainer{workDir: "/host/repo/.sandman/worktrees/branch"}
+	repoPath, worktreePath := testContainerSandboxPaths(t)
+	wt := &fakeWorktreeForContainer{workDir: worktreePath}
 	ctr := &fakeContainer{id: "abc123"}
-	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
+	sb := NewContainerSandbox(wt, ctr, "docker", repoPath)
 
 	prev := ExecCommandFn
 	defer func() { ExecCommandFn = prev }()
@@ -450,9 +467,10 @@ func TestContainerSandbox_ExecInteractive_ReturnsErrorOnStartFailure(t *testing.
 }
 
 func TestSharedContainerSandbox_Exec_RunsContainerExec(t *testing.T) {
-	wt := &fakeWorktreeForContainer{workDir: "/host/repo/.sandman/worktrees/branch"}
+	repoPath, worktreePath := testContainerSandboxPaths(t)
+	wt := &fakeWorktreeForContainer{workDir: worktreePath}
 	ctr := &fakeContainer{id: "shared123"}
-	sb := NewSharedContainerSandbox(wt, ctr, "docker", "/host/repo")
+	sb := NewSharedContainerSandbox(wt, ctr, "docker", repoPath)
 
 	var captured []string
 	prev := ExecCommandFn
@@ -488,9 +506,10 @@ func TestContainerSandbox_Exec_KillAgentFnCalledOnAbort(t *testing.T) {
 		t.Skipf("sleep command not available: %v", err)
 	}
 
-	wt := &fakeWorktreeForContainer{workDir: "/host/repo/.sandman/worktrees/branch"}
+	repoPath, worktreePath := testContainerSandboxPaths(t)
+	wt := &fakeWorktreeForContainer{workDir: worktreePath}
 	ctr := &fakeContainer{id: "test-container-123"}
-	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
+	sb := NewContainerSandbox(wt, ctr, "docker", repoPath)
 
 	prevExec := ExecCommandFn
 	prevKill := KillAgentFn
@@ -570,9 +589,10 @@ func TestContainerSandbox_Exec_CancelsViaContext(t *testing.T) {
 		t.Skipf("sleep command not available: %v", err)
 	}
 
-	wt := &fakeWorktreeForContainer{workDir: "/host/repo/.sandman/worktrees/branch"}
+	repoPath, worktreePath := testContainerSandboxPaths(t)
+	wt := &fakeWorktreeForContainer{workDir: worktreePath}
 	ctr := &fakeContainer{id: "abc123"}
-	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
+	sb := NewContainerSandbox(wt, ctr, "docker", repoPath)
 
 	prev := ExecCommandFn
 	prevKill := KillAgentFn
@@ -616,9 +636,10 @@ func TestContainerSandbox_ExecInteractive_CancelsViaContext(t *testing.T) {
 		t.Skipf("sleep command not available: %v", err)
 	}
 
-	wt := &fakeWorktreeForContainer{workDir: "/host/repo/.sandman/worktrees/branch"}
+	repoPath, worktreePath := testContainerSandboxPaths(t)
+	wt := &fakeWorktreeForContainer{workDir: worktreePath}
 	ctr := &fakeContainer{id: "abc123"}
-	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
+	sb := NewContainerSandbox(wt, ctr, "docker", repoPath)
 
 	prev := ExecCommandFn
 	defer func() { ExecCommandFn = prev }()
@@ -655,9 +676,10 @@ func TestContainerSandbox_Exec_KillAgentFnUsesBinary(t *testing.T) {
 		t.Skipf("sleep command not available: %v", err)
 	}
 
-	wt := &fakeWorktreeForContainer{workDir: "/host/repo/.sandman/worktrees/branch"}
+	repoPath, worktreePath := testContainerSandboxPaths(t)
+	wt := &fakeWorktreeForContainer{workDir: worktreePath}
 	ctr := &fakeContainer{id: "podman-container-456"}
-	sb := NewContainerSandbox(wt, ctr, "podman", "/host/repo")
+	sb := NewContainerSandbox(wt, ctr, "podman", repoPath)
 
 	prevExec := ExecCommandFn
 	prevKill := KillAgentFn
