@@ -300,11 +300,12 @@ func TestPortalLogContinuityBrowser_WaitingDuration(t *testing.T) {
     result.initialStatus = label();
     result.initialDuration = duration();
 
+    const etagBeforeAwait = window.__portalSummaryETag;
     const awaitResponse = await window.__portalDurationFetch('/__test/await', { method: 'POST' });
     if (!awaitResponse.ok) throw new Error('await control failed: HTTP ' + awaitResponse.status);
     const awaitState = await awaitResponse.json();
     const summaryResponse = await window.__portalDurationFetch('/api/runs?summary=1', {
-      headers: window.__portalSummaryETag ? { 'If-None-Match': window.__portalSummaryETag } : {},
+      headers: etagBeforeAwait ? { 'If-None-Match': etagBeforeAwait } : {},
     });
     result.postAwaitStatus = summaryResponse.status;
     if (summaryResponse.status !== 200) throw new Error('await transition returned stale summary status ' + summaryResponse.status);
