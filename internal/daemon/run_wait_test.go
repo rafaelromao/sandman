@@ -85,6 +85,32 @@ func TestRunWait_LegacyQuotaEstimateCannotShortenExistingRecoveryGrace(t *testin
 	}
 }
 
+func TestRunWait_ReadResolvedLocationUsesPublicBatchIdentity(t *testing.T) {
+	root := t.TempDir()
+	batchDir := filepath.Join(root, "relocated", "physical-name")
+	now := time.Now().UTC()
+	path := filepath.Join(batchDir, "runs", "row", "wait.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	record := RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "public-batch", Issue: 42,
+		Branch: "42-fix", BaseBranch: "main", OperationID: "ci:17:head", LeaseExpiresAt: now.Add(time.Minute)}
+	if err := atomicfs.WriteAtomicJSON(path, record, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ReadRunWaitAt(batchDir, "public-batch", "row")
+	if err != nil || got.BatchID != record.BatchID {
+		t.Fatalf("resolved lease = %+v, error=%v", got, err)
+	}
+	if got, err := ReadRunWait(batchDir, "row"); err != nil || got.BatchID != record.BatchID {
+		t.Fatalf("generic relocated lease = %+v, error=%v", got, err)
+	}
+	if _, err := ReadRunWaitAt(batchDir, "other-batch", "row"); err == nil {
+		t.Fatal("resolved lease accepted a mismatched public batch identity")
+	}
+}
+
 func TestInitialWaitRejectsForeignBatchOwnership(t *testing.T) {
 	root := t.TempDir()
 	now := time.Now().UTC()
@@ -92,7 +118,7 @@ func TestInitialWaitRejectsForeignBatchOwnership(t *testing.T) {
 	if err := RenewRunWait(filepath.Join(root, "batches", "owner"), record, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ReadRunWait(filepath.Join(root, "batches", "foreign"), "row"); err == nil {
+	if _, err := ReadRunWaitAt(filepath.Join(root, "batches", "foreign"), "foreign", "row"); err == nil {
 		t.Fatal("foreign batch self-authorized initial intent")
 	}
 	if _, err := TransferRunWait(filepath.Join(root, "batches", "foreign"), filepath.Join(root, "batches", "new"), "row", now); err == nil {

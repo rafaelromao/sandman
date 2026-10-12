@@ -335,8 +335,8 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 	if err != nil {
 		return 0, len(dead), err
 	}
-	emitOrphan := func(run events.RunState, issueNumber int) (bool, error) {
-		emitted, err := emitRecoveredAbort(baseDir, run, issueNumber, recoveredAt, log)
+	emitOrphan := func(run events.RunState, issueNumber int, batchDir string) (bool, error) {
+		emitted, err := emitRecoveredAbort(baseDir, batchDir, run, issueNumber, recoveredAt, log)
 		if err != nil {
 			return false, err
 		}
@@ -350,16 +350,24 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 		latestTerminal := latestTerminalForIssues(batch.Manifest.Issues, byIssue)
 		for _, issueNumber := range batch.Manifest.Issues {
 			for _, run := range byIssue[issueNumber] {
-				protected, suspended := waitRecovery(baseDir, run, recoveredAt)
+				waitDir, locationOK := runWaitDir(idx, layout, run, batch.RunDir)
+				if !locationOK {
+					continue
+				}
+				protected, suspended := waitRecovery(baseDir, waitDir, run, recoveredAt)
 				if protected {
 					// The ready continuation is durably queued for a later
 					// scheduler admission. Preserve its worktree and event
 					// state so the next run command can rehydrate it.
 					continue
 				}
-				if suspended && run.BatchID() == filepath.Base(batch.RunDir) {
+				ownsBatch := run.BatchID() == "" && filepath.Clean(waitDir) == filepath.Clean(batch.RunDir)
+				if run.BatchID() != "" {
+					ownsBatch = batchIdentityMatches(idx, layout, run.BatchID(), batch.RunDir)
+				}
+				if suspended && ownsBatch {
 					if _, ok := recoveredRunIDs[run.RunID]; !ok {
-						if _, err := emitOrphan(run, issueNumber); err != nil {
+						if _, err := emitOrphan(run, issueNumber, waitDir); err != nil {
 							return recovered, len(dead), err
 						}
 					}
@@ -404,7 +412,7 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 				if !latestTerminal.IsZero() && !run.Started.Timestamp.After(latestTerminal) {
 					continue
 				}
-				emitted, err := emitOrphan(run, issueNumber)
+				emitted, err := emitOrphan(run, issueNumber, waitDir)
 				if err != nil {
 					return recovered, len(dead), err
 				}
@@ -439,7 +447,11 @@ func recoverPersistedBatchRuns(baseDir string, layout paths.Layout, idx *batchin
 			// A persisted awaiting run can outlive its coordinator. Check its
 			// lease before treating the dead batch as stale; emitRecoveredAbort
 			// repeats the check under the terminalization claim for races.
-			if protected, _ := waitRecovery(baseDir, run, recoveredAt); protected {
+			waitDir, locationOK := runWaitDir(idx, layout, run, batch.RunDir)
+			if !locationOK {
+				continue
+			}
+			if protected, _ := waitRecovery(baseDir, waitDir, run, recoveredAt); protected {
 				continue
 			}
 			if _, done := recoveredRunIDs[run.RunID]; done {
@@ -455,7 +467,7 @@ func recoverPersistedBatchRuns(baseDir string, layout paths.Layout, idx *batchin
 			if err != nil || manifest.RunID != run.RunID {
 				continue
 			}
-			emitted, err := emitRecoveredAbort(baseDir, run, run.IssueNumber(), recoveredAt, log)
+			emitted, err := emitRecoveredAbort(baseDir, waitDir, run, run.IssueNumber(), recoveredAt, log)
 			if err != nil {
 				return nil, recovered, err
 			}
@@ -538,7 +550,11 @@ func recoverOrphanActiveRuns(layout paths.Layout, idx *batchindex.Index, locatio
 
 	var recovered int
 	for _, run := range runs {
-		if protected, _ := waitRecovery(layout.SandmanDir, run, recoveredAt); protected {
+		waitDir, locationOK := runWaitDir(idx, layout, run, layout.BatchDir(run.BatchID()))
+		if !locationOK {
+			continue
+		}
+		if protected, _ := waitRecovery(layout.SandmanDir, waitDir, run, recoveredAt); protected {
 			continue
 		}
 		// Diagnostics without a start/continuation are unknown lifecycle,
@@ -616,7 +632,7 @@ func recoverOrphanActiveRuns(layout paths.Layout, idx *batchindex.Index, locatio
 			continue
 		}
 
-		emitted, err := emitRecoveredAbort(layout.SandmanDir, run, issueNum, recoveredAt, log)
+		emitted, err := emitRecoveredAbort(layout.SandmanDir, waitDir, run, issueNum, recoveredAt, log)
 		if err != nil {
 			return recovered, err
 		}
@@ -638,9 +654,25 @@ func batchIdentityMatches(idx *batchindex.Index, layout paths.Layout, id, dir st
 	return idx.MatchesBatchLocation(layout, id, dir)
 }
 
+func runWaitDir(idx *batchindex.Index, layout paths.Layout, run events.RunState, fallback string) (string, bool) {
+	batchID := run.BatchID()
+	if batchID == "" {
+		return fallback, true
+	}
+	if batch := idx.ResolveBatchIdentity(batchID); batch != nil {
+		return batch.Location(layout).Dir, true
+	}
+	for _, batch := range idx.Batches {
+		if batch.Path != "" && filepath.Base(batch.Path) == batchID {
+			return "", false
+		}
+	}
+	return layout.BatchDir(batchID), true
+}
+
 // emitRecoveredAbort holds the same RunID claim as admission through the fresh
 // projection check and terminal append, fencing takeover during orphan recovery.
-func emitRecoveredAbort(baseDir string, run events.RunState, issueNumber int, recoveredAt time.Time, log events.EventLog) (bool, error) {
+func emitRecoveredAbort(baseDir, batchDir string, run events.RunState, issueNumber int, recoveredAt time.Time, log events.EventLog) (bool, error) {
 	claim, err := ClaimRun(baseDir, run.RunID)
 	if errors.Is(err, ErrRunOwned) {
 		return false, nil
@@ -658,7 +690,7 @@ func emitRecoveredAbort(baseDir string, run events.RunState, issueNumber int, re
 			return false, nil
 		}
 	}
-	if protected, _ := waitRecoverySchedule(baseDir, run, recoveredAt); protected {
+	if protected, _ := waitRecoveryScheduleAt(batchDir, run, recoveredAt); protected {
 		return false, nil
 	}
 	var issueRef *int

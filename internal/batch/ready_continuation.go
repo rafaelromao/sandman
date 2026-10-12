@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/paths"
@@ -42,6 +43,10 @@ func FindReadyContinuations(eventLog []events.Event, layout paths.Layout) []Read
 	}
 
 	ready := make([]ReadyContinuation, 0)
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
+	if err != nil {
+		return ready
+	}
 	for _, state := range states {
 		issue := state.IssueNumber()
 		if issue <= 0 || latestRunByIssue[issue] != state.RunID || !state.IsActive() || !(state.IsAwaiting() || state.IsCapacityQueued() || state.Status() == "queued") {
@@ -55,8 +60,11 @@ func FindReadyContinuations(eventLog []events.Event, layout paths.Layout) []Read
 		if batchID == "" {
 			batchID = state.BatchID()
 		}
-		batchDir := daemon.ResolveBatchDir(layout, batchID)
-		if batchID != "" && daemon.IsRunActive(batchDir) {
+		batchLocation, ok := resolvedBatchLocation(idx, layout, batchID)
+		if !ok {
+			continue
+		}
+		if batchID != "" && daemon.IsRunActive(batchLocation.Dir) {
 			continue
 		}
 		claim, claimErr := daemon.ClaimRun(layout.SandmanDir, state.RunID)
@@ -64,7 +72,7 @@ func FindReadyContinuations(eventLog []events.Event, layout paths.Layout) []Read
 			continue
 		}
 		_ = claim.Close()
-		wait, waitErr := daemon.ReadRunWait(batchDir, state.RunID)
+		wait, waitErr := daemon.ReadRunWaitAt(batchLocation.Dir, batchLocation.ID, state.RunID)
 		if waitErr == nil {
 			var valid bool
 			wait, _, valid = reconcileRecoveryWait(wait, state)
@@ -107,6 +115,21 @@ func FindReadyContinuations(eventLog []events.Event, layout paths.Layout) []Read
 		})
 	}
 	return ready
+}
+
+func resolvedBatchLocation(idx *batchindex.Index, layout paths.Layout, batchID string) (paths.BatchLocation, bool) {
+	if batchID == "" {
+		return layout.LocateBatch(batchID, ""), true
+	}
+	if batch := idx.ResolveBatchIdentity(batchID); batch != nil {
+		return batch.Location(layout), true
+	}
+	for _, batch := range idx.Batches {
+		if batch.Path != "" && filepath.Base(batch.Path) == batchID {
+			return paths.BatchLocation{}, false
+		}
+	}
+	return layout.LocateBatch(batchID, ""), true
 }
 
 // Events determine whether execution has started. Reconcile a sidecar left

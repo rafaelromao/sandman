@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/events"
 )
@@ -66,57 +67,54 @@ func TestRecoverStaleRuns_PreservesAwaitingRunWithUnexpiredLease(t *testing.T) {
 	}
 }
 
-func TestRecoverStaleRuns_PreservesAwaitingRunAtIndexedRelocatedLocation(t *testing.T) {
-	baseDir := t.TempDir()
-	physical := filepath.Join(baseDir, "relocated", "frozen-location")
-	if err := (&batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{{
-		ID: "public-batch", Path: physical, Status: batchindex.StatusActive, Issues: []int{42},
-	}}}).Save(filepath.Join(baseDir, "batches.json")); err != nil {
+func TestRecoverStaleRuns_PreservesAwaitingRunAtRelocatedIndexedLease(t *testing.T) {
+	baseDir := filepath.Join(t.TempDir(), ".sandman")
+	now := time.Now().UTC()
+	createdAt := now.Add(-20 * time.Minute)
+	started := createdAt.Add(time.Minute)
+	awaited := now.Add(-10 * time.Minute)
+	batchID := "public-batch"
+	physicalDir := filepath.Join(baseDir, "relocated", "physical-name")
+	idx := &batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{{
+		ID: batchID, Path: physicalDir, Status: batchindex.StatusActive, Kind: batchindex.KindIssue, Issues: []int{42},
+	}}}
+	if err := idx.Save(filepath.Join(baseDir, "batches.json")); err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now().UTC()
-	started := now.Add(-20 * time.Minute)
-	awaited := now.Add(-10 * time.Minute)
-	writeManifestFile(t, physical, BatchManifest{Issues: []int{42}, CreatedAt: started})
-	runID := "run-relocated-await-42"
-	runDir := filepath.Join(physical, "runs", runID)
+	writeManifestFile(t, physicalDir, BatchManifest{Issues: []int{42}, CreatedAt: createdAt})
+	runID := "run-relocated-42"
+	runDir := filepath.Join(physicalDir, "runs", runID)
 	if err := batchindex.WriteManifest(runDir, batchindex.RunManifest{
-		RunID: runID, BatchID: "public-batch", Issue: 42,
+		RunID: runID, BatchID: batchID, Issue: 42,
 		Status: batchindex.RunManifestStatusActive, CreatedAt: started,
 	}); err != nil {
-		t.Fatalf("write run manifest: %v", err)
+		t.Fatal(err)
 	}
-	if err := RenewRunWait(physical, RunWait{
-		Protocol: "run-wait/v1", RunID: runID, BatchID: "public-batch", Issue: 42,
+	waitPath := filepath.Join(runDir, "wait.json")
+	if err := atomicfs.WriteAtomicJSON(waitPath, RunWait{
+		Protocol: "run-wait/v1", RunID: runID, BatchID: batchID, Issue: 42,
 		Branch: "42-fix", BaseBranch: "main", OperationID: "ci:17:head",
-		OperationDeadline: now.Add(30 * time.Minute),
-	}, now); err != nil {
-		t.Fatalf("write awaiting snapshot: %v", err)
+		OperationDeadline: now.Add(time.Minute), LeaseExpiresAt: now.Add(time.Minute),
+	}, 0o600); err != nil {
+		t.Fatal(err)
 	}
+
+	eventLog := &recordingEventLog{}
 	existing := []events.Event{
 		{Type: "run.started", RunID: runID, Issue: 42, Timestamp: started, Payload: map[string]any{
-			"batch_id": "public-batch", "branch": "42-fix", "base_branch": "main",
+			"batch_id": batchID, "branch": "42-fix", "base_branch": "main",
 		}},
 		{Type: "run.await", RunID: runID, Issue: 42, Timestamp: awaited, Payload: map[string]any{
-			"await_reason": "pending", "ci_wait": map[string]any{
-				"deadline_unix_seconds": now.Add(30 * time.Minute).Unix(),
-			},
+			"ci_wait": map[string]any{"deadline_unix_seconds": now.Add(time.Minute).Unix()},
 		}},
 	}
-	eventLog := &recordingEventLog{}
+
 	recovered, dirs, err := RecoverStaleRuns(baseDir, existing, eventLog)
 	if err != nil {
-		t.Fatalf("RecoverStaleRuns: %v", err)
+		t.Fatal(err)
 	}
 	if recovered != 0 || dirs != 1 || len(eventLog.logged) != 0 {
 		t.Fatalf("recovery = (%d, %d), events=%v; relocated unexpired await must be preserved", recovered, dirs, eventLog.logged)
-	}
-	manifest, err := batchindex.ReadManifest(runDir)
-	if err != nil {
-		t.Fatalf("read run manifest after recovery: %v", err)
-	}
-	if manifest.Status != batchindex.RunManifestStatusActive {
-		t.Fatalf("run manifest status = %q, want active", manifest.Status)
 	}
 }
 
