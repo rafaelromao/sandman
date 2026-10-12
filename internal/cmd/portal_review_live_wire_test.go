@@ -92,6 +92,55 @@ func TestPortal_Compute_LiveReviewCarriesReviewLiveJSON(t *testing.T) {
 	}
 }
 
+func TestPortal_Compute_LiveReviewPreservesWaitingLifecycleInJSON(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+	awaitAt := startedAt.Add(5 * time.Minute)
+	reviewStartedAt := awaitAt.Add(time.Minute)
+	eventsPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
+	writePortalLog(t, eventsPath, []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "impl-waiting-review", Issue: 2805, Payload: map[string]any{"branch": "2805-fix"}},
+		{Type: "run.await", Timestamp: awaitAt, RunID: "impl-waiting-review", Issue: 2805},
+		{Type: "run.started", Timestamp: reviewStartedAt, RunID: "review-waiting-parent", Issue: 2805, Payload: map[string]any{
+			"review": true, "pr_number": 2805, "issue_number": 2805,
+		}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: eventsPath})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+	var parent *portalRun
+	for i := range runs {
+		if runs[i].RunID == "impl-waiting-review" {
+			parent = &runs[i]
+			break
+		}
+	}
+	if parent == nil {
+		t.Fatalf("waiting implementation row missing: %#v", runs)
+	}
+	if parent.Status != "reviewing" || !parent.ReviewLive {
+		t.Fatalf("live-review aggregate = status %q, reviewLive %v; want reviewing with live review", parent.Status, parent.ReviewLive)
+	}
+
+	data, err := json.Marshal(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if waiting, ok := payload["waiting"].(bool); !ok || !waiting {
+		t.Fatalf("Portal row JSON waiting lifecycle = %#v, want true independently of reviewing aggregate: %s", payload["waiting"], data)
+	}
+}
+
 // TestPortal_Compute_TerminalReviewOmitsReviewLiveJSON pins issue #2109
 // B6 omitempty contract: when every sibling review child is
 // terminal (no in-flight child), the JSON wire must NOT carry the

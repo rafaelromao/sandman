@@ -1624,6 +1624,10 @@
     // startedAt is anchored on run.started) and the terminal path uses
     // the server-stamped Finished - Started.
     if (run && (run.status === 'queued' || run.status === 'blocked')) return '—';
+    // Status may be promoted to "reviewing" by a linked live review even
+    // while the implementation is waiting. Trust the event-derived waiting
+    // signal over an executionSince value retained by a stale client row.
+    if (run && run.waiting) return run.duration || '—';
     const executionSince = Date.parse(run && run.executionSince || '');
     if (!Number.isFinite(executionSince)) return run && run.duration || '—';
     const baseline = Number(run && run.activeDurationSeconds);
@@ -1636,6 +1640,27 @@
     if (hours) return hours + 'h' + (minutes ? minutes + 'm' : '') + (seconds ? seconds + 's' : '');
     if (minutes) return minutes + 'm' + (seconds ? seconds + 's' : '');
     return seconds + 's';
+  }
+
+  function durationSortValue(run) {
+    const status = String(run && run.status || '').trim().toLowerCase();
+    if (status === 'queued' || status === 'blocked') return 0;
+    const baseline = Number(run && run.activeDurationSeconds);
+    const finished = Date.parse(run && run.finishedAt);
+    const terminal = !!(run && run.kind === 'completed')
+      || ['success', 'failure', 'aborted'].includes(status)
+      || Number.isFinite(finished);
+    if (terminal) {
+      return Number.isFinite(baseline) && baseline >= 0 ? baseline * 1000 : 0;
+    }
+    const waiting = !!(run && run.waiting) || status === 'waiting';
+    if (waiting) return Number.isFinite(baseline) && baseline >= 0 ? baseline * 1000 : 0;
+    if (Number.isFinite(baseline) && baseline >= 0) {
+      const executionSince = Date.parse(run && run.executionSince || '');
+      const activeSegment = Number.isFinite(executionSince) ? Math.max(0, Date.now() - executionSince) : 0;
+      return Math.max(0, baseline * 1000 + activeSegment);
+    }
+    return 0;
   }
 
   // Summary 304s intentionally skip the full diff/render path. Refresh only
@@ -1950,6 +1975,7 @@
     insertRunRow,
     updateRunRowCells,
     refreshLiveTimeCells,
+    durationSortValue,
     removeRunRow,
     setEmpty,
     getRowData,

@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +25,17 @@ func TestPortal_RunClockContinuity(t *testing.T) {
 		{Type: "run.continued", Timestamp: start.Add(15 * time.Minute), RunID: "clock", Issue: 42, Payload: map[string]any{"batch_id": "second", "previous_run_id": "clock"}},
 	}
 	writePortalLog(t, log.Path, history)
+	statusAt := func(now time.Time) string {
+		t.Helper()
+		var output bytes.Buffer
+		cmd := newStatusCmd(log, func() time.Time { return now })
+		cmd.SetOut(&output)
+		cmd.SetErr(&output)
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("status at %s: %v", now, err)
+		}
+		return output.String()
+	}
 	assertRow := func(now time.Time, duration string, since *time.Time) portalRun {
 		t.Helper()
 		// A new view rehydrates the clock from saved events on every observation.
@@ -44,17 +57,50 @@ func TestPortal_RunClockContinuity(t *testing.T) {
 	if active.ActiveDurationSeconds != 300 {
 		t.Fatalf("resumed baseline=%d, want 300", active.ActiveDurationSeconds)
 	}
+	if got := statusAt(start.Add(17 * time.Minute)); !strings.Contains(got, "elapsed 7m0s") {
+		t.Fatalf("status duration = %q, want the Portal active duration 7m0s", got)
+	}
 	if err := log.Log(events.Event{Type: "run.await", Timestamp: start.Add(17 * time.Minute), RunID: "clock", Issue: 42}); err != nil {
 		t.Fatal(err)
 	}
 	waiting := assertRow(start.Add(time.Hour), "7m0s", nil)
+	if !waiting.Waiting {
+		t.Fatal("waiting Portal row did not preserve its event-derived waiting lifecycle")
+	}
+	if got := statusAt(start.Add(time.Hour)); !strings.Contains(got, "elapsed 7m0s") {
+		t.Fatalf("waiting status duration = %q, want the frozen Portal duration 7m0s", got)
+	}
+	resumeAt := start.Add(2 * time.Hour)
+	if err := log.Log(events.Event{Type: "run.continued", Timestamp: resumeAt, RunID: "clock", Issue: 42, Payload: map[string]any{"batch_id": "third", "previous_run_id": "clock"}}); err != nil {
+		t.Fatal(err)
+	}
+	resumed := assertRow(resumeAt.Add(2*time.Minute), "9m0s", &resumeAt)
+	if resumed.Waiting || resumed.ActiveDurationSeconds != 420 {
+		t.Fatalf("resumed Portal clock = waiting %v baseline %d, want waiting false baseline 420", resumed.Waiting, resumed.ActiveDurationSeconds)
+	}
+	if got := statusAt(resumeAt.Add(2 * time.Minute)); !strings.Contains(got, "elapsed 9m0s") {
+		t.Fatalf("resumed status duration = %q, want the Portal duration 9m0s", got)
+	}
+	finishedAt := resumeAt.Add(7 * time.Minute)
+	if err := log.Log(events.Event{Type: "run.finished", Timestamp: finishedAt, RunID: "clock", Issue: 42, Payload: map[string]any{"status": "success"}}); err != nil {
+		t.Fatal(err)
+	}
+	terminal := assertRow(finishedAt.Add(time.Hour), "14m0s", nil)
+	if terminal.Waiting || terminal.FinishedAt == nil {
+		t.Fatalf("terminal Portal row = waiting %v finished %v, want terminal and not waiting", terminal.Waiting, terminal.FinishedAt)
+	}
+
 	activeJSON, _ := json.Marshal(active)
 	waitingJSON, _ := json.Marshal(waiting)
+	resumedJSON, _ := json.Marshal(resumed)
+	terminalJSON, _ := json.Marshal(terminal)
 	runNodeScript(t, `
 const body = makeMockBody();
 const opts = { helpers, stopGroups: new Set(), expandedKey: null };
 const active = `+string(activeJSON)+`;
 const waiting = `+string(waitingJSON)+`;
+const resumed = `+string(resumedJSON)+`;
+const terminal = `+string(terminalJSON)+`;
 Date.now = () => `+jsonNumber(start.Add(17*time.Minute).UnixMilli())+`;
 SandmanPortalDiff.diffRuns(body, [active], opts);
 SandmanPortalDiff.refreshLiveTimeCells(body, [active]);
@@ -64,6 +110,14 @@ SandmanPortalDiff.diffRuns(body, [waiting], opts);
 Date.now = () => `+jsonNumber(start.Add(time.Hour).UnixMilli())+`;
 SandmanPortalDiff.refreshLiveTimeCells(body, [waiting]);
 if (!/^7m(?:0s)?$/.test(duration())) throw new Error('waiting clock advanced: ' + duration());
+Date.now = () => `+jsonNumber(resumeAt.Add(2*time.Minute).UnixMilli())+`;
+SandmanPortalDiff.diffRuns(body, [resumed], opts);
+SandmanPortalDiff.refreshLiveTimeCells(body, [resumed]);
+if (!/^9m(?:0s)?$/.test(duration())) throw new Error('resumed clock did not advance from frozen baseline: ' + duration());
+Date.now = () => `+jsonNumber(finishedAt.Add(time.Hour).UnixMilli())+`;
+SandmanPortalDiff.diffRuns(body, [terminal], opts);
+SandmanPortalDiff.refreshLiveTimeCells(body, [terminal]);
+if (!/^14m(?:0s)?$/.test(duration())) throw new Error('terminal duration changed after finish: ' + duration());
 `)
 }
 

@@ -2268,11 +2268,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     }
 
     function runDurationValue(run) {
-      const started = runStartedValue(run);
-      if (!started) return 0;
-      const finished = Date.parse(run && run.finishedAt);
-      const end = Number.isFinite(finished) ? finished : Date.now();
-      return Math.max(0, end - started);
+      return portalDiff.durationSortValue(run);
     }
 
     function sortedVisibleRuns(runs) {
