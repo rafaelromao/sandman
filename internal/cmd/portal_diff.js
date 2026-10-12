@@ -1651,9 +1651,7 @@
       || ['success', 'failure', 'aborted'].includes(status)
       || Number.isFinite(finished);
     if (terminal) {
-      if (Number.isFinite(baseline) && baseline >= 0) return baseline * 1000;
-      const started = Date.parse(run && run.startedAt);
-      return Number.isFinite(finished) && Number.isFinite(started) ? Math.max(0, finished - started) : 0;
+      return Number.isFinite(baseline) && baseline >= 0 ? baseline * 1000 : 0;
     }
     const waiting = !!(run && run.waiting) || status === 'waiting';
     if (waiting) return Number.isFinite(baseline) && baseline >= 0 ? baseline * 1000 : 0;
@@ -1662,9 +1660,7 @@
       const activeSegment = Number.isFinite(executionSince) ? Math.max(0, Date.now() - executionSince) : 0;
       return Math.max(0, baseline * 1000 + activeSegment);
     }
-    const started = Date.parse(run && run.startedAt);
-    if (!Number.isFinite(started)) return 0;
-    return Math.max(0, (Number.isFinite(finished) ? finished : Date.now()) - started);
+    return 0;
   }
 
   // Summary 304s intentionally skip the full diff/render path. Refresh only

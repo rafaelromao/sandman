@@ -147,6 +147,17 @@ const waitingWithoutBaseline = {
 };
 if (durationSortValue(waitingWithoutBaseline) !== 0) throw new Error('waiting row without an active baseline used wall time');
 
+const runningWithoutBaseline = {
+  status: 'running', startedAt: new Date(now - 12 * 60 * 60 * 1000).toISOString(), executionSince: stale,
+};
+if (durationSortValue(runningWithoutBaseline) !== 0) throw new Error('running row without an active baseline used wall time');
+
+const terminalWithoutBaseline = {
+  kind: 'completed', status: 'success', startedAt: new Date(now - 12 * 60 * 60 * 1000).toISOString(),
+  finishedAt: new Date(now - 9 * 60 * 60 * 1000).toISOString(), executionSince: stale,
+};
+if (durationSortValue(terminalWithoutBaseline) !== 0) throw new Error('terminal row without an active baseline used wall time');
+
 const waiting = {
   status: 'reviewing', waiting: true, activeDurationSeconds: 600, executionSince: stale,
   startedAt: new Date(now - 12 * 60 * 60 * 1000).toISOString(),
