@@ -373,6 +373,22 @@ func TestPortalLogContinuityBrowser_WaitingDuration(t *testing.T) {
 				return
 			}
 			setPortalNow(awaitAt.Add(3 * time.Hour))
+			waiting, err := index.SummarySnapshot(r.Context(), primed.ETag)
+			if err != nil {
+				http.Error(w, "refresh waiting summary: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			var waitingParent *portalRun
+			for i := range waiting.Runs {
+				if waiting.Runs[i].RunID == runID {
+					waitingParent = &waiting.Runs[i]
+					break
+				}
+			}
+			if waiting.NotModified || waiting.ETag == primed.ETag || waitingParent == nil || !waitingParent.Waiting || !waitingParent.ReviewLive || waitingParent.Status != "reviewing" {
+				http.Error(w, fmt.Sprintf("await event did not produce a fresh waiting summary: %#v", waiting), http.StatusConflict)
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]string{"browserNow": awaitAt.Add(3 * time.Hour).Format(time.RFC3339Nano)})
 		case "/__test/resume":
