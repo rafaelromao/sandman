@@ -228,6 +228,23 @@ test('legacy stream payloads never become log text and recovery keeps the framed
   assert.equal(new URL(sources[1].url, 'http://localhost').searchParams.get('protocol'), 'frames');
 });
 
+test('structured frame payloads become record text instead of raw envelope text', () => {
+  const store = createStore();
+  const sources = [];
+  let changes = 0;
+  const subscription = createSubscription({ store, openSource: url => {
+    const source = { url, close() { this.closed = true; } };
+    sources.push(source);
+    return source;
+  }, onChange: () => { changes++; } });
+  subscription.select({ runId: 'a', key: 'a' });
+  sources[0].onmessage({ data: JSON.stringify(frame('snapshot', 0, ['parsed record'])) });
+  const state = store.get('a');
+  assert.equal(state.text, 'parsed record\n');
+  assert.equal(state.text.includes('"type":"snapshot"'), false);
+  assert.equal(changes, 1);
+});
+
 test('a reset is one authoritative replacement and its identical retransmission is a no-op', () => {
   const store = createStore();
   const epoch = store.begin('a');
