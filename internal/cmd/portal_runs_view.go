@@ -31,10 +31,10 @@ type portalEvent struct {
 }
 
 type portalRun struct {
-	Key         string     `json:"key"`
-	RunID       string     `json:"runId"`
-	Kind        string     `json:"kind"`
-	Status      string     `json:"status"`
+	Key    string `json:"key"`
+	RunID  string `json:"runId"`
+	Kind   string `json:"kind"`
+	Status string `json:"status"`
 	// Waiting preserves the event-derived lifecycle phase separately from
 	// Status, which may be promoted to "reviewing" by a live linked review.
 	Waiting     bool       `json:"waiting,omitempty"`
