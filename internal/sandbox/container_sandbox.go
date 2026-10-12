@@ -174,7 +174,7 @@ func RestoreWorktreeGitPaths(repoPath, worktreePath string) error {
 	return atomicfs.WriteAtomic(gitFile, []byte(updated), 0644)
 }
 
-const execWrapperScript = `sh -c 'echo $$ > /tmp/agent-pgid; exec sh -c "$1"' _ %s
+const execWrapperScript = `sh -c 'echo $$ > /tmp/agent-pgid; export SANDMAN_GIT_GUARD_DIR="$1"; export PATH="$SANDMAN_GIT_GUARD_DIR:$PATH"; exec sh -c "$2"' _ %s %s
 `
 
 // Exec runs a command inside the container, writing stdout and stderr to the given writers.
@@ -185,7 +185,11 @@ func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, std
 	if err := s.rewriteGitPaths(); err != nil {
 		return fmt.Errorf("rewrite git paths before exec: %w", err)
 	}
-	wrapperCmd := fmt.Sprintf(execWrapperScript, shellenv.Quote(command))
+	guardDir, err := s.AgentGitGuardPath()
+	if err != nil {
+		return fmt.Errorf("prepare agent Git guard: %w", err)
+	}
+	wrapperCmd := fmt.Sprintf(execWrapperScript, shellenv.Quote(guardDir), shellenv.Quote(command))
 	cmd := ExecCommandFn(s.binary, "exec", "-it", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", wrapperCmd)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdout = stdout
@@ -218,7 +222,11 @@ func (s *ContainerSandbox) ExecInteractive(ctx context.Context, command string) 
 	if err := s.rewriteGitPaths(); err != nil {
 		return fmt.Errorf("rewrite git paths before interactive exec: %w", err)
 	}
-	wrapperCmd := fmt.Sprintf(execWrapperScript, command)
+	guardDir, err := s.AgentGitGuardPath()
+	if err != nil {
+		return fmt.Errorf("prepare agent Git guard: %w", err)
+	}
+	wrapperCmd := fmt.Sprintf(execWrapperScript, shellenv.Quote(guardDir), shellenv.Quote(command))
 	cmd := ExecCommandFn(s.binary, "exec", "-it", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", wrapperCmd)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdin = os.Stdin

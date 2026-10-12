@@ -483,8 +483,8 @@ func TestForeignStrandedWorktree_IgnoresWorktreeAtExpectedPath(t *testing.T) {
 }
 
 // TestForeignStrandedWorktree_IgnoresPrunableWorktree pins that prunable
-// worktrees are skipped — they will be cleaned up by `git worktree prune`,
-// not by the foreign-detach recovery path.
+// worktrees are skipped by the foreign-detach recovery path; canonical
+// path-scoped recovery owns any stale registration cleanup.
 func TestForeignStrandedWorktree_IgnoresPrunableWorktree(t *testing.T) {
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)

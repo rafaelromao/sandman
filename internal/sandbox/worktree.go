@@ -494,7 +494,11 @@ func IsGitDir(path string) bool {
 
 // Exec runs a command in the worktree, writing stdout and stderr to the given writers.
 func (s *WorktreeSandbox) Exec(ctx context.Context, command string, stdout, stderr io.Writer) error {
-	cmd := exec.Command("sh", "-c", command)
+	guardDir, err := s.AgentGitGuardPath()
+	if err != nil {
+		return fmt.Errorf("prepare agent Git guard: %w", err)
+	}
+	cmd := exec.Command("sh", "-c", guardedAgentShellCommand(guardDir), "_", command)
 	cmd.Dir = s.workDir
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -516,7 +520,11 @@ func (s *WorktreeSandbox) Exec(ctx context.Context, command string, stdout, stde
 
 // ExecInteractive runs a command in the worktree attached to the user's terminal.
 func (s *WorktreeSandbox) ExecInteractive(ctx context.Context, command string) error {
-	cmd := exec.Command("sh", "-c", command)
+	guardDir, err := s.AgentGitGuardPath()
+	if err != nil {
+		return fmt.Errorf("prepare agent Git guard: %w", err)
+	}
+	cmd := exec.Command("sh", "-c", guardedAgentShellCommand(guardDir), "_", command)
 	cmd.Dir = s.workDir
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -709,8 +717,8 @@ func parseCheckedOutPath(out []byte) (string, bool) {
 
 // removePrunableWorktreeRegistration drops the registration directory that
 // corresponds to the canonical worktree, without touching any other
-// worktree registration. It is the scoped equivalent of
-// `git worktree prune` for a single path.
+// worktree registration. This is the path-scoped alternative to a
+// repository-wide prune.
 //
 // Use this in recovery paths to drop a stale registration (the worktree
 // directory was removed out-of-band, or the `.git` gitlink was rewritten)
@@ -725,9 +733,8 @@ func (s *WorktreeSandbox) removePrunableWorktreeRegistration() error {
 }
 
 // RemoveWorktreeRegistration removes only the registration corresponding to
-// worktreePath. It is the target-scoped alternative to `git worktree prune`,
-// which can remove live sibling registrations when host paths are not visible
-// from a container.
+// worktreePath. Repository-wide pruning can remove live sibling registrations
+// when host paths are not visible from a container.
 func RemoveWorktreeRegistration(repoPath, worktreePath string) error {
 	registrations := filepath.Join(repoPath, ".git", "worktrees")
 	entries, err := os.ReadDir(registrations)

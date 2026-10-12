@@ -362,10 +362,21 @@ func (r *AgentRun) persistSession(sessionID string) {
 // by shellenv.Build is propagated unchanged so the caller can surface a
 // typed failure.
 func (r *AgentRun) prependEnv(strategy agentStrategy, command string) (string, error) {
-	if len(r.env) == 0 {
-		return command, nil
+	env := make(map[string]string, len(r.env)+2)
+	for key, value := range r.env {
+		env[key] = value
 	}
-	env := strategy.LaunchEnv(r.env, r.opencodePermissionMode, command)
+	env = strategy.LaunchEnv(env, r.opencodePermissionMode, command)
+	if guard, ok := r.sandbox.(sandbox.AgentGitGuardProvider); ok {
+		guardDir, err := guard.AgentGitGuardPath()
+		if err != nil {
+			return "", fmt.Errorf("prepare agent Git guard: %w", err)
+		}
+		if path, configured := env["PATH"]; configured {
+			env["PATH"] = guardDir + string(os.PathListSeparator) + path
+		}
+		env["SANDMAN_GIT_GUARD_DIR"] = guardDir
+	}
 	if len(env) == 0 {
 		return command, nil
 	}

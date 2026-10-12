@@ -864,6 +864,43 @@ func TestAgentRun_Run_PassesEnvAndPromptFileThroughFullChain(t *testing.T) {
 	}
 }
 
+type gitGuardProviderTestSandbox struct {
+	*fakeSandbox
+	guardPath string
+	guardErr  error
+}
+
+func (s *gitGuardProviderTestSandbox) AgentGitGuardPath() (string, error) {
+	return s.guardPath, s.guardErr
+}
+
+func TestAgentRun_PrependEnvKeepsGitGuardAheadOfConfiguredPath(t *testing.T) {
+	sb := &gitGuardProviderTestSandbox{
+		fakeSandbox: &fakeSandbox{workDir: t.TempDir()},
+		guardPath:   "/workspace/.sandman/agent-bin",
+	}
+	run := NewAgentRun(&github.Issue{Number: 42, Title: "Fix bug"}, "42-fix-bug", sb)
+	run.env = map[string]string{
+		"PATH":                "/custom/tools",
+		"OPENCODE_PERMISSION": "builtin permission settings",
+	}
+	run.opencodePermissionMode = "builtin"
+
+	command, err := run.prependEnv(opencodeStrategy{builtInCommand: true}, "opencode run")
+	if err != nil {
+		t.Fatalf("prependEnv: %v", err)
+	}
+	if !strings.Contains(command, `export PATH=/workspace/.sandman/agent-bin:/custom/tools`) {
+		t.Errorf("PATH does not put the guard ahead of configured tools: %q", command)
+	}
+	if !strings.Contains(command, `export SANDMAN_GIT_GUARD_DIR=/workspace/.sandman/agent-bin`) {
+		t.Errorf("guard directory is not exported to agent children: %q", command)
+	}
+	if strings.Contains(command, "OPENCODE_PERMISSION") {
+		t.Errorf("built-in permission variable should still be filtered: %q", command)
+	}
+}
+
 func TestAgentRun_Run_TemplateErrorCausesFailure(t *testing.T) {
 	issue := &github.Issue{Number: 42, Title: "Fix bug"}
 	sb := &fakeSandbox{workDir: t.TempDir()}

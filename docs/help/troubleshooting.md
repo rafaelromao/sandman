@@ -28,7 +28,7 @@ Cycles are reported with the cycle path. See [Workflows > BlockedBy-aware execut
 A worktree whose HEAD points to a different branch than its directory name expects — typically caused by a previous run that was interrupted after `git worktree add` but before the agent checked out the right branch.
 
 - Detect: `sandman stranded [--json]`. The text output prints a one-line `git checkout -f ...` remediation per worktree. `--json` returns the structured list.
-- Auto-recover: `--reconcile-stranded` (enabled by default on `sandman run --override` and on a fresh issue under `--continue`) prunes and re-registers the stale worktree. Opt out with `--no-reconcile-stranded`.
+- Auto-recover: `--reconcile-stranded` (enabled by default on `sandman run --override` and on a fresh issue under `--continue`) removes only the stale worktree registration being recovered, then re-registers that worktree. Opt out with `--no-reconcile-stranded`.
 - Prunable worktrees (the gitlink in `git worktree list` is missing) are also auto-recovered on `--continue`.
 
 See [`sandman stranded`](../usage/commands.md#sandman-stranded).

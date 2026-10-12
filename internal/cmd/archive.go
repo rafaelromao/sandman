@@ -282,8 +282,9 @@ func runArchiveBatch(cmd *cobra.Command, batchID string, probe runActivityProbe,
 		for _, rec := range entry.Runs {
 			runIDs = append(runIDs, rec.RunID)
 		}
+		batchDir := entry.Location(layout).Dir
 		for _, state := range states {
-			if state.BatchID() == batchID || state.RunID == batchID {
+			if state.RunID == batchID || idx.MatchesBatchLocation(layout, state.BatchID(), batchDir) {
 				runIDs = append(runIDs, state.RunID)
 			}
 		}

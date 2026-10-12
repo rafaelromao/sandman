@@ -53,6 +53,9 @@
         || pre.getAttribute('data-log-generation') !== state.generation) {
         throw new Error(description + ': rendered range differs from accepted model');
       }
+      if (pre.textContent.includes('{"type":"snapshot"') || pre.textContent.includes('{"type":"append"')) {
+        throw new Error(description + ': rendered transport frame envelope');
+      }
       const response = await fetch('/__test/source?runId=' + encodeURIComponent(runId) + '&start=' + state.start + '&end=' + state.end, { cache: 'no-store' });
       if (!response.ok) throw new Error(description + ': source oracle returned HTTP ' + response.status);
       if (await response.text() !== state.text) throw new Error(description + ': model range differs from authoritative Saved Run Log');
