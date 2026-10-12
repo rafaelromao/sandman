@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/atomicfs"
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
@@ -56,6 +58,69 @@ func TestFindReadyContinuationsUsesLatestDurableCapacityPhase(t *testing.T) {
 	})
 	if got := FindReadyContinuations(continued, layout); len(got) != 0 {
 		t.Fatalf("ready after newer run = %#v, want none", got)
+	}
+}
+
+func TestFindReadyContinuationsReadsIndexedRelocatedLease(t *testing.T) {
+	layout := paths.NewLayout(nil, t.TempDir())
+	physicalDir := filepath.Join(layout.SandmanDir, "relocated", "physical-name")
+	idx := &batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{{
+		ID: "public-batch", Path: physicalDir, Status: batchindex.StatusActive, Kind: batchindex.KindIssue,
+	}}}
+	if err := idx.Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	eventLog := []events.Event{
+		{Type: "run.started", Timestamp: now.Add(-2 * time.Minute), RunID: "run-relocated", Issue: 42,
+			Payload: map[string]any{"branch": "42-fix", "base_branch": "main", "batch_id": "public-batch"}},
+		{Type: "run.await", Timestamp: now.Add(-time.Minute), RunID: "run-relocated", Issue: 42,
+			Payload: map[string]any{"ci_wait": map[string]any{"deadline_unix_seconds": now.Add(10 * time.Minute).Unix()}}},
+	}
+	waitPath := filepath.Join(physicalDir, "runs", "run-relocated", "wait.json")
+	if err := os.MkdirAll(filepath.Dir(waitPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicfs.WriteAtomicJSON(waitPath, daemon.RunWait{
+		Protocol: "run-wait/v1", RunID: "run-relocated", BatchID: "public-batch", Issue: 42,
+		Branch: "42-fix", BaseBranch: "main", OperationID: "ci:17:head",
+		LeaseExpiresAt: now.Add(time.Minute), RecoveryEventAt: now,
+	}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ready := FindReadyContinuations(eventLog, layout)
+	if len(ready) != 1 || ready[0].BatchID != "public-batch" || ready[0].Wait == nil || !ready[0].Wait.RecoverableAt(now) || !ready[0].Wait.LeaseExpiresAt.Equal(now.Add(time.Minute)) {
+		t.Fatalf("relocated ready continuation = %#v, want one valid continuation", ready)
+	}
+}
+
+func TestFindReadyContinuationsReadsIndexedRelocatedCapacityLease(t *testing.T) {
+	layout := paths.NewLayout(nil, t.TempDir())
+	physicalDir := filepath.Join(layout.SandmanDir, "relocated", "physical-name")
+	idx := &batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{{
+		ID: "public-batch", Path: physicalDir, Status: batchindex.StatusActive, Kind: batchindex.KindIssue,
+	}}}
+	if err := idx.Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	eventLog := readyContinuationEvents("run-relocated-capacity", "public-batch", now.Add(-2*time.Minute), now.Add(-time.Minute), now)
+	waitPath := filepath.Join(physicalDir, "runs", "run-relocated-capacity", "wait.json")
+	if err := os.MkdirAll(filepath.Dir(waitPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicfs.WriteAtomicJSON(waitPath, daemon.RunWait{
+		Protocol: "run-wait/v1", RunID: "run-relocated-capacity", BatchID: "public-batch", Issue: 42,
+		Branch: "42-fix", BaseBranch: "main", Ready: true, OperationID: "capacity",
+		LeaseExpiresAt: now.Add(time.Minute), RecoveryEventAt: now,
+	}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ready := FindReadyContinuations(eventLog, layout)
+	if len(ready) != 1 || ready[0].Wait == nil || !ready[0].Wait.LeaseExpiresAt.Before(now.Add(2*time.Minute)) {
+		t.Fatalf("relocated capacity continuation = %#v, want the persisted short lease", ready)
 	}
 }
 
