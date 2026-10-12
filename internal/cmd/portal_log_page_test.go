@@ -19,7 +19,8 @@ func TestPortalLogFrontend_StructuredFramesRenderRecordsNotEnvelope(t *testing.T
 function inspectLog() {
   const state = window.sandmanPortalLogs.get('`+runID+`');
   const pre = document.querySelector('pre[data-scroll-key="`+runID+`"]');
-  if (!state || !pre || pre.getAttribute('data-rendering-log') !== null) {
+  const want = '11:14:58 Fixing the frozen-wait clock\n{"agent":"json"}\n';
+  if (!state || !pre || state.text !== want || pre.textContent !== want || pre.getAttribute('data-rendering-log') !== null) {
     setTimeout(inspectLog, 20);
     return;
   }
