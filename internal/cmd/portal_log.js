@@ -222,7 +222,7 @@
       if (store.get(runId)?.status === 'ended') return;
       const epoch = store.begin(runId);
       const state = store.get(runId);
-      const url = (options.path || '/api/runs/stream') + '?runKey=' + encodeURIComponent(run.backendKey || run.key || runId)
+      const url = (options.path || '/api/runs/stream') + '?protocol=frames&runKey=' + encodeURIComponent(run.backendKey || run.key || runId)
         + (state.cursor ? '&cursor=' + encodeURIComponent(state.cursor) : '');
       const source = options.openSource(url);
       const current = { runId, epoch, source };
