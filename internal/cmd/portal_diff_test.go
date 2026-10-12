@@ -135,6 +135,38 @@ try {
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffDurationSortValueFreezesWaitingAndTerminalRows(t *testing.T) {
+	js := `const durationSortValue = SandmanPortalDiff.durationSortValue;
+if (typeof durationSortValue !== 'function') throw new Error('expected durationSortValue helper');
+const now = 1700003600000;
+Date.now = () => now;
+const stale = new Date(now - 10 * 60 * 60 * 1000).toISOString();
+const waitingWithoutBaseline = {
+  status: 'reviewing', waiting: true, startedAt: new Date(now - 12 * 60 * 60 * 1000).toISOString(),
+  executionSince: stale,
+};
+if (durationSortValue(waitingWithoutBaseline) !== 0) throw new Error('waiting row without an active baseline used wall time');
+
+const waiting = {
+  status: 'reviewing', waiting: true, activeDurationSeconds: 600, executionSince: stale,
+  startedAt: new Date(now - 12 * 60 * 60 * 1000).toISOString(),
+};
+if (durationSortValue(waiting) !== 600000) throw new Error('waiting row did not sort by its frozen active baseline');
+
+const terminal = {
+  kind: 'completed', status: 'success', activeDurationSeconds: 1800, executionSince: stale,
+  startedAt: new Date(now - 12 * 60 * 60 * 1000).toISOString(),
+  finishedAt: new Date(now - 9 * 60 * 60 * 1000).toISOString(),
+};
+if (durationSortValue(terminal) !== 1800000) throw new Error('terminal row accrued time from a stale execution segment');
+
+const running = { status: 'running', activeDurationSeconds: 1800, executionSince: new Date(now - 10 * 60 * 1000).toISOString() };
+if (durationSortValue(running) !== 2400000) throw new Error('running row did not include its current active segment');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffCreateRunRow_DoesNotRenderReviewBadgeInTitle(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', kind: 'active', status: 'reviewing', review: true, issueLabel: 'Issue 1', runId: 'r1' };

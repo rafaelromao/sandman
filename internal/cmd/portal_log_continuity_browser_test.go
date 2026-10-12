@@ -139,26 +139,25 @@ func TestPortalLogContinuityBrowser_DurationSortUsesActiveGroupedDuration(t *tes
 		"issueNumber": 42, "issueLabel": "PR42", "startedAt": now.Add(-90 * time.Minute).Format(time.RFC3339),
 		"duration": "90m", "activeDurationSeconds": 0, "executionSince": now.Add(-90 * time.Minute).Format(time.RFC3339),
 	}
-	waitingWithoutBaseline := map[string]any{
-		"key": "waiting-no-baseline", "runId": "waiting-no-baseline", "kind": "active", "status": "reviewing",
-		"waiting": true, "issueNumber": 44, "issueLabel": "#44",
-		"startedAt": now.Add(-3 * time.Hour).Format(time.RFC3339), "duration": "—",
-		"executionSince": now.Add(-3 * time.Hour).Format(time.RFC3339),
-	}
-	runsJSON, err := json.Marshal([]map[string]any{waitingParent, activeParent, groupedReview, waitingWithoutBaseline})
+	runsJSON, err := json.Marshal([]map[string]any{waitingParent, activeParent, groupedReview})
 	if err != nil {
 		t.Fatal(err)
 	}
 	stateJSON := `{"expandedRunKey":null,"tabs":{},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"duration","sortDir":"desc"}`
-	page := buildPortalReproPage(t, stateJSON, runsJSON, `
+	page := buildPortalReproPage(t, stateJSON, runsJSON, "")
+	page = strings.Replace(page, "</body>", `<script>
+  let captureAttempts = 0;
   function captureDurationOrder() {
     const rows = Array.from(document.querySelectorAll('#runs-body > tr[data-run-key]'))
       .filter(row => !row.classList.contains('detail-row'));
-    if (rows.length < 2) { setTimeout(captureDurationOrder, 10); return; }
+    captureAttempts += 1;
+    if (rows.length < 2 && captureAttempts < 100) { setTimeout(captureDurationOrder, 10); return; }
     const parent = rows.find(row => row.getAttribute('data-run-key') === 'waiting-parent');
     const marker = document.createElement('pre');
     marker.id = 'portal-active-duration-sort';
     marker.textContent = JSON.stringify({
+      rowCount: rows.length,
+      error: document.getElementById('error-banner')?.textContent || '',
       order: rows.map(row => row.getAttribute('data-run-key')),
       waitingDuration: parent && parent.querySelector('[data-cell="duration"] .duration-value')?.textContent,
       reviewChildVisible: rows.some(row => row.getAttribute('data-run-key') === 'review-child'),
@@ -166,18 +165,20 @@ func TestPortalLogContinuityBrowser_DurationSortUsesActiveGroupedDuration(t *tes
     document.body.appendChild(marker);
   }
   setTimeout(captureDurationOrder, 50);
-`)
+</script></body>`, 1)
 	dom, _ := runPortalChromium(t, page)
 	var result struct {
 		Order              []string `json:"order"`
+		RowCount           int      `json:"rowCount"`
 		WaitingDuration    string   `json:"waitingDuration"`
 		ReviewChildVisible bool     `json:"reviewChildVisible"`
+		Error              string   `json:"error"`
 	}
 	if err := json.Unmarshal([]byte(extractPortalMarker(t, dom, "portal-active-duration-sort")), &result); err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Order) != 3 || result.Order[0] != "active-parent" || result.Order[1] != "waiting-parent" || result.Order[2] != "waiting-no-baseline" {
-		t.Fatalf("duration sort order = %#v, want 40m active, 10m waiting, then waiting without baseline", result.Order)
+	if result.Error != "" || result.RowCount != 2 || len(result.Order) != 2 || result.Order[0] != "active-parent" || result.Order[1] != "waiting-parent" {
+		t.Fatalf("duration sort order = %#v (rows=%d error=%q), want 40m active before 10m waiting", result.Order, result.RowCount, result.Error)
 	}
 	if result.WaitingDuration != "10m" || result.ReviewChildVisible {
 		t.Fatalf("grouped waiting row = duration %q, review child visible %v; want parent duration 10m and grouped child hidden", result.WaitingDuration, result.ReviewChildVisible)
@@ -192,7 +193,7 @@ type portalWaitingDurationBrowserResult struct {
 	ReviewLive            bool   `json:"reviewLive"`
 	WaitingDuration       string `json:"waitingDuration"`
 	After304Duration      string `json:"after304Duration"`
-	PreRefresh304Count    int    `json:"preRefresh304Count"`
+	PostAwaitStatus       int    `json:"postAwaitStatus"`
 	Waiting304Count       int    `json:"waiting304Count"`
 	ResumedStatus         string `json:"resumedStatus"`
 	ResumedWaiting        bool   `json:"resumedWaiting"`
@@ -255,6 +256,7 @@ func TestPortalLogContinuityBrowser_WaitingDuration(t *testing.T) {
   Date.now = function () { return window.__portalDurationNow; };
   window.__portalSummaryStatuses = [];
   window.__portalSummaryRuns = [];
+  window.__portalSummaryETag = '';
   window.__portalDurationFetch = window.fetch.bind(window);
   window.fetch = async function (input, init) {
     const response = await window.__portalDurationFetch(input, init);
@@ -264,6 +266,8 @@ func TestPortalLogContinuityBrowser_WaitingDuration(t *testing.T) {
         const payload = await response.clone().json();
         window.__portalSummaryRuns = Array.isArray(payload.runs) ? payload.runs : [];
       }
+      const etag = response.headers.get('ETag');
+      if (etag) window.__portalSummaryETag = etag;
     }
     return response;
   };
@@ -296,15 +300,18 @@ func TestPortalLogContinuityBrowser_WaitingDuration(t *testing.T) {
     result.initialStatus = label();
     result.initialDuration = duration();
 
-    const beforeAwait304 = window.__portalSummaryStatuses.filter(status => status === 304).length;
     const awaitResponse = await window.__portalDurationFetch('/__test/await', { method: 'POST' });
     if (!awaitResponse.ok) throw new Error('await control failed: HTTP ' + awaitResponse.status);
     const awaitState = await awaitResponse.json();
-    await wait(() => window.__portalSummaryStatuses.filter(status => status === 304).length > beforeAwait304,
-      'cache-hit 304 after the await event');
-    result.preRefresh304Count = window.__portalSummaryStatuses.filter(status => status === 304).length - beforeAwait304;
-    await wait(() => projected()?.waiting === true && projected()?.status === 'reviewing' && projected()?.reviewLive === true,
-      'fresh waiting projection with linked live review');
+    const summaryResponse = await window.__portalDurationFetch('/api/runs?summary=1', {
+      headers: window.__portalSummaryETag ? { 'If-None-Match': window.__portalSummaryETag } : {},
+    });
+    result.postAwaitStatus = summaryResponse.status;
+    if (summaryResponse.status !== 200) throw new Error('await transition returned stale summary status ' + summaryResponse.status);
+    const summaryPayload = await summaryResponse.json();
+    window.__portalSummaryRuns = Array.isArray(summaryPayload.runs) ? summaryPayload.runs : [];
+    await wait(() => projected()?.waiting === true && projected()?.status === 'reviewing' && projected()?.reviewLive === true
+      && label() === 'reviewing', 'fresh waiting projection with linked live review');
     result.waitingStatus = label();
     result.waiting = projected().waiting;
     result.reviewLive = projected().reviewLive;
@@ -406,7 +413,7 @@ func TestPortalLogContinuityBrowser_WaitingDuration(t *testing.T) {
 	if result.WaitingStatus != "reviewing" || !result.Waiting || !result.ReviewLive || !portalDurationMatches(result.WaitingDuration, 5*time.Minute) {
 		t.Fatalf("waiting live-review projection = %+v, want reviewing + waiting + live review at frozen 5m", result)
 	}
-	if result.PreRefresh304Count == 0 || result.Waiting304Count == 0 || !portalDurationsEqual(result.After304Duration, result.WaitingDuration) {
+	if result.PostAwaitStatus != http.StatusOK || result.Waiting304Count == 0 || !portalDurationsEqual(result.After304Duration, result.WaitingDuration) {
 		t.Fatalf("304 poll changed waiting duration: %+v", result)
 	}
 	if result.ResumedStatus != "reviewing" || result.ResumedWaiting || result.ResumedExecutionSince == "" || !portalDurationMatches(result.ResumedDuration, 7*time.Minute) {
