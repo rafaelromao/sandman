@@ -178,6 +178,283 @@ func TestPortalLogContinuityBrowser_DurationSortUsesActiveGroupedDuration(t *tes
 	}
 }
 
+type portalWaitingDurationBrowserResult struct {
+	InitialStatus         string `json:"initialStatus"`
+	InitialDuration       string `json:"initialDuration"`
+	WaitingStatus         string `json:"waitingStatus"`
+	Waiting               bool   `json:"waiting"`
+	ReviewLive            bool   `json:"reviewLive"`
+	WaitingDuration       string `json:"waitingDuration"`
+	After304Duration      string `json:"after304Duration"`
+	PreRefresh304Count    int    `json:"preRefresh304Count"`
+	Waiting304Count       int    `json:"waiting304Count"`
+	ResumedStatus         string `json:"resumedStatus"`
+	ResumedWaiting        bool   `json:"resumedWaiting"`
+	ResumedExecutionSince string `json:"resumedExecutionSince"`
+	ResumedDuration       string `json:"resumedDuration"`
+	Error                 string `json:"error,omitempty"`
+}
+
+func TestPortalLogContinuityBrowser_WaitingDuration(t *testing.T) {
+	chromium := requirePortalContinuityTool(t, "chromium")
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const runID = "261012120000-b2805-2805"
+	const reviewID = "261012120000-b2805-2805-PR2805"
+	startedAt := time.Now().UTC().Truncate(time.Second)
+	awaitAt := startedAt.Add(5 * time.Minute)
+	reviewStartedAt := awaitAt.Add(time.Minute)
+	resumeAt := awaitAt.Add(2 * time.Hour)
+	eventLog := &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")}
+	writePortalLog(t, eventLog.Path, []events.Event{{
+		Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 2805,
+		Payload: map[string]any{"branch": "2805-duration", "batch_id": "batch-2805"},
+	}})
+
+	handler := &portalHandler{repoRoot: repoRoot, runsIndex: getPortalRunsIndex(repoRoot)}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/instances", handler.handleInstances)
+	mux.HandleFunc("/api/runs", handler.handleRuns)
+	mux.HandleFunc("/api/runs/stream", handler.handleRunStream)
+	mux.HandleFunc("/api/runs/abort", handler.handleRunAbort)
+	mux.HandleFunc("/api/runs/archive", handler.handleRunArchive)
+	mux.HandleFunc("/api/logs", handler.handleLogs)
+	mux.HandleFunc("/", handler.handlePage)
+	handler.handler = mux
+	index := handler.runsIndex
+	var clockMu sync.Mutex
+	portalNow := awaitAt
+	index.view.now = func() time.Time {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		return portalNow
+	}
+	setPortalNow := func(now time.Time) {
+		clockMu.Lock()
+		portalNow = now
+		clockMu.Unlock()
+	}
+
+	pageResponse := httptest.NewRecorder()
+	handler.ServeHTTP(pageResponse, httptest.NewRequest(http.MethodGet, "/", nil))
+	page := pageResponse.Body.String()
+	mainScript := "<script>\n    const apiPath = \"\\/api\\/runs\";"
+	if !strings.Contains(page, mainScript) {
+		t.Fatal("embedded Portal page is missing its production application script marker")
+	}
+	prelude := fmt.Sprintf(`<script>
+  window.__portalDurationNow = %d;
+  Date.now = function () { return window.__portalDurationNow; };
+  window.__portalSummaryStatuses = [];
+  window.__portalSummaryRuns = [];
+  window.__portalDurationFetch = window.fetch.bind(window);
+  window.fetch = async function (input, init) {
+    const response = await window.__portalDurationFetch(input, init);
+    if (String(input).indexOf('summary=1') >= 0) {
+      window.__portalSummaryStatuses.push(response.status);
+      if (response.status !== 304) {
+        const payload = await response.clone().json();
+        window.__portalSummaryRuns = Array.isArray(payload.runs) ? payload.runs : [];
+      }
+    }
+    return response;
+  };
+  const portalSetInterval = window.setInterval.bind(window);
+  window.setInterval = function (callback, delay, ...args) {
+    return portalSetInterval(callback, callback && callback.name === 'refresh' ? 100 : delay, ...args);
+  };
+</script>
+`+mainScript, startedAt.Add(5*time.Minute).UnixMilli())
+	page = strings.Replace(page, mainScript, prelude, 1)
+	driver := fmt.Sprintf(`
+<script>
+(async function () {
+  const runID = %q;
+  const wait = async function (predicate, label) {
+    const deadline = performance.now() + 20000;
+    while (performance.now() < deadline) {
+      if (predicate()) return;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    throw new Error('timed out waiting for ' + label);
+  };
+  const row = () => document.querySelector('#runs-body > tr[data-run-key="' + runID + '"]');
+  const label = () => row()?.querySelector('.badge-label')?.textContent || '';
+  const duration = () => row()?.querySelector('[data-cell="duration"] .duration-value')?.textContent || '';
+  const projected = () => window.__portalSummaryRuns.find(run => run && run.runId === runID && !run.review);
+  const result = {};
+  try {
+    await wait(() => row() && projected(), 'initial running row');
+    result.initialStatus = label();
+    result.initialDuration = duration();
+
+    const beforeAwait304 = window.__portalSummaryStatuses.filter(status => status === 304).length;
+    const awaitResponse = await window.__portalDurationFetch('/__test/await', { method: 'POST' });
+    if (!awaitResponse.ok) throw new Error('await control failed: HTTP ' + awaitResponse.status);
+    const awaitState = await awaitResponse.json();
+    await wait(() => window.__portalSummaryStatuses.filter(status => status === 304).length > beforeAwait304,
+      'cache-hit 304 after the await event');
+    result.preRefresh304Count = window.__portalSummaryStatuses.filter(status => status === 304).length - beforeAwait304;
+    await wait(() => projected()?.waiting === true && projected()?.status === 'reviewing' && projected()?.reviewLive === true,
+      'fresh waiting projection with linked live review');
+    result.waitingStatus = label();
+    result.waiting = projected().waiting;
+    result.reviewLive = projected().reviewLive;
+    result.waitingDuration = duration();
+
+    const before304 = window.__portalSummaryStatuses.filter(status => status === 304).length;
+    window.__portalDurationNow = Date.parse(awaitState.browserNow) + 4 * 60 * 60 * 1000;
+    await wait(() => window.__portalSummaryStatuses.filter(status => status === 304).length > before304,
+      'unchanged summary 304 while waiting');
+    result.waiting304Count = window.__portalSummaryStatuses.filter(status => status === 304).length - before304;
+    result.after304Duration = duration();
+
+    const resumeResponse = await window.__portalDurationFetch('/__test/resume', { method: 'POST' });
+    if (!resumeResponse.ok) throw new Error('resume control failed: HTTP ' + resumeResponse.status);
+    const resumeState = await resumeResponse.json();
+    window.__portalDurationNow = Date.parse(resumeState.browserNow);
+    await wait(() => projected()?.waiting !== true && projected()?.status === 'reviewing' && projected()?.executionSince,
+      'fresh resumed projection with live review aggregate');
+    await wait(() => /^7m(?:0s)?$/.test(duration()), 'resumed duration to advance from its active baseline');
+    result.resumedStatus = label();
+    result.resumedWaiting = projected().waiting === true;
+    result.resumedExecutionSince = projected().executionSince || '';
+    result.resumedDuration = duration();
+  } catch (error) {
+    result.error = String(error && error.stack || error);
+  }
+  await window.__portalDurationFetch('/__test/result', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(result),
+  });
+})();
+</script>
+`, runID)
+	page = strings.Replace(page, "</body>", driver+"</body>", 1)
+	if !strings.Contains(page, "__portalDurationFetch") {
+		t.Fatal("waiting-duration browser driver was not inserted into the production page")
+	}
+
+	results := make(chan portalWaitingDurationBrowserResult, 1)
+	serverHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/__test/await":
+			primed, err := index.SummarySnapshot(r.Context(), "")
+			if err != nil {
+				http.Error(w, "prime running summary cache: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if len(primed.Runs) != 1 || primed.Runs[0].RunID != runID || primed.Runs[0].Status != "running" {
+				http.Error(w, fmt.Sprintf("summary cache was not primed with the running row: %#v", primed.Runs), http.StatusConflict)
+				return
+			}
+			if err := eventLog.Log(events.Event{Type: "run.await", Timestamp: awaitAt, RunID: runID, Issue: 2805}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if err := eventLog.Log(events.Event{Type: "run.started", Timestamp: reviewStartedAt, RunID: reviewID, Issue: 2805, Payload: map[string]any{
+				"review": true, "pr_number": 2805, "issue_number": 2805, "batch_id": "batch-review-2805",
+			}}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			setPortalNow(awaitAt.Add(3 * time.Hour))
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"browserNow": awaitAt.Add(3 * time.Hour).Format(time.RFC3339Nano)})
+		case "/__test/resume":
+			if err := eventLog.Log(events.Event{Type: "run.continued", Timestamp: resumeAt, RunID: runID, Issue: 2805, Payload: map[string]any{
+				"branch": "2805-duration", "batch_id": "batch-2805-resumed", "previous_run_id": runID,
+			}}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			setPortalNow(resumeAt.Add(2 * time.Minute))
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"browserNow": resumeAt.Add(2 * time.Minute).Format(time.RFC3339Nano)})
+		case "/__test/result":
+			var result portalWaitingDurationBrowserResult
+			if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&result); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			results <- result
+			w.WriteHeader(http.StatusNoContent)
+		case "/":
+			w.Header().Set("Content-Type", pageResponse.Header().Get("Content-Type"))
+			w.Header().Set("Cache-Control", "no-store")
+			_, _ = io.WriteString(w, page)
+		default:
+			handler.ServeHTTP(w, r)
+		}
+	})
+	server := httptest.NewServer(serverHandler)
+	defer server.Close()
+	result := runPortalWaitingDurationBrowser(t, chromium, server.URL, results)
+	if result.Error != "" {
+		t.Fatalf("actual Portal waiting-duration flow: %s", result.Error)
+	}
+	if result.InitialStatus != "running" || !portalDurationMatches(result.InitialDuration, 5*time.Minute) {
+		t.Fatalf("initial row status/duration = %q/%q, want running/5m", result.InitialStatus, result.InitialDuration)
+	}
+	if result.WaitingStatus != "reviewing" || !result.Waiting || !result.ReviewLive || !portalDurationMatches(result.WaitingDuration, 5*time.Minute) {
+		t.Fatalf("waiting live-review projection = %+v, want reviewing + waiting + live review at frozen 5m", result)
+	}
+	if result.PreRefresh304Count == 0 || result.Waiting304Count == 0 || !portalDurationsEqual(result.After304Duration, result.WaitingDuration) {
+		t.Fatalf("304 poll changed waiting duration: %+v", result)
+	}
+	if result.ResumedStatus != "reviewing" || result.ResumedWaiting || result.ResumedExecutionSince == "" || !portalDurationMatches(result.ResumedDuration, 7*time.Minute) {
+		t.Fatalf("same-RunID resumed live-review projection = %+v, want active 7m from its saved baseline", result)
+	}
+}
+
+func portalDurationMatches(value string, want time.Duration) bool {
+	return strings.TrimSpace(value) == want.String() || strings.TrimSpace(value) == strings.TrimSuffix(want.String(), "0s")
+}
+
+func portalDurationsEqual(left, right string) bool {
+	leftDuration, leftErr := time.ParseDuration(strings.TrimSpace(left))
+	rightDuration, rightErr := time.ParseDuration(strings.TrimSpace(right))
+	return leftErr == nil && rightErr == nil && leftDuration == rightDuration
+}
+
+func runPortalWaitingDurationBrowser(t *testing.T, chromium, url string, results <-chan portalWaitingDurationBrowserResult) portalWaitingDurationBrowserResult {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, chromium,
+		"--headless", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
+		"--no-first-run", "--no-default-browser-check", "--disable-background-timer-throttling",
+		"--disable-renderer-backgrounding", "--window-size=1360,900",
+		"--user-data-dir="+t.TempDir(), url)
+	var output bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &output, &output
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	exited := make(chan struct{})
+	var exitErr error
+	go func() {
+		exitErr = cmd.Wait()
+		close(exited)
+	}()
+	defer func() {
+		_ = cmd.Process.Kill()
+		<-exited
+	}()
+	select {
+	case result := <-results:
+		return result
+	case <-exited:
+		t.Fatalf("Chromium exited before waiting-duration assertions: %v\n%s", exitErr, output.String())
+	case <-ctx.Done():
+		_ = cmd.Process.Kill()
+		<-exited
+		t.Fatalf("actual-page waiting-duration browser timed out: %v\n%s", ctx.Err(), output.String())
+	}
+	return portalWaitingDurationBrowserResult{}
+}
+
 func requirePortalContinuityTool(t *testing.T, name string) string {
 	t.Helper()
 	if name == "chromium" {
