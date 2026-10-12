@@ -2268,6 +2268,17 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     }
 
     function runDurationValue(run) {
+      const status = String(run && run.status || '').trim().toLowerCase();
+      if (status === 'queued' || status === 'blocked') return 0;
+      const baseline = Number(run && run.activeDurationSeconds);
+      if (Number.isFinite(baseline) && baseline >= 0) {
+        const waiting = !!(run && run.waiting) || status === 'waiting';
+        const executionSince = waiting ? NaN : Date.parse(run && run.executionSince || '');
+        const activeSegment = Number.isFinite(executionSince)
+          ? Math.max(0, Date.now() - executionSince)
+          : 0;
+        return Math.max(0, baseline * 1000 + activeSegment);
+      }
       const started = runStartedValue(run);
       if (!started) return 0;
       const finished = Date.parse(run && run.finishedAt);

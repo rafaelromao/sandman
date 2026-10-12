@@ -119,6 +119,65 @@ func TestPortalLogContinuityBrowser_TabRoundTrips(t *testing.T) {
 	}
 }
 
+func TestPortalLogContinuityBrowser_DurationSortUsesActiveGroupedDuration(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	activeSince := now.Add(-10 * time.Minute)
+	waitingSince := now.Add(-2 * time.Hour)
+	waitingParent := map[string]any{
+		"key": "waiting-parent", "runId": "waiting-parent", "kind": "active", "status": "reviewing",
+		"waiting": true, "reviewLive": true, "reviewCount": 1, "issueNumber": 42, "issueLabel": "#42",
+		"startedAt": now.Add(-2 * time.Hour).Format(time.RFC3339), "duration": "10m",
+		"activeDurationSeconds": 600, "executionSince": waitingSince.Format(time.RFC3339),
+	}
+	activeParent := map[string]any{
+		"key": "active-parent", "runId": "active-parent", "kind": "active", "status": "running",
+		"issueNumber": 43, "issueLabel": "#43", "startedAt": now.Add(-45 * time.Minute).Format(time.RFC3339),
+		"duration": "30m", "activeDurationSeconds": 1800, "executionSince": activeSince.Format(time.RFC3339),
+	}
+	groupedReview := map[string]any{
+		"key": "review-child", "runId": "review-child", "kind": "active", "status": "reviewing", "review": true,
+		"issueNumber": 42, "issueLabel": "PR42", "startedAt": now.Add(-90 * time.Minute).Format(time.RFC3339),
+		"duration": "90m", "activeDurationSeconds": 0, "executionSince": now.Add(-90 * time.Minute).Format(time.RFC3339),
+	}
+	runsJSON, err := json.Marshal([]map[string]any{waitingParent, activeParent, groupedReview})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateJSON := `{"expandedRunKey":null,"tabs":{},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"duration","sortDir":"desc"}`
+	page := buildPortalReproPage(t, stateJSON, runsJSON, `
+  function captureDurationOrder() {
+    const rows = Array.from(document.querySelectorAll('#runs-body > tr[data-run-key]'))
+      .filter(row => !row.classList.contains('detail-row'));
+    if (rows.length < 2) { setTimeout(captureDurationOrder, 10); return; }
+    const parent = rows.find(row => row.getAttribute('data-run-key') === 'waiting-parent');
+    const marker = document.createElement('pre');
+    marker.id = 'portal-active-duration-sort';
+    marker.textContent = JSON.stringify({
+      order: rows.map(row => row.getAttribute('data-run-key')),
+      waitingDuration: parent && parent.querySelector('[data-cell="duration"] .duration-value')?.textContent,
+      reviewChildVisible: rows.some(row => row.getAttribute('data-run-key') === 'review-child'),
+    });
+    document.body.appendChild(marker);
+  }
+  setTimeout(captureDurationOrder, 50);
+`)
+	dom, _ := runPortalChromium(t, page)
+	var result struct {
+		Order              []string `json:"order"`
+		WaitingDuration    string   `json:"waitingDuration"`
+		ReviewChildVisible bool     `json:"reviewChildVisible"`
+	}
+	if err := json.Unmarshal([]byte(extractPortalMarker(t, dom, "portal-active-duration-sort")), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Order) != 2 || result.Order[0] != "active-parent" || result.Order[1] != "waiting-parent" {
+		t.Fatalf("duration sort order = %#v, want the 40m active parent before the 10m waiting parent", result.Order)
+	}
+	if result.WaitingDuration != "10m" || result.ReviewChildVisible {
+		t.Fatalf("grouped waiting row = duration %q, review child visible %v; want parent duration 10m and grouped child hidden", result.WaitingDuration, result.ReviewChildVisible)
+	}
+}
+
 func requirePortalContinuityTool(t *testing.T, name string) string {
 	t.Helper()
 	if name == "chromium" {
