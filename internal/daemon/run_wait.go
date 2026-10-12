@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/events"
 	"golang.org/x/sys/unix"
 )
@@ -231,7 +232,7 @@ func TransferRunWait(oldBatchDir, newBatchDir, runID string, now time.Time) (Run
 	if err != nil {
 		return record, err
 	}
-	if record.InitialAdmission && record.BatchID != filepath.Base(oldBatchDir) {
+	if !waitBatchIdentityMatches(oldBatchDir, record.BatchID) {
 		return record, fmt.Errorf("waiting ownership identity is invalid")
 	}
 	if !record.RecoverableAt(now) {
@@ -242,6 +243,22 @@ func TransferRunWait(oldBatchDir, newBatchDir, runID string, now time.Time) (Run
 	}
 	record.BatchID = filepath.Base(newBatchDir)
 	return record, writeRunWait(newBatchDir, record, now)
+}
+
+func waitBatchIdentityMatches(batchDir, batchID string) bool {
+	if !safeWaitID(batchID) {
+		return false
+	}
+	if filepath.Base(batchDir) == batchID {
+		return true
+	}
+	indexPath := filepath.Join(filepath.Dir(filepath.Dir(batchDir)), "batches.json")
+	idx, err := batchindex.Load(indexPath)
+	if err != nil {
+		return false
+	}
+	owner := idx.ResolveBatchIdentity(batchID)
+	return owner != nil && filepath.Clean(owner.Location(idx.Layout()).Dir) == filepath.Clean(batchDir)
 }
 
 func writeRunWait(batchDir string, record RunWait, now time.Time) error {

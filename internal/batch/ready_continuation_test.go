@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -121,6 +122,50 @@ func TestFindReadyContinuationsReadsIndexedRelocatedCapacityLease(t *testing.T) 
 	ready := FindReadyContinuations(eventLog, layout)
 	if len(ready) != 1 || ready[0].Wait == nil || !ready[0].Wait.LeaseExpiresAt.Before(now.Add(2*time.Minute)) {
 		t.Fatalf("relocated capacity continuation = %#v, want the persisted short lease", ready)
+	}
+}
+
+func TestFindReadyContinuationsUsesIndexedLocationForLiveOwner(t *testing.T) {
+	layout := paths.NewLayout(nil, t.TempDir())
+	physicalDir := filepath.Join(layout.SandmanDir, "relocated", "physical-name")
+	idx := &batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{{
+		ID: "public-batch", Path: physicalDir, Status: batchindex.StatusActive, Kind: batchindex.KindIssue,
+	}}}
+	if err := idx.Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(physicalDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("unix", (paths.BatchLocation{Dir: physicalDir}).SocketPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	now := time.Now().UTC()
+	if ready := FindReadyContinuations(readyContinuationEvents("run-live-relocated", "public-batch", now.Add(-2*time.Minute), now.Add(-time.Minute), now), layout); len(ready) != 0 {
+		t.Fatalf("live relocated batch was reclaimed: %#v", ready)
+	}
+}
+
+func TestFindReadyContinuationsRejectsAmbiguousIndexedLocation(t *testing.T) {
+	layout := paths.NewLayout(nil, t.TempDir())
+	idx := &batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
+		{ID: "first", Path: filepath.Join(layout.SandmanDir, "relocated", "alias"), Status: batchindex.StatusActive, Kind: batchindex.KindIssue},
+		{ID: "second", Path: filepath.Join(layout.SandmanDir, "other", "alias"), Status: batchindex.StatusActive, Kind: batchindex.KindIssue},
+	}}
+	if err := idx.Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	events := []events.Event{
+		{Type: "run.started", Timestamp: now.Add(-2 * time.Minute), RunID: "run-ambiguous", Issue: 42,
+			Payload: map[string]any{"branch": "42-fix", "base_branch": "main", "batch_id": "alias"}},
+		{Type: "run.await", Timestamp: now.Add(-time.Minute), RunID: "run-ambiguous", Issue: 42,
+			Payload: map[string]any{"ci_wait": map[string]any{"deadline_unix_seconds": now.Add(time.Minute).Unix()}}},
+	}
+	if ready := FindReadyContinuations(events, layout); len(ready) != 0 {
+		t.Fatalf("ambiguous indexed location was reclaimed: %#v", ready)
 	}
 }
 
