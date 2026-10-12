@@ -315,6 +315,8 @@ genuinely exercises the free `opencode/big-pickle` model.
 
 Smoke and e2e tests can create worktrees, containers, batch directories, temp directories, and shim state. If a run is interrupted before cleanup executes, remove residue with `sandman clean --all` (or pick a specific mode flag from the recipes below — bare `sandman clean` is a hard error).
 
+Keep Git cleanup scoped to the temporary worktree being removed. Never run repository-wide `git worktree prune` from a test or agent sandbox: its `.git` directory may be shared with host worktrees whose recorded paths are not visible in the sandbox.
+
 ```bash
 # Preview what would be removed
 sandman clean --dry-run --orphaned

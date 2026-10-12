@@ -23,9 +23,10 @@ func TestContainerSandbox_Exec_KillAgentFnFailureWrapsCleanupError(t *testing.T)
 		t.Skipf("sleep command not available: %v", err)
 	}
 
-	wt := &fakeWorktreeForContainer{workDir: "/host/repo/.sandman/worktrees/branch"}
+	repoPath, worktreePath := testContainerSandboxPaths(t)
+	wt := &fakeWorktreeForContainer{workDir: worktreePath}
 	ctr := &fakeContainer{id: "cleanup-fail-123"}
-	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
+	sb := NewContainerSandbox(wt, ctr, "docker", repoPath)
 
 	prevExec := ExecCommandFn
 	prevKill := KillAgentFn
