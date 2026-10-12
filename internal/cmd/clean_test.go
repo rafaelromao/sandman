@@ -682,7 +682,8 @@ func TestExecuteClean_RechecksActiveEligibilityBeforeMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	action, ok := buildEligibleActiveAction(entry, func(string) bool { return false }, layout, states)
+	idx := &batchindex.Index{Batches: []batchindex.Batch{entry}}
+	action, ok := buildEligibleActiveAction(idx, entry, func(string) bool { return false }, layout, states)
 	if !ok {
 		t.Fatal("expected initial active eligibility check to pass")
 	}

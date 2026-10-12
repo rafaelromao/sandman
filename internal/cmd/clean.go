@@ -385,7 +385,7 @@ func collectEligibleActiveActions(idx *batchindex.Index, probe runActivityProbe,
 		if entry.Path == "" {
 			continue
 		}
-		action, ok := buildEligibleActiveAction(entry, probe, layout, states)
+		action, ok := buildEligibleActiveAction(idx, entry, probe, layout, states)
 		if !ok {
 			continue
 		}
@@ -403,14 +403,15 @@ func collectEligibleActiveActions(idx *batchindex.Index, probe runActivityProbe,
 // row's worktree/branch pair is collected so a multi-run batch reclaims
 // all of its worktrees. A batch with an unknown or missing row manifest
 // is preserved.
-func buildEligibleActiveAction(entry batchindex.Batch, probe runActivityProbe, layout paths.Layout, states map[string]events.RunState) (cleanAction, bool) {
+func buildEligibleActiveAction(idx *batchindex.Index, entry batchindex.Batch, probe runActivityProbe, layout paths.Layout, states map[string]events.RunState) (cleanAction, bool) {
 	if probe != nil && probe(entry.Path) {
 		return cleanAction{}, false
 	}
 	// Artifact loss must not hide in-flight members from completed cleanup.
 	// Use the same event batch membership as whole-batch archive.
+	batchDir := entry.Location(layout).Dir
 	for _, state := range states {
-		if (state.BatchID() == entry.ID || state.RunID == entry.ID) && !state.IsTerminal() {
+		if (state.RunID == entry.ID || idx.MatchesBatchLocation(layout, state.BatchID(), batchDir)) && !state.IsTerminal() {
 			return cleanAction{}, false
 		}
 	}
@@ -622,7 +623,7 @@ func executeCleanWithProbe(actions []cleanAction, gr gitRunner, layout paths.Lay
 				if err != nil {
 					return err
 				}
-				fresh, ok := buildEligibleActiveAction(*entry, probe, layout, states)
+				fresh, ok := buildEligibleActiveAction(current, *entry, probe, layout, states)
 				if !ok {
 					continue
 				}

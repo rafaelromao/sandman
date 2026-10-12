@@ -186,6 +186,41 @@ func TestArchiveBatch_RequiresEveryAgentRunTerminal(t *testing.T) {
 	}
 }
 
+func TestArchiveBatch_ProtectsEventOnlyPhysicalAlias(t *testing.T) {
+	root := newSandmanDir(t)
+	batchDir := filepath.Join(root, ".sandman", "batches", "physical")
+	writeRunDirForArchive(t, batchDir, "done", batchindex.RunManifest{Status: batchindex.RunManifestStatusSuccess})
+	writeBatchIndexForArchive(t, root, []batchindex.Batch{{
+		ID: "public", Path: batchDir, Status: batchindex.StatusActive,
+	}})
+
+	deps := terminalArchiveDeps(t, root, "done")
+	if err := deps.EventLog.Log(events.Event{
+		Type:    "run.queued",
+		RunID:   "pending",
+		Payload: map[string]any{"batch_id": "physical", "initial_admission": true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	deps.RepoRoot = root
+	cmd := NewArchiveCmd(deps)
+	cmd.SetArgs([]string{"batch", "public"})
+
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("archived batch with unfinished event-only physical alias")
+	}
+	if _, err := os.Stat(batchDir); err != nil {
+		t.Fatalf("source batch removed after rejection: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".sandman", "archive", "public")); !os.IsNotExist(err) {
+		t.Fatalf("archive target exists after rejection: %v", err)
+	}
+	idx := loadBatchIndexForArchive(t, root)
+	if entry := idx.ResolveBatch("public"); entry == nil || entry.Status != batchindex.StatusActive {
+		t.Fatalf("batch index changed after rejection: %+v", entry)
+	}
+}
+
 func TestCleanAll_EventTerminalityAndArtifactOwnership(t *testing.T) {
 	for _, scenario := range []string{"terminal-stale-snapshot", "unknown", "capacity-queued", "event-only-capacity-member", "read-error", "wrong-owner"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -247,6 +282,65 @@ func TestCleanAll_EventTerminalityAndArtifactOwnership(t *testing.T) {
 				t.Fatalf("ineligible artifacts removed: %v", statErr)
 			}
 		})
+	}
+}
+
+func TestCleanAll_ProtectsEventOnlyPhysicalAlias(t *testing.T) {
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	root, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	batchDir := filepath.Join(root, ".sandman", "batches", "physical")
+	worktree := filepath.Join(root, ".sandman", "worktrees", "42-work")
+	manifest := batchindex.RunManifest{
+		RunID:        "row",
+		BatchID:      "public",
+		Kind:         batchindex.KindIssue,
+		Status:       batchindex.RunManifestStatusSuccess,
+		Branch:       "42-work",
+		WorktreePath: worktree,
+	}
+	if err := daemon.WriteRunManifest(batchDir, "row", manifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(worktree, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeBatchIndexForArchive(t, root, []batchindex.Batch{{
+		ID: "public", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive,
+	}})
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.finished", RunID: "row", Payload: map[string]any{"status": "success"}},
+		{Type: "run.queued", RunID: "pending", Payload: map[string]any{"batch_id": "physical", "initial_admission": true}},
+	}}
+	deps.EventLog = log
+	deps.GitRunner = &fakeGitRunner{}
+	deps.RepoRoot = root
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(root, ".sandman", "worktrees")}}
+	deps.RunActivityProbe = func(string) bool { return false }
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--all"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(batchDir); err != nil {
+		t.Fatalf("batch removed despite unfinished alias member: %v", err)
+	}
+	if _, err := os.Stat(worktree); err != nil {
+		t.Fatalf("worktree removed despite unfinished alias member: %v", err)
+	}
+	idx := loadBatchIndexForArchive(t, root)
+	if entry := idx.ResolveBatch("public"); entry == nil || entry.Status != batchindex.StatusActive {
+		t.Fatalf("batch index changed despite unfinished alias member: %+v", entry)
+	}
+	for _, event := range log.logged {
+		if event.Type == "run.aborted" && event.RunID == "pending" {
+			t.Fatal("cleanup emitted a stale abort for the event-only member")
+		}
 	}
 }
 
