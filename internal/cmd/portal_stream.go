@@ -41,6 +41,7 @@ type portalLogStreamOptions struct {
 	NewTicker func() portalLogTicker
 	Registry  *portalLogRegistry
 	Scope     string
+	Legacy    bool
 }
 
 func servePortalRunStream(w http.ResponseWriter, r *http.Request, repoRoot string) {
@@ -65,7 +66,8 @@ func servePortalRunStream(w http.ResponseWriter, r *http.Request, repoRoot strin
 		return
 	}
 	servePortalLogStream(w, r, run, portalLogStreamOptions{
-		Scope: repoRoot,
+		Scope:  repoRoot,
+		Legacy: r.URL.Query().Get("protocol") != "frames",
 		Resolve: func(ctx context.Context) (portalRun, error) {
 			// Only path disappearance invokes the full artifact resolver. Normal
 			// idle ticks do not hydrate the view, index or any daemon socket.
@@ -175,6 +177,17 @@ func servePortalLogStream(w http.ResponseWriter, r *http.Request, run portalRun,
 		return
 	}
 	emit := func(frame *portalLogFrame) bool {
+		if opts.Legacy {
+			if frame.Type == "pending" || frame.Type == "unavailable" || frame.Type == "end" {
+				return true
+			}
+			for _, record := range frame.Records {
+				if _, err := fmt.Fprintf(w, "data: %s\n\n", record.Text); err != nil {
+					return false
+				}
+			}
+			return rc.Flush() == nil
+		}
 		data, err := json.Marshal(frame)
 		if err != nil {
 			return false

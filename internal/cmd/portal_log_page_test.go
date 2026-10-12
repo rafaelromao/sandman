@@ -5,6 +5,53 @@ import (
 	"testing"
 )
 
+func TestPortalLogFrontend_StructuredFramesRenderRecordsNotEnvelope(t *testing.T) {
+	const runID = "transport-frame-render"
+	runsJSON, err := json.Marshal([]map[string]any{{
+		"key": runID, "runId": runID, "kind": "active", "status": "running",
+		"issueNumber": 2806, "issueLabel": "#2806", "log": "11:14:58 Fixing the frozen-wait clock\n{\"agent\":\"json\"}",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := buildPortalReproPage(t,
+		`{"expandedRunKey":"`+runID+`","tabs":{"`+runID+`":"log"}}`, runsJSON, `
+function inspectLog() {
+  const state = window.sandmanPortalLogs.get('`+runID+`');
+  const pre = document.querySelector('pre[data-scroll-key="`+runID+`"]');
+  const want = '11:14:58 Fixing the frozen-wait clock\n{"agent":"json"}\n';
+  if (!state || !pre || state.text !== want || pre.textContent !== want || pre.getAttribute('data-rendering-log') !== null) {
+    setTimeout(inspectLog, 20);
+    return;
+  }
+  const marker = document.createElement('pre');
+  marker.id = 'portal-transport-frame-render';
+  marker.textContent = JSON.stringify({
+    stateText: state.text,
+    paneText: pre.textContent,
+    rawFrame: pre.textContent.includes('{"type":"snapshot"'),
+    jsonKey: !!pre.querySelector('.json-key'),
+  });
+  document.body.appendChild(marker);
+}
+setTimeout(inspectLog, 20);
+`)
+	dom, _ := runPortalChromium(t, page)
+	var result struct {
+		StateText string `json:"stateText"`
+		PaneText  string `json:"paneText"`
+		RawFrame  bool   `json:"rawFrame"`
+		JSONKey   bool   `json:"jsonKey"`
+	}
+	if err := json.Unmarshal([]byte(extractPortalMarker(t, dom, "portal-transport-frame-render")), &result); err != nil {
+		t.Fatal(err)
+	}
+	want := "11:14:58 Fixing the frozen-wait clock\n{\"agent\":\"json\"}\n"
+	if result.StateText != want || result.PaneText != want || result.RawFrame || !result.JSONKey {
+		t.Fatalf("structured stream rendered incorrectly: %+v", result)
+	}
+}
+
 func TestPortalLogFrontend_LateParentDetailCannotClearSelectedReviewLoadingState(t *testing.T) {
 	runsJSON := []byte(`[{"key":"parent","runId":"parent","kind":"active","status":"running","issueNumber":42,"issueLabel":"#42","log":"parent source"},{"key":"review","runId":"review","kind":"active","status":"reviewing","issueNumber":42,"issueLabel":"PR42","prNumber":42,"review":true,"log":"review source"}]`)
 	page := buildPortalReproPage(t, `{"expandedRunKey":"parent","tabs":{"parent":"log","review":"log"}}`, runsJSON, `

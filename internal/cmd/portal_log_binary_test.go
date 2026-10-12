@@ -129,7 +129,7 @@ func TestPortalBuiltBinary_ServesEmbeddedLogOwnerAndTerminalSavedLog(t *testing.
 	}
 	assetHash := sha256.Sum256([]byte(portalLogJS))
 
-	response, err := client.Get(baseURL + "/api/runs/stream?runKey=" + runID)
+	response, err := client.Get(baseURL + "/api/runs/stream?protocol=frames&runKey=" + runID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +268,7 @@ func TestPortalBuiltBinary_BrowserContinuityReloadsAndRecoversAfterRestart(t *te
 	defer stopServer()
 	proxy = httptest.NewServer(fixture.binaryHandler(baseURL))
 	defer proxy.Close()
-	response, err := (&http.Client{Timeout: 5 * time.Second}).Get(baseURL + "/api/runs/stream?runKey=" + fixture.run.Key + "&cursor=" + url.QueryEscape(result.FinalCursor))
+	response, err := (&http.Client{Timeout: 5 * time.Second}).Get(baseURL + "/api/runs/stream?protocol=frames&runKey=" + fixture.run.Key + "&cursor=" + url.QueryEscape(result.FinalCursor))
 	if err != nil {
 		t.Fatal(err)
 	}

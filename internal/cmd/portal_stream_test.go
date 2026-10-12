@@ -49,6 +49,17 @@ func TestPortal_RunStream_BridgesControlSocketToSSE(t *testing.T) {
 	}
 }
 
+func TestPortal_RunStream_DefaultsToLegacyPlainLines(t *testing.T) {
+	server, _, _, runID := savedPortalStreamHTTPFixture(t, "{\"agent\":\"json\"}\n[row] plain output\n")
+	resp := getSavedPortalStreamProtocol(t, server.URL, runID, "")
+	defer resp.Body.Close()
+	reader := bufio.NewReader(resp.Body)
+	first, second := readPortalLegacyEvent(t, reader), readPortalLegacyEvent(t, reader)
+	if first != `{"agent":"json"}` || second != "plain output" {
+		t.Fatalf("legacy stream records = %q, %q", first, second)
+	}
+}
+
 func TestPortal_RunStream_EmitsHeartbeatOnIdleSocket(t *testing.T) {
 	original := portalStreamHeartbeat
 	portalStreamHeartbeat = 20 * time.Millisecond
@@ -146,8 +157,16 @@ func savedPortalStreamHTTPFixture(t *testing.T, raw string) (*httptest.Server, s
 }
 
 func getSavedPortalStream(t *testing.T, baseURL, runID string) *http.Response {
+	return getSavedPortalStreamProtocol(t, baseURL, runID, "frames")
+}
+
+func getSavedPortalStreamProtocol(t *testing.T, baseURL, runID, protocol string) *http.Response {
 	t.Helper()
-	resp, err := (&http.Client{Timeout: 5 * time.Second}).Get(baseURL + "/api/runs/stream?runKey=" + url.QueryEscape(runID))
+	streamURL := baseURL + "/api/runs/stream?runKey=" + url.QueryEscape(runID)
+	if protocol != "" {
+		streamURL += "&protocol=" + url.QueryEscape(protocol)
+	}
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Get(streamURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,4 +175,21 @@ func getSavedPortalStream(t *testing.T, baseURL, runID string) *http.Response {
 		t.Fatalf("stream HTTP status %d, Content-Type %q", resp.StatusCode, resp.Header.Get("Content-Type"))
 	}
 	return resp
+}
+
+func readPortalLegacyEvent(t *testing.T, reader *bufio.Reader) string {
+	t.Helper()
+	var data string
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		line = strings.TrimSuffix(line, "\n")
+		if strings.HasPrefix(line, "data: ") {
+			data = strings.TrimPrefix(line, "data: ")
+		} else if line == "" && data != "" {
+			return data
+		}
+	}
 }
