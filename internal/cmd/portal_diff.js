@@ -1624,6 +1624,10 @@
     // startedAt is anchored on run.started) and the terminal path uses
     // the server-stamped Finished - Started.
     if (run && (run.status === 'queued' || run.status === 'blocked')) return '—';
+    // Status may be promoted to "reviewing" by a linked live review even
+    // while the implementation is waiting. Trust the event-derived waiting
+    // signal over an executionSince value retained by a stale client row.
+    if (run && run.waiting) return run.duration || '—';
     const executionSince = Date.parse(run && run.executionSince || '');
     if (!Number.isFinite(executionSince)) return run && run.duration || '—';
     const baseline = Number(run && run.activeDurationSeconds);

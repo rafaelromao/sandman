@@ -35,6 +35,9 @@ type portalRun struct {
 	RunID       string     `json:"runId"`
 	Kind        string     `json:"kind"`
 	Status      string     `json:"status"`
+	// Waiting preserves the event-derived lifecycle phase separately from
+	// Status, which may be promoted to "reviewing" by a live linked review.
+	Waiting     bool       `json:"waiting,omitempty"`
 	IssueLabel  string     `json:"issueLabel"`
 	IssueNumber int        `json:"issueNumber,omitempty"`
 	Branch      string     `json:"branch,omitempty"`
@@ -2023,6 +2026,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		RunID:                 runID,
 		Kind:                  v.kindForRun(runState),
 		Status:                status,
+		Waiting:               runState.Status() == "waiting",
 		IssueLabel:            issueLabel,
 		IssueNumber:           issueNumber,
 		IssueTitle:            v.issueTitleFromPayload(runState.Started.Payload),

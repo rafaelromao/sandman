@@ -92,6 +92,49 @@ try {
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffRefreshLiveTimeCells_WaitingReviewAggregateIgnoresStaleExecutionClock(t *testing.T) {
+	js := `const body = makeMockBody();
+const realNow = Date.now;
+try {
+  const executionSince = new Date(1700000000000).toISOString();
+  const waiting = {
+    key: 'waiting-parent', kind: 'active', status: 'reviewing', waiting: true,
+    reviewLive: true, issueLabel: '#42', runId: 'parent-42', duration: '5m',
+    activeDurationSeconds: 300, executionSince,
+  };
+  const running = {
+    key: 'running-parent', kind: 'active', status: 'running', issueLabel: '#43',
+    runId: 'parent-43', duration: '5m', activeDurationSeconds: 300, executionSince,
+  };
+  const activeReview = {
+    key: 'active-review', kind: 'active', status: 'reviewing', review: true,
+    issueLabel: 'PR44', runId: 'review-44', duration: '5m',
+    activeDurationSeconds: 300, executionSince,
+  };
+  const opts = { helpers, expandedKey: null };
+  for (const run of [waiting, running, activeReview]) SandmanPortalDiff.insertRunRow(body, run, opts);
+  const duration = (index) => body.children[index].querySelector('[data-cell="duration"]')
+    .querySelector('.duration-value').textContent;
+
+  Date.now = () => 1700003600000;
+  SandmanPortalDiff.refreshLiveTimeCells(body, [waiting, running, activeReview]);
+  if (duration(0) !== '5m') throw new Error('waiting parent with stale executionSince advanced to ' + duration(0));
+  if (duration(1) !== '1h5m') throw new Error('running parent did not advance from its active baseline: ' + duration(1));
+  if (duration(2) !== '1h5m') throw new Error('actively executing review did not advance: ' + duration(2));
+
+  Date.now = () => 1700004200000;
+  SandmanPortalDiff.refreshLiveTimeCells(body, [waiting, running, activeReview]);
+  if (duration(0) !== '5m') throw new Error('waiting parent advanced during a later live-time refresh: ' + duration(0));
+  if (duration(1) !== '1h15m') throw new Error('running parent stopped advancing: ' + duration(1));
+  if (duration(2) !== '1h15m') throw new Error('actively executing review stopped advancing: ' + duration(2));
+  console.log('PASS');
+} finally {
+  Date.now = realNow;
+}
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffCreateRunRow_DoesNotRenderReviewBadgeInTitle(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', kind: 'active', status: 'reviewing', review: true, issueLabel: 'Issue 1', runId: 'r1' };
