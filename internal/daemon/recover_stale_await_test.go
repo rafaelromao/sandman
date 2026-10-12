@@ -66,6 +66,60 @@ func TestRecoverStaleRuns_PreservesAwaitingRunWithUnexpiredLease(t *testing.T) {
 	}
 }
 
+func TestRecoverStaleRuns_PreservesAwaitingRunAtIndexedRelocatedLocation(t *testing.T) {
+	baseDir := t.TempDir()
+	physical := filepath.Join(baseDir, "relocated", "frozen-location")
+	if err := (&batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{{
+		ID: "public-batch", Path: physical, Status: batchindex.StatusActive, Issues: []int{42},
+	}}}).Save(filepath.Join(baseDir, "batches.json")); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	started := now.Add(-20 * time.Minute)
+	awaited := now.Add(-10 * time.Minute)
+	writeManifestFile(t, physical, BatchManifest{Issues: []int{42}, CreatedAt: started})
+	runID := "run-relocated-await-42"
+	runDir := filepath.Join(physical, "runs", runID)
+	if err := batchindex.WriteManifest(runDir, batchindex.RunManifest{
+		RunID: runID, BatchID: "public-batch", Issue: 42,
+		Status: batchindex.RunManifestStatusActive, CreatedAt: started,
+	}); err != nil {
+		t.Fatalf("write run manifest: %v", err)
+	}
+	if err := RenewRunWait(physical, RunWait{
+		Protocol: "run-wait/v1", RunID: runID, BatchID: "public-batch", Issue: 42,
+		Branch: "42-fix", BaseBranch: "main", OperationID: "ci:17:head",
+		OperationDeadline: now.Add(30 * time.Minute),
+	}, now); err != nil {
+		t.Fatalf("write awaiting snapshot: %v", err)
+	}
+	existing := []events.Event{
+		{Type: "run.started", RunID: runID, Issue: 42, Timestamp: started, Payload: map[string]any{
+			"batch_id": "public-batch", "branch": "42-fix", "base_branch": "main",
+		}},
+		{Type: "run.await", RunID: runID, Issue: 42, Timestamp: awaited, Payload: map[string]any{
+			"await_reason": "pending", "ci_wait": map[string]any{
+				"deadline_unix_seconds": now.Add(30 * time.Minute).Unix(),
+			},
+		}},
+	}
+	eventLog := &recordingEventLog{}
+	recovered, dirs, err := RecoverStaleRuns(baseDir, existing, eventLog)
+	if err != nil {
+		t.Fatalf("RecoverStaleRuns: %v", err)
+	}
+	if recovered != 0 || dirs != 1 || len(eventLog.logged) != 0 {
+		t.Fatalf("recovery = (%d, %d), events=%v; relocated unexpired await must be preserved", recovered, dirs, eventLog.logged)
+	}
+	manifest, err := batchindex.ReadManifest(runDir)
+	if err != nil {
+		t.Fatalf("read run manifest after recovery: %v", err)
+	}
+	if manifest.Status != batchindex.RunManifestStatusActive {
+		t.Fatalf("run manifest status = %q, want active", manifest.Status)
+	}
+}
+
 func TestRecoverStaleRuns_AbortsAwaitingRunWithExpiredLease(t *testing.T) {
 	baseDir := t.TempDir()
 	now := time.Now().UTC()

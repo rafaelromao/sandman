@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 func TestRunWait_ClaimAndFixedRecoveryWindow(t *testing.T) {
@@ -95,6 +97,51 @@ func TestInitialWaitRejectsForeignBatchOwnership(t *testing.T) {
 	}
 	if _, err := TransferRunWait(filepath.Join(root, "batches", "foreign"), filepath.Join(root, "batches", "new"), "row", now); err == nil {
 		t.Fatal("foreign batch transferred initial intent")
+	}
+}
+
+func TestRunWait_ReadsLeaseAtIndexedRelocatedLocation(t *testing.T) {
+	root := t.TempDir()
+	layout := paths.NewLayout(nil, root)
+	physical := filepath.Join(layout.SandmanDir, "relocated", "frozen-location")
+	if err := (&batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{{
+		ID: "public-batch", Path: physical, Status: batchindex.StatusActive,
+	}}}).Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	record := RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "public-batch", Issue: 42,
+		Branch: "42-fix", BaseBranch: "main", OperationID: "ci:17:head", OperationDeadline: now.Add(time.Hour)}
+	if err := RenewRunWait(physical, record, now); err != nil {
+		t.Fatalf("write relocated lease: %v", err)
+	}
+	read, err := ReadRunWait(physical, record.RunID)
+	if err != nil || read.BatchID != record.BatchID || !read.RecoverableAt(now) {
+		t.Fatalf("read relocated lease = %+v, error=%v", read, err)
+	}
+}
+
+func TestRunWait_TransferPreservesIndexedDestinationIdentity(t *testing.T) {
+	root := t.TempDir()
+	layout := paths.NewLayout(nil, root)
+	destination := filepath.Join(layout.SandmanDir, "relocated", "frozen-destination")
+	if err := (&batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{{
+		ID: "public-destination", Path: destination, Status: batchindex.StatusActive,
+	}}}).Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	record := RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "old", Issue: 42,
+		Branch: "42-fix", BaseBranch: "main", OperationID: "capacity"}
+	if err := RenewRunWait(layout.BatchDir("old"), record, now); err != nil {
+		t.Fatal(err)
+	}
+	moved, err := TransferRunWait(layout.BatchDir("old"), destination, record.RunID, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("transfer relocated lease: %v", err)
+	}
+	if moved.BatchID != "public-destination" {
+		t.Fatalf("transferred BatchID = %q, want public-destination", moved.BatchID)
 	}
 }
 

@@ -174,6 +174,17 @@ func BatchDir(baseDir, dirID string) string {
 	return filepath.Join(baseDir, "batches", dirID)
 }
 
+// ResolveBatchDir returns the frozen physical location for a public BatchID.
+// Unindexed legacy batches retain their canonical location.
+func ResolveBatchDir(layout paths.Layout, batchID string) string {
+	if idx, err := batchindex.Load(layout.BatchesIndexPath); err == nil {
+		if batch := idx.ResolveBatchIdentity(batchID); batch != nil {
+			return batch.Location(layout).Dir
+		}
+	}
+	return layout.BatchDir(batchID)
+}
+
 // ManifestPath returns the on-disk path of the batch manifest file
 // within a batch directory.
 func ManifestPath(batchDir string) string {

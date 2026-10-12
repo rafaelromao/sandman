@@ -55,7 +55,8 @@ func FindReadyContinuations(eventLog []events.Event, layout paths.Layout) []Read
 		if batchID == "" {
 			batchID = state.BatchID()
 		}
-		if batchID != "" && daemon.IsRunActive(daemon.BatchDir(layout.SandmanDir, batchID)) {
+		batchDir := daemon.ResolveBatchDir(layout, batchID)
+		if batchID != "" && daemon.IsRunActive(batchDir) {
 			continue
 		}
 		claim, claimErr := daemon.ClaimRun(layout.SandmanDir, state.RunID)
@@ -63,7 +64,7 @@ func FindReadyContinuations(eventLog []events.Event, layout paths.Layout) []Read
 			continue
 		}
 		_ = claim.Close()
-		wait, waitErr := daemon.ReadRunWait(layout.BatchDir(batchID), state.RunID)
+		wait, waitErr := daemon.ReadRunWait(batchDir, state.RunID)
 		if waitErr == nil {
 			var valid bool
 			wait, _, valid = reconcileRecoveryWait(wait, state)

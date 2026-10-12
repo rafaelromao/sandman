@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/events"
 	"golang.org/x/sys/unix"
 )
@@ -104,8 +105,21 @@ func initialWaitPath(batchDir, runID string) string {
 	return filepath.Join(filepath.Dir(filepath.Dir(batchDir)), "state", "waiting", runID+".json")
 }
 
+func batchIdentityForDir(batchDir string) string {
+	baseDir := filepath.Dir(filepath.Dir(batchDir))
+	layout := layoutForBaseDir(baseDir)
+	if idx, err := batchindex.Load(layout.BatchesIndexPath); err == nil {
+		for _, batch := range idx.Batches {
+			if filepath.Clean(batch.Location(layout).Dir) == filepath.Clean(batchDir) {
+				return batch.ID
+			}
+		}
+	}
+	return filepath.Base(batchDir)
+}
+
 func validateRunWait(batchDir, runID string, record RunWait) error {
-	if !safeWaitID(runID) || !safeWaitID(record.BatchID) || record.Protocol != "run-wait/v1" || record.RunID != runID || record.BatchID != filepath.Base(batchDir) || record.Issue <= 0 || record.BaseBranch == "" || record.OperationID == "" || record.LeaseExpiresAt.IsZero() || record.AdmissionMode < 0 || record.AdmissionMode > 2 {
+	if !safeWaitID(runID) || !safeWaitID(record.BatchID) || record.Protocol != "run-wait/v1" || record.RunID != runID || record.BatchID != batchIdentityForDir(batchDir) || record.Issue <= 0 || record.BaseBranch == "" || record.OperationID == "" || record.LeaseExpiresAt.IsZero() || record.AdmissionMode < 0 || record.AdmissionMode > 2 {
 		return fmt.Errorf("waiting ownership identity/timing is invalid")
 	}
 	clean := filepath.Clean(record.Branch)
@@ -154,8 +168,8 @@ func waitRecoverySchedule(baseDir string, run events.RunState, now time.Time) (p
 	if !run.IsAwaiting() && !run.IsCapacityQueued() && run.Status() != "queued" {
 		return false, false
 	}
-	batchID := run.BatchID()
-	record, err := ReadRunWait(filepath.Join(baseDir, "batches", batchID), run.RunID)
+	layout := layoutForBaseDir(baseDir)
+	record, err := ReadRunWait(ResolveBatchDir(layout, run.BatchID()), run.RunID)
 	if err == nil {
 		return record.RecoverableAt(now), true
 	}
@@ -218,7 +232,7 @@ func TransferRunWait(oldBatchDir, newBatchDir, runID string, now time.Time) (Run
 	if err := writeRunWait(oldBatchDir, record, now); err != nil {
 		return record, err
 	}
-	record.BatchID = filepath.Base(newBatchDir)
+	record.BatchID = batchIdentityForDir(newBatchDir)
 	return record, writeRunWait(newBatchDir, record, now)
 }
 

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
@@ -56,6 +57,29 @@ func TestFindReadyContinuationsUsesLatestDurableCapacityPhase(t *testing.T) {
 	})
 	if got := FindReadyContinuations(continued, layout); len(got) != 0 {
 		t.Fatalf("ready after newer run = %#v, want none", got)
+	}
+}
+
+func TestFindReadyContinuationsReadsIndexedRelocatedLease(t *testing.T) {
+	layout := paths.NewLayout(nil, t.TempDir())
+	physical := filepath.Join(layout.SandmanDir, "relocated", "frozen-location")
+	if err := (&batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{{
+		ID: "public-batch", Path: physical, Status: batchindex.StatusActive,
+	}}}).Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	eventLog := readyContinuationEvents("run-ready", "public-batch", now.Add(-2*time.Minute), now.Add(-time.Minute), now)
+	delete(eventLog[2].Payload, "ready_continuation")
+	if err := daemon.RenewRunWait(physical, daemon.RunWait{
+		Protocol: "run-wait/v1", RunID: "run-ready", BatchID: "public-batch", Issue: 42,
+		Branch: "42-fix", BaseBranch: "main", Ready: true, OperationID: "capacity",
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+	ready := FindReadyContinuations(eventLog, layout)
+	if len(ready) != 1 || ready[0].BatchID != "public-batch" || ready[0].Wait == nil || !ready[0].Wait.RecoverableAt(now) {
+		t.Fatalf("relocated ready continuation = %#v, want logical identity and valid lease", ready)
 	}
 }
 

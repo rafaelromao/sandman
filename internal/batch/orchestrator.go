@@ -1772,11 +1772,11 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			recoveryRejected[issue] = true
 			continue
 		}
-		current, err := daemon.ReadRunWait(layout.BatchDir(recovery.BatchID), recovery.RunID)
+		current, err := daemon.ReadRunWait(daemon.ResolveBatchDir(layout, recovery.BatchID), recovery.RunID)
 		if os.IsNotExist(err) && !recovery.RecoveryEventAt.IsZero() {
 			if legacy, valid := legacyRecoveryWait(claimedStates[recovery.RunID]); valid && legacy.RecoveryEventAt.Equal(recovery.RecoveryEventAt) && legacy.RecoverableAt(recoveryNow()) {
 				current = legacy
-				err = daemon.RenewRunWait(layout.BatchDir(current.BatchID), current, recoveryNow())
+				err = daemon.RenewRunWait(daemon.ResolveBatchDir(layout, current.BatchID), current, recoveryNow())
 			}
 		}
 		if err != nil || current.Issue != issue {
@@ -1789,7 +1789,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			continue
 		}
 		if changed {
-			if err := daemon.RenewRunWait(layout.BatchDir(current.BatchID), reconciled, recoveryNow()); err != nil {
+			if err := daemon.RenewRunWait(daemon.ResolveBatchDir(layout, current.BatchID), reconciled, recoveryNow()); err != nil {
 				recoveryRejected[issue] = true
 				continue
 			}
@@ -1802,7 +1802,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				newBatchID = current.RunID
 			}
 		}
-		current, err = daemon.TransferRunWait(layout.BatchDir(current.BatchID), layout.BatchDir(newBatchID), current.RunID, recoveryNow())
+		current, err = daemon.TransferRunWait(daemon.ResolveBatchDir(layout, current.BatchID), layout.BatchDir(newBatchID), current.RunID, recoveryNow())
 		if err != nil {
 			recoveryRejected[issue] = true
 			continue
