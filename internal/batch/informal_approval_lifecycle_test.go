@@ -211,6 +211,7 @@ func TestInformalApprovalLifecycle_AmbiguousDecisionsCannotAuthorizeMerge(t *tes
 		"## Findings\nNo style issues; please fix the race on line 42 to resolve the correctness issues.\n\n## Decision\nAPPROVED",
 		"## Decision\nAPPROVED — fix the race in worker.go before merging.",
 		"## Decision\nAPPROVED - fix the race in worker.go.",
+		"## Decision\nAPPROVED\n### Merge conditions\nFix the race in worker.go before merging.",
 		"## Decision\n'APPROVED'",
 		"No LGTM",
 		"Previously approved",

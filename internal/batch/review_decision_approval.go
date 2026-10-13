@@ -66,6 +66,9 @@ func reviewDecisionApprovedBody(body string) bool {
 			level := len(trimmed) - len(strings.TrimLeft(trimmed, "#"))
 			if level > sectionLevel && section != "" {
 				switch section {
+				case "decision":
+					decision.WriteString(trimmed + "\n")
+					continue
 				case "findings":
 					findings.WriteString(trimmed + "\n")
 					continue
