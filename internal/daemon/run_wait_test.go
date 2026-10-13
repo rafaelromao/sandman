@@ -202,6 +202,39 @@ func TestRunWait_TransferUsesAuthoritativeLayoutForNestedRelocation(t *testing.T
 	}
 }
 
+func TestRunWait_TransferRejectsUnreadableIndex(t *testing.T) {
+	root := t.TempDir()
+	layout := paths.NewLayout(nil, root)
+	if err := os.MkdirAll(layout.SandmanDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(layout.BatchesIndexPath, []byte("not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	source := layout.BatchDir("old")
+	record := RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "old", Issue: 42,
+		Branch: "42-fix", BaseBranch: "main", OperationID: "capacity"}
+	if err := RenewRunWait(source, record, now); err != nil {
+		t.Fatal(err)
+	}
+	before, err := ReadRunWait(source, record.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := TransferRunWait(layout, source, layout.BatchDir("new"), record.RunID, now); err == nil {
+		t.Fatal("transfer accepted an unreadable batches index")
+	}
+	unchanged, err := ReadRunWait(source, record.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !unchanged.LeaseExpiresAt.Equal(before.LeaseExpiresAt) {
+		t.Fatalf("failed transfer renewed source lease: %v", unchanged.LeaseExpiresAt)
+	}
+}
+
 func TestRunWait_BatchHandoffPreservesQuotaScheduleAndGrace(t *testing.T) {
 	for _, initial := range []bool{true, false} {
 		t.Run(map[bool]string{true: "initial", false: "started"}[initial], func(t *testing.T) {

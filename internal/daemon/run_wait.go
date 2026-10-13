@@ -116,7 +116,11 @@ func batchIdentityForDir(layout paths.Layout, batchDir string) (string, error) {
 			return batch.ID, nil
 		}
 	}
-	return filepath.Base(batchDir), nil
+	legacyID := filepath.Base(batchDir)
+	if filepath.Clean(batchDir) == filepath.Clean(layout.BatchDir(legacyID)) {
+		return legacyID, nil
+	}
+	return "", fmt.Errorf("batch location is not indexed: %s", batchDir)
 }
 
 func validateRunWait(batchDir, expectedBatchID, runID string, record RunWait) error {
