@@ -21,6 +21,12 @@ type repairSandboxFactory struct {
 
 var canonicalRepairID = regexp.MustCompile(`^\d{12}-[0-9a-f]{4}-prompt(?:-[a-zA-Z0-9_-]+)?$`)
 
+// repairEditScope is what an unattended repair may edit without prompting:
+// the repository's Sandman directory, relative to the repository root where
+// repairs run. Its Dockerfile, configuration, and prompts are the operational
+// state a blocked daemon depends on.
+const repairEditScope = ".sandman"
+
 func (f repairSandboxFactory) NewSandbox(string, string, string, string, sandbox.Container) sandbox.Sandbox {
 	return sandbox.NewRepositoryHostSandbox(f.repoPath, f.promptPath)
 }

@@ -36,22 +36,27 @@ type AgentRun struct {
 	modelName                  string
 	variant                    string
 	dangerouslySkipPermissions *bool
-	opencodePermissionMode     string
-	sessionName                string
-	sandbox                    sandbox.Sandbox
-	status                     string
-	contextExhausted           bool
-	usageLimitReached          bool
-	modelProgress              func()
-	usageLimit                 func()
-	cleanupError               error // distinct cleanup failure from context cancellation
-	contextRolloverLiterals    []string
-	env                        map[string]string
-	outputWriter               io.Writer
-	layout                     paths.Layout
-	runFolder                  string
-	taskWriter                 func(string, []byte, os.FileMode) error
-	sessionWarning             io.Writer
+	// editScope is the directory, relative to the working directory, that an
+	// unattended launch may edit without prompting ("" for none). Skipped
+	// permissions already allow everything, so they render no scope.
+	editScope               string
+	opencodePermissionMode  string
+	sessionName             string
+	sandbox                 sandbox.Sandbox
+	status                  string
+	contextExhausted        bool
+	usageLimitReached       bool
+	permissionDenials       []string
+	modelProgress           func()
+	usageLimit              func()
+	cleanupError            error // distinct cleanup failure from context cancellation
+	contextRolloverLiterals []string
+	env                     map[string]string
+	outputWriter            io.Writer
+	layout                  paths.Layout
+	runFolder               string
+	taskWriter              func(string, []byte, os.FileMode) error
+	sessionWarning          io.Writer
 }
 
 // NewAgentRun creates an AgentRun for the given issue, branch, and sandbox.
@@ -222,6 +227,11 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	// launch; see agentStrategy.
 	strategy := strategyFor(r.preset, command)
 	priorSession, useContinue := strategy.PrepareLaunch(r)
+	skipPermissions := r.dangerouslySkipPermissions != nil && *r.dangerouslySkipPermissions
+	editScope := r.editScope
+	if skipPermissions {
+		editScope = ""
+	}
 	render := func(sessionID string, continueFlag bool) (string, error) {
 		sessionFlag := ""
 		if sessionID != "" {
@@ -233,7 +243,8 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 			VariantFlag:                strategy.VariantFlag(r.variant),
 			ModelProvider:              r.modelProvider,
 			ModelName:                  r.modelName,
-			DangerouslySkipPermissions: r.dangerouslySkipPermissions != nil && *r.dangerouslySkipPermissions,
+			DangerouslySkipPermissions: skipPermissions,
+			PermissionFlag:             strategy.EditScopeFlag(editScope),
 			SessionName:                r.sessionName,
 			SessionFlag:                sessionFlag,
 			ContinueFlag:               continueFlag,
@@ -282,6 +293,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	}
 	parsedStdout, parsedStderr := strategy.NewOutputParsers(r.warningWriter())
 	execErr := r.execute(attemptCtx, renderedCmd, stdout, stderr, parsedStdout, parsedStderr)
+	r.permissionDenials = parsersPermissionDenials(parsedStdout, parsedStderr)
 	if detector != nil {
 		detector.Flush()
 	}
@@ -310,6 +322,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 				fallbackUsed = true
 				fallbackOut, fallbackErr := strategy.NewOutputParsers(r.warningWriter())
 				execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, fallbackOut, fallbackErr)
+				r.permissionDenials = parsersPermissionDenials(parsedStdout, parsedStderr, fallbackOut, fallbackErr)
 				parsedStdout, parsedStderr = fallbackOut, fallbackErr
 				strategy.PersistSession(r, fallbackOut, fallbackErr)
 			}
@@ -413,6 +426,7 @@ func (r *AgentRun) Result() AgentRunResult {
 		WorktreePath:      r.sandbox.WorkDir(),
 		ContextExhausted:  r.contextExhausted,
 		UsageLimitReached: r.usageLimitReached,
+		PermissionDenials: r.permissionDenials,
 		CleanupError:      r.cleanupError,
 	}
 }

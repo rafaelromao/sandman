@@ -112,6 +112,50 @@ sandman review \
   --max-containers 2
 ```
 
+## Health repair
+
+When an operation the daemon depends on fails (authenticating to GitHub, listing
+pull requests, preparing or launching a review run, publishing a decision), the
+daemon records the failure in `.sandman/reviews/health-repair.json` and launches
+a diagnostic repair agent. The agent gets the failed operation, its error output,
+and the paths to the event log and run artifacts. GitHub rate limits, usage
+limits, and cancellation are waits, not health failures, and launch no repair.
+
+The repair agent differs from the reviewer:
+
+- **It runs on the host**, at the repository root, with the configured review
+  agent and model. It does not run in a container, because the container image
+  or sandbox may be what is broken. The agent's binary and its authentication
+  must be available on the host; for Claude Code, see
+  [Agent Compatibility > Authentication](agent-compatibility.md#authentication).
+- **It may change operational files.** The reviewer only reads the pull request
+  and writes its decision. The repair agent is told to change only
+  operator-owned files under `.sandman/` (the Dockerfile, `config.yaml`, prompt
+  templates), never Sandman-owned state such as `events.jsonl` or `batches/`,
+  and to report the command for you when a step is not permitted.
+  - Claude Code: the launch allows edits under `.sandman/` and keeps every
+    other prompting call denied (`--allowedTools 'Edit(/.sandman/**)'
+    --permission-mode dontAsk`), with no permission bypass. The repair cannot
+    run shell commands that need approval, such as an image rebuild; the daemon
+    rebuilds the image on the next review attempt. Managed Claude Code settings
+    with `allowManagedPermissionRulesOnly` ignore this rule, so there the repair
+    can only diagnose and you apply its reported fix. Do not loosen managed
+    policy to work around it.
+  - OpenCode: the repair follows your own OpenCode permission configuration. It
+    is not narrowed to `.sandman/`, and Sandman cannot detect refused actions.
+
+Each failure episode allows three repairs, with a cooldown that grows after each.
+A repair whose actions were refused is recorded as `unresolved: repair actions
+denied (<tools>)`, never as a successful repair. The daemon does not relaunch a
+repair for the same failures with the same agent and model; it logs `health
+repair paused: ...` once and waits for you. A changed failure, a new review
+request, or a different review agent or model admits a repair again. The record
+resets once every failed operation succeeds.
+
+Whatever the repair did, the daemon retries the original operation through its
+normal path. If review launches fail with `mise: not found`, see
+[Troubleshooting](../help/troubleshooting.md#container-image-build-fails-with-mise-not-found).
+
 ## Review output
 
 The review agent writes its response to the review worktree's `decision.md`. The daemon reads that file, removes self-triggering review-command text, and posts the final body as a pull-request comment.
