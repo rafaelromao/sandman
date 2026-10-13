@@ -71,6 +71,20 @@ run or standalone session and is never shared global skill state.
 
 When it sees a matching comment authored by the GitHub user authenticated to the daemon, it launches a review AgentRun and posts the result back to the pull request. Requests from other users are ignored. Use direct review for manual or CI-driven reviews that should not be tied to the daemon's authenticated user.
 
+The terminal running `sandman review` shows two streams:
+
+- **stderr** carries the daemon's own decisions: failed launches with a short
+  cause and the time the request is retried, health repairs being launched,
+  paused, or out of budget, and other operational errors.
+- **stdout** carries the transcripts of the review and repair agents it runs.
+
+While the daemon works on a request, it adds a 👀 reaction to the comment and
+the pull request, and removes it when the launch ends. If the reaction
+disappears without a decision being posted, the stderr line for that request
+says why. `sandman attach` streams the same daemon lines from another terminal.
+The complete error of each failing operation is kept in
+`.sandman/reviews/health-repair.json`.
+
 ## Review command guard
 
 By default, `sandman init` writes this config:

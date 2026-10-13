@@ -23,8 +23,9 @@ var reviewDaemonRunner = runReviewDaemon
 
 // NewReviewCmd creates the `sandman review` daemon command. It polls open PRs
 // every 30s for `/sandman review` comments and launches review agents up to
-// parallel_reviews at a time. The daemon writes log lines to .sandman/review.sock
-// (exposed via `sandman attach`) and shuts down cleanly on SIGINT/SIGTERM.
+// parallel_reviews at a time. The daemon writes its log lines to stderr and to
+// .sandman/reviews/review.sock (exposed via `sandman attach`), and shuts down
+// cleanly on SIGINT/SIGTERM.
 func NewReviewCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "review",
