@@ -1772,11 +1772,19 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			recoveryRejected[issue] = true
 			continue
 		}
-		current, err := daemon.ReadRunWait(layout.BatchDir(recovery.BatchID), recovery.RunID)
+		currentBatchDir, err := daemon.ResolveBatchDir(layout, recovery.BatchID)
+		if err != nil {
+			recoveryRejected[issue] = true
+			continue
+		}
+		current, err := daemon.ReadRunWait(currentBatchDir, recovery.RunID)
 		if os.IsNotExist(err) && !recovery.RecoveryEventAt.IsZero() {
 			if legacy, valid := legacyRecoveryWait(claimedStates[recovery.RunID]); valid && legacy.RecoveryEventAt.Equal(recovery.RecoveryEventAt) && legacy.RecoverableAt(recoveryNow()) {
 				current = legacy
-				err = daemon.RenewRunWait(layout.BatchDir(current.BatchID), current, recoveryNow())
+				currentBatchDir, err = daemon.ResolveBatchDir(layout, current.BatchID)
+				if err == nil {
+					err = daemon.RenewRunWait(currentBatchDir, current, recoveryNow())
+				}
 			}
 		}
 		if err != nil || current.Issue != issue {
@@ -1789,7 +1797,12 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			continue
 		}
 		if changed {
-			if err := daemon.RenewRunWait(layout.BatchDir(current.BatchID), reconciled, recoveryNow()); err != nil {
+			currentBatchDir, err := daemon.ResolveBatchDir(layout, current.BatchID)
+			if err != nil {
+				recoveryRejected[issue] = true
+				continue
+			}
+			if err := daemon.RenewRunWait(currentBatchDir, reconciled, recoveryNow()); err != nil {
 				recoveryRejected[issue] = true
 				continue
 			}
@@ -1802,7 +1815,12 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				newBatchID = current.RunID
 			}
 		}
-		current, err = daemon.TransferRunWait(layout.BatchDir(current.BatchID), layout.BatchDir(newBatchID), current.RunID, recoveryNow())
+		currentBatchDir, err = daemon.ResolveBatchDir(layout, current.BatchID)
+		if err != nil {
+			recoveryRejected[issue] = true
+			continue
+		}
+		current, err = daemon.TransferRunWait(layout, currentBatchDir, layout.BatchDir(newBatchID), current.RunID, recoveryNow())
 		if err != nil {
 			recoveryRejected[issue] = true
 			continue
