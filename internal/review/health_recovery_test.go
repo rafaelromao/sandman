@@ -290,6 +290,31 @@ func TestDaemonHealthRepairDeniedActionsAreUnresolved(t *testing.T) {
 	}
 }
 
+// The repair agent works unattended on the host with a narrow edit scope, so
+// its prompt must say what it may change and what to do when a step is refused.
+func TestDaemonHealthRepairPromptStatesScope(t *testing.T) {
+	gh := &fakeGH{listErr: errors.New("remote broken")}
+	runner := &healthRunner{}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{DefaultReviewAgent: "claude", DefaultReviewModel: "sonnet"})
+	_ = d.tick(context.Background())
+	d.inFlight.Wait()
+	if len(runner.requests()) != 1 {
+		t.Fatalf("repair launches=%d, want 1", len(runner.requests()))
+	}
+	prompt := runner.requests()[0].PromptConfig.TaskPrompt
+	for _, want := range []string{
+		"Change only operator-owned files under " + d.BaseDir,
+		"do not hand-edit Sandman-owned state",
+		"events.jsonl",
+		"If an action or verification step is not permitted, do not retry it",
+		"report the exact command or change for the operator",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("repair prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
 // A denied repair cannot do better on the same failure, so the daemon must not
 // spend its budget relaunching it. Each review launch wraps the same cause in
 // fresh per-attempt identities, which must not count as a changed failure.
