@@ -701,18 +701,15 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 				ciEvidence, ciErr = s.ciWaitEvidence(ctx, workDir, pr, headSHA)
 			}
 		}
+		if ctx.Err() != nil {
+			return "aborted", nil, true
+		}
 		if ciErr != nil {
-			if ctx.Err() != nil {
-				return "aborted", nil, true
-			}
 			return "resume", map[string]any{
 				"gate":        gateCIWaitTimeout,
 				"reason":      "CI_WAIT_STATE_ERROR",
 				"next_action": "inspect the persisted CI wait state and repair the current pull-request checks",
 			}, true
-		}
-		if ctx.Err() != nil {
-			return "aborted", nil, true
 		}
 		evidence.payload = mergeLifecycleDiagnostics(evidence.payload, ciEvidence)
 	}
