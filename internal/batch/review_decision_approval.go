@@ -183,5 +183,5 @@ func noReviewFindings(text string) bool {
 func reviewApprovalProse(text string) string {
 	text = informalFeedbackCodeAnchor.ReplaceAllString(text, "code")
 	text = informalFeedbackLineAnchor.ReplaceAllString(text, "code")
-	return text
+	return strings.ReplaceAll(text, "`", "")
 }
