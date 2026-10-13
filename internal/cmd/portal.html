@@ -2615,7 +2615,8 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
 
     function isRunAbortable(run, abortReservations) {
       if (!run || run.kind !== 'active') return false;
-      if (run.status !== 'running' && run.status !== 'reviewing' && run.status !== 'queued' && run.status !== 'blocked') return false;
+      if (run.finishedAt) return false;
+      if (!run.waiting && run.status !== 'running' && run.status !== 'reviewing' && run.status !== 'queued' && run.status !== 'blocked') return false;
       if (!run.batchKey) return false;
       const reservationKey = run.key + ':' + String(run.issueNumber != null ? run.issueNumber : '');
       if (abortReservations && abortReservations.has && abortReservations.has(reservationKey)) return false;
