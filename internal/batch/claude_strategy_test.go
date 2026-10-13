@@ -318,3 +318,47 @@ func TestPermissionFlagIsClaudeOnly(t *testing.T) {
 		})
 	}
 }
+
+// A configured permission mode reaches the launched command of both
+// implementation and review rows.
+func TestRunBatch_ConfiguredPermissionModeReachesClaudeLaunches(t *testing.T) {
+	newOrchestrator := func(sb *fakeSandbox) *Orchestrator {
+		client := &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."}},
+			prs:    map[string]*github.PR{"42-fix-bug": mergedPR("42-fix-bug", "")},
+		}
+		return NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+			Agent:        "claude",
+			DefaultModel: "sonnet",
+			Sandbox:      "worktree",
+			WorktreeDir:  ".sandman/worktrees",
+			Git:          config.GitConfig{BaseBranch: "main"},
+			AgentProviders: map[string]config.Agent{
+				"claude": {Preset: "claude", PermissionMode: "acceptEdits"},
+			},
+		}}, &spyEventLog{}, WithSandboxFactory(&fakeSandboxFactory{sandbox: sb}))
+	}
+	for _, tc := range []struct {
+		name string
+		req  Request
+	}{
+		{name: "implementation", req: Request{Issues: []int{42}}},
+		{name: "review", req: Request{
+			Agent:        "claude",
+			Model:        "sonnet",
+			Review:       true,
+			PRNumber:     42,
+			PromptConfig: prompt.RenderConfig{PromptFlag: "review prompt", Branch: "review-branch"},
+			RunID:        "review-run",
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sb := &fakeSandbox{}
+			tc.req.RunTS, tc.req.RunShortID = orchTestRunTS, orchTestRunShortID
+			_, _ = newOrchestrator(sb).RunBatch(context.Background(), tc.req)
+			if !strings.Contains(sb.execCommand, "--permission-mode 'acceptEdits'") || strings.Contains(sb.execCommand, "--dangerously-skip-permissions") {
+				t.Fatalf("command = %q, want the configured permission mode", sb.execCommand)
+			}
+		})
+	}
+}

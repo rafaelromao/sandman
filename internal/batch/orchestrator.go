@@ -4028,6 +4028,7 @@ loop:
 				agentRun.modelName = s.agentCfg.ModelName
 				agentRun.variant = s.variant
 				agentRun.opencodePermissionMode = s.agentCfg.OpencodePermissionMode
+				agentRun.permissionMode = s.agentCfg.PermissionMode
 				agentRun.baseBranch = s.baseBranch
 				agentRun.runID = runID
 				agentRun.review = s.review
