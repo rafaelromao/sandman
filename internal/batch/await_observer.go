@@ -77,7 +77,10 @@ func awaitOperationChanged(previous, observed map[string]any) bool {
 			continue
 		}
 		identityBound = true
-		if previousOK != observedOK || previousSignature != observedSignature {
+		if previousOK && !observedOK {
+			continue
+		}
+		if previousSignature != observedSignature {
 			return true
 		}
 	}
