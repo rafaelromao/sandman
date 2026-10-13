@@ -921,7 +921,7 @@ func (v *portalRunsView) dedupRuns(runs []portalRun) []portalRun {
 // transport.
 // Restored per issue #1897 after #1825 deleted it (and retargeted to the
 // decision.md artefact by #1938); the parent pick mirrors
-// the JS pickCanonicalParent (see portal.html) so the stamp lands on the
+// JS pickCanonicalParent (see portal_diff.js) so the stamp lands on the
 // row the portal actually displays.
 //
 // Rows without a BatchKey (orphan historical rows) or without a RunDir

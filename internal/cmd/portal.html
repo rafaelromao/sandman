@@ -2461,14 +2461,6 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       return '';
     }
 
-    function pickCanonicalParent(parents) {
-      const liveActive = parents.filter((candidate) => candidate.kind === 'active');
-      if (liveActive.length) {
-        return liveActive.reduce((best, candidate) => (candidate.startedAt > best.startedAt ? candidate : best));
-      }
-      return parents[0];
-    }
-
     function visibleRunForIssueGroup(issueNumber, runs) {
       if (!Number.isInteger(issueNumber) || issueNumber <= 0 || !Array.isArray(runs)) return null;
       const group = runs.filter((run) => run && run.issueNumber === issueNumber);
@@ -2483,7 +2475,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         // read sibling review.log, but logs are stripped on the summary
         // endpoint). The orphan review-only path (below) still uses
         // summarizeReviewGroup because no impl parent carries the stamp.
-        const visibleParent = pickCanonicalParent(parents);
+        const visibleParent = portalDiff.pickCanonicalParent(parents);
         return visibleParent;
       }
       const summary = summarizeReviewGroup(group.filter((run) => run.review));
@@ -2498,7 +2490,9 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const issueLabel = sourcePR > 0
         ? 'PR ' + sourcePR + ' (#' + String(issueNumber) + ')'
         : '#' + String(issueNumber);
-      return {
+      // Start with the validated source row so grouping does not discard
+      // metadata needed by actions, details, and live clock rendering.
+      return Object.assign({}, source, {
         key: source.key,
         runId: source.runId,
         review: true,
@@ -2517,7 +2511,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         unavailable: !!source.unavailable,
         reason: source.reason,
         issueLabel: issueLabel,
-      };
+      });
     }
 
     function visibleRunsForTable(runs) {

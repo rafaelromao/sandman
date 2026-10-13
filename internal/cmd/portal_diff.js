@@ -523,9 +523,8 @@
   // later run was launched; the selector needs one canonical row to act
   // as the parent's identity, plus the sibling reviews.
   //
-  // Pick logic mirrors the table-visibility helper pickCanonicalParent
-  // in portal.html (used by visibleRunForIssueGroup), so the dropdown's
-  // canonical option agrees with the visible table row:
+  // This helper is shared with the table projection in portal.html, so the
+  // dropdown's canonical option agrees with the visible table row:
   //
   //   1. The currently-running parent (kind === 'active'), if any.
   //      Within actives, the latest by startedAt wins. The
@@ -1986,6 +1985,7 @@
     updateDetailPanelEvents,
     subjectRunValue,
     subjectRunsFor,
+    pickCanonicalParent,
     highlightJSON,
     highlightTerminalLog,
     cheapEventsFingerprint,

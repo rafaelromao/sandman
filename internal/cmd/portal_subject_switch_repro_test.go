@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func loadPortalReproAssets(t *testing.T) (string, string, string, string) {
@@ -162,6 +163,82 @@ func runPortalChromiumWithVirtualTimeBudget(t *testing.T, page string, budgetMS 
 		t.Fatal("chromium screenshot was empty")
 	}
 	return string(out), screenshotPath
+}
+
+func TestPortalReviewOrphanProjectionBrowser_PreservesAbortAndExecutionMetadata(t *testing.T) {
+	now := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	orphan := map[string]any{
+		"key": "review-1472", "runId": "review-1472", "kind": "active", "status": "reviewing",
+		"review": true, "issueLabel": "PR1508", "issueNumber": 1472, "prNumber": 1508,
+		"startedAt": now.Add(-10 * time.Minute).Format(time.RFC3339), "duration": "5m",
+		"activeDurationSeconds": 300, "executionSince": now.Add(-30 * time.Second).Format(time.RFC3339),
+		"lastOutputAt": now.Add(-2 * time.Minute).Format(time.RFC3339), "batchKey": "batch-1472",
+		"archived": false, "unavailable": false, "sourceExists": true,
+	}
+	comparison := map[string]any{
+		"key": "impl-2", "runId": "impl-2", "kind": "active", "status": "running",
+		"issueLabel": "#2", "issueNumber": 2, "startedAt": now.Add(-time.Minute).Format(time.RFC3339),
+		"duration": "4m", "activeDurationSeconds": 240,
+		"executionSince": now.Add(-10 * time.Second).Format(time.RFC3339),
+		"lastOutputAt":   now.Format(time.RFC3339), "batchKey": "batch-2",
+		"archived": false, "unavailable": false, "sourceExists": true,
+	}
+	runsJSON, err := json.Marshal([]map[string]any{orphan, comparison})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateJSON := `{"expandedRunKey":null,"tabs":{},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"duration","sortDir":"desc"}`
+	page := buildPortalReproPage(t, stateJSON, runsJSON, fmt.Sprintf(`
+    window.__portalNow = %d;
+    Date.now = function () { return window.__portalNow; };
+    setTimeout(function () {
+      var rows = Array.from(document.querySelectorAll('#runs-body > tr[data-run-key]'))
+        .filter(function (row) { return !row.classList.contains('detail-row'); });
+      var orphanRow = document.querySelector('tr[data-run-key="review-1472"]');
+      var duration = orphanRow && orphanRow.querySelector('[data-cell="duration"] .duration-value');
+      var stale = orphanRow && orphanRow.querySelector('[data-cell="duration"] .stale-line');
+      var abort = orphanRow && orphanRow.querySelector('button[data-action="abort-run"]');
+      var marker = document.createElement('pre');
+      marker.id = 'portal-orphan-review-metadata';
+      marker.textContent = JSON.stringify({
+        order: rows.map(function (row) { return row.getAttribute('data-run-key'); }),
+        duration: duration && duration.textContent,
+        stale: !!stale,
+        abort: !!abort,
+        abortIssue: abort && abort.getAttribute('data-issue'),
+        error: document.getElementById('error-banner') && document.getElementById('error-banner').textContent
+      });
+      document.body.appendChild(marker);
+    }, 500);
+`, now.UnixMilli()))
+	page = strings.Replace(page, "const abortSupported = false;", "const abortSupported = true;", 1)
+	dom, _ := runPortalChromium(t, page)
+	var result struct {
+		Order      []string `json:"order"`
+		Duration   string   `json:"duration"`
+		Stale      bool     `json:"stale"`
+		Abort      bool     `json:"abort"`
+		AbortIssue string   `json:"abortIssue"`
+		Error      string   `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(extractPortalMarker(t, dom, "portal-orphan-review-metadata")), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Error != "" {
+		t.Fatalf("Portal error: %s", result.Error)
+	}
+	if len(result.Order) != 2 || result.Order[0] != "review-1472" {
+		t.Fatalf("orphan review duration projection order=%v, want review-1472 first", result.Order)
+	}
+	if result.Duration != "5m30s" {
+		t.Fatalf("orphan review duration=%q, want 5m30s from preserved execution clock", result.Duration)
+	}
+	if !result.Stale {
+		t.Fatal("orphan review lost the source staleness clock")
+	}
+	if !result.Abort || result.AbortIssue != "1472" {
+		t.Fatalf("orphan review abort control=%v issue=%q, want enabled for issue 1472", result.Abort, result.AbortIssue)
+	}
 }
 
 func extractPortalMarker(t *testing.T, dom, id string) string {

@@ -4040,6 +4040,8 @@ sandbox.Intl = Intl;
 sandbox.window.Intl = Intl;
 const portalLogSource = fs.readFileSync(require('path').join(require('path').dirname(htmlPath), 'portal_log.js'), 'utf8');
 vm.runInNewContext(portalLogSource, sandbox, { filename: 'portal_log.js' });
+const portalDiffSource = fs.readFileSync(require('path').join(require('path').dirname(htmlPath), 'portal_diff.js'), 'utf8');
+vm.runInNewContext(portalDiffSource, sandbox, { filename: 'portal_diff.js' });
 // Wire the production renderRunMeta from portal.html into the test sandbox
 // so tests that call helpers.renderRunMeta actually exercise the live
 // function instead of the sharedMockHelpers() mock. The scriptBody for
@@ -4187,12 +4189,11 @@ console.log('PASS');
 }
 
 // TestPortalRunsView_VisibleRunForIssueGroup_ReviewOnlyIdentityMatchesSourceRun
-// covers behaviour #2 of issue #1526: the visible row's identity fields
-// must come from the review run, not be fabricated from missing
-// implementation-run metadata. batchKey on a non-review source must NOT
-// leak into the review-only visible row.
+// covers the orphan review projection contract: the visible row's identity and
+// validated source metadata must come from the review run, while only the
+// review-group label and summary fields are derived.
 func TestPortalRunsView_VisibleRunForIssueGroup_ReviewOnlyIdentityMatchesSourceRun(t *testing.T) {
-	js := `const review = { key: 'PR1508', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR1508', runId: 'PR1508', issueNumber: 1472, prNumber: 1508, startedAt: '2026-06-30T12:00:00Z' };
+	js := `const review = { key: 'PR1508', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR1508', runId: 'PR1508', issueNumber: 1472, prNumber: 1508, startedAt: '2026-06-30T12:00:00Z', batchKey: 'batch-1472', duration: '2m', activeDurationSeconds: 120, executionSince: '2026-06-30T12:01:00Z', lastOutputAt: '2026-06-30T12:00:00Z' };
 const stub = visibleRunForIssueGroup(1472, [review]);
 if (!stub) throw new Error('expected visible row for review-only issue group');
 if (stub.key !== 'PR1508') throw new Error('expected visible row key to match source runId, got ' + JSON.stringify(stub.key));
@@ -4200,7 +4201,11 @@ if (stub.runId !== 'PR1508') throw new Error('expected visible row runId to matc
 if (stub.issueNumber !== 1472) throw new Error('expected visible row issueNumber to match source issueNumber, got ' + JSON.stringify(stub.issueNumber));
 if (stub.prNumber !== 1508) throw new Error('expected visible row prNumber to match source prNumber, got ' + JSON.stringify(stub.prNumber));
 if (stub.startedAt !== '2026-06-30T12:00:00Z') throw new Error('expected visible row startedAt to match source, got ' + JSON.stringify(stub.startedAt));
-if ('batchKey' in stub && stub.batchKey) throw new Error('expected review-only visible row not to carry a batchKey, got ' + JSON.stringify(stub.batchKey));
+if (stub.batchKey !== 'batch-1472') throw new Error('expected visible row batchKey to preserve source batchKey, got ' + JSON.stringify(stub.batchKey));
+if (stub.duration !== '2m') throw new Error('expected visible row duration to preserve source duration, got ' + JSON.stringify(stub.duration));
+if (stub.activeDurationSeconds !== 120) throw new Error('expected visible row activeDurationSeconds to preserve source clock, got ' + JSON.stringify(stub.activeDurationSeconds));
+if (stub.executionSince !== '2026-06-30T12:01:00Z') throw new Error('expected visible row executionSince to preserve source clock, got ' + JSON.stringify(stub.executionSince));
+if (stub.lastOutputAt !== '2026-06-30T12:00:00Z') throw new Error('expected visible row lastOutputAt to preserve source staleness clock, got ' + JSON.stringify(stub.lastOutputAt));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
@@ -4234,6 +4239,20 @@ const visible = visibleRunsForTable([review]);
 if (visible.length !== 1) throw new Error('expected exactly one visible row, got ' + JSON.stringify(visible.length));
 if (visible[0].key !== '260622193226-a0c19-PR1508') throw new Error('expected visible row key to match source runId, got ' + JSON.stringify(visible[0].key));
 if (visible[0].issueLabel !== 'PR 1508') throw new Error('expected visible row label to use the PR <n> form, got ' + JSON.stringify(visible[0].issueLabel));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+func TestPortalRunsView_VisibleRunForIssueGroup_UsesSelectorCanonicalParent(t *testing.T) {
+	js := `const older = { key: 'impl-old', kind: 'active', status: 'running', issueNumber: 1472, startedAt: '2026-06-29T12:00:00Z' };
+const newer = { key: 'impl-new', kind: 'active', status: 'running', issueNumber: 1472, startedAt: '2026-06-30T12:00:00Z' };
+const group = [older, newer];
+const tableRow = visibleRunForIssueGroup(1472, group);
+const selectorRow = SandmanPortalDiff.subjectRunsFor(newer, { runs: group })[0];
+if (!tableRow || !selectorRow) throw new Error('expected table and selector projections');
+if (tableRow.key !== selectorRow.key) throw new Error('table and selector chose different canonical parents: ' + tableRow.key + ' vs ' + selectorRow.key);
+if (tableRow.key !== 'impl-new') throw new Error('expected newest active parent, got ' + tableRow.key);
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
@@ -4582,7 +4601,7 @@ console.log('PASS');
 // fall back to the only parent; with two parents the dropdown lost
 // the parent entirely and listed only the reviews, breaking the
 // subject switcher. The canonical pick now mirrors the table-visibility
-// helper pickCanonicalParent in portal.html (used by
+// helper pickCanonicalParent in portal_diff.js (used by
 // visibleRunForIssueGroup): prefer an active (currently-running)
 // parent, otherwise trust the caller's order. visibleRunsForTable
 // passes rows in startedAt desc, so parents[0] is the most-recent
