@@ -2,6 +2,7 @@ package batch
 
 import (
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -275,6 +276,29 @@ func sessionNotFound(outputs ...outputParser) bool {
 		}
 	}
 	return false
+}
+
+// permissionDenialReporter is implemented by parsers that recognise the
+// agent's refused tool calls in its structured stream.
+type permissionDenialReporter interface {
+	PermissionDenials() []string
+}
+
+// parsersPermissionDenials merges the parsers' refused tools, first-seen order.
+func parsersPermissionDenials(outputs ...outputParser) []string {
+	var denials []string
+	for _, output := range outputs {
+		reporter, ok := output.(permissionDenialReporter)
+		if !ok {
+			continue
+		}
+		for _, tool := range reporter.PermissionDenials() {
+			if !slices.Contains(denials, tool) {
+				denials = append(denials, tool)
+			}
+		}
+	}
+	return denials
 }
 
 func parsersReachedUsageLimit(outputs ...outputParser) bool {

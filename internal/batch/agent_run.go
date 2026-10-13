@@ -42,6 +42,7 @@ type AgentRun struct {
 	status                     string
 	contextExhausted           bool
 	usageLimitReached          bool
+	permissionDenials          []string
 	modelProgress              func()
 	usageLimit                 func()
 	cleanupError               error // distinct cleanup failure from context cancellation
@@ -282,6 +283,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	}
 	parsedStdout, parsedStderr := strategy.NewOutputParsers(r.warningWriter())
 	execErr := r.execute(attemptCtx, renderedCmd, stdout, stderr, parsedStdout, parsedStderr)
+	r.permissionDenials = parsersPermissionDenials(parsedStdout, parsedStderr)
 	if detector != nil {
 		detector.Flush()
 	}
@@ -310,6 +312,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 				fallbackUsed = true
 				fallbackOut, fallbackErr := strategy.NewOutputParsers(r.warningWriter())
 				execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, fallbackOut, fallbackErr)
+				r.permissionDenials = parsersPermissionDenials(parsedStdout, parsedStderr, fallbackOut, fallbackErr)
 				parsedStdout, parsedStderr = fallbackOut, fallbackErr
 				strategy.PersistSession(r, fallbackOut, fallbackErr)
 			}
@@ -413,6 +416,7 @@ func (r *AgentRun) Result() AgentRunResult {
 		WorktreePath:      r.sandbox.WorkDir(),
 		ContextExhausted:  r.contextExhausted,
 		UsageLimitReached: r.usageLimitReached,
+		PermissionDenials: r.permissionDenials,
 		CleanupError:      r.cleanupError,
 	}
 }

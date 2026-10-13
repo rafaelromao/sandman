@@ -204,3 +204,40 @@ func TestAgentRun_ClaudeDoesNotRolloverOnContextErrors(t *testing.T) {
 		t.Fatalf("status = %q, want the ordinary failure path", launch.status)
 	}
 }
+
+// An unattended Claude Code session cannot answer permission prompts, so its
+// refused tools are the evidence that it could not act. The final result's
+// permission_denials list is authoritative; per-call records are best-effort.
+func TestAgentRun_ClaudeReportsPermissionDenials(t *testing.T) {
+	stream := `{"type":"system","subtype":"init","session_id":"abc"}` + "\n" +
+		`{"type":"system","subtype":"permission_denied","tool_name":"Edit","decision_reason":"not allowed"}` + "\n" +
+		`{"type":"result","subtype":"success","is_error":false,"result":"could not edit","permission_denials":[{"tool_name":"Bash","tool_use_id":"t2"},{"tool_name":"Edit","tool_use_id":"t1"}]}` + "\n"
+	for _, tc := range []struct {
+		name   string
+		result opencodeExecResult
+		status string
+	}{
+		{name: "clean exit", result: opencodeExecResult{stdout: stream}, status: "success"},
+		{name: "failed exit", result: opencodeExecResult{stdout: stream, err: errors.New("exit status 1")}, status: "failure"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			launch := runClaudeLaunch(t, nil, tc.result)
+			if launch.status != tc.status {
+				t.Fatalf("status = %q, want %q", launch.status, tc.status)
+			}
+			if got, want := strings.Join(launch.result.PermissionDenials, ","), "Edit,Bash"; got != want {
+				t.Fatalf("PermissionDenials = %q, want %q", got, want)
+			}
+			if !strings.Contains(launch.runLog, "Permission denied: Edit") {
+				t.Fatalf("run.log lost the rendered denial:\n%s", launch.runLog)
+			}
+		})
+	}
+}
+
+func TestAgentRun_ClaudeWithoutDenialsReportsNone(t *testing.T) {
+	launch := runClaudeLaunch(t, nil, opencodeExecResult{stdout: `{"type":"result","subtype":"success","is_error":false,"result":"done","permission_denials":[]}` + "\n"})
+	if launch.status != "success" || len(launch.result.PermissionDenials) != 0 {
+		t.Fatalf("status=%q denials=%v", launch.status, launch.result.PermissionDenials)
+	}
+}
