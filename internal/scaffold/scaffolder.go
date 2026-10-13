@@ -2107,7 +2107,10 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	aptPackages := append([]string{}, preset.SharedPackages...)
 	aptPackages = append(aptPackages, preset.ExtraPackages...)
 	fmt.Fprintf(&out, "RUN apt-get update && apt-get install -y --no-install-recommends %s && rm -rf /var/lib/apt/lists/*\n", strings.Join(aptPackages, " "))
-	fmt.Fprintf(&out, "RUN curl https://mise.run | MISE_VERSION=%s MISE_INSTALL_PATH=/usr/local/bin/mise sh\n", preset.MiseVersion)
+	// Download to a file so a failed download fails this step: Debian's sh has
+	// no pipefail, and `curl | sh` caches an empty layer that only surfaces as
+	// `mise: not found` at the first step using mise.
+	fmt.Fprintf(&out, "RUN curl -fsSL https://mise.run -o /tmp/mise-install.sh && MISE_VERSION=%s MISE_INSTALL_PATH=/usr/local/bin/mise sh /tmp/mise-install.sh && rm -f /tmp/mise-install.sh && /usr/local/bin/mise --version\n", preset.MiseVersion)
 	out.WriteString("ENV MISE_GLOBAL_CONFIG_FILE=\"/etc/mise/config.toml\"\n")
 	out.WriteString("ENV MISE_CONFIG_DIR=\"/etc/mise\"\n")
 	out.WriteString("ENV MISE_DATA_DIR=\"/usr/local/share/mise\"\n")
