@@ -262,6 +262,34 @@ func readHealthState(t *testing.T, d *Daemon) healthRepairState {
 	return state
 }
 
+// An unattended repair whose actions were denied changed nothing, however its
+// process exited, so it must never read as a successful repair.
+func TestDaemonHealthRepairDeniedActionsAreUnresolved(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result *batch.Result
+		err    error
+	}{
+		{name: "clean exit", result: &batch.Result{Runs: []batch.AgentRunResult{{Status: "success", PermissionDenials: []string{"Edit", "Bash"}}}}},
+		{name: "failed exit", result: &batch.Result{Runs: []batch.AgentRunResult{{Status: "failure", PermissionDenials: []string{"Edit", "Bash"}}}}, err: errors.New("prompt-only run failed")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gh := &fakeGH{listErr: errors.New("remote broken")}
+			runner := &healthRunner{repair: func(context.Context, batch.Request) (*batch.Result, error) { return tc.result, tc.err }}
+			d, logs, _ := newDaemonForTest(t, gh, runner, &config.Config{DefaultReviewAgent: "claude", DefaultReviewModel: "sonnet"})
+			_ = d.tick(context.Background())
+			d.inFlight.Wait()
+			const want = "unresolved: repair actions denied (Edit, Bash)"
+			if outcome := readHealthState(t, d).Outcome; !strings.HasPrefix(outcome, want) {
+				t.Fatalf("outcome = %q, want prefix %q", outcome, want)
+			}
+			if !strings.Contains(logs.String(), want) || strings.Contains(logs.String(), "repair exited successfully") {
+				t.Fatalf("daemon log must name the denied tools, got:\n%s", logs.String())
+			}
+		})
+	}
+}
+
 func TestDaemonHealthRepairBoundedUnresolvedAcrossRestart(t *testing.T) {
 	gh := &fakeGH{listErr: errors.New("remote broken")}
 	runner := &healthRunner{repair: func(context.Context, batch.Request) (*batch.Result, error) {

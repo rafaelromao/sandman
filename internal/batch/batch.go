@@ -203,6 +203,10 @@ type AgentRunResult struct {
 	RunID              string
 	ContextExhausted   bool
 	UsageLimitReached  bool
+	// PermissionDenials names the tools the agent was refused during the run,
+	// in first-seen order. Unattended runs cannot answer permission prompts,
+	// so a denial means the agent could not perform that action.
+	PermissionDenials []string
 	// CleanupError records a failure during process cleanup after context
 	// cancellation. When non-nil, the orchestrator must not mark the run as
 	// terminal until the error is recorded in the event log, satisfying

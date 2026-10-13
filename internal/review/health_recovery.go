@@ -227,12 +227,7 @@ func (d *Daemon) startHealthRepair(ctx context.Context, runner repairRunner) {
 		defer cancel()
 		d.logf("health repair %s: launching agent=%s model=%s", req.RunID, req.Agent, req.Model)
 		result, runErr := runner.RunRepair(repairCtx, req, d.Config)
-		outcome := "unresolved: repair did not return a successful run"
-		if runErr != nil {
-			outcome = "unresolved: " + runErr.Error()
-		} else if result != nil && len(result.Runs) == 1 && result.Runs[0].Status == "success" {
-			outcome = "repair exited successfully; original operations require re-observation"
-		}
+		outcome := healthRepairOutcome(result, runErr)
 		if ctx.Err() != nil {
 			outcome = "cancelled: " + ctx.Err().Error()
 		}
@@ -252,6 +247,40 @@ func (d *Daemon) startHealthRepair(ctx context.Context, runner repairRunner) {
 }
 
 func healthRepairCooldown(attempt int) time.Duration { return time.Duration(attempt) * 5 * time.Minute }
+
+// healthRepairOutcome classifies a finished repair. Denied actions win over the
+// process outcome: whatever the exit, the agent could not change anything.
+func healthRepairOutcome(result *batch.Result, runErr error) string {
+	if denied := deniedRepairTools(result); len(denied) > 0 {
+		return "unresolved: repair actions denied (" + strings.Join(denied, ", ") + "); original operations require operator action"
+	}
+	if runErr != nil {
+		return "unresolved: " + runErr.Error()
+	}
+	if result != nil && len(result.Runs) == 1 && result.Runs[0].Status == "success" {
+		return "repair exited successfully; original operations require re-observation"
+	}
+	return "unresolved: repair did not return a successful run"
+}
+
+// deniedRepairTools returns the repair run's denied tools as single-line,
+// bounded names fit for the persisted outcome and the daemon log.
+func deniedRepairTools(result *batch.Result) []string {
+	if result == nil || len(result.Runs) != 1 {
+		return nil
+	}
+	var tools []string
+	for _, tool := range result.Runs[0].PermissionDenials {
+		tool = strings.Join(strings.Fields(tool), " ")
+		if runes := []rune(tool); len(runes) > 64 {
+			tool = string(runes[:64]) + "…"
+		}
+		if tool != "" {
+			tools = append(tools, tool)
+		}
+	}
+	return tools
+}
 
 func (d *Daemon) resolveHealthOperation(key string) {
 	if _, ok := d.Runner.(repairRunner); !ok {
