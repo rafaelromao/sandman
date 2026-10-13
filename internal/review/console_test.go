@@ -141,6 +141,15 @@ func TestDaemonConsoleReportsExhaustedRepairBudgetOncePerEpisode(t *testing.T) {
 		t.Fatalf("budget line lacks the remediation pointer:\n%s", console.String())
 	}
 
+	// A restarted daemon is still in the same episode: no repeat.
+	restarted := New(d.BaseDir, &fakeGH{}, &prompt.Engine{}, runner, d.Config, &lockedBuffer{}, 0, false, nil)
+	restarted.Console = console
+	d = restarted
+	observe("request:5:a")
+	if got := strings.Count(console.String(), line); got != 1 {
+		t.Fatalf("restart repeated the budget line: %d lines:\n%s", got, console.String())
+	}
+
 	// Recovery ends the episode; a later exhausted episode reports again.
 	d.resolveHealthOperation("request:5:a")
 	observe("request:5:b")
