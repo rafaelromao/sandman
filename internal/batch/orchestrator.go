@@ -2353,6 +2353,11 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 						break
 					}
 					if handled && status == "await" {
+						if err := executor.persistObservedAwait(issueCtx, row, extras); err != nil {
+							o.logAborted(issueNum, runID, nil)
+							res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
+							break
+						}
 						if err := waitForObservation(); err != nil {
 							o.logAborted(issueNum, runID, nil)
 							res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
