@@ -121,6 +121,9 @@ func TaskWithReviewEvidence(content string, evidence map[string]any) string {
 	b.WriteString(trimTrailingNewlines(content))
 	b.WriteString("\n\n## Review Evidence\n\n")
 	b.WriteString("The pull request gate resumed this session with request-scoped evidence. Revalidate the evidence against the live pull request and the worktree head before acting; stale evidence must never drive merge work on its own.\n\n")
+	if evidence["reason"] == "REVIEW_APPROVED" {
+		b.WriteString("The runtime accepted approval for this request and head. A request-scoped informal approval is sufficient; formal GitHub approval is not required. This supersedes a preserved instruction to wait for formal approval: do not request a replacement review solely because no formal APPROVED review or aggregate reviewDecision is present. Revalidate the current request/head approval, green CI, and mergeability, then execute the normal merge gate.\n\n")
+	}
 	for _, key := range []string{"outcome", "reason", "next_action", "pull_request", "head_sha", "repository"} {
 		v, ok := evidence[key]
 		if !ok || v == nil {
