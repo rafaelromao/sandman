@@ -12,6 +12,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/paths"
 	"golang.org/x/sys/unix"
 )
 
@@ -105,17 +106,17 @@ func initialWaitPath(batchDir, runID string) string {
 	return filepath.Join(filepath.Dir(filepath.Dir(batchDir)), "state", "waiting", runID+".json")
 }
 
-func batchIdentityForDir(batchDir string) string {
-	baseDir := filepath.Dir(filepath.Dir(batchDir))
-	layout := layoutForBaseDir(baseDir)
-	if idx, err := batchindex.Load(layout.BatchesIndexPath); err == nil {
-		for _, batch := range idx.Batches {
-			if filepath.Clean(batch.Location(layout).Dir) == filepath.Clean(batchDir) {
-				return batch.ID
-			}
+func batchIdentityForDir(layout paths.Layout, batchDir string) (string, error) {
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
+	if err != nil {
+		return "", err
+	}
+	for _, batch := range idx.Batches {
+		if filepath.Clean(batch.Location(layout).Dir) == filepath.Clean(batchDir) {
+			return batch.ID, nil
 		}
 	}
-	return filepath.Base(batchDir)
+	return filepath.Base(batchDir), nil
 }
 
 func validateRunWait(batchDir, expectedBatchID, runID string, record RunWait) error {
@@ -164,7 +165,12 @@ func waitRecovery(baseDir, batchDir string, run events.RunState, now time.Time) 
 // waitRecoverySchedule requires the caller's RunID claim so a lease refresh
 // cannot race the decision to terminalize ownerless waiting intent.
 func waitRecoverySchedule(baseDir string, run events.RunState, now time.Time) (protected, suspended bool) {
-	return waitRecoveryScheduleAt(filepath.Join(baseDir, "batches", run.BatchID()), run, now)
+	layout := layoutForBaseDir(baseDir)
+	batchDir, err := ResolveBatchDir(layout, run.BatchID())
+	if err != nil {
+		return false, true
+	}
+	return waitRecoveryScheduleAt(batchDir, run, now)
 }
 
 func waitRecoveryScheduleAt(batchDir string, run events.RunState, now time.Time) (protected, suspended bool) {
@@ -242,12 +248,18 @@ func RenewRunWait(batchDir string, record RunWait, now time.Time) error {
 // Callers must hold ClaimRun(sandmanDir, runID) throughout TransferRunWait.
 // Revalidate the
 // source before atomically transferring schedule ownership to another batch.
-func TransferRunWait(oldBatchDir, newBatchDir, runID string, now time.Time) (RunWait, error) {
-	record, err := ReadRunWait(oldBatchDir, runID)
+func TransferRunWait(layout paths.Layout, oldBatchDir, newBatchDir, runID string, now time.Time) (RunWait, error) {
+	oldBatchID, err := batchIdentityForDir(layout, oldBatchDir)
+	if err != nil {
+		return RunWait{}, err
+	}
+	record, err := ReadRunWaitAt(oldBatchDir, oldBatchID, runID)
 	if err != nil {
 		return record, err
 	}
-	if !waitBatchIdentityMatches(oldBatchDir, record.BatchID) {
+	if matches, err := waitBatchIdentityMatches(layout, oldBatchDir, record.BatchID); err != nil {
+		return record, err
+	} else if !matches {
 		return record, fmt.Errorf("waiting ownership identity is invalid")
 	}
 	if !record.RecoverableAt(now) {
@@ -256,24 +268,22 @@ func TransferRunWait(oldBatchDir, newBatchDir, runID string, now time.Time) (Run
 	if err := writeRunWait(oldBatchDir, record, now); err != nil {
 		return record, err
 	}
-	record.BatchID = batchIdentityForDir(newBatchDir)
+	record.BatchID, err = batchIdentityForDir(layout, newBatchDir)
+	if err != nil {
+		return record, err
+	}
 	return record, writeRunWait(newBatchDir, record, now)
 }
 
-func waitBatchIdentityMatches(batchDir, batchID string) bool {
+func waitBatchIdentityMatches(layout paths.Layout, batchDir, batchID string) (bool, error) {
 	if !safeWaitID(batchID) {
-		return false
+		return false, nil
 	}
-	if filepath.Base(batchDir) == batchID {
-		return true
-	}
-	indexPath := filepath.Join(filepath.Dir(filepath.Dir(batchDir)), "batches.json")
-	idx, err := batchindex.Load(indexPath)
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
 	if err != nil {
-		return false
+		return false, err
 	}
-	owner := idx.ResolveBatchIdentity(batchID)
-	return owner != nil && filepath.Clean(owner.Location(idx.Layout()).Dir) == filepath.Clean(batchDir)
+	return idx.MatchesBatchLocation(layout, batchID, batchDir), nil
 }
 
 func writeRunWait(batchDir string, record RunWait, now time.Time) error {

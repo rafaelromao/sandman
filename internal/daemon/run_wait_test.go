@@ -113,15 +113,16 @@ func TestRunWait_ReadResolvedLocationUsesPublicBatchIdentity(t *testing.T) {
 
 func TestInitialWaitRejectsForeignBatchOwnership(t *testing.T) {
 	root := t.TempDir()
+	layout := paths.NewLayout(nil, root)
 	now := time.Now().UTC()
 	record := RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "owner", Issue: 42, BaseBranch: "main", InitialAdmission: true, OperationID: "admission"}
-	if err := RenewRunWait(filepath.Join(root, "batches", "owner"), record, now); err != nil {
+	if err := RenewRunWait(layout.BatchDir("owner"), record, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ReadRunWaitAt(filepath.Join(root, "batches", "foreign"), "foreign", "row"); err == nil {
+	if _, err := ReadRunWaitAt(layout.BatchDir("foreign"), "foreign", "row"); err == nil {
 		t.Fatal("foreign batch self-authorized initial intent")
 	}
-	if _, err := TransferRunWait(filepath.Join(root, "batches", "foreign"), filepath.Join(root, "batches", "new"), "row", now); err == nil {
+	if _, err := TransferRunWait(layout, layout.BatchDir("foreign"), layout.BatchDir("new"), "row", now); err == nil {
 		t.Fatal("foreign batch transferred initial intent")
 	}
 }
@@ -162,12 +163,42 @@ func TestRunWait_TransferPreservesIndexedDestinationIdentity(t *testing.T) {
 	if err := RenewRunWait(layout.BatchDir("old"), record, now); err != nil {
 		t.Fatal(err)
 	}
-	moved, err := TransferRunWait(layout.BatchDir("old"), destination, record.RunID, now.Add(time.Minute))
+	moved, err := TransferRunWait(layout, layout.BatchDir("old"), destination, record.RunID, now.Add(time.Minute))
 	if err != nil {
 		t.Fatalf("transfer relocated lease: %v", err)
 	}
 	if moved.BatchID != "public-destination" {
 		t.Fatalf("transferred BatchID = %q, want public-destination", moved.BatchID)
+	}
+}
+
+func TestRunWait_TransferUsesAuthoritativeLayoutForNestedRelocation(t *testing.T) {
+	root := t.TempDir()
+	layout := paths.NewLayout(nil, root)
+	source := filepath.Join(layout.SandmanDir, "relocated", "deep", "source-dir")
+	destination := filepath.Join(layout.SandmanDir, "relocated", "deeper", "destination-dir")
+	if err := (&batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
+		{ID: "public-source", Path: source, Status: batchindex.StatusActive},
+		{ID: "public-destination", Path: destination, Status: batchindex.StatusActive},
+	}}).Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	record := RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "public-source", Issue: 42,
+		Branch: "42-fix", BaseBranch: "main", OperationID: "capacity"}
+	if err := RenewRunWait(source, record, now); err != nil {
+		t.Fatal(err)
+	}
+
+	moved, err := TransferRunWait(layout, source, destination, record.RunID, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("transfer nested relocated lease: %v", err)
+	}
+	if moved.BatchID != "public-destination" {
+		t.Fatalf("transferred BatchID = %q, want public-destination", moved.BatchID)
+	}
+	if _, err := ReadRunWaitAt(destination, "public-destination", record.RunID); err != nil {
+		t.Fatalf("read transferred nested lease: %v", err)
 	}
 }
 
@@ -181,19 +212,20 @@ func TestRunWait_BatchHandoffPreservesQuotaScheduleAndGrace(t *testing.T) {
 			}
 			defer claim.Close()
 			now := time.Now().UTC()
-			oldDir, newDir := filepath.Join(root, "batches", "old"), filepath.Join(root, "batches", "new")
+			layout := paths.NewLayout(nil, root)
+			oldDir, newDir := layout.BatchDir("old"), layout.BatchDir("new")
 			record := RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "old", Issue: 42, Branch: "42-fix", BaseBranch: "main", InitialAdmission: initial, OperationID: "quota:fixed", OperationDeadline: now.Add(3 * time.Minute), NextPollAt: now.Add(2 * time.Minute), UsageLimitProbe: true}
 			if err := RenewRunWait(oldDir, record, now); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := TransferRunWait(oldDir, newDir, "row", now.Add(time.Minute)); err != nil {
+			if _, err := TransferRunWait(layout, oldDir, newDir, "row", now.Add(time.Minute)); err != nil {
 				t.Fatal(err)
 			}
 			moved, err := ReadRunWait(newDir, "row")
 			if err != nil || moved.BatchID != "new" || moved.Ready || !moved.UsageLimitProbe || !moved.OperationDeadline.IsZero() || !moved.NextPollAt.Equal(record.NextPollAt) || moved.OperationID != "quota:row" || !moved.LeaseExpiresAt.Equal(now.Add(time.Minute+RunRecoveryGrace)) {
 				t.Fatalf("handoff lost quota intent or retained a hard estimate: moved=%+v err=%v", moved, err)
 			}
-			if _, err := TransferRunWait(newDir, oldDir, "row", moved.LeaseExpiresAt); err == nil {
+			if _, err := TransferRunWait(layout, newDir, oldDir, "row", moved.LeaseExpiresAt); err == nil {
 				t.Fatal("expired recovery grace received another window")
 			}
 		})

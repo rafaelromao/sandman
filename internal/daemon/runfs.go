@@ -175,14 +175,18 @@ func BatchDir(baseDir, dirID string) string {
 }
 
 // ResolveBatchDir returns the frozen physical location for a public BatchID.
-// Unindexed legacy batches retain their canonical location.
-func ResolveBatchDir(layout paths.Layout, batchID string) string {
-	if idx, err := batchindex.Load(layout.BatchesIndexPath); err == nil {
-		if batch := idx.ResolveBatchIdentity(batchID); batch != nil {
-			return batch.Location(layout).Dir
-		}
+// Unindexed legacy batches retain their canonical location. An unreadable
+// index is returned to the caller rather than silently selecting a canonical
+// path that may belong to a different physical batch.
+func ResolveBatchDir(layout paths.Layout, batchID string) (string, error) {
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
+	if err != nil {
+		return "", err
 	}
-	return layout.BatchDir(batchID)
+	if batch := idx.ResolveBatchIdentity(batchID); batch != nil {
+		return batch.Location(layout).Dir, nil
+	}
+	return layout.BatchDir(batchID), nil
 }
 
 // ManifestPath returns the on-disk path of the batch manifest file

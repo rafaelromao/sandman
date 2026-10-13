@@ -241,7 +241,7 @@ func TestReadyHandoffRecoveryUsesRenewedCurrentBatch(t *testing.T) {
 	if err := daemon.RenewRunWait(layout.BatchDir("old"), record, now.Add(-10*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	moved, err := daemon.TransferRunWait(layout.BatchDir("old"), layout.BatchDir("new"), "row", now.Add(-9*time.Minute))
+	moved, err := daemon.TransferRunWait(layout, layout.BatchDir("old"), layout.BatchDir("new"), "row", now.Add(-9*time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
