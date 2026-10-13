@@ -38,22 +38,21 @@ type claudeOutputState struct {
 	usageLimitReached bool
 	permissionDenials []string
 	readOnlyMode      *PermissionModeError
+	// readOnlyModes are the permission modes that stop a session at its init
+	// record. Plan mode is where Claude Code starts a session whose settings
+	// carry permissions.defaultMode "plan" when the launch passes no
+	// --permission-mode, including when administrator-managed settings
+	// disable --dangerously-skip-permissions.
+	readOnlyModes []string
 }
-
-// claudeReadOnlyPermissionModes are the Claude Code permission modes in which
-// a session cannot change anything. Plan mode is where Claude Code starts a
-// session whose settings carry permissions.defaultMode "plan" when the launch
-// passes no --permission-mode, including when administrator-managed settings
-// disable --dangerously-skip-permissions.
-var claudeReadOnlyPermissionModes = []string{"plan"}
 
 func claudeReadOnlyModeDiagnostic(mode string) string {
 	return "permission mode " + mode + ": Claude Code cannot make changes; set the agent's permission_mode to a mode your administrator allows " +
 		"(cause: a defaultMode in user or managed settings, bypass mode disabled)"
 }
 
-func newClaudeOutputs() (outputParser, outputParser) {
-	state := &claudeOutputState{}
+func newClaudeOutputs(readOnlyModes ...string) (outputParser, outputParser) {
+	state := &claudeOutputState{readOnlyModes: readOnlyModes}
 	return &claudeOutput{state: state, stdout: true}, &claudeOutput{state: state}
 }
 
@@ -230,7 +229,7 @@ func (w *claudeOutput) readOnlyModeAtInit(record map[string]any) *PermissionMode
 		return nil
 	}
 	mode, _ := record["permissionMode"].(string)
-	if !slices.Contains(claudeReadOnlyPermissionModes, mode) {
+	if mode == "" || !slices.Contains(w.state.readOnlyModes, mode) {
 		return nil
 	}
 	stopped, first := w.recordReadOnlyMode(mode)

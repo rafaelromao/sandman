@@ -16,6 +16,9 @@ import (
 // limits on the final result record.
 type claudeStrategy struct {
 	builtInCommand bool
+	// readOnlyModes are the preset's permission modes in which a session
+	// cannot change anything; a session starting in one is stopped.
+	readOnlyModes []string
 }
 
 func (s claudeStrategy) ModelFlag(model string) string {
@@ -84,7 +87,7 @@ func (s claudeStrategy) NewOutputParsers(io.Writer) (outputParser, outputParser)
 	if !s.builtInCommand {
 		return nil, nil
 	}
-	return newClaudeOutputs()
+	return newClaudeOutputs(s.readOnlyModes...)
 }
 
 func (claudeStrategy) ContextRolloverDetector([]string, func()) *contextRolloverDetector {

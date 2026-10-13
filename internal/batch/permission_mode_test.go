@@ -252,3 +252,30 @@ func TestRunBatch_MergedCompletionOutranksPermissionModeStop(t *testing.T) {
 	}
 	t.Fatalf("no terminal event in %#v", log.snapshot())
 }
+
+// The stdout and stderr parsers share one session: a read-only mode seen on
+// both streams stops the launch once and is reported once.
+func TestClaudeOutput_ReadOnlyModeStopsOnceAcrossStreams(t *testing.T) {
+	stdout, stderr := strategyForPreset("claude").NewOutputParsers(io.Discard)
+	var log bytes.Buffer
+	stops := 0
+	for _, parser := range []outputParser{stdout, stderr} {
+		parser.setDestination(&log)
+		parser.(permissionModeGuard).setPermissionModeStop(func() { stops++ })
+	}
+	init := `{"type":"system","subtype":"init","session_id":"abc","permissionMode":"plan"}` + "\n"
+	for _, parser := range []outputParser{stdout, stderr, stdout} {
+		if _, err := parser.Write([]byte(init)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if stops != 1 {
+		t.Fatalf("stop callbacks = %d, want 1", stops)
+	}
+	if got := strings.Count(log.String(), "Stopped: permission mode plan"); got != 1 {
+		t.Fatalf("diagnostic lines = %d, want 1:\n%s", got, log.String())
+	}
+	if stopped := parsersReadOnlyPermissionMode(stdout, stderr); stopped == nil || stopped.Mode != "plan" {
+		t.Fatalf("reported mode = %#v, want plan", stopped)
+	}
+}

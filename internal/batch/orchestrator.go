@@ -4076,7 +4076,10 @@ loop:
 					if stoppedForPermissionMode(result) && gateStatus != "success" && gateStatus != "aborted" {
 						// The agent could not act, and a resume, await
 						// re-entry or retry would start in the same mode.
-						// Only a verified completion or an abort outranks it.
+						// Like the usage-limit rule below, this consumes the
+						// selected action: terminal success and abort stand,
+						// and every action that would relaunch the agent
+						// becomes the stop's terminal failure.
 						terminalExtras = s.finishPermissionModeStop(&result, terminalExtras)
 						break loop
 					}

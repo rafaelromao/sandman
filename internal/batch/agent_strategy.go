@@ -101,13 +101,18 @@ type usageLimitObserver interface {
 }
 
 // agentStrategies maps each built-in agent preset to its strategy
-// constructor. The constructor learns whether the launch runs the preset's
-// own command template: a custom command under a built-in preset keeps the
-// preset's failure classification and environment rules, but receives no
-// agent flags, session selection, output parsing, or usage-limit awaiting.
-var agentStrategies = map[string]func(builtInCommand bool) agentStrategy{
-	"opencode": func(builtInCommand bool) agentStrategy { return opencodeStrategy{builtInCommand: builtInCommand} },
-	"claude":   func(builtInCommand bool) agentStrategy { return claudeStrategy{builtInCommand: builtInCommand} },
+// constructor. The constructor receives the preset's data and learns whether
+// the launch runs the preset's own command template: a custom command under a
+// built-in preset keeps the preset's failure classification and environment
+// rules, but receives no agent flags, session selection, output parsing, or
+// usage-limit awaiting.
+var agentStrategies = map[string]func(preset config.AgentPreset, builtInCommand bool) agentStrategy{
+	"opencode": func(_ config.AgentPreset, builtInCommand bool) agentStrategy {
+		return opencodeStrategy{builtInCommand: builtInCommand}
+	},
+	"claude": func(preset config.AgentPreset, builtInCommand bool) agentStrategy {
+		return claudeStrategy{builtInCommand: builtInCommand, readOnlyModes: preset.ReadOnlyPermissionModes}
+	},
 }
 
 // strategyFor returns the behaviour bundle for a launch of command under
@@ -122,7 +127,7 @@ func strategyFor(preset, command string) agentStrategy {
 	if !ok {
 		return passthroughStrategy{}
 	}
-	return newStrategy(command == builtIn.Command)
+	return newStrategy(builtIn, command == builtIn.Command)
 }
 
 // strategyForPreset returns the strategy of a preset running its own built-in
