@@ -222,6 +222,7 @@ func TestInformalApprovalLifecycle_AmbiguousDecisionsCannotAuthorizeMerge(t *tes
 		"## Findings\nNo style findings.\nScope: in worker.go, fix the race.\n\n## Decision\nAPPROVED",
 		"## Findings\nNo style findings.\nScope: worker.go and fix the race.\n\n## Decision\nAPPROVED",
 		"## Findings\nNo style findings.\nScope: worker.go and address the race.\n\n## Decision\nAPPROVED",
+		"## Findings\nNo style findings.\nScope: worker.go and `fix` the race.\n\n## Decision\nAPPROVED",
 		"## Decision\nAPPROVED\n\n## Merge conditions\nMerge only after fixing the race in worker.go.",
 		"## Summary\nNot approved: worker.go still has a race.\n\n## Decision\nAPPROVED",
 		"## Decision\nAPPROVED subject to fixing the race in worker.go.",

@@ -15,7 +15,6 @@ var (
 	reviewPublicationMarker        = regexp.MustCompile(`(?m)^[ \t]*<!-- sandman-publication:[0-9a-f]{64} -->[ \t]*$`)
 	reviewApprovalContradiction    = regexp.MustCompile(`(?i)\b(?:not\s+(?:yet\s+)?(?:approved|lgtm)|no\s+approval|changes\s+requested|subject\s+to|contingent\b|only\s+(?:if|after|once)|before\s+merging|(?:merge|approve)[^\n.!?]*(?:after|once|until|if|when)\b)`)
 	reviewMetadataRepair           = regexp.MustCompile(`(?i)\b(?:fix(?:ing)?|address(?:ing)?|repair(?:ing)?|resolve|correct|replace|remove|add|change|use|ensure|update|must|please|needs?|should)\b`)
-	reviewQuotedIdentifier         = regexp.MustCompile("`[A-Za-z_][A-Za-z0-9_.]*`")
 )
 
 // reviewDecisionApprovalEvidenceFor returns informal approvals from the active
@@ -179,10 +178,10 @@ func noReviewFindings(text string) bool {
 	return true
 }
 
-// A path or quoted identifier named "fix" is scope evidence, not an imperative.
-// Preserve surrounding prose so code formatting cannot hide an actual repair.
+// A path named "fix.go" is scope evidence, not an imperative. Preserve other
+// prose, including quoted identifiers, so formatting cannot hide a repair verb.
 func reviewApprovalProse(text string) string {
 	text = informalFeedbackCodeAnchor.ReplaceAllString(text, "code")
 	text = informalFeedbackLineAnchor.ReplaceAllString(text, "code")
-	return reviewQuotedIdentifier.ReplaceAllString(text, "code")
+	return text
 }
