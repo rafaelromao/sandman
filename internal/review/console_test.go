@@ -100,6 +100,51 @@ func TestDaemonConsoleReportsFailedLaunchWithRetryTime(t *testing.T) {
 	}
 }
 
+// An exhausted repair budget is news once per episode, not on every observed
+// failure: each review retry re-observes the same failure.
+func TestDaemonConsoleReportsExhaustedRepairBudgetOncePerEpisode(t *testing.T) {
+	runner := &healthRunner{}
+	d, _, _ := newDaemonForTest(t, &fakeGH{}, runner, &config.Config{DefaultReviewAgent: "claude", DefaultReviewModel: "sonnet"})
+	console := &lockedBuffer{}
+	d.Console = console
+	exhaust := func() {
+		t.Helper()
+		if err := d.withHealthState(func(state *healthRepairState) error {
+			state.Attempts = healthRepairAttempts
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	observe := func(key string) {
+		t.Helper()
+		d.observeHealthFailure(context.Background(), key, "launch review", 5, errors.New("build image: mise: not found"))
+		d.inFlight.Wait()
+	}
+	const line = "health repair budget exhausted"
+
+	observe("request:5:a")
+	exhaust()
+	for range 3 {
+		observe("request:5:a")
+	}
+	if got := strings.Count(console.String(), line); got != 1 {
+		t.Fatalf("budget lines=%d, want 1:\n%s", got, console.String())
+	}
+	if !strings.Contains(console.String(), "docs/usage/reviews.md#health-repair") {
+		t.Fatalf("budget line lacks the remediation pointer:\n%s", console.String())
+	}
+
+	// Recovery ends the episode; a later exhausted episode reports again.
+	d.resolveHealthOperation("request:5:a")
+	observe("request:5:b")
+	exhaust()
+	observe("request:5:b")
+	if got := strings.Count(console.String(), line); got != 2 {
+		t.Fatalf("new episode budget lines=%d, want 2:\n%s", got, console.String())
+	}
+}
+
 // Agents print their own transcript to the process stdout, so the console
 // must not repeat it.
 func TestDaemonConsoleDoesNotRepeatAgentOutput(t *testing.T) {

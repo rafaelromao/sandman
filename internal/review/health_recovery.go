@@ -127,6 +127,7 @@ func (d *Daemon) observeHealthFailure(ctx context.Context, key, operation string
 	if stateErr := d.withHealthState(func(state *healthRepairState) error {
 		if len(state.Failures) == 0 && !state.AttemptPending {
 			*state = healthRepairState{Version: 1, Failures: map[string]healthFailure{}}
+			d.healthBudgetLogged = false
 		}
 		if _, exists := state.Failures[key]; !exists && len(state.Failures) == healthFailureLimit {
 			return errors.New("health repair evidence saturated; unresolved budget retained")
@@ -218,7 +219,10 @@ func (d *Daemon) startHealthRepair(ctx context.Context, runner repairRunner) {
 			return nil
 		}
 		if state.Attempts >= healthRepairAttempts {
-			d.logf("health repair budget exhausted after %d attempts; original operations still unresolved", state.Attempts)
+			if !d.healthBudgetLogged {
+				d.healthBudgetLogged = true
+				d.logf("health repair budget exhausted after %d attempts; original operations still unresolved. Fix the failure by hand (see docs/usage/reviews.md#health-repair); the daemon keeps retrying and repair is admitted again once every failed operation succeeds", state.Attempts)
+			}
 			return nil
 		}
 		if d.now().Before(state.NextAttempt) {

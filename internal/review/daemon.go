@@ -297,6 +297,10 @@ type Daemon struct {
 	// healthPausedLogged is the denied failure set this process last reported
 	// as paused. Guarded by the health-state advisory lock.
 	healthPausedLogged string
+	// healthBudgetLogged records that this process reported the current
+	// episode's exhausted repair budget. Guarded by the health-state
+	// advisory lock; cleared when the episode resets.
+	healthBudgetLogged bool
 }
 
 // effectiveLaunchBackoff returns the launch-failure backoff for
