@@ -35,6 +35,8 @@ None.
 
 ## Previous review progress
 The prior concern in internal/batch/orchestrator_resume.go is resolved.
+
+<!-- sandman-publication:dd4739c73528fd53939c6a0e52d7fb08c5ea79d2a6f2f6c56b3bd1aee86bcf1f -->
 `
 
 func informalApprovalLifecycleFixture(t *testing.T, body string) (*runSession, *registrationGitHubClient, *github.PR, string, *time.Time) {
@@ -112,6 +114,8 @@ func TestInformalApprovalLifecycle_OrdinaryAndCommentedApprovalsSuffice(t *testi
 		{name: "plain looks good", body: "Looks good to me, thanks!"},
 		{name: "plain plus one", body: "+1 👍"},
 		{name: "structured decision", body: "## Decision: APPROVED"},
+		{name: "published decision", body: "## Decision\n**APPROVED**\n<!-- sandman-publication:dd4739c73528fd53939c6a0e52d7fb08c5ea79d2a6f2f6c56b3bd1aee86bcf1f -->"},
+		{name: "descriptive scope in no findings", body: "## Findings\nNo findings. Scope: worker.go. Cognitive complexity: 12.\n\n## Decision\nAPPROVED"},
 		{name: "resolved historical changes", body: approvingMetricsReview + "The previous CHANGES_REQUESTED and not-approved decision are resolved.\n"},
 		{name: "COMMENTED current", body: "LGTM", source: "COMMENTED", commit: "current-sha"},
 		{name: "COMMENTED no commit", body: "Looks good", source: "COMMENTED"},
@@ -212,6 +216,8 @@ func TestInformalApprovalLifecycle_AmbiguousDecisionsCannotAuthorizeMerge(t *tes
 		"## Decision\nAPPROVED — fix the race in worker.go before merging.",
 		"## Decision\nAPPROVED - fix the race in worker.go.",
 		"## Decision\nAPPROVED\n### Merge conditions\nFix the race in worker.go before merging.",
+		"## Findings\nNone.\n\n## Decision\nAPPROVED\n\n## Merge conditions\nFix the race in worker.go before merging.",
+		"## Decision\nAPPROVED subject to fixing the race in worker.go.",
 		"## Decision\n'APPROVED'",
 		"No LGTM",
 		"Previously approved",

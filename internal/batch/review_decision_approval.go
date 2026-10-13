@@ -10,6 +10,9 @@ var (
 	reviewDecisionApprovalNegation = regexp.MustCompile(`(?i)\b(?:not\b|no\s+(?:approval|approved|lgtm)|changes\s+requested|if\b|when\b|once\b|before\b|after\b|provided\b|pending\b|unless\b|until\b|but\b|previous(?:ly)?\b|prior\b|formerly\b|denied\b|rejected\b)`)
 	reviewDecisionNoFindings       = regexp.MustCompile(`(?i)^(?:none\b|no\b[^.\n]*\b(?:findings?|issues?|concerns?)\b)`)
 	reviewFindingDirective         = regexp.MustCompile(`(?im)(?:^|[.!?;:—–-]\s+)\s*(?:[-*]\s*)?(?:fix|change|remove|replace|add|use)\b|\b(?:must|please|needs?|should)\b`)
+	reviewFindingClauses           = regexp.MustCompile(`[;\n]|\.\s+`)
+	reviewFindingMetadata          = regexp.MustCompile(`(?i)^(?:scope|metrics?|files?|cognitive complexity|cyclomatic complexity|coverage|tools used)\s*:`)
+	reviewPublicationMarker        = regexp.MustCompile(`(?m)^[ \t]*<!-- sandman-publication:[0-9a-f]{64} -->[ \t]*$`)
 )
 
 // reviewDecisionApprovalEvidenceFor returns informal approvals from the active
@@ -56,10 +59,11 @@ func (c *reviewClassification) reviewDecisionApprovalEvidenceFor(request reviewR
 }
 
 func reviewDecisionApprovedBody(body string) bool {
+	body = reviewPublicationMarker.ReplaceAllString(body, "")
 	section := ""
 	sectionLevel := 0
 	structured := false
-	var decision, findings strings.Builder
+	var decision, findings, other strings.Builder
 	for _, line := range strings.Split(body, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "#") {
@@ -83,6 +87,9 @@ func reviewDecisionApprovedBody(body string) bool {
 			}
 			findings.Reset()
 			section = nextSection
+			if section == "" {
+				section = "other"
+			}
 			sectionLevel = level
 			switch section {
 			case "decision":
@@ -98,26 +105,20 @@ func reviewDecisionApprovedBody(body string) bool {
 			decision.WriteString(trimmed + "\n")
 		case "findings":
 			findings.WriteString(trimmed + "\n")
+		case "other":
+			other.WriteString(trimmed + "\n")
 		}
 	}
 	if section == "findings" && strings.TrimSpace(findings.String()) != "" && !noReviewFindings(findings.String()) {
 		return false
 	}
 	if structured {
-		return unambiguousReviewApproval(decision.String())
-	}
-	if !unambiguousReviewApproval(body) {
-		return false
+		return unambiguousReviewApproval(decision.String()) && !reviewFindingDirective.MatchString(other.String())
 	}
 	// Ordinary informal approval needs no Decision heading. Restrict this
 	// fallback to approval/acknowledgement prose rather than keyword mentions
 	// embedded in findings, quotations, conditions, or historical discussion.
-	for _, token := range informalFeedbackToken.FindAllString(informalFeedbackStripped(body), -1) {
-		if !informalFeedbackBoilerplateTokens[token] && !(token == "1" && strings.Contains(body, "+1")) {
-			return false
-		}
-	}
-	return true
+	return unambiguousReviewApproval(body)
 }
 
 func reviewApprovalSection(heading string) (string, string) {
@@ -137,7 +138,17 @@ func reviewApprovalSection(heading string) (string, string) {
 }
 
 func unambiguousReviewApproval(text string) bool {
-	return reviewDecisionApprovalPhrase.MatchString(text) && !reviewDecisionApprovalNegation.MatchString(text) && !reviewFindingDirective.MatchString(text) && !strings.ContainsAny(text, "`>\"'?")
+	if !reviewDecisionApprovalPhrase.MatchString(text) || reviewDecisionApprovalNegation.MatchString(text) || reviewFindingDirective.MatchString(text) || strings.ContainsAny(text, "`>\"'?") {
+		return false
+	}
+	// Accept an affirmative decision, not an approval keyword embedded in
+	// otherwise unknown prose such as "approved subject to fixing ...".
+	for _, token := range informalFeedbackToken.FindAllString(informalFeedbackStripped(text), -1) {
+		if !informalFeedbackBoilerplateTokens[token] && !(token == "1" && strings.Contains(text, "+1")) {
+			return false
+		}
+	}
+	return true
 }
 
 func noReviewFindings(text string) bool {
@@ -148,5 +159,14 @@ func noReviewFindings(text string) bool {
 	// Examine the entire section: a leading "None" cannot hide another finding.
 	// Descriptive metric commentary may follow a no-findings statement, but
 	// code-anchored feedback, nested finding headings, and repair directives may not.
-	return !informalFeedbackHasCodeAnchor(text) && !strings.Contains(text, "#") && !reviewFindingDirective.MatchString(text)
+	if strings.Contains(text, "#") || reviewFindingDirective.MatchString(text) {
+		return false
+	}
+	for _, clause := range reviewFindingClauses.Split(text, -1) {
+		clause = strings.TrimSpace(clause)
+		if informalFeedbackHasCodeAnchor(clause) && !reviewFindingMetadata.MatchString(clause) {
+			return false
+		}
+	}
+	return true
 }
