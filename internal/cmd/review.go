@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -79,7 +80,7 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 			warnOpencodeVersionMismatch(cmd, reviewAgentName, sandboxFlag, repoRoot, cfg)
 
 			parallelSet := cmd.Flags().Changed("parallel")
-			return reviewDaemonRunner(cmd.Context(), deps, cfg, sandboxFlag, ccFlag, ccSet, mcFlag, mcSet, agentFlag, modelFlag, variantFlag, cmd.Flags().Changed("variant"), parallelFlag, parallelSet)
+			return reviewDaemonRunner(cmd.Context(), deps, cfg, sandboxFlag, ccFlag, ccSet, mcFlag, mcSet, agentFlag, modelFlag, variantFlag, cmd.Flags().Changed("variant"), parallelFlag, parallelSet, cmd.ErrOrStderr())
 		},
 	}
 
@@ -97,7 +98,7 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 // runReviewDaemon wires and runs the review daemon. The cmd layer owns
 // the SIGINT/SIGTERM signal handling; the daemon handles the polling
 // loop and the in-flight batch cancellation.
-func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agentFlag string, modelFlag string, variantFlag string, variantSet bool, parallel int, parallelSet bool) error {
+func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agentFlag string, modelFlag string, variantFlag string, variantSet bool, parallel int, parallelSet bool, stderr io.Writer) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
@@ -120,28 +121,47 @@ func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Conf
 	if err != nil {
 		return fmt.Errorf("resolve repo root: %w", err)
 	}
-	layout := paths.NewLayout(cfg, repoRoot)
-	sandmanDir := layout.SandmanDir
-	socketDir := layout.ReviewsDir()
+	opts := reviewDaemonOptions{Sandbox: sandbox, ContainerCapacity: cc, ContainerCapacitySet: ccSet,
+		MaxContainers: mc, MaxContainersSet: mcSet, Agent: agentFlag, Model: modelFlag,
+		Variant: variantFlag, VariantSet: variantSet, Parallel: parallel, ParallelSet: parallelSet}
+	return newReviewDaemon(deps, cfg, paths.NewLayout(cfg, repoRoot), opts, stderr).Run(ctx)
+}
+
+// reviewDaemonOptions are the `sandman review` flag values the daemon uses.
+type reviewDaemonOptions struct {
+	Sandbox                                string
+	ContainerCapacity, MaxContainers       int
+	ContainerCapacitySet, MaxContainersSet bool
+	Agent, Model, Variant                  string
+	VariantSet                             bool
+	Parallel                               int
+	ParallelSet                            bool
+}
+
+// newReviewDaemon builds the review daemon without starting it: no socket is
+// bound until Run. Daemon log lines go to stderr (the terminal running the
+// command) and to the broadcaster that `sandman attach` clients read.
+func newReviewDaemon(deps Dependencies, cfg *config.Config, layout paths.Layout, opts reviewDaemonOptions, stderr io.Writer) *review.Daemon {
 	broadcaster := daemon.NewBroadcaster()
-	ctlSocket := daemon.NewControlSocketWithName(socketDir, "review.sock", broadcaster)
+	ctlSocket := daemon.NewControlSocketWithName(layout.ReviewsDir(), "review.sock", broadcaster)
 	poster := deps.CommentPoster
 	if poster == nil {
 		poster = ghCommentPosterFromDeps(deps)
 	}
-	d := review.New(sandmanDir, deps.GitHubClient, deps.Renderer, deps.BatchRunner, cfg, broadcaster, parallel, parallelSet, poster)
+	d := review.New(layout.SandmanDir, deps.GitHubClient, deps.Renderer, deps.BatchRunner, cfg, broadcaster, opts.Parallel, opts.ParallelSet, poster)
+	d.Console = stderr
 	d.Layout = layout
-	d.Sandbox = sandbox
-	d.ContainerCapacity = cc
-	d.ContainerCapacitySet = ccSet
-	d.MaxContainers = mc
-	d.MaxContainersSet = mcSet
-	d.Agent = agentFlag
-	d.Model = modelFlag
-	d.Variant = variantFlag
-	d.VariantSet = variantSet
+	d.Sandbox = opts.Sandbox
+	d.ContainerCapacity = opts.ContainerCapacity
+	d.ContainerCapacitySet = opts.ContainerCapacitySet
+	d.MaxContainers = opts.MaxContainers
+	d.MaxContainersSet = opts.MaxContainersSet
+	d.Agent = opts.Agent
+	d.Model = opts.Model
+	d.Variant = opts.Variant
+	d.VariantSet = opts.VariantSet
 	d.SetSocket(ctlSocket)
-	return d.Run(ctx)
+	return d
 }
 
 // ghCommentPosterFromDeps is a fallback that builds a

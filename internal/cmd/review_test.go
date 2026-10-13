@@ -1,11 +1,15 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"strings"
 	"testing"
 
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/daemon"
+	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 func TestReviewCmd_NoArgsStartsDaemon(t *testing.T) {
@@ -13,7 +17,7 @@ func TestReviewCmd_NoArgsStartsDaemon(t *testing.T) {
 	deps := Dependencies{ConfigStore: &fakeStore{config: cfg}, RepoRoot: t.TempDir()}
 
 	prev := reviewDaemonRunner
-	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agent string, model string, variant string, variantSet bool, parallel int, parallelSet bool) error {
+	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agent string, model string, variant string, variantSet bool, parallel int, parallelSet bool, stderr io.Writer) error {
 		return errReviewDaemonReached
 	}
 	defer func() { reviewDaemonRunner = prev }()
@@ -51,7 +55,7 @@ func TestReviewCmd_ForwardsDaemonOptions(t *testing.T) {
 		ccSet, mcSet, parallelSet bool
 	}
 	prev := reviewDaemonRunner
-	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agent string, model string, variant string, variantSet bool, parallel int, parallelSet bool) error {
+	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agent string, model string, variant string, variantSet bool, parallel int, parallelSet bool, stderr io.Writer) error {
 		got.sandbox, got.agent, got.model = sandbox, agent, model
 		got.cc, got.mc, got.parallel = cc, mc, parallel
 		got.ccSet, got.mcSet, got.parallelSet = ccSet, mcSet, parallelSet
@@ -78,7 +82,7 @@ func TestReviewCmd_ForwardsTrimmedVariantOverride(t *testing.T) {
 	var gotVariant string
 	var gotSet bool
 	prev := reviewDaemonRunner
-	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agent string, model string, variant string, variantSet bool, parallel int, parallelSet bool) error {
+	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agent string, model string, variant string, variantSet bool, parallel int, parallelSet bool, stderr io.Writer) error {
 		gotVariant, gotSet = variant, variantSet
 		return nil
 	}
@@ -103,6 +107,41 @@ func TestReviewCmd_RejectsNegativeDaemonLimits(t *testing.T) {
 		if err := cmd.Execute(); err == nil {
 			t.Fatalf("expected validation error for %v", args)
 		}
+	}
+}
+
+// The daemon's diagnostics belong on the terminal that ran `sandman review`.
+func TestReviewCmd_PassesItsStderrToTheDaemon(t *testing.T) {
+	cfg := &config.Config{DefaultReviewAgent: "opencode"}
+	deps := Dependencies{ConfigStore: &fakeStore{config: cfg}, RepoRoot: t.TempDir()}
+	var got io.Writer
+	prev := reviewDaemonRunner
+	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agent string, model string, variant string, variantSet bool, parallel int, parallelSet bool, stderr io.Writer) error {
+		got = stderr
+		return nil
+	}
+	defer func() { reviewDaemonRunner = prev }()
+
+	var stderr bytes.Buffer
+	cmd := NewReviewCmd(deps)
+	cmd.SetErr(&stderr)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute review command: %v", err)
+	}
+	if got != &stderr {
+		t.Fatalf("daemon runner got stderr %v, want the command's stderr", got)
+	}
+}
+
+func TestNewReviewDaemonLogsToStderrAndAttachClients(t *testing.T) {
+	cfg := &config.Config{DefaultReviewAgent: "opencode"}
+	var stderr bytes.Buffer
+	d := newReviewDaemon(Dependencies{}, cfg, paths.NewLayout(cfg, t.TempDir()), reviewDaemonOptions{}, &stderr)
+	if d.Console != &stderr {
+		t.Fatalf("daemon console = %v, want the command's stderr", d.Console)
+	}
+	if _, ok := d.Broadcaster.(*daemon.Broadcaster); !ok {
+		t.Fatalf("daemon broadcaster = %T, want the attach broadcaster", d.Broadcaster)
 	}
 }
 
