@@ -39,7 +39,10 @@ type AgentRun struct {
 	// editScope is the directory, relative to the working directory, that an
 	// unattended launch may edit without prompting ("" for none). Skipped
 	// permissions already allow everything, so they render no scope.
-	editScope               string
+	editScope string
+	// permissionMode is the operator-configured agent permission mode ("" for
+	// the preset's built-in permission handling).
+	permissionMode          string
 	opencodePermissionMode  string
 	sessionName             string
 	sandbox                 sandbox.Sandbox
@@ -232,6 +235,13 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	if skipPermissions {
 		editScope = ""
 	}
+	// A command-line permission the strategy renders (an edit scope or a
+	// configured mode) is the launch's whole permission policy, so it
+	// replaces skipping permission prompts.
+	permissionFlag := strategy.PermissionFlag(r.permissionMode, editScope)
+	if permissionFlag != "" {
+		skipPermissions = false
+	}
 	render := func(sessionID string, continueFlag bool) (string, error) {
 		sessionFlag := ""
 		if sessionID != "" {
@@ -244,7 +254,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 			ModelProvider:              r.modelProvider,
 			ModelName:                  r.modelName,
 			DangerouslySkipPermissions: skipPermissions,
-			PermissionFlag:             strategy.EditScopeFlag(editScope),
+			PermissionFlag:             permissionFlag,
 			SessionName:                r.sessionName,
 			SessionFlag:                sessionFlag,
 			ContinueFlag:               continueFlag,

@@ -156,6 +156,36 @@ func TestAgentRun_ClaudePresetRendersPrintModeCommand(t *testing.T) {
 			want: env + `claude -p --output-format stream-json --verbose --dangerously-skip-permissions --name 'Sandman run-1: ' "$(cat .sandman/task.md)"`,
 		},
 		{
+			name: "configured permission mode replaces skipped permissions",
+			configure: func(r *AgentRun) {
+				r.model = "sonnet"
+				r.variant = "high"
+				r.dangerouslySkipPermissions = &skip
+				r.permissionMode = "acceptEdits"
+				r.reuseSession = true
+				r.previousBatchID = "batch-0"
+				r.previousRunID = "run-0"
+			},
+			want: env + `claude -p --output-format stream-json --verbose --continue --permission-mode 'acceptEdits' --name 'Sandman run-1: ' --model 'sonnet' --effort 'high' "$(cat .sandman/task.md)"`,
+		},
+		{
+			name: "configured permission mode applies to worktree launches",
+			configure: func(r *AgentRun) {
+				r.dangerouslySkipPermissions = &noSkip
+				r.permissionMode = "dontAsk"
+			},
+			want: env + `claude -p --output-format stream-json --verbose --permission-mode 'dontAsk' --name 'Sandman run-1: ' "$(cat .sandman/task.md)"`,
+		},
+		{
+			name: "repair edit scope wins over a configured permission mode",
+			configure: func(r *AgentRun) {
+				r.dangerouslySkipPermissions = &noSkip
+				r.editScope = ".sandman"
+				r.permissionMode = "acceptEdits"
+			},
+			want: env + `claude -p --output-format stream-json --verbose --allowedTools 'Edit(/.sandman/**)' --permission-mode dontAsk --name 'Sandman run-1: ' "$(cat .sandman/task.md)"`,
+		},
+		{
 			name: "variant maps to effort",
 			configure: func(r *AgentRun) {
 				r.model = " opus "
@@ -258,25 +288,32 @@ func TestAgentRun_ClaudeWithoutDenialsReportsNone(t *testing.T) {
 	}
 }
 
-// Only Claude Code takes a scoped edit allowance from the command line; other
-// agents and custom commands launch exactly as before.
-func TestEditScopeFlagIsClaudeOnly(t *testing.T) {
+// Only Claude Code takes a permission mode or a scoped edit allowance from the
+// command line; other agents and custom commands launch exactly as before.
+func TestPermissionFlagIsClaudeOnly(t *testing.T) {
 	claude := config.BuiltInAgentPresets["claude"].Command
 	opencode := config.BuiltInAgentPresets["opencode"].Command
 	for _, tc := range []struct {
-		name, preset, command, want string
+		name, preset, command, wantScope, wantMode string
 	}{
-		{name: "claude", preset: "claude", command: claude, want: "--allowedTools 'Edit(/.sandman/**)' --permission-mode dontAsk"},
+		{name: "claude", preset: "claude", command: claude, wantScope: "--allowedTools 'Edit(/.sandman/**)' --permission-mode dontAsk", wantMode: "--permission-mode 'acceptEdits'"},
 		{name: "claude custom command", preset: "claude", command: `claude -p "$(cat {{.PromptFile}})"`},
 		{name: "opencode", preset: "opencode", command: opencode},
 		{name: "custom provider", preset: "", command: "my-agent {{.PromptFile}}"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := strategyFor(tc.preset, tc.command).EditScopeFlag(".sandman"); got != tc.want {
-				t.Fatalf("EditScopeFlag = %q, want %q", got, tc.want)
+			strategy := strategyFor(tc.preset, tc.command)
+			if got := strategy.PermissionFlag("", ".sandman"); got != tc.wantScope {
+				t.Fatalf("PermissionFlag(scope) = %q, want %q", got, tc.wantScope)
 			}
-			if got := strategyFor(tc.preset, tc.command).EditScopeFlag(""); got != "" {
-				t.Fatalf("empty scope rendered %q", got)
+			if got := strategy.PermissionFlag("acceptEdits", ".sandman"); got != tc.wantScope {
+				t.Fatalf("PermissionFlag(mode, scope) = %q, want the scope %q", got, tc.wantScope)
+			}
+			if got := strategy.PermissionFlag("acceptEdits", ""); got != tc.wantMode {
+				t.Fatalf("PermissionFlag(mode) = %q, want %q", got, tc.wantMode)
+			}
+			if got := strategy.PermissionFlag("", ""); got != "" {
+				t.Fatalf("no mode and no scope rendered %q", got)
 			}
 		})
 	}
