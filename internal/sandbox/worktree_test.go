@@ -340,8 +340,39 @@ func TestWorktreeSandbox_WorkDirBeforeStart(t *testing.T) {
 	initGitRepo(t, dir)
 
 	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
-	if s.WorkDir() != "" {
-		t.Error("expected workdir to be empty before Start")
+	want := filepath.Join(dir, ".sandman", "worktrees", "42-fix-bug")
+	if s.WorkDir() != want {
+		t.Errorf("workdir before Start = %q, want %q", s.WorkDir(), want)
+	}
+}
+
+func TestWorktreeSandbox_StopReclaimsExistingWorktreeBeforeStart(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+	worktreePath := filepath.Join(worktreeBase, "42-fix-bug")
+	runGit(t, dir, "worktree", "add", "-b", "42-fix-bug", worktreePath, "main")
+
+	s := NewWorktreeSandbox(dir, worktreeBase, "42-fix-bug", "main")
+	if err := s.Stop(); err != nil {
+		t.Fatalf("stop existing worktree before Start: %v", err)
+	}
+	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
+		t.Fatalf("worktree checkout still exists: %v", err)
+	}
+	list := runGit(t, dir, "worktree", "list", "--porcelain")
+	if strings.Contains(list, "worktree "+worktreePath) {
+		t.Fatalf("worktree registration still exists:\n%s", list)
+	}
+}
+
+func TestWorktreeSandbox_StopRejectsInvalidCanonicalPath(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "", "main")
+	if err := s.Stop(); err == nil {
+		t.Fatal("expected invalid canonical worktree path to fail closed")
 	}
 }
 
