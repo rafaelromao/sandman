@@ -16,6 +16,10 @@ func init() {
 	syncSandmanSkill = func(skill.SyncOptions) error { return nil }
 }
 
+// initMiseInstall is the fail-fast mise install `sandman init` scaffolds.
+var initMiseInstall = "RUN curl -fsSL https://mise.run -o /tmp/mise-install.sh && MISE_VERSION=" + scaffold.DefaultMISEVersion +
+	" MISE_INSTALL_PATH=/usr/local/bin/mise sh /tmp/mise-install.sh && rm -f /tmp/mise-install.sh && /usr/local/bin/mise --version"
+
 func TestInit_CreatesSandmanFiles(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -216,7 +220,7 @@ func TestInit_GenericBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(dockerfile, "FROM debian:bookworm-slim") {
 		t.Fatalf("Dockerfile missing Debian base image, got:\n%s", dockerfile)
 	}
-	if !strings.Contains(dockerfile, "RUN curl https://mise.run | MISE_VERSION="+scaffold.DefaultMISEVersion+" MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
+	if !strings.Contains(dockerfile, initMiseInstall) {
 		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", dockerfile)
 	}
 	if !strings.Contains(dockerfile, " gh ") {
@@ -366,7 +370,7 @@ func TestInit_PythonBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(dockerfile, "FROM debian:bookworm-slim") {
 		t.Fatalf("Dockerfile missing Debian base image, got:\n%s", dockerfile)
 	}
-	if !strings.Contains(dockerfile, "RUN curl https://mise.run | MISE_VERSION="+scaffold.DefaultMISEVersion+" MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
+	if !strings.Contains(dockerfile, initMiseInstall) {
 		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", dockerfile)
 	}
 	if !strings.Contains(dockerfile, " gh ") {
@@ -435,7 +439,7 @@ func TestInit_ElixirBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(dockerfile, "FROM debian:bookworm-slim") {
 		t.Fatalf("Dockerfile missing Debian base image, got:\n%s", dockerfile)
 	}
-	if !strings.Contains(dockerfile, "RUN curl https://mise.run | MISE_VERSION="+scaffold.DefaultMISEVersion+" MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
+	if !strings.Contains(dockerfile, initMiseInstall) {
 		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", dockerfile)
 	}
 	if !strings.Contains(dockerfile, " gh ") {
@@ -754,7 +758,7 @@ func TestInit_RubyBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(dockerfile, "FROM debian:bookworm-slim") {
 		t.Fatalf("Dockerfile missing Debian base image, got:\n%s", dockerfile)
 	}
-	if !strings.Contains(dockerfile, "RUN curl https://mise.run | MISE_VERSION="+scaffold.DefaultMISEVersion+" MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
+	if !strings.Contains(dockerfile, initMiseInstall) {
 		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", dockerfile)
 	}
 	if !strings.Contains(dockerfile, " gh ") {

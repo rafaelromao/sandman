@@ -89,8 +89,15 @@ executor reconstruction, or restart renews an operation's authorized lifetime.
 When managed review is enabled, merge work requires confirmed delegated
 request-scoped approval for the current PR head and green CI. Missing delivery
 resumes review-request work. Reviewer process exit alone is not approval; stale,
-unknown, mismatched, or superseded approval cannot authorize a merge. Explicitly
-disabled managed review retains its configuration contract.
+unknown formal `APPROVED`, mismatched, or superseded approval cannot authorize a
+merge. Request-scoped informal approval is sufficient without a formal GitHub
+approval or a nonempty aggregate `reviewDecision`. A `COMMENTED` review without
+commit identity is eligible as an informal response inside the confirmed
+current-head request window; an explicitly stale `COMMENTED` review is not.
+An approving response's scope paths, metrics, or resolved history are not
+actionable feedback, while separate concrete feedback and formal requested
+changes retain precedence. Explicitly disabled managed review retains its
+configuration contract.
 
 The complete managed sequence is request confirmation -> waiting -> current-head
 feedback resume -> renewed request -> approval resume -> verified merge ->

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +35,7 @@ type claudeOutputState struct {
 	mu                sync.Mutex
 	sessionID         string
 	usageLimitReached bool
+	permissionDenials []string
 }
 
 func newClaudeOutputs() (outputParser, outputParser) {
@@ -96,6 +98,26 @@ func (w *claudeOutput) UsageLimitReached() bool {
 	return w.state.usageLimitReached
 }
 
+// PermissionDenials returns the tools Claude Code refused during the session,
+// in first-seen order: the best-effort `permission_denied` system records and
+// the authoritative `permission_denials` list on the final result record.
+func (w *claudeOutput) PermissionDenials() []string {
+	w.state.mu.Lock()
+	defer w.state.mu.Unlock()
+	return append([]string(nil), w.state.permissionDenials...)
+}
+
+func (w *claudeOutput) recordPermissionDenial(tool string) {
+	if tool == "" {
+		return
+	}
+	w.state.mu.Lock()
+	defer w.state.mu.Unlock()
+	if !slices.Contains(w.state.permissionDenials, tool) {
+		w.state.permissionDenials = append(w.state.permissionDenials, tool)
+	}
+}
+
 func (w *claudeOutput) writeLine(line []byte, newline bool) error {
 	text := strings.TrimSuffix(string(line), "\r")
 	var record map[string]any
@@ -112,6 +134,17 @@ func (w *claudeOutput) writeLine(line []byte, newline bool) error {
 	recordType, _ := record["type"].(string)
 	if w.stdout && recordType == "assistant" && claudeAssistantHasText(record) && w.modelProgress != nil {
 		w.modelProgress()
+	}
+	if subtype, _ := record["subtype"].(string); recordType == "system" && subtype == "permission_denied" {
+		tool, _ := record["tool_name"].(string)
+		w.recordPermissionDenial(tool)
+	}
+	if denials, _ := record["permission_denials"].([]any); recordType == "result" {
+		for _, denial := range denials {
+			entry, _ := denial.(map[string]any)
+			tool, _ := entry["tool_name"].(string)
+			w.recordPermissionDenial(tool)
+		}
 	}
 	if recordType == "result" && claudeUsageLimitLine(text) {
 		w.state.mu.Lock()

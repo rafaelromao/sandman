@@ -4046,6 +4046,9 @@ loop:
 				agentRun.review = s.review
 				agentRun.outputWriter = s.outputWriter
 				agentRun.dangerouslySkipPermissions = &s.dangerouslySkipPermissions
+				if s.opts.repairHost {
+					agentRun.editScope = repairEditScope
+				}
 				agentRun.sessionName = "Sandman " + runID + ": "
 				agentRun.runFolder = s.runFolderFor(runID)
 				agentRun.batchID = s.batchID

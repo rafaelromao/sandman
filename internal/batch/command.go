@@ -15,6 +15,7 @@ type CommandData struct {
 	ModelProvider              string
 	ModelName                  string
 	DangerouslySkipPermissions bool
+	PermissionFlag             string
 	SessionName                string
 	SessionFlag                string
 	ContinueFlag               bool

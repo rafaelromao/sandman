@@ -34,6 +34,19 @@ func (s claudeStrategy) VariantFlag(variant string) string {
 	return "--effort " + shellenv.Quote(variant)
 }
 
+// EditScopeFlag allows Edit (which also covers Write and the other file-editing
+// tools) under dir and keeps every other prompting call denied. In
+// command-line rules a leading "/" anchors at the working directory.
+// --allowedTools takes several values, so the single-value --permission-mode
+// follows it and the prompt is never read as a rule; dontAsk is explicit so a
+// later default permission mode cannot widen the scope.
+func (s claudeStrategy) EditScopeFlag(dir string) string {
+	if dir == "" || !s.builtInCommand {
+		return ""
+	}
+	return "--allowedTools " + shellenv.Quote("Edit(/"+dir+"/**)") + " --permission-mode dontAsk"
+}
+
 func (claudeStrategy) LaunchEnv(env map[string]string, _, _ string) map[string]string {
 	return env
 }

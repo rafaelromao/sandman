@@ -2,6 +2,7 @@ package batch
 
 import (
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -25,6 +26,11 @@ type agentStrategy interface {
 	// VariantFlag renders the model-variant selector passed to the command
 	// template as {{.VariantFlag}}, or "".
 	VariantFlag(variant string) string
+	// EditScopeFlag renders, as {{.PermissionFlag}}, the permission that lets
+	// an unattended launch edit files under dir (relative to its working
+	// directory) without prompting, or "" when dir is empty or the agent
+	// takes no such permission from its command line.
+	EditScopeFlag(dir string) string
 	// LaunchEnv returns the environment exported in front of renderedCmd.
 	// permissionMode is the resolved agent's OpencodePermissionMode.
 	LaunchEnv(env map[string]string, permissionMode, renderedCmd string) map[string]string
@@ -155,8 +161,9 @@ func IsUsageLimitOutput(agentName, output string) bool {
 // agent-specific failure classification.
 type passthroughStrategy struct{}
 
-func (passthroughStrategy) ModelFlag(string) string   { return "" }
-func (passthroughStrategy) VariantFlag(string) string { return "" }
+func (passthroughStrategy) ModelFlag(string) string     { return "" }
+func (passthroughStrategy) VariantFlag(string) string   { return "" }
+func (passthroughStrategy) EditScopeFlag(string) string { return "" }
 
 func (passthroughStrategy) LaunchEnv(env map[string]string, _, _ string) map[string]string {
 	return env
@@ -202,6 +209,10 @@ func (s opencodeStrategy) VariantFlag(variant string) string {
 	}
 	return "--variant " + shellenv.Quote(variant)
 }
+
+// EditScopeFlag renders nothing: OpenCode reads permissions from its own
+// configuration, not from scoped command-line rules.
+func (opencodeStrategy) EditScopeFlag(string) string { return "" }
 
 // LaunchEnv drops the preset's OPENCODE_PERMISSION allow-list ("builtin"
 // mode) unless the rendered command skips permission prompts. A value the
@@ -275,6 +286,29 @@ func sessionNotFound(outputs ...outputParser) bool {
 		}
 	}
 	return false
+}
+
+// permissionDenialReporter is implemented by parsers that recognise the
+// agent's refused tool calls in its structured stream.
+type permissionDenialReporter interface {
+	PermissionDenials() []string
+}
+
+// parsersPermissionDenials merges the parsers' refused tools, first-seen order.
+func parsersPermissionDenials(outputs ...outputParser) []string {
+	var denials []string
+	for _, output := range outputs {
+		reporter, ok := output.(permissionDenialReporter)
+		if !ok {
+			continue
+		}
+		for _, tool := range reporter.PermissionDenials() {
+			if !slices.Contains(denials, tool) {
+				denials = append(denials, tool)
+			}
+		}
+	}
+	return denials
 }
 
 func parsersReachedUsageLimit(outputs ...outputParser) bool {

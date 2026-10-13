@@ -117,7 +117,7 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 			Branch:       branch,
 			RetriesTotal: 1,
 		}
-		result.Status = s.finishTerminal(ctx, runID, result, extras, wt, branch)
+		result.Status = s.finishDecidedTerminal(ctx, runID, result, extras, wt, branch)
 		return result, true, true
 	}
 	if gateStatus != "await" && gateStatus != "resume" {
@@ -144,7 +144,7 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 		if gateStatus == "await" {
 			return result, true, true
 		}
-		result.Status = s.finishTerminal(ctx, runID, result, nextExtras, wt, branch)
+		result.Status = s.finishDecidedTerminal(ctx, runID, result, nextExtras, wt, branch)
 		return result, true, true
 	}
 	return s.prepareEntryResume(ctx, wt, branch, runID, extras)
@@ -153,7 +153,7 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 func (s *runSession) prepareEntryResume(ctx context.Context, wt sandbox.Sandbox, branch, runID string, extras map[string]any) (AgentRunResult, bool, bool) {
 	if ctx.Err() != nil {
 		result := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "aborted", Branch: branch, RetriesTotal: 1}
-		result.Status = s.finishTerminal(ctx, runID, result, nil, wt, branch)
+		result.Status = s.finishDecidedTerminal(ctx, runID, result, nil, wt, branch)
 		return result, true, true
 	}
 	// Entry is not an in-session relaunch. Historical head/request counters

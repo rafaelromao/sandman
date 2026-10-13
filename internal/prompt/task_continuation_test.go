@@ -381,3 +381,26 @@ func TestTaskWithReviewEvidence_EmbedsReviewRequest(t *testing.T) {
 		t.Fatalf("expected embedded review_request JSON in evidence prompt:\n%s", got)
 	}
 }
+
+func TestTaskWithReviewEvidence_AcceptedInformalApprovalDoesNotRequireFormalReview(t *testing.T) {
+	got := TaskWithReviewEvidence("# Task\n\n## Next Step\nWait for formal GitHub approval.\n", map[string]any{
+		"reason": "REVIEW_APPROVED",
+		"review_request": map[string]any{
+			"outcome": "approved", "trigger_id": "confirmed-request", "head_sha": "current-sha",
+		},
+	})
+	for _, required := range []string{
+		"informal approval is sufficient",
+		"formal GitHub approval is not required",
+		"do not request a replacement review solely",
+		"Revalidate",
+	} {
+		if !strings.Contains(got, required) {
+			t.Fatalf("accepted informal approval prompt omitted %q:\n%s", required, got)
+		}
+	}
+	feedback := TaskWithReviewEvidence("# Task\n", map[string]any{"reason": "REVIEW_CHANGES_REQUESTED"})
+	if strings.Contains(feedback, "informal approval is sufficient") {
+		t.Fatal("feedback-only continuation acquired an approval instruction")
+	}
+}

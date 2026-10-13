@@ -251,7 +251,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 					return fmt.Errorf("ensure status: %w", err)
 				}
 
-				actions := collectCleanActions(idx, batchindex.StatusArchived)
+				actions := collectCleanActions(idx, batchindex.StatusArchived, layout)
 				states, err := events.ReadRunStates(deps.EventLog)
 				if err != nil {
 					return err
@@ -302,7 +302,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				targetStatus = batchindex.StatusActive
 			}
 
-			actions := collectCleanActions(idx, targetStatus)
+			actions := collectCleanActions(idx, targetStatus, layout)
 			if actions == nil {
 				actions = []cleanAction{}
 			}
@@ -339,19 +339,20 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 	return cmd
 }
 
-func collectCleanActions(idx *batchindex.Index, targetStatus batchindex.Status) []cleanAction {
+func collectCleanActions(idx *batchindex.Index, targetStatus batchindex.Status, layout paths.Layout) []cleanAction {
 	var actions []cleanAction
 	for _, entry := range idx.Batches {
 		if entry.Status == targetStatus || entry.Status == batchindex.StatusUnavailable {
+			batchPath := entry.Location(layout).Dir
 			action := cleanAction{
 				BatchID:   entry.ID,
-				BatchPath: entry.Path,
+				BatchPath: batchPath,
 				Kind:      entry.Kind,
 				Status:    entry.Status,
 				IsUnavail: entry.Status == batchindex.StatusUnavailable,
 			}
-			if !action.IsUnavail && entry.Path != "" {
-				manifest, err := batchindex.ReadManifest(entry.Path)
+			if !action.IsUnavail && batchPath != "" {
+				manifest, err := batchindex.ReadManifest(batchPath)
 				if err != nil {
 					action.Err = fmt.Errorf("read manifest for %s: %w", entry.ID, err)
 				} else {
@@ -404,7 +405,8 @@ func collectEligibleActiveActions(idx *batchindex.Index, probe runActivityProbe,
 // all of its worktrees. A batch with an unknown or missing row manifest
 // is preserved.
 func buildEligibleActiveAction(idx *batchindex.Index, entry batchindex.Batch, probe runActivityProbe, layout paths.Layout, states map[string]events.RunState) (cleanAction, bool) {
-	if probe != nil && probe(entry.Path) {
+	batchPath := entry.Location(layout).Dir
+	if probe != nil && probe(batchPath) {
 		return cleanAction{}, false
 	}
 	// Artifact loss must not hide in-flight members from completed cleanup.
@@ -417,11 +419,11 @@ func buildEligibleActiveAction(idx *batchindex.Index, entry batchindex.Batch, pr
 	}
 	action := cleanAction{
 		BatchID:   entry.ID,
-		BatchPath: entry.Path,
+		BatchPath: batchPath,
 		Kind:      entry.Kind,
 		Status:    entry.Status,
 	}
-	runsDir := filepath.Join(entry.Path, "runs")
+	runsDir := filepath.Join(batchPath, "runs")
 	entries, err := os.ReadDir(runsDir)
 	if err != nil && !os.IsNotExist(err) {
 		return cleanAction{}, false
@@ -474,7 +476,7 @@ func appendArchivedRunRef(action *cleanAction, entry batchindex.Batch, rec batch
 	if rec.ArchivePath == "" {
 		return false
 	}
-	archiveDir, ok := trustedArchivePath(layout, rec.ArchivePath)
+	archiveDir, ok := trustedArchivePath(layout, entry.RunLocation(layout, rec.RunID).Dir)
 	if !ok {
 		return false
 	}
@@ -519,7 +521,7 @@ func allRowsArchived(entry batchindex.Batch, layout paths.Layout) bool {
 		if rec.Status != batchindex.RunRecordStatusArchived || rec.ArchivePath == "" {
 			return false
 		}
-		archiveDir, ok := trustedArchivePath(layout, rec.ArchivePath)
+		archiveDir, ok := trustedArchivePath(layout, entry.RunLocation(layout, rec.RunID).Dir)
 		if !ok {
 			return false
 		}
@@ -531,7 +533,7 @@ func allRowsArchived(entry batchindex.Batch, layout paths.Layout) bool {
 }
 
 func trustedArchivePath(layout paths.Layout, archivePath string) (string, bool) {
-	archiveDir, err := filepath.Abs(filepath.Join(layout.RepoRoot, archivePath))
+	archiveDir, err := filepath.Abs(layout.ResolvePath(archivePath))
 	if err != nil || validateOwnedPath(archiveDir, layout.ArchiveDir) != nil {
 		return "", false
 	}
@@ -615,7 +617,7 @@ func executeCleanWithProbe(actions []cleanAction, gr gitRunner, layout paths.Lay
 	if err := batchindex.Update(layout.BatchesIndexPath, func(current *batchindex.Index) error {
 		for _, a := range actions {
 			entry := current.Resolve(a.BatchID)
-			if entry == nil || entry.Path != a.BatchPath || !cleanStatusCompatible(a.Status, a.IsUnavail, entry.Status) {
+			if entry == nil || entry.Location(layout).Dir != a.BatchPath || !cleanStatusCompatible(a.Status, a.IsUnavail, entry.Status) {
 				continue
 			}
 			if a.Status == batchindex.StatusActive && probe != nil {
@@ -926,7 +928,7 @@ func cleanupOrphanedBatches(layout paths.Layout, log events.EventLog, probe func
 	if err := batchindex.Update(layout.BatchesIndexPath, func(idx *batchindex.Index) error {
 		kept := idx.Batches[:0]
 		for _, entry := range idx.Batches {
-			if path, ok := removedByID[entry.ID]; ok && filepath.Clean(entry.Path) == path {
+			if path, ok := removedByID[entry.ID]; ok && filepath.Clean(entry.Location(layout).Dir) == path {
 				continue
 			}
 			kept = append(kept, entry)
@@ -953,6 +955,11 @@ func confirmRemoved(path string) error {
 // shared prune step used by both the standalone --orphaned mode and the --all
 // umbrella flag.
 func pruneBatchesIndexByOrphanPlan(indexPath string, plan []string) error {
+	indexPath, err := filepath.Abs(indexPath)
+	if err != nil {
+		return fmt.Errorf("resolve batches index path %q: %w", indexPath, err)
+	}
+	layout := paths.NewLayout(nil, filepath.Dir(filepath.Dir(indexPath)))
 	pruned := make(map[string]string, len(plan))
 	for _, p := range plan {
 		absolutePath, err := filepath.Abs(p)
@@ -964,8 +971,8 @@ func pruneBatchesIndexByOrphanPlan(indexPath string, plan []string) error {
 	return batchindex.Update(indexPath, func(idx *batchindex.Index) error {
 		var kept []batchindex.Batch
 		for _, entry := range idx.Batches {
-			if plannedPath, drop := pruned[entry.ID]; drop && filepath.Clean(entry.Path) == filepath.Clean(plannedPath) {
-				if _, err := os.Stat(entry.Path); os.IsNotExist(err) {
+			if plannedPath, drop := pruned[entry.ID]; drop && filepath.Clean(entry.Location(layout).Dir) == filepath.Clean(plannedPath) {
+				if _, err := os.Stat(entry.Location(layout).Dir); os.IsNotExist(err) {
 					continue
 				}
 			}

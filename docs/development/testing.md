@@ -43,6 +43,18 @@ Events own lifecycle; index records and filesystem probes own artifact
 location/availability. Snapshot identity/path validation still governs safe
 artifact reclamation.
 
+For request-scoped informal approval, the focused regression slice is:
+
+```bash
+go test -race ./internal/batch ./internal/prompt -run 'InformalApproval|TaskWithReviewEvidence'
+```
+
+It covers no-findings reviews with scope paths and metrics, ordinary and
+COMMENTED approvals, request/head/window and real-feedback controls, pending-CI
+observations without premature relaunches, and same-RunID approval continuation
+through verified merge. Accepted informal approval is sufficient without a
+formal GitHub approval; its continuation prompt must preserve that contract.
+
 For OpenCode context rollover changes, the hermetic production-path coverage is:
 
 ```bash

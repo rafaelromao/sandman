@@ -12,6 +12,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
@@ -884,6 +885,13 @@ func TestLifecycle_VerifiedMergedCompletionSurvivesLaterLegacyLookup(t *testing.
 func TestLifecycle_FreshRunKeepsVerifiedMergeBeforeLegacyArbitration(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
+	legacyLookupCalls := 0
+	oldLookup := lookupOpenPRFn
+	lookupOpenPRFn = func(string) (bool, int, string, error) {
+		legacyLookupCalls++
+		return true, 99, "CONFLICTING", nil
+	}
+	t.Cleanup(func() { lookupOpenPRFn = oldLookup })
 	worktreePath := filepath.Join(workDir, "worktree")
 	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0o755); err != nil {
 		t.Fatalf("create worktree task directory: %v", err)
@@ -922,6 +930,9 @@ func TestLifecycle_FreshRunKeepsVerifiedMergeBeforeLegacyArbitration(t *testing.
 	}
 	if client.legacyCalls != 0 {
 		t.Fatalf("legacy PR observations = %d, want 0", client.legacyCalls)
+	}
+	if legacyLookupCalls != 0 {
+		t.Fatalf("legacy conflict lookups = %d, want 0", legacyLookupCalls)
 	}
 	if len(factory.created) != 1 {
 		t.Fatalf("agent launches = %d, want 1", len(factory.created))
@@ -1010,5 +1021,83 @@ func TestLifecycle_FreshRunKeepsMergedFailureBeforeLegacyArbitration(t *testing.
 		if got := countEventsByType(logs, eventType); got != 0 {
 			t.Fatalf("%s events = %d, want 0", eventType, got)
 		}
+	}
+}
+
+func TestLifecycle_EntryTerminalDecisionsSkipLegacyArbitration(t *testing.T) {
+	tests := []struct {
+		name   string
+		pr     *github.PR
+		cancel bool
+		want   string
+	}{
+		{
+			name: "success",
+			pr:   &github.PR{Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha"},
+			want: "success",
+		},
+		{
+			name: "failure",
+			pr:   &github.PR{Number: 17, State: "closed", HeadRefName: gateTestBranch, HeadRefOid: "current-sha"},
+			want: "failure",
+		},
+		{
+			name:   "aborted",
+			pr:     &github.PR{Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha"},
+			cancel: true,
+			want:   "aborted",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			legacyLookupCalls := 0
+			oldLookup := lookupOpenPRFn
+			lookupOpenPRFn = func(string) (bool, int, string, error) {
+				legacyLookupCalls++
+				return true, 99, "CONFLICTING", nil
+			}
+			t.Cleanup(func() { lookupOpenPRFn = oldLookup })
+
+			ctx := context.Background()
+			if tc.cancel {
+				cancelCtx, cancel := context.WithCancel(ctx)
+				cancel()
+				ctx = cancelCtx
+			}
+			workDir := t.TempDir()
+			log := &spyEventLog{}
+			session := &runSession{
+				deps: runDeps{
+					githubClient: &fakeGitHubClient{
+						prs: map[string]*github.PR{gateTestBranch: tc.pr},
+					},
+					eventLog: log,
+					errorLog: io.Discard,
+					layout:   paths.NewLayout(&config.Config{}, t.TempDir()),
+				},
+				issueNumber: 42,
+				mode:        ModeContinue,
+				opts:        gateTestRunOptions(),
+			}
+			wt := &retrySandbox{workDir: workDir}
+
+			result, started, handled := session.tryEntryResume(ctx, gateTestBranch, wt, "", "run-id")
+			if !handled || !started {
+				t.Fatalf("entry result = (%#v, %t, %t), want handled started terminal", result, started, handled)
+			}
+			if result.Status != tc.want {
+				t.Fatalf("entry status = %q, want %q", result.Status, tc.want)
+			}
+			if legacyLookupCalls != 0 {
+				t.Fatalf("legacy conflict lookups = %d, want 0", legacyLookupCalls)
+			}
+			if len(log.events) != 1 {
+				t.Fatalf("events = %d, want one terminal event", len(log.events))
+			}
+			if _, ok := log.events[0].Payload["merge_conflict"]; ok {
+				t.Fatalf("terminal payload carries merge_conflict: %#v", log.events[0].Payload)
+			}
+		})
 	}
 }

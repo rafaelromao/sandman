@@ -180,7 +180,11 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 			return result, true
 		}
 	}
-	result.Status = s.finishTerminal(ctx, runID, result, terminalExtras, wt, branch)
+	if s.lifecycleTerminal || events.RunStatusFromPayload(result.Status).IsAborted() {
+		result.Status = s.finishDecidedTerminal(ctx, runID, result, terminalExtras, wt, branch)
+	} else {
+		result.Status = s.finishTerminal(ctx, runID, result, terminalExtras, wt, branch)
+	}
 	if issueDriven {
 		s.verifyNoRemainingProcesses(runID)
 	}

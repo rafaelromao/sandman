@@ -13,7 +13,7 @@ func TestBuiltInAgentPresets_ClaudeRunsUnmodifiedPrintMode(t *testing.T) {
 	if !ok {
 		t.Fatal("claude preset missing")
 	}
-	wantCommand := `claude -p --output-format stream-json --verbose{{if .ContinueFlag}} --continue{{end}}{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .SessionName}} --name '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}}{{if .VariantFlag}} {{.VariantFlag}}{{end}} "$(cat {{.PromptFile}})"`
+	wantCommand := `claude -p --output-format stream-json --verbose{{if .ContinueFlag}} --continue{{end}}{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .PermissionFlag}} {{.PermissionFlag}}{{end}}{{if .SessionName}} --name '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}}{{if .VariantFlag}} {{.VariantFlag}}{{end}} "$(cat {{.PromptFile}})"`
 	if preset.Command != wantCommand {
 		t.Fatalf("claude command template:\n got %s\nwant %s", preset.Command, wantCommand)
 	}
