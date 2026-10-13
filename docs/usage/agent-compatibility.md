@@ -64,7 +64,7 @@ Restart OpenCode after installing it.
 The `claude` preset renders:
 
 ```text
-claude -p --output-format stream-json --verbose [--continue] [--dangerously-skip-permissions] [--name '<session name>'] [--model '<model>'] [--effort '<variant>'] "$(cat .sandman/task.md)"
+claude -p --output-format stream-json --verbose [--continue] [--dangerously-skip-permissions] [--allowedTools 'Edit(/.sandman/**)' --permission-mode dontAsk] [--name '<session name>'] [--model '<model>'] [--effort '<variant>'] "$(cat .sandman/task.md)"
 ```
 
 - `stream-json` with `--verbose` is the only print-mode format that streams while
@@ -73,6 +73,9 @@ claude -p --output-format stream-json --verbose [--continue] [--dangerously-skip
   [Session reuse](#session-reuse).
 - `--dangerously-skip-permissions` follows the same default as every agent: on for
   container runs, off for worktree runs; see [Permissions](#permissions).
+- `--allowedTools 'Edit(/.sandman/**)' --permission-mode dontAsk` is rendered only
+  for the review daemon's [health repairs](reviews.md#health-repair), and never
+  together with `--dangerously-skip-permissions`.
 - `--name` carries the Run's session name, which the lingering-process check
   looks for after the run.
 - `--model` receives the resolved model and `--effort` receives the model variant
@@ -168,6 +171,13 @@ that would prompt. Container runs pass the flag by default. For worktree runs,
 pass `--dangerously-skip-permissions` explicitly, or allow the tools you need
 through `permissions.allow` rules in your own `~/.claude/settings.json`.
 
+The review daemon's health repairs run on the host without skipping permissions.
+Their launch allows edits under `.sandman/` and keeps every other prompting call
+denied; see [Reviews > Health repair](reviews.md#health-repair). Managed
+settings with `allowManagedPermissionRulesOnly` make Claude Code ignore
+command-line rules such as `--allowedTools`, in Sandman's commands and in your
+own.
+
 Podman runs the agent as root inside the container, and Claude Code refuses
 `--dangerously-skip-permissions` as root outside a recognized sandbox. The preset
 exports `IS_SANDBOX=1` for that check, which Claude Code 2.1.283 honours: the
@@ -180,10 +190,14 @@ agents:
   claude:
     preset: claude
     command: >-
-      claude -p --output-format stream-json --verbose --permission-mode dontAsk
+      claude -p --output-format stream-json --verbose
       --allowedTools "Bash" "Edit" "Write" "Read" "Glob" "Grep"
-      "$(cat {{.PromptFile}})"
+      --permission-mode dontAsk "$(cat {{.PromptFile}})"
 ```
+
+`--allowedTools` takes several values, so end its list with another option, as
+`--permission-mode dontAsk` does here; otherwise Claude Code reads the prompt as
+one more tool rule.
 
 A custom command receives no `--model`, `--effort`, or `--continue` from Sandman;
 add `--model <alias>` to it directly.

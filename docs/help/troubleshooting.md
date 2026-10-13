@@ -75,7 +75,15 @@ See [`sandman stranded`](../usage/commands.md#sandman-stranded).
 
 Symptom: a container run stops with `build image from .sandman/Dockerfile: exit status 127`, and the build log ends with `RUN mise use -g --pin ...` and `/bin/sh: 1: mise: not found`. Scroll up to the `RUN curl https://mise.run | ... sh` step: it printed `curl: (60) SSL certificate problem: unable to get local issuer certificate`.
 
-Cause: HTTPS traffic from the container build is re-signed by a certificate authority the Debian base image does not trust, usually a corporate TLS-inspection proxy. The host trusts that authority, so the same URLs work outside the container, and `apt-get` still works because Debian mirrors use plain HTTP. The mise step only looks successful: `curl` fails, `sh` reads empty input and exits 0, and the missing `mise` surfaces at the first step that uses it.
+Dockerfiles scaffolded by current Sandman versions download the installer to a file instead, so the build stops at the mise install step itself with the `curl` error. Older Dockerfiles keep the piped line, because `sandman init` is the only thing that rewrites `.sandman/Dockerfile`. Replace it with:
+
+```dockerfile
+RUN curl -fsSL https://mise.run -o /tmp/mise-install.sh && MISE_VERSION=<version> MISE_INSTALL_PATH=/usr/local/bin/mise sh /tmp/mise-install.sh && rm -f /tmp/mise-install.sh && /usr/local/bin/mise --version
+```
+
+Keep the `<version>` from the `# sandman mise-version:` header. Changing the line also makes the next build rerun that step instead of reusing the cached layer that has no `mise`.
+
+Cause: HTTPS traffic from the container build is re-signed by a certificate authority the Debian base image does not trust, usually a corporate TLS-inspection proxy. The host trusts that authority, so the same URLs work outside the container, and `apt-get` still works because Debian mirrors use plain HTTP. With the piped line, the mise step only looks successful: `curl` fails, `sh` reads empty input and exits 0, the build caches that layer, and the missing `mise` surfaces at the first step that uses it, on every later build too.
 
 Fix: trust the proxy's root certificate inside the image.
 
