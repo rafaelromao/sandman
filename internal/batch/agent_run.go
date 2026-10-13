@@ -53,6 +53,7 @@ type AgentRun struct {
 	modelProgress           func()
 	usageLimit              func()
 	cleanupError            error // distinct cleanup failure from context cancellation
+	operationalError        error
 	contextRolloverLiterals []string
 	env                     map[string]string
 	outputWriter            io.Writer
@@ -302,8 +303,29 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		stderr = io.MultiWriter(append([]io.Writer{stderr}, observers...)...)
 	}
 	parsedStdout, parsedStderr := strategy.NewOutputParsers(r.warningWriter())
+	for _, parser := range []outputParser{parsedStdout, parsedStderr} {
+		if guard, ok := parser.(permissionModeGuard); ok {
+			guard.setPermissionModeStop(func() {
+				if ctx.Err() == nil {
+					cancelAttempt()
+				}
+			})
+		}
+	}
 	execErr := r.execute(attemptCtx, renderedCmd, stdout, stderr, parsedStdout, parsedStderr)
 	r.permissionDenials = parsersPermissionDenials(parsedStdout, parsedStderr)
+	if stopped := parsersReadOnlyPermissionMode(parsedStdout, parsedStderr); stopped != nil && ctx.Err() == nil {
+		// A session in a read-only permission mode cannot do the run's work,
+		// and a relaunch would start in the same mode: stop before its first
+		// turn and report why.
+		r.status = "failure"
+		r.operationalError = stopped
+		var cleanupErr *sandbox.CleanupError
+		if errors.As(execErr, &cleanupErr) {
+			r.cleanupError = cleanupErr.CleanupFail
+		}
+		return r.Result()
+	}
 	if detector != nil {
 		detector.Flush()
 	}
@@ -438,6 +460,7 @@ func (r *AgentRun) Result() AgentRunResult {
 		UsageLimitReached: r.usageLimitReached,
 		PermissionDenials: r.permissionDenials,
 		CleanupError:      r.cleanupError,
+		OperationalError:  r.operationalError,
 	}
 }
 
