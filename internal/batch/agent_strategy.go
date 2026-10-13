@@ -26,6 +26,11 @@ type agentStrategy interface {
 	// VariantFlag renders the model-variant selector passed to the command
 	// template as {{.VariantFlag}}, or "".
 	VariantFlag(variant string) string
+	// EditScopeFlag renders, as {{.PermissionFlag}}, the permission that lets
+	// an unattended launch edit files under dir (relative to its working
+	// directory) without prompting, or "" when dir is empty or the agent
+	// takes no such permission from its command line.
+	EditScopeFlag(dir string) string
 	// LaunchEnv returns the environment exported in front of renderedCmd.
 	// permissionMode is the resolved agent's OpencodePermissionMode.
 	LaunchEnv(env map[string]string, permissionMode, renderedCmd string) map[string]string
@@ -156,8 +161,9 @@ func IsUsageLimitOutput(agentName, output string) bool {
 // agent-specific failure classification.
 type passthroughStrategy struct{}
 
-func (passthroughStrategy) ModelFlag(string) string   { return "" }
-func (passthroughStrategy) VariantFlag(string) string { return "" }
+func (passthroughStrategy) ModelFlag(string) string     { return "" }
+func (passthroughStrategy) VariantFlag(string) string   { return "" }
+func (passthroughStrategy) EditScopeFlag(string) string { return "" }
 
 func (passthroughStrategy) LaunchEnv(env map[string]string, _, _ string) map[string]string {
 	return env
@@ -207,6 +213,10 @@ func (s opencodeStrategy) VariantFlag(variant string) string {
 // LaunchEnv drops the preset's OPENCODE_PERMISSION allow-list ("builtin"
 // mode) unless the rendered command skips permission prompts. A value the
 // operator configured ("custom" mode) is always exported.
+// EditScopeFlag renders nothing: OpenCode reads permissions from its own
+// configuration, not from scoped command-line rules.
+func (opencodeStrategy) EditScopeFlag(string) string { return "" }
+
 func (opencodeStrategy) LaunchEnv(env map[string]string, permissionMode, renderedCmd string) map[string]string {
 	applyPermission := strings.Contains(renderedCmd, "--dangerously-skip-permissions")
 	filtered := make(map[string]string, len(env))
