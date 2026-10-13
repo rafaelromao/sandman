@@ -51,6 +51,7 @@ type fakeGH struct {
 	fetchErr              map[int]error
 	authenticatedLogin    string
 	authenticatedLoginErr error
+	authenticatedCalls    int
 	listCalls             int
 	commentCalls          map[int]int // tracks ListPRComments calls per PR number
 	reactionCalls         []reactionCall
@@ -206,6 +207,7 @@ func TestDaemonMigratesLegacyPendingStateBeforeRehydration(t *testing.T) {
 func (f *fakeGH) AuthenticatedLogin(ctx context.Context) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.authenticatedCalls++
 	if f.authenticatedLogin == "" && f.authenticatedLoginErr == nil {
 		return "sandman", nil
 	}

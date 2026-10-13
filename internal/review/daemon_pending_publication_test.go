@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,6 +35,46 @@ type remoteAcceptThenErrorPoster struct {
 	pr    int
 	body  string
 	calls int
+}
+
+type remoteAcceptingReviewPoster struct {
+	gh        *fakeGH
+	pr        int
+	createdAt time.Time
+	cancel    context.CancelFunc
+
+	mu    sync.Mutex
+	calls int
+}
+
+func (p *remoteAcceptingReviewPoster) PostComment(_ context.Context, prNumber int, body string) error {
+	p.mu.Lock()
+	p.calls++
+	first := p.calls == 1
+	cancel := p.cancel
+	p.mu.Unlock()
+	if first {
+		p.gh.mu.Lock()
+		p.gh.comments[prNumber] = append(p.gh.comments[prNumber], github.PRComment{
+			ID:          "published",
+			AuthorLogin: "sandman",
+			Body:        body,
+			CreatedAt:   p.createdAt,
+			UpdatedAt:   p.createdAt,
+		})
+		p.gh.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+		return context.Canceled
+	}
+	return nil
+}
+
+func (p *remoteAcceptingReviewPoster) Calls() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.calls
 }
 
 func (p *remoteAcceptThenErrorPoster) PostComment(context.Context, int, string) error {
@@ -326,28 +367,50 @@ func TestDaemon_RehydrateExactOutboxMatchAcknowledgesWithoutDuplicatePost(t *tes
 	}
 }
 
-func TestDaemon_RemoteSuccessWithAcknowledgementFailureRecoversWithoutPost(t *testing.T) {
+func TestDaemon_RemoteSuccessWithAcknowledgementFailureRecoversBeforeResponseSuppression(t *testing.T) {
 	const (
 		prNumber  = 2483
 		commentID = "c-ack-failure"
-		body      = "## Decision\n**CHANGES_REQUESTED**\nack failure\n"
+		body      = "## Summary\nThe review is complete.\n\n## Decision\n**APPROVED**\nack failure\n"
 	)
-	trigger := github.PRComment{ID: commentID, Body: "/sandman review"}
+	createdAt := mustParseTime(t, "2026-08-01T12:00:00Z")
+	trigger := github.PRComment{
+		ID:          commentID,
+		AuthorLogin: "sandman",
+		Body:        "/sandman review",
+		CreatedAt:   createdAt,
+		UpdatedAt:   createdAt,
+	}
 	gh := &fakeGH{
 		prs:      []github.PR{{Number: prNumber, State: "open"}},
 		comments: map[int][]github.PRComment{prNumber: {trigger}},
 		prFetch:  map[int]*github.PR{prNumber: {Number: prNumber, Title: "ack failure", Body: "body"}},
 	}
 	runner := &decisionCapturingRunner{capturedRequest: &capturedRequest{}, body: body}
-	poster := &fakeCommentPoster{}
-	d1, dir, worktreeDir := newReviewLaunchTestDaemon(t, gh, runner, newReviewLaunchTestConfig())
+	poster := &remoteAcceptingReviewPoster{gh: gh, pr: prNumber, createdAt: createdAt.Add(time.Minute)}
+	cfg := newReviewLaunchTestConfig()
+	d1, firstLog, dir := newDaemonForTest(t, gh, runner, cfg)
+	d1.Config.WorktreeDir = filepath.Join(dir, ".sandman", "worktrees")
 	d1.CommentPoster = poster
-	stageReviewWorktree(t, worktreeDir, reviewBranchName(prNumber, commentID))
 	previousSave := reviewStateSave
 	reviewStateSave = func(*ReviewStateStore) error { return errors.New("acknowledgement unavailable") }
-	t.Cleanup(func() { reviewStateSave = previousSave })
 
-	tickAndWait(t, d1, context.Background())
+	firstCtx, firstCancel := context.WithCancel(context.Background())
+	poster.cancel = firstCancel
+	firstTrigger := make(chan struct{}, 1)
+	d1.Trigger = firstTrigger
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- d1.Run(firstCtx) }()
+	firstTrigger <- struct{}{}
+	select {
+	case err := <-firstDone:
+		if err != nil {
+			t.Fatalf("first daemon Run: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		firstCancel()
+		t.Fatalf("first daemon Run did not finish after remote acceptance (posts=%d, runs=%d, log=%q)", poster.Calls(), runner.Calls(), firstLog.String())
+	}
 	if poster.Calls() != 1 {
 		t.Fatalf("initial PostComment calls = %d, want 1", poster.Calls())
 	}
@@ -357,15 +420,31 @@ func TestDaemon_RemoteSuccessWithAcknowledgementFailureRecoversWithoutPost(t *te
 	if _, err := os.Stat(markerPath); err != nil {
 		t.Fatalf("pending outbox stat: %v", err)
 	}
-	gh.mu.Lock()
-	gh.comments[prNumber] = append(gh.comments[prNumber], github.PRComment{ID: "published", Body: publicationBody(RedactBody(body), reviewTriggerKey(trigger))})
-	gh.mu.Unlock()
 	reviewStateSave = previousSave
+	t.Cleanup(func() { reviewStateSave = previousSave })
 
 	d2 := New(dir, gh, d1.Prompts, runner, d1.Config, &lockedBuffer{}, 0, false, poster)
 	d2.PollInterval = 0
 	d2.postBackoffs = []time.Duration{0, 0, 0, 0, 0}
-	tickAndWait(t, d2, context.Background())
+	secondTrigger := make(chan struct{}, 1)
+	d2.Trigger = secondTrigger
+	secondCtx, secondCancel := context.WithCancel(context.Background())
+	secondDone := make(chan error, 1)
+	go func() { secondDone <- d2.Run(secondCtx) }()
+	secondTrigger <- struct{}{}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) && !d2.IsTerminalSeen(prNumber, reviewTriggerKey(trigger)) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	secondCancel()
+	select {
+	case err := <-secondDone:
+		if err != nil {
+			t.Fatalf("recovery daemon Run: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("recovery daemon Run did not finish after cancellation")
+	}
 
 	if runner.Calls() != 1 {
 		t.Fatalf("recovery RunBatch calls = %d, want 1", runner.Calls())
@@ -375,6 +454,27 @@ func TestDaemon_RemoteSuccessWithAcknowledgementFailureRecoversWithoutPost(t *te
 	}
 	if !d2.IsTerminalSeen(prNumber, reviewTriggerKey(trigger)) {
 		t.Fatal("recovery should acknowledge the already-published body")
+	}
+	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
+		t.Fatalf("pending outbox stat after recovery = %v, want removed", err)
+	}
+	state, err := batchindex.ReadReviewState(filepath.Dir(markerPath))
+	if err != nil {
+		t.Fatalf("read recovered review state: %v", err)
+	}
+	if len(state.SeenComments) != 1 || state.SeenComments[0].CommentID != reviewTriggerKey(trigger) || state.SeenComments[0].Status != "success" {
+		t.Fatalf("recovered review state = %+v, want successful immutable trigger acknowledgement", state.SeenComments)
+	}
+	gh.mu.Lock()
+	defer gh.mu.Unlock()
+	if gh.authenticatedCalls != 2 {
+		t.Fatalf("AuthenticatedLogin calls = %d, want one per daemon Run", gh.authenticatedCalls)
+	}
+	if len(gh.comments[prNumber]) != 2 {
+		t.Fatalf("remote comments = %d, want trigger plus one publication", len(gh.comments[prNumber]))
+	}
+	if gh.comments[prNumber][1].Body != publicationBody(RedactBody(body), reviewTriggerKey(trigger)) {
+		t.Fatalf("remote publication body = %q, want immutable trigger publication", gh.comments[prNumber][1].Body)
 	}
 }
 

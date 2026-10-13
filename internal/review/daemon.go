@@ -1774,10 +1774,6 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) (operationErr erro
 		}
 		focus, ok := ParseTrigger(comment.Body)
 		if ok {
-			if hasLaterDaemonReviewResponse(comment, comments, d.authenticatedLogin) {
-				d.logf("PR #%d request comment %s has a later daemon review response; skipping", prNumber, comment.ID)
-				continue
-			}
 			triggers = append(triggers, unseenTrigger{comment: comment, focus: focus, key: reviewTriggerKey(comment)})
 			continue
 		}
@@ -1875,6 +1871,23 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) (operationErr erro
 			return nil
 		}
 		unprocessed = filtered
+	}
+
+	// A later daemon response suppresses a fresh launch, but it must not
+	// prevent a matching pending publication from being acknowledged first.
+	// Keep this filter before seen-cache, retry-budget, and newest-trigger
+	// handling so answered requests retain their existing launch semantics.
+	filtered := triggers[:0]
+	for _, trigger := range triggers {
+		if hasLaterDaemonReviewResponse(trigger.comment, comments, d.authenticatedLogin) {
+			d.logf("PR #%d request comment %s has a later daemon review response; skipping", prNumber, trigger.comment.ID)
+			continue
+		}
+		filtered = append(filtered, trigger)
+	}
+	triggers = filtered
+	if len(triggers) == 0 {
+		return nil
 	}
 
 	// Lazy verify (issue #1482) is gone (issue #1849);
