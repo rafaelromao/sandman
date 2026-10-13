@@ -81,7 +81,10 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 			warnOpencodeVersionMismatch(cmd, reviewAgentName, sandboxFlag, repoRoot, cfg)
 
 			parallelSet := cmd.Flags().Changed("parallel")
-			return reviewDaemonRunner(cmd.Context(), deps, cfg, sandboxFlag, ccFlag, ccSet, mcFlag, mcSet, agentFlag, modelFlag, variantFlag, cmd.Flags().Changed("variant"), parallelFlag, parallelSet, cmd.ErrOrStderr())
+			opts := reviewDaemonOptions{Sandbox: sandboxFlag, ContainerCapacity: ccFlag, ContainerCapacitySet: ccSet,
+				MaxContainers: mcFlag, MaxContainersSet: mcSet, Agent: agentFlag, Model: modelFlag,
+				Variant: variantFlag, VariantSet: cmd.Flags().Changed("variant"), Parallel: parallelFlag, ParallelSet: parallelSet}
+			return reviewDaemonRunner(cmd.Context(), deps, cfg, opts, cmd.ErrOrStderr())
 		},
 	}
 
@@ -99,7 +102,7 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 // runReviewDaemon wires and runs the review daemon. The cmd layer owns
 // the SIGINT/SIGTERM signal handling; the daemon handles the polling
 // loop and the in-flight batch cancellation.
-func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agentFlag string, modelFlag string, variantFlag string, variantSet bool, parallel int, parallelSet bool, stderr io.Writer) error {
+func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Config, opts reviewDaemonOptions, stderr io.Writer) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
@@ -122,9 +125,6 @@ func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Conf
 	if err != nil {
 		return fmt.Errorf("resolve repo root: %w", err)
 	}
-	opts := reviewDaemonOptions{Sandbox: sandbox, ContainerCapacity: cc, ContainerCapacitySet: ccSet,
-		MaxContainers: mc, MaxContainersSet: mcSet, Agent: agentFlag, Model: modelFlag,
-		Variant: variantFlag, VariantSet: variantSet, Parallel: parallel, ParallelSet: parallelSet}
 	return newReviewDaemon(deps, cfg, paths.NewLayout(cfg, repoRoot), opts, stderr).Run(ctx)
 }
 

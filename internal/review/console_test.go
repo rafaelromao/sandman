@@ -76,7 +76,8 @@ func TestDaemonConsoleReportsFailedLaunchWithRetryTime(t *testing.T) {
 	gh := launchBudgetGitHub{&fakeGH{prFetch: map[int]*github.PR{17: {Number: 17, HeadRefOid: "head"}}}}
 	cfg := &config.Config{DefaultReviewAgent: "custom", DefaultReviewModel: "model"}
 	runner := &failureRunner{err: errors.New(log.String())}
-	d := New(root, gh, &prompt.Engine{}, runner, cfg, &lockedBuffer{}, 1, true, nil)
+	history := &lockedBuffer{}
+	d := New(root, gh, &prompt.Engine{}, runner, cfg, history, 1, true, nil)
 	console := &lockedBuffer{}
 	d.Console = console
 	now := time.Date(2026, 10, 13, 14, 0, 0, 0, time.UTC)
@@ -94,6 +95,9 @@ func TestDaemonConsoleReportsFailedLaunchWithRetryTime(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("console missing %q:\n%s", want, out)
 		}
+		if !strings.Contains(history.String(), want) {
+			t.Fatalf("attach history missing %q:\n%s", want, history.String())
+		}
 	}
 	if strings.Contains(out, "STEP 100/17") {
 		t.Fatalf("console dumped the build log:\n%s", out)
@@ -107,6 +111,8 @@ func TestDaemonConsoleReportsExhaustedRepairBudgetOncePerEpisode(t *testing.T) {
 	d, _, _ := newDaemonForTest(t, &fakeGH{}, runner, &config.Config{DefaultReviewAgent: "claude", DefaultReviewModel: "sonnet"})
 	console := &lockedBuffer{}
 	d.Console = console
+	// Seeds the persisted budget instead of running three repairs, whose
+	// cooldowns are covered by TestDaemonHealthRepairBoundedUnresolvedAcrossRestart.
 	exhaust := func() {
 		t.Helper()
 		if err := d.withHealthState(func(state *healthRepairState) error {
