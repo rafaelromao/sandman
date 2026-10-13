@@ -290,6 +290,62 @@ func TestDaemonHealthRepairDeniedActionsAreUnresolved(t *testing.T) {
 	}
 }
 
+// A denied repair cannot do better on the same failure, so the daemon must not
+// spend its budget relaunching it. Each review launch wraps the same cause in
+// fresh per-attempt identities, which must not count as a changed failure.
+func TestDaemonHealthRepairDeniedCauseIsNotRelaunched(t *testing.T) {
+	runner := &healthRunner{repair: func(context.Context, batch.Request) (*batch.Result, error) {
+		return &batch.Result{Runs: []batch.AgentRunResult{{Status: "success", PermissionDenials: []string{"Edit"}}}}, nil
+	}}
+	cfg := &config.Config{DefaultReviewAgent: "claude", DefaultReviewModel: "sonnet"}
+	d, logs, dir := newDaemonForTest(t, &fakeGH{}, runner, cfg)
+	now := time.Now()
+	clock := func() time.Time { return now }
+	d.Clock = clock
+	imageBuild := errors.New("build image from .sandman/Dockerfile: exit status 127\n/bin/sh: 1: mise: not found")
+	observe := func(run string, cause error) {
+		t.Helper()
+		evidence := &healthEvidence{context: "request c1 run " + run + " artifacts .sandman/batches/" + run + " worktree .sandman/worktrees/review-5-c1", cause: cause}
+		d.observeHealthFailure(context.Background(), requestHealthKey(5, "c1"), "launch review", 5, evidence)
+		d.inFlight.Wait()
+	}
+	afterCooldown := func() {
+		now = readHealthState(t, d).NextAttempt.Add(time.Second)
+	}
+
+	observe("r1", imageBuild)
+	if got := len(runner.requests()); got != 1 {
+		t.Fatalf("first failure launches=%d, want 1", got)
+	}
+	afterCooldown()
+	observe("r2", imageBuild)
+	observe("r3", imageBuild)
+	if got := len(runner.requests()); got != 1 {
+		t.Fatalf("identical denied cause relaunched: launches=%d", got)
+	}
+	if got := strings.Count(logs.String(), "health repair paused"); got != 1 {
+		t.Fatalf("remediation lines=%d, want exactly 1:\n%s", got, logs.String())
+	}
+
+	d = New(dir, &fakeGH{}, &prompt.Engine{}, runner, cfg, logs, 0, false, nil)
+	d.Clock = clock
+	observe("r4", imageBuild)
+	if got := len(runner.requests()); got != 1 {
+		t.Fatalf("restart forgot the denied cause: launches=%d", got)
+	}
+
+	observe("r5", errors.New("build image from .sandman/Dockerfile: curl: (60) SSL certificate problem"))
+	if got := len(runner.requests()); got != 2 {
+		t.Fatalf("changed cause must re-admit repair: launches=%d", got)
+	}
+	afterCooldown()
+	d.Model = "opus"
+	observe("r6", errors.New("build image from .sandman/Dockerfile: curl: (60) SSL certificate problem"))
+	if got := len(runner.requests()); got != 3 {
+		t.Fatalf("changed repair model must re-admit repair: launches=%d", got)
+	}
+}
+
 func TestDaemonHealthRepairBoundedUnresolvedAcrossRestart(t *testing.T) {
 	gh := &fakeGH{listErr: errors.New("remote broken")}
 	runner := &healthRunner{repair: func(context.Context, batch.Request) (*batch.Result, error) {

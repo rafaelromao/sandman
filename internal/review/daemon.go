@@ -288,6 +288,9 @@ type Daemon struct {
 	// Guarded by the health-state advisory lock; reused for restart lifecycle
 	// observation rather than opening a new event-log descriptor every tick.
 	healthEvents *events.JSONLLogger
+	// healthPausedLogged is the denied failure set this process last reported
+	// as paused. Guarded by the health-state advisory lock.
+	healthPausedLogged string
 }
 
 // effectiveLaunchBackoff returns the launch-failure backoff for
@@ -2262,7 +2265,10 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	defer func() {
 		key := requestHealthKey(prNumber, triggerKey)
 		if operationErr != nil {
-			d.observeHealthFailure(ctx, key, "launch review", prNumber, fmt.Errorf("request %s run %s artifacts %s worktree %s: %w", triggerKey, perRowRunID, reviewRunFolder, d.reviewWorktreePath(prNumber, triggerKey), operationErr))
+			d.observeHealthFailure(ctx, key, "launch review", prNumber, &healthEvidence{
+				context: fmt.Sprintf("request %s run %s artifacts %s worktree %s", triggerKey, perRowRunID, reviewRunFolder, d.reviewWorktreePath(prNumber, triggerKey)),
+				cause:   operationErr,
+			})
 		} else {
 			d.resolveHealthOperation(key)
 		}

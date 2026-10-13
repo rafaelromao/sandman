@@ -2,11 +2,14 @@ package review
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -34,11 +37,25 @@ const healthRepairTimeout = 30 * time.Minute
 const healthFailureLimit = 32
 
 type healthFailure struct {
-	PR         int       `json:"pr,omitempty"`
-	Operation  string    `json:"operation"`
-	Evidence   string    `json:"evidence"`
+	PR        int    `json:"pr,omitempty"`
+	Operation string `json:"operation"`
+	Evidence  string `json:"evidence"`
+	// Cause is the failure's stable text: Evidence without per-attempt
+	// identities. Empty in evidence written before causes were recorded.
+	Cause      string    `json:"cause,omitempty"`
 	ObservedAt time.Time `json:"observed_at"`
 }
+
+// healthEvidence is an operation failure whose diagnostic context names
+// per-attempt identities (run IDs, artifact folders). Its cause alone
+// identifies the failure across attempts.
+type healthEvidence struct {
+	context string
+	cause   error
+}
+
+func (e *healthEvidence) Error() string { return e.context + ": " + e.cause.Error() }
+func (e *healthEvidence) Unwrap() error { return e.cause }
 
 // This is admission/diagnostic evidence, never an alternate Run lifecycle.
 type healthRepairState struct {
@@ -51,6 +68,11 @@ type healthRepairState struct {
 	NextAttempt    time.Time                `json:"next_attempt,omitempty"`
 	Outcome        string                   `json:"outcome,omitempty"`
 	OwnerlessSince time.Time                `json:"ownerless_since,omitempty"`
+	// AttemptCauses fingerprints the failures the current attempt was given;
+	// DeniedCauses keeps them once that attempt's actions were denied, so the
+	// same failures do not relaunch a repair that cannot act on them.
+	AttemptCauses []string `json:"attempt_causes,omitempty"`
+	DeniedCauses  []string `json:"denied_causes,omitempty"`
 }
 
 func (d *Daemon) healthStatePath() string { return filepath.Join(d.reviewsDir(), "health-repair.json") }
@@ -78,6 +100,7 @@ func (d *Daemon) withHealthState(fn func(*healthRepairState) error) error {
 			return fmt.Errorf("decode health repair: %w", err)
 		}
 		if state.Version != 1 || state.Failures == nil || len(state.Failures) > healthFailureLimit || state.Attempts < 0 || state.Attempts > healthRepairAttempts ||
+			len(state.AttemptCauses) > healthFailureLimit || len(state.DeniedCauses) > healthFailureLimit ||
 			(state.AttemptPending && (state.RunID == "" || state.Deadline.IsZero() || state.NextAttempt.IsZero())) {
 			return errors.New("invalid health repair admission evidence")
 		}
@@ -108,7 +131,12 @@ func (d *Daemon) observeHealthFailure(ctx context.Context, key, operation string
 		if _, exists := state.Failures[key]; !exists && len(state.Failures) == healthFailureLimit {
 			return errors.New("health repair evidence saturated; unresolved budget retained")
 		}
-		state.Failures[key] = healthFailure{PR: pr, Operation: operation, Evidence: err.Error(), ObservedAt: d.now()}
+		cause := err.Error()
+		var evidence *healthEvidence
+		if errors.As(err, &evidence) {
+			cause = evidence.cause.Error()
+		}
+		state.Failures[key] = healthFailure{PR: pr, Operation: operation, Evidence: err.Error(), Cause: cause, ObservedAt: d.now()}
 		return nil
 	}); stateErr != nil {
 		d.logf("health repair admission blocked: %v (original %s: %v)", stateErr, operation, err)
@@ -184,6 +212,11 @@ func (d *Daemon) startHealthRepair(ctx context.Context, runner repairRunner) {
 			}
 			state.AttemptPending = false
 		}
+		causes := d.healthCauses(state)
+		if len(state.DeniedCauses) > 0 && containsAll(state.DeniedCauses, causes) {
+			d.logHealthRepairPaused(state)
+			return nil
+		}
 		if state.Attempts >= healthRepairAttempts {
 			d.logf("health repair budget exhausted after %d attempts; original operations still unresolved", state.Attempts)
 			return nil
@@ -205,6 +238,7 @@ func (d *Daemon) startHealthRepair(ctx context.Context, runner repairRunner) {
 		state.AttemptPending = true
 		state.OwnerlessSince = time.Time{}
 		state.Outcome = "reserved"
+		state.AttemptCauses = causes
 		deadline = state.Deadline
 		req = batch.Request{Agent: d.effectiveAgent(), Model: d.effectiveModel(), Variant: d.effectiveVariant(), VariantSet: true,
 			RunID: state.RunID, RunDir: filepath.Join(d.BaseDir, "batches", state.RunID),
@@ -239,6 +273,10 @@ func (d *Daemon) startHealthRepair(ctx context.Context, runner repairRunner) {
 			state.AttemptPending = false
 			state.Outcome = outcome
 			state.NextAttempt = d.now().Add(healthRepairCooldown(state.Attempts))
+			state.DeniedCauses = nil
+			if len(deniedRepairTools(result)) > 0 {
+				state.DeniedCauses = state.AttemptCauses
+			}
 			return nil
 		}); err != nil {
 			d.logf("persist health repair outcome: %v", err)
@@ -247,6 +285,43 @@ func (d *Daemon) startHealthRepair(ctx context.Context, runner repairRunner) {
 }
 
 func healthRepairCooldown(attempt int) time.Duration { return time.Duration(attempt) * 5 * time.Minute }
+
+// healthCauses fingerprints each recorded failure together with the repair
+// agent and model, sorted. A changed failure, a new failure, or a different
+// repair agent or model produces a fingerprint a denied attempt never saw.
+func (d *Daemon) healthCauses(state *healthRepairState) []string {
+	causes := make([]string, 0, len(state.Failures))
+	for key, failure := range state.Failures {
+		cause := failure.Cause
+		if cause == "" {
+			cause = failure.Evidence
+		}
+		sum := sha256.Sum256([]byte(strings.Join([]string{d.effectiveAgent(), d.effectiveModel(), key, failure.Operation, cause}, "\x00")))
+		causes = append(causes, hex.EncodeToString(sum[:]))
+	}
+	sort.Strings(causes)
+	return causes
+}
+
+func containsAll(set, items []string) bool {
+	for _, item := range items {
+		if !slices.Contains(set, item) {
+			return false
+		}
+	}
+	return true
+}
+
+// logHealthRepairPaused tells the operator, once per daemon process for a
+// given denied set, that repair waits for them rather than relaunching.
+func (d *Daemon) logHealthRepairPaused(state *healthRepairState) {
+	paused := strings.Join(state.DeniedCauses, ",")
+	if d.healthPausedLogged == paused {
+		return
+	}
+	d.healthPausedLogged = paused
+	d.logf("health repair paused: the last repair could not act (%s). Fix the failure by hand (see docs/usage/reviews.md#health-repair); a changed failure, a new review request, or a different review agent or model admits repair again", state.Outcome)
+}
 
 // healthRepairOutcome classifies a finished repair. Denied actions win over the
 // process outcome: whatever the exit, the agent could not change anything.
