@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -124,6 +125,16 @@ type observedCleanupSandbox struct {
 func (s *observedCleanupSandbox) Start(sandbox.SandboxStart) error { s.starts++; return nil }
 func (s *observedCleanupSandbox) Stop() error                      { s.stops++; return nil }
 
+type observedStartCountingSandbox struct {
+	sandbox.Sandbox
+	starts int
+}
+
+func (s *observedStartCountingSandbox) Start(opts sandbox.SandboxStart) error {
+	s.starts++
+	return s.Sandbox.Start(opts)
+}
+
 func TestWaitingContract_TerminalObservationUsesResolvedContainerPolicy(t *testing.T) {
 	root := testenv.MkdirShort(t, "sm-observe-policy-")
 	t.Chdir(root)
@@ -145,6 +156,68 @@ func TestWaitingContract_TerminalObservationUsesResolvedContainerPolicy(t *testi
 	}
 	if len(log.snapshot()) != 1 || log.snapshot()[0].Payload["worktree_state"] != "cleaned" {
 		t.Fatalf("terminal cleanup projection=%+v", log.snapshot())
+	}
+}
+
+func TestWaitingContract_TerminalObservationReclaimsExistingWorktreeWithoutStart(t *testing.T) {
+	root := testenv.MkdirShort(t, "sm-observe-reclaim-")
+	t.Chdir(root)
+	initGitRepo(t, root)
+	branch := "42-observed"
+	worktreeBase := filepath.Join(root, ".sandman", "worktrees")
+	worktreePath := filepath.Join(worktreeBase, branch)
+	runGit(t, root, "worktree", "add", "-b", branch, worktreePath, "main")
+
+	var observed *observedStartCountingSandbox
+	factory := sandboxFactoryFunc(func(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox {
+		if container != nil {
+			t.Fatal("terminal observation allocated a container")
+		}
+		observed = &observedStartCountingSandbox{Sandbox: sandbox.NewWorktreeSandbox(repoPath, worktreeBase, branch, sourceBranch)}
+		return observed
+	})
+	log := &spyEventLog{}
+	o := NewOrchestrator(nil, nil, nil, log, WithErrorLog(io.Discard))
+	executor := o.newRunExecutor(context.Background(), BatchConfig{Cfg: &config.Config{WorktreeDir: worktreeBase}}, factory, nil)
+	result := executor.finishObserved(context.Background(), RowSpec{
+		IssueNumber: 42,
+		RunID:       "observed-reclaim",
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+	}, "success", nil)
+
+	if result.Status != "success" || observed == nil || observed.starts != 0 {
+		t.Fatalf("terminal observation started execution: result=%+v sandbox=%+v", result, observed)
+	}
+	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
+		t.Fatalf("observed worktree checkout still exists: %v", err)
+	}
+	if list := runGit(t, root, "worktree", "list", "--porcelain"); strings.Contains(list, "worktree "+worktreePath) {
+		t.Fatalf("observed worktree registration still exists:\n%s", list)
+	}
+	finished := findEvent(log.snapshot(), "run.finished")
+	if finished == nil || finished.Payload["worktree_state"] != "cleaned" {
+		t.Fatalf("terminal observation cleanup event=%+v, want cleaned", finished)
+	}
+}
+
+func TestWaitingContract_TerminalObservationKeepsSuccessWhenCleanupFails(t *testing.T) {
+	stopErr := errors.New("validated worktree removal failed")
+	log := &spyEventLog{}
+	sb := &fakeSandbox{workDir: t.TempDir(), stopError: stopErr}
+	o := NewOrchestrator(nil, nil, nil, log, WithErrorLog(io.Discard))
+	executor := o.newRunExecutor(context.Background(), BatchConfig{}, &fakeSandboxFactory{sandbox: sb}, nil)
+	result := executor.finishObserved(context.Background(), RowSpec{IssueNumber: 42, RunID: "observed-cleanup-failure", Branches: map[int]string{42: "42-work"}}, "success", nil)
+
+	if result.Status != "success" || sb.startCalled {
+		t.Fatalf("cleanup failure changed lifecycle or started execution: result=%+v sandbox=%+v", result, sb)
+	}
+	finished := findEvent(log.snapshot(), "run.finished")
+	if finished == nil {
+		t.Fatal("missing terminal event")
+	}
+	if finished.Payload["cleanup_error"] != stopErr.Error() || finished.Payload["worktree_state"] != "preserved" {
+		t.Fatalf("cleanup failure event=%+v, want diagnostic and preserved worktree", finished.Payload)
 	}
 }
 

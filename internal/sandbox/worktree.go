@@ -42,7 +42,23 @@ func NewWorktreeSandbox(repoPath, worktreeBase, branch, sourceBranch string) *Wo
 		branch:            branch,
 		sourceBranch:      sourceBranch,
 		strandedReconcile: true,
+		workDir:           configuredWorktreePath(worktreeBase, branch),
 	}
+}
+
+func configuredWorktreePath(worktreeBase, branch string) string {
+	if strings.TrimSpace(worktreeBase) == "" || strings.TrimSpace(branch) == "" {
+		return ""
+	}
+	if filepath.IsAbs(branch) {
+		return ""
+	}
+	path := filepath.Join(worktreeBase, branch)
+	rel, err := filepath.Rel(worktreeBase, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	return path
 }
 
 // RestoreHostPaths is a no-op on a worktree-only sandbox: there is no
@@ -63,7 +79,10 @@ func (s *WorktreeSandbox) Start(opts SandboxStart) error {
 	s.strandedReconcile = opts.StrandedReconcile
 	s.gitName = opts.Identity.Name
 	s.gitEmail = opts.Identity.Email
-	s.workDir = filepath.Join(s.worktreeBase, s.branch)
+	s.workDir = configuredWorktreePath(s.worktreeBase, s.branch)
+	if s.workDir == "" {
+		return fmt.Errorf("invalid worktree path: base and branch are required")
+	}
 	if s.continueRun && !s.override {
 		if err := RestoreWorktreeGitPaths(s.repoPath, s.workDir); err != nil {
 			return fmt.Errorf("normalize preserved worktree gitlink for continuation: %w", err)
@@ -547,6 +566,9 @@ func (s *WorktreeSandbox) ExecInteractive(ctx context.Context, command string) e
 
 // Stop cleans up the worktree.
 func (s *WorktreeSandbox) Stop() error {
+	if s.workDir == "" {
+		return fmt.Errorf("invalid worktree path: base and branch are required")
+	}
 	cmd := exec.Command("git", "worktree", "remove", "--force", s.workDir)
 	cmd.Dir = s.repoPath
 	if out, err := cmd.CombinedOutput(); err != nil {

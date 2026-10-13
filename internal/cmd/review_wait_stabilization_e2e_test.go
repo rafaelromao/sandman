@@ -180,6 +180,7 @@ func TestReviewWaitStabilization_CIFailureFixReviewMerge(t *testing.T) {
 	if countReviewWaitEvents(logs, 42, "run.finished") != 1 {
 		t.Fatalf("run.finished events = %d, want 1", countReviewWaitEvents(logs, 42, "run.finished"))
 	}
+	assertReviewWaitWorktreeReclaimed(t, repoDir, "42-parent", logs, stdout.String()+stderr.String())
 	terminalRun := waitForPortalRun(t, portalURL, 42, func(run portalRun) bool {
 		return run.Status == "success" && run.FinishedAt != nil
 	})
@@ -350,6 +351,29 @@ func runReviewWaitScenario(t *testing.T, binPath string, cancelPending bool) {
 	}
 	if countReviewWaitEvents(logs, 43, "run.started") != 1 {
 		t.Fatalf("dependent started events = %d, want 1 after parent completion", countReviewWaitEvents(logs, 43, "run.started"))
+	}
+	assertReviewWaitWorktreeReclaimed(t, repoDir, "42-parent", logs, stdout.String()+stderr.String())
+}
+
+func assertReviewWaitWorktreeReclaimed(t *testing.T, repoDir, branch string, logs []events.Event, output string) {
+	t.Helper()
+	worktreePath := filepath.Join(repoDir, ".sandman", "worktrees", branch)
+	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
+		t.Fatalf("successful observed worktree checkout %q still exists: %v", worktreePath, err)
+	}
+	list := runGit(t, repoDir, "worktree", "list", "--porcelain")
+	for _, line := range strings.Split(list, "\n") {
+		if strings.TrimSpace(line) == "worktree "+worktreePath {
+			t.Fatalf("successful observed worktree registration %q still exists:\n%s", worktreePath, list)
+		}
+	}
+	if strings.Contains(output, "fatal: '' is not a working tree") {
+		t.Fatalf("successful observed cleanup attempted an empty worktree path:\n%s", output)
+	}
+	for _, event := range logs {
+		if event.Issue == 42 && event.Type == "run.finished" && event.Payload["worktree_state"] != "cleaned" {
+			t.Fatalf("successful observed terminal event worktree_state = %v, want cleaned", event.Payload["worktree_state"])
+		}
 	}
 }
 
