@@ -50,7 +50,15 @@ func configuredWorktreePath(worktreeBase, branch string) string {
 	if strings.TrimSpace(worktreeBase) == "" || strings.TrimSpace(branch) == "" {
 		return ""
 	}
-	return filepath.Join(worktreeBase, branch)
+	if filepath.IsAbs(branch) {
+		return ""
+	}
+	path := filepath.Join(worktreeBase, branch)
+	rel, err := filepath.Rel(worktreeBase, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	return path
 }
 
 // RestoreHostPaths is a no-op on a worktree-only sandbox: there is no

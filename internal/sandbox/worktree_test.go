@@ -370,9 +370,12 @@ func TestWorktreeSandbox_StopRejectsInvalidCanonicalPath(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)
 
-	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "", "main")
-	if err := s.Stop(); err == nil {
-		t.Fatal("expected invalid canonical worktree path to fail closed")
+	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+	for _, branch := range []string{"", "../outside", filepath.Join(worktreeBase, "outside")} {
+		s := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+		if err := s.Stop(); err == nil {
+			t.Fatalf("branch %q: expected invalid canonical worktree path to fail closed", branch)
+		}
 	}
 }
 
