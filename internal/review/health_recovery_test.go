@@ -80,6 +80,120 @@ func TestDaemonHealthRepairStrandedFailureLaunchesRealIndependentAdapter(t *test
 	}
 }
 
+// scriptedHealthRunner runs repairs through the production adapter and
+// reviews through a test script.
+type scriptedHealthRunner struct {
+	*batch.Orchestrator
+	review func(context.Context, batch.Request) (*batch.Result, error)
+}
+
+func (r scriptedHealthRunner) RunBatch(ctx context.Context, req batch.Request) (*batch.Result, error) {
+	return r.review(ctx, req)
+}
+
+// newClaudeRepairDaemon serves PR 17's review request through a daemon whose
+// repairs launch the built-in claude preset against a `claude` script.
+func newClaudeRepairDaemon(t *testing.T, script string, review func(context.Context, batch.Request) (*batch.Result, error)) (*Daemon, *lockedBuffer, string) {
+	t.Helper()
+	dir := testenv.MkdirShort(t, "health-claude-")
+	t.Chdir(dir)
+	if err := os.WriteFile("claude", []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	base := filepath.Join(dir, ".sandman")
+	if err := os.MkdirAll(base, 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{DefaultReviewAgent: "claude", DefaultReviewModel: "sonnet", Sandbox: "podman", WorktreeDir: ".sandman/worktrees"}
+	log := &events.JSONLLogger{Path: filepath.Join(base, "events.jsonl")}
+	orchestrator := batch.NewOrchestrator(nil, &prompt.Engine{}, healthConfigStore{cfg}, log, batch.WithErrorLog(io.Discard))
+	gh := &fakeGH{prs: []github.PR{{Number: 17, State: "open", UpdatedAt: time.Now()}},
+		comments: map[int][]github.PRComment{17: {{ID: "image", Body: "/sandman review", AuthorLogin: "sandman", CreatedAt: time.Now()}}},
+		prFetch:  map[int]*github.PR{17: {Number: 17, Title: "repair"}}}
+	logs := &lockedBuffer{}
+	d := New(base, gh, &prompt.Engine{}, scriptedHealthRunner{Orchestrator: orchestrator, review: review}, cfg, logs, 0, false, nil)
+	d.launchBackoff = func(int) time.Duration { return 0 }
+	return d, logs, dir
+}
+
+var errPoisonedImage = errors.New("build image from .sandman/Dockerfile: exit status 127\n/bin/sh: 1: mise: not found")
+
+func TestDaemonHealthRepairClaudeScopedEditRecoversOriginalReview(t *testing.T) {
+	// The script stands in for Claude Code: it edits under .sandman only when
+	// its launch carries the scoped allow rule.
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > claude-launch.txt\n" +
+		"case \"$*\" in *\"Edit(/.sandman/**)\"*) echo fixed > .sandman/Dockerfile.repaired ;; esac\n" +
+		"printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"repaired\"}'\n"
+	decision := newDecisionRunner()
+	d, logs, dir := newClaudeRepairDaemon(t, script, func(ctx context.Context, req batch.Request) (*batch.Result, error) {
+		if _, err := os.Stat(filepath.Join(".sandman", "Dockerfile.repaired")); err != nil {
+			return nil, errPoisonedImage
+		}
+		return decision.RunBatch(ctx, req)
+	})
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	d.inFlight.Wait()
+	launch, err := os.ReadFile(filepath.Join(dir, "claude-launch.txt"))
+	if err != nil {
+		t.Fatalf("claude repair not launched: %v; logs=%s", err, logs.String())
+	}
+	for _, want := range []string{"--allowedTools", "Edit(/.sandman/**)", "--permission-mode", "dontAsk"} {
+		if !strings.Contains(string(launch), want) {
+			t.Fatalf("repair launch missing %q:\n%s", want, launch)
+		}
+	}
+	if strings.Contains(string(launch), "--dangerously-skip-permissions") {
+		t.Fatalf("repair launch bypasses permissions:\n%s", launch)
+	}
+	if outcome := readHealthState(t, d).Outcome; !strings.Contains(outcome, "repair exited successfully") {
+		t.Fatalf("outcome = %q; logs=%s", outcome, logs.String())
+	}
+	if !d.shouldReadComments(d.GitHub.(*fakeGH).prs[0]) {
+		t.Fatal("failed original request must be observed again")
+	}
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	d.inFlight.Wait()
+	if !d.IsTerminalSeen(17, "image") || d.hasHealthFailure(17) {
+		t.Fatalf("original review did not recover after the repair; logs=%s", logs.String())
+	}
+}
+
+func TestDaemonHealthRepairClaudeDeniedRepairIsNotRelaunched(t *testing.T) {
+	script := "#!/bin/sh\necho launch >> claude-launches.txt\n" +
+		"printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"could not edit\",\"permission_denials\":[{\"tool_name\":\"Edit\",\"tool_use_id\":\"t1\"}]}'\n"
+	d, logs, dir := newClaudeRepairDaemon(t, script, func(context.Context, batch.Request) (*batch.Result, error) {
+		return nil, errPoisonedImage
+	})
+	now := time.Now()
+	d.Clock = func() time.Time { return now }
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	d.inFlight.Wait()
+	if outcome := readHealthState(t, d).Outcome; !strings.HasPrefix(outcome, "unresolved: repair actions denied (Edit)") {
+		t.Fatalf("outcome = %q; logs=%s", outcome, logs.String())
+	}
+	now = readHealthState(t, d).NextAttempt.Add(time.Second)
+	for range 2 {
+		if err := d.tick(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		d.inFlight.Wait()
+	}
+	launches, err := os.ReadFile(filepath.Join(dir, "claude-launches.txt"))
+	if err != nil || strings.Count(string(launches), "launch") != 1 {
+		t.Fatalf("denied repair relaunched for the same failure: %q %v; logs=%s", launches, err, logs.String())
+	}
+	if !strings.Contains(logs.String(), "health repair paused") {
+		t.Fatalf("operator remediation missing; logs=%s", logs.String())
+	}
+}
+
 func TestDaemonHealthRepairExcludesNormalWaitsAndCancellation(t *testing.T) {
 	for _, err := range []error{context.Canceled, batch.ErrAborted, errReviewDeferred, reviewlaunch.ErrLaunchOwned,
 		&github.RateLimitError{Err: errors.New("API rate limit exceeded")}, errors.New("Error: The usage limit has been reached")} {
