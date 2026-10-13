@@ -711,6 +711,9 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 				"next_action": "inspect the persisted CI wait state and repair the current pull-request checks",
 			}, true
 		}
+		if ctx.Err() != nil {
+			return "aborted", nil, true
+		}
 		evidence.payload = mergeLifecycleDiagnostics(evidence.payload, ciEvidence)
 	}
 	if evidence.outcome == retainedReviewApproval || evidence.actionable || len(evidence.informalFeedback) > 0 {

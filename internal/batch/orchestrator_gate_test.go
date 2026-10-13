@@ -920,6 +920,92 @@ func TestLifecycleObservationCancellationWhileCIWaitLockContendedAborts(t *testi
 	}
 }
 
+func TestLifecycleObservationCancellationAfterCIPersistenceAborts(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-ci-abort-boundary-")
+	path := filepath.Join(workDir, ".sandman", "state", "17.ci_wait.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	released := make(chan struct{})
+	client := &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+		Number:            17,
+		State:             "open",
+		HeadRefOid:        "current-sha",
+		StatusCheckRollup: "pending",
+		MergeStateStatus:  "BLOCKED",
+	}}}
+	opts := gateTestRunOptions()
+	opts.now = func() time.Time {
+		select {
+		case <-released:
+			cancel()
+		default:
+		}
+		return time.Now().UTC()
+	}
+	session := &runSession{
+		issueNumber: 42,
+		deps:        runDeps{githubClient: client, errorLog: io.Discard},
+		opts:        opts,
+	}
+	ready := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseLock := func() {
+		releaseOnce.Do(func() {
+			close(released)
+			close(release)
+		})
+	}
+	holderDone := make(chan error, 1)
+	go func() {
+		holderDone <- withOperationLock(context.Background(), path, func() error {
+			close(ready)
+			<-release
+			return nil
+		})
+	}()
+	<-ready
+	defer func() {
+		releaseLock()
+		if err := <-holderDone; err != nil {
+			t.Errorf("release CI wait lock: %v", err)
+		}
+	}()
+
+	result := make(chan struct {
+		status  string
+		extras  map[string]any
+		handled bool
+	}, 1)
+	go func() {
+		status, extras, handled := session.handleLifecycleDecision(ctx, workDir, gateTestBranch, "", "run-test", true)
+		result <- struct {
+			status  string
+			extras  map[string]any
+			handled bool
+		}{status, extras, handled}
+	}()
+
+	// Let the observation reach the contended lock before releasing it. The
+	// cancellation is triggered by the state write inside the lock callback, so
+	// ciWaitEvidence returns successfully with a canceled row context.
+	time.Sleep(50 * time.Millisecond)
+	releaseLock()
+
+	select {
+	case got := <-result:
+		if !got.handled || got.status != "aborted" || got.extras != nil {
+			t.Fatalf("canceled lifecycle observation after CI persistence = (%q, %#v, %t), want handled aborted", got.status, got.extras, got.handled)
+		}
+	case <-time.After(500 * time.Millisecond):
+		cancel()
+		t.Fatal("canceled lifecycle observation did not finish after CI persistence")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("canceled lifecycle observation did not persist CI state before abort: %v", err)
+	}
+}
+
 func TestExternalGate_RetainedRecordDiagnosticDoesNotChangeLiveGate(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	writeTimedOutReviewRequest(t, workDir)
