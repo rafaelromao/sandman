@@ -694,14 +694,17 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 		var ciErr error
 		switch strings.ToLower(strings.TrimSpace(pr.StatusCheckRollup)) {
 		case "pending", "in_progress", "queued", "failure":
-			ciEvidence, ciErr = s.ciWaitEvidence(workDir, pr, headSHA)
+			ciEvidence, ciErr = s.ciWaitEvidence(ctx, workDir, pr, headSHA)
 		default:
 			if strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "DIRTY") ||
 				strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "CONFLICTING") {
-				ciEvidence, ciErr = s.ciWaitEvidence(workDir, pr, headSHA)
+				ciEvidence, ciErr = s.ciWaitEvidence(ctx, workDir, pr, headSHA)
 			}
 		}
 		if ciErr != nil {
+			if ctx.Err() != nil {
+				return "aborted", nil, true
+			}
 			return "resume", map[string]any{
 				"gate":        gateCIWaitTimeout,
 				"reason":      "CI_WAIT_STATE_ERROR",

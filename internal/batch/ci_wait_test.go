@@ -1,7 +1,11 @@
 package batch
 
 import (
+	"context"
+	"errors"
+	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,11 +17,11 @@ func TestCIWaitEvidencePersistsDeadlinePerHead(t *testing.T) {
 	s := &runSession{}
 	pr := &github.PR{Number: 17, HeadRefOid: "first-head"}
 
-	first, err := s.ciWaitEvidence(workDir, pr, "first-head")
+	first, err := s.ciWaitEvidence(context.Background(), workDir, pr, "first-head")
 	if err != nil {
 		t.Fatalf("first CI wait evidence: %v", err)
 	}
-	second, err := s.ciWaitEvidence(workDir, pr, "first-head")
+	second, err := s.ciWaitEvidence(context.Background(), workDir, pr, "first-head")
 	if err != nil {
 		t.Fatalf("second CI wait evidence: %v", err)
 	}
@@ -28,7 +32,7 @@ func TestCIWaitEvidencePersistsDeadlinePerHead(t *testing.T) {
 	}
 
 	pr.HeadRefOid = "second-head"
-	reset, err := s.ciWaitEvidence(workDir, pr, "second-head")
+	reset, err := s.ciWaitEvidence(context.Background(), workDir, pr, "second-head")
 	if err != nil {
 		t.Fatalf("reset CI wait evidence: %v", err)
 	}
@@ -43,6 +47,54 @@ func TestCIWaitEvidencePersistsDeadlinePerHead(t *testing.T) {
 	}
 	if registration.HeadSHA != "second-head" || registration.EffectiveTimeoutSecs != int64(ciWaitTimeout/time.Second) {
 		t.Fatalf("registration = %#v", registration)
+	}
+}
+
+func TestCIWaitEvidenceCancellationWhileLockContendedDoesNotPersist(t *testing.T) {
+	workDir := t.TempDir()
+	path := filepath.Join(workDir, ".sandman", "state", "17.ci_wait.json")
+	ready := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseLock := func() { releaseOnce.Do(func() { close(release) }) }
+	holderDone := make(chan error, 1)
+	go func() {
+		holderDone <- withOperationLock(context.Background(), path, func() error {
+			close(ready)
+			<-release
+			return nil
+		})
+	}()
+	<-ready
+	defer func() {
+		releaseLock()
+		if err := <-holderDone; err != nil {
+			t.Errorf("release CI wait lock: %v", err)
+		}
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		_, err := (&runSession{}).ciWaitEvidence(ctx, workDir, &github.PR{Number: 17, HeadRefOid: "head"}, "head")
+		result <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("contended CI observation error = %v, want context cancellation", err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		releaseLock()
+		<-holderDone
+		t.Fatal("contended CI observation ignored cancellation")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("canceled CI observation wrote state: err=%v", err)
 	}
 }
 
