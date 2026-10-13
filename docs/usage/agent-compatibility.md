@@ -64,7 +64,7 @@ Restart OpenCode after installing it.
 The `claude` preset renders:
 
 ```text
-claude -p --output-format stream-json --verbose [--continue] [--dangerously-skip-permissions] [--allowedTools 'Edit(/.sandman/**)' --permission-mode dontAsk] [--name '<session name>'] [--model '<model>'] [--effort '<variant>'] "$(cat .sandman/task.md)"
+claude -p --output-format stream-json --verbose [--continue] [--dangerously-skip-permissions | --permission-mode '<permission_mode>' | --allowedTools 'Edit(/.sandman/**)' --permission-mode dontAsk] [--name '<session name>'] [--model '<model>'] [--effort '<variant>'] "$(cat .sandman/task.md)"
 ```
 
 - `stream-json` with `--verbose` is the only print-mode format that streams while
@@ -73,9 +73,13 @@ claude -p --output-format stream-json --verbose [--continue] [--dangerously-skip
   [Session reuse](#session-reuse).
 - `--dangerously-skip-permissions` follows the same default as every agent: on for
   container runs, off for worktree runs; see [Permissions](#permissions).
+- `--permission-mode '<permission_mode>'` is rendered when the agent sets
+  `permission_mode`, and replaces `--dangerously-skip-permissions`; see
+  [Permissions](#permissions).
 - `--allowedTools 'Edit(/.sandman/**)' --permission-mode dontAsk` is rendered only
   for the review daemon's [health repairs](reviews.md#health-repair), and never
-  together with `--dangerously-skip-permissions`.
+  together with `--dangerously-skip-permissions` or a configured
+  `permission_mode`.
 - `--name` carries the Run's session name, which the lingering-process check
   looks for after the run.
 - `--model` receives the resolved model and `--effort` receives the model variant
@@ -170,6 +174,48 @@ A print-mode session has no one to answer permission prompts, so without
 that would prompt. Container runs pass the flag by default. For worktree runs,
 pass `--dangerously-skip-permissions` explicitly, or allow the tools you need
 through `permissions.allow` rules in your own `~/.claude/settings.json`.
+
+The `~/.claude` snapshot that container runs receive carries your Claude Code
+settings, and Claude Code also reads the machine's managed settings. All of them
+apply inside the container. When they set `permissions.defaultMode` (for example
+to `plan`) and disable bypass mode (`disableBypassPermissionsMode`), Claude Code
+ignores `--dangerously-skip-permissions` and starts the session in that default
+mode. Sandman does not work around administrator policy; it makes the effect
+visible and lets you choose a permitted mode.
+
+Like the OpenCode preset's `OPENCODE_PERMISSION`, the preset has built-in
+permission handling that you can replace:
+
+- **Built-in** (no `permission_mode`): container runs pass
+  `--dangerously-skip-permissions`, worktree runs pass nothing.
+- **Custom** (`permission_mode` set): every launch, container or worktree, passes
+  `--permission-mode <mode>` instead of `--dangerously-skip-permissions`, and
+  keeps Sandman's `--model`, `--effort`, `--continue`, and `--name` flags. On the
+  command line the mode overrides a `defaultMode` from user or managed settings.
+
+```yaml
+agents:
+  claude:
+    preset: claude
+    permission_mode: acceptEdits
+```
+
+Sandman accepts Claude Code's modes `acceptEdits`, `auto`, `bypassPermissions`,
+`dontAsk`, and `manual`. It rejects `plan`, which cannot make changes, and it
+rejects `permission_mode` on agents whose command line takes no mode (OpenCode,
+custom providers) and on a custom `command` (put `--permission-mode` in the
+command instead). Pick a mode your administrator allows: Claude Code refuses a
+disabled mode such as `bypassPermissions` under `disableBypassPermissionsMode`.
+In print mode, prompts that a mode does not pre-approve are denied, so
+`acceptEdits` allows edits but denies shell commands that are not allowed by
+your settings' `permissions.allow` rules.
+
+A session that still starts in `plan` mode cannot do the run's work. Sandman
+reads the effective mode from the session's first record and stops the run at
+once with an error naming the mode and the `permission_mode` setting, instead of
+waiting for the idle timeout. An implementation run fails with reason
+`AGENT_PERMISSION_MODE` and is not retried; a review request is retried through
+the review daemon's launch backoff and starts no health repair.
 
 The review daemon's health repairs run on the host without skipping permissions.
 Their launch allows edits under `.sandman/` and keeps every other prompting call
