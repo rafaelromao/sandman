@@ -1,11 +1,18 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"io"
 	"strings"
 	"testing"
 
+	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/daemon"
+	"github.com/rafaelromao/sandman/internal/paths"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 func TestReviewCmd_NoArgsStartsDaemon(t *testing.T) {
@@ -13,7 +20,7 @@ func TestReviewCmd_NoArgsStartsDaemon(t *testing.T) {
 	deps := Dependencies{ConfigStore: &fakeStore{config: cfg}, RepoRoot: t.TempDir()}
 
 	prev := reviewDaemonRunner
-	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agent string, model string, variant string, variantSet bool, parallel int, parallelSet bool) error {
+	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, opts reviewDaemonOptions, stderr io.Writer) error {
 		return errReviewDaemonReached
 	}
 	defer func() { reviewDaemonRunner = prev }()
@@ -45,16 +52,10 @@ func TestReviewCmd_ForwardsDaemonOptions(t *testing.T) {
 	cfg := &config.Config{DefaultReviewAgent: "opencode"}
 	deps := Dependencies{ConfigStore: &fakeStore{config: cfg}, RepoRoot: t.TempDir()}
 
-	var got struct {
-		sandbox, agent, model     string
-		cc, mc, parallel          int
-		ccSet, mcSet, parallelSet bool
-	}
+	var got reviewDaemonOptions
 	prev := reviewDaemonRunner
-	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agent string, model string, variant string, variantSet bool, parallel int, parallelSet bool) error {
-		got.sandbox, got.agent, got.model = sandbox, agent, model
-		got.cc, got.mc, got.parallel = cc, mc, parallel
-		got.ccSet, got.mcSet, got.parallelSet = ccSet, mcSet, parallelSet
+	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, opts reviewDaemonOptions, stderr io.Writer) error {
+		got = opts
 		return nil
 	}
 	defer func() { reviewDaemonRunner = prev }()
@@ -64,11 +65,10 @@ func TestReviewCmd_ForwardsDaemonOptions(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute daemon command: %v", err)
 	}
-	if got.sandbox != "worktree" || got.agent != "claude" || got.model != "anthropic/claude" {
-		t.Fatalf("daemon options = sandbox=%q agent=%q model=%q", got.sandbox, got.agent, got.model)
-	}
-	if got.cc != 2 || !got.ccSet || got.mc != 3 || !got.mcSet || got.parallel != 4 || !got.parallelSet {
-		t.Fatalf("daemon numeric options = cc=%d/%t mc=%d/%t parallel=%d/%t", got.cc, got.ccSet, got.mc, got.mcSet, got.parallel, got.parallelSet)
+	want := reviewDaemonOptions{Sandbox: "worktree", ContainerCapacity: 2, ContainerCapacitySet: true,
+		MaxContainers: 3, MaxContainersSet: true, Agent: "claude", Model: "anthropic/claude", Parallel: 4, ParallelSet: true}
+	if got != want {
+		t.Fatalf("daemon options = %+v, want %+v", got, want)
 	}
 }
 
@@ -78,8 +78,8 @@ func TestReviewCmd_ForwardsTrimmedVariantOverride(t *testing.T) {
 	var gotVariant string
 	var gotSet bool
 	prev := reviewDaemonRunner
-	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agent string, model string, variant string, variantSet bool, parallel int, parallelSet bool) error {
-		gotVariant, gotSet = variant, variantSet
+	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, opts reviewDaemonOptions, stderr io.Writer) error {
+		gotVariant, gotSet = opts.Variant, opts.VariantSet
 		return nil
 	}
 	defer func() { reviewDaemonRunner = prev }()
@@ -103,6 +103,70 @@ func TestReviewCmd_RejectsNegativeDaemonLimits(t *testing.T) {
 		if err := cmd.Execute(); err == nil {
 			t.Fatalf("expected validation error for %v", args)
 		}
+	}
+}
+
+// The daemon's diagnostics belong on the terminal that ran `sandman review`.
+func TestReviewCmd_PassesItsStderrToTheDaemon(t *testing.T) {
+	cfg := &config.Config{DefaultReviewAgent: "opencode"}
+	deps := Dependencies{ConfigStore: &fakeStore{config: cfg}, RepoRoot: t.TempDir()}
+	var got io.Writer
+	prev := reviewDaemonRunner
+	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, opts reviewDaemonOptions, stderr io.Writer) error {
+		got = stderr
+		return nil
+	}
+	defer func() { reviewDaemonRunner = prev }()
+
+	var stderr bytes.Buffer
+	cmd := NewReviewCmd(deps)
+	cmd.SetErr(&stderr)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute review command: %v", err)
+	}
+	if got != &stderr {
+		t.Fatalf("daemon runner got stderr %v, want the command's stderr", got)
+	}
+}
+
+type loginFailingGitHub struct{ *fakeGitHubClient }
+
+func (loginFailingGitHub) AuthenticatedLogin(context.Context) (string, error) {
+	return "", errors.New("gh auth: token expired")
+}
+
+// repairingRunner lets the daemon treat a broken login as repairable, so it
+// logs the failure instead of exiting on it.
+type repairingRunner struct{}
+
+func (repairingRunner) RunBatch(context.Context, batch.Request) (*batch.Result, error) {
+	return &batch.Result{}, nil
+}
+
+func (repairingRunner) RunRepair(context.Context, batch.Request, *config.Config) (*batch.Result, error) {
+	return &batch.Result{}, nil
+}
+
+func TestNewReviewDaemonLogsToStderrAndAttachClients(t *testing.T) {
+	cfg := &config.Config{DefaultReviewAgent: "opencode", DefaultReviewModel: "provider/model"}
+	deps := Dependencies{GitHubClient: loginFailingGitHub{&fakeGitHubClient{}}, BatchRunner: repairingRunner{}}
+	var stderr bytes.Buffer
+	d := newReviewDaemon(deps, cfg, paths.NewLayout(cfg, testenv.MkdirShort(t, "review-cmd-")), reviewDaemonOptions{}, &stderr)
+	// Cancelled up front: Run logs the login failure, launches no repair, and
+	// returns without polling.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_ = d.Run(ctx)
+	broadcaster, ok := d.Broadcaster.(*daemon.Broadcaster)
+	if !ok {
+		t.Fatalf("daemon broadcaster = %T, want the attach broadcaster", d.Broadcaster)
+	}
+	const want = "authenticated GitHub login: gh auth: token expired"
+	if !strings.Contains(stderr.String(), want) {
+		t.Fatalf("stderr missing the daemon diagnostic:\n%s", stderr.String())
+	}
+	if !strings.Contains(string(broadcaster.Bytes()), want) {
+		t.Fatalf("attach history missing the daemon diagnostic:\n%s", broadcaster.Bytes())
 	}
 }
 

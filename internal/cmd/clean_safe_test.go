@@ -81,7 +81,7 @@ func TestExecuteClean_RetainsFailedAndRemovesSuccessfulEntries(t *testing.T) {
 	actions := collectCleanActions(&batchindex.Index{Batches: []batchindex.Batch{
 		{ID: "good", Path: good, Status: batchindex.StatusArchived},
 		{ID: "bad", Path: bad, Status: batchindex.StatusArchived},
-	}}, batchindex.StatusArchived)
+	}}, batchindex.StatusArchived, layout)
 	// These synthetic actions deliberately bypass manifest planning; the executor
 	// still validates and retains the same index entries on failure.
 	for i := range actions {

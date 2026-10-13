@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -77,6 +78,125 @@ func TestDaemonHealthRepairStrandedFailureLaunchesRealIndependentAdapter(t *test
 	}
 	if states[state.RunID].Status() != "success" || d.IsTerminalSeen(17, "stranded") {
 		t.Fatal("repair lifecycle or original request authority violated")
+	}
+}
+
+// scriptedHealthRunner runs repairs through the production adapter and
+// reviews through a test script.
+type scriptedHealthRunner struct {
+	*batch.Orchestrator
+	review func(context.Context, batch.Request) (*batch.Result, error)
+}
+
+func (r scriptedHealthRunner) RunBatch(ctx context.Context, req batch.Request) (*batch.Result, error) {
+	return r.review(ctx, req)
+}
+
+// newClaudeRepairDaemon serves PR 17's review request through a daemon whose
+// repairs launch the built-in claude preset against a `claude` script.
+func newClaudeRepairDaemon(t *testing.T, script string, review func(context.Context, batch.Request) (*batch.Result, error)) (*Daemon, *lockedBuffer, string) {
+	t.Helper()
+	dir := testenv.MkdirShort(t, "health-claude-")
+	t.Chdir(dir)
+	if err := os.WriteFile("claude", []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	base := filepath.Join(dir, ".sandman")
+	if err := os.MkdirAll(base, 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{DefaultReviewAgent: "claude", DefaultReviewModel: "sonnet", Sandbox: "podman", WorktreeDir: ".sandman/worktrees"}
+	log := &events.JSONLLogger{Path: filepath.Join(base, "events.jsonl")}
+	orchestrator := batch.NewOrchestrator(nil, &prompt.Engine{}, healthConfigStore{cfg}, log, batch.WithErrorLog(io.Discard))
+	gh := &fakeGH{prs: []github.PR{{Number: 17, State: "open", UpdatedAt: time.Now()}},
+		comments: map[int][]github.PRComment{17: {{ID: "image", Body: "/sandman review", AuthorLogin: "sandman", CreatedAt: time.Now()}}},
+		prFetch:  map[int]*github.PR{17: {Number: 17, Title: "repair"}}}
+	logs := &lockedBuffer{}
+	d := New(base, gh, &prompt.Engine{}, scriptedHealthRunner{Orchestrator: orchestrator, review: review}, cfg, logs, 0, false, nil)
+	d.launchBackoff = func(int) time.Duration { return 0 }
+	return d, logs, dir
+}
+
+var errPoisonedImage = errors.New("build image from .sandman/Dockerfile: exit status 127\n/bin/sh: 1: mise: not found")
+
+func TestDaemonHealthRepairClaudeScopedEditRecoversOriginalReview(t *testing.T) {
+	// The script stands in for Claude Code: it edits under .sandman only when
+	// its launch carries the scoped allow rule.
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > claude-launch.txt\n" +
+		"case \"$*\" in *\"Edit(/.sandman/**)\"*) echo fixed > .sandman/Dockerfile.repaired ;; esac\n" +
+		"printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"repaired\"}'\n"
+	decision := newDecisionRunner()
+	d, logs, dir := newClaudeRepairDaemon(t, script, func(ctx context.Context, req batch.Request) (*batch.Result, error) {
+		if _, err := os.Stat(filepath.Join(".sandman", "Dockerfile.repaired")); err != nil {
+			return nil, errPoisonedImage
+		}
+		return decision.RunBatch(ctx, req)
+	})
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	d.inFlight.Wait()
+	launch, err := os.ReadFile(filepath.Join(dir, "claude-launch.txt"))
+	if err != nil {
+		t.Fatalf("claude repair not launched: %v; logs=%s", err, logs.String())
+	}
+	for _, want := range []string{"--allowedTools", "Edit(/.sandman/**)", "--permission-mode", "dontAsk"} {
+		if !strings.Contains(string(launch), want) {
+			t.Fatalf("repair launch missing %q:\n%s", want, launch)
+		}
+	}
+	if strings.Contains(string(launch), "--dangerously-skip-permissions") {
+		t.Fatalf("repair launch bypasses permissions:\n%s", launch)
+	}
+	if outcome := readHealthState(t, d).Outcome; !strings.Contains(outcome, "repair exited successfully") {
+		t.Fatalf("outcome = %q; logs=%s", outcome, logs.String())
+	}
+	if !d.shouldReadComments(d.GitHub.(*fakeGH).prs[0]) {
+		t.Fatal("failed original request must be observed again")
+	}
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	d.inFlight.Wait()
+	if !d.IsTerminalSeen(17, "image") || d.hasHealthFailure(17) {
+		t.Fatalf("original review did not recover after the repair; logs=%s", logs.String())
+	}
+}
+
+func TestDaemonHealthRepairClaudeDeniedRepairIsNotRelaunched(t *testing.T) {
+	script := "#!/bin/sh\necho launch >> claude-launches.txt\n" +
+		"printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"could not edit\",\"permission_denials\":[{\"tool_name\":\"Edit\",\"tool_use_id\":\"t1\"}]}'\n"
+	var reviews atomic.Int32
+	d, logs, dir := newClaudeRepairDaemon(t, script, func(context.Context, batch.Request) (*batch.Result, error) {
+		reviews.Add(1)
+		return nil, errPoisonedImage
+	})
+	now := time.Now()
+	d.Clock = func() time.Time { return now }
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	d.inFlight.Wait()
+	if outcome := readHealthState(t, d).Outcome; !strings.HasPrefix(outcome, "unresolved: repair actions denied (Edit)") {
+		t.Fatalf("outcome = %q; logs=%s", outcome, logs.String())
+	}
+	now = readHealthState(t, d).NextAttempt.Add(time.Second)
+	for range 2 {
+		if err := d.tick(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		d.inFlight.Wait()
+	}
+	if reviews.Load() < 2 {
+		t.Fatalf("original review was not re-observed: reviews=%d; logs=%s", reviews.Load(), logs.String())
+	}
+	launches, err := os.ReadFile(filepath.Join(dir, "claude-launches.txt"))
+	if err != nil || strings.Count(string(launches), "launch") != 1 {
+		t.Fatalf("denied repair relaunched for the same failure: %q %v; logs=%s", launches, err, logs.String())
+	}
+	if !strings.Contains(logs.String(), "health repair paused") {
+		t.Fatalf("operator remediation missing; logs=%s", logs.String())
 	}
 }
 
@@ -260,6 +380,124 @@ func readHealthState(t *testing.T, d *Daemon) healthRepairState {
 		t.Fatal(err)
 	}
 	return state
+}
+
+// An unattended repair whose actions were denied changed nothing, however its
+// process exited, so it must never read as a successful repair.
+func TestDaemonHealthRepairDeniedActionsAreUnresolved(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result *batch.Result
+		err    error
+	}{
+		{name: "clean exit", result: &batch.Result{Runs: []batch.AgentRunResult{{Status: "success", PermissionDenials: []string{"Edit", "Bash"}}}}},
+		{name: "failed exit", result: &batch.Result{Runs: []batch.AgentRunResult{{Status: "failure", PermissionDenials: []string{"Edit", "Bash"}}}}, err: errors.New("prompt-only run failed")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gh := &fakeGH{listErr: errors.New("remote broken")}
+			runner := &healthRunner{repair: func(context.Context, batch.Request) (*batch.Result, error) { return tc.result, tc.err }}
+			d, logs, _ := newDaemonForTest(t, gh, runner, &config.Config{DefaultReviewAgent: "claude", DefaultReviewModel: "sonnet"})
+			_ = d.tick(context.Background())
+			d.inFlight.Wait()
+			const want = "unresolved: repair actions denied (Edit, Bash)"
+			if outcome := readHealthState(t, d).Outcome; !strings.HasPrefix(outcome, want) {
+				t.Fatalf("outcome = %q, want prefix %q", outcome, want)
+			}
+			if !strings.Contains(logs.String(), want) || strings.Contains(logs.String(), "repair exited successfully") {
+				t.Fatalf("daemon log must name the denied tools, got:\n%s", logs.String())
+			}
+		})
+	}
+}
+
+// The repair agent works unattended on the host with a narrow edit scope, so
+// its prompt must say what it may change and what to do when a step is refused.
+func TestDaemonHealthRepairPromptStatesScope(t *testing.T) {
+	gh := &fakeGH{listErr: errors.New("remote broken")}
+	runner := &healthRunner{}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{DefaultReviewAgent: "claude", DefaultReviewModel: "sonnet"})
+	_ = d.tick(context.Background())
+	d.inFlight.Wait()
+	if len(runner.requests()) != 1 {
+		t.Fatalf("repair launches=%d, want 1", len(runner.requests()))
+	}
+	prompt := runner.requests()[0].PromptConfig.TaskPrompt
+	for _, want := range []string{
+		"Change only operator-owned files under " + d.BaseDir,
+		"do not hand-edit Sandman-owned state",
+		"events.jsonl",
+		"If an action or verification step is not permitted, do not retry it",
+		"report the exact command or change for the operator",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("repair prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+// A denied repair cannot do better on the same failure, so the daemon must not
+// spend its budget relaunching it. Each review launch wraps the same cause in
+// fresh per-attempt identities, which must not count as a changed failure.
+func TestDaemonHealthRepairDeniedCauseIsNotRelaunched(t *testing.T) {
+	runner := &healthRunner{repair: func(context.Context, batch.Request) (*batch.Result, error) {
+		return &batch.Result{Runs: []batch.AgentRunResult{{Status: "success", PermissionDenials: []string{"Edit"}}}}, nil
+	}}
+	cfg := &config.Config{DefaultReviewAgent: "claude", DefaultReviewModel: "sonnet"}
+	d, logs, dir := newDaemonForTest(t, &fakeGH{}, runner, cfg)
+	now := time.Now()
+	clock := func() time.Time { return now }
+	d.Clock = clock
+	imageBuild := errors.New("build image from .sandman/Dockerfile: exit status 127\n/bin/sh: 1: mise: not found")
+	observe := func(run string, cause error) {
+		t.Helper()
+		evidence := &healthEvidence{context: "request c1 run " + run + " artifacts .sandman/batches/" + run + " worktree .sandman/worktrees/review-5-c1", cause: cause}
+		d.observeHealthFailure(context.Background(), requestHealthKey(5, "c1"), "launch review", 5, evidence)
+		d.inFlight.Wait()
+	}
+	afterCooldown := func() {
+		now = readHealthState(t, d).NextAttempt.Add(time.Second)
+	}
+
+	observe("r1", imageBuild)
+	if got := len(runner.requests()); got != 1 {
+		t.Fatalf("first failure launches=%d, want 1", got)
+	}
+	afterCooldown()
+	observe("r2", imageBuild)
+	observe("r3", imageBuild)
+	if got := len(runner.requests()); got != 1 {
+		t.Fatalf("identical denied cause relaunched: launches=%d", got)
+	}
+	if got := strings.Count(logs.String(), "health repair paused"); got != 1 {
+		t.Fatalf("remediation lines=%d, want exactly 1:\n%s", got, logs.String())
+	}
+
+	d = New(dir, &fakeGH{}, &prompt.Engine{}, runner, cfg, logs, 0, false, nil)
+	d.Clock = clock
+	observe("r4", imageBuild)
+	if got := len(runner.requests()); got != 1 {
+		t.Fatalf("restart forgot the denied cause: launches=%d", got)
+	}
+
+	observe("r5", errors.New("build image from .sandman/Dockerfile: curl: (60) SSL certificate problem"))
+	if got := len(runner.requests()); got != 2 {
+		t.Fatalf("changed cause must re-admit repair: launches=%d", got)
+	}
+	afterCooldown()
+	d.Model = "opus"
+	observe("r6", errors.New("build image from .sandman/Dockerfile: curl: (60) SSL certificate problem"))
+	if got := len(runner.requests()); got != 3 {
+		t.Fatalf("changed repair model must re-admit repair: launches=%d", got)
+	}
+
+	// Recovery of every failed operation ends the episode, including its
+	// denied set: the same failure later starts a fresh, repairable episode.
+	d.resolveHealthOperation(requestHealthKey(5, "c1"))
+	d.Model = ""
+	observe("r7", imageBuild)
+	if got := len(runner.requests()); got != 4 {
+		t.Fatalf("resolved episode kept its denied set: launches=%d", got)
+	}
 }
 
 func TestDaemonHealthRepairBoundedUnresolvedAcrossRestart(t *testing.T) {

@@ -71,6 +71,20 @@ run or standalone session and is never shared global skill state.
 
 When it sees a matching comment authored by the GitHub user authenticated to the daemon, it launches a review AgentRun and posts the result back to the pull request. Requests from other users are ignored. Use direct review for manual or CI-driven reviews that should not be tied to the daemon's authenticated user.
 
+The terminal running `sandman review` shows two streams:
+
+- **stderr** carries the daemon's own decisions: failed launches with a short
+  cause and the time the request is retried, health repairs being launched,
+  paused, or out of budget, and other operational errors.
+- **stdout** carries the transcripts of the review and repair agents it runs.
+
+While the daemon works on a request, it adds a 👀 reaction to the comment and
+the pull request, and removes it when the launch ends. If the reaction
+disappears without a decision being posted, the stderr line for that request
+says why. `sandman attach` streams the same daemon lines from another terminal.
+The complete error of each failing operation is kept in
+`.sandman/reviews/health-repair.json`.
+
 ## Review command guard
 
 By default, `sandman init` writes this config:
@@ -111,6 +125,50 @@ sandman review \
   --container-capacity 1 \
   --max-containers 2
 ```
+
+## Health repair
+
+When an operation the daemon depends on fails (authenticating to GitHub, listing
+pull requests, preparing or launching a review run, publishing a decision), the
+daemon records the failure in `.sandman/reviews/health-repair.json` and launches
+a diagnostic repair agent. The agent gets the failed operation, its error output,
+and the paths to the event log and run artifacts. GitHub rate limits, usage
+limits, and cancellation are waits, not health failures, and launch no repair.
+
+The repair agent differs from the reviewer:
+
+- **It runs on the host**, at the repository root, with the configured review
+  agent and model. It does not run in a container, because the container image
+  or sandbox may be what is broken. The agent's binary and its authentication
+  must be available on the host; for Claude Code, see
+  [Agent Compatibility > Authentication](agent-compatibility.md#authentication).
+- **It may change operational files.** The reviewer only reads the pull request
+  and writes its decision. The repair agent is told to change only
+  operator-owned files under `.sandman/` (the Dockerfile, `config.yaml`, prompt
+  templates), never Sandman-owned state such as `events.jsonl` or `batches/`,
+  and to report the command for you when a step is not permitted.
+  - Claude Code: the launch allows edits under `.sandman/` and keeps every
+    other prompting call denied (`--allowedTools 'Edit(/.sandman/**)'
+    --permission-mode dontAsk`), with no permission bypass. The repair cannot
+    run shell commands that need approval, such as an image rebuild; the daemon
+    rebuilds the image on the next review attempt. Managed Claude Code settings
+    with `allowManagedPermissionRulesOnly` ignore this rule, so there the repair
+    can only diagnose and you apply its reported fix. Do not loosen managed
+    policy to work around it.
+  - OpenCode: the repair follows your own OpenCode permission configuration. It
+    is not narrowed to `.sandman/`, and Sandman cannot detect refused actions.
+
+Each failure episode allows three repairs, with a cooldown that grows after each.
+A repair whose actions were refused is recorded as `unresolved: repair actions
+denied (<tools>)`, never as a successful repair. The daemon does not relaunch a
+repair for the same failures with the same agent and model; it logs `health
+repair paused: ...` once and waits for you. A changed failure, a new review
+request, or a different review agent or model admits a repair again. The record
+resets once every failed operation succeeds.
+
+Whatever the repair did, the daemon retries the original operation through its
+normal path. If review launches fail with `mise: not found`, see
+[Troubleshooting](../help/troubleshooting.md#container-image-build-fails-with-mise-not-found).
 
 ## Review output
 

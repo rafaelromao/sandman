@@ -10,8 +10,11 @@ import (
 
 func TestCommandData_ExposesPromptFileAndModelFields(t *testing.T) {
 	typ := reflect.TypeOf(CommandData{})
-	if typ.NumField() != 9 {
-		t.Errorf("expected exactly 9 fields in CommandData, got %d", typ.NumField())
+	if typ.NumField() != 10 {
+		t.Errorf("expected exactly 10 fields in CommandData, got %d", typ.NumField())
+	}
+	if field, ok := typ.FieldByName("PermissionFlag"); !ok || field.Type.Kind() != reflect.String {
+		t.Error("expected PermissionFlag string field in CommandData")
 	}
 	field, ok := typ.FieldByName("PromptFile")
 	if !ok {
@@ -218,6 +221,9 @@ func TestRenderCommand_ClaudePresetFlags(t *testing.T) {
 		{name: "skip permissions", data: CommandData{PromptFile: ".sandman/task.md", DangerouslySkipPermissions: true}, want: prefix + ` --dangerously-skip-permissions "$(cat .sandman/task.md)"`},
 		{name: "session name", data: CommandData{PromptFile: ".sandman/task.md", SessionName: "Sandman 260925-abcd-42: "}, want: prefix + ` --name 'Sandman 260925-abcd-42: ' "$(cat .sandman/task.md)"`},
 		{name: "effort", data: CommandData{PromptFile: ".sandman/task.md", VariantFlag: "--effort 'max'"}, want: prefix + ` --effort 'max' "$(cat .sandman/task.md)"`},
+		// --allowedTools takes several values: a single-value option must follow
+		// it, or the prompt would be read as another tool rule.
+		{name: "permission scope before the prompt", data: CommandData{PromptFile: ".sandman/task.md", PermissionFlag: "--allowedTools 'Edit(/.sandman/**)' --permission-mode dontAsk"}, want: prefix + ` --allowedTools 'Edit(/.sandman/**)' --permission-mode dontAsk "$(cat .sandman/task.md)"`},
 		{
 			name: "everything",
 			data: CommandData{PromptFile: ".sandman/task.md", ModelFlag: "--model 'opus'", VariantFlag: "--effort 'high'", DangerouslySkipPermissions: true, SessionName: "Sandman r: ", ContinueFlag: true, SessionFlag: "'ignored'"},

@@ -140,6 +140,22 @@ func TestAgentRun_ClaudePresetRendersPrintModeCommand(t *testing.T) {
 			want: env + `claude -p --output-format stream-json --verbose --name 'Sandman run-1: ' "$(cat .sandman/task.md)"`,
 		},
 		{
+			name: "repair launch may edit only .sandman",
+			configure: func(r *AgentRun) {
+				r.dangerouslySkipPermissions = &noSkip
+				r.editScope = ".sandman"
+			},
+			want: env + `claude -p --output-format stream-json --verbose --allowedTools 'Edit(/.sandman/**)' --permission-mode dontAsk --name 'Sandman run-1: ' "$(cat .sandman/task.md)"`,
+		},
+		{
+			name: "skipped permissions need no edit scope",
+			configure: func(r *AgentRun) {
+				r.dangerouslySkipPermissions = &skip
+				r.editScope = ".sandman"
+			},
+			want: env + `claude -p --output-format stream-json --verbose --dangerously-skip-permissions --name 'Sandman run-1: ' "$(cat .sandman/task.md)"`,
+		},
+		{
 			name: "variant maps to effort",
 			configure: func(r *AgentRun) {
 				r.model = " opus "
@@ -202,5 +218,66 @@ func TestAgentRun_ClaudeDoesNotRolloverOnContextErrors(t *testing.T) {
 	}
 	if launch.status != "failure" {
 		t.Fatalf("status = %q, want the ordinary failure path", launch.status)
+	}
+}
+
+// An unattended Claude Code session cannot answer permission prompts, so its
+// refused tools are the evidence that it could not act. The final result's
+// permission_denials list is authoritative; per-call records are best-effort.
+func TestAgentRun_ClaudeReportsPermissionDenials(t *testing.T) {
+	stream := `{"type":"system","subtype":"init","session_id":"abc"}` + "\n" +
+		`{"type":"system","subtype":"permission_denied","tool_name":"Edit","decision_reason":"not allowed"}` + "\n" +
+		`{"type":"result","subtype":"success","is_error":false,"result":"could not edit","permission_denials":[{"tool_name":"Bash","tool_use_id":"t2"},{"tool_name":"Edit","tool_use_id":"t1"}]}` + "\n"
+	for _, tc := range []struct {
+		name   string
+		result opencodeExecResult
+		status string
+	}{
+		{name: "clean exit", result: opencodeExecResult{stdout: stream}, status: "success"},
+		{name: "failed exit", result: opencodeExecResult{stdout: stream, err: errors.New("exit status 1")}, status: "failure"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			launch := runClaudeLaunch(t, nil, tc.result)
+			if launch.status != tc.status {
+				t.Fatalf("status = %q, want %q", launch.status, tc.status)
+			}
+			if got, want := strings.Join(launch.result.PermissionDenials, ","), "Edit,Bash"; got != want {
+				t.Fatalf("PermissionDenials = %q, want %q", got, want)
+			}
+			if !strings.Contains(launch.runLog, "Permission denied: Edit") {
+				t.Fatalf("run.log lost the rendered denial:\n%s", launch.runLog)
+			}
+		})
+	}
+}
+
+func TestAgentRun_ClaudeWithoutDenialsReportsNone(t *testing.T) {
+	launch := runClaudeLaunch(t, nil, opencodeExecResult{stdout: `{"type":"result","subtype":"success","is_error":false,"result":"done","permission_denials":[]}` + "\n"})
+	if launch.status != "success" || len(launch.result.PermissionDenials) != 0 {
+		t.Fatalf("status=%q denials=%v", launch.status, launch.result.PermissionDenials)
+	}
+}
+
+// Only Claude Code takes a scoped edit allowance from the command line; other
+// agents and custom commands launch exactly as before.
+func TestEditScopeFlagIsClaudeOnly(t *testing.T) {
+	claude := config.BuiltInAgentPresets["claude"].Command
+	opencode := config.BuiltInAgentPresets["opencode"].Command
+	for _, tc := range []struct {
+		name, preset, command, want string
+	}{
+		{name: "claude", preset: "claude", command: claude, want: "--allowedTools 'Edit(/.sandman/**)' --permission-mode dontAsk"},
+		{name: "claude custom command", preset: "claude", command: `claude -p "$(cat {{.PromptFile}})"`},
+		{name: "opencode", preset: "opencode", command: opencode},
+		{name: "custom provider", preset: "", command: "my-agent {{.PromptFile}}"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := strategyFor(tc.preset, tc.command).EditScopeFlag(".sandman"); got != tc.want {
+				t.Fatalf("EditScopeFlag = %q, want %q", got, tc.want)
+			}
+			if got := strategyFor(tc.preset, tc.command).EditScopeFlag(""); got != "" {
+				t.Fatalf("empty scope rendered %q", got)
+			}
+		})
 	}
 }
