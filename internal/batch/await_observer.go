@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"time"
@@ -55,9 +56,46 @@ func (e *runExecutor) persistObservedAwait(ctx context.Context, row RowSpec, ext
 	if e.deps.eventLog == nil {
 		return nil
 	}
+	if states, err := events.ReadRunStates(e.deps.eventLog); err != nil {
+		return err
+	} else if state, ok := states[row.RunID]; ok && state.IsAwaiting() && !state.IsCapacityQueued() && state.AwaitEvent != nil {
+		previous, previousOK := awaitOperationSignature(state.AwaitEvent.Payload)
+		observed, observedOK := awaitOperationSignature(extras)
+		if previousOK && observedOK && previous == observed {
+			return nil
+		}
+	}
 	payload := cloneLifecycleExtras(extras)
 	payload["await"], payload["branch"], payload["base_branch"], payload["batch_id"] = true, row.Branches[row.IssueNumber], row.BaseBranch, row.BatchID
 	return e.deps.eventLog.Log(events.Event{Type: "run.await", Timestamp: newRunSession(e, row).runtimeNow(), RunID: row.RunID, Issue: row.IssueNumber, IssueRef: issueRef(row.IssueNumber), Payload: payload})
+}
+
+func awaitOperationSignature(extras map[string]any) (string, bool) {
+	deadline, gate, ok := lifecycleDeadline(extras)
+	if !ok {
+		return "", false
+	}
+	signature := map[string]any{"gate": gate, "deadline_unix_seconds": deadline.Unix()}
+	if gate == gateCIWaitTimeout {
+		if ciWait, ok := extras["ci_wait"].(map[string]any); ok {
+			for _, key := range []string{"pull_request", "head_sha", "execution_id"} {
+				if value, present := ciWait[key]; present {
+					signature[key] = value
+				}
+			}
+		}
+	}
+	if gate == gateReviewTimeout {
+		if request, ok := extras["review_request"].(map[string]any); ok {
+			for _, key := range []string{"pull_request", "head_sha", "trigger_id"} {
+				if value, present := request[key]; present {
+					signature[key] = value
+				}
+			}
+		}
+	}
+	data, err := json.Marshal(signature)
+	return string(data), err == nil
 }
 
 func (s *runSession) issueRunID() string {
