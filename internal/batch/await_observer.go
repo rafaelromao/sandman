@@ -59,9 +59,7 @@ func (e *runExecutor) persistObservedAwait(ctx context.Context, row RowSpec, ext
 	if states, err := events.ReadRunStates(e.deps.eventLog); err != nil {
 		return err
 	} else if state, ok := states[row.RunID]; ok && state.IsAwaiting() && !state.IsCapacityQueued() && state.AwaitEvent != nil {
-		previous, previousOK := awaitOperationSignature(state.AwaitEvent.Payload)
-		observed, observedOK := awaitOperationSignature(extras)
-		if previousOK && observedOK && previous == observed {
+		if !awaitOperationChanged(state.AwaitEvent.Payload, extras) {
 			return nil
 		}
 	}
@@ -70,31 +68,52 @@ func (e *runExecutor) persistObservedAwait(ctx context.Context, row RowSpec, ext
 	return e.deps.eventLog.Log(events.Event{Type: "run.await", Timestamp: newRunSession(e, row).runtimeNow(), RunID: row.RunID, Issue: row.IssueNumber, IssueRef: issueRef(row.IssueNumber), Payload: payload})
 }
 
-func awaitOperationSignature(extras map[string]any) (string, bool) {
+func awaitOperationChanged(previous, observed map[string]any) bool {
+	identityBound := false
+	for _, operation := range []string{"ci_wait", "review_request"} {
+		previousSignature, previousOK := awaitIdentitySignature(previous, operation)
+		observedSignature, observedOK := awaitIdentitySignature(observed, operation)
+		if !previousOK && !observedOK {
+			continue
+		}
+		identityBound = true
+		if previousOK != observedOK || previousSignature != observedSignature {
+			return true
+		}
+	}
+	if identityBound {
+		return false
+	}
+	previousSignature, previousOK := awaitDeadlineSignature(previous)
+	observedSignature, observedOK := awaitDeadlineSignature(observed)
+	return previousOK != observedOK || previousSignature != observedSignature
+}
+
+func awaitIdentitySignature(extras map[string]any, operation string) (string, bool) {
+	value, ok := extras[operation].(map[string]any)
+	if !ok {
+		return "", false
+	}
+	fields := []string{"pull_request", "head_sha", "execution_id", "trigger_id", "deadline_unix_seconds"}
+	signature := make(map[string]any, len(fields))
+	for _, key := range fields {
+		if field, present := value[key]; present {
+			signature[key] = field
+		}
+	}
+	if _, ok := signature["deadline_unix_seconds"]; !ok {
+		return "", false
+	}
+	data, err := json.Marshal(signature)
+	return string(data), err == nil
+}
+
+func awaitDeadlineSignature(extras map[string]any) (string, bool) {
 	deadline, gate, ok := lifecycleDeadline(extras)
 	if !ok {
 		return "", false
 	}
-	signature := map[string]any{"gate": gate, "deadline_unix_seconds": deadline.Unix()}
-	if gate == gateCIWaitTimeout {
-		if ciWait, ok := extras["ci_wait"].(map[string]any); ok {
-			for _, key := range []string{"pull_request", "head_sha", "execution_id"} {
-				if value, present := ciWait[key]; present {
-					signature[key] = value
-				}
-			}
-		}
-	}
-	if gate == gateReviewTimeout {
-		if request, ok := extras["review_request"].(map[string]any); ok {
-			for _, key := range []string{"pull_request", "head_sha", "trigger_id"} {
-				if value, present := request[key]; present {
-					signature[key] = value
-				}
-			}
-		}
-	}
-	data, err := json.Marshal(signature)
+	data, err := json.Marshal(map[string]any{"gate": gate, "deadline_unix_seconds": deadline.Unix()})
 	return string(data), err == nil
 }
 
