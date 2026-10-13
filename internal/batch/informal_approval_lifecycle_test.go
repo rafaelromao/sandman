@@ -199,7 +199,9 @@ func TestInformalApprovalLifecycle_AmbiguousDecisionsCannotAuthorizeMerge(t *tes
 		"## Decision\n> APPROVED",
 		"## Decision\n`APPROVED`",
 		"## Findings\nFix the race in worker.go before merging.\n\n## Decision\nAPPROVED",
+		"## Findings\n### Important\nFix the race in worker.go before merging.\n\n## Decision\nAPPROVED",
 		"## Decision\nAPPROVED\nBut fix the race in worker.go first.",
+		"## Previous review progress\n### Decision\nAPPROVED",
 	} {
 		t.Run(body, func(t *testing.T) {
 			s, _, pr, workDir, _ := informalApprovalLifecycleFixture(t, body)

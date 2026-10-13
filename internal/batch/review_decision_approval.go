@@ -56,11 +56,22 @@ func (c *reviewClassification) reviewDecisionApprovalEvidenceFor(request reviewR
 
 func reviewDecisionApprovedBody(body string) bool {
 	section := ""
+	sectionLevel := 0
 	structured := false
 	var decision, findings strings.Builder
 	for _, line := range strings.Split(body, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "#") {
+			level := len(trimmed) - len(strings.TrimLeft(trimmed, "#"))
+			if level > sectionLevel && section != "" {
+				switch section {
+				case "findings":
+					findings.WriteString(trimmed + "\n")
+					continue
+				case "history":
+					continue
+				}
+			}
 			heading := strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
 			name, inline, hasColon := strings.Cut(heading, ":")
 			if !hasColon {
@@ -71,6 +82,7 @@ func reviewDecisionApprovedBody(body string) bool {
 			}
 			findings.Reset()
 			section = ""
+			sectionLevel = level
 			switch {
 			case strings.EqualFold(strings.TrimSpace(name), "decision"):
 				structured = true
@@ -78,6 +90,8 @@ func reviewDecisionApprovedBody(body string) bool {
 				decision.WriteString(inline + "\n")
 			case strings.EqualFold(heading, "findings"), strings.EqualFold(heading, "suggested next steps"):
 				section = "findings"
+			case strings.EqualFold(heading, "previous review progress"):
+				section = "history"
 			}
 			continue
 		}
