@@ -81,7 +81,7 @@ Dockerfiles scaffolded by current Sandman versions download the installer to a f
 RUN curl -fsSL https://mise.run -o /tmp/mise-install.sh && MISE_VERSION=<version> MISE_INSTALL_PATH=/usr/local/bin/mise sh /tmp/mise-install.sh && rm -f /tmp/mise-install.sh && /usr/local/bin/mise --version
 ```
 
-Keep the `<version>` from the `# sandman mise-version:` header. Changing the line also makes the next build rerun that step instead of reusing the cached layer that has no `mise`.
+Keep the `<version>` from the `# sandman mise-version:` header. Changing the line also makes the next build rerun that step instead of reusing the cached layer that has no `mise`. To keep the old line, rebuild once with `podman build --no-cache -f .sandman/Dockerfile .sandman` instead; a later failed download can still pass silently and poison the cache again.
 
 Cause: HTTPS traffic from the container build is re-signed by a certificate authority the Debian base image does not trust, usually a corporate TLS-inspection proxy. The host trusts that authority, so the same URLs work outside the container, and `apt-get` still works because Debian mirrors use plain HTTP. With the piped line, the mise step only looks successful: `curl` fails, `sh` reads empty input and exits 0, the build caches that layer, and the missing `mise` surfaces at the first step that uses it, on every later build too.
 

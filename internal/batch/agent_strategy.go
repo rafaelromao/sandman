@@ -210,13 +210,13 @@ func (s opencodeStrategy) VariantFlag(variant string) string {
 	return "--variant " + shellenv.Quote(variant)
 }
 
-// LaunchEnv drops the preset's OPENCODE_PERMISSION allow-list ("builtin"
-// mode) unless the rendered command skips permission prompts. A value the
-// operator configured ("custom" mode) is always exported.
 // EditScopeFlag renders nothing: OpenCode reads permissions from its own
 // configuration, not from scoped command-line rules.
 func (opencodeStrategy) EditScopeFlag(string) string { return "" }
 
+// LaunchEnv drops the preset's OPENCODE_PERMISSION allow-list ("builtin"
+// mode) unless the rendered command skips permission prompts. A value the
+// operator configured ("custom" mode) is always exported.
 func (opencodeStrategy) LaunchEnv(env map[string]string, permissionMode, renderedCmd string) map[string]string {
 	applyPermission := strings.Contains(renderedCmd, "--dangerously-skip-permissions")
 	filtered := make(map[string]string, len(env))

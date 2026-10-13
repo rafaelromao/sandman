@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -166,7 +167,9 @@ func TestDaemonHealthRepairClaudeScopedEditRecoversOriginalReview(t *testing.T) 
 func TestDaemonHealthRepairClaudeDeniedRepairIsNotRelaunched(t *testing.T) {
 	script := "#!/bin/sh\necho launch >> claude-launches.txt\n" +
 		"printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"could not edit\",\"permission_denials\":[{\"tool_name\":\"Edit\",\"tool_use_id\":\"t1\"}]}'\n"
+	var reviews atomic.Int32
 	d, logs, dir := newClaudeRepairDaemon(t, script, func(context.Context, batch.Request) (*batch.Result, error) {
+		reviews.Add(1)
 		return nil, errPoisonedImage
 	})
 	now := time.Now()
@@ -184,6 +187,9 @@ func TestDaemonHealthRepairClaudeDeniedRepairIsNotRelaunched(t *testing.T) {
 			t.Fatal(err)
 		}
 		d.inFlight.Wait()
+	}
+	if reviews.Load() < 2 {
+		t.Fatalf("original review was not re-observed: reviews=%d; logs=%s", reviews.Load(), logs.String())
 	}
 	launches, err := os.ReadFile(filepath.Join(dir, "claude-launches.txt"))
 	if err != nil || strings.Count(string(launches), "launch") != 1 {
@@ -482,6 +488,15 @@ func TestDaemonHealthRepairDeniedCauseIsNotRelaunched(t *testing.T) {
 	observe("r6", errors.New("build image from .sandman/Dockerfile: curl: (60) SSL certificate problem"))
 	if got := len(runner.requests()); got != 3 {
 		t.Fatalf("changed repair model must re-admit repair: launches=%d", got)
+	}
+
+	// Recovery of every failed operation ends the episode, including its
+	// denied set: the same failure later starts a fresh, repairable episode.
+	d.resolveHealthOperation(requestHealthKey(5, "c1"))
+	d.Model = ""
+	observe("r7", imageBuild)
+	if got := len(runner.requests()); got != 4 {
+		t.Fatalf("resolved episode kept its denied set: launches=%d", got)
 	}
 }
 
