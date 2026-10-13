@@ -39,7 +39,10 @@ type AgentRun struct {
 	// editScope is the directory, relative to the working directory, that an
 	// unattended launch may edit without prompting ("" for none). Skipped
 	// permissions already allow everything, so they render no scope.
-	editScope               string
+	editScope string
+	// permissionMode is the operator-configured agent permission mode ("" for
+	// the preset's built-in permission handling).
+	permissionMode          string
 	opencodePermissionMode  string
 	sessionName             string
 	sandbox                 sandbox.Sandbox
@@ -50,6 +53,7 @@ type AgentRun struct {
 	modelProgress           func()
 	usageLimit              func()
 	cleanupError            error // distinct cleanup failure from context cancellation
+	operationalError        error
 	contextRolloverLiterals []string
 	env                     map[string]string
 	outputWriter            io.Writer
@@ -232,6 +236,13 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	if skipPermissions {
 		editScope = ""
 	}
+	// A command-line permission the strategy renders (an edit scope or a
+	// configured mode) is the launch's whole permission policy, so it
+	// replaces skipping permission prompts.
+	permissionFlag := strategy.PermissionFlag(r.permissionMode, editScope)
+	if permissionFlag != "" {
+		skipPermissions = false
+	}
 	render := func(sessionID string, continueFlag bool) (string, error) {
 		sessionFlag := ""
 		if sessionID != "" {
@@ -244,7 +255,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 			ModelProvider:              r.modelProvider,
 			ModelName:                  r.modelName,
 			DangerouslySkipPermissions: skipPermissions,
-			PermissionFlag:             strategy.EditScopeFlag(editScope),
+			PermissionFlag:             permissionFlag,
 			SessionName:                r.sessionName,
 			SessionFlag:                sessionFlag,
 			ContinueFlag:               continueFlag,
@@ -292,8 +303,29 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		stderr = io.MultiWriter(append([]io.Writer{stderr}, observers...)...)
 	}
 	parsedStdout, parsedStderr := strategy.NewOutputParsers(r.warningWriter())
+	for _, parser := range []outputParser{parsedStdout, parsedStderr} {
+		if guard, ok := parser.(permissionModeGuard); ok {
+			guard.setPermissionModeStop(func() {
+				if ctx.Err() == nil {
+					cancelAttempt()
+				}
+			})
+		}
+	}
 	execErr := r.execute(attemptCtx, renderedCmd, stdout, stderr, parsedStdout, parsedStderr)
 	r.permissionDenials = parsersPermissionDenials(parsedStdout, parsedStderr)
+	if stopped := parsersReadOnlyPermissionMode(parsedStdout, parsedStderr); stopped != nil && ctx.Err() == nil {
+		// A session in a read-only permission mode cannot do the run's work,
+		// and a relaunch would start in the same mode: stop before its first
+		// turn and report why.
+		r.status = "failure"
+		r.operationalError = stopped
+		var cleanupErr *sandbox.CleanupError
+		if errors.As(execErr, &cleanupErr) {
+			r.cleanupError = cleanupErr.CleanupFail
+		}
+		return r.Result()
+	}
 	if detector != nil {
 		detector.Flush()
 	}
@@ -428,6 +460,7 @@ func (r *AgentRun) Result() AgentRunResult {
 		UsageLimitReached: r.usageLimitReached,
 		PermissionDenials: r.permissionDenials,
 		CleanupError:      r.cleanupError,
+		OperationalError:  r.operationalError,
 	}
 }
 

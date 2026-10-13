@@ -124,7 +124,11 @@ func (d *Daemon) observeHealthFailure(ctx context.Context, key, operation string
 	runner, ok := d.Runner.(repairRunner)
 	if !ok || err == nil || ctx.Err() != nil || errors.Is(err, context.Canceled) ||
 		errors.Is(err, batch.ErrAborted) || errors.Is(err, errReviewDeferred) || errors.Is(err, reviewlaunch.ErrLaunchOwned) ||
-		github.IsRateLimited(err) || d.isQuotaError(err) || d.isQuotaPaused() {
+		github.IsRateLimited(err) || d.isQuotaError(err) || d.isQuotaPaused() ||
+		// A review agent started in a read-only permission mode: repair cannot
+		// change its settings or the administrator's policy, and the launch
+		// backoff already retries the request.
+		errors.Is(err, batch.ErrUnattendedPermissionMode) {
 		return
 	}
 	if stateErr := d.withHealthState(func(state *healthRepairState) error {

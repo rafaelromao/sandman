@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -72,17 +74,23 @@ type GitConfig struct {
 
 // Agent holds a configured agent provider or a custom override.
 type Agent struct {
-	Name                   string            `yaml:"name,omitempty"`
-	Preset                 string            `yaml:"preset,omitempty"`
-	Command                string            `yaml:"command,omitempty"`
-	Model                  string            `yaml:"model,omitempty"`
-	ModelProvider          string            `yaml:"-"`
-	ModelName              string            `yaml:"-"`
-	Env                    map[string]string `yaml:"env,omitempty"`
-	ConfigDirs             []string          `yaml:"config_dirs,omitempty"`
-	ConfigFiles            []string          `yaml:"config_files,omitempty"`
-	KeychainAuth           bool              `yaml:"keychain_auth,omitempty"`
-	OpencodePermissionMode string            `yaml:"-"`
+	Name          string            `yaml:"name,omitempty"`
+	Preset        string            `yaml:"preset,omitempty"`
+	Command       string            `yaml:"command,omitempty"`
+	Model         string            `yaml:"model,omitempty"`
+	ModelProvider string            `yaml:"-"`
+	ModelName     string            `yaml:"-"`
+	Env           map[string]string `yaml:"env,omitempty"`
+	ConfigDirs    []string          `yaml:"config_dirs,omitempty"`
+	ConfigFiles   []string          `yaml:"config_files,omitempty"`
+	KeychainAuth  bool              `yaml:"keychain_auth,omitempty"`
+	// PermissionMode is the operator's permission mode for agents whose
+	// command line takes one (the preset's PermissionModes). Unset keeps the
+	// preset's built-in permission handling, as OpencodePermissionMode
+	// "builtin" does for OpenCode; set, it is the custom mode every launch
+	// renders.
+	PermissionMode         string `yaml:"permission_mode,omitempty"`
+	OpencodePermissionMode string `yaml:"-"`
 }
 
 // AgentPreset defines the built-in defaults for a provider preset.
@@ -107,6 +115,16 @@ type AgentPreset struct {
 	SnapshotExcludes      []string
 	LiveMounts            []string
 	KeychainAuth          bool
+	// PermissionModes are the modes an operator may set as permission_mode,
+	// rendered on the preset's built-in command line. Empty means the agent
+	// takes no permission mode from its command line.
+	PermissionModes []string
+	// ReadOnlyPermissionModes are the agent's own modes that cannot change
+	// anything, which an unattended run must not be configured with.
+	ReadOnlyPermissionModes []string
+	// PermissionHint tells an operator where an agent without
+	// PermissionModes takes its permissions from instead.
+	PermissionHint string
 }
 
 // OpencodePermissionExternalDirectoryAllow is the OPENCODE_PERMISSION value
@@ -125,6 +143,7 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 		Env: map[string]string{
 			"OPENCODE_PERMISSION": OpencodePermissionExternalDirectoryAllow,
 		},
+		PermissionHint: "configure OPENCODE_PERMISSION under its env instead",
 		ConfigDirs: []string{
 			"~/.config/opencode",
 			"~/.local/share/opencode",
@@ -190,6 +209,11 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 		// host paths are mounted. ~/.agents carries the shared Sandman skill.
 		ConfigDirs:  []string{"~/.claude", "~/.agents"},
 		ConfigFiles: []string{"~/.claude.json"},
+		// Claude Code's --permission-mode choices. On the command line a mode
+		// overrides a permissions.defaultMode from user or managed settings;
+		// Claude Code still refuses a mode the administrator disabled.
+		PermissionModes:         []string{"acceptEdits", "auto", "bypassPermissions", "dontAsk", "manual"},
+		ReadOnlyPermissionModes: []string{"plan"},
 		// Transcripts, caches, and logs stay out of the per-batch snapshot.
 		// Credentials, settings, skills, agents, commands, plugins, and
 		// CLAUDE.md are copied on purpose. The container writes its own
@@ -313,6 +337,11 @@ func Load(path string) (*Config, error) {
 		Git:                   GitConfig{BaseBranch: raw.Git.BaseBranch},
 	}
 
+	for name, agent := range cfg.Agents {
+		agent.PermissionMode = strings.TrimSpace(agent.PermissionMode)
+		cfg.Agents[name] = agent
+	}
+
 	if raw.Git.LegacyBranch != nil {
 		return nil, fmt.Errorf("validate config: %w: git.default_branch was renamed to git.base_branch", ErrBreakingContract)
 	}
@@ -399,7 +428,54 @@ func Load(path string) (*Config, error) {
 	if _, err := cfg.ResolveAgentProvider(cfg.DefaultAgent); err != nil {
 		return nil, fmt.Errorf("validate config: %w", err)
 	}
+	if err := validatePermissionModes(cfg.Agents); err != nil {
+		return nil, fmt.Errorf("validate config: %w", err)
+	}
 	return &cfg, nil
+}
+
+// validatePermissionModes rejects a permission_mode that no launch of its
+// agent would render: an agent whose command line takes no permission mode, a
+// custom command, an unknown mode, or a read-only one.
+func validatePermissionModes(agents map[string]Agent) error {
+	names := make([]string, 0, len(agents))
+	for name := range agents {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		agent := agents[name]
+		mode := agent.PermissionMode
+		if mode == "" {
+			continue
+		}
+		key := "agents." + name + ".permission_mode"
+		presetName := agent.Preset
+		if presetName == "" {
+			presetName = name
+		}
+		preset, ok := BuiltInAgentPresets[presetName]
+		if !ok {
+			return fmt.Errorf("%s: a custom command takes no permission mode from Sandman; put the agent's permission option in the command", key)
+		}
+		if len(preset.PermissionModes) == 0 {
+			msg := fmt.Sprintf("%s: %s takes no permission mode on its command line", key, preset.DisplayName)
+			if preset.PermissionHint != "" {
+				msg += "; " + preset.PermissionHint
+			}
+			return errors.New(msg)
+		}
+		if agent.Command != "" && agent.Command != preset.Command {
+			return fmt.Errorf("%s: a custom command receives no permission mode from Sandman; add --permission-mode to the command instead", key)
+		}
+		if slices.Contains(preset.ReadOnlyPermissionModes, mode) {
+			return fmt.Errorf("%s: %q keeps %s read-only, so an unattended run cannot make changes; choose one of %s", key, mode, preset.DisplayName, strings.Join(preset.PermissionModes, ", "))
+		}
+		if !slices.Contains(preset.PermissionModes, mode) {
+			return fmt.Errorf("%s: %q is not a %s permission mode; choose one of %s", key, mode, preset.DisplayName, strings.Join(preset.PermissionModes, ", "))
+		}
+	}
+	return nil
 }
 
 // ValidateReviewTimeout validates the delegated review response budget in seconds.
@@ -547,6 +623,9 @@ func (p AgentPreset) AgentWithOverrides(preset string, override Agent) Agent {
 	}
 	if override.KeychainAuth {
 		agent.KeychainAuth = true
+	}
+	if override.PermissionMode != "" {
+		agent.PermissionMode = override.PermissionMode
 	}
 	return agent
 }

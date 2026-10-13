@@ -4046,6 +4046,7 @@ loop:
 				agentRun.modelName = s.agentCfg.ModelName
 				agentRun.variant = s.variant
 				agentRun.opencodePermissionMode = s.agentCfg.OpencodePermissionMode
+				agentRun.permissionMode = s.agentCfg.PermissionMode
 				agentRun.baseBranch = s.baseBranch
 				agentRun.runID = runID
 				agentRun.review = s.review
@@ -4090,6 +4091,16 @@ loop:
 			if s.isIssueDriven() && ctx.Err() == nil {
 				hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
 				if gateStatus, extras, handled := s.handleLifecycleDecisionForAttempt(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady, result.Status); handled {
+					if stoppedForPermissionMode(result) && gateStatus != "success" && gateStatus != "aborted" {
+						// The agent could not act, and a resume, await
+						// re-entry or retry would start in the same mode.
+						// Like the usage-limit rule below, this consumes the
+						// selected action: terminal success and abort stand,
+						// and every action that would relaunch the agent
+						// becomes the stop's terminal failure.
+						terminalExtras = s.finishPermissionModeStop(&result, terminalExtras)
+						break loop
+					}
 					if result.UsageLimitReached && !result.ContextExhausted && (gateStatus == "resume" || gateStatus == "await") {
 						// A provider refusal did not perform the selected PR work.
 						// Leave non-terminal gate arbitration to quota recovery and,
@@ -4153,6 +4164,10 @@ loop:
 				}
 			}
 			break relaunch
+		}
+		if stoppedForPermissionMode(result) && !s.lifecycleTerminal && ctx.Err() == nil {
+			terminalExtras = s.finishPermissionModeStop(&result, terminalExtras)
+			break loop
 		}
 		if mergeRequired {
 			prMerged := checkPRMergedForIssue(ctx, s.deps.githubClient, branch, s.issueNumber)
@@ -4300,6 +4315,26 @@ loop:
 		terminalExtras["context_exhausted"] = true
 	}
 	return result, terminalExtras, true
+}
+
+// stoppedForPermissionMode reports a launch the agent strategy stopped because
+// its session started in a read-only permission mode.
+func stoppedForPermissionMode(result AgentRunResult) bool {
+	return errors.Is(result.OperationalError, ErrUnattendedPermissionMode)
+}
+
+// finishPermissionModeStop makes a permission-mode stop the run's terminal
+// failure. No ordinary retry, resume or await re-entry follows: each would
+// start in the same mode until the operator changes the agent's settings.
+func (s *runSession) finishPermissionModeStop(result *AgentRunResult, extras map[string]any) map[string]any {
+	result.Status = "failure"
+	s.lifecycleTerminal = true
+	fmt.Fprintf(s.deps.errorLog, "error: run %s stopped: %v\n", s.runID, result.OperationalError)
+	return mergeLifecycleDiagnostics(extras, map[string]any{
+		"reason":      "AGENT_PERMISSION_MODE",
+		"error":       result.OperationalError.Error(),
+		"next_action": "set the agent's permission_mode to a mode the administrator allows, or change the agent settings that start sessions in a read-only mode, then rerun",
+	})
 }
 
 func (s *runSession) shouldAwaitUsageLimit(result AgentRunResult) bool {

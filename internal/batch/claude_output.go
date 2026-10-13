@@ -26,6 +26,7 @@ type claudeOutput struct {
 	progress      func()
 	modelProgress func()
 	usageLimit    func()
+	stopForMode   func()
 	stdout        bool
 	state         *claudeOutputState
 	buf           bytes.Buffer
@@ -36,10 +37,22 @@ type claudeOutputState struct {
 	sessionID         string
 	usageLimitReached bool
 	permissionDenials []string
+	readOnlyMode      *PermissionModeError
+	// readOnlyModes are the permission modes that stop a session at its init
+	// record. Plan mode is where Claude Code starts a session whose settings
+	// carry permissions.defaultMode "plan" when the launch passes no
+	// --permission-mode, including when administrator-managed settings
+	// disable --dangerously-skip-permissions.
+	readOnlyModes []string
 }
 
-func newClaudeOutputs() (outputParser, outputParser) {
-	state := &claudeOutputState{}
+func claudeReadOnlyModeDiagnostic(mode string) string {
+	return "permission mode " + mode + ": Claude Code cannot make changes; set the agent's permission_mode to a mode your administrator allows " +
+		"(cause: a defaultMode in user or managed settings, bypass mode disabled)"
+}
+
+func newClaudeOutputs(readOnlyModes ...string) (outputParser, outputParser) {
+	state := &claudeOutputState{readOnlyModes: readOnlyModes}
 	return &claudeOutput{state: state, stdout: true}, &claudeOutput{state: state}
 }
 
@@ -54,6 +67,28 @@ func (w *claudeOutput) setProgress(progress func()) { w.progress = progress }
 func (w *claudeOutput) setModelProgress(progress func()) { w.modelProgress = progress }
 
 func (w *claudeOutput) setUsageLimit(onUsageLimit func()) { w.usageLimit = onUsageLimit }
+
+func (w *claudeOutput) setPermissionModeStop(onStop func()) { w.stopForMode = onStop }
+
+// ReadOnlyPermissionMode returns the diagnostic of a session that started in a
+// read-only permission mode, or nil.
+func (w *claudeOutput) ReadOnlyPermissionMode() *PermissionModeError {
+	w.state.mu.Lock()
+	defer w.state.mu.Unlock()
+	return w.state.readOnlyMode
+}
+
+// recordReadOnlyMode records the session's read-only mode once across the
+// shared stdout/stderr state and reports whether this call recorded it.
+func (w *claudeOutput) recordReadOnlyMode(mode string) (*PermissionModeError, bool) {
+	w.state.mu.Lock()
+	defer w.state.mu.Unlock()
+	if w.state.readOnlyMode != nil {
+		return w.state.readOnlyMode, false
+	}
+	w.state.readOnlyMode = &PermissionModeError{Mode: mode, Diagnostic: claudeReadOnlyModeDiagnostic(mode)}
+	return w.state.readOnlyMode, true
+}
 
 func (w *claudeOutput) Write(p []byte) (int, error) {
 	n, err := w.buf.Write(p)
@@ -160,6 +195,9 @@ func (w *claudeOutput) writeLine(line []byte, newline bool) error {
 	switch recordType {
 	case "system":
 		lines = claudeSystemLines(record)
+		if stopped := w.readOnlyModeAtInit(record); stopped != nil {
+			lines = append(lines, "Stopped: "+stopped.Diagnostic)
+		}
 	case "rate_limit_event":
 		lines = claudeRateLimitLines(record)
 	case "assistant":
@@ -181,6 +219,27 @@ func (w *claudeOutput) writeLine(line []byte, newline bool) error {
 		}
 	}
 	return nil
+}
+
+// readOnlyModeAtInit recognises a session whose system/init record reports a
+// read-only permission mode, stops the launch through the registered callback,
+// and returns the diagnostic the first time it is seen.
+func (w *claudeOutput) readOnlyModeAtInit(record map[string]any) *PermissionModeError {
+	if subtype, _ := record["subtype"].(string); subtype != "init" {
+		return nil
+	}
+	mode, _ := record["permissionMode"].(string)
+	if mode == "" || !slices.Contains(w.state.readOnlyModes, mode) {
+		return nil
+	}
+	stopped, first := w.recordReadOnlyMode(mode)
+	if !first {
+		return nil
+	}
+	if w.stopForMode != nil {
+		w.stopForMode()
+	}
+	return stopped
 }
 
 func (w *claudeOutput) writeRaw(line []byte, newline bool) error {

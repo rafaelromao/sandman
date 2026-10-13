@@ -23,11 +23,11 @@ func TestStrategyFor_SelectsByPresetAndCommand(t *testing.T) {
 	}{
 		{name: "built-in opencode", preset: "opencode", command: opencodeCommand, want: opencodeStrategy{builtInCommand: true}},
 		{name: "custom command under opencode", preset: "opencode", command: "opencode run {{.PromptFile}}", want: opencodeStrategy{builtInCommand: false}},
-		{name: "built-in claude", preset: "claude", command: claudeCommand, want: claudeStrategy{builtInCommand: true}},
-		{name: "custom command under claude", preset: "claude", command: "claude -p {{.PromptFile}}", want: claudeStrategy{builtInCommand: false}},
+		{name: "built-in claude", preset: "claude", command: claudeCommand, want: claudeStrategy{builtInCommand: true, readOnlyModes: []string{"plan"}}},
+		{name: "custom command under claude", preset: "claude", command: "claude -p {{.PromptFile}}", want: claudeStrategy{builtInCommand: false, readOnlyModes: []string{"plan"}}},
 		{name: "opencode template under another preset", preset: "custom", command: opencodeCommand, want: passthroughStrategy{}},
 		{name: "claude template without preset", preset: "", command: claudeCommand, want: passthroughStrategy{}},
-		{name: "cross-wired template", preset: "claude", command: opencodeCommand, want: claudeStrategy{builtInCommand: false}},
+		{name: "cross-wired template", preset: "claude", command: opencodeCommand, want: claudeStrategy{builtInCommand: false, readOnlyModes: []string{"plan"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

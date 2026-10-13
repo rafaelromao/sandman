@@ -124,7 +124,7 @@ agents:
     config_files: ["~/.my-agent/config.json"]
 ```
 
-Each entry may set `command`, `model`, `preset`, `env`, `config_dirs`, `config_files`, and `keychain_auth`. When `preset` is set, the custom entry inherits the built-in preset's defaults before applying overrides. See `internal/config/config.go:Agents` and `ResolveAgentProvider`.
+Each entry may set `command`, `model`, `preset`, `env`, `config_dirs`, `config_files`, `keychain_auth`, and `permission_mode`. `permission_mode` applies only to presets whose command line takes a permission mode (`claude`); see [Agent Compatibility > Permissions](agent-compatibility.md#permissions). When `preset` is set, the custom entry inherits the built-in preset's defaults before applying overrides. See `internal/config/config.go:Agents` and `ResolveAgentProvider`.
 
 Session reuse is a run-time choice rather than a configuration
 default. `sandman run --continue` starts a fresh agent conversation;

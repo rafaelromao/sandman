@@ -26,11 +26,13 @@ type agentStrategy interface {
 	// VariantFlag renders the model-variant selector passed to the command
 	// template as {{.VariantFlag}}, or "".
 	VariantFlag(variant string) string
-	// EditScopeFlag renders, as {{.PermissionFlag}}, the permission that lets
-	// an unattended launch edit files under dir (relative to its working
-	// directory) without prompting, or "" when dir is empty or the agent
-	// takes no such permission from its command line.
-	EditScopeFlag(dir string) string
+	// PermissionFlag renders, as {{.PermissionFlag}}, the launch's
+	// command-line permission: the scope that lets an unattended launch edit
+	// files under editDir (relative to its working directory) without
+	// prompting, else the operator-configured permission mode. It returns ""
+	// when neither is set or the agent takes no such permission from its
+	// command line. A non-empty flag replaces the skip-permissions flag.
+	PermissionFlag(mode, editDir string) string
 	// LaunchEnv returns the environment exported in front of renderedCmd.
 	// permissionMode is the resolved agent's OpencodePermissionMode.
 	LaunchEnv(env map[string]string, permissionMode, renderedCmd string) map[string]string
@@ -99,13 +101,18 @@ type usageLimitObserver interface {
 }
 
 // agentStrategies maps each built-in agent preset to its strategy
-// constructor. The constructor learns whether the launch runs the preset's
-// own command template: a custom command under a built-in preset keeps the
-// preset's failure classification and environment rules, but receives no
-// agent flags, session selection, output parsing, or usage-limit awaiting.
-var agentStrategies = map[string]func(builtInCommand bool) agentStrategy{
-	"opencode": func(builtInCommand bool) agentStrategy { return opencodeStrategy{builtInCommand: builtInCommand} },
-	"claude":   func(builtInCommand bool) agentStrategy { return claudeStrategy{builtInCommand: builtInCommand} },
+// constructor. The constructor receives the preset's data and learns whether
+// the launch runs the preset's own command template: a custom command under a
+// built-in preset keeps the preset's failure classification and environment
+// rules, but receives no agent flags, session selection, output parsing, or
+// usage-limit awaiting.
+var agentStrategies = map[string]func(preset config.AgentPreset, builtInCommand bool) agentStrategy{
+	"opencode": func(_ config.AgentPreset, builtInCommand bool) agentStrategy {
+		return opencodeStrategy{builtInCommand: builtInCommand}
+	},
+	"claude": func(preset config.AgentPreset, builtInCommand bool) agentStrategy {
+		return claudeStrategy{builtInCommand: builtInCommand, readOnlyModes: preset.ReadOnlyPermissionModes}
+	},
 }
 
 // strategyFor returns the behaviour bundle for a launch of command under
@@ -120,7 +127,7 @@ func strategyFor(preset, command string) agentStrategy {
 	if !ok {
 		return passthroughStrategy{}
 	}
-	return newStrategy(command == builtIn.Command)
+	return newStrategy(builtIn, command == builtIn.Command)
 }
 
 // strategyForPreset returns the strategy of a preset running its own built-in
@@ -161,9 +168,9 @@ func IsUsageLimitOutput(agentName, output string) bool {
 // agent-specific failure classification.
 type passthroughStrategy struct{}
 
-func (passthroughStrategy) ModelFlag(string) string     { return "" }
-func (passthroughStrategy) VariantFlag(string) string   { return "" }
-func (passthroughStrategy) EditScopeFlag(string) string { return "" }
+func (passthroughStrategy) ModelFlag(string) string              { return "" }
+func (passthroughStrategy) VariantFlag(string) string            { return "" }
+func (passthroughStrategy) PermissionFlag(string, string) string { return "" }
 
 func (passthroughStrategy) LaunchEnv(env map[string]string, _, _ string) map[string]string {
 	return env
@@ -210,9 +217,10 @@ func (s opencodeStrategy) VariantFlag(variant string) string {
 	return "--variant " + shellenv.Quote(variant)
 }
 
-// EditScopeFlag renders nothing: OpenCode reads permissions from its own
-// configuration, not from scoped command-line rules.
-func (opencodeStrategy) EditScopeFlag(string) string { return "" }
+// PermissionFlag renders nothing: OpenCode reads permissions from its own
+// configuration (OPENCODE_PERMISSION, see LaunchEnv), not from the command
+// line.
+func (opencodeStrategy) PermissionFlag(string, string) string { return "" }
 
 // LaunchEnv drops the preset's OPENCODE_PERMISSION allow-list ("builtin"
 // mode) unless the rendered command skips permission prompts. A value the
