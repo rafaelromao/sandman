@@ -463,11 +463,15 @@ func TestPortalLogContinuityBrowser_WaitingAbort(t *testing.T) {
 	const runID = "261013120000-b2797-2797"
 	const issueNumber = 2797
 	startedAt := time.Now().UTC().Truncate(time.Second)
+	awaitAt := startedAt.Add(time.Minute)
 	eventLog := &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")}
-	writePortalLog(t, eventLog.Path, []events.Event{{
-		Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: issueNumber,
-		Payload: map[string]any{"branch": "2797-waiting-abort", "batch_id": "batch-2797"},
-	}})
+	writePortalLog(t, eventLog.Path, []events.Event{
+		{
+			Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: issueNumber,
+			Payload: map[string]any{"branch": "2797-waiting-abort", "batch_id": "batch-2797"},
+		},
+		{Type: "run.await", Timestamp: awaitAt, RunID: runID, Issue: issueNumber},
+	})
 
 	handler := &portalHandler{repoRoot: repoRoot, runsIndex: getPortalRunsIndex(repoRoot)}
 	mux := http.NewServeMux()
