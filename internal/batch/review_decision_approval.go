@@ -9,6 +9,7 @@ var (
 	reviewDecisionApprovalPhrase   = regexp.MustCompile(`(?i)(?:\bapproved\b|\blgtm\b|\blooks?\s+(?:good|great)\b|\b(?:nice|good)\s+work\b|\bthumbs\s+up\b|\+1(?:\s|$)|\bship\s+it\b|\ball\s+(?:good|set)\b|\bgood\s+to\s+go\b|\bno\s+major\s+issues\b|\bminor\s+issues\s+only\b)`)
 	reviewDecisionApprovalNegation = regexp.MustCompile(`(?i)\b(?:not\b|no\s+approval|changes\s+requested|if\b|once\b|after\b|provided\b|pending\b|unless\b|until\b|but\b|previous\b|prior\b|formerly\b)`)
 	reviewDecisionNoFindings       = regexp.MustCompile(`(?i)^(?:none\b|no\b[^.\n]*\b(?:findings?|issues?|concerns?)\b)`)
+	reviewFindingDirective         = regexp.MustCompile(`(?im)(?:^|[.!?]\s+)\s*(?:[-*]\s*)?(?:fix|change|remove|replace|add|use)\b|\b(?:must|please|needs?|should)\b`)
 )
 
 // reviewDecisionApprovalEvidenceFor returns informal approvals from the active
@@ -88,8 +89,11 @@ func reviewDecisionApprovedBody(body string) bool {
 				structured = true
 				section = "decision"
 				decision.WriteString(inline + "\n")
-			case strings.EqualFold(heading, "findings"), strings.EqualFold(heading, "suggested next steps"):
+			case strings.EqualFold(strings.TrimSpace(name), "findings"), strings.EqualFold(heading, "suggested next steps"), strings.EqualFold(strings.TrimSpace(name), "suggested next steps"):
 				section = "findings"
+				if hasColon {
+					findings.WriteString(inline + "\n")
+				}
 			case strings.EqualFold(heading, "previous review progress"):
 				section = "history"
 			}
@@ -127,5 +131,14 @@ func unambiguousReviewApproval(text string) bool {
 }
 
 func noReviewFindings(text string) bool {
-	return reviewDecisionNoFindings.MatchString(strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(text), "-*"))) && !reviewDecisionApprovalNegation.MatchString(text)
+	text = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(text), "-*"))
+	match := reviewDecisionNoFindings.FindStringIndex(text)
+	if match == nil || reviewDecisionApprovalNegation.MatchString(text) {
+		return false
+	}
+	// Examine the entire section: a leading "None" cannot hide another finding.
+	// Descriptive metric commentary may follow a no-findings statement, but
+	// code-anchored feedback, nested finding headings, and repair directives may not.
+	remainder := text[match[1]:]
+	return !informalFeedbackHasCodeAnchor(remainder) && !strings.Contains(remainder, "#") && !reviewFindingDirective.MatchString(remainder)
 }

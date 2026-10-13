@@ -22,7 +22,8 @@ Cognitive complexity: 70 at internal/batch/run_lifecycle.go:22. The increase is
 limited to the adapter branch; no separate readability concern was demonstrated.
 
 ### Findings
-None.
+No quality findings filed. The metric increase is limited to the adapter branch;
+no separate readability or change-risk concern was demonstrated.
 
 ## Findings
 
@@ -200,6 +201,10 @@ func TestInformalApprovalLifecycle_AmbiguousDecisionsCannotAuthorizeMerge(t *tes
 		"## Decision\n`APPROVED`",
 		"## Findings\nFix the race in worker.go before merging.\n\n## Decision\nAPPROVED",
 		"## Findings\n### Important\nFix the race in worker.go before merging.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone.\nFix the race in worker.go before merging.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone in the API layer.\n### Important\nFix the race in worker.go before merging.\n\n## Decision\nAPPROVED",
+		"## Findings: Fix the race in worker.go before merging.\n\n## Decision: APPROVED",
+		"## Suggested next steps: Fix the race in worker.go before merging.\n\n## Decision: APPROVED",
 		"## Decision\nAPPROVED\nBut fix the race in worker.go first.",
 		"## Previous review progress\n### Decision\nAPPROVED",
 	} {

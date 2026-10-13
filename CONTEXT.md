@@ -140,6 +140,17 @@ validation makes canonical evidence authoritative and keeps stale legacy
 evidence diagnostic-only.
 _Avoid_: review retry loop, approval shortcut, restart reset.
 
+**Informal approval**:
+An unambiguous approving response to the confirmed review request for the current
+pull-request head, expressed in a conversation comment or an eligible COMMENTED
+review. It satisfies the review gate without a formal GitHub approval. A
+COMMENTED review without commit identity remains eligible within that request
+window; an explicitly stale review does not. Accepted approval waits for pending
+CI and advances merge work once checks are green. Scope paths, metrics, and
+resolved history in a no-findings approval do not turn it into requested repairs;
+separate concrete feedback and formal requested changes still take precedence.
+_See_: Managed review lifecycle, Informal feedback, Review decision.
+
 **Informal feedback**:
 A retained top-level or inline review response with concrete code feedback that is classified mechanically (code anchor: backtick span, file path, file+line, line reference, or diff hunk line, after boilerplate-only phrasing is excluded) as request-scoped lifecycle evidence. Informal feedback is request-scoped: only current-head responses inside the active request window, without the trigger prefix, produce it; stale, unknown, superseded, trigger, and formal-precedence-bearing responses do not. It is handed to a resumed run as `informal_feedback` inside the retained `review_request` and can only turn a recoverable pending lifecycle into the shared `actionable-feedback` await (bounded by the per-session resume cap) — it never authorizes a merge, approves a request, overrides formal review decisions, or consumes retry budget. References ADR-0052.
 _Avoid_: informal approval, comment classification.
