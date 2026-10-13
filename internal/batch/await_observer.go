@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"time"
@@ -55,9 +56,87 @@ func (e *runExecutor) persistObservedAwait(ctx context.Context, row RowSpec, ext
 	if e.deps.eventLog == nil {
 		return nil
 	}
-	payload := cloneLifecycleExtras(extras)
+	var previous map[string]any
+	if states, err := events.ReadRunStates(e.deps.eventLog); err != nil {
+		return err
+	} else if state, ok := states[row.RunID]; ok && state.IsAwaiting() && !state.IsCapacityQueued() && state.AwaitEvent != nil {
+		previous = state.AwaitEvent.Payload
+		if !awaitOperationChanged(state.AwaitEvent.Payload, extras) {
+			return nil
+		}
+	}
+	payload := mergeRetainedAwaitEvidence(previous, extras)
 	payload["await"], payload["branch"], payload["base_branch"], payload["batch_id"] = true, row.Branches[row.IssueNumber], row.BaseBranch, row.BatchID
 	return e.deps.eventLog.Log(events.Event{Type: "run.await", Timestamp: newRunSession(e, row).runtimeNow(), RunID: row.RunID, Issue: row.IssueNumber, IssueRef: issueRef(row.IssueNumber), Payload: payload})
+}
+
+func mergeRetainedAwaitEvidence(previous, observed map[string]any) map[string]any {
+	payload := cloneLifecycleExtras(observed)
+	for _, operation := range []string{"ci_wait", "review_request"} {
+		if _, ok := awaitIdentitySignature(payload, operation); ok {
+			continue
+		}
+		value, ok := previous[operation].(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, ok := awaitIdentitySignature(previous, operation); ok {
+			payload[operation] = cloneLifecycleExtras(value)
+		}
+	}
+	return payload
+}
+
+func awaitOperationChanged(previous, observed map[string]any) bool {
+	identityBound := false
+	for _, operation := range []string{"ci_wait", "review_request"} {
+		previousSignature, previousOK := awaitIdentitySignature(previous, operation)
+		observedSignature, observedOK := awaitIdentitySignature(observed, operation)
+		if !previousOK && !observedOK {
+			continue
+		}
+		identityBound = true
+		if previousOK && !observedOK {
+			continue
+		}
+		if previousSignature != observedSignature {
+			return true
+		}
+	}
+	if identityBound {
+		return false
+	}
+	previousSignature, previousOK := awaitDeadlineSignature(previous)
+	observedSignature, observedOK := awaitDeadlineSignature(observed)
+	return previousOK != observedOK || previousSignature != observedSignature
+}
+
+func awaitIdentitySignature(extras map[string]any, operation string) (string, bool) {
+	value, ok := extras[operation].(map[string]any)
+	if !ok {
+		return "", false
+	}
+	fields := []string{"pull_request", "head_sha", "execution_id", "trigger_id", "deadline_unix_seconds"}
+	signature := make(map[string]any, len(fields))
+	for _, key := range fields {
+		if field, present := value[key]; present {
+			signature[key] = field
+		}
+	}
+	if _, ok := signature["deadline_unix_seconds"]; !ok {
+		return "", false
+	}
+	data, err := json.Marshal(signature)
+	return string(data), err == nil
+}
+
+func awaitDeadlineSignature(extras map[string]any) (string, bool) {
+	deadline, gate, ok := lifecycleDeadline(extras)
+	if !ok {
+		return "", false
+	}
+	data, err := json.Marshal(map[string]any{"gate": gate, "deadline_unix_seconds": deadline.Unix()})
+	return string(data), err == nil
 }
 
 func (s *runSession) issueRunID() string {
