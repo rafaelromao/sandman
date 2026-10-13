@@ -51,7 +51,7 @@ func (c *reviewClassification) informalFeedbackEvidenceFor(request reviewRequest
 				continue
 			}
 			body := strings.TrimSpace(stringValue(record, "body"))
-			if body == "" || strings.HasPrefix(body, request.TriggerPrefix) || !informalFeedbackConcrete(body) {
+			if body == "" || strings.HasPrefix(body, request.TriggerPrefix) || reviewDecisionApprovedBody(body) || !informalFeedbackConcrete(body) {
 				continue
 			}
 			timestamp := stringValue(record, "response_timestamp")
