@@ -15,6 +15,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 // stoppableSandbox streams records one at a time and, like a killed agent
@@ -132,4 +133,122 @@ func TestAgentRun_OperatorAbortDuringPlanModeStaysAborted(t *testing.T) {
 	if errors.Is(result.OperationalError, ErrUnattendedPermissionMode) {
 		t.Fatalf("an operator abort became a permission-mode failure: %v", result.OperationalError)
 	}
+}
+
+func permissionModeStoppedResult() AgentRunResult {
+	return AgentRunResult{Status: "failure", OperationalError: &PermissionModeError{Mode: "plan", Diagnostic: claudeReadOnlyModeDiagnostic("plan")}}
+}
+
+func newPermissionModeOrchestrator(t *testing.T, dir string, client *fakeGitHubClient, log *spyEventLog, launches *int) *Orchestrator {
+	t.Helper()
+	return NewOrchestrator(client, &noopRenderer{},
+		&fakeConfigStore{config: &config.Config{
+			Agent:       "test-agent",
+			Sandbox:     "worktree",
+			Retries:     2,
+			WorktreeDir: filepath.Join(dir, "worktrees"),
+			Git:         config.GitConfig{BaseBranch: "main"},
+			AgentProviders: map[string]config.Agent{
+				"test-agent": {Command: "true"},
+			},
+		}},
+		log,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(dir, "worktree")}}),
+		WithRunnableFactory(&promptOnlyRunnableFactory{hook: func(*github.Issue, string) AgentRunResult {
+			*launches++
+			return permissionModeStoppedResult()
+		}}),
+	)
+}
+
+// A review row stopped for its permission mode is not relaunched, and the
+// batch result carries the typed diagnostic once for the review daemon.
+func TestRunBatch_ReviewStoppedForPermissionModeIsNotRelaunched(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+	launches := 0
+	o := newPermissionModeOrchestrator(t, dir, &fakeGitHubClient{}, &spyEventLog{}, &launches)
+
+	result, err := o.RunBatch(context.Background(), Request{
+		Agent:        "test-agent",
+		Review:       true,
+		PRNumber:     42,
+		PromptConfig: prompt.RenderConfig{PromptFlag: "review prompt", Branch: "review-branch"},
+		RunID:        "review-run",
+		RunTS:        orchTestRunTS,
+		RunShortID:   orchTestRunShortID,
+	})
+	if err == nil {
+		t.Fatal("RunBatch reported success for a stopped review")
+	}
+	if launches != 1 {
+		t.Fatalf("launches = %d, want 1", launches)
+	}
+	if result == nil || len(result.Runs) != 1 || !errors.Is(result.Runs[0].OperationalError, ErrUnattendedPermissionMode) {
+		t.Fatalf("result = %#v, want the typed permission-mode error on the run", result)
+	}
+	if strings.Contains(err.Error(), "permission mode plan") {
+		t.Fatalf("batch error %q repeats the run's diagnostic", err)
+	}
+}
+
+// An implementation run stopped for its permission mode ends as a terminal
+// failure with its reason, without using the ordinary retry budget.
+func TestRunBatch_ImplementationStoppedForPermissionModeIsNotRetried(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+	launches := 0
+	log := &spyEventLog{}
+	client := &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."}}}
+	o := newPermissionModeOrchestrator(t, dir, client, log, &launches)
+
+	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}, Retries: 2, RunTS: orchTestRunTS, RunShortID: orchTestRunShortID})
+	if launches != 1 {
+		t.Fatalf("launches = %d, want 1", launches)
+	}
+	for _, event := range log.snapshot() {
+		if event.Type == "run.retry" || event.Type == "run.await" {
+			t.Fatalf("unexpected %s event: %#v", event.Type, event.Payload)
+		}
+		if event.Type == "run.finished" {
+			if event.Payload["status"] != "failure" {
+				t.Fatalf("terminal status = %#v, want failure", event.Payload["status"])
+			}
+			if event.Payload["reason"] != "AGENT_PERMISSION_MODE" {
+				t.Fatalf("terminal reason = %#v, want AGENT_PERMISSION_MODE", event.Payload["reason"])
+			}
+			if action, _ := event.Payload["next_action"].(string); !strings.Contains(action, "permission_mode") {
+				t.Fatalf("next_action = %q, want the permission_mode remedy", action)
+			}
+			return
+		}
+	}
+	t.Fatalf("no terminal failure event in %#v", log.snapshot())
+}
+
+// A verified merged completion still outranks a later permission-mode stop.
+func TestRunBatch_MergedCompletionOutranksPermissionModeStop(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+	launches := 0
+	log := &spyEventLog{}
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."}},
+		prs:    map[string]*github.PR{"42-fix-bug": mergedPR("42-fix-bug", "")},
+	}
+	o := newPermissionModeOrchestrator(t, dir, client, log, &launches)
+
+	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}, Retries: 2, RunTS: orchTestRunTS, RunShortID: orchTestRunShortID})
+	for _, event := range log.snapshot() {
+		if event.Type == "run.finished" {
+			if event.Payload["status"] != "success" || event.Payload["reason"] == "AGENT_PERMISSION_MODE" {
+				t.Fatalf("terminal payload = %#v, want the merged success", event.Payload)
+			}
+			return
+		}
+	}
+	t.Fatalf("no terminal event in %#v", log.snapshot())
 }
