@@ -10,8 +10,11 @@ import (
 
 func TestCommandData_ExposesPromptFileAndModelFields(t *testing.T) {
 	typ := reflect.TypeOf(CommandData{})
-	if typ.NumField() != 9 {
-		t.Errorf("expected exactly 9 fields in CommandData, got %d", typ.NumField())
+	if typ.NumField() != 10 {
+		t.Errorf("expected exactly 10 fields in CommandData, got %d", typ.NumField())
+	}
+	if field, ok := typ.FieldByName("PermissionFlag"); !ok || field.Type.Kind() != reflect.String {
+		t.Error("expected PermissionFlag string field in CommandData")
 	}
 	field, ok := typ.FieldByName("PromptFile")
 	if !ok {
