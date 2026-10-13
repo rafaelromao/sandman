@@ -236,22 +236,31 @@ func TestInformalApprovalLifecycle_RequestBoundariesAndFormalPrecedence(t *testi
 }
 
 func TestInformalApprovalLifecycle_OnTimeResponseSurvivesDelayedReentry(t *testing.T) {
-	s, client, pr, workDir, now := informalApprovalLifecycleFixture(t, approvingMetricsReview)
-	client.comments[1].CreatedAt = time.Date(2026, 10, 13, 2, 30, 0, 0, time.UTC)
-	// A response exactly at the original deadline is eligible even when first
-	// observed by a fresh executor after capacity delay or process downtime.
-	*now = time.Date(2026, 10, 13, 3, 0, 0, 0, time.UTC)
-	pr.StatusCheckRollup = "success"
-	status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
-	if !handled || status != "resume" || extras["gate"] != gateReadyToMerge {
-		t.Fatalf("late observation of an on-time approval = (%s, %v, %t), want merge resume", status, extras, handled)
-	}
-	registration, err := readFileReviewRegistration(paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if registration.Request.TriggerID != "request" || registration.Request.DeadlineUnixSeconds != int(client.comments[1].CreatedAt.Unix()) {
-		t.Fatal("late observation changed the request identity or original deadline")
+	for _, tc := range []struct {
+		name, body string
+	}{
+		{"existing metrics approval", approvingMetricsReview},
+		{"captured approval", capturedApprovalWithCIWaitAdvice},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, client, pr, workDir, now := informalApprovalLifecycleFixture(t, tc.body)
+			client.comments[1].CreatedAt = time.Date(2026, 10, 13, 2, 30, 0, 0, time.UTC)
+			// A response exactly at the original deadline is eligible even when first
+			// observed by a fresh executor after capacity delay or process downtime.
+			*now = time.Date(2026, 10, 13, 3, 0, 0, 0, time.UTC)
+			pr.StatusCheckRollup = "success"
+			status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+			if !handled || status != "resume" || extras["gate"] != gateReadyToMerge {
+				t.Fatalf("late observation of an on-time approval = (%s, %v, %t), want merge resume", status, extras, handled)
+			}
+			registration, err := readFileReviewRegistration(paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if registration.Request.TriggerID != "request" || registration.Request.DeadlineUnixSeconds != int(client.comments[1].CreatedAt.Unix()) {
+				t.Fatal("late observation changed the request identity or original deadline")
+			}
+		})
 	}
 }
 
