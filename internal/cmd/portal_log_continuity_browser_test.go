@@ -438,6 +438,216 @@ func TestPortalLogContinuityBrowser_WaitingDuration(t *testing.T) {
 	}
 }
 
+type portalWaitingAbortBrowserResult struct {
+	InitialStatus        string `json:"initialStatus"`
+	InitialWaiting       bool   `json:"initialWaiting"`
+	InitialFinished      bool   `json:"initialFinished"`
+	InitialAbortVisible  bool   `json:"initialAbortVisible"`
+	AbortResponseStatus  int    `json:"abortResponseStatus"`
+	TerminalStatus       string `json:"terminalStatus"`
+	TerminalKind         string `json:"terminalKind"`
+	TerminalFinished     bool   `json:"terminalFinished"`
+	TerminalAbortVisible bool   `json:"terminalAbortVisible"`
+	Error                string `json:"error,omitempty"`
+}
+
+func TestPortalLogContinuityBrowser_WaitingAbort(t *testing.T) {
+	chromium := requirePortalContinuityTool(t, "chromium")
+	if !portalAbortSupported() {
+		t.Skip("skip waiting abort browser test on unsupported platform")
+	}
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const runID = "261013120000-b2797-2797"
+	const issueNumber = 2797
+	startedAt := time.Now().UTC().Truncate(time.Second)
+	awaitAt := startedAt.Add(time.Minute)
+	eventLog := &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")}
+	writePortalLog(t, eventLog.Path, []events.Event{
+		{
+			Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: issueNumber,
+			Payload: map[string]any{"branch": "2797-waiting-abort", "batch_id": "batch-2797"},
+		},
+		{Type: "run.await", Timestamp: awaitAt, RunID: runID, Issue: issueNumber},
+	})
+
+	handler := &portalHandler{repoRoot: repoRoot, runsIndex: getPortalRunsIndex(repoRoot)}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/instances", handler.handleInstances)
+	mux.HandleFunc("/api/runs", handler.handleRuns)
+	mux.HandleFunc("/api/runs/stream", handler.handleRunStream)
+	mux.HandleFunc("/api/runs/abort", handler.handleRunAbort)
+	mux.HandleFunc("/api/runs/archive", handler.handleRunArchive)
+	mux.HandleFunc("/api/logs", handler.handleLogs)
+	mux.HandleFunc("/", handler.handlePage)
+	handler.handler = mux
+
+	previousAborter := portalRunAborter
+	t.Cleanup(func() { portalRunAborter = previousAborter })
+	var abortMu sync.Mutex
+	var abortRunKey string
+	var abortIssue int
+	portalRunAborter = func(_ context.Context, _ string, runKey string, issue int) error {
+		abortMu.Lock()
+		abortRunKey = runKey
+		abortIssue = issue
+		abortMu.Unlock()
+		return eventLog.Log(events.Event{
+			Type: "run.aborted", Timestamp: time.Now().UTC(), RunID: runID, Issue: issue,
+			Payload: map[string]any{"status": "aborted", "branch": "2797-waiting-abort", "batch_id": "batch-2797"},
+		})
+	}
+
+	pageResponse := httptest.NewRecorder()
+	handler.ServeHTTP(pageResponse, httptest.NewRequest(http.MethodGet, "/", nil))
+	page := pageResponse.Body.String()
+	mainScript := "<script>\n    const apiPath = \"\\/api\\/runs\";"
+	if !strings.Contains(page, mainScript) {
+		t.Fatal("embedded Portal page is missing its production application script marker")
+	}
+	prelude := `<script>
+  window.confirm = function () { return true; };
+  window.__portalAbortSummaryRuns = [];
+  window.__portalAbortResponseStatus = 0;
+  const portalAbortFetch = window.fetch.bind(window);
+  window.fetch = async function (input, init) {
+    const response = await portalAbortFetch(input, init);
+    const path = String(input);
+    if (path.indexOf('/api/runs/abort') >= 0) window.__portalAbortResponseStatus = response.status;
+    if (path.indexOf('summary=1') >= 0 && response.status === 200) {
+      const payload = await response.clone().json();
+      window.__portalAbortSummaryRuns = Array.isArray(payload.runs) ? payload.runs : [];
+    }
+    return response;
+  };
+</script>
+` + mainScript
+	page = strings.Replace(page, mainScript, prelude, 1)
+	driver := fmt.Sprintf(`<script>
+(async function () {
+  const runID = %q;
+  const wait = async function (predicate, label) {
+    const deadline = performance.now() + 20000;
+    while (performance.now() < deadline) {
+      if (predicate()) return;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    throw new Error('timed out waiting for ' + label);
+  };
+  const row = () => document.querySelector('#runs-body > tr[data-run-key="' + runID + '"]');
+  const projected = () => window.__portalAbortSummaryRuns.find(run => run && run.runId === runID);
+  const result = {};
+  try {
+    await wait(() => row() && projected(), 'initial waiting row');
+    const initial = projected();
+    result.initialStatus = row()?.querySelector('.badge-label')?.textContent || '';
+    result.initialWaiting = initial.waiting === true;
+    result.initialFinished = initial.finishedAt != null;
+    result.initialAbortVisible = !!row()?.querySelector('button[data-action="abort-run"]');
+    const button = row()?.querySelector('button[data-action="abort-run"]');
+    if (!button) throw new Error('waiting row has no Abort button');
+    button.click();
+    await wait(() => {
+      const terminal = projected();
+      return terminal?.status === 'aborted' && terminal?.kind === 'completed'
+        && terminal?.finishedAt != null && !row()?.querySelector('button[data-action="abort-run"]');
+    }, 'terminal aborted row');
+    const terminal = projected();
+    result.abortResponseStatus = window.__portalAbortResponseStatus;
+    result.terminalStatus = terminal.status;
+    result.terminalKind = terminal.kind;
+    result.terminalFinished = terminal.finishedAt != null;
+    result.terminalAbortVisible = !!row()?.querySelector('button[data-action="abort-run"]');
+  } catch (error) {
+    result.error = String(error && error.stack || error);
+  }
+  await fetch('/__test/result', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(result),
+  });
+})();
+</script>
+`, runID)
+	page = strings.Replace(page, "</body>", driver+"</body>", 1)
+
+	results := make(chan portalWaitingAbortBrowserResult, 1)
+	serverHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/__test/result" {
+			var result portalWaitingAbortBrowserResult
+			if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&result); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			results <- result
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.URL.Path == "/" {
+			w.Header().Set("Content-Type", pageResponse.Header().Get("Content-Type"))
+			w.Header().Set("Cache-Control", "no-store")
+			_, _ = io.WriteString(w, page)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	})
+	server := httptest.NewServer(serverHandler)
+	defer server.Close()
+	result := runPortalWaitingAbortBrowser(t, chromium, server.URL, results)
+	if result.Error != "" {
+		t.Fatalf("actual Portal waiting-abort flow: %s", result.Error)
+	}
+	if result.InitialStatus != "waiting" || !result.InitialWaiting || result.InitialFinished || !result.InitialAbortVisible {
+		t.Fatalf("initial waiting projection = %+v, want waiting lifecycle with Abort", result)
+	}
+	if result.AbortResponseStatus != http.StatusOK || result.TerminalStatus != "aborted" || result.TerminalKind != "completed" || !result.TerminalFinished || result.TerminalAbortVisible {
+		t.Fatalf("terminal waiting-abort projection = %+v", result)
+	}
+	abortMu.Lock()
+	gotRunKey, gotIssue := abortRunKey, abortIssue
+	abortMu.Unlock()
+	if gotRunKey != runID || gotIssue != issueNumber {
+		t.Fatalf("abort request = runKey %q issue %d, want %q issue %d", gotRunKey, gotIssue, runID, issueNumber)
+	}
+}
+
+func runPortalWaitingAbortBrowser(t *testing.T, chromium, url string, results <-chan portalWaitingAbortBrowserResult) portalWaitingAbortBrowserResult {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, chromium,
+		"--headless", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
+		"--no-first-run", "--no-default-browser-check", "--disable-background-timer-throttling",
+		"--disable-renderer-backgrounding", "--window-size=1360,900", url)
+	var output bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &output, &output
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	exited := make(chan struct{})
+	var exitErr error
+	go func() {
+		exitErr = cmd.Wait()
+		close(exited)
+	}()
+	defer func() {
+		_ = cmd.Process.Kill()
+		<-exited
+	}()
+	select {
+	case result := <-results:
+		return result
+	case <-exited:
+		t.Fatalf("Chromium exited before waiting-abort assertions: %v\n%s", exitErr, output.String())
+		return portalWaitingAbortBrowserResult{}
+	case <-ctx.Done():
+		_ = cmd.Process.Kill()
+		<-exited
+		t.Fatalf("actual-page waiting-abort browser timed out: %v\n%s", ctx.Err(), output.String())
+		return portalWaitingAbortBrowserResult{}
+	}
+}
+
 func portalDurationMatches(value string, want time.Duration) bool {
 	return strings.TrimSpace(value) == want.String() || strings.TrimSpace(value) == strings.TrimSuffix(want.String(), "0s")
 }
