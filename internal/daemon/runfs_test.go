@@ -57,6 +57,34 @@ func TestRunFolder(t *testing.T) {
 	}
 }
 
+func TestResolveBatchDir_FallsBackWhenIndexIsAbsent(t *testing.T) {
+	root := t.TempDir()
+	layout := layoutForBaseDir(filepath.Join(root, ".sandman"))
+
+	got, err := ResolveBatchDir(layout, "legacy")
+	if err != nil {
+		t.Fatalf("ResolveBatchDir: %v", err)
+	}
+	if want := layout.BatchDir("legacy"); got != want {
+		t.Fatalf("ResolveBatchDir = %q, want %q", got, want)
+	}
+}
+
+func TestResolveBatchDir_RejectsUnreadableIndex(t *testing.T) {
+	root := t.TempDir()
+	layout := layoutForBaseDir(filepath.Join(root, ".sandman"))
+	if err := os.MkdirAll(layout.SandmanDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(layout.BatchesIndexPath, []byte("not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ResolveBatchDir(layout, "relocated"); err == nil {
+		t.Fatal("ResolveBatchDir accepted an unreadable index")
+	}
+}
+
 func TestBatchSocketPath(t *testing.T) {
 	batchDir := "/some/batches/batch123"
 	got := BatchSocketPath(batchDir)

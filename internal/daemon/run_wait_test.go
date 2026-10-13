@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 func TestRunWait_ClaimAndFixedRecoveryWindow(t *testing.T) {
@@ -83,18 +85,153 @@ func TestRunWait_LegacyQuotaEstimateCannotShortenExistingRecoveryGrace(t *testin
 	}
 }
 
-func TestInitialWaitRejectsForeignBatchOwnership(t *testing.T) {
+func TestRunWait_ReadResolvedLocationUsesPublicBatchIdentity(t *testing.T) {
 	root := t.TempDir()
+	batchDir := filepath.Join(root, "relocated", "physical-name")
 	now := time.Now().UTC()
-	record := RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "owner", Issue: 42, BaseBranch: "main", InitialAdmission: true, OperationID: "admission"}
-	if err := RenewRunWait(filepath.Join(root, "batches", "owner"), record, now); err != nil {
+	path := filepath.Join(batchDir, "runs", "row", "wait.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ReadRunWait(filepath.Join(root, "batches", "foreign"), "row"); err == nil {
+	record := RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "public-batch", Issue: 42,
+		Branch: "42-fix", BaseBranch: "main", OperationID: "ci:17:head", LeaseExpiresAt: now.Add(time.Minute)}
+	if err := atomicfs.WriteAtomicJSON(path, record, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ReadRunWaitAt(batchDir, "public-batch", "row")
+	if err != nil || got.BatchID != record.BatchID {
+		t.Fatalf("resolved lease = %+v, error=%v", got, err)
+	}
+	if got, err := ReadRunWait(batchDir, "row"); err != nil || got.BatchID != record.BatchID {
+		t.Fatalf("generic relocated lease = %+v, error=%v", got, err)
+	}
+	if _, err := ReadRunWaitAt(batchDir, "other-batch", "row"); err == nil {
+		t.Fatal("resolved lease accepted a mismatched public batch identity")
+	}
+}
+
+func TestInitialWaitRejectsForeignBatchOwnership(t *testing.T) {
+	root := t.TempDir()
+	layout := paths.NewLayout(nil, root)
+	now := time.Now().UTC()
+	record := RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "owner", Issue: 42, BaseBranch: "main", InitialAdmission: true, OperationID: "admission"}
+	if err := RenewRunWait(layout.BatchDir("owner"), record, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadRunWaitAt(layout.BatchDir("foreign"), "foreign", "row"); err == nil {
 		t.Fatal("foreign batch self-authorized initial intent")
 	}
-	if _, err := TransferRunWait(filepath.Join(root, "batches", "foreign"), filepath.Join(root, "batches", "new"), "row", now); err == nil {
+	if _, err := TransferRunWait(layout, layout.BatchDir("foreign"), layout.BatchDir("new"), "row", now); err == nil {
 		t.Fatal("foreign batch transferred initial intent")
+	}
+}
+
+func TestRunWait_ReadsLeaseAtIndexedRelocatedLocation(t *testing.T) {
+	root := t.TempDir()
+	layout := paths.NewLayout(nil, root)
+	physical := filepath.Join(layout.SandmanDir, "relocated", "frozen-location")
+	if err := (&batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{{
+		ID: "public-batch", Path: physical, Status: batchindex.StatusActive,
+	}}}).Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	record := RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "public-batch", Issue: 42,
+		Branch: "42-fix", BaseBranch: "main", OperationID: "ci:17:head", OperationDeadline: now.Add(time.Hour)}
+	if err := RenewRunWait(physical, record, now); err != nil {
+		t.Fatalf("write relocated lease: %v", err)
+	}
+	read, err := ReadRunWait(physical, record.RunID)
+	if err != nil || read.BatchID != record.BatchID || !read.RecoverableAt(now) {
+		t.Fatalf("read relocated lease = %+v, error=%v", read, err)
+	}
+}
+
+func TestRunWait_TransferPreservesIndexedDestinationIdentity(t *testing.T) {
+	root := t.TempDir()
+	layout := paths.NewLayout(nil, root)
+	destination := filepath.Join(layout.SandmanDir, "relocated", "frozen-destination")
+	if err := (&batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{{
+		ID: "public-destination", Path: destination, Status: batchindex.StatusActive,
+	}}}).Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	record := RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "old", Issue: 42,
+		Branch: "42-fix", BaseBranch: "main", OperationID: "capacity"}
+	if err := RenewRunWait(layout.BatchDir("old"), record, now); err != nil {
+		t.Fatal(err)
+	}
+	moved, err := TransferRunWait(layout, layout.BatchDir("old"), destination, record.RunID, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("transfer relocated lease: %v", err)
+	}
+	if moved.BatchID != "public-destination" {
+		t.Fatalf("transferred BatchID = %q, want public-destination", moved.BatchID)
+	}
+}
+
+func TestRunWait_TransferUsesAuthoritativeLayoutForNestedRelocation(t *testing.T) {
+	root := t.TempDir()
+	layout := paths.NewLayout(nil, root)
+	source := filepath.Join(layout.SandmanDir, "relocated", "deep", "source-dir")
+	destination := filepath.Join(layout.SandmanDir, "relocated", "deeper", "destination-dir")
+	if err := (&batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
+		{ID: "public-source", Path: source, Status: batchindex.StatusActive},
+		{ID: "public-destination", Path: destination, Status: batchindex.StatusActive},
+	}}).Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	record := RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "public-source", Issue: 42,
+		Branch: "42-fix", BaseBranch: "main", OperationID: "capacity"}
+	if err := RenewRunWait(source, record, now); err != nil {
+		t.Fatal(err)
+	}
+
+	moved, err := TransferRunWait(layout, source, destination, record.RunID, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("transfer nested relocated lease: %v", err)
+	}
+	if moved.BatchID != "public-destination" {
+		t.Fatalf("transferred BatchID = %q, want public-destination", moved.BatchID)
+	}
+	if _, err := ReadRunWaitAt(destination, "public-destination", record.RunID); err != nil {
+		t.Fatalf("read transferred nested lease: %v", err)
+	}
+}
+
+func TestRunWait_TransferRejectsUnreadableIndex(t *testing.T) {
+	root := t.TempDir()
+	layout := paths.NewLayout(nil, root)
+	if err := os.MkdirAll(layout.SandmanDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(layout.BatchesIndexPath, []byte("not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	source := layout.BatchDir("old")
+	record := RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "old", Issue: 42,
+		Branch: "42-fix", BaseBranch: "main", OperationID: "capacity"}
+	if err := RenewRunWait(source, record, now); err != nil {
+		t.Fatal(err)
+	}
+	before, err := ReadRunWait(source, record.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := TransferRunWait(layout, source, layout.BatchDir("new"), record.RunID, now); err == nil {
+		t.Fatal("transfer accepted an unreadable batches index")
+	}
+	unchanged, err := ReadRunWait(source, record.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !unchanged.LeaseExpiresAt.Equal(before.LeaseExpiresAt) {
+		t.Fatalf("failed transfer renewed source lease: %v", unchanged.LeaseExpiresAt)
 	}
 }
 
@@ -108,19 +245,20 @@ func TestRunWait_BatchHandoffPreservesQuotaScheduleAndGrace(t *testing.T) {
 			}
 			defer claim.Close()
 			now := time.Now().UTC()
-			oldDir, newDir := filepath.Join(root, "batches", "old"), filepath.Join(root, "batches", "new")
+			layout := paths.NewLayout(nil, root)
+			oldDir, newDir := layout.BatchDir("old"), layout.BatchDir("new")
 			record := RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "old", Issue: 42, Branch: "42-fix", BaseBranch: "main", InitialAdmission: initial, OperationID: "quota:fixed", OperationDeadline: now.Add(3 * time.Minute), NextPollAt: now.Add(2 * time.Minute), UsageLimitProbe: true}
 			if err := RenewRunWait(oldDir, record, now); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := TransferRunWait(oldDir, newDir, "row", now.Add(time.Minute)); err != nil {
+			if _, err := TransferRunWait(layout, oldDir, newDir, "row", now.Add(time.Minute)); err != nil {
 				t.Fatal(err)
 			}
 			moved, err := ReadRunWait(newDir, "row")
 			if err != nil || moved.BatchID != "new" || moved.Ready || !moved.UsageLimitProbe || !moved.OperationDeadline.IsZero() || !moved.NextPollAt.Equal(record.NextPollAt) || moved.OperationID != "quota:row" || !moved.LeaseExpiresAt.Equal(now.Add(time.Minute+RunRecoveryGrace)) {
 				t.Fatalf("handoff lost quota intent or retained a hard estimate: moved=%+v err=%v", moved, err)
 			}
-			if _, err := TransferRunWait(newDir, oldDir, "row", moved.LeaseExpiresAt); err == nil {
+			if _, err := TransferRunWait(layout, newDir, oldDir, "row", moved.LeaseExpiresAt); err == nil {
 				t.Fatal("expired recovery grace received another window")
 			}
 		})

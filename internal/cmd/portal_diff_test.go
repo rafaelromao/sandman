@@ -1779,6 +1779,33 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffDiffRuns_WaitingLifecycleRendersAbortButton(t *testing.T) {
+	js := `const html = fs.readFileSync('portal.html', 'utf8');
+const match = html.match(/function isRunAbortable\(run, abortReservations\) \{[\s\S]*?^    \}/m);
+if (!match) throw new Error('production isRunAbortable predicate missing');
+const productionIsRunAbortable = vm.runInNewContext(match[0] + '\n; isRunAbortable', { String });
+const productionHelpers = Object.assign({}, helpers, { isRunAbortable: productionIsRunAbortable });
+const waitingRun = {
+  key: 'run-2797', kind: 'active', status: 'waiting', waiting: true,
+  issueLabel: '#2797', issueNumber: 2797, runId: 'run-2797', batchKey: 'batch-2797',
+};
+const terminalWaitingRun = Object.assign({}, waitingRun, { finishedAt: '2026-10-13T12:00:00Z' });
+const waitingReservations = new Set();
+if (!productionIsRunAbortable(waitingRun, waitingReservations)) throw new Error('unfinished waiting row should be abortable');
+if (productionIsRunAbortable(terminalWaitingRun, new Set())) throw new Error('terminal waiting row should not be abortable');
+const body = makeMockBody();
+const opts = { helpers: productionHelpers, abortReservations: waitingReservations, expandedKey: null };
+SandmanPortalDiff.diffRuns(body, [waitingRun], opts);
+const row = body.children[0];
+if (!row.querySelector('button[data-action="abort-run"]')) throw new Error('unfinished waiting row should render Abort');
+const terminalBody = makeMockBody();
+SandmanPortalDiff.diffRuns(terminalBody, [terminalWaitingRun], { helpers: productionHelpers, abortReservations: new Set(), expandedKey: null });
+if (terminalBody.children[0].querySelector('button[data-action="abort-run"]')) throw new Error('terminal waiting row should not render Abort');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffDiffRuns_AbortButtonHiddenWhenRunDirSocketVanishes(t *testing.T) {
 	js := `const body = makeMockBody();
 const abortReservations = new Set();
