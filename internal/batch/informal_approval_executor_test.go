@@ -36,6 +36,7 @@ func (f *informalApprovalMergeFactory) NewRunnable(issue *github.Issue, branch s
 func TestInformalApprovalExecutor_WaitsResumesMergesAndReleasesDependent(t *testing.T) {
 	for _, tc := range []struct{ name, body, source string }{
 		{"metrics review", approvingMetricsReview, "top_level"},
+		{"captured approval with CI wait advice", capturedApprovalWithCIWaitAdvice, "top_level"},
 		{"plain approval", "LGTM", "top_level"},
 		{"COMMENTED approval", "Looks good", "COMMENTED"},
 	} {
