@@ -13,6 +13,9 @@ var (
 	reviewFindingClauses           = regexp.MustCompile(`[;\n]|\.\s+`)
 	reviewFindingMetadata          = regexp.MustCompile(`(?i)^(?:scope|metrics?|files?|cognitive complexity|cyclomatic complexity|coverage|tools used)\s*:`)
 	reviewPublicationMarker        = regexp.MustCompile(`(?m)^[ \t]*<!-- sandman-publication:[0-9a-f]{64} -->[ \t]*$`)
+	reviewApprovalContradiction    = regexp.MustCompile(`(?i)\b(?:not\s+(?:yet\s+)?(?:approved|lgtm)|no\s+approval|changes\s+requested|subject\s+to|contingent\b|only\s+(?:if|after|once)|before\s+merging|(?:merge|approve)[^\n.!?]*(?:after|once|until|if|when)\b)`)
+	reviewMetadataRepair           = regexp.MustCompile(`(?i)\b(?:fix(?:ing)?|address(?:ing)?|repair(?:ing)?|resolve|correct|replace|remove|add|change|use|ensure|update|must|please|needs?|should)\b`)
+	reviewQuotedIdentifier         = regexp.MustCompile("`[A-Za-z_][A-Za-z0-9_.]*`")
 )
 
 // reviewDecisionApprovalEvidenceFor returns informal approvals from the active
@@ -114,7 +117,8 @@ func reviewDecisionApprovedBody(body string) bool {
 		return false
 	}
 	if structured {
-		return unambiguousReviewApproval(decision.String()) && !reviewFindingDirective.MatchString(other.String())
+		prose := reviewApprovalProse(other.String())
+		return unambiguousReviewApproval(decision.String()) && !reviewFindingDirective.MatchString(prose) && !reviewApprovalContradiction.MatchString(prose)
 	}
 	// Ordinary informal approval needs no Decision heading. Restrict this
 	// fallback to approval/acknowledgement prose rather than keyword mentions
@@ -154,20 +158,31 @@ func unambiguousReviewApproval(text string) bool {
 
 func noReviewFindings(text string) bool {
 	text = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(text), "-*"))
-	if !reviewDecisionNoFindings.MatchString(text) || reviewDecisionApprovalNegation.MatchString(text) {
+	prose := reviewApprovalProse(text)
+	if !reviewDecisionNoFindings.MatchString(text) || reviewDecisionApprovalNegation.MatchString(prose) {
 		return false
 	}
 	// Examine the entire section: a leading "None" cannot hide another finding.
 	// Descriptive metric commentary may follow a no-findings statement, but
 	// code-anchored feedback, nested finding headings, and repair directives may not.
-	if strings.Contains(text, "#") || reviewFindingDirective.MatchString(text) {
+	if strings.Contains(text, "#") || reviewFindingDirective.MatchString(prose) {
 		return false
 	}
 	for _, clause := range reviewFindingClauses.Split(text, -1) {
 		clause = strings.TrimSpace(clause)
-		if informalFeedbackHasCodeAnchor(clause) && !reviewFindingMetadata.MatchString(clause) {
-			return false
+		if informalFeedbackHasCodeAnchor(clause) {
+			if !reviewFindingMetadata.MatchString(clause) || reviewMetadataRepair.MatchString(reviewApprovalProse(clause)) {
+				return false
+			}
 		}
 	}
 	return true
+}
+
+// A path or quoted identifier named "fix" is scope evidence, not an imperative.
+// Preserve surrounding prose so code formatting cannot hide an actual repair.
+func reviewApprovalProse(text string) string {
+	text = informalFeedbackCodeAnchor.ReplaceAllString(text, "code")
+	text = informalFeedbackLineAnchor.ReplaceAllString(text, "code")
+	return reviewQuotedIdentifier.ReplaceAllString(text, "code")
 }
