@@ -185,13 +185,19 @@ func publicationBody(redacted, triggerKey string) string {
 // Daemon polls the repo for /sandman review comments and launches review
 // agents up to the configured parallel_reviews limit.
 type Daemon struct {
-	BaseDir              string
-	Layout               paths.Layout
-	GitHub               GitHubClient
-	Prompts              Renderer
-	Runner               BatchRunner
-	Config               *config.Config
-	Broadcaster          io.Writer
+	BaseDir     string
+	Layout      paths.Layout
+	GitHub      GitHubClient
+	Prompts     Renderer
+	Runner      BatchRunner
+	Config      *config.Config
+	Broadcaster io.Writer
+	// Console is the terminal running the daemon. Daemon log lines go to it
+	// as well as to Broadcaster; agent transcripts do not, since agents
+	// print to the process stdout themselves. It must accept concurrent
+	// writes. When nil, log lines go to Broadcaster only (stderr when that
+	// is nil too).
+	Console              io.Writer
 	Clock                Clock
 	Trigger              Trigger
 	PollInterval         time.Duration
@@ -1960,7 +1966,10 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) (operationErr erro
 
 		launchErr := d.launchReviewRevision(ctx, prNumber, focus, newest.key, comment.ID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs, state, priorReviewExists, priorReviewContext)
 		if launchErr != nil {
-			d.logf("launch review for PR #%d comment %s: %v", prNumber, comment.ID, launchErr)
+			var reported *reportedLaunchFailure
+			if !errors.As(launchErr, &reported) {
+				d.logf("launch review for PR #%d comment %s: %s", prNumber, comment.ID, summarizeOperationError(launchErr))
+			}
 			// Ctx-cancel before a decision exists: no publication recovery is
 			// recorded, so release the claim and let the next tick re-launch.
 			if errors.Is(launchErr, context.Canceled) || errors.Is(launchErr, context.DeadlineExceeded) {
@@ -3087,15 +3096,30 @@ func (d *Daemon) recordLaunchFailure(ctx context.Context, commentID string, stat
 		d.logf("mark %s failure (attempts=%d, nextAttemptAt=%v): %v", commentID, attempts, stamp, err)
 	}
 	d.SetNextAttemptAt(state.PR(), commentID, stamp)
-	return cause
+	d.logf("review launch failed for PR #%d request %s (attempt %d): %s; retrying at %s",
+		state.PR(), commentID, attempts, summarizeOperationError(cause), stamp.UTC().Format(time.RFC3339))
+	return &reportedLaunchFailure{cause: cause}
 }
 
-// logf writes a line to the broadcaster (or stderr when none is wired).
-// The format is a single timestamped line.
+// reportedLaunchFailure marks a launch failure already logged with its retry
+// time, so the launching goroutine does not log it again. Its text is the
+// cause's, so health evidence is unchanged.
+type reportedLaunchFailure struct{ cause error }
+
+func (e *reportedLaunchFailure) Error() string { return e.cause.Error() }
+func (e *reportedLaunchFailure) Unwrap() error { return e.cause }
+
+// logf writes a line to the console and the broadcaster (or stderr when
+// neither is wired). The format is a single timestamped line.
 func (d *Daemon) logf(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
+	if d.Console != nil {
+		fmt.Fprintln(d.Console, msg)
+	}
 	if d.Broadcaster == nil {
-		fmt.Fprintln(os.Stderr, msg)
+		if d.Console == nil {
+			fmt.Fprintln(os.Stderr, msg)
+		}
 		return
 	}
 	fmt.Fprintln(d.Broadcaster, msg)

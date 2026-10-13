@@ -73,6 +73,9 @@ type healthRepairState struct {
 	// same failures do not relaunch a repair that cannot act on them.
 	AttemptCauses []string `json:"attempt_causes,omitempty"`
 	DeniedCauses  []string `json:"denied_causes,omitempty"`
+	// BudgetReported records that the episode's exhausted budget was
+	// reported, so a restarted daemon does not report it again.
+	BudgetReported bool `json:"budget_reported,omitempty"`
 }
 
 func (d *Daemon) healthStatePath() string { return filepath.Join(d.reviewsDir(), "health-repair.json") }
@@ -218,7 +221,10 @@ func (d *Daemon) startHealthRepair(ctx context.Context, runner repairRunner) {
 			return nil
 		}
 		if state.Attempts >= healthRepairAttempts {
-			d.logf("health repair budget exhausted after %d attempts; original operations still unresolved", state.Attempts)
+			if !state.BudgetReported {
+				state.BudgetReported = true
+				d.logf("health repair budget exhausted after %d attempts; original operations still unresolved. Fix the failure by hand (see docs/usage/reviews.md#health-repair); the daemon keeps retrying and repair is admitted again once every failed operation succeeds", state.Attempts)
+			}
 			return nil
 		}
 		if d.now().Before(state.NextAttempt) {
