@@ -325,3 +325,59 @@ func TestObservedAwaitPersistsCIGenerationWhenReviewDeadlineIsEarlier(t *testing
 		t.Fatalf("latest await lost changed CI generation: %#v", awaits[1].Payload)
 	}
 }
+
+func TestObservedAwaitRetainsOmittedCIWhenReviewChanges(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	previous := map[string]any{
+		"ci_wait": map[string]any{
+			"head_sha":              "head",
+			"pull_request":          17,
+			"execution_id":          "checks-1",
+			"deadline_unix_seconds": now.Add(ciWaitTimeout).Unix(),
+		},
+		"review_request": map[string]any{
+			"head_sha":              "head",
+			"pull_request":          17,
+			"trigger_id":            "review-1",
+			"deadline_unix_seconds": now.Add(5 * time.Minute).Unix(),
+		},
+		"await": true,
+	}
+	observed := map[string]any{
+		"review_request": map[string]any{
+			"head_sha":              "head",
+			"pull_request":          17,
+			"trigger_id":            "review-2",
+			"deadline_unix_seconds": now.Add(10 * time.Minute).Unix(),
+		},
+		"await": true,
+	}
+	log := &spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "row", Issue: 42, Timestamp: now.Add(-time.Minute), Payload: map[string]any{"branch": "42-fix", "batch_id": "batch"}},
+		{Type: "run.await", RunID: "row", Issue: 42, Timestamp: now.Add(-time.Second), Payload: previous},
+	}}
+	e := &runExecutor{deps: runDeps{eventLog: log, layout: paths.NewLayout(nil, t.TempDir()), runSessionOpts: runSessionOptions{now: func() time.Time { return now }}}}
+	row := RowSpec{RunID: "row", IssueNumber: 42, BatchID: "batch", BaseBranch: "main", Branches: map[int]string{42: "42-fix"}}
+	if err := e.persistObservedAwait(context.Background(), row, observed); err != nil {
+		t.Fatal(err)
+	}
+
+	awaits := make([]events.Event, 0, 2)
+	for _, event := range log.snapshot() {
+		if event.Type == "run.await" {
+			awaits = append(awaits, event)
+		}
+	}
+	if len(awaits) != 2 {
+		t.Fatalf("changed review observation was not persisted: %+v", log.snapshot())
+	}
+	latest := awaits[1].Payload
+	ciWait, ok := latest["ci_wait"].(map[string]any)
+	if !ok || ciWait["execution_id"] != "checks-1" || ciWait["deadline_unix_seconds"] != now.Add(ciWaitTimeout).Unix() {
+		t.Fatalf("omitted CI evidence was not retained: %#v", latest)
+	}
+	review, ok := latest["review_request"].(map[string]any)
+	if !ok || review["trigger_id"] != "review-2" || review["deadline_unix_seconds"] != now.Add(10*time.Minute).Unix() {
+		t.Fatalf("changed review evidence was not persisted: %#v", latest)
+	}
+}

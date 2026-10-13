@@ -56,16 +56,35 @@ func (e *runExecutor) persistObservedAwait(ctx context.Context, row RowSpec, ext
 	if e.deps.eventLog == nil {
 		return nil
 	}
+	var previous map[string]any
 	if states, err := events.ReadRunStates(e.deps.eventLog); err != nil {
 		return err
 	} else if state, ok := states[row.RunID]; ok && state.IsAwaiting() && !state.IsCapacityQueued() && state.AwaitEvent != nil {
+		previous = state.AwaitEvent.Payload
 		if !awaitOperationChanged(state.AwaitEvent.Payload, extras) {
 			return nil
 		}
 	}
-	payload := cloneLifecycleExtras(extras)
+	payload := mergeRetainedAwaitEvidence(previous, extras)
 	payload["await"], payload["branch"], payload["base_branch"], payload["batch_id"] = true, row.Branches[row.IssueNumber], row.BaseBranch, row.BatchID
 	return e.deps.eventLog.Log(events.Event{Type: "run.await", Timestamp: newRunSession(e, row).runtimeNow(), RunID: row.RunID, Issue: row.IssueNumber, IssueRef: issueRef(row.IssueNumber), Payload: payload})
+}
+
+func mergeRetainedAwaitEvidence(previous, observed map[string]any) map[string]any {
+	payload := cloneLifecycleExtras(observed)
+	for _, operation := range []string{"ci_wait", "review_request"} {
+		if _, ok := awaitIdentitySignature(payload, operation); ok {
+			continue
+		}
+		value, ok := previous[operation].(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, ok := awaitIdentitySignature(previous, operation); ok {
+			payload[operation] = cloneLifecycleExtras(value)
+		}
+	}
+	return payload
 }
 
 func awaitOperationChanged(previous, observed map[string]any) bool {
