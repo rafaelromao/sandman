@@ -62,13 +62,13 @@ func TestCIExecutionWaitPreservesBoundsAndLegacyBinding(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	s := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
 	pr := &github.PR{Number: 17, State: "open", HeadRefOid: "head", StatusCheckRollup: "pending"}
-	legacy, err := s.ciWaitEvidence(root, pr, "head")
+	legacy, err := s.ciWaitEvidence(context.Background(), root, pr, "head")
 	if err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(time.Hour)
 	pr.CIExecutionID = "new-execution"
-	bound, err := s.ciWaitEvidence(root, pr, "head")
+	bound, err := s.ciWaitEvidence(context.Background(), root, pr, "head")
 	if err != nil || bound["ci_wait"].(map[string]any)["deadline_unix_seconds"] == legacy["ci_wait"].(map[string]any)["deadline_unix_seconds"] {
 		t.Fatalf("legacy wait poisoned first identified execution: evidence=%v error=%v", bound, err)
 	}
@@ -77,7 +77,7 @@ func TestCIExecutionWaitPreservesBoundsAndLegacyBinding(t *testing.T) {
 	for _, identity := range []string{"new-execution", ""} {
 		pr.CIExecutionID = identity
 		restart := &runSession{opts: s.opts}
-		current, err := restart.ciWaitEvidence(root, pr, "head")
+		current, err := restart.ciWaitEvidence(context.Background(), root, pr, "head")
 		if err != nil || current["ci_wait"].(map[string]any)["deadline_unix_seconds"] != deadline {
 			t.Fatalf("restart or unknown identity renewed expired execution: evidence=%v error=%v", current, err)
 		}
@@ -94,7 +94,7 @@ func TestCIExecutionCannotReplaceInvalidWaitState(t *testing.T) {
 	if err := atomicfs.WriteAtomicJSON(path, invalid, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := (&runSession{}).ciWaitEvidence(root, &github.PR{Number: 17, HeadRefOid: "head", StatusCheckRollup: "pending", CIExecutionID: "rerun"}, "head")
+	_, err := (&runSession{}).ciWaitEvidence(context.Background(), root, &github.PR{Number: 17, HeadRefOid: "head", StatusCheckRollup: "pending", CIExecutionID: "rerun"}, "head")
 	if err == nil {
 		t.Fatal("new execution hid invalid durable CI state")
 	}

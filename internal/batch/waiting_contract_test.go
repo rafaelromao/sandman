@@ -458,7 +458,7 @@ func TestWaitingContract_AdmissionToAwaitPreservesOperationAfterCrash(t *testing
 	e := &runExecutor{deps: runDeps{eventLog: log, layout: layout, runSessionOpts: runSessionOptions{now: func() time.Time { return now }}}}
 	row := RowSpec{RunID: "row", IssueNumber: 42, BatchID: "batch", BaseBranch: "main", Branches: map[int]string{42: "42-fix"}}
 	session := newRunSession(e, row)
-	evidence, err := session.ciWaitEvidence(root, &github.PR{Number: 17, HeadRefOid: "head"}, "head")
+	evidence, err := session.ciWaitEvidence(context.Background(), root, &github.PR{Number: 17, HeadRefOid: "head"}, "head")
 	if err != nil {
 		t.Fatal(err)
 	}

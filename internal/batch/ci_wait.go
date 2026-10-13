@@ -33,13 +33,13 @@ type ciWaitRegistration struct {
 	RemediationAttempts  int    `json:"remediation_attempts"`
 }
 
-func (s *runSession) ciWaitEvidence(workDir string, pr *github.PR, headSHA string) (map[string]any, error) {
+func (s *runSession) ciWaitEvidence(ctx context.Context, workDir string, pr *github.PR, headSHA string) (map[string]any, error) {
 	if pr == nil || pr.Number <= 0 || strings.TrimSpace(headSHA) == "" || !strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) {
 		return nil, nil
 	}
 	path := filepath.Join(paths.NewLayout(nil, workDir).StateDir, fmt.Sprintf("%d.ci_wait.json", pr.Number))
 	var evidence map[string]any
-	err := withOperationLock(context.Background(), path, func() error {
+	err := withOperationLock(ctx, path, func() error {
 		registration, err := readCIWaitRegistration(path)
 		if err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("read CI wait state: %w", err)

@@ -18,7 +18,7 @@ import (
 func TestCIWaitIdentityAcrossProcesses(t *testing.T) {
 	if root := os.Getenv("SANDMAN_CI_WAIT_CHILD"); root != "" {
 		fmt.Println("ready")
-		evidence, err := (&runSession{}).ciWaitEvidence(root, &github.PR{Number: 17, HeadRefOid: "head"}, "head")
+		evidence, err := (&runSession{}).ciWaitEvidence(context.Background(), root, &github.PR{Number: 17, HeadRefOid: "head"}, "head")
 		if err != nil {
 			t.Fatal(err)
 		}
