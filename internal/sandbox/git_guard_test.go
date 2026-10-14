@@ -62,6 +62,11 @@ func TestWorktreeSandboxGitGuardDelegatesWithPrependedPath(t *testing.T) {
 	} {
 		t.Run(prefix, func(t *testing.T) {
 			repo := t.TempDir()
+			alias := filepath.Join(t.TempDir(), "repo alias")
+			if err := os.Symlink(repo, alias); err != nil {
+				t.Fatal(err)
+			}
+			repo = alias
 			initGitRepo(t, repo)
 			s := NewWorktreeSandbox(repo, filepath.Join(repo, ".sandman", "worktrees"), "42-path-guard", "main")
 			if err := s.Start(SandboxStart{}); err != nil {
@@ -79,7 +84,13 @@ func TestWorktreeSandboxGitGuardDelegatesWithPrependedPath(t *testing.T) {
 			if err := s.Exec(ctx, command, &stdout, &stderr); err != nil {
 				t.Fatalf("ordinary Git delegation recursed after PATH prefix: %v (%s)", err, stderr.String())
 			}
-			if strings.TrimSpace(stdout.String()) != s.WorkDir() {
+			// Git reports the physical root (for example /private/var on
+			// macOS), while sandbox ownership retains its logical path.
+			physicalWorktree, err := filepath.EvalSymlinks(s.WorkDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.TrimSpace(stdout.String()) != physicalWorktree {
 				t.Fatalf("wrong delegated worktree: %s", stdout.String())
 			}
 			stdout.Reset()
