@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# GitHub supplies the combined matrix result; fail-fast remains disabled so both
-# build entries finish. Missing/unknown results fail closed, just like failures.
+# Separate job results preserve each platform across partial reruns.
+# Missing/unknown results fail closed, just like failures.
 set -eu
 
 require_success() {
@@ -10,7 +10,8 @@ require_success() {
   fi
 }
 
-require_success build "${BUILD_RESULT:-}"
+require_success build-linux "${LINUX_BUILD_RESULT:-}"
+require_success build-macos "${MACOS_BUILD_RESULT:-}"
 require_success portal-continuity-browser "${PORTAL_RESULT:-}"
 require_success goreleaser "${PACKAGING_RESULT:-}"
 

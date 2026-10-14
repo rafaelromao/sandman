@@ -49,7 +49,7 @@ The historical bound on implementation recovery within one executor session: thr
 _Avoid_: durable repair budget, cumulative remediation exhaustion.
 
 **Quality gate**:
-The stable `CI / quality-gate` status combines both default build matrix entries, Portal browser continuity, four-platform snapshot packaging, and semantic PR title validation. Missing, cancelled, failed, or unexpectedly skipped checks reject the gate. Only main-push title validation may skip. Checked-in protection policy is distinct from verified active GitHub enforcement.
+The stable `CI / quality-gate` status combines both independent default platform build jobs, Portal browser continuity, four-platform snapshot packaging, and semantic PR title validation. Missing, cancelled, failed, or unexpectedly skipped checks reject the gate. Only main-push title validation may skip. Checked-in protection policy is distinct from verified active GitHub enforcement.
 
 **CI wait generation**:
 A bounded managed CI observation operation identified by pull request, current

@@ -88,15 +88,92 @@ jobs:
           args: release --snapshot --clean
           version: v2.10.1
 
-  build:
-    runs-on: ${{ matrix.os }}
+  build-linux:
+    name: build (ubuntu-latest)
+    runs-on: ubuntu-latest
     timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Chrome for Portal continuity tests
+        if: runner.os == 'Linux'
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: stable
+          install-dependencies: true
+
+      - name: Install Podman
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: |
+          if command -v podman >/dev/null 2>&1; then
+            echo "Podman already installed: $(podman --version)"
+            exit 0
+          fi
+          sudo env DEBIAN_FRONTEND=noninteractive timeout --signal=TERM --kill-after=30s 3m bash -e -c '
+            apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+            apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o DPkg::Lock::Timeout=120 install -y --no-install-recommends podman
+          '
+
+      - name: Configure Podman runtime
+        if: runner.os == 'Linux'
+        run: |
+          export CONTAINERS_CONF="$RUNNER_TEMP/containers.conf"
+          echo "CONTAINERS_CONF=$CONTAINERS_CONF" >> "$GITHUB_ENV"
+          cat > "$CONTAINERS_CONF" <<'EOF'
+          [engine]
+          runtime = "runc"
+          EOF
+
+      - name: Validate Podman
+        if: runner.os == 'Linux'
+        run: |
+          test "$(podman info --format '{{.Host.OCIRuntime.Name}}')" = "runc"
+          podman run --rm alpine true
+
+      - name: Build
+        run: go build -v ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Staticcheck
+        run: make staticcheck
+
+      - name: Format check
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "The following files need formatting:"
+            gofmt -l .
+            exit 1
+          fi
+
+      - name: Test
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SANDMAN_TEST_PROVIDERS: ""
+          SANDMAN_RUN_SMOKE_E2E: "0"
+          SANDMAN_RUN_AGENT_E2E: "0"
+          SANDMAN_E2E_GATES: ""
+          SANDMAN_REQUIRE_PORTAL_BROWSER: ${{ runner.os == 'Linux' && '1' || '0' }}
+          SANDMAN_PORTAL_CHROMIUM: ${{ steps.setup-chrome.outputs.chrome-path }}
+        run: go test -race -v ./...
+
+  build-macos:
+    name: build (macos-latest)
+    runs-on: macos-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -179,13 +256,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     if: ${{ always() }}
-    needs: [build, portal-continuity-browser, goreleaser, semantic-pull-request]
+    needs: [build-linux, build-macos, portal-continuity-browser, goreleaser, semantic-pull-request]
     steps:
       - uses: actions/checkout@v4
       - name: Require mandatory checks
         env:
           EVENT_NAME: ${{ github.event_name }}
-          BUILD_RESULT: ${{ needs.build.result }}
+          LINUX_BUILD_RESULT: ${{ needs.build-linux.result }}
+          MACOS_BUILD_RESULT: ${{ needs.build-macos.result }}
           PORTAL_RESULT: ${{ needs.portal-continuity-browser.result }}
           PACKAGING_RESULT: ${{ needs.goreleaser.result }}
           TITLE_RESULT: ${{ needs.semantic-pull-request.result }}

@@ -119,7 +119,7 @@ Before submitting a PR, always run `make check` locally.
 - Write tests for new functionality.
 - Keep the domain vocabulary in `CONTEXT.md` in mind when naming things.
 
-The aggregate `CI / quality-gate` requires both build matrix entries, Portal browser coverage, four-platform snapshot packaging, and PR title validation. Title edits rerun CI; superseded runs cancel only within the same PR. Main pushes intentionally skip title validation. Preserve existing required contexts during migration until the aggregate gate is proven and active. See `docs/development/testing.md` for protection verification and application; a checked-in ruleset alone does not prove active enforcement.
+The aggregate `CI / quality-gate` requires both independent platform build jobs, Portal browser coverage, four-platform snapshot packaging, and PR title validation. Title edits rerun CI; superseded runs cancel only within the same PR. Main pushes intentionally skip title validation. Preserve existing required contexts during migration until the aggregate gate is proven and active. See `docs/development/testing.md` for protection verification and application; a checked-in ruleset alone does not prove active enforcement.
 
 ### Conventional Commits
 
