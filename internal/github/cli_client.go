@@ -18,7 +18,7 @@ import (
 )
 
 // DefaultCallTimeout is the default per-call deadline applied to every
-// gh invocation when the caller's context has no deadline. A hung gh
+// gh invocation, capped by an earlier caller deadline. A hung gh
 // cannot wedge the calling goroutine beyond this value. Configurable
 // via WithTimeout when constructing via NewCLIClient.
 const DefaultCallTimeout = 30 * time.Second
@@ -122,12 +122,9 @@ func configureCancelProcessGroup(cmd *exec.Cmd) {
 // CLIClient wraps the gh CLI for GitHub operations.
 //
 // Timeout, when non-zero, is applied as a per-call deadline to every
-// gh invocation whose caller-supplied context has no deadline of its
-// own. A hung gh cannot wedge the calling goroutine beyond Timeout.
-// When the caller passes a context that already has a deadline, that
-// deadline is honoured as-is and Timeout is ignored — a tighter
-// caller-side deadline wins by virtue of context.WithTimeout returning
-// the earlier deadline.
+// gh invocation. Read-only availability failures permit three attempts with
+// bounded backoff; mutations are never availability-retried. A caller deadline
+// caps every attempt and retry without being renewed.
 type CLIClient struct {
 	runner       execRunner
 	RepoOverride string
@@ -178,15 +175,12 @@ func NewCLIClient(opts ...CLIOption) *CLIClient {
 }
 
 // boundContext returns the caller's context, layered with the
-// configured Timeout when the caller's context has no deadline.
+// configured Timeout, capped by any earlier caller deadline.
 // When the configured Timeout is zero (zero-value struct) the caller's
 // context is returned unchanged so unit tests can opt out of the
 // production deadline. The returned cancel func, if non-nil, must be
 // invoked to release the timer.
 func (c *CLIClient) boundContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	if _, hasDeadline := ctx.Deadline(); hasDeadline {
-		return ctx, func() {}
-	}
 	if c.Timeout <= 0 {
 		return ctx, func() {}
 	}
@@ -371,7 +365,7 @@ func (c *CLIClient) runCmd(ctx context.Context, cmd *exec.Cmd, errMsg string) ([
 			return out, commandErr
 		}
 		if err := waitForRateLimit(ctx, rateLimit.RetryAfter); err != nil {
-			return out, err
+			return out, fmt.Errorf("%w: %w", rateLimit, err)
 		}
 		// Rebuild through the client seam so injected runners observe every
 		// request, including rate-limit retries.
@@ -390,9 +384,9 @@ func commandError(ctx context.Context, errMsg string, err error, out []byte) err
 		suffix = "\n" + string(out)
 	}
 	if cerr := ctx.Err(); cerr != nil {
-		return classifyRateLimit(fmt.Errorf("%s (context: %w): %w%s", errMsg, cerr, err, suffix))
+		return classifyCommandError(fmt.Errorf("%s (context: %w): %w%s", errMsg, cerr, err, suffix))
 	}
-	return classifyRateLimit(fmt.Errorf("%s: %w%s", errMsg, err, suffix))
+	return classifyCommandError(fmt.Errorf("%s: %w%s", errMsg, err, suffix))
 }
 
 func classifyRateLimit(err error) error {
@@ -439,10 +433,7 @@ func (c *CLIClient) resolveRepo(ctx context.Context) (string, string, error) {
 		return c.repo.owner, c.repo.name, nil
 	}
 
-	callCtx, cancel := c.boundContext(ctx)
-	defer cancel()
-	cmd := c.command(callCtx, "gh", "repo", "view", "--json", "owner,name")
-	out, err := c.runCmd(callCtx, cmd, "gh repo view")
+	out, err := c.readCommand(ctx, "gh repo view", "repo", "view", "--json", "owner,name")
 	if err != nil {
 		return "", "", fmt.Errorf("gh repo view: %w", err)
 	}
@@ -534,10 +525,7 @@ func (c *CLIClient) FetchPR(ctx context.Context, number int) (*PR, error) {
 		return nil, err
 	}
 
-	callCtx, cancel := c.boundContext(ctx)
-	defer cancel()
-	cmd := c.command(callCtx, "gh", "pr", "view", fmt.Sprintf("%d", number), "--json", "number,title,body,state,mergedAt,headRefName,headRefOid,closingIssuesReferences")
-	out, err := c.runCmd(callCtx, cmd, "gh pr view")
+	out, err := c.readCommand(ctx, "gh pr view", "pr", "view", fmt.Sprintf("%d", number), "--json", "number,title,body,state,mergedAt,headRefName,headRefOid,closingIssuesReferences")
 	if err != nil {
 		return nil, fmt.Errorf("gh pr view: %w", err)
 	}
@@ -573,10 +561,7 @@ func (c *CLIClient) fetchPRClosingIssueNumbers(ctx context.Context, number int) 
 		return nil, err
 	}
 	query := `query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){closingIssuesReferences(first:100){nodes{number}}}}}`
-	callCtx, cancel := c.boundContext(ctx)
-	defer cancel()
-	cmd := c.command(callCtx, "gh", "api", "graphql", "-F", "owner="+owner, "-F", "repo="+repo, "-F", fmt.Sprintf("number=%d", number), "-f", "query="+query)
-	out, err := c.runCmd(callCtx, cmd, "gh api graphql")
+	out, err := c.readCommand(ctx, "gh api graphql", "api", "graphql", "-F", "owner="+owner, "-F", "repo="+repo, "-F", fmt.Sprintf("number=%d", number), "-f", "query="+query)
 	if err != nil {
 		return nil, err
 	}
@@ -629,10 +614,7 @@ func (c *CLIClient) FetchIssueDependencies(ctx context.Context, number int) ([]i
 
 // FindPRByBranch finds the most recent pull request for a branch via gh CLI.
 func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, error) {
-	callCtx, cancel := c.boundContext(ctx)
-	defer cancel()
-	cmd := c.command(callCtx, "gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number,state,body,mergedAt,headRefName,headRefOid,updatedAt,reviewDecision,mergeStateStatus,statusCheckRollup", "--limit", "1")
-	out, err := c.runCmd(callCtx, cmd, "gh pr list")
+	out, err := c.readCommand(ctx, "gh pr list", "pr", "list", "--head", branch, "--state", "all", "--json", "number,state,body,mergedAt,headRefName,headRefOid,updatedAt,reviewDecision,mergeStateStatus,statusCheckRollup", "--limit", "1")
 	if err != nil {
 		return nil, fmt.Errorf("gh pr list: %w", err)
 	}
@@ -675,10 +657,7 @@ const prListPageLimit = "1000"
 
 // ListOpenPRs lists all open pull requests in the current repo via gh CLI.
 func (c *CLIClient) ListOpenPRs(ctx context.Context) ([]PR, error) {
-	callCtx, cancel := c.boundContext(ctx)
-	defer cancel()
-	cmd := c.command(callCtx, "gh", "pr", "list", "--state", "open", "--json", "number,state,title,body,mergedAt,headRefName,headRefOid,updatedAt", "--limit", prListPageLimit)
-	out, err := c.runCmd(callCtx, cmd, "gh pr list")
+	out, err := c.readCommand(ctx, "gh pr list", "pr", "list", "--state", "open", "--json", "number,state,title,body,mergedAt,headRefName,headRefOid,updatedAt", "--limit", prListPageLimit)
 	if err != nil {
 		return nil, fmt.Errorf("gh pr list: %w", err)
 	}
@@ -749,10 +728,7 @@ type authenticatedUserPayload struct {
 // AuthenticatedLogin returns the login for the GitHub user authenticated to
 // the gh CLI. A blank login is rejected so callers can fail closed.
 func (c *CLIClient) AuthenticatedLogin(ctx context.Context) (string, error) {
-	callCtx, cancel := c.boundContext(ctx)
-	defer cancel()
-	cmd := c.command(callCtx, "gh", "api", "user")
-	out, err := c.runCmd(callCtx, cmd, "gh api authenticated user")
+	out, err := c.readCommand(ctx, "gh api authenticated user", "api", "user")
 	if err != nil {
 		return "", fmt.Errorf("gh api authenticated user: %w", err)
 	}
@@ -782,10 +758,7 @@ func (c *CLIClient) ListPRComments(ctx context.Context, number int) ([]PRComment
 	}
 
 	path := fmt.Sprintf("repos/%s/%s/issues/%d/comments?per_page=%s&sort=created&direction=asc", owner, repo, number, prCommentPageSize)
-	callCtx, cancel := c.boundContext(ctx)
-	defer cancel()
-	cmd := c.command(callCtx, "gh", "api", path, "--paginate")
-	out, err := c.runCmd(callCtx, cmd, "gh api pr comments")
+	out, err := c.readCommand(ctx, "gh api pr comments", "api", path, "--paginate")
 	if err != nil {
 		return nil, fmt.Errorf("gh api pr comments: %w", err)
 	}
@@ -829,9 +802,7 @@ func (c *CLIClient) ListPRReviews(ctx context.Context, number int) ([]PRReview, 
 		return nil, err
 	}
 	path := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews?per_page=%s", owner, repo, number, prCommentPageSize)
-	callCtx, cancel := c.boundContext(ctx)
-	defer cancel()
-	out, err := c.runCmd(callCtx, c.command(callCtx, "gh", "api", path, "--paginate"), "gh api pr reviews")
+	out, err := c.readCommand(ctx, "gh api pr reviews", "api", path, "--paginate")
 	if err != nil {
 		return nil, fmt.Errorf("gh api pr reviews: %w", err)
 	}
@@ -862,9 +833,7 @@ func (c *CLIClient) ListPRReviewComments(ctx context.Context, number int) ([]PRR
 		return nil, err
 	}
 	path := fmt.Sprintf("repos/%s/%s/pulls/%d/comments?per_page=%s", owner, repo, number, prCommentPageSize)
-	callCtx, cancel := c.boundContext(ctx)
-	defer cancel()
-	out, err := c.runCmd(callCtx, c.command(callCtx, "gh", "api", path, "--paginate"), "gh api pr review comments")
+	out, err := c.readCommand(ctx, "gh api pr review comments", "api", path, "--paginate")
 	if err != nil {
 		return nil, fmt.Errorf("gh api pr review comments: %w", err)
 	}
@@ -899,10 +868,7 @@ func (c *CLIClient) ListIssueComments(ctx context.Context, number int) ([]IssueC
 	}
 
 	path := fmt.Sprintf("repos/%s/%s/issues/%d/comments?per_page=%s&sort=created&direction=asc", owner, repo, number, prCommentPageSize)
-	callCtx, cancel := c.boundContext(ctx)
-	defer cancel()
-	cmd := c.command(callCtx, "gh", "api", path, "--paginate")
-	out, err := c.runCmd(callCtx, cmd, "gh api issue comments")
+	out, err := c.readCommand(ctx, "gh api issue comments", "api", path, "--paginate")
 	if err != nil {
 		return nil, fmt.Errorf("gh api issue comments: %w", err)
 	}
@@ -952,10 +918,7 @@ func (c *CLIClient) ListSubIssues(ctx context.Context, parent int) ([]int, error
 	}
 
 	path := fmt.Sprintf("repos/%s/%s/issues/%d/sub_issues?per_page=%s", owner, repo, parent, prCommentPageSize)
-	callCtx, cancel := c.boundContext(ctx)
-	defer cancel()
-	cmd := c.command(callCtx, "gh", "api", path, "--paginate")
-	out, err := c.runCmd(callCtx, cmd, "gh api sub issues")
+	out, err := c.readCommand(ctx, "gh api sub issues", "api", path, "--paginate")
 	if err != nil {
 		return nil, fmt.Errorf("gh api sub issues: %w", err)
 	}
@@ -989,10 +952,7 @@ func (c *CLIClient) ListSubIssues(ctx context.Context, parent int) ([]int, error
 }
 
 func (c *CLIClient) fetchIssuePayload(ctx context.Context, owner, repo string, number int) (issuePayload, error) {
-	callCtx, cancel := c.boundContext(ctx)
-	defer cancel()
-	cmd := c.command(callCtx, "gh", "api", "-H", "Accept: application/vnd.github+json", fmt.Sprintf("repos/%s/%s/issues/%d", owner, repo, number))
-	out, err := c.runCmd(callCtx, cmd, "gh api issue")
+	out, err := c.readCommand(ctx, "gh api issue", "api", "-H", "Accept: application/vnd.github+json", fmt.Sprintf("repos/%s/%s/issues/%d", owner, repo, number))
 	if err != nil {
 		return issuePayload{}, fmt.Errorf("gh api issue: %w", err)
 	}
@@ -1028,11 +988,8 @@ func (c *CLIClient) fetchIssueDependencies(ctx context.Context, owner, repo stri
 		return current, nil
 	}
 
-	callCtx, cancel := c.boundContext(ctx)
-	defer cancel()
 	path := fmt.Sprintf("repos/%s/%s/issues/%d/events", owner, repo, number)
-	cmd := c.command(callCtx, "gh", "api", "-H", "Accept: application/vnd.github+json", path)
-	out, err := c.runCmd(callCtx, cmd, "gh api issue events")
+	out, err := c.readCommand(ctx, "gh api issue events", "api", "-H", "Accept: application/vnd.github+json", path)
 	if err != nil {
 		return nil, fmt.Errorf("gh api issue events: %w", err)
 	}
@@ -1051,11 +1008,8 @@ func (c *CLIClient) fetchIssueDependencies(ctx context.Context, owner, repo stri
 // REST endpoint. A successful empty response and an error both leave the
 // caller to use the compatibility events fallback.
 func (c *CLIClient) fetchIssueDependencyBlockers(ctx context.Context, owner, repo string, number int) ([]int, error) {
-	callCtx, cancel := c.boundContext(ctx)
-	defer cancel()
 	path := fmt.Sprintf("repos/%s/%s/issues/%d/dependencies/blocked_by", owner, repo, number)
-	cmd := c.command(callCtx, "gh", "api", "-H", "Accept: application/vnd.github+json", path)
-	out, err := c.runCmd(callCtx, cmd, "gh api issue dependencies blocked_by")
+	out, err := c.readCommand(ctx, "gh api issue dependencies blocked_by", "api", "-H", "Accept: application/vnd.github+json", path)
 	if err != nil {
 		return nil, err
 	}
@@ -1347,10 +1301,7 @@ func removeIssueNumber(numbers []int, target int) []int {
 // call sites (unbounded ranges, label/query selection) depend on a
 // deterministic ascending order to produce stable batches.
 func (c *CLIClient) SearchIssues(ctx context.Context, query string) ([]Issue, error) {
-	callCtx, cancel := c.boundContext(ctx)
-	defer cancel()
-	cmd := c.command(callCtx, "gh", "issue", "list", "--search", query, "--json", "number,state,title,body,labels", "--limit", "1000")
-	out, err := c.runCmd(callCtx, cmd, "gh issue list")
+	out, err := c.readCommand(ctx, "gh issue list", "issue", "list", "--search", query, "--json", "number,state,title,body,labels", "--limit", "1000")
 	if err != nil {
 		return nil, fmt.Errorf("gh issue list: %w", err)
 	}
@@ -1412,10 +1363,7 @@ func (c *CLIClient) ListOpenIssues(ctx context.Context) ([]Issue, error) {
 	}
 
 	path := fmt.Sprintf("repos/%s/%s/issues?state=open&per_page=100", owner, repo)
-	callCtx, cancel := c.boundContext(ctx)
-	defer cancel()
-	cmd := c.command(callCtx, "gh", "api", path, "--paginate")
-	out, err := c.runCmd(callCtx, cmd, "gh api issues")
+	out, err := c.readCommand(ctx, "gh api issues", "api", path, "--paginate")
 	if err != nil {
 		return nil, fmt.Errorf("gh api issues: %w", err)
 	}

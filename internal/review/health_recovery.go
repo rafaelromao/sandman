@@ -124,7 +124,7 @@ func (d *Daemon) observeHealthFailure(ctx context.Context, key, operation string
 	runner, ok := d.Runner.(repairRunner)
 	if !ok || err == nil || ctx.Err() != nil || errors.Is(err, context.Canceled) ||
 		errors.Is(err, batch.ErrAborted) || errors.Is(err, errReviewDeferred) || errors.Is(err, reviewlaunch.ErrLaunchOwned) ||
-		github.IsRateLimited(err) || d.isQuotaError(err) || d.isQuotaPaused() ||
+		github.IsRateLimited(err) || healthGitHubUnavailable(operation, err) || d.isQuotaError(err) || d.isQuotaPaused() ||
 		// A review agent started in a read-only permission mode: repair cannot
 		// change its settings or the administrator's policy, and the launch
 		// backoff already retries the request.
@@ -150,6 +150,22 @@ func (d *Daemon) observeHealthFailure(ctx context.Context, key, operation string
 		return
 	}
 	d.startHealthRepair(ctx, runner)
+}
+
+func healthGitHubUnavailable(operation string, err error) bool {
+	var unavailable *github.AvailabilityError
+	if errors.As(err, &unavailable) {
+		return true
+	}
+	// Compatibility clients may return raw transport errors. Limit inference
+	// to operations whose source is unambiguously GitHub; launch/publication
+	// paths can also fail locally and require transport-origin evidence.
+	switch operation {
+	case "authenticated GitHub login", "list open PRs", "observe review requests", "observe pending review publication":
+		return github.IsTransient(err)
+	default:
+		return false
+	}
 }
 
 func (d *Daemon) startHealthRepair(ctx context.Context, runner repairRunner) {
