@@ -15,7 +15,8 @@
           { "context": "CI / build (ubuntu-latest)" },
           { "context": "CI / build (macos-latest)" },
           { "context": "CI / portal-continuity-browser" },
-          { "context": "CI / semantic-pull-request" }
+          { "context": "CI / semantic-pull-request" },
+          { "context": "CI / quality-gate" }
         ],
         "strict_required_status_checks_policy": false
       }

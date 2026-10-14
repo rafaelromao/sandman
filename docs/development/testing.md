@@ -348,3 +348,58 @@ For stranded worktrees, see [`sandman stranded`](../usage/commands.md#sandman-st
 ## Deeper test infrastructure
 
 For hermetic `gh` shims, fast-mode blocking shims, short Unix-socket paths, canonical test env vars, parallel test rules, and portal live-run invariants, see [Test Infrastructure](test-infrastructure.md).
+
+## Quality gate and protection migration
+
+`CI / quality-gate` runs with `always()` after `build`,
+`portal-continuity-browser`, `goreleaser`, and `semantic-pull-request`.
+Only success is accepted, except the intentional skipped title check on a main
+push. `build` has `fail-fast: false`: GitHub aggregates both matrix entries;
+one failure cannot be hidden by the other entry succeeding. The snapshot uses
+Go from `go.mod` and GoReleaser v2.10.1 to package all four configured platforms
+on PRs and main pushes. It never publishes a release.
+
+Jobs are bounded at 25 minutes (build), 20 (packaging), 15 (browser), 5 (title),
+and 2 (aggregate), keeping the parallel required path within the managed
+30-minute observation budget under normal runner availability. Queue delays
+remain outside job timeout control. PR events include opened, synchronize,
+reopened, and edited, with no target-branch filter. Concurrency cancels only
+superseded runs of the same PR; each main push has an independent group.
+
+Run `go test ./scripts` for workflow contracts and the hermetic evaluator tests.
+Those tests execute the same `scripts/quality_gate.sh` used by Actions with
+failed, cancelled, skipped, absent, and unknown dependency results. Ordinary PR
+CI retains the opt-in provider/smoke/E2E exclusions and existing runtime guards.
+
+### Verify and apply active protection
+
+The JSON in `.github/rulesets/main.json` is desired policy, not evidence of
+active protection. On 2026-10-14 the connected GitHub API returned an empty
+repository ruleset list, and reading legacy main branch protection returned
+403 `Resource not accessible by integration`. Enforcement is therefore
+**unverified**, not established as absent or successfully applied.
+
+An authorized maintainer must perform the following migration:
+
+1. Read both repository/organization rulesets and legacy protection for `main`
+   in GitHub Settings (Rules / Rulesets and Branches), or with an administrative
+   credential using `gh api repos/rafaelromao/sandman/rulesets`,
+   `gh api repos/rafaelromao/sandman/rules/branches/main`, and
+   `gh api repos/rafaelromao/sandman/branches/main/protection`. Record the active
+   rule IDs, enforcement, required context names and check-source integration,
+   bypass permissions, and any access limitations. A 403/404 is not verification.
+2. Observe a PR run and a main-push run of the new workflow. Confirm exact check
+   names from GitHub, both matrix entries, packaging, and the aggregate result;
+   confirm title edits rerun validation and invalid titles block the gate.
+3. Add the observed `quality-gate` context to the existing active policy in the
+   UI, preserving every currently required context and restriction. The checked-in
+   JSON retains the previous four contexts plus `CI / quality-gate`; use the
+   actual emitted check context (and Actions integration) shown by GitHub.
+   Do not overwrite existing protection by blindly importing this JSON. If no
+   policy exists, create an active ruleset for `refs/heads/main` using this file
+   as the baseline and preserve any applicable organization requirements.
+4. Re-read the effective rules and verify the merge UI blocks a failed aggregate
+   gate for a maintainer without bypass. Record the policy/run links and result.
+   Keep the old contexts until the aggregate gate is proven and active; removing
+   them is a separate reviewed migration. If access is unavailable, leave the
+   verification pending and document the limitation explicitly.

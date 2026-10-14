@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"testing"
@@ -619,4 +621,110 @@ func readRepositoryFile(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(contents)
+}
+
+func TestQualityGateRejectsUnsuccessfulDependencies(t *testing.T) {
+	for _, event := range []string{"pull_request", "push"} {
+		base := map[string]string{"BUILD_RESULT": "success", "PORTAL_RESULT": "success", "PACKAGING_RESULT": "success", "TITLE_RESULT": "success"}
+		if event == "push" {
+			base["TITLE_RESULT"] = "skipped"
+		}
+		run := func(t *testing.T, values map[string]string, wantSuccess bool) {
+			t.Helper()
+			cmd := exec.Command("bash", "quality_gate.sh")
+			// Isolate the evaluator from ambient job results and provider credentials.
+			cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "EVENT_NAME=" + event}
+			for key, value := range values {
+				cmd.Env = append(cmd.Env, key+"="+value)
+			}
+			output, err := cmd.CombinedOutput()
+			if (err == nil) != wantSuccess {
+				t.Fatalf("success=%t, want %t: %v\n%s", err == nil, wantSuccess, err, output)
+			}
+		}
+		t.Run(event+"/all-required-pass", func(t *testing.T) { run(t, base, true) })
+		for key := range base {
+			for _, result := range []string{"failure", "cancelled", "skipped", "", "unknown"} {
+				t.Run(fmt.Sprintf("%s/%s/%s", event, key, result), func(t *testing.T) {
+					values := make(map[string]string)
+					for k, v := range base {
+						values[k] = v
+					}
+					if result == "" {
+						delete(values, key)
+					} else {
+						values[key] = result
+					}
+					run(t, values, event == "push" && key == "TITLE_RESULT" && result == "skipped")
+				})
+			}
+		}
+	}
+}
+
+func TestCIQualityGateWorkflowContract(t *testing.T) {
+	ci := readRepositoryFile(t, "../.github/workflows/go.yml")
+	for _, required := range []string{
+		"types: [opened, synchronize, reopened, edited]",
+		"group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}",
+		"cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+		"needs: [build, portal-continuity-browser, goreleaser, semantic-pull-request]",
+		"if: ${{ always() }}", "run: bash scripts/quality_gate.sh",
+		"BUILD_RESULT: ${{ needs.build.result }}",
+		"PORTAL_RESULT: ${{ needs.portal-continuity-browser.result }}",
+		"PACKAGING_RESULT: ${{ needs.goreleaser.result }}",
+		"TITLE_RESULT: ${{ needs.semantic-pull-request.result }}",
+		"EVENT_NAME: ${{ github.event_name }}",
+	} {
+		if !strings.Contains(ci, required) {
+			t.Errorf("CI missing %q", required)
+		}
+	}
+	for job, minutes := range map[string]int{"build": 25, "goreleaser": 20, "portal-continuity-browser": 15, "semantic-pull-request": 5, "quality-gate": 2} {
+		block := extractCIJob(t, ci, job)
+		if !strings.Contains(block, fmt.Sprintf("timeout-minutes: %d", minutes)) {
+			t.Errorf("%s missing bounded timeout", job)
+		}
+		if strings.Contains(block, "continue-on-error:") {
+			t.Errorf("%s must not tolerate failures", job)
+		}
+		if job != "semantic-pull-request" && regexp.MustCompile(`(?m)^    if:`).MatchString(block) && job != "quality-gate" {
+			t.Errorf("%s must run for PRs and main pushes", job)
+		}
+	}
+	gate := extractCIJob(t, ci, "quality-gate")
+	if !strings.Contains(gate, "if: ${{ always() }}") || !strings.Contains(gate, "needs: [build, portal-continuity-browser, goreleaser, semantic-pull-request]") {
+		t.Fatal("aggregate must always evaluate all mandatory dependencies")
+	}
+	title := extractCIJob(t, ci, "semantic-pull-request")
+	if !strings.Contains(title, "if: github.event_name == 'pull_request'") {
+		t.Fatal("title check must skip only events without a PR title")
+	}
+	build := extractCIJob(t, ci, "build")
+	if !strings.Contains(build, "fail-fast: false") || !strings.Contains(build, "- ubuntu-latest") || !strings.Contains(build, "- macos-latest") {
+		t.Fatal("both build matrix entries must finish and contribute to the aggregate result")
+	}
+	packaging := extractCIJob(t, ci, "goreleaser")
+	setup, release := strings.Index(packaging, "uses: actions/setup-go@v5"), strings.Index(packaging, "uses: goreleaser/goreleaser-action@v6")
+	if setup < 0 || release < setup || !strings.Contains(packaging, "go-version-file: go.mod") || !strings.Contains(packaging, "version: v2.10.1") || !strings.Contains(packaging, "args: release --snapshot --clean") {
+		t.Fatal("mandatory snapshot must explicitly set up Go and use the release tool version")
+	}
+	if !strings.Contains(readRepositoryFile(t, "../.github/rulesets/main.json"), `"context": "CI / quality-gate"`) {
+		t.Fatal("desired protection must include aggregate gate")
+	}
+}
+
+func extractCIJob(t *testing.T, workflow, job string) string {
+	t.Helper()
+	header := "\n  " + job + ":\n"
+	start := strings.Index(workflow, header)
+	if start < 0 {
+		t.Fatalf("missing job %s", job)
+	}
+	rest := workflow[start+len(header):]
+	next := regexp.MustCompile(`(?m)^  [a-z][a-z-]*:`).FindStringIndex(rest)
+	if next != nil {
+		return rest[:next[0]]
+	}
+	return rest
 }

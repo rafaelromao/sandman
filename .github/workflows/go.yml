@@ -4,10 +4,17 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+# Superseded runs cancel only within the same PR; main pushes remain independent.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   semantic-pull-request:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     if: github.event_name == 'pull_request'
     env:
       TITLE: ${{ github.event.pull_request.title }}
@@ -39,6 +46,7 @@ jobs:
 
   portal-continuity-browser:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -67,18 +75,22 @@ jobs:
 
   goreleaser:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
       - uses: goreleaser/goreleaser-action@v6
         with:
           args: release --snapshot --clean
-          version: latest
+          version: v2.10.1
 
   build:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -162,3 +174,19 @@ jobs:
           SANDMAN_REQUIRE_PORTAL_BROWSER: ${{ runner.os == 'Linux' && '1' || '0' }}
           SANDMAN_PORTAL_CHROMIUM: ${{ steps.setup-chrome.outputs.chrome-path }}
         run: go test -race -v ./...
+
+  quality-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    if: ${{ always() }}
+    needs: [build, portal-continuity-browser, goreleaser, semantic-pull-request]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require mandatory checks
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          PORTAL_RESULT: ${{ needs.portal-continuity-browser.result }}
+          PACKAGING_RESULT: ${{ needs.goreleaser.result }}
+          TITLE_RESULT: ${{ needs.semantic-pull-request.result }}
+        run: bash scripts/quality_gate.sh
