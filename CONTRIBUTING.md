@@ -34,7 +34,7 @@ For suggestions related to agent behavior, prompts, or domain vocabulary, use th
 - Change requests branch from `main`. Direct pushes to `main` are blocked by the repository's GitHub Ruleset.
 - Ensure the change-request description clearly describes the problem and solution.
 - Reference the issue this change request addresses in the body (`Closes #<n>`, `Fixes #<n>`, or `Resolves #<n>`), not in the title.
-- Ensure all CI checks pass. The merge button only enables after `CI / build`, `CI / portal-continuity-browser`, and `CI / semantic-pull-request` are green. CI runs on pull requests to any branch, not only on pull requests targeting `main`, so stacked and feature-branch change requests receive the same checks before they reach `main`.
+- Ensure all CI checks pass. The checked-in ruleset requires `CI / quality-gate` alongside the existing `CI / build`, `CI / portal-continuity-browser`, and `CI / semantic-pull-request` contexts. Active enforcement must be verified using the procedure in [testing.md](docs/development/testing.md#quality-gate-and-protection-migration). CI runs on pull requests to any branch, not only on pull requests targeting `main`, so stacked and feature-branch change requests receive the same checks before they reach `main`.
 - For the post-merge release procedure and versioning policy, see the [Releasing guide](docs/development/releasing.md).
 
 ### Release automation
@@ -118,6 +118,8 @@ Before submitting a PR, always run `make check` locally.
 - Run `go vet ./...` and `GOTOOLCHAIN=go1.25.0 go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...` via `make check`; resolve all warnings.
 - Write tests for new functionality.
 - Keep the domain vocabulary in `CONTEXT.md` in mind when naming things.
+
+The aggregate `CI / quality-gate` requires both independent platform build jobs, Portal browser coverage, four-platform snapshot packaging, and PR title validation. Title edits rerun CI; superseded runs cancel only within the same PR. Main pushes intentionally skip title validation. Preserve existing required contexts during migration until the aggregate gate is proven and active. See `docs/development/testing.md` for protection verification and application; a checked-in ruleset alone does not prove active enforcement.
 
 ### Conventional Commits
 

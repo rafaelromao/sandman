@@ -103,7 +103,7 @@ Sandman publishes four GoReleaser targets that match the four Unix platforms Ope
 | macOS amd64 (Intel) | n/a (covered transitively by `CI / build (macos-latest)` arm64 today) | n/a — release-please does not run Podman on macOS after #2459 | `Native Compatibility / (darwin/amd64)` on `macos-15-intel` (release-please branch + dispatch) |
 | macOS arm64 (Apple Silicon) | `CI / build (macos-latest)` (PR + push to `main`) | n/a | `Native Compatibility / (darwin/arm64)` on `macos-14` (release-please branch + dispatch) |
 
-The ordinary `CI` workflow runs the default untagged suite on the `ubuntu-latest` and `macos-latest` runners. It explicitly leaves `SANDMAN_TEST_PROVIDERS`, `SANDMAN_E2E_GATES`, `SANDMAN_RUN_SMOKE_E2E`, and `SANDMAN_RUN_AGENT_E2E` disabled, so pull requests do not run opt-in smoke or E2E scenarios.
+The ordinary `CI` workflow uses independent platform jobs to run the default untagged suite on the `ubuntu-latest` and `macos-latest` runners. It explicitly leaves `SANDMAN_TEST_PROVIDERS`, `SANDMAN_E2E_GATES`, `SANDMAN_RUN_SMOKE_E2E`, and `SANDMAN_RUN_AGENT_E2E` disabled, so pull requests do not run opt-in smoke or E2E scenarios.
 
 The required `CI / portal-continuity-browser` job provisions Node and Chromium on Linux and runs the actual-page Portal log continuity browser scenarios. Its separate required status keeps the browser gate visible in branch protection on pull requests and pushes to `main`.
 
@@ -112,7 +112,7 @@ Release Please branch updates add two release-validation workflows:
 - `Full Regression - Linux` is the exhaustive authority for Linux. It runs the race-enabled unit suite, every smoke provider and build-tools preset, and every E2E gate including real-agent coverage with the canonical 60- and 90-minute budgets.
 - `Native Compatibility` is a focused suite with three parallel arch-specific jobs — `Native Compatibility (darwin/amd64)` on `macos-15-intel`, `Native Compatibility (darwin/arm64)` on `macos-14`, and `Native Compatibility (linux/arm64)` on `ubuntu-24.04-arm`. Each job builds Sandman natively for its arch, then exercises Darwin/Linux socket paths plus portal and attach streaming, and verifies the native portal and attach streaming boundary through two hermetic portal E2E cases. Linux-container preset portability remains covered by the Linux workflow rather than being rebuilt inside the macOS Podman VM.
 
-The contract test `TestPlatformCoverageMapMatchesWorkflowsAndGoReleaser` enforces that the CI matrix, the `Native Compatibility` workflow shape, the `Full Regression - Linux` exhaustive command, and the four `.goreleaser.yml` build IDs all stay aligned with the matrix above. A drift in any one of those four sources fails the contract.
+The contract test `TestPlatformCoverageMapMatchesWorkflowsAndGoReleaser` enforces that the CI platform jobs, the `Native Compatibility` workflow shape, the `Full Regression - Linux` exhaustive command, and the four `.goreleaser.yml` build IDs all stay aligned with the matrix above. A drift in any one of those four sources fails the contract.
 
 ### Full regression (`SANDMAN_FULL_REGRESSION`)
 
@@ -348,3 +348,60 @@ For stranded worktrees, see [`sandman stranded`](../usage/commands.md#sandman-st
 ## Deeper test infrastructure
 
 For hermetic `gh` shims, fast-mode blocking shims, short Unix-socket paths, canonical test env vars, parallel test rules, and portal live-run invariants, see [Test Infrastructure](test-infrastructure.md).
+
+## Quality gate and protection migration
+
+`CI / quality-gate` runs with `always()` after `build-linux`, `build-macos`,
+`portal-continuity-browser`, `goreleaser`, and `semantic-pull-request`.
+Only success is accepted, except the intentional skipped title check on a main
+push. The independent `build-linux` and `build-macos` jobs preserve the existing
+`build (ubuntu-latest)` and `build (macos-latest)` check names. Each is a direct
+gate dependency, so a partial rerun of one platform cannot hide the other
+platform's failure through GitHub's matrix-result aggregation. The snapshot uses
+Go from `go.mod` and GoReleaser v2.10.1 to package all four configured platforms
+on PRs and main pushes. It never publishes a release.
+
+Jobs are bounded at 25 minutes (build), 20 (packaging), 15 (browser), 5 (title),
+and 2 (aggregate), keeping the parallel required path within the managed
+30-minute observation budget under normal runner availability. Queue delays
+remain outside job timeout control. PR events include opened, synchronize,
+reopened, and edited, with no target-branch filter. Concurrency cancels only
+superseded runs of the same PR; each main push has an independent group.
+
+Run `go test ./scripts` for workflow contracts and the hermetic evaluator tests.
+Those tests execute the same `scripts/quality_gate.sh` used by Actions with
+failed, cancelled, skipped, absent, and unknown dependency results. Ordinary PR
+CI retains the opt-in provider/smoke/E2E exclusions and existing runtime guards.
+
+### Verify and apply active protection
+
+The JSON in `.github/rulesets/main.json` is desired policy, not evidence of
+active protection. On 2026-10-14 the connected GitHub API returned an empty
+repository ruleset list, and reading legacy main branch protection returned
+403 `Resource not accessible by integration`. Enforcement is therefore
+**unverified**, not established as absent or successfully applied.
+
+An authorized maintainer must perform the following migration:
+
+1. Read both repository/organization rulesets and legacy protection for `main`
+   in GitHub Settings (Rules / Rulesets and Branches), or with an administrative
+   credential using `gh api repos/rafaelromao/sandman/rulesets`,
+   `gh api repos/rafaelromao/sandman/rules/branches/main`, and
+   `gh api repos/rafaelromao/sandman/branches/main/protection`. Record the active
+   rule IDs, enforcement, required context names and check-source integration,
+   bypass permissions, and any access limitations. A 403/404 is not verification.
+2. Observe a PR run and a main-push run of the new workflow. Confirm exact check
+   names from GitHub, both matrix entries, packaging, and the aggregate result;
+   confirm title edits rerun validation and invalid titles block the gate.
+3. Add the observed `quality-gate` context to the existing active policy in the
+   UI, preserving every currently required context and restriction. The checked-in
+   JSON retains the previous four contexts plus `CI / quality-gate`; use the
+   actual emitted check context (and Actions integration) shown by GitHub.
+   Do not overwrite existing protection by blindly importing this JSON. If no
+   policy exists, create an active ruleset for `refs/heads/main` using this file
+   as the baseline and preserve any applicable organization requirements.
+4. Re-read the effective rules and verify the merge UI blocks a failed aggregate
+   gate for a maintainer without bypass. Record the policy/run links and result.
+   Keep the old contexts until the aggregate gate is proven and active; removing
+   them is a separate reviewed migration. If access is unavailable, leave the
+   verification pending and document the limitation explicitly.
