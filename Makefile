@@ -22,19 +22,40 @@ VERSION ?= $(shell git -C . describe --tags --always --dirty 2>/dev/null || git 
 
 LDFLAGS := -ldflags '-X main.version=$(VERSION)'
 
-.PHONY: check build install fmt test vet staticcheck clean
+.PHONY: check build install fmt fmt-check build-check test test-ci test-browser contracts vet staticcheck clean
 
 # Keep Staticcheck on the repository's supported Go toolchain. Newer local
 # toolchains may emit export data that v0.7.0 cannot consume.
 STATICCHECK_VERSION := v0.7.0
 STATICCHECK_TOOLCHAIN := go1.25.0
 
-check: fmt vet staticcheck test
+check: fmt-check build-check vet staticcheck contracts test
 	@echo "All checks passed."
 
 fmt:
 	@echo "Formatting Go code..."
 	gofmt -w .
+
+fmt-check:
+	@files="$$(gofmt -l .)" || exit $$?; if [ -n "$$files" ]; then printf "%s\n" "$$files"; exit 1; fi
+
+# Shared, non-mutating PR validation commands. Browser scenarios have one owner.
+build-check:
+	go build -v ./...
+
+test-ci:
+	go test -race -json -skip '^TestPortalLogContinuityBrowser_' -timeout=20m ./...
+
+test-browser:
+	go test -json ./internal/cmd -run '^TestPortalLogContinuityBrowser_' -count=1 -timeout=10m
+
+# Default race coverage still runs every architecture guard; this focused job
+# makes contracts independently visible without relying on an exclusion list.
+contracts:
+	python3 scripts/ci_report_test.py
+	go test -json ./scripts ./internal/skill/...
+	go test -json ./internal/batch ./internal/events ./internal/review ./internal/sandbox -run 'Contract|AgentSelection|Cancellation|Ownership|Lifecycle|Centralized|ProductionGoDoesNotInvokeRepositoryWideWorktreePrune|WorktreeSandboxExecBlocksGlobalWorktreePrune'
+	go run scripts/check_adr_index.go
 
 vet:
 	@echo "Running go vet..."

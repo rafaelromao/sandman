@@ -60,3 +60,6 @@ state/*.addressed_comments
 .DS_Store
 Thumbs.db
 
+
+# Local CI validation reports
+reports/

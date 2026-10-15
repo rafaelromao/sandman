@@ -10,6 +10,8 @@ require_success() {
   fi
 }
 
+require_success static-analysis "${STATIC_RESULT:-}"
+require_success contracts "${CONTRACT_RESULT:-}"
 require_success build-linux "${LINUX_BUILD_RESULT:-}"
 require_success build-macos "${MACOS_BUILD_RESULT:-}"
 require_success portal-continuity-browser "${PORTAL_RESULT:-}"
