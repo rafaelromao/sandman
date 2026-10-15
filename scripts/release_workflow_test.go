@@ -3,8 +3,12 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -440,7 +444,7 @@ func TestCIWorkflowKeepsOptInSuitesDisabled(t *testing.T) {
 		`SANDMAN_RUN_SMOKE_E2E: "0"`,
 		`SANDMAN_RUN_AGENT_E2E: "0"`,
 		`SANDMAN_E2E_GATES: ""`,
-		"run: go test -race -v ./...",
+		"run: bash scripts/ci_report.sh race-linux make build-check test-ci",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Errorf("regular CI workflow missing opt-in suite exclusion %q", required)
@@ -477,8 +481,8 @@ func TestLinuxCIGatesPortalLogContinuityOnRequiredBrowserCoverage(t *testing.T) 
 		"name: Portal continuity browser gate",
 		`SANDMAN_REQUIRE_PORTAL_BROWSER: "1"`,
 		"SANDMAN_PORTAL_CHROMIUM: ${{ steps.setup-chrome.outputs.chrome-path }}",
-		"go test ./internal/cmd -run '^TestPortalLogContinuityBrowser_' -count=1 -timeout=10m",
-		"SANDMAN_REQUIRE_PORTAL_BROWSER: ${{ runner.os == 'Linux' && '1' || '0' }}",
+		"run: bash scripts/ci_report.sh portal-browser make test-browser",
+		"run: bash scripts/ci_report.sh race-macos make build-check test-ci",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Errorf("CI workflow is missing required Portal browser gate contract %q", required)
@@ -625,7 +629,7 @@ func readRepositoryFile(t *testing.T, path string) string {
 
 func TestQualityGateRejectsUnsuccessfulDependencies(t *testing.T) {
 	for _, event := range []string{"pull_request", "push"} {
-		base := map[string]string{"LINUX_BUILD_RESULT": "success", "MACOS_BUILD_RESULT": "success", "PORTAL_RESULT": "success", "PACKAGING_RESULT": "success", "TITLE_RESULT": "success"}
+		base := map[string]string{"STATIC_RESULT": "success", "CONTRACT_RESULT": "success", "LINUX_BUILD_RESULT": "success", "MACOS_BUILD_RESULT": "success", "PORTAL_RESULT": "success", "PACKAGING_RESULT": "success", "TITLE_RESULT": "success"}
 		if event == "push" {
 			base["TITLE_RESULT"] = "skipped"
 		}
@@ -668,7 +672,7 @@ func TestCIQualityGateWorkflowContract(t *testing.T) {
 		"types: [opened, synchronize, reopened, edited]",
 		"group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}",
 		"cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
-		"needs: [build-linux, build-macos, portal-continuity-browser, goreleaser, semantic-pull-request]",
+		"needs: [static-analysis, contracts, build-linux, build-macos, portal-continuity-browser, goreleaser, semantic-pull-request]",
 		"if: ${{ always() }}", "run: bash scripts/quality_gate.sh",
 		"LINUX_BUILD_RESULT: ${{ needs.build-linux.result }}",
 		"MACOS_BUILD_RESULT: ${{ needs.build-macos.result }}",
@@ -676,12 +680,14 @@ func TestCIQualityGateWorkflowContract(t *testing.T) {
 		"PACKAGING_RESULT: ${{ needs.goreleaser.result }}",
 		"TITLE_RESULT: ${{ needs.semantic-pull-request.result }}",
 		"EVENT_NAME: ${{ github.event_name }}",
+		"STATIC_RESULT: ${{ needs.static-analysis.result }}",
+		"CONTRACT_RESULT: ${{ needs.contracts.result }}",
 	} {
 		if !strings.Contains(ci, required) {
 			t.Errorf("CI missing %q", required)
 		}
 	}
-	for job, minutes := range map[string]int{"build-linux": 25, "build-macos": 25, "goreleaser": 20, "portal-continuity-browser": 15, "semantic-pull-request": 5, "quality-gate": 2} {
+	for job, minutes := range map[string]int{"static-analysis": 15, "contracts": 15, "build-linux": 25, "build-macos": 25, "goreleaser": 20, "portal-continuity-browser": 15, "semantic-pull-request": 5, "quality-gate": 2} {
 		block := extractCIJob(t, ci, job)
 		if !strings.Contains(block, fmt.Sprintf("timeout-minutes: %d", minutes)) {
 			t.Errorf("%s missing bounded timeout", job)
@@ -694,7 +700,7 @@ func TestCIQualityGateWorkflowContract(t *testing.T) {
 		}
 	}
 	gate := extractCIJob(t, ci, "quality-gate")
-	if !strings.Contains(gate, "if: ${{ always() }}") || !strings.Contains(gate, "needs: [build-linux, build-macos, portal-continuity-browser, goreleaser, semantic-pull-request]") {
+	if !strings.Contains(gate, "if: ${{ always() }}") || !strings.Contains(gate, "needs: [static-analysis, contracts, build-linux, build-macos, portal-continuity-browser, goreleaser, semantic-pull-request]") {
 		t.Fatal("aggregate must always evaluate all mandatory dependencies")
 	}
 	title := extractCIJob(t, ci, "semantic-pull-request")
@@ -707,10 +713,14 @@ func TestCIQualityGateWorkflowContract(t *testing.T) {
 	if strings.Contains(ci, "needs.build.result") || strings.Contains(linux, "matrix:") || strings.Contains(macos, "matrix:") {
 		t.Fatal("aggregate must use independent platform results")
 	}
-	linuxSteps := linux[strings.Index(linux, "    steps:"):]
-	macosSteps := macos[strings.Index(macos, "    steps:"):]
-	if strings.TrimSpace(linuxSteps) != strings.TrimSpace(macosSteps) {
-		t.Fatal("platform jobs must run identical build checks")
+	for job, category := range map[string]string{"build-linux": "race-linux", "build-macos": "race-macos"} {
+		block := extractCIJob(t, ci, job)
+		if !strings.Contains(block, "bash scripts/ci_report.sh "+category+" make build-check test-ci") {
+			t.Errorf("%s must use shared build/race validation", job)
+		}
+		if strings.Contains(block, "setup-chrome") || strings.Contains(block, "make staticcheck") {
+			t.Errorf("%s duplicates separately owned validation", job)
+		}
 	}
 	packaging := extractCIJob(t, ci, "goreleaser")
 	setup, release := strings.Index(packaging, "uses: actions/setup-go@v5"), strings.Index(packaging, "uses: goreleaser/goreleaser-action@v6")
@@ -749,11 +759,118 @@ func TestQualityGatePartialPlatformReruns(t *testing.T) {
 	} {
 		t.Run(results.name, func(t *testing.T) {
 			cmd := exec.Command("bash", "quality_gate.sh")
-			cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "EVENT_NAME=pull_request", "LINUX_BUILD_RESULT=" + results.linux, "MACOS_BUILD_RESULT=" + results.macos, "PORTAL_RESULT=success", "PACKAGING_RESULT=success", "TITLE_RESULT=success"}
+			cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "EVENT_NAME=pull_request", "LINUX_BUILD_RESULT=" + results.linux, "MACOS_BUILD_RESULT=" + results.macos, "STATIC_RESULT=success", "CONTRACT_RESULT=success", "PORTAL_RESULT=success", "PACKAGING_RESULT=success", "TITLE_RESULT=success"}
 			output, err := cmd.CombinedOutput()
 			if (err == nil) != results.pass {
 				t.Fatalf("success=%t, want %t: %v\n%s", err == nil, results.pass, err, output)
 			}
 		})
+	}
+}
+
+func TestCIValidationOwnershipAndReports(t *testing.T) {
+	ci := readRepositoryFile(t, "../.github/workflows/go.yml")
+	makefile := readRepositoryFile(t, "../Makefile")
+	for _, required := range []string{
+		"check: fmt-check build-check vet staticcheck contracts test",
+		"go test -race -json -skip '$(PORTAL_BROWSER_TESTS)' -timeout=20m ./...",
+		"SANDMAN_REQUIRE_PORTAL_BROWSER=1 go test -tags visual -json ./internal/cmd -run '$(PORTAL_BROWSER_TESTS)' -count=1 -timeout=10m",
+		"go run scripts/check_adr_index.go",
+		"AgentSelection", "Ownership", "Lifecycle", "Cancellation",
+		"ProductionGoDoesNotInvokeRepositoryWideWorktreePrune",
+		"go test -json ./scripts ./internal/skill/...",
+	} {
+		if !strings.Contains(makefile, required) {
+			t.Errorf("shared validation missing %q", required)
+		}
+	}
+	for job, command := range map[string]string{"static-analysis": "make fmt-check vet staticcheck", "contracts": "make contracts", "portal-continuity-browser": "make test-browser", "build-linux": "make build-check test-ci", "build-macos": "make build-check test-ci"} {
+		block := extractCIJob(t, ci, job)
+		for _, required := range []string{command, "bash scripts/ci_report.sh", "if: ${{ always() }}", "uses: actions/upload-artifact@v4", "path: reports/"} {
+			if !strings.Contains(block, required) {
+				t.Errorf("%s missing %q", job, required)
+			}
+		}
+	}
+	if strings.Count(ci, "uses: browser-actions/setup-chrome@v2") != 1 {
+		t.Fatal("dedicated browser job must be the only Chromium owner")
+	}
+	for _, job := range []string{"build-linux", "build-macos"} {
+		if !strings.Contains(extractCIJob(t, ci, job), "uses: actions/setup-node@v4") {
+			t.Errorf("%s must preserve Node production-module coverage", job)
+		}
+	}
+}
+
+// Every test that reaches a Chromium helper belongs to the sole browser job.
+// Parse all test files, including the visual build tag, so new page assertions
+// cannot silently skip after being left in a job without a browser.
+func TestPortalBrowserInventoryMatchesChromiumScenarios(t *testing.T) {
+	inventory := strings.Fields(readRepositoryFile(t, "portal_browser_tests.txt"))
+	selected := make(map[string]bool)
+	for _, name := range inventory {
+		if selected[name] {
+			t.Errorf("duplicate browser test %s", name)
+		}
+		selected[name] = true
+	}
+	files, err := filepath.Glob("../internal/cmd/*_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := make(map[string]bool)
+	for _, path := range files {
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, declaration := range file.Decls {
+			fn, ok := declaration.(*ast.FuncDecl)
+			if !ok || !strings.HasPrefix(fn.Name.Name, "Test") || fn.Body == nil {
+				continue
+			}
+			// This separately opted-in binary/restart scenario was never a default
+			// PR gate; do not turn on additional tiers while classifying coverage.
+			if fn.Name.Name == "TestPortalBuiltBinary_BrowserContinuityReloadsAndRecoversAfterRestart" {
+				continue
+			}
+			browser := false
+			ast.Inspect(fn.Body, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				callee, ok := call.Fun.(*ast.Ident)
+				if !ok {
+					return true
+				}
+				switch callee.Name {
+				case "runPortalChromium", "runPortalChromiumWithVirtualTimeBudget", "renderVisual", "runPortalContinuityBrowser", "runPortalWaitingDurationBrowser", "runPortalWaitingAbortBrowser":
+					browser = true
+				case "requirePortalContinuityTool":
+					if len(call.Args) == 2 {
+						if literal, ok := call.Args[1].(*ast.BasicLit); ok && literal.Value == `"chromium"` {
+							browser = true
+						}
+					}
+				}
+				return true
+			})
+			if browser {
+				found[fn.Name.Name] = true
+				if !selected[fn.Name.Name] {
+					t.Errorf("Chromium scenario %s missing from shared browser inventory", fn.Name.Name)
+				}
+			}
+		}
+	}
+	for name := range selected {
+		if !found[name] {
+			t.Errorf("browser inventory contains unknown or non-browser test %s", name)
+		}
+	}
+	makefile := readRepositoryFile(t, "../Makefile")
+	if !strings.Contains(makefile, "PORTAL_BROWSER_TESTS := ^($(shell paste -sd '|' scripts/portal_browser_tests.txt))$$") {
+		t.Fatal("race and browser selectors must derive from the shared browser inventory")
 	}
 }

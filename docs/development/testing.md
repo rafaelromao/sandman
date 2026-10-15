@@ -351,7 +351,7 @@ For hermetic `gh` shims, fast-mode blocking shims, short Unix-socket paths, cano
 
 ## Quality gate and protection migration
 
-`CI / quality-gate` runs with `always()` after `build-linux`, `build-macos`,
+`CI / quality-gate` runs with `always()` after `static-analysis`, `contracts`, `build-linux`, `build-macos`,
 `portal-continuity-browser`, `goreleaser`, and `semantic-pull-request`.
 Only success is accepted, except the intentional skipped title check on a main
 push. The independent `build-linux` and `build-macos` jobs preserve the existing
@@ -405,3 +405,42 @@ An authorized maintainer must perform the following migration:
    Keep the old contexts until the aggregate gate is proven and active; removing
    them is a separate reviewed migration. If access is unavailable, leave the
    verification pending and document the limitation explicitly.
+
+
+### Separate CI validation and reports
+
+`make check` validates without editing files; use `make fmt` explicitly to fix
+formatting. CI uses the same `fmt-check`, `build-check`, `vet`, `staticcheck`,
+`contracts`, `test-ci`, and `test-browser` commands. Local `make test` retains
+all default race tests, including browser tests when Chromium is available.
+
+The aggregate additionally requires `static-analysis` and `contracts`. Existing
+platform status names and required protection contexts remain unchanged. Static
+analysis, contracts (including the ADR index and skill hygiene), Linux/macOS
+build/race tests, Portal browser scenarios, and snapshot packaging run in parallel.
+Only the browser job installs Chromium. `scripts/portal_browser_tests.txt` lists
+all required Chromium-backed tests (continuity, subject switching, page rendering,
+and visual layout). `test-browser` enables the `visual` build tag and requires a
+browser; `test-ci` excludes that same exact inventory. A Go AST contract checks
+the inventory against browser helper callers, preventing silently skipped scenarios.
+The built-binary Portal browser test retains its separate
+`SANDMAN_RUN_PORTAL_BINARY_E2E=1` opt-in; it was never part of default PR coverage. Node remains installed in both platform
+jobs so production-module tests and JavaScript assertions remain in the race suite.
+
+Linux retains Podman with runc and its runtime probe. Default container tests are
+mixed with hermetic tests in the command, batch, and sandbox packages; tests using
+real containers and cancellation must remain in the Linux race tier until an
+explicit inventory and tier migration preserves them. Provider, smoke and real-agent
+opt-ins remain disabled on PRs. No additional API-quota tests are introduced.
+
+`scripts/ci_report.sh` captures raw logs, Go JSON events, a structured JSON report,
+and Markdown under `reports/`, preserving command failure status. Job summaries
+identify category, failing package/test, artifact name, and elapsed seconds;
+compiler/setup failures refer to the raw log. Artifacts upload with `always()`.
+Packaging retains `dist/` and points to GoReleaser diagnostics. Snapshot and release
+both use Go from `go.mod` and GoReleaser `v2.10.1` for four-platform archives.
+
+Race jobs have a 25-minute limit (tests 20 minutes); static/contracts/browser have
+15-minute limits, packaging 20, and aggregate 2. Measure the first PR's elapsed
+critical path including setup and artifact upload against the managed 30-minute
+CI-wait budget; local timing alone cannot verify hosted Linux/macOS duration.

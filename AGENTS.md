@@ -178,7 +178,7 @@ The aggregate `CI / quality-gate` requires both independent platform build jobs,
 1. Branch from `main`.
 2. Pick the most accurate Conventional Commits type. `Update README` fails the gate; `docs: explain the branching and versioning rules in AGENTS.md` passes.
 3. Keep the title short — one sentence, no trailing period, no issue number in the title.
-4. Run `make check` locally before pushing; `CI / build` runs the same suite.
+4. Run `make check` locally before pushing; CI uses the shared non-mutating Make targets described in `docs/development/testing.md`.
 5. Link issues in the body (`Closes #<n>`, `Fixes #<n>`, or `Resolves #<n>`), not in the title.
 
 ### When the change touches CI, versioning, or repository-level agent docs
@@ -228,7 +228,7 @@ Concretely: a contributor reviewing a skill should be able to read it without kn
 Run:
 
 ```bash
-gofmt -w . && go vet ./... && GOTOOLCHAIN=go1.25.0 go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
+make fmt-check vet staticcheck
 ```
 
 If the change affects behavior materially, also run the most relevant targeted tests for the touched package(s) before finalizing.
@@ -258,3 +258,16 @@ For most non-trivial tasks, follow this order:
 4. Make the smallest coherent change.
 5. Run formatting, vetting, and relevant tests.
 6. Summarize what changed, what was verified, and any remaining risk.
+
+
+### Separate CI validation and reports
+
+`make check` never edits source; use `make fmt` explicitly. CI shares the
+`fmt-check`, `build-check`, `vet`, `staticcheck`, `contracts`, `test-ci`, and
+`test-browser` targets. The aggregate also requires static analysis and
+architecture/documentation contracts. Linux retains Podman coverage; Node tests
+remain on both race platforms, while the dedicated browser job owns actual-page
+scenarios listed in `scripts/portal_browser_tests.txt`, including subject switching
+and visual layout. Logs, structured reports, durations and failure summaries
+are uploaded even on failure. See `docs/development/testing.md` for job ownership,
+local commands, artifact names and hosted timing verification.

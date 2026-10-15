@@ -97,7 +97,7 @@ The full rule lives in [`AGENTS.md`](AGENTS.md#feature-branches).
 Use the Makefile for common tasks:
 
 ```bash
-# Format code, run vet, Staticcheck, and run tests
+# Check formatting, build, vet, Staticcheck, contracts, and tests
 make check
 
 # Build the binary
@@ -203,3 +203,16 @@ internal/
 ## Getting Help
 
 If you have questions about contributing, feel free to open a [discussion](https://github.com/rafaelromao/sandman/discussions) or ask in an existing issue.
+
+
+### Separate CI validation and reports
+
+`make check` never edits source; use `make fmt` explicitly. CI shares the
+`fmt-check`, `build-check`, `vet`, `staticcheck`, `contracts`, `test-ci`, and
+`test-browser` targets. The aggregate also requires static analysis and
+architecture/documentation contracts. Linux retains Podman coverage; Node tests
+remain on both race platforms, while the dedicated browser job owns actual-page
+scenarios listed in `scripts/portal_browser_tests.txt`, including subject switching
+and visual layout. Logs, structured reports, durations and failure summaries
+are uploaded even on failure. See `docs/development/testing.md` for job ownership,
+local commands, artifact names and hosted timing verification.
