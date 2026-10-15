@@ -66,11 +66,14 @@ const visualFixtureRowsJS = `
     return tr;
   }
 
+  // Keep the mobile one/two-line fixtures sized for their asserted line counts.
+  // Module paths and the longer historical description wrapped to two/three
+  // lines with current Chromium typography, independently of layout regressions.
   const rows = [
-    { issueLabel: '#960', key: 'a', metaText: 'ID 260618113825-abcd-960', status: 'success', started: 'Jun 15, 11:40:40 AM', duration: '37m46s', issueTitle: 'Add internal/shellenv with key-validation + value-quoting', batchIssues: [960, 961, 962, 963, 964, 965, 966, 967, 968] },
+    { issueLabel: '#960', key: 'a', metaText: 'ID 260618113825-abcd-960', status: 'success', started: 'Jun 15, 11:40:40 AM', duration: '37m46s', issueTitle: 'Validate shell variables', batchIssues: [960, 961, 962, 963, 964, 965, 966, 967, 968] },
     { issueLabel: '#961', key: 'b', metaText: 'ID 260618113825-abcd-961', status: 'running', started: 'Jun 15, 12:18:30 PM', duration: '17s', issueTitle: 'Add internal/prompt.Renderer with body-insert substitution', batchIssues: null },
     { issueLabel: '#962', key: 'c', metaText: 'ID 260618113825-abcd-962', status: 'queued', started: 'Jun 15, 11:38:51 AM', duration: '\u2014', issueTitle: 'Add internal/orchestrator dependencies path', batchIssues: [960, 961, 962, 963, 964, 965, 966, 967, 968] },
-    { issueLabel: '#963', key: 'd', metaText: 'ID 260618113825-abcd-963', status: 'success', started: 'Jun 15, 11:40:40 AM', duration: '12m00s', issueTitle: 'Wire internal/orchestrator dependencies into the slice-3 runnable so the new shellenv renderer is exercised end-to-end on a 500px mobile viewport', batchIssues: null },
+    { issueLabel: '#963', key: 'd', metaText: 'ID 260618113825-abcd-963', status: 'success', started: 'Jun 15, 11:40:40 AM', duration: '12m00s', issueTitle: 'Wire the shellenv renderer through orchestration with safe environment values', batchIssues: null },
   ];
   const body = document.getElementById('runs-body');
   rows.forEach(r => body.appendChild(buildRow(r)));
