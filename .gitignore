@@ -63,3 +63,6 @@ Thumbs.db
 
 # Local CI validation reports
 reports/
+
+# Python validation helpers
+__pycache__/
