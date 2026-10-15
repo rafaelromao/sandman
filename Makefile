@@ -29,6 +29,10 @@ LDFLAGS := -ldflags '-X main.version=$(VERSION)'
 STATICCHECK_VERSION := v0.7.0
 STATICCHECK_TOOLCHAIN := go1.25.0
 
+# Explicit browser inventory is shared by the exclusive CI selectors and tested
+# against Chromium-backed test functions in scripts/release_workflow_test.go.
+PORTAL_BROWSER_TESTS := ^($(shell paste -sd '|' scripts/portal_browser_tests.txt))$$
+
 check: fmt-check build-check vet staticcheck contracts test
 	@echo "All checks passed."
 
@@ -44,10 +48,10 @@ build-check:
 	go build -v ./...
 
 test-ci:
-	go test -race -json -skip '^TestPortalLogContinuityBrowser_' -timeout=20m ./...
+	go test -race -json -skip '$(PORTAL_BROWSER_TESTS)' -timeout=20m ./...
 
 test-browser:
-	go test -json ./internal/cmd -run '^TestPortalLogContinuityBrowser_' -count=1 -timeout=10m
+	SANDMAN_REQUIRE_PORTAL_BROWSER=1 go test -tags visual -json ./internal/cmd -run '$(PORTAL_BROWSER_TESTS)' -count=1 -timeout=10m
 
 # Default race coverage still runs every architecture guard; this focused job
 # makes contracts independently visible without relying on an exclusion list.

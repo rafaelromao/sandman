@@ -418,8 +418,13 @@ The aggregate additionally requires `static-analysis` and `contracts`. Existing
 platform status names and required protection contexts remain unchanged. Static
 analysis, contracts (including the ADR index and skill hygiene), Linux/macOS
 build/race tests, Portal browser scenarios, and snapshot packaging run in parallel.
-Only the browser job installs Chromium and runs `TestPortalLogContinuityBrowser_`;
-`test-ci` excludes precisely that prefix. Node remains installed in both platform
+Only the browser job installs Chromium. `scripts/portal_browser_tests.txt` lists
+all required Chromium-backed tests (continuity, subject switching, page rendering,
+and visual layout). `test-browser` enables the `visual` build tag and requires a
+browser; `test-ci` excludes that same exact inventory. A Go AST contract checks
+the inventory against browser helper callers, preventing silently skipped scenarios.
+The built-binary Portal browser test retains its separate
+`SANDMAN_RUN_PORTAL_BINARY_E2E=1` opt-in; it was never part of default PR coverage. Node remains installed in both platform
 jobs so production-module tests and JavaScript assertions remain in the race suite.
 
 Linux retains Podman with runc and its runtime probe. Default container tests are

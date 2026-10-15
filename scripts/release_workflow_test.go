@@ -3,8 +3,12 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -769,8 +773,8 @@ func TestCIValidationOwnershipAndReports(t *testing.T) {
 	makefile := readRepositoryFile(t, "../Makefile")
 	for _, required := range []string{
 		"check: fmt-check build-check vet staticcheck contracts test",
-		"go test -race -json -skip '^TestPortalLogContinuityBrowser_' -timeout=20m ./...",
-		"go test -json ./internal/cmd -run '^TestPortalLogContinuityBrowser_' -count=1 -timeout=10m",
+		"go test -race -json -skip '$(PORTAL_BROWSER_TESTS)' -timeout=20m ./...",
+		"SANDMAN_REQUIRE_PORTAL_BROWSER=1 go test -tags visual -json ./internal/cmd -run '$(PORTAL_BROWSER_TESTS)' -count=1 -timeout=10m",
 		"go run scripts/check_adr_index.go",
 		"AgentSelection", "Ownership", "Lifecycle", "Cancellation",
 		"ProductionGoDoesNotInvokeRepositoryWideWorktreePrune",
@@ -795,5 +799,78 @@ func TestCIValidationOwnershipAndReports(t *testing.T) {
 		if !strings.Contains(extractCIJob(t, ci, job), "uses: actions/setup-node@v4") {
 			t.Errorf("%s must preserve Node production-module coverage", job)
 		}
+	}
+}
+
+// Every test that reaches a Chromium helper belongs to the sole browser job.
+// Parse all test files, including the visual build tag, so new page assertions
+// cannot silently skip after being left in a job without a browser.
+func TestPortalBrowserInventoryMatchesChromiumScenarios(t *testing.T) {
+	inventory := strings.Fields(readRepositoryFile(t, "portal_browser_tests.txt"))
+	selected := make(map[string]bool)
+	for _, name := range inventory {
+		if selected[name] {
+			t.Errorf("duplicate browser test %s", name)
+		}
+		selected[name] = true
+	}
+	files, err := filepath.Glob("../internal/cmd/*_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := make(map[string]bool)
+	for _, path := range files {
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, declaration := range file.Decls {
+			fn, ok := declaration.(*ast.FuncDecl)
+			if !ok || !strings.HasPrefix(fn.Name.Name, "Test") || fn.Body == nil {
+				continue
+			}
+			// This separately opted-in binary/restart scenario was never a default
+			// PR gate; do not turn on additional tiers while classifying coverage.
+			if fn.Name.Name == "TestPortalBuiltBinary_BrowserContinuityReloadsAndRecoversAfterRestart" {
+				continue
+			}
+			browser := false
+			ast.Inspect(fn.Body, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				callee, ok := call.Fun.(*ast.Ident)
+				if !ok {
+					return true
+				}
+				switch callee.Name {
+				case "runPortalChromium", "runPortalChromiumWithVirtualTimeBudget", "renderVisual", "runPortalContinuityBrowser", "runPortalWaitingDurationBrowser", "runPortalWaitingAbortBrowser":
+					browser = true
+				case "requirePortalContinuityTool":
+					if len(call.Args) == 2 {
+						if literal, ok := call.Args[1].(*ast.BasicLit); ok && literal.Value == `"chromium"` {
+							browser = true
+						}
+					}
+				}
+				return true
+			})
+			if browser {
+				found[fn.Name.Name] = true
+				if !selected[fn.Name.Name] {
+					t.Errorf("Chromium scenario %s missing from shared browser inventory", fn.Name.Name)
+				}
+			}
+		}
+	}
+	for name := range selected {
+		if !found[name] {
+			t.Errorf("browser inventory contains unknown or non-browser test %s", name)
+		}
+	}
+	makefile := readRepositoryFile(t, "../Makefile")
+	if !strings.Contains(makefile, "PORTAL_BROWSER_TESTS := ^($(shell paste -sd '|' scripts/portal_browser_tests.txt))$$") {
+		t.Fatal("race and browser selectors must derive from the shared browser inventory")
 	}
 }

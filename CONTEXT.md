@@ -459,6 +459,7 @@ Resolution: run `sandman init` against the repo. The scaffolder probes the host'
 `test-browser` targets. The aggregate also requires static analysis and
 architecture/documentation contracts. Linux retains Podman coverage; Node tests
 remain on both race platforms, while the dedicated browser job owns actual-page
-continuity scenarios. Logs, structured reports, durations and failure summaries
+scenarios listed in `scripts/portal_browser_tests.txt`, including subject switching
+and visual layout. Logs, structured reports, durations and failure summaries
 are uploaded even on failure. See `docs/development/testing.md` for job ownership,
 local commands, artifact names and hosted timing verification.
