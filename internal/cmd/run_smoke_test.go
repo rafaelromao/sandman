@@ -80,8 +80,9 @@ var smokeProviderCases = []smokeProviderCase{
 			"~/.local/share/opencode/auth.json",
 		},
 		authPaths: []string{
-			"~/.config/opencode",
-			"~/.local/share/opencode",
+			// Real-agent fixtures need credentials, not the operator's live
+			// plugins, dependency installations, sessions, or MCP settings.
+			"~/.local/share/opencode/auth.json",
 		},
 	},
 	{
@@ -864,5 +865,35 @@ func TestCopySmokeAuthLayout_SkipsOpencodeDB(t *testing.T) {
 	authPath := filepath.Join(tempHome, ".local", "share", "opencode", "auth.json")
 	if _, err := os.Stat(authPath); err != nil {
 		t.Errorf("expected auth.json to be copied, got error: %v", err)
+	}
+}
+
+func TestCopySmokeAuthLayout_OpenCodeCopiesOnlyAuthentication(t *testing.T) {
+	realHome, tempHome := t.TempDir(), t.TempDir()
+	authPath := homePath(realHome, "~/.local/share/opencode/auth.json")
+	if err := os.MkdirAll(filepath.Dir(authPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(authPath, []byte(`{"test-provider":{"type":"api","key":"test"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	modules := homePath(realHome, "~/.config/opencode/node_modules")
+	if err := os.MkdirAll(modules, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// A live dependency installation can delete an entry between enumeration
+	// and copying. Authenticated tests must not depend on that mutable tree.
+	if err := os.Symlink("disappeared-plugin.js", filepath.Join(modules, "plugin.js")); err != nil {
+		t.Fatal(err)
+	}
+	tc := smokeProviderCases[0]
+	if !copySmokeAuthLayout(t, realHome, tempHome, tc.authPaths) {
+		t.Fatal("authentication snapshot was not copied")
+	}
+	if _, err := os.Stat(homePath(tempHome, "~/.local/share/opencode/auth.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(homePath(tempHome, "~/.config/opencode/node_modules")); !os.IsNotExist(err) {
+		t.Fatal("smoke fixture copied the host's mutable plugin dependencies")
 	}
 }

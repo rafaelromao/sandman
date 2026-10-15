@@ -21,6 +21,12 @@ GOTOOLCHAIN=go1.25.0 go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
 go test -race -v ./...
 ```
 
+Real OpenCode smoke and preset-matrix fixtures copy credentials into a test-owned
+HOME, rather than importing the operator's live plugins, dependency installations,
+or session database. Preset tests retain the real Podman data-store location and
+allow Sandman's normal cancellation cleanup before deleting temporary artifacts.
+This keeps a concurrent host agent or plugin update from changing their inputs.
+
 The Staticcheck gate inherits the default checks and explicitly defers `U1000`
 (unused code) to the v1.1 cleanup work. The analyzer is pinned to `v0.7.0`
 and runs with Go `1.25.0` so newer local toolchains do not provide incompatible

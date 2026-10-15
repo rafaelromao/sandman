@@ -195,8 +195,8 @@ type IssueComment struct {
 
 // Client wraps gh CLI for GitHub operations. Every method takes a
 // context.Context so callers can cancel a hung gh invocation; the
-// underlying CLIClient applies a per-call timeout when the caller's
-// context has no deadline. See internal/github/cli_client.go.
+// underlying CLIClient caps each call by its timeout and the caller's deadline,
+// with bounded availability retries for reads. See internal/github/cli_client.go.
 type Client interface {
 	FetchIssue(ctx context.Context, number int) (*Issue, error)
 	FetchIssueDependencies(ctx context.Context, number int) ([]int, error)
