@@ -12,6 +12,7 @@ var (
 	reviewFindingDirective         = regexp.MustCompile(`(?im)(?:^|[,.!?;:—–-]\s+)\s*(?:[-*]\s*)?(?:fix|change|remove|replace|add|use)\b|\b(?:must|please|needs?|should)\b`)
 	reviewFindingClauses           = regexp.MustCompile(`[;\n]|\.\s+`)
 	reviewFindingMetadata          = regexp.MustCompile(`(?i)^(?:scope|metrics?|files?|cognitive complexity|cyclomatic complexity|coverage|tools used)\s*:`)
+	reviewCIWaitAdvice             = regexp.MustCompile(`(?i)^(?:await|wait for|monitor|recheck|watch)\s+(?:the\s+)?(?:pending\s+)?(?:required\s+)?(?:CI\s+checks?|checks?|status\s+checks?)(?:\s+(?:are|become|to be)\s+(?:green|complete|successful))?[.!]?$`)
 	reviewPublicationMarker        = regexp.MustCompile(`(?m)^[ \t]*<!-- sandman-publication:[0-9a-f]{64} -->[ \t]*$`)
 	reviewApprovalContradiction    = regexp.MustCompile(`(?i)\b(?:not\s+(?:yet\s+)?(?:approved|lgtm)|no\s+approval|changes\s+requested|subject\s+to|contingent\b|only\s+(?:if|after|once)|before\s+merging|(?:merge|approve)[^\n.!?]*(?:after|once|until|if|when)\b)`)
 	reviewMetadataRepair           = regexp.MustCompile(`(?i)\b(?:fix(?:ing)?|address(?:ing)?|repair(?:ing)?|resolve|correct|replace|remove|add|change|use|ensure|update|must|please|needs?|should)\b`)
@@ -65,7 +66,7 @@ func reviewDecisionApprovedBody(body string) bool {
 	section := ""
 	sectionLevel := 0
 	structured := false
-	var decision, findings, other strings.Builder
+	var decision, findings, suggestedNextSteps, other strings.Builder
 	for _, line := range strings.Split(body, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "#") {
@@ -77,6 +78,9 @@ func reviewDecisionApprovedBody(body string) bool {
 					continue
 				case "findings":
 					findings.WriteString(trimmed + "\n")
+					continue
+				case "suggested_next_steps":
+					suggestedNextSteps.WriteString(trimmed + "\n")
 					continue
 				case "history":
 					continue
@@ -100,6 +104,8 @@ func reviewDecisionApprovedBody(body string) bool {
 				decision.WriteString(inline + "\n")
 			case "findings":
 				findings.WriteString(inline + "\n")
+			case "suggested_next_steps":
+				suggestedNextSteps.WriteString(inline + "\n")
 			}
 			continue
 		}
@@ -108,6 +114,8 @@ func reviewDecisionApprovedBody(body string) bool {
 			decision.WriteString(trimmed + "\n")
 		case "findings":
 			findings.WriteString(trimmed + "\n")
+		case "suggested_next_steps":
+			suggestedNextSteps.WriteString(trimmed + "\n")
 		case "other":
 			other.WriteString(trimmed + "\n")
 		}
@@ -117,7 +125,7 @@ func reviewDecisionApprovedBody(body string) bool {
 	}
 	if structured {
 		prose := reviewApprovalProse(other.String())
-		return unambiguousReviewApproval(decision.String()) && !reviewFindingDirective.MatchString(prose) && !reviewApprovalContradiction.MatchString(prose)
+		return unambiguousReviewApproval(decision.String()) && reviewCIWaitAdviceOnly(suggestedNextSteps.String()) && !reviewFindingDirective.MatchString(prose) && !reviewApprovalContradiction.MatchString(prose)
 	}
 	// Ordinary informal approval needs no Decision heading. Restrict this
 	// fallback to approval/acknowledgement prose rather than keyword mentions
@@ -128,7 +136,7 @@ func reviewDecisionApprovedBody(body string) bool {
 func reviewApprovalSection(heading string) (string, string) {
 	for _, named := range []struct{ heading, section string }{
 		{"Decision", "decision"}, {"Findings", "findings"},
-		{"Suggested next steps", "findings"}, {"Previous review progress", "history"},
+		{"Suggested next steps", "suggested_next_steps"}, {"Previous review progress", "history"},
 	} {
 		if len(heading) < len(named.heading) || !strings.EqualFold(heading[:len(named.heading)], named.heading) {
 			continue
@@ -158,7 +166,7 @@ func unambiguousReviewApproval(text string) bool {
 func noReviewFindings(text string) bool {
 	text = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(text), "-*"))
 	prose := reviewApprovalProse(text)
-	if !reviewDecisionNoFindings.MatchString(text) || reviewDecisionApprovalNegation.MatchString(prose) {
+	if !reviewDecisionNoFindings.MatchString(text) || reviewApprovalContradiction.MatchString(prose) {
 		return false
 	}
 	// Examine the entire section: a leading "None" cannot hide another finding.
@@ -173,6 +181,19 @@ func noReviewFindings(text string) bool {
 			if !reviewFindingMetadata.MatchString(clause) || reviewMetadataRepair.MatchString(reviewApprovalProse(clause)) {
 				return false
 			}
+		}
+	}
+	return true
+}
+
+func reviewCIWaitAdviceOnly(text string) bool {
+	for _, line := range strings.Split(strings.TrimSpace(text), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.EqualFold(strings.TrimRight(line, ".!?"), "none") {
+			continue
+		}
+		if !reviewCIWaitAdvice.MatchString(line) {
+			return false
 		}
 	}
 	return true

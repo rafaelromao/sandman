@@ -39,6 +39,33 @@ The prior concern in internal/batch/orchestrator_resume.go is resolved.
 <!-- sandman-publication:dd4739c73528fd53939c6a0e52d7fb08c5ea79d2a6f2f6c56b3bd1aee86bcf1f -->
 `
 
+const capturedApprovalWithCIWaitAdvice = `## Summary
+The requested changes are addressed in this diff.
+
+## Quality check
+### Scope
+Changed internal/batch/run_lifecycle.go and internal/batch/review_decision_approval.go.
+
+### Metrics
+The metrics signals do not demonstrate a construct-specific readability or change-risk concern in this diff.
+
+### Findings
+None. The metrics signals do not demonstrate a construct-specific readability or change-risk concern in this diff.
+
+## Findings
+
+## Suggested next steps
+Await the pending required CI checks.
+
+## Decision
+**APPROVED**
+
+## Previous review progress
+All prior findings are resolved.
+
+<!-- sandman-publication:dd4739c73528fd53939c6a0e52d7fb08c5ea79d2a6f2f6c56b3bd1aee86bcf1f -->
+`
+
 func informalApprovalLifecycleFixture(t *testing.T, body string) (*runSession, *registrationGitHubClient, *github.PR, string, *time.Time) {
 	t.Helper()
 	workDir := t.TempDir()
@@ -89,6 +116,36 @@ func TestInformalApprovalLifecycle_MetricsReviewAwaitsCIThenResumesMerge(t *test
 	request := extras["review_request"].(map[string]any)
 	if request["outcome"] != "approved" || request["informal_feedback"] != nil {
 		t.Fatalf("merge evidence = %v, want approval without false feedback", request)
+	}
+}
+
+func TestInformalApprovalLifecycle_ApprovalWithCIWaitAdviceAndMetricExplanation(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+	}{
+		{"CI wait advice", "## Summary\nChanged worker.go.\n\n## Suggested next steps\nAwait the pending required CI checks.\n\n## Decision\nAPPROVED"},
+		{"metric explanation", "## Summary\nChanged worker.go.\n\n## Findings\nNone. The metrics signals do not demonstrate a readability concern.\n\n## Decision\nAPPROVED"},
+		{"captured response", capturedApprovalWithCIWaitAdvice},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, pr, workDir, now := informalApprovalLifecycleFixture(t, tc.body)
+			for i := 0; i < defaultAwaitResumeMax+2; i++ {
+				status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+				if !handled || status != "await" || extras["gate"] != "pending" || s.resumeCount != 0 {
+					t.Fatalf("pending CI = %s/%v, want await without repair relaunch", status, extras["gate"])
+				}
+				request := extras["review_request"].(map[string]any)
+				if request["operation_resolved"] != true || request["informal_feedback"] != nil {
+					t.Fatalf("approval evidence = %v, want resolved approval without feedback", request)
+				}
+				*now = now.Add(time.Minute)
+			}
+			pr.StatusCheckRollup = "success"
+			status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+			if !handled || status != "resume" || extras["gate"] != gateReadyToMerge {
+				t.Fatalf("green CI = %s/%v, want approved merge resume", status, extras["gate"])
+			}
+		})
 	}
 }
 
@@ -179,22 +236,31 @@ func TestInformalApprovalLifecycle_RequestBoundariesAndFormalPrecedence(t *testi
 }
 
 func TestInformalApprovalLifecycle_OnTimeResponseSurvivesDelayedReentry(t *testing.T) {
-	s, client, pr, workDir, now := informalApprovalLifecycleFixture(t, approvingMetricsReview)
-	client.comments[1].CreatedAt = time.Date(2026, 10, 13, 2, 30, 0, 0, time.UTC)
-	// A response exactly at the original deadline is eligible even when first
-	// observed by a fresh executor after capacity delay or process downtime.
-	*now = time.Date(2026, 10, 13, 3, 0, 0, 0, time.UTC)
-	pr.StatusCheckRollup = "success"
-	status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
-	if !handled || status != "resume" || extras["gate"] != gateReadyToMerge {
-		t.Fatalf("late observation of an on-time approval = (%s, %v, %t), want merge resume", status, extras, handled)
-	}
-	registration, err := readFileReviewRegistration(paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if registration.Request.TriggerID != "request" || registration.Request.DeadlineUnixSeconds != int(client.comments[1].CreatedAt.Unix()) {
-		t.Fatal("late observation changed the request identity or original deadline")
+	for _, tc := range []struct {
+		name, body string
+	}{
+		{"existing metrics approval", approvingMetricsReview},
+		{"captured approval", capturedApprovalWithCIWaitAdvice},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, client, pr, workDir, now := informalApprovalLifecycleFixture(t, tc.body)
+			client.comments[1].CreatedAt = time.Date(2026, 10, 13, 2, 30, 0, 0, time.UTC)
+			// A response exactly at the original deadline is eligible even when first
+			// observed by a fresh executor after capacity delay or process downtime.
+			*now = time.Date(2026, 10, 13, 3, 0, 0, 0, time.UTC)
+			pr.StatusCheckRollup = "success"
+			status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+			if !handled || status != "resume" || extras["gate"] != gateReadyToMerge {
+				t.Fatalf("late observation of an on-time approval = (%s, %v, %t), want merge resume", status, extras, handled)
+			}
+			registration, err := readFileReviewRegistration(paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if registration.Request.TriggerID != "request" || registration.Request.DeadlineUnixSeconds != int(client.comments[1].CreatedAt.Unix()) {
+				t.Fatal("late observation changed the request identity or original deadline")
+			}
+		})
 	}
 }
 
