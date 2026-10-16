@@ -115,7 +115,7 @@ func TestReleaseWorkflowPublishesConfiguredReleaseArtifacts(t *testing.T) {
 	for _, required := range []string{
 		"release_created == 'true'",
 		"uses: actions/setup-go@v5",
-		"go-version-file: go.mod",
+		"go-version-file: .go-version",
 		"version: v2.10.1",
 		"args: release --clean",
 		"GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}",
@@ -624,12 +624,13 @@ func readRepositoryFile(t *testing.T, path string) string {
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
-	return string(contents)
+	// Keep behavior contracts independent of Dependabot's verified SHA updates.
+	return regexp.MustCompile(`(?m)(uses: [\w/-]+)@[a-f0-9]{40} # (v[^\s]+|latest)`).ReplaceAllString(string(contents), "$1@$2")
 }
 
 func TestQualityGateRejectsUnsuccessfulDependencies(t *testing.T) {
 	for _, event := range []string{"pull_request", "push"} {
-		base := map[string]string{"STATIC_RESULT": "success", "CONTRACT_RESULT": "success", "LINUX_BUILD_RESULT": "success", "MACOS_BUILD_RESULT": "success", "PORTAL_RESULT": "success", "PACKAGING_RESULT": "success", "TITLE_RESULT": "success"}
+		base := map[string]string{"SECURITY_RESULT": "success", "WORKFLOW_RESULT": "success", "STATIC_RESULT": "success", "CONTRACT_RESULT": "success", "LINUX_BUILD_RESULT": "success", "MACOS_BUILD_RESULT": "success", "PORTAL_RESULT": "success", "PACKAGING_RESULT": "success", "TITLE_RESULT": "success"}
 		if event == "push" {
 			base["TITLE_RESULT"] = "skipped"
 		}
@@ -672,7 +673,7 @@ func TestCIQualityGateWorkflowContract(t *testing.T) {
 		"types: [opened, synchronize, reopened, edited]",
 		"group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}",
 		"cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
-		"needs: [static-analysis, contracts, build-linux, build-macos, portal-continuity-browser, goreleaser, semantic-pull-request]",
+		"needs: [security, workflow-validation, static-analysis, contracts, build-linux, build-macos, portal-continuity-browser, goreleaser, semantic-pull-request]",
 		"if: ${{ always() }}", "run: bash scripts/quality_gate.sh",
 		"LINUX_BUILD_RESULT: ${{ needs.build-linux.result }}",
 		"MACOS_BUILD_RESULT: ${{ needs.build-macos.result }}",
@@ -700,7 +701,7 @@ func TestCIQualityGateWorkflowContract(t *testing.T) {
 		}
 	}
 	gate := extractCIJob(t, ci, "quality-gate")
-	if !strings.Contains(gate, "if: ${{ always() }}") || !strings.Contains(gate, "needs: [static-analysis, contracts, build-linux, build-macos, portal-continuity-browser, goreleaser, semantic-pull-request]") {
+	if !strings.Contains(gate, "if: ${{ always() }}") || !strings.Contains(gate, "needs: [security, workflow-validation, static-analysis, contracts, build-linux, build-macos, portal-continuity-browser, goreleaser, semantic-pull-request]") {
 		t.Fatal("aggregate must always evaluate all mandatory dependencies")
 	}
 	title := extractCIJob(t, ci, "semantic-pull-request")
@@ -724,7 +725,7 @@ func TestCIQualityGateWorkflowContract(t *testing.T) {
 	}
 	packaging := extractCIJob(t, ci, "goreleaser")
 	setup, release := strings.Index(packaging, "uses: actions/setup-go@v5"), strings.Index(packaging, "uses: goreleaser/goreleaser-action@v6")
-	if setup < 0 || release < setup || !strings.Contains(packaging, "go-version-file: go.mod") || !strings.Contains(packaging, "version: v2.10.1") || !strings.Contains(packaging, "args: release --snapshot --clean") {
+	if setup < 0 || release < setup || !strings.Contains(packaging, "go-version-file: .go-version") || !strings.Contains(packaging, "version: v2.10.1") || !strings.Contains(packaging, "args: release --snapshot --clean") {
 		t.Fatal("mandatory snapshot must explicitly set up Go and use the release tool version")
 	}
 	if !strings.Contains(readRepositoryFile(t, "../.github/rulesets/main.json"), `"context": "CI / quality-gate"`) {
@@ -759,7 +760,7 @@ func TestQualityGatePartialPlatformReruns(t *testing.T) {
 	} {
 		t.Run(results.name, func(t *testing.T) {
 			cmd := exec.Command("bash", "quality_gate.sh")
-			cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "EVENT_NAME=pull_request", "LINUX_BUILD_RESULT=" + results.linux, "MACOS_BUILD_RESULT=" + results.macos, "STATIC_RESULT=success", "CONTRACT_RESULT=success", "PORTAL_RESULT=success", "PACKAGING_RESULT=success", "TITLE_RESULT=success"}
+			cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "EVENT_NAME=pull_request", "LINUX_BUILD_RESULT=" + results.linux, "MACOS_BUILD_RESULT=" + results.macos, "SECURITY_RESULT=success", "WORKFLOW_RESULT=success", "STATIC_RESULT=success", "CONTRACT_RESULT=success", "PORTAL_RESULT=success", "PACKAGING_RESULT=success", "TITLE_RESULT=success"}
 			output, err := cmd.CombinedOutput()
 			if (err == nil) != results.pass {
 				t.Fatalf("success=%t, want %t: %v\n%s", err == nil, results.pass, err, output)
@@ -872,6 +873,48 @@ func TestPortalBrowserInventoryMatchesChromiumScenarios(t *testing.T) {
 	makefile := readRepositoryFile(t, "../Makefile")
 	if !strings.Contains(makefile, "PORTAL_BROWSER_TESTS := ^($(shell paste -sd '|' scripts/portal_browser_tests.txt))$$") {
 		t.Fatal("race and browser selectors must derive from the shared browser inventory")
+	}
+}
+
+func TestSecurityWorkflowContract(t *testing.T) {
+	version := strings.TrimSpace(readRepositoryFile(t, "../.go-version"))
+	if !strings.Contains(readRepositoryFile(t, "../go.mod"), "toolchain go"+version) {
+		t.Fatal("CI and local patched toolchains must match")
+	}
+	paths, err := filepath.Glob("../.github/workflows/*.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	external := regexp.MustCompile(`uses: ([^\s]+)`)
+	pinned := regexp.MustCompile(`^[\w/-]+@[a-f0-9]{40}$`)
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, match := range external.FindAllStringSubmatch(string(data), -1) {
+			if !strings.HasPrefix(match[1], "./") && !pinned.MatchString(match[1]) {
+				t.Errorf("%s: unpinned action %s", path, match[1])
+			}
+		}
+		if !strings.Contains(string(data), "\npermissions:") {
+			t.Errorf("%s lacks explicit permissions", path)
+		}
+	}
+	ci := readRepositoryFile(t, "../.github/workflows/go.yml")
+	for _, required := range []string{"SECURITY_RESULT: ${{ needs.security.result }}", "WORKFLOW_RESULT: ${{ needs.workflow-validation.result }}", "uses: ./.github/workflows/security-check.yml", "make workflow-check"} {
+		if !strings.Contains(ci, required) {
+			t.Errorf("missing %s", required)
+		}
+	}
+	scan := readRepositoryFile(t, "../.github/workflows/security-check.yml")
+	for _, required := range []string{"fetch-depth: 0", "persist-credentials: false", "govulncheck@v1.1.4", "gitleaks/v8@v8.24.3", "make security-check", "timeout-minutes: 15"} {
+		if !strings.Contains(scan, required) {
+			t.Errorf("missing %s", required)
+		}
+	}
+	if strings.Contains(scan, "upload-artifact") || strings.Contains(scan, "continue-on-error") {
+		t.Fatal("security must fail closed without uploading secret diagnostics")
 	}
 }
 

@@ -1,0 +1,10 @@
+name: Scheduled Security
+on:
+  schedule:
+    - cron: '17 7 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  security:
+    uses: ./.github/workflows/security-check.yml
