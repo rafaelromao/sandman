@@ -41,7 +41,7 @@ For suggestions related to agent behavior, prompts, or domain vocabulary, use th
 
 The release workflow requires a repository secret named `RELEASE_PLEASE_TOKEN`. Configure it under **Settings > Secrets and variables > Actions**. Use a fine-grained personal access token limited to this repository with write access to **Contents**, **Issues**, and **Pull requests**. The token must belong to a maintainer who owns its rotation; set an expiration date and replace the repository secret before it expires.
 
-Release automation uses this token instead of `GITHUB_TOKEN` because pull requests created with `GITHUB_TOKEN` do not start `pull_request` workflows. The maintainer token lets release-please create or update the release pull request and allows it to receive the required `CI / build`, `CI / portal-continuity-browser`, and `CI / semantic-pull-request` checks. The exhaustive Linux regression and the focused `Native Compatibility` workflows (three parallel arch-specific jobs: `darwin/amd64`, `darwin/arm64`, and `linux/arm64`) run separately when Release Please pushes to its release branch; their results are visible on the release pull request and must be reviewed before merging. Never print the token or commit it to the repository. A missing `RELEASE_PLEASE_TOKEN` intentionally fails the release workflow rather than falling back to an unverified credential.
+Release automation uses this token instead of `GITHUB_TOKEN` because pull requests created with `GITHUB_TOKEN` do not start `pull_request` workflows. The maintainer token lets release-please create or update the release pull request and allows it to receive the required `CI / build`, `CI / portal-continuity-browser`, and `CI / semantic-pull-request` checks. The exhaustive Linux regression and the focused `Native Compatibility` workflows (four parallel arch-specific jobs: `linux/amd64`, `linux/arm64`, `darwin/amd64`, and `darwin/arm64`) run separately when Release Please pushes to its release branch; their results are visible on the release pull request and must be reviewed before merging. Never print the token or commit it to the repository. A missing `RELEASE_PLEASE_TOKEN` intentionally fails the release workflow rather than falling back to an unverified credential.
 
 ### Feature branches
 
@@ -250,3 +250,13 @@ approval before enforcement. Do not combine platform statement totals or treat
 Go coverage as Portal JavaScript/browser coverage. Preserve behavioral tests.
 See `docs/development/testing.md` for base selection, artifacts, calibration and
 reviewed exemptions in `.github/coverage-policy.json`.
+
+Release validation uses the required scenario manifest in
+`scripts/release_scenarios.json`. Keep it aligned with tagged E2E additions and
+provider changes. Unit/browser, smoke, credential-free integration and live
+provider tiers run independently; missing required prerequisites or unexpected
+skips fail the release gate. Live validation requires the two provider secrets
+and pinned CLI/model versions described in `docs/development/testing.md`.
+Review SHA-bound reports from all tiers and all four native platforms before
+merging a release. Run `python3 scripts/release_report_test.py` for the hermetic
+coverage evaluator; no provider credentials are needed for ordinary PR checks.
