@@ -160,7 +160,8 @@ ordinary PR path. The production release job explicitly installs the pinned Go
 and GoReleaser versions after the publication gate succeeds.
 
 Only after that gate succeeds does publication create an immutable tag and draft
-release. GoReleaser uploads with `--draft`; finalization downloads every asset and
+release. GoReleaser uses `release.use_existing_draft: true` to upload to the prepared
+draft, with `release.draft: true` and `--draft` retaining draft state; finalization downloads every asset and
 verifies exactly the four platform archives against `checksums.txt` before making
 the draft public. A failed validation creates no tag/release; failed packaging or
 upload leaves a draft, never a complete public release. Existing tags must resolve

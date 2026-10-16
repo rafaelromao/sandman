@@ -1050,6 +1050,12 @@ func TestPublicationUsesSameRunValidatedSource(t *testing.T) {
 			t.Errorf("publication gate missing %s", required)
 		}
 	}
+	config := readRepositoryFile(t, "../.goreleaser.yml")
+	for _, required := range []string{"use_existing_draft: true", "draft: true"} {
+		if !strings.Contains(config, required) {
+			t.Errorf("GoReleaser must reuse and retain the prepared draft: missing %s", required)
+		}
+	}
 	publish := extractCIJob(t, release, "publish")
 	for _, required := range []string{"needs: [candidate, publication-gate]", "ref: ${{ needs.candidate.outputs.sha }}", "release --clean --draft", "python3 scripts/publication_finalize.py"} {
 		if !strings.Contains(publish, required) {
