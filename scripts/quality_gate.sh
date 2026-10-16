@@ -10,6 +10,8 @@ require_success() {
   fi
 }
 
+require_success security "${SECURITY_RESULT:-}"
+require_success workflow-validation "${WORKFLOW_RESULT:-}"
 require_success static-analysis "${STATIC_RESULT:-}"
 require_success contracts "${CONTRACT_RESULT:-}"
 require_success build-linux "${LINUX_BUILD_RESULT:-}"

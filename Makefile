@@ -57,6 +57,8 @@ test-browser:
 # makes contracts independently visible without relying on an exclusion list.
 contracts:
 	python3 scripts/ci_report_test.py
+	python3 scripts/security_policy_test.py
+	python3 scripts/security_check_test.py
 	go test -json ./scripts ./internal/skill/...
 	go test -json ./internal/batch ./internal/events ./internal/review ./internal/sandbox -run 'Contract|AgentSelection|Cancellation|Ownership|Lifecycle|Centralized|ProductionGoDoesNotInvokeRepositoryWideWorktreePrune|WorktreeSandboxExecBlocksGlobalWorktreePrune'
 	go run scripts/check_adr_index.go
@@ -84,3 +86,10 @@ install:
 clean:
 	@echo "Cleaning build artifacts..."
 	rm -f $(BINARY)
+
+.PHONY: security-check workflow-check
+security-check:
+	bash scripts/security_check.sh
+
+workflow-check:
+	bash scripts/workflow_check.sh

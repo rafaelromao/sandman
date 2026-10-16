@@ -450,3 +450,28 @@ Race jobs have a 25-minute limit (tests 20 minutes); static/contracts/browser ha
 15-minute limits, packaging 20, and aggregate 2. Measure the first PR's elapsed
 critical path including setup and artifact upload against the managed 30-minute
 CI-wait budget; local timing alone cannot verify hosted Linux/macOS duration.
+
+Security and workflow validation are mandatory dependencies of `CI / quality-gate`.
+Run `make security-check workflow-check` with govulncheck v1.1.4, Gitleaks
+v8.24.3, Actionlint v1.7.7 and ShellCheck v0.10.0 on PATH. The reusable security
+workflow also runs every Monday and manually; inspect Scheduled Security in
+Actions for failures. Scanner errors fail closed. Public output contains status
+only, never raw secret findings; reproduce locally to investigate. No scanner
+artifacts are uploaded. The reviewed baseline contains 28 exact historical false positives in Portal
+run/batch identifier fixtures (`.github/security-exceptions.json`), owned by
+rafaelromao and expiring 2027-01-16. No actual secrets are accepted. Never regenerate a baseline
+to accept new findings. Secret exceptions require an exact Gitleaks fingerprint,
+owner, rationale and ISO expiry date; expired entries fail validation. Reachable
+vulnerabilities must be fixed, with no blanket vulnerability suppression.
+Dependabot opens weekly Go module and Actions updates; review those updates and
+retain full action commit pins with readable version comments. Release automation
+retains write permissions; validation defaults to contents read and semantic title
+validation gets pull-request read. Existing protection contexts remain in place.
+
+The Go language minimum remains 1.25; `toolchain go1.26.9` selects a patched
+standard library for normal builds; `.go-version` selects the same patched
+toolchain explicitly in setup-go and security scans. Keep automatic
+toolchain selection enabled. Staticcheck retains its isolated Go 1.25.0 runner
+for export-data compatibility; it does not build release binaries. The checked-in
+ruleset also requires workflow-validation explicitly; apply/verify live protection
+using the existing documented procedure.

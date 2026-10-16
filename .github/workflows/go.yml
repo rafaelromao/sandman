@@ -11,15 +11,40 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+permissions:
+  contents: read
+
 jobs:
+  security:
+    uses: ./.github/workflows/security-check.yml
+
+  workflow-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: .go-version
+      - name: Install pinned validators
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          mkdir -p "$RUNNER_TEMP/shellcheck"
+          curl --fail --silent --show-error --location https://github.com/koalaman/shellcheck/releases/download/v0.10.0/shellcheck-v0.10.0.linux.x86_64.tar.xz -o "$RUNNER_TEMP/shellcheck.tar.xz"
+          echo '6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87  '"$RUNNER_TEMP/shellcheck.tar.xz" | sha256sum --check
+          tar -xJf "$RUNNER_TEMP/shellcheck.tar.xz" -C "$RUNNER_TEMP/shellcheck" --strip-components=1
+          echo "$RUNNER_TEMP/shellcheck" >> "$GITHUB_PATH"
+      - run: make workflow-check
   semantic-pull-request:
+    permissions:
+      pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: github.event_name == 'pull_request'
     env:
       TITLE: ${{ github.event.pull_request.title }}
     steps:
-      - uses: amannn/action-semantic-pull-request@v5
+      - uses: amannn/action-semantic-pull-request@e32d7e603df1aa1ba07e981f2a23455dee596825 # v5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -48,21 +73,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version-file: go.mod
+          go-version-file: .go-version
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
 
       - name: Set up Chrome for Portal continuity tests
         id: setup-chrome
-        uses: browser-actions/setup-chrome@v2
+        uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2
         with:
           chrome-version: stable
           install-dependencies: true
@@ -86,7 +111,7 @@ jobs:
 
       - name: Publish portal-browser reports
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: portal-browser-${{ runner.os }}
           path: reports/
@@ -96,13 +121,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version-file: go.mod
-      - uses: goreleaser/goreleaser-action@v6
+          go-version-file: .go-version
+      - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
         id: snapshot
         with:
           args: release --snapshot --clean
@@ -118,7 +143,7 @@ jobs:
 
       - name: Publish packaging reports
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: packaging-${{ runner.os }}
           path: dist/
@@ -128,10 +153,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version-file: go.mod
+          go-version-file: .go-version
       - name: Static validation
         run: bash scripts/ci_report.sh static-analysis make fmt-check vet staticcheck
       - name: Summarize interrupted static-analysis validation
@@ -148,7 +173,7 @@ jobs:
 
       - name: Publish static-analysis reports
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: static-analysis-${{ runner.os }}
           path: reports/
@@ -158,10 +183,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version-file: go.mod
+          go-version-file: .go-version
       - name: Architecture and documentation contracts
         run: bash scripts/ci_report.sh contracts make contracts
       - name: Summarize interrupted contracts validation
@@ -178,7 +203,7 @@ jobs:
 
       - name: Publish contracts reports
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: contracts-${{ runner.os }}
           path: reports/
@@ -189,15 +214,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version-file: go.mod
+          go-version-file: .go-version
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
 
@@ -253,7 +278,7 @@ jobs:
 
       - name: Publish race-linux reports
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: race-linux-${{ runner.os }}
           path: reports/
@@ -264,15 +289,15 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version-file: go.mod
+          go-version-file: .go-version
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
 
@@ -299,7 +324,7 @@ jobs:
 
       - name: Publish race-macos reports
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: race-macos-${{ runner.os }}
           path: reports/
@@ -309,11 +334,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     if: ${{ always() }}
-    needs: [static-analysis, contracts, build-linux, build-macos, portal-continuity-browser, goreleaser, semantic-pull-request]
+    needs: [security, workflow-validation, static-analysis, contracts, build-linux, build-macos, portal-continuity-browser, goreleaser, semantic-pull-request]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Require mandatory checks
         env:
+          SECURITY_RESULT: ${{ needs.security.result }}
+          WORKFLOW_RESULT: ${{ needs.workflow-validation.result }}
           STATIC_RESULT: ${{ needs.static-analysis.result }}
           CONTRACT_RESULT: ${{ needs.contracts.result }}
           EVENT_NAME: ${{ github.event_name }}
