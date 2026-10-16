@@ -1,0 +1,998 @@
+{
+  "schema": 1,
+  "platforms": {
+    "linux/amd64": "full regression plus native boundary",
+    "linux/arm64": "native socket and portal boundary",
+    "darwin/amd64": "native socket and portal boundary",
+    "darwin/arm64": "native socket and portal boundary"
+  },
+  "providers": {
+    "opencode": {
+      "cli": "1.15.0",
+      "model": "opencode/big-pickle"
+    },
+    "claude": {
+      "cli": "2.1.283",
+      "model": "claude-haiku-4-5-20251001"
+    }
+  },
+  "scenarios": [
+    {
+      "package": "github.com/rafaelromao/sandman/internal/batch",
+      "test": "TestBadgeE2E_HappyPath_ProductionWiringFiresBadgeHook",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/batch",
+      "test": "TestBadgeE2E_Idempotency_MarkerPRPresent",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/batch",
+      "test": "TestBadgeE2E_NoMergedSandmanPRs",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/batch",
+      "test": "TestBadgeE2E_TriggerCheckFailure_StaysSilent",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/batch",
+      "test": "TestBadgeE2E_PRCreateFailure_StaysSilentAndDoesNotMarkFile",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/batch",
+      "test": "TestBadgeE2E_ControlFilePresent_SkipsAPIScan",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/batch",
+      "test": "TestBadgeE2E_PaginatedSearch_FindsMarkerOnSecondPage_NoSpawn",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/batch",
+      "test": "TestBadgeE2E_PaginatedSearch_MarkerAbsent_TriggersCreation",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/batch",
+      "test": "TestRunBatch_ClaudePresetWorktreeEndToEnd",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/batch",
+      "test": "TestRunBatch_ContextRolloverWorktreeEndToEnd",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBadge_E2E_HappyPath",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBadge_E2E_MarkerPRSeeded_ShortCircuitsBadgeHook",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBatchIDRules_SingleIssueBatchIdentity",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBatchIDRules_MultiIssueBatchIdentity",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBatchIDRules_OrphanReviewBatchIdentity",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBatchIDRules_PromptOnlyBatchIdentity",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBatchIDRules_PortalBatchLabelAndDetailsRenderPublicBatchId",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBatchIDRules_PortalLiveVsSavedVsArchivedLog",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBatchIDRules_ArchiveRunMovesOnlyRunFolder",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBatchIDRules_ArchiveRunLeavesSiblingsLive",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBatchIDRules_ArchiveRunFlipsPerRowRecordStatus",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBatchIDRules_ArchiveRunLogRetrievableFromNewPath",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBatchIDRules_ArchiveRunAlreadyArchivedReturns409",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBatchIDRules_ArchiveRunNonTerminalReturns409",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBatchIDRules_ArchiveBatchMovesWholeDirAndFlipsEntry",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBatchIDRules_ArchiveOlderThanPerRowAware",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBatchIDRules_ArchiveStalePerRowAware",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBatchIDRules_ArchiveLazyRecoveryOnIndexLoad",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBatchIDRules_ContinueMintsFreshBatchAndRunIDs",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBatchIDRules_ContinueReusesOriginalBranchAndWorktree",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBatchIDRules_ContinueLeavesPreviousRunUnchanged",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBatchIDRules_ContinueEmitsRunContinuedEvent",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBatchIDRules_ContinueFoldCreatesFreshRunState",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBatchIDRules_ContinueSubjectPickerExposesPreviousRun",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBatchIDRules_ContinuePickerSwitchesToPreviousRun",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBatchIDRules_ContinueDoesNotRenderContinuationChip",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBatchIDRules_AbortResolvesByRunID",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestRun_ContinueFlag_PromptOnlyUsesCurrentConfig_E2E",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestRun_ContinueFlag_WarnsWhenPromptOnlyTaskMissing",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestDependencyBlockEvidenceSurvivesOverrideE2E",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestLifecycle_CleanStale_RecoversAndRemoves",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestLifecycle_CleanOrphaned_RemovesOrphanDirs",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestLifecycle_Status_ReportsCorrectState",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestLifecycle_Status_NoActiveRuns",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestLifecycle_ArchiveRun_ArchivesTerminalRun",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestOpencodeSubagentPermissionAllowAll",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortal_E2E_RetriesContract_RetryRunCarriesCountsAndEvents",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortal_E2E_RetriesContract_CleanRunOmitsFields",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortal_E2E_RetriesContract_LegacyFinishedRunDefaultsToZero",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortal_E2E_RowCarriesLiveAttemptAndRetryReason",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortal_E2E_CleanRunOmitsAttemptsAndLastRetryReason",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortal_E2E_ParentSuccWithLiveChild",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBlockingOpencodeShim_WakesOnSignal",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortal_E2E_TwoLiveRuns",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortal_E2E_AbortStopsOneIssueAndBatchContinues",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortal_E2E_AbortStopsOneIssueAndBatchContinues_Container",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortal_E2E_MixedBatchShowsBatchMembershipAndFiltersSiblingLogs",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortal_E2E_AbortReturns404ForUnknownRun",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_SkipsWhenNoContainerRuntime",
+      "tier": "integration",
+      "permitted_skip": "container runtime is available; the no-runtime skip path is not reachable here"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_GenericScaffolds",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_GenericRunExecutesRealTask",
+      "tier": "live"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_GenericBuildsWithEditedDockerfile",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_GoScaffolds",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_GoRunExecutesRealTask",
+      "tier": "live"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_GoBuildsWithEditedDockerfile",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_NodeScaffolds",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_NodeRunExecutesRealTask",
+      "tier": "live"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_NodeBuildsWithEditedDockerfile",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_RealAgentOverride",
+      "tier": "live"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_RealAgentContinue",
+      "tier": "live"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_RealClaudeAgentReuseSession",
+      "tier": "live"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixAgentHomeIsolatesStateAndPreservesContainerStorage",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_DotnetScaffolds",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_DotnetRunExecutesRealTask",
+      "tier": "live"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_DotnetBuildsWithEditedDockerfile",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_ElixirScaffolds",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_ElixirRunExecutesRealTask",
+      "tier": "live"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_ElixirBuildsWithEditedDockerfile",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_RustScaffolds",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_RustRunExecutesRealTask",
+      "tier": "live"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_RustBuildsWithEditedDockerfile",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_JavaScaffolds",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_JavaRunExecutesRealTask",
+      "tier": "live"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_JavaBuildsWithEditedDockerfile",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_RubyScaffolds",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_RubyRunExecutesRealTask",
+      "tier": "live"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_RubyBuildsWithEditedDockerfile",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_PythonScaffolds",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_PythonRunExecutesRealTask",
+      "tier": "live"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_PythonBuildsWithEditedDockerfile",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixRunContext_AllowsSlowProviderWithoutUsingEntireSuiteBudget",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixRunContext_ReservesSuiteCleanupTime",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixRunContext_ExpiredSuiteBudgetCancelsRun",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestAssertHermeticGHShimsParallel_HappyPath",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestAssertHermeticGHShimsParallel_MultipleScopes",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPRFlow_PodmanSandboxBinaryCommitsAndPushes",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPRFlow_PodmanSandboxCommitsAndPushes",
+      "tier": "integration",
+      "permitted_skip": "converted to the fake-runner pattern"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPRFlow_WorktreeSandboxCommitsAndPushes",
+      "tier": "integration",
+      "permitted_skip": "converted to the fake-runner pattern"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPRFlow_PodmanSandboxBinaryParallelAgentRuns",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPRFlow_PodmanSandboxBinaryParallelAgentRunsAutoCapacity",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestE2E_QueuedIssuesPersistAfterBatchCompletes",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestGHShimParallel_BlockedByResponse",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestReviewDaemonE2E_RealAgentInContainer",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestReviewDaemonE2E_TriggerCommentLaunchesReview",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestReviewDaemonE2E_ProcessesFourRequestsInParallel",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestReviewWaitStabilization_PendingLifecycleStaysForeground",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestReviewWaitStabilization_CancellationAbortsForegroundWait",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestReviewWaitStabilization_PendingCIReleasesCapacityForIndependentWork",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestReviewWaitStabilization_CIFailureFixReviewMerge",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestRun_BatchEffectiveParallel_AutoMode",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestRun_BatchEffectiveParallel_AutoModeSpawnsPerCapacity",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestRun_BatchEffectiveParallel_ExplicitMax",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestRun_BatchEffectiveParallel_SerialByTurn",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestRun_BatchEffectiveParallel_UnlimitedParallel",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestRun_PathlenWorktreeAndReviewSockets",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalBatchMetadata_RendersBatchAboveRun",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalLogContinuityBrowser_DurationSortUsesActiveGroupedDuration",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalLogContinuityBrowser_TabRoundTrips",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalLogContinuityBrowser_WaitingAbort",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalLogContinuityBrowser_WaitingDuration",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalLogFrontend_LateParentDetailCannotClearSelectedReviewLoadingState",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalLogFrontend_SourceModelWinsBothDetailFetchCompletionOrders",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalLogFrontend_StructuredFramesRenderRecordsNotEnvelope",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalLogPane_SubjectSwitchReusesCachedPane",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalRefreshHydratesRestoredExpandedRunDetail",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalRefresh_ActiveEventsTabHydratesDetail",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalRefresh_DiscardsQueuedExpandedStateBeforeDetailFetch",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalRefresh_ExpandedDetailsTabShowsLoadingCursorWhileDetailFetchPending",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalRefresh_ExpandedRunShowsLoadingCursorWhileDetailFetchPending",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalRefresh_IgnoresEmptyExpandedStateBeforeDetailFetch",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalRefresh_LocksRowIdentityAcrossMixedBatchPayloads",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalRefresh_LogTabSwitchShowsLoadingCursorForMismatchedRunIdentity",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalRefresh_LogTabSwitchShowsLoadingCursorWhileDetailFetchPending",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalReviewSubjectSwitch_GroupBeforeFilterKeepsParentIssueVisible",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalReviewSubjectSwitch_HydratesSelectedSubjectDetail",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalReviewSubjectSwitch_PreservesPendingPerRunOutputAcrossRoundTrip",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalReviewSubjectSwitch_ReusesCachedParentPaneAcrossRoundTrip",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalRowClick_IgnoresForcedToggleAttrsOnQueuedRun",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalSubjectSwitch_ContinuationRowExposesPreviousRun",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalSubjectSwitch_IgnoresEmptySelectionChange",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalSummaryPoll_UsesIfNoneMatchAndKeepsRowsOn304",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortal_Visual_MetaLineDoesNotForceColumnWidth",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortal_Visual_NoHorizontalScrollAt1280px",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortal_Visual_RunRowStaysShortOnMobileViewport",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestSmoke_ContainerBuildFailure",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestSmoke_AllPresetImagesExposeRuntimeTools",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/socketpath",
+      "test": "TestPath_LongLogicalPathIsShortenedOnEveryOS",
+      "tier": "native"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/socketpath",
+      "test": "TestPath_LongLogicalPathIsDeterministic",
+      "tier": "native"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/review",
+      "test": "TestDaemon_SocketPathAndSocketAddrAgreeForLongPath",
+      "tier": "native"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/daemon",
+      "test": "TestControlSocket_StartForLongPathCreatesShortFilesystemSocket",
+      "tier": "native"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/daemon",
+      "test": "TestCommandServer_StartUsesShortFilesystemSocketForLongPath",
+      "tier": "native"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestResolvePortalPeerPIDReturnsCallerPID",
+      "tier": "native",
+      "platforms": [
+        "darwin/amd64",
+        "darwin/arm64"
+      ]
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestDiscoverPortalInstances_LongPathBindsAndDials",
+      "tier": "native"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortal_RunStream_BridgesControlSocketToSSE",
+      "tier": "native"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestAttach_ReadsFromSocket",
+      "tier": "native"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestAttach_ExitsOnEOF",
+      "tier": "native"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestAttach_FindsLongPathReviewSock",
+      "tier": "native"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortal_E2E_TwoLiveRuns",
+      "tier": "native"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortal_E2E_AbortReturns404ForUnknownRun",
+      "tier": "native"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPRFlow_PodmanSandboxBinaryCommitsAndPushes/opencode",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPRFlow_PodmanSandboxBinaryParallelAgentRuns/opencode",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPRFlow_PodmanSandboxBinaryParallelAgentRunsAutoCapacity/opencode",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestE2E_QueuedIssuesPersistAfterBatchCompletes/opencode",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalStatePersistsCommandFormCollapsed",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalScrollCaptureAndRestore",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestReproNormalize_DiscardsQueuedExpandedState",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_ElixirPresetBuildsForEveryBuiltInAgentProvider",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_ElixirPresetBuildsForEveryBuiltInAgentProvider/opencode",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_ElixirPresetBuildsForEveryBuiltInAgentProvider/claude",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_PythonPresetBuildsForEveryBuiltInAgentProvider",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_PythonPresetBuildsForEveryBuiltInAgentProvider/opencode",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_PythonPresetBuildsForEveryBuiltInAgentProvider/claude",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_DotnetPresetBuildsForEveryBuiltInAgentProvider",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_DotnetPresetBuildsForEveryBuiltInAgentProvider/opencode",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_DotnetPresetBuildsForEveryBuiltInAgentProvider/claude",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_GoPresetBuildsForEveryBuiltInAgentProvider",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_GoPresetBuildsForEveryBuiltInAgentProvider/opencode",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_GoPresetBuildsForEveryBuiltInAgentProvider/claude",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_NodePresetBuildsForEveryBuiltInAgentProvider",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_NodePresetBuildsForEveryBuiltInAgentProvider/opencode",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_NodePresetBuildsForEveryBuiltInAgentProvider/claude",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_RubyPresetBuildsForEveryBuiltInAgentProvider",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_RubyPresetBuildsForEveryBuiltInAgentProvider/opencode",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_RubyPresetBuildsForEveryBuiltInAgentProvider/claude",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_JavaPresetBuildsForEveryBuiltInAgentProvider",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_JavaPresetBuildsForEveryBuiltInAgentProvider/opencode",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_JavaPresetBuildsForEveryBuiltInAgentProvider/claude",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_RustPresetBuildsForEveryBuiltInAgentProvider",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_RustPresetBuildsForEveryBuiltInAgentProvider/opencode",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_RustPresetBuildsForEveryBuiltInAgentProvider/claude",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_GenericPresetBuildsForEveryBuiltInAgentProvider",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_GenericPresetBuildsForEveryBuiltInAgentProvider/opencode",
+      "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestInit_GenericPresetBuildsForEveryBuiltInAgentProvider/claude",
+      "tier": "smoke"
+    }
+  ]
+}

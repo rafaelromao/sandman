@@ -148,7 +148,7 @@ SANDMAN_FULL_REGRESSION=1 SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SAN
   go test -tags e2e -timeout 90m ./...
 ```
 
-`SANDMAN_FULL_REGRESSION=1` disables the CI-only skip guards so the exhaustive run actually executes every test (see `docs/development/testing.md`). The real-agent E2E cases still skip with a clear reason when their runtime prerequisites (the opencode or claude binary, its auth snapshot or token, podman) are absent. Aggregate the per-tier PASS/FAIL/SKIP counts and surface a final summary, never silently swallow a failure. Timeouts are tuned per tier — do not lower them; lowering reintroduces the `batch aborted by operator` false-positive from under-budgeted test processes.
+`SANDMAN_FULL_REGRESSION=1` disables the CI-only skip guards so the exhaustive run actually executes every test (see `docs/development/testing.md`). Local real-agent tests can skip when prerequisites are absent; release validation treats those skips as incomplete and fails. The release scenario manifest and `scripts/release_report.py` are authoritative for required coverage. Aggregate the per-tier PASS/FAIL/SKIP counts and surface a final summary, never silently swallow a failure. Timeouts are tuned per tier — do not lower them; lowering reintroduces the `batch aborted by operator` false-positive from under-budgeted test processes.
 
 ## Implementation constraints
 
@@ -305,3 +305,10 @@ approval before enforcement. Do not combine platform statement totals or treat
 Go coverage as Portal JavaScript/browser coverage. Preserve behavioral tests.
 See `docs/development/testing.md` for base selection, artifacts, calibration and
 reviewed exemptions in `.github/coverage-policy.json`.
+
+Release regression runs independent unit/browser, smoke, credential-free
+integration and live-provider tiers with bounded cleanup. Preserve the required
+scenario manifest, narrow negative-control skip reasons, pinned CLI/model
+identifiers and SHA-bound reports. Native boundary evidence is required on Linux
+and macOS amd64/arm64. See `docs/development/testing.md`; do not move live/API
+quota tests into ordinary PR CI or change runtime check-rollup selection.

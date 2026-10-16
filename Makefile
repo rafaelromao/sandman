@@ -57,6 +57,8 @@ test-browser:
 # Default race coverage still runs every architecture guard; this focused job
 # makes contracts independently visible without relying on an exclusion list.
 contracts:
+	python3 scripts/release_report_test.py
+	go test -tags smoke -json ./internal/cmd -run '^TestReleasePresetBuildsMissingPrewarmImage$$'
 	python3 scripts/ci_report_test.py
 	python3 scripts/security_policy_test.py
 	python3 scripts/security_check_test.py
