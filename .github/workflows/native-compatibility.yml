@@ -24,6 +24,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      - name: Prepare native evidence
+        run: |
+          mkdir -p regression-artifacts
+          touch regression-artifacts/events.jsonl
+          echo "$GITHUB_SHA" > regression-artifacts/source-sha.txt
+
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
@@ -36,28 +42,49 @@ jobs:
           test "$(go env GOOS)" = "darwin"
           test "$(go env GOARCH)" = "amd64"
           go build -o "$RUNNER_TEMP/sandman" ./cmd/sandman
+          go version > regression-artifacts/versions.txt
+          go env GOOS GOARCH >> regression-artifacts/versions.txt
           file "$RUNNER_TEMP/sandman"
           "$RUNNER_TEMP/sandman" version
 
       - name: Test native socket compatibility
         run: |
-          go test -race -v -timeout 10m \
+          go test -race -json -count=1 -timeout 10m \
             ./internal/socketpath ./internal/review ./internal/daemon ./internal/cmd \
-            -run '^(TestPath_(LongLogicalPathIsShortenedOnEveryOS|LongLogicalPathIsDeterministic)|TestDaemon_SocketPathAndSocketAddrAgreeForLongPath|TestControlSocket_StartForLongPathCreatesShortFilesystemSocket|TestCommandServer_StartUsesShortFilesystemSocketForLongPath|TestResolvePortalPeerPIDReturnsCallerPID|TestDiscoverPortalInstances_LongPathBindsAndDials|TestPortal_RunStream_BridgesControlSocketToSSE|TestAttach_(ReadsFromSocket|ExitsOnEOF|FindsLongPathReviewSock))$'
+            -run '^(TestPath_(LongLogicalPathIsShortenedOnEveryOS|LongLogicalPathIsDeterministic)|TestDaemon_SocketPathAndSocketAddrAgreeForLongPath|TestControlSocket_StartForLongPathCreatesShortFilesystemSocket|TestCommandServer_StartUsesShortFilesystemSocketForLongPath|TestResolvePortalPeerPIDReturnsCallerPID|TestDiscoverPortalInstances_LongPathBindsAndDials|TestPortal_RunStream_BridgesControlSocketToSSE|TestAttach_(ReadsFromSocket|ExitsOnEOF|FindsLongPathReviewSock))$' 2>&1 | tee -a regression-artifacts/events.jsonl
 
       - name: Test native portal process
         env:
           SANDMAN_E2E_GATES: portal
         run: |
-          go test -v -tags e2e -timeout 10m ./internal/cmd \
-            -run '^TestPortal_E2E_TwoLiveRuns$'
+          go test -json -count=1 -tags e2e -timeout 10m ./internal/cmd \
+            -run '^TestPortal_E2E_TwoLiveRuns$' 2>&1 | tee -a regression-artifacts/events.jsonl
 
       - name: Test native portal abort endpoint
         env:
           SANDMAN_E2E_GATES: portal
         run: |
-          go test -v -tags e2e -timeout 10m ./internal/cmd \
-            -run '^TestPortal_E2E_AbortReturns404ForUnknownRun$'
+          go test -json -count=1 -tags e2e -timeout 10m ./internal/cmd \
+            -run '^TestPortal_E2E_AbortReturns404ForUnknownRun$' 2>&1 | tee -a regression-artifacts/events.jsonl
+
+      - name: Evaluate native coverage
+        if: ${{ always() }}
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          rc=1
+          if [ "$JOB_STATUS" = success ]; then rc=0; fi
+          RELEASE_PLATFORM="$(go env GOOS)/$(go env GOARCH)"
+          export RELEASE_PLATFORM
+          python3 scripts/release_report.py native regression-artifacts/events.jsonl "$rc" regression-artifacts/report.json
+
+      - name: Upload native evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-darwin-amd64-${{ github.sha }}
+          path: regression-artifacts/
+          if-no-files-found: error
 
   darwin-arm64:
     name: Native Compatibility (darwin/arm64)
@@ -69,6 +96,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Prepare native evidence
+        run: |
+          mkdir -p regression-artifacts
+          touch regression-artifacts/events.jsonl
+          echo "$GITHUB_SHA" > regression-artifacts/source-sha.txt
 
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
@@ -82,28 +115,49 @@ jobs:
           test "$(go env GOOS)" = "darwin"
           test "$(go env GOARCH)" = "arm64"
           go build -o "$RUNNER_TEMP/sandman" ./cmd/sandman
+          go version > regression-artifacts/versions.txt
+          go env GOOS GOARCH >> regression-artifacts/versions.txt
           file "$RUNNER_TEMP/sandman"
           "$RUNNER_TEMP/sandman" version
 
       - name: Test native socket compatibility
         run: |
-          go test -race -v -timeout 10m \
+          go test -race -json -count=1 -timeout 10m \
             ./internal/socketpath ./internal/review ./internal/daemon ./internal/cmd \
-            -run '^(TestPath_(LongLogicalPathIsShortenedOnEveryOS|LongLogicalPathIsDeterministic)|TestDaemon_SocketPathAndSocketAddrAgreeForLongPath|TestControlSocket_StartForLongPathCreatesShortFilesystemSocket|TestCommandServer_StartUsesShortFilesystemSocketForLongPath|TestResolvePortalPeerPIDReturnsCallerPID|TestDiscoverPortalInstances_LongPathBindsAndDials|TestPortal_RunStream_BridgesControlSocketToSSE|TestAttach_(ReadsFromSocket|ExitsOnEOF|FindsLongPathReviewSock))$'
+            -run '^(TestPath_(LongLogicalPathIsShortenedOnEveryOS|LongLogicalPathIsDeterministic)|TestDaemon_SocketPathAndSocketAddrAgreeForLongPath|TestControlSocket_StartForLongPathCreatesShortFilesystemSocket|TestCommandServer_StartUsesShortFilesystemSocketForLongPath|TestResolvePortalPeerPIDReturnsCallerPID|TestDiscoverPortalInstances_LongPathBindsAndDials|TestPortal_RunStream_BridgesControlSocketToSSE|TestAttach_(ReadsFromSocket|ExitsOnEOF|FindsLongPathReviewSock))$' 2>&1 | tee -a regression-artifacts/events.jsonl
 
       - name: Test native portal process
         env:
           SANDMAN_E2E_GATES: portal
         run: |
-          go test -v -tags e2e -timeout 10m ./internal/cmd \
-            -run '^TestPortal_E2E_TwoLiveRuns$'
+          go test -json -count=1 -tags e2e -timeout 10m ./internal/cmd \
+            -run '^TestPortal_E2E_TwoLiveRuns$' 2>&1 | tee -a regression-artifacts/events.jsonl
 
       - name: Test native portal abort endpoint
         env:
           SANDMAN_E2E_GATES: portal
         run: |
-          go test -v -tags e2e -timeout 10m ./internal/cmd \
-            -run '^TestPortal_E2E_AbortReturns404ForUnknownRun$'
+          go test -json -count=1 -tags e2e -timeout 10m ./internal/cmd \
+            -run '^TestPortal_E2E_AbortReturns404ForUnknownRun$' 2>&1 | tee -a regression-artifacts/events.jsonl
+
+      - name: Evaluate native coverage
+        if: ${{ always() }}
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          rc=1
+          if [ "$JOB_STATUS" = success ]; then rc=0; fi
+          RELEASE_PLATFORM="$(go env GOOS)/$(go env GOARCH)"
+          export RELEASE_PLATFORM
+          python3 scripts/release_report.py native regression-artifacts/events.jsonl "$rc" regression-artifacts/report.json
+
+      - name: Upload native evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-darwin-arm64-${{ github.sha }}
+          path: regression-artifacts/
+          if-no-files-found: error
 
   linux-arm64:
     name: Native Compatibility (linux/arm64)
@@ -115,6 +169,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Prepare native evidence
+        run: |
+          mkdir -p regression-artifacts
+          touch regression-artifacts/events.jsonl
+          echo "$GITHUB_SHA" > regression-artifacts/source-sha.txt
 
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
@@ -128,25 +188,119 @@ jobs:
           test "$(go env GOOS)" = "linux"
           test "$(go env GOARCH)" = "arm64"
           go build -o "$RUNNER_TEMP/sandman" ./cmd/sandman
+          go version > regression-artifacts/versions.txt
+          go env GOOS GOARCH >> regression-artifacts/versions.txt
           file "$RUNNER_TEMP/sandman"
           "$RUNNER_TEMP/sandman" version
 
       - name: Test native socket compatibility
         run: |
-          go test -race -v -timeout 10m \
+          go test -race -json -count=1 -timeout 10m \
             ./internal/socketpath ./internal/review ./internal/daemon ./internal/cmd \
-            -run '^(TestPath_(LongLogicalPathIsShortenedOnEveryOS|LongLogicalPathIsDeterministic)|TestDaemon_SocketPathAndSocketAddrAgreeForLongPath|TestControlSocket_StartForLongPathCreatesShortFilesystemSocket|TestCommandServer_StartUsesShortFilesystemSocketForLongPath|TestResolvePortalPeerPIDReturnsCallerPID|TestDiscoverPortalInstances_LongPathBindsAndDials|TestPortal_RunStream_BridgesControlSocketToSSE|TestAttach_(ReadsFromSocket|ExitsOnEOF|FindsLongPathReviewSock))$'
+            -run '^(TestPath_(LongLogicalPathIsShortenedOnEveryOS|LongLogicalPathIsDeterministic)|TestDaemon_SocketPathAndSocketAddrAgreeForLongPath|TestControlSocket_StartForLongPathCreatesShortFilesystemSocket|TestCommandServer_StartUsesShortFilesystemSocketForLongPath|TestResolvePortalPeerPIDReturnsCallerPID|TestDiscoverPortalInstances_LongPathBindsAndDials|TestPortal_RunStream_BridgesControlSocketToSSE|TestAttach_(ReadsFromSocket|ExitsOnEOF|FindsLongPathReviewSock))$' 2>&1 | tee -a regression-artifacts/events.jsonl
 
       - name: Test native portal process
         env:
           SANDMAN_E2E_GATES: portal
         run: |
-          go test -v -tags e2e -timeout 10m ./internal/cmd \
-            -run '^TestPortal_E2E_TwoLiveRuns$'
+          go test -json -count=1 -tags e2e -timeout 10m ./internal/cmd \
+            -run '^TestPortal_E2E_TwoLiveRuns$' 2>&1 | tee -a regression-artifacts/events.jsonl
 
       - name: Test native portal abort endpoint
         env:
           SANDMAN_E2E_GATES: portal
         run: |
-          go test -v -tags e2e -timeout 10m ./internal/cmd \
-            -run '^TestPortal_E2E_AbortReturns404ForUnknownRun$'
+          go test -json -count=1 -tags e2e -timeout 10m ./internal/cmd \
+            -run '^TestPortal_E2E_AbortReturns404ForUnknownRun$' 2>&1 | tee -a regression-artifacts/events.jsonl
+
+      - name: Evaluate native coverage
+        if: ${{ always() }}
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          rc=1
+          if [ "$JOB_STATUS" = success ]; then rc=0; fi
+          RELEASE_PLATFORM="$(go env GOOS)/$(go env GOARCH)"
+          export RELEASE_PLATFORM
+          python3 scripts/release_report.py native regression-artifacts/events.jsonl "$rc" regression-artifacts/report.json
+
+      - name: Upload native evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-linux-arm64-${{ github.sha }}
+          path: regression-artifacts/
+          if-no-files-found: error
+
+  linux-amd64:
+    name: Native Compatibility (linux/amd64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CI: "true"
+      SANDMAN_TEST_PROVIDERS: all
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Prepare native evidence
+        run: |
+          mkdir -p regression-artifacts
+          touch regression-artifacts/events.jsonl
+          echo "$GITHUB_SHA" > regression-artifacts/source-sha.txt
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: .go-version
+          cache: true
+
+      - name: Build native Sandman (Linux amd64)
+        run: |
+          test "$(uname -m)" = "x86_64"
+          test "$(go env GOOS)" = "linux"
+          test "$(go env GOARCH)" = "amd64"
+          go build -o "$RUNNER_TEMP/sandman" ./cmd/sandman
+          go version > regression-artifacts/versions.txt
+          go env GOOS GOARCH >> regression-artifacts/versions.txt
+          file "$RUNNER_TEMP/sandman"
+          "$RUNNER_TEMP/sandman" version
+
+      - name: Test native socket compatibility
+        run: |
+          go test -race -json -count=1 -timeout 10m \
+            ./internal/socketpath ./internal/review ./internal/daemon ./internal/cmd \
+            -run '^(TestPath_(LongLogicalPathIsShortenedOnEveryOS|LongLogicalPathIsDeterministic)|TestDaemon_SocketPathAndSocketAddrAgreeForLongPath|TestControlSocket_StartForLongPathCreatesShortFilesystemSocket|TestCommandServer_StartUsesShortFilesystemSocketForLongPath|TestResolvePortalPeerPIDReturnsCallerPID|TestDiscoverPortalInstances_LongPathBindsAndDials|TestPortal_RunStream_BridgesControlSocketToSSE|TestAttach_(ReadsFromSocket|ExitsOnEOF|FindsLongPathReviewSock))$' 2>&1 | tee -a regression-artifacts/events.jsonl
+
+      - name: Test native portal process
+        env:
+          SANDMAN_E2E_GATES: portal
+        run: |
+          go test -json -count=1 -tags e2e -timeout 10m ./internal/cmd \
+            -run '^TestPortal_E2E_TwoLiveRuns$' 2>&1 | tee -a regression-artifacts/events.jsonl
+
+      - name: Test native portal abort endpoint
+        env:
+          SANDMAN_E2E_GATES: portal
+        run: |
+          go test -json -count=1 -tags e2e -timeout 10m ./internal/cmd \
+            -run '^TestPortal_E2E_AbortReturns404ForUnknownRun$' 2>&1 | tee -a regression-artifacts/events.jsonl
+
+      - name: Evaluate native coverage
+        if: ${{ always() }}
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          rc=1
+          if [ "$JOB_STATUS" = success ]; then rc=0; fi
+          RELEASE_PLATFORM="$(go env GOOS)/$(go env GOARCH)"
+          export RELEASE_PLATFORM
+          python3 scripts/release_report.py native regression-artifacts/events.jsonl "$rc" regression-artifacts/report.json
+
+      - name: Upload native evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-linux-amd64-${{ github.sha }}
+          path: regression-artifacts/
+          if-no-files-found: error

@@ -497,3 +497,15 @@ approval before enforcement. Do not combine platform statement totals or treat
 Go coverage as Portal JavaScript/browser coverage. Preserve behavioral tests.
 See `docs/development/testing.md` for base selection, artifacts, calibration and
 reviewed exemptions in `.github/coverage-policy.json`.
+
+### Release scenario coverage
+
+A required release scenario is a package/test identity in
+`scripts/release_scenarios.json`, evaluated against observed Go JSON events.
+Missing prerequisites, absent scenarios, duplicate results and unexpected skips
+mean incomplete release validation. Only named negative-control or retired-test
+skips with matching reasons are permitted. Release evidence binds counts,
+reasons, tool/model versions and timeout classification to the tested SHA.
+Independent unit/browser, smoke, credential-free integration and live-provider
+jobs retain evidence despite sibling failures; native boundary reports cover
+Linux/macOS amd64/arm64. Ordinary PR checks retain their existing budget.

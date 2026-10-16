@@ -104,7 +104,7 @@ Sandman publishes four GoReleaser targets that match the four Unix platforms Ope
 
 | Platform | Build + unit (race) | Podman-backed regression | Native Compatibility boundary |
 |----------|---------------------|--------------------------|-------------------------------|
-| Linux amd64 | `CI / build (ubuntu-latest)` + `CI / portal-continuity-browser` (PR + push to `main`) | `Full Regression - Linux` (release-please branch + dispatch) | n/a |
+| Linux amd64 | `CI / build (ubuntu-latest)` + `CI / portal-continuity-browser` (PR + push to `main`) | `Full Regression - Linux` (release-please branch + dispatch) | `Native Compatibility (linux/amd64)` on `ubuntu-latest` |
 | Linux arm64 | (no PR-time matrix entry today; covered by the released archive) | n/a | `Native Compatibility / (linux/arm64)` on `ubuntu-24.04-arm` (release-please branch + dispatch) |
 | macOS amd64 (Intel) | n/a (covered transitively by `CI / build (macos-latest)` arm64 today) | n/a — release-please does not run Podman on macOS after #2459 | `Native Compatibility / (darwin/amd64)` on `macos-15-intel` (release-please branch + dispatch) |
 | macOS arm64 (Apple Silicon) | `CI / build (macos-latest)` (PR + push to `main`) | n/a | `Native Compatibility / (darwin/arm64)` on `macos-14` (release-please branch + dispatch) |
@@ -115,8 +115,8 @@ The required `CI / portal-continuity-browser` job provisions Node and Chromium o
 
 Release Please branch updates add two release-validation workflows:
 
-- `Full Regression - Linux` is the exhaustive authority for Linux. It runs the race-enabled unit suite, every smoke provider and build-tools preset, and every E2E gate including real-agent coverage with the canonical 60- and 90-minute budgets.
-- `Native Compatibility` is a focused suite with three parallel arch-specific jobs — `Native Compatibility (darwin/amd64)` on `macos-15-intel`, `Native Compatibility (darwin/arm64)` on `macos-14`, and `Native Compatibility (linux/arm64)` on `ubuntu-24.04-arm`. Each job builds Sandman natively for its arch, then exercises Darwin/Linux socket paths plus portal and attach streaming, and verifies the native portal and attach streaming boundary through two hermetic portal E2E cases. Linux-container preset portability remains covered by the Linux workflow rather than being rebuilt inside the macOS Podman VM.
+- `Full Regression - Linux` is the exhaustive authority for Linux. It runs independent unit/browser, smoke container, credential-free integration, and live-provider jobs with the canonical 60- and 90-minute budgets.
+- `Native Compatibility` is a focused suite with four parallel arch-specific jobs — `Native Compatibility (linux/amd64)` on `ubuntu-latest`, `Native Compatibility (darwin/amd64)` on `macos-15-intel`, `Native Compatibility (darwin/arm64)` on `macos-14`, and `Native Compatibility (linux/arm64)` on `ubuntu-24.04-arm`. Each job builds Sandman natively for its arch, then exercises Darwin/Linux socket paths plus portal and attach streaming, and verifies the native portal and attach streaming boundary through two hermetic portal E2E cases. Linux-container preset portability remains covered by the Linux workflow rather than being rebuilt inside the macOS Podman VM.
 
 The contract test `TestPlatformCoverageMapMatchesWorkflowsAndGoReleaser` enforces that the CI platform jobs, the `Native Compatibility` workflow shape, the `Full Regression - Linux` exhaustive command, and the four `.goreleaser.yml` build IDs all stay aligned with the matrix above. A drift in any one of those four sources fails the contract.
 
@@ -132,12 +132,60 @@ CI-only skip guard is written as
 exhaustive job actually executes the real-agent, portal, preset-matrix, visual,
 and heartbeat-timeout tests that ordinary CI only compiles.
 
-The full-regression workflow installs the `opencode` CLI (`curl -fsSL
-https://opencode.ai/install | bash`) and provisions `~/.local/share/opencode/auth.json`
-from the `OPENCODE_API_KEY` secret. With auth present, the real-agent tests run
-for real and a free-model quota exhaustion surfaces as a failed job instead of
-a green-but-empty one. If the secret is absent, the auth-gated tests skip
-cleanly with their normal "missing auth" message rather than failing.
+The checked-in `scripts/release_scenarios.json` manifest defines required tests,
+provider CLIs/models, native platform boundaries and narrowly permitted skips.
+The only permitted required-scenario skips are the no-runtime negative control
+when a runtime exists and two retired PR-flow scenarios whose replacement is
+required. Skip reasons must match the manifest. Unrelated optional default tests
+are reported but do not substitute for required scenario coverage. New tagged
+E2E tests must enter the manifest; contracts reject missing entries.
+
+The four independent jobs call `release-regression-tier.yml` and have no
+dependency on each other. The final gate checks each job explicitly, preserving
+sibling failures when only one tier is rerun.
+Unit includes `visual` tests and Node production-module coverage. Smoke builds
+all preset containers without provider calls. Integration excludes the manifest's
+live selector and uses fake agents, local Git remotes and real containers.
+Live selects the explicit OpenCode and Claude scenarios; only this tier receives
+provider credentials. No live-provider validation is added to ordinary PR CI.
+
+Every Linux tier provisions Node 22, Chromium and validated rootless Podman
+with runc. Live additionally installs `opencode-ai@1.15.0` and
+`@anthropic-ai/claude-code@2.1.283`, checks their versions, and requires both
+`OPENCODE_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` secrets. OpenCode auth is
+written as JSON with mode 0600. The selected model identifiers are
+`opencode/big-pickle` and `claude-haiku-4-5-20251001`. Missing credentials,
+tools, required tests, unexpected skips and duplicate executions fail validation.
+Quota/provider failures remain failures; they cannot produce successful coverage.
+
+`release-regression-<tier>-<sha>` artifacts contain the raw Go JSON stream,
+process exit code, source SHA, observed tool versions and `report.json`.
+Reports and Actions summaries count executions, passes, skips, failures,
+missing scenarios and interrupted tests; they retain skip/failure reasons and
+classify process failures versus timeouts. The evaluator runs with `always()`
+even after setup failure, and the final release regression gate requires every
+tier. GNU timeout kills the tier process group after a bounded grace period;
+runner containers are removed during final cleanup. Native jobs similarly
+publish `native-<platform>-<sha>` reports for all four published platforms.
+
+To reproduce one tier after provisioning prerequisites, use:
+
+```bash
+mkdir -p regression-artifacts
+export RELEASE_TIER=integration SANDMAN_FULL_REGRESSION=1
+export SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all
+bash scripts/release_tier.sh
+GITHUB_SHA=$(git rev-parse HEAD) python3 scripts/release_report.py \
+  "$RELEASE_TIER" regression-artifacts/events.jsonl \
+  "$(cat regression-artifacts/exit-code)" regression-artifacts/report.json
+```
+
+Run `python3 scripts/release_report_test.py` for hermetic accounting tests.
+Hosted live runs and native runners remain necessary to establish actual release
+evidence; local contract tests alone cannot certify a release. The main ruleset
+keeps ordinary PR contexts because release-only contexts do not exist on other
+PRs; maintainers must inspect both release workflows at the exact release head
+before merging. Do not alter runtime check-rollup selection for these jobs.
 
 `go.yml` must never set `SANDMAN_FULL_REGRESSION`; the contract test
 `TestCIWorkflowKeepsOptInSuitesDisabled` enforces that so the CI-only skips

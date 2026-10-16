@@ -319,24 +319,29 @@ func TestReleaseValidationWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 		}
 	}
 
-	linux := readRepositoryFile(t, "../.github/workflows/full-regression-linux.yml")
-	if !strings.Contains(linux, "SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -json -timeout 90m ./...") {
-		t.Error("Linux full regression workflow must preserve the canonical E2E command")
-	}
+	linux := readRepositoryFile(t, "../.github/workflows/full-regression-linux.yml") + readRepositoryFile(t, "../.github/workflows/release-regression-tier.yml")
 	for _, required := range []string{
 		`SANDMAN_FULL_REGRESSION: "1"`,
-		"name: Install opencode CLI",
-		"curl -fsSL https://opencode.ai/install | bash",
-		"name: Provision opencode auth",
-		"secrets.OPENCODE_API_KEY",
+		"tier: unit", "tier: smoke", "tier: integration", "tier: live",
+		"name: Install pinned agent CLIs", "opencode-ai@1.15.0 @anthropic-ai/claude-code@2.1.283",
+		"secrets.OPENCODE_API_KEY", "secrets.CLAUDE_CODE_OAUTH_TOKEN",
+		"name: Set up Node", "name: Set up Chromium",
+		"name: Validate prerequisites and record versions",
+		"python3 scripts/release_report.py", "if: ${{ always() }}",
+		"needs: [unit, smoke, integration, live]", `test "$LIVE_RESULT" = success`,
 		`export CONTAINERS_CONF="$RUNNER_TEMP/containers.conf"`,
 		`echo "CONTAINERS_CONF=$CONTAINERS_CONF" >> "$GITHUB_ENV"`,
-		"name: Configure Podman runtime",
-		`runtime = "runc"`,
+		"name: Configure Podman runtime", `runtime = "runc"`,
 		`test "$(podman info --format '{{.Host.OCIRuntime.Name}}')" = "runc"`,
 	} {
 		if !strings.Contains(linux, required) {
 			t.Errorf("Linux full regression workflow missing %q", required)
+		}
+	}
+	runner := readRepositoryFile(t, "release_tier.sh")
+	for _, required := range []string{"SANDMAN_RUN_AGENT_E2E=1", "-tags e2e", "-skip", "-run", "--kill-after=30s", "PIPESTATUS[0]", "exit-code", "-count=1"} {
+		if !strings.Contains(runner, required) {
+			t.Errorf("release tier runner missing %q", required)
 		}
 	}
 }
@@ -501,7 +506,7 @@ func TestLinuxCIGatesPortalLogContinuityOnRequiredBrowserCoverage(t *testing.T) 
 func TestPodmanInstallIsBoundedAcrossLinuxWorkflows(t *testing.T) {
 	for _, workflowPath := range []string{
 		"../.github/workflows/go.yml",
-		"../.github/workflows/full-regression-linux.yml",
+		"../.github/workflows/release-regression-tier.yml",
 	} {
 		workflow := readRepositoryFile(t, workflowPath)
 		for _, required := range []string{
@@ -520,7 +525,7 @@ func TestPodmanInstallIsBoundedAcrossLinuxWorkflows(t *testing.T) {
 
 func TestPlatformCoverageMapMatchesWorkflowsAndGoReleaser(t *testing.T) {
 	ci := readRepositoryFile(t, "../.github/workflows/go.yml")
-	linuxFull := readRepositoryFile(t, "../.github/workflows/full-regression-linux.yml")
+	linuxFull := readRepositoryFile(t, "../.github/workflows/full-regression-linux.yml") + readRepositoryFile(t, "../.github/workflows/release-regression-tier.yml")
 	nativeCompat := readRepositoryFile(t, "../.github/workflows/native-compatibility.yml")
 	goreleaser := readRepositoryFile(t, "../.goreleaser.yml")
 
@@ -552,7 +557,7 @@ func TestPlatformCoverageMapMatchesWorkflowsAndGoReleaser(t *testing.T) {
 		}
 	}
 
-	if !strings.Contains(linuxFull, "SANDMAN_RUN_AGENT_E2E=1") || !strings.Contains(linuxFull, "SANDMAN_E2E_GATES=all") {
+	if !strings.Contains(readRepositoryFile(t, "release_tier.sh"), "SANDMAN_RUN_AGENT_E2E=1") || !strings.Contains(linuxFull, "SANDMAN_E2E_GATES: all") {
 		t.Error("Full Regression - Linux must remain the exhaustive release regression authority (real-agent + all e2e gates)")
 	}
 
@@ -931,5 +936,102 @@ func TestCoverageCollectionAndPolicyOwnership(t *testing.T) {
 	makefile := readRepositoryFile(t, "../Makefile")
 	if !strings.Contains(makefile, "-race -covermode=atomic -coverprofile=reports/coverage.out") || !strings.Contains(makefile, "python3 scripts/coverage_report_test.py") {
 		t.Fatal("coverage must reuse atomic race collection and test policy in contracts")
+	}
+}
+
+func TestReleaseManifestInventoriesTaggedScenarios(t *testing.T) {
+	var manifest struct {
+		Scenarios []struct{ Package, Test, Tier string }
+	}
+	if err := json.Unmarshal([]byte(readRepositoryFile(t, "release_scenarios.json")), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	required := make(map[string]string)
+	for _, scenario := range manifest.Scenarios {
+		key := scenario.Tier + ":" + scenario.Package + ":" + scenario.Test
+		if required[key] != "" {
+			t.Errorf("duplicate manifest scenario %s", key)
+		}
+		required[key] = scenario.Test
+	}
+	err := filepath.WalkDir("../internal", func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		source := readRepositoryFile(t, path)
+		if !strings.HasPrefix(source, "//go:build e2e") {
+			return nil
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			return err
+		}
+		pkg := "github.com/rafaelromao/sandman/" + strings.TrimPrefix(filepath.ToSlash(filepath.Dir(path)), "../")
+		for _, declaration := range file.Decls {
+			fn, ok := declaration.(*ast.FuncDecl)
+			if !ok || !strings.HasPrefix(fn.Name.Name, "Test") {
+				continue
+			}
+			invokesLive := false
+			ast.Inspect(fn.Body, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				name, ok := call.Fun.(*ast.Ident)
+				if ok && (name.Name == "requireSandmanAgentE2E" || name.Name == "requirePresetMatrixE2E" || name.Name == "runE2ERun") {
+					invokesLive = true
+				}
+				return true
+			})
+			if invokesLive && required["live:"+pkg+":"+fn.Name.Name] == "" {
+				t.Errorf("real-provider scenario must belong to live tier: %s:%s", pkg, fn.Name.Name)
+			}
+			found := false
+			for _, tier := range []string{"integration", "live"} {
+				if required[tier+":"+pkg+":"+fn.Name.Name] != "" {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("tagged release scenario missing from manifest: %s:%s", pkg, fn.Name.Name)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := readRepositoryFile(t, "../.github/workflows/native-compatibility.yml")
+	for _, platform := range []string{"linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64"} {
+		block := extractCIJob(t, native, platform)
+		for _, required := range []string{"python3 scripts/release_report.py native", "if: ${{ always() }}", "-json -count=1", "source-sha.txt", "versions.txt"} {
+			if !strings.Contains(block, required) {
+				t.Errorf("native %s missing %s", platform, required)
+			}
+		}
+	}
+}
+
+func TestReleaseTierJobsRemainIndependent(t *testing.T) {
+	workflow := readRepositoryFile(t, "../.github/workflows/full-regression-linux.yml")
+	for _, tier := range []string{"unit", "smoke", "integration", "live"} {
+		block := extractCIJob(t, workflow, tier)
+		if !strings.Contains(block, "uses: ./.github/workflows/release-regression-tier.yml") || strings.Contains(block, "needs:") {
+			t.Errorf("release tier %s must run independently", tier)
+		}
+		if tier != "live" && strings.Contains(block, "secrets:") {
+			t.Errorf("%s must receive no provider secrets", tier)
+		}
+		gate := extractCIJob(t, workflow, "release-gate")
+		if !strings.Contains(gate, "needs."+tier+".result") {
+			t.Errorf("release gate must inspect %s explicitly", tier)
+		}
+	}
+	if strings.Contains(workflow, "matrix:") {
+		t.Fatal("separate jobs must preserve per-tier outcomes on partial reruns")
 	}
 }
