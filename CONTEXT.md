@@ -509,3 +509,11 @@ reasons, tool/model versions and timeout classification to the tested SHA.
 Independent unit/browser, smoke, credential-free integration and live-provider
 jobs retain evidence despite sibling failures; native boundary reports cover
 Linux/macOS amd64/arm64. Ordinary PR checks retain their existing budget.
+
+**Publication gate**: authorization from same-invocation reusable CI, complete
+release-regression manifest and four-platform native validation for the exact
+merged main SHA. Release-branch evidence cannot transfer to another SHA. Immutable
+tag creation follows authorization; draft assets become public only after complete
+checksum verification. Release PR maintenance runs independently. See
+`docs/development/releasing.md` for safe reruns and `docs/development/testing.md`
+for strict main-protection setup and live verification limits.

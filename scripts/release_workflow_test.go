@@ -113,11 +113,11 @@ func TestReleasePolicyDocumentationDescribesAutomaticVersioningAfterRC1(t *testi
 func TestReleaseWorkflowPublishesConfiguredReleaseArtifacts(t *testing.T) {
 	release := readRepositoryFile(t, "../.github/workflows/release.yml")
 	for _, required := range []string{
-		"release_created == 'true'",
+		"skip-github-release: true",
 		"uses: actions/setup-go@v5",
 		"go-version-file: .go-version",
 		"version: v2.10.1",
-		"args: release --clean",
+		"args: release --clean --draft",
 		"GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}",
 	} {
 		if !strings.Contains(release, required) {
@@ -138,7 +138,7 @@ func TestReleaseWorkflowPublishesConfiguredReleaseArtifacts(t *testing.T) {
 	}
 
 	setupGoBlock := release[setupGo:goreleaserStep]
-	if !strings.Contains(setupGoBlock, "if: steps.release-please.outputs.release_created == 'true'") {
+	if !strings.Contains(setupGoBlock, "if: steps.prepare.outputs.complete != 'true'") {
 		t.Fatal("release workflow Go setup must be gated on release creation")
 	}
 
@@ -286,7 +286,7 @@ func TestReleaseWorkflowRefreshesUnchangedPendingBranch(t *testing.T) {
 	if checkout < 0 || refresh < checkout || setupGo < refresh {
 		t.Fatal("release branch refresh must run after checkout and before release publication")
 	}
-	block := release[checkout:setupGo]
+	block := release[checkout:strings.Index(release, "\n  candidate:")]
 	for _, required := range []string{"GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}", "run: sh scripts/refresh_release_pr.sh", "timeout-minutes: 5", "persist-credentials: false"} {
 		if !strings.Contains(block, required) {
 			t.Errorf("release refresh missing %q", required)
@@ -1033,5 +1033,34 @@ func TestReleaseTierJobsRemainIndependent(t *testing.T) {
 	}
 	if strings.Contains(workflow, "matrix:") {
 		t.Fatal("separate jobs must preserve per-tier outcomes on partial reruns")
+	}
+}
+
+func TestPublicationUsesSameRunValidatedSource(t *testing.T) {
+	release := readRepositoryFile(t, "../.github/workflows/release.yml")
+	for _, job := range []string{"quality", "regression", "native"} {
+		block := extractCIJob(t, release, job)
+		if !strings.Contains(block, "needs: candidate") || !strings.Contains(block, "uses: ./.github/workflows/") {
+			t.Errorf("%s must validate the caller source through a local reusable workflow", job)
+		}
+	}
+	gate := extractCIJob(t, release, "publication-gate")
+	for _, required := range []string{"always()", "needs: [candidate, quality, regression, native]", "toJSON(needs)", "python3 scripts/publication_gate.py"} {
+		if !strings.Contains(gate, required) {
+			t.Errorf("publication gate missing %s", required)
+		}
+	}
+	publish := extractCIJob(t, release, "publish")
+	for _, required := range []string{"needs: [candidate, publication-gate]", "ref: ${{ needs.candidate.outputs.sha }}", "release --clean --draft", "python3 scripts/publication_finalize.py"} {
+		if !strings.Contains(publish, required) {
+			t.Errorf("publisher missing %s", required)
+		}
+	}
+	maintenance := extractCIJob(t, release, "release-please")
+	if strings.Contains(maintenance, "needs:") || !strings.Contains(maintenance, "skip-github-release: true") {
+		t.Fatal("release PR maintenance must be independent and cannot publish")
+	}
+	if !strings.Contains(readRepositoryFile(t, "../.github/rulesets/main.json"), `"strict_required_status_checks_policy": true`) {
+		t.Fatal("main must require up-to-date validation")
 	}
 }

@@ -32,22 +32,20 @@ binary installation ([#2392](https://github.com/rafaelromao/sandman/issues/2392)
    Reviewers must not merge a failed or incomplete suite. Check the SHA-bound
    scenario and prerequisite reports described in `testing.md`, including the
    independent unit/browser, smoke, integration and live-provider results.
-4. Release Please creates the version tag and published GitHub Release when
-   the release change request is merged. The manifest records the published
-   `v1.0.0-rc.1` release, which is marked as a GitHub prerelease. Release Please
-   now calculates later RC versions from merged release-bearing Conventional
-   Commits.
-5. When Release Please reports `release_created == 'true'`, the same workflow
-   checks out the workflow's triggering commit with full history and runs
-   Go `1.25.0` from `go.mod`, then runs GoReleaser `v2.10.1` with
-   `release --clean`. GoReleaser uploads the archives and `checksums.txt` to
-   the GitHub Release. The workflow does not explicitly pass the generated tag
-   to `actions/checkout`.
+   Release Please now calculates later RC versions from merged release-bearing
+   Conventional Commits.
+4. Merging the release change request triggers fresh CI, regression and native
+   validation of the exact merged main SHA. Prior release-branch results cannot
+   authorize publication of this new commit.
+5. After the publication gate succeeds, the publisher creates an immutable tag
+   and draft release, sets up the patched Go toolchain from `.go-version`, and
+   runs GoReleaser `v2.10.1` with `release --clean --draft`. Finalization verifies
+   all four archives and checksums before exposing the release. Go `1.25.0` from `go.mod`
+   remains the language minimum; `.go-version` selects the patched build toolchain.
 
-To diagnose a release, inspect the Release workflow run, the Release Please
-change request and its generated tag, then the GoReleaser step and the assets
-on the GitHub Release page. GoReleaser is conditional: a failed or skipped
-Release Please release means it does not run.
+To diagnose a release, inspect the Release run's publication gate, the SHA-bound
+validation reports, then the draft and GoReleaser output. A failed or incomplete
+gate prevents tag and release creation. See recovery instructions below.
 
 The configured release targets are:
 
@@ -139,10 +137,9 @@ config, and the version command tests; no sandbox behavior change is claimed.
 ## Toolchain Determinism
 
 The production release job explicitly installs the Go version declared by
-`go.mod` and pins GoReleaser to `v2.10.1`. Both steps run only when Release
-Please reports `release_created == 'true'`. The pull-request snapshot workflow
-is separate and intentionally remains independent of the production release
-toolchain.
+`.go-version` and pins GoReleaser to `v2.10.1`. Both steps require the publication
+gate to succeed and are skipped for an already public release. The pull-request
+snapshot workflow shares these toolchain selections.
 
 ## First RC Verification
 
@@ -151,3 +148,34 @@ prerelease, all four platform archives and `checksums.txt` are present, and the
 released binary reports version `1.0.0-rc.1`. Leave the manifest at the
 Release Please-generated RC1 state; the next release-bearing merged history
 determines the next version automatically.
+
+### Validated-source publication and recovery
+
+Release Please creates/refreshes PRs with `skip-github-release: true`, independently
+of release validation failures. The Release workflow recognizes a candidate only
+when the main commit changes `.release-please-manifest.json` from its first parent.
+The immutable merged SHA, rather than release-branch evidence, runs the reusable
+CI, regression and native workflows. These expensive checks remain outside the
+ordinary PR path. The production release job explicitly installs the pinned Go
+and GoReleaser versions after the publication gate succeeds.
+
+Only after that gate succeeds does publication create an immutable tag and draft
+release. GoReleaser uploads with `--draft`; finalization downloads every asset and
+verifies exactly the four platform archives against `checksums.txt` before making
+the draft public. A failed validation creates no tag/release; failed packaging or
+upload leaves a draft, never a complete public release. Existing tags must resolve
+to the candidate SHA. Tags are never moved and assets are never overwritten.
+Publication runs serialize without cancelling validation. Later main commits do
+not change the candidate's SHA; strict up-to-date PR protection handles concurrent
+merges before admission (see testing.md for live enforcement verification).
+
+Rerun the failed Release run, or dispatch Release at the same main release commit.
+A fully published release at that immutable tag is a no-op. An empty draft can be
+retried. A partially uploaded draft fails closed: inspect the failed run, confirm
+the tag SHA, then remove only that draft's partial assets and rerun. Never delete
+or replace assets of an already public release. Do not dispatch a later unrelated
+main commit expecting it to publish an earlier version; rerun the original run.
+If a tag points elsewhere, stop and investigate rather than force-update it.
+The manual recovery operation must retain the same reviewed source and rerun all
+validation. GitHub Actions logs retain the run ID/attempt and SHA of each required
+job; regression/native artifacts retain scenario, platform and tool evidence.
