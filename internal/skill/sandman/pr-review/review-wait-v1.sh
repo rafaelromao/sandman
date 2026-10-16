@@ -7,7 +7,6 @@
 set -u
 
 request_file=
-json_output=false
 poll_once=false
 
 usage() {
@@ -24,7 +23,7 @@ while [ "$#" -gt 0 ]; do
 			shift 2
 			;;
 		--json)
-			json_output=true
+			# Output is always JSON; retain the compatibility flag.
 			shift
 			;;
 		--once)
@@ -113,9 +112,6 @@ request_repository=$(printf '%s\n' "$request_json" | jq -r '.repository')
 request_pr=$(printf '%s\n' "$request_json" | jq -r '.pull_request')
 request_head=$(printf '%s\n' "$request_json" | jq -r '.head_sha')
 request_trigger=$(printf '%s\n' "$request_json" | jq -r '.trigger_id')
-request_trigger_prefix=$(printf '%s\n' "$request_json" | jq -r '.trigger_prefix')
-request_trigger_created_at=$(printf '%s\n' "$request_json" | jq -r '.trigger_created_at')
-request_confirmed_at=$(printf '%s\n' "$request_json" | jq -r '.confirmed_at')
 request_started_at=$(printf '%s\n' "$request_json" | jq -r '.started_at')
 request_deadline_at=$(printf '%s\n' "$request_json" | jq -r '.deadline_at')
 
@@ -132,12 +128,11 @@ request_data_file=$pinned_request_file
 trap 'rm -f "$pinned_request_file"' EXIT
 
 state_file=$request_file.state
-state_json=
 lifecycle=started
 prior_state=pending
 
 if [ -e "$state_file" ]; then
-	state_json=$(jq -c . "$state_file" 2>/dev/null) || {
+	jq -c . "$state_file" >/dev/null 2>&1 || {
 		emit_unavailable state-file-invalid
 		exit 0
 	}
@@ -220,7 +215,7 @@ if [ "$prior_state" = "responded" ] || [ "$prior_state" = "timed_out" ] || [ "$p
 	exit 0
 fi
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 observer=${SANDMAN_REVIEW_WAIT_OBSERVER:-$script_dir/review-observe-v1.sh}
 clock=${SANDMAN_REVIEW_WAIT_CLOCK:-}
 sleeper=${SANDMAN_REVIEW_WAIT_SLEEP:-}

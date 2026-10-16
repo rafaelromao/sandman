@@ -1,0 +1,4 @@
+# Hosted Intel label added after Actionlint v1.7.7; retain native x86 coverage.
+self-hosted-runner:
+  labels:
+    - macos-15-intel
