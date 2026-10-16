@@ -602,15 +602,25 @@ func TestContainerSandbox_Exec_CancelsViaContext(t *testing.T) {
 	}()
 	readyPath := filepath.Join(t.TempDir(), "child.ready")
 	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
-		return exec.Command("sh", "-c", fmt.Sprintf("touch %s && sleep 60", shellenv.Quote(readyPath)))
+		// Replace the ready shell in place: cancellation must not race a new
+		// sleep child inheriting the output pipes while the shell is killed.
+		return exec.Command("sh", "-c", fmt.Sprintf("touch %s && exec sleep 60", shellenv.Quote(readyPath)))
 	}
 	KillAgentFn = func(string, string) error { return nil }
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	errCh := make(chan error, 1)
+	doneCh := make(chan struct{})
 	go func() {
+		defer close(doneCh)
 		errCh <- sb.Exec(ctx, "echo hello", io.Discard, io.Discard)
+	}()
+
+	// Join before restoring factory/kill seams, including on readiness or timeout failure.
+	defer func() {
+		cancel()
+		<-doneCh
 	}()
 
 	waitForChildReadyTB(t, readyPath, 2*time.Second)
@@ -645,14 +655,24 @@ func TestContainerSandbox_ExecInteractive_CancelsViaContext(t *testing.T) {
 	defer func() { ExecCommandFn = prev }()
 	readyPath := filepath.Join(t.TempDir(), "child.ready")
 	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
-		return exec.Command("sh", "-c", fmt.Sprintf("touch %s && sleep 60", shellenv.Quote(readyPath)))
+		// Replace the ready shell in place: cancellation must not race a new
+		// sleep child inheriting the output pipes while the shell is killed.
+		return exec.Command("sh", "-c", fmt.Sprintf("touch %s && exec sleep 60", shellenv.Quote(readyPath)))
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	errCh := make(chan error, 1)
+	doneCh := make(chan struct{})
 	go func() {
+		defer close(doneCh)
 		errCh <- sb.ExecInteractive(ctx, "echo hello")
+	}()
+
+	// Join before restoring factory/kill seams, including on readiness or timeout failure.
+	defer func() {
+		cancel()
+		<-doneCh
 	}()
 
 	waitForChildReadyTB(t, readyPath, 2*time.Second)
