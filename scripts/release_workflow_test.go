@@ -773,7 +773,7 @@ func TestCIValidationOwnershipAndReports(t *testing.T) {
 	makefile := readRepositoryFile(t, "../Makefile")
 	for _, required := range []string{
 		"check: fmt-check build-check vet staticcheck contracts test",
-		"go test -race -json -skip '$(PORTAL_BROWSER_TESTS)' -timeout=20m ./...",
+		"go test -race -covermode=atomic -coverprofile=reports/coverage.out -json -skip '$(PORTAL_BROWSER_TESTS)' -timeout=20m ./...",
 		"SANDMAN_REQUIRE_PORTAL_BROWSER=1 go test -tags visual -json ./internal/cmd -run '$(PORTAL_BROWSER_TESTS)' -count=1 -timeout=10m",
 		"go run scripts/check_adr_index.go",
 		"AgentSelection", "Ownership", "Lifecycle", "Cancellation",
@@ -872,5 +872,21 @@ func TestPortalBrowserInventoryMatchesChromiumScenarios(t *testing.T) {
 	makefile := readRepositoryFile(t, "../Makefile")
 	if !strings.Contains(makefile, "PORTAL_BROWSER_TESTS := ^($(shell paste -sd '|' scripts/portal_browser_tests.txt))$$") {
 		t.Fatal("race and browser selectors must derive from the shared browser inventory")
+	}
+}
+
+func TestCoverageCollectionAndPolicyOwnership(t *testing.T) {
+	ci := readRepositoryFile(t, "../.github/workflows/go.yml")
+	for _, platform := range []string{"linux", "macos"} {
+		job := extractCIJob(t, ci, "build-"+platform)
+		for _, required := range []string{"fetch-depth: 0", "COVERAGE_TEST_RESULT: ${{ steps.race.outcome }}", "python3 scripts/coverage_report.py --platform " + platform, "name: coverage-" + platform, "reports/coverage.out"} {
+			if !strings.Contains(job, required) {
+				t.Errorf("%s coverage contract missing %q", platform, required)
+			}
+		}
+	}
+	makefile := readRepositoryFile(t, "../Makefile")
+	if !strings.Contains(makefile, "-race -covermode=atomic -coverprofile=reports/coverage.out") || !strings.Contains(makefile, "python3 scripts/coverage_report_test.py") {
+		t.Fatal("coverage must reuse atomic race collection and test policy in contracts")
 	}
 }

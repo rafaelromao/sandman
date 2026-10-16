@@ -463,3 +463,12 @@ scenarios listed in `scripts/portal_browser_tests.txt`, including subject switch
 and visual layout. Logs, structured reports, durations and failure summaries
 are uploaded even on failure. See `docs/development/testing.md` for job ownership,
 local commands, artifact names and hosted timing verification.
+
+### Go coverage policy
+
+CI collects separate atomic profiles in the existing Linux/macOS race suites.
+Coverage starts advisory; thresholds require measured baselines and reviewed
+approval before enforcement. Do not combine platform statement totals or treat
+Go coverage as Portal JavaScript/browser coverage. Preserve behavioral tests.
+See `docs/development/testing.md` for base selection, artifacts, calibration and
+reviewed exemptions in `.github/coverage-policy.json`.

@@ -450,3 +450,57 @@ Race jobs have a 25-minute limit (tests 20 minutes); static/contracts/browser ha
 15-minute limits, packaging 20, and aggregate 2. Measure the first PR's elapsed
 critical path including setup and artifact upload against the managed 30-minute
 CI-wait budget; local timing alone cannot verify hosted Linux/macOS duration.
+
+### Go coverage rollout
+
+The existing Linux and macOS `test-ci` race runs each collect an atomic Go
+profile. There is no second complete test run. `coverage-linux` and
+`coverage-macos` artifacts contain the raw profile, package statement totals,
+changed-line result, head/base SHA, and policy decision in JSON and Markdown.
+Profiles are never summed across platforms; duplicate blocks within a profile
+are counted once. These measurements do not measure Portal JavaScript or
+browser coverage. The dedicated browser gate and Node tests retain ownership.
+
+`python3 scripts/coverage_report.py --platform linux` reproduces the report after
+`make test-ci`. Locally it compares HEAD with its parent; in PR CI it compares
+the merge base of the actual PR base SHA and tested merge SHA, including stacked PRs.
+CI retains GitHub's synthetic merge checkout so validation covers integration with
+the target branch. Reports identify the exact tested SHA.
+Main pushes compare with their before SHA. Deleted lines are excluded. Renames
+are conservatively treated as deletion/addition, including unchanged executable
+lines at the destination. Changed executable lines mean changed lines intersecting
+Go coverage block spans, not AST statement counts; comments or braces inside a
+block span can therefore be included. Overlapping spans require every block to
+be covered. No intersecting executable changes gives n/a, never 0% or 100%.
+
+The baseline is a same-platform artifact from a successful CI main push at the
+exact comparison SHA. Stacked bases without such artifacts explicitly report
+baseline unavailable; there is no fallback to an unrelated main baseline.
+Expired artifacts and API failures also report unavailable. The first rollout
+runs establish the measured baselines; no repository-wide floor is imposed.
+
+`.github/coverage-policy.json` starts in `report` mode. The 80% changed-line
+proposal and 1 percentage point protected-package regression tolerance are
+calibration candidates, not approved requirements. Advisory findings exit zero
+so Sandman's overall check rollup continues to work. To enable enforcement,
+review the platform baseline reports and CI timings, agree thresholds in a PR,
+set `approval_url` to that review and change `mode` to `enforce`. Then violations
+(including missing baselines) fail the platform job and existing aggregate gate.
+No new ruleset context is needed. Legacy low coverage alone never fails policy.
+
+Protected packages are events, batch, review, daemon and sandbox. Exemptions
+require `package`, exact package `source_tree`, `expires_on` (ISO date), a concrete
+`reason`, and HTTPS `review_url` in the policy file. Compute the package tree with
+`git rev-parse HEAD:internal/events` (substitute the package). Unlike a containing
+commit SHA, this can be recorded before committing the policy. Source changes
+invalidate it; unchanged code remains exempt only through its expiration date.
+They waive only that package regression, not changed-line policy or missing
+baseline evidence. Require maintainer review for policy
+and exemption changes. Prioritize behavioral ownership, recovery, event
+projection and cancellation tests over tests written only to increase coverage.
+
+Coverage reporting runs after failed tests when a profile exists. Reports mark
+`collection_status`; only `success` profiles with matching schema, platform and
+tested SHA qualify as baselines. Failed/unverified collections are diagnostic
+only. CI explicitly grants read access to Actions artifacts; signed download
+redirects discard the GitHub authorization header.
