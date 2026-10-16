@@ -210,11 +210,16 @@ jobs:
           if-no-files-found: warn
 
   build-linux:
+    permissions:
+      contents: read
+      actions: read
     name: build (ubuntu-latest)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
@@ -256,6 +261,7 @@ jobs:
           podman run --rm alpine true
 
       - name: Test
+        id: race
         env:
           GH_TOKEN: ${{ github.token }}
           SANDMAN_TEST_PROVIDERS: ""
@@ -263,6 +269,24 @@ jobs:
           SANDMAN_RUN_AGENT_E2E: "0"
           SANDMAN_E2E_GATES: ""
         run: bash scripts/ci_report.sh race-linux make build-check test-ci
+
+      - name: Report Go coverage and evaluate policy
+        if: ${{ always() && hashFiles('reports/coverage.out') != '' }}
+        env:
+          COVERAGE_TEST_RESULT: ${{ steps.race.outcome }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/coverage_report.py --platform linux
+
+      - name: Publish platform coverage baseline
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-linux
+          path: |
+            reports/coverage.json
+            reports/coverage.md
+            reports/coverage.out
+          if-no-files-found: warn
 
       - name: Summarize interrupted race-linux validation
         if: ${{ always() }}
@@ -285,11 +309,16 @@ jobs:
           if-no-files-found: warn
 
   build-macos:
+    permissions:
+      contents: read
+      actions: read
     name: build (macos-latest)
     runs-on: macos-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
@@ -302,6 +331,7 @@ jobs:
           node-version: 22
 
       - name: Test
+        id: race
         env:
           GH_TOKEN: ${{ github.token }}
           SANDMAN_TEST_PROVIDERS: ""
@@ -309,6 +339,24 @@ jobs:
           SANDMAN_RUN_AGENT_E2E: "0"
           SANDMAN_E2E_GATES: ""
         run: bash scripts/ci_report.sh race-macos make build-check test-ci
+
+      - name: Report Go coverage and evaluate policy
+        if: ${{ always() && hashFiles('reports/coverage.out') != '' }}
+        env:
+          COVERAGE_TEST_RESULT: ${{ steps.race.outcome }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/coverage_report.py --platform macos
+
+      - name: Publish platform coverage baseline
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-macos
+          path: |
+            reports/coverage.json
+            reports/coverage.md
+            reports/coverage.out
+          if-no-files-found: warn
 
       - name: Summarize interrupted race-macos validation
         if: ${{ always() }}

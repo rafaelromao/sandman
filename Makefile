@@ -48,7 +48,8 @@ build-check:
 	go build -v ./...
 
 test-ci:
-	go test -race -json -skip '$(PORTAL_BROWSER_TESTS)' -timeout=20m ./...
+	mkdir -p reports
+	go test -race -covermode=atomic -coverprofile=reports/coverage.out -json -skip '$(PORTAL_BROWSER_TESTS)' -timeout=20m ./...
 
 test-browser:
 	SANDMAN_REQUIRE_PORTAL_BROWSER=1 go test -tags visual -json ./internal/cmd -run '$(PORTAL_BROWSER_TESTS)' -count=1 -timeout=10m
@@ -59,6 +60,8 @@ contracts:
 	python3 scripts/ci_report_test.py
 	python3 scripts/security_policy_test.py
 	python3 scripts/security_check_test.py
+
+	python3 scripts/coverage_report_test.py
 	go test -json ./scripts ./internal/skill/...
 	go test -json ./internal/batch ./internal/events ./internal/review ./internal/sandbox -run 'Contract|AgentSelection|Cancellation|Ownership|Lifecycle|Centralized|ProductionGoDoesNotInvokeRepositoryWideWorktreePrune|WorktreeSandboxExecBlocksGlobalWorktreePrune'
 	go run scripts/check_adr_index.go

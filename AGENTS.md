@@ -296,3 +296,12 @@ toolchain selection enabled. Staticcheck retains its isolated Go 1.25.0 runner
 for export-data compatibility; it does not build release binaries. The checked-in
 ruleset also requires workflow-validation explicitly; apply/verify live protection
 using the existing documented procedure.
+
+### Go coverage policy
+
+CI collects separate atomic profiles in the existing Linux/macOS race suites.
+Coverage starts advisory; thresholds require measured baselines and reviewed
+approval before enforcement. Do not combine platform statement totals or treat
+Go coverage as Portal JavaScript/browser coverage. Preserve behavioral tests.
+See `docs/development/testing.md` for base selection, artifacts, calibration and
+reviewed exemptions in `.github/coverage-policy.json`.
