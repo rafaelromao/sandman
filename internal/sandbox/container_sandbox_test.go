@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -601,11 +603,10 @@ func TestContainerSandbox_Exec_CancelsViaContext(t *testing.T) {
 		KillAgentFn = prevKill
 	}()
 	readyPath := filepath.Join(t.TempDir(), "child.ready")
-	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
-		// Replace the ready shell in place: cancellation must not race a new
-		// sleep child inheriting the output pipes while the shell is killed.
-		return exec.Command("sh", "-c", fmt.Sprintf("touch %s && exec sleep 60", shellenv.Quote(readyPath)))
-	}
+	// Start the descendant before readiness, and keep the shell waiting for it.
+	// Its PID file also lets teardown kill only this fixture after a regression.
+	fixture := exec.Command("sh", "-c", `sleep 60 & child=$!; printf '%s %s' "$$" "$child" > "$1"; wait "$child"`, "sh", readyPath)
+	ExecCommandFn = func(name string, arg ...string) *exec.Cmd { return fixture }
 	KillAgentFn = func(string, string) error { return nil }
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -620,10 +621,20 @@ func TestContainerSandbox_Exec_CancelsViaContext(t *testing.T) {
 	// Join before restoring factory/kill seams, including on readiness or timeout failure.
 	defer func() {
 		cancel()
-		<-doneCh
+		select {
+		case <-doneCh:
+			return
+		default:
+		}
+		killCancellationFixture(t, readyPath)
+		select {
+		case <-doneCh:
+		case <-time.After(5 * time.Second):
+			t.Error("fixture execution did not finish after forced cleanup")
+		}
 	}()
 
-	waitForChildReadyTB(t, readyPath, 2*time.Second)
+	waitRuntimeMarker(t, readyPath)
 	cancel()
 
 	select {
@@ -652,13 +663,17 @@ func TestContainerSandbox_ExecInteractive_CancelsViaContext(t *testing.T) {
 	sb := NewContainerSandbox(wt, ctr, "docker", repoPath)
 
 	prev := ExecCommandFn
-	defer func() { ExecCommandFn = prev }()
+	prevKill := KillAgentFn
+	defer func() {
+		ExecCommandFn = prev
+		KillAgentFn = prevKill
+	}()
+	KillAgentFn = func(string, string) error { return nil }
 	readyPath := filepath.Join(t.TempDir(), "child.ready")
-	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
-		// Replace the ready shell in place: cancellation must not race a new
-		// sleep child inheriting the output pipes while the shell is killed.
-		return exec.Command("sh", "-c", fmt.Sprintf("touch %s && exec sleep 60", shellenv.Quote(readyPath)))
-	}
+	// Start the descendant before readiness, and keep the shell waiting for it.
+	// Its PID file also lets teardown kill only this fixture after a regression.
+	fixture := exec.Command("sh", "-c", `sleep 60 & child=$!; printf '%s %s' "$$" "$child" > "$1"; wait "$child"`, "sh", readyPath)
+	ExecCommandFn = func(name string, arg ...string) *exec.Cmd { return fixture }
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -672,10 +687,20 @@ func TestContainerSandbox_ExecInteractive_CancelsViaContext(t *testing.T) {
 	// Join before restoring factory/kill seams, including on readiness or timeout failure.
 	defer func() {
 		cancel()
-		<-doneCh
+		select {
+		case <-doneCh:
+			return
+		default:
+		}
+		killCancellationFixture(t, readyPath)
+		select {
+		case <-doneCh:
+		case <-time.After(5 * time.Second):
+			t.Error("fixture execution did not finish after forced cleanup")
+		}
 	}()
 
-	waitForChildReadyTB(t, readyPath, 2*time.Second)
+	waitRuntimeMarker(t, readyPath)
 	cancel()
 
 	select {
@@ -778,5 +803,23 @@ func waitForChildReadyTB(t *testing.T, path string, timeout time.Duration) {
 			t.Fatalf("timed out waiting for child readiness marker %s", path)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// Kill the recorded descendant as well as its group leader: this cleanup also
+// works when the behavior under test accidentally kills only the leader.
+func killCancellationFixture(t *testing.T, marker string) {
+	t.Helper()
+	data, err := os.ReadFile(marker)
+	if err != nil {
+		return // Readiness was never published; context cancellation owns startup.
+	}
+	for _, field := range strings.Fields(string(data)) {
+		pid, err := strconv.Atoi(field)
+		if err != nil || pid <= 1 {
+			t.Errorf("invalid fixture PID %q", field)
+			continue
+		}
+		_ = syscall.Kill(pid, syscall.SIGKILL)
 	}
 }
