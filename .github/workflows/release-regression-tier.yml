@@ -138,18 +138,14 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.tier == 'claude' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
           RELEASE_TIER: ${{ inputs.tier }}
         run: |
-          missing=0
           credential=OPENCODE_API_KEY
           if [ "$RELEASE_TIER" = claude ]; then
             credential=CLAUDE_CODE_OAUTH_TOKEN
           fi
-          for credential in "$credential"; do
-            if [ -z "${!credential}" ]; then
-              echo "::error::Required repository secret $credential is missing. Configure it before rerunning live release validation."
-              missing=1
-            fi
-          done
-          test "$missing" = 0
+          if [ -z "${!credential}" ]; then
+            echo "::error::Required repository secret $credential is missing. Configure it before rerunning provider validation."
+            exit 1
+          fi
           if [ "$RELEASE_TIER" = live ]; then
           python3 - <<'PYAUTH'
           import json, os
