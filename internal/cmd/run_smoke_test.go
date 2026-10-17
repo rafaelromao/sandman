@@ -152,7 +152,7 @@ func prepareSmokeProvider(t *testing.T, tc smokeProviderCase) (runtime string, r
 		}
 		t.Skipf("missing file-backed auth for %s; expected one of %s under %s", tc.name, strings.Join(probePaths, ", "), realHome)
 	}
-	if !copySmokeAuthLayout(t, realHome, homeDir, tc.authPaths) {
+	if !copySmokeAuthLayout(t, realHome, homeDir, tc.authPaths) && authToken == "" {
 		t.Skipf("missing file-backed auth for %s; expected one of %s under %s", tc.name, strings.Join(tc.authPaths, ", "), realHome)
 	}
 	ensureSmokeWritableDirs(t, homeDir, tc.name)

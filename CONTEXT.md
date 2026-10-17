@@ -517,3 +517,6 @@ tag creation follows authorization; draft assets become public only after comple
 checksum verification. Release PR maintenance runs independently. See
 `docs/development/releasing.md` for safe reruns and `docs/development/testing.md`
 for strict main-protection setup and live verification limits.
+
+Claude provider E2Es run only through the manual `run_claude` workflow input.
+The automatic live release tier validates OpenCode; Claude is not a publication gate.

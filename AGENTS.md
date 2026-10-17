@@ -318,3 +318,6 @@ for the merged main SHA, never prior release-branch statuses. Keep Release Pleas
 PR maintenance independent, tags immutable, uploads draft until checksum-verified,
 and reruns fail closed on partial assets. Strict up-to-date main checks require
 live administrator verification. See `docs/development/releasing.md` for recovery.
+
+Claude provider E2Es are manual-only (`Full Regression - Linux`, `run_claude`).
+Automatic live release validation uses OpenCode and never requires Claude credentials.

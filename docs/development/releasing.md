@@ -47,6 +47,12 @@ To diagnose a release, inspect the Release run's publication gate, the SHA-bound
 validation reports, then the draft and GoReleaser output. A failed or incomplete
 gate prevents tag and release creation. See recovery instructions below.
 
+Automatic live validation uses OpenCode and requires only `OPENCODE_API_KEY`.
+Claude provider E2Es are manual: dispatch `Full Regression - Linux` with
+`run_claude` enabled. Only that optional job receives
+`CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`); token-only authentication
+works on a clean runner. Claude results do not gate automatic release publication.
+
 The configured release targets are:
 
 - `sandman_<version>_linux_amd64.tar.gz`
