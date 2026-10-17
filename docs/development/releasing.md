@@ -47,6 +47,13 @@ To diagnose a release, inspect the Release run's publication gate, the SHA-bound
 validation reports, then the draft and GoReleaser output. A failed or incomplete
 gate prevents tag and release creation. See recovery instructions below.
 
+The live tier requires repository secrets `OPENCODE_API_KEY` and
+`CLAUDE_CODE_OAUTH_TOKEN`. Create the latter with `claude setup-token` and
+store it in the repository's Actions secrets before rerunning validation.
+An OAuth token is sufficient on a clean runner; no local Claude credentials
+file is required. Missing secrets fail with their names in the auth step;
+do not bypass the live tier to unblock a release.
+
 The configured release targets are:
 
 - `sandman_<version>_linux_amd64.tar.gz`
