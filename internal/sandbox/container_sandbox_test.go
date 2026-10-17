@@ -621,11 +621,8 @@ func TestContainerSandbox_Exec_CancelsViaContext(t *testing.T) {
 	// Join before restoring factory/kill seams, including on readiness or timeout failure.
 	defer func() {
 		cancel()
-		select {
-		case <-doneCh:
-			return
-		default:
-		}
+		// Interactive execution may return while a descendant still owns the
+		// terminal descriptors. Always clean recorded PIDs before joining.
 		killCancellationFixture(t, readyPath)
 		select {
 		case <-doneCh:
@@ -687,11 +684,8 @@ func TestContainerSandbox_ExecInteractive_CancelsViaContext(t *testing.T) {
 	// Join before restoring factory/kill seams, including on readiness or timeout failure.
 	defer func() {
 		cancel()
-		select {
-		case <-doneCh:
-			return
-		default:
-		}
+		// Interactive execution may return while a descendant still owns the
+		// terminal descriptors. Always clean recorded PIDs before joining.
 		killCancellationFixture(t, readyPath)
 		select {
 		case <-doneCh:
