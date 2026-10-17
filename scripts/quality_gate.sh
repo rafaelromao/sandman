@@ -20,7 +20,7 @@ require_success portal-continuity-browser "${PORTAL_RESULT:-}"
 require_success goreleaser "${PACKAGING_RESULT:-}"
 
 # Only main pushes intentionally omit PR title validation.
-if [ "${EVENT_NAME:-}" = push ] && [ "${TITLE_RESULT:-}" = skipped ]; then
+if { [ "${EVENT_NAME:-}" = push ] || [ "${EVENT_NAME:-}" = workflow_dispatch ]; } && [ "${TITLE_RESULT:-}" = skipped ]; then
   exit 0
 fi
 require_success semantic-pull-request "${TITLE_RESULT:-}"

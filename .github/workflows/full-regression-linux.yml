@@ -2,6 +2,12 @@ name: Full Regression - Linux
 
 # Expensive release validation never runs on ordinary PRs.
 on:
+  workflow_call:
+    secrets:
+      OPENCODE_API_KEY:
+        required: false
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: false
   workflow_dispatch:
   push:
     branches: [release-please--branches--main]

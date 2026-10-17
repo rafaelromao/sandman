@@ -48,7 +48,9 @@ snapshot:
   name_template: "{{ .Version }}-SNAPSHOT-{{ .ShortCommit }}"
 
 release:
-  draft: false
+  # Publication prepares and verifies the immutable draft before upload.
+  use_existing_draft: true
+  draft: true
   prerelease: auto
 
 checksum:

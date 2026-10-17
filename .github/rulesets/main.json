@@ -19,7 +19,7 @@
           { "context": "CI / quality-gate" },
           { "context": "CI / workflow-validation" }
         ],
-        "strict_required_status_checks_policy": false
+        "strict_required_status_checks_policy": true
       }
     },
     { "type": "non_fast_forward" },

@@ -1,16 +1,21 @@
 name: Release
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
 
 permissions:
-  contents: write
-  issues: write
-  pull-requests: write
+  contents: read
 
 jobs:
   release-please:
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - name: Verify release credential
@@ -24,6 +29,7 @@ jobs:
       - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
         id: release-please
         with:
+          skip-github-release: true
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
@@ -37,14 +43,88 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
         run: sh scripts/refresh_release_pr.sh
+
+  candidate:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      tag: ${{ steps.candidate.outputs.tag }}
+      sha: ${{ steps.candidate.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: candidate
+        run: python3 scripts/publication_candidate.py
+
+  quality:
+    needs: candidate
+    if: needs.candidate.outputs.tag != ''
+    uses: ./.github/workflows/go.yml
+
+  regression:
+    needs: candidate
+    if: needs.candidate.outputs.tag != ''
+    uses: ./.github/workflows/full-regression-linux.yml
+    secrets:
+      OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+  native:
+    needs: candidate
+    if: needs.candidate.outputs.tag != ''
+    uses: ./.github/workflows/native-compatibility.yml
+
+  publication-gate:
+    if: ${{ always() && needs.candidate.outputs.tag != '' }}
+    needs: [candidate, quality, regression, native]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Require current immutable source validation
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: python3 scripts/publication_gate.py
+
+  publish:
+    # Serialize writes without blocking independent release PR maintenance.
+    concurrency:
+      group: publication-main
+      cancel-in-progress: false
+    needs: [candidate, publication-gate]
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ needs.candidate.outputs.tag }}
+      RELEASE_SHA: ${{ needs.candidate.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.candidate.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prepare immutable tag and draft
+        id: prepare
+        run: bash scripts/publication_prepare.sh
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        if: steps.release-please.outputs.release_created == 'true'
+        if: steps.prepare.outputs.complete != 'true'
         with:
           go-version-file: .go-version
       - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
-        if: steps.release-please.outputs.release_created == 'true'
+        if: steps.prepare.outputs.complete != 'true'
         with:
-          args: release --clean
+          args: release --clean --draft
           version: v2.10.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish complete release
+        if: steps.prepare.outputs.complete != 'true'
+        run: python3 scripts/publication_finalize.py

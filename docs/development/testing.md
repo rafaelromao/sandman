@@ -577,3 +577,24 @@ Coverage reporting runs after failed tests when a profile exists. Reports mark
 tested SHA qualify as baselines. Failed/unverified collections are diagnostic
 only. CI explicitly grants read access to Actions artifacts; signed download
 redirects discard the GitHub authorization header.
+
+### Publication authorization
+
+Release publication uses same-invocation reusable workflows from the exact main
+commit: CI (including security, coverage policy and four-platform snapshot), Full
+Regression (all manifest tiers), and Native Compatibility (all four platforms).
+`Release / publication-gate` rejects any missing, skipped, failed or cancelled
+result. No check name, external status, earlier workflow run or release-branch SHA
+can authorize publication. GitHub's reusable-workflow dependency graph establishes
+provenance; the gate also checks the caller repository, event, main ref, workflow
+source SHA and candidate SHA. Do not replace these dependencies with status-name
+lookups. A merged release commit always receives fresh validation, even if its
+release branch passed. Workflow dispatch is permitted on main for recovery.
+
+The checked-in main ruleset now sets
+`strict_required_status_checks_policy: true`: concurrent merges require the PR to
+be current with main before merging. Apply and read back protection using the
+procedure above; the file alone does not enforce it. On 2026-10-16 the rulesets
+API returned an empty list; legacy protection/admin access remains unverified.
+An authorized repository administrator must apply/verify strict required checks.
+A merge queue would also require `merge_group` CI and title-gate support first.

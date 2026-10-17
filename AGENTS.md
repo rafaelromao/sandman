@@ -312,3 +312,9 @@ scenario manifest, narrow negative-control skip reasons, pinned CLI/model
 identifiers and SHA-bound reports. Native boundary evidence is required on Linux
 and macOS amd64/arm64. See `docs/development/testing.md`; do not move live/API
 quota tests into ordinary PR CI or change runtime check-rollup selection.
+
+Publication consumes same-invocation reusable CI, regression and native results
+for the merged main SHA, never prior release-branch statuses. Keep Release Please
+PR maintenance independent, tags immutable, uploads draft until checksum-verified,
+and reruns fail closed on partial assets. Strict up-to-date main checks require
+live administrator verification. See `docs/development/releasing.md` for recovery.
