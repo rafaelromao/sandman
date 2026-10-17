@@ -90,7 +90,8 @@ def main():
             pass  # Go's timeout panic also emits non-JSON stderr.
     result = evaluate(manifest, args.tier, events, args.returncode, os.environ.get('RELEASE_PLATFORM', 'linux/amd64'), 'panic: test timed out' in raw or 'timeout: sending signal' in raw)
     result.update(sha=os.environ['GITHUB_SHA'], tier=args.tier,
-                  providers=manifest['providers'], platform=os.environ.get('RELEASE_PLATFORM', 'linux/amd64'),
+                  providers={name: value for name, value in manifest['providers'].items()
+                             if args.tier not in ('live', 'claude') or name == ('opencode' if args.tier == 'live' else 'claude')}, platform=os.environ.get('RELEASE_PLATFORM', 'linux/amd64'),
                   versions=Path('regression-artifacts/versions.txt').read_text() if Path('regression-artifacts/versions.txt').exists() else 'unavailable',
                   prerequisites=os.environ.get('RELEASE_PREREQUISITES', 'not recorded'))
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)

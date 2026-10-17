@@ -323,7 +323,7 @@ func TestReleaseValidationWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 	for _, required := range []string{
 		`SANDMAN_FULL_REGRESSION: "1"`,
 		"tier: unit", "tier: smoke", "tier: integration", "tier: live",
-		"name: Install pinned agent CLIs", "opencode-ai@1.15.0 @anthropic-ai/claude-code@2.1.283",
+		"name: Install pinned agent CLIs", "opencode-ai@1.15.0", "@anthropic-ai/claude-code@2.1.283",
 		"secrets.OPENCODE_API_KEY", "secrets.CLAUDE_CODE_OAUTH_TOKEN",
 		"name: Set up Node", "name: Set up Chromium",
 		"name: Validate prerequisites and record versions",
@@ -991,7 +991,7 @@ func TestReleaseManifestInventoriesTaggedScenarios(t *testing.T) {
 				t.Errorf("real-provider scenario must belong to live tier: %s:%s", pkg, fn.Name.Name)
 			}
 			found := false
-			for _, tier := range []string{"integration", "live"} {
+			for _, tier := range []string{"integration", "live", "claude"} {
 				if required[tier+":"+pkg+":"+fn.Name.Name] != "" {
 					found = true
 				}
@@ -1068,5 +1068,33 @@ func TestPublicationUsesSameRunValidatedSource(t *testing.T) {
 	}
 	if !strings.Contains(readRepositoryFile(t, "../.github/rulesets/main.json"), `"strict_required_status_checks_policy": true`) {
 		t.Fatal("main must require up-to-date validation")
+	}
+}
+
+func TestClaudeProviderE2EsRequireManualDispatch(t *testing.T) {
+	workflow := readRepositoryFile(t, "../.github/workflows/full-regression-linux.yml")
+	manual := extractCIJob(t, workflow, "claude")
+	for _, required := range []string{"github.event_name == 'workflow_dispatch' && inputs.run_claude", "tier: claude", "secrets.CLAUDE_CODE_OAUTH_TOKEN"} {
+		if !strings.Contains(manual, required) {
+			t.Errorf("manual Claude job missing %q", required)
+		}
+	}
+	dispatch := extractOnSubBlock(t, workflow, "workflow_dispatch")
+	if !strings.Contains(dispatch, "run_claude:") || !strings.Contains(dispatch, "default: false") {
+		t.Fatal("Claude E2Es must require explicit opt-in on manual dispatch")
+	}
+	for _, source := range []string{extractCIJob(t, workflow, "live"), extractCIJob(t, workflow, "release-gate"), readRepositoryFile(t, "../.github/workflows/release.yml")} {
+		if strings.Contains(source, "CLAUDE_CODE_OAUTH_TOKEN") || strings.Contains(source, "needs.claude") {
+			t.Error("automatic release validation must not require Claude credentials or results")
+		}
+	}
+	var manifest struct{ Scenarios []struct{ Test, Tier string } }
+	if err := json.Unmarshal([]byte(readRepositoryFile(t, "release_scenarios.json")), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	for _, scenario := range manifest.Scenarios {
+		if scenario.Test == "TestPresetMatrixHarness_RealClaudeAgentReuseSession" && scenario.Tier != "claude" {
+			t.Fatal("Claude provider scenario must belong only to the manual tier")
+		}
 	}
 }

@@ -146,13 +146,15 @@ sibling failures when only one tier is rerun.
 Unit includes `visual` tests and Node production-module coverage. Smoke builds
 all preset containers without provider calls. Integration excludes the manifest's
 live selector and uses fake agents, local Git remotes and real containers.
-Live selects the explicit OpenCode and Claude scenarios; only this tier receives
-provider credentials. No live-provider validation is added to ordinary PR CI.
+Live selects the explicit OpenCode scenarios and receives only OpenCode credentials.
+Claude provider E2Es run in a separate manual tier when `Full Regression - Linux`
+is dispatched with `run_claude` enabled; only that job receives Claude credentials. No live-provider validation is added to ordinary PR CI.
 
 Every Linux tier provisions Node 22, Chromium and validated rootless Podman
-with runc. Live additionally installs `opencode-ai@1.15.0` and
-`@anthropic-ai/claude-code@2.1.283`, checks their versions, and requires both
-`OPENCODE_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` secrets. OpenCode auth is
+with runc. Live additionally installs `opencode-ai@1.15.0` and requires
+`OPENCODE_API_KEY`. The optional manual Claude tier installs
+`@anthropic-ai/claude-code@2.1.283` and requires `CLAUDE_CODE_OAUTH_TOKEN`.
+Each provider tier checks its own CLI version. OpenCode auth is
 written as JSON with mode 0600. The selected model identifiers are
 `opencode/big-pickle` and `claude-haiku-4-5-20251001`. Missing credentials,
 tools, required tests, unexpected skips and duplicate executions fail validation.

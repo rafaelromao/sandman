@@ -47,12 +47,11 @@ To diagnose a release, inspect the Release run's publication gate, the SHA-bound
 validation reports, then the draft and GoReleaser output. A failed or incomplete
 gate prevents tag and release creation. See recovery instructions below.
 
-The live tier requires repository secrets `OPENCODE_API_KEY` and
-`CLAUDE_CODE_OAUTH_TOKEN`. Create the latter with `claude setup-token` and
-store it in the repository's Actions secrets before rerunning validation.
-An OAuth token is sufficient on a clean runner; no local Claude credentials
-file is required. Missing secrets fail with their names in the auth step;
-do not bypass the live tier to unblock a release.
+Automatic live validation uses OpenCode and requires only `OPENCODE_API_KEY`.
+Claude provider E2Es are manual: dispatch `Full Regression - Linux` with
+`run_claude` enabled. Only that optional job receives
+`CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`); token-only authentication
+works on a clean runner. Claude results do not gate automatic release publication.
 
 The configured release targets are:
 

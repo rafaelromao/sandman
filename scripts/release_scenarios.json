@@ -371,7 +371,7 @@
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestPresetMatrixHarness_RealClaudeAgentReuseSession",
-      "tier": "live"
+      "tier": "claude"
     },
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",

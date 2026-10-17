@@ -98,7 +98,7 @@ class ReleasePipelineTests(unittest.TestCase):
             binary = root / 'go'
             binary.write_text('#!/usr/bin/env python3\nimport json,sys,os\nprint(json.dumps(sys.argv[1:]))\nsys.exit(int(os.environ["FAKE_RC"]))\n')
             binary.chmod(0o755)
-            for tier in ['unit', 'smoke', 'integration', 'live']:
+            for tier in ['unit', 'smoke', 'integration', 'live', 'claude']:
                 env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ['PATH'],
                            RELEASE_TIER=tier, FAKE_RC='7')
                 result = subprocess.run(['bash', str(scripts / 'release_tier.sh')], cwd=root,
@@ -106,9 +106,10 @@ class ReleasePipelineTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 7, result.stderr)
                 self.assertEqual((root / 'regression-artifacts/exit-code').read_text().strip(), '7')
                 args = json.loads((root / 'regression-artifacts/events.jsonl').read_text())
-                if tier in ('live', 'integration'):
-                    selector = args[args.index('-run' if tier == 'live' else '-skip') + 1]
-                    self.assertEqual(set(selector[2:-2].split('|')), live)
+                if tier in ('live', 'integration', 'claude'):
+                    selector = args[args.index('-skip' if tier == 'integration' else '-run') + 1]
+                    expected = {row['test'] for row in manifest['scenarios'] if row['tier'] in (('live', 'claude') if tier == 'integration' else (tier,))}
+                    self.assertEqual(set(selector[2:-2].split('|')), expected)
                 self.assertIn('-count=1', args)
 
 
