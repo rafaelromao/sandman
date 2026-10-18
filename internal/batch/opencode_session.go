@@ -3,79 +3,34 @@ package batch
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 	"sync"
 
-	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/paths"
 )
 
-const (
-	opencodeSessionProtocol = "opencode-session/v1"
-	opencodeProvider        = "opencode"
-)
+// opencodeSessionKind is the OpenCode session identity recorded in a Run's
+// session.json.
+var opencodeSessionKind = agentSessionKind{protocol: "opencode-session/v1", provider: "opencode"}
 
-type opencodeSessionIdentity struct {
-	Protocol  string `json:"protocol"`
-	Provider  string `json:"provider"`
-	SessionID string `json:"session_id"`
-}
-
-func validOpenCodeSession(id opencodeSessionIdentity) error {
-	if id.Protocol != opencodeSessionProtocol {
-		return fmt.Errorf("unsupported session protocol %q", id.Protocol)
-	}
-	if id.Provider != opencodeProvider {
-		return fmt.Errorf("unsupported session provider %q", id.Provider)
-	}
-	if strings.TrimSpace(id.SessionID) == "" {
-		return errors.New("session id is empty")
-	}
-	return nil
-}
-
-func readOpenCodeSession(path string) (opencodeSessionIdentity, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return opencodeSessionIdentity{}, err
-	}
-	var identity opencodeSessionIdentity
-	if err := json.Unmarshal(data, &identity); err != nil {
-		return opencodeSessionIdentity{}, fmt.Errorf("parse session metadata: %w", err)
-	}
-	if err := validOpenCodeSession(identity); err != nil {
-		return opencodeSessionIdentity{}, err
-	}
-	return identity, nil
-}
-
-func writeOpenCodeSession(path, sessionID string) error {
-	identity := opencodeSessionIdentity{
-		Protocol:  opencodeSessionProtocol,
-		Provider:  opencodeProvider,
-		SessionID: strings.TrimSpace(sessionID),
-	}
-	if err := validOpenCodeSession(identity); err != nil {
-		return err
-	}
-	return atomicfs.WriteAtomicJSON(path, identity, 0644)
+func readOpenCodeSession(path string) (agentSessionIdentity, error) {
+	return readAgentSession(path, opencodeSessionKind)
 }
 
 // priorOpenCodeSession selects canonical metadata first. Legacy lookup is
 // deliberately limited to a missing canonical file so a broken canonical
 // record cannot be silently replaced by stale evidence.
-func priorOpenCodeSession(layout paths.Layout, batchID, runID string) (opencodeSessionIdentity, bool, error) {
+func priorOpenCodeSession(layout paths.Layout, batchID, runID string) (agentSessionIdentity, bool, error) {
 	canonical := layout.RunSessionPath(batchID, runID)
 	identity, err := readOpenCodeSession(canonical)
 	if err == nil {
 		return identity, true, nil
 	}
 	if !os.IsNotExist(err) {
-		return opencodeSessionIdentity{}, false, err
+		return agentSessionIdentity{}, false, err
 	}
 
 	legacy := layout.LegacyRunSessionPath(runID)
@@ -84,9 +39,9 @@ func priorOpenCodeSession(layout paths.Layout, batchID, runID string) (opencodeS
 		return identity, true, nil
 	}
 	if os.IsNotExist(err) {
-		return opencodeSessionIdentity{}, false, nil
+		return agentSessionIdentity{}, false, nil
 	}
-	return opencodeSessionIdentity{}, false, err
+	return agentSessionIdentity{}, false, err
 }
 
 type opencodeOutput struct {

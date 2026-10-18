@@ -206,8 +206,12 @@ func TestAgentRun_ClaudePresetRendersPrintModeCommand(t *testing.T) {
 			if !strings.Contains(launch.runLog, "Result: success") || strings.Contains(launch.runLog, `"type":"result"`) {
 				t.Fatalf("run.log = %q, want the rendered result instead of raw stream-json", launch.runLog)
 			}
-			if _, err := os.Stat(filepath.Join(launch.root, "run", "session.json")); !os.IsNotExist(err) {
-				t.Fatalf("session.json stat err = %v, want no OpenCode session identity for claude", err)
+			if id, ok := ReadAgentSessionID(filepath.Join(launch.root, "run")); !ok || id != "abc" {
+				t.Fatalf("agent session ID = %q, %v; want the observed Claude session abc", id, ok)
+			}
+			data, err := os.ReadFile(filepath.Join(launch.root, "run", "session.json"))
+			if err != nil || !strings.Contains(string(data), `"protocol": "claude-session/v1"`) || !strings.Contains(string(data), `"provider": "claude"`) {
+				t.Fatalf("session.json = %s, %v; want a Claude session identity", data, err)
 			}
 		})
 	}

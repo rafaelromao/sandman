@@ -105,7 +105,7 @@ func runAgentLaunchGoldenCase(t *testing.T, tc agentLaunchGoldenCase) string {
 	layout := paths.NewLayout(&config.Config{}, root)
 	runFolder := filepath.Join(root, "run")
 	if tc.priorSession != "" {
-		if err := writeOpenCodeSession(layout.RunSessionPath("prior-batch", "prior-run"), tc.priorSession); err != nil {
+		if err := writeAgentSession(layout.RunSessionPath("prior-batch", "prior-run"), opencodeSessionKind, tc.priorSession); err != nil {
 			t.Fatal(err)
 		}
 	}

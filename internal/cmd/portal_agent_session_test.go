@@ -1,0 +1,114 @@
+package cmd
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/rafaelromao/sandman/internal/daemon"
+	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/testenv"
+)
+
+func writeRunSessionIdentity(t *testing.T, runDir, protocol, provider, sessionID string) {
+	t.Helper()
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(map[string]string{"protocol": protocol, "provider": provider, "session_id": sessionID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "session.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func portalAgentSessionRepo(t *testing.T) string {
+	t.Helper()
+	repoRoot := testenv.MkdirShort(t, "sm-agentsess-")
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return repoRoot
+}
+
+func TestPortal_AgentSessionID_ActiveClaudeRow(t *testing.T) {
+	repoRoot := portalAgentSessionRepo(t)
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", "live-session")
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), BatchId: "live-session"}); err != nil {
+		t.Fatal(err)
+	}
+	createUnixRunSocket(t, filepath.Join(batchDir, "batch.sock"))
+	addBatchToIndex(t, repoRoot, "live-session", batchDir, []int{42})
+	runID := "abcd-260101120000-42"
+	writeRunSessionIdentity(t, filepath.Join(batchDir, "runs", runID), "claude-session/v1", "claude", "6f1c2a4e-0b7d-4c1a-9a55-2f0e8d3b7c11")
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: runID, Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(runs))
+	}
+	if got := runs[0].AgentSessionID; got != "6f1c2a4e-0b7d-4c1a-9a55-2f0e8d3b7c11" {
+		t.Fatalf("AgentSessionID = %q, want the Claude session recorded in the Run folder", got)
+	}
+	data, err := json.Marshal(portalSummaryRuns(runs)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if raw["agentSessionId"] != "6f1c2a4e-0b7d-4c1a-9a55-2f0e8d3b7c11" {
+		t.Fatalf("summary JSON agentSessionId = %v, want the session ID: %s", raw["agentSessionId"], data)
+	}
+}
+
+func TestPortal_AgentSessionID_TerminalOpenCodeRow(t *testing.T) {
+	repoRoot := portalAgentSessionRepo(t)
+	batchID := "abcd-260101120000-99"
+	runID := batchID
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
+	writeRunSessionIdentity(t, filepath.Join(batchDir, "runs", runID), "opencode-session/v1", "opencode", "ses_terminal")
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: runID, Issue: 99, Payload: map[string]any{"branch": "99-fix", "batch_id": batchID}},
+		{Type: "run.finished", Timestamp: time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC), RunID: runID, Issue: 99, Payload: map[string]any{"status": "success", "branch": "99-fix", "batch_id": batchID}},
+	})
+	addBatchToIndex(t, repoRoot, batchID, batchDir, []int{99})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(runs))
+	}
+	if got := runs[0].AgentSessionID; got != "ses_terminal" {
+		t.Fatalf("AgentSessionID = %q, want the OpenCode session recorded in the Run folder", got)
+	}
+}
+
+func TestPortal_AgentSessionID_OmittedWithoutIdentity(t *testing.T) {
+	data, err := json.Marshal(portalRun{Key: "k", RunID: "r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw["agentSessionId"]; ok {
+		t.Fatalf("agentSessionId present without an identity: %s", data)
+	}
+}

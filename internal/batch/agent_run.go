@@ -378,24 +378,24 @@ func (r *AgentRun) warningWriter() io.Writer {
 
 func (r *AgentRun) warnSession(err error) {
 	if err != nil && r.warningWriter() != nil {
-		fmt.Fprintf(r.warningWriter(), "warning: OpenCode session metadata: %v\n", err)
+		fmt.Fprintf(r.warningWriter(), "warning: agent session metadata: %v\n", err)
 	}
 }
 
-func (r *AgentRun) persistSession(sessionID string) {
+func (r *AgentRun) persistSession(kind agentSessionKind, sessionID string) {
 	if strings.TrimSpace(sessionID) == "" {
 		return
 	}
 	path := ""
 	if r.runFolder != "" {
-		path = filepath.Join(r.runFolder, "session.json")
+		path = filepath.Join(r.runFolder, agentSessionFile)
 	} else if r.batchID != "" && r.runID != "" {
 		path = r.layout.RunSessionPath(r.batchID, r.runID)
 	} else {
 		r.warnSession(errors.New("current Run metadata path is unavailable"))
 		return
 	}
-	if err := writeOpenCodeSession(path, sessionID); err != nil {
+	if err := writeAgentSession(path, kind, sessionID); err != nil {
 		r.warnSession(err)
 	}
 }

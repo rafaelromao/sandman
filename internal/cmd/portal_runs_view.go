@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
@@ -56,12 +57,16 @@ type portalRun struct {
 	// from JSON for terminal rows, so the /api/runs contract carries
 	// staleness only where it is meaningful. The portal renders this as
 	// a "stale · Ns" chip past an idle threshold.
-	LastOutputAt *time.Time    `json:"lastOutputAt,omitempty"`
-	SocketPath   string        `json:"socketPath,omitempty"`
-	LogPath      string        `json:"logPath,omitempty"`
-	LogURL       string        `json:"logUrl,omitempty"`
-	Log          string        `json:"log,omitempty"`
-	Events       []portalEvent `json:"events,omitempty"`
+	LastOutputAt *time.Time `json:"lastOutputAt,omitempty"`
+	SocketPath   string     `json:"socketPath,omitempty"`
+	LogPath      string     `json:"logPath,omitempty"`
+	// AgentSessionID is the agent session recorded in the Run folder's
+	// session.json (Claude Code or OpenCode), so the operator can resume the
+	// conversation from the host. Omitted when no identity was recorded.
+	AgentSessionID string        `json:"agentSessionId,omitempty"`
+	LogURL         string        `json:"logUrl,omitempty"`
+	Log            string        `json:"log,omitempty"`
+	Events         []portalEvent `json:"events,omitempty"`
 	// Review flags runs whose run.started event carried payload.review = true.
 	// The field is omitted from JSON when false to preserve the existing /api/runs
 	// contract for implementation runs.
@@ -605,6 +610,9 @@ func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventLis
 	runs = v.dedupRuns(runs)
 	runs = v.aggregateReviewChildren(layout, runs)
 	for i := range runs {
+		if sessionID, ok := batch.ReadAgentSessionID(reviewRunDir(layout, runs[i])); ok {
+			runs[i].AgentSessionID = sessionID
+		}
 		// Active runs are never marked archived, even if a directory
 		// matching the run ID happens to exist under .sandman/archive.
 		// Skipping the disk probe for active rows also keeps the hot

@@ -259,7 +259,7 @@ func (s opencodeStrategy) RetryAfterMissingSession(run *AgentRun, priorSession s
 }
 
 func (opencodeStrategy) PersistSession(run *AgentRun, stdout, stderr outputParser) {
-	run.persistSession(firstSessionID(stdout, stderr))
+	run.persistSession(opencodeSessionKind, firstSessionID(stdout, stderr))
 }
 
 func (s opencodeStrategy) NewOutputParsers(warnings io.Writer) (outputParser, outputParser) {

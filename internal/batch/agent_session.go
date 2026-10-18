@@ -1,0 +1,93 @@
+package batch
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/rafaelromao/sandman/internal/atomicfs"
+)
+
+// agentSessionFile is the Run artifact that records the agent session
+// identity: <batchDir>/runs/<runID>/session.json.
+const agentSessionFile = "session.json"
+
+// agentSessionKind is the protocol and provider one agent strategy records in
+// a Run's session.json. Each strategy validates only its own kind, so a record
+// written by another agent is never selected for a launch.
+type agentSessionKind struct {
+	protocol string
+	provider string
+}
+
+type agentSessionIdentity struct {
+	Protocol  string `json:"protocol"`
+	Provider  string `json:"provider"`
+	SessionID string `json:"session_id"`
+}
+
+func (k agentSessionKind) validate(id agentSessionIdentity) error {
+	if id.Protocol != k.protocol {
+		return fmt.Errorf("unsupported session protocol %q", id.Protocol)
+	}
+	if id.Provider != k.provider {
+		return fmt.Errorf("unsupported session provider %q", id.Provider)
+	}
+	if strings.TrimSpace(id.SessionID) == "" {
+		return errors.New("session id is empty")
+	}
+	return nil
+}
+
+func decodeAgentSession(path string) (agentSessionIdentity, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return agentSessionIdentity{}, err
+	}
+	var identity agentSessionIdentity
+	if err := json.Unmarshal(data, &identity); err != nil {
+		return agentSessionIdentity{}, fmt.Errorf("parse session metadata: %w", err)
+	}
+	return identity, nil
+}
+
+func readAgentSession(path string, kind agentSessionKind) (agentSessionIdentity, error) {
+	identity, err := decodeAgentSession(path)
+	if err != nil {
+		return agentSessionIdentity{}, err
+	}
+	if err := kind.validate(identity); err != nil {
+		return agentSessionIdentity{}, err
+	}
+	return identity, nil
+}
+
+func writeAgentSession(path string, kind agentSessionKind, sessionID string) error {
+	identity := agentSessionIdentity{
+		Protocol:  kind.protocol,
+		Provider:  kind.provider,
+		SessionID: strings.TrimSpace(sessionID),
+	}
+	if err := kind.validate(identity); err != nil {
+		return err
+	}
+	return atomicfs.WriteAtomicJSON(path, identity, 0644)
+}
+
+// ReadAgentSessionID returns the agent session ID recorded in a Run folder's
+// session.json, whichever agent wrote it, for display in Run details. A
+// missing or malformed record reports false.
+func ReadAgentSessionID(runDir string) (string, bool) {
+	if strings.TrimSpace(runDir) == "" {
+		return "", false
+	}
+	identity, err := decodeAgentSession(filepath.Join(runDir, agentSessionFile))
+	if err != nil || identity.Protocol == "" || identity.Provider == "" {
+		return "", false
+	}
+	sessionID := strings.TrimSpace(identity.SessionID)
+	return sessionID, sessionID != ""
+}

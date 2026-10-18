@@ -79,7 +79,15 @@ func (claudeStrategy) RetryAfterMissingSession(*AgentRun, string, error, outputP
 	return false
 }
 
-func (claudeStrategy) PersistSession(*AgentRun, outputParser, outputParser) {}
+// claudeSessionKind is the Claude Code session identity recorded in a Run's
+// session.json.
+var claudeSessionKind = agentSessionKind{protocol: "claude-session/v1", provider: "claude"}
+
+// PersistSession records the session ID Claude Code reported so the Run's
+// details can name the conversation to resume from the host.
+func (claudeStrategy) PersistSession(run *AgentRun, stdout, stderr outputParser) {
+	run.persistSession(claudeSessionKind, firstSessionID(stdout, stderr))
+}
 
 // NewOutputParsers renders the built-in command's stream-json into readable
 // lines. Custom commands keep their own output untouched.

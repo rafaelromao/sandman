@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -73,7 +74,7 @@ func TestPriorOpenCodeSession_CanonicalInvalidDoesNotUseLegacy(t *testing.T) {
 	layout := paths.NewLayout(&config.Config{}, root)
 	canonical := layout.RunSessionPath("batch-1", "run-1")
 	legacy := layout.LegacyRunSessionPath("run-1")
-	if err := writeOpenCodeSession(legacy, "legacy"); err != nil {
+	if err := writeAgentSession(legacy, opencodeSessionKind, "legacy"); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Dir(canonical), 0755); err != nil {
@@ -109,7 +110,7 @@ func TestAgentRun_ReusesMissingSessionWithOneTimeFallback(t *testing.T) {
 	run.runFolder = runFolder
 	run.env = map[string]string{"TEST_ENV": "test-value"}
 	layout := paths.NewLayout(&config.Config{}, root)
-	if err := writeOpenCodeSession(layout.RunSessionPath("prior-batch", "prior-run"), "old"); err != nil {
+	if err := writeAgentSession(layout.RunSessionPath("prior-batch", "prior-run"), opencodeSessionKind, "old"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -155,7 +156,7 @@ func TestAgentRun_DoesNotFallbackForUnrelatedOpenCodeFailure(t *testing.T) {
 	run.previousBatchID = "prior-batch"
 	run.previousRunID = "prior-run"
 	run.runFolder = filepath.Join(root, "current")
-	if err := writeOpenCodeSession(filepath.Join(root, ".sandman", "batches", "prior-batch", "runs", "prior-run", "session.json"), "old"); err != nil {
+	if err := writeAgentSession(filepath.Join(root, ".sandman", "batches", "prior-batch", "runs", "prior-run", "session.json"), opencodeSessionKind, "old"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -184,7 +185,7 @@ func TestAgentRun_PersistsSessionObservedBeforeFallbackFailure(t *testing.T) {
 	run.previousBatchID = "prior-batch"
 	run.previousRunID = "prior-run"
 	run.runFolder = runFolder
-	if err := writeOpenCodeSession(filepath.Join(root, ".sandman", "batches", "prior-batch", "runs", "prior-run", "session.json"), "old"); err != nil {
+	if err := writeAgentSession(filepath.Join(root, ".sandman", "batches", "prior-batch", "runs", "prior-run", "session.json"), opencodeSessionKind, "old"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -278,7 +279,7 @@ func TestRunExecutor_ContinuedRowSelectsOpenCodeSession(t *testing.T) {
 		WithErrorLog(io.Discard),
 	)
 	layout := paths.NewLayout(&config.Config{}, root)
-	if err := writeOpenCodeSession(layout.RunSessionPath("prior-batch", "prior-run"), "prior-session"); err != nil {
+	if err := writeAgentSession(layout.RunSessionPath("prior-batch", "prior-run"), opencodeSessionKind, "prior-session"); err != nil {
 		t.Fatal(err)
 	}
 	bc := BatchConfig{
@@ -622,5 +623,39 @@ func TestOpenCodeOutput_RendersToolDetails(t *testing.T) {
 				t.Fatalf("output = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestAgentRun_OpenCodeIgnoresAnotherAgentsSessionIdentity(t *testing.T) {
+	root := t.TempDir()
+	sb := &opencodeSequenceSandbox{
+		fakeSandbox: fakeSandbox{workDir: root},
+		results:     []opencodeExecResult{{stdout: `{"type":"step_start","sessionID":"new"}` + "\n"}},
+	}
+	layout := paths.NewLayout(&config.Config{}, root)
+	run := NewAgentRunWithLayout(&github.Issue{Number: 42}, "42-fix", sb, layout)
+	run.preset = "opencode"
+	run.reuseSession = true
+	run.previousBatchID = "prior-batch"
+	run.previousRunID = "prior-run"
+	run.batchID = "current-batch"
+	run.runID = "current-run"
+	run.runFolder = filepath.Join(root, "current-run")
+	var warnings bytes.Buffer
+	run.sessionWarning = &warnings
+	// The preset changed under the same Run: the prior record is Claude's.
+	if err := writeAgentSession(layout.RunSessionPath("prior-batch", "prior-run"), claudeSessionKind, "6f1c2a4e-0b7d-4c1a-9a55-2f0e8d3b7c11"); err != nil {
+		t.Fatal(err)
+	}
+
+	result := run.Run(context.Background(), &spyRenderer{result: "prompt"}, config.BuiltInAgentPresets["opencode"].Command, prompt.RenderConfig{})
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success", result.Status)
+	}
+	if len(sb.commands) != 1 || strings.Contains(sb.commands[0], "--session") {
+		t.Fatalf("commands = %q, want one launch without another agent's session", sb.commands)
+	}
+	if !strings.Contains(warnings.String(), `unsupported session protocol "claude-session/v1"`) {
+		t.Fatalf("warnings = %q, want the rejected identity reported", warnings.String())
 	}
 }
