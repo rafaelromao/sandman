@@ -67,18 +67,23 @@ func issueBatchIDForRequest(req Request) string {
 }
 
 // batchIDForPromptOnly returns the per-row batch directory name for a
-// prompt-only session. When runDir is non-empty, the batch ID is
-// derived from the directory two levels above runDir (so
-// `<batchesDir>/<batchID>/runs/<runID>` round-trips). This pins the
-// orchestrator ↔ daemon agreement: the review daemon's `Request.RunDir`
-// is the authoritative path the daemon's `prepareReviewRun` will read
-// `decision.md` from, so
-// the orchestrator must place `agentRun.runFolder` at the same
-// path. Otherwise the reviewer bot writes `decision.md` to a path
-// the daemon never reads and the review comment is silently dropped
-// (issue discovered on PR #1875: per-row RunID
-// `<ts>-<sid>-<linkedIssue>-PR<pr>` diverged from the legacy batch
-// dir `<ts>-<sid>-PR<pr>` that `prepareReviewRun` mints).
+// prompt-only session. When runDir is non-empty it is accepted in two
+// shapes:
+//
+//   - the per-run folder `<batchesDir>/<batchID>/runs/<runID>` handed over
+//     by the review daemon and RunRepair, where the batch ID is the
+//     directory two levels above runDir. This pins the orchestrator <->
+//     daemon agreement: the daemon's `Request.RunDir` is the authoritative
+//     path `prepareReviewRun` reads `decision.md` from, so the
+//     orchestrator must place `agentRun.runFolder` at the same path
+//     (issue discovered on PR #1875).
+//   - the per-batch directory `<batchesDir>/<batchID>` handed over by
+//     `sandman run`, where the batch ID is runDir's own basename. Without
+//     this, the `-prompt[-<id>]` segment was dropped and run artifacts
+//     landed in a sibling `<ts>-<sid>` folder the Portal never reads.
+//
+// Any other shape returns the empty string so the caller falls back to the
+// historical derivation rather than guessing.
 //
 // When runDir is empty, fall back to the user-provided runID; when
 // that is also empty, route the (ts, shortid) pair through the
@@ -88,16 +93,15 @@ func issueBatchIDForRequest(req Request) string {
 // of #1943, see issue #2042).
 func batchIDForPromptOnly(ts, shortid, userRunID, runDir string) string {
 	if runDir != "" {
-		// runDir = <batchesDir>/<batchID>/runs/<runID>; the batchID
-		// is two levels above runDir's last segment. Defensively
-		// guard against a short path (no /runs/<runID>) by returning
-		// the empty string so the caller falls back to the historical
-		// derivation rather than panicking.
+		runDir = filepath.Clean(runDir)
 		parent := filepath.Dir(runDir)
-		if filepath.Base(parent) != "runs" {
-			return ""
+		switch filepath.Base(parent) {
+		case "runs":
+			return filepath.Base(filepath.Dir(parent))
+		case "batches":
+			return filepath.Base(runDir)
 		}
-		return filepath.Base(filepath.Dir(parent))
+		return ""
 	}
 	if userRunID != "" {
 		return userRunID
