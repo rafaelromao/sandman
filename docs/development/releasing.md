@@ -43,6 +43,14 @@ binary installation ([#2392](https://github.com/rafaelromao/sandman/issues/2392)
    all four archives and checksums before exposing the release. Go `1.25.0` from `go.mod`
    remains the language minimum; `.go-version` selects the patched build toolchain.
 
+If Release fails at startup with no jobs, inspect its workflow annotations first.
+The reusable CI call must grant `contents: read`, `actions: read` and
+`pull-requests: read`; GitHub validates nested job permissions even when the
+candidate condition would skip validation. A startup failure also prevents
+Release Please maintenance from refreshing the pending branch. After merging a
+workflow repair, dispatch Release on current `main` to refresh that branch;
+rerunning an old run retains its old workflow source.
+
 To diagnose a release, inspect the Release run's publication gate, the SHA-bound
 validation reports, then the draft and GoReleaser output. A failed or incomplete
 gate prevents tag and release creation. See recovery instructions below.

@@ -60,6 +60,11 @@ jobs:
         run: python3 scripts/publication_candidate.py
 
   quality:
+    # Reusable jobs cannot request permissions absent from their caller.
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
     needs: candidate
     if: needs.candidate.outputs.tag != ''
     uses: ./.github/workflows/go.yml
