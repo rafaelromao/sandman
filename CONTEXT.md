@@ -112,11 +112,11 @@ The master list at `.sandman/batches.json` recording every batch ever created wi
 _Avoid_: index, master index.
 
 **Run**:
-One folder under `.sandman/batches/<batch-id>/runs/<run-id>/` containing `run.json`, `run.log`, `session.json` for supported OpenCode runs, `run.sock`, and (for review runs) `review-state.json`. Identified by the per-row RunID produced by `runid.NewRunID`. Each Run represents a single AgentRun within a Batch. The Run may be archived or unavailable independently of AgentRun lifecycle. `run.json` is an atomic artifact manifest whose legacy `status` is a best-effort execution snapshot for inspection/compatibility; it never overrides or substitutes for events. References ADR-0032.
+One folder under `.sandman/batches/<batch-id>/runs/<run-id>/` containing `run.json`, `run.log`, `session.json` (agent session identity) for supported OpenCode and Claude Code runs, `run.sock`, and (for review runs) `review-state.json`. Identified by the per-row RunID produced by `runid.NewRunID`. Each Run represents a single AgentRun within a Batch. The Run may be archived or unavailable independently of AgentRun lifecycle. `run.json` is an atomic artifact manifest whose legacy `status` is a best-effort execution snapshot for inspection/compatibility; it never overrides or substitutes for events. References ADR-0032.
 _Avoid_: run folder, run directory.
 
-**OpenCode session identity**:
-The validated runtime metadata in `<Run>/session.json` that records `{protocol: "opencode-session/v1", provider: "opencode", session_id: "..."}`. It is atomically replaced when a supported OpenCode invocation observes a session ID. Runtime-owned await re-entry and explicit `--continue --reuse-session` may select it; plain `--continue`, retries, and non-OpenCode agents do not. Missing exact sessions use one OpenCode `--continue` fallback only on the selected reuse path. The `claude` preset keeps no session identity: on the same reuse paths it renders Claude Code's working-directory-scoped `--continue`.
+**Agent session identity**:
+The validated runtime metadata in `<Run>/session.json` that records `{protocol, provider, session_id}`: `opencode-session/v1`/`opencode` for OpenCode, or `claude-session/v1`/`claude` for Claude Code (from its `system/init` record). It is atomically replaced as soon as a supported invocation observes a session, and again after the attempt. Runtime-owned await re-entry and explicit `--continue --reuse-session` may select it, each strategy accepting only its own protocol. Plain `--continue` and retries do not. Missing OpenCode sessions use one OpenCode `--continue` fallback on the selected reuse path. Claude reuse renders `--resume <uuid>`, never Claude Code's working-directory-scoped `--continue`. A missing, invalid, or vanished Claude session starts fresh. The Portal shows either identity as the Run detail `agentSessionId` (ADR-0055, ADR-0057).
 _Avoid_: transcript, mutable Run status.
 
 **Run retry**:
@@ -218,7 +218,7 @@ Paths (typically subtrees of a `ConfigDir`) skipped during the copy-resolve snap
 _Avoid_: snapshot blocklist, copy excludes.
 
 **LiveMount**:
-A path bind-mounted directly from the host into a ContainerSandbox at its corresponding HOME=/ container path, instead of being copied into the snapshot. Used when host-side state must remain inspectable after the container run completes — e.g. OpenCode's `opencode.db` session database (ADR-0016). A LiveMount is implicitly a `SnapshotExclude` of the same path.
+A path bind-mounted directly from the host into a ContainerSandbox at its corresponding HOME=/ container path, instead of being copied into the snapshot. Used when host-side state must remain inspectable after the container run completes — e.g. OpenCode's `opencode.db` session database (ADR-0016) or Claude Code's `~/.claude/projects` transcripts (ADR-0057). A preset's `LiveMountDirs` are LiveMounts that Sandman creates on the host first when missing. A LiveMount is implicitly a `SnapshotExclude` of the same path.
 _Avoid_: bind mount (too generic), shared mount.
 
 **ContainerSandbox**:

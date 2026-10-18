@@ -224,6 +224,33 @@ Each agent run writes its output to the run's log file inside the batch director
 
 The built-in `opencode` preset renders OpenCode's JSON events into readable text. The built-in `claude` preset renders Claude Code's stream-json the same way, ending with a `Result:` summary line; see [Agent Compatibility > Readable logs](agent-compatibility.md#readable-logs).
 
+## Resuming an agent session from the host
+
+Each Run records its agent session in its `session.json`, as soon as the agent
+reports one. Open the Run in the Portal and select **Details**: `agentSessionId`
+holds the Claude Code or OpenCode session ID. It is the same field for both
+agents and is empty until a session is recorded. The ID stays with the Run,
+including after `sandman archive`.
+
+To open the conversation on the host:
+
+- **Claude Code**: `claude --resume <agentSessionId>`. Run it from the Run's
+  worktree (`.sandman/worktrees/<branch>`) so tools act on that checkout. Claude
+  Code finds the session from any directory. While the Run is still live, add
+  `--fork-session` so two processes do not write to the same transcript.
+- **OpenCode**: `opencode --session <agentSessionId>`, from the Run's worktree.
+
+In container mode, Claude Code's working directory is
+`/workspace/.sandman/worktrees/<branch>`, not the host path. That is why the
+default `claude --resume` picker on the host does not list Sandman sessions;
+resume them by ID. Their transcripts are under host
+`~/.claude/projects/-workspace--sandman-worktrees-*` directories, which you can
+delete like any other Claude Code transcripts. Resume-by-ID across directories
+was verified with Claude Code 2.1.302.
+
+Resuming by hand does not change the Run's lifecycle. Sandman keeps its own
+events and decides retries, waits, and merges as usual.
+
 ## Worktree hints
 
 ```bash
