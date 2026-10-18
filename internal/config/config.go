@@ -181,9 +181,9 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 	// The claude preset runs the unmodified Claude Code CLI in print mode.
 	// stream-json with --verbose is the only print-mode format that emits
 	// output while the agent works, which the idle-timeout heartbeat needs.
-	// --continue resumes the worktree's most recent conversation when
-	// Sandman selects session reuse, and --name puts the Run's session name
-	// on the command line for the lingering-process check.
+	// --resume selects the exact session recorded in the Run's session.json
+	// when Sandman selects session reuse, and --name puts the Run's session
+	// name on the command line for the lingering-process check.
 	"claude": {
 		DisplayName:  "Claude Code",
 		DefaultModel: "sonnet",
@@ -191,7 +191,7 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 		// often the most expensive model; parallel AFK runs spend subscription
 		// quota, so a minimal config still runs on the preset default.
 		DefaultModelWhenUnset: true,
-		Command:               `claude -p --output-format stream-json --verbose{{if .ContinueFlag}} --continue{{end}}{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .PermissionFlag}} {{.PermissionFlag}}{{end}}{{if .SessionName}} --name '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}}{{if .VariantFlag}} {{.VariantFlag}}{{end}} "$(cat {{.PromptFile}})"`,
+		Command:               `claude -p --output-format stream-json --verbose{{if .SessionFlag}} --resume {{.SessionFlag}}{{end}}{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .PermissionFlag}} {{.PermissionFlag}}{{end}}{{if .SessionName}} --name '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}}{{if .VariantFlag}} {{.VariantFlag}}{{end}} "$(cat {{.PromptFile}})"`,
 		Env: map[string]string{
 			"DISABLE_AUTOUPDATER":                      "1",
 			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"sync"
 
@@ -16,32 +15,8 @@ import (
 // session.json.
 var opencodeSessionKind = agentSessionKind{protocol: "opencode-session/v1", provider: "opencode"}
 
-func readOpenCodeSession(path string) (agentSessionIdentity, error) {
-	return readAgentSession(path, opencodeSessionKind)
-}
-
-// priorOpenCodeSession selects canonical metadata first. Legacy lookup is
-// deliberately limited to a missing canonical file so a broken canonical
-// record cannot be silently replaced by stale evidence.
 func priorOpenCodeSession(layout paths.Layout, batchID, runID string) (agentSessionIdentity, bool, error) {
-	canonical := layout.RunSessionPath(batchID, runID)
-	identity, err := readOpenCodeSession(canonical)
-	if err == nil {
-		return identity, true, nil
-	}
-	if !os.IsNotExist(err) {
-		return agentSessionIdentity{}, false, err
-	}
-
-	legacy := layout.LegacyRunSessionPath(runID)
-	identity, err = readOpenCodeSession(legacy)
-	if err == nil {
-		return identity, true, nil
-	}
-	if os.IsNotExist(err) {
-		return agentSessionIdentity{}, false, nil
-	}
-	return agentSessionIdentity{}, false, err
+	return priorAgentSession(layout, batchID, runID, opencodeSessionKind)
 }
 
 type opencodeOutput struct {

@@ -35,6 +35,7 @@ type claudeOutput struct {
 type claudeOutputState struct {
 	mu                sync.Mutex
 	sessionID         string
+	sessionNotFound   bool
 	usageLimitReached bool
 	permissionDenials []string
 	readOnlyMode      *PermissionModeError
@@ -125,7 +126,22 @@ func (w *claudeOutput) SessionID() string {
 	return w.state.sessionID
 }
 
-func (w *claudeOutput) SessionNotFound() bool { return false }
+func (w *claudeOutput) SessionNotFound() bool {
+	w.state.mu.Lock()
+	defer w.state.mu.Unlock()
+	return w.state.sessionNotFound
+}
+
+// claudeSessionNotFoundMessage starts the error Claude Code reports, both in
+// the final result record's errors and as plain stderr text, when --resume
+// names a session that does not exist.
+const claudeSessionNotFoundMessage = "No conversation found with session ID"
+
+func (w *claudeOutput) recordSessionNotFound() {
+	w.state.mu.Lock()
+	defer w.state.mu.Unlock()
+	w.state.sessionNotFound = true
+}
 
 func (w *claudeOutput) UsageLimitReached() bool {
 	w.state.mu.Lock()
@@ -157,16 +173,24 @@ func (w *claudeOutput) writeLine(line []byte, newline bool) error {
 	text := strings.TrimSuffix(string(line), "\r")
 	var record map[string]any
 	if !strings.HasPrefix(strings.TrimSpace(text), "{") || json.Unmarshal([]byte(text), &record) != nil {
+		if strings.HasPrefix(strings.TrimSpace(text), claudeSessionNotFoundMessage) {
+			w.recordSessionNotFound()
+		}
 		return w.writeRaw(line, newline)
 	}
-	if id, _ := record["session_id"].(string); id != "" {
+	recordType, _ := record["type"].(string)
+	// Only the init record names the session that actually started: a failed
+	// --resume reports the requested ID on its result record as well.
+	if id, _ := record["session_id"].(string); id != "" && recordType == "system" && record["subtype"] == "init" {
 		w.state.mu.Lock()
 		if w.state.sessionID == "" {
 			w.state.sessionID = id
 		}
 		w.state.mu.Unlock()
 	}
-	recordType, _ := record["type"].(string)
+	if recordType == "result" && claudeResultReportsMissingSession(record) {
+		w.recordSessionNotFound()
+	}
 	if w.stdout && recordType == "assistant" && claudeAssistantHasText(record) && w.modelProgress != nil {
 		w.modelProgress()
 	}
@@ -444,4 +468,14 @@ func claudeToolResultText(content any) string {
 
 func singleLine(value string) string {
 	return strings.Join(strings.Fields(value), " ")
+}
+
+func claudeResultReportsMissingSession(record map[string]any) bool {
+	errs, _ := record["errors"].([]any)
+	for _, entry := range errs {
+		if message, _ := entry.(string); strings.HasPrefix(message, claudeSessionNotFoundMessage) {
+			return true
+		}
+	}
+	return false
 }

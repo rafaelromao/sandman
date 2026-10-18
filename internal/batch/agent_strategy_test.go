@@ -109,7 +109,8 @@ func TestAgentStrategy_Contract(t *testing.T) {
 			want: contract{
 				modelFlag: "--model 'provider/model'", variantFlag: "--effort 'high'",
 				safeEnv: permissionEnv, dangerousEnv: permissionEnv,
-				reuseContinue: true, parsers: true, usageRule: true, awaitsUsageLimit: true,
+				// No recorded session: reuse starts fresh, never --continue.
+				parsers: true, usageRule: true, awaitsUsageLimit: true, retriesMissingSession: true,
 			},
 		},
 		{

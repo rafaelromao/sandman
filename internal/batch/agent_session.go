@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
+	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 // agentSessionFile is the Run artifact that records the agent session
@@ -63,6 +64,31 @@ func readAgentSession(path string, kind agentSessionKind) (agentSessionIdentity,
 		return agentSessionIdentity{}, err
 	}
 	return identity, nil
+}
+
+// priorAgentSession selects canonical metadata first. Legacy lookup is
+// deliberately limited to a missing canonical file so a broken canonical
+// record cannot be silently replaced by stale evidence. A Run recorded
+// without a batch lives in the batch its RunID encodes, as the Run folder does.
+func priorAgentSession(layout paths.Layout, batchID, runID string, kind agentSessionKind) (agentSessionIdentity, bool, error) {
+	if batchID == "" {
+		batchID = batchIDFromRunID(runID)
+	}
+	identity, err := readAgentSession(layout.RunSessionPath(batchID, runID), kind)
+	if err == nil {
+		return identity, true, nil
+	}
+	if !os.IsNotExist(err) {
+		return agentSessionIdentity{}, false, err
+	}
+	identity, err = readAgentSession(layout.LegacyRunSessionPath(runID), kind)
+	if err == nil {
+		return identity, true, nil
+	}
+	if os.IsNotExist(err) {
+		return agentSessionIdentity{}, false, nil
+	}
+	return agentSessionIdentity{}, false, err
 }
 
 func writeAgentSession(path string, kind agentSessionKind, sessionID string) error {
