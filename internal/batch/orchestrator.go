@@ -66,31 +66,14 @@ func issueBatchIDForRequest(req Request) string {
 	return req.RunTS + "-" + req.RunShortID
 }
 
-// batchIDForPromptOnly returns the per-row batch directory name for a
-// prompt-only session. When runDir is non-empty it is accepted in two
-// shapes:
-//
-//   - the per-run folder `<batchesDir>/<batchID>/runs/<runID>` handed over
-//     by the review daemon and RunRepair, where the batch ID is the
-//     directory two levels above runDir. This pins the orchestrator <->
-//     daemon agreement: the daemon's `Request.RunDir` is the authoritative
-//     path `prepareReviewRun` reads `decision.md` from, so the
-//     orchestrator must place `agentRun.runFolder` at the same path
-//     (issue discovered on PR #1875).
-//   - the per-batch directory `<batchesDir>/<batchID>` handed over by
-//     `sandman run`, where the batch ID is runDir's own basename. Without
-//     this, the `-prompt[-<id>]` segment was dropped and run artifacts
-//     landed in a sibling `<ts>-<sid>` folder the Portal never reads.
-//
-// Any other shape returns the empty string so the caller falls back to the
-// historical derivation rather than guessing.
-//
-// When runDir is empty, fall back to the user-provided runID; when
-// that is also empty, route the (ts, shortid) pair through the
-// shared identity engine so the output is `<ts>-<sid>-prompt`.
-// Routing through `runid.NewBatchID` keeps the prompt-only BatchId
-// shape aligned with every other prompt-only mint surface (cleanup
-// of #1943, see issue #2042).
+// batchIDForPromptOnly returns the public batch ID for a prompt-only run.
+// runDir is either the per-batch directory `<batches>/<batchID>` handed over
+// by `sandman run`, or the per-run folder `<batches>/<batchID>/runs/<runID>`
+// handed over by the review daemon and RunRepair (the daemon reads
+// decision.md from that exact path, so the run folder must match it). Any
+// other shape returns "" and the caller keeps the historical derivation.
+// Without runDir it falls back to the user run ID, then to the canonical
+// `<ts>-<sid>-prompt` identity.
 func batchIDForPromptOnly(ts, shortid, userRunID, runDir string) string {
 	if runDir != "" {
 		runDir = filepath.Clean(runDir)
