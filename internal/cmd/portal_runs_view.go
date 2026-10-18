@@ -247,7 +247,43 @@ type portalRunMatch struct {
 type portalRunsView struct {
 	mu            sync.Mutex
 	manifestCache map[string]portalManifestCacheEntry
+	sessionCache  map[string]portalSessionCacheEntry
 	now           func() time.Time
+}
+
+type portalSessionCacheEntry struct {
+	size      int64
+	modTime   time.Time
+	sessionID string
+}
+
+// stampAgentSessions sets each row's AgentSessionID from its Run folder's
+// session.json. The portal polls every few seconds over every row, history
+// included, so a record is re-read only when its size or mtime changes, and
+// the cache keeps only the records of the rows in this pass.
+func (v *portalRunsView) stampAgentSessions(layout paths.Layout, runs []portalRun) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	previous := v.sessionCache
+	v.sessionCache = make(map[string]portalSessionCacheEntry, len(runs))
+	for i := range runs {
+		runDir := reviewRunDir(layout, runs[i])
+		if runDir == "" {
+			continue
+		}
+		path := filepath.Join(runDir, "session.json")
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		entry, ok := previous[path]
+		if !ok || entry.size != info.Size() || !entry.modTime.Equal(info.ModTime()) {
+			sessionID, _ := batch.ReadAgentSessionID(runDir)
+			entry = portalSessionCacheEntry{size: info.Size(), modTime: info.ModTime(), sessionID: sessionID}
+		}
+		v.sessionCache[path] = entry
+		runs[i].AgentSessionID = entry.sessionID
+	}
 }
 
 type portalManifestCacheEntry struct {
@@ -610,9 +646,6 @@ func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventLis
 	runs = v.dedupRuns(runs)
 	runs = v.aggregateReviewChildren(layout, runs)
 	for i := range runs {
-		if sessionID, ok := batch.ReadAgentSessionID(reviewRunDir(layout, runs[i])); ok {
-			runs[i].AgentSessionID = sessionID
-		}
 		// Active runs are never marked archived, even if a directory
 		// matching the run ID happens to exist under .sandman/archive.
 		// Skipping the disk probe for active rows also keeps the hot
@@ -641,6 +674,7 @@ func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventLis
 
 		v.rehydrateArchivedRun(repoRoot, layout, idx, &runs[i], locator)
 	}
+	v.stampAgentSessions(layout, runs)
 	// Staleness signal for active rows: the saved-run-log mtime (with a
 	// StartedAt fallback). Computed here so every runFrom* constructor and
 	// every caller of compute() (the /api/runs handler, the abort lookup)
