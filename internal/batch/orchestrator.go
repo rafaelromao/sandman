@@ -66,38 +66,22 @@ func issueBatchIDForRequest(req Request) string {
 	return req.RunTS + "-" + req.RunShortID
 }
 
-// batchIDForPromptOnly returns the per-row batch directory name for a
-// prompt-only session. When runDir is non-empty, the batch ID is
-// derived from the directory two levels above runDir (so
-// `<batchesDir>/<batchID>/runs/<runID>` round-trips). This pins the
-// orchestrator ↔ daemon agreement: the review daemon's `Request.RunDir`
-// is the authoritative path the daemon's `prepareReviewRun` will read
-// `decision.md` from, so
-// the orchestrator must place `agentRun.runFolder` at the same
-// path. Otherwise the reviewer bot writes `decision.md` to a path
-// the daemon never reads and the review comment is silently dropped
-// (issue discovered on PR #1875: per-row RunID
-// `<ts>-<sid>-<linkedIssue>-PR<pr>` diverged from the legacy batch
-// dir `<ts>-<sid>-PR<pr>` that `prepareReviewRun` mints).
-//
-// When runDir is empty, fall back to the user-provided runID; when
-// that is also empty, route the (ts, shortid) pair through the
-// shared identity engine so the output is `<ts>-<sid>-prompt`.
-// Routing through `runid.NewBatchID` keeps the prompt-only BatchId
-// shape aligned with every other prompt-only mint surface (cleanup
-// of #1943, see issue #2042).
+// batchIDForPromptOnly returns the public batch ID for a prompt-only run.
+// runDir is either the batch directory `<batches>/<batchID>` or a run folder
+// `<batches>/<batchID>/runs/<runID>`; any other shape returns "" so the
+// caller keeps its historical derivation. Without runDir it falls back to
+// the user run ID, then to the canonical `<ts>-<sid>-prompt` identity.
 func batchIDForPromptOnly(ts, shortid, userRunID, runDir string) string {
 	if runDir != "" {
-		// runDir = <batchesDir>/<batchID>/runs/<runID>; the batchID
-		// is two levels above runDir's last segment. Defensively
-		// guard against a short path (no /runs/<runID>) by returning
-		// the empty string so the caller falls back to the historical
-		// derivation rather than panicking.
+		runDir = filepath.Clean(runDir)
 		parent := filepath.Dir(runDir)
-		if filepath.Base(parent) != "runs" {
-			return ""
+		switch filepath.Base(parent) {
+		case "runs":
+			return filepath.Base(filepath.Dir(parent))
+		case "batches":
+			return filepath.Base(runDir)
 		}
-		return filepath.Base(filepath.Dir(parent))
+		return ""
 	}
 	if userRunID != "" {
 		return userRunID
