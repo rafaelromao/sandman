@@ -2732,9 +2732,7 @@ func TestRun_PromptOnlyWithRunIDRegistersOrchestratorRunIDInBatchesIndex(t *test
 		t.Errorf("batch folder basename = %q, want %q (== batches index entry id == public BatchId)", entries[0].Name(), got.ID)
 	}
 
-	// The orchestrator derives the run's batch identity from Request.RunDir,
-	// so the CLI must hand it the batch directory itself or run artifacts
-	// land in a sibling folder the batches index (and the Portal) never reads.
+	// The orchestrator derives the run's batch identity from Request.RunDir.
 	if gotRunDir := filepath.Base(spy.req.RunDir); gotRunDir != got.ID {
 		t.Errorf("Request.RunDir basename = %q, want %q (== public BatchId)", gotRunDir, got.ID)
 	}
@@ -2801,9 +2799,6 @@ func TestRun_PromptOnlyWithoutRunIDRegistersCanonicalBatchIdInBatchesIndex(t *te
 		t.Errorf("batch folder basename = %q, want %q (== batches index entry id == public BatchId)", entries[0].Name(), got.ID)
 	}
 
-	// The orchestrator derives the run's batch identity from Request.RunDir,
-	// so the CLI must hand it the batch directory itself or run artifacts
-	// land in a sibling folder the batches index (and the Portal) never reads.
 	if gotRunDir := filepath.Base(spy.req.RunDir); gotRunDir != got.ID {
 		t.Errorf("Request.RunDir basename = %q, want %q (== public BatchId)", gotRunDir, got.ID)
 	}

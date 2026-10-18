@@ -67,13 +67,10 @@ func issueBatchIDForRequest(req Request) string {
 }
 
 // batchIDForPromptOnly returns the public batch ID for a prompt-only run.
-// runDir is either the per-batch directory `<batches>/<batchID>` handed over
-// by `sandman run`, or the per-run folder `<batches>/<batchID>/runs/<runID>`
-// handed over by the review daemon and RunRepair (the daemon reads
-// decision.md from that exact path, so the run folder must match it). Any
-// other shape returns "" and the caller keeps the historical derivation.
-// Without runDir it falls back to the user run ID, then to the canonical
-// `<ts>-<sid>-prompt` identity.
+// runDir is either the batch directory `<batches>/<batchID>` or a run folder
+// `<batches>/<batchID>/runs/<runID>`; any other shape returns "" so the
+// caller keeps its historical derivation. Without runDir it falls back to
+// the user run ID, then to the canonical `<ts>-<sid>-prompt` identity.
 func batchIDForPromptOnly(ts, shortid, userRunID, runDir string) string {
 	if runDir != "" {
 		runDir = filepath.Clean(runDir)

@@ -6638,12 +6638,8 @@ func TestRunBatch_ReviewRunFolderMatchesLegacyBatchDirFormula(t *testing.T) {
 	}
 }
 
-// TestRunBatch_PromptOnlyBatchDirRunDir pins the `sandman run --prompt`
-// contract: the CLI hands the orchestrator the per-batch directory
-// (`.sandman/batches/<batchID>`) as Request.RunDir, and every run
-// artifact (run folder, run.json, run.started batch_id) must agree with
-// that directory instead of dropping the `-prompt[-<id>]` segment into a
-// sibling `<ts>-<sid>` folder the Portal never reads.
+// TestRunBatch_PromptOnlyBatchDirRunDir pins that a batch-directory RunDir
+// is the home of the run folder, run.json and the run.started batch_id.
 func TestRunBatch_PromptOnlyBatchDirRunDir(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -6726,8 +6722,12 @@ func TestRunBatch_PromptOnlyBatchDirRunDir(t *testing.T) {
 			if len(names) != 1 || names[0] != tc.wantBatchID {
 				t.Errorf("batches dir entries = %v, want exactly [%s] (no sibling batch folder)", names, tc.wantBatchID)
 			}
-			if _, err := os.Stat(filepath.Join(dir, batchRel, "runs", tc.wantRunID, "run.json")); err != nil {
-				t.Errorf("run.json not written under the batch directory: %v", err)
+			manifest, err := batchindex.ReadManifest(filepath.Join(dir, batchRel, "runs", tc.wantRunID))
+			if err != nil {
+				t.Fatalf("run.json not written under the batch directory: %v", err)
+			}
+			if manifest.BatchID != tc.wantBatchID {
+				t.Errorf("run.json batchId = %q, want %q", manifest.BatchID, tc.wantBatchID)
 			}
 
 			var started []string
@@ -12661,11 +12661,8 @@ func TestLogAborted_EventLogWriteErrorIsSurfacedOnErrorLog(t *testing.T) {
 	}
 }
 
-// TestBatchIDForPromptOnly_RunDirShapes pins both RunDir shapes the
-// orchestrator receives for a prompt-only session: the per-batch
-// directory handed over by `sandman run` and the per-run folder handed
-// over by the review daemon / RunRepair. Anything else keeps the
-// historical derivation (empty result).
+// TestBatchIDForPromptOnly_RunDirShapes pins the batch-directory and
+// per-run-folder RunDir shapes; anything else yields the empty result.
 func TestBatchIDForPromptOnly_RunDirShapes(t *testing.T) {
 	const promptBatch = "260504123456-ab12-prompt"
 	const namedBatch = "260504123456-ab12-prompt-my-run"

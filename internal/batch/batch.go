@@ -98,7 +98,7 @@ type Request struct {
 	// under which container config snapshots are stored for the lifetime of
 	// the batch. When empty, snapshots fall back to a temp directory.
 	// Prompt-only runs also accept the per-run folder
-	// (`.sandman/batches/<batch-id>/runs/<run-id>`) used by the review daemon.
+	// (`.sandman/batches/<batch-id>/runs/<run-id>`).
 	RunDir string
 	// WorktreeDir is the host-absolute path of the per-row review
 	// worktree base directory (issue #1953). The daemon/cmd sets
