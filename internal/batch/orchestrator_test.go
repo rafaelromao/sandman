@@ -12768,3 +12768,56 @@ func TestRunSession_CopyQualityRulesMissingSource(t *testing.T) {
 		t.Errorf("expected missing-source to leave target absent; stat err = %v", err)
 	}
 }
+
+// TestPrepareContainerConfigMounts_ClaudePresetSharesTranscriptsWithTheHost
+// pins that container Claude Code writes its session transcripts straight into
+// the host's ~/.claude/projects, created when the host never ran Claude Code,
+// so `claude --resume <id>` on the host finds them.
+func TestPrepareContainerConfigMounts_ClaudePresetSharesTranscriptsWithTheHost(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	claudeDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startOpts, err := buildStartOptions(config.BuiltInAgentPresets["claude"].Agent("claude"))
+	if err != nil {
+		t.Fatalf("build start options: %v", err)
+	}
+	cleanup, err := PrepareContainerConfigMounts(context.Background(), t.TempDir(), "", &startOpts, func(context.Context) (string, error) { return "", nil })
+	if err != nil {
+		t.Fatalf("prepare container config mounts: %v", err)
+	}
+	defer cleanup()
+
+	projects := filepath.Join(claudeDir, "projects")
+	if info, err := os.Stat(projects); err != nil || !info.IsDir() {
+		t.Fatalf("host transcript directory = %v, %v; want it created", info, err)
+	}
+	snapshotAt, transcriptsAt := -1, -1
+	var snapshotSource string
+	for i, mount := range startOpts.ConfigMounts {
+		switch mount.Target {
+		case "/.claude":
+			snapshotAt, snapshotSource = i, mount.Source
+		case "/.claude/projects":
+			transcriptsAt = i
+			if mount.Source != projects {
+				t.Errorf("transcript mount source = %q, want the host directory %q", mount.Source, projects)
+			}
+		}
+	}
+	if snapshotAt < 0 || transcriptsAt < 0 {
+		t.Fatalf("mounts = %v, want the ~/.claude snapshot and the live transcript mount", startOpts.ConfigMounts)
+	}
+	if transcriptsAt < snapshotAt {
+		t.Errorf("transcript mount at %d precedes the snapshot at %d; it must shadow the snapshot", transcriptsAt, snapshotAt)
+	}
+	if _, err := os.Stat(filepath.Join(snapshotSource, "settings.json")); err != nil {
+		t.Errorf("expected settings.json in the snapshot: %v", err)
+	}
+}

@@ -114,7 +114,11 @@ type AgentPreset struct {
 	ConfigFiles           []string
 	SnapshotExcludes      []string
 	LiveMounts            []string
-	KeychainAuth          bool
+	// LiveMountDirs are host directories that are live-mounted like
+	// LiveMounts and created on the host first when missing, so the agent
+	// never falls back to writing them into the throwaway snapshot.
+	LiveMountDirs []string
+	KeychainAuth  bool
 	// PermissionModes are the modes an operator may set as permission_mode,
 	// rendered on the preset's built-in command line. Empty means the agent
 	// takes no permission mode from its command line.
@@ -216,9 +220,7 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 		ReadOnlyPermissionModes: []string{"plan"},
 		// Transcripts, caches, and logs stay out of the per-batch snapshot.
 		// Credentials, settings, skills, agents, commands, plugins, and
-		// CLAUDE.md are copied on purpose. The container writes its own
-		// transcripts into the batch snapshot, which is what lets an await
-		// re-entry --continue the same conversation.
+		// CLAUDE.md are copied on purpose.
 		SnapshotExcludes: []string{
 			"~/.claude/projects",
 			"~/.claude/debug",
@@ -236,6 +238,12 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 			"~/.claude/ide",
 			"~/.claude/usage-data",
 		},
+		// Session transcripts are written straight into the host's
+		// ~/.claude/projects, so `claude --resume <session-id>` on the host
+		// finds a container Run's conversation by the ID in its Run details.
+		// Every container worktree shares the /workspace path, so reuse
+		// selects the exact recorded session, never the directory's latest.
+		LiveMountDirs: []string{"~/.claude/projects"},
 	},
 }
 
