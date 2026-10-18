@@ -303,6 +303,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		stderr = io.MultiWriter(append([]io.Writer{stderr}, observers...)...)
 	}
 	parsedStdout, parsedStderr := strategy.NewOutputParsers(r.warningWriter())
+	persistSessionsAsObserved(strategy, r, parsedStdout, parsedStderr)
 	for _, parser := range []outputParser{parsedStdout, parsedStderr} {
 		if guard, ok := parser.(permissionModeGuard); ok {
 			guard.setPermissionModeStop(func() {
@@ -353,6 +354,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 			if err == nil {
 				fallbackUsed = true
 				fallbackOut, fallbackErr := strategy.NewOutputParsers(r.warningWriter())
+				persistSessionsAsObserved(strategy, r, fallbackOut, fallbackErr)
 				execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, fallbackOut, fallbackErr)
 				r.permissionDenials = parsersPermissionDenials(parsedStdout, parsedStderr, fallbackOut, fallbackErr)
 				parsedStdout, parsedStderr = fallbackOut, fallbackErr

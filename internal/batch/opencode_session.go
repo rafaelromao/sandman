@@ -32,6 +32,13 @@ type opencodeSessionCapture struct {
 	mu              sync.Mutex
 	sessionID       string
 	sessionNotFound bool
+	onSession       func()
+}
+
+func (w *opencodeOutput) setSessionObserved(onSession func()) {
+	w.capture.mu.Lock()
+	defer w.capture.mu.Unlock()
+	w.capture.onSession = onSession
 }
 
 func newOpenCodeOutput(dst, warning io.Writer, stderr bool) *opencodeOutput {
@@ -95,10 +102,15 @@ func (w *opencodeOutput) writeLine(line []byte, newline bool) error {
 		id = strings.TrimSpace(id)
 		w.capture.mu.Lock()
 		previous := w.capture.sessionID
+		var onSession func()
 		if previous == "" {
 			w.capture.sessionID = id
+			onSession = w.capture.onSession
 		}
 		w.capture.mu.Unlock()
+		if onSession != nil {
+			onSession()
+		}
 		if previous != "" && previous != id {
 			w.warn(fmt.Sprintf("conflicting OpenCode session IDs %q and %q", previous, id))
 		}

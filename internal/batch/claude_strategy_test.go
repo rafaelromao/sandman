@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
@@ -443,5 +444,50 @@ func TestAgentRun_ClaudeMissingSessionRecordIsNotPersisted(t *testing.T) {
 	}
 	if id, ok := ReadAgentSessionID(filepath.Join(launch.root, "run")); ok {
 		t.Fatalf("recorded session = %q, want nothing from a missing-session result", id)
+	}
+}
+
+func TestAgentRun_ClaudeRecordsSessionWhileTheAttemptRuns(t *testing.T) {
+	var during string
+	var runDir string
+	launch := runClaudeLaunch(t, func(r *AgentRun) { runDir = r.runFolder }, opencodeExecResult{
+		stdout: `{"type":"system","subtype":"init","session_id":"` + recordedClaudeSession + `"}` + "\n",
+		during: func() { sessionWhileRunning(runDir, &during)() },
+	})
+	if launch.status != "success" {
+		t.Fatalf("status = %q, want success", launch.status)
+	}
+	if during != recordedClaudeSession {
+		t.Fatalf("session while running = %q, want the init session recorded before Claude Code exits", during)
+	}
+}
+
+func TestAgentRun_ClaudeMissingSessionKeepsThePriorRecordUntilTheFreshInit(t *testing.T) {
+	const missing = `{"type":"result","subtype":"error_during_execution","is_error":true,"session_id":"` + recordedClaudeSession + `","errors":["No conversation found with session ID: ` + recordedClaudeSession + `"]}`
+	const fresh = "0d9e8f7a-6b5c-4d3e-8f1a-2b3c4d5e6f70"
+	const current = "11111111-2222-4333-8444-555555555555"
+	var runDir, duringMissing string
+	reuse := reuseRecordedClaudeSession(t, recordedClaudeSession)
+	launch := runClaudeLaunch(t, func(r *AgentRun) {
+		reuse(r)
+		runDir = r.runFolder
+		if err := writeAgentSession(filepath.Join(runDir, "session.json"), claudeSessionKind, current); err != nil {
+			t.Fatal(err)
+		}
+	},
+		opencodeExecResult{stdout: missing + "\n", err: errors.New("exit status 1"), during: func() {
+			time.Sleep(50 * time.Millisecond)
+			duringMissing, _ = ReadAgentSessionID(runDir)
+		}},
+		opencodeExecResult{stdout: `{"type":"system","subtype":"init","session_id":"` + fresh + `"}` + "\n"},
+	)
+	if launch.status != "success" {
+		t.Fatalf("status = %q, want success", launch.status)
+	}
+	if duringMissing != current {
+		t.Fatalf("session during the missing-session attempt = %q, want the prior record %s unchanged", duringMissing, current)
+	}
+	if id, _ := ReadAgentSessionID(runDir); id != fresh {
+		t.Fatalf("final session = %q, want the fresh relaunch's %s", id, fresh)
 	}
 }

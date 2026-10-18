@@ -36,6 +36,7 @@ type claudeOutputState struct {
 	mu                sync.Mutex
 	sessionID         string
 	sessionNotFound   bool
+	onSession         func()
 	usageLimitReached bool
 	permissionDenials []string
 	readOnlyMode      *PermissionModeError
@@ -126,6 +127,12 @@ func (w *claudeOutput) SessionID() string {
 	return w.state.sessionID
 }
 
+func (w *claudeOutput) setSessionObserved(onSession func()) {
+	w.state.mu.Lock()
+	defer w.state.mu.Unlock()
+	w.state.onSession = onSession
+}
+
 func (w *claudeOutput) SessionNotFound() bool {
 	w.state.mu.Lock()
 	defer w.state.mu.Unlock()
@@ -183,10 +190,15 @@ func (w *claudeOutput) writeLine(line []byte, newline bool) error {
 	// --resume reports the requested ID on its result record as well.
 	if id, _ := record["session_id"].(string); id != "" && recordType == "system" && record["subtype"] == "init" {
 		w.state.mu.Lock()
+		var onSession func()
 		if w.state.sessionID == "" {
 			w.state.sessionID = id
+			onSession = w.state.onSession
 		}
 		w.state.mu.Unlock()
+		if onSession != nil {
+			onSession()
+		}
 	}
 	if recordType == "result" && claudeResultReportsMissingSession(record) {
 		w.recordSessionNotFound()

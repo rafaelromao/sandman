@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
@@ -21,6 +22,9 @@ type opencodeExecResult struct {
 	stdout string
 	stderr string
 	err    error
+	// during runs after the output is written, while the attempt is still
+	// running.
+	during func()
 }
 
 type opencodeSequenceSandbox struct {
@@ -65,6 +69,9 @@ func (s *opencodeSequenceSandbox) Exec(ctx context.Context, command string, stdo
 	}
 	if result.stderr != "" {
 		_, _ = io.WriteString(stderr, result.stderr)
+	}
+	if result.during != nil {
+		result.during()
 	}
 	return result.err
 }
@@ -657,5 +664,38 @@ func TestAgentRun_OpenCodeIgnoresAnotherAgentsSessionIdentity(t *testing.T) {
 	}
 	if !strings.Contains(warnings.String(), `unsupported session protocol "claude-session/v1"`) {
 		t.Fatalf("warnings = %q, want the rejected identity reported", warnings.String())
+	}
+}
+
+// sessionWhileRunning reports the agent session recorded in runDir while the
+// attempt is still running, waiting briefly for buffered output to reach the
+// parsers.
+func sessionWhileRunning(runDir string, got *string) func() {
+	return func() {
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if id, ok := ReadAgentSessionID(runDir); ok {
+				*got = id
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+func TestAgentRun_OpenCodeRecordsSessionWhileTheAttemptRuns(t *testing.T) {
+	root := t.TempDir()
+	runFolder := filepath.Join(root, "run")
+	var during string
+	sb := &opencodeSequenceSandbox{
+		fakeSandbox: fakeSandbox{workDir: root},
+		results:     []opencodeExecResult{{stdout: `{"type":"step_start","sessionID":"ses_live"}` + "\n", during: sessionWhileRunning(runFolder, &during)}},
+	}
+	run := NewAgentRunWithLayout(&github.Issue{Number: 42}, "42-fix", sb, paths.NewLayout(&config.Config{}, root))
+	run.preset = "opencode"
+	run.runFolder = runFolder
+	run.Run(context.Background(), &spyRenderer{result: "prompt"}, config.BuiltInAgentPresets["opencode"].Command, prompt.RenderConfig{})
+	if during != "ses_live" {
+		t.Fatalf("session while running = %q, want ses_live recorded before the agent exits", during)
 	}
 }
