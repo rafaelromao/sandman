@@ -53,7 +53,7 @@ func TestRunBatch_AuthenticationFailureIsNotRetried(t *testing.T) {
 				t.Fatalf("terminal reason = %#v, want AGENT_AUTHENTICATION", event.Payload["reason"])
 			}
 			action, _ := event.Payload["next_action"].(string)
-			if !strings.Contains(action, "CLAUDE_CODE_OAUTH_TOKEN") || !strings.Contains(action, "--continue") {
+			if !strings.Contains(action, "claude /login") || !strings.Contains(action, "claude setup-token") || !strings.Contains(action, "--continue") {
 				t.Fatalf("next_action = %q, want the credential remedy and the continuation", action)
 			}
 			return

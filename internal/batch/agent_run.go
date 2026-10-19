@@ -373,9 +373,13 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		strategy.PersistSession(r, parsedStdout, parsedStderr)
 	}
 	if execErr != nil && ctx.Err() == nil && parsersFailedAuthentication(parsedStdout, parsedStderr) {
-		// The launch already reconciled its credentials with the host when it
-		// ended. Credentials the host refreshed meanwhile get one relaunch;
-		// with nothing to reconcile, a relaunch would fail the same way.
+		// The launch reconciled its credentials with the host when it ended,
+		// so a refresh the host made meanwhile is in place: a launch that has
+		// credentials to reconcile gets one relaunch. Without them, as with a
+		// long-lived token, a relaunch would fail the same way. The relaunch
+		// is a plain retry of the same command; only its authentication
+		// outcome is classified here, and any other failure takes the
+		// ordinary paths below.
 		if r.credentials != nil && attemptCtx.Err() == nil {
 			relaunchOut, relaunchErr := strategy.NewOutputParsers(r.warningWriter())
 			persistSessionsAsObserved(strategy, r, relaunchOut, relaunchErr)

@@ -104,6 +104,11 @@ func (c *syncedCredential) reconcile() error {
 		return nil
 	}
 	if sha256.Sum256(hostData) == c.agreed {
+		// The host may refresh while the copy is prepared: re-read it just
+		// before replacing it, and let a newer host token win.
+		if current, err := os.ReadFile(host); err != nil || sha256.Sum256(current) != c.agreed {
+			return nil
+		}
 		if err := writeCredentialCopy(host, snapshotData); err != nil {
 			return fmt.Errorf("write back rotated credentials to %s: %w", c.host, err)
 		}

@@ -127,7 +127,10 @@ type AgentPreset struct {
 	// on use, so a snapshot copy and the host copy must not refresh
 	// independently.
 	CredentialFiles []string
-	KeychainAuth    bool
+	// SignInRemedy tells the operator how to restore the agent's credentials
+	// on the host when a run stops because the agent cannot authenticate.
+	SignInRemedy string
+	KeychainAuth bool
 	// PermissionModes are the modes an operator may set as permission_mode,
 	// rendered on the preset's built-in command line. Empty means the agent
 	// takes no permission mode from its command line.
@@ -258,6 +261,7 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 		// `claude setup-token` needs no refresh at all.
 		CredentialEnv:   "CLAUDE_CODE_OAUTH_TOKEN",
 		CredentialFiles: []string{"~/.claude/.credentials.json"},
+		SignInRemedy:    "run `claude /login` on the host, or export CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`",
 	},
 }
 

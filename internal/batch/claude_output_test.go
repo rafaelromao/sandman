@@ -226,6 +226,8 @@ func TestClaudeOutput_RecognisesAuthenticationFailure(t *testing.T) {
 		"expired OAuth session": `{"type":"assistant","message":{"content":[{"type":"text","text":"Failed to authenticate: OAuth session expired and could not be refreshed"}]}}` + "\n" + claudeExpiredOAuthResult + "\n",
 		"not logged in":         claudeRealAuthFailureResult + "\n",
 		"plain stderr":          "Invalid API key · Please run /login\n",
+		"revoked token": strings.Replace(claudeRealAuthFailureResult, `"result":"Not logged in · Please run /login"`,
+			`"result":"Failed to authenticate. API Error: 401 OAuth token has been revoked"`, 1) + "\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, parser := renderClaudeStream(t, stream)

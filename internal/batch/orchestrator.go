@@ -4377,8 +4377,8 @@ func (s *runSession) operatorStopFor(result AgentRunResult) *operatorStop {
 		}
 	case errors.Is(result.OperationalError, ErrAgentAuthentication):
 		action := "sign the agent in again on the host"
-		if preset, ok := config.BuiltInAgentPresets[s.agentCfg.Preset]; ok && preset.CredentialEnv != "" {
-			action += ", or export " + preset.CredentialEnv + " with a long-lived token"
+		if preset, ok := config.BuiltInAgentPresets[s.agentCfg.Preset]; ok && preset.SignInRemedy != "" {
+			action = preset.SignInRemedy
 		}
 		return &operatorStop{
 			reason:     "AGENT_AUTHENTICATION",
