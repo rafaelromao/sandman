@@ -32,6 +32,7 @@ sandman init [flags]
 | `--parallel-reviews` | `-1` | Persist `parallel_reviews` in scaffolded config (default `1`) |
 | `--run-idle-timeout` | `-1` | Persist `run_idle_timeout` (seconds) in scaffolded config. `-1` keeps the built-in default of `3600`; `0` disables the heartbeat watchdog |
 | `--review-timeout` | omitted | Persist `review_timeout` (seconds) in scaffolded config. Default `1800`; values below `240` are invalid |
+| `--ca-cert` | omitted | Trust a CA certificate in the sandbox image (repeatable): a PEM file path, `auto` to capture a TLS-inspection proxy's root from this host, or `none` to remove trusted certificates. Omitted keeps the certificates already in `.sandman/certs/`. See [Scaffolding > Trusted CA certificates](scaffolding.md#trusted-ca-certificates) |
 
 When `--tool-version` is omitted, `init` uses the preset resolver's interactive defaults: repo hints are offered when present, otherwise `latest`/`lts` choices are prompted.
 

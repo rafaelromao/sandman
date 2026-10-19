@@ -87,7 +87,15 @@ Keep the `<version>` from the `# sandman mise-version:` header. Changing the lin
 
 Cause: HTTPS traffic from the container build is re-signed by a certificate authority the Debian base image does not trust, usually a corporate TLS-inspection proxy. The host trusts that authority, so the same URLs work outside the container, and `apt-get` still works because Debian mirrors use plain HTTP. With the piped line, the mise step only looks successful: `curl` fails, `sh` reads empty input and exits 0, the build caches that layer, and the missing `mise` surfaces at the first step that uses it, on every later build too.
 
-Fix: trust the proxy's root certificate inside the image.
+Fix: trust the proxy's root certificate inside the image with `sandman init`:
+
+```bash
+sandman init --ca-cert auto
+```
+
+`auto` captures the proxy's root from this host and regenerates `.sandman/Dockerfile` to trust it; the certificate stays in `.sandman/certs/` across later re-inits. If `auto` reports no interception, or this host does not trust the proxy either, export the root certificate yourself and pass its path with `sandman init --ca-cert <path>`. See [Scaffolding > Trusted CA certificates](../usage/scaffolding.md#trusted-ca-certificates). Image builds that fail TLS verification print this suggestion.
+
+Manual fallback, for a hand-maintained Dockerfile:
 
 1. Confirm the issuer from the host. A company name instead of a public certificate authority confirms the cause:
 
@@ -113,7 +121,8 @@ Fix: trust the proxy's root certificate inside the image.
 
    `update-ca-certificates` fixes `curl` (mise, rtk), and `NODE_EXTRA_CA_CERTS` makes npm and the agent CLIs trust the same authority during the build and at run time.
 
-- `sandman init` regenerates `.sandman/Dockerfile`, so re-apply these lines after every re-init.
+- `sandman init` regenerates `.sandman/Dockerfile`, so re-apply these lines after every re-init, or switch to `--ca-cert`.
+- A `.dockerignore` or `.containerignore` that excludes `.sandman/` breaks both the manual `COPY` and `--ca-cert`.
 - To run without the image while you fix it, use a worktree run, which uses the agent CLI installed on the host: `sandman run <issue> --sandbox worktree`. The `claude` preset also needs `--dangerously-skip-permissions` there; see [Agent Compatibility > Permissions](../usage/agent-compatibility.md#permissions).
 
 ## Portal shows unknown rows after upgrading Sandman

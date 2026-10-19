@@ -17,6 +17,7 @@ Creates or updates:
 | `.sandman/prompt.md` | Project Prompt Template used to render each agent task |
 | `.sandman/reviews/review-prompt.md` | Review-agent prompt template used by `sandman review` |
 | `.sandman/reviews/quality-rules.md` | Review quality rules used by the review prompt |
+| `.sandman/certs/*.crt` | Trusted CA certificates baked into the image; written only with `--ca-cert` |
 
 The scaffolded `.sandman/Dockerfile` is a **minimal BuildToolsPreset** for the detected project type. It includes the shared baseline packages and the preset-specific toolchain, but it is intentionally lightweight. Before starting work with Sandman, **review and extend `.sandman/Dockerfile`** with the project-specific tools, runtimes, and system packages you need — then rebuild the container image so the sandbox has everything your work requires.
 
@@ -28,7 +29,27 @@ If `.sandman/` already exists, `sandman init` asks before overwriting in an inte
 
 A valid existing `.sandman/config.yaml` is preserved, with one exception: an explicit `--agent` switches it. `agent` becomes the new preset and `model` becomes `--model` or the preset's default model. A `review_agent` that followed the previous default agent moves too, with the new preset's default `review_model`; a separately chosen review agent is kept. `init` prints the keys it changed. Without `--agent`, re-running `init` keeps the configured built-in agent in the regenerated Dockerfile.
 
+Trusted CA certificates in `.sandman/certs/` survive re-initialization: `init` without `--ca-cert` keeps them and renders them into the regenerated Dockerfile.
+
 Review prompt files are write-if-missing: existing `.sandman/reviews/review-prompt.md` and `.sandman/reviews/quality-rules.md` files are preserved so local edits survive re-initialization.
+
+## Trusted CA certificates
+
+Behind a TLS-inspection proxy, HTTPS downloads inside the image build fail with `curl: (60) SSL certificate problem: unable to get local issuer certificate`, because the Debian base image does not trust the proxy's certificate authority. `sandman init --ca-cert` bakes that authority into the image:
+
+```bash
+sandman init --ca-cert auto
+sandman init --ca-cert ./corp-root.pem
+sandman init --ca-cert none
+```
+
+- **`<path>`** reads a PEM file holding one or more certificates. Each certificate is stored as `.sandman/certs/<fingerprint>.crt`.
+- **`auto`** probes the HTTPS hosts the image build downloads from (`mise.run`, `github.com`, `registry.npmjs.org`), honoring `HTTPS_PROXY`, and trusts any root that this host trusts but that is not a public root of the operating system. On macOS the public set is the system root keychain; on Linux it is the distro's Mozilla bundle. Without a public set, `auto` trusts a root only when every probed host shares it. It prints each captured root, or `no TLS interception detected` and leaves the trusted set unchanged. When this host cannot verify those hosts either, it fails and asks for `--ca-cert <path>`.
+- **`none`** removes every trusted certificate. It cannot be combined with other values.
+
+Paths and `auto` can be combined; together they replace the trusted set. The regenerated Dockerfile copies `.sandman/certs/` into the image, runs `update-ca-certificates` right after the `apt-get` step, and points `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, and `CURL_CA_BUNDLE` at the system bundle so curl, mise, npm, Python, and the agent CLIs all trust it. A `# sandman ca-certs:` header records the fingerprints; a run fails before building when `.sandman/certs/` no longer matches it, asking you to rerun `sandman init`.
+
+The image is built with the repository root as its context, so a `.dockerignore` or `.containerignore` that excludes `.sandman/` breaks the certificate copy.
 
 ## Build-tools presets
 

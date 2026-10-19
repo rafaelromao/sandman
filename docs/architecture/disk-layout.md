@@ -11,6 +11,7 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 ├── Dockerfile                          # scaffold (init only)
 ├── config.yaml                         # scaffold (init only)
 ├── prompt.md                           # scaffold (init only)
+├── certs/<fingerprint>.crt             # scaffold (init --ca-cert): trusted CA certificates baked into the image
 ├── events.jsonl                        # runtime, multi-writer (O_APPEND)
 ├── events.jsonl.malformed              # runtime sidecar (quarantined torn lines)
 ├── events.jsonl.lock                   # runtime coordination lock (persistent)
@@ -117,6 +118,7 @@ event batch identity have terminal projections. See [Architecture Overview](over
 | `Dockerfile` | scaffold | `sandman init` | container runtime | repo (manual) | init only |
 | `config.yaml` | scaffold | `sandman init` | Sandman (config load) | repo (manual) | init only |
 | `prompt.md` | scaffold | `sandman init` | prompt renderer | repo (manual) | init only |
+| `certs/<fingerprint>.crt` | scaffold, atomic-rename | `sandman init --ca-cert` | container image build (`COPY`), Dockerfile drift check | `sandman init --ca-cert none` | init only |
 | `events.jsonl` | runtime, O_APPEND | orchestrator / run loop | `events.RunState` projection, portal, CLI status | never (append-only log) | continuous |
 | `events.jsonl.malformed` | runtime sidecar | event writer (on torn line) | human / log triage | `sandman clean` (optional) | per torn line |
 | `events.jsonl.lock` | runtime coordination | event logger | event logger | never (stable advisory-lock inode) | continuous |
