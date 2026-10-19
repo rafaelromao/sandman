@@ -38,9 +38,7 @@ func TestOpencodeSubagentPermissionAllowAll(t *testing.T) {
 	t.Chdir(repoDir)
 	_ = initRunIntegrationRepoWithRemote(t, repoDir)
 
-	// Keep the runner's HOME/XDG_CONFIG_HOME so rootless Podman uses its
-	// normal container store. Host and container GitHub calls use separate
-	// shims; the host shim precedes .sandman/bin on PATH below.
+	preparePermissionAgentHome(t, repoDir)
 
 	ghShimDir := t.TempDir()
 	writeMergedFakeGHShim(t, ghShimDir)
@@ -98,6 +96,54 @@ func TestOpencodeSubagentPermissionAllowAll(t *testing.T) {
 	}
 	if !strings.Contains(string(envData), `"external_directory":"allow"`) {
 		t.Fatalf("expected subagent to observe OPENCODE_PERMISSION with external_directory:allow, got:\n%s", envData)
+	}
+}
+
+func preparePermissionAgentHome(t *testing.T, repoDir string) {
+	t.Helper()
+	// The agent is a shell fake and needs no host credentials or sessions.
+	// Keep Podman's real data store while isolating all snapshotted config.
+	// Both binary helpers must use this same HOME (init's helper sets it too).
+	realHome, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataHome := os.Getenv("XDG_DATA_HOME")
+	if dataHome == "" {
+		dataHome = filepath.Join(realHome, ".local", "share")
+	}
+	home := filepath.Join(repoDir, ".sandman-test-home")
+	if err := os.MkdirAll(home, 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_DATA_HOME", dataHome)
+
+}
+
+func TestPermissionFakeAgentHomeIsolatedFromHostState(t *testing.T) {
+	realHome := t.TempDir()
+	hostConfig := filepath.Join(realHome, ".config", "opencode")
+	if err := os.MkdirAll(hostConfig, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hostConfig, "host-state"), []byte("must not be snapshotted"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", realHome)
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(realHome, ".config"))
+	repoDir := t.TempDir()
+	preparePermissionAgentHome(t, repoDir)
+	if got := os.Getenv("HOME"); got != filepath.Join(repoDir, ".sandman-test-home") {
+		t.Fatalf("fixture HOME = %q", got)
+	}
+	if got := os.Getenv("XDG_DATA_HOME"); got != filepath.Join(realHome, ".local", "share") {
+		t.Fatalf("Podman data home = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "opencode", "host-state")); !os.IsNotExist(err) {
+		t.Fatalf("fixture inherited host state: %v", err)
 	}
 }
 

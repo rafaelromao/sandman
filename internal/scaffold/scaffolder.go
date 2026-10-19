@@ -229,7 +229,7 @@ var KnownBuildToolsPresets = func() []string {
 }()
 
 var builtInAgentVersionCatalog = map[string][]string{
-	"opencode": {"1.15.0", "1.14.0", "1.13.0"},
+	"opencode": {"1.18.0", "1.15.0", "1.14.0", "1.13.0"},
 	// 2.1.277 is the floor: the first Claude Code release that reads
 	// AGENTS.md natively.
 	"claude": {"2.1.283"},

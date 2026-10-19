@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/rafaelromao/sandman/internal/scaffold"
 )
 
 func TestReleaseConfigUsesAutomaticRCVersioningAfterRC1(t *testing.T) {
@@ -323,7 +325,7 @@ func TestReleaseValidationWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 	for _, required := range []string{
 		`SANDMAN_FULL_REGRESSION: "1"`,
 		"tier: unit", "tier: smoke", "tier: integration", "tier: live",
-		"name: Install pinned agent CLIs", "opencode-ai@1.15.0", "@anthropic-ai/claude-code@2.1.283",
+		"name: Install pinned agent CLIs", "opencode-ai@1.18.0", "@anthropic-ai/claude-code@2.1.283",
 		"secrets.OPENCODE_API_KEY", "secrets.CLAUDE_CODE_OAUTH_TOKEN",
 		"name: Set up Node", "name: Set up Chromium",
 		"name: Validate prerequisites and record versions",
@@ -1096,5 +1098,24 @@ func TestClaudeProviderE2EsRequireManualDispatch(t *testing.T) {
 		if scenario.Test == "TestPresetMatrixHarness_RealClaudeAgentReuseSession" && scenario.Tier != "claude" {
 			t.Fatal("Claude provider scenario must belong only to the manual tier")
 		}
+	}
+}
+
+func TestReleaseOpenCodePinMatchesScaffoldFallback(t *testing.T) {
+	var manifest struct {
+		Providers map[string]struct {
+			CLI string `json:"cli"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal([]byte(readRepositoryFile(t, "release_scenarios.json")), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	pin := manifest.Providers["opencode"].CLI
+	if pin != scaffold.DefaultBuiltInAgentVersion("opencode") {
+		t.Fatalf("release OpenCode %q differs from scaffold fallback %q", pin, scaffold.DefaultBuiltInAgentVersion("opencode"))
+	}
+	workflow := readRepositoryFile(t, "../.github/workflows/release-regression-tier.yml")
+	if !strings.Contains(workflow, "npm install -g opencode-ai@"+pin) || !strings.Contains(workflow, "$(opencode --version)\" = "+pin) {
+		t.Fatal("release installation and prerequisite check must match the manifest pin")
 	}
 }

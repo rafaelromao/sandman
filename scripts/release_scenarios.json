@@ -8,7 +8,7 @@
   },
   "providers": {
     "opencode": {
-      "cli": "1.15.0",
+      "cli": "1.18.0",
       "model": "opencode/big-pickle"
     },
     "claude": {
@@ -993,6 +993,11 @@
       "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestInit_GenericPresetBuildsForEveryBuiltInAgentProvider/claude",
       "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPermissionFakeAgentHomeIsolatedFromHostState",
+      "tier": "integration"
     }
   ]
 }

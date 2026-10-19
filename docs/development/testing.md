@@ -146,12 +146,14 @@ sibling failures when only one tier is rerun.
 Unit includes `visual` tests and Node production-module coverage. Smoke builds
 all preset containers without provider calls. Integration excludes the manifest's
 live selector and uses fake agents, local Git remotes and real containers.
+The subagent permission fixture isolates HOME/config snapshots from runner state
+while retaining the runner's XDG data directory for Podman's container store.
 Live selects the explicit OpenCode scenarios and receives only OpenCode credentials.
 Claude provider E2Es run in a separate manual tier when `Full Regression - Linux`
 is dispatched with `run_claude` enabled; only that job receives Claude credentials. No live-provider validation is added to ordinary PR CI.
 
 Every Linux tier provisions Node 22, Chromium and validated rootless Podman
-with runc. Live additionally installs `opencode-ai@1.15.0` and requires
+with runc. Live additionally installs `opencode-ai@1.18.0` and requires
 `OPENCODE_API_KEY`. The optional manual Claude tier installs
 `@anthropic-ai/claude-code@2.1.283` and requires `CLAUDE_CODE_OAUTH_TOKEN`.
 Each provider tier checks its own CLI version. OpenCode auth is

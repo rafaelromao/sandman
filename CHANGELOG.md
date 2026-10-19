@@ -575,6 +575,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Use OpenCode 1.18.0 as the scaffold fallback and release validation pin, meeting the provider's current free-tier minimum.
+
 ### Changed
 
 - New configurations now default `run_idle_timeout` to 3600 seconds; explicit values, including `0`, remain unchanged.
