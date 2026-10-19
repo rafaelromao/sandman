@@ -532,8 +532,9 @@
   //      startedAt, then the greater runId. A newer terminal run therefore
   //      wins over an older one that carries stale review metadata (#1825).
   //
-  // Times compare as parsed instants, never as strings, and the input order
-  // is not trusted. With no parents, a non-review fallback run owns itself.
+  // Times compare as parsed instants (millisecond precision, where the server
+  // compares nanoseconds), never as strings, and the input order is not
+  // trusted. With no parents, a non-review fallback run owns itself.
   function canonicalTime(value) {
     const ts = Date.parse(value || '');
     return Number.isFinite(ts) ? ts : 0;

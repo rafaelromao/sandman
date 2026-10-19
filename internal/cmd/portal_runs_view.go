@@ -1079,9 +1079,9 @@ func (v *portalRunsView) aggregateReviewChildren(layout paths.Layout, runs []por
 // parent than incumbent. The shared JS pickCanonicalParent in portal_diff.js
 // mirrors this rule for the table and the subject selector: active parents
 // win over terminal parents; within active, the latest StartedAt wins; within
-// terminal, the latest FinishedAt wins (then StartedAt, then RunID). Used by aggregateReviewChildren, which runs before
-// the sort.SliceStable at compute, so the comparison must be explicit rather
-// than rely on slice order.
+// terminal, the latest FinishedAt wins (then StartedAt, then RunID). Used by
+// aggregateReviewChildren, which runs before the sort.SliceStable at compute,
+// so the comparison must be explicit rather than rely on slice order.
 func canonicalParentIsBetter(candidate, incumbent portalRun) bool {
 	cActive := candidate.Kind == "active"
 	iActive := incumbent.Kind == "active"
