@@ -48,8 +48,12 @@ type StartOptions struct {
 	LiveMountDirs []string
 	ConfigMounts  []ConfigMount
 	UserID        string
-	SSH           bool
-	RemoteScheme  string
+	// PassEnv names host environment variables the container receives by
+	// name only (`--env NAME`): the runtime CLI inherits Sandman's
+	// environment and resolves the value, so it never appears in argv.
+	PassEnv      []string
+	SSH          bool
+	RemoteScheme string
 }
 
 // ContainerRuntime starts and manages containers.
@@ -94,6 +98,9 @@ func (r *ContainerRuntime) Start(ctx context.Context, image, repoPath string, op
 			args = append(args, "--user", opts.UserID)
 		}
 		args = append(args, "--env", "HOME=/")
+	}
+	for _, name := range opts.PassEnv {
+		args = append(args, "--env", name)
 	}
 
 	if opts.GitConfigPath != "" {
@@ -283,6 +290,12 @@ func toContainerPath(hostPath string) string {
 		return "/" + strings.TrimPrefix(rel, "/")
 	}
 	return hostPath
+}
+
+// ContainerPath returns where a host config path appears inside a container:
+// paths under the host home directory map to the container's HOME=/.
+func ContainerPath(hostPath string) string {
+	return toContainerPath(hostPath)
 }
 
 // NewLiveConfigMount returns a ConfigMount that bind-mounts the given host

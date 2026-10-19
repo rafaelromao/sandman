@@ -61,6 +61,9 @@ type AgentRun struct {
 	runFolder               string
 	taskWriter              func(string, []byte, os.FileMode) error
 	sessionWarning          io.Writer
+	// credentials reconciles rotating agent credentials between the host and
+	// the batch config snapshot around every launch; nil for none.
+	credentials *credentialSync
 }
 
 // NewAgentRun creates an AgentRun for the given issue, branch, and sandbox.
@@ -152,6 +155,8 @@ func (r *AgentRun) execute(ctx context.Context, command string, stdout, stderr i
 
 	combinedOut := io.MultiWriter(prefixedOut, logPrefixedOut)
 	combinedErr := io.MultiWriter(prefixedErr, logPrefixedErr)
+	// Sandman's own warnings bypass the agent output parsers.
+	warnings := combinedErr
 	touchLog := func() {
 		now := time.Now()
 		_ = os.Chtimes(logPath, now, now)
@@ -176,8 +181,10 @@ func (r *AgentRun) execute(ctx context.Context, command string, stdout, stderr i
 		combinedErr = parsedStderr
 	}
 
+	r.reconcileCredentials(warnings)
 	execErr := r.sandbox.Exec(ctx, command, combinedOut, combinedErr)
 	flushOutputParsers(parsedStdout, parsedStderr)
+	r.reconcileCredentials(warnings)
 	_ = prefixedOut.Flush()
 	_ = prefixedErr.Flush()
 	_ = logPrefixedOut.Flush()
@@ -365,6 +372,32 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	if !fallbackUsed {
 		strategy.PersistSession(r, parsedStdout, parsedStderr)
 	}
+	if execErr != nil && ctx.Err() == nil && parsersFailedAuthentication(parsedStdout, parsedStderr) {
+		// The launch reconciled its credentials with the host when it ended,
+		// so a refresh the host made meanwhile is in place: a launch that has
+		// credentials to reconcile gets one relaunch. Without them, as with a
+		// long-lived token, a relaunch would fail the same way. The relaunch
+		// is a plain retry of the same command; only its authentication
+		// outcome is classified here, and any other failure takes the
+		// ordinary paths below.
+		if r.credentials != nil && attemptCtx.Err() == nil {
+			relaunchOut, relaunchErr := strategy.NewOutputParsers(r.warningWriter())
+			persistSessionsAsObserved(strategy, r, relaunchOut, relaunchErr)
+			execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, relaunchOut, relaunchErr)
+			r.permissionDenials = parsersPermissionDenials(parsedStdout, parsedStderr, relaunchOut, relaunchErr)
+			parsedStdout, parsedStderr = relaunchOut, relaunchErr
+			strategy.PersistSession(r, relaunchOut, relaunchErr)
+		}
+		if execErr != nil && ctx.Err() == nil && parsersFailedAuthentication(parsedStdout, parsedStderr) {
+			r.status = "failure"
+			r.operationalError = ErrAgentAuthentication
+			var cleanupErr *sandbox.CleanupError
+			if errors.As(execErr, &cleanupErr) {
+				r.cleanupError = cleanupErr.CleanupFail
+			}
+			return r.Result()
+		}
+	}
 	if execErr != nil {
 		r.usageLimitReached = ctx.Err() == nil &&
 			((usageDetector != nil && usageDetector.Triggered()) || parsersReachedUsageLimit(parsedStdout, parsedStderr))
@@ -372,6 +405,15 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		return r.Result()
 	}
 	return r.Result()
+}
+
+// reconcileCredentials brings the launch's credential copies into agreement
+// with the host. A failure leaves both copies untouched and only warns: the
+// launch itself reports whether its credentials still authenticate.
+func (r *AgentRun) reconcileCredentials(warnings io.Writer) {
+	if err := r.credentials.Reconcile(); err != nil {
+		fmt.Fprintf(warnings, "warning: agent credentials: %v\n", err)
+	}
 }
 
 func (r *AgentRun) warningWriter() io.Writer {
