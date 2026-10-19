@@ -34,6 +34,8 @@ func (f repairSandboxFactory) NewSandbox(string, string, string, string, sandbox
 // RunRepair is the optional production adapter for repository-scoped diagnostic
 // repairs. Admission/attempt ownership belongs to its caller; execution uses the
 // ordinary prompt-only lifecycle with a reserved identity and no retries.
+// Repairs run on the host; the agent strategy alone renders any edit scope, and
+// the caller must opt in to a permission bypass (docs/usage/reviews.md#health-repair).
 func (o *Orchestrator) RunRepair(ctx context.Context, req Request, cfg *config.Config) (*Result, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

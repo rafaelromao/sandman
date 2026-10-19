@@ -148,9 +148,13 @@ The repair agent differs from the reviewer:
 
 - **It runs on the host**, at the repository root, with the configured review
   agent and model. It does not run in a container, because the container image
-  or sandbox may be what is broken. The agent's binary and its authentication
-  must be available on the host; for Claude Code, see
+  or sandbox may be what is broken. The agent's binary, its authentication, and
+  any permission rules it relies on must be available on the host; for Claude
+  Code, see
   [Agent Compatibility > Authentication](agent-compatibility.md#authentication).
+  A repair that cannot start, for example because the binary is missing or the
+  agent is not signed in, is recorded as `unresolved: <error>` and counts as one
+  of the failure episode's repairs.
 - **It may change operational files.** The reviewer only reads the pull request
   and writes its decision. The repair agent is told to change only
   operator-owned files under `.sandman/` (the Dockerfile, `config.yaml`, prompt
@@ -158,14 +162,19 @@ The repair agent differs from the reviewer:
   and to report the command for you when a step is not permitted.
   - Claude Code: the launch allows edits under `.sandman/` and keeps every
     other prompting call denied (`--allowedTools 'Edit(/.sandman/**)'
-    --permission-mode dontAsk`), with no permission bypass. The repair cannot
-    run shell commands that need approval, such as an image rebuild; the daemon
-    rebuilds the image on the next review attempt. Managed Claude Code settings
-    with `allowManagedPermissionRulesOnly` ignore this rule, so there the repair
-    can only diagnose and you apply its reported fix. Do not loosen managed
-    policy to work around it.
+    --permission-mode dontAsk`). The scope replaces a configured
+    `permission_mode`, and the daemon never requests a permission bypass. The
+    repair cannot run shell commands that need approval, such as an image
+    rebuild; the daemon rebuilds the image on the next review attempt. Managed
+    Claude Code settings with `allowManagedPermissionRulesOnly` ignore this
+    rule, so there the repair can only diagnose and you apply its reported fix.
+    Do not loosen managed policy to work around it.
   - OpenCode: the repair follows your own OpenCode permission configuration. It
     is not narrowed to `.sandman/`, and Sandman cannot detect refused actions.
+  - Custom command: an agent whose `command` you replaced is launched as
+    written, with no edit scope, permission mode, or bypass added. The command
+    must carry its own permission rules; without them the repair can only
+    diagnose, and Sandman cannot detect refused actions.
 
 Each failure episode allows three repairs, with a cooldown that grows after each.
 A repair whose actions were refused is recorded as `unresolved: repair actions

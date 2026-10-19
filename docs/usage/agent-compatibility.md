@@ -240,7 +240,8 @@ the review daemon's launch backoff and starts no health repair.
 
 The review daemon's health repairs run on the host without skipping permissions.
 Their launch allows edits under `.sandman/` and keeps every other prompting call
-denied; see [Reviews > Health repair](reviews.md#health-repair). Managed
+denied; see [Reviews > Health repair](reviews.md#health-repair). A custom
+`command` is launched as written and gets no such scope. Managed
 settings with `allowManagedPermissionRulesOnly` make Claude Code ignore
 command-line rules such as `--allowedTools`, in Sandman's commands and in your
 own.
