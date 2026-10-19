@@ -60,3 +60,9 @@ state/*.addressed_comments
 .DS_Store
 Thumbs.db
 
+
+# Local CI validation reports
+reports/
+
+# Python validation caches
+__pycache__/

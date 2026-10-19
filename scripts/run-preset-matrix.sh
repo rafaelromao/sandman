@@ -60,7 +60,7 @@ build_filter() {
 }
 
 if [[ $# -eq 0 ]]; then
-    presets=($VALID_PRESETS)
+    read -r -a presets <<< "$VALID_PRESETS"
 else
     for preset in "$@"; do
         validate_preset "$preset"

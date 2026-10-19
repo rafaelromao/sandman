@@ -1045,6 +1045,7 @@
       branch: run.branch || '',
       batch: run.batchKey || '',
       logPath: run.logPath || '',
+      agentSessionId: run.agentSessionId || '',
       peers: batchPeers(run),
     };
   }
@@ -1095,6 +1096,7 @@
       run && run.branch != null ? run.branch : '',
       run && run.batchKey != null ? run.batchKey : '',
       run && run.logPath != null ? run.logPath : '',
+      run && run.agentSessionId != null ? run.agentSessionId : '',
       peers.length,
       peers.join(','),
     ].join(':');

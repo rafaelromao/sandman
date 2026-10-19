@@ -47,11 +47,11 @@ work when checks are green, without requiring a formal GitHub approval.
 - **Implementation pull-request lifecycle**: Clean exits are evaluated by one runtime-owned lifecycle decision before event, task, log, portal, or dependency projections. Verified merged completion wins over retained review evidence; recoverable open pull-request states await or resume; terminal `blocked` is reserved for dependency outcomes.
 - **Managed review lifecycle**: A confirmed current-head request waits without consuming generic retry budget, resumes the same RunID for actionable feedback, renews at a new request/head boundary, resumes for current-head approval and green checks, verifies merge without another execution slot, and releases dependents only after terminal closure. Restart rehydrates event and wait evidence; explicit abort revokes continuation. Canonical evidence is authoritative after validated migration, while stale or mismatched legacy evidence remains diagnostic-only.
 - **Factory seams**: `cmd.Dependencies` (`internal/cmd/root.go`) is the top-level dependency injection struct. The per-run seam is `RunExecutor{Execute(ctx, row RowSpec)}` (`internal/batch/row_spec.go`); its implementation holds a `runDeps` struct (github.Client, prompt.IssueRenderer, events.EventLog, RunnableFactory, SandboxFactory, paths.Layout, heartbeatTickInterval, errorLog, runSessionOptions, verifyPath) and a narrow `runCoordination` interface (`*Orchestrator` implements it; RunBatch owns the state). Test injection of the orchestrator's behavior goes through `OrchestratorOpt` options on `NewOrchestrator` — `WithRunnableFactory`, `WithSandboxFactory`, `WithContainerRuntimeFactory`, `WithErrorLog`, `WithRunSessionOpts`, `WithHeartbeatTickInterval`, `WithVerifyPath` (and `WithBadgeHooker` for production). `batch.Request` is the public batch input (issues, config, flags) — it does **not** carry factories. Inject fakes at the `runDeps`/`OrchestratorOpt` seams rather than mocking deep concrete types.
-- **Agent strategy seam**: `strategyFor(preset, command)` in `internal/batch/agent_strategy.go` is the only place that may inspect the agent name; agent-specific flags, launch environment, session reuse, output parsing, and failure classification (context rollover and usage limits) are methods on the selected `agentStrategy` (OpenCode, Claude, passthrough). Recognised usage limits enter `run.await` with quota-reset polling (ten-minute polls for up to five hours, same-session resume); the review daemon uses the strategy's provider-wide quota recovery gate for reviewer launches. Adding an agent = a preset entry in `config.BuiltInAgentPresets` + an installer entry in the scaffold's `agentInstallers` + a strategy type. `TestAgentSelection_NoAgentNameComparisonsOutsideStrategy` fails on any `== "opencode"`-style comparison elsewhere.
+- **Agent strategy seam**: `strategyFor(preset, command)` in `internal/batch/agent_strategy.go` is the only place that may inspect the agent name; agent-specific flags, launch environment, session reuse, output parsing, and failure classification (context rollover, usage limits, and authentication failures) are methods on the selected `agentStrategy` (OpenCode, Claude, passthrough). Recognised usage limits enter `run.await` with quota-reset polling (ten-minute polls for up to five hours, same-session resume); the review daemon uses the strategy's provider-wide quota recovery gate for reviewer launches. Adding an agent = a preset entry in `config.BuiltInAgentPresets` + an installer entry in the scaffold's `agentInstallers` + a strategy type. `TestAgentSelection_NoAgentNameComparisonsOutsideStrategy` fails on any `== "opencode"`-style comparison elsewhere.
 - **Sandbox interface** (`internal/sandbox/sandbox.go`): the abstract isolation contract implemented by `WorktreeSandbox` and `ContainerSandbox`. After the parent-map consolidation (#2244), the interface has 9 methods and `Start(opts SandboxStart) error` is the only configuration entry point — the previous 4-setter pre-Start dance (SetOverride / SetStrandedReconcile / SetGitIdentity / SetContinue) is gone. `SandboxStart{Override, Continue, StrandedReconcile, Identity}` plus `SandboxIdentity{Name, Email}` are the value types callers build per row; production builds them via `runSession.startOptsFor(branch)`. `RestoreHostPaths()` is a separate post-Start protocol and stays unchanged.
 - **Shared worktree safety**: Sandman processes and agents must never invoke repository-wide `git worktree prune`, including from review or test sandboxes. Containers share the parent `.git` metadata but may not resolve host paths recorded for sibling worktrees; a global prune can erase live registrations. Remove only the exact temporary worktree owned by the current operation, or use Sandman's path-scoped recovery. The agent sandbox places a Git guard first on `PATH`; do not bypass it with an absolute Git executable.
 - **Filesystem as data store**: There is no database. State lives in flat files under `.sandman/` (manifests, logs, review state), written atomically via temp-file + `os.Rename`. The review daemon's provider-wide quota recovery gate is `.sandman/reviews/quota-pause.json`; it applies to review agents whose strategy awaits usage limits (OpenCode and Claude Code, each with its own usage-limit rule) and is daemon-wide, never per-PR. Implementation runs use the same usage-limit rule with `run.await` polling instead of the quota file. IPC uses Unix domain sockets.
-- **OpenCode session reuse**: Supported OpenCode runs write the first valid session identity to the current Run's `session.json` atomically. Runtime-owned await re-entry reuses it; ordinary `--continue` is fresh unless `--reuse-session` is explicitly selected. Missing exact sessions use one narrow OpenCode `--continue` fallback; unrelated failures and non-OpenCode agents do not. The `claude` preset keeps no session identity: on the same reuse paths its strategy renders Claude Code's working-directory-scoped `--continue`.
+- **Agent session reuse**: Supported OpenCode and Claude Code runs write the observed session identity to the current Run's `session.json` atomically, as soon as it is observed. Each strategy accepts only its own protocol. The Portal shows it as `agentSessionId`. Runtime-owned await re-entry reuses it; ordinary `--continue` is fresh unless `--reuse-session` is explicitly selected. Missing exact OpenCode sessions use one narrow OpenCode `--continue` fallback; unrelated failures do not. The `claude` preset resumes the exact recorded UUID with `--resume`. It never renders Claude Code's working-directory-scoped `--continue`, because container worktrees share `/workspace` paths and `~/.claude/projects` is live-mounted from the host. A missing or invalid Claude session starts fresh (ADR-0057).
 
 ## Sandman task routing
 
@@ -148,7 +148,7 @@ SANDMAN_FULL_REGRESSION=1 SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SAN
   go test -tags e2e -timeout 90m ./...
 ```
 
-`SANDMAN_FULL_REGRESSION=1` disables the CI-only skip guards so the exhaustive run actually executes every test (see `docs/development/testing.md`). The real-agent E2E cases still skip with a clear reason when their runtime prerequisites (the opencode or claude binary, its auth snapshot or token, podman) are absent. Aggregate the per-tier PASS/FAIL/SKIP counts and surface a final summary, never silently swallow a failure. Timeouts are tuned per tier — do not lower them; lowering reintroduces the `batch aborted by operator` false-positive from under-budgeted test processes.
+`SANDMAN_FULL_REGRESSION=1` disables the CI-only skip guards so the exhaustive run actually executes every test (see `docs/development/testing.md`). Local real-agent tests can skip when prerequisites are absent; release validation treats those skips as incomplete and fails. The release scenario manifest and `scripts/release_report.py` are authoritative for required coverage. Aggregate the per-tier PASS/FAIL/SKIP counts and surface a final summary, never silently swallow a failure. Timeouts are tuned per tier — do not lower them; lowering reintroduces the `batch aborted by operator` false-positive from under-budgeted test processes.
 
 ## Implementation constraints
 
@@ -168,15 +168,17 @@ These rules apply to every change-request an agent opens against this repository
   ```
   Allowed types: `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`. Use a trailing `!` (for example `feat!:`) only when the change is breaking. Keep the title to one short imperative sentence with no trailing period.
 - **SemVer is derived from merged Conventional Commits.** Release Please aggregates the merged commit type stack: `feat:` → minor bump, `fix:` / `perf:` → patch, `feat!:` / `fix!:` / `perf!:` → major. Everything else is changelog-only. The pull-request title is validated separately by CI; title validation does not replace Release Please's commit-history parsing. Release Please opens a Release change request that applies the next SemVer tag. With the initial RC published, Release Please calculates subsequent RC versions automatically from release-bearing merged history.
-- **Required status checks on `main`:** `CI / build` (matrix `ubuntu-latest` + `macos-latest`), `CI / portal-continuity-browser` (Linux actual-page browser gate), and `CI / semantic-pull-request`, from `.github/workflows/go.yml` on `pull_request` and `push` to `main`. All must pass before the GitHub merge button enables. The exhaustive Linux regression (`Full Regression - Linux`) and focused `Native Compatibility` workflows run on pushes to `release-please--branches--main` (and on `workflow_dispatch`); their failures are visible on the release PR but require maintainer review rather than a static ruleset check. The platform-coverage contract is enforced by `TestPlatformCoverageMapMatchesWorkflowsAndGoReleaser` in `scripts/release_workflow_test.go` and matches the four-platform matrix in `docs/development/testing.md`.
+- **Required status checks on `main`:** `CI / build` (independent `ubuntu-latest` + `macos-latest` jobs), `CI / portal-continuity-browser` (Linux actual-page browser gate), and `CI / semantic-pull-request`, from `.github/workflows/go.yml` on `pull_request` and `push` to `main`. The checked-in ruleset additionally requires `CI / quality-gate`; active enforcement must be verified using the procedure in `docs/development/testing.md`. The exhaustive Linux regression (`Full Regression - Linux`) and focused `Native Compatibility` workflows run on pushes to `release-please--branches--main` (and on `workflow_dispatch`); their failures are visible on the release PR but require maintainer review rather than a static ruleset check. The platform-coverage contract is enforced by `TestPlatformCoverageMapMatchesWorkflowsAndGoReleaser` in `scripts/release_workflow_test.go` and matches the four-platform matrix in `docs/development/testing.md`.
 - **CI scope on pull requests:** CI runs on pull requests to any branch, not only on pull requests targeting `main`. The `pull_request` trigger in `.github/workflows/go.yml` is unfiltered so stacked and feature-branch change requests receive `CI / build`, `CI / portal-continuity-browser`, and `CI / semantic-pull-request` checks before they reach `main`. The `push` trigger is restricted to `main` so a direct push to a feature branch does not start a duplicate CI run alongside the pull request's checks.
+
+The aggregate `CI / quality-gate` requires both independent platform build jobs, Portal browser coverage, four-platform snapshot packaging, and PR title validation. Title edits rerun CI; superseded runs cancel only within the same PR. Main pushes intentionally skip title validation. Preserve existing required contexts during migration until the aggregate gate is proven and active. See `docs/development/testing.md` for protection verification and application; a checked-in ruleset alone does not prove active enforcement.
 
 ### When opening a change request
 
 1. Branch from `main`.
 2. Pick the most accurate Conventional Commits type. `Update README` fails the gate; `docs: explain the branching and versioning rules in AGENTS.md` passes.
 3. Keep the title short — one sentence, no trailing period, no issue number in the title.
-4. Run `make check` locally before pushing; `CI / build` runs the same suite.
+4. Run `make check` locally before pushing; CI uses the shared non-mutating Make targets described in `docs/development/testing.md`.
 5. Link issues in the body (`Closes #<n>`, `Fixes #<n>`, or `Resolves #<n>`), not in the title.
 
 ### When the change touches CI, versioning, or repository-level agent docs
@@ -226,7 +228,7 @@ Concretely: a contributor reviewing a skill should be able to read it without kn
 Run:
 
 ```bash
-gofmt -w . && go vet ./... && GOTOOLCHAIN=go1.25.0 go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
+make fmt-check vet staticcheck
 ```
 
 If the change affects behavior materially, also run the most relevant targeted tests for the touched package(s) before finalizing.
@@ -256,3 +258,74 @@ For most non-trivial tasks, follow this order:
 4. Make the smallest coherent change.
 5. Run formatting, vetting, and relevant tests.
 6. Summarize what changed, what was verified, and any remaining risk.
+
+
+### Separate CI validation and reports
+
+`make check` never edits source; use `make fmt` explicitly. CI shares the
+`fmt-check`, `build-check`, `vet`, `staticcheck`, `contracts`, `test-ci`, and
+`test-browser` targets. The aggregate also requires static analysis and
+architecture/documentation contracts. Linux retains Podman coverage; Node tests
+remain on both race platforms, while the dedicated browser job owns actual-page
+scenarios listed in `scripts/portal_browser_tests.txt`, including subject switching
+and visual layout. Logs, structured reports, durations and failure summaries
+are uploaded even on failure. See `docs/development/testing.md` for job ownership,
+local commands, artifact names and hosted timing verification.
+
+Security and workflow validation are mandatory dependencies of `CI / quality-gate`.
+Run `make security-check workflow-check` with govulncheck v1.1.4, Gitleaks
+v8.24.3, Actionlint v1.7.7 and ShellCheck v0.10.0 on PATH. The reusable security
+workflow also runs every Monday and manually; inspect Scheduled Security in
+Actions for failures. Scanner errors fail closed. Public output contains status
+only, never raw secret findings; reproduce locally to investigate. No scanner
+artifacts are uploaded. The reviewed baseline contains 28 exact historical false positives in Portal
+run/batch identifier fixtures (`.github/security-exceptions.json`), owned by
+rafaelromao and expiring 2027-01-16. No actual secrets are accepted. Never regenerate a baseline
+to accept new findings. Secret exceptions require an exact Gitleaks fingerprint,
+owner, rationale and ISO expiry date; expired entries fail validation. Reachable
+vulnerabilities must be fixed, with no blanket vulnerability suppression.
+Dependabot opens weekly Go module and Actions updates; review those updates and
+retain full action commit pins with readable version comments. Release automation
+retains write permissions; validation defaults to contents read and semantic title
+validation gets pull-request read. Existing protection contexts remain in place.
+
+The Go language minimum remains 1.25; `toolchain go1.26.9` selects a patched
+standard library for normal builds; `.go-version` selects the same patched
+toolchain explicitly in setup-go and security scans. Keep automatic
+toolchain selection enabled. Staticcheck retains its isolated Go 1.25.0 runner
+for export-data compatibility; it does not build release binaries. The checked-in
+ruleset also requires workflow-validation explicitly; apply/verify live protection
+using the existing documented procedure.
+
+### Go coverage policy
+
+CI collects separate atomic profiles in the existing Linux/macOS race suites.
+Coverage starts advisory; thresholds require measured baselines and reviewed
+approval before enforcement. Do not combine platform statement totals or treat
+Go coverage as Portal JavaScript/browser coverage. Preserve behavioral tests.
+See `docs/development/testing.md` for base selection, artifacts, calibration and
+reviewed exemptions in `.github/coverage-policy.json`.
+
+Release regression runs independent unit/browser, smoke, credential-free
+integration and live-provider tiers with bounded cleanup. Preserve the required
+scenario manifest, narrow negative-control skip reasons, pinned CLI/model
+identifiers and SHA-bound reports. Native boundary evidence is required on Linux
+and macOS amd64/arm64. See `docs/development/testing.md`; do not move full live/API
+quota suites into ordinary PR CI or change runtime check-rollup selection.
+
+Publication consumes same-invocation reusable CI, regression and native results
+for the merged main SHA, never prior release-branch statuses. Keep Release Please
+PR maintenance independent, tags immutable, uploads draft until checksum-verified,
+and reruns fail closed on partial assets. Strict up-to-date main checks require
+live administrator verification. See `docs/development/releasing.md` for recovery.
+
+Claude provider E2Es are manual-only (`Full Regression - Linux`, `run_claude`).
+Automatic live release validation uses OpenCode and never requires Claude credentials.
+
+Regular CI runs one tool-free OpenCode canary request on Linux (60-second
+provider deadline, three-minute job, no containers or retries), using the release
+manifest's exact CLI/model. A provider deprecation failure instructs the implementor
+to update the scaffold fallback, release manifest and release workflow pin together.
+The canary is mandatory in the aggregate quality gate; full provider E2Es remain
+release-only, and Claude provider E2Es remain manual-only. The existing OPENCODE_API_KEY repository secret is required and is forwarded
+by the Release reusable-CI caller.

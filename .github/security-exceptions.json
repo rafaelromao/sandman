@@ -1,0 +1,170 @@
+[
+  {
+    "fingerprint": "ae2373cfb80457228b640045d0dbd48d8edc88b4:internal/cmd/portal_diff_archive_test.go:generic-api-key:72",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "ae2373cfb80457228b640045d0dbd48d8edc88b4:internal/cmd/portal_diff_unavailable_test.go:generic-api-key:88",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "ae2373cfb80457228b640045d0dbd48d8edc88b4:internal/cmd/portal_index_test.go:generic-api-key:106",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "ae2373cfb80457228b640045d0dbd48d8edc88b4:internal/cmd/portal_state_test.go:generic-api-key:406",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "ae2373cfb80457228b640045d0dbd48d8edc88b4:internal/cmd/portal_subject_switch_repro_test.go:generic-api-key:1350",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "ae2373cfb80457228b640045d0dbd48d8edc88b4:internal/cmd/portal_diff_test.go:generic-api-key:4349",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "ae2373cfb80457228b640045d0dbd48d8edc88b4:internal/cmd/portal_diff_test.go:generic-api-key:4362",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "ae2373cfb80457228b640045d0dbd48d8edc88b4:internal/cmd/portal_diff_test.go:generic-api-key:4448",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "ae2373cfb80457228b640045d0dbd48d8edc88b4:internal/cmd/portal_diff_test.go:generic-api-key:4449",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "ae2373cfb80457228b640045d0dbd48d8edc88b4:internal/cmd/portal_diff_test.go:generic-api-key:4599",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "ae2373cfb80457228b640045d0dbd48d8edc88b4:internal/cmd/portal_diff_test.go:generic-api-key:4600",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "ae2373cfb80457228b640045d0dbd48d8edc88b4:internal/cmd/portal_diff_test.go:generic-api-key:4787",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "ae2373cfb80457228b640045d0dbd48d8edc88b4:internal/cmd/portal_diff_test.go:generic-api-key:4802",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "d24f69e638bc0aee34c1e1f14204134d211c973c:internal/cmd/portal_diff_test.go:generic-api-key:4558",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "d24f69e638bc0aee34c1e1f14204134d211c973c:internal/cmd/portal_diff_test.go:generic-api-key:4559",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "fa9effa15f6a60da22a69ed0fdd496d9850f3d2c:internal/cmd/slice10_e2e_test.go:generic-api-key:1281",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "5030c75ee60fe4f8970b80468326361a217770c7:internal/cmd/portal_index_test.go:generic-api-key:106",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "5030c75ee60fe4f8970b80468326361a217770c7:internal/cmd/portal_state_test.go:generic-api-key:406",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "5030c75ee60fe4f8970b80468326361a217770c7:internal/cmd/portal_test.go:generic-api-key:3005",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "5030c75ee60fe4f8970b80468326361a217770c7:internal/cmd/portal_diff_test.go:generic-api-key:4329",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "5030c75ee60fe4f8970b80468326361a217770c7:internal/cmd/portal_diff_test.go:generic-api-key:4342",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "5030c75ee60fe4f8970b80468326361a217770c7:internal/cmd/portal_diff_test.go:generic-api-key:4428",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "5030c75ee60fe4f8970b80468326361a217770c7:internal/cmd/portal_diff_test.go:generic-api-key:4429",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "5030c75ee60fe4f8970b80468326361a217770c7:internal/cmd/portal_diff_test.go:generic-api-key:4694",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "5030c75ee60fe4f8970b80468326361a217770c7:internal/cmd/portal_diff_test.go:generic-api-key:4709",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "1ddba5d397d575f67e9626ef3fb6af943c07654c:internal/cmd/portal_subject_switch_repro_test.go:generic-api-key:1241",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "06338ece8c2c872c86fcae4b6c73b1f27186bad2:internal/cmd/portal_diff_unavailable_test.go:generic-api-key:88",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  },
+  {
+    "fingerprint": "757d766e6716e8c0b943025646dfe2158c74c2b8:internal/cmd/portal_diff_archive_test.go:generic-api-key:44",
+    "owner": "rafaelromao",
+    "rationale": "Reviewed historical Portal run/batch identifier fixture, not an authentication credential. Exact commit/path/rule/line only.",
+    "expires": "2027-01-16"
+  }
+]

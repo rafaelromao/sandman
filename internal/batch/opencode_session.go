@@ -3,90 +3,20 @@ package batch
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"sync"
 
-	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/paths"
 )
 
-const (
-	opencodeSessionProtocol = "opencode-session/v1"
-	opencodeProvider        = "opencode"
-)
+// opencodeSessionKind is the OpenCode session identity recorded in a Run's
+// session.json.
+var opencodeSessionKind = agentSessionKind{protocol: "opencode-session/v1", provider: "opencode"}
 
-type opencodeSessionIdentity struct {
-	Protocol  string `json:"protocol"`
-	Provider  string `json:"provider"`
-	SessionID string `json:"session_id"`
-}
-
-func validOpenCodeSession(id opencodeSessionIdentity) error {
-	if id.Protocol != opencodeSessionProtocol {
-		return fmt.Errorf("unsupported session protocol %q", id.Protocol)
-	}
-	if id.Provider != opencodeProvider {
-		return fmt.Errorf("unsupported session provider %q", id.Provider)
-	}
-	if strings.TrimSpace(id.SessionID) == "" {
-		return errors.New("session id is empty")
-	}
-	return nil
-}
-
-func readOpenCodeSession(path string) (opencodeSessionIdentity, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return opencodeSessionIdentity{}, err
-	}
-	var identity opencodeSessionIdentity
-	if err := json.Unmarshal(data, &identity); err != nil {
-		return opencodeSessionIdentity{}, fmt.Errorf("parse session metadata: %w", err)
-	}
-	if err := validOpenCodeSession(identity); err != nil {
-		return opencodeSessionIdentity{}, err
-	}
-	return identity, nil
-}
-
-func writeOpenCodeSession(path, sessionID string) error {
-	identity := opencodeSessionIdentity{
-		Protocol:  opencodeSessionProtocol,
-		Provider:  opencodeProvider,
-		SessionID: strings.TrimSpace(sessionID),
-	}
-	if err := validOpenCodeSession(identity); err != nil {
-		return err
-	}
-	return atomicfs.WriteAtomicJSON(path, identity, 0644)
-}
-
-// priorOpenCodeSession selects canonical metadata first. Legacy lookup is
-// deliberately limited to a missing canonical file so a broken canonical
-// record cannot be silently replaced by stale evidence.
-func priorOpenCodeSession(layout paths.Layout, batchID, runID string) (opencodeSessionIdentity, bool, error) {
-	canonical := layout.RunSessionPath(batchID, runID)
-	identity, err := readOpenCodeSession(canonical)
-	if err == nil {
-		return identity, true, nil
-	}
-	if !os.IsNotExist(err) {
-		return opencodeSessionIdentity{}, false, err
-	}
-
-	legacy := layout.LegacyRunSessionPath(runID)
-	identity, err = readOpenCodeSession(legacy)
-	if err == nil {
-		return identity, true, nil
-	}
-	if os.IsNotExist(err) {
-		return opencodeSessionIdentity{}, false, nil
-	}
-	return opencodeSessionIdentity{}, false, err
+func priorOpenCodeSession(layout paths.Layout, batchID, runID string) (agentSessionIdentity, bool, error) {
+	return priorAgentSession(layout, batchID, runID, opencodeSessionKind)
 }
 
 type opencodeOutput struct {
@@ -102,6 +32,13 @@ type opencodeSessionCapture struct {
 	mu              sync.Mutex
 	sessionID       string
 	sessionNotFound bool
+	onSession       func()
+}
+
+func (w *opencodeOutput) setSessionObserved(onSession func()) {
+	w.capture.mu.Lock()
+	defer w.capture.mu.Unlock()
+	w.capture.onSession = onSession
 }
 
 func newOpenCodeOutput(dst, warning io.Writer, stderr bool) *opencodeOutput {
@@ -165,10 +102,15 @@ func (w *opencodeOutput) writeLine(line []byte, newline bool) error {
 		id = strings.TrimSpace(id)
 		w.capture.mu.Lock()
 		previous := w.capture.sessionID
+		var onSession func()
 		if previous == "" {
 			w.capture.sessionID = id
+			onSession = w.capture.onSession
 		}
 		w.capture.mu.Unlock()
+		if onSession != nil {
+			onSession()
+		}
 		if previous != "" && previous != id {
 			w.warn(fmt.Sprintf("conflicting OpenCode session IDs %q and %q", previous, id))
 		}

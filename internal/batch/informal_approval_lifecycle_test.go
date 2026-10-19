@@ -2,6 +2,7 @@ package batch
 
 import (
 	"io"
+	"os"
 	"testing"
 	"time"
 
@@ -35,33 +36,6 @@ None.
 
 ## Previous review progress
 The prior concern in internal/batch/orchestrator_resume.go is resolved.
-
-<!-- sandman-publication:dd4739c73528fd53939c6a0e52d7fb08c5ea79d2a6f2f6c56b3bd1aee86bcf1f -->
-`
-
-const capturedApprovalWithCIWaitAdvice = `## Summary
-The requested changes are addressed in this diff.
-
-## Quality check
-### Scope
-Changed internal/batch/run_lifecycle.go and internal/batch/review_decision_approval.go.
-
-### Metrics
-The metrics signals do not demonstrate a construct-specific readability or change-risk concern in this diff.
-
-### Findings
-None. The metrics signals do not demonstrate a construct-specific readability or change-risk concern in this diff.
-
-## Findings
-
-## Suggested next steps
-Await the pending required CI checks.
-
-## Decision
-**APPROVED**
-
-## Previous review progress
-All prior findings are resolved.
 
 <!-- sandman-publication:dd4739c73528fd53939c6a0e52d7fb08c5ea79d2a6f2f6c56b3bd1aee86bcf1f -->
 `
@@ -119,34 +93,43 @@ func TestInformalApprovalLifecycle_MetricsReviewAwaitsCIThenResumesMerge(t *test
 	}
 }
 
-func TestInformalApprovalLifecycle_ApprovalWithCIWaitAdviceAndMetricExplanation(t *testing.T) {
-	for _, tc := range []struct {
-		name, body string
-	}{
-		{"CI wait advice", "## Summary\nChanged worker.go.\n\n## Suggested next steps\nAwait the pending required CI checks.\n\n## Decision\nAPPROVED"},
-		{"metric explanation", "## Summary\nChanged worker.go.\n\n## Findings\nNone. The metrics signals do not demonstrate a readability concern.\n\n## Decision\nAPPROVED"},
-		{"captured response", capturedApprovalWithCIWaitAdvice},
+func TestInformalApprovalLifecycle_RealReviewExplanationsAndCIAdvice(t *testing.T) {
+	captured := capturedApprovalWithCIAdvice(t)
+	for _, tc := range []struct{ name, body string }{
+		{"captured review", captured},
+		{"CI wait", "## Summary\nChanged worker.go.\n\n## Suggested next steps\nAwait the pending required CI checks.\n\n## Decision\n**APPROVED**"},
+		{"negative metric explanation", "## Summary\nChanged worker.go.\n\n## Findings\nNone. The metrics signals do not demonstrate a construct-specific readability or change-risk concern in this diff.\n\n## Decision\n**APPROVED**"},
+		{"no author followup", "## Summary\nChanged worker.go.\n\n## Suggested next steps\nNo author follow-up required.\n\n## Decision\n**APPROVED**"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _, pr, workDir, now := informalApprovalLifecycleFixture(t, tc.body)
-			for i := 0; i < defaultAwaitResumeMax+2; i++ {
+			for range defaultAwaitResumeMax + 2 {
 				status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
 				if !handled || status != "await" || extras["gate"] != "pending" || s.resumeCount != 0 {
-					t.Fatalf("pending CI = %s/%v, want await without repair relaunch", status, extras["gate"])
+					t.Fatalf("approved review with pending CI = %s/%v (%v), want await without repair launches", status, extras["gate"], extras["reason"])
 				}
 				request := extras["review_request"].(map[string]any)
 				if request["operation_resolved"] != true || request["informal_feedback"] != nil {
-					t.Fatalf("approval evidence = %v, want resolved approval without feedback", request)
+					t.Fatalf("approval evidence = %v, want resolved approval without false informal feedback", request)
 				}
 				*now = now.Add(time.Minute)
 			}
 			pr.StatusCheckRollup = "success"
 			status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
 			if !handled || status != "resume" || extras["gate"] != gateReadyToMerge {
-				t.Fatalf("green CI = %s/%v, want approved merge resume", status, extras["gate"])
+				t.Fatalf("approved review with green CI = %s/%v, want merge resume", status, extras["gate"])
 			}
 		})
 	}
+}
+
+func capturedApprovalWithCIAdvice(t *testing.T) string {
+	t.Helper()
+	body, err := os.ReadFile("testdata/approved-with-ci-advice.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(body)
 }
 
 func TestInformalApprovalLifecycle_SeparateFeedbackStillResumesRepair(t *testing.T) {
@@ -240,7 +223,7 @@ func TestInformalApprovalLifecycle_OnTimeResponseSurvivesDelayedReentry(t *testi
 		name, body string
 	}{
 		{"existing metrics approval", approvingMetricsReview},
-		{"captured approval", capturedApprovalWithCIWaitAdvice},
+		{"captured approval", capturedApprovalWithCIAdvice(t)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, client, pr, workDir, now := informalApprovalLifecycleFixture(t, tc.body)
@@ -273,6 +256,16 @@ func TestInformalApprovalLifecycle_AmbiguousDecisionsCannotAuthorizeMerge(t *tes
 		"## Findings\nFix the race in worker.go before merging.\n\n## Decision\nAPPROVED",
 		"## Findings\n### Important\nFix the race in worker.go before merging.\n\n## Decision\nAPPROVED",
 		"## Findings\nNone.\nFix the race in worker.go before merging.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone. Not good: this remains racy.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone. This remains racy.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone. The code is unsafe.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone. The metrics reveal a correctness concern.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone. The metrics signals are limited to a data race.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone. The metric increase is limited to the adapter branch with a data race.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone. The metrics do not demonstrate a resolution of a correctness concern.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone. The metrics signals do not demonstrate a concern. Not good: this remains racy.\n\n## Decision\nAPPROVED",
+		"## Suggested next steps\nAwait the pending CI checks; fix the race in worker.go.\n\n## Decision\nAPPROVED",
+		"## Suggested next steps\nNo author follow-up required except fixing worker.go.\n\n## Decision\nAPPROVED",
 		"## Findings\nNone in the API layer.\n### Important\nFix the race in worker.go before merging.\n\n## Decision\nAPPROVED",
 		"## Findings: Fix the race in worker.go before merging.\n\n## Decision: APPROVED",
 		"## Suggested next steps: Fix the race in worker.go before merging.\n\n## Decision: APPROVED",

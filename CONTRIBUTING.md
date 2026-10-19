@@ -34,14 +34,14 @@ For suggestions related to agent behavior, prompts, or domain vocabulary, use th
 - Change requests branch from `main`. Direct pushes to `main` are blocked by the repository's GitHub Ruleset.
 - Ensure the change-request description clearly describes the problem and solution.
 - Reference the issue this change request addresses in the body (`Closes #<n>`, `Fixes #<n>`, or `Resolves #<n>`), not in the title.
-- Ensure all CI checks pass. The merge button only enables after `CI / build`, `CI / portal-continuity-browser`, and `CI / semantic-pull-request` are green. CI runs on pull requests to any branch, not only on pull requests targeting `main`, so stacked and feature-branch change requests receive the same checks before they reach `main`.
+- Ensure all CI checks pass. The checked-in ruleset requires `CI / quality-gate` alongside the existing `CI / build`, `CI / portal-continuity-browser`, and `CI / semantic-pull-request` contexts. Active enforcement must be verified using the procedure in [testing.md](docs/development/testing.md#quality-gate-and-protection-migration). CI runs on pull requests to any branch, not only on pull requests targeting `main`, so stacked and feature-branch change requests receive the same checks before they reach `main`.
 - For the post-merge release procedure and versioning policy, see the [Releasing guide](docs/development/releasing.md).
 
 ### Release automation
 
 The release workflow requires a repository secret named `RELEASE_PLEASE_TOKEN`. Configure it under **Settings > Secrets and variables > Actions**. Use a fine-grained personal access token limited to this repository with write access to **Contents**, **Issues**, and **Pull requests**. The token must belong to a maintainer who owns its rotation; set an expiration date and replace the repository secret before it expires.
 
-Release automation uses this token instead of `GITHUB_TOKEN` because pull requests created with `GITHUB_TOKEN` do not start `pull_request` workflows. The maintainer token lets release-please create or update the release pull request and allows it to receive the required `CI / build`, `CI / portal-continuity-browser`, and `CI / semantic-pull-request` checks. The exhaustive Linux regression and the focused `Native Compatibility` workflows (three parallel arch-specific jobs: `darwin/amd64`, `darwin/arm64`, and `linux/arm64`) run separately when Release Please pushes to its release branch; their results are visible on the release pull request and must be reviewed before merging. Never print the token or commit it to the repository. A missing `RELEASE_PLEASE_TOKEN` intentionally fails the release workflow rather than falling back to an unverified credential.
+Release automation uses this token instead of `GITHUB_TOKEN` because pull requests created with `GITHUB_TOKEN` do not start `pull_request` workflows. The maintainer token lets release-please create or update the release pull request and allows it to receive the required `CI / build`, `CI / portal-continuity-browser`, and `CI / semantic-pull-request` checks. The exhaustive Linux regression and the focused `Native Compatibility` workflows (four parallel arch-specific jobs: `linux/amd64`, `linux/arm64`, `darwin/amd64`, and `darwin/arm64`) run separately when Release Please pushes to its release branch; their results are visible on the release pull request and must be reviewed before merging. Never print the token or commit it to the repository. A missing `RELEASE_PLEASE_TOKEN` intentionally fails the release workflow rather than falling back to an unverified credential.
 
 ### Feature branches
 
@@ -97,7 +97,7 @@ The full rule lives in [`AGENTS.md`](AGENTS.md#feature-branches).
 Use the Makefile for common tasks:
 
 ```bash
-# Format code, run vet, Staticcheck, and run tests
+# Check formatting, build, vet, Staticcheck, contracts, and tests
 make check
 
 # Build the binary
@@ -118,6 +118,8 @@ Before submitting a PR, always run `make check` locally.
 - Run `go vet ./...` and `GOTOOLCHAIN=go1.25.0 go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...` via `make check`; resolve all warnings.
 - Write tests for new functionality.
 - Keep the domain vocabulary in `CONTEXT.md` in mind when naming things.
+
+The aggregate `CI / quality-gate` requires both independent platform build jobs, Portal browser coverage, four-platform snapshot packaging, and PR title validation. Title edits rerun CI; superseded runs cancel only within the same PR. Main pushes intentionally skip title validation. Preserve existing required contexts during migration until the aggregate gate is proven and active. See `docs/development/testing.md` for protection verification and application; a checked-in ruleset alone does not prove active enforcement.
 
 ### Conventional Commits
 
@@ -201,3 +203,67 @@ internal/
 ## Getting Help
 
 If you have questions about contributing, feel free to open a [discussion](https://github.com/rafaelromao/sandman/discussions) or ask in an existing issue.
+
+
+### Separate CI validation and reports
+
+`make check` never edits source; use `make fmt` explicitly. CI shares the
+`fmt-check`, `build-check`, `vet`, `staticcheck`, `contracts`, `test-ci`, and
+`test-browser` targets. The aggregate also requires static analysis and
+architecture/documentation contracts. Linux retains Podman coverage; Node tests
+remain on both race platforms, while the dedicated browser job owns actual-page
+scenarios listed in `scripts/portal_browser_tests.txt`, including subject switching
+and visual layout. Logs, structured reports, durations and failure summaries
+are uploaded even on failure. See `docs/development/testing.md` for job ownership,
+local commands, artifact names and hosted timing verification.
+
+Security and workflow validation are mandatory dependencies of `CI / quality-gate`.
+Run `make security-check workflow-check` with govulncheck v1.1.4, Gitleaks
+v8.24.3, Actionlint v1.7.7 and ShellCheck v0.10.0 on PATH. The reusable security
+workflow also runs every Monday and manually; inspect Scheduled Security in
+Actions for failures. Scanner errors fail closed. Public output contains status
+only, never raw secret findings; reproduce locally to investigate. No scanner
+artifacts are uploaded. The reviewed baseline contains 28 exact historical false positives in Portal
+run/batch identifier fixtures (`.github/security-exceptions.json`), owned by
+rafaelromao and expiring 2027-01-16. No actual secrets are accepted. Never regenerate a baseline
+to accept new findings. Secret exceptions require an exact Gitleaks fingerprint,
+owner, rationale and ISO expiry date; expired entries fail validation. Reachable
+vulnerabilities must be fixed, with no blanket vulnerability suppression.
+Dependabot opens weekly Go module and Actions updates; review those updates and
+retain full action commit pins with readable version comments. Release automation
+retains write permissions; validation defaults to contents read and semantic title
+validation gets pull-request read. Existing protection contexts remain in place.
+
+The Go language minimum remains 1.25; `toolchain go1.26.9` selects a patched
+standard library for normal builds; `.go-version` selects the same patched
+toolchain explicitly in setup-go and security scans. Keep automatic
+toolchain selection enabled. Staticcheck retains its isolated Go 1.25.0 runner
+for export-data compatibility; it does not build release binaries. The checked-in
+ruleset also requires workflow-validation explicitly; apply/verify live protection
+using the existing documented procedure.
+
+### Go coverage policy
+
+CI collects separate atomic profiles in the existing Linux/macOS race suites.
+Coverage starts advisory; thresholds require measured baselines and reviewed
+approval before enforcement. Do not combine platform statement totals or treat
+Go coverage as Portal JavaScript/browser coverage. Preserve behavioral tests.
+See `docs/development/testing.md` for base selection, artifacts, calibration and
+reviewed exemptions in `.github/coverage-policy.json`.
+
+Release validation uses the required scenario manifest in
+`scripts/release_scenarios.json`. Keep it aligned with tagged E2E additions and
+provider changes. Unit/browser, smoke, credential-free integration and live
+provider tiers run independently; missing required prerequisites or unexpected
+skips fail the release gate. Live validation requires the two provider secrets
+and pinned CLI/model versions described in `docs/development/testing.md`.
+Review SHA-bound reports from all tiers and all four native platforms before
+merging a release. Run `python3 scripts/release_report_test.py` for the hermetic
+coverage evaluator; no provider credentials are needed for ordinary PR checks.
+
+Release publication requires fresh CI, regression and native validation of the
+exact merged release commit. Release PR refresh stays independent. Main protection
+must use strict up-to-date required checks; maintainers must apply and verify live
+settings, not rely on the checked-in ruleset. See
+[publication and recovery](docs/development/releasing.md#validated-source-publication-and-recovery)
+and [testing](docs/development/testing.md#publication-authorization).

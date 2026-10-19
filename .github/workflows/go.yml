@@ -1,18 +1,54 @@
 name: CI
 
 on:
+  workflow_call:
+    secrets:
+      OPENCODE_API_KEY:
+        required: false
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+# Superseded runs cancel only within the same PR; main pushes remain independent.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
 
 jobs:
-  semantic-pull-request:
+  security:
+    uses: ./.github/workflows/security-check.yml
+
+  workflow-validation:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: .go-version
+      - name: Install pinned validators
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          mkdir -p "$RUNNER_TEMP/shellcheck"
+          curl --fail --silent --show-error --location https://github.com/koalaman/shellcheck/releases/download/v0.10.0/shellcheck-v0.10.0.linux.x86_64.tar.xz -o "$RUNNER_TEMP/shellcheck.tar.xz"
+          echo '6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87  '"$RUNNER_TEMP/shellcheck.tar.xz" | sha256sum --check
+          tar -xJf "$RUNNER_TEMP/shellcheck.tar.xz" -C "$RUNNER_TEMP/shellcheck" --strip-components=1
+          echo "$RUNNER_TEMP/shellcheck" >> "$GITHUB_PATH"
+      - run: make workflow-check
+  semantic-pull-request:
+    permissions:
+      pull-requests: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     if: github.event_name == 'pull_request'
     env:
       TITLE: ${{ github.event.pull_request.title }}
     steps:
-      - uses: amannn/action-semantic-pull-request@v5
+      - uses: amannn/action-semantic-pull-request@e32d7e603df1aa1ba07e981f2a23455dee596825 # v5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -39,22 +75,23 @@ jobs:
 
   portal-continuity-browser:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version-file: go.mod
+          go-version-file: .go-version
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
 
       - name: Set up Chrome for Portal continuity tests
         id: setup-chrome
-        uses: browser-actions/setup-chrome@v2
+        uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2
         with:
           chrome-version: stable
           install-dependencies: true
@@ -63,48 +100,140 @@ jobs:
         env:
           SANDMAN_REQUIRE_PORTAL_BROWSER: "1"
           SANDMAN_PORTAL_CHROMIUM: ${{ steps.setup-chrome.outputs.chrome-path }}
-        run: go test ./internal/cmd -run '^TestPortalLogContinuityBrowser_' -count=1 -timeout=10m
+        run: bash scripts/ci_report.sh portal-browser make test-browser
+      - name: Summarize interrupted portal-browser validation
+        if: ${{ always() }}
+        env:
+          RESULT: ${{ job.status }}
+        run: |
+          mkdir -p reports
+          if [ ! -f reports/portal-browser.json ]; then
+            echo "## portal-browser: $RESULT; validation did not complete" > reports/portal-browser-setup.md
+            echo 'See setup/validation step logs; artifact: portal-browser-${{ runner.os }}.' >> reports/portal-browser-setup.md
+            cat reports/portal-browser-setup.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Publish portal-browser reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: portal-browser-${{ runner.os }}
+          path: reports/
+          if-no-files-found: warn
 
   goreleaser:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: .go-version
+      - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
+        id: snapshot
         with:
           args: release --snapshot --clean
-          version: latest
+          version: v2.10.1
 
-  build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
+      - name: Summarize packaging
+        if: ${{ always() }}
+        env:
+          RESULT: ${{ job.status }}
+        run: |
+          echo "## Packaging: $RESULT" >> "$GITHUB_STEP_SUMMARY"
+          echo 'Artifact: packaging-Linux (dist/); diagnostics: GoReleaser step log.' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish packaging reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: packaging-${{ runner.os }}
+          path: dist/
+          if-no-files-found: warn
+
+  static-analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: .go-version
+      - name: Static validation
+        run: bash scripts/ci_report.sh static-analysis make fmt-check vet staticcheck
+      - name: Summarize interrupted static-analysis validation
+        if: ${{ always() }}
+        env:
+          RESULT: ${{ job.status }}
+        run: |
+          mkdir -p reports
+          if [ ! -f reports/static-analysis.json ]; then
+            echo "## static-analysis: $RESULT; validation did not complete" > reports/static-analysis-setup.md
+            echo 'See setup/validation step logs; artifact: static-analysis-${{ runner.os }}.' >> reports/static-analysis-setup.md
+            cat reports/static-analysis-setup.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Publish static-analysis reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: static-analysis-${{ runner.os }}
+          path: reports/
+          if-no-files-found: warn
+
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: .go-version
+      - name: Architecture and documentation contracts
+        run: bash scripts/ci_report.sh contracts make contracts
+      - name: Summarize interrupted contracts validation
+        if: ${{ always() }}
+        env:
+          RESULT: ${{ job.status }}
+        run: |
+          mkdir -p reports
+          if [ ! -f reports/contracts.json ]; then
+            echo "## contracts: $RESULT; validation did not complete" > reports/contracts-setup.md
+            echo 'See setup/validation step logs; artifact: contracts-${{ runner.os }}.' >> reports/contracts-setup.md
+            cat reports/contracts-setup.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Publish contracts reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: contracts-${{ runner.os }}
+          path: reports/
+          if-no-files-found: warn
+
+  build-linux:
+    permissions:
+      contents: read
+      actions: read
+    name: build (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version-file: go.mod
+          go-version-file: .go-version
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-
-      - name: Set up Chrome for Portal continuity tests
-        if: runner.os == 'Linux'
-        id: setup-chrome
-        uses: browser-actions/setup-chrome@v2
-        with:
-          chrome-version: stable
-          install-dependencies: true
 
       - name: Install Podman
         if: runner.os == 'Linux'
@@ -135,30 +264,159 @@ jobs:
           test "$(podman info --format '{{.Host.OCIRuntime.Name}}')" = "runc"
           podman run --rm alpine true
 
-      - name: Build
-        run: go build -v ./...
-
-      - name: Vet
-        run: go vet ./...
-
-      - name: Staticcheck
-        run: make staticcheck
-
-      - name: Format check
-        run: |
-          if [ -n "$(gofmt -l .)" ]; then
-            echo "The following files need formatting:"
-            gofmt -l .
-            exit 1
-          fi
-
       - name: Test
+        id: race
         env:
           GH_TOKEN: ${{ github.token }}
           SANDMAN_TEST_PROVIDERS: ""
           SANDMAN_RUN_SMOKE_E2E: "0"
           SANDMAN_RUN_AGENT_E2E: "0"
           SANDMAN_E2E_GATES: ""
-          SANDMAN_REQUIRE_PORTAL_BROWSER: ${{ runner.os == 'Linux' && '1' || '0' }}
-          SANDMAN_PORTAL_CHROMIUM: ${{ steps.setup-chrome.outputs.chrome-path }}
-        run: go test -race -v ./...
+        run: bash scripts/ci_report.sh race-linux make build-check test-ci
+
+      - name: Report Go coverage and evaluate policy
+        if: ${{ always() && hashFiles('reports/coverage.out') != '' }}
+        env:
+          COVERAGE_TEST_RESULT: ${{ steps.race.outcome }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/coverage_report.py --platform linux
+
+      - name: Publish platform coverage baseline
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-linux
+          path: |
+            reports/coverage.json
+            reports/coverage.md
+            reports/coverage.out
+          if-no-files-found: warn
+
+      - name: Summarize interrupted race-linux validation
+        if: ${{ always() }}
+        env:
+          RESULT: ${{ job.status }}
+        run: |
+          mkdir -p reports
+          if [ ! -f reports/race-linux.json ]; then
+            echo "## race-linux: $RESULT; validation did not complete" > reports/race-linux-setup.md
+            echo 'See setup/validation step logs; artifact: race-linux-${{ runner.os }}.' >> reports/race-linux-setup.md
+            cat reports/race-linux-setup.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Publish race-linux reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: race-linux-${{ runner.os }}
+          path: reports/
+          if-no-files-found: warn
+
+  build-macos:
+    permissions:
+      contents: read
+      actions: read
+    name: build (macos-latest)
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: .go-version
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Test
+        id: race
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SANDMAN_TEST_PROVIDERS: ""
+          SANDMAN_RUN_SMOKE_E2E: "0"
+          SANDMAN_RUN_AGENT_E2E: "0"
+          SANDMAN_E2E_GATES: ""
+        run: bash scripts/ci_report.sh race-macos make build-check test-ci
+
+      - name: Report Go coverage and evaluate policy
+        if: ${{ always() && hashFiles('reports/coverage.out') != '' }}
+        env:
+          COVERAGE_TEST_RESULT: ${{ steps.race.outcome }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/coverage_report.py --platform macos
+
+      - name: Publish platform coverage baseline
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-macos
+          path: |
+            reports/coverage.json
+            reports/coverage.md
+            reports/coverage.out
+          if-no-files-found: warn
+
+      - name: Summarize interrupted race-macos validation
+        if: ${{ always() }}
+        env:
+          RESULT: ${{ job.status }}
+        run: |
+          mkdir -p reports
+          if [ ! -f reports/race-macos.json ]; then
+            echo "## race-macos: $RESULT; validation did not complete" > reports/race-macos-setup.md
+            echo 'See setup/validation step logs; artifact: race-macos-${{ runner.os }}.' >> reports/race-macos-setup.md
+            cat reports/race-macos-setup.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Publish race-macos reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: race-macos-${{ runner.os }}
+          path: reports/
+          if-no-files-found: warn
+
+  opencode-canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Install release-pinned OpenCode
+        run: npm install -g "opencode-ai@$(python3 -c 'import json; print(json.load(open("scripts/release_scenarios.json"))["providers"]["opencode"]["cli"])')"
+      - name: One minimal provider request
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: python3 scripts/opencode_canary.py
+
+  quality-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    if: ${{ always() }}
+    needs: [opencode-canary, security, workflow-validation, static-analysis, contracts, build-linux, build-macos, portal-continuity-browser, goreleaser, semantic-pull-request]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Require mandatory checks
+        env:
+          OPENCODE_RESULT: ${{ needs.opencode-canary.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
+          WORKFLOW_RESULT: ${{ needs.workflow-validation.result }}
+          STATIC_RESULT: ${{ needs.static-analysis.result }}
+          CONTRACT_RESULT: ${{ needs.contracts.result }}
+          EVENT_NAME: ${{ github.event_name }}
+          LINUX_BUILD_RESULT: ${{ needs.build-linux.result }}
+          MACOS_BUILD_RESULT: ${{ needs.build-macos.result }}
+          PORTAL_RESULT: ${{ needs.portal-continuity-browser.result }}
+          PACKAGING_RESULT: ${{ needs.goreleaser.result }}
+          TITLE_RESULT: ${{ needs.semantic-pull-request.result }}
+        run: bash scripts/quality_gate.sh

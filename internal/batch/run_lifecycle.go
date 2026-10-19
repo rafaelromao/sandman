@@ -67,6 +67,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		}
 		defer lease.Release()
 		container = lease.container
+		s.credentials = lease.credentials
 	}
 	if ctx.Err() != nil {
 		return s.lifecycleEarlyAbort(ctx, branch), false

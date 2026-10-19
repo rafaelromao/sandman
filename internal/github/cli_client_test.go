@@ -61,11 +61,17 @@ func (f *fakeRunner) Run(ctx context.Context, name string, arg ...string) *exec.
 // Used to prove that CLIClient honours the caller's ctx and the
 // configured per-call Timeout.
 type blockingFakeRunner struct {
-	startCount int
+	startCount        int
+	hasDeadline       bool
+	deadlineRemaining time.Duration
 }
 
 func (b *blockingFakeRunner) Run(ctx context.Context, name string, arg ...string) *exec.Cmd {
 	b.startCount++
+	if deadline, ok := ctx.Deadline(); ok {
+		b.hasDeadline = true
+		b.deadlineRemaining = time.Until(deadline)
+	}
 	cmd := exec.CommandContext(ctx, "sleep", "60")
 	configureCancelProcessGroup(cmd)
 	return cmd
@@ -2352,9 +2358,7 @@ func TestCLIClient_ClientTimeoutBoundsCallWithoutCallerDeadline(t *testing.T) {
 	runner := &blockingFakeRunner{}
 	client := NewCLIClient(WithRunner(runner), WithTimeout(50*time.Millisecond))
 
-	start := time.Now()
 	_, err := client.SearchIssues(context.Background(), "is:open")
-	elapsed := time.Since(start)
 
 	if err == nil {
 		t.Fatal("expected error from client-side timeout, got nil")
@@ -2362,8 +2366,10 @@ func TestCLIClient_ClientTimeoutBoundsCallWithoutCallerDeadline(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "context deadline exceeded") {
 		t.Errorf("expected context-deadline-exceeded error, got %v", err)
 	}
-	if elapsed > 2*time.Second {
-		t.Errorf("expected 50 ms client timeout to bound the call, elapsed=%v", elapsed)
+	// Check the deadline reaching the command rather than runner scheduling
+	// latency: a saturated CI host can resume this goroutine seconds later.
+	if !runner.hasDeadline || runner.deadlineRemaining > 50*time.Millisecond {
+		t.Errorf("expected at most 50 ms deadline at command entry, got deadline=%t remaining=%v", runner.hasDeadline, runner.deadlineRemaining)
 	}
 }
 

@@ -196,7 +196,7 @@ func TestUsageLimitAwaitExcludesCustomOpenCodePreset(t *testing.T) {
 	session := runSession{
 		issueNumber: 42,
 		agentCfg: config.Agent{
-			Preset:  opencodeProvider,
+			Preset:  opencodeSessionKind.provider,
 			Command: "custom-opencode run",
 		},
 	}

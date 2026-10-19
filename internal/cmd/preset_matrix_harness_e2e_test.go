@@ -47,6 +47,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -619,6 +620,10 @@ func runSandmanBinaryWithEnv(t *testing.T, binPath, workDir, ghBinDir string, ar
 	ctx, cancel := presetMatrixRunContext(t)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binPath, args...)
+	// Give Sandman its normal cancellation path so it can stop the owned
+	// agent/container and close its snapshot before TempDir cleanup runs.
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = 20 * time.Second
 	cmd.Dir = workDir
 	cmd.Env = append(os.Environ(),
 		"PATH="+ghBinDir+string(os.PathListSeparator)+os.Getenv("PATH"),
@@ -682,6 +687,7 @@ func runE2EScaffold(t *testing.T, preset, toolVersion, dockerfileAppend string) 
 func runE2ERun(t *testing.T, binPath, repoDir, preset string) string {
 	t.Helper()
 	requirePresetMatrixE2E(t)
+	realHome := preparePresetMatrixAgentHome(t)
 	seedPresetMatrixProject(t, repoDir, preset)
 	seedCommit := exec.Command("git", "-C", repoDir, "add", ".")
 	if out, err := seedCommit.CombinedOutput(); err != nil {
@@ -705,11 +711,11 @@ func runE2ERun(t *testing.T, binPath, repoDir, preset string) string {
 	// dotnet) overflow it with "disk quota exceeded". Relocate TMPDIR onto a
 	// larger filesystem for this test so both the harness build and the
 	// orchestrator's build (sandman run inherits the env) have room.
-	if home, err := os.UserHomeDir(); err == nil {
-		largeTemp := filepath.Join(home, ".cache", "sandman-e2e-podman")
-		if os.MkdirAll(largeTemp, 0755) == nil {
-			t.Setenv("TMPDIR", largeTemp)
-		}
+	// Use the original home: a nested test HOME makes conmon's terminal socket
+	// path exceed Unix sun_path even though its agent credentials are isolated.
+	largeTemp := filepath.Join(realHome, ".cache", "sandman-e2e-podman")
+	if os.MkdirAll(largeTemp, 0755) == nil {
+		t.Setenv("TMPDIR", largeTemp)
 	}
 
 	imageTag := "sandman-preset-matrix-" + strings.ToLower(preset)
@@ -757,6 +763,61 @@ func runE2ERun(t *testing.T, binPath, repoDir, preset string) string {
 		t.Fatalf("sandman run failed: %v\noutput:\n%s", err, out)
 	}
 	return baseline
+}
+
+// Pure real-agent tests need the operator's credentials, not live plugins,
+// dependency installations, or session databases. Keep Podman's real storage
+// location while giving the agent an authentication-only, test-owned HOME.
+func preparePresetMatrixAgentHome(t *testing.T) string {
+	t.Helper()
+	realHome, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	if !copySmokeAuthLayout(t, realHome, home, smokeProviderCases[0].authPaths) {
+		t.Fatal("authenticated preset run has no authentication snapshot")
+	}
+	dataHome := os.Getenv("XDG_DATA_HOME")
+	if dataHome == "" {
+		dataHome = filepath.Join(realHome, ".local", "share")
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_DATA_HOME", dataHome)
+	return realHome
+}
+
+func TestPresetMatrixAgentHomeIsolatesStateAndPreservesContainerStorage(t *testing.T) {
+	for _, dataHome := range []string{"", "/shared/container-storage"} {
+		t.Run(dataHome, func(t *testing.T) {
+			realHome := t.TempDir()
+			authPath := homePath(realHome, "~/.local/share/opencode/auth.json")
+			if err := os.MkdirAll(filepath.Dir(authPath), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(authPath, []byte(`{"test-provider":{"type":"api","key":"test"}}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("HOME", realHome)
+			t.Setenv("XDG_DATA_HOME", dataHome)
+			preparePresetMatrixAgentHome(t)
+			home, err := os.UserHomeDir()
+			if err != nil || home == realHome || os.Getenv("XDG_CONFIG_HOME") != filepath.Join(home, ".config") {
+				t.Fatalf("agent still uses host configuration: home=%s err=%v", home, err)
+			}
+			wantData := dataHome
+			if wantData == "" {
+				wantData = filepath.Join(realHome, ".local", "share")
+			}
+			if os.Getenv("XDG_DATA_HOME") != wantData {
+				t.Fatal("test redirected Podman's real container store into its temporary HOME")
+			}
+			if _, err := os.Stat(homePath(home, "~/.local/share/opencode/auth.json")); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
 }
 
 // runE2EBuild scaffolds a repo, optionally appends a RUN line to the

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -215,6 +216,54 @@ func TestDaemonHealthRepairExcludesNormalWaitsAndCancellation(t *testing.T) {
 	}
 }
 
+func TestDaemonHealthRepairTransientGitHubFailuresOnlyReobserve(t *testing.T) {
+	for _, err := range []error{
+		context.DeadlineExceeded,
+		errors.New("gh pr list: exit status 1\nerror connecting to api.github.com"),
+		errors.New("gh pr list: exit status 1\nHTTP 502: Bad Gateway"),
+	} {
+		t.Run(err.Error(), func(t *testing.T) {
+			gh := &fakeGH{listErr: err}
+			runner := &healthRunner{}
+			d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{DefaultReviewAgent: "opencode"})
+			for range 4 {
+				_ = d.tick(context.Background())
+				d.inFlight.Wait()
+			}
+			if len(runner.requests()) != 0 {
+				t.Fatalf("transient GitHub outage launched %d local repairs", len(runner.requests()))
+			}
+			gh.listErr = nil
+			if err := d.tick(context.Background()); err != nil {
+				t.Fatalf("normal observation did not recover: %v", err)
+			}
+		})
+	}
+}
+
+func TestDaemonHealthRepairTimeoutOriginPreservesLocalRepairs(t *testing.T) {
+	for _, tc := range []struct {
+		name, operation string
+		err             error
+		wantRepairs     int
+	}{
+		{"local preparation timeout", "prepare review run", fmt.Errorf("start sandbox: %w", context.DeadlineExceeded), 1},
+		{"local launch timeout", "launch review", fmt.Errorf("build image: %w", context.DeadlineExceeded), 1},
+		{"GitHub lookup inside launch", "launch review", &github.AvailabilityError{Err: context.DeadlineExceeded}, 0},
+		{"GitHub write inside publication", "publish review decision", &github.AvailabilityError{Err: context.DeadlineExceeded}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := &healthRunner{}
+			d, _, _ := newDaemonForTest(t, &fakeGH{}, runner, &config.Config{DefaultReviewAgent: "opencode"})
+			d.observeHealthFailure(context.Background(), "operation", tc.operation, 17, tc.err)
+			d.inFlight.Wait()
+			if len(runner.requests()) != tc.wantRepairs {
+				t.Fatalf("operation=%s err=%v repairs=%d, want %d", tc.operation, tc.err, len(runner.requests()), tc.wantRepairs)
+			}
+		})
+	}
+}
+
 func TestDaemonHealthRepairExecutionFailureDoesNotCompleteOrRecurse(t *testing.T) {
 	gh := &fakeGH{listErr: errors.New("remote broken")}
 	runner := &healthRunner{repair: func(context.Context, batch.Request) (*batch.Result, error) {
@@ -256,7 +305,7 @@ func TestDaemonHealthRepairAuthenticationReobservesBeforeProcessing(t *testing.T
 	}
 }
 
-func TestDaemonHealthRepairOperationTimeoutIsNotOperatorCancellation(t *testing.T) {
+func TestDaemonHealthRepairOperationTimeoutDoesNotLaunchLocalRepair(t *testing.T) {
 	gh := &fakeGH{listErr: context.DeadlineExceeded}
 	runner := &healthRunner{}
 	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{DefaultReviewAgent: "opencode", DefaultReviewModel: "openai/configured"})
@@ -264,14 +313,14 @@ func TestDaemonHealthRepairOperationTimeoutIsNotOperatorCancellation(t *testing.
 		t.Fatalf("operation timeout lost: %v", err)
 	}
 	d.inFlight.Wait()
-	if len(runner.requests()) != 1 {
-		t.Fatal("live daemon must repair an operation-local timeout")
+	if len(runner.requests()) != 0 {
+		t.Fatal("GitHub operation timeout must use normal re-observation, not local repair")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_ = d.tick(ctx)
 	d.inFlight.Wait()
-	if len(runner.requests()) != 1 {
+	if len(runner.requests()) != 0 {
 		t.Fatal("operator cancellation must not launch another repair")
 	}
 }

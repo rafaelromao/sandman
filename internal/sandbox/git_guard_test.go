@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestWorktreeSandboxExecBlocksGlobalWorktreePrune(t *testing.T) {
@@ -50,6 +51,55 @@ func TestWorktreeSandboxExecBlocksGlobalWorktreePrune(t *testing.T) {
 	stderr.Reset()
 	if err := s.Exec(context.Background(), "git -C "+shellQuote(repo)+" status --short", &stdout, &stderr); err != nil {
 		t.Fatalf("guard did not delegate ordinary Git commands: %v (%s)", err, stderr.String())
+	}
+}
+
+func TestWorktreeSandboxGitGuardDelegatesWithPrependedPath(t *testing.T) {
+	for _, prefix := range []string{
+		`PATH="$extra_bin:$PATH"`,
+		`PATH="$extra_bin:$SANDMAN_GIT_GUARD_DIR:$PATH:$SANDMAN_GIT_GUARD_DIR"`,
+		`PATH="$extra_bin::$PATH:"`,
+	} {
+		t.Run(prefix, func(t *testing.T) {
+			repo := t.TempDir()
+			alias := filepath.Join(t.TempDir(), "repo alias")
+			if err := os.Symlink(repo, alias); err != nil {
+				t.Fatal(err)
+			}
+			repo = alias
+			initGitRepo(t, repo)
+			s := NewWorktreeSandbox(repo, filepath.Join(repo, ".sandman", "worktrees"), "42-path-guard", "main")
+			if err := s.Start(SandboxStart{}); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = s.Stop() })
+			extra := filepath.Join(t.TempDir(), "gh shim")
+			if err := os.MkdirAll(extra, 0755); err != nil {
+				t.Fatal(err)
+			}
+			command := "extra_bin=" + shellQuote(extra) + "; " + prefix + "; export PATH; git rev-parse --show-toplevel"
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			var stdout, stderr bytes.Buffer
+			if err := s.Exec(ctx, command, &stdout, &stderr); err != nil {
+				t.Fatalf("ordinary Git delegation recursed after PATH prefix: %v (%s)", err, stderr.String())
+			}
+			// Git reports the physical root (for example /private/var on
+			// macOS), while sandbox ownership retains its logical path.
+			physicalWorktree, err := filepath.EvalSymlinks(s.WorkDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.TrimSpace(stdout.String()) != physicalWorktree {
+				t.Fatalf("wrong delegated worktree: %s", stdout.String())
+			}
+			stdout.Reset()
+			stderr.Reset()
+			command = "extra_bin=" + shellQuote(extra) + "; " + prefix + "; export PATH; git worktree prune --expire now"
+			if err := s.Exec(ctx, command, &stdout, &stderr); err == nil || !strings.Contains(stderr.String(), "repository-wide worktree pruning is blocked") {
+				t.Fatalf("PATH prefix bypassed prune protection: err=%v stderr=%s", err, stderr.String())
+			}
+		})
 	}
 }
 

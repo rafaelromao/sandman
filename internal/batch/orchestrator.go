@@ -66,38 +66,22 @@ func issueBatchIDForRequest(req Request) string {
 	return req.RunTS + "-" + req.RunShortID
 }
 
-// batchIDForPromptOnly returns the per-row batch directory name for a
-// prompt-only session. When runDir is non-empty, the batch ID is
-// derived from the directory two levels above runDir (so
-// `<batchesDir>/<batchID>/runs/<runID>` round-trips). This pins the
-// orchestrator ↔ daemon agreement: the review daemon's `Request.RunDir`
-// is the authoritative path the daemon's `prepareReviewRun` will read
-// `decision.md` from, so
-// the orchestrator must place `agentRun.runFolder` at the same
-// path. Otherwise the reviewer bot writes `decision.md` to a path
-// the daemon never reads and the review comment is silently dropped
-// (issue discovered on PR #1875: per-row RunID
-// `<ts>-<sid>-<linkedIssue>-PR<pr>` diverged from the legacy batch
-// dir `<ts>-<sid>-PR<pr>` that `prepareReviewRun` mints).
-//
-// When runDir is empty, fall back to the user-provided runID; when
-// that is also empty, route the (ts, shortid) pair through the
-// shared identity engine so the output is `<ts>-<sid>-prompt`.
-// Routing through `runid.NewBatchID` keeps the prompt-only BatchId
-// shape aligned with every other prompt-only mint surface (cleanup
-// of #1943, see issue #2042).
+// batchIDForPromptOnly returns the public batch ID for a prompt-only run.
+// runDir is either the batch directory `<batches>/<batchID>` or a run folder
+// `<batches>/<batchID>/runs/<runID>`; any other shape returns "" so the
+// caller keeps its historical derivation. Without runDir it falls back to
+// the user run ID, then to the canonical `<ts>-<sid>-prompt` identity.
 func batchIDForPromptOnly(ts, shortid, userRunID, runDir string) string {
 	if runDir != "" {
-		// runDir = <batchesDir>/<batchID>/runs/<runID>; the batchID
-		// is two levels above runDir's last segment. Defensively
-		// guard against a short path (no /runs/<runID>) by returning
-		// the empty string so the caller falls back to the historical
-		// derivation rather than panicking.
+		runDir = filepath.Clean(runDir)
 		parent := filepath.Dir(runDir)
-		if filepath.Base(parent) != "runs" {
-			return ""
+		switch filepath.Base(parent) {
+		case "runs":
+			return filepath.Base(filepath.Dir(parent))
+		case "batches":
+			return filepath.Base(runDir)
 		}
-		return filepath.Base(filepath.Dir(parent))
+		return ""
 	}
 	if userRunID != "" {
 		return userRunID
@@ -404,6 +388,11 @@ type Orchestrator struct {
 	// (issue #1780).
 	lookupGHToken func(ctx context.Context) (string, error)
 
+	// lookupEnv reads the host environment when building container start
+	// options. NewOrchestrator initialises it to os.LookupEnv; nil reads the
+	// process environment too.
+	lookupEnv func(string) (string, bool)
+
 	// runSessionOpts bundles the test-injection hooks consumed by
 	// runSession (the function overrides and the test-tunable killTimeout)
 	// together with the shared baseBranchSyncMu mutex that gates
@@ -559,8 +548,9 @@ func defaultLookupGHToken(ctx context.Context) (string, error) {
 }
 
 type containerLease struct {
-	container sandbox.Container
-	release   func()
+	container   sandbox.Container
+	credentials *credentialSync
+	release     func()
 }
 
 func (l *containerLease) Release() {
@@ -610,6 +600,10 @@ type containerPool struct {
 	startOpts     sandbox.StartOptions
 	capacity      int
 	maxContainers int
+
+	// credentials reconciles the snapshot's rotating agent credentials with
+	// the host around each launch in any of the pool's containers.
+	credentials *credentialSync
 
 	mu         sync.Mutex
 	cond       *sync.Cond
@@ -1094,7 +1088,7 @@ func (p *containerPool) Acquire(ctx context.Context) (*containerLease, error) {
 			best.active++
 			container := best.container
 			p.mu.Unlock()
-			return &containerLease{container: container, release: func() { p.releaseShared(best) }}, nil
+			return &containerLease{container: container, credentials: p.credentials, release: func() { p.releaseShared(best) }}, nil
 		}
 		if p.cleanupErr != nil {
 			err := p.cleanupErr
@@ -1152,7 +1146,7 @@ func (p *containerPool) Acquire(ctx context.Context) (*containerLease, error) {
 		entry.ready = true
 		p.cond.Broadcast()
 		p.mu.Unlock()
-		return &containerLease{container: container, release: func() { p.releaseShared(entry) }}, nil
+		return &containerLease{container: container, credentials: p.credentials, release: func() { p.releaseShared(entry) }}, nil
 	}
 }
 
@@ -1302,6 +1296,7 @@ func NewOrchestrator(githubClient github.Client, renderer prompt.IssueRenderer, 
 		errorLog:      os.Stderr,
 		layout:        paths.NewLayout(&config.Config{}, root),
 		lookupGHToken: defaultLookupGHToken,
+		lookupEnv:     os.LookupEnv,
 		runSessionOpts: runSessionOptions{
 			baseBranchSyncMu:     &sync.Mutex{},
 			taskWriter:           atomicfs.WriteAtomic,
@@ -2691,7 +2686,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 }
 
 func (o *Orchestrator) resolveSandboxExecutionPolicy(ctx context.Context, cfg *config.Config, agentCfg config.Agent, req Request, sandboxMode string) (*sandboxExecutionPolicy, error) {
-	startOpts, err := buildStartOptions(agentCfg)
+	startOpts, err := buildStartOptions(agentCfg, o.lookupEnv)
 	if err != nil {
 		return nil, err
 	}
@@ -2769,12 +2764,15 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(ctx context.Context, cfg *c
 		return nil, fmt.Errorf("build container image: %w", err)
 	}
 	pool := newContainerPool(starter, image, ".", startOpts, containerCapacity, maxContainers)
+	pool.credentials = newCredentialSync(startOpts.ConfigMounts, credentialFiles(agentCfg))
 	return &sandboxExecutionPolicy{
 		mode:           sandboxMode,
 		sandboxFactory: sbFactory,
 		containerAlloc: pool,
 		close: func() {
 			_ = pool.Close()
+			// The final agreement must land before the snapshot is removed.
+			_ = pool.credentials.Reconcile()
 			cleanup()
 		},
 	}, nil
@@ -2892,7 +2890,13 @@ func dockerfileAgentExpectations(defaultAgent, runAgent string, runAgentCfg conf
 	return defaultAgent, required
 }
 
-func buildStartOptions(agentCfg config.Agent) (sandbox.StartOptions, error) {
+// buildStartOptions resolves container start options for agentCfg.
+// lookupEnv reads the host environment; it only decides whether a preset
+// credential variable is present, and its value is never copied.
+func buildStartOptions(agentCfg config.Agent, lookupEnv func(string) (string, bool)) (sandbox.StartOptions, error) {
+	if lookupEnv == nil {
+		lookupEnv = os.LookupEnv
+	}
 	opts := sandbox.StartOptions{}
 
 	if uid := os.Getuid(); uid >= 0 {
@@ -2948,9 +2952,42 @@ func buildStartOptions(agentCfg config.Agent) (sandbox.StartOptions, error) {
 			return sandbox.StartOptions{}, err
 		}
 		opts.LiveMounts = append(opts.LiveMounts, expanded...)
+
+		expanded, err = expandPaths(preset.LiveMountDirs, "live mount directory")
+		if err != nil {
+			return sandbox.StartOptions{}, err
+		}
+		opts.LiveMounts = append(opts.LiveMounts, expanded...)
+		opts.LiveMountDirs = append(opts.LiveMountDirs, expanded...)
+
+		if name := preset.CredentialEnv; name != "" && agentCfg.Command == preset.Command {
+			if value, ok := lookupEnv(name); ok && strings.TrimSpace(value) != "" {
+				expanded, err = expandPaths(preset.CredentialFiles, "credential file")
+				if err != nil {
+					return sandbox.StartOptions{}, err
+				}
+				opts.PassEnv = append(opts.PassEnv, name)
+				opts.AgentConfigExcludes = append(opts.AgentConfigExcludes, expanded...)
+			}
+		}
 	}
 
 	return opts, nil
+}
+
+// credentialFiles returns the host credential files of agentCfg's preset
+// whose snapshot copies are reconciled with the host. A custom command may
+// not be the preset's agent, so it reconciles nothing.
+func credentialFiles(agentCfg config.Agent) []string {
+	preset, ok := config.BuiltInAgentPresets[agentCfg.Preset]
+	if !ok || agentCfg.Command != preset.Command {
+		return nil
+	}
+	files, err := expandPaths(preset.CredentialFiles, "credential file")
+	if err != nil {
+		return nil
+	}
+	return files
 }
 
 func expandPaths(paths []string, label string) ([]string, error) {
@@ -3037,26 +3074,29 @@ type runSession struct {
 	commander daemon.IssueCommander
 
 	// Inputs captured from the runSingle / runPromptOnlySingle call site.
-	issueNumber                int
-	issueState                 string
-	cfg                        *config.Config
-	agentName                  string
-	agentCfg                   config.Agent
-	variant                    string
-	mode                       IssueMode
-	previousRunIDs             map[int]string
-	previousRunBatchIDs        map[int]string
-	reuseSession               bool
-	usageLimitProbe            bool
-	usageLimitWaited           time.Duration
-	usageLimitDeadline         time.Time
-	usageLimitRestoreErr       error
-	identityResolver           *gitIdentityResolver
-	branches                   map[int]string
-	renderCfg                  prompt.RenderConfig
-	outputWriter               io.Writer
-	sbFactory                  SandboxFactory
-	containerAlloc             containerAllocator
+	issueNumber          int
+	issueState           string
+	cfg                  *config.Config
+	agentName            string
+	agentCfg             config.Agent
+	variant              string
+	mode                 IssueMode
+	previousRunIDs       map[int]string
+	previousRunBatchIDs  map[int]string
+	reuseSession         bool
+	usageLimitProbe      bool
+	usageLimitWaited     time.Duration
+	usageLimitDeadline   time.Time
+	usageLimitRestoreErr error
+	identityResolver     *gitIdentityResolver
+	branches             map[int]string
+	renderCfg            prompt.RenderConfig
+	outputWriter         io.Writer
+	sbFactory            SandboxFactory
+	containerAlloc       containerAllocator
+	// credentials is the leased container's credential reconcile, set when
+	// the row acquires its container; nil outside container mode.
+	credentials                *credentialSync
 	baseBranch                 string
 	externalBlockers           []int
 	parallel                   int
@@ -4036,6 +4076,7 @@ loop:
 			runnable = factory.NewRunnable(issue, branch, wt)
 			if agentRun, ok := runnable.(*AgentRun); ok {
 				agentRun.env = s.agentCfg.Env
+				agentRun.credentials = s.credentials
 				agentRun.preset = s.agentCfg.Preset
 				agentRun.contextRolloverLiterals = append([]string(nil), s.opts.contextRolloverLiterals...)
 				if s.opts.taskWriter != nil {
@@ -4091,14 +4132,14 @@ loop:
 			if s.isIssueDriven() && ctx.Err() == nil {
 				hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
 				if gateStatus, extras, handled := s.handleLifecycleDecisionForAttempt(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady, result.Status); handled {
-					if stoppedForPermissionMode(result) && gateStatus != "success" && gateStatus != "aborted" {
+					if stop := s.operatorStopFor(result); stop != nil && gateStatus != "success" && gateStatus != "aborted" {
 						// The agent could not act, and a resume, await
-						// re-entry or retry would start in the same mode.
+						// re-entry or retry would fail the same way.
 						// Like the usage-limit rule below, this consumes the
 						// selected action: terminal success and abort stand,
 						// and every action that would relaunch the agent
 						// becomes the stop's terminal failure.
-						terminalExtras = s.finishPermissionModeStop(&result, terminalExtras)
+						terminalExtras = s.finishOperatorStop(&result, terminalExtras, stop)
 						break loop
 					}
 					if result.UsageLimitReached && !result.ContextExhausted && (gateStatus == "resume" || gateStatus == "await") {
@@ -4165,8 +4206,8 @@ loop:
 			}
 			break relaunch
 		}
-		if stoppedForPermissionMode(result) && !s.lifecycleTerminal && ctx.Err() == nil {
-			terminalExtras = s.finishPermissionModeStop(&result, terminalExtras)
+		if stop := s.operatorStopFor(result); stop != nil && !s.lifecycleTerminal && ctx.Err() == nil {
+			terminalExtras = s.finishOperatorStop(&result, terminalExtras, stop)
 			break loop
 		}
 		if mergeRequired {
@@ -4317,23 +4358,47 @@ loop:
 	return result, terminalExtras, true
 }
 
-// stoppedForPermissionMode reports a launch the agent strategy stopped because
-// its session started in a read-only permission mode.
-func stoppedForPermissionMode(result AgentRunResult) bool {
-	return errors.Is(result.OperationalError, ErrUnattendedPermissionMode)
+// operatorStop is the terminal diagnostic of a launch that no resume, await
+// re-entry or retry can fix until the operator acts.
+type operatorStop struct {
+	reason     string
+	nextAction string
 }
 
-// finishPermissionModeStop makes a permission-mode stop the run's terminal
-// failure. No ordinary retry, resume or await re-entry follows: each would
-// start in the same mode until the operator changes the agent's settings.
-func (s *runSession) finishPermissionModeStop(result *AgentRunResult, extras map[string]any) map[string]any {
+// operatorStopFor returns the stop of a launch the agent strategy ended
+// because its session started in a read-only permission mode or could not
+// authenticate, or nil.
+func (s *runSession) operatorStopFor(result AgentRunResult) *operatorStop {
+	switch {
+	case errors.Is(result.OperationalError, ErrUnattendedPermissionMode):
+		return &operatorStop{
+			reason:     "AGENT_PERMISSION_MODE",
+			nextAction: "set the agent's permission_mode to a mode the administrator allows, or change the agent settings that start sessions in a read-only mode, then rerun",
+		}
+	case errors.Is(result.OperationalError, ErrAgentAuthentication):
+		action := "sign the agent in again on the host"
+		if preset, ok := config.BuiltInAgentPresets[s.agentCfg.Preset]; ok && preset.SignInRemedy != "" {
+			action = preset.SignInRemedy
+		}
+		return &operatorStop{
+			reason:     "AGENT_AUTHENTICATION",
+			nextAction: action + ", then resume with sandman run --continue",
+		}
+	}
+	return nil
+}
+
+// finishOperatorStop makes an operator stop the run's terminal failure. No
+// ordinary retry, resume or await re-entry follows: each would fail the same
+// way until the operator changes the agent's settings or credentials.
+func (s *runSession) finishOperatorStop(result *AgentRunResult, extras map[string]any, stop *operatorStop) map[string]any {
 	result.Status = "failure"
 	s.lifecycleTerminal = true
 	fmt.Fprintf(s.deps.errorLog, "error: run %s stopped: %v\n", s.runID, result.OperationalError)
 	return mergeLifecycleDiagnostics(extras, map[string]any{
-		"reason":      "AGENT_PERMISSION_MODE",
+		"reason":      stop.reason,
 		"error":       result.OperationalError.Error(),
-		"next_action": "set the agent's permission_mode to a mode the administrator allows, or change the agent settings that start sessions in a read-only mode, then rerun",
+		"next_action": stop.nextAction,
 	})
 }
 

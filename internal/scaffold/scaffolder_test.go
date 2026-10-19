@@ -310,6 +310,48 @@ func TestScaffold_SharedPackagesIncludeRipgrepAndYq(t *testing.T) {
 	}
 }
 
+func TestScaffold_SharedPackagesIncludeFonts(t *testing.T) {
+	presets := make([]string, 0, len(builtInBuildToolsPresets))
+	for name := range builtInBuildToolsPresets {
+		presets = append(presets, name)
+	}
+	sort.Strings(presets)
+	for _, preset := range presets {
+		t.Run(preset, func(t *testing.T) {
+			dir := t.TempDir()
+			s := &Scaffolder{}
+
+			if err := s.Scaffold(dir, Options{BuildTools: preset}, &fakePrompter{confirm: true}); err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+
+			data, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+			if err != nil {
+				t.Fatalf("read Dockerfile: %v", err)
+			}
+
+			content := string(data)
+			aptLine := ""
+			for _, line := range strings.Split(content, "\n") {
+				if strings.Contains(line, "apt-get update && apt-get install") {
+					aptLine = line
+					break
+				}
+			}
+			if aptLine == "" {
+				t.Fatalf("Dockerfile missing apt install line, got:\n%s", content)
+			}
+
+			aptPackages := strings.Fields(aptLine)
+			for _, pkg := range []string{"fontconfig", "fonts-liberation"} {
+				if !containsString(aptPackages, pkg) {
+					t.Errorf("Dockerfile apt install line missing %s, got: %s", pkg, aptLine)
+				}
+			}
+		})
+	}
+}
+
 // pinnedMiseInstall is the fail-fast mise install every preset renders.
 var pinnedMiseInstall = "RUN curl -fsSL https://mise.run -o /tmp/mise-install.sh && MISE_VERSION=" + DefaultMISEVersion +
 	" MISE_INSTALL_PATH=/usr/local/bin/mise sh /tmp/mise-install.sh && rm -f /tmp/mise-install.sh && /usr/local/bin/mise --version"

@@ -107,6 +107,8 @@ When you use the `opencode` preset, install the `opencode-shell-strategy` plugin
 
 The `claude` preset (experimental in v1) runs the unmodified Claude Code CLI in print mode and is how you use a Claude subscription with Sandman. See [Agent Compatibility](agent-compatibility.md#claude-code) for authentication, permissions, and its limitations.
 
+For container runs on a subscription, export `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` in the shell that runs Sandman rather than adding it to `env`: the preset passes it to containers by name only, so the value stays off command lines and out of `.sandman/`. See [Agent Compatibility > Authentication](agent-compatibility.md#authentication).
+
 Both built-in presets also see `~/.agents`, which is where Sandman installs the shared skill folder.
 
 `sandman run --agent` selects the agent preset per invocation (built-in `opencode` or `claude`, or a custom provider under `agents`). `sandman config set agent` changes the project default. A container run whose agent is not listed in the Dockerfile's `# sandman installed-agents:` header fails before any container starts; a run on an agent other than the default does not depend on the default agent's metadata.
