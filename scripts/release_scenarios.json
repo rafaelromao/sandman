@@ -687,6 +687,11 @@
     },
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalReviewOrphanProjectionBrowser_PreservesAbortAndExecutionMetadata",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestPortalReviewSubjectSwitch_GroupBeforeFilterKeepsParentIssueVisible",
       "tier": "unit"
     },
