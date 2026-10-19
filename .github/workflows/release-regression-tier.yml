@@ -101,7 +101,7 @@ jobs:
           if [ "$RELEASE_TIER" = claude ]; then
             npm install -g @anthropic-ai/claude-code@2.1.283
           else
-            npm install -g opencode-ai@1.15.0
+            npm install -g opencode-ai@1.19.3
           fi
 
       - name: Validate prerequisites and record versions
@@ -114,7 +114,7 @@ jobs:
           node --version
           "$SANDMAN_PORTAL_CHROMIUM" --version
           if [ "$RELEASE_TIER" = live ]; then
-            test "$(opencode --version)" = 1.15.0
+            test "$(opencode --version)" = 1.19.3
           elif [ "$RELEASE_TIER" = claude ]; then
             claude --version | grep -F '2.1.283'
           fi
