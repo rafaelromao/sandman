@@ -185,6 +185,89 @@ func TestPortalLogContinuityBrowser_DurationSortUsesActiveGroupedDuration(t *tes
 	}
 }
 
+// TestPortalLogContinuityBrowser_OrphanReviewKeepsAbortAndClock is the
+// actual-page regression for issue #2799. An orphan review-only issue group
+// used to be rebuilt from a field whitelist that dropped the source row's
+// batch and execution-clock metadata, so its Abort control, stale line and
+// live duration disappeared after grouping and duration sort lost its clock.
+func TestPortalLogContinuityBrowser_OrphanReviewKeepsAbortAndClock(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	orphanReview := map[string]any{
+		"key": "review-2799", "runId": "review-2799", "kind": "active", "status": "reviewing", "review": true,
+		"issueNumber": 2799, "issueLabel": "PR2810", "prNumber": 2810, "batchKey": "batch-2799",
+		"startedAt": now.Add(-40 * time.Minute).Format(time.RFC3339), "duration": "30m",
+		"activeDurationSeconds": 1800, "executionSince": now.Add(-10 * time.Minute).Format(time.RFC3339),
+		"lastOutputAt": now.Add(-5 * time.Minute).Format(time.RFC3339),
+	}
+	shorterRun := map[string]any{
+		"key": "impl-43", "runId": "impl-43", "kind": "active", "status": "running",
+		"issueNumber": 43, "issueLabel": "#43", "batchKey": "batch-43",
+		"startedAt": now.Add(-2 * time.Minute).Format(time.RFC3339), "duration": "1m",
+		"activeDurationSeconds": 60, "executionSince": now.Add(-time.Minute).Format(time.RFC3339),
+		"lastOutputAt": now.Format(time.RFC3339),
+	}
+	runsJSON, err := json.Marshal([]map[string]any{shorterRun, orphanReview})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateJSON := `{"expandedRunKey":null,"tabs":{},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"duration","sortDir":"desc"}`
+	page := buildPortalReproPage(t, stateJSON, runsJSON, "")
+	const abortDisabled = "const abortSupported = false;"
+	if !strings.Contains(page, abortDisabled) {
+		t.Fatal("Portal repro page is missing its abort-support switch")
+	}
+	page = strings.Replace(page, abortDisabled, "const abortSupported = true;", 1)
+	page = strings.Replace(page, "</body>", `<script>
+  let captureAttempts = 0;
+  function captureOrphanReview() {
+    const rows = Array.from(document.querySelectorAll('#runs-body > tr[data-run-key]'))
+      .filter(row => !row.classList.contains('detail-row'));
+    captureAttempts += 1;
+    if (rows.length < 2 && captureAttempts < 100) { setTimeout(captureOrphanReview, 10); return; }
+    const orphan = rows.find(row => row.getAttribute('data-run-key') === 'review-2799');
+    const marker = document.createElement('pre');
+    marker.id = 'portal-orphan-review';
+    marker.textContent = JSON.stringify({
+      error: document.getElementById('error-banner')?.textContent || '',
+      order: rows.map(row => row.getAttribute('data-run-key')),
+      label: orphan?.querySelector('[data-cell="title"] .name')?.textContent || '',
+      abortVisible: !!orphan?.querySelector('button[data-action="abort-run"]'),
+      duration: orphan?.querySelector('[data-cell="duration"] .duration-value')?.textContent || '',
+      staleText: orphan?.querySelector('[data-cell="duration"] .stale-line')?.textContent || '',
+    });
+    document.body.appendChild(marker);
+  }
+  setTimeout(captureOrphanReview, 50);
+</script></body>`, 1)
+	dom, _ := runPortalChromium(t, page)
+	var result struct {
+		Error        string   `json:"error"`
+		Order        []string `json:"order"`
+		Label        string   `json:"label"`
+		AbortVisible bool     `json:"abortVisible"`
+		Duration     string   `json:"duration"`
+		StaleText    string   `json:"staleText"`
+	}
+	if err := json.Unmarshal([]byte(extractPortalMarker(t, dom, "portal-orphan-review")), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Error != "" || len(result.Order) != 2 || result.Order[0] != "review-2799" || result.Order[1] != "impl-43" {
+		t.Fatalf("duration sort order = %#v (error=%q), want the 40m orphan review before the 2m run", result.Order, result.Error)
+	}
+	if result.Label != "PR 2810 (#2799)" {
+		t.Fatalf("orphan review label = %q, want %q", result.Label, "PR 2810 (#2799)")
+	}
+	if !result.AbortVisible {
+		t.Fatalf("orphan review row lost its Abort control after grouping: %+v", result)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(result.Duration), "40m") {
+		t.Fatalf("orphan review duration = %q, want the live source clock (~40m)", result.Duration)
+	}
+	if !strings.Contains(result.StaleText, "stale") {
+		t.Fatalf("orphan review stale line = %q, want the source staleness signal", result.StaleText)
+	}
+}
+
 type portalWaitingDurationBrowserResult struct {
 	InitialStatus         string `json:"initialStatus"`
 	InitialDuration       string `json:"initialDuration"`
