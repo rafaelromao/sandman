@@ -17,8 +17,7 @@ PIN_GUIDANCE = ('The provider rejected the OpenCode pin as obsolete. Update the 
 def evaluate(output, returncode):
     lower = output.lower()
     if any(marker in lower for marker in ('required to use the free tier', 'deprecated',
-                                          'no longer supported', 'upgrade opencode',
-                                          'free tier can only be used from within opencode')):
+                                          'no longer supported', 'upgrade opencode')):
         return PIN_GUIDANCE
     text = []
     errors = False
@@ -48,8 +47,11 @@ def main():
         return 1
     with tempfile.TemporaryDirectory(prefix='sandman-opencode-canary-') as directory:
         env = dict(os.environ, HOME=directory, XDG_CONFIG_HOME=directory + '/config',
-                   XDG_DATA_HOME=directory + '/data', XDG_CACHE_HOME=directory + '/cache',
-                   OPENCODE_PERMISSION='{"*":"deny"}')
+                   XDG_DATA_HOME=directory + '/data', XDG_CACHE_HOME=directory + '/cache')
+        # Keep OpenCode's normal tool schema: disabling tools can itself
+        # trigger the provider's client-validation rejection. The prompt asks
+        # for one literal response without calling tools.
+        env.pop('OPENCODE_PERMISSION', None)
         token = env.get('OPENCODE_API_KEY', '')
         if token:
             auth = Path(env['XDG_DATA_HOME']) / 'opencode/auth.json'
