@@ -311,7 +311,12 @@ func TestScaffold_SharedPackagesIncludeRipgrepAndYq(t *testing.T) {
 }
 
 func TestScaffold_SharedPackagesIncludeFonts(t *testing.T) {
-	for _, preset := range KnownBuildToolsPresets {
+	presets := make([]string, 0, len(builtInBuildToolsPresets))
+	for name := range builtInBuildToolsPresets {
+		presets = append(presets, name)
+	}
+	sort.Strings(presets)
+	for _, preset := range presets {
 		t.Run(preset, func(t *testing.T) {
 			dir := t.TempDir()
 			s := &Scaffolder{}
@@ -337,8 +342,9 @@ func TestScaffold_SharedPackagesIncludeFonts(t *testing.T) {
 				t.Fatalf("Dockerfile missing apt install line, got:\n%s", content)
 			}
 
+			aptPackages := strings.Fields(aptLine)
 			for _, pkg := range []string{"fontconfig", "fonts-liberation"} {
-				if !strings.Contains(aptLine, " "+pkg+" ") {
+				if !containsString(aptPackages, pkg) {
 					t.Errorf("Dockerfile apt install line missing %s, got: %s", pkg, aptLine)
 				}
 			}
