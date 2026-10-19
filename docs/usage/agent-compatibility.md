@@ -119,10 +119,31 @@ an `EBADENGINE` warning at install time and still installs.
 | Sandbox | Host | How Claude Code authenticates | Notes |
 |---------|------|-------------------------------|-------|
 | worktree | macOS or Linux | The host login (macOS Keychain or `~/.claude/.credentials.json`), or `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` exported in your shell | Worktree runs inherit the host environment |
-| container | Linux | `~/.claude/.credentials.json` rides along in the `~/.claude` snapshot | The snapshot lives under `.sandman/batches/<batch-id>/config/` and is kept with the batch; keep `.sandman/` gitignored |
-| container | macOS | The Keychain never reaches a container. Run `claude setup-token` and set the token in the agent's env (below), or use `ANTHROPIC_API_KEY` | The value is exported on the rendered command line and is visible to `ps` on the host during the run, like every agent env value |
+| container | macOS or Linux (recommended) | `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, exported in the shell that runs Sandman | The container receives the variable by name only; its value never appears on a command line or under `.sandman/`, and `~/.claude/.credentials.json` stays out of the snapshot |
+| container | Linux | `~/.claude/.credentials.json` rides along in the `~/.claude` snapshot and is reconciled with the host around every launch | The snapshot lives under `.sandman/batches/<batch-id>/config/` and is kept with the batch; keep `.sandman/` gitignored |
+| container | macOS | The Keychain never reaches a container. Export the token as above, set it in the agent's env (below), or use `ANTHROPIC_API_KEY` | An agent env value is exported on the rendered command line and is visible to `ps` on the host during the run |
 
-For containers on macOS, add the token to `.sandman/config.yaml`:
+Subscription sign-ins refresh with single-use refresh tokens: whichever copy
+of `.credentials.json` refreshes first invalidates every other copy. Without
+`CLAUDE_CODE_OAUTH_TOKEN`, Sandman reconciles the snapshot copy with the host
+copy before and after every launch, so a launch hours into a batch (for example
+after a usage-limit wait) uses the credentials the host refreshed meanwhile,
+and a token a container refreshed reaches the host. A refresh on both sides
+during the same launch can still invalidate one of them; the token avoids
+refreshes altogether:
+
+```bash
+claude setup-token                     # prints sk-ant-oat01-...
+export CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...
+sandman run 42
+```
+
+A launch that still cannot authenticate is relaunched once on the reconciled
+credentials, then the run stops with reason `AGENT_AUTHENTICATION` instead of
+spending its retries; sign in again or export the token, then resume it with
+`sandman run --continue`.
+
+Alternatively, add the token to `.sandman/config.yaml`:
 
 ```yaml
 agents:
