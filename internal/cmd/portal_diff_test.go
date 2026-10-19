@@ -4388,15 +4388,21 @@ func TestPortalRunsView_VisibleRunForIssueGroup_LiveOrphanReviewUsesLiveSource(t
 const finished = {
   key: 'review-done', runId: 'review-done', kind: 'completed', status: 'success', review: true,
   issueNumber: 2799, prNumber: 2810, batchKey: 'batch-done', startedAt: '2026-10-19T10:30:00Z',
-  finishedAt: '2026-10-19T10:40:00Z', activeDurationSeconds: 600,
+  finishedAt: '2026-10-19T10:40:00Z', activeDurationSeconds: 600, reviewVerdict: 'Approved',
 };
-const row = visibleRunForIssueGroup(2799, [finished, live]);
+const olderLive = {
+  key: 'review-live-old', runId: 'review-live-old', kind: 'active', status: 'reviewing', review: true,
+  issueNumber: 2799, prNumber: 2810, batchKey: 'batch-live-old', startedAt: '2026-10-19T09:00:00Z',
+};
+const row = visibleRunForIssueGroup(2799, [olderLive, finished, live]);
 if (!row) throw new Error('expected visible orphan review row');
 if (row.key !== 'review-live') throw new Error('expected live review to own the visible row, got ' + JSON.stringify(row.key));
 if (row.status !== 'reviewing' || row.kind !== 'active') throw new Error('expected live status/kind, got ' + JSON.stringify([row.status, row.kind]));
 if (row.finishedAt) throw new Error('expected no finishedAt on a live visible row, got ' + JSON.stringify(row.finishedAt));
 if (row.batchKey !== 'batch-live') throw new Error('expected live review batchKey, got ' + JSON.stringify(row.batchKey));
-if (row.reviewCount !== 2) throw new Error('expected both reviews counted, got ' + JSON.stringify(row.reviewCount));
+if (row.reviewCount !== 3) throw new Error('expected every review counted, got ' + JSON.stringify(row.reviewCount));
+if (row.reviewVerdict !== 'Approved') throw new Error('expected verdict from the newest review overall, got ' + JSON.stringify(row.reviewVerdict));
+if (row.reviewPendingPublication !== false) throw new Error('expected pending publication from the newest review overall, got ' + JSON.stringify(row.reviewPendingPublication));
 if (!isRunAbortable(row, new Set())) throw new Error('expected live visible row to keep Abort');
 console.log('PASS');
 `

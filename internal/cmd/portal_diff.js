@@ -526,7 +526,8 @@
   // parent that aggregateReviewChildren stamps with review metadata:
   //
   //   1. Active parents beat terminal parents.
-  //   2. Among actives, the latest startedAt wins.
+  //   2. Among actives, the latest startedAt wins (an exact tie keeps the
+  //      earlier candidate, as the server rule does).
   //   3. Among terminals, the latest finishedAt wins, then the latest
   //      startedAt, then the greater runId. A newer terminal run therefore
   //      wins over an older one that carries stale review metadata (#1825).
