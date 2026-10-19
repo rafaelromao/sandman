@@ -60,6 +60,7 @@ func NewInitCmd() *cobra.Command {
 			parallel, _ := cmd.Flags().GetInt("parallel")
 			parallelReviews, _ := cmd.Flags().GetInt("parallel-reviews")
 			reviewCommand, _ := cmd.Flags().GetString("review-command")
+			caCerts, _ := cmd.Flags().GetStringArray("ca-cert")
 
 			retriesOverride, err := resolveInitInt(cmd, "retries")
 			if err != nil {
@@ -102,6 +103,7 @@ func NewInitCmd() *cobra.Command {
 				Retries:          retriesOverride,
 				RunIdleTimeout:   runIdleTimeoutOverride,
 				ReviewTimeout:    reviewTimeoutOverride,
+				CACerts:          caCerts,
 				Writer:           cmd.OutOrStdout(),
 				DiagnosticWriter: diagnosticWriter,
 			}, prompter); err != nil {
@@ -133,6 +135,7 @@ func NewInitCmd() *cobra.Command {
 	cmd.Flags().String("review-command", "", "Review command to store in config and install into shared skills")
 	cmd.Flags().Int("retries", -1, fmt.Sprintf("Persist `retries` in scaffolded config (-1 = use built-in default of %d)", config.DefaultRetries))
 	cmd.Flags().Int("run-idle-timeout", -1, fmt.Sprintf("Persist `run_idle_timeout` in scaffolded config (-1 = use built-in default of %d)", config.DefaultRunIdleTimeout))
+	cmd.Flags().StringArray("ca-cert", nil, "Trust a CA certificate in the sandbox image: a PEM file path, \"auto\" to capture a TLS-inspection proxy's root from this host, or \"none\" to remove trusted certificates (repeatable)")
 	cmd.Flags().Int("review-timeout", 0, fmt.Sprintf("Persist `review_timeout` in scaffolded config (seconds; default %d, minimum %d; 0 is invalid)", config.DefaultReviewTimeout, config.MinReviewTimeout))
 
 	return cmd

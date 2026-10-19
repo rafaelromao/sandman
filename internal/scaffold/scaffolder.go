@@ -88,17 +88,21 @@ func DefaultNodeLTSVersion() string {
 
 // Options configures the scaffolding behavior.
 type Options struct {
-	BuildTools       string // --build-tools override
-	ToolVersion      string // --tool-version override
-	Agent            string // --agent override
-	Model            string // --model override
-	Variant          string // --variant override
-	Parallel         int    // --parallel override (-1 = use config default)
-	ParallelReviews  int    // --parallel-reviews override (-1 = use config default)
-	ReviewCommand    string // --review-command override
-	Retries          *int   // --retries override; nil = use config.DefaultRetries
-	RunIdleTimeout   *int   // --run-idle-timeout override; nil = use config.DefaultRunIdleTimeout
-	ReviewTimeout    *int   // --review-timeout override; nil = use config.DefaultReviewTimeout
+	BuildTools      string // --build-tools override
+	ToolVersion     string // --tool-version override
+	Agent           string // --agent override
+	Model           string // --model override
+	Variant         string // --variant override
+	Parallel        int    // --parallel override (-1 = use config default)
+	ParallelReviews int    // --parallel-reviews override (-1 = use config default)
+	ReviewCommand   string // --review-command override
+	Retries         *int   // --retries override; nil = use config.DefaultRetries
+	RunIdleTimeout  *int   // --run-idle-timeout override; nil = use config.DefaultRunIdleTimeout
+	ReviewTimeout   *int   // --review-timeout override; nil = use config.DefaultReviewTimeout
+	// CACerts holds the --ca-cert values: PEM paths, CACertAuto, or
+	// CACertNone. Empty keeps the trusted certificates already in
+	// .sandman/certs/.
+	CACerts          []string
 	Writer           io.Writer
 	DiagnosticWriter io.Writer
 }
@@ -485,6 +489,9 @@ type Scaffolder struct {
 	Gitignore GitignoreRuleWriter
 	GitOps    GitOps
 	HooksDir  string
+	// TLSTrust is the host trust seam for `--ca-cert auto`; the zero value
+	// probes the real download hosts with the host's trust store.
+	TLSTrust TLSTrust
 }
 
 // resolveGitignore returns the configured GitignoreRuleWriter, falling
@@ -552,8 +559,20 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return fmt.Errorf("stat .sandman: %w", err)
 	}
 
+	// Resolve trusted CA certificates before the first write so invalid
+	// input leaves an existing scaffold untouched.
+	caCerts, err := s.resolveCACerts(sandmanDir, opts.CACerts)
+	if err != nil {
+		return err
+	}
+
 	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
 		return fmt.Errorf("create .sandman: %w", err)
+	}
+	if caCerts.replace {
+		if err := writeCACertDir(caCertsDir(sandmanDir), caCerts.certs); err != nil {
+			return err
+		}
 	}
 
 	defaultAgent, err := s.resolveDefaultAgent(opts, preserved)
@@ -684,7 +703,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	}
 
 	agentVersion := resolveAgentVersion(defaultAgent)
-	dockerfile := s.renderBuildToolsDockerfile(preset, defaultAgent, agentVersion, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion, rubyVersion, rustVersion, javaVersion)
+	dockerfile := s.renderBuildToolsDockerfile(preset, defaultAgent, agentVersion, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion, rubyVersion, rustVersion, javaVersion, caCertFingerprints(caCerts.certs))
 	dockerfilePath := layout.DockerfilePath()
 	if err := atomicfs.WriteAtomic(dockerfilePath, []byte(dockerfile), 0644); err != nil {
 		return fmt.Errorf("write Dockerfile: %w", err)
@@ -721,6 +740,9 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		".sandman/reviews/review-prompt.md",
 		".sandman/reviews/quality-rules.md",
 	}
+	if len(caCerts.certs) > 0 {
+		scaffoldedFiles = append(scaffoldedFiles, ".sandman/certs/")
+	}
 	summary := s.formatInitSummary(
 		preset.Name,
 		defaultAgent,
@@ -741,7 +763,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	if w == nil {
 		w = io.Discard
 	}
-	fmt.Fprint(w, configUpdate+summary)
+	fmt.Fprint(w, caCerts.report+configUpdate+summary)
 
 	return nil
 }
@@ -2072,7 +2094,7 @@ func resolveAgentVersion(agent string) string {
 	return DefaultBuiltInAgentVersion(agent)
 }
 
-func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, defaultAgent, agentVersion, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion, rubyVersion, rustVersion, javaVersion string) string {
+func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, defaultAgent, agentVersion, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion, rubyVersion, rustVersion, javaVersion string, caFingerprints []string) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "# sandman build-tools: %s\n", preset.Name)
 	fmt.Fprintf(&out, "# sandman default-agent: %s\n", defaultAgent)
@@ -2105,10 +2127,12 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	fmt.Fprintf(&out, "# sandman mise-version: %s\n", preset.MiseVersion)
 	fmt.Fprintf(&out, "# sandman rtk-version: %s\n", DefaultRTKVersion)
 	fmt.Fprintf(&out, "%s\n", renderAnalyzerMetadataLine(preset.Name, goVersion, nodeVersion, dotnetVersion, rustVersion))
+	out.WriteString(renderCACertMetadataLine(caFingerprints))
 	fmt.Fprintf(&out, "FROM %s\n", preset.BaseImage)
 	aptPackages := append([]string{}, preset.SharedPackages...)
 	aptPackages = append(aptPackages, preset.ExtraPackages...)
 	fmt.Fprintf(&out, "RUN apt-get update && apt-get install -y --no-install-recommends %s && rm -rf /var/lib/apt/lists/*\n", strings.Join(aptPackages, " "))
+	out.WriteString(renderCACertInstall(caFingerprints))
 	// Download to a file so a failed download fails this step: Debian's sh has
 	// no pipefail, and `curl | sh` caches an empty layer that only surfaces as
 	// `mise: not found` at the first step using mise.
@@ -2610,7 +2634,8 @@ func ValidateDockerfileMetadata(repoRoot, expectedBuildTools, expectedDefaultAge
 		expectedBuildTools = defaultBuildToolsPreset
 	}
 	expectedDefaultAgent = strings.TrimSpace(expectedDefaultAgent)
-	dockerfilePath := paths.NewLayout(&config.Config{}, repoRoot).DockerfilePath()
+	layout := paths.NewLayout(&config.Config{}, repoRoot)
+	dockerfilePath := layout.DockerfilePath()
 	meta, found, err := readDockerfileMetadata(dockerfilePath)
 	if err != nil {
 		return err
@@ -2634,7 +2659,7 @@ func ValidateDockerfileMetadata(repoRoot, expectedBuildTools, expectedDefaultAge
 		}
 		return fmt.Errorf("scaffold metadata drift: Dockerfile installed-agents %v does not include agent %q; install it in .sandman/Dockerfile and add it to the \"# sandman installed-agents:\" header", meta.InstalledAgents, agent)
 	}
-	return nil
+	return validateCACertMetadata(layout.SandmanDir, meta.CACerts)
 }
 
 type dockerfileMetadata struct {
@@ -2653,6 +2678,7 @@ type dockerfileMetadata struct {
 	MiseVersion      string
 	RtkVersion       string
 	Analyzers        string
+	CACerts          []string
 }
 
 func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
@@ -2731,6 +2757,13 @@ func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
 			meta.RtkVersion = strings.TrimSpace(value)
 		case "analyzers":
 			meta.Analyzers = strings.TrimSpace(value)
+		case "ca-certs":
+			meta.CACerts = nil
+			for _, part := range strings.Split(value, ",") {
+				if trimmed := strings.TrimSpace(part); trimmed != "" {
+					meta.CACerts = append(meta.CACerts, trimmed)
+				}
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {

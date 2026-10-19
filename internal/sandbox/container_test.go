@@ -889,6 +889,42 @@ func TestContainerRuntime_BuildImage_BuildFailure(t *testing.T) {
 	}
 }
 
+func TestContainerRuntime_BuildImage_TLSFailureSuggestsCACert(t *testing.T) {
+	cases := map[string]struct {
+		output   string
+		wantHint bool
+	}{
+		"curl 60":           {output: "curl: (60) SSL certificate problem: unable to get local issuer certificate", wantHint: true},
+		"node self-signed":  {output: "npm error code SELF_SIGNED_CERT_IN_CHAIN", wantHint: true},
+		"python verify":     {output: "ssl.SSLCertVerificationError: [SSL: CERTIFICATE_VERIFY_FAILED]", wantHint: true},
+		"unrelated failure": {output: "E: Unable to locate package nonexistent", wantHint: false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(dir, ".sandman"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, ".sandman", "Dockerfile"), []byte("FROM alpine\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			rt := NewContainerRuntime("docker")
+			rt.execFn = func(name string, arg ...string) *exec.Cmd {
+				return exec.Command("sh", "-c", "echo \"$0\"; exit 1", tc.output)
+			}
+
+			_, err := rt.BuildImage(t.Context(), dir)
+			if err == nil {
+				t.Fatal("expected build failure")
+			}
+			hasHint := strings.Contains(err.Error(), "sandman init --ca-cert auto")
+			if hasHint != tc.wantHint {
+				t.Fatalf("hint present = %v, want %v:\n%v", hasHint, tc.wantHint, err)
+			}
+		})
+	}
+}
+
 func TestToContainerPath_MapsDirectory(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {
