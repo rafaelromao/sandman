@@ -137,6 +137,8 @@ var sharedPackages = []string{
 	"ca-certificates",
 	"curl",
 	"file",
+	"fontconfig",
+	"fonts-liberation",
 	"gh",
 	"git",
 	"jq",
