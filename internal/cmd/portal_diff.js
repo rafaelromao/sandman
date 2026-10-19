@@ -518,36 +518,45 @@
   }
 
   // pickCanonicalParent chooses the single impl row that "owns" an issue
-  // group in the subject selector. Multiple impl rows for the same
-  // issueNumber appear when a prior run was abandoned or succeeded and a
-  // later run was launched; the selector needs one canonical row to act
-  // as the parent's identity, plus the sibling reviews.
+  // group. Multiple impl rows for the same issueNumber appear when a prior
+  // run was abandoned or succeeded and a later run was launched. The table
+  // (visibleRunForIssueGroup in portal.html) and the subject selector both
+  // use this helper so they agree on one canonical row (issue #2799), and
+  // the rule mirrors the server's canonicalParentIsBetter, which picks the
+  // parent that aggregateReviewChildren stamps with review metadata:
   //
-  // Pick logic mirrors the table-visibility helper pickCanonicalParent
-  // in portal.html (used by visibleRunForIssueGroup), so the dropdown's
-  // canonical option agrees with the visible table row:
+  //   1. Active parents beat terminal parents.
+  //   2. Among actives, the latest startedAt wins.
+  //   3. Among terminals, the latest finishedAt wins, then the latest
+  //      startedAt, then the greater runId. A newer terminal run therefore
+  //      wins over an older one that carries stale review metadata (#1825).
   //
-  //   1. The currently-running parent (kind === 'active'), if any.
-  //      Within actives, the latest by startedAt wins. The
-  //      startedAt-desc filter is a tiebreaker — reviews and prior
-  //      impl rows can never surface because they live in the
-  //      reviews / parents splits separately.
-  //   2. Otherwise, parents[0] — the caller's order is authoritative.
-  //      visibleRunsForTable sorts runs by startedAt desc, so
-  //      parents[0] is the most-recent terminal impl row. The
-  //      #1825 contract forbids preferring a parent that carries
-  //      stale review metadata over a newer parent that does not —
-  //      the table-visibility helper enforces this by trusting
-  //      caller order, and so do we.
+  // Times compare as parsed instants, never as strings, and the input order
+  // is not trusted. With no parents, a non-review fallback run owns itself.
+  function canonicalTime(value) {
+    const ts = Date.parse(value || '');
+    return Number.isFinite(ts) ? ts : 0;
+  }
+
+  function canonicalParentIsBetter(candidate, incumbent) {
+    const cActive = candidate.kind === 'active';
+    const iActive = incumbent.kind === 'active';
+    if (cActive !== iActive) return cActive;
+    if (cActive) return canonicalTime(candidate.startedAt) > canonicalTime(incumbent.startedAt);
+    const cFinished = canonicalTime(candidate.finishedAt);
+    const iFinished = canonicalTime(incumbent.finishedAt);
+    if (cFinished !== iFinished) return cFinished > iFinished;
+    const cStarted = canonicalTime(candidate.startedAt);
+    const iStarted = canonicalTime(incumbent.startedAt);
+    if (cStarted !== iStarted) return cStarted > iStarted;
+    return String(candidate.runId || '') > String(incumbent.runId || '');
+  }
+
   function pickCanonicalParent(parents, run) {
     if (!parents || !parents.length) {
       return run && !run.review ? run : null;
     }
-    const liveActive = parents.filter((candidate) => candidate.kind === 'active');
-    if (liveActive.length) {
-      return liveActive.reduce((best, candidate) => (candidate.startedAt > best.startedAt ? candidate : best));
-    }
-    return parents[0];
+    return parents.reduce((best, candidate) => (canonicalParentIsBetter(candidate, best) ? candidate : best));
   }
 
   function previousRunIDForContinuation(run) {
@@ -1988,6 +1997,7 @@
     updateDetailPanelEvents,
     subjectRunValue,
     subjectRunsFor,
+    pickCanonicalParent,
     highlightJSON,
     highlightTerminalLog,
     cheapEventsFingerprint,

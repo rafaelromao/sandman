@@ -4045,6 +4045,9 @@ sandbox.fetch = function () { return Promise.reject(new Error('fetch unavailable
 sandbox.window.SandmanPortalState = null;
 sandbox.window.SandmanPortalScroll = null;
 sandbox.window.SandmanPortalDiff = null;
+// Load the production diff module so portal.html helpers that delegate to
+// SandmanPortalDiff (e.g. the shared canonical-parent rule) run for real.
+vm.runInNewContext(fs.readFileSync(require('path').join(require('path').dirname(htmlPath), 'portal_diff.js'), 'utf8'), sandbox, { filename: 'portal_diff.js' });
 sandbox.setInterval = function () { return 0; };
 sandbox.clearInterval = function () {};
 sandbox.setTimeout = function () { return 0; };
@@ -4339,6 +4342,113 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+// TestPortalRunsView_VisibleRunForIssueGroup_OrphanReviewPreservesSourceMetadata
+// is the regression test for issue #2799: the orphan review-only visible row
+// must keep the source row's validated metadata (batch, waiting, execution
+// clock, staleness) and override only grouping-derived fields. A field
+// whitelist used to drop batchKey, so an Abort-eligible source lost its
+// Abort control after grouping.
+func TestPortalRunsView_VisibleRunForIssueGroup_OrphanReviewPreservesSourceMetadata(t *testing.T) {
+	js := `const source = {
+  key: 'review-2799', runId: 'review-2799', kind: 'active', status: 'reviewing', review: true,
+  issueLabel: 'PR2810', issueNumber: 2799, prNumber: 2810, batchKey: 'batch-2799',
+  issueTitle: 'Preserve review grouping metadata', startedAt: '2026-10-19T10:00:00Z',
+  executionSince: '2026-10-19T10:05:00Z', activeDurationSeconds: 300, lastOutputAt: '2026-10-19T10:06:00Z',
+  duration: '5m',
+};
+const snapshot = JSON.stringify(source);
+const row = visibleRunForIssueGroup(2799, [source]);
+if (!row) throw new Error('expected visible orphan review row');
+if (row.batchKey !== 'batch-2799') throw new Error('expected source batchKey to survive grouping, got ' + JSON.stringify(row.batchKey));
+if (row.issueTitle !== 'Preserve review grouping metadata') throw new Error('expected source issueTitle, got ' + JSON.stringify(row.issueTitle));
+if (row.executionSince !== '2026-10-19T10:05:00Z') throw new Error('expected source executionSince, got ' + JSON.stringify(row.executionSince));
+if (row.activeDurationSeconds !== 300) throw new Error('expected source activeDurationSeconds, got ' + JSON.stringify(row.activeDurationSeconds));
+if (row.lastOutputAt !== '2026-10-19T10:06:00Z') throw new Error('expected source lastOutputAt, got ' + JSON.stringify(row.lastOutputAt));
+if (row.issueLabel !== 'PR 2810 (#2799)') throw new Error('expected derived review-only label, got ' + JSON.stringify(row.issueLabel));
+if (row.review !== true || row.groupedReview !== false) throw new Error('expected derived review flags, got ' + JSON.stringify([row.review, row.groupedReview]));
+if (row.reviewCount !== 1 || row.reviewLive !== true) throw new Error('expected derived review summary, got ' + JSON.stringify([row.reviewCount, row.reviewLive]));
+if (!isRunAbortable(row, new Set())) throw new Error('expected Abort-eligible source to stay Abort-eligible after grouping');
+if (JSON.stringify(source) !== snapshot) throw new Error('expected source row not to be mutated');
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestPortalRunsView_VisibleRunForIssueGroup_LiveOrphanReviewUsesLiveSource
+// pins issue #2799's live-group rule: when an older sibling review is still
+// reviewing but a newer review already finished, the visible row must be the
+// live review so its key, clock, and Abort target match the reviewing
+// status. The verdict ordering still uses the newest review overall.
+func TestPortalRunsView_VisibleRunForIssueGroup_LiveOrphanReviewUsesLiveSource(t *testing.T) {
+	js := `const live = {
+  key: 'review-live', runId: 'review-live', kind: 'active', status: 'reviewing', review: true,
+  issueNumber: 2799, prNumber: 2810, batchKey: 'batch-live', startedAt: '2026-10-19T10:00:00Z',
+  executionSince: '2026-10-19T10:00:00Z', activeDurationSeconds: 0,
+};
+const finished = {
+  key: 'review-done', runId: 'review-done', kind: 'completed', status: 'success', review: true,
+  issueNumber: 2799, prNumber: 2810, batchKey: 'batch-done', startedAt: '2026-10-19T10:30:00Z',
+  finishedAt: '2026-10-19T10:40:00Z', activeDurationSeconds: 600,
+};
+const row = visibleRunForIssueGroup(2799, [finished, live]);
+if (!row) throw new Error('expected visible orphan review row');
+if (row.key !== 'review-live') throw new Error('expected live review to own the visible row, got ' + JSON.stringify(row.key));
+if (row.status !== 'reviewing' || row.kind !== 'active') throw new Error('expected live status/kind, got ' + JSON.stringify([row.status, row.kind]));
+if (row.finishedAt) throw new Error('expected no finishedAt on a live visible row, got ' + JSON.stringify(row.finishedAt));
+if (row.batchKey !== 'batch-live') throw new Error('expected live review batchKey, got ' + JSON.stringify(row.batchKey));
+if (row.reviewCount !== 2) throw new Error('expected both reviews counted, got ' + JSON.stringify(row.reviewCount));
+if (!isRunAbortable(row, new Set())) throw new Error('expected live visible row to keep Abort');
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestPortalRunsView_CanonicalParent_TableAndSelectorAgree pins issue #2799's
+// convergence rule: the table's visible row and the subject selector's
+// canonical option are the same implementation parent regardless of API
+// order, using the server's canonicalParentIsBetter rule (active beats
+// terminal; latest start among actives; latest finish, then start, then run
+// ID among terminals). Times compare as instants, not strings.
+func TestPortalRunsView_CanonicalParent_TableAndSelectorAgree(t *testing.T) {
+	js := `const cases = [
+  {
+    name: 'terminal parents order by finishedAt, not input order',
+    want: 'impl-new',
+    runs: [
+      { key: 'impl-old', runId: 'impl-old', kind: 'completed', status: 'aborted', issueNumber: 9, startedAt: '2026-10-19T09:00:00Z', finishedAt: '2026-10-19T09:30:00Z', reviewCount: 1 },
+      { key: 'impl-new', runId: 'impl-new', kind: 'completed', status: 'success', issueNumber: 9, startedAt: '2026-10-19T10:00:00Z', finishedAt: '2026-10-19T10:30:00Z' },
+    ],
+  },
+  {
+    name: 'terminal ties break on runId',
+    want: 'impl-b',
+    runs: [
+      { key: 'impl-a', runId: 'impl-a', kind: 'completed', status: 'failure', issueNumber: 9, startedAt: '2026-10-19T10:00:00Z', finishedAt: '2026-10-19T10:30:00Z' },
+      { key: 'impl-b', runId: 'impl-b', kind: 'completed', status: 'failure', issueNumber: 9, startedAt: '2026-10-19T10:00:00Z', finishedAt: '2026-10-19T10:30:00Z' },
+    ],
+  },
+  {
+    name: 'active parents compare startedAt as instants',
+    want: 'impl-later',
+    runs: [
+      { key: 'impl-later', runId: 'impl-later', kind: 'active', status: 'running', issueNumber: 9, startedAt: '2026-10-19T11:00:00+02:00' },
+      { key: 'impl-earlier', runId: 'impl-earlier', kind: 'active', status: 'running', issueNumber: 9, startedAt: '2026-10-19T08:30:00Z' },
+    ],
+  },
+];
+for (const tc of cases) {
+  const review = { key: 'review-9', runId: 'review-9', kind: 'completed', status: 'success', review: true, issueNumber: 9, startedAt: '2026-10-19T12:00:00Z' };
+  const runs = tc.runs.concat([review]);
+  const visible = visibleRunForIssueGroup(9, runs);
+  if (!visible || visible.key !== tc.want) throw new Error(tc.name + ': table chose ' + JSON.stringify(visible && visible.key) + ', want ' + tc.want);
+  const related = window.SandmanPortalDiff.subjectRunsFor(visible, { runs });
+  if (!related.length || related[0].key !== tc.want) throw new Error(tc.name + ': selector chose ' + JSON.stringify(related[0] && related[0].key) + ', want ' + tc.want);
+}
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
 func TestPortalRunsView_VisibleRunForIssueGroup_TerminalReviewWinsOverActiveKind(t *testing.T) {
 	js := `const review = { key: '260622193226-a0c19-1227', kind: 'active', status: 'success', review: true, issueLabel: '#1223', runId: '260622193226-a0c19-1227', issueNumber: 1223, prNumber: 5 };
 const stub = visibleRunForIssueGroup(1223, [review]);
@@ -4423,16 +4533,12 @@ console.log('PASS');
 // review metadata, newer successful without), the visible row must be
 // the newer successful run — never the older aborted run. The backend
 // projection no longer stamps review metadata across batches, and the
-// frontend's pickCanonicalParent must pick the first parent in the
-// input order rather than preferring parents that happen to carry
-// reviewCount/reviewVerdict from a previous batch. The caller
-// (visibleRunsForTable) sorts runs by startedAt desc, so the first
-// parent in this test fixture is the newer one by FinishedAt.
+// shared pickCanonicalParent must pick the latest terminal parent by
+// FinishedAt rather than preferring parents that happen to carry
+// reviewCount/reviewVerdict from a previous batch.
 func TestPortalRunsView_VisibleRunForIssueGroup_NewerSuccessWinsOverOlderAbortedWithReviews(t *testing.T) {
-	js := `// visibleRunsForTable sorts runs by startedAt desc, so the newest
-// parent sits at index 0 when visibleRunForIssueGroup is invoked. The
-// bug was that pickCanonicalParent reached past parents[0] to find
-// the older impl row that carried reviewCount/reviewVerdict.
+	js := `// The bug was that pickCanonicalParent preferred the older impl row
+// that carried reviewCount/reviewVerdict.
 const newerSuccess = {
   key: 'impl-9744', kind: 'completed', status: 'success', review: false,
   issueLabel: '#1793', runId: 'impl-9744', issueNumber: 1793,
@@ -4598,13 +4704,11 @@ console.log('PASS');
 // reviews. The earlier parent pick required `parents.length === 1` to
 // fall back to the only parent; with two parents the dropdown lost
 // the parent entirely and listed only the reviews, breaking the
-// subject switcher. The canonical pick now mirrors the table-visibility
-// helper pickCanonicalParent in portal.html (used by
-// visibleRunForIssueGroup): prefer an active (currently-running)
-// parent, otherwise trust the caller's order. visibleRunsForTable
-// passes rows in startedAt desc, so parents[0] is the most-recent
-// terminal impl — never the olderAborted-with-reviewMetadata row,
-// which is exactly the #1825 cross-batch guard's contract.
+// subject switcher. The table and the selector share pickCanonicalParent
+// (portal_diff.js): prefer an active (currently-running) parent,
+// otherwise the most-recent terminal impl — never the
+// olderAborted-with-reviewMetadata row, which is exactly the #1825
+// cross-batch guard's contract.
 func TestPortalDiff_SubjectRunsFor_MultipleParentsPicksCanonical(t *testing.T) {
 	js := `const opts = { helpers, runs: [
   { key: '260706140827-1058-1855-PR1875', runId: '260706140827-1058-1855-PR1875', kind: 'completed', status: 'success', review: true, issueNumber: 1855, issueLabel: 'PR1875', prNumber: 1875, startedAt: '2026-07-06T14:08:32Z' },
