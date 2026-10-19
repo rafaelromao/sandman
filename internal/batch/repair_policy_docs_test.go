@@ -26,7 +26,7 @@ func TestHealthRepairDocsMatchRepairPolicy(t *testing.T) {
 			name:    "reviews health repair",
 			doc:     "reviews.md",
 			section: "## Health repair",
-			want:    []string{scopeFlag, "custom command", "authentication", "permission_mode"},
+			want:    []string{scopeFlag, "custom command", "authentication", "permission_mode", "permission bypass", "unresolved"},
 		},
 		{
 			name: "agent compatibility",

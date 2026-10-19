@@ -173,8 +173,8 @@ The repair agent differs from the reviewer:
     is not narrowed to `.sandman/`, and Sandman cannot detect refused actions.
   - Custom command: an agent whose `command` you replaced is launched as
     written, with no edit scope, permission mode, or bypass added. The command
-    must carry its own permission rules; without them the repair can only
-    diagnose, and Sandman cannot detect refused actions.
+    must carry its own permission rules; a permission-gated command without
+    matching rules can only diagnose, and Sandman cannot detect refused actions.
 
 Each failure episode allows three repairs, with a cooldown that grows after each.
 A repair whose actions were refused is recorded as `unresolved: repair actions
