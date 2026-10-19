@@ -84,7 +84,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--retries` | config `retries` (3) | Number of times to retry a failed run; omit to use `retries` from `.sandman/config.yaml` (default 3) |
 | `--override` | `false` | Replace worktree and branch for a new attempt while retaining prior AgentRun events (append-only), batch artifacts, and logs; force-checkout worktree to expected branch on mismatch or detached HEAD |
 | `--continue` | `false` | Continue the latest AgentRun for selected issues by reusing the preserved worktree (branch, base branch, task file, prior run id); the agent starts a fresh conversation by default |
-| `--reuse-session` | `false` | Only with `--continue`: explicitly reuse each continued row's prior conversation. OpenCode selects the exact prior session, falling back once to OpenCode `--continue` if it is unavailable; Claude Code resumes the worktree's most recent conversation with `--continue` |
+| `--reuse-session` | `false` | Only with `--continue`: explicitly reuse each continued row's prior conversation. OpenCode selects the exact prior session, falling back once to OpenCode `--continue` if it is unavailable; Claude Code resumes the exact recorded session with `--resume`, starting fresh if it is unavailable |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for agent runs |
 | `--include-dependencies` | `false` | Auto-expand batch with transitive blockers |
 | `--label` | — | Select issues by label |

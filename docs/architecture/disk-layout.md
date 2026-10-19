@@ -27,7 +27,7 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 │       └── runs/<runID>/
 │           ├── run.json                # row manifest (atomic-rename)
 │           ├── run.log                 # O_APPEND prefixed stdout/stderr
-│           ├── session.json             # OpenCode session identity (atomic-rename)
+│           ├── session.json             # agent session identity, OpenCode or Claude Code (atomic-rename)
 │           ├── run.sock                # per-row control socket
 │           ├── review-state.json       # review dedup state (atomic-rename)
 │           └── config/                 # per-row container config snapshot
@@ -134,7 +134,7 @@ event batch identity have terminal projections. See [Architecture Overview](over
 | `batches/<batchID>/runs/<runID>/` | runtime | orchestrator (per-row execution path) | orchestrator, portal | `sandman archive run` / `sandman clean` (retained after success) | per AgentRun |
 | `batches/<batchID>/runs/<runID>/run.json` | runtime, atomic-rename | orchestrator (run start, status change, finish) | orchestrator, portal, attach client | `sandman archive` / `sandman clean` | per AgentRun |
 | `batches/<batchID>/runs/<runID>/run.log` | runtime, O_APPEND | `AgentRun.Execute` (prefixed stdout/stderr) | `readPortalTextFile`, attach client | never (run log is canonical per-run artefact) | per AgentRun |
-| `batches/<batchID>/runs/<runID>/session.json` | runtime, atomic-rename | OpenCode execution boundary | runtime-owned re-entry and explicit session reuse | never (retained with Run) | per OpenCode AgentRun (the `claude` preset writes none; it resumes with Claude Code's `--continue`) |
+| `batches/<batchID>/runs/<runID>/session.json` | runtime, atomic-rename | agent execution boundary, as soon as the session is observed and again after the attempt | runtime-owned re-entry and explicit session reuse (own protocol only), Portal Run details (`agentSessionId`) | never (retained with Run) | per OpenCode or `claude` AgentRun (`opencode-session/v1` or `claude-session/v1`) |
 | `batches/runs/<runID>/session.json` | legacy compatibility evidence | prior runtime versions | explicit reuse lookup when the canonical batch path is absent | never | legacy Run only |
 | `batches/<batchID>/runs/<runID>/run.sock` | runtime | command server on per-row start | external caller (`{"action":"abort","issue":N}`) | command server on per-row completion | per AgentRun |
 | `batches/<batchID>/runs/<runID>/review-state.json` | runtime, atomic-rename | review state store (dedup, claim lock) | review state store | `sandman archive` / `sandman clean` | per review AgentRun |

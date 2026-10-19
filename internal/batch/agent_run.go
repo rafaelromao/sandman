@@ -303,6 +303,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		stderr = io.MultiWriter(append([]io.Writer{stderr}, observers...)...)
 	}
 	parsedStdout, parsedStderr := strategy.NewOutputParsers(r.warningWriter())
+	persistSessionsAsObserved(strategy, r, parsedStdout, parsedStderr)
 	for _, parser := range []outputParser{parsedStdout, parsedStderr} {
 		if guard, ok := parser.(permissionModeGuard); ok {
 			guard.setPermissionModeStop(func() {
@@ -353,6 +354,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 			if err == nil {
 				fallbackUsed = true
 				fallbackOut, fallbackErr := strategy.NewOutputParsers(r.warningWriter())
+				persistSessionsAsObserved(strategy, r, fallbackOut, fallbackErr)
 				execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, fallbackOut, fallbackErr)
 				r.permissionDenials = parsersPermissionDenials(parsedStdout, parsedStderr, fallbackOut, fallbackErr)
 				parsedStdout, parsedStderr = fallbackOut, fallbackErr
@@ -378,24 +380,24 @@ func (r *AgentRun) warningWriter() io.Writer {
 
 func (r *AgentRun) warnSession(err error) {
 	if err != nil && r.warningWriter() != nil {
-		fmt.Fprintf(r.warningWriter(), "warning: OpenCode session metadata: %v\n", err)
+		fmt.Fprintf(r.warningWriter(), "warning: agent session metadata: %v\n", err)
 	}
 }
 
-func (r *AgentRun) persistSession(sessionID string) {
+func (r *AgentRun) persistSession(kind agentSessionKind, sessionID string) {
 	if strings.TrimSpace(sessionID) == "" {
 		return
 	}
 	path := ""
 	if r.runFolder != "" {
-		path = filepath.Join(r.runFolder, "session.json")
+		path = filepath.Join(r.runFolder, agentSessionFile)
 	} else if r.batchID != "" && r.runID != "" {
 		path = r.layout.RunSessionPath(r.batchID, r.runID)
 	} else {
 		r.warnSession(errors.New("current Run metadata path is unavailable"))
 		return
 	}
-	if err := writeOpenCodeSession(path, sessionID); err != nil {
+	if err := writeAgentSession(path, kind, sessionID); err != nil {
 		r.warnSession(err)
 	}
 }

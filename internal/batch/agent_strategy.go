@@ -259,7 +259,7 @@ func (s opencodeStrategy) RetryAfterMissingSession(run *AgentRun, priorSession s
 }
 
 func (opencodeStrategy) PersistSession(run *AgentRun, stdout, stderr outputParser) {
-	run.persistSession(firstSessionID(stdout, stderr))
+	run.persistSession(opencodeSessionKind, firstSessionID(stdout, stderr))
 }
 
 func (s opencodeStrategy) NewOutputParsers(warnings io.Writer) (outputParser, outputParser) {
@@ -277,6 +277,24 @@ func (opencodeStrategy) ContextRolloverDetector(literals []string, onTrigger fun
 func (opencodeStrategy) UsageLimitRule() func(string) bool { return opencodeUsageLimitLine }
 
 func (s opencodeStrategy) AwaitsUsageLimit() bool { return s.builtInCommand }
+
+// sessionObserver is implemented by parsers that report the first session
+// they observe while the agent is still running. Parsers of one invocation
+// share their session state, so the callback runs once per invocation.
+type sessionObserver interface {
+	setSessionObserved(onSession func())
+}
+
+// persistSessionsAsObserved makes the strategy record the invocation's
+// session as soon as its parsers observe it, so a live Run's details already
+// name the session to resume. The post-exit PersistSession still runs.
+func persistSessionsAsObserved(strategy agentStrategy, run *AgentRun, stdout, stderr outputParser) {
+	for _, parser := range []outputParser{stdout, stderr} {
+		if observer, ok := parser.(sessionObserver); ok {
+			observer.setSessionObserved(func() { strategy.PersistSession(run, stdout, stderr) })
+		}
+	}
+}
 
 func firstSessionID(outputs ...outputParser) string {
 	for _, output := range outputs {

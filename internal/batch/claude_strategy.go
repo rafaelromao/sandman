@@ -2,15 +2,17 @@ package batch
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
+	"regexp"
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/shellenv"
 )
 
 // claudeStrategy runs the unmodified Claude Code CLI in print mode
-// (`claude -p --output-format stream-json --verbose`). It reuses sessions
-// through Claude Code's working-directory-scoped --continue, relies on Claude
+// (`claude -p --output-format stream-json --verbose`). It reuses the exact
+// session recorded in session.json through --resume, relies on Claude
 // Code's automatic compaction instead of context rollover, renders the
 // stream-json records as readable lines, and recognises subscription usage
 // limits on the final result record.
@@ -67,19 +69,52 @@ func (claudeStrategy) LaunchEnv(env map[string]string, _, _ string) map[string]s
 	return env
 }
 
-// PrepareLaunch resumes with `claude -p --continue`, which reopens the most
-// recent conversation in the working directory, print-mode sessions
-// included. Each row owns one worktree, so the worktree identifies the
-// conversation: no session ID is parsed and no session.json is written.
+// PrepareLaunch selects the exact session recorded in the prior Run's
+// session.json, rendered as --resume. Claude Code's working-directory-scoped
+// --continue is never used: every container worktree lives under the same
+// /workspace path, and the host transcript directory is shared, so the most
+// recent conversation in a directory may belong to another repository. With
+// no valid recorded session the launch starts a fresh session.
 func (s claudeStrategy) PrepareLaunch(run *AgentRun) (string, bool) {
-	return "", s.builtInCommand && run.reuseSession
+	if !s.builtInCommand || !run.reuseSession {
+		return "", false
+	}
+	identity, found, err := priorAgentSession(run.layout, run.previousBatchID, run.previousRunID, claudeSessionKind)
+	if found && !claudeSessionIDPattern.MatchString(identity.SessionID) {
+		found, err = false, fmt.Errorf("invalid Claude Code session id %q", identity.SessionID)
+	}
+	if err != nil {
+		run.warnSession(err)
+	}
+	if !found {
+		return "", false
+	}
+	return identity.SessionID, false
 }
 
-func (claudeStrategy) RetryAfterMissingSession(*AgentRun, string, error, outputParser, outputParser) bool {
-	return false
+// claudeSessionIDPattern is the UUID shape of a Claude Code session ID. A
+// recorded value of any other shape is never rendered into the command.
+var claudeSessionIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// RetryAfterMissingSession relaunches once when the recorded session no
+// longer exists. The relaunch renders no session selector, so it starts a
+// fresh session; the Claude preset has no --continue fallback.
+func (s claudeStrategy) RetryAfterMissingSession(run *AgentRun, priorSession string, execErr error, stdout, stderr outputParser) bool {
+	return execErr != nil && s.builtInCommand && run.reuseSession && priorSession != "" && sessionNotFound(stdout, stderr)
 }
 
-func (claudeStrategy) PersistSession(*AgentRun, outputParser, outputParser) {}
+// claudeSessionKind is the Claude Code session identity recorded in a Run's
+// session.json.
+var claudeSessionKind = agentSessionKind{protocol: "claude-session/v1", provider: "claude"}
+
+// PersistSession records the session ID Claude Code reported so the Run's
+// details can name the conversation to resume from the host.
+func (s claudeStrategy) PersistSession(run *AgentRun, stdout, stderr outputParser) {
+	if !s.builtInCommand {
+		return
+	}
+	run.persistSession(claudeSessionKind, firstSessionID(stdout, stderr))
+}
 
 // NewOutputParsers renders the built-in command's stream-json into readable
 // lines. Custom commands keep their own output untouched.

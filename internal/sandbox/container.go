@@ -43,10 +43,13 @@ type StartOptions struct {
 	AgentConfigFiles    []string
 	AgentConfigExcludes []string
 	LiveMounts          []string
-	ConfigMounts        []ConfigMount
-	UserID              string
-	SSH                 bool
-	RemoteScheme        string
+	// LiveMountDirs are the LiveMounts that are directories to create on the
+	// host before mounting when they are missing.
+	LiveMountDirs []string
+	ConfigMounts  []ConfigMount
+	UserID        string
+	SSH           bool
+	RemoteScheme  string
 }
 
 // ContainerRuntime starts and manages containers.

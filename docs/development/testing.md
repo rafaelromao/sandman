@@ -90,8 +90,13 @@ strategy seam existed; regenerate its golden with
 `SANDMAN_AGENT_STRATEGY_UPDATE=1` only for an intended OpenCode behaviour change.
 `TestAgentSelection_NoAgentNameComparisonsOutsideStrategy` fails when a new
 `== "opencode"`-style agent-name comparison appears outside the strategy seam.
+Session identity is agent-neutral in storage: each strategy validates its own
+`session.json` protocol and provider, and the Portal reads any valid record, so
+neither needs an agent-name comparison. The Claude launch tests in
+`claude_strategy_test.go` pin fresh, exact-resume, invalid-identity, and
+missing-session commands, in place of a Claude golden.
 The hermetic `claude` preset path (a fake `claude` binary behind the real
-worktree sandbox, usage-limit await, and `--continue` re-entry) runs with the
+worktree sandbox, usage-limit await, and exact `--resume` re-entry) runs with the
 `batch` E2E gate:
 
 ```bash

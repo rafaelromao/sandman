@@ -2932,6 +2932,13 @@ func buildStartOptions(agentCfg config.Agent) (sandbox.StartOptions, error) {
 			return sandbox.StartOptions{}, err
 		}
 		opts.LiveMounts = append(opts.LiveMounts, expanded...)
+
+		expanded, err = expandPaths(preset.LiveMountDirs, "live mount directory")
+		if err != nil {
+			return sandbox.StartOptions{}, err
+		}
+		opts.LiveMounts = append(opts.LiveMounts, expanded...)
+		opts.LiveMountDirs = append(opts.LiveMountDirs, expanded...)
 	}
 
 	return opts, nil
