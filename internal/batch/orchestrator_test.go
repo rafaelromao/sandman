@@ -6638,6 +6638,113 @@ func TestRunBatch_ReviewRunFolderMatchesLegacyBatchDirFormula(t *testing.T) {
 	}
 }
 
+// TestRunBatch_PromptOnlyBatchDirRunDir pins that a batch-directory RunDir
+// is the home of the run folder, run.json and the run.started batch_id.
+func TestRunBatch_PromptOnlyBatchDirRunDir(t *testing.T) {
+	tests := []struct {
+		name        string
+		ts, shortid string
+		userRunID   string
+		wantBatchID string
+		wantRunID   string
+	}{
+		{
+			name: "generated id",
+			ts:   orchTestRunTS, shortid: orchTestRunShortID,
+			wantBatchID: "260618113825-abcd-prompt",
+			wantRunID:   "260618113825-abcd-prompt",
+		},
+		{
+			name: "user run id",
+			ts:   orchTestRunTS, shortid: orchTestRunShortID,
+			userRunID:   "my-run",
+			wantBatchID: "260618113825-abcd-prompt-my-run",
+			wantRunID:   "260618113825-abcd-prompt-my-run",
+		},
+		{
+			name:        "continue by multi-dash run id without ts and shortid",
+			userRunID:   "a-b-c",
+			wantBatchID: "a-b-c",
+			wantRunID:   "a-b-c",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := testenv.MkdirShort(t, "sm-orch-po-")
+			t.Chdir(dir)
+			initGitRepo(t, dir)
+
+			spyLog := &spyEventLog{}
+			agentRunCh := make(chan *AgentRun, 1)
+			o := NewOrchestrator(&fakeGitHubClient{err: errors.New("fetch should not run")}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+				Agent:       "test-agent",
+				Sandbox:     "worktree",
+				WorktreeDir: ".sandman/worktrees",
+				Git:         config.GitConfig{BaseBranch: "main"},
+				AgentProviders: map[string]config.Agent{
+					"test-agent": {Command: "true"},
+				},
+			}}, spyLog,
+				WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "prompt-only")}}),
+				WithRunnableFactory(&capturingAgentRunFactory{agentRunCh: agentRunCh}),
+			)
+
+			batchRel := filepath.Join(".sandman", "batches", tc.wantBatchID)
+			_, err := o.RunBatch(context.Background(), Request{
+				PromptConfig: prompt.RenderConfig{PromptFlag: "Do the thing."},
+				RunID:        tc.userRunID,
+				BatchTS:      tc.ts,
+				BatchShortID: tc.shortid,
+				RunDir:       batchRel,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			select {
+			case ar := <-agentRunCh:
+				wantSuffix := filepath.ToSlash(filepath.Join(batchRel, "runs", tc.wantRunID))
+				if got := filepath.ToSlash(ar.runFolder); !strings.HasSuffix(got, wantSuffix) {
+					t.Errorf("agentRun.runFolder = %q, want suffix %q", got, wantSuffix)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("timed out waiting for AgentRun to be created")
+			}
+
+			entries, err := os.ReadDir(filepath.Join(dir, ".sandman", "batches"))
+			if err != nil {
+				t.Fatalf("read batches dir: %v", err)
+			}
+			var names []string
+			for _, e := range entries {
+				names = append(names, e.Name())
+			}
+			if len(names) != 1 || names[0] != tc.wantBatchID {
+				t.Errorf("batches dir entries = %v, want exactly [%s] (no sibling batch folder)", names, tc.wantBatchID)
+			}
+			manifest, err := batchindex.ReadManifest(filepath.Join(dir, batchRel, "runs", tc.wantRunID))
+			if err != nil {
+				t.Fatalf("run.json not written under the batch directory: %v", err)
+			}
+			if manifest.BatchID != tc.wantBatchID {
+				t.Errorf("run.json batchId = %q, want %q", manifest.BatchID, tc.wantBatchID)
+			}
+
+			var started []string
+			for _, e := range spyLog.snapshot() {
+				if e.Type != "run.started" {
+					continue
+				}
+				id, _ := e.Payload["batch_id"].(string)
+				started = append(started, id)
+			}
+			if len(started) != 1 || started[0] != tc.wantBatchID {
+				t.Errorf("run.started batch_id = %v, want [%s]", started, tc.wantBatchID)
+			}
+		})
+	}
+}
+
 func TestRunBatch_PromptOnlyReviewRunWithEmptyFocus(t *testing.T) {
 	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
@@ -12551,6 +12658,36 @@ func TestLogAborted_EventLogWriteErrorIsSurfacedOnErrorLog(t *testing.T) {
 	}
 	if !strings.Contains(errBuf.String(), "run.aborted") {
 		t.Errorf("expected errorLog line to mention run.aborted, got:\n%s", errBuf.String())
+	}
+}
+
+// TestBatchIDForPromptOnly_RunDirShapes pins the batch-directory and
+// per-run-folder RunDir shapes; anything else yields the empty result.
+func TestBatchIDForPromptOnly_RunDirShapes(t *testing.T) {
+	const promptBatch = "260504123456-ab12-prompt"
+	const namedBatch = "260504123456-ab12-prompt-my-run"
+	tests := []struct {
+		name   string
+		runDir string
+		want   string
+	}{
+		{"relative batch dir", filepath.Join(".sandman", "batches", promptBatch), promptBatch},
+		{"absolute batch dir", filepath.Join(string(filepath.Separator), "repo", ".sandman", "batches", promptBatch), promptBatch},
+		{"batch dir with trailing separator", filepath.Join(".sandman", "batches", promptBatch) + string(filepath.Separator), promptBatch},
+		{"batch dir with user run id", filepath.Join(".sandman", "batches", namedBatch), namedBatch},
+		{"per-run folder", filepath.Join(".sandman", "batches", promptBatch, "runs", promptBatch), promptBatch},
+		{"per-run folder with user run id", filepath.Join(".sandman", "batches", namedBatch, "runs", namedBatch), namedBatch},
+		{"batches root itself", filepath.Join(".sandman", "batches"), ""},
+		{"bare batches name", "batches", ""},
+		{"arbitrary directory", filepath.Join(string(filepath.Separator), "tmp", "scratch"), ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := batchIDForPromptOnly(orchTestRunTS, orchTestRunShortID, "", tc.runDir)
+			if got != tc.want {
+				t.Fatalf("batchIDForPromptOnly(runDir=%q) = %q, want %q", tc.runDir, got, tc.want)
+			}
+		})
 	}
 }
 
