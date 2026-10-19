@@ -25,7 +25,7 @@ var canonicalRepairID = regexp.MustCompile(`^\d{12}-[0-9a-f]{4}-prompt(?:-[a-zA-
 // the repository's Sandman directory, relative to the repository root where
 // repairs run. Its Dockerfile, configuration, and prompts are the operational
 // state a blocked daemon depends on. docs/usage/reviews.md#health-repair
-// documents the policy; TestHealthRepairDocsMatchRepairPolicy pins it.
+// documents the policy.
 const repairEditScope = ".sandman"
 
 func (f repairSandboxFactory) NewSandbox(string, string, string, string, sandbox.Container) sandbox.Sandbox {

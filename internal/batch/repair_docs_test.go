@@ -21,9 +21,11 @@ func TestHealthRepairDocsMatchRepairPolicy(t *testing.T) {
 	}{
 		{"reviews.md#health-repair", reviews, scope},
 		{"reviews.md#health-repair", reviews, "custom `command`"},
-		{"reviews.md#health-repair", reviews, "`permission_mode`"},
+		{"reviews.md#health-repair", reviews, "`permission_mode`, including a read-only mode such as `plan`"},
+		{"reviews.md#health-repair", reviews, "a bypass included"},
 		{"reviews.md#health-repair", reviews, "cannot start"},
 		{"reviews.md#health-repair", reviews, "`unresolved: prompt-only run failed`"},
+		{"reviews.md#health-repair", reviews, "`.sandman/batches/<repair-run-id>/runs/<repair-run-id>/`"},
 		{"agent-compatibility.md", compatibility, scope},
 		{"agent-compatibility.md", compatibility, "reviews.md#health-repair"},
 	} {
@@ -33,8 +35,8 @@ func TestHealthRepairDocsMatchRepairPolicy(t *testing.T) {
 	}
 }
 
-// docSection returns a docs/usage file, or its section from heading up to the
-// next heading of the same level, with whitespace collapsed so wrapped prose
+// docSection returns a docs/usage file, or its level-2 section from heading up
+// to the next level-2 heading, with whitespace collapsed so wrapped prose
 // matches.
 func docSection(t *testing.T, name, heading string) string {
 	t.Helper()
