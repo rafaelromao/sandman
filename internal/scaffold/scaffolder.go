@@ -2635,7 +2635,8 @@ func ValidateDockerfileMetadata(repoRoot, expectedBuildTools, expectedDefaultAge
 		expectedBuildTools = defaultBuildToolsPreset
 	}
 	expectedDefaultAgent = strings.TrimSpace(expectedDefaultAgent)
-	dockerfilePath := paths.NewLayout(&config.Config{}, repoRoot).DockerfilePath()
+	layout := paths.NewLayout(&config.Config{}, repoRoot)
+	dockerfilePath := layout.DockerfilePath()
 	meta, found, err := readDockerfileMetadata(dockerfilePath)
 	if err != nil {
 		return err
@@ -2659,7 +2660,7 @@ func ValidateDockerfileMetadata(repoRoot, expectedBuildTools, expectedDefaultAge
 		}
 		return fmt.Errorf("scaffold metadata drift: Dockerfile installed-agents %v does not include agent %q; install it in .sandman/Dockerfile and add it to the \"# sandman installed-agents:\" header", meta.InstalledAgents, agent)
 	}
-	return nil
+	return validateCACertMetadata(layout.SandmanDir, meta.CACerts)
 }
 
 type dockerfileMetadata struct {
@@ -2678,6 +2679,7 @@ type dockerfileMetadata struct {
 	MiseVersion      string
 	RtkVersion       string
 	Analyzers        string
+	CACerts          []string
 }
 
 func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
@@ -2756,6 +2758,13 @@ func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
 			meta.RtkVersion = strings.TrimSpace(value)
 		case "analyzers":
 			meta.Analyzers = strings.TrimSpace(value)
+		case "ca-certs":
+			meta.CACerts = nil
+			for _, part := range strings.Split(value, ",") {
+				if trimmed := strings.TrimSpace(part); trimmed != "" {
+					meta.CACerts = append(meta.CACerts, trimmed)
+				}
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {

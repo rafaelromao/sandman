@@ -256,3 +256,65 @@ func TestScaffold_InvalidFileInCertsDirFailsReInit(t *testing.T) {
 		t.Fatalf("err = %v, want invalid certs-dir file named", err)
 	}
 }
+
+func TestValidateDockerfileMetadata_DetectsCACertDrift(t *testing.T) {
+	dir := t.TempDir()
+	ca := newTestCA(t, "Corp Root")
+	if err := (&Scaffolder{}).Scaffold(dir, Options{BuildTools: "generic", CACerts: []string{writeTestFile(t, ca.pem)}}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateDockerfileMetadata(dir, "generic", "", nil); err != nil {
+		t.Fatalf("fresh scaffold reports drift: %v", err)
+	}
+
+	// Certificate added after the Dockerfile was rendered.
+	other := newTestCA(t, "Other Root")
+	if err := os.WriteFile(filepath.Join(dir, ".sandman", "certs", "other.crt"), other.pem, 0644); err != nil {
+		t.Fatal(err)
+	}
+	err := ValidateDockerfileMetadata(dir, "generic", "", nil)
+	if err == nil || !strings.Contains(err.Error(), "ca-certs") || !strings.Contains(err.Error(), "sandman init") {
+		t.Fatalf("added cert: err = %v, want ca-certs drift with sandman init remediation", err)
+	}
+
+	// Every certificate removed while the Dockerfile still installs them.
+	if err := os.RemoveAll(filepath.Join(dir, ".sandman", "certs")); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateDockerfileMetadata(dir, "generic", "", nil); err == nil || !strings.Contains(err.Error(), "ca-certs") {
+		t.Fatalf("removed certs: err = %v, want ca-certs drift", err)
+	}
+}
+
+func TestValidateDockerfileMetadata_DetectsCertsAddedToPlainScaffold(t *testing.T) {
+	dir := t.TempDir()
+	if err := (&Scaffolder{}).Scaffold(dir, Options{BuildTools: "generic"}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatal(err)
+	}
+	ca := newTestCA(t, "Corp Root")
+	if err := os.MkdirAll(filepath.Join(dir, ".sandman", "certs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".sandman", "certs", "corp.crt"), ca.pem, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateDockerfileMetadata(dir, "generic", "", nil); err == nil || !strings.Contains(err.Error(), "ca-certs") {
+		t.Fatalf("err = %v, want ca-certs drift", err)
+	}
+}
+
+func TestValidateDockerfileMetadata_CustomDockerfileIgnoresCACerts(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".sandman", "certs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".sandman", "Dockerfile"), []byte("FROM debian:bookworm-slim\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".sandman", "certs", "junk.crt"), []byte("junk"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateDockerfileMetadata(dir, "generic", "", nil); err != nil {
+		t.Fatalf("metadata-free Dockerfile: %v", err)
+	}
+}

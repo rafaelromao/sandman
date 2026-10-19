@@ -272,3 +272,19 @@ func (s *Scaffolder) resolveCACerts(sandmanDir string, values []string, w io.Wri
 	}
 	return caCertSelection{replace: true, certs: dedupeCACerts(certs)}, nil
 }
+
+// validateCACertMetadata reports drift between the trusted certificates in
+// .sandman/certs/ and the set the Dockerfile installs.
+func validateCACertMetadata(sandmanDir string, dockerfileFingerprints []string) error {
+	certs, err := readCACertDir(caCertsDir(sandmanDir))
+	if err != nil {
+		return fmt.Errorf("scaffold metadata drift: %w; fix .sandman/certs/ and run `sandman init`", err)
+	}
+	want := caCertFingerprints(certs)
+	got := slices.Clone(dockerfileFingerprints)
+	sort.Strings(got)
+	if slices.Equal(want, got) {
+		return nil
+	}
+	return fmt.Errorf("scaffold metadata drift: Dockerfile ca-certs %v does not match .sandman/certs/ %v; run `sandman init` to regenerate .sandman/Dockerfile", got, want)
+}
