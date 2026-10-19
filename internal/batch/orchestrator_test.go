@@ -12821,3 +12821,22 @@ func TestPrepareContainerConfigMounts_ClaudePresetSharesTranscriptsWithTheHost(t
 		t.Errorf("expected settings.json in the snapshot: %v", err)
 	}
 }
+
+// TestBuildStartOptions_ClaudePresetCreatesNothingOnTheHost pins that building
+// start options, which every sandbox mode does, leaves the host untouched; only
+// container mount preparation creates the live-mounted transcript directory.
+func TestBuildStartOptions_ClaudePresetCreatesNothingOnTheHost(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	opts, err := buildStartOptions(config.BuiltInAgentPresets["claude"].Agent("claude"))
+	if err != nil {
+		t.Fatalf("build start options: %v", err)
+	}
+	projects := filepath.Join(home, ".claude", "projects")
+	if _, err := os.Stat(projects); !os.IsNotExist(err) {
+		t.Fatalf("stat %s = %v, want it not created by option building", projects, err)
+	}
+	if len(opts.LiveMountDirs) != 1 || opts.LiveMountDirs[0] != projects {
+		t.Fatalf("LiveMountDirs = %v, want [%s]", opts.LiveMountDirs, projects)
+	}
+}

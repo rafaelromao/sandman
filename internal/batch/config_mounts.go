@@ -60,6 +60,13 @@ func prepareSnapshotParent(runDir string) (string, func(), error) {
 // a context so the spawned `gh auth token` invocation honours the
 // caller's cancellation (issue #1780).
 func PrepareContainerConfigMounts(ctx context.Context, repoPath, runDir string, opts *sandbox.StartOptions, lookupGHToken func(context.Context) (string, error)) (func(), error) {
+	// Create live-mounted directories before anything is mounted, so the
+	// agent writes them to the host rather than into the throwaway snapshot.
+	for _, dir := range opts.LiveMountDirs {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, fmt.Errorf("create live mount directory %q: %w", dir, err)
+		}
+	}
 	dirs := append([]string(nil), opts.AgentConfigDirs...)
 	files := append([]string(nil), opts.AgentConfigFiles...)
 	excludes := append([]string(nil), opts.AgentConfigExcludes...)

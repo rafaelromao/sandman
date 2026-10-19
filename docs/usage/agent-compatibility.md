@@ -272,8 +272,9 @@ fresh. Sandman never renders Claude Code's own `--continue`: every container
 worktree shares the `/workspace` path, so "the latest conversation in this
 directory" could be another repository's.
 
-In container mode the host's `~/.claude/projects` is live-mounted. Sandman
-creates it if it is missing. Transcripts are written to the host directly, so
+Worktree runs use your own `HOME`, so their transcripts are already in the
+host's `~/.claude/projects`. In container mode the host's `~/.claude/projects`
+is live-mounted. Sandman creates it if it is missing. Transcripts are written to the host directly, so
 they outlive the batch and you can resume them from the host (see
 [Resuming an agent session from the host](monitoring.md#resuming-an-agent-session-from-the-host)).
 Do not set `CLAUDE_CODE_SKIP_PROMPT_HISTORY` or add `--no-session-persistence`

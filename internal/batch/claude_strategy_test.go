@@ -476,7 +476,8 @@ func TestAgentRun_ClaudeMissingSessionKeepsThePriorRecordUntilTheFreshInit(t *te
 		}
 	},
 		opencodeExecResult{stdout: missing + "\n", err: errors.New("exit status 1"), during: func() {
-			time.Sleep(50 * time.Millisecond)
+			// Read only once the parser has rendered the result record.
+			waitForRunLog(t, filepath.Join(runDir, "run.log"), "Result: ")
 			duringMissing, _ = ReadAgentSessionID(runDir)
 		}},
 		opencodeExecResult{stdout: `{"type":"system","subtype":"init","session_id":"` + fresh + `"}` + "\n"},
@@ -490,4 +491,18 @@ func TestAgentRun_ClaudeMissingSessionKeepsThePriorRecordUntilTheFreshInit(t *te
 	if id, _ := ReadAgentSessionID(runDir); id != fresh {
 		t.Fatalf("final session = %q, want the fresh relaunch's %s", id, fresh)
 	}
+}
+
+// waitForRunLog waits until the Run's log contains want, which proves the
+// output parsers have consumed the record that renders it.
+func waitForRunLog(t *testing.T, path, want string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if data, err := os.ReadFile(path); err == nil && strings.Contains(string(data), want) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Errorf("run.log never contained %q", want)
 }

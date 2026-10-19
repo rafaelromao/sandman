@@ -28,7 +28,8 @@ repository or an older batch.
 
 The `claude` preset live-mounts `~/.claude/projects`, creating it on the host if
 it is missing (`LiveMountDirs`). Container transcripts land in the host's
-transcript directory.
+transcript directory. Worktree runs keep the host `HOME`, so their transcripts
+were already there.
 
 The Claude strategy records the session from Claude Code's `system/init` record
 in the Run's `session.json` as

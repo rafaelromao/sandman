@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
@@ -103,6 +104,10 @@ func writeAgentSession(path string, kind agentSessionKind, sessionID string) err
 	return atomicfs.WriteAtomicJSON(path, identity, 0644)
 }
 
+// agentSessionProtocolPattern is the shape every strategy's session protocol
+// shares, such as "opencode-session/v1".
+var agentSessionProtocolPattern = regexp.MustCompile(`^[a-z]+-session/v[0-9]+$`)
+
 // ReadAgentSessionID returns the agent session ID recorded in a Run folder's
 // session.json, whichever agent wrote it, for display in Run details. A
 // missing or malformed record reports false.
@@ -111,7 +116,7 @@ func ReadAgentSessionID(runDir string) (string, bool) {
 		return "", false
 	}
 	identity, err := decodeAgentSession(filepath.Join(runDir, agentSessionFile))
-	if err != nil || identity.Protocol == "" || identity.Provider == "" {
+	if err != nil || !agentSessionProtocolPattern.MatchString(identity.Protocol) || identity.Provider == "" {
 		return "", false
 	}
 	sessionID := strings.TrimSpace(identity.SessionID)
