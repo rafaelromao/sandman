@@ -24,7 +24,8 @@ var canonicalRepairID = regexp.MustCompile(`^\d{12}-[0-9a-f]{4}-prompt(?:-[a-zA-
 // repairEditScope is what an unattended repair may edit without prompting:
 // the repository's Sandman directory, relative to the repository root where
 // repairs run. Its Dockerfile, configuration, and prompts are the operational
-// state a blocked daemon depends on.
+// state a blocked daemon depends on. docs/usage/reviews.md#health-repair
+// documents the policy; TestHealthRepairDocsMatchRepairPolicy pins it.
 const repairEditScope = ".sandman"
 
 func (f repairSandboxFactory) NewSandbox(string, string, string, string, sandbox.Container) sandbox.Sandbox {
@@ -34,6 +35,15 @@ func (f repairSandboxFactory) NewSandbox(string, string, string, string, sandbox
 // RunRepair is the optional production adapter for repository-scoped diagnostic
 // repairs. Admission/attempt ownership belongs to its caller; execution uses the
 // ordinary prompt-only lifecycle with a reserved identity and no retries.
+//
+// Unattended editing policy: the repair runs on the host at the repository
+// root, so the agent binary, its authentication, and its permission rules must
+// be available there. The selected strategy renders repairEditScope as the
+// launch's whole permission policy (for the built-in Claude Code command, a
+// .sandman/ edit allowance with every other prompt denied), replacing any
+// configured permission mode; a custom command launches as written. The daemon
+// never requests DangerouslySkipPermissions: a caller that does would drop the
+// edit scope and bypass every prompt instead.
 func (o *Orchestrator) RunRepair(ctx context.Context, req Request, cfg *config.Config) (*Result, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
