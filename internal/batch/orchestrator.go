@@ -4132,14 +4132,14 @@ loop:
 			if s.isIssueDriven() && ctx.Err() == nil {
 				hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
 				if gateStatus, extras, handled := s.handleLifecycleDecisionForAttempt(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady, result.Status); handled {
-					if stoppedForPermissionMode(result) && gateStatus != "success" && gateStatus != "aborted" {
+					if stop := s.operatorStopFor(result); stop != nil && gateStatus != "success" && gateStatus != "aborted" {
 						// The agent could not act, and a resume, await
-						// re-entry or retry would start in the same mode.
+						// re-entry or retry would fail the same way.
 						// Like the usage-limit rule below, this consumes the
 						// selected action: terminal success and abort stand,
 						// and every action that would relaunch the agent
 						// becomes the stop's terminal failure.
-						terminalExtras = s.finishPermissionModeStop(&result, terminalExtras)
+						terminalExtras = s.finishOperatorStop(&result, terminalExtras, stop)
 						break loop
 					}
 					if result.UsageLimitReached && !result.ContextExhausted && (gateStatus == "resume" || gateStatus == "await") {
@@ -4206,8 +4206,8 @@ loop:
 			}
 			break relaunch
 		}
-		if stoppedForPermissionMode(result) && !s.lifecycleTerminal && ctx.Err() == nil {
-			terminalExtras = s.finishPermissionModeStop(&result, terminalExtras)
+		if stop := s.operatorStopFor(result); stop != nil && !s.lifecycleTerminal && ctx.Err() == nil {
+			terminalExtras = s.finishOperatorStop(&result, terminalExtras, stop)
 			break loop
 		}
 		if mergeRequired {
@@ -4358,23 +4358,47 @@ loop:
 	return result, terminalExtras, true
 }
 
-// stoppedForPermissionMode reports a launch the agent strategy stopped because
-// its session started in a read-only permission mode.
-func stoppedForPermissionMode(result AgentRunResult) bool {
-	return errors.Is(result.OperationalError, ErrUnattendedPermissionMode)
+// operatorStop is the terminal diagnostic of a launch that no resume, await
+// re-entry or retry can fix until the operator acts.
+type operatorStop struct {
+	reason     string
+	nextAction string
 }
 
-// finishPermissionModeStop makes a permission-mode stop the run's terminal
-// failure. No ordinary retry, resume or await re-entry follows: each would
-// start in the same mode until the operator changes the agent's settings.
-func (s *runSession) finishPermissionModeStop(result *AgentRunResult, extras map[string]any) map[string]any {
+// operatorStopFor returns the stop of a launch the agent strategy ended
+// because its session started in a read-only permission mode or could not
+// authenticate, or nil.
+func (s *runSession) operatorStopFor(result AgentRunResult) *operatorStop {
+	switch {
+	case errors.Is(result.OperationalError, ErrUnattendedPermissionMode):
+		return &operatorStop{
+			reason:     "AGENT_PERMISSION_MODE",
+			nextAction: "set the agent's permission_mode to a mode the administrator allows, or change the agent settings that start sessions in a read-only mode, then rerun",
+		}
+	case errors.Is(result.OperationalError, ErrAgentAuthentication):
+		action := "sign the agent in again on the host"
+		if preset, ok := config.BuiltInAgentPresets[s.agentCfg.Preset]; ok && preset.CredentialEnv != "" {
+			action += ", or export " + preset.CredentialEnv + " with a long-lived token"
+		}
+		return &operatorStop{
+			reason:     "AGENT_AUTHENTICATION",
+			nextAction: action + ", then resume with sandman run --continue",
+		}
+	}
+	return nil
+}
+
+// finishOperatorStop makes an operator stop the run's terminal failure. No
+// ordinary retry, resume or await re-entry follows: each would fail the same
+// way until the operator changes the agent's settings or credentials.
+func (s *runSession) finishOperatorStop(result *AgentRunResult, extras map[string]any, stop *operatorStop) map[string]any {
 	result.Status = "failure"
 	s.lifecycleTerminal = true
 	fmt.Fprintf(s.deps.errorLog, "error: run %s stopped: %v\n", s.runID, result.OperationalError)
 	return mergeLifecycleDiagnostics(extras, map[string]any{
-		"reason":      "AGENT_PERMISSION_MODE",
+		"reason":      stop.reason,
 		"error":       result.OperationalError.Error(),
-		"next_action": "set the agent's permission_mode to a mode the administrator allows, or change the agent settings that start sessions in a read-only mode, then rerun",
+		"next_action": stop.nextAction,
 	})
 }
 

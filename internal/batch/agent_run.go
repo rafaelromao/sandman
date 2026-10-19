@@ -372,6 +372,28 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	if !fallbackUsed {
 		strategy.PersistSession(r, parsedStdout, parsedStderr)
 	}
+	if execErr != nil && ctx.Err() == nil && parsersFailedAuthentication(parsedStdout, parsedStderr) {
+		// The launch already reconciled its credentials with the host when it
+		// ended. Credentials the host refreshed meanwhile get one relaunch;
+		// with nothing to reconcile, a relaunch would fail the same way.
+		if r.credentials != nil && attemptCtx.Err() == nil {
+			relaunchOut, relaunchErr := strategy.NewOutputParsers(r.warningWriter())
+			persistSessionsAsObserved(strategy, r, relaunchOut, relaunchErr)
+			execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, relaunchOut, relaunchErr)
+			r.permissionDenials = parsersPermissionDenials(parsedStdout, parsedStderr, relaunchOut, relaunchErr)
+			parsedStdout, parsedStderr = relaunchOut, relaunchErr
+			strategy.PersistSession(r, relaunchOut, relaunchErr)
+		}
+		if execErr != nil && ctx.Err() == nil && parsersFailedAuthentication(parsedStdout, parsedStderr) {
+			r.status = "failure"
+			r.operationalError = ErrAgentAuthentication
+			var cleanupErr *sandbox.CleanupError
+			if errors.As(execErr, &cleanupErr) {
+				r.cleanupError = cleanupErr.CleanupFail
+			}
+			return r.Result()
+		}
+	}
 	if execErr != nil {
 		r.usageLimitReached = ctx.Err() == nil &&
 			((usageDetector != nil && usageDetector.Triggered()) || parsersReachedUsageLimit(parsedStdout, parsedStderr))

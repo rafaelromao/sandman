@@ -223,3 +223,45 @@ func TestDaemonConsoleReportsPermissionModeStopWithoutHealthRepair(t *testing.T)
 		t.Fatal("a permission-mode stop was recorded as health evidence")
 	}
 }
+
+// A review agent that cannot authenticate is reported on the console and
+// retried through the launch backoff. Health repair cannot sign the agent in
+// on the host, so none is launched.
+func TestDaemonConsoleReportsAuthenticationStopWithoutHealthRepair(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	runner := &healthRunner{review: func(context.Context, batch.Request) (*batch.Result, error) {
+		return &batch.Result{Runs: []batch.AgentRunResult{{
+			Status:           "failure",
+			OperationalError: batch.ErrAgentAuthentication,
+		}}}, errors.New("prompt-only run failed")
+	}}
+	gh := launchBudgetGitHub{&fakeGH{prFetch: map[int]*github.PR{17: {Number: 17, HeadRefOid: "head"}}}}
+	cfg := &config.Config{DefaultReviewAgent: "claude", DefaultReviewModel: "sonnet"}
+	d := New(root, gh, &prompt.Engine{}, runner, cfg, &lockedBuffer{}, 1, true, nil)
+	console := &lockedBuffer{}
+	d.Console = console
+	now := time.Date(2026, 10, 13, 14, 0, 0, 0, time.UTC)
+	d.Clock = func() time.Time { return now }
+	d.launchBackoff = func(int) time.Duration { return 90 * time.Second }
+	state, err := NewReviewStateStore(filepath.Join(root, "review-state.json"), 17, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.launchReview(context.Background(), 17, "", "request-1", "", "", "", "run-1", daemon.NewRunSession(root, "run-1"), state, false); err == nil {
+		t.Fatal("launch must fail")
+	}
+	d.inFlight.Wait()
+	out := console.String()
+	for _, want := range []string{"PR #17", "request-1", "could not authenticate", "retrying at 2026-10-13T14:01:30Z"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("console missing %q:\n%s", want, out)
+		}
+	}
+	if repairs := runner.requests(); len(repairs) != 0 {
+		t.Fatalf("health repair launched %d times for an authentication stop", len(repairs))
+	}
+	if d.hasHealthFailure(17) {
+		t.Fatal("an authentication stop was recorded as health evidence")
+	}
+}

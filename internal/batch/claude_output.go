@@ -38,6 +38,7 @@ type claudeOutputState struct {
 	sessionNotFound   bool
 	onSession         func()
 	usageLimitReached bool
+	authFailed        bool
 	permissionDenials []string
 	readOnlyMode      *PermissionModeError
 	// readOnlyModes are the permission modes that stop a session at its init
@@ -150,6 +151,20 @@ func (w *claudeOutput) recordSessionNotFound() {
 	w.state.sessionNotFound = true
 }
 
+// AuthenticationFailed reports that Claude Code ended the session because it
+// could not authenticate, as opposed to a usage limit.
+func (w *claudeOutput) AuthenticationFailed() bool {
+	w.state.mu.Lock()
+	defer w.state.mu.Unlock()
+	return w.state.authFailed && !w.state.usageLimitReached
+}
+
+func (w *claudeOutput) recordAuthFailure() {
+	w.state.mu.Lock()
+	defer w.state.mu.Unlock()
+	w.state.authFailed = true
+}
+
 func (w *claudeOutput) UsageLimitReached() bool {
 	w.state.mu.Lock()
 	defer w.state.mu.Unlock()
@@ -182,6 +197,9 @@ func (w *claudeOutput) writeLine(line []byte, newline bool) error {
 	if !strings.HasPrefix(strings.TrimSpace(text), "{") || json.Unmarshal([]byte(text), &record) != nil {
 		if strings.HasPrefix(strings.TrimSpace(text), claudeSessionNotFoundMessage) {
 			w.recordSessionNotFound()
+		}
+		if claudeAuthFailureText(text) {
+			w.recordAuthFailure()
 		}
 		return w.writeRaw(line, newline)
 	}
@@ -216,6 +234,9 @@ func (w *claudeOutput) writeLine(line []byte, newline bool) error {
 			tool, _ := entry["tool_name"].(string)
 			w.recordPermissionDenial(tool)
 		}
+	}
+	if recordType == "result" && claudeAuthFailureLine(text) {
+		w.recordAuthFailure()
 	}
 	if recordType == "result" && claudeUsageLimitLine(text) {
 		w.state.mu.Lock()

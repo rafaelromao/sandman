@@ -10,7 +10,10 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/paths"
+	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
@@ -244,4 +247,84 @@ func TestAgentRun_LaunchWritesRotatedCredentialsBack(t *testing.T) {
 
 	_ = run.Execute(context.Background(), "true", io.Discard, io.Discard)
 	f.want(t, "container-refreshed", "container-refreshed")
+}
+
+func runClaudeAuthLaunch(t *testing.T, sb *fakeSandbox, credentials *credentialSync) AgentRunResult {
+	t.Helper()
+	root := t.TempDir()
+	sb.workDir = filepath.Join(root, "worktree")
+	run := NewAgentRunWithLayout(&github.Issue{Number: 42, Title: "Claude auth"}, "42-claude", sb, paths.NewLayout(&config.Config{}, root))
+	run.preset = "claude"
+	run.credentials = credentials
+	agent := config.BuiltInAgentPresets["claude"].Agent("claude")
+	return run.Run(context.Background(), &spyRenderer{result: "task"}, agent.Command, prompt.RenderConfig{})
+}
+
+// TestAgentRun_AuthenticationFailureRelaunchesOnceWithReconciledCredentials
+// pins that a launch refused for credentials the host has since refreshed
+// gets exactly one relaunch on the reconciled snapshot.
+func TestAgentRun_AuthenticationFailureRelaunchesOnceWithReconciledCredentials(t *testing.T) {
+	f := newCredentialFixture(t, "batch-start")
+	launches := 0
+	sb := &fakeSandbox{execFunc: func(_ context.Context, _ string, stdout, _ io.Writer) error {
+		launches++
+		if launches == 1 {
+			writeCredential(t, f.host, "host-refreshed")
+			_, _ = io.WriteString(stdout, claudeExpiredOAuthResult+"\n")
+			return errors.New("exit status 1")
+		}
+		if got := readCredential(t, f.snapshot); got != "host-refreshed" {
+			t.Errorf("relaunch saw credentials %q, want host-refreshed", got)
+		}
+		return nil
+	}}
+	result := runClaudeAuthLaunch(t, sb, f.sync)
+	if launches != 2 {
+		t.Fatalf("launches = %d, want one relaunch", launches)
+	}
+	if result.Status != "success" || result.OperationalError != nil {
+		t.Fatalf("result = %+v, want the relaunch's success", result)
+	}
+}
+
+// TestAgentRun_RepeatedAuthenticationFailureStops pins that a launch which
+// still cannot authenticate after the relaunch ends with the typed
+// authentication error instead of a usage limit or a plain failure.
+func TestAgentRun_RepeatedAuthenticationFailureStops(t *testing.T) {
+	f := newCredentialFixture(t, "batch-start")
+	launches := 0
+	sb := &fakeSandbox{execFunc: func(_ context.Context, _ string, stdout, _ io.Writer) error {
+		launches++
+		_, _ = io.WriteString(stdout, claudeExpiredOAuthResult+"\n")
+		return errors.New("exit status 1")
+	}}
+	result := runClaudeAuthLaunch(t, sb, f.sync)
+	if launches != 2 {
+		t.Fatalf("launches = %d, want one relaunch", launches)
+	}
+	if !errors.Is(result.OperationalError, ErrAgentAuthentication) {
+		t.Fatalf("operational error = %v, want ErrAgentAuthentication", result.OperationalError)
+	}
+	if result.Status != "failure" || result.UsageLimitReached {
+		t.Fatalf("result = %+v, want a failure that is not a usage limit", result)
+	}
+}
+
+// TestAgentRun_AuthenticationFailureWithoutSyncStopsAtOnce pins that a
+// launch with nothing to reconcile, such as one using a long-lived token,
+// is not relaunched on the same credentials.
+func TestAgentRun_AuthenticationFailureWithoutSyncStopsAtOnce(t *testing.T) {
+	launches := 0
+	sb := &fakeSandbox{execFunc: func(_ context.Context, _ string, stdout, _ io.Writer) error {
+		launches++
+		_, _ = io.WriteString(stdout, claudeRealAuthFailureResult+"\n")
+		return errors.New("exit status 1")
+	}}
+	result := runClaudeAuthLaunch(t, sb, nil)
+	if launches != 1 {
+		t.Fatalf("launches = %d, want no relaunch", launches)
+	}
+	if !errors.Is(result.OperationalError, ErrAgentAuthentication) {
+		t.Fatalf("operational error = %v, want ErrAgentAuthentication", result.OperationalError)
+	}
 }

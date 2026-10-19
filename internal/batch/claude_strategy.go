@@ -177,3 +177,42 @@ func claudeUsageLimitLine(line string) bool {
 	}
 	return false
 }
+
+// claudeAuthFailureLiterals are Claude Code's messages for a session that
+// cannot authenticate: missing or invalid credentials, and a subscription
+// OAuth session whose refresh token was already spent by another copy.
+var claudeAuthFailureLiterals = []string{
+	"failed to authenticate",
+	"oauth session expired",
+	"oauth token has been revoked",
+	"invalid api key",
+	"please run /login",
+}
+
+// claudeAuthFailureLine recognises an authentication failure on the terminal
+// stream-json `result` record with `is_error: true`, under the same echo
+// rule as claudeUsageLimitLine.
+func claudeAuthFailureLine(line string) bool {
+	line = normalizeContextRolloverLine(line)
+	var record struct {
+		Type    string `json:"type"`
+		IsError bool   `json:"is_error"`
+	}
+	if json.Unmarshal([]byte(line), &record) != nil || record.Type != "result" || !record.IsError {
+		return false
+	}
+	return claudeAuthFailureText(line)
+}
+
+// claudeAuthFailureText reports whether text carries an authentication
+// failure literal. Applied to plain lines it covers Claude Code's own stderr
+// diagnostics, which are never agent text.
+func claudeAuthFailureText(text string) bool {
+	lower := strings.ToLower(text)
+	for _, literal := range claudeAuthFailureLiterals {
+		if strings.Contains(lower, literal) {
+			return true
+		}
+	}
+	return false
+}
