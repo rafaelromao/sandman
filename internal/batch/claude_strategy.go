@@ -109,7 +109,10 @@ var claudeSessionKind = agentSessionKind{protocol: "claude-session/v1", provider
 
 // PersistSession records the session ID Claude Code reported so the Run's
 // details can name the conversation to resume from the host.
-func (claudeStrategy) PersistSession(run *AgentRun, stdout, stderr outputParser) {
+func (s claudeStrategy) PersistSession(run *AgentRun, stdout, stderr outputParser) {
+	if !s.builtInCommand {
+		return
+	}
 	run.persistSession(claudeSessionKind, firstSessionID(stdout, stderr))
 }
 
