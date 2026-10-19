@@ -118,7 +118,16 @@ type AgentPreset struct {
 	// LiveMounts and created on the host first when missing, so the agent
 	// never falls back to writing them into the throwaway snapshot.
 	LiveMountDirs []string
-	KeychainAuth  bool
+	// CredentialEnv names a host environment variable holding a long-lived
+	// agent credential. When it is set and the preset's own command runs,
+	// containers receive it by name and CredentialFiles stay out of the
+	// config snapshot.
+	CredentialEnv string
+	// CredentialFiles are agent credential files whose refresh tokens rotate
+	// on use, so a snapshot copy and the host copy must not refresh
+	// independently.
+	CredentialFiles []string
+	KeychainAuth    bool
 	// PermissionModes are the modes an operator may set as permission_mode,
 	// rendered on the preset's built-in command line. Empty means the agent
 	// takes no permission mode from its command line.
@@ -244,6 +253,11 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 		// Every container worktree shares the /workspace path, so reuse
 		// selects the exact recorded session, never the directory's latest.
 		LiveMountDirs: []string{"~/.claude/projects"},
+		// Subscription OAuth refresh tokens are single-use: whichever copy
+		// refreshes first invalidates every other copy. A token from
+		// `claude setup-token` needs no refresh at all.
+		CredentialEnv:   "CLAUDE_CODE_OAUTH_TOKEN",
+		CredentialFiles: []string{"~/.claude/.credentials.json"},
 	},
 }
 

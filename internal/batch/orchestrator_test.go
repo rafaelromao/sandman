@@ -9509,7 +9509,7 @@ func TestBuildStartOptions_IncludesSharedSkillsDir(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	agentCfg := config.BuiltInAgentPresets["opencode"].Agent("opencode")
-	opts, err := buildStartOptions(agentCfg)
+	opts, err := buildStartOptions(agentCfg, lookupEnvFrom(nil))
 	if err != nil {
 		t.Fatalf("build start options: %v", err)
 	}
@@ -9528,7 +9528,7 @@ func TestBuildStartOptions_PopulatesOpencodeSnapshotExcludesAndLiveMounts(t *tes
 	t.Setenv("HOME", home)
 
 	agentCfg := config.BuiltInAgentPresets["opencode"].Agent("opencode")
-	opts, err := buildStartOptions(agentCfg)
+	opts, err := buildStartOptions(agentCfg, lookupEnvFrom(nil))
 	if err != nil {
 		t.Fatalf("build start options: %v", err)
 	}
@@ -9589,7 +9589,7 @@ func TestPrepareContainerConfigMounts_OpencodePresetEndToEnd(t *testing.T) {
 	}
 
 	agentCfg := config.BuiltInAgentPresets["opencode"].Agent("opencode")
-	startOpts, err := buildStartOptions(agentCfg)
+	startOpts, err := buildStartOptions(agentCfg, lookupEnvFrom(nil))
 	if err != nil {
 		t.Fatalf("build start options: %v", err)
 	}
@@ -12921,7 +12921,7 @@ func TestPrepareContainerConfigMounts_ClaudePresetSharesTranscriptsWithTheHost(t
 		t.Fatal(err)
 	}
 
-	startOpts, err := buildStartOptions(config.BuiltInAgentPresets["claude"].Agent("claude"))
+	startOpts, err := buildStartOptions(config.BuiltInAgentPresets["claude"].Agent("claude"), lookupEnvFrom(nil))
 	if err != nil {
 		t.Fatalf("build start options: %v", err)
 	}
@@ -12965,7 +12965,7 @@ func TestPrepareContainerConfigMounts_ClaudePresetSharesTranscriptsWithTheHost(t
 func TestBuildStartOptions_ClaudePresetCreatesNothingOnTheHost(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	opts, err := buildStartOptions(config.BuiltInAgentPresets["claude"].Agent("claude"))
+	opts, err := buildStartOptions(config.BuiltInAgentPresets["claude"].Agent("claude"), lookupEnvFrom(nil))
 	if err != nil {
 		t.Fatalf("build start options: %v", err)
 	}
@@ -12975,5 +12975,159 @@ func TestBuildStartOptions_ClaudePresetCreatesNothingOnTheHost(t *testing.T) {
 	}
 	if len(opts.LiveMountDirs) != 1 || opts.LiveMountDirs[0] != projects {
 		t.Fatalf("LiveMountDirs = %v, want [%s]", opts.LiveMountDirs, projects)
+	}
+}
+
+// claudeCredentialHome creates a HOME with Claude Code subscription
+// credentials and returns the credentials path.
+func claudeCredentialHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	claudeDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	credentials := filepath.Join(claudeDir, ".credentials.json")
+	if err := os.WriteFile(credentials, []byte(`{"claudeAiOauth":{"refreshToken":"host"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return credentials
+}
+
+func lookupEnvFrom(values map[string]string) func(string) (string, bool) {
+	return func(name string) (string, bool) {
+		value, ok := values[name]
+		return value, ok
+	}
+}
+
+func snapshotHasClaudeCredentials(t *testing.T, startOpts *sandbox.StartOptions) bool {
+	t.Helper()
+	cleanup, err := PrepareContainerConfigMounts(context.Background(), t.TempDir(), "", startOpts, func(context.Context) (string, error) { return "", nil })
+	if err != nil {
+		t.Fatalf("prepare container config mounts: %v", err)
+	}
+	t.Cleanup(cleanup)
+	for _, mount := range startOpts.ConfigMounts {
+		if mount.Target != "/.claude" {
+			continue
+		}
+		_, err := os.Stat(filepath.Join(mount.Source, ".credentials.json"))
+		return err == nil
+	}
+	t.Fatalf("mounts = %v, want a ~/.claude snapshot", startOpts.ConfigMounts)
+	return false
+}
+
+// TestBuildStartOptions_ClaudeOAuthTokenReplacesSnapshotCredentials pins that
+// a long-lived Claude Code token in the host environment reaches the container
+// by name and keeps the rotating subscription credentials out of the snapshot,
+// so no container ever spends the host's refresh token.
+func TestBuildStartOptions_ClaudeOAuthTokenReplacesSnapshotCredentials(t *testing.T) {
+	claudeCredentialHome(t)
+	startOpts, err := buildStartOptions(config.BuiltInAgentPresets["claude"].Agent("claude"), lookupEnvFrom(map[string]string{"CLAUDE_CODE_OAUTH_TOKEN": "sentinel"}))
+	if err != nil {
+		t.Fatalf("build start options: %v", err)
+	}
+	if want := []string{"CLAUDE_CODE_OAUTH_TOKEN"}; !reflect.DeepEqual(startOpts.PassEnv, want) {
+		t.Fatalf("PassEnv = %v, want %v", startOpts.PassEnv, want)
+	}
+	if snapshotHasClaudeCredentials(t, &startOpts) {
+		t.Fatal("snapshot contains .credentials.json; the token must replace it")
+	}
+}
+
+func TestBuildStartOptions_ClaudeWithoutOAuthTokenKeepsSnapshotCredentials(t *testing.T) {
+	claudeCredentialHome(t)
+	startOpts, err := buildStartOptions(config.BuiltInAgentPresets["claude"].Agent("claude"), lookupEnvFrom(nil))
+	if err != nil {
+		t.Fatalf("build start options: %v", err)
+	}
+	if len(startOpts.PassEnv) != 0 {
+		t.Fatalf("PassEnv = %v, want none", startOpts.PassEnv)
+	}
+	if !snapshotHasClaudeCredentials(t, &startOpts) {
+		t.Fatal("snapshot lacks .credentials.json without a token")
+	}
+}
+
+func TestBuildStartOptions_CustomClaudeCommandGetsNoTokenPassthrough(t *testing.T) {
+	claudeCredentialHome(t)
+	agentCfg := config.BuiltInAgentPresets["claude"].Agent("claude")
+	agentCfg.Command = "my-wrapper"
+	startOpts, err := buildStartOptions(agentCfg, lookupEnvFrom(map[string]string{"CLAUDE_CODE_OAUTH_TOKEN": "sentinel"}))
+	if err != nil {
+		t.Fatalf("build start options: %v", err)
+	}
+	if len(startOpts.PassEnv) != 0 {
+		t.Fatalf("PassEnv = %v, want none for a custom command", startOpts.PassEnv)
+	}
+	if !snapshotHasClaudeCredentials(t, &startOpts) {
+		t.Fatal("custom command lost .credentials.json")
+	}
+}
+
+// TestRunBatch_ClaudeOAuthTokenNeverLeaves pins the token passthrough end to
+// end: the container receives the variable by name, and its value appears in
+// no container start option, rendered agent command, or file under .sandman/.
+func TestRunBatch_ClaudeOAuthTokenNeverLeaves(t *testing.T) {
+	const sentinel = "sk-ant-oat01-sentinel-never-persist"
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write docker: %v", err)
+	}
+	t.Setenv("PATH", dir)
+	claudeCredentialHome(t)
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", sentinel)
+
+	starter := &fakeContainerStarter{container: &fakeContainerForOrchestrator{id: "shared123"}}
+	sb := &fakeSandbox{}
+	o := NewOrchestrator(&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}}, &noopRenderer{},
+		&fakeConfigStore{config: &config.Config{Agent: "claude", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"},
+			AgentProviders: map[string]config.Agent{"claude": config.BuiltInAgentPresets["claude"].Agent("claude")}}}, nil,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: sb}),
+		WithContainerRuntimeFactory(&fakeContainerRuntimeFactory{starter: starter}),
+	)
+
+	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}, Sandbox: "docker"})
+
+	if !starter.startCalled {
+		t.Fatal("expected container starter to be called")
+	}
+	if want := []string{"CLAUDE_CODE_OAUTH_TOKEN"}; !reflect.DeepEqual(starter.startOpts.PassEnv, want) {
+		t.Fatalf("PassEnv = %v, want %v", starter.startOpts.PassEnv, want)
+	}
+	if opts := fmt.Sprintf("%+v", starter.startOpts); strings.Contains(opts, sentinel) {
+		t.Fatalf("container start options carry the token value: %s", opts)
+	}
+	if !sb.execCalled {
+		t.Fatal("expected the agent command to run")
+	}
+	if strings.Contains(sb.execCommand, sentinel) {
+		t.Fatalf("rendered agent command carries the token value: %s", sb.execCommand)
+	}
+	scanned := 0
+	err := filepath.WalkDir(filepath.Join(dir, ".sandman"), func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		scanned++
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(data), sentinel) {
+			t.Errorf("%s contains the token value", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk .sandman: %v", err)
+	}
+	if scanned == 0 {
+		t.Fatal("expected run artifacts under .sandman/")
 	}
 }

@@ -388,6 +388,11 @@ type Orchestrator struct {
 	// (issue #1780).
 	lookupGHToken func(ctx context.Context) (string, error)
 
+	// lookupEnv reads the host environment when building container start
+	// options. NewOrchestrator initialises it to os.LookupEnv; nil reads the
+	// process environment too.
+	lookupEnv func(string) (string, bool)
+
 	// runSessionOpts bundles the test-injection hooks consumed by
 	// runSession (the function overrides and the test-tunable killTimeout)
 	// together with the shared baseBranchSyncMu mutex that gates
@@ -1286,6 +1291,7 @@ func NewOrchestrator(githubClient github.Client, renderer prompt.IssueRenderer, 
 		errorLog:      os.Stderr,
 		layout:        paths.NewLayout(&config.Config{}, root),
 		lookupGHToken: defaultLookupGHToken,
+		lookupEnv:     os.LookupEnv,
 		runSessionOpts: runSessionOptions{
 			baseBranchSyncMu:     &sync.Mutex{},
 			taskWriter:           atomicfs.WriteAtomic,
@@ -2675,7 +2681,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 }
 
 func (o *Orchestrator) resolveSandboxExecutionPolicy(ctx context.Context, cfg *config.Config, agentCfg config.Agent, req Request, sandboxMode string) (*sandboxExecutionPolicy, error) {
-	startOpts, err := buildStartOptions(agentCfg)
+	startOpts, err := buildStartOptions(agentCfg, o.lookupEnv)
 	if err != nil {
 		return nil, err
 	}
@@ -2876,7 +2882,13 @@ func dockerfileAgentExpectations(defaultAgent, runAgent string, runAgentCfg conf
 	return defaultAgent, required
 }
 
-func buildStartOptions(agentCfg config.Agent) (sandbox.StartOptions, error) {
+// buildStartOptions resolves container start options for agentCfg.
+// lookupEnv reads the host environment; it only decides whether a preset
+// credential variable is present, and its value is never copied.
+func buildStartOptions(agentCfg config.Agent, lookupEnv func(string) (string, bool)) (sandbox.StartOptions, error) {
+	if lookupEnv == nil {
+		lookupEnv = os.LookupEnv
+	}
 	opts := sandbox.StartOptions{}
 
 	if uid := os.Getuid(); uid >= 0 {
@@ -2939,6 +2951,17 @@ func buildStartOptions(agentCfg config.Agent) (sandbox.StartOptions, error) {
 		}
 		opts.LiveMounts = append(opts.LiveMounts, expanded...)
 		opts.LiveMountDirs = append(opts.LiveMountDirs, expanded...)
+
+		if name := preset.CredentialEnv; name != "" && agentCfg.Command == preset.Command {
+			if value, ok := lookupEnv(name); ok && strings.TrimSpace(value) != "" {
+				expanded, err = expandPaths(preset.CredentialFiles, "credential file")
+				if err != nil {
+					return sandbox.StartOptions{}, err
+				}
+				opts.PassEnv = append(opts.PassEnv, name)
+				opts.AgentConfigExcludes = append(opts.AgentConfigExcludes, expanded...)
+			}
+		}
 	}
 
 	return opts, nil
