@@ -241,3 +241,31 @@ func bufferedConnPair() (net.Conn, net.Conn, error) {
 	}
 	return conns[0], conns[1], nil
 }
+
+func TestScaffold_CACertAutoTreatsReissuedPublicRootAsPublic(t *testing.T) {
+	srv := tlsHosts{}
+	public := newTestCA(t, "Public Root")
+	// Same subject and key, different serial and validity: a re-issued copy
+	// of the public root whose raw bytes differ from the platform's copy.
+	tmpl := *public.cert
+	tmpl.SerialNumber = big.NewInt(time.Now().UnixNano() + 1)
+	tmpl.NotAfter = time.Now().Add(2 * time.Hour)
+	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &public.key.PublicKey, public.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reissued, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+
+	trust := hostTrust(t, srv, []string{newTLSHost(t, srv, public)}, []testCA{public}, nil, true)
+	trust.PublicRoots = func() ([]*x509.Certificate, bool) { return []*x509.Certificate{reissued}, true }
+	if err := (&Scaffolder{TLSTrust: trust}).Scaffold(dir, Options{BuildTools: "generic", CACerts: []string{CACertAuto}}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatal(err)
+	}
+	if files := scaffoldedCertFiles(t, dir); len(files) != 0 {
+		t.Fatalf("certs = %v, want re-issued public root recognised as public", files)
+	}
+}

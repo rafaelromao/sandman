@@ -205,8 +205,8 @@ _Avoid_: Bot branch, auto branch.
 A scaffold-time recipe chosen during `sandman init` that seeds a pinned container image definition with shared baseline tools and built-in agent installation defaults.
 _Avoid_: language, stack, base image.
 
-**Trusted CA Certificates**:
-The certificate authorities `sandman init --ca-cert` stores in `.sandman/certs/` and bakes into the scaffolded image so builds and agents behind a TLS-inspection proxy can verify HTTPS.
+**Trusted CA certificate**:
+A certificate authority `sandman init --ca-cert` stores in `.sandman/certs/` and bakes into the scaffolded image so builds and agents behind a TLS-inspection proxy can verify HTTPS.
 _Avoid_: corp cert, custom bundle.
 
 **ConfigDirs**:

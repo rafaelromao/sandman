@@ -561,13 +561,18 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 
 	// Resolve trusted CA certificates before the first write so invalid
 	// input leaves an existing scaffold untouched.
-	caCerts, err := s.resolveCACerts(sandmanDir, opts.CACerts, opts.Writer)
+	caCerts, err := s.resolveCACerts(sandmanDir, opts.CACerts)
 	if err != nil {
 		return err
 	}
 
 	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
 		return fmt.Errorf("create .sandman: %w", err)
+	}
+	if caCerts.replace {
+		if err := writeCACertDir(caCertsDir(sandmanDir), caCerts.certs); err != nil {
+			return err
+		}
 	}
 
 	defaultAgent, err := s.resolveDefaultAgent(opts, preserved)
@@ -697,12 +702,6 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		}
 	}
 
-	if caCerts.replace {
-		if err := writeCACertDir(caCertsDir(sandmanDir), caCerts.certs); err != nil {
-			return err
-		}
-	}
-
 	agentVersion := resolveAgentVersion(defaultAgent)
 	dockerfile := s.renderBuildToolsDockerfile(preset, defaultAgent, agentVersion, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion, rubyVersion, rustVersion, javaVersion, caCertFingerprints(caCerts.certs))
 	dockerfilePath := layout.DockerfilePath()
@@ -764,7 +763,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	if w == nil {
 		w = io.Discard
 	}
-	fmt.Fprint(w, configUpdate+summary)
+	fmt.Fprint(w, caCerts.report+configUpdate+summary)
 
 	return nil
 }

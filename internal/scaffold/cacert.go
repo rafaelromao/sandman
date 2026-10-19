@@ -8,7 +8,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -168,6 +167,8 @@ func writeCACertDir(dir string, certs []*x509.Certificate) error {
 type caCertSelection struct {
 	replace bool
 	certs   []*x509.Certificate
+	// report is printed once the selection has been written.
+	report string
 }
 
 // parseCACertValues validates the raw --ca-cert values without touching the
@@ -234,7 +235,7 @@ func renderCACertInstall(fingerprints []string) string {
 // resolveCACerts turns the --ca-cert values into the certificate set the
 // scaffold should trust. No values keeps (and validates) the current
 // .sandman/certs/ contents.
-func (s *Scaffolder) resolveCACerts(sandmanDir string, values []string, w io.Writer) (caCertSelection, error) {
+func (s *Scaffolder) resolveCACerts(sandmanDir string, values []string) (caCertSelection, error) {
 	if len(values) == 0 {
 		existing, err := readCACertDir(caCertsDir(sandmanDir))
 		if err != nil {
@@ -257,20 +258,21 @@ func (s *Scaffolder) resolveCACerts(sandmanDir string, values []string, w io.Wri
 		}
 		certs = append(certs, parsed...)
 	}
+	report := ""
 	if auto {
-		if w == nil {
-			w = io.Discard
-		}
-		detected, err := s.TLSTrust.detectInterceptionRoots(w)
+		detected, detectReport, err := s.TLSTrust.detectInterceptionRoots()
 		if err != nil {
 			return caCertSelection{}, err
 		}
+		report = detectReport
 		if len(detected) == 0 && len(paths) == 0 {
-			return s.resolveCACerts(sandmanDir, nil, w)
+			kept, err := s.resolveCACerts(sandmanDir, nil)
+			kept.report = report
+			return kept, err
 		}
 		certs = append(certs, detected...)
 	}
-	return caCertSelection{replace: true, certs: dedupeCACerts(certs)}, nil
+	return caCertSelection{replace: true, certs: dedupeCACerts(certs), report: report}, nil
 }
 
 // validateCACertMetadata reports drift between the trusted certificates in
