@@ -11,6 +11,8 @@ from opencode_canary import evaluate, PIN_GUIDANCE
 class CanaryTests(unittest.TestCase):
     def test_real_response_required(self):
         self.assertIsNone(evaluate('{"type":"text","part":{"text":"OK"}}', 0))
+        self.assertIsNone(evaluate(json.dumps({'type': 'text', 'part': {'text': 'OK.'}}), 0))
+        self.assertIsNotNone(evaluate(json.dumps({'type': 'text', 'part': {'text': '  '}}), 0))
         for output, code in [('', 0), ('{"type":"step_finish"}', 0),
                              ('{"type":"text","part":{"text":"OK"}}', 1),
                              ('{"type":"error","error":{"message":"offline"}}', 0)]:

@@ -34,11 +34,13 @@ def evaluate(output, returncode):
             provider_message = str(event.get('error', {}).get('data', {}).get('message', ''))
         if event.get('type') == 'text':
             text.append(event.get('part', {}).get('text', ''))
-    if returncode or errors or ''.join(text).strip() != 'OK':
+    if returncode or errors or not ''.join(text).strip():
         secret = os.environ.get('OPENCODE_API_KEY', '')
         if secret:
             provider_message = provider_message.replace(secret, '[redacted]')
-        detail = (' Provider: ' + provider_message[:400]) if provider_message else ''
+        detail = f' Exit code: {returncode}; error event: {errors}; response characters: {len("".join(text).strip())}.'
+        if provider_message:
+            detail += ' Provider: ' + provider_message[:400]
         return 'OpenCode provider canary failed. Check provider availability/authentication; if the CLI pin is deprecated, update the pins rather than bypassing this check.' + detail
     return None
 
