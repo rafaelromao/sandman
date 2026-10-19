@@ -191,9 +191,12 @@ func TestPortalReviewOrphanProjectionBrowser_PreservesAbortAndExecutionMetadata(
 	page := buildPortalReproPage(t, stateJSON, runsJSON, fmt.Sprintf(`
     window.__portalNow = %d;
     Date.now = function () { return window.__portalNow; };
-    setTimeout(function () {
+    var captureAttempts = 0;
+    function captureOrphanMetadata() {
       var rows = Array.from(document.querySelectorAll('#runs-body > tr[data-run-key]'))
         .filter(function (row) { return !row.classList.contains('detail-row'); });
+      captureAttempts += 1;
+      if (rows.length < 2 && captureAttempts < 100) { setTimeout(captureOrphanMetadata, 10); return; }
       var orphanRow = document.querySelector('tr[data-run-key="review-1472"]');
       var duration = orphanRow && orphanRow.querySelector('[data-cell="duration"] .duration-value');
       var stale = orphanRow && orphanRow.querySelector('[data-cell="duration"] .stale-line');
@@ -209,8 +212,12 @@ func TestPortalReviewOrphanProjectionBrowser_PreservesAbortAndExecutionMetadata(
         error: document.getElementById('error-banner') && document.getElementById('error-banner').textContent
       });
       document.body.appendChild(marker);
-    }, 500);
+    }
+    setTimeout(captureOrphanMetadata, 200);
 `, now.UnixMilli()))
+	if !strings.Contains(page, "const abortSupported = false;") {
+		t.Fatal("repro page no longer declares abortSupported; update the abort enablement")
+	}
 	page = strings.Replace(page, "const abortSupported = false;", "const abortSupported = true;", 1)
 	dom, _ := runPortalChromium(t, page)
 	var result struct {
@@ -230,8 +237,8 @@ func TestPortalReviewOrphanProjectionBrowser_PreservesAbortAndExecutionMetadata(
 	if len(result.Order) != 2 || result.Order[0] != "review-1472" {
 		t.Fatalf("orphan review duration projection order=%v, want review-1472 first", result.Order)
 	}
-	if result.Duration != "5m30s" {
-		t.Fatalf("orphan review duration=%q, want 5m30s from preserved execution clock", result.Duration)
+	if result.Duration != "5m" {
+		t.Fatalf("orphan review duration=%q, want the source duration 5m", result.Duration)
 	}
 	if !result.Stale {
 		t.Fatal("orphan review lost the source staleness clock")

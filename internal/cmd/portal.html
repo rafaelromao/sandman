@@ -2490,11 +2490,8 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const issueLabel = sourcePR > 0
         ? 'PR ' + sourcePR + ' (#' + String(issueNumber) + ')'
         : '#' + String(issueNumber);
-      // Start with the validated source row so grouping does not discard
-      // metadata needed by actions, details, and live clock rendering.
+      // Spread the validated source row so grouping keeps its actions and clocks.
       return Object.assign({}, source, {
-        key: source.key,
-        runId: source.runId,
         review: true,
         groupedReview: false,
         reviewCount: summary.count,
@@ -2504,12 +2501,8 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         status: summary.status || String(source.status || '').trim(),
         kind: summary.kind,
         issueNumber: issueNumber,
-        prNumber: source.prNumber,
-        startedAt: source.startedAt,
-        duration: source.duration,
         archived: !!source.archived,
         unavailable: !!source.unavailable,
-        reason: source.reason,
         issueLabel: issueLabel,
       });
     }

@@ -4201,6 +4201,7 @@ if (stub.runId !== 'PR1508') throw new Error('expected visible row runId to matc
 if (stub.issueNumber !== 1472) throw new Error('expected visible row issueNumber to match source issueNumber, got ' + JSON.stringify(stub.issueNumber));
 if (stub.prNumber !== 1508) throw new Error('expected visible row prNumber to match source prNumber, got ' + JSON.stringify(stub.prNumber));
 if (stub.startedAt !== '2026-06-30T12:00:00Z') throw new Error('expected visible row startedAt to match source, got ' + JSON.stringify(stub.startedAt));
+if (stub.issueLabel !== 'PR 1508 (#1472)') throw new Error('expected derived PR+issue label to override the source label, got ' + JSON.stringify(stub.issueLabel));
 if (stub.batchKey !== 'batch-1472') throw new Error('expected visible row batchKey to preserve source batchKey, got ' + JSON.stringify(stub.batchKey));
 if (stub.duration !== '2m') throw new Error('expected visible row duration to preserve source duration, got ' + JSON.stringify(stub.duration));
 if (stub.activeDurationSeconds !== 120) throw new Error('expected visible row activeDurationSeconds to preserve source clock, got ' + JSON.stringify(stub.activeDurationSeconds));
@@ -4253,6 +4254,13 @@ const selectorRow = SandmanPortalDiff.subjectRunsFor(newer, { runs: group })[0];
 if (!tableRow || !selectorRow) throw new Error('expected table and selector projections');
 if (tableRow.key !== selectorRow.key) throw new Error('table and selector chose different canonical parents: ' + tableRow.key + ' vs ' + selectorRow.key);
 if (tableRow.key !== 'impl-new') throw new Error('expected newest active parent, got ' + tableRow.key);
+const doneNewest = { key: 'impl-done-new', kind: 'history', status: 'success', issueNumber: 1473, startedAt: '2026-06-30T12:00:00Z' };
+const doneOlder = { key: 'impl-done-old', kind: 'history', status: 'success', issueNumber: 1473, startedAt: '2026-06-29T12:00:00Z' };
+const doneGroup = [doneNewest, doneOlder];
+const doneTable = visibleRunForIssueGroup(1473, doneGroup);
+const doneSelector = SandmanPortalDiff.subjectRunsFor(doneOlder, { runs: doneGroup })[0];
+if (!doneTable || !doneSelector) throw new Error('expected table and selector projections without an active parent');
+if (doneTable.key !== doneSelector.key || doneTable.key !== 'impl-done-new') throw new Error('table and selector disagree without an active parent: ' + doneTable.key + ' vs ' + doneSelector.key);
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
