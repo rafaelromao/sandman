@@ -548,8 +548,9 @@ func defaultLookupGHToken(ctx context.Context) (string, error) {
 }
 
 type containerLease struct {
-	container sandbox.Container
-	release   func()
+	container   sandbox.Container
+	credentials *credentialSync
+	release     func()
 }
 
 func (l *containerLease) Release() {
@@ -599,6 +600,10 @@ type containerPool struct {
 	startOpts     sandbox.StartOptions
 	capacity      int
 	maxContainers int
+
+	// credentials reconciles the snapshot's rotating agent credentials with
+	// the host around each launch in any of the pool's containers.
+	credentials *credentialSync
 
 	mu         sync.Mutex
 	cond       *sync.Cond
@@ -1083,7 +1088,7 @@ func (p *containerPool) Acquire(ctx context.Context) (*containerLease, error) {
 			best.active++
 			container := best.container
 			p.mu.Unlock()
-			return &containerLease{container: container, release: func() { p.releaseShared(best) }}, nil
+			return &containerLease{container: container, credentials: p.credentials, release: func() { p.releaseShared(best) }}, nil
 		}
 		if p.cleanupErr != nil {
 			err := p.cleanupErr
@@ -1141,7 +1146,7 @@ func (p *containerPool) Acquire(ctx context.Context) (*containerLease, error) {
 		entry.ready = true
 		p.cond.Broadcast()
 		p.mu.Unlock()
-		return &containerLease{container: container, release: func() { p.releaseShared(entry) }}, nil
+		return &containerLease{container: container, credentials: p.credentials, release: func() { p.releaseShared(entry) }}, nil
 	}
 }
 
@@ -2759,12 +2764,15 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(ctx context.Context, cfg *c
 		return nil, fmt.Errorf("build container image: %w", err)
 	}
 	pool := newContainerPool(starter, image, ".", startOpts, containerCapacity, maxContainers)
+	pool.credentials = newCredentialSync(startOpts.ConfigMounts, credentialFiles(agentCfg))
 	return &sandboxExecutionPolicy{
 		mode:           sandboxMode,
 		sandboxFactory: sbFactory,
 		containerAlloc: pool,
 		close: func() {
 			_ = pool.Close()
+			// The final agreement must land before the snapshot is removed.
+			_ = pool.credentials.Reconcile()
 			cleanup()
 		},
 	}, nil
@@ -2967,6 +2975,21 @@ func buildStartOptions(agentCfg config.Agent, lookupEnv func(string) (string, bo
 	return opts, nil
 }
 
+// credentialFiles returns the host credential files of agentCfg's preset
+// whose snapshot copies are reconciled with the host. A custom command may
+// not be the preset's agent, so it reconciles nothing.
+func credentialFiles(agentCfg config.Agent) []string {
+	preset, ok := config.BuiltInAgentPresets[agentCfg.Preset]
+	if !ok || agentCfg.Command != preset.Command {
+		return nil
+	}
+	files, err := expandPaths(preset.CredentialFiles, "credential file")
+	if err != nil {
+		return nil
+	}
+	return files
+}
+
 func expandPaths(paths []string, label string) ([]string, error) {
 	if len(paths) == 0 {
 		return nil, nil
@@ -3051,26 +3074,29 @@ type runSession struct {
 	commander daemon.IssueCommander
 
 	// Inputs captured from the runSingle / runPromptOnlySingle call site.
-	issueNumber                int
-	issueState                 string
-	cfg                        *config.Config
-	agentName                  string
-	agentCfg                   config.Agent
-	variant                    string
-	mode                       IssueMode
-	previousRunIDs             map[int]string
-	previousRunBatchIDs        map[int]string
-	reuseSession               bool
-	usageLimitProbe            bool
-	usageLimitWaited           time.Duration
-	usageLimitDeadline         time.Time
-	usageLimitRestoreErr       error
-	identityResolver           *gitIdentityResolver
-	branches                   map[int]string
-	renderCfg                  prompt.RenderConfig
-	outputWriter               io.Writer
-	sbFactory                  SandboxFactory
-	containerAlloc             containerAllocator
+	issueNumber          int
+	issueState           string
+	cfg                  *config.Config
+	agentName            string
+	agentCfg             config.Agent
+	variant              string
+	mode                 IssueMode
+	previousRunIDs       map[int]string
+	previousRunBatchIDs  map[int]string
+	reuseSession         bool
+	usageLimitProbe      bool
+	usageLimitWaited     time.Duration
+	usageLimitDeadline   time.Time
+	usageLimitRestoreErr error
+	identityResolver     *gitIdentityResolver
+	branches             map[int]string
+	renderCfg            prompt.RenderConfig
+	outputWriter         io.Writer
+	sbFactory            SandboxFactory
+	containerAlloc       containerAllocator
+	// credentials is the leased container's credential reconcile, set when
+	// the row acquires its container; nil outside container mode.
+	credentials                *credentialSync
 	baseBranch                 string
 	externalBlockers           []int
 	parallel                   int
@@ -4050,6 +4076,7 @@ loop:
 			runnable = factory.NewRunnable(issue, branch, wt)
 			if agentRun, ok := runnable.(*AgentRun); ok {
 				agentRun.env = s.agentCfg.Env
+				agentRun.credentials = s.credentials
 				agentRun.preset = s.agentCfg.Preset
 				agentRun.contextRolloverLiterals = append([]string(nil), s.opts.contextRolloverLiterals...)
 				if s.opts.taskWriter != nil {

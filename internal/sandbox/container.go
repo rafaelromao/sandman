@@ -292,6 +292,12 @@ func toContainerPath(hostPath string) string {
 	return hostPath
 }
 
+// ContainerPath returns where a host config path appears inside a container:
+// paths under the host home directory map to the container's HOME=/.
+func ContainerPath(hostPath string) string {
+	return toContainerPath(hostPath)
+}
+
 // NewLiveConfigMount returns a ConfigMount that bind-mounts the given host
 // path directly into the container at its corresponding HOME=/ path, instead
 // of copying it into the snapshot. Use this when the file or directory is

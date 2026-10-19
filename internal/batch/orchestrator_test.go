@@ -13131,3 +13131,49 @@ func TestRunBatch_ClaudeOAuthTokenNeverLeaves(t *testing.T) {
 		t.Fatal("expected run artifacts under .sandman/")
 	}
 }
+
+// TestRunBatch_ClaudeCredentialRotationReachesHost pins the wiring from the
+// batch snapshot to every launch: a token the container rotates during a
+// launch is written back to the host credentials, so the host is not logged
+// out by the refresh it can no longer use.
+func TestRunBatch_ClaudeCredentialRotationReachesHost(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write docker: %v", err)
+	}
+	t.Setenv("PATH", dir)
+	hostCredentials := claudeCredentialHome(t)
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
+
+	starter := &fakeContainerStarter{container: &fakeContainerForOrchestrator{id: "shared123"}}
+	sb := &fakeSandbox{}
+	sb.execFunc = func(context.Context, string, io.Writer, io.Writer) error {
+		for _, mount := range starter.startOpts.ConfigMounts {
+			if mount.Target == "/.claude" {
+				return os.WriteFile(filepath.Join(mount.Source, ".credentials.json"), []byte(`{"claudeAiOauth":{"refreshToken":"rotated"}}`), 0600)
+			}
+		}
+		return errors.New("no ~/.claude snapshot mounted")
+	}
+	o := NewOrchestrator(&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}}, &noopRenderer{},
+		&fakeConfigStore{config: &config.Config{Agent: "claude", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"},
+			AgentProviders: map[string]config.Agent{"claude": config.BuiltInAgentPresets["claude"].Agent("claude")}}}, nil,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: sb}),
+		WithContainerRuntimeFactory(&fakeContainerRuntimeFactory{starter: starter}),
+	)
+
+	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}, Sandbox: "docker"})
+
+	if !sb.execCalled {
+		t.Fatal("expected the agent command to run")
+	}
+	data, err := os.ReadFile(hostCredentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "rotated") {
+		t.Fatalf("host credentials = %s, want the container's rotated token", data)
+	}
+}
