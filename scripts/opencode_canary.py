@@ -21,6 +21,7 @@ def evaluate(output, returncode):
         return PIN_GUIDANCE
     text = []
     errors = False
+    provider_message = ""
     for line in output.splitlines():
         try:
             event = json.loads(line)
@@ -29,10 +30,16 @@ def evaluate(output, returncode):
         if not isinstance(event, dict):
             continue
         errors |= event.get('type') == 'error'
+        if event.get('type') == 'error':
+            provider_message = str(event.get('error', {}).get('data', {}).get('message', ''))
         if event.get('type') == 'text':
             text.append(event.get('part', {}).get('text', ''))
     if returncode or errors or ''.join(text).strip() != 'OK':
-        return 'OpenCode provider canary failed. Check provider availability/authentication; if the CLI pin is deprecated, update the pins rather than bypassing this check.'
+        secret = os.environ.get('OPENCODE_API_KEY', '')
+        if secret:
+            provider_message = provider_message.replace(secret, '[redacted]')
+        detail = (' Provider: ' + provider_message[:400]) if provider_message else ''
+        return 'OpenCode provider canary failed. Check provider availability/authentication; if the CLI pin is deprecated, update the pins rather than bypassing this check.' + detail
     return None
 
 
@@ -58,7 +65,7 @@ def main():
             auth.parent.mkdir(parents=True)
             auth.write_text(json.dumps({'opencode': {'type': 'api', 'key': token}}))
             auth.chmod(0o600)
-        command = ['opencode', 'run', '--pure', '--format', 'json', '-m', manifest['model'],
+        command = ['opencode', 'run', '--format', 'json', '-m', manifest['model'],
                    'Reply with exactly OK. Do not use any tools.']
         process = subprocess.Popen(command, cwd=directory, env=env, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, text=True, start_new_session=True)
@@ -72,7 +79,7 @@ def main():
         error = evaluate(output, process.returncode)
         # Never print raw provider output, which could contain credential details.
         if error:
-            print('::error::' + error)
+            print('::error::' + error.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'))
             return 1
     print('OpenCode provider canary passed (one request).')
     return 0

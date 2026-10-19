@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 from opencode_canary import evaluate, PIN_GUIDANCE
 
 
@@ -19,6 +20,12 @@ class CanaryTests(unittest.TestCase):
         for message in ['OpenCode 1.18.0 or newer is required to use the free tier',
                         'This CLI version is deprecated', 'CLI no longer supported']:
             self.assertEqual(evaluate(message, 0), PIN_GUIDANCE)
+
+    def test_provider_diagnostics_redact_the_authentication_key(self):
+        with patch.dict(os.environ, {'OPENCODE_API_KEY': 'private-test-key'}):
+            result = evaluate('{"type":"error","error":{"data":{"message":"Invalid key private-test-key"}}}', 0)
+        self.assertIn('Invalid key [redacted]', result)
+        self.assertNotIn('private-test-key', result)
 
     def test_client_configuration_error_is_not_assumed_to_be_deprecation(self):
         self.assertNotEqual(evaluate("OpenCode's free tier can only be used from within OpenCode", 1), PIN_GUIDANCE)
@@ -48,7 +55,7 @@ class CanaryProcessTests(unittest.TestCase):
             calls = [json.loads(line) for line in record.read_text().splitlines()]
             self.assertEqual(len(calls), 1)
             self.assertIsNone(calls[0]['permission'], 'canary must keep the official CLI tool schema')
-            self.assertEqual(calls[0]['args'][:6], ['run', '--pure', '--format', 'json', '-m', 'opencode/big-pickle'])
+            self.assertEqual(calls[0]['args'][:5], ['run', '--format', 'json', '-m', 'opencode/big-pickle'])
             self.assertEqual(calls[0]['home'], calls[0]['cwd'])
             self.assertNotEqual(calls[0]['cwd'], str(root))
             self.assertFalse(Path(calls[0]['home']).exists(), 'temporary provider state must be removed')
