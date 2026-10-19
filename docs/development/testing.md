@@ -21,6 +21,12 @@ GOTOOLCHAIN=go1.25.0 go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
 go test -race -v ./...
 ```
 
+Real OpenCode smoke and preset-matrix fixtures copy credentials into a test-owned
+HOME, rather than importing the operator's live plugins, dependency installations,
+or session database. Preset tests retain the real Podman data-store location and
+allow Sandman's normal cancellation cleanup before deleting temporary artifacts.
+This keeps a concurrent host agent or plugin update from changing their inputs.
+
 The Staticcheck gate inherits the default checks and explicitly defers `U1000`
 (unused code) to the v1.1 cleanup work. The analyzer is pinned to `v0.7.0`
 and runs with Go `1.25.0` so newer local toolchains do not provide incompatible
@@ -84,8 +90,13 @@ strategy seam existed; regenerate its golden with
 `SANDMAN_AGENT_STRATEGY_UPDATE=1` only for an intended OpenCode behaviour change.
 `TestAgentSelection_NoAgentNameComparisonsOutsideStrategy` fails when a new
 `== "opencode"`-style agent-name comparison appears outside the strategy seam.
+Session identity is agent-neutral in storage: each strategy validates its own
+`session.json` protocol and provider, and the Portal reads any valid record, so
+neither needs an agent-name comparison. The Claude launch tests in
+`claude_strategy_test.go` pin fresh, exact-resume, invalid-identity, and
+missing-session commands, in place of a Claude golden.
 The hermetic `claude` preset path (a fake `claude` binary behind the real
-worktree sandbox, usage-limit await, and `--continue` re-entry) runs with the
+worktree sandbox, usage-limit await, and exact `--resume` re-entry) runs with the
 `batch` E2E gate:
 
 ```bash
@@ -98,21 +109,21 @@ Sandman publishes four GoReleaser targets that match the four Unix platforms Ope
 
 | Platform | Build + unit (race) | Podman-backed regression | Native Compatibility boundary |
 |----------|---------------------|--------------------------|-------------------------------|
-| Linux amd64 | `CI / build (ubuntu-latest)` + `CI / portal-continuity-browser` (PR + push to `main`) | `Full Regression - Linux` (release-please branch + dispatch) | n/a |
+| Linux amd64 | `CI / build (ubuntu-latest)` + `CI / portal-continuity-browser` (PR + push to `main`) | `Full Regression - Linux` (release-please branch + dispatch) | `Native Compatibility (linux/amd64)` on `ubuntu-latest` |
 | Linux arm64 | (no PR-time matrix entry today; covered by the released archive) | n/a | `Native Compatibility / (linux/arm64)` on `ubuntu-24.04-arm` (release-please branch + dispatch) |
 | macOS amd64 (Intel) | n/a (covered transitively by `CI / build (macos-latest)` arm64 today) | n/a — release-please does not run Podman on macOS after #2459 | `Native Compatibility / (darwin/amd64)` on `macos-15-intel` (release-please branch + dispatch) |
 | macOS arm64 (Apple Silicon) | `CI / build (macos-latest)` (PR + push to `main`) | n/a | `Native Compatibility / (darwin/arm64)` on `macos-14` (release-please branch + dispatch) |
 
-The ordinary `CI` workflow runs the default untagged suite on the `ubuntu-latest` and `macos-latest` runners. It explicitly leaves `SANDMAN_TEST_PROVIDERS`, `SANDMAN_E2E_GATES`, `SANDMAN_RUN_SMOKE_E2E`, and `SANDMAN_RUN_AGENT_E2E` disabled, so pull requests do not run opt-in smoke or E2E scenarios.
+The ordinary `CI` workflow uses independent platform jobs to run the default untagged suite on the `ubuntu-latest` and `macos-latest` runners. It explicitly leaves `SANDMAN_TEST_PROVIDERS`, `SANDMAN_E2E_GATES`, `SANDMAN_RUN_SMOKE_E2E`, and `SANDMAN_RUN_AGENT_E2E` disabled, so pull requests do not run opt-in smoke or E2E scenarios.
 
 The required `CI / portal-continuity-browser` job provisions Node and Chromium on Linux and runs the actual-page Portal log continuity browser scenarios. Its separate required status keeps the browser gate visible in branch protection on pull requests and pushes to `main`.
 
 Release Please branch updates add two release-validation workflows:
 
-- `Full Regression - Linux` is the exhaustive authority for Linux. It runs the race-enabled unit suite, every smoke provider and build-tools preset, and every E2E gate including real-agent coverage with the canonical 60- and 90-minute budgets.
-- `Native Compatibility` is a focused suite with three parallel arch-specific jobs — `Native Compatibility (darwin/amd64)` on `macos-15-intel`, `Native Compatibility (darwin/arm64)` on `macos-14`, and `Native Compatibility (linux/arm64)` on `ubuntu-24.04-arm`. Each job builds Sandman natively for its arch, then exercises Darwin/Linux socket paths plus portal and attach streaming, and verifies the native portal and attach streaming boundary through two hermetic portal E2E cases. Linux-container preset portability remains covered by the Linux workflow rather than being rebuilt inside the macOS Podman VM.
+- `Full Regression - Linux` is the exhaustive authority for Linux. It runs independent unit/browser, smoke container, credential-free integration, and live-provider jobs with the canonical 60- and 90-minute budgets.
+- `Native Compatibility` is a focused suite with four parallel arch-specific jobs — `Native Compatibility (linux/amd64)` on `ubuntu-latest`, `Native Compatibility (darwin/amd64)` on `macos-15-intel`, `Native Compatibility (darwin/arm64)` on `macos-14`, and `Native Compatibility (linux/arm64)` on `ubuntu-24.04-arm`. Each job builds Sandman natively for its arch, then exercises Darwin/Linux socket paths plus portal and attach streaming, and verifies the native portal and attach streaming boundary through two hermetic portal E2E cases. Linux-container preset portability remains covered by the Linux workflow rather than being rebuilt inside the macOS Podman VM.
 
-The contract test `TestPlatformCoverageMapMatchesWorkflowsAndGoReleaser` enforces that the CI matrix, the `Native Compatibility` workflow shape, the `Full Regression - Linux` exhaustive command, and the four `.goreleaser.yml` build IDs all stay aligned with the matrix above. A drift in any one of those four sources fails the contract.
+The contract test `TestPlatformCoverageMapMatchesWorkflowsAndGoReleaser` enforces that the CI platform jobs, the `Native Compatibility` workflow shape, the `Full Regression - Linux` exhaustive command, and the four `.goreleaser.yml` build IDs all stay aligned with the matrix above. A drift in any one of those four sources fails the contract.
 
 ### Full regression (`SANDMAN_FULL_REGRESSION`)
 
@@ -126,12 +137,62 @@ CI-only skip guard is written as
 exhaustive job actually executes the real-agent, portal, preset-matrix, visual,
 and heartbeat-timeout tests that ordinary CI only compiles.
 
-The full-regression workflow installs the `opencode` CLI (`curl -fsSL
-https://opencode.ai/install | bash`) and provisions `~/.local/share/opencode/auth.json`
-from the `OPENCODE_API_KEY` secret. With auth present, the real-agent tests run
-for real and a free-model quota exhaustion surfaces as a failed job instead of
-a green-but-empty one. If the secret is absent, the auth-gated tests skip
-cleanly with their normal "missing auth" message rather than failing.
+The checked-in `scripts/release_scenarios.json` manifest defines required tests,
+provider CLIs/models, native platform boundaries and narrowly permitted skips.
+The only permitted required-scenario skips are the no-runtime negative control
+when a runtime exists and two retired PR-flow scenarios whose replacement is
+required. Skip reasons must match the manifest. Unrelated optional default tests
+are reported but do not substitute for required scenario coverage. New tagged
+E2E tests must enter the manifest; contracts reject missing entries.
+
+The four independent jobs call `release-regression-tier.yml` and have no
+dependency on each other. The final gate checks each job explicitly, preserving
+sibling failures when only one tier is rerun.
+Unit includes `visual` tests and Node production-module coverage. Smoke builds
+all preset containers without provider calls. Integration excludes the manifest's
+live selector and uses fake agents, local Git remotes and real containers.
+Live selects the explicit OpenCode scenarios and receives only OpenCode credentials.
+Claude provider E2Es run in a separate manual tier when `Full Regression - Linux`
+is dispatched with `run_claude` enabled; only that job receives Claude credentials. No live-provider validation is added to ordinary PR CI.
+
+Every Linux tier provisions Node 22, Chromium and validated rootless Podman
+with runc. Live additionally installs `opencode-ai@1.15.0` and requires
+`OPENCODE_API_KEY`. The optional manual Claude tier installs
+`@anthropic-ai/claude-code@2.1.283` and requires `CLAUDE_CODE_OAUTH_TOKEN`.
+Each provider tier checks its own CLI version. OpenCode auth is
+written as JSON with mode 0600. The selected model identifiers are
+`opencode/big-pickle` and `claude-haiku-4-5-20251001`. Missing credentials,
+tools, required tests, unexpected skips and duplicate executions fail validation.
+Quota/provider failures remain failures; they cannot produce successful coverage.
+
+`release-regression-<tier>-<sha>` artifacts contain the raw Go JSON stream,
+process exit code, source SHA, observed tool versions and `report.json`.
+Reports and Actions summaries count executions, passes, skips, failures,
+missing scenarios and interrupted tests; they retain skip/failure reasons and
+classify process failures versus timeouts. The evaluator runs with `always()`
+even after setup failure, and the final release regression gate requires every
+tier. GNU timeout kills the tier process group after a bounded grace period;
+runner containers are removed during final cleanup. Native jobs similarly
+publish `native-<platform>-<sha>` reports for all four published platforms.
+
+To reproduce one tier after provisioning prerequisites, use:
+
+```bash
+mkdir -p regression-artifacts
+export RELEASE_TIER=integration SANDMAN_FULL_REGRESSION=1
+export SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all
+bash scripts/release_tier.sh
+GITHUB_SHA=$(git rev-parse HEAD) python3 scripts/release_report.py \
+  "$RELEASE_TIER" regression-artifacts/events.jsonl \
+  "$(cat regression-artifacts/exit-code)" regression-artifacts/report.json
+```
+
+Run `python3 scripts/release_report_test.py` for hermetic accounting tests.
+Hosted live runs and native runners remain necessary to establish actual release
+evidence; local contract tests alone cannot certify a release. The main ruleset
+keeps ordinary PR contexts because release-only contexts do not exist on other
+PRs; maintainers must inspect both release workflows at the exact release head
+before merging. Do not alter runtime check-rollup selection for these jobs.
 
 `go.yml` must never set `SANDMAN_FULL_REGRESSION`; the contract test
 `TestCIWorkflowKeepsOptInSuitesDisabled` enforces that so the CI-only skips
@@ -348,3 +409,199 @@ For stranded worktrees, see [`sandman stranded`](../usage/commands.md#sandman-st
 ## Deeper test infrastructure
 
 For hermetic `gh` shims, fast-mode blocking shims, short Unix-socket paths, canonical test env vars, parallel test rules, and portal live-run invariants, see [Test Infrastructure](test-infrastructure.md).
+
+## Quality gate and protection migration
+
+`CI / quality-gate` runs with `always()` after `static-analysis`, `contracts`, `build-linux`, `build-macos`,
+`portal-continuity-browser`, `goreleaser`, and `semantic-pull-request`.
+Only success is accepted, except the intentional skipped title check on a main
+push. The independent `build-linux` and `build-macos` jobs preserve the existing
+`build (ubuntu-latest)` and `build (macos-latest)` check names. Each is a direct
+gate dependency, so a partial rerun of one platform cannot hide the other
+platform's failure through GitHub's matrix-result aggregation. The snapshot uses
+Go from `go.mod` and GoReleaser v2.10.1 to package all four configured platforms
+on PRs and main pushes. It never publishes a release.
+
+Jobs are bounded at 25 minutes (build), 20 (packaging), 15 (browser), 5 (title),
+and 2 (aggregate), keeping the parallel required path within the managed
+30-minute observation budget under normal runner availability. Queue delays
+remain outside job timeout control. PR events include opened, synchronize,
+reopened, and edited, with no target-branch filter. Concurrency cancels only
+superseded runs of the same PR; each main push has an independent group.
+
+Run `go test ./scripts` for workflow contracts and the hermetic evaluator tests.
+Those tests execute the same `scripts/quality_gate.sh` used by Actions with
+failed, cancelled, skipped, absent, and unknown dependency results. Ordinary PR
+CI retains the opt-in provider/smoke/E2E exclusions and existing runtime guards.
+
+### Verify and apply active protection
+
+The JSON in `.github/rulesets/main.json` is desired policy, not evidence of
+active protection. On 2026-10-14 the connected GitHub API returned an empty
+repository ruleset list, and reading legacy main branch protection returned
+403 `Resource not accessible by integration`. Enforcement is therefore
+**unverified**, not established as absent or successfully applied.
+
+An authorized maintainer must perform the following migration:
+
+1. Read both repository/organization rulesets and legacy protection for `main`
+   in GitHub Settings (Rules / Rulesets and Branches), or with an administrative
+   credential using `gh api repos/rafaelromao/sandman/rulesets`,
+   `gh api repos/rafaelromao/sandman/rules/branches/main`, and
+   `gh api repos/rafaelromao/sandman/branches/main/protection`. Record the active
+   rule IDs, enforcement, required context names and check-source integration,
+   bypass permissions, and any access limitations. A 403/404 is not verification.
+2. Observe a PR run and a main-push run of the new workflow. Confirm exact check
+   names from GitHub, both matrix entries, packaging, and the aggregate result;
+   confirm title edits rerun validation and invalid titles block the gate.
+3. Add the observed `quality-gate` context to the existing active policy in the
+   UI, preserving every currently required context and restriction. The checked-in
+   JSON retains the previous four contexts plus `CI / quality-gate`; use the
+   actual emitted check context (and Actions integration) shown by GitHub.
+   Do not overwrite existing protection by blindly importing this JSON. If no
+   policy exists, create an active ruleset for `refs/heads/main` using this file
+   as the baseline and preserve any applicable organization requirements.
+4. Re-read the effective rules and verify the merge UI blocks a failed aggregate
+   gate for a maintainer without bypass. Record the policy/run links and result.
+   Keep the old contexts until the aggregate gate is proven and active; removing
+   them is a separate reviewed migration. If access is unavailable, leave the
+   verification pending and document the limitation explicitly.
+
+
+### Separate CI validation and reports
+
+`make check` validates without editing files; use `make fmt` explicitly to fix
+formatting. CI uses the same `fmt-check`, `build-check`, `vet`, `staticcheck`,
+`contracts`, `test-ci`, and `test-browser` commands. Local `make test` retains
+all default race tests, including browser tests when Chromium is available.
+
+The aggregate additionally requires `static-analysis` and `contracts`. Existing
+platform status names and required protection contexts remain unchanged. Static
+analysis, contracts (including the ADR index and skill hygiene), Linux/macOS
+build/race tests, Portal browser scenarios, and snapshot packaging run in parallel.
+Only the browser job installs Chromium. `scripts/portal_browser_tests.txt` lists
+all required Chromium-backed tests (continuity, subject switching, page rendering,
+and visual layout). `test-browser` enables the `visual` build tag and requires a
+browser; `test-ci` excludes that same exact inventory. A Go AST contract checks
+the inventory against browser helper callers, preventing silently skipped scenarios.
+The built-binary Portal browser test retains its separate
+`SANDMAN_RUN_PORTAL_BINARY_E2E=1` opt-in; it was never part of default PR coverage. Node remains installed in both platform
+jobs so production-module tests and JavaScript assertions remain in the race suite.
+
+Linux retains Podman with runc and its runtime probe. Default container tests are
+mixed with hermetic tests in the command, batch, and sandbox packages; tests using
+real containers and cancellation must remain in the Linux race tier until an
+explicit inventory and tier migration preserves them. Provider, smoke and real-agent
+opt-ins remain disabled on PRs. No additional API-quota tests are introduced.
+
+`scripts/ci_report.sh` captures raw logs, Go JSON events, a structured JSON report,
+and Markdown under `reports/`, preserving command failure status. Job summaries
+identify category, failing package/test, artifact name, and elapsed seconds;
+compiler/setup failures refer to the raw log. Artifacts upload with `always()`.
+Packaging retains `dist/` and points to GoReleaser diagnostics. Snapshot and release
+both use Go from `go.mod` and GoReleaser `v2.10.1` for four-platform archives.
+
+Race jobs have a 25-minute limit (tests 20 minutes); static/contracts/browser have
+15-minute limits, packaging 20, and aggregate 2. Measure the first PR's elapsed
+critical path including setup and artifact upload against the managed 30-minute
+CI-wait budget; local timing alone cannot verify hosted Linux/macOS duration.
+
+Security and workflow validation are mandatory dependencies of `CI / quality-gate`.
+Run `make security-check workflow-check` with govulncheck v1.1.4, Gitleaks
+v8.24.3, Actionlint v1.7.7 and ShellCheck v0.10.0 on PATH. The reusable security
+workflow also runs every Monday and manually; inspect Scheduled Security in
+Actions for failures. Scanner errors fail closed. Public output contains status
+only, never raw secret findings; reproduce locally to investigate. No scanner
+artifacts are uploaded. The reviewed baseline contains 28 exact historical false positives in Portal
+run/batch identifier fixtures (`.github/security-exceptions.json`), owned by
+rafaelromao and expiring 2027-01-16. No actual secrets are accepted. Never regenerate a baseline
+to accept new findings. Secret exceptions require an exact Gitleaks fingerprint,
+owner, rationale and ISO expiry date; expired entries fail validation. Reachable
+vulnerabilities must be fixed, with no blanket vulnerability suppression.
+Dependabot opens weekly Go module and Actions updates; review those updates and
+retain full action commit pins with readable version comments. Release automation
+retains write permissions; validation defaults to contents read and semantic title
+validation gets pull-request read. Existing protection contexts remain in place.
+
+The Go language minimum remains 1.25; `toolchain go1.26.9` selects a patched
+standard library for normal builds; `.go-version` selects the same patched
+toolchain explicitly in setup-go and security scans. Keep automatic
+toolchain selection enabled. Staticcheck retains its isolated Go 1.25.0 runner
+for export-data compatibility; it does not build release binaries. The checked-in
+ruleset also requires workflow-validation explicitly; apply/verify live protection
+using the existing documented procedure.
+
+### Go coverage rollout
+
+The existing Linux and macOS `test-ci` race runs each collect an atomic Go
+profile. There is no second complete test run. `coverage-linux` and
+`coverage-macos` artifacts contain the raw profile, package statement totals,
+changed-line result, head/base SHA, and policy decision in JSON and Markdown.
+Profiles are never summed across platforms; duplicate blocks within a profile
+are counted once. These measurements do not measure Portal JavaScript or
+browser coverage. The dedicated browser gate and Node tests retain ownership.
+
+`python3 scripts/coverage_report.py --platform linux` reproduces the report after
+`make test-ci`. Locally it compares HEAD with its parent; in PR CI it compares
+the merge base of the actual PR base SHA and tested merge SHA, including stacked PRs.
+CI retains GitHub's synthetic merge checkout so validation covers integration with
+the target branch. Reports identify the exact tested SHA.
+Main pushes compare with their before SHA. Deleted lines are excluded. Renames
+are conservatively treated as deletion/addition, including unchanged executable
+lines at the destination. Changed executable lines mean changed lines intersecting
+Go coverage block spans, not AST statement counts; comments or braces inside a
+block span can therefore be included. Overlapping spans require every block to
+be covered. No intersecting executable changes gives n/a, never 0% or 100%.
+
+The baseline is a same-platform artifact from a successful CI main push at the
+exact comparison SHA. Stacked bases without such artifacts explicitly report
+baseline unavailable; there is no fallback to an unrelated main baseline.
+Expired artifacts and API failures also report unavailable. The first rollout
+runs establish the measured baselines; no repository-wide floor is imposed.
+
+`.github/coverage-policy.json` starts in `report` mode. The 80% changed-line
+proposal and 1 percentage point protected-package regression tolerance are
+calibration candidates, not approved requirements. Advisory findings exit zero
+so Sandman's overall check rollup continues to work. To enable enforcement,
+review the platform baseline reports and CI timings, agree thresholds in a PR,
+set `approval_url` to that review and change `mode` to `enforce`. Then violations
+(including missing baselines) fail the platform job and existing aggregate gate.
+No new ruleset context is needed. Legacy low coverage alone never fails policy.
+
+Protected packages are events, batch, review, daemon and sandbox. Exemptions
+require `package`, exact package `source_tree`, `expires_on` (ISO date), a concrete
+`reason`, and HTTPS `review_url` in the policy file. Compute the package tree with
+`git rev-parse HEAD:internal/events` (substitute the package). Unlike a containing
+commit SHA, this can be recorded before committing the policy. Source changes
+invalidate it; unchanged code remains exempt only through its expiration date.
+They waive only that package regression, not changed-line policy or missing
+baseline evidence. Require maintainer review for policy
+and exemption changes. Prioritize behavioral ownership, recovery, event
+projection and cancellation tests over tests written only to increase coverage.
+
+Coverage reporting runs after failed tests when a profile exists. Reports mark
+`collection_status`; only `success` profiles with matching schema, platform and
+tested SHA qualify as baselines. Failed/unverified collections are diagnostic
+only. CI explicitly grants read access to Actions artifacts; signed download
+redirects discard the GitHub authorization header.
+
+### Publication authorization
+
+Release publication uses same-invocation reusable workflows from the exact main
+commit: CI (including security, coverage policy and four-platform snapshot), Full
+Regression (all manifest tiers), and Native Compatibility (all four platforms).
+`Release / publication-gate` rejects any missing, skipped, failed or cancelled
+result. No check name, external status, earlier workflow run or release-branch SHA
+can authorize publication. GitHub's reusable-workflow dependency graph establishes
+provenance; the gate also checks the caller repository, event, main ref, workflow
+source SHA and candidate SHA. Do not replace these dependencies with status-name
+lookups. A merged release commit always receives fresh validation, even if its
+release branch passed. Workflow dispatch is permitted on main for recovery.
+
+The checked-in main ruleset now sets
+`strict_required_status_checks_policy: true`: concurrent merges require the PR to
+be current with main before merging. Apply and read back protection using the
+procedure above; the file alone does not enforce it. On 2026-10-16 the rulesets
+API returned an empty list; legacy protection/admin access remains unverified.
+An authorized repository administrator must apply/verify strict required checks.
+A merge queue would also require `merge_group` CI and title-gate support first.

@@ -51,16 +51,34 @@ if is_worktree_prune "$@"; then
   exit 129
 fi
 
-# Keep this shim first only for the agent process tree. Remove it before
-# delegating so this script resolves the real Git executable instead of itself.
+# Remove every occurrence before delegating. Agent launchers can prepend their
+# own tool directory, moving this shim away from the front of PATH; stripping
+# only a leading occurrence would exec this same script forever. Preserve other
+# entries, including empty entries and paths containing spaces.
 guard_dir=${SANDMAN_GIT_GUARD_DIR-}
 if [ -n "$guard_dir" ]; then
+  path_rest=${PATH-}
+  path_clean=
+  path_sep=
   while :; do
-    case "${PATH-}" in
-      "$guard_dir":*) PATH=${PATH#"$guard_dir":} ;;
-      *) break ;;
+    case "$path_rest" in
+      *:*)
+        path_entry=${path_rest%%:*}
+        path_rest=${path_rest#*:}
+        path_more=1
+        ;;
+      *)
+        path_entry=$path_rest
+        path_more=0
+        ;;
     esac
+    if [ "$path_entry" != "$guard_dir" ]; then
+      path_clean=$path_clean$path_sep$path_entry
+      path_sep=:
+    fi
+    [ "$path_more" = 1 ] || break
   done
+  PATH=$path_clean
 fi
 export PATH
 exec git "$@"

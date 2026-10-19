@@ -420,6 +420,10 @@ func TestPortalReviewSubjectSwitch_PreservesPendingPerRunOutputAcrossRoundTrip(t
       }, 'parent source snapshot');
       const parent = window.sandmanPortalLogs.get('`+parentID+`');
       const nativeRaf = window.requestAnimationFrame.bind(window);
+      // Snapshot acknowledgement precedes view work. Let the initial log
+      // projection and its render finish before intercepting later frames;
+      // otherwise the scheduler can still own a frame on the native queue.
+      await new Promise(resolve => nativeRaf(() => nativeRaf(resolve)));
       const pendingRafs = [];
       window.requestAnimationFrame = function (callback) { pendingRafs.push(callback); return pendingRafs.length; };
       const parentStream = window.__portalStreams.find(source => source.runId === '`+parentID+`' && source.readyState === 1);

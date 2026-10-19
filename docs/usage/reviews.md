@@ -82,7 +82,7 @@ While the daemon works on a request, it adds a 👀 reaction to the comment and
 the pull request, and removes it when the launch ends. If the reaction
 disappears without a decision being posted, the stderr line for that request
 says why. `sandman attach` streams the same daemon lines from another terminal.
-The complete error of each failing operation is kept in
+Errors remain visible on stderr. Locally repairable failures are also kept in
 `.sandman/reviews/health-repair.json`.
 
 ## Review command guard
@@ -128,12 +128,21 @@ sandman review \
 
 ## Health repair
 
-When an operation the daemon depends on fails (authenticating to GitHub, listing
-pull requests, preparing or launching a review run, publishing a decision), the
-daemon records the failure in `.sandman/reviews/health-repair.json` and launches
-a diagnostic repair agent. The agent gets the failed operation, its error output,
-and the paths to the event log and run artifacts. GitHub rate limits, usage
-limits, and cancellation are waits, not health failures, and launch no repair.
+When a locally repairable operation fails (for example a broken credential helper,
+container image, review worktree, or decision artifact), the daemon records the
+failure in `.sandman/reviews/health-repair.json` and launches a diagnostic repair
+agent. The agent gets the failed operation, its error output, and the paths to the
+event log and run artifacts.
+
+GitHub connection errors, call timeouts, and temporary server failures use bounded
+read retries and normal daemon re-observation; they launch no local repair agent.
+Each read allows at most three attempts, each capped by the GitHub call timeout
+and the caller's unchanged deadline. Read recovery does not renew CI or review
+deadlines, spend implementation retries, or authorize a merge from stale facts.
+Writes such as posting review decisions are not automatically retried after an
+availability failure: their durable publication recovery checks for an existing
+post before trying again. GitHub rate limits, agent usage limits, and operator
+cancellation retain their separate recovery behavior and launch no health repair.
 
 The repair agent differs from the reviewer:
 

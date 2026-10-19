@@ -16,7 +16,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
-func TestUsageLimitAwait_ClaudeResumesSameConversationWithContinue(t *testing.T) {
+func TestUsageLimitAwait_ClaudeResumesTheExactRecordedSession(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
 	initGitRepo(t, root)
@@ -76,7 +76,7 @@ func TestUsageLimitAwait_ClaudeResumesSameConversationWithContinue(t *testing.T)
 	if len(commands) != 2 {
 		t.Fatalf("commands = %q, want the limited launch and one re-entry", commands)
 	}
-	if strings.Contains(commands[0], "--continue") {
+	if strings.Contains(commands[0], "--resume") || strings.Contains(commands[0], "--continue") {
 		t.Fatalf("first command = %q, want a fresh conversation", commands[0])
 	}
 	for i, command := range commands {
@@ -84,8 +84,8 @@ func TestUsageLimitAwait_ClaudeResumesSameConversationWithContinue(t *testing.T)
 			t.Fatalf("command[%d] = %q, want the claude preset with the requested model", i, command)
 		}
 	}
-	if !strings.Contains(commands[1], " --continue ") || strings.Contains(commands[1], "--session") {
-		t.Fatalf("re-entry command = %q, want Claude Code's --continue and no session selector", commands[1])
+	if !strings.Contains(commands[1], " --resume '"+recordedClaudeSession+"' ") || strings.Contains(commands[1], "--continue") {
+		t.Fatalf("re-entry command = %q, want the exact recorded session and no --continue", commands[1])
 	}
 	if got := countEventsByType(log.snapshot(), "run.await"); got != 1 {
 		t.Fatalf("run.await events = %d, want 1", got)
@@ -134,7 +134,7 @@ func (s *claudeUsageLimitSandbox) Exec(_ context.Context, command string, stdout
 	attempt := s.attempts
 	s.commands = append(s.commands, command)
 	s.mu.Unlock()
-	_, _ = io.WriteString(stdout, `{"type":"system","subtype":"init","session_id":"conv-1"}`+"\n")
+	_, _ = io.WriteString(stdout, `{"type":"system","subtype":"init","session_id":"`+recordedClaudeSession+`"}`+"\n")
 	if attempt <= s.failures {
 		_, _ = io.WriteString(stdout, claudeUsageLimitResult+"\n")
 		return errors.New("exit status 1")

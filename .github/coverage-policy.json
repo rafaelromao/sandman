@@ -1,0 +1,8 @@
+{
+  "mode": "report",
+  "approval_url": null,
+  "changed_line_proposal": 80,
+  "tolerance_percentage_points": 1,
+  "protected_packages": ["internal/events", "internal/batch", "internal/review", "internal/daemon", "internal/sandbox"],
+  "exemptions": []
+}

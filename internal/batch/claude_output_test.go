@@ -204,3 +204,62 @@ func (s *claudeHeartbeatSandbox) Exec(_ context.Context, _ string, stdout, _ io.
 	_, _ = io.WriteString(stdout, `{"type":"result","subtype":"success","is_error":false,"num_turns":1}`+"\n")
 	return nil
 }
+
+// claudeExpiredOAuthResult is the real result framing with the message the
+// Claude Code launches of a long-waiting batch reported once the host had
+// rotated the subscription refresh token their snapshot still held.
+var claudeExpiredOAuthResult = strings.Replace(claudeRealAuthFailureResult,
+	`"result":"Not logged in · Please run /login"`,
+	`"result":"Failed to authenticate: OAuth session expired and could not be refreshed"`, 1)
+
+func authenticationFailed(t *testing.T, parser outputParser) bool {
+	t.Helper()
+	reporter, ok := parser.(authenticationFailureReporter)
+	if !ok {
+		t.Fatalf("%T does not report authentication failures", parser)
+	}
+	return reporter.AuthenticationFailed()
+}
+
+func TestClaudeOutput_RecognisesAuthenticationFailure(t *testing.T) {
+	for name, stream := range map[string]string{
+		"expired OAuth session": `{"type":"assistant","message":{"content":[{"type":"text","text":"Failed to authenticate: OAuth session expired and could not be refreshed"}]}}` + "\n" + claudeExpiredOAuthResult + "\n",
+		"not logged in":         claudeRealAuthFailureResult + "\n",
+		"plain stderr":          "Invalid API key · Please run /login\n",
+		"revoked token": strings.Replace(claudeRealAuthFailureResult, `"result":"Not logged in · Please run /login"`,
+			`"result":"Failed to authenticate. API Error: 401 OAuth token has been revoked"`, 1) + "\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, parser := renderClaudeStream(t, stream)
+			if !authenticationFailed(t, parser) {
+				t.Fatal("authentication failure was not recognised")
+			}
+			if parser.UsageLimitReached() {
+				t.Fatal("authentication failure was treated as a usage limit")
+			}
+		})
+	}
+}
+
+func TestClaudeOutput_AuthenticationEchoIsNotAFailure(t *testing.T) {
+	_, parser := renderClaudeStream(t,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"If it says Failed to authenticate, please run /login"}]}}`+"\n"+
+			`{"type":"result","subtype":"success","is_error":false,"num_turns":3,"result":"Failed to authenticate is handled now"}`+"\n")
+	if authenticationFailed(t, parser) {
+		t.Fatal("agent text about authentication was treated as a failure")
+	}
+}
+
+// TestClaudeOutput_UsageLimitOutranksAuthentication pins the precedence: a
+// result that reports a usage limit awaits its reset even when its text
+// also mentions authentication.
+func TestClaudeOutput_UsageLimitOutranksAuthentication(t *testing.T) {
+	result := strings.Replace(claudeUsageLimitResult, `resets 3pm (America/Sao_Paulo)`, `resets 3pm (America/Sao_Paulo); Please run /login to switch accounts`, 1)
+	_, parser := renderClaudeStream(t, result+"\n")
+	if !parser.UsageLimitReached() {
+		t.Fatal("usage limit was not recognised")
+	}
+	if authenticationFailed(t, parser) {
+		t.Fatal("usage-limit result was treated as an authentication failure")
+	}
+}

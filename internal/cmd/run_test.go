@@ -2731,6 +2731,14 @@ func TestRun_PromptOnlyWithRunIDRegistersOrchestratorRunIDInBatchesIndex(t *test
 	if entries[0].Name() != got.ID {
 		t.Errorf("batch folder basename = %q, want %q (== batches index entry id == public BatchId)", entries[0].Name(), got.ID)
 	}
+
+	// The orchestrator derives the run's batch identity from Request.RunDir.
+	if gotRunDir := filepath.Base(spy.req.RunDir); gotRunDir != got.ID {
+		t.Errorf("Request.RunDir basename = %q, want %q (== public BatchId)", gotRunDir, got.ID)
+	}
+	if gotParent := filepath.Base(filepath.Dir(spy.req.RunDir)); gotParent != "batches" {
+		t.Errorf("Request.RunDir parent = %q, want %q", gotParent, "batches")
+	}
 }
 
 // TestRun_PromptOnlyWithoutRunIDRegistersCanonicalBatchIdInBatchesIndex
@@ -2789,6 +2797,13 @@ func TestRun_PromptOnlyWithoutRunIDRegistersCanonicalBatchIdInBatchesIndex(t *te
 	}
 	if entries[0].Name() != got.ID {
 		t.Errorf("batch folder basename = %q, want %q (== batches index entry id == public BatchId)", entries[0].Name(), got.ID)
+	}
+
+	if gotRunDir := filepath.Base(spy.req.RunDir); gotRunDir != got.ID {
+		t.Errorf("Request.RunDir basename = %q, want %q (== public BatchId)", gotRunDir, got.ID)
+	}
+	if gotParent := filepath.Base(filepath.Dir(spy.req.RunDir)); gotParent != "batches" {
+		t.Errorf("Request.RunDir parent = %q, want %q", gotParent, "batches")
 	}
 }
 

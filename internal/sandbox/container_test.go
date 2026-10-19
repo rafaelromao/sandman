@@ -1342,3 +1342,25 @@ func TestResolveConfigMounts_SkipsExcludedFile(t *testing.T) {
 		t.Errorf("expected excluded file to be absent from snapshot, got: %v", err)
 	}
 }
+
+func TestContainerRuntime_Start_PassesEnvByNameOnly(t *testing.T) {
+	t.Setenv("SANDMAN_TEST_PASS_TOKEN", "sentinel-secret-value")
+	rt := NewContainerRuntime("podman")
+	var captured []string
+	rt.execFn = func(name string, arg ...string) *exec.Cmd {
+		captured = append([]string{name}, arg...)
+		return exec.Command("echo", "abc123")
+	}
+
+	if _, err := rt.Start(t.Context(), "alpine", ".", StartOptions{PassEnv: []string{"SANDMAN_TEST_PASS_TOKEN"}}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	joined := strings.Join(captured, " ")
+	if !strings.Contains(joined, "--env SANDMAN_TEST_PASS_TOKEN ") {
+		t.Fatalf("start args = %q, want --env SANDMAN_TEST_PASS_TOKEN", joined)
+	}
+	if strings.Contains(joined, "sentinel-secret-value") {
+		t.Fatalf("start args leak the passed value: %q", joined)
+	}
+}

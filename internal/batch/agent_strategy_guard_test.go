@@ -19,9 +19,6 @@ var agentSelectionGuardAllowlist = map[string]string{
 	// The host/sandbox version-drift warning is an OpenCode-only feature by
 	// design; other presets document the limitation instead.
 	"internal/cmd/opencode_version.go": "OpenCode-only version-drift warning",
-	// session.json validation checks the provider recorded in the OpenCode
-	// session identity; it is part of the OpenCode strategy's own storage.
-	"internal/batch/opencode_session.go": "OpenCode session identity validation",
 }
 
 // TestAgentSelection_NoAgentNameComparisonsOutsideStrategy enforces the agent
@@ -45,7 +42,7 @@ func TestAgentSelection_NoAgentNameComparisonsOutsideStrategy(t *testing.T) {
 		{name: "switch case on an agent name", re: regexp.MustCompile(`\bcase\s+[^:\n]*` + agent)},
 		{name: "string match on an agent name", re: regexp.MustCompile(`\b(?:EqualFold|Contains|HasPrefix|HasSuffix)\([^)\n]*` + agent)},
 		{name: "preset registry indexed by a literal agent name", re: regexp.MustCompile(`BuiltInAgentPresets\[` + agent + `\]`)},
-		{name: "comparison against the OpenCode provider constant", re: regexp.MustCompile(`(?:==|!=)\s*opencodeProvider\b|\bopencodeProvider\s*(?:==|!=)`)},
+		{name: "comparison against a strategy's session provider", re: regexp.MustCompile(`(?:==|!=)\s*(?:opencode|claude)SessionKind\.provider\b|\b(?:opencode|claude)SessionKind\.provider\s*(?:==|!=)`)},
 	}
 
 	repoRoot := filepath.Join("..", "..")

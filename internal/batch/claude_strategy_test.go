@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
@@ -68,11 +69,12 @@ func TestClaudeUsageLimitLine(t *testing.T) {
 }
 
 type claudeLaunch struct {
-	command string
-	status  string
-	result  AgentRunResult
-	runLog  string
-	root    string
+	command  string
+	commands []string
+	status   string
+	result   AgentRunResult
+	runLog   string
+	root     string
 }
 
 func runClaudeLaunch(t *testing.T, configure func(*AgentRun), results ...opencodeExecResult) claudeLaunch {
@@ -94,6 +96,7 @@ func runClaudeLaunch(t *testing.T, configure func(*AgentRun), results ...opencod
 	}
 	result := run.Run(context.Background(), &spyRenderer{result: "task"}, agent.Command, prompt.RenderConfig{})
 	launch := claudeLaunch{status: result.Status, result: result, root: root}
+	launch.commands = sb.commands
 	if len(sb.commands) > 0 {
 		launch.command = sb.commands[len(sb.commands)-1]
 	}
@@ -122,7 +125,7 @@ func TestAgentRun_ClaudePresetRendersPrintModeCommand(t *testing.T) {
 			want: env + `claude -p --output-format stream-json --verbose --dangerously-skip-permissions --name 'Sandman run-1: ' --model 'sonnet' "$(cat .sandman/task.md)"`,
 		},
 		{
-			name: "await re-entry continues the conversation",
+			name: "await re-entry without a recorded session starts fresh",
 			configure: func(r *AgentRun) {
 				r.model = "sonnet"
 				r.dangerouslySkipPermissions = &skip
@@ -130,7 +133,7 @@ func TestAgentRun_ClaudePresetRendersPrintModeCommand(t *testing.T) {
 				r.previousBatchID = "batch-0"
 				r.previousRunID = "run-0"
 			},
-			want: env + `claude -p --output-format stream-json --verbose --continue --dangerously-skip-permissions --name 'Sandman run-1: ' --model 'sonnet' "$(cat .sandman/task.md)"`,
+			want: env + `claude -p --output-format stream-json --verbose --dangerously-skip-permissions --name 'Sandman run-1: ' --model 'sonnet' "$(cat .sandman/task.md)"`,
 		},
 		{
 			name: "worktree launch keeps permission prompts",
@@ -166,7 +169,7 @@ func TestAgentRun_ClaudePresetRendersPrintModeCommand(t *testing.T) {
 				r.previousBatchID = "batch-0"
 				r.previousRunID = "run-0"
 			},
-			want: env + `claude -p --output-format stream-json --verbose --continue --permission-mode 'acceptEdits' --name 'Sandman run-1: ' --model 'sonnet' --effort 'high' "$(cat .sandman/task.md)"`,
+			want: env + `claude -p --output-format stream-json --verbose --permission-mode 'acceptEdits' --name 'Sandman run-1: ' --model 'sonnet' --effort 'high' "$(cat .sandman/task.md)"`,
 		},
 		{
 			name: "configured permission mode applies to worktree launches",
@@ -206,8 +209,12 @@ func TestAgentRun_ClaudePresetRendersPrintModeCommand(t *testing.T) {
 			if !strings.Contains(launch.runLog, "Result: success") || strings.Contains(launch.runLog, `"type":"result"`) {
 				t.Fatalf("run.log = %q, want the rendered result instead of raw stream-json", launch.runLog)
 			}
-			if _, err := os.Stat(filepath.Join(launch.root, "run", "session.json")); !os.IsNotExist(err) {
-				t.Fatalf("session.json stat err = %v, want no OpenCode session identity for claude", err)
+			if id, ok := ReadAgentSessionID(filepath.Join(launch.root, "run")); !ok || id != "abc" {
+				t.Fatalf("agent session ID = %q, %v; want the observed Claude session abc", id, ok)
+			}
+			data, err := os.ReadFile(filepath.Join(launch.root, "run", "session.json"))
+			if err != nil || !strings.Contains(string(data), `"protocol": "claude-session/v1"`) || !strings.Contains(string(data), `"provider": "claude"`) {
+				t.Fatalf("session.json = %s, %v; want a Claude session identity", data, err)
 			}
 		})
 	}
@@ -361,4 +368,141 @@ func TestRunBatch_ConfiguredPermissionModeReachesClaudeLaunches(t *testing.T) {
 			}
 		})
 	}
+}
+
+const recordedClaudeSession = "6f1c2a4e-0b7d-4c1a-9a55-2f0e8d3b7c11"
+
+// reuseRecordedClaudeSession selects session reuse with the prior Run's
+// recorded Claude identity set to sessionID.
+func reuseRecordedClaudeSession(t *testing.T, sessionID string) func(*AgentRun) {
+	return func(r *AgentRun) {
+		r.reuseSession = true
+		r.previousBatchID = "batch-0"
+		r.previousRunID = "run-0"
+		if err := writeAgentSession(r.layout.RunSessionPath("batch-0", "run-0"), claudeSessionKind, sessionID); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestAgentRun_ClaudeReuseResumesTheExactRecordedSession(t *testing.T) {
+	ok := opencodeExecResult{stdout: `{"type":"system","subtype":"init","session_id":"` + recordedClaudeSession + `"}` + "\n" + `{"type":"result","subtype":"success","is_error":false,"result":"OK"}` + "\n"}
+	launch := runClaudeLaunch(t, reuseRecordedClaudeSession(t, recordedClaudeSession), ok)
+	if launch.status != "success" {
+		t.Fatalf("status = %q, want success", launch.status)
+	}
+	if !strings.Contains(launch.command, "--resume '"+recordedClaudeSession+"'") || strings.Contains(launch.command, "--continue") {
+		t.Fatalf("command = %s, want the exact recorded session and no directory-scoped --continue", launch.command)
+	}
+}
+
+func TestAgentRun_ClaudeIgnoresAnInvalidRecordedSession(t *testing.T) {
+	var warnings bytes.Buffer
+	ok := opencodeExecResult{stdout: `{"type":"system","subtype":"init","session_id":"` + recordedClaudeSession + `"}` + "\n" + `{"type":"result","subtype":"success","is_error":false,"result":"OK"}` + "\n"}
+	reuse := reuseRecordedClaudeSession(t, "x'; rm -rf ~ #")
+	launch := runClaudeLaunch(t, func(r *AgentRun) {
+		reuse(r)
+		r.sessionWarning = &warnings
+	}, ok)
+	if strings.Contains(launch.command, "--resume") || strings.Contains(launch.command, "rm -rf") || strings.Contains(launch.command, "--continue") {
+		t.Fatalf("command = %s, want a fresh launch that never renders the recorded value", launch.command)
+	}
+	if !strings.Contains(warnings.String(), "agent session metadata") {
+		t.Fatalf("warnings = %q, want the invalid identity reported", warnings.String())
+	}
+}
+
+func TestAgentRun_ClaudeMissingSessionRelaunchesFresh(t *testing.T) {
+	const missing = `{"type":"result","subtype":"error_during_execution","is_error":true,"session_id":"` + recordedClaudeSession + `","errors":["No conversation found with session ID: ` + recordedClaudeSession + `"]}`
+	const fresh = "0d9e8f7a-6b5c-4d3e-8f1a-2b3c4d5e6f70"
+	launch := runClaudeLaunch(t, reuseRecordedClaudeSession(t, recordedClaudeSession),
+		opencodeExecResult{stdout: missing + "\n", stderr: "No conversation found with session ID: " + recordedClaudeSession + "\n", err: errors.New("exit status 1")},
+		opencodeExecResult{stdout: `{"type":"system","subtype":"init","session_id":"` + fresh + `"}` + "\n" + `{"type":"result","subtype":"success","is_error":false,"result":"OK"}` + "\n"},
+	)
+	if launch.status != "success" {
+		t.Fatalf("status = %q, want the fresh relaunch to succeed", launch.status)
+	}
+	if len(launch.commands) != 2 {
+		t.Fatalf("commands = %q, want the exact attempt plus one fresh relaunch", launch.commands)
+	}
+	if !strings.Contains(launch.commands[0], "--resume '"+recordedClaudeSession+"'") {
+		t.Fatalf("first command = %s, want the exact recorded session", launch.commands[0])
+	}
+	if strings.Contains(launch.commands[1], "--resume") || strings.Contains(launch.commands[1], "--continue") {
+		t.Fatalf("relaunch = %s, want a fresh session", launch.commands[1])
+	}
+	if id, ok := ReadAgentSessionID(filepath.Join(launch.root, "run")); !ok || id != fresh {
+		t.Fatalf("recorded session = %q, %v; want the fresh relaunch's session %s", id, ok, fresh)
+	}
+}
+
+func TestAgentRun_ClaudeMissingSessionRecordIsNotPersisted(t *testing.T) {
+	const missing = `{"type":"result","subtype":"error_during_execution","is_error":true,"session_id":"` + recordedClaudeSession + `","errors":["No conversation found with session ID: ` + recordedClaudeSession + `"]}`
+	launch := runClaudeLaunch(t, nil, opencodeExecResult{stdout: missing + "\n", err: errors.New("exit status 1")})
+	if launch.status != "failure" {
+		t.Fatalf("status = %q, want failure", launch.status)
+	}
+	if id, ok := ReadAgentSessionID(filepath.Join(launch.root, "run")); ok {
+		t.Fatalf("recorded session = %q, want nothing from a missing-session result", id)
+	}
+}
+
+func TestAgentRun_ClaudeRecordsSessionWhileTheAttemptRuns(t *testing.T) {
+	var during string
+	var runDir string
+	launch := runClaudeLaunch(t, func(r *AgentRun) { runDir = r.runFolder }, opencodeExecResult{
+		stdout: `{"type":"system","subtype":"init","session_id":"` + recordedClaudeSession + `"}` + "\n",
+		during: func() { sessionWhileRunning(runDir, &during)() },
+	})
+	if launch.status != "success" {
+		t.Fatalf("status = %q, want success", launch.status)
+	}
+	if during != recordedClaudeSession {
+		t.Fatalf("session while running = %q, want the init session recorded before Claude Code exits", during)
+	}
+}
+
+func TestAgentRun_ClaudeMissingSessionKeepsThePriorRecordUntilTheFreshInit(t *testing.T) {
+	const missing = `{"type":"result","subtype":"error_during_execution","is_error":true,"session_id":"` + recordedClaudeSession + `","errors":["No conversation found with session ID: ` + recordedClaudeSession + `"]}`
+	const fresh = "0d9e8f7a-6b5c-4d3e-8f1a-2b3c4d5e6f70"
+	const current = "11111111-2222-4333-8444-555555555555"
+	var runDir, duringMissing string
+	reuse := reuseRecordedClaudeSession(t, recordedClaudeSession)
+	launch := runClaudeLaunch(t, func(r *AgentRun) {
+		reuse(r)
+		runDir = r.runFolder
+		if err := writeAgentSession(filepath.Join(runDir, "session.json"), claudeSessionKind, current); err != nil {
+			t.Fatal(err)
+		}
+	},
+		opencodeExecResult{stdout: missing + "\n", err: errors.New("exit status 1"), during: func() {
+			// Read only once the parser has rendered the result record.
+			waitForRunLog(t, filepath.Join(runDir, "run.log"), "Result: ")
+			duringMissing, _ = ReadAgentSessionID(runDir)
+		}},
+		opencodeExecResult{stdout: `{"type":"system","subtype":"init","session_id":"` + fresh + `"}` + "\n"},
+	)
+	if launch.status != "success" {
+		t.Fatalf("status = %q, want success", launch.status)
+	}
+	if duringMissing != current {
+		t.Fatalf("session during the missing-session attempt = %q, want the prior record %s unchanged", duringMissing, current)
+	}
+	if id, _ := ReadAgentSessionID(runDir); id != fresh {
+		t.Fatalf("final session = %q, want the fresh relaunch's %s", id, fresh)
+	}
+}
+
+// waitForRunLog waits until the Run's log contains want, which proves the
+// output parsers have consumed the record that renders it.
+func waitForRunLog(t *testing.T, path, want string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if data, err := os.ReadFile(path); err == nil && strings.Contains(string(data), want) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Errorf("run.log never contained %q", want)
 }

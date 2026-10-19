@@ -12,6 +12,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/rafaelromao/sandman/internal/scaffold"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 type buildPrompter struct{}
@@ -27,7 +28,8 @@ func (buildPrompter) Select(string, []string) (string, error) { return "", nil }
 // SIGQUIT. The smoke pre-warm already exercises every variant we want to
 // assert against when the host can build it; on hosts where the pre-warm
 // could not produce the image (or where SANDMAN_RUN_SMOKE_E2E=1 / SANDMAN_SMOKE_PREFETCH=1 were not set), the test
-// is skipped instead of being retried.
+// is skipped instead of being retried. Full release validation has a 60-minute
+// budget and builds missing variants on demand; those builds must not skip.
 const buildPresetImageSkipRationale = "smoke pre-warm image not available for this (agent, preset) pair; per-test build skipped to stay inside the 10m timeout"
 
 func TestInit_ElixirPresetBuildsForEveryBuiltInAgentProvider(t *testing.T) {
@@ -239,10 +241,22 @@ func buildPresetImage(t *testing.T, runtime, agent, preset string) {
 
 	tag := smokePrewarmLookup(agent, preset)
 	if tag == "" {
-		t.Skip(buildPresetImageSkipRationale)
+		if !testenv.FullRegression() {
+			t.Skip(buildPresetImageSkipRationale)
+		}
+		// Release validation owns a 60-minute budget and cannot count a
+		// missing pre-warm image as successful preset coverage.
+		var err error
+		tag, err = prewarmImageFunc(agent, preset)
+		if err != nil {
+			t.Fatalf("build required %s/%s image: %v", agent, preset, err)
+		}
 	}
 
 	if err := exec.Command(runtime, "image", "exists", tag).Run(); err != nil {
+		if testenv.FullRegression() {
+			t.Fatalf("required image %q not present in %s: %v", tag, runtime, err)
+		}
 		t.Skipf("smoke pre-warm image %q not present in %s: %v", tag, runtime, err)
 	}
 }
@@ -298,5 +312,28 @@ func TestSmoke_AllPresetImagesExposeRuntimeTools(t *testing.T) {
 				t.Fatalf("%s preset runtime tools unavailable: %v\n%s", tt.preset, err, out)
 			}
 		})
+	}
+}
+
+// Release validation must build a missing pre-warm artifact instead of skipping.
+func TestReleasePresetBuildsMissingPrewarmImage(t *testing.T) {
+	t.Setenv("SANDMAN_FULL_REGRESSION", "1")
+	original := prewarmImageFunc
+	t.Cleanup(func() { prewarmImageFunc = original })
+	built := false
+	prewarmImageFunc = func(agent, preset string) (string, error) {
+		if agent != "release-test" || preset != "missing" {
+			t.Fatalf("unexpected build %s/%s", agent, preset)
+		}
+		built = true
+		return "required-image", nil
+	}
+	runtime := filepath.Join(t.TempDir(), "runtime")
+	if err := os.WriteFile(runtime, []byte("#!/bin/sh\ntest \"$1 $2 $3\" = \"image exists required-image\"\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	buildPresetImage(t, runtime, "release-test", "missing")
+	if !built {
+		t.Fatal("required preset image was not built")
 	}
 }

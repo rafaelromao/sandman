@@ -217,7 +217,8 @@ func TestRenderCommand_ClaudePresetFlags(t *testing.T) {
 	}{
 		{name: "prompt only", data: CommandData{PromptFile: "./.sandman/task.md"}, want: prefix + ` "$(cat ./.sandman/task.md)"`},
 		{name: "model", data: CommandData{PromptFile: ".sandman/task.md", ModelFlag: "--model 'sonnet'"}, want: prefix + ` --model 'sonnet' "$(cat .sandman/task.md)"`},
-		{name: "continue", data: CommandData{PromptFile: ".sandman/task.md", ContinueFlag: true}, want: prefix + ` --continue "$(cat .sandman/task.md)"`},
+		{name: "continue renders nothing", data: CommandData{PromptFile: ".sandman/task.md", ContinueFlag: true}, want: prefix + ` "$(cat .sandman/task.md)"`},
+		{name: "exact session", data: CommandData{PromptFile: ".sandman/task.md", SessionFlag: "'6f1c2a4e-0b7d-4c1a-9a55-2f0e8d3b7c11'"}, want: prefix + ` --resume '6f1c2a4e-0b7d-4c1a-9a55-2f0e8d3b7c11' "$(cat .sandman/task.md)"`},
 		{name: "skip permissions", data: CommandData{PromptFile: ".sandman/task.md", DangerouslySkipPermissions: true}, want: prefix + ` --dangerously-skip-permissions "$(cat .sandman/task.md)"`},
 		{name: "session name", data: CommandData{PromptFile: ".sandman/task.md", SessionName: "Sandman 260925-abcd-42: "}, want: prefix + ` --name 'Sandman 260925-abcd-42: ' "$(cat .sandman/task.md)"`},
 		{name: "effort", data: CommandData{PromptFile: ".sandman/task.md", VariantFlag: "--effort 'max'"}, want: prefix + ` --effort 'max' "$(cat .sandman/task.md)"`},
@@ -226,8 +227,8 @@ func TestRenderCommand_ClaudePresetFlags(t *testing.T) {
 		{name: "permission scope before the prompt", data: CommandData{PromptFile: ".sandman/task.md", PermissionFlag: "--allowedTools 'Edit(/.sandman/**)' --permission-mode dontAsk"}, want: prefix + ` --allowedTools 'Edit(/.sandman/**)' --permission-mode dontAsk "$(cat .sandman/task.md)"`},
 		{
 			name: "everything",
-			data: CommandData{PromptFile: ".sandman/task.md", ModelFlag: "--model 'opus'", VariantFlag: "--effort 'high'", DangerouslySkipPermissions: true, SessionName: "Sandman r: ", ContinueFlag: true, SessionFlag: "'ignored'"},
-			want: prefix + ` --continue --dangerously-skip-permissions --name 'Sandman r: ' --model 'opus' --effort 'high' "$(cat .sandman/task.md)"`,
+			data: CommandData{PromptFile: ".sandman/task.md", ModelFlag: "--model 'opus'", VariantFlag: "--effort 'high'", DangerouslySkipPermissions: true, SessionName: "Sandman r: ", ContinueFlag: true, SessionFlag: "'6f1c2a4e-0b7d-4c1a-9a55-2f0e8d3b7c11'"},
+			want: prefix + ` --resume '6f1c2a4e-0b7d-4c1a-9a55-2f0e8d3b7c11' --dangerously-skip-permissions --name 'Sandman r: ' --model 'opus' --effort 'high' "$(cat .sandman/task.md)"`,
 		},
 	}
 	for _, tt := range tests {

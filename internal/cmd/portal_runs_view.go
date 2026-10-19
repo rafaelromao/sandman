@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
@@ -56,12 +57,16 @@ type portalRun struct {
 	// from JSON for terminal rows, so the /api/runs contract carries
 	// staleness only where it is meaningful. The portal renders this as
 	// a "stale · Ns" chip past an idle threshold.
-	LastOutputAt *time.Time    `json:"lastOutputAt,omitempty"`
-	SocketPath   string        `json:"socketPath,omitempty"`
-	LogPath      string        `json:"logPath,omitempty"`
-	LogURL       string        `json:"logUrl,omitempty"`
-	Log          string        `json:"log,omitempty"`
-	Events       []portalEvent `json:"events,omitempty"`
+	LastOutputAt *time.Time `json:"lastOutputAt,omitempty"`
+	SocketPath   string     `json:"socketPath,omitempty"`
+	LogPath      string     `json:"logPath,omitempty"`
+	// AgentSessionID is the agent session recorded in the Run folder's
+	// session.json (Claude Code or OpenCode), so the operator can resume the
+	// conversation from the host. Omitted when no identity was recorded.
+	AgentSessionID string        `json:"agentSessionId,omitempty"`
+	LogURL         string        `json:"logUrl,omitempty"`
+	Log            string        `json:"log,omitempty"`
+	Events         []portalEvent `json:"events,omitempty"`
 	// Review flags runs whose run.started event carried payload.review = true.
 	// The field is omitted from JSON when false to preserve the existing /api/runs
 	// contract for implementation runs.
@@ -242,7 +247,43 @@ type portalRunMatch struct {
 type portalRunsView struct {
 	mu            sync.Mutex
 	manifestCache map[string]portalManifestCacheEntry
+	sessionCache  map[string]portalSessionCacheEntry
 	now           func() time.Time
+}
+
+type portalSessionCacheEntry struct {
+	size      int64
+	modTime   time.Time
+	sessionID string
+}
+
+// stampAgentSessions sets each row's AgentSessionID from its Run folder's
+// session.json. The portal polls every few seconds over every row, history
+// included, so a record is re-read only when its size or mtime changes, and
+// the cache keeps only the records of the rows in this pass.
+func (v *portalRunsView) stampAgentSessions(layout paths.Layout, runs []portalRun) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	previous := v.sessionCache
+	v.sessionCache = make(map[string]portalSessionCacheEntry, len(runs))
+	for i := range runs {
+		runDir := reviewRunDir(layout, runs[i])
+		if runDir == "" {
+			continue
+		}
+		path := filepath.Join(runDir, "session.json")
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		entry, ok := previous[path]
+		if !ok || entry.size != info.Size() || !entry.modTime.Equal(info.ModTime()) {
+			sessionID, _ := batch.ReadAgentSessionID(runDir)
+			entry = portalSessionCacheEntry{size: info.Size(), modTime: info.ModTime(), sessionID: sessionID}
+		}
+		v.sessionCache[path] = entry
+		runs[i].AgentSessionID = entry.sessionID
+	}
 }
 
 type portalManifestCacheEntry struct {
@@ -633,6 +674,7 @@ func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventLis
 
 		v.rehydrateArchivedRun(repoRoot, layout, idx, &runs[i], locator)
 	}
+	v.stampAgentSessions(layout, runs)
 	// Staleness signal for active rows: the saved-run-log mtime (with a
 	// StartedAt fallback). Computed here so every runFrom* constructor and
 	// every caller of compute() (the /api/runs handler, the abort lookup)

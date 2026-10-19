@@ -2120,6 +2120,23 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffUpdateDetailDetails_ShowsAgentSessionWhenItAppears(t *testing.T) {
+	js := `const body = makeMockBody();
+const run1 = { key: 'a', kind: 'completed', status: 'success', issueLabel: 'A', runId: 'r1', startedAt: 1000, finishedAt: 2000, duration: 1, branch: 'main', logPath: '/tmp/run.log', logUrl: '/log' };
+const opts = { helpers, stopGroups: new Set(), expandedKey: 'a', tabs: { a: 'details' } };
+SandmanPortalDiff.diffRuns(body, [run1], opts);
+const detailRow = body.children[1];
+const pre1 = detailRow.querySelector('pre[data-rendered-json]');
+if (!pre1.getAttribute('data-rendered-json').includes('"agentSessionId": ""')) throw new Error('expected an empty agentSessionId before an identity is recorded, got ' + pre1.getAttribute('data-rendered-json'));
+const run2 = Object.assign({}, run1, { agentSessionId: '6f1c2a4e-0b7d-4c1a-9a55-2f0e8d3b7c11' });
+SandmanPortalDiff.diffRuns(body, [run2], opts);
+const pre2 = detailRow.querySelector('pre[data-rendered-json]');
+if (!pre2.getAttribute('data-rendered-json').includes('"agentSessionId": "6f1c2a4e-0b7d-4c1a-9a55-2f0e8d3b7c11"')) throw new Error('expected the agent session in details json, got ' + pre2.getAttribute('data-rendered-json'));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffUpdateDetailDetails_ActiveRunSkipsRebuildBeforeFirstPayload(t *testing.T) {
 	js := `const body = makeMockBody();
 const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', startedAt: 1000, finishedAt: null, duration: '1s', branch: 'main', log: '', events: [] };
@@ -5099,8 +5116,8 @@ const detailRow = body.children[1];
 const content = detailRow.querySelector('.detail-content');
 SandmanPortalDiff.diffRuns(body, [run], opts);
 const fp = content.getAttribute('data-rendered-fingerprint') || '';
-if (fp.indexOf('details|42:Fix the frobnicator:main:b1:/tmp/run.log:1:99|') !== 0) {
-  throw new Error('expected cheap prefix details|42:Fix the frobnicator:main:b1:/tmp/run.log:1:99|, got ' + fp);
+if (fp.indexOf('details|42:Fix the frobnicator:main:b1:/tmp/run.log::1:99|') !== 0) {
+  throw new Error('expected cheap prefix details|42:Fix the frobnicator:main:b1:/tmp/run.log::1:99|, got ' + fp);
 }
 if (fp.indexOf('"issueNumber"') !== -1 || fp.indexOf('{') !== -1) {
   throw new Error('fingerprint looks like JSON, expected cheap string, got ' + fp);

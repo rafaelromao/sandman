@@ -119,10 +119,31 @@ an `EBADENGINE` warning at install time and still installs.
 | Sandbox | Host | How Claude Code authenticates | Notes |
 |---------|------|-------------------------------|-------|
 | worktree | macOS or Linux | The host login (macOS Keychain or `~/.claude/.credentials.json`), or `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` exported in your shell | Worktree runs inherit the host environment |
-| container | Linux | `~/.claude/.credentials.json` rides along in the `~/.claude` snapshot | The snapshot lives under `.sandman/batches/<batch-id>/config/` and is kept with the batch; keep `.sandman/` gitignored |
-| container | macOS | The Keychain never reaches a container. Run `claude setup-token` and set the token in the agent's env (below), or use `ANTHROPIC_API_KEY` | The value is exported on the rendered command line and is visible to `ps` on the host during the run, like every agent env value |
+| container | macOS or Linux (recommended) | `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, exported in the shell that runs Sandman | The container receives the variable by name only; its value never appears on a command line or under `.sandman/`, and `~/.claude/.credentials.json` stays out of the snapshot |
+| container | Linux | `~/.claude/.credentials.json` rides along in the `~/.claude` snapshot and is reconciled with the host around every launch | The snapshot lives under `.sandman/batches/<batch-id>/config/` and is kept with the batch; keep `.sandman/` gitignored |
+| container | macOS | The Keychain never reaches a container. Export the token as above, set it in the agent's env (below), or use `ANTHROPIC_API_KEY` | An agent env value is exported on the rendered command line and is visible to `ps` on the host during the run |
 
-For containers on macOS, add the token to `.sandman/config.yaml`:
+Subscription sign-ins refresh with single-use refresh tokens: whichever copy
+of `.credentials.json` refreshes first invalidates every other copy. Without
+`CLAUDE_CODE_OAUTH_TOKEN`, Sandman reconciles the snapshot copy with the host
+copy before and after every launch, so a launch hours into a batch (for example
+after a usage-limit wait) uses the credentials the host refreshed meanwhile,
+and a token a container refreshed reaches the host. A refresh on both sides
+during the same launch can still invalidate one of them; the token avoids
+refreshes altogether:
+
+```bash
+claude setup-token                     # prints sk-ant-oat01-...
+export CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...
+sandman run 42
+```
+
+A launch that still cannot authenticate is relaunched once on the reconciled
+credentials, then the run stops with reason `AGENT_AUTHENTICATION` instead of
+spending its retries; sign in again or export the token, then resume it with
+`sandman run --continue`.
+
+Alternatively, add the token to `.sandman/config.yaml`:
 
 ```yaml
 agents:
@@ -260,19 +281,25 @@ sandbox inside the container too.
 
 ### Session reuse
 
-Claude Code's `claude -p --continue` reopens the most recent conversation in the
-current directory, print-mode sessions included. Each row owns one worktree, so
-Sandman resumes a Claude conversation by rendering `--continue` on the same
+Sandman records the Claude Code session ID of each Run in the Run's
+`session.json`, as soon as Claude Code reports it. It is the `agentSessionId`
+in the Portal's Run details. Sandman reuses a Claude conversation on the same
 paths that reuse an OpenCode session: runtime-owned await re-entry (including
-usage-limit polling) and `sandman run --continue --reuse-session`. Plain
-`--continue` starts a fresh conversation. No `session.json` is written for
-`claude` runs.
+usage-limit polling) and `sandman run --continue --reuse-session`. On those
+paths it renders `--resume <session-id>` for the exact recorded session. If no
+valid session is recorded, or Claude Code no longer has it, the Run starts a
+fresh conversation from its preserved Task. Plain `--continue` always starts
+fresh. Sandman never renders Claude Code's own `--continue`: every container
+worktree shares the `/workspace` path, so "the latest conversation in this
+directory" could be another repository's.
 
-In container mode the batch config snapshot is bind-mounted read-write, so a
-conversation written during a run survives an await re-entry within the same
-batch. A later batch starts from a new snapshot, so cross-batch reuse works in
-worktree mode only. Do not set `CLAUDE_CODE_SKIP_PROMPT_HISTORY` or add
-`--no-session-persistence` if you want reuse.
+Worktree runs use your own `HOME`, so their transcripts are already in the
+host's `~/.claude/projects`. In container mode the host's `~/.claude/projects`
+is live-mounted. Sandman creates it if it is missing. Transcripts are written to the host directly, so
+they outlive the batch and you can resume them from the host (see
+[Resuming an agent session from the host](monitoring.md#resuming-an-agent-session-from-the-host)).
+Do not set `CLAUDE_CODE_SKIP_PROMPT_HISTORY` or add `--no-session-persistence`
+if you want reuse.
 
 ### Usage limits
 
@@ -328,12 +355,12 @@ A custom `command` under the `claude` preset keeps its own output unchanged.
 | Worktree and container runs, prompts, pull-request lifecycle, retries, verification, dependencies, events, portal, badge, analyzers | Supported |
 | Idle-timeout heartbeat | Supported (streams with `stream-json --verbose`) |
 | `--model`, per-preset default model, `variant` as `--effort` | Supported |
-| Session reuse on await re-entry and `--continue --reuse-session` | Supported through `--continue` |
+| Session reuse on await re-entry and `--continue --reuse-session` | Supported through `--resume <session-id>` with the exact recorded session |
 | Implementation usage limits | Supported through usage-limit waiting (10-minute polls, 5-hour window, same-session resume); the review daemon separately recovers reviewer quota |
 | Scaffolded Dockerfile install and `installed-agents` pre-flight | Supported |
 | Skill discovery | Supported through `~/.claude/skills` links; see [Skills](skills.md) |
-| Exact-ID session identity (`session.json`) | Limitation: OpenCode only; Claude reuse is per worktree |
-| Session reuse across batches in container mode | Limitation: use worktree mode, or add `~/.claude/projects` as a live mount in a custom provider (exposes every host transcript to the container) |
+| Exact-ID session identity (`session.json`), shown in Portal Run details | Supported |
+| Session transcripts visible to host Claude Code | Supported: container runs live-mount `~/.claude/projects` (every host transcript is visible inside the container) |
 | Context-limit rollover and the `context-exhausted` retry reason | Limitation by design: Claude Code compacts automatically; a failed compaction takes the ordinary retry path |
 | Readable `run.log` rendering | Supported for the built-in command; custom commands keep raw output |
 | Host/sandbox version-drift warning | Limitation: OpenCode only; the image pins a version and disables auto-update |

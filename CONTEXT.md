@@ -48,6 +48,9 @@ _Avoid_: synthetic issue run.
 The historical bound on implementation recovery within one executor session: three relaunches in addition to entry. A fresh executor has a fresh allowance; persisted head/request repair counts do not form a cumulative launch budget. Ordinary agent retries and the ten-pass review loop retain their separate bounds.
 _Avoid_: durable repair budget, cumulative remediation exhaustion.
 
+**Quality gate**:
+The stable `CI / quality-gate` status combines both independent default platform build jobs, Portal browser continuity, four-platform snapshot packaging, and semantic PR title validation. Missing, cancelled, failed, or unexpectedly skipped checks reject the gate. Only main-push title validation may skip. Checked-in protection policy is distinct from verified active GitHub enforcement.
+
 **CI wait generation**:
 A bounded managed CI observation operation identified by pull request, current
 head, and the stable set of provider check-execution links. The same execution
@@ -109,11 +112,11 @@ The master list at `.sandman/batches.json` recording every batch ever created wi
 _Avoid_: index, master index.
 
 **Run**:
-One folder under `.sandman/batches/<batch-id>/runs/<run-id>/` containing `run.json`, `run.log`, `session.json` for supported OpenCode runs, `run.sock`, and (for review runs) `review-state.json`. Identified by the per-row RunID produced by `runid.NewRunID`. Each Run represents a single AgentRun within a Batch. The Run may be archived or unavailable independently of AgentRun lifecycle. `run.json` is an atomic artifact manifest whose legacy `status` is a best-effort execution snapshot for inspection/compatibility; it never overrides or substitutes for events. References ADR-0032.
+One folder under `.sandman/batches/<batch-id>/runs/<run-id>/` containing `run.json`, `run.log`, `session.json` (agent session identity) for supported OpenCode and Claude Code runs, `run.sock`, and (for review runs) `review-state.json`. Identified by the per-row RunID produced by `runid.NewRunID`. Each Run represents a single AgentRun within a Batch. The Run may be archived or unavailable independently of AgentRun lifecycle. `run.json` is an atomic artifact manifest whose legacy `status` is a best-effort execution snapshot for inspection/compatibility; it never overrides or substitutes for events. References ADR-0032.
 _Avoid_: run folder, run directory.
 
-**OpenCode session identity**:
-The validated runtime metadata in `<Run>/session.json` that records `{protocol: "opencode-session/v1", provider: "opencode", session_id: "..."}`. It is atomically replaced when a supported OpenCode invocation observes a session ID. Runtime-owned await re-entry and explicit `--continue --reuse-session` may select it; plain `--continue`, retries, and non-OpenCode agents do not. Missing exact sessions use one OpenCode `--continue` fallback only on the selected reuse path. The `claude` preset keeps no session identity: on the same reuse paths it renders Claude Code's working-directory-scoped `--continue`.
+**Agent session identity**:
+The validated runtime metadata in `<Run>/session.json` that records `{protocol, provider, session_id}`: `opencode-session/v1`/`opencode` for OpenCode, or `claude-session/v1`/`claude` for Claude Code (from its `system/init` record). It is atomically replaced as soon as a supported invocation observes a session, and again after the attempt. Runtime-owned await re-entry and explicit `--continue --reuse-session` may select it, each strategy accepting only its own protocol. Plain `--continue` and retries do not. Missing OpenCode sessions use one OpenCode `--continue` fallback on the selected reuse path. Claude reuse renders `--resume <uuid>`, never Claude Code's working-directory-scoped `--continue`. A missing, invalid, or vanished Claude session starts fresh. The Portal shows either identity as the Run detail `agentSessionId` (ADR-0055, ADR-0057).
 _Avoid_: transcript, mutable Run status.
 
 **Run retry**:
@@ -215,7 +218,7 @@ Paths (typically subtrees of a `ConfigDir`) skipped during the copy-resolve snap
 _Avoid_: snapshot blocklist, copy excludes.
 
 **LiveMount**:
-A path bind-mounted directly from the host into a ContainerSandbox at its corresponding HOME=/ container path, instead of being copied into the snapshot. Used when host-side state must remain inspectable after the container run completes — e.g. OpenCode's `opencode.db` session database (ADR-0016). A LiveMount is implicitly a `SnapshotExclude` of the same path.
+A path bind-mounted directly from the host into a ContainerSandbox at its corresponding HOME=/ container path, instead of being copied into the snapshot. Used when host-side state must remain inspectable after the container run completes — e.g. OpenCode's `opencode.db` session database (ADR-0016) or Claude Code's `~/.claude/projects` transcripts (ADR-0057). A preset's `LiveMountDirs` are LiveMounts that Sandman creates on the host first when missing. A LiveMount is implicitly a `SnapshotExclude` of the same path.
 _Avoid_: bind mount (too generic), shared mount.
 
 **ContainerSandbox**:
@@ -447,3 +450,73 @@ The sandbox-image opencode (pinned in `.sandman/Dockerfile`) is too old; the in-
 Cause: the catalog head (`builtInAgentVersionCatalog["opencode"]` in `internal/scaffold/scaffolder.go:193`) shipped with a stale opencode version. Operators with newer opencode installed on the host see the warning every `sandman run` / `sandman review`.
 
 Resolution: run `sandman init` against the repo. The scaffolder probes the host's installed opencode (via the shared `opencode.VersionProbe` seam in `internal/opencode/probe.go`) and pins that version in the new Dockerfile when present; otherwise it falls back to the catalog head so CI agents and fresh containers still produce a valid install command. Once the sandbox pin matches the host, the warning goes silent. The catalog head bump is a separate concern for operators without `opencode` installed; see [ADR-0033](docs/adr/0033-opencode-host-sandbox-version-mismatch.md) for the warning + init contract.
+
+
+### Separate CI validation and reports
+
+`make check` never edits source; use `make fmt` explicitly. CI shares the
+`fmt-check`, `build-check`, `vet`, `staticcheck`, `contracts`, `test-ci`, and
+`test-browser` targets. The aggregate also requires static analysis and
+architecture/documentation contracts. Linux retains Podman coverage; Node tests
+remain on both race platforms, while the dedicated browser job owns actual-page
+scenarios listed in `scripts/portal_browser_tests.txt`, including subject switching
+and visual layout. Logs, structured reports, durations and failure summaries
+are uploaded even on failure. See `docs/development/testing.md` for job ownership,
+local commands, artifact names and hosted timing verification.
+
+Security and workflow validation are mandatory dependencies of `CI / quality-gate`.
+Run `make security-check workflow-check` with govulncheck v1.1.4, Gitleaks
+v8.24.3, Actionlint v1.7.7 and ShellCheck v0.10.0 on PATH. The reusable security
+workflow also runs every Monday and manually; inspect Scheduled Security in
+Actions for failures. Scanner errors fail closed. Public output contains status
+only, never raw secret findings; reproduce locally to investigate. No scanner
+artifacts are uploaded. The reviewed baseline contains 28 exact historical false positives in Portal
+run/batch identifier fixtures (`.github/security-exceptions.json`), owned by
+rafaelromao and expiring 2027-01-16. No actual secrets are accepted. Never regenerate a baseline
+to accept new findings. Secret exceptions require an exact Gitleaks fingerprint,
+owner, rationale and ISO expiry date; expired entries fail validation. Reachable
+vulnerabilities must be fixed, with no blanket vulnerability suppression.
+Dependabot opens weekly Go module and Actions updates; review those updates and
+retain full action commit pins with readable version comments. Release automation
+retains write permissions; validation defaults to contents read and semantic title
+validation gets pull-request read. Existing protection contexts remain in place.
+
+The Go language minimum remains 1.25; `toolchain go1.26.9` selects a patched
+standard library for normal builds; `.go-version` selects the same patched
+toolchain explicitly in setup-go and security scans. Keep automatic
+toolchain selection enabled. Staticcheck retains its isolated Go 1.25.0 runner
+for export-data compatibility; it does not build release binaries. The checked-in
+ruleset also requires workflow-validation explicitly; apply/verify live protection
+using the existing documented procedure.
+
+### Go coverage policy
+
+CI collects separate atomic profiles in the existing Linux/macOS race suites.
+Coverage starts advisory; thresholds require measured baselines and reviewed
+approval before enforcement. Do not combine platform statement totals or treat
+Go coverage as Portal JavaScript/browser coverage. Preserve behavioral tests.
+See `docs/development/testing.md` for base selection, artifacts, calibration and
+reviewed exemptions in `.github/coverage-policy.json`.
+
+### Release scenario coverage
+
+A required release scenario is a package/test identity in
+`scripts/release_scenarios.json`, evaluated against observed Go JSON events.
+Missing prerequisites, absent scenarios, duplicate results and unexpected skips
+mean incomplete release validation. Only named negative-control or retired-test
+skips with matching reasons are permitted. Release evidence binds counts,
+reasons, tool/model versions and timeout classification to the tested SHA.
+Independent unit/browser, smoke, credential-free integration and live-provider
+jobs retain evidence despite sibling failures; native boundary reports cover
+Linux/macOS amd64/arm64. Ordinary PR checks retain their existing budget.
+
+**Publication gate**: authorization from same-invocation reusable CI, complete
+release-regression manifest and four-platform native validation for the exact
+merged main SHA. Release-branch evidence cannot transfer to another SHA. Immutable
+tag creation follows authorization; draft assets become public only after complete
+checksum verification. Release PR maintenance runs independently. See
+`docs/development/releasing.md` for safe reruns and `docs/development/testing.md`
+for strict main-protection setup and live verification limits.
+
+Claude provider E2Es run only through the manual `run_claude` workflow input.
+The automatic live release tier validates OpenCode; Claude is not a publication gate.

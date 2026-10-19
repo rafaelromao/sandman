@@ -26,7 +26,8 @@ var visualChromiumMu sync.Mutex
 // This test exercises the run-table layout in a real headless Chromium and
 // asserts on the same signals the diagnose loop produced for the screenshot
 // in issue #953. It is gated //go:build visual and skips when Chromium is
-// not on PATH or when CI is set, mirroring portal_e2e_test.go.
+// unavailable, or on CI unless the dedicated browser gate requires coverage
+// (the exhaustive full-regression override remains supported).
 //
 // It uses a self-generated HTML fixture that:
 //   - inlines the relevant CSS rules from portal.html (so the test is
@@ -65,11 +66,14 @@ const visualFixtureRowsJS = `
     return tr;
   }
 
+  // Keep the mobile one/two-line fixtures sized for their asserted line counts.
+  // Module paths and the longer historical description wrapped to two/three
+  // lines with current Chromium typography, independently of layout regressions.
   const rows = [
-    { issueLabel: '#960', key: 'a', metaText: 'ID 260618113825-abcd-960', status: 'success', started: 'Jun 15, 11:40:40 AM', duration: '37m46s', issueTitle: 'Add internal/shellenv with key-validation + value-quoting', batchIssues: [960, 961, 962, 963, 964, 965, 966, 967, 968] },
+    { issueLabel: '#960', key: 'a', metaText: 'ID 260618113825-abcd-960', status: 'success', started: 'Jun 15, 11:40:40 AM', duration: '37m46s', issueTitle: 'Validate shell variables', batchIssues: [960, 961, 962, 963, 964, 965, 966, 967, 968] },
     { issueLabel: '#961', key: 'b', metaText: 'ID 260618113825-abcd-961', status: 'running', started: 'Jun 15, 12:18:30 PM', duration: '17s', issueTitle: 'Add internal/prompt.Renderer with body-insert substitution', batchIssues: null },
     { issueLabel: '#962', key: 'c', metaText: 'ID 260618113825-abcd-962', status: 'queued', started: 'Jun 15, 11:38:51 AM', duration: '\u2014', issueTitle: 'Add internal/orchestrator dependencies path', batchIssues: [960, 961, 962, 963, 964, 965, 966, 967, 968] },
-    { issueLabel: '#963', key: 'd', metaText: 'ID 260618113825-abcd-963', status: 'success', started: 'Jun 15, 11:40:40 AM', duration: '12m00s', issueTitle: 'Wire internal/orchestrator dependencies into the slice-3 runnable so the new shellenv renderer is exercised end-to-end on a 500px mobile viewport', batchIssues: null },
+    { issueLabel: '#963', key: 'd', metaText: 'ID 260618113825-abcd-963', status: 'success', started: 'Jun 15, 11:40:40 AM', duration: '12m00s', issueTitle: 'Wire the shellenv renderer through orchestration with safe environment values', batchIssues: null },
   ];
   const body = document.getElementById('runs-body');
   rows.forEach(r => body.appendChild(buildRow(r)));
@@ -187,13 +191,13 @@ type visualDump struct {
 }
 
 // runChromiumDump runs chromium once and returns its stdout.
-func runChromiumDump(url string, viewportW, viewportH int) ([]byte, error) {
+func runChromiumDump(chromium, url string, viewportW, viewportH int) ([]byte, error) {
 	// Use legacy --headless (not --headless=new): the new headless mode
 	// races --dump-dom with the page's requestAnimationFrame chain on this
 	// chromium build, occasionally returning the DOM before the dump
 	// block is appended. Legacy headless waits reliably.
 	cmd := exec.Command(
-		"chromium",
+		chromium,
 		"--headless",
 		"--no-sandbox",
 		"--disable-gpu",
@@ -210,15 +214,13 @@ func runChromiumDump(url string, viewportW, viewportH int) ([]byte, error) {
 // post-JS DOM, and returns the parsed JSON measurements.
 func renderVisual(t *testing.T, fixturePath string, viewportW, viewportH int) *visualDump {
 	t.Helper()
-	if _, err := exec.LookPath("chromium"); err != nil {
-		t.Skip("chromium not on PATH; skipping visual test")
-	}
+	chromium := requirePortalContinuityTool(t, "chromium")
 	// Serialise: see visualChromiumMu.
 	visualChromiumMu.Lock()
 	defer visualChromiumMu.Unlock()
 	domPath := filepath.Join(t.TempDir(), "dom.html")
 	url := "file://" + fixturePath
-	out, err := runChromiumDump(url, viewportW, viewportH)
+	out, err := runChromiumDump(chromium, url, viewportW, viewportH)
 	if err != nil {
 		t.Fatalf("chromium failed: %v", err)
 	}
@@ -227,7 +229,7 @@ func renderVisual(t *testing.T, fixturePath string, viewportW, viewportH int) *v
 	// exits before the rAF chain fires even with the virtual time budget.
 	if !strings.Contains(dom, `<pre id="visual-debug"`) {
 		time.Sleep(300 * time.Millisecond)
-		out, err = runChromiumDump(url, viewportW, viewportH)
+		out, err = runChromiumDump(chromium, url, viewportW, viewportH)
 		if err != nil {
 			t.Fatalf("chromium retry failed: %v", err)
 		}
@@ -279,7 +281,7 @@ func itoa(n int) string {
 // unbreakable run-id token in the meta-line breaks inside the value cell
 // and does not force the Run column wider than its cap.
 func TestPortal_Visual_MetaLineDoesNotForceColumnWidth(t *testing.T) {
-	if os.Getenv("CI") != "" && !testenv.FullRegression() {
+	if os.Getenv("CI") != "" && os.Getenv("SANDMAN_REQUIRE_PORTAL_BROWSER") != "1" && !testenv.FullRegression() {
 		t.Skip("skip visual in CI")
 	}
 	fixture := buildVisualFixture(t)
@@ -312,7 +314,7 @@ func TestPortal_Visual_MetaLineDoesNotForceColumnWidth(t *testing.T) {
 // TestPortal_Visual_NoHorizontalScrollAt1280px asserts the table fits
 // the viewport with no horizontal scroll inside .table-shell.
 func TestPortal_Visual_NoHorizontalScrollAt1280px(t *testing.T) {
-	if os.Getenv("CI") != "" && !testenv.FullRegression() {
+	if os.Getenv("CI") != "" && os.Getenv("SANDMAN_REQUIRE_PORTAL_BROWSER") != "1" && !testenv.FullRegression() {
 		t.Skip("skip visual in CI")
 	}
 	fixture := buildVisualFixture(t)
@@ -338,7 +340,7 @@ func TestPortal_Visual_NoHorizontalScrollAt1280px(t *testing.T) {
 // Chromium's headless mode has a minimum window width of ~500px, so we
 // use 500x720 as the narrowest we can test.
 func TestPortal_Visual_RunRowStaysShortOnMobileViewport(t *testing.T) {
-	if os.Getenv("CI") != "" && !testenv.FullRegression() {
+	if os.Getenv("CI") != "" && os.Getenv("SANDMAN_REQUIRE_PORTAL_BROWSER") != "1" && !testenv.FullRegression() {
 		t.Skip("skip visual in CI")
 	}
 	fixture := buildVisualFixture(t)
