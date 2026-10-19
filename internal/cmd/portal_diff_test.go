@@ -4188,10 +4188,7 @@ console.log('PASS');
 	runPortalHTMLScript(t, js)
 }
 
-// TestPortalRunsView_VisibleRunForIssueGroup_ReviewOnlyIdentityMatchesSourceRun
-// covers the orphan review projection contract: the visible row's identity and
-// validated source metadata must come from the review run, while only the
-// review-group label and summary fields are derived.
+// Review-only rows keep validated source metadata; only the label and summary fields are derived.
 func TestPortalRunsView_VisibleRunForIssueGroup_ReviewOnlyIdentityMatchesSourceRun(t *testing.T) {
 	js := `const review = { key: 'PR1508', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR1508', runId: 'PR1508', issueNumber: 1472, prNumber: 1508, startedAt: '2026-06-30T12:00:00Z', batchKey: 'batch-1472', duration: '2m', activeDurationSeconds: 120, executionSince: '2026-06-30T12:01:00Z', lastOutputAt: '2026-06-30T12:00:00Z' };
 const stub = visibleRunForIssueGroup(1472, [review]);
@@ -4207,6 +4204,10 @@ if (stub.duration !== '2m') throw new Error('expected visible row duration to pr
 if (stub.activeDurationSeconds !== 120) throw new Error('expected visible row activeDurationSeconds to preserve source clock, got ' + JSON.stringify(stub.activeDurationSeconds));
 if (stub.executionSince !== '2026-06-30T12:01:00Z') throw new Error('expected visible row executionSince to preserve source clock, got ' + JSON.stringify(stub.executionSince));
 if (stub.lastOutputAt !== '2026-06-30T12:00:00Z') throw new Error('expected visible row lastOutputAt to preserve source staleness clock, got ' + JSON.stringify(stub.lastOutputAt));
+if (stub.review !== true || stub.groupedReview !== false) throw new Error('expected an ungrouped review row, got review=' + stub.review + ' groupedReview=' + stub.groupedReview);
+if (stub.kind !== 'active' || stub.status !== 'reviewing') throw new Error('expected live review lifecycle kind=active status=reviewing, got ' + stub.kind + '/' + stub.status);
+if (stub.archived !== false || stub.unavailable !== false) throw new Error('expected archived/unavailable to be normalized to false, got ' + stub.archived + '/' + stub.unavailable);
+if (stub.reviewCount !== 1 || stub.reviewLive !== true) throw new Error('expected derived review summary count=1 live=true, got ' + stub.reviewCount + '/' + stub.reviewLive);
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
