@@ -10,6 +10,7 @@ require_success() {
   fi
 }
 
+require_success opencode-canary "${OPENCODE_RESULT:-}"
 require_success security "${SECURITY_RESULT:-}"
 require_success workflow-validation "${WORKFLOW_RESULT:-}"
 require_success static-analysis "${STATIC_RESULT:-}"

@@ -46,7 +46,7 @@ The `build_tools` config value controls the toolchain installed into the scaffol
 | `rust` | Rust/Cargo projects | Rust via mise |
 | `java` | Maven/Gradle projects | Java via mise |
 
-Every preset starts from `debian:bookworm-slim` and includes the shared baseline packages: bash, build tools, certificates, curl, file, `gh`, git, jq, Node/npm, OpenSSH client, Python/pip, ripgrep, unzip, xz-utils, and yq.
+Every preset starts from `debian:bookworm-slim` and includes the shared baseline packages: bash, build tools, certificates, curl, file, `fontconfig`, `fonts-liberation`, `gh`, git, jq, Node/npm, OpenSSH client, Python/pip, ripgrep, unzip, xz-utils, and yq.
 
 ## Auto-detection
 

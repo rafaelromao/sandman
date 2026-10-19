@@ -17,6 +17,7 @@
           { "context": "CI / portal-continuity-browser" },
           { "context": "CI / semantic-pull-request" },
           { "context": "CI / quality-gate" },
+          { "context": "CI / opencode-canary" },
           { "context": "CI / workflow-validation" }
         ],
         "strict_required_status_checks_policy": true
