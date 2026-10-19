@@ -489,6 +489,9 @@ type Scaffolder struct {
 	Gitignore GitignoreRuleWriter
 	GitOps    GitOps
 	HooksDir  string
+	// TLSTrust is the host trust seam for `--ca-cert auto`; the zero value
+	// probes the real download hosts with the host's trust store.
+	TLSTrust TLSTrust
 }
 
 // resolveGitignore returns the configured GitignoreRuleWriter, falling

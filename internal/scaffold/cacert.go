@@ -242,7 +242,7 @@ func (s *Scaffolder) resolveCACerts(sandmanDir string, values []string, w io.Wri
 		}
 		return caCertSelection{certs: existing}, nil
 	}
-	paths, _, none, err := parseCACertValues(values)
+	paths, auto, none, err := parseCACertValues(values)
 	if err != nil {
 		return caCertSelection{}, err
 	}
@@ -256,6 +256,19 @@ func (s *Scaffolder) resolveCACerts(sandmanDir string, values []string, w io.Wri
 			return caCertSelection{}, err
 		}
 		certs = append(certs, parsed...)
+	}
+	if auto {
+		if w == nil {
+			w = io.Discard
+		}
+		detected, err := s.TLSTrust.detectInterceptionRoots(w)
+		if err != nil {
+			return caCertSelection{}, err
+		}
+		if len(detected) == 0 && len(paths) == 0 {
+			return s.resolveCACerts(sandmanDir, nil, w)
+		}
+		certs = append(certs, detected...)
 	}
 	return caCertSelection{replace: true, certs: dedupeCACerts(certs)}, nil
 }
