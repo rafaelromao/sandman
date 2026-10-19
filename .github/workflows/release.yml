@@ -68,6 +68,8 @@ jobs:
     needs: candidate
     if: needs.candidate.outputs.tag != ''
     uses: ./.github/workflows/go.yml
+    secrets:
+      OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
 
   regression:
     needs: candidate
