@@ -577,7 +577,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Use OpenCode 1.18.0 as the scaffold fallback and release validation pin, meeting the provider's current free-tier minimum.
+- Use OpenCode 1.19.3 as the scaffold fallback and release validation pin, meeting the provider's current free-tier minimum.
 
 ### Changed
 

@@ -325,7 +325,7 @@ func TestReleaseValidationWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 	for _, required := range []string{
 		`SANDMAN_FULL_REGRESSION: "1"`,
 		"tier: unit", "tier: smoke", "tier: integration", "tier: live",
-		"name: Install pinned agent CLIs", "opencode-ai@1.18.0", "@anthropic-ai/claude-code@2.1.283",
+		"name: Install pinned agent CLIs", "opencode-ai@1.19.3", "@anthropic-ai/claude-code@2.1.283",
 		"secrets.OPENCODE_API_KEY", "secrets.CLAUDE_CODE_OAUTH_TOKEN",
 		"name: Set up Node", "name: Set up Chromium",
 		"name: Validate prerequisites and record versions",
@@ -637,7 +637,7 @@ func readRepositoryFile(t *testing.T, path string) string {
 
 func TestQualityGateRejectsUnsuccessfulDependencies(t *testing.T) {
 	for _, event := range []string{"pull_request", "push"} {
-		base := map[string]string{"SECURITY_RESULT": "success", "WORKFLOW_RESULT": "success", "STATIC_RESULT": "success", "CONTRACT_RESULT": "success", "LINUX_BUILD_RESULT": "success", "MACOS_BUILD_RESULT": "success", "PORTAL_RESULT": "success", "PACKAGING_RESULT": "success", "TITLE_RESULT": "success"}
+		base := map[string]string{"OPENCODE_RESULT": "success", "SECURITY_RESULT": "success", "WORKFLOW_RESULT": "success", "STATIC_RESULT": "success", "CONTRACT_RESULT": "success", "LINUX_BUILD_RESULT": "success", "MACOS_BUILD_RESULT": "success", "PORTAL_RESULT": "success", "PACKAGING_RESULT": "success", "TITLE_RESULT": "success"}
 		if event == "push" {
 			base["TITLE_RESULT"] = "skipped"
 		}
@@ -680,7 +680,7 @@ func TestCIQualityGateWorkflowContract(t *testing.T) {
 		"types: [opened, synchronize, reopened, edited]",
 		"group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}",
 		"cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
-		"needs: [security, workflow-validation, static-analysis, contracts, build-linux, build-macos, portal-continuity-browser, goreleaser, semantic-pull-request]",
+		"needs: [opencode-canary, security, workflow-validation, static-analysis, contracts, build-linux, build-macos, portal-continuity-browser, goreleaser, semantic-pull-request]",
 		"if: ${{ always() }}", "run: bash scripts/quality_gate.sh",
 		"LINUX_BUILD_RESULT: ${{ needs.build-linux.result }}",
 		"MACOS_BUILD_RESULT: ${{ needs.build-macos.result }}",
@@ -708,7 +708,7 @@ func TestCIQualityGateWorkflowContract(t *testing.T) {
 		}
 	}
 	gate := extractCIJob(t, ci, "quality-gate")
-	if !strings.Contains(gate, "if: ${{ always() }}") || !strings.Contains(gate, "needs: [security, workflow-validation, static-analysis, contracts, build-linux, build-macos, portal-continuity-browser, goreleaser, semantic-pull-request]") {
+	if !strings.Contains(gate, "if: ${{ always() }}") || !strings.Contains(gate, "needs: [opencode-canary, security, workflow-validation, static-analysis, contracts, build-linux, build-macos, portal-continuity-browser, goreleaser, semantic-pull-request]") {
 		t.Fatal("aggregate must always evaluate all mandatory dependencies")
 	}
 	title := extractCIJob(t, ci, "semantic-pull-request")
@@ -767,7 +767,7 @@ func TestQualityGatePartialPlatformReruns(t *testing.T) {
 	} {
 		t.Run(results.name, func(t *testing.T) {
 			cmd := exec.Command("bash", "quality_gate.sh")
-			cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "EVENT_NAME=pull_request", "LINUX_BUILD_RESULT=" + results.linux, "MACOS_BUILD_RESULT=" + results.macos, "SECURITY_RESULT=success", "WORKFLOW_RESULT=success", "STATIC_RESULT=success", "CONTRACT_RESULT=success", "PORTAL_RESULT=success", "PACKAGING_RESULT=success", "TITLE_RESULT=success"}
+			cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "EVENT_NAME=pull_request", "LINUX_BUILD_RESULT=" + results.linux, "MACOS_BUILD_RESULT=" + results.macos, "OPENCODE_RESULT=success", "SECURITY_RESULT=success", "WORKFLOW_RESULT=success", "STATIC_RESULT=success", "CONTRACT_RESULT=success", "PORTAL_RESULT=success", "PACKAGING_RESULT=success", "TITLE_RESULT=success"}
 			output, err := cmd.CombinedOutput()
 			if (err == nil) != results.pass {
 				t.Fatalf("success=%t, want %t: %v\n%s", err == nil, results.pass, err, output)

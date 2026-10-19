@@ -520,3 +520,11 @@ for strict main-protection setup and live verification limits.
 
 Claude provider E2Es run only through the manual `run_claude` workflow input.
 The automatic live release tier validates OpenCode; Claude is not a publication gate.
+
+Regular CI runs one tool-free OpenCode canary request on Linux (60-second
+provider deadline, three-minute job, no containers or retries), using the release
+manifest's exact CLI/model. A provider deprecation failure instructs the implementor
+to update the scaffold fallback, release manifest and release workflow pin together.
+The canary is mandatory in the aggregate quality gate; full provider E2Es remain
+release-only, and Claude provider E2Es remain manual-only. The existing OPENCODE_API_KEY repository secret is required and is forwarded
+by the Release reusable-CI caller.

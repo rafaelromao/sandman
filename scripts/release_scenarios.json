@@ -8,7 +8,7 @@
   },
   "providers": {
     "opencode": {
-      "cli": "1.18.0",
+      "cli": "1.19.3",
       "model": "opencode/big-pickle"
     },
     "claude": {
