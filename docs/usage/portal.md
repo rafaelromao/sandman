@@ -201,7 +201,7 @@ The stream reads the row's Saved Log (`run.log`), never the control socket, and 
 
 | `type` | Meaning |
 |--------|---------|
-| `snapshot` | The retained tail of the log, sent on a first connect without a cursor |
+| `snapshot` | The retained tail of the log, sent on a first connect without a cursor; `reason` is `oversized-record` when the tail cannot fit the retained-byte bound (one record is larger than it) |
 | `append` | New complete lines after the previous frame |
 | `reset` | The retained tail sent again; `reason` is `source-changed`, `invalid-cursor`, or `catchup-bounded`, optionally followed by `;oversized-record` |
 | `pending` | The log is not readable yet (`reason` `source-missing` or `source-unreadable`); sent once while it stays missing |
@@ -212,7 +212,7 @@ The SSE event `id:` is the frame's `cursor` for content frames and `end`. To res
 
 **Plain mode** (no `protocol=frames`). Each saved log line is sent as a separate `data: <line>` event and control frames are not sent; the stream still closes when the run's events are terminal.
 
-In both modes a `: keepalive` comment is sent every 15 seconds when no output has flowed. If `.sandman/events.jsonl` cannot be read, the stream keeps tailing rather than ending.
+In both modes a `: keepalive` comment is sent every 15 seconds, whether or not output is flowing. If `.sandman/events.jsonl` cannot be read, the stream keeps tailing rather than ending.
 
 Errors return JSON with an appropriate HTTP status:
 

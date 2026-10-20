@@ -21,7 +21,7 @@ This is the advanced reference for Sandman's test harness. For the common comman
 | `SANDMAN_PORTAL_CHROMIUM` | Path to the Chromium binary used by portal browser tests |
 | `SANDMAN_RUN_PORTAL_BINARY_E2E` | `1` opts in to the portal log tests that build and run a real `sandman` binary (the test builds it; there is no prebuilt-binary override) |
 
-Build tags select tiers: `smoke` (smoke tests), `e2e` (tagged e2e scenarios, which also compiles smoke files), and `visual` (portal browser and visual tests, used by `make test-browser`).
+Build tags select tiers: `smoke` (smoke tests), `e2e` (tagged e2e scenarios, which also compiles smoke files), and `visual` (portal visual tests). `make test-browser` runs the `visual`-tagged tests together with the untagged portal browser continuity tests listed in `scripts/portal_browser_tests.txt`.
 
 When gate vars are unset, expensive tests should skip themselves instead of doing real work.
 
