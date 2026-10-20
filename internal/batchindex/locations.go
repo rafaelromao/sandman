@@ -58,19 +58,33 @@ func (idx *Index) ResolveBatchIdentity(id string) *Batch {
 	return found
 }
 
-// MatchesBatchLocation interprets event batch identity without row aliases.
-// Unknown identities may refer to a canonical unindexed legacy directory;
-// ambiguous indexed aliases never use that fallback.
-func (idx *Index) MatchesBatchLocation(layout paths.Layout, id, dir string) bool {
-	if owner := idx.ResolveBatchIdentity(id); owner != nil {
-		return filepath.Clean(owner.Location(layout).Dir) == filepath.Clean(dir)
+// LocateBatchIdentity resolves event batch identity, without row aliases, to
+// its frozen location. Unknown identities may refer to a canonical unindexed
+// legacy directory; ambiguous indexed aliases and empty identities do not.
+func (idx *Index) LocateBatchIdentity(layout paths.Layout, id string) (paths.BatchLocation, bool) {
+	if id == "" {
+		return paths.BatchLocation{}, false
 	}
-	for _, b := range idx.Batches {
-		if b.Path != "" && filepath.Base(b.Path) == id {
-			return false
+	if owner := idx.ResolveBatchIdentity(id); owner != nil {
+		return owner.Location(layout), true
+	}
+	if idx != nil {
+		for _, b := range idx.Batches {
+			if b.Path != "" && filepath.Base(b.Path) == id {
+				return paths.BatchLocation{}, false
+			}
 		}
 	}
-	return filepath.Clean(layout.BatchDir(id)) == filepath.Clean(dir)
+	return layout.LocateBatch(id, ""), true
+}
+
+// MatchesBatchLocation reports whether event batch identity owns dir.
+func (idx *Index) MatchesBatchLocation(layout paths.Layout, id, dir string) bool {
+	if id == "" {
+		return filepath.Clean(layout.BatchDir(id)) == filepath.Clean(dir)
+	}
+	location, ok := idx.LocateBatchIdentity(layout, id)
+	return ok && filepath.Clean(location.Dir) == filepath.Clean(dir)
 }
 
 // ResolveRunBatch resolves row-action IDs through the index and physical
@@ -83,10 +97,8 @@ func (idx *Index) ResolveRunBatch(layout paths.Layout, id string) *Batch {
 		return b
 	}
 	// A known but ambiguous Batch alias must not be reinterpreted as a row.
-	for _, b := range idx.Batches {
-		if b.Path != "" && filepath.Base(b.Path) == id {
-			return nil
-		}
+	if _, ok := idx.LocateBatchIdentity(layout, id); !ok {
+		return nil
 	}
 	for i := range idx.Batches {
 		for _, rec := range idx.Batches[i].Runs {
