@@ -127,9 +127,10 @@ Manual fallback, for a hand-maintained Dockerfile:
 
 ## Portal shows unknown rows after upgrading Sandman
 
-Sandman does not migrate on-disk state across version upgrades. Existing `.sandman/` state can contain identifiers the current portal does not understand.
+Sandman does not generally migrate on-disk state across version upgrades. Existing `.sandman/` state can contain identifiers the current portal does not understand. Runs waiting on a pull-request review are the exception: their complete, valid saved review state is carried forward (see [Upgrades](../architecture/disk-layout.md#upgrades)).
 
-- Clear `.sandman/` and rebuild: `rm -rf .sandman && sandman init`.
+- First check whether any run is still waiting or needs its history. Clearing `.sandman/` discards both.
+- If nothing needs preserving, clear `.sandman/` and rebuild: `rm -rf .sandman && sandman init`.
 - Re-run current Sandman jobs after re-initializing.
 
 ## `/sandman review` keeps triggering itself

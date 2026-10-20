@@ -191,8 +191,11 @@ missing closing reference produces `failure` with completion diagnostics.
 Only an actively resolving current-head CI operation, a confirmed, in-deadline
 delegated-review request, or a recognised provider usage limit produces `run.await` without consuming an agent retry.
 A review request is active from successful trigger confirmation, even before a
-review run starts. A usage limit is active because the provider quota window resets externally: the run accumulates completed ten-minute polling intervals up to five hours, retains its final boundary probe, and then follows the configured ordinary fresh-session retry path. Pending managed current-head CI is bounded by its durable per-head
-deadline; a new head is the only reset boundary. The logical row keeps its
+review run starts. A usage limit is active because the provider quota window resets externally: the run accumulates completed ten-minute polling intervals up to five hours, retains its final boundary probe, and then follows the configured ordinary fresh-session retry path. Pending managed current-head CI is bounded by its durable per-head 30-minute
+deadline, that is, for each identified check execution on the current head (a
+CI generation). A new head or a verified rerun of the checks on the same head
+starts a new generation; observing CI or restarting Sandman never extends the
+deadline, and legacy head-only evidence binds to its execution identity once. The logical row keeps its
 dependents queued while execution capacity is released between observations.
 When the review produces request-scoped feedback or approval, the implementation
 resumes on an available slot to repair or merge; if capacity is full,
@@ -340,8 +343,8 @@ Prompt-only runs show the same summary with `prompt-only` in the issue column.
 | Subcommand | Behaviour |
 |------------|-----------|
 | `sandman archive run <runId>` | Move `runs/<runId>/` from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/runs/<runId>/`. The AgentRun's event projection must be terminal; sibling rows and the batch daemon stay untouched. Persists a per-row `Runs[]` artifact record carrying `status: "archived"` and `archivePath` for crash recovery; the event-derived AgentRun status is unchanged. |
-| `sandman archive batch <batchId>` | Move the whole batch dir from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/`. The batch daemon must be gone. Flips the batch-level `status` to `archived`. CLI-only — not exposed via HTTP. |
-| `sandman archive older-than <days>` | Walk every `runs/<runID>/run.json` across all batches and archive each terminal row older than the cutoff. Already-archived rows are skipped via the per-row `Runs[]` record. |
+| `sandman archive batch <batchId>` | Move the whole batch dir from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/`. The batch daemon must be gone and every AgentRun in the batch must be event-terminal; otherwise the command refuses. Flips the batch-level `status` to `archived`. CLI-only — not exposed via HTTP. |
+| `sandman archive older-than <days>` | Walk every `runs/<runID>/run.json` across batches whose daemon is gone and archive each terminal row created before the cutoff (manifest creation time, or manifest mtime). Already-archived rows are skipped via the per-row `Runs[]` record. |
 | `sandman archive stale` | Run the same stale-recovery pass as `clean --stale` (emit `run.aborted` for unterminated runs in dead batches), then walk every `runs/<runID>/run.json` and archive each terminal row. |
 
 Per-row archive does not edit `events.jsonl` and does not touch `.sandman/worktrees/`. The HTTP `POST /api/runs/archive` endpoint shares the `archive run` contract: per-row, empty `200` on success, structured `409` (with `archivePath`) on collision or non-terminal, `404` when the row id is unknown.
@@ -350,4 +353,4 @@ Bulk commands process each row individually; a batch with multiple terminal rows
 
 ## Upgrades
 
-Sandman does not migrate on-disk state across version upgrades. Clear `.sandman/` and re-run `sandman init` after upgrading. See [Troubleshooting](../help/troubleshooting.md#portal-shows-unknown-rows-after-upgrading-sandman) if status or portal rows look inconsistent after an upgrade.
+Sandman does not generally migrate on-disk state across version upgrades. Runs waiting on a pull-request review are carried forward when their saved review request, head, and state are complete and valid; incomplete or stale legacy review state is never promoted. Clearing `.sandman/` discards waiting runs and their history, so do it only when status or portal rows still look wrong after upgrading and no run needs to be preserved: clear `.sandman/` and re-run `sandman init`. See [Upgrades](../architecture/disk-layout.md#upgrades) for the exact contract and [Troubleshooting](../help/troubleshooting.md#portal-shows-unknown-rows-after-upgrading-sandman) for the symptom and fix.
