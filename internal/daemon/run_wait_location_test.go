@@ -130,3 +130,60 @@ func TestRenewRunWait_RejectsRecordForAnotherBatch(t *testing.T) {
 		t.Fatalf("rejected renewal wrote a wait record: %v", err)
 	}
 }
+
+// The index records frozen paths under the git toplevel while callers may
+// name the same repository through a symlink (or /tmp vs /private/tmp). The
+// owner is the same directory, so identity must not depend on the spelling,
+// and the returned location keeps the index's frozen spelling.
+func TestBatchLocationForDir_MatchesThroughSymlinkedRoot(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "checkout")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	realLayout, linkLayout := paths.NewLayout(nil, real), paths.NewLayout(nil, link)
+	frozen := filepath.Join(realLayout.BatchesDir, "frozen")
+	legacy := realLayout.BatchDir("legacy")
+	for _, dir := range []string{frozen, legacy} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := (&batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
+		{ID: "public", Path: frozen, Status: batchindex.StatusActive},
+	}}).Save(realLayout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+	got, err := BatchLocationForDir(linkLayout, filepath.Join(linkLayout.BatchesDir, "frozen"))
+	if err != nil || got.ID != "public" || got.Dir != frozen {
+		t.Fatalf("symlinked indexed location = %+v, %v; want public at %s", got, err, frozen)
+	}
+	got, err = BatchLocationForDir(linkLayout, filepath.Join(link, ".sandman", "batches", "legacy"))
+	if err != nil || got.ID != "legacy" {
+		t.Fatalf("symlinked legacy location = %+v, %v", got, err)
+	}
+}
+
+// Two indexed Batches resolving to one physical directory have no single
+// owner; recovery must fail closed rather than pick one.
+func TestBatchLocationForDir_RefusesTwoOwnersOfOneDirectory(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "checkout")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	realLayout := paths.NewLayout(nil, real)
+	frozen := filepath.Join(realLayout.BatchesDir, "frozen")
+	if err := os.MkdirAll(frozen, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
+		{ID: "first", Path: frozen, Status: batchindex.StatusActive},
+		{ID: "second", Path: filepath.Join(link, ".sandman", "batches", "frozen"), Status: batchindex.StatusActive},
+	}}).Save(realLayout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := BatchLocationForDir(realLayout, frozen); err == nil {
+		t.Fatalf("two owners resolved to %+v", got)
+	}
+}

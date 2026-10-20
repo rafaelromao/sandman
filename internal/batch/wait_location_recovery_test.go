@@ -142,3 +142,36 @@ func TestRunSessionWritesRunArtifactsAtFrozenBatchDir(t *testing.T) {
 		t.Fatalf("run artifacts leaked into the public ID's canonical dir: %v", err)
 	}
 }
+
+// A fresh issue batch whose repository root is reached through a symlink
+// still resolves the RunDir the CLI registered under the git toplevel.
+func TestIssueBatchLocationResolvesRunDirThroughSymlinkedRoot(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "checkout")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	realLayout := paths.NewLayout(nil, real)
+	frozen := filepath.Join(realLayout.BatchesDir, "261001090000-beef-42")
+	if err := os.MkdirAll(frozen, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
+		{ID: "261001090000-beef-42", Path: frozen, Status: batchindex.StatusActive},
+	}}).Save(realLayout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+	got, err := issueBatchLocation(paths.NewLayout(nil, link), Request{RunDir: filepath.Join(".sandman", "batches", "261001090000-beef-42")})
+	if err != nil || got.ID != "261001090000-beef-42" || got.Dir != frozen {
+		t.Fatalf("issue batch location = %+v, %v; want frozen %s", got, err, frozen)
+	}
+}
+
+// RunDir identity comes only from the index; the minted-ID helper no longer
+// derives an identity from a directory basename.
+func TestIssueBatchIDForRequestIgnoresRunDir(t *testing.T) {
+	req := Request{Issues: []int{42}, RunTS: "261001090000", RunShortID: "beef", RunDir: filepath.Join(".sandman", "batches", "frozen-x")}
+	if got, want := issueBatchIDForRequest(req), BatchIDForIssue(42, 1, "261001090000", "beef"); got != want {
+		t.Fatalf("issueBatchIDForRequest = %q, want minted %q", got, want)
+	}
+}

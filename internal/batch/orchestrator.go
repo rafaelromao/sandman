@@ -82,10 +82,9 @@ func rowWaitBatch(layout paths.Layout, issueBatch paths.BatchLocation, runID str
 	return daemon.ResolveBatchLocation(layout, id)
 }
 
+// issueBatchIDForRequest mints the public ID of a new issue Batch. A
+// supplied RunDir is resolved by issueBatchLocation instead.
 func issueBatchIDForRequest(req Request) string {
-	if runDir := strings.TrimSpace(req.RunDir); runDir != "" {
-		return filepath.Base(runDir)
-	}
 	if len(req.Issues) > 0 {
 		return BatchIDForIssue(req.Issues[0], len(req.Issues), req.RunTS, req.RunShortID)
 	}

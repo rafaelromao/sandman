@@ -112,22 +112,46 @@ func initialWaitPath(layout paths.Layout, runID string) (string, error) {
 }
 
 // BatchLocationForDir returns the public identity owning a frozen Batch
-// directory. Indexed owners win; an unindexed canonical directory keeps its
-// basename only when no indexed Batch claims that name.
+// directory, with the directory spelled as the owner records it. Indexed
+// owners win; an unindexed canonical directory keeps its basename only when no
+// indexed Batch claims that name. Paths are compared after resolving symlinks,
+// so a repository reached through another spelling of the same directory
+// (a symlinked checkout, /tmp vs /private/tmp) finds the same owner.
 func BatchLocationForDir(layout paths.Layout, batchDir string) (paths.BatchLocation, error) {
 	idx, err := batchindex.Load(layout.BatchesIndexPath)
 	if err != nil {
 		return paths.BatchLocation{}, err
 	}
+	var owner *paths.BatchLocation
 	for _, batch := range idx.Batches {
-		if idx.MatchesBatchLocation(layout, batch.ID, batchDir) {
-			return paths.BatchLocation{ID: batch.ID, Dir: batchDir}, nil
+		location, ok := idx.LocateBatchIdentity(layout, batch.ID)
+		if !ok || location.ID != batch.ID || !sameDir(location.Dir, batchDir) {
+			continue
 		}
+		if owner != nil {
+			return paths.BatchLocation{}, fmt.Errorf("batch location has more than one owner: %s", batchDir)
+		}
+		owner = &location
 	}
-	if legacyID := filepath.Base(batchDir); ownsBatchLocation(idx, layout, paths.BatchLocation{ID: legacyID, Dir: batchDir}) {
-		return paths.BatchLocation{ID: legacyID, Dir: batchDir}, nil
+	if owner != nil {
+		return *owner, nil
+	}
+	legacy := layout.LocateBatch(filepath.Base(batchDir), "")
+	if sameDir(legacy.Dir, batchDir) && ownsBatchLocation(idx, layout, legacy) {
+		return legacy, nil
 	}
 	return paths.BatchLocation{}, fmt.Errorf("batch location has no unambiguous identity: %s", batchDir)
+}
+
+// sameDir reports whether two spellings name one directory. Cleaned equality
+// suffices; otherwise both must resolve through symlinks to the same path.
+func sameDir(a, b string) bool {
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	return errA == nil && errB == nil && ra == rb
 }
 
 // ownsBatchLocation reports whether a public Batch ID, never another Batch's
