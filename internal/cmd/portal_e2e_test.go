@@ -188,10 +188,14 @@ func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues_Container(t *testing.T) 
 	t.Chdir(repoDir)
 	initRunIntegrationRepoWithRemote(t, repoDir)
 	writeContainerAbortE2EConfig(t, repoDir)
+	// The agent runs in the container, which also needs gh for its auth
+	// setup at start. A blocking opencode on the host PATH would only hang
+	// the host `opencode --version` probe before the batch starts.
+	writeBlockingOpencodeShimForContainer(t, repoDir)
+	writeFakeGHShimForContainer(t, filepath.Join(repoDir, ".sandman", "bin"))
 
 	ghShimDir := shortTempDir(t)
 	writeFakeGHShim(t, ghShimDir)
-	writeBlockingOpencodeShim(t, ghShimDir)
 	prependPath(t, ghShimDir)
 
 	portalURL := startPortalBinary(t, binPath, repoDir, ghShimDir)
