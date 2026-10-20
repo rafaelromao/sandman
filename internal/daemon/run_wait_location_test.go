@@ -60,3 +60,27 @@ func TestTransferRunWait_RefusesCanonicalDirShadowingPublicID(t *testing.T) {
 		t.Fatalf("refused transfer stranded the source wait: %+v %v", source, err)
 	}
 }
+
+// Unindexed canonical legacy destinations keep their directory name as their
+// identity when no indexed Batch claims that name.
+func TestTransferRunWait_AcceptsUnindexedCanonicalLegacyDestination(t *testing.T) {
+	layout := paths.NewLayout(nil, t.TempDir())
+	if err := (&batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
+		{ID: "public", Path: filepath.Join(layout.SandmanDir, "relocated", "frozen"), Status: batchindex.StatusActive},
+	}}).Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	record := RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "old", Issue: 42,
+		Branch: "42-fix", BaseBranch: "main", OperationID: "capacity"}
+	if err := RenewRunWait(layout.BatchDir("old"), record, now); err != nil {
+		t.Fatal(err)
+	}
+	moved, err := TransferRunWait(layout, layout.BatchDir("old"), layout.BatchDir("legacy"), "row", now.Add(time.Minute))
+	if err != nil || moved.BatchID != "legacy" {
+		t.Fatalf("legacy transfer = %+v, %v", moved, err)
+	}
+	if _, err := ReadRunWaitAt(layout.BatchDir("legacy"), "legacy", "row"); err != nil {
+		t.Fatalf("legacy destination wait unreadable: %v", err)
+	}
+}
