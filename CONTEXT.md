@@ -104,7 +104,7 @@ The last-resort Specification child harvest source. When every cheaper harvest p
 _Avoid_: full-repo scan, discovery scan.
 
 **Discovered children**:
-The subset of Specification children identified by the Open-issue scan and persisted on the spec as a `<!-- sandman-discovered-children -->` marker comment containing a `## Discovered children` H2 section with `- #N` bullets. Future runs pick the candidates up via the existing comment harvest so the expensive scan is short-circuited while the marker comment is intact. Operators may edit the marker comment to remove false positives, add missing candidates, or delete the marker to force a re-scan. References ADR-0044.
+The subset of Specification children identified by the Open-issue scan and persisted on the spec as a `<!-- sandman-discovered-children -->` marker comment containing a `## Discovered children` H2 section with `- #N` bullets. Future runs harvest the marker's bullets as ordinary comment candidates. The scan is gated on the cheaper candidate set, not on the marker: any nonempty set of cheaper candidates (marker bullets included, before verification) suppresses the scan, while the marker's presence only suppresses reposting. Operators may edit the marker comment to remove false positives or add missing candidates. A marker edited down to no bullets lets the scan rediscover children on each run without reposting; deleting the marker allows a repost, but a re-scan happens only when no other source yields candidates. References ADR-0044.
 _Avoid_: auto-discovered children, scan results.
 
 **Batch**:

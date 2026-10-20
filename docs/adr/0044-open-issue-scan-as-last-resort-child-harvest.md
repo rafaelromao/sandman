@@ -28,6 +28,8 @@ The cost of one full-repo `gh api repos/<owner>/<repo>/issues?state=open --pagin
    ```
     The hidden HTML marker identifies the comment as auto-generated. The `## Discovered children` heading plus `- #N` bullets is recognised by the existing structured comment harvest (`ParseChildrenFromBody`) on subsequent runs, so the operator gains a persistent record and the expensive scan only runs once per spec per missing-marker state.
 3. **Idempotency.** Before posting, sandman lists the spec's existing comments. If any carries the `<!-- sandman-discovered-children -->` marker, sandman skips posting. Operators who want to force a re-scan delete the marker comment; sandman then re-runs the harvest and re-posts on the next call.
+
+   > **Clarified (annotated 2026-10-19, #2801):** the scan is gated on an empty cheaper-candidate set, not on the marker's absence. Any nonempty set of cheaper candidates (marker bullets included) suppresses the scan; the marker only prevents reposting. A marker emptied of bullets lets the scan rediscover children without reposting, and deleting the marker forces a re-scan only when every other source is also empty.
 4. **Optional interfaces for additive growth.** The two new GitHub operations are exposed as optional interfaces (`github.OpenIssueLister`, `github.IssueCommentPoster`) on `internal/github/github.go`. The resolver type-asserts `r.client.(github.OpenIssueLister)` and `r.client.(github.IssueCommentPoster)`; production `CLIClient` implements both, existing test fakes do not. This means the new step is a no-op on every existing fake — no test changes are required. The hardening guarantee: existing tests stay unchanged because they pre-date the optional interface.
 5. **Implementation seams.**
    - `internal/github/github.go` gains the `OpenIssueLister` and `IssueCommentPoster` interfaces.
@@ -55,6 +57,8 @@ The cost of one full-repo `gh api repos/<owner>/<repo>/issues?state=open --pagin
 - Closes the spike's harvest-side gap: candidates whose `## Parent` section cites the spec are recovered even when the spec body, its comments, native sub-issues, and the mention-search fallback are all silent.
 - The auto-posted comment gives operators a persistent, reviewable record of what sandman auto-discovered. They can edit the marker comment to remove false positives, add missing candidates, or delete the marker to force a re-scan.
 - Future runs automatically pick up the marker comment via the existing comment-harvest path (`ListIssueComments` + `ParseChildrenFromBody`), so the expensive scan only fires when the marker is absent — the comment is the cache.
+
+> **Clarified (annotated 2026-10-19, #2801):** the scan is gated on an empty cheaper-candidate set, not on the marker's absence. Any nonempty set of cheaper candidates (marker bullets included) suppresses the scan; the marker only prevents reposting. A marker emptied of bullets lets the scan rediscover children without reposting, and deleting the marker forces a re-scan only when every other source is also empty.
 - The widened `HasParentSectionBacklinkTo` matcher (ADR-0042) is reused as the filter, so the spike's `## Parent area` umbrella pattern (threeterm #232 / #234) is covered for free without a second matcher.
 - Existing tests in `internal/batch/spec_test.go`, `internal/batch/orchestrator_test.go`, `internal/batch/dependencies_test.go`, `internal/batch/badge_e2e_test.go`, and `internal/cmd/run_test.go` are unchanged because the new operations live on optional interfaces — the type-assertion falls through, and the new step is a no-op on fakes that do not implement the optional interfaces.
 
@@ -62,6 +66,8 @@ The cost of one full-repo `gh api repos/<owner>/<repo>/issues?state=open --pagin
 
 - One full-repo open-issue scan is more expensive than the existing search fallback, especially on repos with thousands of open issues. Gating by `len(order) == 0` keeps it off the hot path; a future change may need a per-batch cap or opt-out flag if any real repo hits the budget.
 - The auto-posted comment is a side effect on the spec issue. Operators who run sandman repeatedly without deleting the marker will never see a re-scan, even after opening new child issues that reference the spec. The trade-off favours persistence over freshness; the operator's "delete the marker" escape hatch is documented in the marker comment itself.
+
+> **Clarified (annotated 2026-10-19, #2801):** this applies only while the marker keeps its bullets or another source yields candidates; see the clarification under Positive above.
 - The strategy relies on every child carrying a `## Parent` H2 section that cites the spec. Children written without that backlink (only body keywords, only sub-issue edges, only range references) are not recovered by the scan. The first category is handled by the existing body-keyword + sub-issue harvests; the range-reference gap surfaced in the spike remains open as a separate problem.
 - A comment-post failure leaves the candidates harvested in memory accepted this run but unpersisted; the next run will re-scan and re-attempt. Operators who care about durability should run sandman twice or fix the underlying post failure.
 
