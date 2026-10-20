@@ -120,6 +120,8 @@ The original implementation of `launchReview` ran `verifyReviewPosted` synchrono
 
 **Promotion step:** the `pendingPost` rehydrate mechanism (issue #1847 S4) replaces the earlier `promotePendingReviews` lazy-verify path. On `Daemon.New`, the daemon walks every review-kind batch and registers a `pendingPostEntry` for each `pending` review-state whose worktree has `decision.md` on disk. On each tick, `processPR` consults the `pendingPost` map before launching: if an entry exists and `decision.md` is still on disk, the daemon reads, redacts, and posts it (rehydrate success → `MarkSeen("success")`, drop entry). If `decision.md` is missing at tick time, the entry is dropped and `processPR` falls through to the launch path. Three outcomes:
 
+> **Later change (annotated 2026-10-19, #2801):** entries are now registered from the run-folder outbox or durable `decision.md` copy rather than from the worktree file; see the note under Restart semantics below.
+
 - A non-trigger comment is observed at-or-after the launch timestamp → `MarkSeen("success")` on the per-run store; the cache hook fires; the entry is dropped.
 - No review comment yet → the entry's cycle counter increments. After `pendingMaxCycles = 3` cycles (~90s at default `PollingInterval`) the entry is promoted to `MarkSeen("failure")`; the daemon also calls `MarkTerminalSeen` on the seen cache hook so the next tick skips the trigger without re-launching. This is a slice-D-only path; `MarkSeen("failure")` invoked from processPR's RunBatch-error branch does NOT fire `MarkTerminalSeen` (failure remains retryable per slice A's contract).
 - `ListPRComments` errors are logged and the entry is kept — a temporary GitHub outage does not silently promote an in-flight review to failure.
@@ -130,11 +132,15 @@ The original implementation of `launchReview` ran `verifyReviewPosted` synchrono
 
 **Retryable failure recovery (issue #1949):** for the missing-decision.md and decision.md-is-a-directory branches, the next tick's rehydrate walker (`tryRehydratePost`) finds decision.md still missing or still a directory at tick time, drops the stale pending entry, and falls through to the launch path. The launch path's `ClearReviewArtifacts` defer removes the worktree directory (which removes any directory-shaped `decision.md`) so the next `postDecision` observes a clean slate. For the post-failure branch, decision.md is on disk and rehydrate actually retries the post; the trigger stays in `pending` until the post lands or an operator intervenes. Operators who want guaranteed lossless recovery across restarts during the post-failure pending window should re-post `/sandman review` on the PR after the daemon restarts; this trade-off is bounded (a 90s window at default `PollingInterval`) and acceptable.
 
+> **Later change (annotated 2026-10-19, #2801):** the re-post advice here is superseded by #2640; see the note under Restart semantics below.
+
 **New status — `pending`:** `review-state.json` can now carry `pending` in `seenComments`. `pending` is NOT in `shouldSkipDedupStatus` (it remains retryable from the per-run store's perspective); the in-process `pendingPost` map and the per-tick pending-set filter in `processPR` are what guard against double-launching while pending.
 
 **Dedup consequence for `(prNumber, commentID)`:** the seen cache continues to short-circuit only `success`/`superseded` entries; pending comments are still subject to in-memory dedup via the daemon's `pendingPost` map keyed by PR number plus comment ID. A follow-up tick that processes the same PR sees the pending filter drop the trigger from `unprocessed`, and `tryRehydratePost` resolves the entry toward `success` or falls through to launch. There is no observable window in which a trigger is double-launched.
 
 **Restart semantics:** `pendingPost` is in-memory only. A daemon restart drops the pending window — but `loadPendingPosts` rehydrates from on-disk `review-state.json` at construction, so a `pending` entry whose worktree still has `decision.md` is re-registered on the next start. Operators who want guaranteed lossless recovery across restarts during the post-failure pending window should re-post `/sandman review` on the PR after the daemon restarts. This trade-off is bounded (a 90s window at default `PollingInterval`) and acceptable for slice D.
+
+> **Later change (annotated 2026-10-19, #2801):** superseded by #2640. Rehydration is driven by the run-owned outbox `<runDir>/pending-publication.json`, which re-posts the exact recorded body after a remote duplicate check. Recovery across restarts during the post-failure window is lossless and needs no re-posted `/sandman review`; the worktree `decision.md` is only the agent's handoff.
 
 ### Retry-attempt counter on `SeenComment` (issue #2209)
 

@@ -63,8 +63,9 @@ replace that runner through the existing `WithRunner` seam.
 
 The review pipeline does not let the LLM post to PRs directly. Instead:
 
-1. The reviewer agent writes its body to the review worktree's `decision.md` (atomic temp-file + `os.Rename`).
-2. The daemon reads the file, applies `RedactBody` (`(?i)/sandman` → `sandman`), and posts the redacted body via `gh pr comment`.
+1. The reviewer agent writes its body to the review worktree's `decision.md` (atomic temp-file + `os.Rename`). That file is a handoff.
+2. The daemon copies it to the run folder, applies `RedactBody` (`(?i)/sandman` → `sandman`), and writes the exact redacted body to the run-owned outbox `<runDir>/pending-publication.json`.
+3. The daemon posts the outbox body via `gh pr comment` and removes the outbox only after the post is acknowledged. After a restart it re-posts the exact outbox body, first checking GitHub for a comment carrying its publication marker. Deleting the worktree `decision.md` does not clear the outbox.
 
 The redactor is the load-bearing safety net for the no-self-loop invariant: it runs out-of-band of the LLM, so the bot's body can never contain the trigger substring regardless of what the prompt rule says. The structural sniff `LooksLikeBotReviewBody` is defence-in-depth — bodies that look like previous bot reviews are dropped before `ParseTrigger` runs.
 

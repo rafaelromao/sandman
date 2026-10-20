@@ -31,11 +31,16 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 │           ├── session.json             # agent session identity, OpenCode or Claude Code (atomic-rename)
 │           ├── run.sock                # per-row control socket
 │           ├── review-state.json       # review dedup state (atomic-rename)
+│           ├── decision.md             # durable review decision copy (atomic-rename)
+│           ├── pending-publication.json # exact redacted review publication outbox
 │           └── config/                 # per-row container config snapshot
 ├── reviews/
 │   ├── review-prompt.md                # scaffold (init only)
 │   ├── quality-rules.md                # scaffold (init only)
 │   ├── quota-pause.json                # review quota recovery gate (atomic-rename)
+│   ├── health-repair.json              # health-repair episode evidence and budget (atomic-rename)
+│   ├── health-repair.json.lock         # serializes health-repair evidence updates
+│   ├── claims/                         # health-repair launch claim
 │   └── review.sock                     # review-daemon control socket
 ├── worktrees/<branch>/                 # per-run worktree (git)
 │   └── .sandman/task.md                # per-worktree rendered prompt
@@ -140,10 +145,14 @@ event batch identity have terminal projections. See [Architecture Overview](over
 | `batches/runs/<runID>/session.json` | legacy compatibility evidence | prior runtime versions | explicit reuse lookup when the canonical batch path is absent | never | legacy Run only |
 | `batches/<batchID>/runs/<runID>/run.sock` | runtime | command server on per-row start | external caller (`{"action":"abort","issue":N}`) | command server on per-row completion | per AgentRun |
 | `batches/<batchID>/runs/<runID>/review-state.json` | runtime, atomic-rename | review state store (dedup, claim lock) | review state store | `sandman archive` / `sandman clean` | per review AgentRun |
+| `batches/<batchID>/runs/<runID>/decision.md` | runtime, atomic-rename | review daemon (copied from the review worktree's handoff `decision.md`) | review daemon (rehydrate fallback when no outbox exists), verdict reader | `sandman archive` / `sandman clean` (retained with Run) | per review AgentRun |
+| `batches/<batchID>/runs/<runID>/pending-publication.json` | runtime, atomic-rename | review daemon, before posting (exact redacted body plus publication identity) | review daemon (post, restart rehydrate with remote duplicate check) | review daemon, only after the post is acknowledged; deleting the worktree `decision.md` does not clear it | per unacknowledged review publication |
 | `batches/<batchID>/runs/<runID>/config/` | runtime, container snapshot | `PrepareContainerConfigMounts` | container runtime (bind-mount) | `sandman clean` (retained with Run) | per AgentRun |
 | `reviews/review-prompt.md` | scaffold | `sandman init` | review daemon (materialization + live template render) | repo (manual) | init only |
 | `reviews/quality-rules.md` | scaffold | `sandman init` | review daemon (prompt materialization) | repo (manual) | init only |
 | `reviews/quota-pause.json` | runtime, atomic-rename | review daemon (usage-limit review failure / probe, for OpenCode and Claude Code review agents) | review daemon (startup / tick) | review daemon (cleared after a successful probe) | provider-wide quota recovery |
+| `reviews/health-repair.json` (+ `.lock`) | runtime, atomic-rename under a permanent lock file | review daemon health recovery | review daemon (repair admission, budget, paused outcome) | review daemon (record resets once every failed operation succeeds) | per failure episode; each repair itself is a modifying prompt-only Run on the host under `batches/<repair-run-id>/`, unlike read-only reviewers |
+| `reviews/claims/` | runtime, launch claim | review daemon health recovery | review daemon (one health repair at a time) | released when repair supervision ends | per health repair |
 | `reviews/review.sock` | runtime | review daemon on start | review daemon CLI | review daemon on stop | continuous |
 | `worktrees/<branch>/` | runtime, git worktree | `git worktree add` (orchestrator) | agent, orchestrator | orchestrator (auto-cleaned on `success`; preserved on `failure`/`aborted`/`blocked` for `--continue` / inspection) + `sandman clean` (remaining cases) | per AgentRun |
 | `worktrees/<branch>/.sandman/task.md` | runtime, atomic-rename | prompt renderer (or `--continue` skips render and reads existing) | agent | orchestrator (removed with worktree on `success`) + `sandman clean` (preserved with worktree otherwise) | per AgentRun |
