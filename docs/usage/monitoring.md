@@ -192,7 +192,8 @@ Only an actively resolving current-head CI operation, a confirmed, in-deadline
 delegated-review request, or a recognised provider usage limit produces `run.await` without consuming an agent retry.
 A review request is active from successful trigger confirmation, even before a
 review run starts. A usage limit is active because the provider quota window resets externally: the run accumulates completed ten-minute polling intervals up to five hours, retains its final boundary probe, and then follows the configured ordinary fresh-session retry path. Pending managed current-head CI is bounded by its durable per-head 30-minute
-deadline for each check execution (a CI generation). A new head or a verified rerun of the checks on the same head
+deadline, that is, for each identified check execution on the current head (a
+CI generation). A new head or a verified rerun of the checks on the same head
 starts a new generation; observing CI or restarting Sandman never extends the
 deadline, and legacy head-only evidence binds to its execution identity once. The logical row keeps its
 dependents queued while execution capacity is released between observations.

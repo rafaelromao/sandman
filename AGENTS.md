@@ -114,7 +114,8 @@ Always run dependency or blast-radius checks before changing:
 
 - Event definitions or event-fold/projection logic.
 - Shared command wiring or `cmd.Dependencies`.
-- The per-run seam: `RunExecutor` interface, `RowSpec`/`BatchConfig`, `runDeps` (incl. `RunnableFactory`/`SandboxFactory` and their implementations), and `runCoordination`.
+- The per-run seam: `RunExecutor` interface, `RowSpec`/`BatchConfig`, `runDeps` (incl. `RunnableFactory`/`SandboxFactory` and their implementations), and `runCoordination` (implemented by the per-batch `batchCoordinator`).
+- Batch preparation (`batch.Preparer`, `internal/batch/preparation.go`), which owns Specification discovery and the dependency graph before execution.
 - `OrchestratorOpt` options on `NewOrchestrator` (`WithRunnableFactory`, `WithSandboxFactory`, `WithContainerRuntimeFactory`, `WithErrorLog`, `WithRunSessionOpts`, `WithHeartbeatTickInterval`, `WithVerifyPath`, `WithBadgeHooker`).
 - The agent strategy seam: the `agentStrategy` interface, `strategyFor`, and the strategy registry (`internal/batch/agent_strategy.go`); the OpenCode launch golden (`internal/batch/agent_strategy_test/opencode_launches.golden`) must stay byte-identical unless OpenCode behaviour is meant to change.
 - Files with high blast radius.

@@ -114,8 +114,9 @@ type runDeps struct {
 // shared, mutable coordination state that RunBatch owns (the active-runs map,
 // the shutdown-supervisor fan-in, the per-batch phase writer, and the
 // first-sandbox-start once). The per-batch *batchCoordinator implements it;
-// RunBatch creates and owns one coordinator per batch. Keeping this an interface (rather than a raw struct handle) preserves
-// the executor's testability — the constructor is the seam.
+// RunBatch creates and owns one coordinator per batch. Keeping this an
+// interface (rather than a raw struct handle) preserves the executor's
+// testability — the constructor is the seam.
 type runCoordination interface {
 	registerActiveRun(key int, sb sandbox.Sandbox)
 	unregisterActiveRun(key int)
