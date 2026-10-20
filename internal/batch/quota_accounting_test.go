@@ -165,7 +165,7 @@ func TestQuotaAccountingSurvivesSchedulerReconstruction(t *testing.T) {
 	}}
 	layout := paths.NewLayout(&config.Config{WorktreeDir: "worktrees"}, root)
 	recovery := daemon.RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "old", Issue: 42, Branch: gateTestBranch, BaseBranch: "main", OperationID: "quota:old", OperationDeadline: now.Add(10 * time.Minute), UsageLimitProbe: true, NextPollAt: now.Add(-time.Minute)}
-	if err := daemon.RenewRunWait(layout.BatchDir("old"), recovery, now); err != nil {
+	if err := daemon.RenewRunWait(layout, layout.LocateBatch("old", ""), recovery, now); err != nil {
 		t.Fatal(err)
 	}
 	worktree := filepath.Join(layout.WorktreeDir, gateTestBranch)
@@ -205,7 +205,7 @@ func TestQuotaOwnershipEstimateDoesNotChangeOperationOrGrace(t *testing.T) {
 	}
 	defer claim.Close()
 	pulse := make(chan time.Time)
-	owner, err := newWaitOwner(layout.BatchDir("batch"), daemon.RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "batch", Issue: 42, Branch: gateTestBranch, BaseBranch: "main", UsageLimitProbe: true, OperationID: "quota:old-estimate", OperationDeadline: now.Add(time.Hour)}, func() time.Time { return now }, log, pulse)
+	owner, err := newWaitOwner(layout, layout.LocateBatch("batch", ""), daemon.RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "batch", Issue: 42, Branch: gateTestBranch, BaseBranch: "main", UsageLimitProbe: true, OperationID: "quota:old-estimate", OperationDeadline: now.Add(time.Hour)}, func() time.Time { return now }, log, pulse)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestQuotaOwnershipEstimateDoesNotChangeOperationOrGrace(t *testing.T) {
 	if err := owner.checkpoint(row, false, usageLimitPollInterval); err != nil {
 		t.Fatal(err)
 	}
-	first, err := daemon.ReadRunWait(layout.BatchDir("batch"), "row")
+	first, err := daemon.ReadRunWaitAt(layout, layout.LocateBatch("batch", ""), "row")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +223,7 @@ func TestQuotaOwnershipEstimateDoesNotChangeOperationOrGrace(t *testing.T) {
 	if err := owner.checkpoint(row, true, 0); err != nil {
 		t.Fatalf("recomputed quota estimate vetoed ownership: %v", err)
 	}
-	saved, err := daemon.ReadRunWait(layout.BatchDir("batch"), "row")
+	saved, err := daemon.ReadRunWaitAt(layout, layout.LocateBatch("batch", ""), "row")
 	if err != nil || saved.OperationID != first.OperationID || saved.OperationID != "quota:row" || !saved.OperationDeadline.IsZero() || !saved.LeaseExpiresAt.Equal(now.Add(daemon.RunRecoveryGrace)) {
 		t.Fatalf("quota estimate became a hard lifetime or a new operation: first=%+v saved=%+v error=%v", first, saved, err)
 	}

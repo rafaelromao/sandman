@@ -53,6 +53,35 @@ func BatchIDForIssue(firstIssueNum, n int, ts, shortid string) string {
 	return runid.NewBatchID(runid.KindIssue, n, fmt.Sprintf("%d", firstIssueNum), ts, shortid)
 }
 
+// issueBatchLocation pairs the issue Batch's public identity with its frozen
+// directory. A supplied RunDir is that frozen directory, so its identity comes
+// from the index rather than its basename, which may be another Batch's
+// public ID. A freshly minted identity uses its canonical directory.
+func issueBatchLocation(layout paths.Layout, req Request) (paths.BatchLocation, error) {
+	if runDir := strings.TrimSpace(req.RunDir); runDir != "" {
+		return daemon.BatchLocationForDir(layout, layout.ResolvePath(filepath.Clean(runDir)))
+	}
+	id := issueBatchIDForRequest(req)
+	if id == "" {
+		return paths.BatchLocation{}, nil
+	}
+	return layout.LocateBatch(id, ""), nil
+}
+
+// rowWaitBatch is where a row's waiting ownership lives. Rows without an
+// issue Batch fall back to the identity their RunID encodes, resolved to the
+// frozen location the index records for it.
+func rowWaitBatch(layout paths.Layout, issueBatch paths.BatchLocation, runID string) (paths.BatchLocation, error) {
+	if issueBatch.ID != "" {
+		return issueBatch, nil
+	}
+	id := batchIDFromRunID(runID)
+	if id == "" {
+		id = runID
+	}
+	return daemon.ResolveBatchLocation(layout, id)
+}
+
 func issueBatchIDForRequest(req Request) string {
 	if runDir := strings.TrimSpace(req.RunDir); runDir != "" {
 		return filepath.Base(runDir)
@@ -1704,7 +1733,11 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 
 	batchIdentityResolver := newBatchIdentityResolver(o, ".")
-	issueBatchID := issueBatchIDForRequest(req)
+	issueBatch, err := issueBatchLocation(layout, req)
+	if err != nil {
+		return nil, fmt.Errorf("resolve batch location: %w", err)
+	}
+	issueBatchID := issueBatch.ID
 	claims := make(map[int]*daemon.RunClaim, len(ordered))
 	for _, num := range ordered {
 		id := strings.TrimSpace(req.RunIDs[num])
@@ -1767,18 +1800,19 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			recoveryRejected[issue] = true
 			continue
 		}
-		currentBatchDir, err := daemon.ResolveBatchDir(layout, recovery.BatchID)
-		if err != nil {
+		currentBatch, err := daemon.ResolveBatchLocation(layout, recovery.BatchID)
+		if err != nil || currentBatch.ID == "" {
 			recoveryRejected[issue] = true
 			continue
 		}
-		current, err := daemon.ReadRunWait(currentBatchDir, recovery.RunID)
+		current, err := daemon.ReadRunWaitAt(layout, currentBatch, recovery.RunID)
 		if os.IsNotExist(err) && !recovery.RecoveryEventAt.IsZero() {
 			if legacy, valid := legacyRecoveryWait(claimedStates[recovery.RunID]); valid && legacy.RecoveryEventAt.Equal(recovery.RecoveryEventAt) && legacy.RecoverableAt(recoveryNow()) {
 				current = legacy
-				currentBatchDir, err = daemon.ResolveBatchDir(layout, current.BatchID)
+				currentBatch, err = daemon.ResolveBatchLocation(layout, current.BatchID)
 				if err == nil {
-					err = daemon.RenewRunWait(currentBatchDir, current, recoveryNow())
+					current.BatchID = currentBatch.ID
+					err = daemon.RenewRunWait(layout, currentBatch, current, recoveryNow())
 				}
 			}
 		}
@@ -1792,30 +1826,18 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			continue
 		}
 		if changed {
-			currentBatchDir, err := daemon.ResolveBatchDir(layout, current.BatchID)
-			if err != nil {
-				recoveryRejected[issue] = true
-				continue
-			}
-			if err := daemon.RenewRunWait(currentBatchDir, reconciled, recoveryNow()); err != nil {
+			if err := daemon.RenewRunWait(layout, currentBatch, reconciled, recoveryNow()); err != nil {
 				recoveryRejected[issue] = true
 				continue
 			}
 			current = reconciled
 		}
-		newBatchID := issueBatchID
-		if newBatchID == "" {
-			newBatchID = batchIDFromRunID(current.RunID)
-			if newBatchID == "" {
-				newBatchID = current.RunID
-			}
-		}
-		currentBatchDir, err = daemon.ResolveBatchDir(layout, current.BatchID)
+		newBatch, err := rowWaitBatch(layout, issueBatch, current.RunID)
 		if err != nil {
 			recoveryRejected[issue] = true
 			continue
 		}
-		current, err = daemon.TransferRunWait(layout, currentBatchDir, layout.BatchDir(newBatchID), current.RunID, recoveryNow())
+		current, err = daemon.TransferRunWait(layout, currentBatch, newBatch, current.RunID, recoveryNow())
 		if err != nil {
 			recoveryRejected[issue] = true
 			continue
@@ -2000,20 +2022,15 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			}
 			var initialOwner *waitOwner
 			if !claimedStates[runID].HasStarted() {
-				initialBatchID := issueBatchID
-				if initialBatchID == "" {
-					initialBatchID = batchIDFromRunID(runID)
-					if initialBatchID == "" {
-						initialBatchID = runID
-					}
-				}
+				initialBatch, err := rowWaitBatch(layout, issueBatch, runID)
 				initialBaseBranch := req.BaseBranches[issueNum]
 				if initialBaseBranch == "" {
 					initialBaseBranch = baseBranch
 				}
-				record := daemon.RunWait{Protocol: "run-wait/v1", RunID: runID, BatchID: initialBatchID, Issue: issueNum, Branch: req.Branches[issueNum], BaseBranch: initialBaseBranch, InitialAdmission: true, AdmissionMode: int(req.IssueMode(issueNum)), Dependencies: append([]int(nil), blockers...), ReuseSession: req.ReuseSession[issueNum], Ready: true, OperationID: "admission", PreviousRunID: req.PreviousRunIDs[issueNum], PreviousBatchID: req.PreviousRunBatchIDs[issueNum]}
-				var err error
-				initialOwner, err = newWaitOwnerWithFailure(layout.BatchDir(initialBatchID), record, recoveryNow, o.eventLog, ownerPulse(runID), leaseFailure)
+				record := daemon.RunWait{Protocol: "run-wait/v1", RunID: runID, BatchID: initialBatch.ID, Issue: issueNum, Branch: req.Branches[issueNum], BaseBranch: initialBaseBranch, InitialAdmission: true, AdmissionMode: int(req.IssueMode(issueNum)), Dependencies: append([]int(nil), blockers...), ReuseSession: req.ReuseSession[issueNum], Ready: true, OperationID: "admission", PreviousRunID: req.PreviousRunIDs[issueNum], PreviousBatchID: req.PreviousRunBatchIDs[issueNum]}
+				if err == nil {
+					initialOwner, err = newWaitOwnerWithFailure(layout, initialBatch, record, recoveryNow, o.eventLog, ownerPulse(runID), leaseFailure)
+				}
 				if err != nil {
 					o.logAborted(issueNum, runID, nil)
 					mu.Lock()
@@ -2181,6 +2198,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				RunTS:               req.RunTS,
 				RunShortID:          req.RunShortID,
 				BatchID:             issueBatchID,
+				BatchDir:            issueBatch.Dir,
 				QualityRulesFile:    req.QualityRulesFile,
 			}
 			recovery, recovering := req.RecoveryWaits[issueNum]
@@ -2237,19 +2255,13 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				}
 				return time.Now().UTC()
 			}
-			waitBatchID := issueBatchID
-			if waitBatchID == "" {
-				waitBatchID = batchIDFromRunID(runID)
-				if waitBatchID == "" {
-					waitBatchID = runID
-				}
-			}
+			waitBatch, waitBatchErr := rowWaitBatch(layout, issueBatch, runID)
 			waitBranch := row.Branches[issueNum]
 			if waitBranch == "" {
 				waitBranch = claimedStates[runID].Branch()
 			}
 			ownerRecord := daemon.RunWait{
-				Protocol: "run-wait/v1", RunID: runID, BatchID: waitBatchID, Issue: issueNum,
+				Protocol: "run-wait/v1", RunID: runID, BatchID: waitBatch.ID, Issue: issueNum,
 				Branch: waitBranch, BaseBranch: issueBaseBranch, InitialAdmission: !claimedStates[runID].HasStarted(), AdmissionMode: int(row.Mode), OperationID: "admission", Ready: true,
 				PreviousRunID: row.PreviousRunIDs[issueNum], PreviousBatchID: row.PreviousRunBatchIDs[issueNum],
 				Dependencies: append([]int(nil), blockers...),
@@ -2257,9 +2269,13 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			}
 			if recovering {
 				ownerRecord = recovery
-				ownerRecord.BatchID = waitBatchID
+				ownerRecord.BatchID = waitBatch.ID
 			}
-			owner, ownerErr := newWaitOwnerWithFailure(layout.BatchDir(waitBatchID), ownerRecord, clock, o.eventLog, ownerPulse(runID), leaseFailure)
+			var owner *waitOwner
+			ownerErr := waitBatchErr
+			if ownerErr == nil {
+				owner, ownerErr = newWaitOwnerWithFailure(layout, waitBatch, ownerRecord, clock, o.eventLog, ownerPulse(runID), leaseFailure)
+			}
 			if ownerErr != nil {
 				o.logAborted(issueNum, runID, nil)
 				mu.Lock()
@@ -3131,6 +3147,10 @@ type runSession struct {
 	// the execute path (returns AgentRunResult{Status: "failure", ...}).
 	batchID string
 
+	// batchDir is batchID's frozen directory when the caller resolved one;
+	// empty means the canonical <batchesDir>/<batchID>.
+	batchDir string
+
 	// batchTS and batchShortID are the timestamp and short-id components
 	// of the auto-generated batch id for prompt-only runs. Used to
 	// construct the per-row RunID in run.started events when runID is
@@ -3272,7 +3292,16 @@ func (s *runSession) runFolderFor(runID string) string {
 	if batchID == "" {
 		return filepath.Join(s.deps.layout.BatchesDir, "runs", runID)
 	}
-	return s.deps.layout.RunFolder(batchID, runID)
+	return s.batchLocation(batchID).Run(runID).Dir
+}
+
+// batchLocation returns the session Batch's frozen location, or the
+// canonical location of any other batchID.
+func (s *runSession) batchLocation(batchID string) paths.BatchLocation {
+	if batchID == s.batchID && s.batchDir != "" {
+		return paths.BatchLocation{ID: batchID, Dir: s.batchDir}
+	}
+	return s.deps.layout.LocateBatch(batchID, "")
 }
 
 // runLogPathFor returns the per-row run.log path. Mirrors runFolderFor
@@ -3285,7 +3314,7 @@ func (s *runSession) runLogPathFor(runID string) string {
 	if batchID == "" {
 		return filepath.Join(s.deps.layout.BatchesDir, "runs", runID, "run.log")
 	}
-	return s.deps.layout.RunLogPath(batchID, runID)
+	return s.batchLocation(batchID).Run(runID).LogPath()
 }
 
 // batchIDFromRunID derives a stable batch directory name from a
@@ -3937,7 +3966,7 @@ func hasBlockingOpenPR(errorLog io.Writer, branch string) (map[string]any, bool)
 // status. Failures are logged to errorLog and ignored; the event log remains
 // authoritative.
 func (s *runSession) updateRunManifestStatus(runID string, status batchindex.RunManifestStatus) {
-	batchDir := s.deps.layout.BatchDir(s.batchID)
+	batchDir := s.batchLocation(s.batchID).Dir
 	if s.batchID == "" {
 		batchDir = s.deps.layout.BatchesDir
 	}

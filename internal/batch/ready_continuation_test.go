@@ -238,14 +238,14 @@ func TestReadyHandoffRecoveryUsesRenewedCurrentBatch(t *testing.T) {
 	}
 	defer claim.Close()
 	record := daemon.RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "old", Issue: 42, Branch: "42-fix", BaseBranch: "main", Ready: true, OperationID: "capacity"}
-	if err := daemon.RenewRunWait(layout.BatchDir("old"), record, now.Add(-10*time.Minute)); err != nil {
+	if err := daemon.RenewRunWait(layout, layout.LocateBatch("old", ""), record, now.Add(-10*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	moved, err := daemon.TransferRunWait(layout, layout.BatchDir("old"), layout.BatchDir("new"), "row", now.Add(-9*time.Minute))
+	moved, err := daemon.TransferRunWait(layout, layout.LocateBatch("old", ""), layout.LocateBatch("new", ""), "row", now.Add(-9*time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := daemon.RenewRunWait(layout.BatchDir("new"), moved, now); err != nil {
+	if err := daemon.RenewRunWait(layout, layout.LocateBatch("new", ""), moved, now); err != nil {
 		t.Fatal(err)
 	}
 	if err := claim.Close(); err != nil {
@@ -268,7 +268,7 @@ func TestProductionReadyTakeoverPublishesOwnerBeforeAdmission(t *testing.T) {
 	layout := paths.NewLayout(nil, root)
 	now := time.Now().UTC()
 	log := &spyEventLog{events: readyContinuationEvents("ready", "old", now.Add(-time.Minute), now.Add(-30*time.Second), now)}
-	if err := daemon.RenewRunWait(layout.BatchDir("old"), daemon.RunWait{Protocol: "run-wait/v1", RunID: "ready", BatchID: "old", Issue: 42, Branch: "42-fix", BaseBranch: "main", Ready: true, OperationID: "capacity"}, now); err != nil {
+	if err := daemon.RenewRunWait(layout, layout.LocateBatch("old", ""), daemon.RunWait{Protocol: "run-wait/v1", RunID: "ready", BatchID: "old", Issue: 42, Branch: "42-fix", BaseBranch: "main", Ready: true, OperationID: "capacity"}, now); err != nil {
 		t.Fatal(err)
 	}
 	task := filepath.Join(layout.WorktreeDir, "42-fix", ".sandman", "task.md")
@@ -344,7 +344,7 @@ func TestRecoveryReconcilesChangedExternalOperation(t *testing.T) {
 	layout := paths.NewLayout(nil, t.TempDir())
 	now := time.Now().UTC()
 	record := daemon.RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "batch", Issue: 42, Branch: "42-fix", BaseBranch: "main", OperationID: "ci:old", OperationDeadline: now.Add(time.Minute)}
-	if err := daemon.RenewRunWait(layout.BatchDir("batch"), record, now); err != nil {
+	if err := daemon.RenewRunWait(layout, layout.LocateBatch("batch", ""), record, now); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
@@ -426,7 +426,7 @@ func TestReturnedWaitingIntentRenewsUntilBatchReleasesClaims(t *testing.T) {
 	for {
 		valid := true
 		for _, id := range ids {
-			record, err := daemon.ReadRunWait(layout.BatchDir(issueBatchIDForRequest(request)), id)
+			record, err := daemon.ReadRunWaitAt(layout, layout.LocateBatch(issueBatchIDForRequest(request), ""), id)
 			if err != nil || !record.LeaseExpiresAt.After(future) {
 				valid = false
 			}
@@ -467,7 +467,7 @@ func TestExternalWaitTakeoverRejectsOwnershipAppendFailure(t *testing.T) {
 		{Type: "run.started", RunID: "row", Issue: 42, Timestamp: now.Add(-time.Minute), Payload: map[string]any{"batch_id": "old", "branch": "42-fix"}},
 		{Type: "run.await", RunID: "row", Issue: 42, Timestamp: now, Payload: map[string]any{"ci_wait": map[string]any{"deadline_unix_seconds": now.Add(30 * time.Minute).Unix()}}},
 	}}}
-	if err := daemon.RenewRunWait(layout.BatchDir("old"), daemon.RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "old", Issue: 42, Branch: "42-fix", BaseBranch: "main", OperationID: "ci:old", OperationDeadline: now.Add(30 * time.Minute)}, now); err != nil {
+	if err := daemon.RenewRunWait(layout, layout.LocateBatch("old", ""), daemon.RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "old", Issue: 42, Branch: "42-fix", BaseBranch: "main", OperationID: "ci:old", OperationDeadline: now.Add(30 * time.Minute)}, now); err != nil {
 		t.Fatal(err)
 	}
 	task := filepath.Join(layout.WorktreeDir, "42-fix", ".sandman", "task.md")
@@ -494,7 +494,7 @@ func TestRecoverableWaitingAdmissionRequiresNoInventedTask(t *testing.T) {
 	layout := paths.NewLayout(nil, root)
 	now := time.Now().UTC()
 	log := []events.Event{{Type: "run.queued", RunID: "initial", Issue: 42, Timestamp: now, Payload: map[string]any{"batch_id": "old", "initial_admission": true}}}
-	if err := daemon.RenewRunWait(layout.BatchDir("old"), daemon.RunWait{
+	if err := daemon.RenewRunWait(layout, layout.LocateBatch("old", ""), daemon.RunWait{
 		Protocol: "run-wait/v1", RunID: "initial", BatchID: "old", Issue: 42, BaseBranch: "main", InitialAdmission: true, Ready: true, OperationID: "admission", Dependencies: []int{43},
 	}, now); err != nil {
 		t.Fatal(err)
@@ -524,7 +524,7 @@ func TestExternalWaitRehydratesWithinFixedGrace(t *testing.T) {
 		{Type: "run.started", RunID: "waiting", Issue: 42, Timestamp: now.Add(-time.Minute), Payload: map[string]any{"batch_id": "old", "branch": "42-wait"}},
 		{Type: "run.await", RunID: "waiting", Issue: 42, Timestamp: now, Payload: map[string]any{"await_reason": "pending", "ci_wait": map[string]any{"deadline_unix_seconds": now.Add(time.Hour).Unix()}}},
 	}
-	if err := daemon.RenewRunWait(layout.BatchDir("old"), daemon.RunWait{
+	if err := daemon.RenewRunWait(layout, layout.LocateBatch("old", ""), daemon.RunWait{
 		Protocol: "run-wait/v1", RunID: "waiting", BatchID: "old", Issue: 42, Branch: "42-wait", BaseBranch: "main",
 		OperationID: "ci:17:head", OperationDeadline: now.Add(time.Hour),
 	}, now); err != nil {
@@ -534,7 +534,7 @@ func TestExternalWaitRehydratesWithinFixedGrace(t *testing.T) {
 	if len(ready) != 1 || ready[0].Wait == nil || ready[0].Wait.Ready {
 		t.Fatalf("external wait lost readiness distinction: %v", ready)
 	}
-	if err := daemon.RenewRunWait(layout.BatchDir("old"), *ready[0].Wait, now.Add(-10*time.Minute)); err != nil {
+	if err := daemon.RenewRunWait(layout, layout.LocateBatch("old", ""), *ready[0].Wait, now.Add(-10*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	if got := FindReadyContinuations(log, layout); len(got) != 0 {
@@ -564,7 +564,7 @@ func TestRunBatchRehydratesExternalAwaitAfterRestart(t *testing.T) {
 			"ci_wait": map[string]any{"deadline_unix_seconds": now.Add(30 * time.Minute).Unix()},
 		}},
 	}}
-	if err := daemon.RenewRunWait(layout.BatchDir(oldBatch), daemon.RunWait{
+	if err := daemon.RenewRunWait(layout, layout.LocateBatch(oldBatch, ""), daemon.RunWait{
 		Protocol: "run-wait/v1", RunID: runID, BatchID: oldBatch, Issue: issue,
 		Branch: branch, BaseBranch: "main", OperationID: "ci:17:head", OperationDeadline: now.Add(30 * time.Minute),
 	}, now); err != nil {
@@ -606,7 +606,7 @@ func TestRunBatchRehydratesExternalAwaitAfterRestart(t *testing.T) {
 	if recovered.BatchID == oldBatch || !recovered.LeaseExpiresAt.After(now) {
 		t.Fatalf("restart did not renew transferred lease: %+v", recovered)
 	}
-	persisted, err := daemon.ReadRunWait(layout.BatchDir(recovered.BatchID), runID)
+	persisted, err := daemon.ReadRunWaitAt(layout, layout.LocateBatch(recovered.BatchID, ""), runID)
 	if err != nil || !persisted.LeaseExpiresAt.After(now) {
 		t.Fatalf("renewed lease was not persisted: record=%+v error=%v", persisted, err)
 	}
@@ -628,7 +628,7 @@ func TestExplicitAbortPreventsAwaitRecovery(t *testing.T) {
 			"await_reason": "pending", "batch_id": "old", "branch": "42-fix",
 		}},
 	}}
-	if err := daemon.RenewRunWait(layout.BatchDir("old"), daemon.RunWait{
+	if err := daemon.RenewRunWait(layout, layout.LocateBatch("old", ""), daemon.RunWait{
 		Protocol: "run-wait/v1", RunID: "row", BatchID: "old", Issue: 42,
 		Branch: "42-fix", BaseBranch: "main", OperationID: "ci:17:head", OperationDeadline: now.Add(time.Hour),
 	}, now); err != nil {
@@ -798,7 +798,7 @@ func TestRecoveryRevalidatesTerminalityAndGraceUnderClaim(t *testing.T) {
 			layout := paths.NewLayout(nil, root)
 			now := time.Now().UTC()
 			wait := daemon.RunWait{Protocol: "run-wait/v1", RunID: "recovery", BatchID: "old", Issue: 42, Branch: "42-fix", BaseBranch: "main", InitialAdmission: tc.initial, Ready: tc.initial, OperationID: "admission"}
-			if err := daemon.RenewRunWait(layout.BatchDir("old"), wait, now); err != nil {
+			if err := daemon.RenewRunWait(layout, layout.LocateBatch("old", ""), wait, now); err != nil {
 				t.Fatal(err)
 			}
 			if tc.legacy {
@@ -840,7 +840,7 @@ func TestRecoveryRevalidatesTerminalityAndGraceUnderClaim(t *testing.T) {
 				_ = log.Log(events.Event{Type: "run.aborted", Timestamp: now.Add(time.Second), RunID: wait.RunID, Issue: 42})
 			}
 			if tc.expire && !tc.legacy {
-				if err := daemon.RenewRunWait(layout.BatchDir("old"), wait, now.Add(-10*time.Minute)); err != nil {
+				if err := daemon.RenewRunWait(layout, layout.LocateBatch("old", ""), wait, now.Add(-10*time.Minute)); err != nil {
 					t.Fatal(err)
 				}
 			}

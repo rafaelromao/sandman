@@ -38,7 +38,7 @@ func TestTransferRunWait_RefusesCanonicalDirShadowingPublicID(t *testing.T) {
 	now := time.Now().UTC()
 	record := RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "old", Issue: 42,
 		Branch: "42-fix", BaseBranch: "main", OperationID: "capacity"}
-	if err := RenewRunWait(layout.BatchDir("old"), record, now); err != nil {
+	if err := RenewRunWait(layout, layout.LocateBatch("old", ""), record, now); err != nil {
 		t.Fatal(err)
 	}
 	sourcePath := filepath.Join(layout.BatchDir("old"), "runs", "row", "wait.json")
@@ -46,17 +46,22 @@ func TestTransferRunWait_RefusesCanonicalDirShadowingPublicID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	destination := layout.BatchDir("shadowed")
-	if moved, err := TransferRunWait(layout, layout.BatchDir("old"), destination, "row", now.Add(time.Minute)); err == nil {
-		t.Fatalf("transfer attributed canonical dir to another batch: %+v", moved)
-	}
-	if _, err := os.Stat(filepath.Join(destination, "runs", "row", "wait.json")); !os.IsNotExist(err) {
-		t.Fatalf("transfer wrote misattributed wait: %v", err)
+	for _, destination := range []paths.BatchLocation{
+		{ID: "shadowed", Dir: layout.BatchDir("shadowed")},
+		// A physical alias is not the frozen Batch's public identity.
+		{ID: "frozen", Dir: filepath.Join(layout.SandmanDir, "relocated", "frozen")},
+	} {
+		if moved, err := TransferRunWait(layout, layout.LocateBatch("old", ""), destination, "row", now.Add(time.Minute)); err == nil {
+			t.Fatalf("transfer attributed %+v to the wrong identity: %+v", destination, moved)
+		}
+		if _, err := os.Stat(filepath.Join(destination.Dir, "runs", "row", "wait.json")); !os.IsNotExist(err) {
+			t.Fatalf("transfer wrote misattributed wait: %v", err)
+		}
 	}
 	if after, err := os.ReadFile(sourcePath); err != nil || string(after) != string(before) {
 		t.Fatalf("refused transfer changed the source wait: %v", err)
 	}
-	if source, err := ReadRunWaitAt(layout.BatchDir("old"), "old", "row"); err != nil || !source.RecoverableAt(now) {
+	if source, err := ReadRunWaitAt(layout, layout.LocateBatch("old", ""), "row"); err != nil || !source.RecoverableAt(now) {
 		t.Fatalf("refused transfer stranded the source wait: %+v %v", source, err)
 	}
 }
@@ -73,14 +78,55 @@ func TestTransferRunWait_AcceptsUnindexedCanonicalLegacyDestination(t *testing.T
 	now := time.Now().UTC()
 	record := RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "old", Issue: 42,
 		Branch: "42-fix", BaseBranch: "main", OperationID: "capacity"}
-	if err := RenewRunWait(layout.BatchDir("old"), record, now); err != nil {
+	if err := RenewRunWait(layout, layout.LocateBatch("old", ""), record, now); err != nil {
 		t.Fatal(err)
 	}
-	moved, err := TransferRunWait(layout, layout.BatchDir("old"), layout.BatchDir("legacy"), "row", now.Add(time.Minute))
+	moved, err := TransferRunWait(layout, layout.LocateBatch("old", ""), layout.LocateBatch("legacy", ""), "row", now.Add(time.Minute))
 	if err != nil || moved.BatchID != "legacy" {
 		t.Fatalf("legacy transfer = %+v, %v", moved, err)
 	}
-	if _, err := ReadRunWaitAt(layout.BatchDir("legacy"), "legacy", "row"); err != nil {
+	if _, err := ReadRunWaitAt(layout, layout.LocateBatch("legacy", ""), "row"); err != nil {
 		t.Fatalf("legacy destination wait unreadable: %v", err)
+	}
+}
+
+// The initial-admission sidecar is repository state: a relocated frozen Batch
+// directory must not move it beside the Batch's grandparent.
+func TestInitialWaitSidecarLivesInLayoutStateDir(t *testing.T) {
+	layout := paths.NewLayout(nil, t.TempDir())
+	batch := paths.BatchLocation{ID: "public", Dir: filepath.Join(layout.SandmanDir, "relocated", "deep", "frozen")}
+	if err := (&batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
+		{ID: batch.ID, Path: batch.Dir, Status: batchindex.StatusActive},
+	}}).Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	record := RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: batch.ID, Issue: 42,
+		BaseBranch: "main", InitialAdmission: true, OperationID: "admission"}
+	if err := RenewRunWait(layout, batch, record, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(layout.StateDir, "waiting", "row.json")); err != nil {
+		t.Fatalf("initial sidecar missing from layout state dir: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(layout.SandmanDir, "relocated", "state")); !os.IsNotExist(err) {
+		t.Fatalf("initial sidecar derived from the batch dir's grandparent: %v", err)
+	}
+	if got, err := ReadRunWaitAt(layout, batch, "row"); err != nil || !got.InitialAdmission || got.BatchID != batch.ID {
+		t.Fatalf("initial sidecar read = %+v, %v", got, err)
+	}
+}
+
+// Writers cannot stamp a record with an identity other than its location's.
+func TestRenewRunWait_RejectsRecordForAnotherBatch(t *testing.T) {
+	layout := paths.NewLayout(nil, t.TempDir())
+	record := RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "frozen", Issue: 42,
+		Branch: "42-fix", BaseBranch: "main", OperationID: "capacity"}
+	batch := paths.BatchLocation{ID: "public", Dir: layout.BatchDir("frozen")}
+	if err := RenewRunWait(layout, batch, record, time.Now().UTC()); err == nil {
+		t.Fatal("renewed a record under another Batch's identity")
+	}
+	if _, err := os.Stat(filepath.Join(batch.Dir, "runs", "row", "wait.json")); !os.IsNotExist(err) {
+		t.Fatalf("rejected renewal wrote a wait record: %v", err)
 	}
 }

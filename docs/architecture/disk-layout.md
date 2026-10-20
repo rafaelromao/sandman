@@ -72,6 +72,8 @@ not artifact availability or a scheduling label, authorizes terminal operations.
 
 Started suspension schedules live in `<batch>/runs/<RunID>/wait.json`; initial
 admissions use `state/waiting/<RunID>.json` without creating execution folders.
+`<batch>` is the Batch's frozen indexed directory, and every record carries the
+Batch's public ID, never the directory basename.
 Atomic leases preserve ownerless intent for five minutes capped by a hard
 operation deadline, while stable advisory claims fence ownership. Worktree-local
 `<PR>.ci_wait.json` retains managed CI head and check-execution identity with a
