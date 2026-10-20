@@ -2383,6 +2383,9 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           summary.live = true;
           summary.kind = 'active';
           summary.status = 'reviewing';
+          // A live group is owned by its newest live review so the visible
+          // row's key, clock, and Abort target match its reviewing status.
+          summary.source = review;
           break;
         }
       }
@@ -2461,14 +2464,6 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       return '';
     }
 
-    function pickCanonicalParent(parents) {
-      const liveActive = parents.filter((candidate) => candidate.kind === 'active');
-      if (liveActive.length) {
-        return liveActive.reduce((best, candidate) => (candidate.startedAt > best.startedAt ? candidate : best));
-      }
-      return parents[0];
-    }
-
     function visibleRunForIssueGroup(issueNumber, runs) {
       if (!Number.isInteger(issueNumber) || issueNumber <= 0 || !Array.isArray(runs)) return null;
       const group = runs.filter((run) => run && run.issueNumber === issueNumber);
@@ -2483,8 +2478,9 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         // read sibling review.log, but logs are stripped on the summary
         // endpoint). The orphan review-only path (below) still uses
         // summarizeReviewGroup because no impl parent carries the stamp.
-        const visibleParent = pickCanonicalParent(parents);
-        return visibleParent;
+        // The table and the subject selector share one canonical-parent
+        // rule that mirrors the server's canonicalParentIsBetter (#2799).
+        return portalDiff.pickCanonicalParent(parents);
       }
       const summary = summarizeReviewGroup(group.filter((run) => run.review));
       const source = summary.source || group[0];
@@ -2498,9 +2494,10 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const issueLabel = sourcePR > 0
         ? 'PR ' + sourcePR + ' (#' + String(issueNumber) + ')'
         : '#' + String(issueNumber);
-      return {
-        key: source.key,
-        runId: source.runId,
+      // Keep the source row's validated metadata (batch, waiting state,
+      // execution clock, staleness) so Abort eligibility and live duration
+      // survive grouping (issue #2799); override only grouping-derived fields.
+      return Object.assign({}, source, {
         review: true,
         groupedReview: false,
         reviewCount: summary.count,
@@ -2510,14 +2507,10 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         status: summary.status || String(source.status || '').trim(),
         kind: summary.kind,
         issueNumber: issueNumber,
-        prNumber: source.prNumber,
-        startedAt: source.startedAt,
-        duration: source.duration,
         archived: !!source.archived,
         unavailable: !!source.unavailable,
-        reason: source.reason,
         issueLabel: issueLabel,
-      };
+      });
     }
 
     function visibleRunsForTable(runs) {
@@ -2870,7 +2863,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           if (group.length) {
             const parents = group.filter(r => !r.review);
             if (parents.length) {
-              run = parents[0];
+              run = portalDiff.pickCanonicalParent(parents);
             } else {
               const summary = summarizeReviewGroup(group.filter(r => r.review));
               run = summary.source || null;

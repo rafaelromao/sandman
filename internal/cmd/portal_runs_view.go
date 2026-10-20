@@ -963,7 +963,7 @@ func (v *portalRunsView) dedupRuns(runs []portalRun) []portalRun {
 // transport.
 // Restored per issue #1897 after #1825 deleted it (and retargeted to the
 // decision.md artefact by #1938); the parent pick mirrors
-// the JS pickCanonicalParent (see portal.html) so the stamp lands on the
+// the JS pickCanonicalParent (see portal_diff.js) so the stamp lands on the
 // row the portal actually displays.
 //
 // Rows without a BatchKey (orphan historical rows) or without a RunDir
@@ -1076,12 +1076,12 @@ func (v *portalRunsView) aggregateReviewChildren(layout paths.Layout, runs []por
 }
 
 // canonicalParentIsBetter reports whether candidate is a "more canonical"
-// parent than incumbent, mirroring the JS pickCanonicalParent rule in
-// portal.html: active parents win over terminal parents; within active, the
-// latest StartedAt wins; within terminal, the latest FinishedAt wins (then
-// StartedAt, then RunID). Used by aggregateReviewChildren, which runs before
-// the sort.SliceStable at compute, so the comparison must be explicit rather
-// than rely on slice order.
+// parent than incumbent. The shared JS pickCanonicalParent in portal_diff.js
+// mirrors this rule for the table and the subject selector: active parents
+// win over terminal parents; within active, the latest StartedAt wins; within
+// terminal, the latest FinishedAt wins (then StartedAt, then RunID). Used by
+// aggregateReviewChildren, which runs before the sort.SliceStable at compute,
+// so the comparison must be explicit rather than rely on slice order.
 func canonicalParentIsBetter(candidate, incumbent portalRun) bool {
 	cActive := candidate.Kind == "active"
 	iActive := incumbent.Kind == "active"
