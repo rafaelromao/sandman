@@ -340,8 +340,8 @@ Prompt-only runs show the same summary with `prompt-only` in the issue column.
 | Subcommand | Behaviour |
 |------------|-----------|
 | `sandman archive run <runId>` | Move `runs/<runId>/` from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/runs/<runId>/`. The AgentRun's event projection must be terminal; sibling rows and the batch daemon stay untouched. Persists a per-row `Runs[]` artifact record carrying `status: "archived"` and `archivePath` for crash recovery; the event-derived AgentRun status is unchanged. |
-| `sandman archive batch <batchId>` | Move the whole batch dir from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/`. The batch daemon must be gone. Flips the batch-level `status` to `archived`. CLI-only — not exposed via HTTP. |
-| `sandman archive older-than <days>` | Walk every `runs/<runID>/run.json` across all batches and archive each terminal row older than the cutoff. Already-archived rows are skipped via the per-row `Runs[]` record. |
+| `sandman archive batch <batchId>` | Move the whole batch dir from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/`. The batch daemon must be gone and every AgentRun in the batch must be event-terminal; otherwise the command refuses. Flips the batch-level `status` to `archived`. CLI-only — not exposed via HTTP. |
+| `sandman archive older-than <days>` | Walk every `runs/<runID>/run.json` across batches whose daemon is gone and archive each terminal row created before the cutoff (manifest creation time, or manifest mtime). Already-archived rows are skipped via the per-row `Runs[]` record. |
 | `sandman archive stale` | Run the same stale-recovery pass as `clean --stale` (emit `run.aborted` for unterminated runs in dead batches), then walk every `runs/<runID>/run.json` and archive each terminal row. |
 
 Per-row archive does not edit `events.jsonl` and does not touch `.sandman/worktrees/`. The HTTP `POST /api/runs/archive` endpoint shares the `archive run` contract: per-row, empty `200` on success, structured `409` (with `archivePath`) on collision or non-terminal, `404` when the row id is unknown.
