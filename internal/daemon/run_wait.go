@@ -122,10 +122,11 @@ func BatchLocationForDir(layout paths.Layout, batchDir string) (paths.BatchLocat
 	if err != nil {
 		return paths.BatchLocation{}, err
 	}
+	target := resolveDir(batchDir)
 	var owner *paths.BatchLocation
 	for _, batch := range idx.Batches {
 		location, ok := idx.LocateBatchIdentity(layout, batch.ID)
-		if !ok || location.ID != batch.ID || !sameDir(location.Dir, batchDir) {
+		if !ok || location.ID != batch.ID || !target.same(location.Dir) {
 			continue
 		}
 		if owner != nil {
@@ -137,21 +138,37 @@ func BatchLocationForDir(layout paths.Layout, batchDir string) (paths.BatchLocat
 		return *owner, nil
 	}
 	legacy := layout.LocateBatch(filepath.Base(batchDir), "")
-	if sameDir(legacy.Dir, batchDir) && ownsBatchLocation(idx, layout, legacy) {
+	if target.same(legacy.Dir) && ownsBatchLocation(idx, layout, legacy) {
 		return legacy, nil
 	}
 	return paths.BatchLocation{}, fmt.Errorf("batch location has no unambiguous identity: %s", batchDir)
 }
 
-// sameDir reports whether two spellings name one directory. Cleaned equality
-// suffices; otherwise both must resolve through symlinks to the same path.
-func sameDir(a, b string) bool {
-	if filepath.Clean(a) == filepath.Clean(b) {
+// resolvedDir is a directory spelling with its symlink-resolved form computed
+// once, so matching it against many candidates resolves it only once.
+type resolvedDir struct {
+	clean, real string
+}
+
+func resolveDir(dir string) resolvedDir {
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		real = ""
+	}
+	return resolvedDir{clean: filepath.Clean(dir), real: real}
+}
+
+// same reports whether other names this directory. Cleaned equality suffices;
+// otherwise both must resolve through symlinks to the same path.
+func (d resolvedDir) same(other string) bool {
+	if d.clean == filepath.Clean(other) {
 		return true
 	}
-	ra, errA := filepath.EvalSymlinks(a)
-	rb, errB := filepath.EvalSymlinks(b)
-	return errA == nil && errB == nil && ra == rb
+	if d.real == "" {
+		return false
+	}
+	real, err := filepath.EvalSymlinks(other)
+	return err == nil && real == d.real
 }
 
 // ownsBatchLocation reports whether a public Batch ID, never another Batch's
