@@ -25,9 +25,7 @@ func TestOpencodeSubagentPermissionAllowAll(t *testing.T) {
 	if !testenv.E2EGateAllowed(testenv.E2EScenarioOpencodeSubagent) {
 		t.Skip("set SANDMAN_E2E_GATES=opencode_subagent (or all) to run opencode subagent permission e2e")
 	}
-	if os.Getenv("CI") != "" && !testenv.FullRegression() {
-		t.Skip("skip e2e in CI")
-	}
+	// This credential-free shell fixture is also selected by the Linux CI job.
 	if !podmanAvailable(t) {
 		return
 	}
@@ -239,7 +237,9 @@ exit 0
 	// This permission test runs a shell fake, so it must not first download
 	// the real agent, mise, Go and complexity analyzers. Release tiers run on
 	// independent runners and cannot reuse another tier's warmed image cache.
-	dockerfile := "FROM alpine\nRUN apk add --no-cache git bash coreutils\nCOPY .sandman/bin/opencode /usr/local/bin/opencode\nRUN chmod +x /usr/local/bin/opencode\n"
+	// Container startup runs gh auth setup-git before the agent command adds
+	// the worktree shim directory to PATH, so install the gh fake globally too.
+	dockerfile := "FROM alpine\nRUN apk add --no-cache git bash coreutils\nCOPY .sandman/bin/opencode .sandman/bin/gh /usr/local/bin/\nRUN chmod +x /usr/local/bin/opencode /usr/local/bin/gh\n"
 	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0644); err != nil {
 		t.Fatalf("write fake-agent Dockerfile: %v", err)
 	}
