@@ -191,8 +191,10 @@ missing closing reference produces `failure` with completion diagnostics.
 Only an actively resolving current-head CI operation, a confirmed, in-deadline
 delegated-review request, or a recognised provider usage limit produces `run.await` without consuming an agent retry.
 A review request is active from successful trigger confirmation, even before a
-review run starts. A usage limit is active because the provider quota window resets externally: the run accumulates completed ten-minute polling intervals up to five hours, retains its final boundary probe, and then follows the configured ordinary fresh-session retry path. Pending managed current-head CI is bounded by its durable per-head
-deadline; a new head is the only reset boundary. The logical row keeps its
+review run starts. A usage limit is active because the provider quota window resets externally: the run accumulates completed ten-minute polling intervals up to five hours, retains its final boundary probe, and then follows the configured ordinary fresh-session retry path. Pending managed current-head CI is bounded by a durable 30-minute deadline per
+CI generation. A new head or a verified rerun of the checks on the same head
+starts a new generation; observing CI or restarting Sandman never extends the
+deadline, and legacy head-only evidence binds to its execution identity once. The logical row keeps its
 dependents queued while execution capacity is released between observations.
 When the review produces request-scoped feedback or approval, the implementation
 resumes on an available slot to repair or merge; if capacity is full,
@@ -350,4 +352,4 @@ Bulk commands process each row individually; a batch with multiple terminal rows
 
 ## Upgrades
 
-Sandman does not migrate on-disk state across version upgrades. Clear `.sandman/` and re-run `sandman init` after upgrading. See [Troubleshooting](../help/troubleshooting.md#portal-shows-unknown-rows-after-upgrading-sandman) if status or portal rows look inconsistent after an upgrade.
+Sandman does not generally migrate on-disk state across version upgrades. Runs waiting on a pull-request review are carried forward when their saved review request, head, and state are complete and valid; incomplete or stale legacy review state is never promoted. Clearing `.sandman/` discards waiting runs and their history, so do it only when status or portal rows still look wrong after upgrading and no run needs to be preserved: clear `.sandman/` and re-run `sandman init`. See [Upgrades](../architecture/disk-layout.md#upgrades) for the exact contract and [Troubleshooting](../help/troubleshooting.md#portal-shows-unknown-rows-after-upgrading-sandman) for the symptom and fix.

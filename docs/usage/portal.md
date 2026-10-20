@@ -72,7 +72,7 @@ Use the picker to switch between the continuation and the previous run without c
 
 ### Upgrades
 
-Sandman does not migrate on-disk state across version upgrades. Clear `.sandman/` and re-run `sandman init` after upgrading. See [Troubleshooting](../help/troubleshooting.md#portal-shows-unknown-rows-after-upgrading-sandman) if the portal shows unknown rows.
+Sandman does not generally migrate on-disk state across version upgrades. Runs waiting on a pull-request review are carried forward when their saved review request, head, and state are complete and valid; incomplete or stale legacy review state is never promoted. Clearing `.sandman/` discards waiting runs and their history, so do it only when status or portal rows still look wrong after upgrading and no run needs to be preserved: clear `.sandman/` and re-run `sandman init`. See [Upgrades](../architecture/disk-layout.md#upgrades) for the exact contract and [Troubleshooting](../help/troubleshooting.md#portal-shows-unknown-rows-after-upgrading-sandman) for the symptom and fix.
 
 ## Abort
 

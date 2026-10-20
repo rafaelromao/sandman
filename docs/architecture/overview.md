@@ -68,9 +68,9 @@ The review pipeline does not let the LLM post to PRs directly. Instead:
 
 The redactor is the load-bearing safety net for the no-self-loop invariant: it runs out-of-band of the LLM, so the bot's body can never contain the trigger substring regardless of what the prompt rule says. The structural sniff `LooksLikeBotReviewBody` is defence-in-depth — bodies that look like previous bot reviews are dropped before `ParseTrigger` runs.
 
-## No state migration across version upgrades
+## No general state migration across version upgrades
 
-Sandman does not migrate on-disk state across version upgrades. After upgrading, clear `.sandman/` and re-run `sandman init`. This avoids ambiguous identifiers and keeps the on-disk reader linear. See [Troubleshooting](../help/troubleshooting.md#portal-shows-unknown-rows-after-upgrading-sandman) for the symptom and fix.
+Sandman does not generally migrate on-disk state across version upgrades. Runs waiting on a pull-request review are carried forward when their saved review request, head, and state are complete and valid; incomplete or stale legacy review state is never promoted. Clearing `.sandman/` discards waiting runs and their history, so do it only when status or portal rows still look wrong after upgrading and no run needs to be preserved: clear `.sandman/` and re-run `sandman init`. See [Upgrades](disk-layout.md#upgrades) for the exact contract and [Troubleshooting](../help/troubleshooting.md#portal-shows-unknown-rows-after-upgrading-sandman) for the symptom and fix. Keeping migration to that one validated path avoids ambiguous identifiers and keeps the on-disk reader linear.
 
 ## Project structure
 
