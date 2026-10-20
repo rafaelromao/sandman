@@ -538,3 +538,7 @@ to update the scaffold fallback, release manifest and release workflow pin toget
 The canary is mandatory in the aggregate quality gate; full provider E2Es remain
 release-only, and Claude provider E2Es remain manual-only. The existing OPENCODE_API_KEY repository secret is required and is forwarded
 by the Release reusable-CI caller.
+
+The regular Linux build also selects the credential-free fake subagent permission
+container scenario. Its image must expose the fake gh on the image PATH for
+pre-agent auth setup. Keep this selection narrow; it makes no provider requests.

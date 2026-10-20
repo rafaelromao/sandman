@@ -460,8 +460,20 @@ func TestCIWorkflowKeepsOptInSuitesDisabled(t *testing.T) {
 	if strings.Contains(workflow, "SANDMAN_FULL_REGRESSION") {
 		t.Fatal("regular CI must not set SANDMAN_FULL_REGRESSION; only the full-regression workflow disables CI skips")
 	}
+	// The one credential-free fixture uses the real container startup path.
+	// Keep its selection exact; broad smoke/provider E2Es must remain disabled.
+	fakePermissionsStep := `      - name: Fake subagent container permissions
+        env:
+          SANDMAN_E2E_GATES: opencode_subagent
+        run: bash scripts/ci_report.sh container-permissions go test -tags e2e -json -count=1 -timeout=12m ./internal/cmd -run '^Test(OpencodeSubagentPermissionAllowAll|PermissionFakeAgentHomeIsolatedFromHostState)$'
+
+`
+	if strings.Count(workflow, fakePermissionsStep) != 1 {
+		t.Fatal("regular Linux CI must run exactly the credential-free subagent permission fixture")
+	}
+	workflow = strings.Replace(workflow, fakePermissionsStep, "", 1)
 	if strings.Contains(workflow, "-tags smoke") || strings.Contains(workflow, "-tags e2e") {
-		t.Fatal("regular CI must not compile or run smoke/e2e-tagged tests")
+		t.Fatal("regular CI must not select broader smoke/e2e suites")
 	}
 	for _, required := range []string{
 		`export CONTAINERS_CONF="$RUNNER_TEMP/containers.conf"`,

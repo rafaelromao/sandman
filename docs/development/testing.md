@@ -619,3 +619,11 @@ to update the scaffold fallback, release manifest and release workflow pin toget
 The canary is mandatory in the aggregate quality gate; full provider E2Es remain
 release-only, and Claude provider E2Es remain manual-only. The existing OPENCODE_API_KEY repository secret is required and is forwarded
 by the Release reusable-CI caller.
+
+The regular Linux build also runs the credential-free fake subagent permission
+scenario (`TestOpencodeSubagentPermissionAllowAll`) with Podman. Its minimal image
+installs both shell fakes (`gh` and `opencode`) on the image PATH, so container
+auth setup succeeds before the agent adds the worktree's shim directory. This
+exercises the real container startup and permission forwarding without a provider
+request. Diagnostics are included as `container-permissions` in the existing
+Linux build reports; the broader provider suites remain release-only.
