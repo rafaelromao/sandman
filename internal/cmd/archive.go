@@ -259,32 +259,32 @@ func runArchiveBatch(cmd *cobra.Command, batchID string, probe runActivityProbe,
 	}
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
 
-	archivePath := layout.ArchiveBatch(batchID).Dir
 	if err := batchindex.Update(layout.BatchesIndexPath, func(idx *batchindex.Index) error {
-		entry := idx.Resolve(batchID)
+		entry := idx.ResolveBatchIdentity(batchID)
 		if entry == nil {
 			return fmt.Errorf("batch %q not found in index", batchID)
 		}
+		batchID = entry.ID
 		if entry.Status != batchindex.StatusActive {
 			return fmt.Errorf("batch %q is not active (status=%s); refusing to archive", batchID, entry.Status)
 		}
-		if probe != nil && probe(entry.Location(layout).Dir) {
+		location := entry.Location(layout)
+		if probe != nil && probe(location.Dir) {
 			return fmt.Errorf("batch %q is still active; stop the daemon before archiving", batchID)
 		}
 		states, err := events.ReadRunStates(log)
 		if err != nil {
 			return err
 		}
-		runIDs, err := listRunDirs(entry.Location(layout).Dir)
+		runIDs, err := listRunDirs(location.Dir)
 		if err != nil {
 			return err
 		}
 		for _, rec := range entry.Runs {
 			runIDs = append(runIDs, rec.RunID)
 		}
-		batchDir := entry.Location(layout).Dir
 		for _, state := range states {
-			if state.RunID == batchID || idx.MatchesBatchLocation(layout, state.BatchID(), batchDir) {
+			if state.RunID == entry.ID || idx.MatchesBatchLocation(layout, state.BatchID(), location.Dir) {
 				runIDs = append(runIDs, state.RunID)
 			}
 		}
@@ -296,6 +296,7 @@ func runArchiveBatch(cmd *cobra.Command, batchID string, probe runActivityProbe,
 				return &daemon.NonTerminalRowError{RunID: id}
 			}
 		}
+		archivePath := layout.ArchiveBatch(entry.ID).Dir
 		if _, err := os.Stat(archivePath); err == nil {
 			return fmt.Errorf("archive %q already exists", batchID)
 		} else if !os.IsNotExist(err) {
@@ -304,13 +305,13 @@ func runArchiveBatch(cmd *cobra.Command, batchID string, probe runActivityProbe,
 		if err := os.MkdirAll(layout.ArchiveDir, 0755); err != nil {
 			return fmt.Errorf("create archive dir: %w", err)
 		}
-		if err := os.Rename(entry.Location(layout).Dir, archivePath); err != nil {
+		if err := os.Rename(location.Dir, archivePath); err != nil {
 			return fmt.Errorf("move batch dir: %w", err)
 		}
 		if err := stripSockets(archivePath); err != nil {
 			return fmt.Errorf("strip sockets from archived batch %q: %w", batchID, err)
 		}
-		if err := idx.SetArchived(batchID, archivePath, time.Now().UTC()); err != nil {
+		if err := idx.SetArchived(entry.ID, archivePath, time.Now().UTC()); err != nil {
 			return fmt.Errorf("set archived in index: %w", err)
 		}
 		return nil
