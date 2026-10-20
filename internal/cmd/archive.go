@@ -259,18 +259,20 @@ func runArchiveBatch(cmd *cobra.Command, batchID string, probe runActivityProbe,
 	}
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
 
+	// Operator input may be a physical alias; artifacts use the public ID.
+	publicID := batchID
 	if err := batchindex.Update(layout.BatchesIndexPath, func(idx *batchindex.Index) error {
 		entry := idx.ResolveBatchIdentity(batchID)
 		if entry == nil {
 			return fmt.Errorf("batch %q not found in index", batchID)
 		}
-		batchID = entry.ID
+		publicID = entry.ID
 		if entry.Status != batchindex.StatusActive {
-			return fmt.Errorf("batch %q is not active (status=%s); refusing to archive", batchID, entry.Status)
+			return fmt.Errorf("batch %q is not active (status=%s); refusing to archive", publicID, entry.Status)
 		}
 		location := entry.Location(layout)
 		if probe != nil && probe(location.Dir) {
-			return fmt.Errorf("batch %q is still active; stop the daemon before archiving", batchID)
+			return fmt.Errorf("batch %q is still active; stop the daemon before archiving", publicID)
 		}
 		states, err := events.ReadRunStates(log)
 		if err != nil {
@@ -289,7 +291,7 @@ func runArchiveBatch(cmd *cobra.Command, batchID string, probe runActivityProbe,
 			}
 		}
 		if len(runIDs) == 0 {
-			return fmt.Errorf("batch %q has no AgentRun lifecycle evidence", batchID)
+			return fmt.Errorf("batch %q has no AgentRun lifecycle evidence", publicID)
 		}
 		for _, id := range runIDs {
 			if !states[id].IsTerminal() {
@@ -298,7 +300,7 @@ func runArchiveBatch(cmd *cobra.Command, batchID string, probe runActivityProbe,
 		}
 		archivePath := layout.ArchiveBatch(entry.ID).Dir
 		if _, err := os.Stat(archivePath); err == nil {
-			return fmt.Errorf("archive %q already exists", batchID)
+			return fmt.Errorf("archive %q already exists", publicID)
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("stat archive target: %w", err)
 		}
@@ -309,7 +311,7 @@ func runArchiveBatch(cmd *cobra.Command, batchID string, probe runActivityProbe,
 			return fmt.Errorf("move batch dir: %w", err)
 		}
 		if err := stripSockets(archivePath); err != nil {
-			return fmt.Errorf("strip sockets from archived batch %q: %w", batchID, err)
+			return fmt.Errorf("strip sockets from archived batch %q: %w", publicID, err)
 		}
 		if err := idx.SetArchived(entry.ID, archivePath, time.Now().UTC()); err != nil {
 			return fmt.Errorf("set archived in index: %w", err)
@@ -319,7 +321,7 @@ func runArchiveBatch(cmd *cobra.Command, batchID string, probe runActivityProbe,
 		return fmt.Errorf("archive batch: %w", err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Archived batch %q\n", batchID)
+	fmt.Fprintf(cmd.OutOrStdout(), "Archived batch %q\n", publicID)
 	return nil
 }
 

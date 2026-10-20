@@ -39,23 +39,30 @@ func (b Batch) RunLocation(layout paths.Layout, runID string) paths.RunLocation 
 // Exact public identity takes precedence over aliases of other batches.
 // This does not interpret row IDs and is suitable for event batch_id evidence.
 func (idx *Index) ResolveBatchIdentity(id string) *Batch {
+	owner, _ := idx.batchIdentity(id)
+	return owner
+}
+
+// batchIdentity applies the alias rule once: an exact public ID, else the
+// single Batch whose frozen directory has that basename. More than one such
+// Batch is ambiguous and resolves to no owner.
+func (idx *Index) batchIdentity(id string) (owner *Batch, ambiguous bool) {
 	if idx == nil || id == "" {
-		return nil
+		return nil, false
 	}
 	if b := idx.ResolveBatch(id); b != nil {
-		return b
+		return b, false
 	}
-	var found *Batch
 	for i := range idx.Batches {
 		b := &idx.Batches[i]
 		if b.Path != "" && filepath.Base(b.Path) == id {
-			if found != nil {
-				return nil
+			if owner != nil {
+				return nil, true
 			}
-			found = b
+			owner = b
 		}
 	}
-	return found
+	return owner, false
 }
 
 // LocateBatchIdentity resolves event batch identity, without row aliases, to
@@ -65,15 +72,12 @@ func (idx *Index) LocateBatchIdentity(layout paths.Layout, id string) (paths.Bat
 	if id == "" {
 		return paths.BatchLocation{}, false
 	}
-	if owner := idx.ResolveBatchIdentity(id); owner != nil {
+	owner, ambiguous := idx.batchIdentity(id)
+	if owner != nil {
 		return owner.Location(layout), true
 	}
-	if idx != nil {
-		for _, b := range idx.Batches {
-			if b.Path != "" && filepath.Base(b.Path) == id {
-				return paths.BatchLocation{}, false
-			}
-		}
+	if ambiguous {
+		return paths.BatchLocation{}, false
 	}
 	return layout.LocateBatch(id, ""), true
 }
@@ -93,12 +97,9 @@ func (idx *Index) ResolveRunBatch(layout paths.Layout, id string) *Batch {
 	if idx == nil || id == "" {
 		return nil
 	}
-	if b := idx.ResolveBatchIdentity(id); b != nil {
-		return b
-	}
 	// A known but ambiguous Batch alias must not be reinterpreted as a row.
-	if _, ok := idx.LocateBatchIdentity(layout, id); !ok {
-		return nil
+	if b, ambiguous := idx.batchIdentity(id); b != nil || ambiguous {
+		return b
 	}
 	for i := range idx.Batches {
 		for _, rec := range idx.Batches[i].Runs {
