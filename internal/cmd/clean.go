@@ -405,15 +405,15 @@ func collectEligibleActiveActions(idx *batchindex.Index, probe runActivityProbe,
 // all of its worktrees. A batch with an unknown or missing row manifest
 // is preserved.
 func buildEligibleActiveAction(idx *batchindex.Index, entry batchindex.Batch, probe runActivityProbe, layout paths.Layout, states map[string]events.RunState) (cleanAction, bool) {
-	batchPath := entry.Location(layout).Dir
+	location := entry.Location(layout)
+	batchPath := location.Dir
 	if probe != nil && probe(batchPath) {
 		return cleanAction{}, false
 	}
 	// Artifact loss must not hide in-flight members from completed cleanup.
 	// Use the same event batch membership as whole-batch archive.
-	batchDir := entry.Location(layout).Dir
 	for _, state := range states {
-		if (state.RunID == entry.ID || idx.MatchesBatchLocation(layout, state.BatchID(), batchDir)) && !state.IsTerminal() {
+		if (state.RunID == entry.ID || idx.MatchesBatchLocation(layout, state.BatchID(), batchPath)) && !state.IsTerminal() {
 			return cleanAction{}, false
 		}
 	}
@@ -423,8 +423,7 @@ func buildEligibleActiveAction(idx *batchindex.Index, entry batchindex.Batch, pr
 		Kind:      entry.Kind,
 		Status:    entry.Status,
 	}
-	runsDir := filepath.Join(batchPath, "runs")
-	entries, err := os.ReadDir(runsDir)
+	entries, err := os.ReadDir(location.RunsDir())
 	if err != nil && !os.IsNotExist(err) {
 		return cleanAction{}, false
 	}
@@ -435,8 +434,7 @@ func buildEligibleActiveAction(idx *batchindex.Index, entry batchindex.Batch, pr
 			continue
 		}
 		liveCount++
-		manifestPath := filepath.Join(runsDir, e.Name(), "run.json")
-		data, err := os.ReadFile(manifestPath)
+		data, err := os.ReadFile(location.Run(e.Name()).ManifestPath())
 		if err != nil {
 			return cleanAction{}, false
 		}
