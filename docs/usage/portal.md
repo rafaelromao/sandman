@@ -53,16 +53,13 @@ The row folder under `.sandman/batches/<batch-id>/runs/<runID>/` is named after 
 
 ### Public BatchId vs per-row RunID
 
-The portal surfaces two distinct identifiers (per-row RunID shapes are pinned by ADR-0030):
+The portal works with three distinct things: two identifiers and one location (per-row RunID shapes are pinned by ADR-0030). `<ts>` is a `YYMMDDhhmmss` timestamp and `<sid>` is four hex characters.
 
-- **Public BatchId** — the batch-level identifier rendered in the Batch label and Details tab. Equals the batch folder basename (`batches/<id>/`'s last segment), `batch.json.batchId`, `run.json.BatchID`, and the event payload `batch_id`.
-- **Per-row RunID** — the row-level identifier rendered per row and used by row-level actions (archive, abort, log download). Equals `run.json.runID` and the event payload `run_id`.
+- **Public BatchId** — the batch-level identifier rendered in the Batch label and Details tab. Equals `batch.json.batchId`, `run.json.BatchID`, the batch's `id` in `.sandman/batches.json`, and the event payload `batch_id`. Shapes: `<ts>-<sid>-<issue>` (one issue), `<ts>-<sid>-<firstIssue>+<N>` (N more issues), `<ts>-<sid>-PR<pr>` (review; the linked issue is never part of it), and `<ts>-<sid>-prompt` or `<ts>-<sid>-prompt-<id>` (prompt-only).
+- **Batch folder** — where the batch's files live on disk. Sandman records this path in `.sandman/batches.json` when the batch is created and keeps using it; do not rebuild it from the BatchId. A new batch starts at `.sandman/batches/<BatchId>/`, and archiving moves it to `.sandman/archive/<BatchId>/` while its BatchId stays the same.
+- **Per-row RunID** — the row-level identifier rendered per row and used by row-level actions (archive, abort, log download). Equals `run.json.runID` and the event payload `run_id`. Each row's files live in `<batch folder>/runs/<RunID>/`. Issue rows use `<ts>-<sid>-<issue>`, review rows use the shapes in [Review run identity in the portal](#review-run-identity-in-the-portal), and prompt-only rows reuse their BatchId.
 
-For multi-issue batches the two diverge: the public BatchId carries the `+N` additional count suffix and the per-row RunID does not. For every other kind (single-issue, prompt-only, review) the two are identical.
-
-### Batch and Run identity
-
-The portal reads the public BatchId / per-row RunID contract defined above.
+The BatchId and RunID are identical only for single-issue, prompt-only, and unlinked review runs. They diverge for every row of a multi-issue batch (the BatchId carries the `+N` suffix; each row's RunID carries its own issue number) and for reviews whose pull request links an issue (the RunID carries `<linkedIssue>-PR<pr>`; the BatchId carries only `PR<pr>`). Batch lookups accept only the BatchId, never a row RunID.
 
 ### Continuation history
 
@@ -72,7 +69,7 @@ Use the picker to switch between the continuation and the previous run without c
 
 ### Upgrades
 
-Sandman does not migrate on-disk state across version upgrades. Clear `.sandman/` and re-run `sandman init` after upgrading. See [Troubleshooting](../help/troubleshooting.md#portal-shows-unknown-rows-after-upgrading-sandman) if the portal shows unknown rows.
+Sandman does not generally migrate on-disk state across version upgrades. Runs waiting on a pull-request review are carried forward when their saved review request, head, and state are complete and valid; incomplete or stale legacy review state is never promoted. Clearing `.sandman/` discards waiting runs and their history, so do it only when status or portal rows still look wrong after upgrading and no run needs to be preserved: clear `.sandman/` and re-run `sandman init`. See [Upgrades](../architecture/disk-layout.md#upgrades) for the exact contract and [Troubleshooting](../help/troubleshooting.md#portal-shows-unknown-rows-after-upgrading-sandman) for the symptom and fix.
 
 ## Abort
 
@@ -93,18 +90,7 @@ Abort is available on Linux and macOS; other platforms return `501 Not Implement
 
 ## Log streaming
 
-```
-GET /api/runs/<key>/log
-```
-
-Returns live output as `text/plain; charset=utf-8`. The handler reads from the control socket first, falling back to the log file if the socket is empty or unavailable.
-
-Special states return fixed messages:
-
-| Status | Message |
-|--------|---------|
-| `blocked` | `Blocked. Waiting on unresolved blockers.` (or listed blocker issue numbers) |
-| `queued` | `Queued. Waiting to start.` |
+The live log view streams the row's Saved Log, `<batch folder>/runs/<RunID>/run.log`, over [`GET /api/runs/stream`](#get-apirunsstream). The saved log file is the source of truth: the stream never reads the run's control socket, and it keeps following the file when archiving moves it. The stream ends only when `.sandman/events.jsonl` shows the run's lifecycle as terminal; neither the portal's status label, end of file, nor socket state ends it. To download the whole log, use [`GET /api/logs`](#get-apilogs). There is no per-run log route under `/api/runs/<key>/`.
 
 ## Archive
 
@@ -209,21 +195,34 @@ Server-Sent Events stream of live run output. Used by the portal UI for real-tim
 
 **Response** `200 OK` — `text/event-stream`
 
-Each output line from the run's control socket is emitted as a separate SSE `data:` event:
+The stream reads the row's Saved Log (`run.log`), never the control socket, and polls it for new output. It has two modes.
 
-```
-data: <cleaned line>\n\n
-```
+**Framed mode** (`?protocol=frames`, used by the portal UI). Each SSE `data:` is a JSON frame with `type`, `runId`, `generation`, `start` and `end` byte offsets, `records` (each `{start, end, text}`), `cursor`, and an optional `reason`:
 
-Lines are cleaned server-side (ANSI escapes stripped, control bytes removed) to match the `run.log` contract. A `:` keepalive comment is sent every 15 seconds when no output has flowed. The stream ends when the client disconnects or the daemon closes the control socket.
+| `type` | Meaning |
+|--------|---------|
+| `snapshot` | The retained tail of the log, sent on a first connect without a cursor; `reason` is `oversized-record` when the tail cannot fit the retained-byte bound (one record is larger than it) |
+| `append` | New complete lines after the previous frame |
+| `reset` | The retained tail sent again; `reason` is `source-changed`, `invalid-cursor`, or `catchup-bounded`, optionally followed by `;oversized-record` |
+| `pending` | The log is not readable yet (`reason` `source-missing` or `source-unreadable`); sent once while it stays missing |
+| `unavailable` | The run is terminal but its log is missing |
+| `end` | Terminal completion: sent once the run's events are terminal, after any remaining partial line, carrying the final `cursor`; the server then closes the stream |
+
+The SSE event `id:` is the frame's `cursor` for content frames and `end`. To resume, reconnect with `?cursor=<cursor>` or the `Last-Event-ID` header; the header wins when present, even if empty or invalid, and an invalid cursor produces a `reset`.
+
+**Plain mode** (no `protocol=frames`). Each saved log line is sent as a separate `data: <line>` event and control frames are not sent; the stream still closes when the run's events are terminal.
+
+In both modes a `: keepalive` comment is sent every 15 seconds, whether or not output is flowing. If `.sandman/events.jsonl` cannot be read, the stream keeps tailing rather than ending.
 
 Errors return JSON with an appropriate HTTP status:
 
 | Status | Meaning |
 |--------|---------|
 | `400` | Missing `runKey` |
-| `409` | Run is not active |
-| `502` | Cannot connect to the run's control socket |
+| `404` | Unknown `runKey` |
+| `405` | Method other than `GET` (plain-text body) |
+| `409` | The row's saved log location is invalid (not `batches/*/runs/<RunID>/run.log` or `archive/*/runs/<RunID>/run.log`) |
+| `500` | The run index could not be read |
 
 ### `GET /api/logs`
 
@@ -244,7 +243,7 @@ The log file is served as an attachment with `Content-Disposition: attachment; f
 
 ### `POST /api/runs/abort`
 
-Signals a running issue to abort. See [## Stop (Abort)](#stop-abort) above.
+Signals a running issue to abort. See [Abort](#abort) above.
 
 ### `POST /api/runs/archive`
 

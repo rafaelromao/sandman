@@ -47,9 +47,11 @@ directly in OpenCode or Claude Code, load `sandman-run`. That standalone
 entrypoint composes `sandman-implement`, `sandman-review-cycle`, and
 `sandman-pr-merge`, with review-cycle state held in memory for the session.
 
-Managed waiting is event-backed and restart-safe: `sandman run --continue`
-rehydrates the same RunID and validates the current pull-request head before
-resuming. A verified merge is terminal without another execution slot, while
+Managed waiting is event-backed and restart-safe: after a restart, the next
+`sandman run` (without `--override` or `--run-id`) picks up each recoverable
+waiting row under its original RunID and validates the current pull-request
+head before resuming. Manual `sandman run --continue` is different: it starts a
+new Batch ID and RunID and records the prior RunID as lineage. A verified merge is terminal without another execution slot, while
 dependent rows remain held until dependency closure is confirmed. Use
 `sandman clean --stale` only for dead ownership; an explicit abort is final and
 does not create a continuation.
@@ -84,7 +86,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--max-containers` | config default (0) | Max containers; `0` = no cap (unbounded pool growth) |
 | `--retries` | config `retries` (3) | Number of times to retry a failed run; omit to use `retries` from `.sandman/config.yaml` (default 3) |
 | `--override` | `false` | Replace worktree and branch for a new attempt while retaining prior AgentRun events (append-only), batch artifacts, and logs; force-checkout worktree to expected branch on mismatch or detached HEAD |
-| `--continue` | `false` | Continue the latest AgentRun for selected issues by reusing the preserved worktree (branch, base branch, task file, prior run id); the agent starts a fresh conversation by default |
+| `--continue` | `false` | Continue the latest AgentRun for selected issues by reusing the preserved worktree (branch, base branch, task file); the continued row gets a new Batch ID and RunID, with the prior RunID recorded as its predecessor; the agent starts a fresh conversation by default |
 | `--reuse-session` | `false` | Only with `--continue`: explicitly reuse each continued row's prior conversation. OpenCode selects the exact prior session, falling back once to OpenCode `--continue` if it is unavailable; Claude Code resumes the exact recorded session with `--resume`, starting fresh if it is unavailable |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for agent runs |
 | `--include-dependencies` | `false` | Auto-expand batch with transitive blockers |
@@ -153,7 +155,7 @@ Continue the last agent run for one or more issues. Reads the task file (`.sandm
 sandman run --continue <issue-number>...
 ```
 
-Reuses the prior run's worktree identity: the existing branch, the stored base branch (the worktree was cut from it), the prior run id, the `.sandman/task.md` contents, and the issue mode. Tunables (agent, model, parallel, retries, sandbox, container tunables, review command, review timeout) come from current CLI flags / config defaults, not from the stored payload. CLI overrides on the `--continue` invocation still win over both config defaults and stored values. The agent starts a fresh conversation unless `--reuse-session` is also supplied. When no task file exists, an empty task template is used as the resume prompt (with a warning on stderr).
+Reuses the prior run's worktree identity: the existing branch, the stored base branch (the worktree was cut from it), the `.sandman/task.md` contents, and the issue mode. The continued run gets a new Batch ID and RunID and records the prior RunID as its predecessor, so its active duration starts fresh. Only the automatic re-entry of a recoverable waiting row keeps the original RunID. Tunables (agent, model, parallel, retries, sandbox, container tunables, review command, review timeout) come from current CLI flags / config defaults, not from the stored payload. CLI overrides on the `--continue` invocation still win over both config defaults and stored values. The agent starts a fresh conversation unless `--reuse-session` is also supplied. When no task file exists, an empty task template is used as the resume prompt (with a warning on stderr).
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -206,8 +208,8 @@ sandman archive stale
 | Subcommand | Description |
 |------------|-------------|
 | `run <runId>` | Move `runs/<runId>/` from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/runs/<runId>/`. The AgentRun's event projection must be terminal; sibling rows and the batch daemon stay untouched. Persists an `archivePath` recovery record for crash recovery. The HTTP `POST /api/runs/archive` endpoint shares this per-row contract. |
-| `batch <batchId>` | Move the whole batch directory from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/`. The batch daemon must be gone; sibling rows are not applicable. Flips the batch-level `status` to `archived`. CLI-only — not exposed via HTTP. |
-| `older-than <days>` | Walk every `run.json` across all batches and archive each terminal row older than the cutoff. Already-archived rows are skipped. Sibling rows and live batch daemons stay untouched. `<days>` must be a non-negative integer; `0` archives every dead batch. |
+| `batch <batchId>` | Move the whole batch directory from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/`. The batch daemon must be gone and every AgentRun in the batch must be event-terminal; otherwise the command refuses. Flips the batch-level `status` to `archived`. CLI-only — not exposed via HTTP. |
+| `older-than <days>` | Walk every `run.json` across all batches and archive each terminal row older than the cutoff. Already-archived rows are skipped. Sibling rows and live batch daemons stay untouched. Selection is per row, by the manifest creation time (or manifest mtime); the batch root never moves. `<days>` must be a non-negative integer; `0` archives every terminal row in batches whose daemon is gone. |
 | `stale` | Chain the same status-fix logic as `clean --stale` (emit `run.aborted` for unterminated runs in dead batches), then walk every `run.json` and archive each terminal row. Live batches are skipped entirely.
 
 See the [Archive section in `monitoring.md`](monitoring.md#archive) for detailed semantics including the per-row `Runs[]` record and the whole-batch archive invariant.
