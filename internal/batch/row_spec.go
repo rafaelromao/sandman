@@ -113,8 +113,8 @@ type runDeps struct {
 // runCoordination is the narrow interface the elevated executor uses for the
 // shared, mutable coordination state that RunBatch owns (the active-runs map,
 // the shutdown-supervisor fan-in, the per-batch phase writer, and the
-// first-sandbox-start once). *Orchestrator implements it; RunBatch stays the
-// owner. Keeping this an interface (rather than a raw struct handle) preserves
+// first-sandbox-start once). The per-batch *batchCoordinator implements it;
+// RunBatch creates and owns one coordinator per batch. Keeping this an interface (rather than a raw struct handle) preserves
 // the executor's testability — the constructor is the seam.
 type runCoordination interface {
 	registerActiveRun(key int, sb sandbox.Sandbox)
@@ -151,8 +151,8 @@ type runExecutor struct {
 }
 
 // newRunExecutor is the constructor/test seam: it snapshots the
-// batch-constant dependencies off the orchestrator (which still owns the
-// coordination state and implements runCoordination / IssueCommander) and
+// batch-constant dependencies off the orchestrator, pairs them with a fresh
+// *batchCoordinator (which implements runCoordination / IssueCommander), and
 // freezes them on the returned executor.
 func (o *Orchestrator) newRunExecutor(parentCtx context.Context, bc BatchConfig, sbFactory SandboxFactory, containerAlloc containerAllocator) *runExecutor {
 	coord := newBatchCoordinator(nil)

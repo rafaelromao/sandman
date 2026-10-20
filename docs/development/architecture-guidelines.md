@@ -31,7 +31,7 @@ When changing lifecycle behavior:
 
 ## Preserve dependency-injection seams
 
-Command code should stay testable through explicit dependencies. Prefer changing existing seams over introducing hidden globals or constructing deep concrete dependencies inline.
+Command code should stay testable through explicit dependencies. The per-run seam is `RunExecutor`; its executor reaches shared batch state only through the narrow `runCoordination` interface, implemented by the per-batch coordinator that `RunBatch` creates and owns. Prefer changing existing seams over introducing hidden globals or constructing deep concrete dependencies inline.
 
 When writing tests, fake the documented boundary rather than mocking deep implementation details.
 
@@ -55,6 +55,7 @@ Process coordination uses Unix domain sockets. Socket changes should keep owners
 
 - The process that creates a socket should own its lifecycle.
 - Cleanup should tolerate already-removed sockets.
+- Long socket paths map to a deterministic short filesystem socket under `/tmp` (`internal/socketpath`), never to an abstract socket; see [Disk layout](../architecture/disk-layout.md).
 - Tests that bind sockets should use short temp paths; see [Test Infrastructure](test-infrastructure.md#short-unix-socket-paths).
 
 ## Check blast radius before central changes
@@ -66,6 +67,8 @@ Pay special attention to:
 - Event definitions and run-state projection
 - Command dependency wiring
 - Batch and sandbox interfaces
+- Batch preparation (`internal/batch/preparation.go`), which owns Specification discovery and the dependency graph before execution
+- The per-batch coordination seam (`runCoordination`, implemented by `batchCoordinator`)
 - The agent strategy interface and its selector
 - Persistence helpers
 - IPC and socket lifecycle code
