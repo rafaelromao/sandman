@@ -916,19 +916,19 @@ func cleanupOrphanedBatches(layout paths.Layout, log events.EventLog, probe func
 		}
 		removed = append(removed, path)
 	}
-	removedByID := make(map[string]string, len(removed))
+	removedDirs := make(map[string]bool, len(removed))
 	for _, path := range removed {
 		absolute, err := filepath.Abs(path)
 		if err != nil {
 			cleanupErrs = append(cleanupErrs, fmt.Errorf("resolve removed orphan path %q: %w", path, err))
 			continue
 		}
-		removedByID[filepath.Base(path)] = filepath.Clean(absolute)
+		removedDirs[absolute] = true
 	}
 	if err := batchindex.Update(layout.BatchesIndexPath, func(idx *batchindex.Index) error {
 		kept := idx.Batches[:0]
 		for _, entry := range idx.Batches {
-			if path, ok := removedByID[entry.ID]; ok && filepath.Clean(entry.Location(layout).Dir) == path {
+			if dir, err := filepath.Abs(entry.Location(layout).Dir); err == nil && removedDirs[dir] {
 				continue
 			}
 			kept = append(kept, entry)
@@ -948,39 +948,6 @@ func confirmRemoved(path string) error {
 		return err
 	}
 	return nil
-}
-
-// pruneBatchesIndexByOrphanPlan removes the index entries whose BatchID matches
-// the basename of any path in plan, then atomically saves the index. It is the
-// shared prune step used by both the standalone --orphaned mode and the --all
-// umbrella flag.
-func pruneBatchesIndexByOrphanPlan(indexPath string, plan []string) error {
-	indexPath, err := filepath.Abs(indexPath)
-	if err != nil {
-		return fmt.Errorf("resolve batches index path %q: %w", indexPath, err)
-	}
-	layout := paths.NewLayout(nil, filepath.Dir(filepath.Dir(indexPath)))
-	pruned := make(map[string]string, len(plan))
-	for _, p := range plan {
-		absolutePath, err := filepath.Abs(p)
-		if err != nil {
-			return fmt.Errorf("resolve orphan plan path %q: %w", p, err)
-		}
-		pruned[filepath.Base(p)] = absolutePath
-	}
-	return batchindex.Update(indexPath, func(idx *batchindex.Index) error {
-		var kept []batchindex.Batch
-		for _, entry := range idx.Batches {
-			if plannedPath, drop := pruned[entry.ID]; drop && filepath.Clean(entry.Location(layout).Dir) == filepath.Clean(plannedPath) {
-				if _, err := os.Stat(entry.Location(layout).Dir); os.IsNotExist(err) {
-					continue
-				}
-			}
-			kept = append(kept, entry)
-		}
-		idx.Batches = kept
-		return nil
-	})
 }
 
 func runCleanTemps(cmd *cobra.Command, deps Dependencies, layout paths.Layout, dryRun bool) (tempDirs []string, images []string, cleanupErr error) {
