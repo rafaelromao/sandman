@@ -107,3 +107,32 @@ func TestLocations_DiscoveryAndIdentityAliases(t *testing.T) {
 		seen[loc.Dir] = true
 	}
 }
+
+func TestLocations_LocateBatchIdentity(t *testing.T) {
+	layout := paths.NewLayout(nil, t.TempDir())
+	idx := &Index{Version: IndexVersion, Batches: []Batch{
+		{ID: "public", Path: layout.BatchDir("physical"), Status: StatusActive},
+		{ID: "physical", Path: filepath.Join(layout.SandmanDir, "moved", "other"), Status: StatusActive},
+		{ID: "ambiguous-a", Path: filepath.Join(layout.SandmanDir, "a", "same"), Status: StatusActive},
+		{ID: "ambiguous-b", Path: filepath.Join(layout.SandmanDir, "b", "same"), Status: StatusActive},
+		{ID: "aliased", Path: filepath.Join(layout.SandmanDir, "moved", "alias"), Status: StatusActive},
+	}}
+	for _, tc := range []struct {
+		id, want string
+		ok       bool
+	}{
+		{"physical", filepath.Join(layout.SandmanDir, "moved", "other"), true},
+		{"alias", filepath.Join(layout.SandmanDir, "moved", "alias"), true},
+		{"legacy", layout.BatchDir("legacy"), true},
+		{"same", "", false},
+		{"", "", false},
+	} {
+		got, ok := idx.LocateBatchIdentity(layout, tc.id)
+		if ok != tc.ok || got.Dir != tc.want {
+			t.Errorf("LocateBatchIdentity(%q) = %+v, %v; want %q, %v", tc.id, got, ok, tc.want, tc.ok)
+		}
+	}
+	if !idx.MatchesBatchLocation(layout, "", layout.BatchDir("")) {
+		t.Error("empty identity lost its canonical comparison")
+	}
+}

@@ -99,7 +99,7 @@ func safeWaitID(id string) bool {
 }
 
 func waitPath(batchDir, runID string) string {
-	return filepath.Join(batchDir, "runs", runID, "wait.json")
+	return filepath.Join(paths.BatchLocation{Dir: batchDir}.Run(runID).Dir, "wait.json")
 }
 
 func initialWaitPath(batchDir, runID string) string {
@@ -112,15 +112,14 @@ func batchIdentityForDir(layout paths.Layout, batchDir string) (string, error) {
 		return "", err
 	}
 	for _, batch := range idx.Batches {
-		if filepath.Clean(batch.Location(layout).Dir) == filepath.Clean(batchDir) {
+		if idx.MatchesBatchLocation(layout, batch.ID, batchDir) {
 			return batch.ID, nil
 		}
 	}
-	legacyID := filepath.Base(batchDir)
-	if filepath.Clean(batchDir) == filepath.Clean(layout.BatchDir(legacyID)) {
+	if legacyID := filepath.Base(batchDir); idx.MatchesBatchLocation(layout, legacyID, batchDir) {
 		return legacyID, nil
 	}
-	return "", fmt.Errorf("batch location is not indexed: %s", batchDir)
+	return "", fmt.Errorf("batch location has no unambiguous identity: %s", batchDir)
 }
 
 func validateRunWait(batchDir, expectedBatchID, runID string, record RunWait) error {
@@ -269,13 +268,14 @@ func TransferRunWait(layout paths.Layout, oldBatchDir, newBatchDir, runID string
 	if !record.RecoverableAt(now) {
 		return record, fmt.Errorf("waiting recovery grace expired")
 	}
-	if err := writeRunWait(oldBatchDir, record, now); err != nil {
-		return record, err
-	}
-	record.BatchID, err = batchIdentityForDir(layout, newBatchDir)
+	newBatchID, err := batchIdentityForDir(layout, newBatchDir)
 	if err != nil {
 		return record, err
 	}
+	if err := writeRunWait(oldBatchDir, record, now); err != nil {
+		return record, err
+	}
+	record.BatchID = newBatchID
 	return record, writeRunWait(newBatchDir, record, now)
 }
 

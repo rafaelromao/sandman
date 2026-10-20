@@ -60,9 +60,12 @@ func FindReadyContinuations(eventLog []events.Event, layout paths.Layout) []Read
 		if batchID == "" {
 			batchID = state.BatchID()
 		}
-		batchLocation, ok := resolvedBatchLocation(idx, layout, batchID)
-		if !ok {
-			continue
+		batchLocation := layout.LocateBatch(batchID, "")
+		if batchID != "" {
+			var ok bool
+			if batchLocation, ok = idx.LocateBatchIdentity(layout, batchID); !ok {
+				continue
+			}
 		}
 		if batchID != "" && daemon.IsRunActive(batchLocation.Dir) {
 			continue
@@ -115,21 +118,6 @@ func FindReadyContinuations(eventLog []events.Event, layout paths.Layout) []Read
 		})
 	}
 	return ready
-}
-
-func resolvedBatchLocation(idx *batchindex.Index, layout paths.Layout, batchID string) (paths.BatchLocation, bool) {
-	if batchID == "" {
-		return layout.LocateBatch(batchID, ""), true
-	}
-	if batch := idx.ResolveBatchIdentity(batchID); batch != nil {
-		return batch.Location(layout), true
-	}
-	for _, batch := range idx.Batches {
-		if batch.Path != "" && filepath.Base(batch.Path) == batchID {
-			return paths.BatchLocation{}, false
-		}
-	}
-	return layout.LocateBatch(batchID, ""), true
 }
 
 // Events determine whether execution has started. Reconcile a sidecar left

@@ -176,17 +176,21 @@ func BatchDir(baseDir, dirID string) string {
 
 // ResolveBatchDir returns the frozen physical location for a public BatchID.
 // Unindexed legacy batches retain their canonical location. An unreadable
-// index is returned to the caller rather than silently selecting a canonical
-// path that may belong to a different physical batch.
+// index or an ambiguous alias is returned to the caller rather than silently
+// selecting a canonical path that may belong to a different physical batch.
 func ResolveBatchDir(layout paths.Layout, batchID string) (string, error) {
 	idx, err := batchindex.Load(layout.BatchesIndexPath)
 	if err != nil {
 		return "", err
 	}
-	if batch := idx.ResolveBatchIdentity(batchID); batch != nil {
-		return batch.Location(layout).Dir, nil
+	if batchID == "" {
+		return layout.BatchDir(batchID), nil
 	}
-	return layout.BatchDir(batchID), nil
+	location, ok := idx.LocateBatchIdentity(layout, batchID)
+	if !ok {
+		return "", fmt.Errorf("batch identity %q is ambiguous", batchID)
+	}
+	return location.Dir, nil
 }
 
 // ManifestPath returns the on-disk path of the batch manifest file
@@ -663,15 +667,8 @@ func runWaitDir(idx *batchindex.Index, layout paths.Layout, run events.RunState,
 	if batchID == "" {
 		return fallback, true
 	}
-	if batch := idx.ResolveBatchIdentity(batchID); batch != nil {
-		return batch.Location(layout).Dir, true
-	}
-	for _, batch := range idx.Batches {
-		if batch.Path != "" && filepath.Base(batch.Path) == batchID {
-			return "", false
-		}
-	}
-	return layout.BatchDir(batchID), true
+	location, ok := idx.LocateBatchIdentity(layout, batchID)
+	return location.Dir, ok
 }
 
 // emitRecoveredAbort holds the same RunID claim as admission through the fresh
