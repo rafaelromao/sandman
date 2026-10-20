@@ -123,19 +123,23 @@ Release Please branch updates add two release-validation workflows:
 - `Full Regression - Linux` is the exhaustive authority for Linux. It runs independent unit/browser, smoke container, credential-free integration, and live-provider jobs with the canonical 60- and 90-minute budgets.
 - `Native Compatibility` is a focused suite with four parallel arch-specific jobs — `Native Compatibility (linux/amd64)` on `ubuntu-latest`, `Native Compatibility (darwin/amd64)` on `macos-15-intel`, `Native Compatibility (darwin/arm64)` on `macos-14`, and `Native Compatibility (linux/arm64)` on `ubuntu-24.04-arm`. Each job builds Sandman natively for its arch, then exercises Darwin/Linux socket paths plus portal and attach streaming, and verifies the native portal and attach streaming boundary through two hermetic portal E2E cases. Linux-container preset portability remains covered by the Linux workflow rather than being rebuilt inside the macOS Podman VM.
 
-The contract test `TestPlatformCoverageMapMatchesWorkflowsAndGoReleaser` enforces that the CI platform jobs, the `Native Compatibility` workflow shape, the `Full Regression - Linux` exhaustive command, and the four `.goreleaser.yml` build IDs all stay aligned with the matrix above. A drift in any one of those four sources fails the contract.
+The contract test `TestPlatformCoverageMapMatchesWorkflowsAndGoReleaser` checks that required substrings are present in the workflow files, `scripts/release_tier.sh`, and `.goreleaser.yml`: the platform build jobs' runner labels and `runs-on`, the three native runner labels with their GOOS/GOARCH/`uname` assertions and two portal E2E test names, the exhaustive-regression environment (`SANDMAN_RUN_AGENT_E2E=1`, `SANDMAN_E2E_GATES: all`), and the four GoReleaser build IDs. It does not parse the matrix above, so edits to this table are not enforced; keep the table aligned with those files by review.
 
 ### Full regression (`SANDMAN_FULL_REGRESSION`)
 
 Tests that are tagged for a container runtime or a real provider typically skip
 themselves when the generic `CI` env var is set (`os.Getenv("CI") != ""`), so
 the ordinary PR-time `CI` workflow stays fast and never spends API quota on
-real-agent runs. The `Full Regression - Linux` workflow is different: its whole
-point is that nothing is skipped. It sets `SANDMAN_FULL_REGRESSION=1`, and every
-CI-only skip guard is written as
+real-agent runs. The `Full Regression - Linux` workflow is different: it runs
+every required scenario. It sets `SANDMAN_FULL_REGRESSION=1`, and CI-only skip
+guards are written as
 `if os.Getenv("CI") != "" && !testenv.FullRegression() { t.Skip(...) }` so the
 exhaustive job actually executes the real-agent, portal, preset-matrix, visual,
-and heartbeat-timeout tests that ordinary CI only compiles.
+and heartbeat-timeout tests that ordinary CI only compiles. Portal browser
+guards also accept `SANDMAN_REQUIRE_PORTAL_BROWSER=1`, which overrides the CI
+skip and turns a missing browser into a failure. Tests can still skip for
+missing prerequisites (no container runtime, host CLI, or file-backed auth);
+only the manifest-permitted skips below are acceptable for required scenarios.
 
 The checked-in `scripts/release_scenarios.json` manifest defines required tests,
 provider CLIs/models, native platform boundaries and narrowly permitted skips.
@@ -202,14 +206,14 @@ remain active on pull requests.
 
 ## Smoke tests
 
-Smoke tests run a single agent session end-to-end and verify the core run loop. They are fast compared with full e2e tests and are disabled unless a provider allowlist is set.
+Smoke tests run a single agent session end-to-end and verify the core run loop. They are fast compared with full e2e tests. They need the `smoke` (or `e2e`) build tag, `SANDMAN_RUN_SMOKE_E2E=1`, and a non-empty provider allowlist; without the opt-in or the allowlist they skip themselves.
 
 ```bash
-SANDMAN_TEST_PROVIDERS=opencode \
+SANDMAN_RUN_SMOKE_E2E=1 SANDMAN_TEST_PROVIDERS=opencode \
   go test -tags smoke -timeout 30m ./internal/cmd -run Smoke
 ```
 
-`SANDMAN_TEST_PROVIDERS` accepts a comma-separated list of provider names, `all`, or `*`. When unset, smoke tests skip themselves.
+`SANDMAN_TEST_PROVIDERS` accepts a comma-separated list of provider names, `all`, or `*`. Even when enabled, individual cases skip when no container runtime, host CLI, or file-backed agent auth is available, or when image build, config mount, container start, or worktree setup is unavailable on the host.
 
 The `-timeout 30m` budget is required because each smoke sub-test pays a real
 `podman build` of the per-provider / per-buildTools image plus a real
@@ -308,37 +312,37 @@ the exhaustive E2E tier still uses its canonical 90-minute timeout.
 
 ## Gated scenarios
 
-Some expensive scenarios run without a build tag and are selected with `SANDMAN_E2E_GATES`. The value can be a single scenario, a comma-separated list, `all`, or `*`.
+Expensive scenarios are selected with `SANDMAN_E2E_GATES`. The value can be a single scenario, a comma-separated list, `all`, or `*`. Only the `batch` gate's `TestRunBatch_EndToEnd` and the `base_branch_feature` test run without a build tag; every other gated test, including the `batch`-gated claude preset and context-rollover tests, lives in `//go:build e2e` files and also needs `-tags e2e`.
 
 ### Scenario reference
 
 | Scenario | Package | Test selector |
 |----------|---------|---------------|
 | `batch` | `internal/batch` | `TestRunBatch_EndToEnd` |
-| `continue_multi` | `internal/cmd` | `TestContinueFlow_PodmanSandboxBinarySupportsMultipleIssues` |
+| `continue_multi` | `internal/cmd` | none: no gated test currently references this scenario |
 | `opencode_subagent` | `internal/cmd` | `TestOpencodeSubagentPermissionAllowAll` |
 | `badge` | `internal/cmd` | badge scenario tests |
 | `pathlen` | `internal/cmd` | path-length scenario tests |
 | `batch_id_rules` | `internal/cmd` | `TestBatchIDRules_*` |
-| `preset_matrix` | `internal/cmd` | preset-matrix scenario tests |
+| `preset_matrix` | `internal/cmd` | none gated by this constant; the e2e-tagged preset-matrix harness (`preset_matrix_harness_e2e_test.go`) runs through `scripts/run-preset-matrix.sh` |
 | `base_branch_feature` | `internal/batch` | `TestRunBatch_BaseBranchFeature_CutsWorktreeFromFeatureBranch` |
 | `review_daemon` | `internal/cmd` | `TestReviewDaemonE2E_RealAgentInContainer` |
 | `lifecycle_commands` | `internal/cmd` | `TestLifecycle_*` |
 | `review_wait` | `internal/cmd` | `TestReviewWaitStabilization_*` |
 
-The `review_wait` scenario is in the tagged E2E tier and requires
-`go test -tags e2e`.
+All scenarios except the untagged `batch` and `base_branch_feature` tests
+require `go test -tags e2e`.
 
 ```bash
 # Single scenario
 SANDMAN_E2E_GATES=batch go test -timeout 30m -run TestRunBatch_EndToEnd ./internal/batch
 
-# Multiple scenarios
-SANDMAN_E2E_GATES=batch,continue_multi,opencode_subagent \
-  go test -timeout 30m ./...
+# Multiple scenarios (tagged tier)
+SANDMAN_E2E_GATES=batch,opencode_subagent,review_wait \
+  go test -tags e2e -timeout 30m ./...
 
 # All scenarios
-SANDMAN_E2E_GATES=all go test -timeout 30m ./...
+SANDMAN_E2E_GATES=all go test -tags e2e -timeout 90m ./...
 ```
 
 ## Per-agent model override
@@ -347,7 +351,7 @@ By default, smoke and e2e tests use the model baked into each test case. To targ
 
 ```bash
 SANDMAN_TEST_MODEL_OPENCODE=opencode/gpt-5-nano \
-  SANDMAN_TEST_PROVIDERS=opencode \
+  SANDMAN_RUN_SMOKE_E2E=1 SANDMAN_TEST_PROVIDERS=opencode \
   go test -tags smoke -timeout 30m ./internal/cmd -run Smoke
 ```
 
