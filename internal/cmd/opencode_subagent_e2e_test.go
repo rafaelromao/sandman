@@ -59,6 +59,11 @@ func TestOpencodeSubagentPermissionAllowAll(t *testing.T) {
 	forcePodmanSandbox(t, repoDir)
 	writeMergedFakeGHShimForContainer(t, filepath.Join(repoDir, ".sandman", "bin"))
 	installPermissionFakeOpenCodeForContainer(t, repoDir)
+	// Host `sandman run` probes `opencode --version`; resolving the container
+	// fake there would hang the probe until the run deadline.
+	if path, err := exec.LookPath("opencode"); err == nil && strings.HasPrefix(path, repoDir) {
+		t.Fatalf("host PATH resolves the container-only fake opencode at %s", path)
+	}
 
 	out, err = runSandmanBinaryWithTimeout(t, binPath, repoDir, 10*time.Minute, "run", "--verbose", "--sandbox", "podman", "1")
 	if err != nil {
@@ -276,18 +281,15 @@ func runSandmanBinaryWithTimeout(t *testing.T, binPath, workDir string, timeout 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	ghBin := filepath.Join(workDir, ".sandman", "bin")
 	cmd := exec.CommandContext(ctx, binPath, args...)
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = 20 * time.Second
 	cmd.Dir = workDir
+	// The inherited PATH already resolves the host gh shim. .sandman/bin holds
+	// container-only fakes (gh, opencode), so it stays off the host PATH: host
+	// `sandman run` probes `opencode --version` before the batch starts, and
+	// the fake agent would hang that probe.
 	cmd.Env = append(os.Environ(),
-		// Host-side sandman should resolve the dedicated host gh shim first.
-		// The container-only gh shim under .sandman/bin is copied into the image
-		// separately, and prepending it here makes the host process try to use a
-		// script whose shim_dir is /workspace/.sandman/bin (container path), which
-		// fails before the container even starts.
-		"PATH="+os.Getenv("PATH")+string(os.PathListSeparator)+ghBin,
 		"GH_TOKEN=fake",
 		"GITHUB_TOKEN=fake",
 	)
