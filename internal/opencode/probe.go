@@ -14,16 +14,33 @@
 package opencode
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"strings"
+	"syscall"
+	"time"
 )
 
+// VersionProbeTimeout bounds one host `opencode --version` probe. A
+// healthy host answers in well under a second (about 0.7 s cold and
+// 0.3 s warm on a developer laptop), so five seconds leaves room for a
+// cold cache on a slow host while capping how long a hung binary can
+// delay `sandman run`, `sandman review` and `sandman init`, which all
+// probe synchronously before doing any work.
+const VersionProbeTimeout = 5 * time.Second
+
+// versionProbeWaitDelay bounds pipe draining after the probe exits or
+// its process group is killed, so a helper that escaped the group or
+// outlived the probe while holding stdout cannot extend the wait.
+const versionProbeWaitDelay = time.Second
+
 // VersionProbe shells `opencode --version` and returns the leading
-// semver-style string. Production wires exec.Command at package init
-// time; tests inject a stub via the package-level var. Returning
-// (empty, err) is the documented "host has no opencode binary"
-// signal — callers should not warn in that case.
+// semver-style string. Production wires the bounded host probe at
+// package init time; tests inject a stub via the package-level var.
+// Returning (empty, err) is the documented "host has no usable opencode
+// binary" signal — callers should not warn in that case. A probe that
+// does not finish within VersionProbeTimeout returns that signal too.
 //
 // The parse is intentionally tolerant: opencode has shipped versions
 // like `1.17.19`, `1.17.19+abc123`, and bare date stamps across
@@ -31,8 +48,25 @@ import (
 // investigation); we accept anything in the first whitespace-separated
 // token.
 var VersionProbe = func() (string, error) {
-	out, err := exec.Command("opencode", "--version").Output()
+	return probeVersion(VersionProbeTimeout)
+}
+
+// probeVersion runs `opencode --version` in its own process group.
+// When timeout elapses the whole group is killed, so neither the probe
+// nor helpers it spawned keep running, and WaitDelay bounds any pipe a
+// surviving helper still holds.
+func probeVersion(timeout time.Duration) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "opencode", "--version")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = versionProbeWaitDelay
+	out, err := cmd.Output()
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", fmt.Errorf("opencode --version did not finish within %s: %w", timeout, ctxErr)
+		}
 		return "", err
 	}
 	fields := strings.Fields(strings.TrimSpace(string(out)))
