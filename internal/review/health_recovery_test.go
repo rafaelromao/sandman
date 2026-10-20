@@ -201,6 +201,36 @@ func TestDaemonHealthRepairClaudeDeniedRepairIsNotRelaunched(t *testing.T) {
 	}
 }
 
+// A repair whose agent cannot start on the host (here the shell's answer for a
+// missing binary) is unresolved, spends a repair, and leaves the original
+// operation to normal re-observation.
+func TestDaemonHealthRepairClaudeMissingBinaryIsUnresolvedAndRetried(t *testing.T) {
+	script := "#!/bin/sh\necho 'claude: command not found' >&2\nexit 127\n"
+	var reviews atomic.Int32
+	d, logs, _ := newClaudeRepairDaemon(t, script, func(context.Context, batch.Request) (*batch.Result, error) {
+		reviews.Add(1)
+		return nil, errPoisonedImage
+	})
+	now := time.Now()
+	d.Clock = func() time.Time { return now }
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	d.inFlight.Wait()
+	state := readHealthState(t, d)
+	if state.Outcome != "unresolved: prompt-only run failed" || state.Attempts != 1 {
+		t.Fatalf("outcome = %q, attempts = %d; logs=%s", state.Outcome, state.Attempts, logs.String())
+	}
+	now = state.NextAttempt.Add(time.Second)
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	d.inFlight.Wait()
+	if reviews.Load() < 2 {
+		t.Fatalf("original review was not re-observed: reviews=%d; logs=%s", reviews.Load(), logs.String())
+	}
+}
+
 func TestDaemonHealthRepairExcludesNormalWaitsAndCancellation(t *testing.T) {
 	for _, err := range []error{context.Canceled, batch.ErrAborted, errReviewDeferred, reviewlaunch.ErrLaunchOwned,
 		&github.RateLimitError{Err: errors.New("API rate limit exceeded")}, errors.New("Error: The usage limit has been reached")} {

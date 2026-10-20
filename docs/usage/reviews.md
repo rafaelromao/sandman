@@ -164,6 +164,13 @@ The repair agent differs from the reviewer:
     with `allowManagedPermissionRulesOnly` ignore this rule, so there the repair
     can only diagnose and you apply its reported fix. Do not loosen managed
     policy to work around it.
+    - The repair scope replaces a configured `permission_mode`, including a
+      read-only mode such as `plan`: the repair always launches with
+      `dontAsk` and the `.sandman/` edit rule.
+    - A custom `command` is launched as written: Sandman adds no edit scope,
+      permission mode, or bypass. Any permission flags the command carries
+      itself, a bypass included, apply to repairs unchanged, so a custom
+      command must carry its own permission rules.
   - OpenCode: the repair follows your own OpenCode permission configuration. It
     is not narrowed to `.sandman/`, and Sandman cannot detect refused actions.
 
@@ -174,6 +181,13 @@ repair for the same failures with the same agent and model; it logs `health
 repair paused: ...` once and waits for you. A changed failure, a new review
 request, or a different review agent or model admits a repair again. The record
 resets once every failed operation succeeds.
+
+A repair whose agent cannot start on the host, for example because its binary is
+not on the daemon's `PATH` or it is not authenticated there, is recorded as
+`unresolved: prompt-only run failed`. The cause is in the repair Run's log under
+`.sandman/batches/<repair-run-id>/runs/<repair-run-id>/` (the daemon log names
+the repair Run ID), not in the daemon log itself. It counts toward the three
+repairs of the episode.
 
 Whatever the repair did, the daemon retries the original operation through its
 normal path. If review launches fail with `mise: not found`, see
