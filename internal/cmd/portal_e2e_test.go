@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -89,8 +90,6 @@ func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues(t *testing.T) {
 	ghShimDir := shortTempDir(t)
 	writeFakeGHShim(t, ghShimDir)
 	writeBlockingOpencodeShim(t, ghShimDir)
-	writeSandmanDockerfile(t, repoDir)
-	writeBlockingOpencodeShimForContainer(t, repoDir)
 	prependPath(t, ghShimDir)
 
 	portalURL := startPortalBinary(t, binPath, repoDir, ghShimDir)
@@ -107,67 +106,7 @@ func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues(t *testing.T) {
 		return run.Kind == "active" && run.Status == "queued" && run.FinishedAt == nil
 	})
 
-	logPath := filepath.Join(repoDir, ".sandman", "logs", "1.log")
-	for i := 0; i < 50; i++ {
-		if data, err := os.ReadFile(logPath); err == nil && strings.Contains(string(data), "fake opencode issue 1 still running") {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	runs := fetchPortalRuns(t, portalURL)
-	runByIssue := portalRunsByIssue(runs)
-	abortRun, ok := runByIssue[1]
-	if !ok {
-		t.Fatalf("expected issue 1 run in %v", runs)
-	}
-	abortBodyCode, abortBody := writeAbortRequest(t, portalURL, abortRun.Key, 1)
-	for i := 0; i < 20 && abortBodyCode == http.StatusConflict; i++ {
-		time.Sleep(100 * time.Millisecond)
-		abortBodyCode, abortBody = writeAbortRequest(t, portalURL, abortRun.Key, 1)
-	}
-	if abortBodyCode != http.StatusOK {
-		t.Skipf("container abort e2e unsupported here: got %d: %s", abortBodyCode, abortBody)
-	}
-	if len(abortBody) == 0 {
-		t.Fatal("expected non-empty abort response body")
-	}
-	var abortResp map[string]any
-	if err := json.Unmarshal(abortBody, &abortResp); err != nil {
-		t.Fatalf("parse abort response: %v", err)
-	}
-	if abortResp["status"] != "aborted" || abortResp["scope"] != "issue" {
-		t.Fatalf("unexpected abort response: %v", abortResp)
-	}
-
-	waitForPortalRun(t, portalURL, 1, func(run portalRun) bool {
-		return run.Kind == "completed" && run.Status == "aborted"
-	})
-
-	issue2Run := waitForPortalRun(t, portalURL, 2, func(run portalRun) bool {
-		return run.Kind == "active" || (run.Kind == "completed" && run.Status == "success")
-	})
-	if issue2Run.Kind == "completed" && issue2Run.Status != "success" {
-		t.Fatalf("expected issue 2 to stay active or finish successfully, got %#v", issue2Run)
-	}
-
-	eventLog := &events.JSONLLogger{Path: filepath.Join(repoDir, ".sandman", "events.jsonl")}
-	eventsWritten, err := eventLog.Read()
-	if err != nil {
-		t.Fatalf("read events: %v", err)
-	}
-	var aborted []events.Event
-	for _, event := range eventsWritten {
-		if event.Type == "run.aborted" {
-			aborted = append(aborted, event)
-		}
-	}
-	if len(aborted) != 1 {
-		t.Fatalf("expected exactly one run.aborted event, got %v", aborted)
-	}
-	if aborted[0].Issue != 1 {
-		t.Fatalf("expected run.aborted for issue 1, got %#v", aborted[0])
-	}
+	abortIssueOneAndVerifyBatchContinues(t, portalURL, repoDir, 20*time.Second)
 }
 
 func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues_Container(t *testing.T) {
@@ -197,30 +136,45 @@ func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues_Container(t *testing.T) 
 	ghShimDir := shortTempDir(t)
 	writeFakeGHShim(t, ghShimDir)
 	prependPath(t, ghShimDir)
+	if path, err := exec.LookPath("opencode"); err == nil && (strings.HasPrefix(path, repoDir) || strings.HasPrefix(path, ghShimDir)) {
+		t.Fatalf("host PATH resolves a fake opencode at %s", path)
+	}
 
 	portalURL := startPortalBinary(t, binPath, repoDir, ghShimDir)
 	waitForPortalReady(t, portalURL)
 
 	_ = startSandmanRun(t, binPath, repoDir, ghShimDir, "run", "1", "2")
 
-	waitForPortalRunCountAndStatus(t, portalURL, 2, "active")
+	// Runs are admitted before the image is built; issue 1 only becomes
+	// abortable once its sandbox has started.
+	abortIssueOneAndVerifyBatchContinues(t, portalURL, repoDir, 3*time.Minute)
+}
 
-	runs := fetchPortalRuns(t, portalURL)
-	runByIssue := portalRunsByIssue(runs)
-	abortRun, ok := runByIssue[1]
-	if !ok {
-		t.Fatalf("expected issue 1 run in %v", runs)
+// abortIssueOneAndVerifyBatchContinues aborts issue 1 through Portal once its
+// agent runs, then requires that none of its processes survive, that issue 2
+// starts, and that only issue 1 records run.aborted. startup bounds sandbox
+// preparation, such as a container image build.
+func abortIssueOneAndVerifyBatchContinues(t *testing.T, portalURL, repoDir string, startup time.Duration) {
+	t.Helper()
+
+	// A run serves aborts once it is running. Its agent records its process
+	// group before the agent command (which carries the run ID) starts.
+	abortRun := waitForPortalRunWithin(t, portalURL, 1, startup, func(run portalRun) bool {
+		return run.Kind == "active" && run.Status == "running"
+	})
+	waitForRunProcesses(t, abortRun.Key, true)
+
+	code, body := writeAbortRequest(t, portalURL, abortRun.Key, 1)
+	for i := 0; i < 20 && code == http.StatusConflict; i++ {
+		time.Sleep(100 * time.Millisecond)
+		code, body = writeAbortRequest(t, portalURL, abortRun.Key, 1)
 	}
-	abortBodyCode, abortBody := writeAbortRequest(t, portalURL, abortRun.Key, 1)
-	if abortBodyCode != http.StatusOK {
-		t.Skipf("container abort e2e unsupported here: got %d: %s", abortBodyCode, abortBody)
-	}
-	if len(abortBody) == 0 {
-		t.Fatal("expected non-empty abort response body")
+	if code != http.StatusOK {
+		t.Fatalf("abort issue 1: got %d: %s", code, body)
 	}
 	var abortResp map[string]any
-	if err := json.Unmarshal(abortBody, &abortResp); err != nil {
-		t.Fatalf("parse abort response: %v", err)
+	if err := json.Unmarshal(body, &abortResp); err != nil {
+		t.Fatalf("parse abort response %q: %v", body, err)
 	}
 	if abortResp["status"] != "aborted" || abortResp["scope"] != "issue" {
 		t.Fatalf("unexpected abort response: %v", abortResp)
@@ -229,13 +183,11 @@ func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues_Container(t *testing.T) 
 	waitForPortalRun(t, portalURL, 1, func(run portalRun) bool {
 		return run.Kind == "completed" && run.Status == "aborted"
 	})
-
-	issue2Run := waitForPortalRun(t, portalURL, 2, func(run portalRun) bool {
-		return run.Kind == "active" || (run.Kind == "completed" && run.Status == "success")
+	waitForRunProcesses(t, abortRun.Key, false)
+	// Issue 2's fake agent blocks, so it starts and keeps running.
+	waitForPortalRunWithin(t, portalURL, 2, startup, func(run portalRun) bool {
+		return run.Kind == "active" && run.Status == "running"
 	})
-	if issue2Run.Kind == "completed" && issue2Run.Status != "success" {
-		t.Fatalf("expected issue 2 to stay active or finish successfully, got %#v", issue2Run)
-	}
 
 	eventLog := &events.JSONLLogger{Path: filepath.Join(repoDir, ".sandman", "events.jsonl")}
 	eventsWritten, err := eventLog.Read()
@@ -254,6 +206,36 @@ func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues_Container(t *testing.T) 
 	if aborted[0].Issue != 1 {
 		t.Fatalf("expected run.aborted for issue 1, got %#v", aborted[0])
 	}
+}
+
+// waitForRunProcesses waits until host processes whose command line carries
+// runID appear (want) or are all gone. Container agents are host-visible on
+// Linux; elsewhere only the runtime client is.
+func waitForRunProcesses(t *testing.T, runID string, want bool) {
+	t.Helper()
+
+	var found []string
+	deadline := time.Now().Add(time.Minute)
+	for time.Now().Before(deadline) {
+		out, err := exec.Command("ps", "axww").Output()
+		if err != nil {
+			t.Fatalf("list processes: %v", err)
+		}
+		found = found[:0]
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.Contains(line, runID) {
+				found = append(found, strings.TrimSpace(line))
+			}
+		}
+		if (len(found) > 0) == want {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if want {
+		t.Fatalf("no process for run %s started", runID)
+	}
+	t.Fatalf("processes for run %s survived its abort:\n%s", runID, strings.Join(found, "\n"))
 }
 
 func TestPortal_E2E_MixedBatchShowsBatchMembershipAndFiltersSiblingLogs(t *testing.T) {
@@ -527,10 +509,20 @@ func startSandmanRun(t *testing.T, binPath, repoDir, shimDir string, args ...str
 		t.Fatalf("start sandman run: %v", err)
 	}
 	t.Cleanup(func() {
-		if cmd.Process != nil {
+		// SIGTERM lets sandman abort its runs and remove its containers;
+		// SIGKILL only a run that does not stop.
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+		done := make(chan struct{})
+		go func() {
+			_ = cmd.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(30 * time.Second):
 			_ = cmd.Process.Kill()
+			<-done
 		}
-		_ = cmd.Wait()
 		t.Logf("sandman run stdout:\n%s", stdout.String())
 		t.Logf("sandman run stderr:\n%s", stderr.String())
 	})
@@ -564,8 +556,13 @@ func waitForPortalRunCountAndStatus(t *testing.T, baseURL string, want int, want
 
 func waitForPortalRun(t *testing.T, baseURL string, issue int, match func(portalRun) bool) portalRun {
 	t.Helper()
+	return waitForPortalRunWithin(t, baseURL, issue, 20*time.Second, match)
+}
 
-	deadline := time.Now().Add(20 * time.Second)
+func waitForPortalRunWithin(t *testing.T, baseURL string, issue int, timeout time.Duration, match func(portalRun) bool) portalRun {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		for _, run := range fetchPortalRuns(t, baseURL) {
 			if run.IssueNumber == issue && match(run) {
