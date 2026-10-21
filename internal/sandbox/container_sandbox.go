@@ -2,11 +2,13 @@ package sandbox
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -26,6 +28,9 @@ type ContainerSandbox struct {
 	ownsContainer  bool
 	cmd            *exec.Cmd
 	processWrapper *processWrapper
+	// pgidDir is where agent execs record their process groups inside the
+	// container; empty means /tmp. Tests point it at a host directory.
+	pgidDir string
 }
 
 // ExecCommandFn is the function-variable seam for the *exec.Cmd factory used
@@ -44,27 +49,26 @@ type ContainerSandbox struct {
 var ExecCommandFn = exec.Command
 
 // KillAgentFn is the function-variable seam for the container-side kill signal
-// sent when an exec is aborted via context cancellation. The default reads the
-// agent's pidfile (/tmp/agent-pgid) inside the container and sends SIGKILL to
-// that process group via `<binary> exec <id> sh -c 'kill -KILL -<pgid>'`.
-// The binary parameter is the container runtime (docker or podman). Tests may
-// substitute a stub to verify the call is made with the expected container ID.
-// Save and restore around the test:
+// sent when an exec is aborted via context cancellation. The default runs
+// killAgentScript inside the container via `<binary> exec <id> sh -c`, which
+// SIGKILLs the process group the aborted exec recorded in pgidFile. The binary
+// parameter is the container runtime (docker or podman). Tests may substitute
+// a stub to verify the call is made with the expected container ID. Save and
+// restore around the test:
 //
 //	prev := sandbox.KillAgentFn
 //	defer func() { sandbox.KillAgentFn = prev }()
-//	sandbox.KillAgentFn = func(containerID, binary string) error { ... }
-var KillAgentFn = func(containerID, binary string) error {
-	cmd := exec.Command(binary, "exec", containerID, "sh", "-c", killAgentScript())
+//	sandbox.KillAgentFn = func(containerID, binary, pgidFile string) error { ... }
+var KillAgentFn = func(containerID, binary, pgidFile string) error {
+	cmd := exec.Command(binary, "exec", containerID, "sh", "-c", killAgentScript(pgidFile))
 	return cmd.Run()
 }
 
-// agentPGIDFile is where the agent exec records its process group inside the
-// container. Tests point it at a host file to run the real scripts.
-var agentPGIDFile = "/tmp/agent-pgid"
-
-func killAgentScript() string {
-	return "pgid=$(cat " + shellenv.Quote(agentPGIDFile) + " 2>/dev/null); [ -n \"$pgid\" ] && kill -KILL -\"$pgid\""
+// killAgentScript SIGKILLs the process group recorded in pgidFile and removes
+// the file. It fails when no group was recorded or the group is gone.
+func killAgentScript(pgidFile string) string {
+	file := shellenv.Quote(pgidFile)
+	return "pgid=$(cat " + file + " 2>/dev/null); rm -f " + file + "; [ -n \"$pgid\" ] && kill -KILL -\"$pgid\""
 }
 
 // NewContainerSandbox creates a ContainerSandbox that owns the given container.
@@ -181,15 +185,25 @@ func RestoreWorktreeGitPaths(repoPath, worktreePath string) error {
 	return atomicfs.WriteAtomic(gitFile, []byte(updated), 0644)
 }
 
+// newAgentPGIDFile names the process-group file for one agent exec. Several
+// runs share a container, so each exec records its own group; an abort must
+// never signal a sibling run.
+func (s *ContainerSandbox) newAgentPGIDFile() string {
+	dir := s.pgidDir
+	if dir == "" {
+		dir = "/tmp"
+	}
+	return path.Join(dir, "sandman-agent-pgid-"+rand.Text())
+}
+
 // agentExecArgs builds the runtime arguments that run command as the agent.
 // `exec -t` starts the script as a session leader, so its $$ is the process
 // group every agent process inherits. The runtime must run it directly:
 // nested in another `sh -c`, dash and busybox fork it, and the child's $$
 // names no group, so an abort would leave the agent running.
-func (s *ContainerSandbox) agentExecArgs(guardDir, command string) []string {
-	script := "echo $$ > " + shellenv.Quote(agentPGIDFile) +
-		`; export SANDMAN_GIT_GUARD_DIR="$1"; export PATH="$SANDMAN_GIT_GUARD_DIR:$PATH"; exec sh -c "$2"`
-	return []string{"exec", "-it", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", script, "_", guardDir, command}
+func (s *ContainerSandbox) agentExecArgs(pgidFile, guardDir, command string) []string {
+	script := "echo $$ > " + shellenv.Quote(pgidFile) + "; " + guardedAgentShellCommand(guardDir)
+	return []string{"exec", "-it", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", script, "_", command}
 }
 
 // Exec runs a command inside the container, writing stdout and stderr to the given writers.
@@ -204,7 +218,8 @@ func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, std
 	if err != nil {
 		return fmt.Errorf("prepare agent Git guard: %w", err)
 	}
-	cmd := ExecCommandFn(s.binary, s.agentExecArgs(guardDir, command)...)
+	pgidFile := s.newAgentPGIDFile()
+	cmd := ExecCommandFn(s.binary, s.agentExecArgs(pgidFile, guardDir, command)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -219,7 +234,7 @@ func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, std
 	// Exec goroutine is still running onAbort.
 	killAgent := KillAgentFn
 	onAbort := func() error {
-		return killAgent(s.container.ID(), s.binary)
+		return killAgent(s.container.ID(), s.binary, pgidFile)
 	}
 
 	if contextErr, cleanupErr := waitCmd(ctx, cmd, s.processWrapper, onAbort); contextErr != nil {
@@ -240,7 +255,8 @@ func (s *ContainerSandbox) ExecInteractive(ctx context.Context, command string) 
 	if err != nil {
 		return fmt.Errorf("prepare agent Git guard: %w", err)
 	}
-	cmd := ExecCommandFn(s.binary, s.agentExecArgs(guardDir, command)...)
+	pgidFile := s.newAgentPGIDFile()
+	cmd := ExecCommandFn(s.binary, s.agentExecArgs(pgidFile, guardDir, command)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -256,7 +272,7 @@ func (s *ContainerSandbox) ExecInteractive(ctx context.Context, command string) 
 	// Exec goroutine is still running onAbort.
 	killAgent := KillAgentFn
 	onAbort := func() error {
-		return killAgent(s.container.ID(), s.binary)
+		return killAgent(s.container.ID(), s.binary, pgidFile)
 	}
 
 	if contextErr, cleanupErr := waitCmd(ctx, cmd, s.processWrapper, onAbort); contextErr != nil {
