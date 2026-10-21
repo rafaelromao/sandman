@@ -177,6 +177,11 @@ func TestDaemonMigratesLegacyPendingStateBeforeRehydration(t *testing.T) {
 	dir := testenv.MkdirShort(t, "sm-review-")
 	seedPriorReviewEntry(t, dir, batchID, prNumber, commentID, "pending")
 	comment := github.PRComment{ID: commentID, Body: "/sandman review", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	// The old state key can migrate only while independent snapshot provenance
+	// already binds the actual revision that produced this decision.
+	if err := writeReviewSnapshot(runDirForTest(t, dir, batchID, prNumber), reviewSnapshot{Version: 1, PR: prNumber, Request: reviewTriggerKey(comment), Head: "head"}); err != nil {
+		t.Fatal(err)
+	}
 	gh := &fakeGH{prs: []github.PR{{Number: prNumber, State: "open"}}, comments: map[int][]github.PRComment{prNumber: {comment}}}
 	runner := &capturedRequest{}
 	d := New(dir, gh, &prompt.Engine{}, runner, &config.Config{WorktreeDir: ".sandman/worktrees"}, &lockedBuffer{}, 0, false, nil)
@@ -269,10 +274,16 @@ func (f *fakeGH) FetchPR(ctx context.Context, number int) (*github.PR, error) {
 	}
 	body := "B"
 	if pr, ok := f.prFetch[number]; ok {
-		body = pr.Body
-		return &github.PR{Number: pr.Number, Title: pr.Title, Body: body}, nil
+		copy := *pr
+		if copy.HeadRefOid == "" {
+			copy.HeadRefOid = "head"
+		}
+		if copy.BaseRefName == "" {
+			copy.BaseRefName = "main"
+		}
+		return &copy, nil
 	}
-	return &github.PR{Number: number, Title: "T", Body: body}, nil
+	return &github.PR{Number: number, Title: "T", Body: body, HeadRefOid: "head", BaseRefName: "main"}, nil
 }
 
 func (f *fakeGH) FetchIssue(ctx context.Context, number int) (*github.Issue, error) {
@@ -2331,7 +2342,7 @@ func TestDaemon_LaunchReviewCreatesControlSocketAndManifest(t *testing.T) {
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
 		comments: map[int][]github.PRComment{
-			1: {{ID: "vc1", Body: "## Summary\nLGTM", CreatedAt: now.Add(1 * time.Minute)}},
+			1: {{ID: "c1", Body: "/sandman review", CreatedAt: now}, {ID: "vc1", Body: "## Summary\nLGTM", CreatedAt: now.Add(1 * time.Minute)}},
 		},
 		prFetch: map[int]*github.PR{1: {Number: 1, Title: "T", Body: "B"}},
 	}
@@ -2412,6 +2423,7 @@ func TestDaemon_LaunchReview_ConcurrentBatchesShareOrchestrator(t *testing.T) {
 			1: {Number: 1, Title: "First", Body: "first body"},
 			2: {Number: 2, Title: "Second", Body: "second body"},
 		},
+		comments: map[int][]github.PRComment{1: {{ID: "comment-1", Body: "/sandman review"}}, 2: {{ID: "comment-2", Body: "/sandman review"}}},
 	}
 	cfg := &config.Config{
 		DefaultReviewAgent: "opencode",
@@ -2424,10 +2436,17 @@ func TestDaemon_LaunchReview_ConcurrentBatchesShareOrchestrator(t *testing.T) {
 	}
 	runnables := &concurrentReviewRunnableFactory{started: make(chan struct{}, 2), release: make(chan struct{})}
 	orchestrator := batch.NewOrchestrator(nil, &prompt.Engine{}, reviewConfigStore{cfg: cfg}, nil,
-		batch.WithSandboxFactory(concurrentReviewSandboxFactory{}),
 		batch.WithRunnableFactory(runnables),
 	)
-	d, _, _ := newDaemonForTest(t, gh, orchestrator, cfg)
+	d, _, dir := newDaemonForTest(t, gh, orchestrator, cfg)
+	initReviewTestGitRepo(t, dir)
+	remote := t.TempDir()
+	runSnapshotGit(t, remote, "init", "--bare")
+	runSnapshotGit(t, dir, "remote", "add", "origin", remote)
+	runSnapshotGit(t, dir, "push", "origin", "main", "HEAD:refs/pull/1/head", "HEAD:refs/pull/2/head")
+	head := strings.TrimSpace(runSnapshotGit(t, dir, "rev-parse", "HEAD"))
+	gh.prFetch[1].HeadRefOid = head
+	gh.prFetch[2].HeadRefOid = head
 
 	type reviewRun struct {
 		pr            int
@@ -2560,7 +2579,7 @@ func TestDaemon_LaunchReviewReplacesStaleSocket(t *testing.T) {
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
 		comments: map[int][]github.PRComment{
-			1: {{ID: "vc2", Body: "## Summary\nLGTM", CreatedAt: now.Add(1 * time.Minute)}},
+			1: {{ID: "c1", Body: "/sandman review", CreatedAt: now}, {ID: "vc2", Body: "## Summary\nLGTM", CreatedAt: now.Add(1 * time.Minute)}},
 		},
 		prFetch: map[int]*github.PR{1: {Number: 1, Title: "T", Body: "B"}},
 	}
@@ -2636,7 +2655,7 @@ func TestDaemon_LaunchReviewRoutesOutputToPerPRSock(t *testing.T) {
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
 		comments: map[int][]github.PRComment{
-			1: {{ID: "vc3", Body: "## Summary\nLGTM", CreatedAt: now.Add(1 * time.Minute)}},
+			1: {{ID: "c1", Body: "/sandman review", CreatedAt: now}, {ID: "vc3", Body: "## Summary\nLGTM", CreatedAt: now.Add(1 * time.Minute)}},
 		},
 		prFetch: map[int]*github.PR{1: {Number: 1, Title: "T", Body: "B"}},
 	}

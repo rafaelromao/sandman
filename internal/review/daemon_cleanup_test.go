@@ -303,7 +303,8 @@ func TestPrepareReviewRun_BatchDirName_MatchesPerRowRunIDForLinkedIssue(t *testi
 func TestLaunchReview_CleansUpWorktreeAndBranchOnSuccess(t *testing.T) {
 	now := time.Now().UTC()
 	gh := &fakeGH{
-		prs: []github.PR{{Number: 42, State: "open"}},
+		comments: map[int][]github.PRComment{42: {{ID: "c1", Body: "/sandman review"}}},
+		prs:      []github.PR{{Number: 42, State: "open"}},
 		prFetch: map[int]*github.PR{
 			42: {Number: 42, Title: "T", Body: "B"},
 		},
@@ -378,7 +379,8 @@ func TestLaunchReview_CleansUpWorktreeAndBranchOnSuccess(t *testing.T) {
 func TestPrepareReviewRun_LinkedIssueRegistersPerRowRunID(t *testing.T) {
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
-		prs: []github.PR{{Number: 42, State: "open"}},
+		comments: map[int][]github.PRComment{42: {{ID: "c1", Body: "/sandman review"}}},
+		prs:      []github.PR{{Number: 42, State: "open"}},
 		prFetch: map[int]*github.PR{
 			42: {Number: 42, Title: "T", Body: "Fixes #99"},
 		},

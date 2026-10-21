@@ -1082,6 +1082,9 @@ func (d *Daemon) loadPendingPosts() error {
 			continue
 		}
 		runDir := filepath.Join(entry.Path, "runs", rowID)
+		if snapshot, err := readReviewSnapshot(runDir); err == nil && snapshot.Invalidated {
+			continue
+		}
 		reviewState := filepath.Join(runDir, "review-state.json")
 		state, stateErr := seenStateReader(runDir)
 		marker, markerErr := readPendingPublicationMarker(runDir)
@@ -2349,6 +2352,9 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	if pr == nil {
 		return d.recordLaunchFailure(ctx, triggerKey, state, errors.New("fetch PR: empty response"))
 	}
+	if strings.TrimSpace(pr.HeadRefOid) == "" {
+		return d.recordLaunchFailure(ctx, triggerKey, state, errors.New("fetch PR: missing review head"))
+	}
 	if pr != nil {
 		if strings.TrimSpace(pr.HeadRefOid) == "" {
 			launchClaim, lookupClaim = lookupClaim, nil
@@ -2471,6 +2477,10 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	}
 	d.logf("repo=%s agent=%s model=%s pr=%d", repoName, agentName, modelName, prNumber)
 
+	if err := writeReviewSnapshot(reviewRunFolder, reviewSnapshot{Version: 1, PR: prNumber, Request: triggerKey, Head: pr.HeadRefOid}); err != nil {
+		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("persist review snapshot: %w", err))
+	}
+	rendered = fmt.Sprintf("## Review snapshot\n\nCheckout commit: `%s`\nComparison base: `origin/%s`\n\n", pr.HeadRefOid, pr.BaseRefName) + rendered
 	req := batch.Request{
 		Agent:                agentName,
 		BaseBranch:           pr.BaseRefName,
@@ -2640,6 +2650,13 @@ func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, comm
 		*preserveWorktree = true
 	}
 
+	if _, err := d.currentReviewSnapshot(ctx, prNumber, commentID, reviewRunFolder); err != nil {
+		if errors.Is(err, errStaleReviewSnapshot) {
+			return d.recordLaunchFailure(ctx, commentID, state, err)
+		}
+		d.recordPendingPublication(prNumber, commentID, decisionDir, reviewRunFolder, "", state, preserveWorktree)
+		return err
+	}
 	redacted := publicationBody(RedactBody(string(body)), commentID)
 	if err := d.persistPublicationOutbox(reviewRunFolder, pendingPublicationMarker{
 		Version:   2,
@@ -2672,8 +2689,14 @@ func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, comm
 		d.recordPendingPublication(prNumber, commentID, decisionDir, reviewRunFolder, redacted, state, preserveWorktree)
 		return cerr
 	}
-	postErr := postWithRetry(ctx, d, prNumber, redacted)
+	postErr := postWithRetry(ctx, d, prNumber, redacted, func() error {
+		_, err := d.currentReviewSnapshot(ctx, prNumber, commentID, reviewRunFolder)
+		return err
+	})
 	if postErr != nil {
+		if errors.Is(postErr, errStaleReviewSnapshot) {
+			return d.recordLaunchFailure(ctx, commentID, state, postErr)
+		}
 		if cerr := ctx.Err(); cerr != nil {
 			d.logf("PR #%d: ctx cancelled during post; retaining durable decision for publication recovery", prNumber)
 			d.recordPendingPublication(prNumber, commentID, decisionDir, reviewRunFolder, redacted, state, preserveWorktree)
@@ -2718,11 +2741,14 @@ func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, comm
 // postStepBackoffs[attempt-1]. Returns the last error from
 // PostComment on exhaustion, or ctx.Err() if the context is
 // cancelled at any point. Issue #1891.
-func postWithRetry(ctx context.Context, d *Daemon, prNumber int, body string) error {
+func postWithRetry(ctx context.Context, d *Daemon, prNumber int, body string, validate func() error) error {
 	var lastErr error
 	for attempt := 1; attempt <= PostStepMaxAttempts; attempt++ {
 		if cerr := ctx.Err(); cerr != nil {
 			return cerr
+		}
+		if err := validate(); err != nil {
+			return err
 		}
 		// The first post belongs to this decision and must not be
 		// suppressed by an identical body from an older request. After
@@ -2938,6 +2964,16 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 	}
 	d.pendingPostMu.Unlock()
 
+	if _, err := d.currentReviewSnapshot(ctx, prNumber, triggerKey, filepath.Dir(entry.reviewState)); err != nil {
+		if errors.Is(err, errStaleReviewSnapshot) {
+			d.pendingPostMu.Lock()
+			delete(d.pendingPost[prNumber], triggerKey)
+			d.pendingPostMu.Unlock()
+			return false
+		}
+		d.observeHealthFailure(ctx, requestHealthKey(prNumber, triggerKey), "validate pending review snapshot", prNumber, err)
+		return true
+	}
 	body := []byte(entry.body)
 	if entry.body == "" {
 		decisionPath := filepath.Join(entry.runDir, "decision.md")

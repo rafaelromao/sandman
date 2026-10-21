@@ -3,8 +3,10 @@ package review
 import (
 	"context"
 	"errors"
+	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
@@ -12,6 +14,17 @@ import (
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
+
+func runSnapshotGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, out)
+	}
+	return string(out)
+}
 
 func TestReviewSnapshotReachesRunnerSeparatelyFromComparisonBase(t *testing.T) {
 	root := testenv.MkdirShort(t, "sm-snap-")
@@ -37,5 +50,25 @@ func TestReviewSnapshotReachesRunnerSeparatelyFromComparisonBase(t *testing.T) {
 	_ = d.launchReview(context.Background(), 36, "", "request", "", "", folder, id, session, state, false)
 	if !called {
 		t.Fatal("runner did not receive review")
+	}
+}
+
+func TestReviewSnapshotHeadChangeDoesNotPublishOrConsumeRequest(t *testing.T) {
+	root := testenv.MkdirShort(t, "sm-pub-")
+	t.Chdir(root)
+	initReviewTestGitRepo(t, root)
+	gh := &fakeGH{prs: []github.PR{{Number: 36, State: "open"}}, prFetch: map[int]*github.PR{36: {Number: 36, HeadRefOid: "old-head"}}, comments: map[int][]github.PRComment{36: {{ID: "request", Body: "/sandman review", CreatedAt: time.Now()}}}}
+	runner := batchFunc(func(_ context.Context, req batch.Request) (*batch.Result, error) {
+		gh.mu.Lock()
+		gh.prFetch[36].HeadRefOid = "new-head"
+		gh.mu.Unlock()
+		return &batch.Result{}, writeDecisionToWorktree(req, "APPROVED")
+	})
+	d := New(filepath.Join(root, ".sandman"), launchBudgetGitHub{gh}, &prompt.Engine{}, runner, &config.Config{DefaultReviewAgent: "custom", DefaultReviewModel: "model", WorktreeDir: filepath.Join(root, ".sandman", "worktrees")}, &lockedBuffer{}, 1, true, nil)
+	posts := 0
+	d.CommentPoster = ownershipCommentPoster(func(context.Context, int, string) error { posts++; return nil })
+	tickAndWait(t, d, context.Background())
+	if posts != 0 || d.IsTerminalSeen(36, "request") {
+		t.Fatalf("stale review published/consumed: posts=%d terminal=%v", posts, d.IsTerminalSeen(36, "request"))
 	}
 }
