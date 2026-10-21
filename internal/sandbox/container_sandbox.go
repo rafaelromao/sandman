@@ -55,9 +55,16 @@ var ExecCommandFn = exec.Command
 //	defer func() { sandbox.KillAgentFn = prev }()
 //	sandbox.KillAgentFn = func(containerID, binary string) error { ... }
 var KillAgentFn = func(containerID, binary string) error {
-	cmd := exec.Command(binary, "exec", containerID, "sh", "-c",
-		"pgid=$(cat /tmp/agent-pgid 2>/dev/null); [ -n \"$pgid\" ] && kill -KILL -\"$pgid\"")
+	cmd := exec.Command(binary, "exec", containerID, "sh", "-c", killAgentScript())
 	return cmd.Run()
+}
+
+// agentPGIDFile is where the agent exec records its process group inside the
+// container. Tests point it at a host file to run the real scripts.
+var agentPGIDFile = "/tmp/agent-pgid"
+
+func killAgentScript() string {
+	return "pgid=$(cat " + shellenv.Quote(agentPGIDFile) + " 2>/dev/null); [ -n \"$pgid\" ] && kill -KILL -\"$pgid\""
 }
 
 // NewContainerSandbox creates a ContainerSandbox that owns the given container.
@@ -174,8 +181,16 @@ func RestoreWorktreeGitPaths(repoPath, worktreePath string) error {
 	return atomicfs.WriteAtomic(gitFile, []byte(updated), 0644)
 }
 
-const execWrapperScript = `sh -c 'echo $$ > /tmp/agent-pgid; export SANDMAN_GIT_GUARD_DIR="$1"; export PATH="$SANDMAN_GIT_GUARD_DIR:$PATH"; exec sh -c "$2"' _ %s %s
-`
+// agentExecArgs builds the runtime arguments that run command as the agent.
+// `exec -t` starts the script as a session leader, so its $$ is the process
+// group every agent process inherits. The runtime must run it directly:
+// nested in another `sh -c`, dash and busybox fork it, and the child's $$
+// names no group, so an abort would leave the agent running.
+func (s *ContainerSandbox) agentExecArgs(guardDir, command string) []string {
+	script := "echo $$ > " + shellenv.Quote(agentPGIDFile) +
+		`; export SANDMAN_GIT_GUARD_DIR="$1"; export PATH="$SANDMAN_GIT_GUARD_DIR:$PATH"; exec sh -c "$2"`
+	return []string{"exec", "-it", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", script, "_", guardDir, command}
+}
 
 // Exec runs a command inside the container, writing stdout and stderr to the given writers.
 func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, stderr io.Writer) error {
@@ -189,8 +204,7 @@ func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, std
 	if err != nil {
 		return fmt.Errorf("prepare agent Git guard: %w", err)
 	}
-	wrapperCmd := fmt.Sprintf(execWrapperScript, shellenv.Quote(guardDir), shellenv.Quote(command))
-	cmd := ExecCommandFn(s.binary, "exec", "-it", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", wrapperCmd)
+	cmd := ExecCommandFn(s.binary, s.agentExecArgs(guardDir, command)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -226,8 +240,7 @@ func (s *ContainerSandbox) ExecInteractive(ctx context.Context, command string) 
 	if err != nil {
 		return fmt.Errorf("prepare agent Git guard: %w", err)
 	}
-	wrapperCmd := fmt.Sprintf(execWrapperScript, shellenv.Quote(guardDir), shellenv.Quote(command))
-	cmd := ExecCommandFn(s.binary, "exec", "-it", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", wrapperCmd)
+	cmd := ExecCommandFn(s.binary, s.agentExecArgs(guardDir, command)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
