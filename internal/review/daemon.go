@@ -2473,6 +2473,8 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 
 	req := batch.Request{
 		Agent:                agentName,
+		BaseBranch:           pr.BaseRefName,
+		ReviewHeadSHA:        pr.HeadRefOid,
 		Model:                modelName,
 		Variant:              d.effectiveVariant(),
 		VariantSet:           d.VariantSet,

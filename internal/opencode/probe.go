@@ -67,10 +67,7 @@ func probeVersion(timeout time.Duration) (string, error) {
 		}
 		return "", err
 	}
-	fields := strings.Fields(strings.TrimSpace(string(out)))
-	if len(fields) > 0 && fields[0] == "opencode" {
-		fields = fields[1:]
-	}
+	fields := strings.Fields(versionPrefix.ReplaceAllString(strings.TrimSpace(string(out)), ""))
 	if len(fields) == 0 {
 		return "", fmt.Errorf("opencode --version returned no version")
 	}
@@ -82,3 +79,4 @@ func probeVersion(timeout time.Duration) (string, error) {
 }
 
 var versionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$`)
+var versionPrefix = regexp.MustCompile(`^opencode\s+`)

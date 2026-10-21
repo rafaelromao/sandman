@@ -115,6 +115,8 @@ type Request struct {
 	// `run.started` and `run.finished` events so the event log and portal
 	// can distinguish review runs from implementation runs.
 	Review bool
+	// ReviewHeadSHA pins a delegated review's checkout independently of BaseBranch.
+	ReviewHeadSHA string
 	// PRNumber is the GitHub PR number being reviewed. Only meaningful
 	// when Review is true. Implementation runs leave it zero.
 	PRNumber int

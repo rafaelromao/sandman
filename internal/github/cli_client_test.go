@@ -1477,7 +1477,7 @@ func TestCLIClient_FetchPR_Success(t *testing.T) {
 	if runner.calls[1].name != "gh" {
 		t.Errorf("expected command gh, got %q", runner.calls[1].name)
 	}
-	expectedArgs := []string{"pr", "view", "42", "--json", "number,title,body,state,mergedAt,headRefName,headRefOid,closingIssuesReferences"}
+	expectedArgs := []string{"pr", "view", "42", "--json", "number,title,body,state,mergedAt,headRefName,headRefOid,baseRefName,closingIssuesReferences"}
 	if !reflect.DeepEqual(runner.calls[1].args, expectedArgs) {
 		t.Errorf("unexpected fetch args: %v", runner.calls[1].args)
 	}

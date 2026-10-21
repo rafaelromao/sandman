@@ -55,9 +55,10 @@ type RowSpec struct {
 	// resolved RunDir). Empty means the canonical directory for BatchID.
 	BatchDir string
 	// Review / prompt-only fields.
-	Review      bool
-	PRNumber    int
-	ReviewFocus string
+	Review        bool
+	ReviewHeadSHA string
+	PRNumber      int
+	ReviewFocus   string
 	// PortalHidden preserves internal prompt-only visibility metadata through
 	// the per-run execution seam.
 	PortalHidden bool
@@ -284,6 +285,7 @@ func newRunSession(e *runExecutor, row RowSpec) *runSession {
 		runID:                      row.RunID,
 		userProvidedRunID:          row.UserProvidedRunID,
 		review:                     row.Review,
+		reviewHeadSHA:              row.ReviewHeadSHA,
 		prNumber:                   row.PRNumber,
 		reviewFocus:                row.ReviewFocus,
 		portalHidden:               row.PortalHidden,
