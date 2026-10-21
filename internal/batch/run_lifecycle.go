@@ -276,7 +276,7 @@ func (s *runSession) startExtras(ctx context.Context, branch string, sandboxStar
 
 func (s *runSession) initialRunManifest(branch string, wt sandbox.Sandbox) (string, batchindex.RunManifest) {
 	runID := s.runID
-	batchDir := s.deps.layout.BatchDir(s.batchID)
+	batchDir := s.batchLocation(s.batchID).Dir
 	manifestBatchID := s.batchID
 	kind := batchindex.KindIssue
 	if s.isIssueDriven() {
@@ -297,7 +297,7 @@ func (s *runSession) initialRunManifest(branch string, wt sandbox.Sandbox) (stri
 		if s.batchID == "" {
 			s.batchID = batchIDFromRunID(runID)
 		}
-		batchDir = s.deps.layout.BatchDir(s.batchID)
+		batchDir = s.batchLocation(s.batchID).Dir
 		manifestBatchID = s.batchID
 		kind = batchindex.KindPromptOnly
 		if s.review {

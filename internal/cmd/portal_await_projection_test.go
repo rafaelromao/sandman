@@ -174,7 +174,7 @@ func TestPortal_StartupPreservesAwaitingRunWithUnexpiredLease(t *testing.T) {
 		t.Fatalf("write run manifest: %v", err)
 	}
 	addBatchToIndex(t, repoRoot, batchID, batchDir, []int{42})
-	if err := daemon.RenewRunWait(batchDir, daemon.RunWait{
+	if err := daemon.RenewRunWait(paths.NewLayout(nil, repoRoot), paths.BatchLocation{ID: batchID, Dir: batchDir}, daemon.RunWait{
 		Protocol: "run-wait/v1", RunID: runID, BatchID: batchID, Issue: 42,
 		Branch: "42-fix", BaseBranch: "main", OperationID: "ci:17:head",
 		OperationDeadline: now.Add(30 * time.Minute),

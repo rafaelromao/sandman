@@ -51,6 +51,9 @@ type RowSpec struct {
 	// Pre-derived at the call site (issue-driven: from buildRunID;
 	// prompt-only: from batchIDForPromptOnly).
 	BatchID string
+	// BatchDir is BatchID's frozen directory when known (issue-driven: the
+	// resolved RunDir). Empty means the canonical directory for BatchID.
+	BatchDir string
 	// Review / prompt-only fields.
 	Review      bool
 	PRNumber    int
@@ -275,6 +278,7 @@ func newRunSession(e *runExecutor, row RowSpec) *runSession {
 		runTS:                      row.RunTS,
 		runShortID:                 row.RunShortID,
 		batchID:                    row.BatchID,
+		batchDir:                   row.BatchDir,
 		batchTS:                    row.BatchTS,
 		batchShortID:               row.BatchShortID,
 		runID:                      row.RunID,
