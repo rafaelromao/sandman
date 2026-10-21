@@ -4,6 +4,8 @@ package cmd
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -97,16 +99,13 @@ func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues(t *testing.T) {
 
 	_ = startSandmanRun(t, binPath, repoDir, ghShimDir, "run", "1", "2")
 
-	waitForPortalRun(t, portalURL, 1, func(run portalRun) bool {
-		return run.Kind == "active" && run.Status == "running"
-	})
 	// Initial admission is unfinished and remains cancellation-aware until
 	// the later run.started event admits execution.
 	waitForPortalRun(t, portalURL, 2, func(run portalRun) bool {
 		return run.Kind == "active" && run.Status == "queued" && run.FinishedAt == nil
 	})
 
-	abortIssueOneAndVerifyBatchContinues(t, portalURL, repoDir, 20*time.Second)
+	abortIssueOneAndVerifyBatchContinues(t, portalURL, repoDir, portalRunWait)
 }
 
 func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues_Container(t *testing.T) {
@@ -143,6 +142,8 @@ func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues_Container(t *testing.T) 
 	portalURL := startPortalBinary(t, binPath, repoDir, ghShimDir)
 	waitForPortalReady(t, portalURL)
 
+	// Registered first, so it runs after sandman has stopped.
+	removeSandboxImageOnCleanup(t, "podman", repoDir)
 	_ = startSandmanRun(t, binPath, repoDir, ghShimDir, "run", "1", "2")
 
 	// Runs are admitted before the image is built; issue 1 only becomes
@@ -157,12 +158,12 @@ func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues_Container(t *testing.T) 
 func abortIssueOneAndVerifyBatchContinues(t *testing.T, portalURL, repoDir string, startup time.Duration) {
 	t.Helper()
 
-	// A run serves aborts once it is running. Its agent records its process
-	// group before the agent command (which carries the run ID) starts.
+	// A run serves aborts once it is running. The fake agent itself signals
+	// that it started, which is after its sandbox recorded its process group.
 	abortRun := waitForPortalRunWithin(t, portalURL, 1, startup, func(run portalRun) bool {
 		return run.Kind == "active" && run.Status == "running"
 	})
-	waitForRunProcesses(t, abortRun.Key, true)
+	waitForFakeAgentStarted(t, repoDir, startup)
 
 	code, body := writeAbortRequest(t, portalURL, abortRun.Key, 1)
 	for i := 0; i < 20 && code == http.StatusConflict; i++ {
@@ -183,7 +184,7 @@ func abortIssueOneAndVerifyBatchContinues(t *testing.T, portalURL, repoDir strin
 	waitForPortalRun(t, portalURL, 1, func(run portalRun) bool {
 		return run.Kind == "completed" && run.Status == "aborted"
 	})
-	waitForRunProcesses(t, abortRun.Key, false)
+	waitForRunProcessesGone(t, abortRun.RunID)
 	// Issue 2's fake agent blocks, so it starts and keeps running.
 	waitForPortalRunWithin(t, portalURL, 2, startup, func(run portalRun) bool {
 		return run.Kind == "active" && run.Status == "running"
@@ -208,12 +209,43 @@ func abortIssueOneAndVerifyBatchContinues(t *testing.T, portalURL, repoDir strin
 	}
 }
 
-// waitForRunProcesses waits until host processes whose command line carries
-// runID appear (want) or are all gone. Container agents are host-visible on
-// Linux; elsewhere only the runtime client is.
-func waitForRunProcesses(t *testing.T, runID string, want bool) {
+// fakeAgentStartedMarker is written by the blocking fake agent for issue 1
+// into its worktree once it runs.
+const fakeAgentStartedMarker = ".sandman-fake-agent-1-started"
+
+func waitForFakeAgentStarted(t *testing.T, repoDir string, timeout time.Duration) {
 	t.Helper()
 
+	worktrees := filepath.Join(repoDir, ".sandman", "worktrees")
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		found := false
+		_ = filepath.WalkDir(worktrees, func(path string, entry os.DirEntry, err error) error {
+			if err != nil || entry.IsDir() && entry.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			if entry.Name() == fakeAgentStartedMarker {
+				found = true
+				return filepath.SkipAll
+			}
+			return nil
+		})
+		if found {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatalf("fake agent for issue 1 did not start within %s", timeout)
+}
+
+// waitForRunProcessesGone waits until no host process carries runID's agent
+// session title. On Linux the container's processes are host-visible, so this
+// proves the in-container agent stopped; with a VM-backed runtime, such as
+// podman machine, it only covers the runtime client.
+func waitForRunProcessesGone(t *testing.T, runID string) {
+	t.Helper()
+
+	title := "Sandman " + runID + ": "
 	var found []string
 	deadline := time.Now().Add(time.Minute)
 	for time.Now().Before(deadline) {
@@ -223,19 +255,38 @@ func waitForRunProcesses(t *testing.T, runID string, want bool) {
 		}
 		found = found[:0]
 		for _, line := range strings.Split(string(out), "\n") {
-			if strings.Contains(line, runID) {
+			if strings.Contains(line, title) {
 				found = append(found, strings.TrimSpace(line))
 			}
 		}
-		if (len(found) > 0) == want {
+		if len(found) == 0 {
 			return
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	if want {
-		t.Fatalf("no process for run %s started", runID)
-	}
 	t.Fatalf("processes for run %s survived its abort:\n%s", runID, strings.Join(found, "\n"))
+}
+
+// removeSandboxImageOnCleanup removes the image `sandman run` builds for
+// repoDir. ContainerRuntime.BuildImage tags it by the absolute repo path and
+// the Dockerfile contents.
+func removeSandboxImageOnCleanup(t *testing.T, runtime, repoDir string) {
+	t.Helper()
+
+	t.Cleanup(func() {
+		dockerfile, err := os.ReadFile(filepath.Join(repoDir, ".sandman", "Dockerfile"))
+		if err != nil {
+			return
+		}
+		paths := []string{repoDir}
+		if resolved, err := filepath.EvalSymlinks(repoDir); err == nil && resolved != repoDir {
+			paths = append(paths, resolved)
+		}
+		for _, path := range paths {
+			sum := sha256.Sum256(append([]byte(path), dockerfile...))
+			_ = exec.Command(runtime, "rmi", "-f", fmt.Sprintf("sandman-custom-%x:latest", sum[:8])).Run()
+		}
+	})
 }
 
 func TestPortal_E2E_MixedBatchShowsBatchMembershipAndFiltersSiblingLogs(t *testing.T) {
@@ -387,13 +438,10 @@ func writeContainerAbortE2EConfig(t *testing.T, repoDir string) {
 	}
 }
 
-func writeBlockingOpencodeShim(t *testing.T, dir string) {
-	t.Helper()
-
-	script := `#!/bin/sh
+// blockingOpencodeShim is a fake agent that blocks until killed. For issue 1
+// it first marks its worktree, so tests know the agent runs.
+const blockingOpencodeShim = `#!/bin/sh
 set -eu
-
-repo_root=$(dirname "$(dirname "$(dirname "$(dirname "$PWD")")")")
 
 fast_test_wait() {
     _duration="$1"
@@ -412,6 +460,9 @@ fast_test_wait() {
 
 case "$*" in
   *"Implement GitHub issue #1"*)
+    case "$PWD" in
+      */.sandman/worktrees/*) : > "$PWD/` + fakeAgentStartedMarker + `" ;;
+    esac
     child=0
     trap 'if [ "$child" -ne 0 ]; then kill "$child" >/dev/null 2>&1 || true; fi; exit 130' INT
     fast_test_wait 600 &
@@ -426,7 +477,11 @@ case "$*" in
     ;;
 esac
 `
-	if err := os.WriteFile(filepath.Join(dir, "opencode"), []byte(script), 0755); err != nil {
+
+func writeBlockingOpencodeShim(t *testing.T, dir string) {
+	t.Helper()
+
+	if err := os.WriteFile(filepath.Join(dir, "opencode"), []byte(blockingOpencodeShim), 0755); err != nil {
 		t.Fatalf("write blocking opencode shim: %v", err)
 	}
 }
@@ -438,45 +493,7 @@ func writeBlockingOpencodeShimForContainer(t *testing.T, repoDir string) {
 	if err := os.MkdirAll(binDir, 0755); err != nil {
 		t.Fatalf("create container opencode dir: %v", err)
 	}
-
-	script := `#!/bin/sh
-set -eu
-
-repo_root=$(dirname "$(dirname "$(dirname "$(dirname "$PWD")")")")
-
-fast_test_wait() {
-    _duration="$1"
-    _wakeup_dir="${WAKEUP_DIR:-}"
-    if [ "${SANDMAN_TEST_FAST:-}" = "1" ] && [ -n "$_wakeup_dir" ] && [ -d "$_wakeup_dir" ]; then
-        _deadline=$(($(date +%s) + _duration))
-        while [ $(date +%s) -lt $_deadline ]; do
-            if [ -f "$_wakeup_dir/wakeup" ]; then
-                return 0
-            fi
-            sleep 0.1
-        done
-    fi
-    sleep "$_duration"
-}
-
-case "$*" in
-  *"Implement GitHub issue #1"*)
-    child=0
-    trap 'if [ "$child" -ne 0 ]; then kill "$child" >/dev/null 2>&1 || true; fi; exit 130' INT
-    fast_test_wait 600 &
-    child=$!
-    wait "$child"
-    ;;
-  *"Implement GitHub issue #2"*)
-    fast_test_wait 600
-    ;;
-  *)
-    fast_test_wait 600
-    ;;
-esac
-`
-
-	if err := os.WriteFile(filepath.Join(binDir, "opencode"), []byte(script), 0755); err != nil {
+	if err := os.WriteFile(filepath.Join(binDir, "opencode"), []byte(blockingOpencodeShim), 0755); err != nil {
 		t.Fatalf("write container blocking opencode shim: %v", err)
 	}
 
@@ -494,7 +511,12 @@ esac
 func startSandmanRun(t *testing.T, binPath, repoDir, shimDir string, args ...string) *exec.Cmd {
 	t.Helper()
 
-	cmd := exec.Command(binPath, args...)
+	// SIGTERM lets sandman abort its runs and remove its containers; Wait
+	// SIGKILLs a run that has not stopped after WaitDelay.
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(ctx, binPath, args...)
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = 30 * time.Second
 	cmd.Dir = repoDir
 	cmd.Env = append(os.Environ(),
 		"PATH="+shimDir+string(os.PathListSeparator)+os.Getenv("PATH"),
@@ -506,57 +528,25 @@ func startSandmanRun(t *testing.T, binPath, repoDir, shimDir string, args ...str
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
+		cancel()
 		t.Fatalf("start sandman run: %v", err)
 	}
 	t.Cleanup(func() {
-		// SIGTERM lets sandman abort its runs and remove its containers;
-		// SIGKILL only a run that does not stop.
-		_ = cmd.Process.Signal(syscall.SIGTERM)
-		done := make(chan struct{})
-		go func() {
-			_ = cmd.Wait()
-			close(done)
-		}()
-		select {
-		case <-done:
-		case <-time.After(30 * time.Second):
-			_ = cmd.Process.Kill()
-			<-done
-		}
+		cancel()
+		_ = cmd.Wait()
 		t.Logf("sandman run stdout:\n%s", stdout.String())
 		t.Logf("sandman run stderr:\n%s", stderr.String())
 	})
 	return cmd
 }
 
-func waitForPortalRunCountAndStatus(t *testing.T, baseURL string, want int, wantKind string) []portalRun {
-	t.Helper()
-
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
-		runs := fetchPortalRuns(t, baseURL)
-		if len(runs) >= want {
-			allMatch := true
-			for _, run := range runs {
-				if run.Kind != wantKind {
-					allMatch = false
-					break
-				}
-			}
-			if allMatch {
-				return runs
-			}
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	runs := fetchPortalRuns(t, baseURL)
-	t.Fatalf("expected %d runs with kind %q, got %#v", want, wantKind, runs)
-	return nil
-}
+// portalRunWait bounds waits for a Portal run state that needs no sandbox
+// preparation.
+const portalRunWait = 20 * time.Second
 
 func waitForPortalRun(t *testing.T, baseURL string, issue int, match func(portalRun) bool) portalRun {
 	t.Helper()
-	return waitForPortalRunWithin(t, baseURL, issue, 20*time.Second, match)
+	return waitForPortalRunWithin(t, baseURL, issue, portalRunWait, match)
 }
 
 func waitForPortalRunWithin(t *testing.T, baseURL string, issue int, timeout time.Duration, match func(portalRun) bool) portalRun {
