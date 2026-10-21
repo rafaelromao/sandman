@@ -213,34 +213,33 @@ func TestWarnOpencodeVersionMismatch_SilentWhenAgentNotOpencode(t *testing.T) {
 	}
 }
 
+// TestWarnOpencodeVersionMismatch_SilentWhenProbeFails pins that any
+// probe failure, including the bounded probe's timeout, takes the silent
+// no-probe path. The opencode package covers the real host execution
+// behind the seam.
 func TestWarnOpencodeVersionMismatch_SilentWhenProbeFails(t *testing.T) {
-	dir := t.TempDir()
-	withProbe(t, "", errProbe)
-	withDockerfilePin(t, dir, "1.15.0")
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "probe error", err: errProbe},
+		{name: "probe timeout", err: fmt.Errorf("opencode --version did not finish within 5s (context: %w)", context.DeadlineExceeded)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			calls := withProbe(t, "", tc.err)
+			withDockerfilePin(t, dir, "1.15.0")
 
-	cmd, buf, _ := newWarningTestCmd(t)
-	warnOpencodeVersionMismatch(cmd, "opencode", "podman", dir, defaultCfgSandbox(""))
-	if got := buf.String(); got != "" {
-		t.Errorf("probe failure must be silent; got:\n%s", got)
-	}
-}
+			cmd, errBuf, outBuf := newWarningTestCmd(t)
+			warnOpencodeVersionMismatch(cmd, "opencode", "podman", dir, defaultCfgSandbox(""))
 
-// TestWarnOpencodeVersionMismatch_SilentWhenProbeTimesOut pins that the
-// bounded probe's timeout takes the silent no-probe path. The opencode
-// package covers the real host execution behind the seam.
-func TestWarnOpencodeVersionMismatch_SilentWhenProbeTimesOut(t *testing.T) {
-	dir := t.TempDir()
-	calls := withProbe(t, "", fmt.Errorf("opencode --version did not finish within 5s (context: %w)", context.DeadlineExceeded))
-	withDockerfilePin(t, dir, "1.15.0")
-
-	cmd, errBuf, outBuf := newWarningTestCmd(t)
-	warnOpencodeVersionMismatch(cmd, "opencode", "podman", dir, defaultCfgSandbox(""))
-
-	if *calls != 1 {
-		t.Fatalf("probe calls = %d, want 1", *calls)
-	}
-	if errBuf.Len() != 0 || outBuf.Len() != 0 {
-		t.Errorf("probe timeout must be silent; stderr:\n%s\nstdout:\n%s", errBuf.String(), outBuf.String())
+			if *calls != 1 {
+				t.Fatalf("probe calls = %d, want 1", *calls)
+			}
+			if errBuf.Len() != 0 || outBuf.Len() != 0 {
+				t.Errorf("probe failure must be silent; stderr:\n%s\nstdout:\n%s", errBuf.String(), outBuf.String())
+			}
+		})
 	}
 }
 

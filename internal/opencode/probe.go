@@ -40,8 +40,9 @@ const versionProbeWaitDelay = time.Second
 
 // operatorSignals are the signals that stop sandman from a terminal or
 // a supervisor. The probe watches them because its own process group
-// does not receive a terminal Ctrl-C.
-var operatorSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
+// receives neither a terminal Ctrl-C nor the hangup when the terminal
+// closes.
+var operatorSignals = []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}
 
 // VersionProbe shells `opencode --version` and returns the leading
 // semver-style string. Production wires the bounded host probe at
@@ -50,6 +51,10 @@ var operatorSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
 // binary" signal — callers should not warn in that case. A probe that
 // does not finish within five seconds, or that the operator interrupts,
 // returns that signal too.
+//
+// An operator signal that arrives during the probe is re-delivered once
+// the probe's process group is gone. A caller that registered its own
+// handler before probing therefore receives that signal twice.
 //
 // The parse is intentionally tolerant: opencode has shipped versions
 // like `1.17.19`, `1.17.19+abc123`, and bare date stamps across
@@ -60,13 +65,14 @@ var VersionProbe = func() (string, error) {
 	return probeVersionWithin(versionProbeTimeout)
 }
 
-// probeVersionWithin runs `opencode --version` in its own process group
-// and kills the whole group when timeout elapses, when the operator
-// interrupts or terminates sandman, or when the probe does not finish
-// cleanly, so no probe process outlives the call. WaitDelay bounds any
-// pipe a helper outside the group still holds. An operator signal is
-// handed back once the group is gone, so the caller's own disposition
-// still applies: without a handler, sandman exits as if no probe ran.
+// probeVersionWithin runs `opencode --version` in its own process group.
+// It kills the whole group when timeout elapses, when an operator signal
+// arrives, or when the probe does not finish cleanly, so in those cases
+// no process in the group outlives the call; a clean exit leaves the
+// group alone. WaitDelay bounds any pipe a helper outside the group
+// still holds. An operator signal is handed back once the group is gone,
+// so the caller's own disposition still applies: without a handler,
+// sandman exits as if no probe ran.
 func probeVersionWithin(timeout time.Duration) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()

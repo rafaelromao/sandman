@@ -82,27 +82,34 @@ func installFakeOpencode(t *testing.T, script string) {
 }
 
 // installFakeOpencodeWithHelper installs a fake opencode that first
-// starts a helper inheriting its stdout and publishes the helper's PID,
-// then runs rest. It returns the PID file path.
+// starts a helper inheriting its stdout and atomically publishes the
+// helper's PID, then runs rest. It returns the PID file path.
 func installFakeOpencodeWithHelper(t *testing.T, rest string) string {
 	t.Helper()
 	pidFile := filepath.Join(t.TempDir(), "helper.pid")
-	installFakeOpencode(t, fmt.Sprintf("/bin/sleep 600 &\necho $! > '%s'\n%s", pidFile, rest))
+	installFakeOpencode(t, fmt.Sprintf("/bin/sleep 600 &\necho $! > '%[1]s.tmp' && mv '%[1]s.tmp' '%[1]s'\n%[2]s", pidFile, rest))
 	return pidFile
 }
 
-// publishedHelper waits for the PID a fake opencode published and kills
-// that helper when t ends, so a failing test never leaks it.
-func publishedHelper(t *testing.T, pidFile string) int {
+// awaitHelperPID waits for the PID a fake opencode published and kills
+// that helper when t ends if it is still running, so a failing test
+// never leaks it.
+func awaitHelperPID(t *testing.T, pidFile string) int {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		data, err := os.ReadFile(pidFile)
 		if err == nil {
-			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
-				t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
-				return pid
+			pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+			if err != nil {
+				t.Fatalf("parse helper PID %q: %v", data, err)
 			}
+			t.Cleanup(func() {
+				if processExists(pid) {
+					_ = syscall.Kill(pid, syscall.SIGKILL)
+				}
+			})
+			return pid
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("fake opencode did not publish its helper PID")
@@ -149,21 +156,24 @@ func TestVersionProbe_ParsesHostBinaryOutput(t *testing.T) {
 	}
 }
 
-// TestVersionProbe_KillsHangingHostBinaryAndItsHelpers pins the bound on
-// a host opencode that never answers: the probe returns the timeout as an
-// error, and its whole process group is killed, including a helper that
-// inherited the output pipe.
-func TestVersionProbe_KillsHangingHostBinaryAndItsHelpers(t *testing.T) {
+// TestVersionProbe_KillsHangingHostBinaryWithinItsBound pins the
+// production bound on a host opencode that never answers: VersionProbe
+// waits the full five seconds, returns the timeout as an error, and
+// kills its whole process group, including a helper that inherited the
+// output pipe.
+func TestVersionProbe_KillsHangingHostBinaryWithinItsBound(t *testing.T) {
 	pidFile := installFakeOpencodeWithHelper(t, "wait\n")
 
-	const timeout = time.Second
 	start := time.Now()
-	got, err := probeVersionWithin(timeout)
+	got, err := VersionProbe()
 	elapsed := time.Since(start)
-	helper := publishedHelper(t, pidFile)
+	helper := awaitHelperPID(t, pidFile)
 
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected a deadline error from a hanging probe, got version %q, err %v", got, err)
+	}
+	if !strings.Contains(err.Error(), "within 5s") {
+		t.Errorf("timeout error does not name the five-second bound: %v", err)
 	}
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {
@@ -172,7 +182,10 @@ func TestVersionProbe_KillsHangingHostBinaryAndItsHelpers(t *testing.T) {
 	if got != "" {
 		t.Errorf("expected empty version on timeout, got %q", got)
 	}
-	if limit := timeout + versionProbeWaitDelay + 3*time.Second; elapsed > limit {
+	if elapsed < versionProbeTimeout {
+		t.Errorf("hanging probe gave up after %s, before its %s bound", elapsed, versionProbeTimeout)
+	}
+	if limit := versionProbeTimeout + versionProbeWaitDelay + 3*time.Second; elapsed > limit {
 		t.Fatalf("hanging probe returned after %s, want under %s", elapsed, limit)
 	}
 	requireProcessGone(t, helper)
@@ -188,7 +201,7 @@ func TestVersionProbe_AcceptsVersionWhenHelperHoldsOutput(t *testing.T) {
 	start := time.Now()
 	got, err := probeVersionWithin(time.Minute)
 	elapsed := time.Since(start)
-	helper := publishedHelper(t, pidFile)
+	helper := awaitHelperPID(t, pidFile)
 
 	if err != nil {
 		t.Fatalf("unexpected error when only a helper held output: %v", err)
@@ -202,75 +215,112 @@ func TestVersionProbe_AcceptsVersionWhenHelperHoldsOutput(t *testing.T) {
 	requireProcessGone(t, helper)
 }
 
-// probeChildEnv switches TestVersionProbe_InterruptedProbeLeavesNoHelper
-// into its child role. The value says whether the child installs its own
-// interrupt handler first.
+// probeChildEnv switches TestVersionProbe_SignalledProbeLeavesNoHelper
+// into its child role. Its value says whether the child installs its own
+// interrupt handler before probing.
 const probeChildEnv = "SANDMAN_OPENCODE_PROBE_CHILD"
 
-// TestVersionProbe_InterruptedProbeLeavesNoHelper interrupts a child
-// process during a hanging probe, as an operator Ctrl-C would. Without a
-// handler of its own (`sandman review`, `sandman init`) the child must
-// still die by SIGINT; with one (`sandman run`) the handler must still
-// receive it. Either way the probe's process group must be gone.
-func TestVersionProbe_InterruptedProbeLeavesNoHelper(t *testing.T) {
-	if mode := os.Getenv(probeChildEnv); mode != "" {
-		var handler chan os.Signal
-		if mode == "handled" {
-			handler = make(chan os.Signal, 1)
-			signal.Notify(handler, os.Interrupt)
-		}
-		_, err := probeVersionWithin(time.Minute)
-		fmt.Printf("probe: %v\n", err)
-		if handler != nil {
-			select {
-			case <-handler:
-				fmt.Println("handler received interrupt")
-			case <-time.After(5 * time.Second):
-			}
-		}
+// TestVersionProbe_SignalledProbeLeavesNoHelper signals a child process
+// during a hanging probe, as an operator would. Without a handler of its
+// own (`sandman review`, `sandman init`) the child must still die by the
+// signal; with one (`sandman run`) the handler must receive the original
+// signal and its re-delivery. Either way the probe's process group must
+// be gone.
+func TestVersionProbe_SignalledProbeLeavesNoHelper(t *testing.T) {
+	if value := os.Getenv(probeChildEnv); value != "" {
+		runSignalledProbeChild(value)
 		return
 	}
 
-	for _, mode := range []string{"unhandled", "handled"} {
-		t.Run(mode, func(t *testing.T) {
+	diesBy := func(sig syscall.Signal) func(*testing.T, *os.ProcessState, string) {
+		return func(t *testing.T, state *os.ProcessState, out string) {
+			status, _ := state.Sys().(syscall.WaitStatus)
+			if !status.Signaled() || status.Signal() != sig {
+				t.Fatalf("child without a handler must die by %v, got %v; output:\n%s", sig, state, out)
+			}
+		}
+	}
+	cases := []struct {
+		name    string
+		sig     syscall.Signal
+		handler bool
+		verify  func(*testing.T, *os.ProcessState, string)
+	}{
+		{name: "interrupt without handler", sig: syscall.SIGINT, verify: diesBy(syscall.SIGINT)},
+		{name: "terminate without handler", sig: syscall.SIGTERM, verify: diesBy(syscall.SIGTERM)},
+		{name: "hangup without handler", sig: syscall.SIGHUP, verify: diesBy(syscall.SIGHUP)},
+		{name: "interrupt with handler", sig: syscall.SIGINT, handler: true, verify: func(t *testing.T, state *os.ProcessState, out string) {
+			if !state.Success() {
+				t.Fatalf("child with a handler must exit normally, got %v; output:\n%s", state, out)
+			}
+			for _, want := range []string{"interrupted by interrupt", "handler received 2 interrupts"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("child output is missing %q:\n%s", want, out)
+				}
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if signal.Ignored(tc.sig) {
+				t.Skipf("%v is ignored here, and the child would inherit that", tc.sig)
+			}
 			pidFile := installFakeOpencodeWithHelper(t, "wait\n")
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			var out bytes.Buffer
-			child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestVersionProbe_InterruptedProbeLeavesNoHelper$")
-			child.Env = append(os.Environ(), probeChildEnv+"="+mode)
+			child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestVersionProbe_SignalledProbeLeavesNoHelper$")
+			child.Env = append(os.Environ(), probeChildEnv+"="+strconv.FormatBool(tc.handler))
 			child.Stdout, child.Stderr = &out, &out
 			if err := child.Start(); err != nil {
 				t.Fatalf("start child: %v", err)
 			}
-			helper := publishedHelper(t, pidFile)
+			helper := awaitHelperPID(t, pidFile)
 
-			interrupted := time.Now()
-			if err := child.Process.Signal(os.Interrupt); err != nil {
-				t.Fatalf("interrupt child: %v", err)
+			signalled := time.Now()
+			if err := child.Process.Signal(tc.sig); err != nil {
+				t.Fatalf("signal child: %v", err)
 			}
-			waitErr := child.Wait()
-			if elapsed := time.Since(interrupted); elapsed > 10*time.Second {
-				t.Fatalf("child took %s to finish after the interrupt", elapsed)
+			_ = child.Wait()
+			if elapsed := time.Since(signalled); elapsed > 10*time.Second {
+				t.Fatalf("child took %s to finish after the signal", elapsed)
 			}
-
-			status, _ := child.ProcessState.Sys().(syscall.WaitStatus)
-			switch mode {
-			case "unhandled":
-				if !status.Signaled() || status.Signal() != syscall.SIGINT {
-					t.Fatalf("child without a handler must die by SIGINT, got %v; output:\n%s", waitErr, out.String())
-				}
-			case "handled":
-				if waitErr != nil {
-					t.Fatalf("child with a handler must exit normally, got %v; output:\n%s", waitErr, out.String())
-				}
-				for _, want := range []string{"interrupted by interrupt", "handler received interrupt"} {
-					if !strings.Contains(out.String(), want) {
-						t.Errorf("child output is missing %q:\n%s", want, out.String())
-					}
-				}
-			}
+			tc.verify(t, child.ProcessState, out.String())
 			requireProcessGone(t, helper)
 		})
 	}
+}
+
+// runSignalledProbeChild is the child role: it probes against the hanging
+// fake on PATH and, when asked to install a handler, reports how many
+// interrupts that handler received.
+func runSignalledProbeChild(value string) {
+	withHandler, _ := strconv.ParseBool(value)
+	var handler chan os.Signal
+	if withHandler {
+		handler = make(chan os.Signal, 4)
+		signal.Notify(handler, os.Interrupt)
+	}
+	_, err := probeVersionWithin(time.Minute)
+	fmt.Printf("probe: %v\n", err)
+	if handler == nil {
+		return
+	}
+	received := 0
+	timeout := time.After(5 * time.Second)
+	for received < 2 {
+		select {
+		case <-handler:
+			received++
+		case <-timeout:
+			fmt.Printf("handler received %d interrupts\n", received)
+			return
+		}
+	}
+	select {
+	case <-handler:
+		received++
+	case <-time.After(200 * time.Millisecond):
+	}
+	fmt.Printf("handler received %d interrupts\n", received)
 }
