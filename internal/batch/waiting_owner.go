@@ -7,13 +7,15 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 // waitOwner keeps schedule evidence fresh while the logical row is suspended.
 // The enclosing row holds its exclusive RunID claim until terminal persistence.
 type waitOwner struct {
 	mu       sync.Mutex
-	batchDir string
+	layout   paths.Layout
+	batch    paths.BatchLocation
 	record   daemon.RunWait
 	now      func() time.Time
 	log      events.EventLog
@@ -22,19 +24,21 @@ type waitOwner struct {
 	stopOnce sync.Once
 }
 
-func newWaitOwner(batchDir string, record daemon.RunWait, now func() time.Time, log events.EventLog, pulse ...<-chan time.Time) (*waitOwner, error) {
+func newWaitOwner(layout paths.Layout, batch paths.BatchLocation, record daemon.RunWait, now func() time.Time, log events.EventLog, pulse ...<-chan time.Time) (*waitOwner, error) {
 	var ticks <-chan time.Time
 	if len(pulse) > 0 {
 		ticks = pulse[0]
 	}
-	return newWaitOwnerWithFailure(batchDir, record, now, log, ticks, nil)
+	return newWaitOwnerWithFailure(layout, batch, record, now, log, ticks, nil)
 }
 
-func newWaitOwnerWithFailure(batchDir string, record daemon.RunWait, now func() time.Time, log events.EventLog, pulse <-chan time.Time, onFailure func(error)) (*waitOwner, error) {
-	if err := daemon.RenewRunWait(batchDir, record, now()); err != nil {
+// The owner renews record at batch's frozen location; record must carry the
+// Batch's public identity, never its physical directory name.
+func newWaitOwnerWithFailure(layout paths.Layout, batch paths.BatchLocation, record daemon.RunWait, now func() time.Time, log events.EventLog, pulse <-chan time.Time, onFailure func(error)) (*waitOwner, error) {
+	if err := daemon.RenewRunWait(layout, batch, record, now()); err != nil {
 		return nil, err
 	}
-	owner := &waitOwner{batchDir: batchDir, record: record, now: now, log: log, done: make(chan struct{}), stopped: make(chan struct{})}
+	owner := &waitOwner{layout: layout, batch: batch, record: record, now: now, log: log, done: make(chan struct{}), stopped: make(chan struct{})}
 	go func() {
 		defer close(owner.stopped)
 		var ticks <-chan time.Time
@@ -51,7 +55,7 @@ func newWaitOwnerWithFailure(batchDir string, record daemon.RunWait, now func() 
 				return
 			case <-ticks:
 				owner.mu.Lock()
-				err := daemon.RenewRunWait(owner.batchDir, owner.record, owner.now())
+				err := daemon.RenewRunWait(owner.layout, owner.batch, owner.record, owner.now())
 				owner.mu.Unlock()
 				if err != nil {
 					if onFailure != nil {
@@ -113,7 +117,7 @@ func (o *waitOwner) checkpoint(row RowSpec, ready bool, nextPoll time.Duration) 
 	if row.UsageLimitProbe {
 		record.OperationID, record.OperationDeadline = "quota:"+row.RunID, time.Time{}
 	}
-	if err := daemon.RenewRunWait(o.batchDir, record, o.now()); err != nil {
+	if err := daemon.RenewRunWait(o.layout, o.batch, record, o.now()); err != nil {
 		return err
 	}
 	o.record = record

@@ -75,7 +75,7 @@ func FindReadyContinuations(eventLog []events.Event, layout paths.Layout) []Read
 			continue
 		}
 		_ = claim.Close()
-		wait, waitErr := daemon.ReadRunWaitAt(batchLocation.Dir, batchLocation.ID, state.RunID)
+		wait, waitErr := daemon.ReadRunWaitAt(layout, batchLocation, state.RunID)
 		if waitErr == nil {
 			var valid bool
 			wait, _, valid = reconcileRecoveryWait(wait, state)
