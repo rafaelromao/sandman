@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -35,18 +36,15 @@ const VersionProbeTimeout = 5 * time.Second
 // outlived the probe while holding stdout cannot extend the wait.
 const versionProbeWaitDelay = time.Second
 
-// VersionProbe shells `opencode --version` and returns the leading
-// semver-style string. Production wires the bounded host probe at
+// VersionProbe shells `opencode --version` and returns a validated,
+// normalized version. Production wires the bounded host probe at
 // package init time; tests inject a stub via the package-level var.
 // Returning (empty, err) is the documented "host has no usable opencode
 // binary" signal — callers should not warn in that case. A probe that
 // does not finish within VersionProbeTimeout returns that signal too.
 //
-// The parse is intentionally tolerant: opencode has shipped versions
-// like `1.17.19`, `1.17.19+abc123`, and bare date stamps across
-// releases (we observed both formats in the wild during the issue
-// investigation); we accept anything in the first whitespace-separated
-// token.
+// Both bare V1 output and the named `opencode v2.1.2` format are
+// recognized. The executable name must never become an npm version.
 var VersionProbe = func() (string, error) {
 	return probeVersion(VersionProbeTimeout)
 }
@@ -70,8 +68,17 @@ func probeVersion(timeout time.Duration) (string, error) {
 		return "", err
 	}
 	fields := strings.Fields(strings.TrimSpace(string(out)))
-	if len(fields) == 0 {
-		return "", fmt.Errorf("opencode --version returned no output")
+	if len(fields) > 0 && fields[0] == "opencode" {
+		fields = fields[1:]
 	}
-	return fields[0], nil
+	if len(fields) == 0 {
+		return "", fmt.Errorf("opencode --version returned no version")
+	}
+	version := strings.TrimPrefix(fields[0], "v")
+	if !versionPattern.MatchString(version) {
+		return "", fmt.Errorf("opencode --version returned an invalid version")
+	}
+	return version, nil
 }
+
+var versionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$`)
