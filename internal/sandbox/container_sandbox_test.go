@@ -733,11 +733,11 @@ func TestContainerSandbox_Exec_AbortKillsOnlyItsAgentProcessGroup(t *testing.T) 
 		if resolved, err := filepath.EvalSymlinks(path); err == nil {
 			path = resolved
 		}
-		if key := strings.Join(append([]string{path}, shell[1:]...), " "); seen[key] {
+		key := strings.Join(append([]string{path}, shell[1:]...), " ")
+		if seen[key] {
 			continue
-		} else {
-			seen[key] = true
 		}
+		seen[key] = true
 		t.Run(filepath.Base(path), func(t *testing.T) { testAbortKillsOnlyItsAgentProcessGroup(t, shell) })
 	}
 	if len(seen) == 0 {
@@ -756,7 +756,12 @@ func testAbortKillsOnlyItsAgentProcessGroup(t *testing.T, shell []string) {
 		return exec.Command("sh", "-c", killAgentScript(pgidFile)).Run()
 	}
 	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
-		script := arg[slices.Index(arg, "sh")+1:]
+		i := slices.Index(arg, "sh")
+		if i < 0 {
+			t.Errorf("container-side shell missing from exec arguments %q", arg)
+			return exec.Command("false")
+		}
+		script := arg[i+1:]
 		leader := exec.Command(shell[0], append(slices.Clone(shell[1:]), script...)...)
 		leader.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 		if err := leader.Start(); err != nil {
@@ -769,8 +774,12 @@ func testAbortKillsOnlyItsAgentProcessGroup(t *testing.T, shell []string) {
 			close(exited)
 		}()
 		t.Cleanup(func() {
-			_ = syscall.Kill(-leader.Process.Pid, syscall.SIGKILL)
-			<-exited
+			select {
+			case <-exited:
+			default:
+				_ = syscall.Kill(-leader.Process.Pid, syscall.SIGKILL)
+				<-exited
+			}
 		})
 		return exec.Command("sh", "-c", `while kill -0 "$1" 2>/dev/null; do sleep 0.05; done`, "client", strconv.Itoa(leader.Process.Pid))
 	}
@@ -814,6 +823,12 @@ func testAbortKillsOnlyItsAgentProcessGroup(t *testing.T, shell []string) {
 		if e.childPID, err = strconv.Atoi(strings.TrimSpace(string(data))); err != nil {
 			t.Fatalf("parse agent child PID %q: %v", data, err)
 		}
+		// Kill only this fixture's agent if it survived a failed abort.
+		t.Cleanup(func() {
+			if testenv.ProcessAlive(e.childPID) {
+				_ = syscall.Kill(e.childPID, syscall.SIGKILL)
+			}
+		})
 		return e
 	}
 	abort := func(e *agentExec) {

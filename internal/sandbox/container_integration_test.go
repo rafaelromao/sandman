@@ -255,8 +255,10 @@ func TestSharedContainerSandbox_Exec_AbortKillsOnlyItsAgent_Integration(t *testi
 	abort(b)
 }
 
-// waitForContainerProcess waits until a process whose command line contains
-// args is running inside the container (want) or none is.
+// waitForContainerProcess waits until a process whose command line is args
+// runs inside the container (want) or none does. The exec script carries the
+// agent command as an argument, so only an exact command line identifies the
+// agent itself.
 func waitForContainerProcess(t *testing.T, id, args string, want bool) {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
@@ -265,7 +267,13 @@ func waitForContainerProcess(t *testing.T, id, args string, want bool) {
 		if err != nil {
 			t.Fatalf("list container processes: %v\n%s", err, out)
 		}
-		if strings.Contains(string(out), args) == want {
+		found := false
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.HasSuffix(strings.TrimSpace(line), " "+args) {
+				found = true
+			}
+		}
+		if found == want {
 			return
 		}
 		if time.Now().After(deadline) {

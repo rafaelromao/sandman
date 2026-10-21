@@ -30,6 +30,9 @@
 // MkdirShort is the filesystem helper. Use it in any test that binds a
 // Unix domain socket, in place of t.TempDir(); see its doc comment for
 // the macOS sun_path rationale.
+//
+// ProcessAlive is the process helper for tests that must prove a spawned
+// process stopped; it treats a zombie awaiting its reaper as gone.
 package testenv
 
 import (
