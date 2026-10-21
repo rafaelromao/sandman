@@ -46,7 +46,7 @@ func (r *snapshotRunnable) Run(_ context.Context, _ prompt.IssueRenderer, _ stri
 }
 
 func TestReviewSnapshotChecksOutForkHeadWithSeparateBase(t *testing.T) {
-	for _, scenario := range []string{"fresh", "missing-ref", "wrong-head", "reused-wrong-head", "retry"} {
+	for _, scenario := range []string{"fresh", "missing-ref", "wrong-head", "reused-wrong-head", "reused-dirty-head", "retry"} {
 		t.Run(scenario, func(t *testing.T) { testReviewSnapshotCheckout(t, scenario) })
 	}
 }
@@ -80,6 +80,18 @@ func testReviewSnapshotCheckout(t *testing.T, scenario string) {
 	if scenario == "reused-wrong-head" {
 		stale := sandbox.NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "review-36-test", "main")
 		if err := stale.Start(sandbox.SandboxStart{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if scenario == "reused-dirty-head" {
+		if err := sandbox.FetchReviewHead(context.Background(), dir, 36, head); err != nil {
+			t.Fatal(err)
+		}
+		stale := sandbox.NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "review-36-test", head)
+		if err := stale.Start(sandbox.SandboxStart{}); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(stale.WorkDir(), "feature.txt"), []byte("unreviewed changes\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -65,9 +65,9 @@ func TestDaemon_LaunchReviewReturnsFastAndRecordsPending(t *testing.T) {
 	}
 
 	// Initial publication scans triggers and revalidates the request before
-	// preparing the outbox and immediately before the remote publication.
-	if got := gh.commentCalls[7]; got != 3 {
-		t.Errorf("ListPRComments should scan and revalidate the request twice, got %d calls", got)
+	// preparing the outbox and around the remote publication.
+	if got := gh.commentCalls[7]; got != 4 {
+		t.Errorf("ListPRComments should scan and revalidate publication provenance, got %d calls", got)
 	}
 
 	// Issue #1846 (S3) and #1849 (S6): launchReview owns MarkSeen

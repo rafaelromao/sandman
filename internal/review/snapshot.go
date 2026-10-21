@@ -89,3 +89,14 @@ func (d *Daemon) currentReviewSnapshot(ctx context.Context, pr int, request, dir
 	}
 	return snapshot, invalidateReviewSnapshot(dir, snapshot)
 }
+
+func (d *Daemon) handlePendingSnapshotFailure(ctx context.Context, pr int, request string, err error) bool {
+	if errors.Is(err, errStaleReviewSnapshot) {
+		d.pendingPostMu.Lock()
+		delete(d.pendingPost[pr], request)
+		d.pendingPostMu.Unlock()
+		return false
+	}
+	d.observeHealthFailure(ctx, requestHealthKey(pr, request), "validate pending review snapshot", pr, err)
+	return true
+}

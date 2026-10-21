@@ -54,5 +54,8 @@ func VerifyReviewHead(ctx context.Context, sb Sandbox, head string) error {
 	if !strings.EqualFold(strings.TrimSpace(out.String()), head) {
 		return fmt.Errorf("review checkout does not match expected PR head %s", head)
 	}
+	if err := sb.Exec(ctx, "git diff --quiet HEAD --", nil, &stderr); err != nil {
+		return fmt.Errorf("review checkout has tracked changes or cannot be verified: %w: %s", err, stderr.String())
+	}
 	return nil
 }
