@@ -179,18 +179,25 @@ func BatchDir(baseDir, dirID string) string {
 // index or an ambiguous alias is returned to the caller rather than silently
 // selecting a canonical path that may belong to a different physical batch.
 func ResolveBatchDir(layout paths.Layout, batchID string) (string, error) {
+	location, err := ResolveBatchLocation(layout, batchID)
+	return location.Dir, err
+}
+
+// ResolveBatchLocation pairs event batch identity with its frozen directory.
+// An empty identity keeps the legacy location directly beneath BatchesDir.
+func ResolveBatchLocation(layout paths.Layout, batchID string) (paths.BatchLocation, error) {
 	idx, err := batchindex.Load(layout.BatchesIndexPath)
 	if err != nil {
-		return "", err
+		return paths.BatchLocation{}, err
 	}
 	if batchID == "" {
-		return layout.BatchDir(batchID), nil
+		return paths.BatchLocation{Dir: layout.BatchDir(batchID)}, nil
 	}
 	location, ok := idx.LocateBatchIdentity(layout, batchID)
 	if !ok {
-		return "", fmt.Errorf("batch identity %q is ambiguous", batchID)
+		return paths.BatchLocation{}, fmt.Errorf("batch identity %q is ambiguous", batchID)
 	}
-	return location.Dir, nil
+	return location, nil
 }
 
 // ManifestPath returns the on-disk path of the batch manifest file
@@ -655,7 +662,7 @@ func recoverOrphanActiveRuns(layout paths.Layout, idx *batchindex.Index, locatio
 func layoutForBaseDir(baseDir string) paths.Layout {
 	return paths.Layout{RepoRoot: filepath.Dir(baseDir), SandmanDir: baseDir,
 		BatchesDir: filepath.Join(baseDir, "batches"), ArchiveDir: filepath.Join(baseDir, "archive"),
-		BatchesIndexPath: filepath.Join(baseDir, "batches.json")}
+		StateDir: filepath.Join(baseDir, "state"), BatchesIndexPath: filepath.Join(baseDir, "batches.json")}
 }
 
 func batchIdentityMatches(idx *batchindex.Index, layout paths.Layout, id, dir string) bool {
@@ -691,7 +698,7 @@ func emitRecoveredAbort(baseDir, batchDir string, run events.RunState, issueNumb
 			return false, nil
 		}
 	}
-	if protected, _ := waitRecoveryScheduleAt(batchDir, run, recoveredAt); protected {
+	if protected, _ := waitRecoveryScheduleAt(layoutForBaseDir(baseDir), paths.BatchLocation{ID: run.BatchID(), Dir: batchDir}, run, recoveredAt); protected {
 		return false, nil
 	}
 	var issueRef *int

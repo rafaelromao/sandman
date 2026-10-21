@@ -393,10 +393,10 @@ func TestWaitingContract_VerifiedQuotaProgressReopensOnlyThatBatchGate(t *testin
 }
 
 func TestWaitingOwnerNilLogPreservesQuotaSchedule(t *testing.T) {
-	root := t.TempDir()
-	batchDir := filepath.Join(root, "batches", "batch")
+	layout := paths.NewLayout(nil, t.TempDir())
+	batch := layout.LocateBatch("batch", "")
 	now := time.Now().UTC()
-	owner, err := newWaitOwner(batchDir, daemon.RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "batch", Issue: 42, Branch: "42-work", BaseBranch: "main", InitialAdmission: true, OperationID: "admission"}, func() time.Time { return now }, nil)
+	owner, err := newWaitOwner(layout, batch, daemon.RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "batch", Issue: 42, Branch: "42-work", BaseBranch: "main", InitialAdmission: true, OperationID: "admission"}, func() time.Time { return now }, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -405,7 +405,7 @@ func TestWaitingOwnerNilLogPreservesQuotaSchedule(t *testing.T) {
 	if err := owner.checkpoint(RowSpec{RunID: "row", IssueNumber: 42, Branches: map[int]string{42: "42-work"}, UsageLimitProbe: true, UsageLimitDeadline: deadline}, false, usageLimitPollInterval); err != nil {
 		t.Fatal(err)
 	}
-	record, err := daemon.ReadRunWait(batchDir, "row")
+	record, err := daemon.ReadRunWaitAt(layout, batch, "row")
 	if err != nil || record.InitialAdmission || !record.UsageLimitProbe || !record.OperationDeadline.IsZero() || record.OperationID != "quota:row" || !record.LeaseExpiresAt.Equal(now.Add(daemon.RunRecoveryGrace)) {
 		t.Fatalf("nil logger lost runtime-derived quota schedule: %+v err=%v", record, err)
 	}
@@ -523,7 +523,7 @@ func TestWaitingContract_AdmissionToAwaitPreservesOperationAfterCrash(t *testing
 		t.Fatal(err)
 	}
 	defer claim.Close()
-	owner, err := newWaitOwner(layout.BatchDir("batch"), daemon.RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "batch", Issue: 42, Branch: "42-fix", BaseBranch: "main", Ready: true, OperationID: "capacity"}, func() time.Time { return now }, log)
+	owner, err := newWaitOwner(layout, layout.LocateBatch("batch", ""), daemon.RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "batch", Issue: 42, Branch: "42-fix", BaseBranch: "main", Ready: true, OperationID: "capacity"}, func() time.Time { return now }, log)
 	if err != nil {
 		t.Fatal(err)
 	}

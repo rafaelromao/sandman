@@ -244,7 +244,7 @@ func TestCIRerunRecoveryUsesPersistedGenerationAfterTransportFailure(t *testing.
 		t.Fatal(err)
 	}
 	defer claim.Close()
-	owner, err := newWaitOwner(layout.BatchDir("batch"), daemon.RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "batch", Issue: 42, Branch: "42-fix", BaseBranch: "main", OperationID: "pending:" + old.ExecutionID, OperationDeadline: time.Unix(old.DeadlineUnixSeconds, 0)}, func() time.Time { return now }, log)
+	owner, err := newWaitOwner(layout, layout.LocateBatch("batch", ""), daemon.RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "batch", Issue: 42, Branch: "42-fix", BaseBranch: "main", OperationID: "pending:" + old.ExecutionID, OperationDeadline: time.Unix(old.DeadlineUnixSeconds, 0)}, func() time.Time { return now }, log)
 	if err != nil {
 		t.Fatal(err)
 	}

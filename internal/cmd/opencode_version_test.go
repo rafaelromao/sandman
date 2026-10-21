@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/opencode"
@@ -215,6 +216,32 @@ func TestWarnOpencodeVersionMismatch_SilentWhenProbeFails(t *testing.T) {
 	warnOpencodeVersionMismatch(cmd, "opencode", "podman", dir, defaultCfgSandbox(""))
 	if got := buf.String(); got != "" {
 		t.Errorf("probe failure must be silent; got:\n%s", got)
+	}
+}
+
+// TestWarnOpencodeVersionMismatch_HangingHostProbeStaysSilent runs the
+// production probe against a host opencode that never answers. The
+// bounded probe must let run/review startup continue, and its timeout
+// must stay as silent as a missing binary.
+func TestWarnOpencodeVersionMismatch_HangingHostProbeStaysSilent(t *testing.T) {
+	binDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(binDir, "opencode"), []byte("#!/bin/sh\nexec /bin/sleep 600\n"), 0o755); err != nil {
+		t.Fatalf("write fake opencode: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	dir := t.TempDir()
+	withDockerfilePin(t, dir, "1.15.0")
+
+	cmd, errBuf, outBuf := newWarningTestCmd(t)
+	start := time.Now()
+	warnOpencodeVersionMismatch(cmd, "opencode", "podman", dir, defaultCfgSandbox(""))
+	elapsed := time.Since(start)
+
+	if limit := opencode.VersionProbeTimeout + 10*time.Second; elapsed > limit {
+		t.Fatalf("hanging host probe blocked startup for %s, want under %s", elapsed, limit)
+	}
+	if errBuf.Len() != 0 || outBuf.Len() != 0 {
+		t.Errorf("probe timeout must be silent; stderr:\n%s\nstdout:\n%s", errBuf.String(), outBuf.String())
 	}
 }
 
