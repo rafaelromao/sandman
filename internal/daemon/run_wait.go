@@ -104,6 +104,10 @@ func waitPath(batchDir, runID string) string {
 
 // initialWaitPath is the repository-wide sidecar for a Run that has not yet
 // started; it never depends on where the Batch directory happens to live.
+// Earlier releases derived it from the Batch directory's grandparent. For
+// canonical and flat relocated Batches that is this same path. Sidecars that
+// a nested relocation or a batchless legacy Run left elsewhere are not
+// migrated; their Runs recover through the event-anchored grace instead.
 func initialWaitPath(layout paths.Layout, runID string) (string, error) {
 	if layout.StateDir == "" {
 		return "", fmt.Errorf("waiting state directory is unknown")
@@ -261,7 +265,9 @@ func waitRecoveryScheduleAt(layout paths.Layout, batch paths.BatchLocation, run 
 // ReadRunWaitAt reads a lease from a resolved physical batch location while
 // validating the record against the location's public BatchID, never the
 // physical directory name. An empty ID is reserved for legacy Runs recorded
-// without a batch, whose initial admissions keep the basename check.
+// without a batch: their started records are read without an identity check
+// (no writer produces them any more), while their initial admissions keep
+// the basename check.
 func ReadRunWaitAt(layout paths.Layout, batch paths.BatchLocation, runID string) (RunWait, error) {
 	var record RunWait
 	if !safeWaitID(runID) || (batch.ID != "" && !safeWaitID(batch.ID)) {

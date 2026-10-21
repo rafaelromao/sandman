@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -185,5 +186,45 @@ func TestBatchLocationForDir_RefusesTwoOwnersOfOneDirectory(t *testing.T) {
 	}
 	if got, err := BatchLocationForDir(realLayout, frozen); err == nil {
 		t.Fatalf("two owners resolved to %+v", got)
+	}
+}
+
+// Pins the legacy batchless read: a Run recorded without a batch_id resolves
+// to BatchesDir with an empty identity. Its started record stays readable so
+// in-flight legacy waits keep their grace, while an initial admission must
+// still name the directory it lives in.
+func TestReadRunWaitAt_LegacyBatchlessLocation(t *testing.T) {
+	layout := paths.NewLayout(nil, t.TempDir())
+	batch, err := ResolveBatchLocation(layout, "")
+	if err != nil || batch.ID != "" || batch.Dir != layout.BatchesDir {
+		t.Fatalf("batchless location = %+v, %v", batch, err)
+	}
+	now := time.Now().UTC()
+	write := func(path string, record RunWait) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := atomicfs.WriteAtomicJSON(path, record, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	started := RunWait{Protocol: "run-wait/v1", RunID: "started", BatchID: "legacy-batch", Issue: 42,
+		Branch: "42-fix", BaseBranch: "main", OperationID: "capacity", LeaseExpiresAt: now.Add(time.Minute)}
+	write(filepath.Join(layout.BatchesDir, "runs", "started", "wait.json"), started)
+	if got, err := ReadRunWaitAt(layout, batch, "started"); err != nil || got.BatchID != "legacy-batch" {
+		t.Fatalf("legacy batchless started read = %+v, %v", got, err)
+	}
+
+	initial := RunWait{Protocol: "run-wait/v1", RunID: "initial", BatchID: "foreign", Issue: 42,
+		BaseBranch: "main", InitialAdmission: true, OperationID: "admission", LeaseExpiresAt: now.Add(time.Minute)}
+	write(filepath.Join(layout.StateDir, "waiting", "initial.json"), initial)
+	if got, err := ReadRunWaitAt(layout, batch, "initial"); err == nil {
+		t.Fatalf("batchless read accepted a foreign initial admission: %+v", got)
+	}
+	initial.BatchID = filepath.Base(layout.BatchesDir)
+	write(filepath.Join(layout.StateDir, "waiting", "initial.json"), initial)
+	if _, err := ReadRunWaitAt(layout, batch, "initial"); err != nil {
+		t.Fatalf("batchless read rejected an initial admission named for its directory: %v", err)
 	}
 }
