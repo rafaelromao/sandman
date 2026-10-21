@@ -78,5 +78,9 @@ func probeVersion(timeout time.Duration) (string, error) {
 	return version, nil
 }
 
-var versionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$`)
+const versionNumber = `(0|[1-9][0-9]*)`
+const prereleaseIdentifier = `(` + versionNumber + `|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)`
+
+var versionPattern = regexp.MustCompile(`^` + versionNumber + `\.` + versionNumber + `\.` + versionNumber +
+	`(-` + prereleaseIdentifier + `(\.` + prereleaseIdentifier + `)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$`)
 var versionPrefix = regexp.MustCompile(`^opencode\s+`)

@@ -22,7 +22,7 @@ func TestDaemonIgnoresAnsweredRequestAndProcessesFreshRequest(t *testing.T) {
 	}
 	response := github.PRComment{
 		ID:          "response-1",
-		Body:        "## Summary\nThe review is complete.\n\n## Decision\n**APPROVED**",
+		Body:        publicationBody("## Summary\nThe review is complete.\n\n## Decision\n**APPROVED**", reviewTriggerKey(request), "head"),
 		AuthorLogin: "sandman",
 		CreatedAt:   now.Add(time.Minute),
 	}
@@ -121,6 +121,7 @@ func TestDaemonDoesNotTreatUnrelatedLaterCommentAsReviewResponse(t *testing.T) {
 	}{
 		{name: "ordinary comment by daemon account", author: "sandman", body: "I will take a look."},
 		{name: "review-shaped comment by another account", author: "reviewer", body: "## Summary\nReviewed.\n\n## Decision\n**APPROVED**"},
+		{name: "unbound legacy review by daemon account", author: "sandman", body: "## Summary\nReviewed.\n\n## Decision\n**APPROVED**"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			const prNumber = 2738

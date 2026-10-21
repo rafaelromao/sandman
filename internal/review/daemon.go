@@ -1639,7 +1639,7 @@ func hasLaterDaemonReviewResponse(trigger github.PRComment, comments []github.PR
 			continue
 		}
 		if hasMarkdownHeading(comment.Body, "Summary") && hasMarkdownHeading(comment.Body, "Decision") {
-			if strings.Contains(comment.Body, publicationIdentityPrefix) && !strings.HasSuffix(comment.Body, publicationIdentity(reviewTriggerKey(trigger), head)) {
+			if !strings.HasSuffix(comment.Body, publicationIdentity(reviewTriggerKey(trigger), head)) {
 				continue
 			}
 			return true
