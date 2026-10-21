@@ -75,7 +75,11 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 
 	checkout := s.baseBranch
 	if s.reviewHeadSHA != "" {
-		if err := sandbox.FetchReviewHead(ctx, ".", s.prNumber, s.reviewHeadSHA); err != nil {
+		fetchHead := s.opts.reviewHeadFetch
+		if fetchHead == nil {
+			fetchHead = sandbox.FetchReviewHead
+		}
+		if err := fetchHead(ctx, ".", s.prNumber, s.reviewHeadSHA); err != nil {
 			return s.lifecycleEarlyFailure("fetch review snapshot", branch, s.runID, err), false
 		}
 		checkout = s.reviewHeadSHA

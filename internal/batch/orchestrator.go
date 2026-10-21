@@ -3050,6 +3050,7 @@ type runSessionOptions struct {
 	waitOwnerPulse             func(string) <-chan time.Time
 	now                        func() time.Time
 	baseBranchSync             func(repoPath, sourceBranch string) error
+	reviewHeadFetch            func(context.Context, string, int, string) error
 	baseBranchSyncMu           *sync.Mutex
 	contextRolloverLiterals    []string
 	contextRolloverLiteralsSet bool

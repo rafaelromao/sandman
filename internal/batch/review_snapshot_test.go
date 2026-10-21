@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,5 +113,25 @@ func testReviewSnapshotCheckout(t *testing.T, scenario string) {
 	}
 	if got := strings.TrimSpace(runGit(t, dir, "rev-parse", "HEAD")); got != parentHead {
 		t.Fatalf("operator checkout changed to %s", got)
+	}
+}
+
+func TestReviewSnapshotFetchUsesInjectedRunDependency(t *testing.T) {
+	t.Chdir(t.TempDir()) // deliberately no Git repository
+	called := false
+	wantErr := errors.New("injected fetch failure")
+	cfg := &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}
+	o := NewOrchestrator(&fakeGitHubClient{}, &noopRenderer{}, &fakeConfigStore{config: cfg}, &spyEventLog{},
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+		WithRunSessionOpts(runSessionOptions{reviewHeadFetch: func(_ context.Context, repo string, pr int, head string) error {
+			called = true
+			if repo != "." || pr != 36 || head != "expected-head" {
+				t.Errorf("unexpected fetch inputs: repo=%s pr=%d head=%s", repo, pr, head)
+			}
+			return wantErr
+		}}))
+	_, err := o.RunBatch(context.Background(), Request{Review: true, PRNumber: 36, ReviewHeadSHA: "expected-head", PromptConfig: prompt.RenderConfig{PromptFlag: "review", Branch: "review-test"}, RunID: "review-snapshot"})
+	if !called || !errors.Is(err, wantErr) {
+		t.Fatalf("fetch seam bypassed: called=%v error=%v", called, err)
 	}
 }
