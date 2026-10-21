@@ -324,3 +324,54 @@ func runSignalledProbeChild(value string) {
 	}
 	fmt.Printf("handler received %d interrupts\n", received)
 }
+
+// ignoredHangupChildEnv switches TestVersionProbe_IgnoredSignalStaysIgnored
+// into its child role. Its value is the PID file the fake opencode writes
+// once the probe is running.
+const ignoredHangupChildEnv = "SANDMAN_OPENCODE_PROBE_IGNORED_HANGUP_CHILD"
+
+// TestVersionProbe_IgnoredSignalStaysIgnored pins the signal.Ignored
+// filter: a process that ignores SIGHUP (as under nohup) and receives one
+// during the probe must neither end the probe early nor die, so the probe
+// runs to its own deadline.
+func TestVersionProbe_IgnoredSignalStaysIgnored(t *testing.T) {
+	if pidFile := os.Getenv(ignoredHangupChildEnv); pidFile != "" {
+		signal.Ignore(syscall.SIGHUP)
+		go func() {
+			for {
+				if _, err := os.Stat(pidFile); err == nil {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			fmt.Println("sent hangup")
+			_ = syscall.Kill(os.Getpid(), syscall.SIGHUP)
+		}()
+		_, err := probeVersionWithin(time.Second)
+		fmt.Printf("probe: %v\n", err)
+		return
+	}
+
+	pidFile := installFakeOpencodeWithHelper(t, "wait\n")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var out bytes.Buffer
+	child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestVersionProbe_IgnoredSignalStaysIgnored$")
+	child.Env = append(os.Environ(), ignoredHangupChildEnv+"="+pidFile)
+	child.Stdout, child.Stderr = &out, &out
+	if err := child.Run(); err != nil {
+		t.Fatalf("child that ignores SIGHUP must exit normally, got %v; output:\n%s", err, out.String())
+	}
+	helper := awaitHelperPID(t, pidFile)
+
+	if !strings.Contains(out.String(), "sent hangup") {
+		t.Fatalf("child never sent itself SIGHUP during the probe; output:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "interrupted by") {
+		t.Errorf("an ignored SIGHUP ended the probe early; output:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), context.DeadlineExceeded.Error()) {
+		t.Errorf("probe must run to its deadline when SIGHUP is ignored; output:\n%s", out.String())
+	}
+	requireProcessGone(t, helper)
+}

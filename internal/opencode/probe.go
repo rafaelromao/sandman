@@ -38,6 +38,13 @@ const versionProbeTimeout = 5 * time.Second
 // outlived the probe while holding stdout cannot extend the wait.
 const versionProbeWaitDelay = time.Second
 
+// redeliveryGrace is how long the probe pauses after re-delivering an
+// operator signal. Delivery to the process is asynchronous, so without a
+// handler sandman dies during the pause instead of resuming the caller
+// (for example `sandman init` writing its Dockerfile). A caller with a
+// handler pays the pause once, after the operator already asked to stop.
+const redeliveryGrace = 100 * time.Millisecond
+
 // operatorSignals are the signals that stop sandman from a terminal or
 // a supervisor. The probe watches them because its own process group
 // receives neither a terminal Ctrl-C nor the hangup when the terminal
@@ -72,7 +79,7 @@ var VersionProbe = func() (string, error) {
 // group alone. WaitDelay bounds any pipe a helper outside the group
 // still holds. An operator signal is handed back once the group is gone,
 // so the caller's own disposition still applies: without a handler,
-// sandman exits as if no probe ran.
+// sandman dies by that signal shortly after, as if no probe ran.
 func probeVersionWithin(timeout time.Duration) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -82,17 +89,20 @@ func probeVersionWithin(timeout time.Duration) (string, error) {
 	cmd.Cancel = func() error { return killProbeGroup(cmd) }
 	cmd.WaitDelay = versionProbeWaitDelay
 	out, err := cmd.Output()
-	if err != nil && cmd.Process != nil {
+	sig := stopWatching()
+	if (err != nil || sig != nil) && cmd.Process != nil {
 		// Cancel only runs on timeout or interrupt. This also stops a
-		// helper that kept stdout open past WaitDelay or outlived a
-		// failed probe.
+		// helper that kept stdout open past WaitDelay, outlived a failed
+		// probe, or was still running when a signal arrived just after
+		// the probe exited.
 		_ = killProbeGroup(cmd)
 	}
-	if sig := stopWatching(); sig != nil {
+	if sig != nil {
 		// Re-deliver the signal now that the group is gone; without a
-		// handler of its own, sandman exits here.
+		// handler of its own, sandman dies shortly after.
 		if s, ok := sig.(syscall.Signal); ok {
 			_ = syscall.Kill(os.Getpid(), s)
+			time.Sleep(redeliveryGrace)
 		}
 		return "", errors.Join(fmt.Errorf("opencode --version interrupted by %v", sig), err)
 	}
@@ -114,8 +124,9 @@ func probeVersionWithin(timeout time.Duration) (string, error) {
 	return fields[0], nil
 }
 
-// killProbeGroup kills the process group the probe leads. The group can
-// outlive the probe process itself, so this stays valid after Wait.
+// killProbeGroup kills the process group the probe leads, including
+// members that outlived the probe process itself. It is harmless if the
+// group is already gone.
 func killProbeGroup(cmd *exec.Cmd) error {
 	return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 }

@@ -55,11 +55,13 @@ Two cooperating changes, scoped together:
 
    > **Later change (annotated 2026-10-21, #2877):** the probe is now
    > bounded to five seconds (#2874) and ends early when the operator
-   > interrupts, terminates or hangs up sandman (#2877). A timed-out or
-   > interrupted probe counts as a failed probe, so the check stays
-   > silent. After a timeout, an interrupt or an unclean finish, the
-   > probe's process group does not outlive it. The decision above is
-   > otherwise unchanged.
+   > interrupts, terminates or hangs up sandman (#2877). A timed-out
+   > probe counts as a failed probe, so the check stays silent. A signal
+   > during the probe is handed back once the probe ends, so it still
+   > ends `sandman review` as before, and `sandman run`'s own handler
+   > still receives it. After a timeout, a signal or an unclean finish,
+   > the probe's process group does not outlive it. The decision above
+   > is otherwise unchanged.
 
 2. **Self-resolution** — `sandman init` resolves the opencode
    version through the same probe seam. When the host reports a
@@ -69,9 +71,9 @@ Two cooperating changes, scoped together:
    head remains the pin (current value: `"1.15.0"`).
 
    > **Later change (annotated 2026-10-21, #2877):** a host
-   > `opencode --version` that does not answer within five seconds, or
-   > a probe the operator interrupts, also counts as a failed probe, so
-   > the catalog head remains the pin.
+   > `opencode --version` that does not answer within five seconds also
+   > counts as a failed probe, so the catalog head remains the pin. An
+   > interrupt during the probe still ends `sandman init` as before.
 
    Implementation: `internal/scaffold/scaffolder.go` gains
    `resolveAgentVersion(agent string) string` and a thin package-level

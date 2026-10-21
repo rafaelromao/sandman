@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -223,7 +222,7 @@ func TestWarnOpencodeVersionMismatch_SilentWhenProbeFails(t *testing.T) {
 		err  error
 	}{
 		{name: "probe error", err: errProbe},
-		{name: "probe timeout", err: fmt.Errorf("opencode --version did not finish within 5s (context: %w)", context.DeadlineExceeded)},
+		{name: "probe timeout", err: context.DeadlineExceeded},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
