@@ -18,6 +18,7 @@ type snapshotRunnableFactory struct {
 	t     *testing.T
 	head  string
 	calls int
+	retry bool
 }
 
 func (f *snapshotRunnableFactory) NewRunnable(_ *github.Issue, _ string, sb sandbox.Sandbox) Runnable {
@@ -38,11 +39,14 @@ func (r *snapshotRunnable) Run(_ context.Context, _ prompt.IssueRenderer, _ stri
 	if data, err := os.ReadFile(filepath.Join(r.sb.WorkDir(), "feature.txt")); err != nil || string(data) != "PR change\n" {
 		f.t.Errorf("reviewer cannot see fork change: %q, %v", data, err)
 	}
+	if f.retry && f.calls == 1 {
+		return AgentRunResult{Status: "failure"}
+	}
 	return AgentRunResult{Status: "success"}
 }
 
 func TestReviewSnapshotChecksOutForkHeadWithSeparateBase(t *testing.T) {
-	for _, scenario := range []string{"fresh", "missing-ref", "wrong-head", "reused-wrong-head"} {
+	for _, scenario := range []string{"fresh", "missing-ref", "wrong-head", "reused-wrong-head", "retry"} {
 		t.Run(scenario, func(t *testing.T) { testReviewSnapshotCheckout(t, scenario) })
 	}
 }
@@ -79,12 +83,16 @@ func testReviewSnapshotCheckout(t *testing.T, scenario string) {
 			t.Fatal(err)
 		}
 	}
-	factory := &snapshotRunnableFactory{t: t, head: head}
+	factory := &snapshotRunnableFactory{t: t, head: head, retry: scenario == "retry"}
 	cfg := &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}
 	o := NewOrchestrator(&fakeGitHubClient{}, &noopRenderer{}, &fakeConfigStore{config: cfg}, &spyEventLog{}, WithRunnableFactory(factory))
-	_, err := o.RunBatch(context.Background(), Request{Review: true, PRNumber: 36, ReviewHeadSHA: requested, BaseBranch: "release", PromptConfig: prompt.RenderConfig{PromptFlag: "review", Branch: "review-36-test"}, RunID: "review-snapshot"})
-	if scenario == "fresh" {
-		if err != nil || factory.calls != 1 {
+	_, err := o.RunBatch(context.Background(), Request{Review: true, PRNumber: 36, ReviewHeadSHA: requested, BaseBranch: "release", Retries: 1, PromptConfig: prompt.RenderConfig{PromptFlag: "review", Branch: "review-36-test"}, RunID: "review-snapshot"})
+	if scenario == "fresh" || scenario == "retry" {
+		want := 1
+		if scenario == "retry" {
+			want = 2
+		}
+		if err != nil || factory.calls != want {
 			t.Fatalf("reviewer launches = %d, error = %v", factory.calls, err)
 		}
 	} else if err == nil || factory.calls != 0 {

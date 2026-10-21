@@ -4725,7 +4725,11 @@ func (o *Orchestrator) runPromptOnlyRow(ctx context.Context, row RowSpec, bc Bat
 func (s *runSession) preparePromptAttempt(ctx context.Context, branch string, wt sandbox.Sandbox, logPath string, attempt int, previous AgentRunResult) (prompt.RenderConfig, *AgentRunResult) {
 	if attempt > 0 {
 		if !previous.ContextExhausted {
-			if err := resetRetryBranch(s.deps.runSessionOpts, ctx, wt, branch, s.baseBranch); err != nil {
+			checkout := s.baseBranch
+			if s.reviewHeadSHA != "" {
+				checkout = s.reviewHeadSHA
+			}
+			if err := resetRetryBranch(s.deps.runSessionOpts, ctx, wt, branch, checkout); err != nil {
 				fmt.Fprintf(s.deps.errorLog, "error: reset retry branch for prompt-only run: %v\n", err)
 				return prompt.RenderConfig{}, &AgentRunResult{Status: "failure", Branch: branch, RetriesTotal: attempt, Review: s.review, RunID: s.runID}
 			}
