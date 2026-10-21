@@ -176,7 +176,7 @@ internal/
   scaffold/                  # sandman init scaffolding logic
   shellenv/                  # Validated, single-quoted `sh -c` env-prefix builder
   skill/                     # Sync function for embedded sandman skill
-  testenv/                   # MkdirShort and canonical env-var helpers
+  testenv/                   # MkdirShort, ProcessAlive and canonical env-var helpers
 ```
 
 ### Key interfaces
