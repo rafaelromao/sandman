@@ -47,7 +47,10 @@ Two cooperating changes, scoped together:
 
    Implementation: `internal/opencode/probe.go` owns the shell-out
    seam `opencode.VersionProbe func() (string, error)` (mirrors the
-   `sandbox.ExecCommandFn` pattern); `internal/cmd/opencode_version.go`
+   `sandbox.ExecCommandFn` pattern). The probe is bounded to five
+   seconds and stops early on an operator interrupt or termination;
+   either outcome counts as a failed probe, and the probe's process
+   group does not outlive it. `internal/cmd/opencode_version.go`
    owns the pure helpers (`ParseOpencodePinFromDockerfile`,
    `ResolveSandboxVersion`, `FormatMismatchWarning`,
    `warnOpencodeVersionMismatch`); `run.go` and `review.go` wire
@@ -57,7 +60,8 @@ Two cooperating changes, scoped together:
    version through the same probe seam. When the host reports a
    non-empty version, the new `RUN npm install -g opencode-ai@<X>`
    line carries the host version (e.g. `1.17.19`). When the probe
-   fails (CI agent, fresh container, no `opencode`), the catalog
+   fails (CI agent, fresh container, no `opencode`, or a host binary
+   that does not answer within the bound), the catalog
    head remains the pin (current value: `"1.15.0"`).
 
    Implementation: `internal/scaffold/scaffolder.go` gains

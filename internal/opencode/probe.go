@@ -15,32 +15,41 @@ package opencode
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
 	"syscall"
 	"time"
 )
 
-// VersionProbeTimeout bounds one host `opencode --version` probe. A
+// versionProbeTimeout bounds one host `opencode --version` probe. A
 // healthy host answers in well under a second (about 0.7 s cold and
 // 0.3 s warm on a developer laptop), so five seconds leaves room for a
 // cold cache on a slow host while capping how long a hung binary can
 // delay `sandman run`, `sandman review` and `sandman init`, which all
 // probe synchronously before doing any work.
-const VersionProbeTimeout = 5 * time.Second
+const versionProbeTimeout = 5 * time.Second
 
 // versionProbeWaitDelay bounds pipe draining after the probe exits or
 // its process group is killed, so a helper that escaped the group or
 // outlived the probe while holding stdout cannot extend the wait.
 const versionProbeWaitDelay = time.Second
 
+// operatorSignals are the signals that stop sandman from a terminal or
+// a supervisor. The probe watches them because its own process group
+// does not receive a terminal Ctrl-C.
+var operatorSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
+
 // VersionProbe shells `opencode --version` and returns the leading
 // semver-style string. Production wires the bounded host probe at
 // package init time; tests inject a stub via the package-level var.
 // Returning (empty, err) is the documented "host has no usable opencode
 // binary" signal — callers should not warn in that case. A probe that
-// does not finish within VersionProbeTimeout returns that signal too.
+// does not finish within five seconds, or that the operator interrupts,
+// returns that signal too.
 //
 // The parse is intentionally tolerant: opencode has shipped versions
 // like `1.17.19`, `1.17.19+abc123`, and bare date stamps across
@@ -48,24 +57,47 @@ const versionProbeWaitDelay = time.Second
 // investigation); we accept anything in the first whitespace-separated
 // token.
 var VersionProbe = func() (string, error) {
-	return probeVersion(VersionProbeTimeout)
+	return probeVersionWithin(versionProbeTimeout)
 }
 
-// probeVersion runs `opencode --version` in its own process group.
-// When timeout elapses the whole group is killed, so neither the probe
-// nor helpers it spawned keep running, and WaitDelay bounds any pipe a
-// surviving helper still holds.
-func probeVersion(timeout time.Duration) (string, error) {
+// probeVersionWithin runs `opencode --version` in its own process group
+// and kills the whole group when timeout elapses, when the operator
+// interrupts or terminates sandman, or when the probe does not finish
+// cleanly, so no probe process outlives the call. WaitDelay bounds any
+// pipe a helper outside the group still holds. An operator signal is
+// handed back once the group is gone, so the caller's own disposition
+// still applies: without a handler, sandman exits as if no probe ran.
+func probeVersionWithin(timeout time.Duration) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+	stopWatching := cancelOnOperatorSignal(cancel)
 	cmd := exec.CommandContext(ctx, "opencode", "--version")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.Cancel = func() error { return killProbeGroup(cmd) }
 	cmd.WaitDelay = versionProbeWaitDelay
 	out, err := cmd.Output()
+	if err != nil && cmd.Process != nil {
+		// Cancel only runs on timeout or interrupt. This also stops a
+		// helper that kept stdout open past WaitDelay or outlived a
+		// failed probe.
+		_ = killProbeGroup(cmd)
+	}
+	if sig := stopWatching(); sig != nil {
+		// Re-deliver the signal now that the group is gone; without a
+		// handler of its own, sandman exits here.
+		if s, ok := sig.(syscall.Signal); ok {
+			_ = syscall.Kill(os.Getpid(), s)
+		}
+		return "", errors.Join(fmt.Errorf("opencode --version interrupted by %v", sig), err)
+	}
+	if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
+		// opencode answered and exited cleanly; only a helper held
+		// stdout open, so the version it printed is still valid.
+		err = nil
+	}
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return "", fmt.Errorf("opencode --version did not finish within %s: %w", timeout, ctxErr)
+			return "", fmt.Errorf("opencode --version did not finish within %s (context: %w): %w", timeout, ctxErr, err)
 		}
 		return "", err
 	}
@@ -74,4 +106,50 @@ func probeVersion(timeout time.Duration) (string, error) {
 		return "", fmt.Errorf("opencode --version returned no output")
 	}
 	return fields[0], nil
+}
+
+// killProbeGroup kills the process group the probe leads. The group can
+// outlive the probe process itself, so this stays valid after Wait.
+func killProbeGroup(cmd *exec.Cmd) error {
+	return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+}
+
+// cancelOnOperatorSignal calls cancel when an operator signal arrives.
+// The returned stop ends the watch and reports the signal that arrived,
+// if any. Signals the process ignores are not watched, so they stay
+// ignored.
+func cancelOnOperatorSignal(cancel context.CancelFunc) (stop func() os.Signal) {
+	var watched []os.Signal
+	for _, sig := range operatorSignals {
+		if !signal.Ignored(sig) {
+			watched = append(watched, sig)
+		}
+	}
+	if len(watched) == 0 {
+		return func() os.Signal { return nil }
+	}
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, watched...)
+	done, finished := make(chan struct{}), make(chan struct{})
+	var received os.Signal
+	go func() {
+		defer close(finished)
+		select {
+		case received = <-signals:
+			cancel()
+		case <-done:
+		}
+	}()
+	return func() os.Signal {
+		close(done)
+		<-finished
+		signal.Stop(signals)
+		if received == nil {
+			select {
+			case received = <-signals:
+			default:
+			}
+		}
+		return received
+	}
 }

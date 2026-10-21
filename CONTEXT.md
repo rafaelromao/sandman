@@ -459,7 +459,7 @@ The sandbox-image opencode (pinned in `.sandman/Dockerfile`) is too old; the in-
 
 Cause: the catalog head (`builtInAgentVersionCatalog["opencode"]` in `internal/scaffold/scaffolder.go:193`) shipped with a stale opencode version. Operators with newer opencode installed on the host see the warning every `sandman run` / `sandman review`.
 
-Resolution: run `sandman init` against the repo. The scaffolder probes the host's installed opencode (via the shared `opencode.VersionProbe` seam in `internal/opencode/probe.go`) and pins that version in the new Dockerfile when present; otherwise it falls back to the catalog head so CI agents and fresh containers still produce a valid install command. Once the sandbox pin matches the host, the warning goes silent. The catalog head bump is a separate concern for operators without `opencode` installed; see [ADR-0033](docs/adr/0033-opencode-host-sandbox-version-mismatch.md) for the warning + init contract.
+Resolution: run `sandman init` against the repo. The scaffolder probes the host's installed opencode (via the shared `opencode.VersionProbe` seam in `internal/opencode/probe.go`) and pins that version in the new Dockerfile when present; otherwise it falls back to the catalog head (a host `opencode --version` that does not answer within five seconds counts as absent) so CI agents and fresh containers still produce a valid install command. Once the sandbox pin matches the host, the warning goes silent. The catalog head bump is a separate concern for operators without `opencode` installed; see [ADR-0033](docs/adr/0033-opencode-host-sandbox-version-mismatch.md) for the warning + init contract.
 
 
 ### Separate CI validation and reports
