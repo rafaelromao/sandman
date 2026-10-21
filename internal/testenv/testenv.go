@@ -33,9 +33,12 @@
 package testenv
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -209,4 +212,20 @@ func MkdirShort(t *testing.T, dirHint string) string {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(path) })
 	return path
+}
+
+// ProcessAlive reports whether pid names a running process. On Linux a zombie
+// awaiting its reaper counts as gone.
+func ProcessAlive(pid int) bool {
+	if runtime.GOOS == "linux" {
+		data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+		if err == nil {
+			fields := strings.Fields(string(data))
+			if len(fields) >= 3 && fields[2] == "Z" {
+				return false
+			}
+		}
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
 }

@@ -52,7 +52,7 @@ See `internal/batch/row_spec.go:RunExecutor` / `runDeps` and `internal/cmd/root.
 
 Any new `Sandbox` implementation must set `Setpgid: true` on the spawned command.
 
-> Note: killing the host-side `docker exec` / `podman exec` wrapper does not yet propagate to the in-container AgentRun. This is a known limitation.
+Killing the host-side `docker exec` / `podman exec` client does not stop the in-container AgentRun, so `ContainerSandbox` also kills it inside the container. The runtime runs the agent's exec script directly under `exec -t`, which makes it a session leader. The script records its own process group in a file unique to that exec, and the abort SIGKILLs that group. Several runs share one container, so each exec must use its own file, or an abort would signal a sibling run.
 
 The production GitHub CLI adapter follows the same cancellation rule. Its
 `realRunner` starts `gh` as a process-group leader and cancels the negative PGID
