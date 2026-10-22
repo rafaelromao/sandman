@@ -392,7 +392,7 @@ func TestInit_PythonBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(dockerfile, "# sandman python-version:") {
 		t.Fatalf("Dockerfile missing python-version metadata, got:\n%s", dockerfile)
 	}
-	if !strings.Contains(dockerfile, "RUN mise use -g --pin python@") {
+	if !strings.Contains(dockerfile, "mise use -g --pin python@") {
 		t.Fatalf("Dockerfile missing pinned python install, got:\n%s", dockerfile)
 	}
 	if !strings.Contains(dockerfile, "RUN pip3 install uv") {
@@ -609,7 +609,7 @@ func TestInit_DefaultsToPythonPresetForPythonRepo(t *testing.T) {
 	if !strings.Contains(dockerfile, "# sandman python-version:") {
 		t.Fatalf("Dockerfile missing python-version metadata, got:\n%s", dockerfile)
 	}
-	if !strings.Contains(dockerfile, "RUN mise use -g --pin python@") {
+	if !strings.Contains(dockerfile, "mise use -g --pin python@") {
 		t.Fatalf("Dockerfile missing pinned python install, got:\n%s", dockerfile)
 	}
 	if !strings.Contains(dockerfile, "RUN pip3 install uv") {

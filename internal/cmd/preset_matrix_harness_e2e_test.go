@@ -53,6 +53,7 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/rafaelromao/sandman/internal/scaffold"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
@@ -743,8 +744,7 @@ func runE2ERun(t *testing.T, binPath, repoDir, preset string) string {
 			_ = exec.Command("podman", "rmi", "-f", imageTag).Run()
 			_ = exec.Command("podman", "image", "prune", "-f").Run()
 		})
-		buildCmd := exec.Command("podman", "build", "-t", imageTag, "-f",
-			filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)
+		buildCmd := exec.Command("podman", sandbox.ImageBuildArgs(imageTag, filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)...)
 		if out, err := buildCmd.CombinedOutput(); err != nil {
 			t.Fatalf("build image %q: %v\n%s", imageTag, err, out)
 		}
@@ -845,8 +845,7 @@ func runE2EBuild(t *testing.T, binPath, repoDir, preset string) string {
 		_ = exec.Command("podman", "image", "prune", "-f").Run()
 	})
 
-	buildCmd := exec.Command("podman", "build", "-t", imageTag, "-f",
-		filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)
+	buildCmd := exec.Command("podman", sandbox.ImageBuildArgs(imageTag, filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)...)
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		t.Fatalf("build image %q: %v\n%s", imageTag, err, out)
 	}

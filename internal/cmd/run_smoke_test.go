@@ -637,7 +637,7 @@ func preflightSmokeImage(t *testing.T, runtime, repoDir, provider, buildTools st
 	// (UnixNano) so concurrent tests do not collide, and Cleanup
 	// removes it when the test finishes.
 	tag := fmt.Sprintf("sandman-smoke-%s-%d:latest", provider, time.Now().UnixNano())
-	cmd := exec.Command(runtime, "build", "-t", tag, "-f", filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)
+	cmd := exec.Command(runtime, sandbox.ImageBuildArgs(tag, filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Skipf("skip %s smoke: container image build unavailable: %v\n%s", provider, err, out)
 	}

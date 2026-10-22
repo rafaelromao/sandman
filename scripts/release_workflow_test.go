@@ -465,7 +465,7 @@ func TestCIWorkflowKeepsOptInSuitesDisabled(t *testing.T) {
 	fakePermissionsStep := `      - name: Fake subagent container permissions
         env:
           SANDMAN_E2E_GATES: opencode_subagent
-        run: bash scripts/ci_report.sh container-permissions go test -tags e2e -json -count=1 -timeout=12m ./internal/cmd -run '^Test(OpencodeSubagentPermissionAllowAll|PermissionFakeAgentHomeIsolatedFromHostState)$'
+        run: bash scripts/ci_report.sh container-permissions go test -tags e2e -json -count=1 -timeout=12m ./internal/cmd -run '^Test(OpencodeSubagentPermissionAllowAll|PermissionFakeAgentHomeIsolatedFromHostState|PythonBuildSecretIsTransient)$'
 
 `
 	if strings.Count(workflow, fakePermissionsStep) != 1 {

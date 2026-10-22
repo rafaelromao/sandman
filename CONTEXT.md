@@ -542,3 +542,17 @@ by the Release reusable-CI caller.
 The regular Linux build also selects the credential-free fake subagent permission
 container scenario. Its image must expose the fake gh on the image PATH for
 pre-agent auth setup. Keep this selection narrow; it makes no provider requests.
+
+Python toolchain image builds mount an optional `github_token` build secret for
+mise downloads and artifact-attestation verification. Image builders share the
+same argument helper; token values never become build arguments or image ENV.
+The release runner supplies `MISE_GITHUB_TOKEN` independently of fake GitHub CLI
+credentials. Local builds without a token still work subject to GitHub API limits.
+Regular Linux CI tests the generated install instruction with a fake installer,
+both with and without authentication, and checks that the secret is absent from
+subsequent layers, runtime environment, and image history.
+
+Maintainers can add the `release-validation` label to a same-repository PR to
+run the full Linux release regression tiers before merging a release repair.
+New commits rerun that opt-in validation. Fork PRs receive no provider secrets;
+Claude remains excluded and requires the existing manual workflow input.

@@ -2490,7 +2490,8 @@ func renderNodeInstallCommand(version string) string {
 
 func renderPythonInstallCommand(version string) string {
 	var out strings.Builder
-	out.WriteString(fmt.Sprintf("RUN mise use -g --pin python@%s\n", version))
+	out.WriteString(fmt.Sprintf(`RUN --mount=type=secret,id=github_token if [ -s /run/secrets/github_token ]; then export GITHUB_TOKEN="$(cat /run/secrets/github_token)"; export MISE_GITHUB_TOKEN="$GITHUB_TOKEN"; fi; mise use -g --pin python@%s
+`, version))
 	out.WriteString("RUN pip3 install uv\n")
 	out.WriteString("RUN ln -sf \"$(dirname \"$(mise which python3)\")/uv\" /usr/local/bin/uv\n")
 	return out.String()
