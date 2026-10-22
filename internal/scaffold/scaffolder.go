@@ -251,6 +251,7 @@ type agentInstaller struct {
 	// probeHostVersion returns the agent version installed on the host, or
 	// is nil when init always pins the catalog head.
 	probeHostVersion func() (string, error)
+	validateVersion  func(string) error
 }
 
 // InstallCommand renders the Dockerfile instruction that installs version.
@@ -280,6 +281,12 @@ func (i agentInstaller) ProbeHostVersion() (string, bool) {
 var agentInstallers = map[string]agentInstaller{
 	"opencode": {
 		packageName: "opencode-ai",
+		validateVersion: func(version string) error {
+			if !strings.HasPrefix(version, "1.") {
+				return fmt.Errorf("unsupported OpenCode version %q: Sandman requires OpenCode V1; install opencode-ai@%s and retry init", version, DefaultBuiltInAgentVersion("opencode"))
+			}
+			return nil
+		},
 		// Late-bound so tests can replace probeOpencodeVersion.
 		probeHostVersion: func() (string, error) { return probeOpencodeVersion() },
 	},
@@ -566,6 +573,17 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return err
 	}
 
+	defaultAgent, err := s.resolveDefaultAgent(opts, preserved)
+	if err != nil {
+		return err
+	}
+	agentVersion := resolveAgentVersion(defaultAgent)
+	if validate := agentInstallers[defaultAgent].validateVersion; validate != nil {
+		if err := validate(agentVersion); err != nil {
+			return err
+		}
+	}
+
 	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
 		return fmt.Errorf("create .sandman: %w", err)
 	}
@@ -573,11 +591,6 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		if err := writeCACertDir(caCertsDir(sandmanDir), caCerts.certs); err != nil {
 			return err
 		}
-	}
-
-	defaultAgent, err := s.resolveDefaultAgent(opts, preserved)
-	if err != nil {
-		return err
 	}
 
 	preset, err := s.resolveBuildToolsPreset(repoRoot, opts, p)
@@ -702,7 +715,6 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		}
 	}
 
-	agentVersion := resolveAgentVersion(defaultAgent)
 	dockerfile := s.renderBuildToolsDockerfile(preset, defaultAgent, agentVersion, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion, rubyVersion, rustVersion, javaVersion, caCertFingerprints(caCerts.certs))
 	dockerfilePath := layout.DockerfilePath()
 	if err := atomicfs.WriteAtomic(dockerfilePath, []byte(dockerfile), 0644); err != nil {

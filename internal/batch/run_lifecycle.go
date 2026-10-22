@@ -73,7 +73,18 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		return s.lifecycleEarlyAbort(ctx, branch), false
 	}
 
-	wt := s.sbFactory.NewSandbox(".", s.worktreeDir(), branch, s.baseBranch, container)
+	checkout := s.baseBranch
+	if s.reviewHeadSHA != "" {
+		fetchHead := s.opts.reviewHeadFetch
+		if fetchHead == nil {
+			fetchHead = sandbox.FetchReviewHead
+		}
+		if err := fetchHead(ctx, ".", s.prNumber, s.reviewHeadSHA); err != nil {
+			return s.lifecycleEarlyFailure("fetch review snapshot", branch, s.runID, err), false
+		}
+		checkout = s.reviewHeadSHA
+	}
+	wt := s.sbFactory.NewSandbox(".", s.worktreeDir(), branch, checkout, container)
 	opts, errResult, ok := s.startOptsFor(branch)
 	if !ok {
 		if issueDriven {

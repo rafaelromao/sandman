@@ -1437,7 +1437,7 @@ func TestParseChildrenFromBody(t *testing.T) {
 func TestCLIClient_FetchPR_Success(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
-		{output: `{"number":42,"state":"open","title":"Add review command","body":"Adds the sandman review one-shot.","mergedAt":null,"headRefName":"issue-381/sandman-review-config-default-prompt-and-one-shot-mode","headRefOid":"deadbeef"}`},
+		{output: `{"number":42,"state":"open","title":"Add review command","body":"Adds the sandman review one-shot.","mergedAt":null,"headRefName":"issue-381/sandman-review-config-default-prompt-and-one-shot-mode","headRefOid":"deadbeef","baseRefName":"release"}`},
 	}}
 	client := &CLIClient{runner: runner}
 
@@ -1469,6 +1469,9 @@ func TestCLIClient_FetchPR_Success(t *testing.T) {
 	if pr.HeadRefOid != "deadbeef" {
 		t.Errorf("expected head ref oid to round-trip, got %q", pr.HeadRefOid)
 	}
+	if pr.BaseRefName != "release" {
+		t.Errorf("expected PR comparison base to round-trip, got %q", pr.BaseRefName)
+	}
 	if len(runner.calls) != 2 {
 		t.Fatalf("expected 2 commands, got %d", len(runner.calls))
 	}
@@ -1478,7 +1481,7 @@ func TestCLIClient_FetchPR_Success(t *testing.T) {
 	if runner.calls[1].name != "gh" {
 		t.Errorf("expected command gh, got %q", runner.calls[1].name)
 	}
-	expectedArgs := []string{"pr", "view", "42", "--json", "number,title,body,state,mergedAt,headRefName,headRefOid,closingIssuesReferences"}
+	expectedArgs := []string{"pr", "view", "42", "--json", "number,title,body,state,mergedAt,headRefName,headRefOid,baseRefName,closingIssuesReferences"}
 	if !reflect.DeepEqual(runner.calls[1].args, expectedArgs) {
 		t.Errorf("unexpected fetch args: %v", runner.calls[1].args)
 	}

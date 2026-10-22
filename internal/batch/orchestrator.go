@@ -3050,6 +3050,7 @@ type runSessionOptions struct {
 	waitOwnerPulse             func(string) <-chan time.Time
 	now                        func() time.Time
 	baseBranchSync             func(repoPath, sourceBranch string) error
+	reviewHeadFetch            func(context.Context, string, int, string) error
 	baseBranchSyncMu           *sync.Mutex
 	contextRolloverLiterals    []string
 	contextRolloverLiteralsSet bool
@@ -3084,9 +3085,10 @@ type runSessionOptions struct {
 // is built by runSingle / runPromptOnlySingle. A session is short-lived: it
 // lives for one execute call and is discarded on return.
 type runSession struct {
-	deps      runDeps
-	coord     runCoordination
-	commander daemon.IssueCommander
+	reviewHeadSHA string
+	deps          runDeps
+	coord         runCoordination
+	commander     daemon.IssueCommander
 
 	// Inputs captured from the runSingle / runPromptOnlySingle call site.
 	issueNumber          int
@@ -4662,6 +4664,7 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 		RunID:               req.RunID,
 		UserProvidedRunID:   req.RunID,
 		Review:              req.Review,
+		ReviewHeadSHA:       req.ReviewHeadSHA,
 		PRNumber:            req.PRNumber,
 		ReviewFocus:         req.ReviewFocus,
 		PortalHidden:        req.PortalHidden,
@@ -4723,7 +4726,11 @@ func (o *Orchestrator) runPromptOnlyRow(ctx context.Context, row RowSpec, bc Bat
 func (s *runSession) preparePromptAttempt(ctx context.Context, branch string, wt sandbox.Sandbox, logPath string, attempt int, previous AgentRunResult) (prompt.RenderConfig, *AgentRunResult) {
 	if attempt > 0 {
 		if !previous.ContextExhausted {
-			if err := resetRetryBranch(s.deps.runSessionOpts, ctx, wt, branch, s.baseBranch); err != nil {
+			checkout := s.baseBranch
+			if s.reviewHeadSHA != "" {
+				checkout = s.reviewHeadSHA
+			}
+			if err := resetRetryBranch(s.deps.runSessionOpts, ctx, wt, branch, checkout); err != nil {
 				fmt.Fprintf(s.deps.errorLog, "error: reset retry branch for prompt-only run: %v\n", err)
 				return prompt.RenderConfig{}, &AgentRunResult{Status: "failure", Branch: branch, RetriesTotal: attempt, Review: s.review, RunID: s.runID}
 			}
@@ -4735,6 +4742,11 @@ func (s *runSession) preparePromptAttempt(ctx context.Context, branch string, wt
 		}
 	}
 	attemptCfg := s.renderCfg
+	if s.reviewHeadSHA != "" {
+		if err := sandbox.VerifyReviewHead(ctx, wt, s.reviewHeadSHA); err != nil {
+			return prompt.RenderConfig{}, &AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: s.runID, OperationalError: err}
+		}
+	}
 	if s.mode == ModeContinue || attempt > 0 {
 		taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
 		taskContent, taskExists, err := ReadTaskContent(taskPath)

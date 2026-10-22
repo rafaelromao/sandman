@@ -90,6 +90,30 @@ func TestVersionProbe_ParsesHostBinaryOutput(t *testing.T) {
 	}
 }
 
+func TestVersionProbe_NormalizesPrefixedVersion(t *testing.T) {
+	for _, version := range []string{"2.1.2", "1.19.3", "1.2.3-rc.1+2026.sha-1", "1.2.3-0", "1.2.3-01alpha"} {
+		t.Run(version, func(t *testing.T) {
+			installFakeOpencode(t, fmt.Sprintf("echo 'opencode v%s'\n", version))
+			got, err := VersionProbe()
+			if err != nil || got != version {
+				t.Fatalf("version = %q, error = %v; want %s", got, err, version)
+			}
+		})
+	}
+}
+
+func TestVersionProbe_RejectsMalformedHostOutput(t *testing.T) {
+	for _, output := range []string{"", "opencode", "opencode latest", "unknown 1.19.3", "v1.2", "1.02.3", "1.19.3;false", "1.2.3-..", "1.2.3+.", "1.2.3-01", "1.2.3-alpha..beta", "1.2.3+build..metadata"} {
+		t.Run(output, func(t *testing.T) {
+			installFakeOpencode(t, fmt.Sprintf("printf '%%s\\n' '%s'\n", output))
+			got, err := VersionProbe()
+			if err == nil || got != "" {
+				t.Fatalf("malformed output %q produced version %q, error %v", output, got, err)
+			}
+		})
+	}
+}
+
 // TestVersionProbe_KillsHangingHostBinaryAndItsHelpers pins the bound on
 // a host opencode that never answers: the probe returns the timeout as an
 // error, and its whole process group is killed, including a helper that

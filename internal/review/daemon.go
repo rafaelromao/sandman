@@ -176,10 +176,13 @@ type pendingPublicationMarker struct {
 // publicationBody keeps the rendered decision unchanged while adding an
 // invisible request identity. Body equality alone cannot distinguish a new
 // review from an older request with the same decision text during recovery.
-func publicationBody(redacted, triggerKey string) string {
-	identity := sha256.Sum256([]byte(triggerKey))
-	return strings.TrimRight(redacted, "\n") + "\n\n" +
-		publicationIdentityPrefix + fmt.Sprintf("%x", identity[:]) + " -->\n"
+func publicationBody(redacted, triggerKey, head string) string {
+	return strings.TrimRight(redacted, "\n") + "\n\n" + publicationIdentity(triggerKey, head)
+}
+
+func publicationIdentity(triggerKey, head string) string {
+	identity := sha256.Sum256([]byte(triggerKey + "\x00" + strings.ToLower(head)))
+	return publicationIdentityPrefix + fmt.Sprintf("%x", identity[:]) + " -->\n"
 }
 
 // Daemon polls the repo for /sandman review comments and launches review
@@ -1082,6 +1085,9 @@ func (d *Daemon) loadPendingPosts() error {
 			continue
 		}
 		runDir := filepath.Join(entry.Path, "runs", rowID)
+		if snapshot, err := readReviewSnapshot(runDir); err == nil && snapshot.Invalidated {
+			continue
+		}
 		reviewState := filepath.Join(runDir, "review-state.json")
 		state, stateErr := seenStateReader(runDir)
 		marker, markerErr := readPendingPublicationMarker(runDir)
@@ -1623,7 +1629,7 @@ func reviewTriggerTimestamp(comment github.PRComment) time.Time {
 	return comment.CreatedAt
 }
 
-func hasLaterDaemonReviewResponse(trigger github.PRComment, comments []github.PRComment, authenticatedLogin string) bool {
+func hasLaterDaemonReviewResponse(trigger github.PRComment, comments []github.PRComment, authenticatedLogin, head string) bool {
 	if strings.TrimSpace(authenticatedLogin) == "" {
 		return false
 	}
@@ -1633,6 +1639,9 @@ func hasLaterDaemonReviewResponse(trigger github.PRComment, comments []github.PR
 			continue
 		}
 		if hasMarkdownHeading(comment.Body, "Summary") && hasMarkdownHeading(comment.Body, "Decision") {
+			if !strings.HasSuffix(comment.Body, publicationIdentity(reviewTriggerKey(trigger), head)) {
+				continue
+			}
 			return true
 		}
 	}
@@ -1877,9 +1886,20 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) (operationErr erro
 	// prevent a matching pending publication from being acknowledged first.
 	// Keep this filter before seen-cache, retry-budget, and newest-trigger
 	// handling so answered requests retain their existing launch semantics.
+	responseHead := ""
+	if d.authenticatedLogin != "" {
+		pr, err := d.GitHub.FetchPR(ctx, prNumber)
+		if err != nil {
+			return fmt.Errorf("observe response head: %w", err)
+		}
+		if pr == nil || strings.TrimSpace(pr.HeadRefOid) == "" {
+			return errors.New("observe response head: missing current head")
+		}
+		responseHead = pr.HeadRefOid
+	}
 	filtered := triggers[:0]
 	for _, trigger := range triggers {
-		if hasLaterDaemonReviewResponse(trigger.comment, comments, d.authenticatedLogin) {
+		if hasLaterDaemonReviewResponse(trigger.comment, comments, d.authenticatedLogin, responseHead) {
 			d.logf("PR #%d request comment %s has a later daemon review response; skipping", prNumber, trigger.comment.ID)
 			continue
 		}
@@ -2349,6 +2369,9 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	if pr == nil {
 		return d.recordLaunchFailure(ctx, triggerKey, state, errors.New("fetch PR: empty response"))
 	}
+	if strings.TrimSpace(pr.HeadRefOid) == "" {
+		return d.recordLaunchFailure(ctx, triggerKey, state, errors.New("fetch PR: missing review head"))
+	}
 	if pr != nil {
 		if strings.TrimSpace(pr.HeadRefOid) == "" {
 			launchClaim, lookupClaim = lookupClaim, nil
@@ -2471,8 +2494,14 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	}
 	d.logf("repo=%s agent=%s model=%s pr=%d", repoName, agentName, modelName, prNumber)
 
+	if err := writeReviewSnapshot(reviewRunFolder, reviewSnapshot{Version: 1, PR: prNumber, Request: triggerKey, Head: pr.HeadRefOid}); err != nil {
+		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("persist review snapshot: %w", err))
+	}
+	rendered = fmt.Sprintf("## Review snapshot\n\nCheckout commit: `%s`\nComparison base: `origin/%s`\n\n", pr.HeadRefOid, pr.BaseRefName) + rendered
 	req := batch.Request{
 		Agent:                agentName,
+		BaseBranch:           pr.BaseRefName,
+		ReviewHeadSHA:        pr.HeadRefOid,
 		Model:                modelName,
 		Variant:              d.effectiveVariant(),
 		VariantSet:           d.VariantSet,
@@ -2638,7 +2667,15 @@ func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, comm
 		*preserveWorktree = true
 	}
 
-	redacted := publicationBody(RedactBody(string(body)), commentID)
+	snapshot, snapshotErr := d.currentReviewSnapshot(ctx, prNumber, commentID, reviewRunFolder)
+	if err := snapshotErr; err != nil {
+		if errors.Is(err, errStaleReviewSnapshot) {
+			return d.recordLaunchFailure(ctx, commentID, state, err)
+		}
+		d.recordPendingPublication(prNumber, commentID, decisionDir, reviewRunFolder, "", state, preserveWorktree)
+		return err
+	}
+	redacted := publicationBody(RedactBody(string(body)), commentID, snapshot.Head)
 	if err := d.persistPublicationOutbox(reviewRunFolder, pendingPublicationMarker{
 		Version:   2,
 		PR:        prNumber,
@@ -2670,8 +2707,14 @@ func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, comm
 		d.recordPendingPublication(prNumber, commentID, decisionDir, reviewRunFolder, redacted, state, preserveWorktree)
 		return cerr
 	}
-	postErr := postWithRetry(ctx, d, prNumber, redacted)
+	postErr := postWithRetry(ctx, d, prNumber, redacted, func() error {
+		_, err := d.currentReviewSnapshot(ctx, prNumber, commentID, reviewRunFolder)
+		return err
+	})
 	if postErr != nil {
+		if errors.Is(postErr, errStaleReviewSnapshot) {
+			return d.recordLaunchFailure(ctx, commentID, state, postErr)
+		}
 		if cerr := ctx.Err(); cerr != nil {
 			d.logf("PR #%d: ctx cancelled during post; retaining durable decision for publication recovery", prNumber)
 			d.recordPendingPublication(prNumber, commentID, decisionDir, reviewRunFolder, redacted, state, preserveWorktree)
@@ -2716,11 +2759,14 @@ func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, comm
 // postStepBackoffs[attempt-1]. Returns the last error from
 // PostComment on exhaustion, or ctx.Err() if the context is
 // cancelled at any point. Issue #1891.
-func postWithRetry(ctx context.Context, d *Daemon, prNumber int, body string) error {
+func postWithRetry(ctx context.Context, d *Daemon, prNumber int, body string, validate func() error) error {
 	var lastErr error
 	for attempt := 1; attempt <= PostStepMaxAttempts; attempt++ {
 		if cerr := ctx.Err(); cerr != nil {
 			return cerr
+		}
+		if err := validate(); err != nil {
+			return err
 		}
 		// The first post belongs to this decision and must not be
 		// suppressed by an identical body from an older request. After
@@ -2743,7 +2789,10 @@ func postWithRetry(ctx context.Context, d *Daemon, prNumber int, body string) er
 				continue
 			}
 			if alreadyPosted {
-				return nil
+				return validate()
+			}
+			if err := validate(); err != nil {
+				return err
 			}
 		}
 		if err := d.CommentPoster.PostComment(ctx, prNumber, body); err != nil {
@@ -2766,7 +2815,7 @@ func postWithRetry(ctx context.Context, d *Daemon, prNumber int, body string) er
 		if attempt > 1 {
 			d.logf("PR #%d: post succeeded on attempt %d/%d", prNumber, attempt, PostStepMaxAttempts)
 		}
-		return nil
+		return validate()
 	}
 	return lastErr
 }
@@ -2936,6 +2985,10 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 	}
 	d.pendingPostMu.Unlock()
 
+	snapshot, snapshotErr := d.currentReviewSnapshot(ctx, prNumber, triggerKey, filepath.Dir(entry.reviewState))
+	if err := snapshotErr; err != nil {
+		return d.handlePendingSnapshotFailure(ctx, prNumber, triggerKey, err)
+	}
 	body := []byte(entry.body)
 	if entry.body == "" {
 		decisionPath := filepath.Join(entry.runDir, "decision.md")
@@ -2987,7 +3040,7 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 			d.observeHealthFailure(ctx, requestHealthKey(prNumber, triggerKey), "read pending review decision", prNumber, err)
 			return true
 		}
-		body = []byte(publicationBody(RedactBody(string(body)), triggerKey))
+		body = []byte(publicationBody(RedactBody(string(body)), triggerKey, snapshot.Head))
 		if err := d.persistPublicationOutbox(filepath.Dir(entry.reviewState), pendingPublicationMarker{
 			Version:   2,
 			PR:        prNumber,
@@ -3009,6 +3062,9 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 		}
 		d.pendingPostMu.Unlock()
 	}
+	if !strings.HasSuffix(string(body), publicationIdentity(triggerKey, snapshot.Head)) {
+		return d.handlePendingSnapshotFailure(ctx, prNumber, triggerKey, invalidateReviewSnapshot(filepath.Dir(entry.reviewState), snapshot))
+	}
 
 	// Honour ctx cancellation observed between ReadFile and the
 	// post step: do NOT call MarkSeen so the trigger stays in
@@ -3025,6 +3081,9 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 		d.observeHealthFailure(ctx, requestHealthKey(prNumber, triggerKey), "observe pending review publication", prNumber, lookupErr)
 		return true
 	}
+	if _, err := d.currentReviewSnapshot(ctx, prNumber, triggerKey, filepath.Dir(entry.reviewState)); err != nil {
+		return d.handlePendingSnapshotFailure(ctx, prNumber, triggerKey, err)
+	}
 	if !alreadyPosted {
 		lookupErr = d.CommentPoster.PostComment(ctx, prNumber, string(body))
 	}
@@ -3032,6 +3091,9 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 		d.logf("PR #%d comment %s: rehydrate post failed: %v; keeping entry for next-tick retry (issue #1847)", prNumber, comment.ID, lookupErr)
 		d.observeHealthFailure(ctx, requestHealthKey(prNumber, triggerKey), "publish pending review decision", prNumber, lookupErr)
 		return true
+	}
+	if _, err := d.currentReviewSnapshot(ctx, prNumber, triggerKey, filepath.Dir(entry.reviewState)); err != nil {
+		return d.handlePendingSnapshotFailure(ctx, prNumber, triggerKey, err)
 	}
 
 	// Successful post. MarkSeen("success") on the per-run store

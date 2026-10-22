@@ -47,7 +47,7 @@ func TestInit_CACertFlagInstallsTrustedCertificateBeforeHTTPSDownloads(t *testin
 	writeTestCAPEM(t, caPath, "Corp Inspection Root")
 
 	var out bytes.Buffer
-	cmd := NewInitCmd()
+	cmd := newInitCommandForTest(t)
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
 	cmd.SetArgs([]string{"--build-tools", "generic", "--ca-cert", caPath})

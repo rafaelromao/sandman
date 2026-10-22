@@ -212,6 +212,7 @@ type prPayload struct {
 	MergedAt                string          `json:"mergedAt"`
 	HeadRefName             string          `json:"headRefName"`
 	HeadRefOid              string          `json:"headRefOid"`
+	BaseRefName             string          `json:"baseRefName"`
 	UpdatedAt               string          `json:"updatedAt"`
 	ReviewDecision          string          `json:"reviewDecision"`
 	MergeStateStatus        string          `json:"mergeStateStatus"`
@@ -525,7 +526,7 @@ func (c *CLIClient) FetchPR(ctx context.Context, number int) (*PR, error) {
 		return nil, err
 	}
 
-	out, err := c.readCommand(ctx, "gh pr view", "pr", "view", fmt.Sprintf("%d", number), "--json", "number,title,body,state,mergedAt,headRefName,headRefOid,closingIssuesReferences")
+	out, err := c.readCommand(ctx, "gh pr view", "pr", "view", fmt.Sprintf("%d", number), "--json", "number,title,body,state,mergedAt,headRefName,headRefOid,baseRefName,closingIssuesReferences")
 	if err != nil {
 		return nil, fmt.Errorf("gh pr view: %w", err)
 	}
@@ -550,6 +551,7 @@ func (c *CLIClient) FetchPR(ctx context.Context, number int) (*PR, error) {
 		Merged:             strings.TrimSpace(payload.MergedAt) != "",
 		HeadRefName:        payload.HeadRefName,
 		HeadRefOid:         payload.HeadRefOid,
+		BaseRefName:        payload.BaseRefName,
 		linkedIssueNumber:  firstLinkedIssueNumber(linkedIssueNumbers),
 		linkedIssueNumbers: linkedIssueNumbers,
 	}, nil
