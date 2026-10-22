@@ -86,6 +86,8 @@ class ReleasePipelineTests(unittest.TestCase):
             self.assertEqual(report['versions'], 'observed CLI version')
             self.assertEqual(report['prerequisites'], 'auth failed')
             self.assertEqual(report['counts']['missing'], 1)
+            # The job log must name the failing scenario without opening the artifact.
+            self.assertIn("::error::required scenario missing: ('p', 'TestRequired')", result.stderr.decode())
 
     def test_tier_selectors_and_process_failures(self):
         scripts = Path(__file__).resolve().parent

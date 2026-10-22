@@ -4,6 +4,7 @@ import argparse
 import collections
 import json
 import os
+import sys
 from pathlib import Path
 
 
@@ -109,6 +110,9 @@ def main():
     if os.environ.get('GITHUB_STEP_SUMMARY'):
         with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as stream:
             stream.write(summary)
+    # Name each failure in the job log too; the step summary and artifact are easy to miss.
+    for error in result['errors'][:50]:
+        print(f'::error::{error[:500]}', file=sys.stderr)
     raise SystemExit(0 if result['success'] else 1)
 
 
