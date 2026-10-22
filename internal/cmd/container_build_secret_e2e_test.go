@@ -33,7 +33,7 @@ func TestPythonBuildSecretIsTransient(t *testing.T) {
 			}
 			repo := t.TempDir()
 			s := &scaffold.Scaffolder{}
-			if err := s.Scaffold(repo, scaffold.Options{BuildTools: "python", ToolVersion: "3.12.9"}, smokePrompter{}); err != nil {
+			if err := s.Scaffold(repo, scaffold.Options{BuildTools: "python"}, smokePrompter{}); err != nil {
 				t.Fatal(err)
 			}
 			dockerfile := filepath.Join(repo, ".sandman", "Dockerfile")
@@ -51,7 +51,7 @@ func TestPythonBuildSecretIsTransient(t *testing.T) {
 				t.Fatal("generated Python install instruction missing")
 			}
 			// The stand-in stores only a digest of the expected fixture token.
-			mise := fmt.Sprintf("#!/bin/sh\nset -eu\ntest \"$*\" = 'use -g --pin python@3.12.9'\ntest \"${MISE_GITHUB_TOKEN:-}\" = \"${GITHUB_TOKEN:-}\"\ntest \"$(printf '%%s' \"${GITHUB_TOKEN:-}\" | sha256sum | cut -d ' ' -f 1)\" = '%x'\n", sha256.Sum256([]byte(token)))
+			mise := fmt.Sprintf("#!/bin/sh\nset -eu\ntest \"$*\" = 'use -g --pin python@%s'\ntest \"${MISE_GITHUB_TOKEN:-}\" = \"${GITHUB_TOKEN:-}\"\ntest \"$(printf '%%s' \"${GITHUB_TOKEN:-}\" | sha256sum | cut -d ' ' -f 1)\" = '%x'\n", scaffold.BundledPythonVersion("latest"), sha256.Sum256([]byte(token)))
 			if err := os.WriteFile(filepath.Join(repo, "mise"), []byte(mise), 0755); err != nil {
 				t.Fatal(err)
 			}
