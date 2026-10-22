@@ -3,7 +3,6 @@ package github
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 type fakeRunner struct {
@@ -2434,13 +2435,13 @@ func TestNewCLIClient_CancelsSpawnedGHProcess(t *testing.T) {
 		data, err := os.ReadFile(childPIDPath)
 		if err == nil {
 			childPID, err = strconv.Atoi(strings.TrimSpace(string(data)))
-			if err == nil && processExists(childPID) {
+			if err == nil && testenv.ProcessAlive(childPID) {
 				break
 			}
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if childPID == 0 || !processExists(childPID) {
+	if childPID == 0 || !testenv.ProcessAlive(childPID) {
 		t.Fatalf("fake gh did not publish a live child process")
 	}
 	t.Cleanup(func() {
@@ -2465,10 +2466,10 @@ func TestNewCLIClient_CancelsSpawnedGHProcess(t *testing.T) {
 	}
 
 	processGoneDeadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(processGoneDeadline) && processExists(childPID) {
+	for time.Now().Before(processGoneDeadline) && testenv.ProcessAlive(childPID) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if processExists(childPID) {
+	if testenv.ProcessAlive(childPID) {
 		t.Fatalf("fake gh child process %d survived cancellation", childPID)
 	}
 }
@@ -2507,18 +2508,4 @@ func TestCLIClient_ZeroValueRemainsUsable(t *testing.T) {
 	if got != "owner/repo" {
 		t.Fatalf("RepoName = %q, want owner/repo", got)
 	}
-}
-
-func processExists(pid int) bool {
-	if runtime.GOOS == "linux" {
-		data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-		if err == nil {
-			fields := strings.Fields(string(data))
-			if len(fields) >= 3 && fields[2] == "Z" {
-				return false
-			}
-		}
-	}
-	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
 }
