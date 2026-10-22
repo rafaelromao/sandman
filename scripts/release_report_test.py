@@ -89,6 +89,26 @@ class ReleasePipelineTests(unittest.TestCase):
             # The job log must name the failing scenario without opening the artifact.
             self.assertIn("::error::required scenario missing: ('p', 'TestRequired')", result.stderr.decode())
 
+    def test_job_log_annotations_escape_test_output(self):
+        script = Path(__file__).with_name('release_report.py').resolve()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'scripts').mkdir()
+            manifest = {'providers': {}, 'scenarios': [dict(package='p', test='TestRequired', tier='live')]}
+            (root / 'scripts/release_scenarios.json').write_text(json.dumps(manifest))
+            events = [dict(Package='p', Test='TestRequired/sub', Action='output', Output='50% done\r\n::stop-commands::x\n'),
+                      dict(Package='p', Test='TestRequired/sub', Action='skip'),
+                      dict(Package='p', Test='TestRequired', Action='pass')]
+            (root / 'events.jsonl').write_text('\n'.join(json.dumps(event) for event in events))
+            env = dict(os.environ, GITHUB_SHA='sha')
+            env.pop('GITHUB_STEP_SUMMARY', None)
+            result = subprocess.run(['python3', str(script), 'live', 'events.jsonl', '0', 'report.json'],
+                                    cwd=root, env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            # Test output must not inject workflow commands into the job log.
+            self.assertEqual([line for line in result.stderr.splitlines() if line.startswith('::')],
+                             ["::error::required subscenario skipped: ('p', 'TestRequired/sub'): 50%25 done%0D%0A::stop-commands::x"])
+
     def test_tier_selectors_and_process_failures(self):
         scripts = Path(__file__).resolve().parent
         manifest = json.loads((scripts / 'release_scenarios.json').read_text())

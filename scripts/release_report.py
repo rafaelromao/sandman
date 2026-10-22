@@ -112,7 +112,8 @@ def main():
             stream.write(summary)
     # Name each failure in the job log too; the step summary and artifact are easy to miss.
     for error in result['errors'][:50]:
-        print(f'::error::{error[:500]}', file=sys.stderr)
+        # Escape like the runner expects, so test output cannot inject workflow commands.
+        print('::error::' + error[:500].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'), file=sys.stderr)
     raise SystemExit(0 if result['success'] else 1)
 
 
