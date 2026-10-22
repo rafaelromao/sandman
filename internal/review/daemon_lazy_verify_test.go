@@ -64,10 +64,10 @@ func TestDaemon_LaunchReviewReturnsFastAndRecordsPending(t *testing.T) {
 		t.Fatalf("first tick should launch exactly 1 batch, got %d", runner.calls)
 	}
 
-	// Initial publication posts directly; exact-match lookup is reserved
-	// for ambiguous retries and durable recovery.
-	if got := gh.commentCalls[7]; got != 1 {
-		t.Errorf("ListPRComments should be called once during the first tick for the trigger scan, got %d calls", got)
+	// Initial publication scans triggers and revalidates the request before
+	// preparing the outbox and around the remote publication.
+	if got := gh.commentCalls[7]; got != 4 {
+		t.Errorf("ListPRComments should scan and revalidate publication provenance, got %d calls", got)
 	}
 
 	// Issue #1846 (S3) and #1849 (S6): launchReview owns MarkSeen

@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -51,8 +52,8 @@ const redeliveryGrace = 100 * time.Millisecond
 // closes.
 var operatorSignals = []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}
 
-// VersionProbe shells `opencode --version` and returns the leading
-// semver-style string. Production wires the bounded host probe at
+// VersionProbe shells `opencode --version` and returns a validated,
+// normalized version. Production wires the bounded host probe at
 // package init time; tests inject a stub via the package-level var.
 // Returning (empty, err) is the documented "host has no usable opencode
 // binary" signal — callers should not warn in that case. A probe that
@@ -63,11 +64,8 @@ var operatorSignals = []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}
 // the probe's process group is gone. A caller that registered its own
 // handler before probing therefore receives that signal twice.
 //
-// The parse is intentionally tolerant: opencode has shipped versions
-// like `1.17.19`, `1.17.19+abc123`, and bare date stamps across
-// releases (we observed both formats in the wild during the issue
-// investigation); we accept anything in the first whitespace-separated
-// token.
+// Both bare V1 output and the named `opencode v2.1.2` format are
+// recognized. The executable name must never become an npm version.
 var VersionProbe = func() (string, error) {
 	return probeVersionWithin(versionProbeTimeout)
 }
@@ -117,11 +115,15 @@ func probeVersionWithin(timeout time.Duration) (string, error) {
 		}
 		return "", err
 	}
-	fields := strings.Fields(strings.TrimSpace(string(out)))
+	fields := strings.Fields(versionPrefix.ReplaceAllString(strings.TrimSpace(string(out)), ""))
 	if len(fields) == 0 {
-		return "", fmt.Errorf("opencode --version returned no output")
+		return "", fmt.Errorf("opencode --version returned no version")
 	}
-	return fields[0], nil
+	version := strings.TrimPrefix(fields[0], "v")
+	if !versionPattern.MatchString(version) {
+		return "", fmt.Errorf("opencode --version returned an invalid version")
+	}
+	return version, nil
 }
 
 // killProbeGroup kills the process group the probe leads, including
@@ -170,3 +172,10 @@ func cancelOnOperatorSignal(cancel context.CancelFunc) (stop func() os.Signal) {
 		return received
 	}
 }
+
+const versionNumber = `(0|[1-9][0-9]*)`
+const prereleaseIdentifier = `(` + versionNumber + `|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)`
+
+var versionPattern = regexp.MustCompile(`^` + versionNumber + `\.` + versionNumber + `\.` + versionNumber +
+	`(-` + prereleaseIdentifier + `(\.` + prereleaseIdentifier + `)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$`)
+var versionPrefix = regexp.MustCompile(`^opencode\s+`)

@@ -30,6 +30,7 @@ type PR struct {
 	Merged      bool
 	HeadRefName string
 	HeadRefOid  string
+	BaseRefName string
 	UpdatedAt   time.Time
 	// ReviewDecision, MergeStateStatus, and StatusCheckRollup are populated
 	// by FindPRByBranch when available; they are empty when the underlying

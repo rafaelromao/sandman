@@ -36,7 +36,7 @@ func TestContainerSandbox_Exec_KillAgentFnFailureWrapsCleanupError(t *testing.T)
 	}()
 
 	readyPath := filepath.Join(t.TempDir(), "child.ready")
-	KillAgentFn = func(containerID, binary string) error {
+	KillAgentFn = func(containerID, binary, _ string) error {
 		return fmt.Errorf("kill failed for %s", containerID)
 	}
 	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
