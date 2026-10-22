@@ -998,6 +998,11 @@
       "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestPermissionFakeAgentHomeIsolatedFromHostState",
       "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPythonBuildSecretIsTransient",
+      "tier": "integration"
     }
   ]
 }

@@ -1931,7 +1931,7 @@ func TestScaffold_PythonPresetWritesPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(content, "FROM debian:bookworm-slim") {
 		t.Fatalf("Dockerfile missing Debian base image, got:\n%s", content)
 	}
-	if !strings.Contains(content, "RUN mise use -g --pin python@") {
+	if !strings.Contains(content, "mise use -g --pin python@") {
 		t.Fatalf("Dockerfile missing pinned python install, got:\n%s", content)
 	}
 	if !strings.Contains(content, "RUN pip3 install uv") {
@@ -1991,7 +1991,7 @@ func TestScaffold_AllAgentPresets_GeneratePythonPresetFiles(t *testing.T) {
 			if !strings.Contains(content, "# sandman build-tools: python") {
 				t.Fatalf("Dockerfile missing python build-tools metadata, got:\n%s", content)
 			}
-			if !strings.Contains(content, "RUN mise use -g --pin python@"+wantPythonVersion) {
+			if !strings.Contains(content, "mise use -g --pin python@"+wantPythonVersion) {
 				t.Fatalf("Dockerfile missing pinned python install %q, got:\n%s", wantPythonVersion, content)
 			}
 			if !strings.Contains(content, "RUN pip3 install uv") {

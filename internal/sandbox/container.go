@@ -206,7 +206,7 @@ func (r *ContainerRuntime) BuildImage(ctx context.Context, repoPath string) (str
 	h := sha256.Sum256(append([]byte(absPath), dockerfileData...))
 	tag := fmt.Sprintf("sandman-custom-%x:latest", h[:8])
 
-	args := []string{"build", "-t", tag, "-f", dockerfile, repoPath}
+	args := ImageBuildArgs(tag, dockerfile, repoPath)
 	out, err := runContainerCommand(ctx, r.execFn(r.binary, args...))
 	if err != nil {
 		return "", fmt.Errorf("build image from .sandman/Dockerfile: %w\n%s%s", err, out, tlsVerificationHint(string(out)))
