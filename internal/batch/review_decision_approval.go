@@ -177,7 +177,8 @@ func noReviewFindings(text string) bool {
 	// Construct tags are rule metadata, not code locations or repair requests.
 	text = reviewQualityTag.ReplaceAllString(text, "rule")
 	text = strings.TrimSpace(text)
-	if reviewFindingSeverity.MatchString(text) || reviewFindingHeading.MatchString(text) {
+	severityProse := strings.NewReplacer("*", "", "_", "").Replace(reviewApprovalProse(text))
+	if reviewFindingSeverity.MatchString(severityProse) || reviewFindingHeading.MatchString(text) {
 		return false
 	}
 	// Reports commonly follow the no-findings paragraph with acceptance evidence.
