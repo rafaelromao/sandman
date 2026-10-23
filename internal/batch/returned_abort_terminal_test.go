@@ -40,9 +40,9 @@ func assertSharedAbortTerminal(t *testing.T, log []events.Event, layout paths.La
 	if payload := aborted[0].Payload; aborted[0].RunID != started.RunID || payload["branch"] != "42-parent" || payload["worktree_state"] != "preserved" {
 		t.Fatalf("run.aborted %s payload = %v, want Run %s with its branch and preserved worktree evidence", aborted[0].RunID, payload, started.RunID)
 	}
-	manifests, _ := filepath.Glob(filepath.Join(layout.BatchesDir, "*", "runs", started.RunID, "run.json"))
-	if len(manifests) != 1 {
-		t.Fatalf("run manifests for %s = %v, want one", started.RunID, manifests)
+	manifests, err := filepath.Glob(filepath.Join(layout.BatchesDir, "*", "runs", started.RunID, "run.json"))
+	if err != nil || len(manifests) != 1 {
+		t.Fatalf("run manifests for %s = %v (err %v), want one", started.RunID, manifests, err)
 	}
 	manifest, err := batchindex.ReadManifest(filepath.Dir(manifests[0]))
 	if err != nil || manifest.Status != batchindex.RunManifestStatusAborted {
@@ -103,9 +103,9 @@ func TestWaitingContract_LeaseFailureOfAReturnedWaitingRunAppliesTheSharedTermin
 	}
 	layout := paths.NewLayout(cfg, root)
 	// A started Run's wait record lives in its Run folder.
-	records, _ := filepath.Glob(filepath.Join(layout.BatchesDir, "*", "runs", runID, "wait.json"))
-	if len(records) != 1 {
-		t.Fatalf("wait records for %s = %v, want one", runID, records)
+	records, err := filepath.Glob(filepath.Join(layout.BatchesDir, "*", "runs", runID, "wait.json"))
+	if err != nil || len(records) != 1 {
+		t.Fatalf("wait records for %s = %v (err %v), want one", runID, records, err)
 	}
 	if err := os.WriteFile(records[0], []byte("invalid ownership checkpoint"), 0o600); err != nil {
 		t.Fatal(err)
@@ -188,7 +188,7 @@ func TestWaitingContract_CancellationFenceAbortOfAReturnedQueuedAdmissionRecords
 	if result == nil || len(result.Runs) != 3 || result.Runs[1].Status != "aborted" {
 		t.Fatalf("result = %+v, want the queued admission aborted", result)
 	}
-	aborts := 0
+	aborts, queuedRunID := 0, ""
 	for _, e := range log.snapshot() {
 		if e.Issue != 43 {
 			continue
@@ -198,6 +198,7 @@ func TestWaitingContract_CancellationFenceAbortOfAReturnedQueuedAdmissionRecords
 		}
 		if e.Type == "run.aborted" {
 			aborts++
+			queuedRunID = e.RunID
 			if _, ok := e.Payload["worktree_state"]; ok {
 				t.Fatalf("unstarted abort payload = %v, want no worktree evidence", e.Payload)
 			}
@@ -205,6 +206,11 @@ func TestWaitingContract_CancellationFenceAbortOfAReturnedQueuedAdmissionRecords
 	}
 	if aborts != 1 {
 		t.Fatalf("run.aborted events for the queued admission = %d, want exactly one", aborts)
+	}
+	for _, state := range events.ProjectRunStates(log.snapshot()) {
+		if state.RunID == queuedRunID && (state.Status() != "aborted" || !state.IsTerminal()) {
+			t.Fatalf("queued admission projection = %+v, want terminal aborted", state)
+		}
 	}
 	assertSharedAbortTerminal(t, log.snapshot(), paths.NewLayout(cfg, root))
 }
