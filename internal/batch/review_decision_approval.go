@@ -19,6 +19,13 @@ var (
 	reviewMetricScopeExplanation   = regexp.MustCompile(`(?i)^(?:the\s+)?metric\s+increase\s+is\s+limited\s+to\s+(?:the\s+)?(?:adapter|changed|existing|new)\s+(?:branch|function|code|scope|path)(?:\s+in\s+this\s+diff)?[.!]?$`)
 	reviewNoFollowup               = regexp.MustCompile(`(?i)^no\s+(?:(?:author\s+)?follow[- ]up|further\s+action)\s+(?:is\s+)?(?:required|needed|necessary)[.!]?$`)
 	reviewCIWaitAdvice             = regexp.MustCompile(`(?i)^(?:await|wait\s+for)\s+(?:the\s+)?(?:(?:pending|required|remaining|current-head)\s+)*(?:ci(?:\s+checks?)?|(?:required\s+)?checks?)(?:\s+to\s+(?:pass|finish|complete|turn\s+green))?(?:\s+before\s+merging)?[.!]?$`)
+	reviewQualityTag               = regexp.MustCompile("`\\[(?:control-flow|functional|OOP|public-api)\\]`")
+	reviewNoChangeStep             = regexp.MustCompile(`(?i)^(?:none(?:\s+required)?|no\s+(?:author\s+)?changes\s+(?:are\s+)?(?:requested|required|needed))[.!]?$`)
+	reviewNoQualityFinding         = regexp.MustCompile(`(?i)^(?:none\.\s+)?no\b[^\n.:]*\b(?:concern|finding)s?\b[^\n.:]*\b(?:found|filed|identified)\s*:`)
+	reviewAcceptanceEvidence       = regexp.MustCompile(`(?i)^(?:verification\s+against|how\s+each)\b`)
+	reviewMergeReadyAdvice         = regexp.MustCompile(`(?i)^merge\s+when\s+ready[.!]?$`)
+	reviewFindingSeverity          = regexp.MustCompile(`(?im)^(?:\s*#{1,6}\s*|\s*[-*]\s*)?(?:\*\*)?(?:Blocking|Important)\b`)
+	reviewEvidenceCode             = regexp.MustCompile("`+[^`\\n]+`+")
 )
 
 // reviewDecisionApprovalEvidenceFor returns informal approvals from the active
@@ -93,6 +100,10 @@ func (section reviewApprovalTextSection) permitsApproval() bool {
 		return !reviewFindingDirective.MatchString(prose) && !reviewApprovalContradiction.MatchString(prose)
 	case "history":
 		return true
+	case "metadata":
+		// Locations, thresholds and analyzer availability describe the review;
+		// findings and the verdict carry its actionable result.
+		return true
 	default:
 		return false
 	}
@@ -138,6 +149,7 @@ func reviewApprovalSection(heading string) (string, string) {
 	for _, named := range []struct{ heading, section string }{
 		{"Decision", "decision"}, {"Findings", "findings"},
 		{"Suggested next steps", "next-steps"}, {"Previous review progress", "history"},
+		{"Scope", "metadata"}, {"Metrics", "metadata"}, {"Tools used", "metadata"},
 	} {
 		if len(heading) < len(named.heading) || !strings.EqualFold(heading[:len(named.heading)], named.heading) {
 			continue
@@ -165,6 +177,33 @@ func unambiguousReviewApproval(text string) bool {
 }
 
 func noReviewFindings(text string) bool {
+	// Construct tags are rule metadata, not code locations or repair requests.
+	text = reviewQualityTag.ReplaceAllString(text, "rule")
+	text = strings.TrimSpace(text)
+	if reviewFindingSeverity.MatchString(text) {
+		return false
+	}
+	// Reports commonly follow the no-findings paragraph with acceptance evidence.
+	// Validate the finding declaration strictly, and inspect the explanatory
+	// remainder for new directives rather than requiring every sentence to be a
+	// member of a vocabulary of no-findings phrases.
+	paragraphs := strings.SplitN(strings.TrimSpace(text), "\n\n", 2)
+	if len(paragraphs) == 2 {
+		if !noReviewFindings(paragraphs[0]) {
+			return false
+		}
+		_, explanation, _ := strings.Cut(paragraphs[0], ". ")
+		if reviewAcceptanceEvidence.MatchString(paragraphs[1]) || reviewAcceptanceEvidence.MatchString(explanation) {
+			return !reviewFindingDirective.MatchString(reviewApprovalProse(reviewEvidenceCode.ReplaceAllString(paragraphs[1], "code")))
+		}
+		return noReviewFindings(paragraphs[1])
+	}
+	if loc := reviewNoQualityFinding.FindStringIndex(text); loc != nil {
+		return !reviewFindingDirective.MatchString(reviewApprovalProse(text[loc[1]:]))
+	}
+	if first := strings.SplitN(text, ". ", 2); len(first) == 2 && reviewAcceptanceEvidence.MatchString(first[1]) {
+		return noReviewFindings(first[0]) && !reviewFindingDirective.MatchString(reviewApprovalProse(first[1]))
+	}
 	text = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(text), "-*"))
 	prose := reviewApprovalProse(text)
 	if !reviewDecisionNoFindings.MatchString(text) {
@@ -189,6 +228,9 @@ func noReviewFindingClause(clause string) bool {
 	if clause == "" {
 		return true
 	}
+	if strings.EqualFold(strings.TrimSpace(clause), "rule rules do not apply.") || strings.EqualFold(strings.TrimSpace(clause), "rule rules do not apply") {
+		return true
+	}
 	prose := reviewApprovalProse(clause)
 	// Permit only a complete, bounded metric explanation. Blanket removal
 	// of negation would also accept "None. Not good: this remains racy."
@@ -200,10 +242,26 @@ func noReviewFindingClause(clause string) bool {
 		!reviewMetricNoConcern.MatchString(prose) && !reviewMetricScopeExplanation.MatchString(prose) {
 		return false
 	}
+	// Severity names in a negative finding count are labels, not code anchors.
+	clause = strings.NewReplacer("`Blocking`", "Blocking", "`Important`", "Important", "`Nit`", "Nit").Replace(clause)
 	return !informalFeedbackHasCodeAnchor(clause) || (metadata && !reviewMetadataRepair.MatchString(prose))
 }
 
 func noRepairNextSteps(text string) bool {
+	// A no-change declaration may be followed by publication limitations,
+	// verification notes or merge/CI advice. None is an author repair request.
+	trimmed := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(text), "-*"))
+	first := reviewFindingClauses.Split(trimmed, 2)
+	if len(first) > 0 && reviewNoChangeStep.MatchString(strings.TrimSpace(first[0])) {
+		if len(first) == 1 {
+			return true
+		}
+		remainder := reviewApprovalProse(first[1])
+		if reviewMergeReadyAdvice.MatchString(strings.TrimSpace(remainder)) {
+			return true
+		}
+		return !reviewFindingDirective.MatchString(remainder) && !reviewApprovalContradiction.MatchString(remainder)
+	}
 	for _, clause := range reviewFindingClauses.Split(text, -1) {
 		clause = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(clause), "-*"))
 		if clause != "" && !noReviewFindings(clause) && !reviewNoFollowup.MatchString(clause) && !reviewCIWaitAdvice.MatchString(clause) {

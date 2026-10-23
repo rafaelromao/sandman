@@ -175,9 +175,20 @@ func (s *runSession) retainedLifecycleEvidence(ctx context.Context, workDir stri
 		if !reviewEvidenceWithinCanonicalDeadline(handoff, registration.Request) {
 			return evidence
 		}
-		evidence.actionable = handoff.hasActionableFeedback()
+		// Confirmed approval settles this request before feedback heuristics.
+		// Scope tables, informational comments and earlier feedback cannot turn
+		// an approved current-head request into another repair launch.
 		switch {
-		case evidence.actionable:
+		case handoff.Outcome == retainedReviewApproval:
+			evidence.payload = handoff.payloadFor(gateReadyToMerge, "REVIEW_APPROVED", "revalidate current-head approval, CI, and mergeability, then execute the normal pull-request merge gate")
+			if request, ok := evidence.payload["review_request"].(map[string]any); ok {
+				request["outcome"] = "approved"
+				if handoff.Classification != nil {
+					request["review_decision_approval"] = handoff.Classification.reviewDecisionApprovalEvidenceFor(handoff.Request, handoff.Classification.WindowEnd)
+				}
+			}
+		case handoff.hasActionableFeedback():
+			evidence.actionable = true
 			evidence.payload = handoff.payloadFor(gateActionableFeedback, actionableFeedbackReason, actionableFeedbackNextAction)
 		case handoff.Classification != nil:
 			evidence.informalFeedback = handoff.Classification.informalFeedbackEvidenceFor(handoff.Request, handoff.Classification.WindowEnd)
@@ -185,13 +196,6 @@ func (s *runSession) retainedLifecycleEvidence(ctx context.Context, workDir stri
 				evidence.payload = handoff.payloadFor(gateActionableFeedback, informalFeedbackReason, informalFeedbackNextAction)
 				if request, ok := evidence.payload["review_request"].(map[string]any); ok {
 					request["informal_feedback"] = evidence.informalFeedback
-				}
-			} else if handoff.Outcome == retainedReviewApproval {
-				evidence.outcome = retainedReviewApproval
-				evidence.payload = handoff.payloadFor(gateReadyToMerge, "REVIEW_APPROVED", "revalidate current-head approval, CI, and mergeability, then execute the normal pull-request merge gate")
-				if request, ok := evidence.payload["review_request"].(map[string]any); ok {
-					request["outcome"] = "approved"
-					request["review_decision_approval"] = handoff.Classification.reviewDecisionApprovalEvidenceFor(handoff.Request, handoff.Classification.WindowEnd)
 				}
 			} else {
 				return evidence

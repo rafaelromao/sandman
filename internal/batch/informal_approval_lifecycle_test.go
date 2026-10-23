@@ -3,6 +3,7 @@ package batch
 import (
 	"io"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -119,6 +120,92 @@ func TestInformalApprovalLifecycle_RealReviewExplanationsAndCIAdvice(t *testing.
 	}
 }
 
+func capturedApprovingReports(t *testing.T) map[string]string {
+	t.Helper()
+	reports := make(map[string]string)
+	for _, name := range []string{"approved-daemon-28-first.md", "approved-daemon-28-second.md", "approved-daemon-28-final.md", "approved-sandman-2818.md", "approved-sandman-2886.md"} {
+		body, err := os.ReadFile("testdata/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reports[name] = string(body)
+	}
+	return reports
+}
+
+func TestInformalApprovalLifecycle_CapturedReports(t *testing.T) {
+	for name, body := range capturedApprovingReports(t) {
+		t.Run(name, func(t *testing.T) {
+			if !reviewDecisionApprovedBody(body) {
+				for _, section := range collectReviewApprovalSections(body) {
+					if !section.permitsApproval() {
+						t.Errorf("rejected %s section: %s", section.kind, section.text)
+					}
+				}
+				t.Fatal("captured approving report rejected")
+			}
+			s, _, pr, workDir, now := informalApprovalLifecycleFixture(t, body)
+			for range defaultAwaitResumeMax + 2 {
+				status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+				if !handled || status != "await" || extras["gate"] != "pending" || s.resumeCount != 0 {
+					t.Fatalf("pending CI = %s/%v, want wait without relaunch", status, extras)
+				}
+				*now = now.Add(time.Minute)
+			}
+			pr.StatusCheckRollup = "success"
+			status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+			if !handled || status != "resume" || extras["gate"] != gateReadyToMerge || extras["reason"] != "REVIEW_APPROVED" {
+				t.Fatalf("green CI = %s/%v, want approved merge work", status, extras)
+			}
+		})
+	}
+}
+
+func TestInformalApprovalClassifier_CapturedReportsAndContradictions(t *testing.T) {
+	for name, body := range capturedApprovingReports(t) {
+		t.Run(name, func(t *testing.T) {
+			c := informalClassificationForTest(t, func(raw map[string]any) {
+				sources := raw["sources"].(map[string]any)
+				records := sources["top_level"].([]any)
+				records[0].(map[string]any)["body"] = body
+			})
+			request := informalRequestForTest()
+			if got := c.reviewDecisionApprovalEvidenceFor(request, ""); len(got) != 1 {
+				t.Fatalf("approval evidence = %v", got)
+			}
+			if got := c.informalFeedbackEvidenceFor(request, ""); len(got) != 0 {
+				t.Fatalf("approving report produced feedback: %v", got)
+			}
+			for _, conflicting := range []string{
+				strings.Replace(body, "**APPROVED**", "**CHANGES_REQUESTED**", 1),
+				strings.Replace(body, "## Decision", "## Findings\n### Important\nFix the race in `worker.go`.\n\n## Decision", 1),
+			} {
+				if reviewDecisionApprovedBody(conflicting) || !informalReviewFeedbackConcrete(conflicting) {
+					t.Fatal("non-approval or important finding did not remain actionable")
+				}
+			}
+		})
+	}
+}
+
+func TestInformalApprovalLifecycle_ApprovalPrecedesFeedbackFacts(t *testing.T) {
+	for _, checks := range []string{"pending", "success"} {
+		t.Run(checks, func(t *testing.T) {
+			d := decideImplementationPRLifecycle(implementationPRFacts{
+				pr:      &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha", StatusCheckRollup: checks, MergeStateStatus: "CLEAN"},
+				headSHA: "current-sha", requireReview: true,
+				retainedEvidence: retainedReviewEvidence{
+					outcome: retainedReviewApproval, actionable: true,
+					informalFeedback: []informalFeedbackEvidence{{Body: "Fix `worker`."}},
+				},
+			})
+			if checks == "pending" && d.action != lifecycleAwait || checks == "success" && (d.action != lifecycleResume || d.gate != lifecycleGateReady) {
+				t.Fatalf("approval lost to feedback: %+v", d)
+			}
+		})
+	}
+}
+
 func capturedApprovalWithCIAdvice(t *testing.T) string {
 	t.Helper()
 	body, err := os.ReadFile("testdata/approved-with-ci-advice.md")
@@ -128,17 +215,21 @@ func capturedApprovalWithCIAdvice(t *testing.T) string {
 	return string(body)
 }
 
-func TestInformalApprovalLifecycle_SeparateFeedbackStillResumesRepair(t *testing.T) {
+func TestInformalApprovalLifecycle_ApprovalPrecedesSeparateFeedback(t *testing.T) {
 	s, client, pr, workDir, now := informalApprovalLifecycleFixture(t, approvingMetricsReview)
 	client.inline = []github.PRReviewComment{{ID: "feedback", Body: "Please fix the race in internal/batch/run_lifecycle.go before merging.", CommitID: pr.HeadRefOid, CreatedAt: now.Add(-30 * time.Second)}}
 	status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
-	if !handled || status != "resume" || extras["gate"] != gateActionableFeedback {
-		t.Fatalf("separate concrete feedback = (%s, %v, %t), want repair resume", status, extras, handled)
+	if !handled || status != "await" || extras["gate"] != "pending" {
+		t.Fatalf("approved request with pending CI = (%s, %v, %t), want CI wait", status, extras, handled)
 	}
 	request := extras["review_request"].(map[string]any)
-	feedback, ok := request["informal_feedback"].([]informalFeedbackEvidence)
-	if !ok || len(feedback) != 1 || feedback[0].ID != "feedback" {
-		t.Fatalf("retained feedback = %v, want only the independent requested change", request["informal_feedback"])
+	if request["informal_feedback"] != nil {
+		t.Fatalf("approved request retained feedback: %v", request)
+	}
+	pr.StatusCheckRollup = "success"
+	status, extras, handled = s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	if !handled || status != "resume" || extras["gate"] != gateReadyToMerge {
+		t.Fatalf("approved request with green CI = (%s, %v, %t), want merge work", status, extras, handled)
 	}
 }
 

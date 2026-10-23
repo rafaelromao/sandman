@@ -95,8 +95,9 @@ approval or a nonempty aggregate `reviewDecision`. A `COMMENTED` review without
 commit identity is eligible as an informal response inside the confirmed
 current-head request window; an explicitly stale `COMMENTED` review is not.
 An approving response's scope paths, metrics, or resolved history are not
-actionable feedback, while separate concrete feedback and formal requested
-changes retain precedence. Explicitly disabled managed review retains its
+actionable feedback. Eligible approval is checked before informal feedback from
+the same request, matching the standalone review loop; formal requested changes,
+current-head CI failures and merge conflicts remain blocking. Explicitly disabled managed review retains its
 configuration contract.
 
 The complete managed sequence is request confirmation -> waiting -> current-head

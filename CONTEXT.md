@@ -156,7 +156,9 @@ COMMENTED review without commit identity remains eligible within that request
 window; an explicitly stale review does not. Accepted approval waits for pending
 CI and advances merge work once checks are green. Scope paths, metrics, and
 resolved history in a no-findings approval do not turn it into requested repairs;
-separate concrete feedback and formal requested changes still take precedence.
+eligible approval is evaluated before informal feedback from that request.
+Formal requested changes, current-head CI failures and merge conflicts remain
+blocking.
 _See_: Managed review lifecycle, Informal feedback, Review decision.
 
 **Informal feedback**:

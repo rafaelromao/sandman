@@ -49,7 +49,7 @@ func (c *readyApprovalGitHubClient) FindPRByBranch(ctx context.Context, branch s
 }
 
 func TestInformalApprovalExecutor_ReadyContinuationSurvivesGitHubTimeout(t *testing.T) {
-	body := capturedApprovalWithCIAdvice(t)
+	body := capturedApprovingReports(t)["approved-daemon-28-final.md"]
 	s, client, pr, workDir, now := informalApprovalLifecycleFixture(t, body)
 	pr.StatusCheckRollup = "success"
 	status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
@@ -107,12 +107,16 @@ func (f *informalApprovalMergeFactory) NewRunnable(issue *github.Issue, branch s
 }
 
 func TestInformalApprovalExecutor_WaitsResumesMergesAndReleasesDependent(t *testing.T) {
-	for _, tc := range []struct{ name, body, source string }{
+	cases := []struct{ name, body, source string }{
 		{"captured CI-wait review", capturedApprovalWithCIAdvice(t), "top_level"},
 		{"metrics review", approvingMetricsReview, "top_level"},
 		{"plain approval", "LGTM", "top_level"},
 		{"COMMENTED approval", "Looks good", "COMMENTED"},
-	} {
+	}
+	for name, body := range capturedApprovingReports(t) {
+		cases = append(cases, struct{ name, body, source string }{name, body, "top_level"})
+	}
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s, client, pr, seedDir, now := informalApprovalLifecycleFixture(t, tc.body)
 			if tc.source == "COMMENTED" {
