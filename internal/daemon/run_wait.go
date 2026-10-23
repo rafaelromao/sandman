@@ -38,8 +38,18 @@ func invalidRunWait(err error) error { return &runWaitInvalidError{err: err} }
 
 type RunClaim struct{ file *os.File }
 
-// ClaimRun fences scheduler ownership by RunID. The stable lock inode is never
-// removed: owner death releases the advisory lock, not the durable intent.
+// claimRunBeforeLock lets tests act between opening and locking a claim file.
+var claimRunBeforeLock func(path string)
+
+// claimRunAttempts bounds how often ClaimRun reopens a claim file that was
+// replaced between opening and locking it.
+const claimRunAttempts = 8
+
+// ClaimRun fences scheduler ownership by RunID. Owner death releases the
+// advisory lock, not the durable intent. PruneRunClaims may unlink the lock
+// file of a terminal Run while holding its claim, so a claimant revalidates
+// after locking that the path still names the inode it locked and retries
+// otherwise; two claimants can never hold different inodes for one RunID.
 func ClaimRun(sandmanDir, runID string) (*RunClaim, error) {
 	if !safeWaitID(runID) {
 		return nil, fmt.Errorf("invalid run claim identity")
@@ -48,18 +58,49 @@ func ClaimRun(sandmanDir, runID string) (*RunClaim, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	file, err := os.OpenFile(filepath.Join(dir, runID+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
-		_ = file.Close()
-		if errors.Is(err, unix.EWOULDBLOCK) {
-			return nil, ErrRunOwned
+	path := filepath.Join(dir, runID+".lock")
+	for range claimRunAttempts {
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+		if err != nil {
+			return nil, err
 		}
-		return nil, err
+		if claimRunBeforeLock != nil {
+			claimRunBeforeLock(path)
+		}
+		if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+			_ = file.Close()
+			if errors.Is(err, unix.EWOULDBLOCK) {
+				return nil, ErrRunOwned
+			}
+			return nil, err
+		}
+		current, err := claimFileIsPath(file, path)
+		if err != nil {
+			_ = file.Close()
+			return nil, err
+		}
+		if current {
+			return &RunClaim{file: file}, nil
+		}
+		_ = file.Close()
 	}
-	return &RunClaim{file: file}, nil
+	return nil, fmt.Errorf("claim run %s: lock file kept changing", runID)
+}
+
+// claimFileIsPath reports whether file is still the inode path names.
+func claimFileIsPath(file *os.File, path string) (bool, error) {
+	held, err := file.Stat()
+	if err != nil {
+		return false, err
+	}
+	current, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return os.SameFile(held, current), nil
 }
 
 func (c *RunClaim) Close() error {
@@ -69,6 +110,54 @@ func (c *RunClaim) Close() error {
 	err := c.file.Close()
 	c.file = nil
 	return err
+}
+
+// PruneRunClaims removes the claim files of Runs whose event projection is
+// terminal and returns how many it removed. Each file is unlinked while its
+// claim is held, so a concurrent ClaimRun revalidates onto a fresh file.
+// Unfinished Runs, Runs absent from states, live claims and anything other
+// than a regular claim file are kept.
+func PruneRunClaims(sandmanDir string, states map[string]events.RunState) (int, error) {
+	dir := filepath.Join(sandmanDir, "state", "run-claims")
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	var errs []error
+	for _, entry := range entries {
+		runID, ok := strings.CutSuffix(entry.Name(), ".lock")
+		if !ok || !safeWaitID(runID) {
+			continue
+		}
+		state, known := states[runID]
+		if !known || !state.IsTerminal() {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		claim, err := ClaimRun(sandmanDir, runID)
+		if errors.Is(err, ErrRunOwned) {
+			continue
+		}
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, err)
+		} else if err == nil {
+			removed++
+		}
+		_ = claim.Close()
+	}
+	return removed, errors.Join(errs...)
 }
 
 // RunWait carries ownership/schedule evidence only. Lifecycle and terminality

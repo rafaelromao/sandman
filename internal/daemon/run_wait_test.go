@@ -331,3 +331,110 @@ func TestRunWait_RenewalClassifiesInvalidOwnershipApartFromIOFailures(t *testing
 		}
 	})
 }
+
+func TestRunWait_ClaimRevalidatesReplacedLockFile(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "state", "run-claims", "row.lock")
+	replaced := false
+	claimRunBeforeLock = func(opened string) {
+		if replaced || opened != path {
+			return
+		}
+		replaced = true
+		// A pruner unlinks the file this claimant already opened, and a
+		// later claimant recreates it.
+		if err := os.Remove(opened); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(opened, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { claimRunBeforeLock = nil })
+
+	claim, err := ClaimRun(root, "row")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer claim.Close()
+	held, err := claim.file.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(held, current) {
+		t.Fatal("claim holds an unlinked lock inode instead of the claim path")
+	}
+	if second, err := ClaimRun(root, "row"); !errors.Is(err, ErrRunOwned) {
+		if second != nil {
+			_ = second.Close()
+		}
+		t.Fatalf("second claim err=%v, want ErrRunOwned", err)
+	}
+}
+
+func TestRunWait_PruneRunClaimsRemovesOnlyTerminalRunClaims(t *testing.T) {
+	root := t.TempDir()
+	started := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+	list := []events.Event{
+		{Type: "run.started", RunID: "done", Issue: 41, Timestamp: started},
+		{Type: "run.aborted", RunID: "done", Issue: 41, Timestamp: started.Add(time.Minute)},
+		{Type: "run.started", RunID: "held", Issue: 42, Timestamp: started},
+		{Type: "run.aborted", RunID: "held", Issue: 42, Timestamp: started.Add(time.Minute)},
+		{Type: "run.started", RunID: "live", Issue: 43, Timestamp: started},
+	}
+	states := map[string]events.RunState{}
+	for _, state := range events.ProjectRunStates(list) {
+		states[state.RunID] = state
+	}
+	for _, id := range []string{"done", "held", "live", "unknown"} {
+		claim, err := ClaimRun(root, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if id != "held" {
+			if err := claim.Close(); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		defer claim.Close()
+	}
+	dir := filepath.Join(root, "state", "run-claims")
+	target := filepath.Join(t.TempDir(), "outside.lock")
+	if err := os.WriteFile(target, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A symlink named after a terminal Run is not a claim file.
+	if err := os.Symlink(target, filepath.Join(dir, "linked.lock")); err != nil {
+		t.Fatal(err)
+	}
+	linked := states["done"]
+	linked.RunID = "linked"
+	states["linked"] = linked
+
+	removed, err := PruneRunClaims(root, states)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 1 {
+		t.Fatalf("removed %d claim files, want 1", removed)
+	}
+	for id, want := range map[string]bool{"done": false, "held": true, "live": true, "unknown": true, "linked": true} {
+		_, err := os.Lstat(filepath.Join(dir, id+".lock"))
+		if exists := err == nil; exists != want {
+			t.Errorf("%s.lock exists=%v, want %v (err=%v)", id, exists, want, err)
+		}
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("pruning followed a symlink: %v", err)
+	}
+	claim, err := ClaimRun(root, "done")
+	if err != nil {
+		t.Fatalf("pruned terminal Run cannot be claimed again: %v", err)
+	}
+	_ = claim.Close()
+}

@@ -212,6 +212,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				}
 				_ = staleRemoved
 				fmt.Fprintf(cmd.OutOrStdout(), "Recovered %d stale runs as aborted across %d dead directories.\n", recovered, deadDirs)
+				pruneTerminalRunClaims(cmd, layout, deps.EventLog)
 				tempDirs, images, tempErr := runCleanTemps(cmd, deps, layout, false)
 				printCleanReport(cmd, nil, nil, tempDirs, images, false)
 				return tempErr
@@ -270,6 +271,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 					outcomes, cleanErr = executeCleanWithProbe(actions, gr, layout, remover, probe, deps.EventLog)
 					orphanRemoved, err = cleanupOrphanedBatches(layout, deps.EventLog, probe, remover)
 					cleanErr = errors.Join(cleanErr, err)
+					pruneTerminalRunClaims(cmd, layout, deps.EventLog)
 				} else {
 					outcomes, cleanErr = validateCleanActions(actions, layout)
 					if orphanErr := validateOrphanPaths(orphanPlan, layout); orphanErr != nil {
@@ -337,6 +339,24 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Bool("orphaned", false, "Remove orphaned test batch directories (no matching run.started event and no live daemon socket)")
 	cmd.Long = "Clean up sandbox resources, stale worktrees, and Sandman-owned temp files.\n\nAlso removes temp directories under the system temp dir (e.g. /tmp/) that were created\nby Sandman and are no longer in use, as well as container images tagged with the\nsandman-smoke-* prefix. Only Sandman-owned paths are removed; unrelated temp content\nis never touched."
 	return cmd
+}
+
+// pruneTerminalRunClaims removes the RunID claim files of event-terminal Runs.
+// It reads lifecycle after stale recovery so recovered aborts count; when the
+// events cannot be read it keeps every claim.
+func pruneTerminalRunClaims(cmd *cobra.Command, layout paths.Layout, log events.EventLog) {
+	states, err := events.ReadRunStates(log)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: skip run claim cleanup: %v\n", err)
+		return
+	}
+	removed, err := daemon.PruneRunClaims(layout.SandmanDir, states)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: run claim cleanup: %v\n", err)
+	}
+	if removed > 0 {
+		fmt.Fprintf(cmd.OutOrStdout(), "Removed %d terminal run claim file(s).\n", removed)
+	}
 }
 
 func collectCleanActions(idx *batchindex.Index, targetStatus batchindex.Status, layout paths.Layout) []cleanAction {
