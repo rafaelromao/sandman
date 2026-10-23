@@ -199,9 +199,7 @@ func TestWorktreeSandboxGitGuardKeepsSiblingRegistrationsThroughGC(t *testing.T)
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = s.Stop() })
-			if strings.Contains(command, "%s") {
-				command = strings.Replace(command, "%s", shellQuote(repo), 1)
-			}
+			command = strings.Replace(command, "%s", shellQuote(repo), 1)
 			var stdout, stderr bytes.Buffer
 			if err := s.Exec(t.Context(), command, &stdout, &stderr); err != nil {
 				t.Fatalf("guarded git gc failed: %v (%s)", err, stderr.String())

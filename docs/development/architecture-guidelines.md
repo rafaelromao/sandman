@@ -20,6 +20,10 @@ configured ordinary retries. Obsolete cumulative repair ledgers cannot deny
 execution. See the [AFK exit baseline](afk-exit-regression-baseline.md) when
 evaluating added exit conditions. RunID claims fence lease renewal,
 takeover and terminal cancellation; lease/schedule data is not a status record.
+A live owner retries transient renewal I/O failures while its last renewal's
+uncapped recovery grace outlasts the next renewal; invalid ownership fails
+closed at once. Claim files may be unlinked only while held and only for
+event-terminal Runs; claimants revalidate the locked inode against the path.
 Tests must cover composed quota → recovery → CI/review and wait → restart/abort
 paths, including concurrent launch-boundary admission revalidation.
 

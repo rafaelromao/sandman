@@ -313,7 +313,7 @@ A sandman-managed git worktree whose HEAD points to a different branch than its 
 _Avoid_: Orphaned worktree, lost worktree.
 _See_: Branch, Worktree.
 
-Sandman-managed processes and agents must not run repository-wide `git worktree prune`. Container sandboxes share Git administration data with host worktrees but cannot always resolve host paths, so a global prune can erase live sibling registrations. Recovery and cleanup remove only the registration or worktree path they own.
+Sandman-managed processes and agents must not run repository-wide `git worktree prune`. Container sandboxes share Git administration data with host worktrees but cannot always resolve host paths, so a global prune can erase live sibling registrations. Recovery and cleanup remove only the registration or worktree path they own. `git gc`, including the automatic gc that commits and fetches start, runs the same prune internally; the agent Git guard therefore runs every agent Git command with `gc.worktreePruneExpire=never`.
 
 **Archive**:
 The on-disk resting place at `.sandman/archive/<batch-id>/`. `sandman archive run <run-id>` relocates one event-terminal Run to `archive/<batch-id>/runs/<run-id>/` while siblings stay live. `archive older-than <days>` selects event-terminal Runs using manifest creation metadata (or manifest mtime); `archive stale` first appends recovery events for eligible non-terminal work. `archive batch <batch-id>` moves the whole Batch only after its daemon is gone and all known AgentRuns are event-terminal. Index archive/unavailable states describe artifacts, never AgentRun outcomes. The daemon is forbidden from writing to an archived Batch. References ADR-0032.
