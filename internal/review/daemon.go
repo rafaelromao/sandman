@@ -1884,8 +1884,8 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) (operationErr erro
 
 	// A later daemon response suppresses a fresh launch, but it must not
 	// prevent a matching pending publication from being acknowledged first.
-	// Keep this filter before seen-cache, retry-budget, and newest-trigger
-	// handling so answered requests retain their existing launch semantics.
+	// Filter the remaining launch candidates before newest-trigger selection
+	// and superseded marking, preserving the seen-cache and retry gates above.
 	responseHead := ""
 	if d.authenticatedLogin != "" {
 		pr, err := d.GitHub.FetchPR(ctx, prNumber)
@@ -1897,16 +1897,16 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) (operationErr erro
 		}
 		responseHead = pr.HeadRefOid
 	}
-	filtered := triggers[:0]
-	for _, trigger := range triggers {
+	filtered := unprocessed[:0]
+	for _, trigger := range unprocessed {
 		if hasLaterDaemonReviewResponse(trigger.comment, comments, d.authenticatedLogin, responseHead) {
 			d.logf("PR #%d request comment %s has a later daemon review response; skipping", prNumber, trigger.comment.ID)
 			continue
 		}
 		filtered = append(filtered, trigger)
 	}
-	triggers = filtered
-	if len(triggers) == 0 {
+	unprocessed = filtered
+	if len(unprocessed) == 0 {
 		return nil
 	}
 
