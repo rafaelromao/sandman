@@ -210,3 +210,31 @@ func TestWorktreeSandboxGitGuardKeepsSiblingRegistrationsThroughGC(t *testing.T)
 		})
 	}
 }
+
+func TestWorktreeSandboxGitGuardDelegatesInsideAnotherGuard(t *testing.T) {
+	// An agent that runs Sandman's own tests is already behind a guard. The
+	// nested guard overwrites SANDMAN_GIT_GUARD_DIR, so each guard must still
+	// remove its own directory before delegating.
+	outer, err := ensureAgentGitGuard(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SANDMAN_GIT_GUARD_DIR", outer)
+	t.Setenv("PATH", outer+string(os.PathListSeparator)+os.Getenv("PATH"))
+	repo := t.TempDir()
+	initGitRepo(t, repo)
+	s := NewWorktreeSandbox(repo, filepath.Join(repo, ".sandman", "worktrees"), "42-nested-guard", "main")
+	if err := s.Start(SandboxStart{}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Stop() })
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	var stdout, stderr bytes.Buffer
+	if err := s.Exec(ctx, "git rev-parse --is-inside-work-tree", &stdout, &stderr); err != nil {
+		t.Fatalf("nested guard did not delegate: %v (%s)", err, stderr.String())
+	}
+	if strings.TrimSpace(stdout.String()) != "true" {
+		t.Fatalf("nested guard output = %q", stdout.String())
+	}
+}

@@ -74,12 +74,12 @@ func newWaitOwnerWithFailure(layout paths.Layout, batch paths.BatchLocation, rec
 				if err == nil {
 					owner.renewedAt = at
 				}
-				expires := owner.renewedAt.Add(daemon.RunRecoveryGrace)
+				renewedAt := owner.renewedAt
 				owner.mu.Unlock()
 				if err == nil {
 					continue
 				}
-				if !errors.Is(err, daemon.ErrRunWaitInvalid) && at.Add(leaseRenewInterval).Before(expires) {
+				if renewalRetryable(err, at, renewedAt) {
 					if onRetry != nil {
 						onRetry(err)
 					}
@@ -93,6 +93,13 @@ func newWaitOwnerWithFailure(layout paths.Layout, batch paths.BatchLocation, rec
 		}
 	}()
 	return owner, nil
+}
+
+// renewalRetryable reports whether a failed renewal at at may be retried: the
+// failure is not invalid ownership, and the next renewal still lands inside the
+// uncapped recovery grace of the last successful renewal.
+func renewalRetryable(err error, at, renewedAt time.Time) bool {
+	return !errors.Is(err, daemon.ErrRunWaitInvalid) && at.Add(leaseRenewInterval).Before(renewedAt.Add(daemon.RunRecoveryGrace))
 }
 
 func (o *waitOwner) checkpoint(row RowSpec, ready bool, nextPoll time.Duration) error {
