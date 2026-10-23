@@ -79,7 +79,7 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 		BaseBranch:        baseBranch,
 		RenderCfg:         renderCfg,
 		OutputWriter:      outputWriter,
-		BatchID:           batchIDForPromptOnly(batchTS, batchShortID, runID, runDir),
+		BatchID:           promptOnlyBatchLocation(o.layout, batchTS, batchShortID, runID, runDir).ID,
 		BatchTS:           batchTS,
 		BatchShortID:      batchShortID,
 		RunID:             runID,

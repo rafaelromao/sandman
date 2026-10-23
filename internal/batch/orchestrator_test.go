@@ -12661,18 +12661,21 @@ func TestLogAborted_EventLogWriteErrorIsSurfacedOnErrorLog(t *testing.T) {
 	}
 }
 
-// TestBatchIDForPromptOnly_RunDirShapes pins the batch-directory and
-// per-run-folder RunDir shapes; anything else yields the empty result.
-func TestBatchIDForPromptOnly_RunDirShapes(t *testing.T) {
+// TestPromptOnlyBatchLocation_RunDirShapes pins the batch-directory and
+// per-run-folder RunDir shapes of unindexed canonical Batches, which keep
+// their directory name as identity; anything else yields the empty result.
+func TestPromptOnlyBatchLocation_RunDirShapes(t *testing.T) {
 	const promptBatch = "260504123456-ab12-prompt"
 	const namedBatch = "260504123456-ab12-prompt-my-run"
+	root := t.TempDir()
+	layout := paths.NewLayout(&config.Config{}, root)
 	tests := []struct {
 		name   string
 		runDir string
 		want   string
 	}{
 		{"relative batch dir", filepath.Join(".sandman", "batches", promptBatch), promptBatch},
-		{"absolute batch dir", filepath.Join(string(filepath.Separator), "repo", ".sandman", "batches", promptBatch), promptBatch},
+		{"absolute batch dir", filepath.Join(root, ".sandman", "batches", promptBatch), promptBatch},
 		{"batch dir with trailing separator", filepath.Join(".sandman", "batches", promptBatch) + string(filepath.Separator), promptBatch},
 		{"batch dir with user run id", filepath.Join(".sandman", "batches", namedBatch), namedBatch},
 		{"per-run folder", filepath.Join(".sandman", "batches", promptBatch, "runs", promptBatch), promptBatch},
@@ -12680,12 +12683,13 @@ func TestBatchIDForPromptOnly_RunDirShapes(t *testing.T) {
 		{"batches root itself", filepath.Join(".sandman", "batches"), ""},
 		{"bare batches name", "batches", ""},
 		{"arbitrary directory", filepath.Join(string(filepath.Separator), "tmp", "scratch"), ""},
+		{"batches directory of another repository", filepath.Join(string(filepath.Separator), "repo", ".sandman", "batches", promptBatch), ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := batchIDForPromptOnly(orchTestRunTS, orchTestRunShortID, "", tc.runDir)
+			got := promptOnlyBatchLocation(layout, orchTestRunTS, orchTestRunShortID, "", tc.runDir).ID
 			if got != tc.want {
-				t.Fatalf("batchIDForPromptOnly(runDir=%q) = %q, want %q", tc.runDir, got, tc.want)
+				t.Fatalf("promptOnlyBatchLocation(runDir=%q).ID = %q, want %q", tc.runDir, got, tc.want)
 			}
 		})
 	}
@@ -12701,10 +12705,10 @@ func TestBatchIDForPromptOnly_RunDirShapes(t *testing.T) {
 func TestBatchIDForPromptOnly_EmptyRunIDAndRunDir_EmitsTsSid(t *testing.T) {
 	want := runid.NewBatchID(runid.KindPromptOnly, 1, "", orchTestRunTS, orchTestRunShortID)
 
-	got := batchIDForPromptOnly(orchTestRunTS, orchTestRunShortID, "", "")
+	got := batchIDForPromptOnly(orchTestRunTS, orchTestRunShortID, "")
 
 	if got != want {
-		t.Fatalf("batchIDForPromptOnly(%q, %q, \"\", \"\") = %q, want %q (must route through runid.NewBatchID for ts-sid shape)",
+		t.Fatalf("batchIDForPromptOnly(%q, %q, \"\") = %q, want %q (must route through runid.NewBatchID for ts-sid shape)",
 			orchTestRunTS, orchTestRunShortID, got, want)
 	}
 

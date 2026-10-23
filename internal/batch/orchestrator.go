@@ -94,23 +94,36 @@ func issueBatchIDForRequest(req Request) string {
 	return req.RunTS + "-" + req.RunShortID
 }
 
-// batchIDForPromptOnly returns the public batch ID for a prompt-only run.
-// runDir is either the batch directory `<batches>/<batchID>` or a run folder
-// `<batches>/<batchID>/runs/<runID>`; any other shape returns "" so the
-// caller keeps its historical derivation. Without runDir it falls back to
-// the user run ID, then to the canonical `<ts>-<sid>-prompt` identity.
-func batchIDForPromptOnly(ts, shortid, userRunID, runDir string) string {
-	if runDir != "" {
-		runDir = filepath.Clean(runDir)
-		parent := filepath.Dir(runDir)
-		switch filepath.Base(parent) {
-		case "runs":
-			return filepath.Base(filepath.Dir(parent))
-		case "batches":
-			return filepath.Base(runDir)
-		}
-		return ""
+// promptOnlyBatchLocation pairs a prompt-only or review Batch's public
+// identity with its frozen directory. runDir is either that directory or one
+// of its run folders (`<batch>/runs/<runID>`); the identity owning it comes
+// from the index, never from the directory's basename, which may be another
+// Batch's public ID. Any other shape, or a directory with no unambiguous
+// owner, yields the zero location so the caller keeps its historical
+// derivation. Without runDir the identity is minted by batchIDForPromptOnly.
+func promptOnlyBatchLocation(layout paths.Layout, ts, shortid, userRunID, runDir string) paths.BatchLocation {
+	if runDir == "" {
+		return paths.BatchLocation{ID: batchIDForPromptOnly(ts, shortid, userRunID)}
 	}
+	batchDir := filepath.Clean(runDir)
+	parent := filepath.Dir(batchDir)
+	switch filepath.Base(parent) {
+	case "runs":
+		batchDir = filepath.Dir(parent)
+	case "batches":
+	default:
+		return paths.BatchLocation{}
+	}
+	location, err := daemon.BatchLocationForDir(layout, layout.ResolvePath(batchDir))
+	if err != nil {
+		return paths.BatchLocation{}
+	}
+	return location
+}
+
+// batchIDForPromptOnly mints the public batch ID of a prompt-only run without
+// a RunDir: the user run ID, else the canonical `<ts>-<sid>-prompt` identity.
+func batchIDForPromptOnly(ts, shortid, userRunID string) string {
 	if userRunID != "" {
 		return userRunID
 	}
@@ -4651,6 +4664,7 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 			variant = strings.TrimSpace(cfg.Variant)
 		}
 	}
+	promptOnlyBatch := promptOnlyBatchLocation(layout, req.BatchTS, req.BatchShortID, req.RunID, req.RunDir)
 	row := RowSpec{
 		IssueNumber:         req.IssueNumber,
 		Mode:                req.IssueMode(0),
@@ -4661,7 +4675,8 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 		BaseBranch:          baseBranch,
 		RenderCfg:           req.PromptConfig,
 		OutputWriter:        req.OutputWriter,
-		BatchID:             batchIDForPromptOnly(req.BatchTS, req.BatchShortID, req.RunID, req.RunDir),
+		BatchID:             promptOnlyBatch.ID,
+		BatchDir:            promptOnlyBatch.Dir,
 		BatchTS:             req.BatchTS,
 		BatchShortID:        req.BatchShortID,
 		RunID:               req.RunID,
