@@ -199,17 +199,11 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 		DefaultModel:   DefaultModel,
 		Command:        `opencode run --format json{{if .ContinueFlag}} --continue{{end}}{{if .SessionFlag}} --session {{.SessionFlag}}{{end}}{{if .DangerouslySkipPermissions}} --auto{{end}}{{if .SessionName}} --title '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}} "$(cat {{.PromptFile}})"`,
 		PermissionHint: "configure permissions in OpenCode v2 config instead",
-		ConfigDirs:     []string{"~/.config/opencode", "~/.local/share/opencode", "~/.claude", "~/.agents"},
-		SnapshotExcludes: []string{
-			"~/.local/share/opencode/token-optimizer", "~/.local/share/opencode/storage",
-			"~/.local/share/opencode/snapshot", "~/.local/share/opencode/tool-output",
-			"~/.local/share/opencode/repos", "~/.local/share/opencode/log",
-			"~/.local/share/opencode/node_modules", "~/.local/share/opencode/opencode.db",
-			"~/.local/share/opencode/opencode.db-shm", "~/.local/share/opencode/opencode.db-wal",
-		},
-		// V2 credentials and sessions live in SQLite. Share the live database and
-		// sidecars rather than a stale auth.json snapshot (also used by v1).
-		LiveMounts: []string{"~/.local/share/opencode/opencode.db", "~/.local/share/opencode/opencode.db-shm", "~/.local/share/opencode/opencode.db-wal"},
+		ConfigDirs:     []string{"~/.config/opencode", "~/.claude", "~/.agents"},
+		// V2 credentials and sessions live in SQLite. Mount the entire data
+		// directory so sidecars created after launch and database replacements
+		// persist even when the host service is stopped or no database exists yet.
+		LiveMountDirs: []string{"~/.local/share/opencode"},
 	},
 
 	// The claude preset runs the unmodified Claude Code CLI in print mode.

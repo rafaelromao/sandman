@@ -50,8 +50,9 @@ suffix is preserved. Set a model when selecting a v2 variant. V2 uses `--auto`
 for unattended permission approval and does not inject v1's `OPENCODE_PERMISSION`
 default; explicit v2 permission denials still apply.
 
-V2 uses the live-mounted `~/.local/share/opencode/opencode.db` and its WAL/SHM
-files for current credentials and sessions. It does not depend on the legacy
+V2 live-mounts the entire `~/.local/share/opencode` data directory for current
+credentials and sessions. Sandman creates it if missing, so a new database,
+WAL/SHM sidecars and database replacements stay on the host after container cleanup. It does not depend on the legacy
 `auth.json` containing refreshed OAuth tokens. Standard stable-channel paths are
 supported; custom `OPENCODE_DB` and XDG overrides require matching manual mounts.
 V1 and v2 have separate session metadata; each reuses its own session, with one

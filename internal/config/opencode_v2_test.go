@@ -19,7 +19,7 @@ func TestOpenCodeV2Preset(t *testing.T) {
 		t.Fatal("v2 inherited v1 permission defaults")
 	}
 	preset := BuiltInAgentPresets[agent.Preset]
-	if len(preset.LiveMounts) != 3 {
-		t.Fatalf("v2 must share live credential database and sidecars: %v", preset.LiveMounts)
+	if len(preset.LiveMounts) != 0 || len(preset.LiveMountDirs) != 1 || preset.LiveMountDirs[0] != "~/.local/share/opencode" {
+		t.Fatalf("v2 must share the data directory for newly created sidecars: files=%v dirs=%v", preset.LiveMounts, preset.LiveMountDirs)
 	}
 }

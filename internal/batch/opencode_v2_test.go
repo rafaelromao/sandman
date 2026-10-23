@@ -13,6 +13,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
 // Execute the rendered shell command, so a v1 flag or broken quoting cannot
@@ -88,5 +89,78 @@ func TestOpenCodeV2_DoesNotReuseV1Identity(t *testing.T) {
 	session, useContinue := strategy.PrepareLaunch(run)
 	if session != "" || !useContinue {
 		t.Fatalf("v2 reused v1 identity: %q %t", session, useContinue)
+	}
+}
+
+// Model the container's mount namespace by choosing its most specific mount.
+// An individual DB bind does not cover a sidecar that did not exist at startup.
+func v2MountedFile(t *testing.T, mounts []sandbox.ConfigMount, target string) string {
+	t.Helper()
+	var source string
+	longest := -1
+	for _, mount := range mounts {
+		if target == mount.Target && len(mount.Target) > longest {
+			source, longest = mount.Source, len(mount.Target)
+		} else if rel, ok := strings.CutPrefix(target, strings.TrimSuffix(mount.Target, "/")+"/"); ok && len(mount.Target) > longest {
+			source, longest = filepath.Join(mount.Source, filepath.FromSlash(rel)), len(mount.Target)
+		}
+	}
+	if source == "" {
+		t.Fatalf("no mount covers %s: %v", target, mounts)
+	}
+	return source
+}
+
+func TestOpenCodeV2_NewDatabaseAndSidecarsSurviveSnapshotCleanup(t *testing.T) {
+	for _, existingDB := range []bool{false, true} {
+		t.Run(map[bool]string{false: "fresh-home", true: "stopped-host-service"}[existingDB], func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			dataDir := filepath.Join(home, ".local", "share", "opencode")
+			if existingDB {
+				if err := os.MkdirAll(dataDir, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dataDir, "opencode.db"), []byte("database"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			opts, err := buildStartOptions(config.BuiltInAgentPresets["opencode-v2"].Agent("opencode-v2"), lookupEnvFrom(nil))
+			if err != nil {
+				t.Fatal(err)
+			}
+			cleanup, err := PrepareContainerConfigMounts(context.Background(), t.TempDir(), "", &opts, func(context.Context) (string, error) { return "", nil })
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cleanup()
+			// No WAL/SHM existed when mounts were prepared. They must be created
+			// in host storage, not beside a snapshot's individually mounted DB.
+			for _, name := range []string{"opencode.db", "opencode.db-wal", "opencode.db-shm"} {
+				path := v2MountedFile(t, opts.ConfigMounts, "/.local/share/opencode/"+name)
+				if err := os.WriteFile(path, []byte("session-update:"+name), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// Replacement is another directory operation individual file binds miss.
+			replacement := v2MountedFile(t, opts.ConfigMounts, "/.local/share/opencode/opencode.db.new")
+			if err := os.WriteFile(replacement, []byte("replacement"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(replacement, v2MountedFile(t, opts.ConfigMounts, "/.local/share/opencode/opencode.db")); err != nil {
+				t.Fatal(err)
+			}
+			cleanup()
+			for _, name := range []string{"opencode.db", "opencode.db-wal", "opencode.db-shm"} {
+				data, err := os.ReadFile(filepath.Join(dataDir, name))
+				want := "session-update:" + name
+				if name == "opencode.db" {
+					want = "replacement"
+				}
+				if err != nil || string(data) != want {
+					t.Fatalf("%s was lost on cleanup: %q %v", name, data, err)
+				}
+			}
+		})
 	}
 }
