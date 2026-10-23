@@ -94,7 +94,7 @@ func (o *Orchestrator) RunRepair(ctx context.Context, req Request, cfg *config.C
 	req.BatchTS, req.BatchShortID = "", ""
 	req.Retries = 0
 	req.Mode, req.PreviousRunIDs, req.PreviousRunBatchIDs, req.ReuseSession = nil, nil, nil, nil
-	layout := paths.NewLayout(cfg, o.layout.RepoRoot)
+	layout := paths.NewLayout(cfg, o.requestRepoRoot(req))
 	batchID := req.RunID
 	batchDir := layout.BatchDir(batchID)
 	if req.RunDir != "" && filepath.Clean(req.RunDir) != filepath.Clean(batchDir) {

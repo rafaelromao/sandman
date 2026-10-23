@@ -3,6 +3,7 @@ package batch
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -78,5 +79,63 @@ func TestRunBatch_PromptOnlyRunDirResolvesItsBatchThroughTheIndex(t *testing.T) 
 				t.Errorf("run.started batch_id = %v, want [public-id]", started)
 			}
 		})
+	}
+}
+
+// Request.RepoRoot roots Batch location resolution even when the process runs
+// from a repository subdirectory, where the orchestrator's default root is.
+func TestRunBatch_ResolvesRunDirUnderTheRequestRepositoryRoot(t *testing.T) {
+	const runID = "review-run"
+	frozenRel := filepath.Join(".sandman", "batches", "frozen-dir")
+	dir := testenv.MkdirShort(t, "sm-orch-root-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+	saveBatchIndex(t, paths.NewLayout(&config.Config{}, dir),
+		batchindex.Batch{ID: "public-id", Path: frozenRel, Kind: batchindex.KindPromptOnly, Status: batchindex.StatusActive},
+	)
+	subdir := filepath.Join(dir, "nested")
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(subdir)
+
+	spyLog := &spyEventLog{}
+	agentRunCh := make(chan *AgentRun, 1)
+	o := NewOrchestrator(&fakeGitHubClient{err: errors.New("fetch should not run")}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+		Agent:          "test-agent",
+		Sandbox:        "worktree",
+		WorktreeDir:    ".sandman/worktrees",
+		Git:            config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}},
+	}}, spyLog,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(dir, ".sandman", "worktrees", "sandman", "prompt-only")}}),
+		WithRunnableFactory(&capturingAgentRunFactory{agentRunCh: agentRunCh}),
+	)
+	if _, err := o.RunBatch(context.Background(), Request{
+		PromptConfig: prompt.RenderConfig{PromptFlag: "Do the thing."},
+		RunID:        runID,
+		RunDir:       frozenRel,
+		RepoRoot:     dir,
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	select {
+	case ar := <-agentRunCh:
+		if want := filepath.Join(dir, frozenRel, "runs", runID); filepath.Clean(ar.runFolder) != want {
+			t.Errorf("run folder = %q, want %q under the request's repository root", ar.runFolder, want)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for AgentRun to be created")
+	}
+	for _, e := range spyLog.snapshot() {
+		if e.Type == "run.started" {
+			if id, _ := e.Payload["batch_id"].(string); id != "public-id" {
+				t.Errorf("run.started batch_id = %q, want public-id", id)
+			}
+		}
+	}
+	if _, err := os.Stat(filepath.Join(subdir, ".sandman")); !os.IsNotExist(err) {
+		t.Errorf("subdirectory gained Sandman state (%v); want everything under the request's repository root", err)
 	}
 }

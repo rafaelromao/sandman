@@ -100,6 +100,11 @@ type Request struct {
 	// Prompt-only runs also accept the per-run folder
 	// (`.sandman/batches/<batch-id>/runs/<run-id>`).
 	RunDir string
+	// RepoRoot is the repository root the caller resolved. A relative RunDir
+	// and the Batch locations of this request (index, batch and run folders,
+	// wait records) resolve against it. When empty, the orchestrator's own
+	// root applies.
+	RepoRoot string
 	// WorktreeDir is the host-absolute path of the per-row review
 	// worktree base directory (issue #1953). The daemon/cmd sets
 	// this from paths.NewLayout(cfg, repoRoot).WorktreeDir (already

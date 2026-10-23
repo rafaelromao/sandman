@@ -1517,7 +1517,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		delete(o.coordinators, coord)
 		o.coordinatorsMu.Unlock()
 	}()
-	layout := paths.NewLayout(cfg, o.layout.RepoRoot)
+	layout := paths.NewLayout(cfg, o.requestRepoRoot(req))
 	retries := resolveRetries(req, cfg)
 	runIdleTimeout := resolveRunIdleTimeout(req, cfg)
 	reviewTimeout, err := resolveReviewTimeout(req, cfg)
@@ -3281,17 +3281,14 @@ func (s *runSession) copyQualityRulesIntoWorktree(branch string) error {
 	return nil
 }
 
-// orchestratorWorktreeDir resolves the worktree base directory
-// for orchestrator-level code (outside a runSession) like the
-// post-run cleanup walker.
-func (o *Orchestrator) orchestratorWorktreeDir(cfg *config.Config) string {
-	if o.layout.RepoRoot != "" {
-		return o.layout.WorktreeDir
+// requestRepoRoot is the repository root a Request's relative RunDir and
+// Batch locations resolve against: the root its caller resolved, else the
+// orchestrator's own.
+func (o *Orchestrator) requestRepoRoot(req Request) string {
+	if root := strings.TrimSpace(req.RepoRoot); root != "" {
+		return root
 	}
-	if cfg != nil {
-		return strings.TrimSpace(cfg.WorktreeDir)
-	}
-	return ""
+	return o.layout.RepoRoot
 }
 
 // runFolderFor returns the per-run folder path under the batch for the
