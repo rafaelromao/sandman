@@ -23,7 +23,7 @@ type claudeStrategy struct {
 	readOnlyModes []string
 }
 
-func (s claudeStrategy) ModelFlag(model string) string {
+func (s claudeStrategy) ModelFlag(model, _ string) string {
 	if model == "" || !s.builtInCommand {
 		return ""
 	}

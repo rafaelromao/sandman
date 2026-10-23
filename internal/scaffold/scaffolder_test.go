@@ -3907,7 +3907,7 @@ func TestScaffold_OpencodeFallsBackToCatalogWhenProbeFails(t *testing.T) {
 func TestScaffold_RejectsUnsupportedOpenCodeBeforeWriting(t *testing.T) {
 	dir := t.TempDir()
 	prev := probeOpencodeVersion
-	probeOpencodeVersion = func() (string, error) { return "2.1.2", nil }
+	probeOpencodeVersion = func() (string, error) { return "3.0.0", nil }
 	t.Cleanup(func() { probeOpencodeVersion = prev })
 	err := (&Scaffolder{}).Scaffold(dir, Options{BuildTools: "generic", Agent: "opencode"}, &fakePrompter{confirm: true})
 	if err == nil || !strings.Contains(err.Error(), "OpenCode V1") {

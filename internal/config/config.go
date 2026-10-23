@@ -194,6 +194,18 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 			"~/.local/share/opencode/opencode.db-wal",
 		},
 	},
+	"opencode-v2": {
+		DisplayName:    "OpenCode v2",
+		DefaultModel:   DefaultModel,
+		Command:        `opencode run --format json{{if .ContinueFlag}} --continue{{end}}{{if .SessionFlag}} --session {{.SessionFlag}}{{end}}{{if .DangerouslySkipPermissions}} --auto{{end}}{{if .SessionName}} --title '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}} "$(cat {{.PromptFile}})"`,
+		PermissionHint: "configure permissions in OpenCode v2 config instead",
+		ConfigDirs:     []string{"~/.config/opencode", "~/.claude", "~/.agents"},
+		// V2 credentials and sessions live in SQLite. Mount the entire data
+		// directory so sidecars created after launch and database replacements
+		// persist even when the host service is stopped or no database exists yet.
+		LiveMountDirs: []string{"~/.local/share/opencode"},
+	},
+
 	// The claude preset runs the unmodified Claude Code CLI in print mode.
 	// stream-json with --verbose is the only print-mode format that emits
 	// output while the agent works, which the idle-timeout heartbeat needs.

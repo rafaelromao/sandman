@@ -21,7 +21,7 @@ An external AI coding tool (OpenCode or Claude Code) invoked by Sandman via `os/
 _Avoid_: AI model, LLM, copilot.
 
 **AgentPreset**:
-A built-in command, config source, auth profile, and default model for a known AI coding tool keyed by name (`opencode`, `claude`). Declared in `config.BuiltInAgentPresets` and resolved by `config.ResolveAgentProvider`. Presets hold data only; the agent-specific run-loop behaviour for a preset is its AgentStrategy.
+A built-in command, config source, auth profile, and default model for a known AI coding tool keyed by name (`opencode`, `opencode-v2`, `claude`). Declared in `config.BuiltInAgentPresets` and resolved by `config.ResolveAgentProvider`. Presets hold data only; the agent-specific run-loop behaviour for a preset is its AgentStrategy.
 _Avoid_: Provider template, agent type.
 
 **AgentStrategy**:
@@ -29,7 +29,7 @@ The per-preset behaviour bundle the run loop selects once per launch with `strat
 _Avoid_: agent type switch, preset check.
 
 **Agent Provider**:
-A configured agent preset or custom provider definition. Sandman supports the built-in presets (`opencode`, `claude`) and optional repo-local custom providers via the `agents` config map.
+A configured agent preset or custom provider definition. Sandman supports the built-in presets (`opencode`, `opencode-v2`, `claude`) and optional repo-local custom providers via the `agents` config map.
 _Avoid_: Agent type, runner.
 
 **AgentModel**:
@@ -121,7 +121,7 @@ One folder under `.sandman/batches/<batch-id>/runs/<run-id>/` containing `run.js
 _Avoid_: run folder, run directory.
 
 **Agent session identity**:
-The validated runtime metadata in `<Run>/session.json` that records `{protocol, provider, session_id}`: `opencode-session/v1`/`opencode` for OpenCode, or `claude-session/v1`/`claude` for Claude Code (from its `system/init` record). It is atomically replaced as soon as a supported invocation observes a session, and again after the attempt. Runtime-owned await re-entry and explicit `--continue --reuse-session` may select it, each strategy accepting only its own protocol. Plain `--continue` and retries do not. Missing OpenCode sessions use one OpenCode `--continue` fallback on the selected reuse path. Claude reuse renders `--resume <uuid>`, never Claude Code's working-directory-scoped `--continue`. A missing, invalid, or vanished Claude session starts fresh. The Portal shows either identity as the Run detail `agentSessionId` (ADR-0055, ADR-0057).
+The validated runtime metadata in `<Run>/session.json` that records `{protocol, provider, session_id}`: `opencode-session/v1`/`opencode` for OpenCode v1, `opencode-session/v2`/`opencode-v2` for OpenCode v2, or `claude-session/v1`/`claude` for Claude Code (from its `system/init` record). It is atomically replaced as soon as a supported invocation observes a session, and again after the attempt. Runtime-owned await re-entry and explicit `--continue --reuse-session` may select it, each strategy accepting only its own protocol. Plain `--continue` and retries do not. Missing OpenCode sessions use one OpenCode `--continue` fallback on the selected reuse path. Claude reuse renders `--resume <uuid>`, never Claude Code's working-directory-scoped `--continue`. A missing, invalid, or vanished Claude session starts fresh. The Portal shows either identity as the Run detail `agentSessionId` (ADR-0055, ADR-0057).
 _Avoid_: transcript, mutable Run status.
 
 **Run retry**:

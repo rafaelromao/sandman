@@ -291,3 +291,27 @@ func TestWarnOpencodeVersionMismatch_UsesCatalogWhenNoDockerfile(t *testing.T) {
 		t.Errorf("missing Dockerfile must surface catalog pin; got:\n%s", got)
 	}
 }
+
+func TestWarnOpencodeVersionMismatch_V2Pin(t *testing.T) {
+	dir := t.TempDir()
+	withDockerfilePin(t, dir, "2.1.2")
+	path := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, bytes.ReplaceAll(data, []byte("opencode-ai"), []byte("@opencode/cli")), 0644); err != nil {
+		t.Fatal(err)
+	}
+	withProbe(t, "2.1.2", nil)
+	cmd, stderr, _ := newWarningTestCmd(t)
+	warnOpencodeVersionMismatch(cmd, "opencode-v2", "docker", dir, defaultCfgSandbox(""))
+	if stderr.Len() != 0 {
+		t.Fatalf("matching v2 image warned: %s", stderr)
+	}
+	withProbe(t, "2.1.3", nil)
+	warnOpencodeVersionMismatch(cmd, "opencode-v2", "docker", dir, defaultCfgSandbox(""))
+	if !strings.Contains(stderr.String(), "sandbox version (2.1.2)") {
+		t.Fatalf("wrong mismatch: %s", stderr)
+	}
+}
