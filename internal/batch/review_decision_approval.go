@@ -100,10 +100,6 @@ func (section reviewApprovalTextSection) permitsApproval() bool {
 		return !reviewFindingDirective.MatchString(prose) && !reviewApprovalContradiction.MatchString(prose)
 	case "history":
 		return true
-	case "metadata":
-		// Locations, thresholds and analyzer availability describe the review;
-		// findings and the verdict carry its actionable result.
-		return true
 	default:
 		return false
 	}
@@ -149,7 +145,6 @@ func reviewApprovalSection(heading string) (string, string) {
 	for _, named := range []struct{ heading, section string }{
 		{"Decision", "decision"}, {"Findings", "findings"},
 		{"Suggested next steps", "next-steps"}, {"Previous review progress", "history"},
-		{"Scope", "metadata"}, {"Metrics", "metadata"}, {"Tools used", "metadata"},
 	} {
 		if len(heading) < len(named.heading) || !strings.EqualFold(heading[:len(named.heading)], named.heading) {
 			continue
@@ -194,15 +189,15 @@ func noReviewFindings(text string) bool {
 		}
 		_, explanation, _ := strings.Cut(paragraphs[0], ". ")
 		if reviewAcceptanceEvidence.MatchString(paragraphs[1]) || reviewAcceptanceEvidence.MatchString(explanation) {
-			return !reviewFindingDirective.MatchString(reviewApprovalProse(reviewEvidenceCode.ReplaceAllString(paragraphs[1], "code")))
+			return reviewEvidencePermitsApproval(paragraphs[1])
 		}
 		return noReviewFindings(paragraphs[1])
 	}
 	if loc := reviewNoQualityFinding.FindStringIndex(text); loc != nil {
-		return !reviewFindingDirective.MatchString(reviewApprovalProse(text[loc[1]:]))
+		return reviewEvidencePermitsApproval(text[loc[1]:])
 	}
 	if first := strings.SplitN(text, ". ", 2); len(first) == 2 && reviewAcceptanceEvidence.MatchString(first[1]) {
-		return noReviewFindings(first[0]) && !reviewFindingDirective.MatchString(reviewApprovalProse(first[1]))
+		return noReviewFindings(first[0]) && reviewEvidencePermitsApproval(first[1])
 	}
 	text = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(text), "-*"))
 	prose := reviewApprovalProse(text)
@@ -221,6 +216,13 @@ func noReviewFindings(text string) bool {
 		}
 	}
 	return true
+}
+
+// Evidence may quote code or historical examples; its author-facing prose
+// must still be free of repair directives and conditional approval.
+func reviewEvidencePermitsApproval(text string) bool {
+	prose := reviewApprovalProse(reviewEvidenceCode.ReplaceAllString(text, "code"))
+	return !reviewFindingDirective.MatchString(prose) && !reviewApprovalContradiction.MatchString(prose)
 }
 
 func noReviewFindingClause(clause string) bool {
