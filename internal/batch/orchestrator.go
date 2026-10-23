@@ -2317,6 +2317,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					fmt.Fprintf(o.errorLog, "error: stop command server for issue %d: %v\n", issueNum, err)
 				}
 			}()
+			// Explicit abort is a terminal decision applied once, at the fence
+			// after the loop, rather than at each phase that observed it.
+			abortRequested := false
 			executor := o.newRunExecutorWith(parentCtx, bc, policy.sandboxFactory, policy.containerAlloc, coord, coord, layout)
 			executor.deps.quotaProgress = quotaGate.modelProgress
 			executor.deps.quotaLimit = quotaGate.limit
@@ -2374,14 +2377,12 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 							wait = waitForAwaitPoll
 						}
 						if err := wait(issueCtx, interval); err != nil {
-							o.logAborted(issueNum, runID, nil)
-							res.Status = "aborted"
+							abortRequested = true
 							break
 						}
 						usageLimitWaited += interval
 						if err := markQuotaProbeReady(); err != nil {
-							o.logAborted(issueNum, runID, nil)
-							res.Status = "aborted"
+							abortRequested = true
 							break
 						}
 						recovering = false
@@ -2390,19 +2391,16 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				if awaiting && !readyContinuation && !row.UsageLimitProbe {
 					status, extras, handled := executor.observeLifecycle(issueCtx, row)
 					if issueCtx.Err() != nil {
-						o.logAborted(issueNum, runID, nil)
-						res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
+						abortRequested = true
 						break
 					}
 					if handled && status == "await" {
 						if err := executor.persistObservedAwait(issueCtx, row, extras); err != nil {
-							o.logAborted(issueNum, runID, nil)
-							res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
+							abortRequested = true
 							break
 						}
 						if err := waitForObservation(); err != nil {
-							o.logAborted(issueNum, runID, nil)
-							res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
+							abortRequested = true
 							break
 						}
 						continue
@@ -2421,8 +2419,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 								fmt.Fprintf(o.errorLog, "warning: persist ready continuation for issue %d: %v; keeping the run in its external wait\n", issueNum, err)
 							}
 							if waitErr := waitForObservation(); waitErr != nil {
-								o.logAborted(issueNum, runID, nil)
-								res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
+								abortRequested = true
 								break
 							}
 							continue
@@ -2430,8 +2427,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					}
 					readyContinuation = true
 					if err := owner.checkpoint(row, true, 0); err != nil {
-						o.logAborted(issueNum, runID, nil)
-						res.Status = "aborted"
+						abortRequested = true
 						break
 					}
 				}
@@ -2450,8 +2446,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					}
 					advanceTurn()
 					if err := owner.checkpoint(row, !awaiting || readyContinuation, 0); err != nil {
-						o.logAborted(issueNum, runID, nil)
-						res.Status = "aborted"
+						abortRequested = true
 						break
 					}
 					if !o.runSessionOpts.releaseAwaitCapacity {
@@ -2496,8 +2491,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 							break
 						}
 						if issueCtx.Err() != nil {
-							o.logAborted(issueNum, runID, nil)
-							res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
+							abortRequested = true
 						} else {
 							res = executor.finishObserved(issueCtx, row, "failure", map[string]any{"reason": "AGENT_USAGE_LIMIT", "next_action": "resume with available provider quota after the exhausted recovery window"})
 						}
@@ -2534,14 +2528,12 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				if errors.Is(err, admissionChanged) {
 					if admissionStatus == "await" {
 						if err := executor.persistObservedAwait(issueCtx, row, admissionExtras); err != nil {
-							o.logAborted(issueNum, runID, nil)
-							res.Status = "aborted"
+							abortRequested = true
 							break
 						}
 						readyContinuation = false
 						if err := waitForObservation(); err != nil {
-							o.logAborted(issueNum, runID, nil)
-							res.Status = "aborted"
+							abortRequested = true
 							break
 						}
 						continue
@@ -2550,8 +2542,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					break
 				}
 				if err != nil {
-					o.logAborted(issueNum, runID, nil)
-					res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
+					abortRequested = true
 					break
 				}
 				// Quota can close while an ordinary row is blocked inside Acquire.
@@ -2583,8 +2574,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 						interval = usageLimitPollInterval
 					}
 					if err := owner.checkpoint(row, false, interval); err != nil {
-						o.logAborted(issueNum, runID, nil)
-						res.Status = "aborted"
+						abortRequested = true
 					}
 				}
 				if res.Status != "await" || !o.runSessionOpts.releaseAwaitCapacity {
@@ -2600,8 +2590,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					row.UsageLimitDeadline = res.UsageLimitDeadline
 					row.UsageLimitProbe = true
 					if err := owner.checkpoint(row, false, interval); err != nil {
-						o.logAborted(issueNum, runID, nil)
-						res.Status = "aborted"
+						abortRequested = true
 						break
 					}
 					awaitWait := o.runSessionOpts.awaitWait
@@ -2609,8 +2598,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 						awaitWait = waitForAwaitPoll
 					}
 					if err := awaitWait(issueCtx, interval); err != nil {
-						o.logAborted(issueNum, runID, nil)
-						res.Status = "aborted"
+						abortRequested = true
 						break
 					}
 					usageLimitWaited += interval
@@ -2622,16 +2610,14 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					row.UsageLimitDeadline = res.UsageLimitDeadline
 					row.UsageLimitWaited = usageLimitWaited
 					if err := markQuotaProbeReady(); err != nil {
-						o.logAborted(issueNum, runID, nil)
-						res.Status = "aborted"
+						abortRequested = true
 						break
 					}
 					awaiting = true
 					continue
 				}
 				if err := waitForObservation(); err != nil {
-					o.logAborted(issueNum, runID, nil)
-					res.Status = "aborted"
+					abortRequested = true
 					break
 				}
 				row.Mode = ModeContinue
@@ -2642,11 +2628,13 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				readyContinuation = false
 				continue
 			}
-			mu.Lock()
 			if issueCtx.Err() != nil && !events.RunStatusFromPayload(res.Status).IsTerminal() {
-				o.logAborted(issueNum, runID, nil)
-				res.Status = "aborted"
+				abortRequested = true
 			}
+			if abortRequested {
+				res = o.applyAbort(issueCtx, executor, row, res)
+			}
+			mu.Lock()
 			results[idx] = res
 			statuses[issueNum] = res.Status
 			resStatus := events.RunStatusFromPayload(res.Status)
@@ -2843,6 +2831,34 @@ func (o *Orchestrator) logAborted(issueNum int, runID string, abortedBy []int) {
 	}); err != nil {
 		fmt.Fprintf(o.errorLog, "event log write failed: run.aborted (issue=%d run=%s): %v\n", issueNum, runID, err)
 	}
+}
+
+// applyAbort applies an explicit abort decision. A Run the event log shows as
+// started receives the shared terminal application, so its event, artifact
+// manifest and worktree evidence match every other terminal decision. The
+// abort decision itself selects run.aborted, even when the phase that
+// requested it failed without cancellation. A Run that never started records only the abort.
+// An unreadable event log cannot prove the Run unstarted, so it receives the
+// shared application too.
+func (o *Orchestrator) applyAbort(ctx context.Context, executor *runExecutor, row RowSpec, res AgentRunResult) AgentRunResult {
+	started := true
+	if o.eventLog != nil {
+		states, err := events.ReadRunStates(o.eventLog)
+		if err != nil {
+			fmt.Fprintf(o.errorLog, "warning: read run state before aborting run %s: %v\n", row.RunID, err)
+		} else {
+			started = states[row.RunID].HasStarted()
+		}
+	}
+	if started {
+		return executor.abortObserved(ctx, row)
+	}
+	o.logAborted(row.IssueNumber, row.RunID, nil)
+	res.IssueNumber, res.Issue, res.Status = row.IssueNumber, issueRef(row.IssueNumber), "aborted"
+	if res.Branch == "" {
+		res.Branch = row.Branches[row.IssueNumber]
+	}
+	return res
 }
 
 // mapRetryReason picks the closed-vocabulary reason for a run.retry emit
@@ -3099,6 +3115,9 @@ type runSessionOptions struct {
 // is built by runSingle / runPromptOnlySingle. A session is short-lived: it
 // lives for one execute call and is discarded on return.
 type runSession struct {
+	// explicitAbort records a selected abort decision, so its terminal is a
+	// run.aborted whatever the state of the context it is applied under.
+	explicitAbort bool
 	reviewHeadSHA string
 	deps          runDeps
 	coord         runCoordination
@@ -3668,6 +3687,9 @@ func (s *runSession) emitTerminal(ctx context.Context, runID string, result Agen
 
 func (s *runSession) emitNormalizedTerminal(ctx context.Context, runID string, result AgentRunResult, extras map[string]any) string {
 	terminalEventType, terminalStatus := terminalRunEvent(ctx, result.Status)
+	if s.explicitAbort {
+		terminalEventType, terminalStatus = "run.aborted", "aborted"
+	}
 	s.updateRunManifestStatus(runID, batchindex.RunManifestStatus(terminalStatus))
 	if s.deps.eventLog == nil {
 		return terminalStatus
