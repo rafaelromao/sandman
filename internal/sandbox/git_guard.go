@@ -54,9 +54,15 @@ fi
 # Remove every occurrence before delegating. Agent launchers can prepend their
 # own tool directory, moving this shim away from the front of PATH; stripping
 # only a leading occurrence would exec this same script forever. Preserve other
-# entries, including empty entries and paths containing spaces.
+# entries, including empty entries and paths containing spaces. A nested guard
+# (an agent running Sandman's own tests) overwrites SANDMAN_GIT_GUARD_DIR, so
+# also remove the directory this script was found in.
 guard_dir=${SANDMAN_GIT_GUARD_DIR-}
-if [ -n "$guard_dir" ]; then
+self_dir=
+case "$0" in
+  */*) self_dir=${0%/*} ;;
+esac
+if [ -n "$guard_dir" ] || [ -n "$self_dir" ]; then
   path_rest=${PATH-}
   path_clean=
   path_sep=
@@ -72,7 +78,7 @@ if [ -n "$guard_dir" ]; then
         path_more=0
         ;;
     esac
-    if [ "$path_entry" != "$guard_dir" ]; then
+    if [ "$path_entry" != "$guard_dir" ] && [ "$path_entry" != "$self_dir" ]; then
       path_clean=$path_clean$path_sep$path_entry
       path_sep=:
     fi
@@ -81,7 +87,10 @@ if [ -n "$guard_dir" ]; then
   PATH=$path_clean
 fi
 export PATH
-exec git "$@"
+# git gc (including the automatic gc that commits and fetches start) runs its
+# own repository-wide worktree prune without passing through PATH. Git exports
+# -c settings to its children, so this keeps every nested gc from pruning.
+exec git -c gc.worktreePruneExpire=never "$@"
 `
 
 func ensureAgentGitGuard(repoPath string) (string, error) {

@@ -460,6 +460,89 @@ func TestWaitingContract_RenewalFailureStopsActiveExecution(t *testing.T) {
 	}
 }
 
+// retryLog signals each retried ownership renewal written to the error log.
+type retryLog struct{ retried chan struct{} }
+
+func (l retryLog) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), "retrying while the last lease is valid") {
+		select {
+		case l.retried <- struct{}{}:
+		default:
+		}
+	}
+	return len(p), nil
+}
+
+func TestWaitingContract_TransientRenewalFailureKeepsActiveExecution(t *testing.T) {
+	root := testenv.MkdirShort(t, "sm-renew-retry-")
+	t.Chdir(root)
+	initGitRepo(t, root)
+	started := make(chan struct{})
+	var cancelled atomic.Bool
+	pulse := make(chan time.Time)
+	log := &spyEventLog{}
+	errorLog := retryLog{retried: make(chan struct{}, 1)}
+	factory := &controlledRunnableFactory{runnables: map[int]Runnable{42: waitingRunnableFunction(func(ctx context.Context) AgentRunResult {
+		close(started)
+		<-ctx.Done()
+		cancelled.Store(true)
+		return AgentRunResult{IssueNumber: 42, Status: "aborted", Branch: "42-work"}
+	})}}
+	cfg := &config.Config{Agent: "test", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"test": {Command: "true"}}}
+	o := NewOrchestrator(&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}}, &noopRenderer{}, &fakeConfigStore{config: cfg}, log, WithErrorLog(errorLog), WithRunnableFactory(factory), WithSandboxFactory(reviewWaitSchedulerSandboxFactory{}), WithRunSessionOpts(runSessionOptions{waitOwnerPulse: func(string) <-chan time.Time { return pulse }}))
+	request := Request{Issues: []int{42}, RunTS: "261005120000", RunShortID: "retry", Branches: map[int]string{42: "42-work"}}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan struct{})
+	go func() { defer close(done); _, _ = o.RunBatch(ctx, request) }()
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("agent did not start")
+	}
+	layout := paths.NewLayout(cfg, root)
+	waiting := filepath.Join(layout.StateDir, "waiting")
+	record := filepath.Join(waiting, buildRunID(42, request.RunTS, request.RunShortID)+".json")
+	// A regular file in place of the directory fails the renewal with ENOTDIR,
+	// even for root.
+	if err := os.RemoveAll(waiting); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(waiting, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pulse <- time.Now()
+	select {
+	case <-errorLog.retried:
+	case <-ctx.Done():
+		t.Fatal("transient renewal failure was not retried")
+	}
+	if err := os.Remove(waiting); err != nil {
+		t.Fatal(err)
+	}
+	pulse <- time.Now()
+	for {
+		if _, err := os.Stat(record); err == nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("ownership was not renewed after the transient failure")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	if cancelled.Load() {
+		t.Fatal("transient renewal failure cancelled active execution")
+	}
+	for _, state := range events.ProjectRunStates(log.snapshot()) {
+		if state.IsTerminal() {
+			t.Fatalf("transient renewal failure ended the row: %+v", state)
+		}
+	}
+	cancel()
+	<-done
+}
+
 func TestWaitingContract_ReviewerLaunchHistoryCannotPreemptApproval(t *testing.T) {
 	for _, corrupt := range []bool{false, true} {
 		t.Run(fmt.Sprintf("corrupt=%v", corrupt), func(t *testing.T) {

@@ -45,7 +45,7 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 ├── worktrees/<branch>/                 # per-run worktree (git)
 │   └── .sandman/task.md                # per-worktree rendered prompt
 └── state/                              # runtime sidecars
-    ├── run-claims/<RunID>.lock          # stable advisory RunID ownership claim
+    ├── run-claims/<RunID>.lock          # advisory RunID ownership claim; `clean --stale`/`--all` remove it once the Run is event-terminal
     ├── waiting/<RunID>.json             # initial-admission schedule/lease (no Task required)
     ├── .prompt-version                 # SHA-256 of materialized prompt template
     ├── .built_with_sandman             # empty control file (badge sidecar)

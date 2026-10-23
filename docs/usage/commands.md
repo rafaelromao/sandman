@@ -186,11 +186,13 @@ The temp-dir and `sandman-smoke-*` image sweep runs in every mode — `--all`, `
 
 | Flag | Description |
 |------|-------------|
-| `--all` | Run the full cleanup sequence: recover stale runs, remove orphaned test batches, remove archived batches, reclaim completed active batches (daemon gone, all runs terminal or all rows archived), then sweep Sandman-owned temp dirs and `sandman-smoke-*` images. Live or in-flight active batches are preserved. |
+| `--all` | Run the full cleanup sequence: recover stale runs, remove orphaned test batches, remove archived batches, reclaim completed active batches (daemon gone, all runs terminal or all rows archived), remove terminal Runs' claim files, then sweep Sandman-owned temp dirs and `sandman-smoke-*` images. Live or in-flight active batches are preserved. |
 | `--archived` | Remove archived batches |
 | `--dry-run` | Print intended deletions without performing I/O |
-| `--stale` | Recover stale runs in dead batches by emitting `run.aborted` events |
+| `--stale` | Recover stale runs in dead batches by emitting `run.aborted` events, then remove the `.sandman/state/run-claims/<RunID>.lock` files of event-terminal Runs |
 | `--orphaned` | Remove orphaned test batch directories (no matching run.started event and no live daemon socket) |
+
+Claim-file cleanup keeps the claims of unfinished Runs, of Runs with no events, and of any claim still held by a live process; `--dry-run` never removes them.
 
 `--all` is mutually exclusive with `--archived`, `--stale`, and `--orphaned` (it is the umbrella flag, not a combiner). `--stale` is mutually exclusive with `--archived`, `--dry-run`, and `--orphaned`. `--orphaned` is mutually exclusive with `--archived`, `--stale`, and `--all`. `--archived` and `--dry-run` can be combined.
 

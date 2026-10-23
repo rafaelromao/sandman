@@ -1976,6 +1976,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					abortedCount++
 				}
 			}
+			leaseRetry := func(err error) {
+				fmt.Fprintf(o.errorLog, "warning: renew ownership for run %s: %v; retrying while the last lease is valid\n", runID, err)
+			}
 			rowTerminal := func() bool {
 				mu.Lock()
 				defer mu.Unlock()
@@ -2028,7 +2031,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				}
 				record := daemon.RunWait{Protocol: "run-wait/v1", RunID: runID, BatchID: initialBatch.ID, Issue: issueNum, Branch: req.Branches[issueNum], BaseBranch: initialBaseBranch, InitialAdmission: true, AdmissionMode: int(req.IssueMode(issueNum)), Dependencies: append([]int(nil), blockers...), ReuseSession: req.ReuseSession[issueNum], Ready: true, OperationID: "admission", PreviousRunID: req.PreviousRunIDs[issueNum], PreviousBatchID: req.PreviousRunBatchIDs[issueNum]}
 				if err == nil {
-					initialOwner, err = newWaitOwnerWithFailure(layout, initialBatch, record, recoveryNow, o.eventLog, ownerPulse(runID), leaseFailure)
+					initialOwner, err = newWaitOwnerWithFailure(layout, initialBatch, record, recoveryNow, o.eventLog, ownerPulse(runID), leaseFailure, leaseRetry)
 				}
 				if err != nil {
 					o.logAborted(issueNum, runID, nil)
@@ -2273,7 +2276,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			var owner *waitOwner
 			ownerErr := waitBatchErr
 			if ownerErr == nil {
-				owner, ownerErr = newWaitOwnerWithFailure(layout, waitBatch, ownerRecord, clock, o.eventLog, ownerPulse(runID), leaseFailure)
+				owner, ownerErr = newWaitOwnerWithFailure(layout, waitBatch, ownerRecord, clock, o.eventLog, ownerPulse(runID), leaseFailure, leaseRetry)
 			}
 			if ownerErr != nil {
 				o.logAborted(issueNum, runID, nil)

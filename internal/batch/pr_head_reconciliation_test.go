@@ -32,6 +32,25 @@ func TestReconcileWorktreeToPRHead_FastForwardsToExactRemoteHead(t *testing.T) {
 	}
 }
 
+func TestReconcileWorktreeToPRHead_RemovesTemporaryRefAfterCancellation(t *testing.T) {
+	workDir, branch, _, remoteHead := worktreeWithAdvancedPRHead(t)
+	if _, _, err := reconcileWorktreeToPRHead(context.Background(), workDir, branch, 592, remoteHead); err != nil {
+		t.Fatal(err)
+	}
+	if got := runGit(t, workDir, "for-each-ref", "refs/sandman/"); got != "" {
+		t.Fatalf("temporary reconciliation refs left behind: %q", got)
+	}
+
+	ref := "refs/sandman/pr-head-reconcile/592/" + remoteHead
+	runGit(t, workDir, "update-ref", ref, remoteHead)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	removeTemporaryRef(ctx, workDir, ref)
+	if got := runGit(t, workDir, "for-each-ref", "refs/sandman/"); got != "" {
+		t.Fatalf("cancelled caller left the temporary ref behind: %q", got)
+	}
+}
+
 func TestReconcileWorktreeToPRHead_PreservesDirtyAndDivergedWorktrees(t *testing.T) {
 	t.Run("dirty", func(t *testing.T) {
 		workDir, branch, oldHead, remoteHead := worktreeWithAdvancedPRHead(t)

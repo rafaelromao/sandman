@@ -180,7 +180,12 @@ delay, and quota deferral. Cancellation consumes no retry budget and must preven
 subsequent retry bookkeeping or launches. Completed siblings retain their outcomes.
 
 Atomic run-owned schedule/lease evidence and an exclusive advisory RunID claim
-support recovery. A live owner renews the lease. Unclean exit releases the claim,
+support recovery. A live owner renews the lease every 30 seconds; a transient
+renewal I/O failure is retried while the next renewal still falls within the
+last successful renewal's uncapped recovery grace (the held claim, not the
+lease, protects the live row), and invalid ownership aborts immediately.
+`sandman clean` reclaims claim files of event-terminal Runs while holding the
+claim; claimants revalidate the locked inode. Unclean exit releases the claim,
 but valid intent remains recoverable for five minutes, capped by its existing
 operation deadline. Repeated discovery does not extend grace.
 Quota diagnostic estimates do not cap grace. Legacy quota schedules normalize

@@ -20,11 +20,40 @@ const RunRecoveryGrace = 5 * time.Minute
 
 var ErrRunOwned = errors.New("run already has a live owner")
 
+// ErrRunWaitInvalid marks schedule ownership that can no longer be renewed:
+// a foreign identity, a changed operation deadline, or a record that does not
+// decode or validate. Records are replaced atomically, so these never heal on
+// their own. Other renewal failures are I/O and may succeed on a later try.
+var ErrRunWaitInvalid = errors.New("waiting ownership cannot be renewed")
+
+// runWaitInvalidError keeps the diagnostic text of a permanent ownership
+// failure while classifying it as ErrRunWaitInvalid.
+type runWaitInvalidError struct{ err error }
+
+func (e *runWaitInvalidError) Error() string        { return e.err.Error() }
+func (e *runWaitInvalidError) Unwrap() error        { return e.err }
+func (e *runWaitInvalidError) Is(target error) bool { return target == ErrRunWaitInvalid }
+
+func invalidRunWait(err error) error { return &runWaitInvalidError{err: err} }
+
 type RunClaim struct{ file *os.File }
 
-// ClaimRun fences scheduler ownership by RunID. The stable lock inode is never
-// removed: owner death releases the advisory lock, not the durable intent.
+// claimRunAttempts bounds how often ClaimRun reopens a claim file that was
+// replaced between opening and locking it.
+const claimRunAttempts = 8
+
+// ClaimRun fences scheduler ownership by RunID. Owner death releases the
+// advisory lock, not the durable intent. PruneRunClaims may unlink the lock
+// file of a terminal Run while holding its claim, so a claimant revalidates
+// after locking that the path still names the inode it locked and retries
+// otherwise; two claimants can never hold different inodes for one RunID.
 func ClaimRun(sandmanDir, runID string) (*RunClaim, error) {
+	return claimRun(sandmanDir, runID, nil)
+}
+
+// claimRun is ClaimRun with beforeLock, which tests use to act between opening
+// and locking the claim file.
+func claimRun(sandmanDir, runID string, beforeLock func(path string)) (*RunClaim, error) {
 	if !safeWaitID(runID) {
 		return nil, fmt.Errorf("invalid run claim identity")
 	}
@@ -32,18 +61,49 @@ func ClaimRun(sandmanDir, runID string) (*RunClaim, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	file, err := os.OpenFile(filepath.Join(dir, runID+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
-		_ = file.Close()
-		if errors.Is(err, unix.EWOULDBLOCK) {
-			return nil, ErrRunOwned
+	path := filepath.Join(dir, runID+".lock")
+	for range claimRunAttempts {
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+		if err != nil {
+			return nil, err
 		}
-		return nil, err
+		if beforeLock != nil {
+			beforeLock(path)
+		}
+		if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+			_ = file.Close()
+			if errors.Is(err, unix.EWOULDBLOCK) {
+				return nil, ErrRunOwned
+			}
+			return nil, err
+		}
+		current, err := claimFileIsPath(file, path)
+		if err != nil {
+			_ = file.Close()
+			return nil, err
+		}
+		if current {
+			return &RunClaim{file: file}, nil
+		}
+		_ = file.Close()
 	}
-	return &RunClaim{file: file}, nil
+	return nil, fmt.Errorf("claim run %s: lock file kept changing", runID)
+}
+
+// claimFileIsPath reports whether file is still the inode path names.
+func claimFileIsPath(file *os.File, path string) (bool, error) {
+	held, err := file.Stat()
+	if err != nil {
+		return false, err
+	}
+	current, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return os.SameFile(held, current), nil
 }
 
 func (c *RunClaim) Close() error {
@@ -53,6 +113,54 @@ func (c *RunClaim) Close() error {
 	err := c.file.Close()
 	c.file = nil
 	return err
+}
+
+// PruneRunClaims removes the claim files of Runs whose event projection is
+// terminal and returns how many it removed. Each file is unlinked while its
+// claim is held, so a concurrent ClaimRun revalidates onto a fresh file.
+// Unfinished Runs, Runs absent from states, live claims and anything other
+// than a regular claim file are kept.
+func PruneRunClaims(sandmanDir string, states map[string]events.RunState) (int, error) {
+	dir := filepath.Join(sandmanDir, "state", "run-claims")
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	var errs []error
+	for _, entry := range entries {
+		runID, ok := strings.CutSuffix(entry.Name(), ".lock")
+		if !ok || !safeWaitID(runID) {
+			continue
+		}
+		state, known := states[runID]
+		if !known || !state.IsTerminal() {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		claim, err := ClaimRun(sandmanDir, runID)
+		if errors.Is(err, ErrRunOwned) {
+			continue
+		}
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, err)
+		} else if err == nil {
+			removed++
+		}
+		_ = claim.Close()
+	}
+	return removed, errors.Join(errs...)
 }
 
 // RunWait carries ownership/schedule evidence only. Lifecycle and terminality
@@ -189,18 +297,18 @@ func validateRunWait(batchDir, expectedBatchID, runID string, record RunWait) er
 	identityMismatch := expectedBatchID != "" && record.BatchID != expectedBatchID
 	legacyInitialMismatch := expectedBatchID == "" && record.InitialAdmission && record.BatchID != filepath.Base(batchDir)
 	if !safeWaitID(runID) || !safeWaitID(record.BatchID) || identityMismatch || legacyInitialMismatch || record.Protocol != "run-wait/v1" || record.RunID != runID || record.Issue <= 0 || record.BaseBranch == "" || record.OperationID == "" || record.LeaseExpiresAt.IsZero() || record.AdmissionMode < 0 || record.AdmissionMode > 2 {
-		return fmt.Errorf("waiting ownership identity/timing is invalid")
+		return invalidRunWait(fmt.Errorf("waiting ownership identity/timing is invalid"))
 	}
 	clean := filepath.Clean(record.Branch)
 	if record.Branch != "" && (filepath.IsAbs(record.Branch) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator))) {
-		return fmt.Errorf("waiting branch escapes worktree ownership")
+		return invalidRunWait(fmt.Errorf("waiting branch escapes worktree ownership"))
 	}
 	if !record.InitialAdmission && record.Branch == "" {
-		return fmt.Errorf("waiting continuation branch is invalid")
+		return invalidRunWait(fmt.Errorf("waiting continuation branch is invalid"))
 	}
 	for _, issue := range record.Dependencies {
 		if issue <= 0 || issue == record.Issue {
-			return fmt.Errorf("waiting dependency identity is invalid")
+			return invalidRunWait(fmt.Errorf("waiting dependency identity is invalid"))
 		}
 	}
 	return nil
@@ -271,7 +379,7 @@ func waitRecoveryScheduleAt(layout paths.Layout, batch paths.BatchLocation, run 
 func ReadRunWaitAt(layout paths.Layout, batch paths.BatchLocation, runID string) (RunWait, error) {
 	var record RunWait
 	if !safeWaitID(runID) || (batch.ID != "" && !safeWaitID(batch.ID)) {
-		return record, fmt.Errorf("invalid waiting run identity")
+		return record, invalidRunWait(fmt.Errorf("invalid waiting run identity"))
 	}
 	data, err := os.ReadFile(waitPath(batch.Dir, runID))
 	if os.IsNotExist(err) {
@@ -297,12 +405,21 @@ func ReadRunWaitAt(layout paths.Layout, batch paths.BatchLocation, runID string)
 // The record must carry the public identity of the Batch it is written to.
 func RenewRunWait(layout paths.Layout, batch paths.BatchLocation, record RunWait, now time.Time) error {
 	if record.BatchID != batch.ID {
-		return fmt.Errorf("waiting ownership identity is invalid")
+		return invalidRunWait(fmt.Errorf("waiting ownership identity is invalid"))
 	}
 	record = normalizeQuotaWait(record)
-	if old, err := ReadRunWaitAt(layout, batch, record.RunID); err == nil && old.OperationID == record.OperationID && !old.OperationDeadline.Equal(record.OperationDeadline) {
-		return fmt.Errorf("waiting operation deadline cannot be renewed")
-	} else if err != nil && !os.IsNotExist(err) {
+	old, err := ReadRunWaitAt(layout, batch, record.RunID)
+	var malformed *json.SyntaxError
+	var wrongType *json.UnmarshalTypeError
+	switch {
+	case err == nil:
+		if old.OperationID == record.OperationID && !old.OperationDeadline.Equal(record.OperationDeadline) {
+			return invalidRunWait(fmt.Errorf("waiting operation deadline cannot be renewed"))
+		}
+	case os.IsNotExist(err):
+	case errors.As(err, &malformed) || errors.As(err, &wrongType):
+		return invalidRunWait(err)
+	default:
 		return err
 	}
 	return writeRunWait(layout, batch.Dir, record, now)
