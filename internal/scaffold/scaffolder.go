@@ -235,7 +235,8 @@ var KnownBuildToolsPresets = func() []string {
 }()
 
 var builtInAgentVersionCatalog = map[string][]string{
-	"opencode": {"1.19.3", "1.18.0", "1.15.0", "1.14.0", "1.13.0"},
+	"opencode-v2": {"2.1.2"},
+	"opencode":    {"1.19.3", "1.18.0", "1.15.0", "1.14.0", "1.13.0"},
 	// 2.1.277 is the floor: the first Claude Code release that reads
 	// AGENTS.md natively.
 	"claude": {"2.1.283"},
@@ -283,13 +284,24 @@ var agentInstallers = map[string]agentInstaller{
 		packageName: "opencode-ai",
 		validateVersion: func(version string) error {
 			if !strings.HasPrefix(version, "1.") {
-				return fmt.Errorf("unsupported OpenCode version %q: Sandman requires OpenCode V1; install opencode-ai@%s and retry init", version, DefaultBuiltInAgentVersion("opencode"))
+				return fmt.Errorf("unsupported OpenCode version %q: the opencode preset requires OpenCode V1; use --agent opencode-v2 for a V2 host, or install opencode-ai@%s and retry init", version, DefaultBuiltInAgentVersion("opencode"))
 			}
 			return nil
 		},
 		// Late-bound so tests can replace probeOpencodeVersion.
 		probeHostVersion: func() (string, error) { return probeOpencodeVersion() },
 	},
+	"opencode-v2": {
+		packageName:      "@opencode/cli",
+		probeHostVersion: func() (string, error) { return probeOpencodeVersion() },
+		validateVersion: func(version string) error {
+			if !strings.HasPrefix(version, "2.") {
+				return fmt.Errorf("unsupported OpenCode version %q: the opencode-v2 preset requires OpenCode V2; use --agent opencode for a V1 host, or install @opencode/cli@2.1.2 and retry init", version)
+			}
+			return nil
+		},
+	},
+
 	"claude": {
 		packageName: "@anthropic-ai/claude-code",
 	},

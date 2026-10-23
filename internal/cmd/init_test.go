@@ -73,18 +73,42 @@ func TestInit_CreatesSandmanFiles(t *testing.T) {
 	}
 }
 
-func TestInit_RejectsUnsupportedHostOpenCodeBeforeWriting(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	installInitHostVersion(t, "opencode v2.1.2")
-	cmd := NewInitCmd()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetArgs([]string{"--build-tools", "generic", "--agent", "opencode"})
-	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "requires OpenCode V1") {
-		t.Fatalf("unsupported generation must fail with guidance: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, ".sandman")); !os.IsNotExist(err) {
-		t.Fatalf("unsupported host wrote scaffold files: %v", err)
+func TestInit_OpenCodeGenerations(t *testing.T) {
+	for _, tc := range []struct {
+		version, pkg, preset string
+		supported            bool
+	}{
+		{"1.19.3", "opencode-ai", "opencode", true}, {"2.1.2", "@opencode/cli", "opencode-v2", true},
+		{"0.9.0", "", "opencode", false}, {"3.0.0", "", "opencode-v2", false}, {"2.1.2", "", "opencode", false}, {"1.19.3", "", "opencode-v2", false},
+	} {
+		t.Run(tc.preset+"/"+tc.version, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Chdir(dir)
+			installInitHostVersion(t, "opencode v"+tc.version)
+			cmd := NewInitCmd()
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetArgs([]string{"--build-tools", "generic", "--agent", tc.preset})
+			err := cmd.Execute()
+			if !tc.supported {
+				if err == nil || !strings.Contains(err.Error(), "retry init") {
+					t.Fatalf("unsupported generation must fail with guidance: %v", err)
+				}
+				if _, err := os.Stat(filepath.Join(dir, ".sandman")); !os.IsNotExist(err) {
+					t.Fatalf("unsupported host wrote scaffold files: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(data), "RUN npm install -g "+tc.pkg+"@"+tc.version) {
+				t.Fatalf("wrong installer: %s", data)
+			}
+		})
 	}
 }
 

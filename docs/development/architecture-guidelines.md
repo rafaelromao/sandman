@@ -45,6 +45,7 @@ Sandman supports more than one agent CLI. Everything that differs between agents
 
 - Never branch on an agent or preset name at a call site; add or change a strategy method, or a registry field, instead. `TestAgentSelection_NoAgentNameComparisonsOutsideStrategy` enforces this.
 - Adding an agent means a preset entry, an installer entry, and one strategy type.
+- OpenCode v1 (`opencode`) and v2 (`opencode-v2`) are separate presets. Share compatible JSON parsing and failure detectors, but keep command flags, installer pins, permission defaults and session identity generation-specific. Never choose the protocol from a host probe during launch.
 - Behaviour an agent does not support is documented as a limitation in `docs/usage/agent-compatibility.md`, not emulated with a special case.
 
 ## Preserve atomic filesystem writes

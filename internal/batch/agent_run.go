@@ -257,7 +257,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		}
 		return RenderCommand(command, CommandData{
 			PromptFile:                 renderedPromptFile,
-			ModelFlag:                  strategy.ModelFlag(strings.TrimSpace(r.model)),
+			ModelFlag:                  strategy.ModelFlag(strings.TrimSpace(r.model), r.variant),
 			VariantFlag:                strategy.VariantFlag(r.variant),
 			ModelProvider:              r.modelProvider,
 			ModelName:                  r.modelName,

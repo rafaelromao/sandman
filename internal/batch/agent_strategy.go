@@ -22,7 +22,7 @@ import (
 type agentStrategy interface {
 	// ModelFlag renders the model selector passed to the command template as
 	// {{.ModelFlag}}, or "" when the model is empty or not wired for the launch.
-	ModelFlag(model string) string
+	ModelFlag(model, variant string) string
 	// VariantFlag renders the model-variant selector passed to the command
 	// template as {{.VariantFlag}}, or "".
 	VariantFlag(variant string) string
@@ -110,6 +110,9 @@ var agentStrategies = map[string]func(preset config.AgentPreset, builtInCommand 
 	"opencode": func(_ config.AgentPreset, builtInCommand bool) agentStrategy {
 		return opencodeStrategy{builtInCommand: builtInCommand}
 	},
+	"opencode-v2": func(_ config.AgentPreset, builtInCommand bool) agentStrategy {
+		return opencodeV2Strategy{opencodeStrategy{builtInCommand: builtInCommand}}
+	},
 	"claude": func(preset config.AgentPreset, builtInCommand bool) agentStrategy {
 		return claudeStrategy{builtInCommand: builtInCommand, readOnlyModes: preset.ReadOnlyPermissionModes}
 	},
@@ -168,7 +171,7 @@ func IsUsageLimitOutput(agentName, output string) bool {
 // agent-specific failure classification.
 type passthroughStrategy struct{}
 
-func (passthroughStrategy) ModelFlag(string) string              { return "" }
+func (passthroughStrategy) ModelFlag(string, string) string      { return "" }
 func (passthroughStrategy) VariantFlag(string) string            { return "" }
 func (passthroughStrategy) PermissionFlag(string, string) string { return "" }
 
@@ -203,7 +206,7 @@ type opencodeStrategy struct {
 	builtInCommand bool
 }
 
-func (s opencodeStrategy) ModelFlag(model string) string {
+func (s opencodeStrategy) ModelFlag(model, _ string) string {
 	if model == "" || !s.builtInCommand {
 		return ""
 	}
@@ -277,6 +280,43 @@ func (opencodeStrategy) ContextRolloverDetector(literals []string, onTrigger fun
 func (opencodeStrategy) UsageLimitRule() func(string) bool { return opencodeUsageLimitLine }
 
 func (s opencodeStrategy) AwaitsUsageLimit() bool { return s.builtInCommand }
+
+// opencodeV2Strategy shares OpenCode's JSON stream and failure detectors, but
+// owns the v2 model selector and session identity. Selecting a preset determines
+// the protocol; launch rendering never guesses from the host version.
+type opencodeV2Strategy struct{ opencodeStrategy }
+
+func (s opencodeV2Strategy) ModelFlag(model, variant string) string {
+	if !s.builtInCommand || model == "" {
+		return ""
+	}
+	if variant != "" {
+		model, _, _ = strings.Cut(model, "#")
+		model += "#" + variant
+	}
+	return "--model " + shellenv.Quote(model)
+}
+func (opencodeV2Strategy) VariantFlag(string) string                                      { return "" }
+func (opencodeV2Strategy) LaunchEnv(env map[string]string, _, _ string) map[string]string { return env }
+
+var opencodeV2SessionKind = agentSessionKind{protocol: "opencode-session/v2", provider: "opencode-v2"}
+
+func (s opencodeV2Strategy) PrepareLaunch(run *AgentRun) (string, bool) {
+	if !s.builtInCommand || !run.reuseSession {
+		return "", false
+	}
+	identity, found, err := priorAgentSession(run.layout, run.previousBatchID, run.previousRunID, opencodeV2SessionKind)
+	if err != nil {
+		run.warnSession(err)
+	}
+	if found {
+		return identity.SessionID, false
+	}
+	return "", true
+}
+func (opencodeV2Strategy) PersistSession(run *AgentRun, stdout, stderr outputParser) {
+	run.persistSession(opencodeV2SessionKind, firstSessionID(stdout, stderr))
+}
 
 // sessionObserver is implemented by parsers that report the first session
 // they observe while the agent is still running. Parsers of one invocation

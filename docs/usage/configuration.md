@@ -17,8 +17,8 @@ agent: opencode
 model: opencode/big-pickle
 
 # Optional provider-specific implementation model variant. Empty disables
-# forwarding it to the built-in command (--variant for OpenCode, --effort for
-# Claude Code).
+# forwarding it to the built-in command (--variant for OpenCode v1, #variant on the model for
+# opencode-v2, --effort for Claude Code).
 variant: ""
 
 # Default agent preset used for review runs when `--agent` is omitted in `sandman review`.
