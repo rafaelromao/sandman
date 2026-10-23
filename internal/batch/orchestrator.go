@@ -1735,6 +1735,24 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	failureCount := 0
 	abortedCount := 0
 	statuses := make(map[int]string, len(req.Issues))
+	// returnedAborts holds, per row returned unfinished to the batch, the
+	// selected abort application for its Run, so a later abort applies the
+	// same terminal as the row's own fence. Guarded by mu.
+	returnedAborts := make([]func(context.Context) AgentRunResult, len(req.Issues))
+	// abortReturned aborts an unfinished row whose goroutine returned it to
+	// the batch. A row returned before it had an executor is an unstarted
+	// admission and records only the abort. Callers hold mu.
+	abortReturned := func(ctx context.Context, idx, issueNum int, runID string) {
+		if abort := returnedAborts[idx]; abort != nil {
+			returnedAborts[idx] = nil
+			results[idx] = abort(ctx)
+		} else {
+			o.logAborted(issueNum, runID, nil)
+			results[idx].Status = "aborted"
+		}
+		statuses[issueNum] = results[idx].Status
+		abortedCount++
+	}
 	completed := make(map[int]chan struct{}, len(req.Issues))
 	yielded := make(map[int]chan struct{}, len(req.Issues))
 	for _, num := range req.Issues {
@@ -1982,9 +2000,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				// Active execution consumes cancellation through its ordinary abort
 				// path. Returned unfinished rows still belong to this batch.
 				if results[idx].Status != "" && !events.RunStatusFromPayload(results[idx].Status).IsTerminal() {
-					o.logAborted(issueNum, runID, nil)
-					results[idx].Status, statuses[issueNum] = "aborted", "aborted"
-					abortedCount++
+					abortReturned(issueCtx, idx, issueNum, runID)
 				}
 			}
 			leaseRetry := func(err error) {
@@ -2638,6 +2654,12 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			results[idx] = res
 			statuses[issueNum] = res.Status
 			resStatus := events.RunStatusFromPayload(res.Status)
+			if !resStatus.IsTerminal() {
+				abortRow, abortRes := row, res
+				returnedAborts[idx] = func(ctx context.Context) AgentRunResult {
+					return o.applyAbort(ctx, executor, abortRow, abortRes)
+				}
+			}
 			if resStatus.IsFailure() {
 				failureCount++
 			}
@@ -2653,6 +2675,8 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		// The batch retains RunID claims through this final cancellation fence.
 		// A returned await/initial queue is still unfinished owned intent;
 		// preserve terminal siblings and prevent later grace-based reclamation.
+		// Wait owners still renew here, so a lease failure may race this fence.
+		mu.Lock()
 		for i := range results {
 			if events.RunStatusFromPayload(results[i].Status).IsTerminal() {
 				continue
@@ -2662,11 +2686,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			if id == "" {
 				id = buildRunID(issue, req.RunTS, req.RunShortID)
 			}
-			o.logAborted(issue, id, nil)
-			results[i].Status = "aborted"
-			statuses[issue] = "aborted"
-			abortedCount++
+			abortReturned(ctx, i, issue, id)
 		}
+		mu.Unlock()
 	}
 
 	if policy.mode == "docker" || policy.mode == "podman" {
