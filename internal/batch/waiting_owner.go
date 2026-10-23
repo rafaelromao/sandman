@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -10,18 +11,26 @@ import (
 	"github.com/rafaelromao/sandman/internal/paths"
 )
 
+// leaseRenewInterval is how often a live owner renews its schedule lease.
+const leaseRenewInterval = 30 * time.Second
+
 // waitOwner keeps schedule evidence fresh while the logical row is suspended.
 // The enclosing row holds its exclusive RunID claim until terminal persistence.
 type waitOwner struct {
-	mu       sync.Mutex
-	layout   paths.Layout
-	batch    paths.BatchLocation
-	record   daemon.RunWait
-	now      func() time.Time
-	log      events.EventLog
-	done     chan struct{}
-	stopped  chan struct{}
-	stopOnce sync.Once
+	mu     sync.Mutex
+	layout paths.Layout
+	batch  paths.BatchLocation
+	record daemon.RunWait
+	now    func() time.Time
+	log    events.EventLog
+	// renewedAt is when the lease was last written successfully. Retries
+	// are measured from it against the uncapped recovery grace: a lease
+	// capped by its operation deadline cannot be extended by renewal, and
+	// the held RunID claim, not the lease, protects the live row.
+	renewedAt time.Time
+	done      chan struct{}
+	stopped   chan struct{}
+	stopOnce  sync.Once
 }
 
 func newWaitOwner(layout paths.Layout, batch paths.BatchLocation, record daemon.RunWait, now func() time.Time, log events.EventLog, pulse ...<-chan time.Time) (*waitOwner, error) {
@@ -29,23 +38,28 @@ func newWaitOwner(layout paths.Layout, batch paths.BatchLocation, record daemon.
 	if len(pulse) > 0 {
 		ticks = pulse[0]
 	}
-	return newWaitOwnerWithFailure(layout, batch, record, now, log, ticks, nil)
+	return newWaitOwnerWithFailure(layout, batch, record, now, log, ticks, nil, nil)
 }
 
 // The owner renews record at batch's frozen location; record must carry the
-// Batch's public identity, never its physical directory name.
-func newWaitOwnerWithFailure(layout paths.Layout, batch paths.BatchLocation, record daemon.RunWait, now func() time.Time, log events.EventLog, pulse <-chan time.Time, onFailure func(error)) (*waitOwner, error) {
-	if err := daemon.RenewRunWait(layout, batch, record, now()); err != nil {
+// Batch's public identity, never its physical directory name. A renewal that
+// fails with ErrRunWaitInvalid calls onFailure at once. Any other failure is
+// reported to onRetry and retried on later ticks; onFailure is called only
+// once the last successful renewal's recovery grace would lapse before the
+// next renewal.
+func newWaitOwnerWithFailure(layout paths.Layout, batch paths.BatchLocation, record daemon.RunWait, now func() time.Time, log events.EventLog, pulse <-chan time.Time, onFailure, onRetry func(error)) (*waitOwner, error) {
+	renewedAt := now()
+	if err := daemon.RenewRunWait(layout, batch, record, renewedAt); err != nil {
 		return nil, err
 	}
-	owner := &waitOwner{layout: layout, batch: batch, record: record, now: now, log: log, done: make(chan struct{}), stopped: make(chan struct{})}
+	owner := &waitOwner{layout: layout, batch: batch, record: record, now: now, log: log, renewedAt: renewedAt, done: make(chan struct{}), stopped: make(chan struct{})}
 	go func() {
 		defer close(owner.stopped)
 		var ticks <-chan time.Time
 		if pulse != nil {
 			ticks = pulse
 		} else {
-			ticker := time.NewTicker(30 * time.Second)
+			ticker := time.NewTicker(leaseRenewInterval)
 			defer ticker.Stop()
 			ticks = ticker.C
 		}
@@ -55,14 +69,26 @@ func newWaitOwnerWithFailure(layout paths.Layout, batch paths.BatchLocation, rec
 				return
 			case <-ticks:
 				owner.mu.Lock()
-				err := daemon.RenewRunWait(owner.layout, owner.batch, owner.record, owner.now())
-				owner.mu.Unlock()
-				if err != nil {
-					if onFailure != nil {
-						onFailure(err)
-					}
-					return
+				at := owner.now()
+				err := daemon.RenewRunWait(owner.layout, owner.batch, owner.record, at)
+				if err == nil {
+					owner.renewedAt = at
 				}
+				expires := owner.renewedAt.Add(daemon.RunRecoveryGrace)
+				owner.mu.Unlock()
+				if err == nil {
+					continue
+				}
+				if !errors.Is(err, daemon.ErrRunWaitInvalid) && at.Add(leaseRenewInterval).Before(expires) {
+					if onRetry != nil {
+						onRetry(err)
+					}
+					continue
+				}
+				if onFailure != nil {
+					onFailure(err)
+				}
+				return
 			}
 		}
 	}()
@@ -117,10 +143,12 @@ func (o *waitOwner) checkpoint(row RowSpec, ready bool, nextPoll time.Duration) 
 	if row.UsageLimitProbe {
 		record.OperationID, record.OperationDeadline = "quota:"+row.RunID, time.Time{}
 	}
-	if err := daemon.RenewRunWait(o.layout, o.batch, record, o.now()); err != nil {
+	at := o.now()
+	if err := daemon.RenewRunWait(o.layout, o.batch, record, at); err != nil {
 		return err
 	}
 	o.record = record
+	o.renewedAt = at
 	return nil
 }
 

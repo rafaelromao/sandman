@@ -20,6 +20,22 @@ const RunRecoveryGrace = 5 * time.Minute
 
 var ErrRunOwned = errors.New("run already has a live owner")
 
+// ErrRunWaitInvalid marks schedule ownership that can no longer be renewed:
+// a foreign identity, a changed operation deadline, or a record that does not
+// decode or validate. Records are replaced atomically, so these never heal on
+// their own. Other renewal failures are I/O and may succeed on a later try.
+var ErrRunWaitInvalid = errors.New("waiting ownership cannot be renewed")
+
+// runWaitInvalidError keeps the diagnostic text of a permanent ownership
+// failure while classifying it as ErrRunWaitInvalid.
+type runWaitInvalidError struct{ err error }
+
+func (e *runWaitInvalidError) Error() string        { return e.err.Error() }
+func (e *runWaitInvalidError) Unwrap() error        { return e.err }
+func (e *runWaitInvalidError) Is(target error) bool { return target == ErrRunWaitInvalid }
+
+func invalidRunWait(err error) error { return &runWaitInvalidError{err: err} }
+
 type RunClaim struct{ file *os.File }
 
 // ClaimRun fences scheduler ownership by RunID. The stable lock inode is never
@@ -189,18 +205,18 @@ func validateRunWait(batchDir, expectedBatchID, runID string, record RunWait) er
 	identityMismatch := expectedBatchID != "" && record.BatchID != expectedBatchID
 	legacyInitialMismatch := expectedBatchID == "" && record.InitialAdmission && record.BatchID != filepath.Base(batchDir)
 	if !safeWaitID(runID) || !safeWaitID(record.BatchID) || identityMismatch || legacyInitialMismatch || record.Protocol != "run-wait/v1" || record.RunID != runID || record.Issue <= 0 || record.BaseBranch == "" || record.OperationID == "" || record.LeaseExpiresAt.IsZero() || record.AdmissionMode < 0 || record.AdmissionMode > 2 {
-		return fmt.Errorf("waiting ownership identity/timing is invalid")
+		return invalidRunWait(fmt.Errorf("waiting ownership identity/timing is invalid"))
 	}
 	clean := filepath.Clean(record.Branch)
 	if record.Branch != "" && (filepath.IsAbs(record.Branch) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator))) {
-		return fmt.Errorf("waiting branch escapes worktree ownership")
+		return invalidRunWait(fmt.Errorf("waiting branch escapes worktree ownership"))
 	}
 	if !record.InitialAdmission && record.Branch == "" {
-		return fmt.Errorf("waiting continuation branch is invalid")
+		return invalidRunWait(fmt.Errorf("waiting continuation branch is invalid"))
 	}
 	for _, issue := range record.Dependencies {
 		if issue <= 0 || issue == record.Issue {
-			return fmt.Errorf("waiting dependency identity is invalid")
+			return invalidRunWait(fmt.Errorf("waiting dependency identity is invalid"))
 		}
 	}
 	return nil
@@ -271,7 +287,7 @@ func waitRecoveryScheduleAt(layout paths.Layout, batch paths.BatchLocation, run 
 func ReadRunWaitAt(layout paths.Layout, batch paths.BatchLocation, runID string) (RunWait, error) {
 	var record RunWait
 	if !safeWaitID(runID) || (batch.ID != "" && !safeWaitID(batch.ID)) {
-		return record, fmt.Errorf("invalid waiting run identity")
+		return record, invalidRunWait(fmt.Errorf("invalid waiting run identity"))
 	}
 	data, err := os.ReadFile(waitPath(batch.Dir, runID))
 	if os.IsNotExist(err) {
@@ -297,12 +313,21 @@ func ReadRunWaitAt(layout paths.Layout, batch paths.BatchLocation, runID string)
 // The record must carry the public identity of the Batch it is written to.
 func RenewRunWait(layout paths.Layout, batch paths.BatchLocation, record RunWait, now time.Time) error {
 	if record.BatchID != batch.ID {
-		return fmt.Errorf("waiting ownership identity is invalid")
+		return invalidRunWait(fmt.Errorf("waiting ownership identity is invalid"))
 	}
 	record = normalizeQuotaWait(record)
-	if old, err := ReadRunWaitAt(layout, batch, record.RunID); err == nil && old.OperationID == record.OperationID && !old.OperationDeadline.Equal(record.OperationDeadline) {
-		return fmt.Errorf("waiting operation deadline cannot be renewed")
-	} else if err != nil && !os.IsNotExist(err) {
+	old, err := ReadRunWaitAt(layout, batch, record.RunID)
+	var malformed *json.SyntaxError
+	var wrongType *json.UnmarshalTypeError
+	switch {
+	case err == nil:
+		if old.OperationID == record.OperationID && !old.OperationDeadline.Equal(record.OperationDeadline) {
+			return invalidRunWait(fmt.Errorf("waiting operation deadline cannot be renewed"))
+		}
+	case os.IsNotExist(err):
+	case errors.As(err, &malformed) || errors.As(err, &wrongType):
+		return invalidRunWait(err)
+	default:
 		return err
 	}
 	return writeRunWait(layout, batch.Dir, record, now)

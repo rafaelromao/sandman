@@ -269,3 +269,65 @@ func TestRunWait_BatchHandoffPreservesQuotaScheduleAndGrace(t *testing.T) {
 		})
 	}
 }
+
+func TestRunWait_RenewalClassifiesInvalidOwnershipApartFromIOFailures(t *testing.T) {
+	now := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+	initial := func() RunWait {
+		return RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "batch", Issue: 42, Branch: "42-fix", BaseBranch: "main", InitialAdmission: true, OperationID: "admission"}
+	}
+	setup := func(t *testing.T) (paths.Layout, paths.BatchLocation) {
+		layout := layoutForBaseDir(t.TempDir())
+		batch := layout.LocateBatch("batch", "")
+		if err := RenewRunWait(layout, batch, initial(), now); err != nil {
+			t.Fatal(err)
+		}
+		return layout, batch
+	}
+	invalid := map[string]func(*testing.T, paths.Layout, paths.BatchLocation) error{
+		"corrupt record": func(t *testing.T, layout paths.Layout, batch paths.BatchLocation) error {
+			if err := os.WriteFile(filepath.Join(layout.StateDir, "waiting", "row.json"), []byte("corrupt"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return RenewRunWait(layout, batch, initial(), now)
+		},
+		"foreign batch": func(t *testing.T, layout paths.Layout, batch paths.BatchLocation) error {
+			record := initial()
+			record.BatchID = "other"
+			return RenewRunWait(layout, batch, record, now)
+		},
+		"changed deadline": func(t *testing.T, layout paths.Layout, batch paths.BatchLocation) error {
+			record := initial()
+			record.OperationDeadline = now.Add(time.Hour)
+			return RenewRunWait(layout, batch, record, now)
+		},
+		"invalid record": func(t *testing.T, layout paths.Layout, batch paths.BatchLocation) error {
+			record := initial()
+			record.BaseBranch = ""
+			return RenewRunWait(layout, batch, record, now)
+		},
+	}
+	for name, renew := range invalid {
+		t.Run(name, func(t *testing.T) {
+			layout, batch := setup(t)
+			if err := renew(t, layout, batch); !errors.Is(err, ErrRunWaitInvalid) {
+				t.Fatalf("renewal error = %v, want ErrRunWaitInvalid", err)
+			}
+		})
+	}
+	t.Run("unwritable state", func(t *testing.T) {
+		layout, batch := setup(t)
+		// A regular file in place of the directory fails the write with
+		// ENOTDIR even for root, unlike a permission change.
+		waiting := filepath.Join(layout.StateDir, "waiting")
+		if err := os.RemoveAll(waiting); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(waiting, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		err := RenewRunWait(layout, batch, initial(), now)
+		if err == nil || errors.Is(err, ErrRunWaitInvalid) {
+			t.Fatalf("renewal error = %v, want a retryable I/O failure", err)
+		}
+	})
+}
