@@ -98,12 +98,14 @@ func issueBatchIDForRequest(req Request) string {
 // identity with its frozen directory. runDir is either that directory or one
 // of its run folders (`<batch>/runs/<runID>`); the identity owning it comes
 // from the index, never from the directory's basename, which may be another
-// Batch's public ID. Any other shape, or a directory with no unambiguous
-// owner, yields the zero location so the caller keeps its historical
-// derivation. Without runDir the identity is minted by batchIDForPromptOnly.
-func promptOnlyBatchLocation(layout paths.Layout, ts, shortid, userRunID, runDir string) paths.BatchLocation {
+// Batch's public ID. A directory of either shape that the index cannot read
+// or attribute to one owner is an error, as for issue Batches. Any other
+// shape yields the zero location, so run folders keep deriving their Batch
+// from the RunID. Without runDir the identity is minted by
+// batchIDForPromptOnly.
+func promptOnlyBatchLocation(layout paths.Layout, ts, shortid, userRunID, runDir string) (paths.BatchLocation, error) {
 	if runDir == "" {
-		return paths.BatchLocation{ID: batchIDForPromptOnly(ts, shortid, userRunID)}
+		return paths.BatchLocation{ID: batchIDForPromptOnly(ts, shortid, userRunID)}, nil
 	}
 	batchDir := filepath.Clean(runDir)
 	parent := filepath.Dir(batchDir)
@@ -112,13 +114,9 @@ func promptOnlyBatchLocation(layout paths.Layout, ts, shortid, userRunID, runDir
 		batchDir = filepath.Dir(parent)
 	case "batches":
 	default:
-		return paths.BatchLocation{}
+		return paths.BatchLocation{}, nil
 	}
-	location, err := daemon.BatchLocationForDir(layout, layout.ResolvePath(batchDir))
-	if err != nil {
-		return paths.BatchLocation{}
-	}
-	return location
+	return daemon.BatchLocationForDir(layout, layout.ResolvePath(batchDir))
 }
 
 // batchIDForPromptOnly mints the public batch ID of a prompt-only run without
@@ -4661,7 +4659,10 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 			variant = strings.TrimSpace(cfg.Variant)
 		}
 	}
-	promptOnlyBatch := promptOnlyBatchLocation(layout, req.BatchTS, req.BatchShortID, req.RunID, req.RunDir)
+	promptOnlyBatch, err := promptOnlyBatchLocation(layout, req.BatchTS, req.BatchShortID, req.RunID, req.RunDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve prompt-only batch: %w", err)
+	}
 	row := RowSpec{
 		IssueNumber:         req.IssueNumber,
 		Mode:                req.IssueMode(0),

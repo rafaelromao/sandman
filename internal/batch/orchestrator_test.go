@@ -12683,13 +12683,12 @@ func TestPromptOnlyBatchLocation_RunDirShapes(t *testing.T) {
 		{"batches root itself", filepath.Join(".sandman", "batches"), ""},
 		{"bare batches name", "batches", ""},
 		{"arbitrary directory", filepath.Join(string(filepath.Separator), "tmp", "scratch"), ""},
-		{"batches directory of another repository", filepath.Join(string(filepath.Separator), "repo", ".sandman", "batches", promptBatch), ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := promptOnlyBatchLocation(layout, orchTestRunTS, orchTestRunShortID, "", tc.runDir).ID
-			if got != tc.want {
-				t.Fatalf("promptOnlyBatchLocation(runDir=%q).ID = %q, want %q", tc.runDir, got, tc.want)
+			location, err := promptOnlyBatchLocation(layout, orchTestRunTS, orchTestRunShortID, "", tc.runDir)
+			if got := location.ID; err != nil || got != tc.want {
+				t.Fatalf("promptOnlyBatchLocation(runDir=%q) = %q, %v; want %q", tc.runDir, got, err, tc.want)
 			}
 		})
 	}

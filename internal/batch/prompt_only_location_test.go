@@ -139,3 +139,23 @@ func TestRunBatch_ResolvesRunDirUnderTheRequestRepositoryRoot(t *testing.T) {
 		t.Errorf("subdirectory gained Sandman state (%v); want everything under the request's repository root", err)
 	}
 }
+
+// A Batch-shaped RunDir that the index cannot attribute fails closed, as an
+// issue RunDir does, instead of running under an empty identity.
+func TestPromptOnlyBatchLocation_FailsClosedForAnUnattributableBatchDirectory(t *testing.T) {
+	root := t.TempDir()
+	layout := paths.NewLayout(&config.Config{}, root)
+	foreign := filepath.Join(string(filepath.Separator), "repo", ".sandman", "batches", "260504123456-ab12-prompt")
+	if _, err := promptOnlyBatchLocation(layout, "", "", "", foreign); err == nil {
+		t.Fatal("foreign batches directory resolved; want an error")
+	}
+	if err := os.MkdirAll(filepath.Dir(layout.BatchesIndexPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(layout.BatchesIndexPath, []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := promptOnlyBatchLocation(layout, "", "", "", filepath.Join(".sandman", "batches", "frozen-dir")); err == nil {
+		t.Fatal("corrupt index resolved; want an error")
+	}
+}

@@ -71,6 +71,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, parentCtx context.Context,
 // runPromptOnlySingle is the legacy positional entry point that collapses to a
 // RowSpec + BatchConfig and delegates to runPromptOnlyRow.
 func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, branch string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, mode IssueMode, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, strandedReconcile bool, review bool, prNumber int, reviewFocus string, runID string, previousRunIDs map[int]string, reviewIssueNumber int, batchTS string, batchShortID string, runDir string) (AgentRunResult, bool) {
+	batch, _ := promptOnlyBatchLocation(o.layout, batchTS, batchShortID, runID, runDir)
 	row := RowSpec{
 		IssueNumber:       reviewIssueNumber,
 		Mode:              mode,
@@ -79,7 +80,7 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 		BaseBranch:        baseBranch,
 		RenderCfg:         renderCfg,
 		OutputWriter:      outputWriter,
-		BatchID:           promptOnlyBatchLocation(o.layout, batchTS, batchShortID, runID, runDir).ID,
+		BatchID:           batch.ID,
 		BatchTS:           batchTS,
 		BatchShortID:      batchShortID,
 		RunID:             runID,
