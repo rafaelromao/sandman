@@ -336,23 +336,15 @@ func TestRunWait_ClaimRevalidatesReplacedLockFile(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "state", "run-claims", "row.lock")
 	replaced := false
-	claimRunBeforeLock = func(opened string) {
-		if replaced || opened != path {
+	// A pruner unlinks the file this claimant already opened, and a later
+	// claimant recreates it.
+	claim, err := claimRun(root, "row", func(opened string) {
+		if replaced {
 			return
 		}
 		replaced = true
-		// A pruner unlinks the file this claimant already opened, and a
-		// later claimant recreates it.
-		if err := os.Remove(opened); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(opened, nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Cleanup(func() { claimRunBeforeLock = nil })
-
-	claim, err := ClaimRun(root, "row")
+		replaceClaimFile(t, opened)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,4 +429,25 @@ func TestRunWait_PruneRunClaimsRemovesOnlyTerminalRunClaims(t *testing.T) {
 		t.Fatalf("pruned terminal Run cannot be claimed again: %v", err)
 	}
 	_ = claim.Close()
+}
+
+func TestRunWait_ClaimGivesUpWhenLockFileKeepsChanging(t *testing.T) {
+	root := t.TempDir()
+	claim, err := claimRun(root, "row", func(opened string) { replaceClaimFile(t, opened) })
+	if claim != nil {
+		_ = claim.Close()
+	}
+	if err == nil || errors.Is(err, ErrRunOwned) {
+		t.Fatalf("claim err=%v, want a bounded non-ownership failure", err)
+	}
+}
+
+func replaceClaimFile(t *testing.T, path string) {
+	t.Helper()
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 }

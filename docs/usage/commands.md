@@ -186,7 +186,7 @@ The temp-dir and `sandman-smoke-*` image sweep runs in every mode — `--all`, `
 
 | Flag | Description |
 |------|-------------|
-| `--all` | Run the full cleanup sequence: recover stale runs, remove terminal Runs' claim files, remove orphaned test batches, remove archived batches, reclaim completed active batches (daemon gone, all runs terminal or all rows archived), then sweep Sandman-owned temp dirs and `sandman-smoke-*` images. Live or in-flight active batches are preserved. |
+| `--all` | Run the full cleanup sequence: recover stale runs, remove orphaned test batches, remove archived batches, reclaim completed active batches (daemon gone, all runs terminal or all rows archived), remove terminal Runs' claim files, then sweep Sandman-owned temp dirs and `sandman-smoke-*` images. Live or in-flight active batches are preserved. |
 | `--archived` | Remove archived batches |
 | `--dry-run` | Print intended deletions without performing I/O |
 | `--stale` | Recover stale runs in dead batches by emitting `run.aborted` events, then remove the `.sandman/state/run-claims/<RunID>.lock` files of event-terminal Runs |

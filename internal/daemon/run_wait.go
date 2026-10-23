@@ -38,9 +38,6 @@ func invalidRunWait(err error) error { return &runWaitInvalidError{err: err} }
 
 type RunClaim struct{ file *os.File }
 
-// claimRunBeforeLock lets tests act between opening and locking a claim file.
-var claimRunBeforeLock func(path string)
-
 // claimRunAttempts bounds how often ClaimRun reopens a claim file that was
 // replaced between opening and locking it.
 const claimRunAttempts = 8
@@ -51,6 +48,12 @@ const claimRunAttempts = 8
 // after locking that the path still names the inode it locked and retries
 // otherwise; two claimants can never hold different inodes for one RunID.
 func ClaimRun(sandmanDir, runID string) (*RunClaim, error) {
+	return claimRun(sandmanDir, runID, nil)
+}
+
+// claimRun is ClaimRun with beforeLock, which tests use to act between opening
+// and locking the claim file.
+func claimRun(sandmanDir, runID string, beforeLock func(path string)) (*RunClaim, error) {
 	if !safeWaitID(runID) {
 		return nil, fmt.Errorf("invalid run claim identity")
 	}
@@ -64,8 +67,8 @@ func ClaimRun(sandmanDir, runID string) (*RunClaim, error) {
 		if err != nil {
 			return nil, err
 		}
-		if claimRunBeforeLock != nil {
-			claimRunBeforeLock(path)
+		if beforeLock != nil {
+			beforeLock(path)
 		}
 		if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
 			_ = file.Close()
