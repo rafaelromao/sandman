@@ -101,6 +101,8 @@ func TestInformalApprovalLifecycle_RealReviewExplanationsAndCIAdvice(t *testing.
 		{"CI wait", "## Summary\nChanged worker.go.\n\n## Suggested next steps\nAwait the pending required CI checks.\n\n## Decision\n**APPROVED**"},
 		{"negative metric explanation", "## Summary\nChanged worker.go.\n\n## Findings\nNone. The metrics signals do not demonstrate a construct-specific readability or change-risk concern in this diff.\n\n## Decision\n**APPROVED**"},
 		{"no author followup", "## Summary\nChanged worker.go.\n\n## Suggested next steps\nNo author follow-up required.\n\n## Decision\n**APPROVED**"},
+		{"no changes then CI wait", "## Findings\nNone.\n\n## Suggested next steps\nNone. Await the pending CI checks before merging.\n\n## Decision\n**APPROVED**"},
+		{"no author changes then CI wait", "## Findings\nNone.\n\n## Suggested next steps\nNo author changes requested; await the required CI checks before merging. A formal GitHub review cannot be submitted from this daemon run.\n\n## Decision\n**APPROVED**"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _, pr, workDir, now := informalApprovalLifecycleFixture(t, tc.body)
@@ -369,7 +371,14 @@ func TestInformalApprovalLifecycle_AmbiguousDecisionsCannotAuthorizeMerge(t *tes
 		"## Scope\nworker.go: approval is contingent on fixing the race before merging.\n\n## Findings\nNone.\n\n## Decision\nAPPROVED",
 		"## Metrics\nCognitive complexity: 12. Please fix the race in worker.go.\n\n## Decision\nAPPROVED",
 		"## Tools used\nworker.go: merge only after fixing the race.\n\n## Decision\nAPPROVED",
+		"## Scope\nworker.go: CHANGES_REQUESTED\n\n## Findings\nNone.\n\n## Decision\nAPPROVED",
 		"## Findings\nNone.\n\nVerification against the acceptance criteria:\nMerge only after fixing the race in worker.go.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone.\n\nVerification against the acceptance criteria:\n### Decision\nCHANGES_REQUESTED\n\n## Decision\nAPPROVED",
+		"## Findings\nNone.\n\nVerification against the acceptance criteria:\nCHANGES_REQUESTED\n\n## Decision\nAPPROVED",
+		"## Findings\nNone.\n\nVerification against the acceptance criteria:\n### Merge conditions\nFix worker.go before merging.\n\n## Decision\nAPPROVED",
+		"## Suggested next steps\nNone. Await the pending CI checks before merging; fix the race in worker.go.\n\n## Decision\nAPPROVED",
+		"## Suggested next steps\nNone. Merge only; after fixing the race in worker.go.\n\n## Decision\nAPPROVED",
+		"## Suggested next steps\nNo author changes requested. Documentation is informational; fix the race in worker.go.\n\n## Decision\nAPPROVED",
 		"## Decision\nAPPROVED subject to fixing the race in worker.go.",
 		"## Decision\n'APPROVED'",
 		"No LGTM",

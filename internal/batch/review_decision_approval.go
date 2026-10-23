@@ -25,6 +25,8 @@ var (
 	reviewAcceptanceEvidence       = regexp.MustCompile(`(?i)^(?:verification\s+against|how\s+each)\b`)
 	reviewMergeReadyAdvice         = regexp.MustCompile(`(?i)^merge\s+when\s+ready[.!]?$`)
 	reviewFindingSeverity          = regexp.MustCompile(`(?im)^(?:\s*#{1,6}\s*|\s*[-*]\s*)?(?:\*\*)?(?:Blocking|Important)\b`)
+	reviewFindingHeading           = regexp.MustCompile(`(?m)^[ \t]*#{1,6}(?:[ \t]|$)`)
+	reviewOpposingVerdict          = regexp.MustCompile(`(?i)\b(?:CHANGES_REQUESTED|NOT_APPROVED)\b`)
 	reviewEvidenceCode             = regexp.MustCompile("`+[^`\\n]+`+")
 )
 
@@ -97,7 +99,7 @@ func (section reviewApprovalTextSection) permitsApproval() bool {
 		return noRepairNextSteps(section.text)
 	case "other":
 		prose := reviewApprovalProse(section.text)
-		return !reviewFindingDirective.MatchString(prose) && !reviewApprovalContradiction.MatchString(prose)
+		return !reviewFindingDirective.MatchString(prose) && !reviewApprovalContradiction.MatchString(prose) && !reviewOpposingVerdict.MatchString(prose)
 	case "history":
 		return true
 	default:
@@ -175,7 +177,7 @@ func noReviewFindings(text string) bool {
 	// Construct tags are rule metadata, not code locations or repair requests.
 	text = reviewQualityTag.ReplaceAllString(text, "rule")
 	text = strings.TrimSpace(text)
-	if reviewFindingSeverity.MatchString(text) {
+	if reviewFindingSeverity.MatchString(text) || reviewFindingHeading.MatchString(text) {
 		return false
 	}
 	// Reports commonly follow the no-findings paragraph with acceptance evidence.
@@ -222,7 +224,7 @@ func noReviewFindings(text string) bool {
 // must still be free of repair directives and conditional approval.
 func reviewEvidencePermitsApproval(text string) bool {
 	prose := reviewApprovalProse(reviewEvidenceCode.ReplaceAllString(text, "code"))
-	return !reviewFindingDirective.MatchString(prose) && !reviewApprovalContradiction.MatchString(prose)
+	return !reviewFindingDirective.MatchString(prose) && !reviewApprovalContradiction.MatchString(prose) && !reviewOpposingVerdict.MatchString(prose)
 }
 
 func noReviewFindingClause(clause string) bool {
@@ -254,23 +256,32 @@ func noRepairNextSteps(text string) bool {
 	// verification notes or merge/CI advice. None is an author repair request.
 	trimmed := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(text), "-*"))
 	first := reviewFindingClauses.Split(trimmed, 2)
-	if len(first) > 0 && reviewNoChangeStep.MatchString(strings.TrimSpace(first[0])) {
+	if len(first) > 0 && (reviewNoChangeStep.MatchString(strings.TrimSpace(first[0])) || reviewNoFollowup.MatchString(strings.TrimSpace(first[0]))) {
 		if len(first) == 1 {
 			return true
 		}
-		remainder := reviewApprovalProse(first[1])
-		if reviewMergeReadyAdvice.MatchString(strings.TrimSpace(remainder)) {
-			return true
+		var remainder strings.Builder
+		for _, clause := range reviewFindingClauses.Split(first[1], -1) {
+			if reviewNextStepAdvice(clause) {
+				continue
+			}
+			remainder.WriteString(reviewApprovalProse(clause))
+			remainder.WriteString("; ")
 		}
-		return !reviewFindingDirective.MatchString(remainder) && !reviewApprovalContradiction.MatchString(remainder)
+		prose := remainder.String()
+		return !reviewFindingDirective.MatchString(prose) && !reviewApprovalContradiction.MatchString(prose) && !reviewOpposingVerdict.MatchString(prose)
 	}
 	for _, clause := range reviewFindingClauses.Split(text, -1) {
-		clause = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(clause), "-*"))
-		if clause != "" && !noReviewFindings(clause) && !reviewNoFollowup.MatchString(clause) && !reviewCIWaitAdvice.MatchString(clause) {
+		if !reviewNextStepAdvice(clause) {
 			return false
 		}
 	}
 	return true
+}
+
+func reviewNextStepAdvice(clause string) bool {
+	clause = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(clause), "-*"))
+	return clause == "" || noReviewFindings(clause) || reviewNoChangeStep.MatchString(clause) || reviewNoFollowup.MatchString(clause) || reviewCIWaitAdvice.MatchString(clause) || reviewMergeReadyAdvice.MatchString(clause)
 }
 
 // A path named "fix.go" is scope evidence, not an imperative. Preserve other
