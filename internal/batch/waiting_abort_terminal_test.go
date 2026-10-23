@@ -99,6 +99,8 @@ func TestWaitingContract_ExplicitAbortOfAnUnstartedAdmissionRecordsOnlyTheAbort(
 	if result == nil || len(result.Runs) != 2 || result.Runs[1].Status != "aborted" {
 		t.Fatalf("result = %+v, want the queued admission aborted", result)
 	}
+	queuedAborts := 0
+	queuedRunID := ""
 	for _, e := range log.snapshot() {
 		if e.Issue != 43 {
 			continue
@@ -107,12 +109,19 @@ func TestWaitingContract_ExplicitAbortOfAnUnstartedAdmissionRecordsOnlyTheAbort(
 			t.Fatalf("queued admission started: %+v", e)
 		}
 		if e.Type == "run.aborted" {
+			queuedAborts++
+			queuedRunID = e.RunID
 			if _, ok := e.Payload["worktree_state"]; ok {
 				t.Fatalf("unstarted abort payload = %v, want no worktree evidence", e.Payload)
 			}
 		}
 	}
-	if countEventsByType(log.snapshot(), "run.aborted") < 1 {
-		t.Fatalf("events = %v, want the admission abort recorded", log.snapshot())
+	if queuedAborts != 1 {
+		t.Fatalf("run.aborted events for the queued admission = %d, want exactly one", queuedAborts)
+	}
+	for _, state := range events.ProjectRunStates(log.snapshot()) {
+		if state.RunID == queuedRunID && (state.Status() != "aborted" || !state.IsTerminal()) {
+			t.Fatalf("queued admission projection = %+v, want terminal aborted", state)
+		}
 	}
 }

@@ -14,7 +14,20 @@ import (
 // execution capacity or starting an agent/container. Cleanup uses the resolved
 // sandbox policy; observation never re-arbitrates the selected lifecycle action.
 func (e *runExecutor) finishObserved(ctx context.Context, row RowSpec, status string, extras map[string]any) AgentRunResult {
+	return e.applyObserved(ctx, newRunSession(e, row), row, status, extras)
+}
+
+// abortObserved applies an explicit abort decision through the same terminal
+// application. The decision, not the context's state, selects run.aborted, so
+// an abort requested by a phase that failed without cancellation is recorded
+// the same way as one requested by cancellation.
+func (e *runExecutor) abortObserved(ctx context.Context, row RowSpec) AgentRunResult {
 	session := newRunSession(e, row)
+	session.explicitAbort = true
+	return e.applyObserved(ctx, session, row, "aborted", nil)
+}
+
+func (e *runExecutor) applyObserved(ctx context.Context, session *runSession, row RowSpec, status string, extras map[string]any) AgentRunResult {
 	branch := row.Branches[row.IssueNumber]
 	factory := e.sbFactory
 	if factory == nil {
