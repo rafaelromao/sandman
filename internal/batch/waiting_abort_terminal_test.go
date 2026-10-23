@@ -125,3 +125,33 @@ func TestWaitingContract_ExplicitAbortOfAnUnstartedAdmissionRecordsOnlyTheAbort(
 		}
 	}
 }
+
+// A phase can request the abort of a started Run after failing on lease,
+// checkpoint or accounting I/O while the batch is still live. The selected
+// abort decision, not the context, makes its terminal a run.aborted.
+func TestApplyAbort_StartedRunWithoutCancellationRecordsTheSelectedAbort(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	initGitRepo(t, root)
+	const runID = "261004120000-live-42"
+	log := &spyEventLog{events: []events.Event{{Type: "run.started", RunID: runID, Issue: 42, IssueRef: issueRef(42), Payload: map[string]any{"branch": "42-parent", "batch_id": "261004120000-live-42"}}}}
+	o := NewOrchestrator(&fakeGitHubClient{}, &noopRenderer{}, nil, log, WithErrorLog(io.Discard), WithSandboxFactory(reviewWaitSchedulerSandboxFactory{}))
+	bc := BatchConfig{Cfg: &config.Config{WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}}, IdentityResolver: noopIdentityResolver()}
+	row := RowSpec{IssueNumber: 42, RunID: runID, BatchID: "261004120000-live-42", Branches: map[int]string{42: "42-parent"}, BaseBranch: "main"}
+	executor := o.newRunExecutor(context.Background(), bc, reviewWaitSchedulerSandboxFactory{}, nil)
+
+	result := o.applyAbort(context.Background(), executor, row, AgentRunResult{})
+
+	if result.Status != "aborted" {
+		t.Fatalf("status = %q, want aborted", result.Status)
+	}
+	var terminals []events.Event
+	for _, e := range log.snapshot() {
+		if e.Type == "run.aborted" || e.Type == "run.finished" {
+			terminals = append(terminals, e)
+		}
+	}
+	if len(terminals) != 1 || terminals[0].Type != "run.aborted" || terminals[0].Payload["branch"] != "42-parent" || terminals[0].Payload["worktree_state"] != "preserved" {
+		t.Fatalf("terminal events = %+v, want one run.aborted with the Run's branch and preserved worktree evidence", terminals)
+	}
+}
