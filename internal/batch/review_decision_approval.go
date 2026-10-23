@@ -9,7 +9,7 @@ var (
 	reviewDecisionApprovalPhrase   = regexp.MustCompile(`(?i)(?:\bapproved\b|\blgtm\b|\blooks?\s+(?:good|great)\b|\b(?:nice|good)\s+work\b|\bthumbs\s+up\b|\+1(?:\s|$)|\bship\s+it\b|\ball\s+(?:good|set)\b|\bgood\s+to\s+go\b|\bno\s+major\s+issues\b|\bminor\s+issues\s+only\b)`)
 	reviewDecisionApprovalNegation = regexp.MustCompile(`(?i)\b(?:not\b|no\s+(?:approval|approved|lgtm)|changes\s+requested|if\b|when\b|once\b|before\b|after\b|provided\b|pending\b|unless\b|until\b|but\b|previous(?:ly)?\b|prior\b|formerly\b|denied\b|rejected\b)`)
 	reviewDecisionNoFindings       = regexp.MustCompile(`(?i)^(?:none\b|no\b[^.\n]*\b(?:findings?|issues?|concerns?)\b)`)
-	reviewFindingDirective         = regexp.MustCompile(`(?im)(?:^|[,.!?;:—–-]\s+)\s*(?:[-*]\s*)?(?:fix|change|remove|replace|add|use)\b|\b(?:must|please|needs?|should)\b`)
+	reviewFindingDirective         = regexp.MustCompile(`(?im)(?:^|[,.!?;:—–-]\s+)\s*(?:(?:[-*+]|\d+[.)])\s*)?(?:fix|change|remove|replace|add|use)\b|\b(?:must|please|needs?|should)\b`)
 	reviewFindingClauses           = regexp.MustCompile(`[;\n]|\.\s+`)
 	reviewFindingMetadata          = regexp.MustCompile(`(?i)^(?:scope|metrics?|files?|cognitive complexity|cyclomatic complexity|coverage|tools used)\s*:`)
 	reviewPublicationMarker        = regexp.MustCompile(`(?m)^[ \t]*<!-- sandman-publication:[0-9a-f]{64} -->[ \t]*$`)
@@ -24,7 +24,7 @@ var (
 	reviewNoQualityFinding         = regexp.MustCompile(`(?i)^(?:none\.\s+)?no\b[^\n.:]*\b(?:concern|finding)s?\b[^\n.:]*\b(?:found|filed|identified)\s*:`)
 	reviewAcceptanceEvidence       = regexp.MustCompile(`(?i)^(?:verification\s+against|how\s+each)\b`)
 	reviewMergeReadyAdvice         = regexp.MustCompile(`(?i)^merge\s+when\s+ready[.!]?$`)
-	reviewFindingSeverity          = regexp.MustCompile(`(?im)^(?:\s*#{1,6}\s*|\s*[-*]\s*)?(?:\*\*)?(?:Blocking|Important)\b`)
+	reviewFindingSeverity          = regexp.MustCompile(`(?im)^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]*)?(?:Blocking|Important)\b`)
 	reviewFindingHeading           = regexp.MustCompile(`(?m)^[ \t]*#{1,6}(?:[ \t]|$)`)
 	reviewOpposingVerdict          = regexp.MustCompile(`(?i)\b(?:CHANGES_REQUESTED|NOT_APPROVED)\b`)
 	reviewQuotedCompound           = regexp.MustCompile("`[ \\t`]*[A-Za-z]+[ \\t`]*`(-[A-Za-z][A-Za-z0-9-]*)")
@@ -99,7 +99,7 @@ func (section reviewApprovalTextSection) permitsApproval() bool {
 		return noRepairNextSteps(section.text)
 	case "other":
 		prose := reviewApprovalProse(section.text)
-		return !reviewFindingDirective.MatchString(prose) && !reviewApprovalContradiction.MatchString(prose) && !reviewOpposingVerdict.MatchString(prose)
+		return !reviewFindingDirective.MatchString(reviewDirectiveProse(section.text)) && !reviewApprovalContradiction.MatchString(prose) && !reviewOpposingVerdict.MatchString(prose)
 	case "history":
 		return true
 	default:
@@ -177,7 +177,7 @@ func noReviewFindings(text string) bool {
 	// Construct tags are rule metadata, not code locations or repair requests.
 	text = reviewQualityTag.ReplaceAllString(text, "rule")
 	text = strings.TrimSpace(text)
-	severityProse := strings.NewReplacer("*", "", "_", "").Replace(reviewApprovalProse(text))
+	severityProse := reviewDirectiveProse(text)
 	if reviewFindingSeverity.MatchString(severityProse) || reviewFindingHeading.MatchString(text) {
 		return false
 	}
@@ -203,14 +203,13 @@ func noReviewFindings(text string) bool {
 		return noReviewFindings(first[0]) && reviewEvidencePermitsApproval(first[1])
 	}
 	text = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(text), "-*"))
-	prose := reviewApprovalProse(text)
 	if !reviewDecisionNoFindings.MatchString(text) {
 		return false
 	}
 	// Examine the entire section: a leading "None" cannot hide another finding.
 	// Descriptive metric commentary may follow a no-findings statement, but
 	// code-anchored feedback, nested finding headings, and repair directives may not.
-	if strings.Contains(text, "#") || reviewFindingDirective.MatchString(prose) {
+	if strings.Contains(text, "#") || reviewFindingDirective.MatchString(reviewDirectiveProse(text)) {
 		return false
 	}
 	for _, clause := range reviewFindingClauses.Split(text, -1) {
@@ -226,7 +225,7 @@ func noReviewFindings(text string) bool {
 // a standalone imperative, including when Markdown uses nested backticks.
 func reviewEvidencePermitsApproval(text string) bool {
 	prose := reviewApprovalProse(reviewQuotedCompound.ReplaceAllString(text, "label$1"))
-	directiveProse := strings.NewReplacer("*", "", "_", "").Replace(prose)
+	directiveProse := reviewDirectiveProse(prose)
 	return !reviewFindingDirective.MatchString(directiveProse) && !reviewApprovalContradiction.MatchString(prose) && !reviewOpposingVerdict.MatchString(prose)
 }
 
@@ -272,7 +271,7 @@ func noRepairNextSteps(text string) bool {
 			remainder.WriteString("; ")
 		}
 		prose := remainder.String()
-		return !reviewFindingDirective.MatchString(prose) && !reviewApprovalContradiction.MatchString(prose) && !reviewOpposingVerdict.MatchString(prose)
+		return !reviewFindingDirective.MatchString(reviewDirectiveProse(prose)) && !reviewApprovalContradiction.MatchString(prose) && !reviewOpposingVerdict.MatchString(prose)
 	}
 	for _, clause := range reviewFindingClauses.Split(text, -1) {
 		if !reviewNextStepAdvice(clause) {
@@ -293,4 +292,11 @@ func reviewApprovalProse(text string) string {
 	text = informalFeedbackCodeAnchor.ReplaceAllString(text, "code")
 	text = informalFeedbackLineAnchor.ReplaceAllString(text, "code")
 	return strings.ReplaceAll(text, "`", "")
+}
+
+// Markdown emphasis and inline-code markers cannot hide an imperative or
+// severity label. Keep this separate from verdict prose so internal underscores
+// in explicit states such as CHANGES_REQUESTED retain their meaning.
+func reviewDirectiveProse(text string) string {
+	return strings.NewReplacer("*", "", "_", "").Replace(reviewApprovalProse(text))
 }
