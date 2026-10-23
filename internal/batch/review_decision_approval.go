@@ -24,9 +24,9 @@ var (
 	reviewNoQualityFinding         = regexp.MustCompile(`(?i)^(?:none\.\s+)?no\b[^\n.:]*\b(?:concern|finding)s?\b[^\n.:]*\b(?:found|filed|identified)\s*:`)
 	reviewAcceptanceEvidence       = regexp.MustCompile(`(?i)^(?:verification\s+against|how\s+each)\b`)
 	reviewMergeReadyAdvice         = regexp.MustCompile(`(?i)^merge\s+when\s+ready[.!]?$`)
-	reviewFindingSeverity          = regexp.MustCompile(`(?im)^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]*)?(?:Blocking|Important)\b`)
+	reviewFindingSeverity          = regexp.MustCompile(`(?im)^[ \t]*(?:(?:#{1,6}|[-*+]|\d+[.)])[ \t]*)?(?:Blocking|Important)\b`)
 	reviewFindingHeading           = regexp.MustCompile(`(?m)^[ \t]*#{1,6}(?:[ \t]|$)`)
-	reviewOpposingVerdict          = regexp.MustCompile(`(?i)\b(?:CHANGES_REQUESTED|NOT_APPROVED)\b`)
+	reviewOpposingVerdict          = regexp.MustCompile(`(?i)(?:^|\W)_*(?:CHANGES_REQUESTED|NOT_APPROVED)_*(?:\W|$)`)
 	reviewQuotedCompound           = regexp.MustCompile("`[ \\t`]*[A-Za-z]+[ \\t`]*`(-[A-Za-z][A-Za-z0-9-]*)")
 )
 
@@ -98,8 +98,7 @@ func (section reviewApprovalTextSection) permitsApproval() bool {
 	case "next-steps":
 		return noRepairNextSteps(section.text)
 	case "other":
-		prose := reviewApprovalProse(section.text)
-		return !reviewFindingDirective.MatchString(reviewDirectiveProse(section.text)) && !reviewApprovalContradiction.MatchString(prose) && !reviewOpposingVerdict.MatchString(prose)
+		return reviewProsePermitsApproval(section.text)
 	case "history":
 		return true
 	default:
@@ -224,9 +223,19 @@ func noReviewFindings(text string) bool {
 // a hyphenated suffix (for example, `fix`-verb) is a compound label rather than
 // a standalone imperative, including when Markdown uses nested backticks.
 func reviewEvidencePermitsApproval(text string) bool {
-	prose := reviewApprovalProse(reviewQuotedCompound.ReplaceAllString(text, "label$1"))
-	directiveProse := reviewDirectiveProse(prose)
-	return !reviewFindingDirective.MatchString(directiveProse) && !reviewApprovalContradiction.MatchString(prose) && !reviewOpposingVerdict.MatchString(prose)
+	return reviewProsePermitsApproval(reviewQuotedCompound.ReplaceAllString(text, "label$1"))
+}
+
+// Apply the same safety checks to every author-facing assessment. Formatting is
+// irrelevant to directives, natural-language conditions and severity labels;
+// explicit verdict states keep underscores so CHANGES_REQUESTED is not lost.
+func reviewProsePermitsApproval(text string) bool {
+	prose := reviewApprovalProse(text)
+	visible := reviewDirectiveProse(text)
+	return !reviewFindingDirective.MatchString(visible) &&
+		!reviewApprovalContradiction.MatchString(visible) &&
+		!reviewFindingSeverity.MatchString(visible) &&
+		!reviewOpposingVerdict.MatchString(prose)
 }
 
 func noReviewFindingClause(clause string) bool {
@@ -267,11 +276,10 @@ func noRepairNextSteps(text string) bool {
 			if reviewNextStepAdvice(clause) {
 				continue
 			}
-			remainder.WriteString(reviewApprovalProse(clause))
+			remainder.WriteString(clause)
 			remainder.WriteString("; ")
 		}
-		prose := remainder.String()
-		return !reviewFindingDirective.MatchString(reviewDirectiveProse(prose)) && !reviewApprovalContradiction.MatchString(prose) && !reviewOpposingVerdict.MatchString(prose)
+		return reviewProsePermitsApproval(remainder.String())
 	}
 	for _, clause := range reviewFindingClauses.Split(text, -1) {
 		if !reviewNextStepAdvice(clause) {
