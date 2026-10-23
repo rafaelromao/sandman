@@ -81,7 +81,10 @@ if [ -n "$guard_dir" ]; then
   PATH=$path_clean
 fi
 export PATH
-exec git "$@"
+# git gc (including the automatic gc that commits and fetches start) runs its
+# own repository-wide worktree prune without passing through PATH. Git exports
+# -c settings to its children, so this keeps every nested gc from pruning.
+exec git -c gc.worktreePruneExpire=never "$@"
 `
 
 func ensureAgentGitGuard(repoPath string) (string, error) {

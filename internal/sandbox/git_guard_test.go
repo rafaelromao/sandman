@@ -161,3 +161,54 @@ func stringLiteral(expr ast.Expr) string {
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
+
+func TestWorktreeSandboxGitGuardKeepsSiblingRegistrationsThroughGC(t *testing.T) {
+	// Host settings for gc.worktreePruneExpire or gc.auto must not decide
+	// the outcome.
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("HOME", t.TempDir())
+	for _, command := range []string{"git gc --quiet", "git -C %s gc --quiet"} {
+		t.Run(command, func(t *testing.T) {
+			repo := t.TempDir()
+			initGitRepo(t, repo)
+			sibling := "43-sibling"
+			runGit(t, repo, "worktree", "add", "-b", sibling, filepath.Join(t.TempDir(), sibling))
+			registration := filepath.Join(repo, ".git", "worktrees", sibling)
+			if err := os.WriteFile(filepath.Join(registration, "gitdir"), []byte("/container-only/host/worktree/.git\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			// git gc prunes registrations whose gitdir is unresolvable once
+			// they are older than gc.worktreePruneExpire (three months).
+			old := time.Now().AddDate(-1, 0, 0)
+			entries, err := os.ReadDir(registration)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, entry := range entries {
+				if err := os.Chtimes(filepath.Join(registration, entry.Name()), old, old); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.Chtimes(registration, old, old); err != nil {
+				t.Fatal(err)
+			}
+
+			s := NewWorktreeSandbox(repo, filepath.Join(repo, ".sandman", "worktrees"), "42-gc-guard", "main")
+			if err := s.Start(SandboxStart{}); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = s.Stop() })
+			if strings.Contains(command, "%s") {
+				command = strings.Replace(command, "%s", shellQuote(repo), 1)
+			}
+			var stdout, stderr bytes.Buffer
+			if err := s.Exec(t.Context(), command, &stdout, &stderr); err != nil {
+				t.Fatalf("guarded git gc failed: %v (%s)", err, stderr.String())
+			}
+			if _, err := os.Stat(registration); err != nil {
+				t.Fatalf("git gc pruned the sibling registration through the guard: %v", err)
+			}
+		})
+	}
+}
