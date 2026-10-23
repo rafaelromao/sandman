@@ -27,7 +27,7 @@ var (
 	reviewFindingSeverity          = regexp.MustCompile(`(?im)^(?:\s*#{1,6}\s*|\s*[-*]\s*)?(?:\*\*)?(?:Blocking|Important)\b`)
 	reviewFindingHeading           = regexp.MustCompile(`(?m)^[ \t]*#{1,6}(?:[ \t]|$)`)
 	reviewOpposingVerdict          = regexp.MustCompile(`(?i)\b(?:CHANGES_REQUESTED|NOT_APPROVED)\b`)
-	reviewEvidenceCode             = regexp.MustCompile("`+[^`\\n]+`+")
+	reviewQuotedCompound           = regexp.MustCompile("`[ \\t`]*[A-Za-z]+[ \\t`]*`(-[A-Za-z][A-Za-z0-9-]*)")
 )
 
 // reviewDecisionApprovalEvidenceFor returns informal approvals from the active
@@ -220,11 +220,13 @@ func noReviewFindings(text string) bool {
 	return true
 }
 
-// Evidence may quote code or historical examples; its author-facing prose
-// must still be free of repair directives and conditional approval.
+// Inline-code formatting cannot hide a repair verb. A quoted word followed by
+// a hyphenated suffix (for example, `fix`-verb) is a compound label rather than
+// a standalone imperative, including when Markdown uses nested backticks.
 func reviewEvidencePermitsApproval(text string) bool {
-	prose := reviewApprovalProse(reviewEvidenceCode.ReplaceAllString(text, "code"))
-	return !reviewFindingDirective.MatchString(prose) && !reviewApprovalContradiction.MatchString(prose) && !reviewOpposingVerdict.MatchString(prose)
+	prose := reviewApprovalProse(reviewQuotedCompound.ReplaceAllString(text, "label$1"))
+	directiveProse := strings.NewReplacer("*", "", "_", "").Replace(prose)
+	return !reviewFindingDirective.MatchString(directiveProse) && !reviewApprovalContradiction.MatchString(prose) && !reviewOpposingVerdict.MatchString(prose)
 }
 
 func noReviewFindingClause(clause string) bool {
