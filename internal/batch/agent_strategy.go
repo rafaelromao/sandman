@@ -110,8 +110,8 @@ var agentStrategies = map[string]func(preset config.AgentPreset, builtInCommand 
 	"opencode": func(_ config.AgentPreset, builtInCommand bool) agentStrategy {
 		return opencodeStrategy{builtInCommand: builtInCommand}
 	},
-	"opencode-v2": func(_ config.AgentPreset, builtInCommand bool) agentStrategy {
-		return opencodeV2Strategy{opencodeStrategy{builtInCommand: builtInCommand}}
+	"opencode-v2": func(preset config.AgentPreset, builtInCommand bool) agentStrategy {
+		return opencodeV2Strategy{opencodeStrategy: opencodeStrategy{builtInCommand: builtInCommand}, defaultModel: preset.DefaultModel}
 	},
 	"claude": func(preset config.AgentPreset, builtInCommand bool) agentStrategy {
 		return claudeStrategy{builtInCommand: builtInCommand, readOnlyModes: preset.ReadOnlyPermissionModes}
@@ -284,10 +284,22 @@ func (s opencodeStrategy) AwaitsUsageLimit() bool { return s.builtInCommand }
 // opencodeV2Strategy shares OpenCode's JSON stream and failure detectors, but
 // owns the v2 model selector and session identity. Selecting a preset determines
 // the protocol; launch rendering never guesses from the host version.
-type opencodeV2Strategy struct{ opencodeStrategy }
+type opencodeV2Strategy struct {
+	opencodeStrategy
+	defaultModel string
+}
 
 func (s opencodeV2Strategy) ModelFlag(model, variant string) string {
-	if !s.builtInCommand || model == "" {
+	if !s.builtInCommand {
+		return ""
+	}
+	// V2 encodes variants inside the model selector. A variant-only Sandman
+	// request needs a model to attach it to; use the preset default without
+	// changing launches that leave both choices to the agent CLI.
+	if model == "" && variant != "" {
+		model = s.defaultModel
+	}
+	if model == "" {
 		return ""
 	}
 	if variant != "" {

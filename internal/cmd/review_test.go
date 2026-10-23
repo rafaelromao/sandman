@@ -73,24 +73,38 @@ func TestReviewCmd_ForwardsDaemonOptions(t *testing.T) {
 }
 
 func TestReviewCmd_ForwardsTrimmedVariantOverride(t *testing.T) {
-	cfg := &config.Config{DefaultReviewAgent: "opencode", ReviewVariant: "configured"}
-	deps := Dependencies{ConfigStore: &fakeStore{config: cfg}, RepoRoot: t.TempDir()}
-	var gotVariant string
-	var gotSet bool
-	prev := reviewDaemonRunner
-	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, opts reviewDaemonOptions, stderr io.Writer) error {
-		gotVariant, gotSet = opts.Variant, opts.VariantSet
-		return nil
-	}
-	defer func() { reviewDaemonRunner = prev }()
-
-	cmd := NewReviewCmd(deps)
-	cmd.SetArgs([]string{"--variant", "  provider/foo bar  "})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("execute review command: %v", err)
-	}
-	if gotVariant != "provider/foo bar" || !gotSet {
-		t.Fatalf("variant = %q (set=%v), want trimmed explicit override", gotVariant, gotSet)
+	for agent := range config.BuiltInAgentPresets {
+		for _, tc := range []struct {
+			name string
+			args []string
+			want string
+			set  bool
+		}{
+			{"override", []string{"--variant", "  high  "}, "high", true},
+			{"explicit-empty", []string{"--variant", "   "}, "", true},
+			{"omitted", nil, "", false},
+		} {
+			t.Run(agent+"/"+tc.name, func(t *testing.T) {
+				cfg := &config.Config{DefaultReviewAgent: agent, ReviewVariant: "configured"}
+				deps := Dependencies{ConfigStore: &fakeStore{config: cfg}, RepoRoot: t.TempDir()}
+				var gotVariant string
+				var gotSet bool
+				prev := reviewDaemonRunner
+				reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, opts reviewDaemonOptions, stderr io.Writer) error {
+					gotVariant, gotSet = opts.Variant, opts.VariantSet
+					return nil
+				}
+				t.Cleanup(func() { reviewDaemonRunner = prev })
+				cmd := NewReviewCmd(deps)
+				cmd.SetArgs(tc.args)
+				if err := cmd.Execute(); err != nil {
+					t.Fatal(err)
+				}
+				if gotVariant != tc.want || gotSet != tc.set {
+					t.Fatalf("variant=%q set=%t, want %q set=%t", gotVariant, gotSet, tc.want, tc.set)
+				}
+			})
+		}
 	}
 }
 
