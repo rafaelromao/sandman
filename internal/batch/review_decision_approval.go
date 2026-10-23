@@ -24,7 +24,7 @@ var (
 	reviewNoQualityFinding         = regexp.MustCompile(`(?i)^(?:none\.\s+)?no\b[^\n.:]*\b(?:concern|finding)s?\b[^\n.:]*\b(?:found|filed|identified)\s*:`)
 	reviewAcceptanceEvidence       = regexp.MustCompile(`(?i)^(?:verification\s+against|how\s+each)\b`)
 	reviewMergeReadyAdvice         = regexp.MustCompile(`(?i)^merge\s+when\s+ready[.!]?$`)
-	reviewFindingSeverity          = regexp.MustCompile(`(?im)^[ \t]*(?:(?:#{1,6}|[-*+]|\d+[.)])[ \t]*)?(?:Blocking|Important)\b`)
+	reviewFindingSeverity          = regexp.MustCompile(`(?im)(?:^|[.;:!?][ \t]+)[ \t]*(?:(?:#{1,6}|[-*+]|\d+[.)])[ \t]*)?(?:Blocking|Important)\b`)
 	reviewFindingHeading           = regexp.MustCompile(`(?m)^[ \t]*#{1,6}(?:[ \t]|$)`)
 	reviewOpposingVerdict          = regexp.MustCompile(`(?i)(?:^|\W)_*(?:CHANGES_REQUESTED|NOT_APPROVED)_*(?:\W|$)`)
 	reviewQuotedCompound           = regexp.MustCompile("`[ \\t`]*[A-Za-z]+[ \\t`]*`(-[A-Za-z][A-Za-z0-9-]*)")
@@ -275,6 +275,11 @@ func noRepairNextSteps(text string) bool {
 		for _, clause := range reviewFindingClauses.Split(first[1], -1) {
 			if reviewNextStepAdvice(clause) {
 				continue
+			}
+			// Check line/list-local findings before joining clauses. The joined
+			// check below also catches approval conditions split across clauses.
+			if !reviewProsePermitsApproval(clause) {
+				return false
 			}
 			remainder.WriteString(clause)
 			remainder.WriteString("; ")
