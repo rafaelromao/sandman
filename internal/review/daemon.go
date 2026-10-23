@@ -486,6 +486,10 @@ func (d *Daemon) quotaProbeRecovered(ctx context.Context) bool {
 		Agent:   d.effectiveAgent(),
 		Model:   d.effectiveModel(),
 		Variant: d.effectiveVariant(),
+		// The review variant is already resolved, even when it is empty. Quota
+		// probes are ordinary prompt-only runs, so leaving this unset would
+		// substitute the implementation variant during batch preparation.
+		VariantSet: true,
 		PromptConfig: prompt.RenderConfig{
 			PromptFlag: "quota-probe",
 		},
