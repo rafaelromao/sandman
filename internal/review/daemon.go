@@ -1188,6 +1188,19 @@ func (d *Daemon) SocketPath() string {
 	return socketpath.Path(filepath.Join(d.BaseDir, "reviews", "review.sock"))
 }
 
+// repoRoot is the host repository whose .sandman directory the daemon
+// writes review Batches into: the layout's root, else the parent of a
+// .sandman BaseDir. A legacy BaseDir outside any .sandman layout has none.
+func (d *Daemon) repoRoot() string {
+	if d.Layout.RepoRoot != "" {
+		return d.Layout.RepoRoot
+	}
+	if filepath.Base(d.BaseDir) == ".sandman" {
+		return filepath.Dir(d.BaseDir)
+	}
+	return ""
+}
+
 // SocketAddr returns the address the daemon is listening on. The
 // daemon's address always lives on the filesystem (the resolver maps
 // overlong paths to a short /tmp path), so SocketAddr is the same as
@@ -2421,11 +2434,7 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	// ".sandman"-suffix guard keeps the translation a no-op for
 	// tests (newDaemonForTest passes a tmp dir directly, no
 	// .sandman layout).
-	repoRoot := ""
-	if filepath.Base(d.BaseDir) == ".sandman" {
-		repoRoot = filepath.Dir(d.BaseDir)
-	}
-	agentRunDir := sandbox.ContainerVisiblePath(d.reviewWorktreePath(prNumber, triggerKey), repoRoot, sandboxMode)
+	agentRunDir := sandbox.ContainerVisiblePath(d.reviewWorktreePath(prNumber, triggerKey), d.repoRoot(), sandboxMode)
 
 	acceptanceCriteria := ""
 	if linkedIssue := pr.LinkedIssueNumber(); linkedIssue > 0 {
@@ -2527,6 +2536,7 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 		ReviewFocus:  focus,
 		RunID:        perRowRunID,
 		RunDir:       reviewRunFolder,
+		RepoRoot:     d.repoRoot(),
 		WorktreeDir:  d.reviewWorktreeBase(),
 		// Issue #2367: the daemon has just materialised the rules file
 		// (initPromptTemplate above) at d.QualityRulesPath(). The

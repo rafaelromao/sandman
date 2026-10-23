@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/paths"
 )
 
@@ -71,11 +72,17 @@ func readAgentSession(path string, kind agentSessionKind) (agentSessionIdentity,
 // deliberately limited to a missing canonical file so a broken canonical
 // record cannot be silently replaced by stale evidence. A Run recorded
 // without a batch lives in the batch its RunID encodes, as the Run folder does.
+// That Batch's frozen location comes from the index; a Batch the index cannot
+// locate is an error rather than a guessed directory.
 func priorAgentSession(layout paths.Layout, batchID, runID string, kind agentSessionKind) (agentSessionIdentity, bool, error) {
 	if batchID == "" {
 		batchID = batchIDFromRunID(runID)
 	}
-	identity, err := readAgentSession(layout.RunSessionPath(batchID, runID), kind)
+	batch, err := daemon.ResolveBatchLocation(layout, batchID)
+	if err != nil {
+		return agentSessionIdentity{}, false, err
+	}
+	identity, err := readAgentSession(filepath.Join(batch.Run(runID).Dir, agentSessionFile), kind)
 	if err == nil {
 		return identity, true, nil
 	}

@@ -49,7 +49,7 @@ type RowSpec struct {
 	RunID             string
 	UserProvidedRunID string
 	// Pre-derived at the call site (issue-driven: from buildRunID;
-	// prompt-only: from batchIDForPromptOnly).
+	// prompt-only: from promptOnlyBatchLocation).
 	BatchID string
 	// BatchDir is BatchID's frozen directory when known (issue-driven: the
 	// resolved RunDir). Empty means the canonical directory for BatchID.

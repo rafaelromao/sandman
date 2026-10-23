@@ -2439,6 +2439,9 @@ func TestDaemon_LaunchReview_ConcurrentBatchesShareOrchestrator(t *testing.T) {
 		batch.WithRunnableFactory(runnables),
 	)
 	d, _, dir := newDaemonForTest(t, gh, orchestrator, cfg)
+	// Review Batches live in the repository's .sandman layout, which the
+	// orchestrator resolves their RunDir against.
+	d.BaseDir = filepath.Join(dir, ".sandman")
 	initReviewTestGitRepo(t, dir)
 	remote := t.TempDir()
 	runSnapshotGit(t, remote, "init", "--bare")

@@ -94,23 +94,34 @@ func issueBatchIDForRequest(req Request) string {
 	return req.RunTS + "-" + req.RunShortID
 }
 
-// batchIDForPromptOnly returns the public batch ID for a prompt-only run.
-// runDir is either the batch directory `<batches>/<batchID>` or a run folder
-// `<batches>/<batchID>/runs/<runID>`; any other shape returns "" so the
-// caller keeps its historical derivation. Without runDir it falls back to
-// the user run ID, then to the canonical `<ts>-<sid>-prompt` identity.
-func batchIDForPromptOnly(ts, shortid, userRunID, runDir string) string {
-	if runDir != "" {
-		runDir = filepath.Clean(runDir)
-		parent := filepath.Dir(runDir)
-		switch filepath.Base(parent) {
-		case "runs":
-			return filepath.Base(filepath.Dir(parent))
-		case "batches":
-			return filepath.Base(runDir)
-		}
-		return ""
+// promptOnlyBatchLocation pairs a prompt-only or review Batch's public
+// identity with its frozen directory. runDir is either that directory or one
+// of its run folders (`<batch>/runs/<runID>`); the identity owning it comes
+// from the index, never from the directory's basename, which may be another
+// Batch's public ID. A directory of either shape that the index cannot read
+// or attribute to one owner is an error, as for issue Batches. Any other
+// shape yields the zero location, so run folders keep deriving their Batch
+// from the RunID. Without runDir the identity is minted by
+// batchIDForPromptOnly.
+func promptOnlyBatchLocation(layout paths.Layout, ts, shortid, userRunID, runDir string) (paths.BatchLocation, error) {
+	if runDir == "" {
+		return paths.BatchLocation{ID: batchIDForPromptOnly(ts, shortid, userRunID)}, nil
 	}
+	batchDir := filepath.Clean(runDir)
+	parent := filepath.Dir(batchDir)
+	switch filepath.Base(parent) {
+	case "runs":
+		batchDir = filepath.Dir(parent)
+	case "batches":
+	default:
+		return paths.BatchLocation{}, nil
+	}
+	return daemon.BatchLocationForDir(layout, layout.ResolvePath(batchDir))
+}
+
+// batchIDForPromptOnly mints the public batch ID of a prompt-only run without
+// a RunDir: the user run ID, else the canonical `<ts>-<sid>-prompt` identity.
+func batchIDForPromptOnly(ts, shortid, userRunID string) string {
 	if userRunID != "" {
 		return userRunID
 	}
@@ -1504,7 +1515,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		delete(o.coordinators, coord)
 		o.coordinatorsMu.Unlock()
 	}()
-	layout := paths.NewLayout(cfg, o.layout.RepoRoot)
+	layout := paths.NewLayout(cfg, o.requestRepoRoot(req))
 	retries := resolveRetries(req, cfg)
 	runIdleTimeout := resolveRunIdleTimeout(req, cfg)
 	reviewTimeout, err := resolveReviewTimeout(req, cfg)
@@ -3268,17 +3279,14 @@ func (s *runSession) copyQualityRulesIntoWorktree(branch string) error {
 	return nil
 }
 
-// orchestratorWorktreeDir resolves the worktree base directory
-// for orchestrator-level code (outside a runSession) like the
-// post-run cleanup walker.
-func (o *Orchestrator) orchestratorWorktreeDir(cfg *config.Config) string {
-	if o.layout.RepoRoot != "" {
-		return o.layout.WorktreeDir
+// requestRepoRoot is the repository root a Request's relative RunDir and
+// Batch locations resolve against: the root its caller resolved, else the
+// orchestrator's own.
+func (o *Orchestrator) requestRepoRoot(req Request) string {
+	if root := strings.TrimSpace(req.RepoRoot); root != "" {
+		return root
 	}
-	if cfg != nil {
-		return strings.TrimSpace(cfg.WorktreeDir)
-	}
-	return ""
+	return o.layout.RepoRoot
 }
 
 // runFolderFor returns the per-run folder path under the batch for the
@@ -4651,6 +4659,10 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 			variant = strings.TrimSpace(cfg.Variant)
 		}
 	}
+	promptOnlyBatch, err := promptOnlyBatchLocation(layout, req.BatchTS, req.BatchShortID, req.RunID, req.RunDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve prompt-only batch: %w", err)
+	}
 	row := RowSpec{
 		IssueNumber:         req.IssueNumber,
 		Mode:                req.IssueMode(0),
@@ -4661,7 +4673,8 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 		BaseBranch:          baseBranch,
 		RenderCfg:           req.PromptConfig,
 		OutputWriter:        req.OutputWriter,
-		BatchID:             batchIDForPromptOnly(req.BatchTS, req.BatchShortID, req.RunID, req.RunDir),
+		BatchID:             promptOnlyBatch.ID,
+		BatchDir:            promptOnlyBatch.Dir,
 		BatchTS:             req.BatchTS,
 		BatchShortID:        req.BatchShortID,
 		RunID:               req.RunID,
