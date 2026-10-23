@@ -96,8 +96,8 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--template` | — | Path to prompt template file |
 | `--prompt-arg` | — | Custom template substitution (`KEY=VALUE`, repeatable) |
 | `--model` | `model` from config | Override the model passed to the agent for built-in presets |
-| `--variant` | `variant` from config | Override the implementation model variant; forwarded to the built-in command only when non-empty (`--variant` for OpenCode v1, `#variant` on the model for `opencode-v2`, `--effort` for Claude Code) |
-| `--agent` | `agent` from config (`opencode`) | Agent preset for this run (built-in `opencode` or `claude`, or a custom provider under `agents` in config); on `--continue` uses the current CLI/config value, not the prior run's stored agent |
+| `--variant` | `variant` from config | Override the implementation model variant using the same flag for every built-in agent; Sandman translates it to the native syntax ([mapping](agent-compatibility.md#model-variants)); `--variant ""` disables the configured variant |
+| `--agent` | `agent` from config (`opencode`) | Agent preset for this run (built-in `opencode`, `opencode-v2`, or `claude`, or a custom provider under `agents` in config); on `--continue` uses the current CLI/config value, not the prior run's stored agent |
 | `--run-id` | — | Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection |
 | `--run-idle-timeout` | config `run_idle_timeout` (`3600`) | Treat an AgentRun as stuck if it produces no output for N seconds; explicit `0` disables the timeout |
 | `--review-timeout` | config `review_timeout` (`1800`) | Override the absolute per-confirmed-request delegated review deadline in seconds; minimum `240` |
@@ -119,7 +119,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 - `--max-containers` caps the number of `ContainerSandbox` instances; `0` means no cap (unbounded pool growth)
 - `--model` only applies to built-in presets; if omitted, Sandman uses `model` from config when the agent shares the default `agent`'s preset, then the agent provider's configured model, then the preset's default model (`opencode/big-pickle`, `sonnet`)
 - `--variant` is trimmed and treated as opaque provider-specific text; when omitted, Sandman uses `variant` from config. On `--continue`, current CLI/config values replace the prior event value. Non-empty values are safely passed as one argument to the built-in command (`--variant` for OpenCode v1, `#variant` on the model for `opencode-v2`, `--effort` for Claude Code); custom commands are unchanged.
-- `--agent` selects the agent preset for this run (built-in `opencode` or `claude`, or a custom provider under `agents` in config); if omitted, Sandman uses `agent` from config. In container mode the Dockerfile's `installed-agents` header must list the agent's preset
+- `--agent` selects the agent preset for this run (built-in `opencode`, `opencode-v2`, or `claude`, or a custom provider under `agents` in config); if omitted, Sandman uses `agent` from config. In container mode the Dockerfile's `installed-agents` header must list the agent's preset
 - `--continue` cannot be combined with `--override`
 - `--reuse-session` requires `--continue`; it applies independently to each continued row and never to promoted or fresh rows
 - Runtime-owned re-entry after an external pull-request wait reuses the prior conversation automatically (the exact OpenCode session, or Claude Code's `--continue`); ordinary retries and context-rollover retries remain fresh

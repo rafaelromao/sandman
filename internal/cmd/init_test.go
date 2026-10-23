@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/scaffold"
 	"github.com/rafaelromao/sandman/internal/skill"
@@ -1328,6 +1329,30 @@ func TestInit_ReviewTimeoutRejectsValuesBelowMinimum(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), "review_timeout") {
 				t.Fatalf("expected review_timeout error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestInit_VariantFlagForEveryBuiltInAgent(t *testing.T) {
+	for agent := range config.BuiltInAgentPresets {
+		t.Run(agent, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Chdir(dir)
+			installInitHostVersion(t, scaffold.DefaultBuiltInAgentVersion(agent))
+			cmd := NewInitCmd()
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetIn(strings.NewReader(""))
+			cmd.SetArgs([]string{"--build-tools", "generic", "--agent", agent, "--variant", "high"})
+			if err := cmd.Execute(); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := config.Load(filepath.Join(dir, ".sandman", "config.yaml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.DefaultAgent != agent || cfg.Variant != "high" {
+				t.Fatalf("init lost shared variant: agent=%q variant=%q", cfg.DefaultAgent, cfg.Variant)
 			}
 		})
 	}

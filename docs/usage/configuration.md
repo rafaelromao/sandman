@@ -16,9 +16,10 @@ agent: opencode
 # configured, claude runs on sonnet and opencode on its own CLI default.
 model: opencode/big-pickle
 
-# Optional provider-specific implementation model variant. Empty disables
-# forwarding it to the built-in command (--variant for OpenCode v1, #variant on the model for
-# opencode-v2, --effort for Claude Code).
+# Optional implementation model variant. The Sandman CLI always uses --variant;
+# Sandman translates it to each built-in agent's native model/variant syntax.
+# Empty disables the configured variant. OpenCode v2 uses its preset model when
+# a variant is set without a resolved model.
 variant: ""
 
 # Default agent preset used for review runs when `--agent` is omitted in `sandman review`.

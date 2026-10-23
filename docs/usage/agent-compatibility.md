@@ -28,6 +28,37 @@ preset. A custom `command` under a built-in preset keeps that preset's failure
 classification and environment rules, but Sandman injects no model, variant, or
 session flags into it.
 
+## Model variants
+
+Sandman's public CLI is the same for every built-in agent: use `--variant`.
+Keep the model and variant separate in Sandman commands and configuration:
+
+```bash
+sandman run --agent opencode-v2 --model provider/model --variant high 42
+sandman run --continue --variant high 42
+sandman review --agent opencode-v2 --model provider/model --variant high
+sandman init --agent opencode-v2 --variant high
+```
+
+Select `opencode`, `opencode-v2`, or `claude` with `--agent` and use the same
+`--variant` option. In configuration, set `variant` for implementation and
+`review_variant` for reviews. A CLI override wins over configuration;
+`--variant ""` disables the configured variant. Continuations use the current
+CLI/config value rather than restoring a prior run's variant.
+
+Only the agent invocation changes:
+
+| Preset | Sandman input | Native agent argument |
+| --- | --- | --- |
+| `opencode` | `--variant high` | `--variant 'high'` |
+| `opencode-v2` | `--variant high` | `--model 'provider/model#high'` |
+| `claude` | `--variant high` | `--effort 'high'` |
+
+When v2 receives a variant without a resolved model, Sandman attaches it to the
+preset's default model (`opencode/big-pickle`). An explicitly configured model
+still takes precedence. With neither model nor variant set, v2 keeps using its
+own CLI default. Custom commands retain their configured invocation.
+
 ## OpenCode generations
 
 Choose the generation explicitly:
@@ -46,7 +77,8 @@ change their launch protocol. Switch with `sandman init --agent opencode-v2`.
 V1 sends `variant` / `review_variant` as `--variant`. V2 combines them with the
 selected model (`--model 'provider/model#variant'`), replacing an existing suffix
 when an explicit variant is configured. With an empty variant, a model's existing
-suffix is preserved. Set a model when selecting a v2 variant. V2 uses `--auto`
+suffix is preserved. Sandman users keep passing `--variant`; the native
+`#variant` suffix is produced automatically. V2 uses `--auto`
 for unattended permission approval and does not inject v1's `OPENCODE_PERMISSION`
 default; explicit v2 permission denials still apply.
 
