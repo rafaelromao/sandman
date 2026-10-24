@@ -91,7 +91,7 @@ func TestPriorOpenCodeSession_CanonicalInvalidDoesNotUseLegacy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, found, err := priorOpenCodeSession(layout, "batch-1", "run-1")
+	_, found, err := priorAgentSession(layout, "batch-1", "run-1", opencodeSessionKind)
 	if err == nil || found {
 		t.Fatalf("invalid canonical metadata = found %t, err %v; want no identity and an error", found, err)
 	}

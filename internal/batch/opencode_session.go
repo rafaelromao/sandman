@@ -8,16 +8,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 // opencodeSessionKind is the OpenCode session identity recorded in a Run's
 // session.json.
 var opencodeSessionKind = agentSessionKind{protocol: "opencode-session/v1", provider: "opencode"}
-
-func priorOpenCodeSession(layout paths.Layout, batchID, runID string) (agentSessionIdentity, bool, error) {
-	return priorAgentSession(layout, batchID, runID, opencodeSessionKind)
-}
 
 type opencodeOutput struct {
 	dst           io.Writer

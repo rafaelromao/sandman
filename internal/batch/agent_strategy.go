@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"errors"
 	"io"
 	"slices"
 	"strings"
@@ -241,15 +242,23 @@ func (opencodeStrategy) LaunchEnv(env map[string]string, permissionMode, rendere
 }
 
 // PrepareLaunch selects the exact prior session recorded in session.json.
-// When reuse is requested but no identity was recorded, the launch falls back
-// to OpenCode's own --continue.
 func (s opencodeStrategy) PrepareLaunch(run *AgentRun) (string, bool) {
+	return s.prepareSession(run, opencodeSessionKind)
+}
+
+// prepareSession selects the exact prior session of kind. When reuse is
+// requested but the previous Run recorded no identity, the launch falls back
+// to OpenCode's own --continue; so does a record written by another agent
+// kind. Any other lookup failure cannot prove the session missing, so it
+// starts a fresh session instead.
+func (s opencodeStrategy) prepareSession(run *AgentRun, kind agentSessionKind) (string, bool) {
 	if !s.builtInCommand || !run.reuseSession {
 		return "", false
 	}
-	identity, found, lookupErr := priorOpenCodeSession(run.layout, run.previousBatchID, run.previousRunID)
-	if lookupErr != nil {
-		run.warnSession(lookupErr)
+	identity, found, err := priorAgentSession(run.layout, run.previousBatchID, run.previousRunID, kind)
+	if err != nil {
+		run.warnSession(err)
+		return "", errors.Is(err, errForeignSession)
 	}
 	if found {
 		return identity.SessionID, false
@@ -314,17 +323,7 @@ func (opencodeV2Strategy) LaunchEnv(env map[string]string, _, _ string) map[stri
 var opencodeV2SessionKind = agentSessionKind{protocol: "opencode-session/v2", provider: "opencode-v2"}
 
 func (s opencodeV2Strategy) PrepareLaunch(run *AgentRun) (string, bool) {
-	if !s.builtInCommand || !run.reuseSession {
-		return "", false
-	}
-	identity, found, err := priorAgentSession(run.layout, run.previousBatchID, run.previousRunID, opencodeV2SessionKind)
-	if err != nil {
-		run.warnSession(err)
-	}
-	if found {
-		return identity.SessionID, false
-	}
-	return "", true
+	return s.prepareSession(run, opencodeV2SessionKind)
 }
 func (opencodeV2Strategy) PersistSession(run *AgentRun, stdout, stderr outputParser) {
 	run.persistSession(opencodeV2SessionKind, firstSessionID(stdout, stderr))

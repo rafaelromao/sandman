@@ -32,12 +32,16 @@ type agentSessionIdentity struct {
 	SessionID string `json:"session_id"`
 }
 
+// errForeignSession reports a session record written by another agent kind.
+// For the reading strategy it records no session of its own.
+var errForeignSession = errors.New("session recorded by another agent")
+
 func (k agentSessionKind) validate(id agentSessionIdentity) error {
 	if id.Protocol != k.protocol {
-		return fmt.Errorf("unsupported session protocol %q", id.Protocol)
+		return fmt.Errorf("%w: unsupported session protocol %q", errForeignSession, id.Protocol)
 	}
 	if id.Provider != k.provider {
-		return fmt.Errorf("unsupported session provider %q", id.Provider)
+		return fmt.Errorf("%w: unsupported session provider %q", errForeignSession, id.Provider)
 	}
 	if strings.TrimSpace(id.SessionID) == "" {
 		return errors.New("session id is empty")
