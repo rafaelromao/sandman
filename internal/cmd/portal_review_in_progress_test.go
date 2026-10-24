@@ -1,6 +1,13 @@
 package cmd
 
-import "testing"
+import (
+	"encoding/json"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/rafaelromao/sandman/internal/paths"
+)
 
 // B-tag vocabulary for issue #2109 (review canonical row) and issue #2340:
 //   B3 — live review renders "N review(s) - In Progress" in JS counter
@@ -44,81 +51,71 @@ console.log('PASS');
 	runPortalHTMLScript(t, js)
 }
 
-func TestVisibleRunsForIssueGroup_PendingPublicationOverridesOlderVerdict(t *testing.T) {
-	js := `const runs = [
-  {
-    key: 'review-old', runId: 'review-old', issueNumber: 2472, review: true,
-    status: 'success', kind: 'completed', startedAt: '2026-08-14T12:00:00Z',
-    finishedAt: '2026-08-14T12:02:00Z', reviewPendingPublication: false,
-    log: '', prNumber: 42,
-  },
-  {
-    key: 'review-new', runId: 'review-new', issueNumber: 2472, review: true,
-    status: 'success', kind: 'completed', startedAt: '2026-08-14T12:05:00Z',
-    finishedAt: '2026-08-14T12:07:00Z', reviewPendingPublication: true,
-    log: '', prNumber: 42,
-  },
-];
-const visible = visibleRunsForTable(runs);
+// orphanReviewGroupMeta projects an orphan linked review group (two terminal
+// reviews of issue 2472, no implementation parent) through the Go issue-group
+// owner, ships it as the summary payload and returns the rendered meta line of
+// the table row. Each review is described as (runID, startedAt, finishedAt,
+// publication status, decision).
+type orphanReviewFixture struct {
+	runID       string
+	started     time.Time
+	finished    time.Time
+	publication string
+	decision    string
+}
+
+func orphanReviewGroupMeta(t *testing.T, want, forbidden string, reviews ...orphanReviewFixture) {
+	t.Helper()
+	repoRoot := t.TempDir()
+	layout := paths.NewLayout(nil, repoRoot)
+	runs := make([]portalRun, 0, len(reviews))
+	for _, review := range reviews {
+		runDir := filepath.Join(repoRoot, ".sandman", "batches", "b-"+review.runID, "runs", review.runID)
+		writeReviewPublicationFixture(t, runDir, review.publication, review.finished, review.decision)
+		finished := review.finished
+		runs = append(runs, portalRun{
+			Key: review.runID, RunID: review.runID, IssueNumber: 2472, PRNumber: 42, Review: true,
+			Kind: "completed", Status: "success", StartedAt: review.started, FinishedAt: &finished,
+			BatchKey: "b-" + review.runID, RunDir: runDir,
+		})
+	}
+	projected := (&portalRunsView{}).projectIssueGroups(layout, runs)
+	runsJSON, err := json.Marshal(portalSummaryRuns(projected))
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := `const visible = visibleRunsForTable(JSON.parse('` + string(runsJSON) + `'));
 if (visible.length !== 1) throw new Error('expected one orphan review row, got ' + JSON.stringify(visible));
-if (!visible[0].reviewPendingPublication) throw new Error('newer pending publication must propagate to the orphan row, got ' + JSON.stringify(visible[0]));
 const meta = helpers.renderRunMeta(visible[0]);
-if (meta.indexOf('2 reviews - In Progress') < 0) throw new Error('expected pending orphan reviews to render In Progress, got ' + JSON.stringify(meta));
-if (meta.indexOf('Approved') >= 0) throw new Error('pending orphan reviews must suppress the older Approved verdict, got ' + JSON.stringify(meta));
+if (meta.indexOf('` + want + `') < 0) throw new Error('expected ` + want + `, got ' + JSON.stringify(meta));
+if ('` + forbidden + `' && meta.indexOf('` + forbidden + `') >= 0) throw new Error('unexpected ` + forbidden + `, got ' + JSON.stringify(meta));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
+}
+
+func TestVisibleRunsForIssueGroup_PendingPublicationOverridesOlderVerdict(t *testing.T) {
+	base := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	orphanReviewGroupMeta(t, "2 reviews - In Progress", "Approved",
+		orphanReviewFixture{"review-old", base, base.Add(2 * time.Minute), "success", "## Decision\n**APPROVED**\n"},
+		orphanReviewFixture{"review-new", base.Add(5 * time.Minute), base.Add(7 * time.Minute), "pending", ""},
+	)
 }
 
 func TestVisibleRunsForIssueGroup_UnreadableNewestReviewDoesNotResurrectOlderVerdict(t *testing.T) {
-	js := `const runs = [
-  {
-    key: 'review-old', runId: 'review-old', issueNumber: 2472, review: true,
-    status: 'success', kind: 'completed', startedAt: '2026-08-14T12:00:00Z',
-    finishedAt: '2026-08-14T12:02:00Z', reviewPendingPublication: false,
-    log: '## Decision' + String.fromCharCode(10) + '**APPROVED**', prNumber: 42,
-  },
-  {
-    key: 'review-new', runId: 'review-new', issueNumber: 2472, review: true,
-    status: 'success', kind: 'completed', startedAt: '2026-08-14T12:05:00Z',
-    finishedAt: '2026-08-14T12:07:00Z', reviewPendingPublication: false,
-    reviewVerdict: 'Unclear', log: '', prNumber: 42,
-  },
-];
-const visible = visibleRunsForTable(runs);
-if (visible.length !== 1) throw new Error('expected one orphan review row, got ' + JSON.stringify(visible));
-if (visible[0].reviewVerdict !== 'Unclear') throw new Error('unreadable newest review must clear older verdicts, got ' + JSON.stringify(visible[0]));
-const meta = helpers.renderRunMeta(visible[0]);
-if (meta.indexOf('2 reviews - Unclear') < 0) throw new Error('expected newest unreadable review to render Unclear, got ' + JSON.stringify(meta));
-if (meta.indexOf('Approved') >= 0) throw new Error('unreadable newest review must not resurrect older Approved, got ' + JSON.stringify(meta));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
+	base := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	orphanReviewGroupMeta(t, "2 reviews - Unclear", "Approved",
+		orphanReviewFixture{"review-old", base, base.Add(2 * time.Minute), "success", "## Decision\n**APPROVED**\n"},
+		orphanReviewFixture{"review-new", base.Add(5 * time.Minute), base.Add(7 * time.Minute), "success", ""},
+	)
 }
 
 func TestVisibleRunsForIssueGroup_EqualTimestampUsesDescendingRunID(t *testing.T) {
-	js := `const runs = [
-  {
-    key: 'review-a', runId: 'review-a', issueNumber: 2472, review: true,
-    status: 'success', kind: 'completed', startedAt: '2026-08-14T12:00:00Z',
-    finishedAt: '2026-08-14T12:02:00Z', reviewPendingPublication: false,
-    log: '', prNumber: 42,
-  },
-  {
-    key: 'review-z', runId: 'review-z', issueNumber: 2472, review: true,
-    status: 'success', kind: 'completed', startedAt: '2026-08-14T12:00:00Z',
-    finishedAt: '2026-08-14T12:02:00Z', reviewPendingPublication: true,
-    log: '', prNumber: 42,
-  },
-];
-const visible = visibleRunsForTable(runs);
-if (visible.length !== 1) throw new Error('expected one orphan review row, got ' + JSON.stringify(visible));
-if (!visible[0].reviewPendingPublication) throw new Error('descending RunID tie-break must choose review-z pending state, got ' + JSON.stringify(visible[0]));
-const meta = helpers.renderRunMeta(visible[0]);
-if (meta.indexOf('2 reviews - In Progress') < 0) throw new Error('expected equal-timestamp newest review to render In Progress, got ' + JSON.stringify(meta));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
+	base := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	orphanReviewGroupMeta(t, "2 reviews - In Progress", "Approved",
+		orphanReviewFixture{"review-a", base, base.Add(2 * time.Minute), "success", "## Decision\n**APPROVED**\n"},
+		orphanReviewFixture{"review-z", base, base.Add(2 * time.Minute), "pending", ""},
+	)
 }
 
 // TestRenderRunMeta_TwoLiveReviewsRenderInProgress pins issue #2109

@@ -205,7 +205,7 @@ func TestPortal_Compute_AggregatesChildReviewsOntoIssueRow(t *testing.T) {
 // TestPortal_Compute_TerminalReviewWithApprovedMarker_PreservesParentStatus
 // pins the restored #1897 + slice-1-of-#1938 behavior for a terminal review
 // child whose <runDir>/decision.md carries the **APPROVED** marker:
-// aggregateReviewChildren stamps ReviewVerdict="Approved" onto the parent
+// projectIssueGroups stamps ReviewVerdict="Approved" onto the parent
 // row from decision.md (during compute, before the summary endpoint strips
 // Log). The parent's own terminal run.finished status ("success") is
 // preserved because the sibling review is terminal, not live — no
@@ -778,7 +778,7 @@ func TestPortal_TerminalReviewLiveSocket_PreservesStatus(t *testing.T) {
 // contract: a terminal parent impl row (success) with a live (active) sibling
 // review child must preserve status "success" — no badge-flip to "reviewing".
 // This matches the e2e regression test for the #1825 live-run atomicity
-// invariant. aggregateReviewChildren no longer flips terminal parent status.
+// invariant. projectIssueGroups no longer flips terminal parent status.
 func TestPortal_ParentSuccWithLiveChild_PreservesTerminalStatus(t *testing.T) {
 	repoRoot := testenv.MkdirShort(t, "pswl")
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0o644); err != nil {

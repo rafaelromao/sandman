@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 // TestPortalLogContinuityBrowser_TabRoundTrips drives the issue #2772 actual
@@ -139,7 +140,7 @@ func TestPortalLogContinuityBrowser_DurationSortUsesActiveGroupedDuration(t *tes
 		"issueNumber": 42, "issueLabel": "PR42", "startedAt": now.Add(-90 * time.Minute).Format(time.RFC3339),
 		"duration": "90m", "activeDurationSeconds": 0, "executionSince": now.Add(-90 * time.Minute).Format(time.RFC3339),
 	}
-	runsJSON, err := json.Marshal([]map[string]any{waitingParent, activeParent, groupedReview})
+	runsJSON, err := marshalPortalRunsFixture([]map[string]any{waitingParent, activeParent, groupedReview})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +207,7 @@ func TestPortalLogContinuityBrowser_OrphanReviewKeepsAbortAndClock(t *testing.T)
 		"activeDurationSeconds": 60, "executionSince": now.Add(-time.Minute).Format(time.RFC3339),
 		"lastOutputAt": now.Format(time.RFC3339),
 	}
-	runsJSON, err := json.Marshal([]map[string]any{shorterRun, orphanReview})
+	runsJSON, err := marshalPortalRunsFixture([]map[string]any{shorterRun, orphanReview})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -994,6 +995,8 @@ func (f *portalLogContinuityFixture) handler(stream http.Handler) http.Handler {
 			if f.reviewRun != nil {
 				runs = append(runs, *f.reviewRun)
 			}
+			// The server owns the issue group: stamp it as compute does.
+			runs = (&portalRunsView{}).projectIssueGroups(paths.NewLayout(nil, f.repoRoot), runs)
 			_ = json.NewEncoder(w).Encode(map[string]any{"runs": runs})
 		}
 	})

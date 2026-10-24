@@ -455,7 +455,7 @@ func TestPortal_E2E_ParentSuccWithLiveChild(t *testing.T) {
 		t.Fatalf("expected parent row for issue #1, got %#v", rows)
 	}
 	if parentRow.Status != "success" {
-		t.Fatalf("expected parent Status='success' (terminal run.finished value preserved after aggregateReviewChildren removal), got %q", parentRow.Status)
+		t.Fatalf("expected parent Status='success' (terminal run.finished value preserved after projectIssueGroups removal), got %q", parentRow.Status)
 	}
 	if reviewChild == nil {
 		t.Fatalf("expected review child row for issue #1, got %#v", rows)
