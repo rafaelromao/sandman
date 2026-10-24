@@ -30,6 +30,9 @@ var (
 	reviewQuotedCompound           = regexp.MustCompile("`[ \\t`]*[A-Za-z]+[ \\t`]*`(-[A-Za-z][A-Za-z0-9-]*)")
 	reviewUnmetCriterion           = regexp.MustCompile(`(?i)\b(?:criteri(?:on|a)|requirements?)\s+(?:(?:is|are|remains?|still|currently|has|have)\s+)*(?:not\s+(?:(?:yet|currently|fully|completely)\s+)?(?:met|satisfied|fulfilled|implemented|covered)|unmet|unsatisfied|unfulfilled|unimplemented|failing|fails?|failed)\b|\b(?:unmet|unsatisfied|unfulfilled|failed)\s+(?:acceptance\s+)?(?:criteri(?:on|a)|requirements?)\b`)
 	reviewUnresolvedDefect         = regexp.MustCompile(`(?i)\b(?:an?|the|this|that|current)\s+(?:unresolved|unfixed|unaddressed)\s+(?:defects?|bugs?|issues?|problems?)\b|\b(?:the|this|that|current)\s+(?:defects?|bugs?|issues?|problems?|code|implementation|handler|function)\s+(?:(?:is|are|remains?|still|currently)\s+)+(?:unresolved|unfixed|unaddressed|open|racy|unsafe|broken|incorrect|vulnerable)\b`)
+	reviewNegatedAssessment        = regexp.MustCompile(`(?i)\b(?:no|zero|none\s+of\s+the)\s+(?:(?:unmet|unsatisfied|unfulfilled|failed)\s+(?:acceptance\s+)?(?:criteri(?:on|a)|requirements?)|(?:acceptance\s+)?(?:criteria|requirements?)\s+(?:are|remain)\s+(?:unmet|unsatisfied|unfulfilled|failed))\b`)
+	reviewResolvedAssessment       = regexp.MustCompile(`(?i)\b(?:the\s+)?(?:(?:previously|formerly|prior)\s+)?(?:unmet|unsatisfied|unfulfilled|failed|unresolved|unfixed|unaddressed)\s+(?:acceptance\s+)?(?:criteri(?:on|a)|requirements?|defects?|bugs?|issues?|problems?)(?:\s+(?:in|for|of)\s+(?:code|(?:this|the)\s+(?:diff|change|implementation|code)))?\s+(?:(?:is|are)\s+(?:now\s+)?|(?:has|have)\s+been\s+)(?:met|satisfied|fulfilled|implemented|covered|resolved|fixed)\b`)
+	reviewAssessmentQualification  = regexp.MustCompile(`(?i)\b(?:but|except|however|although|yet|unless|until|apart\s+from|other\s+than)\b`)
 )
 
 // reviewDecisionApprovalEvidenceFor returns informal approvals from the active
@@ -237,9 +240,24 @@ func reviewProsePermitsApproval(text string) bool {
 	return !reviewFindingDirective.MatchString(visible) &&
 		!reviewApprovalContradiction.MatchString(visible) &&
 		!reviewFindingSeverity.MatchString(visible) &&
-		!reviewUnmetCriterion.MatchString(visible) &&
-		!reviewUnresolvedDefect.MatchString(visible) &&
+		!reviewHasUnresolvedAssessment(visible) &&
 		!reviewOpposingVerdict.MatchString(prose)
+}
+
+// Negation and resolution belong to the same assertion as the failure words.
+// Remove only bounded, unconditional success assertions; check every remaining
+// clause so a resolved historical requirement cannot hide another current one.
+func reviewHasUnresolvedAssessment(text string) bool {
+	for _, clause := range reviewFindingClauses.Split(text, -1) {
+		if !reviewAssessmentQualification.MatchString(clause) {
+			clause = reviewNegatedAssessment.ReplaceAllString(clause, "satisfied assessment")
+			clause = reviewResolvedAssessment.ReplaceAllString(clause, "resolved assessment")
+		}
+		if reviewUnmetCriterion.MatchString(clause) || reviewUnresolvedDefect.MatchString(clause) {
+			return true
+		}
+	}
+	return false
 }
 
 func noReviewFindingClause(clause string) bool {
