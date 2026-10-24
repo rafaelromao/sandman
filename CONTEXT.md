@@ -148,6 +148,29 @@ validation makes canonical evidence authoritative and keeps stale legacy
 evidence diagnostic-only.
 _Avoid_: review retry loop, approval shortcut, restart reset.
 
+**AFK continuity**:
+The rule that a started Run whose pull request is open at its current head never
+becomes terminal-failed when the only missing evidence is review, CI, or a review
+request the runtime did not observe: it waits for external recovery or proceeds
+to merge, wherever v1.0.0-rc.2 would have merged or kept waiting. Terminal
+failure is reserved for classified permanent reasons (closed pull request,
+explicit abort, unverifiable completion, formal requested changes left
+unrepaired, no review request delivered). A stalled relaunch records a
+**resume signature** (gate, reason, live head, request trigger and response
+identities) in the wait so observation does not relaunch on unchanged evidence;
+a recoverable failure becomes a **continuity hold**.
+_Avoid_: remediation exhaustion as failure, idle failure.
+_See_: Managed review lifecycle, Publication verdict.
+
+**Publication verdict**:
+The closed-set decision (`approved` or `changes_requested`) the review daemon
+stamps as a trailer directly before the publication identity of its posted
+report. The identity binds the report to one trigger revision and one reviewed
+head; a report bound to another request or head is stale. The runtime trusts
+the verdict additively: reports without it keep the prose approval rules, and an
+unknown verdict is never repair evidence.
+_See_: Informal approval, AFK continuity.
+
 **Informal approval**:
 An unambiguous approving response to the confirmed review request for the current
 pull-request head, expressed in a conversation comment or an eligible COMMENTED

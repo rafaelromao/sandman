@@ -48,6 +48,23 @@ loop. Scope tables, quality tags, no-change next steps and informational review
 prose must not turn an approving report into a repair relaunch. Formal requested
 changes, current-head CI failures and merge conflicts remain blocking.
 
+AFK continuity (rule since v1.0.0-rc.2): a started Run may stop only for a
+permanent failure it cannot handle or wait for external recovery, and only
+where rc2 would not have resolved it. An open current-head PR whose only
+missing evidence is review, CI or an unobserved request waits or merges; it
+never terminal-fails. Exhausted relaunch allowances on review, CI, request or
+merge work, expired requests and idle gates after owned work wait
+(`RESUME_STALLED`, `continuity_hold`); only formal CHANGES_REQUESTED left
+unrepaired, a closed PR, abort, unverifiable completion, no delivered request
+and other classified permanent reasons stay terminal. A feedback relaunch that
+leaves head, request and responses unchanged stops relaunching; `run.await`
+`stalled_resumes` keeps observation from relaunching on that evidence after
+restart. A trigger delivered by any attempt of a session (including a failed
+one) is registered; owned-work retries log `lifecycle-owned-work`. The review
+daemon stamps a verdict trailer before its publication identity; the runtime
+trusts it additively (prose approvals stay accepted). Every lifecycle reason is
+classified in one place and `TestAFKContinuityContract_*` replays the incidents.
+
 - **Event-sourced state**: Run status is a projection over the append-only `.sandman/events.jsonl`, not mutable records. `events.RunState` folds events into current state. If a status looks wrong, start by tracing the relevant event types and the fold/projection logic rather than searching for mutable status fields.
 - **Lifecycle versus artifacts**: `events.RunState.IsTerminal()` is the shared lifecycle predicate for status/history/Portal, archive, cleanup and recovery. Initial `run.queued` admissions tagged `initial_admission: true` are non-terminal; untagged historical records and explicit `terminal_placeholder` skipped records remain terminal. `run.capacity_queued` is non-terminal readiness evidence: started rows remain waiting. Index status and `run.json.status` describe artifacts/compatibility only and cannot authorize terminal operations. Read failures fail closed; missing events remain unknown. Preserve manifest/path validation and terminal outcomes during reclamation.
 - **Portal waiting state**: Started implementation suspension projects as waiting for authorized external work or delayed execution admission. `run.capacity_queued` records ready/capacity metadata without returning a started row to queued. Continuation/resume returns it to running and preserves accumulated active time. A live linked review promotes any non-terminal parent to reviewing; terminal parents retain their outcomes. The issue group (visible row, retained review metadata, subjects) is projected once in Go; the page and renderer only look rows up and never re-derive it. Transient observation failure may re-observe only prior identity-valid operation evidence within its unchanged deadline.
