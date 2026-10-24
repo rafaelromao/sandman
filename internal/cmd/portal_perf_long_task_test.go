@@ -686,7 +686,6 @@ sandbox.findRunByKey = sandbox.findRunByIdentity;
 sandbox.subjectRunIdentity = function (run) { return run ? (run.runId || run.key || '') : ''; };
 sandbox.subjectTabKey = function (key) { return key || ''; };
 sandbox.isWaitStateRun = function () { return false; };
-sandbox.summarizeReviewGroup = function (group) { return { source: group && group[0] || null }; };
 sandbox.loadRunDetail = function () {};
 sandbox.findRunRowByIdentity = function () { return null; };
 sandbox.logSubscription = { select: function () {} };

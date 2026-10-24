@@ -2096,7 +2096,11 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     function findRunRowByIdentity(runIdentity) {
       if (!runIdentity) return null;
       const run = findRunByIdentity(runIdentity);
-      const runKey = run ? (visibleRunForIssueGroup(run.issueNumber, state.runs)?.key || run.key) : runIdentity;
+      // A subject renders inside the detail row of the group row whose
+      // server-stamped subjects list it; otherwise it is its own row.
+      const owner = run ? (state.runs || []).find((candidate) => candidate && candidate.groupVisible
+        && Array.isArray(candidate.subjects) && candidate.subjects.includes(run.runId || run.key)) : null;
+      const runKey = run ? ((owner && owner.key) || run.key) : runIdentity;
       return Array.from(runsBody.children).find((child) => child.getAttribute('data-run-key') === runKey) || null;
     }
 
@@ -2342,205 +2346,27 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       return status || 'default';
     }
 
-    function summarizeReviewGroup(reviews) {
-      // Orphan review-only path (no implementation parent): build the
-      // count and, when a sibling review's `log` is already loaded in
-      // the client, the verdict. Issue #1897 restored server-side
-      // stamping for parent impl rows (aggregateReviewChildren), so
-      // this helper is no longer used to enrich the parent row — only
-      // the orphan synthetic row below. The verdict scan uses the same
-      // ## Decision marker rule the Go-side verdict reader uses (bare
-      // `**MARKER**` only; the controlled decision.md artefact is never
-      // prefixed or suffixed with shell debris, so the lenient
-      // "with-debris" regex the run.log parser used to require is no
-      // longer present):
-      // APPROVED -> "Approved", CHANGES_REQUESTED -> "Changes requested".
-      // The scan reads each review's already-loaded `log` field; when no
-      // log content is available (the common case: the summary endpoint
-      // strips logs) verdict stays '' and the renderRunMeta
-      // `if (run.reviewVerdict)` guard hides the trailing dash. The
-      // verdict is taken from the newest review in the effective-finishedAt
-      // (or startedAt) ordering that carries a marker. Pending publication
-      // metadata on that newest review suppresses older local verdicts.
-      const summary = { count: 0, live: false, pendingPublication: false, verdict: '', status: '', kind: 'completed', source: null };
-      if (!Array.isArray(reviews) || !reviews.length) return summary;
-      summary.count = reviews.length;
-      const ordered = reviews.slice().sort((a, b) => {
-        const aFinished = Date.parse(a && a.finishedAt);
-        const bFinished = Date.parse(b && b.finishedAt);
-        const aEffective = Number.isFinite(aFinished) ? aFinished : runStartedValue(a);
-        const bEffective = Number.isFinite(bFinished) ? bFinished : runStartedValue(b);
-        if (aEffective !== bEffective) return bEffective - aEffective;
-        const aStarted = runStartedValue(a);
-        const bStarted = runStartedValue(b);
-        if (aStarted !== bStarted) return bStarted - aStarted;
-        return String((b && b.runId) || (b && b.key) || '').localeCompare(String((a && a.runId) || (a && a.key) || ''));
-      });
-      summary.source = ordered[0] || null;
-      for (const review of ordered) {
-        const status = String(review && review.status ? review.status : '').trim();
-        if (status === 'reviewing') {
-          summary.live = true;
-          summary.kind = 'active';
-          summary.status = 'reviewing';
-          // A live group is owned by its newest live review so the visible
-          // row's key, clock, and Abort target match its reviewing status.
-          summary.source = review;
-          break;
-        }
-      }
-      summary.pendingPublication = !!(ordered[0] && ordered[0].reviewPendingPublication);
-      if (!summary.live) {
-        const terminal = ordered.find((review) => /^(success|failure|aborted)$/i.test(String((review && review.status) || '').trim()));
-        if (terminal) {
-          summary.status = String(terminal.status || '').trim();
-          summary.kind = 'completed';
-        }
-      }
-    // Verdict extraction: walk the ordered reviews, scan each one's
-    // `log` for the ## Decision marker. Mirrors Go's
-    // reviewVerdictFromDecisionFile (portal_runs_view.go) but reads
-    // the orphan fallback path: a server-stamped parent row already
-    // carries reviewVerdict via aggregateReviewChildren, so the JS
-    // helper only matters for the orphan synthetic row. We accept the
-    // same shapes the legacy lenient run.log parser did, because
-    // orphan reviews still surface the saved log content.
-      if (!summary.pendingPublication) {
-        const latest = ordered[0];
-        if (latest && Object.prototype.hasOwnProperty.call(latest, 'reviewVerdict')) {
-          summary.verdict = String(latest.reviewVerdict || '');
-        } else {
-          const verdict = extractReviewVerdictFromLog(latest && latest.log);
-          if (verdict) {
-            summary.verdict = verdict;
-          }
-        }
-      }
-      return summary;
-    }
-
-    // extractReviewVerdictFromLog scans a single review run's log text
-    // for the ## Decision marker. The Go server-side reader for parent
-    // rows reads decision.md (the controlled artefact), so the JS
-    // orphan path keeps this lenient log scan only as a fallback when
-    // a sibling review.log is already in memory. Returns the
-    // user-facing verdict string ("Approved" / "Changes requested") or
-    // '' when no marker is recoverable. Tolerates missing or empty log
-    // (returns ''), the "[<runID>] HH:MM:SS " line prefix added by the
-    // agent output stream, and the with-debris shell-piped shape
-    // ("**APPROVED**" 2>&1 | tail -5) for legacy run.log content.
-    function extractReviewVerdictFromLog(logText) {
-      if (!logText) return '';
-      const text = String(logText);
-      if (!text) return '';
-      const lines = text.split('\n');
-      let inDecision = false;
-      const bareRe = /^\*\*([A-Z_]+)\*\*$/;
-      const debrisRe = /^\*\*([A-Z_]+)\*\*["'`\.\-|&][^\n]*$/;
-      const headingRe = /^##\s+decision\s*$/i;
-      const labelRe = /^\[[^\]]*\]\s*/;
-      const tsRe = /^\d{2}:\d{2}:\d{2}\s+/;
-      for (let i = 0; i < lines.length; i++) {
-        let line = lines[i];
-        if (labelRe.test(line)) {
-          line = line.replace(labelRe, '');
-        }
-        line = line.replace(tsRe, '');
-        const trimmed = line.trim();
-        if (!inDecision && headingRe.test(trimmed)) {
-          inDecision = true;
-          continue;
-        }
-        if (!inDecision) continue;
-        if (/^##\s+/.test(trimmed)) return '';
-        if (trimmed === '') continue;
-        let m = bareRe.exec(trimmed);
-        if (!m) m = debrisRe.exec(trimmed);
-        if (!m) continue;
-        if (m[1] === 'APPROVED') return 'Approved';
-        if (m[1] === 'CHANGES_REQUESTED') return 'Changes requested';
-        return '';
-      }
-      return '';
-    }
-
-    function visibleRunForIssueGroup(issueNumber, runs) {
-      if (!Number.isInteger(issueNumber) || issueNumber <= 0 || !Array.isArray(runs)) return null;
-      const group = runs.filter((run) => run && run.issueNumber === issueNumber);
-      if (!group.length) return null;
-      const parents = group.filter((run) => !run.review);
-      if (parents.length) {
-        // The canonical parent's reviewCount/reviewVerdict are stamped
-        // server-side by aggregateReviewChildren during compute (restored
-        // in #1897), so they ride the JSON from /api/runs?summary=1 even
-        // though the summary endpoint strips Log. The JS must NOT overwrite
-        // them, or the verdict is lost on cold load (the #1856 workaround
-        // read sibling review.log, but logs are stripped on the summary
-        // endpoint). The orphan review-only path (below) still uses
-        // summarizeReviewGroup because no impl parent carries the stamp.
-        // The table and the subject selector share one canonical-parent
-        // rule that mirrors the server's canonicalParentIsBetter (#2799).
-        return portalDiff.pickCanonicalParent(parents);
-      }
-      const summary = summarizeReviewGroup(group.filter((run) => run.review));
-      const source = summary.source || group[0];
-      if (!source) return null;
-      // Orphan review with a resolved issue: surface the PR the review
-      // targeted first, then the issue it was filed against, so the
-      // user can see both at a glance (e.g. "PR 1668 (#1667)").
-      // Matches the no-issue convention in reviewOrphanIssueLabel
-      // (issue #2296/#1526 / #1667).
-      const sourcePR = Number(source && source.prNumber) || 0;
-      const issueLabel = sourcePR > 0
-        ? 'PR ' + sourcePR + ' (#' + String(issueNumber) + ')'
-        : '#' + String(issueNumber);
-      // Keep the source row's validated metadata (batch, waiting state,
-      // execution clock, staleness) so Abort eligibility and live duration
-      // survive grouping (issue #2799); override only grouping-derived fields.
-      return Object.assign({}, source, {
-        review: true,
-        groupedReview: false,
-        reviewCount: summary.count,
-        reviewVerdict: summary.verdict,
-        reviewPendingPublication: summary.pendingPublication,
-        reviewLive: summary.live,
-        status: summary.status || String(source.status || '').trim(),
-        kind: summary.kind,
-        issueNumber: issueNumber,
-        archived: !!source.archived,
-        unavailable: !!source.unavailable,
-        issueLabel: issueLabel,
-      });
-    }
-
+    // visibleRunsForTable renders rows without an issue plus the one row the
+    // server marked groupVisible for each issue group. The Go projection
+    // (projectIssueGroups) owns the group; the page never re-derives it.
     function visibleRunsForTable(runs) {
       if (!Array.isArray(runs)) return [];
-      const byIssue = new Map();
-      const passthrough = [];
+      const visible = [];
+      const grouped = [];
       for (const run of runs) {
         if (!run) continue;
         if (!Number.isInteger(run.issueNumber) || run.issueNumber <= 0) {
-          passthrough.push(run);
+          visible.push(run);
           continue;
         }
-        const group = byIssue.get(run.issueNumber) || [];
-        group.push(run);
-        byIssue.set(run.issueNumber, group);
+        if (run.groupVisible) grouped.push(run);
       }
-      const visible = [...passthrough];
-      const grouped = Array.from(byIssue.entries()).map(([issueNumber, group]) => ({
-        issueNumber,
-        visibleRun: visibleRunForIssueGroup(issueNumber, group),
-      })).filter((entry) => entry.visibleRun);
       grouped.sort((a, b) => {
-        const startedCmp = runStartedValue(b.visibleRun) - runStartedValue(a.visibleRun);
+        const startedCmp = runStartedValue(b) - runStartedValue(a);
         if (startedCmp !== 0) return startedCmp;
         return a.issueNumber - b.issueNumber;
       });
-      for (const entry of grouped) {
-        visible.push(entry.visibleRun);
-      }
-      return visible;
+      return visible.concat(grouped);
     }
 
     function renderRunMeta(run) {
@@ -2768,18 +2594,21 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           }
         }
         if (state.expandedRunKey) {
+          // Keep the expanded subject's cached row when the server dropped it.
+          // The server owns the issue group: when the payload already has a
+          // visible row for the issue, the restored row loses its group stamps
+          // so it never comes back as a second visible row.
           const cached = prevRuns.find((run) => run && (run.key === state.expandedRunKey || run.runId === state.expandedRunKey));
-          const issueNumber = cached ? cached.issueNumber : 0;
-          const issueParent = issueNumber > 0 ? prevRuns.find((run) => {
-            if (!run || run.issueNumber !== issueNumber || run.review) return false;
-            const label = String(run.issueLabel || '').trim();
-            return label === ('#' + String(issueNumber));
-          }) : null;
-          for (const issueRun of [cached, issueParent]) {
-            if (!issueRun) continue;
-            if (!nextRuns.some((run) => run && (run.key === issueRun.key || run.runId === issueRun.runId))) {
-              nextRuns.unshift(issueRun);
+          if (cached && !nextRuns.some((run) => run && (run.key === cached.key || run.runId === cached.runId))) {
+            const restored = { ...cached };
+            const issueNumber = restored.issueNumber;
+            const groupShown = Number.isInteger(issueNumber) && issueNumber > 0
+              && nextRuns.some((run) => run && run.groupVisible && run.issueNumber === issueNumber);
+            if (groupShown) {
+              delete restored.groupVisible;
+              delete restored.subjects;
             }
+            nextRuns.unshift(restored);
           }
         }
 	      state.runs = nextRuns;
@@ -2854,23 +2683,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
 
     function toggleRun(runKey) {
       const prevExpandedRunKey = state.expandedRunKey;
-      let run = findRunByIdentity(runKey);
-      if (!run) {
-        const stubMatch = runKey.match(/^(?:issue|review-stub)-(\d+)$/);
-        if (stubMatch) {
-          const issueNum = Number(stubMatch[1]);
-          const group = (state.runs || []).filter(r => r && r.issueNumber === issueNum);
-          if (group.length) {
-            const parents = group.filter(r => !r.review);
-            if (parents.length) {
-              run = portalDiff.pickCanonicalParent(parents);
-            } else {
-              const summary = summarizeReviewGroup(group.filter(r => r.review));
-              run = summary.source || null;
-            }
-          }
-        }
-      }
+      const run = findRunByIdentity(runKey);
       if (isWaitStateRun(run)) return;
       const subjectKey = subjectRunIdentity(run) || runKey;
       navigationVersion += 1;

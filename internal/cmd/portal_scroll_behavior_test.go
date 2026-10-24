@@ -78,7 +78,6 @@ const sandbox = {
   },
   isWaitStateRun: function () { return false; },
   subjectRunIdentity: function (run) { return run ? (run.runId || run.key || '') : ''; },
-  summarizeReviewGroup: function (group) { return { source: (group && group[0]) || null }; },
   persistPortalViewState: function () {},
   scheduleRender: function (cb) { if (typeof cb === 'function') cb(); },
   loadRunDetail: function () {},
