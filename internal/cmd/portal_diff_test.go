@@ -650,7 +650,7 @@ console.log('PASS');
 
 func TestPortalDiffCreateRunRow_DetailRowWhenExpanded(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1 };
+const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1 , subjects: ['260618113825-abcd-1', 'PR42'] };
 const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
 const retryRun = { key: 'retry-1', kind: 'active', status: 'running', issueLabel: 'Issue 1 retry', runId: 'retry-1', issueNumber: 1 };
 const run = parentRun;
@@ -686,7 +686,7 @@ console.log('PASS');
 
 func TestPortalDiffCreateRunRow_ExpandedChildReviewKeepsVisibleParentRow(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1 };
+const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1 , subjects: ['260618113825-abcd-1', 'PR42'] };
 const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'PR42', runs: [parentRun, childReview], visibleRuns: [parentRun] };
@@ -755,7 +755,7 @@ console.log('PASS');
 
 func TestPortalDiffDiffRuns_SubjectSelectorIncludesDistinctParentAndReview(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', review: false, issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1 };
+const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', review: false, issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1 , subjects: ['260618113825-abcd-1', 'PR42'] };
 const review = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', runs: [parentRun, review], visibleRuns: [parentRun] };
@@ -775,7 +775,7 @@ console.log('PASS');
 
 func TestPortalDiffDiffRuns_SubjectSelectorSkipsQueuedAndBlockedPlaceholders(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', review: false, issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1 };
+const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', review: false, issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1 , subjects: ['260618113825-abcd-1', 'PR42', 'queued-1', 'blocked-1'] };
 const review = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
 const queued = { key: 'queued-1', kind: 'active', status: 'queued', review: false, issueLabel: '#1 queued', runId: 'queued-1', issueNumber: 1 };
 const blocked = { key: 'blocked-1', kind: 'active', status: 'blocked', review: false, issueLabel: '#1 blocked', runId: 'blocked-1', issueNumber: 1 };
@@ -806,8 +806,10 @@ const created = SandmanPortalDiff.insertRunRow(body, parentRun, opts1);
 const subjectSelectBefore = created.detailRow.querySelector('select[data-action="set-subject"]');
 if (subjectSelectBefore) throw new Error('expected no subject selector before a child review appears (nothing to switch between), got ' + subjectSelectBefore.children.length + ' options');
 SandmanPortalDiff.resetCounters();
-const opts2 = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', runs: [parentRun, childReview] };
-SandmanPortalDiff.diffRuns(body, [parentRun], opts2);
+// The server stamps the new review onto the group row's subjects.
+const refreshedParent = Object.assign({}, parentRun, { subjects: ['260618113825-abcd-1', 'PR42'] });
+const opts2 = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', runs: [refreshedParent, childReview] };
+SandmanPortalDiff.diffRuns(body, [refreshedParent], opts2);
 const subjectSelectAfter = created.detailRow.querySelector('select[data-action="set-subject"]');
 if (!subjectSelectAfter) throw new Error('expected subject selector after refresh');
 if (subjectSelectAfter.children.length !== 2) throw new Error('expected parent plus child review options after refresh, got ' + subjectSelectAfter.children.length);
@@ -844,7 +846,7 @@ if (!visibleRow) throw new Error('expected review row visible under its real Run
 func TestPortalDiffDiffRuns_MultipleOrphanReviewsRenderOneOptionPerRun(t *testing.T) {
 	js := `const body = makeMockBody();
 const terminal = { key: 'PR41', kind: 'completed', status: 'success', review: true, issueLabel: 'PR41', runId: 'PR41', issueNumber: 1, prNumber: 41, startedAt: '2026-06-29T10:00:00Z' };
-const live = { key: 'PR42', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42, startedAt: '2026-06-30T10:00:00Z' };
+const live = { key: 'PR42', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42, startedAt: '2026-06-30T10:00:00Z', groupVisible: true, subjects: ['PR42', 'PR41'] };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'PR42', runs: [terminal, live], visibleRuns: [live] };
 const result = SandmanPortalDiff.diffRuns(body, [terminal, live], opts);
@@ -1320,7 +1322,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetailContent_ReviewSubjectModelShieldsPane(t *testing.T) {
 	js := `const body = makeMockBody();
-const parent = { key: 'impl-1', runId: 'impl-1', kind: 'active', status: 'running', issueLabel: '#1', issueNumber: 1, log: 'impl line 1' };
+const parent = { key: 'impl-1', runId: 'impl-1', kind: 'active', status: 'running', issueLabel: '#1', issueNumber: 1, subjects: ['impl-1', 'PR42'], log: 'impl line 1' };
 const review = { key: 'PR42', runId: 'PR42', kind: 'active', status: 'reviewing', issueLabel: 'PR42', issueNumber: 1, prNumber: 42, review: true, log: 'review line 1' };
 const accepted = helpers.logState(review);
 helpers.logState = () => accepted;
@@ -1355,7 +1357,7 @@ console.log('PASS');
 // the old streamPreFor returned null and dropped every streamed line.
 func TestPortalDiff_DetailRowKeying_SubjectScrollKeyVsParentDetailFor(t *testing.T) {
 	js := `const body = makeMockBody();
-const parent = { key: 'impl-1', runId: 'impl-1', kind: 'active', status: 'running', issueLabel: '#1', issueNumber: 1, log: 'p' };
+const parent = { key: 'impl-1', runId: 'impl-1', kind: 'active', status: 'running', issueLabel: '#1', issueNumber: 1, subjects: ['impl-1', 'PR42'], log: 'p' };
 const review = { key: 'PR42', runId: 'PR42', kind: 'active', status: 'reviewing', issueLabel: 'PR42', issueNumber: 1, prNumber: 42, review: true, log: 'r' };
 const opts = { helpers, stopGroups: new Set(), runs: [parent, review], visibleRuns: [parent], expandedKey: 'PR42', tabs: { PR42: 'log' } };
 SandmanPortalDiff.diffRuns(body, [parent], opts);
@@ -1927,7 +1929,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetail_SwitchingSubjectRestoresPlaceholder(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1, log: '' };
+const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1, subjects: ['260618113825-abcd-1', 'PR42'], log: '' };
 const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42, log: 'review log' };
 const stopGroups = new Set();
 const opts1 = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', tabs: { '260618113825-abcd-1': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
@@ -1998,7 +2000,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetailEvents_IgnoresSubjectPickerChurn(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1, events: [{ type: 'start', timestamp: 1700000000000, payload: { ok: true } }] };
+const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1, subjects: ['260618113825-abcd-1', 'PR42'], events: [{ type: 'start', timestamp: 1700000000000, payload: { ok: true } }] };
 const reviewRun = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
 const reviewRun2 = { key: 'PR43', kind: 'completed', status: 'success', review: true, issueLabel: 'PR43', runId: 'PR43', issueNumber: 1, prNumber: 43 };
 const stopGroups = new Set();
@@ -2008,9 +2010,11 @@ const detailRow = body.children[1];
 const content1 = detailRow.querySelector('.detail-content');
 const pre1 = detailRow.querySelector('pre[data-rendered-json]');
 if (!content1 || !pre1) throw new Error('expected initial events content');
-const opts2 = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', tabs: { '260618113825-abcd-1': 'events' }, runs: [parentRun, reviewRun, reviewRun2], visibleRuns: [parentRun] };
+// The server stamps the new review onto the group row's subjects.
+const parentRun2 = Object.assign({}, parentRun, { subjects: ['260618113825-abcd-1', 'PR43', 'PR42'] });
+const opts2 = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', tabs: { '260618113825-abcd-1': 'events' }, runs: [parentRun2, reviewRun, reviewRun2], visibleRuns: [parentRun2] };
 SandmanPortalDiff.resetCounters();
-SandmanPortalDiff.diffRuns(body, [parentRun], opts2);
+SandmanPortalDiff.diffRuns(body, [parentRun2], opts2);
 const counters = SandmanPortalDiff.getCounters();
 if (counters.mutations === 0) throw new Error('subject-picker churn should still update the panel chrome, got 0 mutations');
 const content2 = detailRow.querySelector('.detail-content');
@@ -2071,7 +2075,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetailDetails_IgnoresSubjectPickerChurn(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: '260618113825-abcd-1', kind: 'completed', status: 'success', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1, startedAt: 1000, finishedAt: 2000, duration: 1, branch: 'main', logPath: '/tmp/run.log' };
+const parentRun = { key: '260618113825-abcd-1', kind: 'completed', status: 'success', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1, subjects: ['260618113825-abcd-1', 'PR42'], startedAt: 1000, finishedAt: 2000, duration: 1, branch: 'main', logPath: '/tmp/run.log' };
 const reviewRun = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
 const reviewRun2 = { key: 'PR43', kind: 'completed', status: 'success', review: true, issueLabel: 'PR43', runId: 'PR43', issueNumber: 1, prNumber: 43 };
 const stopGroups = new Set();
@@ -2081,9 +2085,11 @@ const detailRow = body.children[1];
 const content1 = detailRow.querySelector('.detail-content');
 const pre1 = detailRow.querySelector('pre[data-rendered-json]');
 if (!content1 || !pre1) throw new Error('expected initial details content');
-const opts2 = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', tabs: { '260618113825-abcd-1': 'details' }, runs: [parentRun, reviewRun, reviewRun2], visibleRuns: [parentRun] };
+// The server stamps the new review onto the group row's subjects.
+const parentRun2 = Object.assign({}, parentRun, { subjects: ['260618113825-abcd-1', 'PR43', 'PR42'] });
+const opts2 = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', tabs: { '260618113825-abcd-1': 'details' }, runs: [parentRun2, reviewRun, reviewRun2], visibleRuns: [parentRun2] };
 SandmanPortalDiff.resetCounters();
-SandmanPortalDiff.diffRuns(body, [parentRun], opts2);
+SandmanPortalDiff.diffRuns(body, [parentRun2], opts2);
 const counters = SandmanPortalDiff.getCounters();
 if (counters.mutations === 0) throw new Error('subject-picker churn should still update the panel chrome, got 0 mutations');
 const content2 = detailRow.querySelector('.detail-content');
@@ -2295,7 +2301,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetail_SwitchingSubjectPreservesContent(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1, log: 'parent log' };
+const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1, subjects: ['260618113825-abcd-1', 'PR42'], log: 'parent log' };
 const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42, log: 'review log' };
 const stopGroups = new Set();
 const opts1 = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', tabs: { '260618113825-abcd-1': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
@@ -2327,7 +2333,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetail_SwitchingSubjectMutationsAndContent(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1, log: 'parent log', socketPath: '/tmp/sock' };
+const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1, subjects: ['260618113825-abcd-1', 'PR42'], log: 'parent log', socketPath: '/tmp/sock' };
 const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42, log: 'review log' };
 const stopGroups = new Set();
 const opts1 = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', tabs: { '260618113825-abcd-1': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
@@ -2355,7 +2361,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetail_SwitchingSubjectRoundTripReusesCachedPane(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1, log: 'parent log' };
+const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1, subjects: ['260618113825-abcd-1', 'PR42'], log: 'parent log' };
 const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42, log: 'review log' };
 const stopGroups = new Set();
 const optsParent = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', tabs: { '260618113825-abcd-1': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
@@ -4087,14 +4093,6 @@ vm.runInNewContext(scriptBody + '\n' + ` + "`" + js + "`" + `, Object.assign({},
 	}
 }
 
-// TestPortalRunsView_VisibleRunForIssueGroup_PreservesReviewRunID is the
-// regression test for the bug where a review-only daemon (no parent issue
-// row in the same group) loses its real RunID in the synthesized "issue-N"
-// stub row, which breaks row expansion because the DOM row key no longer
-// matches any state.runs entry. The visibleRunForIssueGroup helper must
-// preserve the source row's runId so renderRunMeta continues to surface
-// the real run identifier in the meta line, and so findRunByIdentity can
-// locate the row from its data-run-key.
 func TestPortalDiffBuildLogPre_HasTerminalLogClass(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: 'A', runId: 'r1', log: 'some log output' };
@@ -4159,81 +4157,17 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalRunsView_VisibleRunForIssueGroup_PreservesReviewRunID(t *testing.T) {
-	js := `const review = { key: '260622193226-a0c19-1227', kind: 'active', status: 'reviewing', review: true, issueLabel: '#1223', runId: '260622193226-a0c19-1227', issueNumber: 1223, prNumber: 5 };
-const stub = visibleRunForIssueGroup(1223, [review]);
-if (!stub) throw new Error('expected stub row for review-only issue group');
-if (stub.runId !== '260622193226-a0c19-1227') throw new Error('expected stub.runId to preserve source RunID, got ' + JSON.stringify(stub.runId));
-if (stub.key !== '260622193226-a0c19-1227') throw new Error('expected stub.key to preserve source RunID, got ' + JSON.stringify(stub.key));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestPortalRunsView_VisibleRunForIssueGroup_ReviewOnlyReturnsSourceRowWithReviewTrue
-// is the tracer bullet for issue #1489.
-func TestPortalRunsView_VisibleRunForIssueGroup_ReviewOnlyReturnsSourceRowWithReviewTrue(t *testing.T) {
-	js := `const review = { key: '260622193226-a0c19-1227', kind: 'active', status: 'reviewing', review: true, issueLabel: '#1223', runId: '260622193226-a0c19-1227', issueNumber: 1223, prNumber: 5 };
-const stub = visibleRunForIssueGroup(1223, [review]);
-if (!stub) throw new Error('expected visible row for review-only issue group');
-if (stub.review !== true) throw new Error('expected visible row to keep review=true for review-only issue group, got ' + JSON.stringify(stub.review));
-if (stub.groupedReview !== false) throw new Error('expected groupedReview=false on review-only visible row, got ' + JSON.stringify(stub.groupedReview));
-if (stub.runId !== '260622193226-a0c19-1227') throw new Error('expected visible row runId to match source, got ' + JSON.stringify(stub.runId));
-if (stub.key !== '260622193226-a0c19-1227') throw new Error('expected visible row key to match source, got ' + JSON.stringify(stub.key));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestPortalRunsView_VisibleRunForIssueGroup_ReviewOnlyLabelsIssueWithPrefix
-// is the tracer bullet for issue #1526: a review-only issue group must
-// produce a visible row whose issueLabel explicitly signals review-only
-// (e.g. "PR 1508 (#1472)") rather than reusing the source PR
-// label or fabricating a bare issue label. The PR the review targeted
-// is surfaced first, the linked issue is shown as a parenthesised
-// reference.
-func TestPortalRunsView_VisibleRunForIssueGroup_ReviewOnlyLabelsIssueWithPrefix(t *testing.T) {
-	js := `const review = { key: 'PR1508', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR1508', runId: 'PR1508', issueNumber: 1472, prNumber: 1508 };
-const stub = visibleRunForIssueGroup(1472, [review]);
-if (!stub) throw new Error('expected visible row for review-only issue group');
-const label = String(stub.issueLabel || '');
-if (label === 'PR1508') throw new Error('expected review-only label to differ from source PR label, got bare PR label ' + JSON.stringify(label));
-if (label === '#1472') throw new Error('expected review-only label to differ from bare issue label, got bare issue label ' + JSON.stringify(label));
-if (label.indexOf('PR 1508') < 0) throw new Error('expected review-only label to reference the PR number, got ' + JSON.stringify(label));
-if (label.indexOf('#1472') < 0) throw new Error('expected review-only label to reference the issue number, got ' + JSON.stringify(label));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestPortalRunsView_VisibleRunForIssueGroup_ReviewOnlyIdentityMatchesSourceRun
-// covers behaviour #2 of issue #1526: the visible row's identity fields
-// must come from the review run, not be fabricated from missing
-// implementation-run metadata. batchKey on a non-review source must NOT
-// leak into the review-only visible row.
-func TestPortalRunsView_VisibleRunForIssueGroup_ReviewOnlyIdentityMatchesSourceRun(t *testing.T) {
-	js := `const review = { key: 'PR1508', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR1508', runId: 'PR1508', issueNumber: 1472, prNumber: 1508, startedAt: '2026-06-30T12:00:00Z' };
-const stub = visibleRunForIssueGroup(1472, [review]);
-if (!stub) throw new Error('expected visible row for review-only issue group');
-if (stub.key !== 'PR1508') throw new Error('expected visible row key to match source runId, got ' + JSON.stringify(stub.key));
-if (stub.runId !== 'PR1508') throw new Error('expected visible row runId to match source runId, got ' + JSON.stringify(stub.runId));
-if (stub.issueNumber !== 1472) throw new Error('expected visible row issueNumber to match source issueNumber, got ' + JSON.stringify(stub.issueNumber));
-if (stub.prNumber !== 1508) throw new Error('expected visible row prNumber to match source prNumber, got ' + JSON.stringify(stub.prNumber));
-if (stub.startedAt !== '2026-06-30T12:00:00Z') throw new Error('expected visible row startedAt to match source, got ' + JSON.stringify(stub.startedAt));
-if ('batchKey' in stub && stub.batchKey) throw new Error('expected review-only visible row not to carry a batchKey, got ' + JSON.stringify(stub.batchKey));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
 // TestPortalRunsView_VisibleRunsForTable_OrphanReviewRowCarriesReviewOnlyLabel
-// covers behaviour #3 of issue #1526 at the table-projection level:
-// visibleRunsForTable must surface the orphan review's issueLabel as
-// "PR <N> (#<issue>)", so the table renders the explicit
-// review-only label with both the PR and the linked issue visible.
+// covers behaviour #3 of issue #1526 end to end: the Go issue-group
+// projection labels an orphan linked review "PR <N> (#<issue>)" and the
+// table renders that row with the explicit review-only label.
 func TestPortalRunsView_VisibleRunsForTable_OrphanReviewRowCarriesReviewOnlyLabel(t *testing.T) {
-	js := `const review = { key: 'PR1508', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR1508', runId: 'PR1508', issueNumber: 1472, prNumber: 1508, startedAt: '2026-06-30T12:00:00Z' };
-const visible = visibleRunsForTable([review]);
+	runsJSON := issueGroupJSON(t, []portalRun{{
+		Key: "PR1508", RunID: "PR1508", Kind: "active", Status: "reviewing", Review: true,
+		IssueLabel: "PR1508", IssueNumber: 1472, PRNumber: 1508,
+		StartedAt: time.Date(2026, 6, 30, 12, 0, 0, 0, time.UTC),
+	}})
+	js := `const visible = visibleRunsForTable(JSON.parse('` + runsJSON + `'));
 if (visible.length !== 1) throw new Error('expected exactly one visible row, got ' + JSON.stringify(visible.length));
 if (visible[0].key !== 'PR1508') throw new Error('expected visible row key to match source runId, got ' + JSON.stringify(visible[0].key));
 if (visible[0].issueLabel !== 'PR 1508 (#1472)') throw new Error('expected visible row label to be explicit review-only with PR+issue, got ' + JSON.stringify(visible[0].issueLabel));
@@ -4290,7 +4224,7 @@ console.log('PASS');
 // orphan row must expand to a detail panel keyed by its own runId, surfacing
 // the review run's content directly. A review-only orphan is always alone, so
 // no subject selector should render. The visible row here mirrors what
-// visibleRunForIssueGroup produces: identity fields from the review run
+// projectIssueGroups produces: identity fields from the review run
 // with an explicit "PR <N> (#<issue>)" issueLabel.
 func TestPortalDiffDiffRuns_OrphanReviewWithReviewOnlyLabelExpandsToDetailPanel(t *testing.T) {
 	js := `const body = makeMockBody();
@@ -4323,7 +4257,7 @@ func TestPortalDiffDiffRuns_OrphanReviewSubjectSwitchPreservesRowIdentity(t *tes
 	js := `const body = makeMockBody();
 const terminal = { key: 'PR1507', kind: 'completed', status: 'success', review: true, issueLabel: 'PR1507', runId: 'PR1507', issueNumber: 1472, prNumber: 1507, startedAt: '2026-06-29T10:00:00Z' };
 const live = { key: 'PR1508', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR1508', runId: 'PR1508', issueNumber: 1472, prNumber: 1508, startedAt: '2026-06-30T10:00:00Z' };
-const orphanRow = { key: 'PR1508', runId: 'PR1508', review: true, groupedReview: false, issueLabel: 'PR 1508 (#1472)', issueNumber: 1472, prNumber: 1508, kind: 'active', status: 'reviewing', startedAt: '2026-06-30T12:00:00Z' };
+const orphanRow = { key: 'PR1508', runId: 'PR1508', review: true, groupedReview: false, issueLabel: 'PR 1508 (#1472)', issueNumber: 1472, prNumber: 1508, kind: 'active', status: 'reviewing', startedAt: '2026-06-30T12:00:00Z', groupVisible: true, subjects: ['PR1508', 'PR1507'] };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'PR1508', runs: [terminal, live], visibleRuns: [orphanRow] };
 SandmanPortalDiff.diffRuns(body, [orphanRow], opts);
@@ -4342,235 +4276,13 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-// TestPortalRunsView_VisibleRunForIssueGroup_OrphanReviewPreservesSourceMetadata
-// is the regression test for issue #2799: the orphan review-only visible row
-// must keep the source row's validated metadata (batch, waiting, execution
-// clock, staleness) and override only grouping-derived fields. A field
-// whitelist used to drop batchKey, so an Abort-eligible source lost its
-// Abort control after grouping.
-func TestPortalRunsView_VisibleRunForIssueGroup_OrphanReviewPreservesSourceMetadata(t *testing.T) {
-	js := `const source = {
-  key: 'review-2799', runId: 'review-2799', kind: 'active', status: 'reviewing', review: true,
-  issueLabel: 'PR2810', issueNumber: 2799, prNumber: 2810, batchKey: 'batch-2799',
-  issueTitle: 'Preserve review grouping metadata', startedAt: '2026-10-19T10:00:00Z',
-  executionSince: '2026-10-19T10:05:00Z', activeDurationSeconds: 300, lastOutputAt: '2026-10-19T10:06:00Z',
-  duration: '5m',
-};
-const snapshot = JSON.stringify(source);
-const row = visibleRunForIssueGroup(2799, [source]);
-if (!row) throw new Error('expected visible orphan review row');
-if (row.batchKey !== 'batch-2799') throw new Error('expected source batchKey to survive grouping, got ' + JSON.stringify(row.batchKey));
-if (row.issueTitle !== 'Preserve review grouping metadata') throw new Error('expected source issueTitle, got ' + JSON.stringify(row.issueTitle));
-if (row.executionSince !== '2026-10-19T10:05:00Z') throw new Error('expected source executionSince, got ' + JSON.stringify(row.executionSince));
-if (row.activeDurationSeconds !== 300) throw new Error('expected source activeDurationSeconds, got ' + JSON.stringify(row.activeDurationSeconds));
-if (row.lastOutputAt !== '2026-10-19T10:06:00Z') throw new Error('expected source lastOutputAt, got ' + JSON.stringify(row.lastOutputAt));
-if (row.issueLabel !== 'PR 2810 (#2799)') throw new Error('expected derived review-only label, got ' + JSON.stringify(row.issueLabel));
-if (row.review !== true || row.groupedReview !== false) throw new Error('expected derived review flags, got ' + JSON.stringify([row.review, row.groupedReview]));
-if (row.reviewCount !== 1 || row.reviewLive !== true) throw new Error('expected derived review summary, got ' + JSON.stringify([row.reviewCount, row.reviewLive]));
-if (!isRunAbortable(row, new Set())) throw new Error('expected Abort-eligible source to stay Abort-eligible after grouping');
-if (JSON.stringify(source) !== snapshot) throw new Error('expected source row not to be mutated');
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestPortalRunsView_VisibleRunForIssueGroup_LiveOrphanReviewUsesLiveSource
-// pins issue #2799's live-group rule: when an older sibling review is still
-// reviewing but a newer review already finished, the visible row must be the
-// live review so its key, clock, and Abort target match the reviewing
-// status. The verdict ordering still uses the newest review overall.
-func TestPortalRunsView_VisibleRunForIssueGroup_LiveOrphanReviewUsesLiveSource(t *testing.T) {
-	js := `const live = {
-  key: 'review-live', runId: 'review-live', kind: 'active', status: 'reviewing', review: true,
-  issueNumber: 2799, prNumber: 2810, batchKey: 'batch-live', startedAt: '2026-10-19T10:00:00Z',
-  executionSince: '2026-10-19T10:00:00Z', activeDurationSeconds: 0,
-};
-const finished = {
-  key: 'review-done', runId: 'review-done', kind: 'completed', status: 'success', review: true,
-  issueNumber: 2799, prNumber: 2810, batchKey: 'batch-done', startedAt: '2026-10-19T10:30:00Z',
-  finishedAt: '2026-10-19T10:40:00Z', activeDurationSeconds: 600, reviewVerdict: 'Approved',
-};
-const olderLive = {
-  key: 'review-live-old', runId: 'review-live-old', kind: 'active', status: 'reviewing', review: true,
-  issueNumber: 2799, prNumber: 2810, batchKey: 'batch-live-old', startedAt: '2026-10-19T09:00:00Z',
-};
-const row = visibleRunForIssueGroup(2799, [olderLive, finished, live]);
-if (!row) throw new Error('expected visible orphan review row');
-if (row.key !== 'review-live') throw new Error('expected live review to own the visible row, got ' + JSON.stringify(row.key));
-if (row.status !== 'reviewing' || row.kind !== 'active') throw new Error('expected live status/kind, got ' + JSON.stringify([row.status, row.kind]));
-if (row.finishedAt) throw new Error('expected no finishedAt on a live visible row, got ' + JSON.stringify(row.finishedAt));
-if (row.batchKey !== 'batch-live') throw new Error('expected live review batchKey, got ' + JSON.stringify(row.batchKey));
-if (row.reviewCount !== 3) throw new Error('expected every review counted, got ' + JSON.stringify(row.reviewCount));
-if (row.reviewVerdict !== 'Approved') throw new Error('expected verdict from the newest review overall, got ' + JSON.stringify(row.reviewVerdict));
-if (row.reviewPendingPublication !== false) throw new Error('expected pending publication from the newest review overall, got ' + JSON.stringify(row.reviewPendingPublication));
-if (!isRunAbortable(row, new Set())) throw new Error('expected live visible row to keep Abort');
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestPortalRunsView_CanonicalParent_TableAndSelectorAgree pins issue #2799's
-// convergence rule: the table's visible row and the subject selector's
-// canonical option are the same implementation parent regardless of API
-// order, using the server's canonicalParentIsBetter rule (active beats
-// terminal; latest start among actives; latest finish, then start, then run
-// ID among terminals). Times compare as instants, not strings.
-func TestPortalRunsView_CanonicalParent_TableAndSelectorAgree(t *testing.T) {
-	js := `const cases = [
-  {
-    name: 'terminal parents order by finishedAt, not input order',
-    want: 'impl-new',
-    runs: [
-      { key: 'impl-old', runId: 'impl-old', kind: 'completed', status: 'aborted', issueNumber: 9, startedAt: '2026-10-19T09:00:00Z', finishedAt: '2026-10-19T09:30:00Z', reviewCount: 1 },
-      { key: 'impl-new', runId: 'impl-new', kind: 'completed', status: 'success', issueNumber: 9, startedAt: '2026-10-19T10:00:00Z', finishedAt: '2026-10-19T10:30:00Z' },
-    ],
-  },
-  {
-    name: 'terminal ties break on runId',
-    want: 'impl-b',
-    runs: [
-      { key: 'impl-a', runId: 'impl-a', kind: 'completed', status: 'failure', issueNumber: 9, startedAt: '2026-10-19T10:00:00Z', finishedAt: '2026-10-19T10:30:00Z' },
-      { key: 'impl-b', runId: 'impl-b', kind: 'completed', status: 'failure', issueNumber: 9, startedAt: '2026-10-19T10:00:00Z', finishedAt: '2026-10-19T10:30:00Z' },
-    ],
-  },
-  {
-    name: 'active parents compare startedAt as instants',
-    want: 'impl-later',
-    runs: [
-      { key: 'impl-later', runId: 'impl-later', kind: 'active', status: 'running', issueNumber: 9, startedAt: '2026-10-19T11:00:00+02:00' },
-      { key: 'impl-earlier', runId: 'impl-earlier', kind: 'active', status: 'running', issueNumber: 9, startedAt: '2026-10-19T08:30:00Z' },
-    ],
-  },
-];
-for (const tc of cases) {
-  const review = { key: 'review-9', runId: 'review-9', kind: 'completed', status: 'success', review: true, issueNumber: 9, startedAt: '2026-10-19T12:00:00Z' };
-  const runs = tc.runs.concat([review]);
-  const visible = visibleRunForIssueGroup(9, runs);
-  if (!visible || visible.key !== tc.want) throw new Error(tc.name + ': table chose ' + JSON.stringify(visible && visible.key) + ', want ' + tc.want);
-  const related = window.SandmanPortalDiff.subjectRunsFor(visible, { runs });
-  if (!related.length || related[0].key !== tc.want) throw new Error(tc.name + ': selector chose ' + JSON.stringify(related[0] && related[0].key) + ', want ' + tc.want);
-}
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-func TestPortalRunsView_VisibleRunForIssueGroup_TerminalReviewWinsOverActiveKind(t *testing.T) {
-	js := `const review = { key: '260622193226-a0c19-1227', kind: 'active', status: 'success', review: true, issueLabel: '#1223', runId: '260622193226-a0c19-1227', issueNumber: 1223, prNumber: 5 };
-const stub = visibleRunForIssueGroup(1223, [review]);
-if (!stub) throw new Error('expected stub row for terminal review group');
-if (stub.kind !== 'completed') throw new Error('expected completed kind once terminal status is present, got ' + JSON.stringify(stub.kind));
-if (stub.status !== 'success') throw new Error('expected terminal status to win over live kind, got ' + JSON.stringify(stub.status));
-// Issue #1729: orphan review-only groups can no longer project a verdict
-// from run.status (the heuristic is wrong). The Go projection covers the
-// canonical-parent path; the JS orphan path renders an empty verdict and
-// the meta line guard in renderRunMeta hides the trailing dash.
-if (stub.reviewVerdict !== '') throw new Error('expected empty reviewVerdict on orphan review-only group (issue #1729), got ' + JSON.stringify(stub.reviewVerdict));
-if (stub.review !== true) throw new Error('expected review=true on visible row for terminal review-only group, got ' + JSON.stringify(stub.review));
-if (stub.groupedReview !== false) throw new Error('expected groupedReview=false on visible row for review-only group, got ' + JSON.stringify(stub.groupedReview));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-func TestPortalRunsView_VisibleRunForIssueGroup_PrefersLiveActiveOverCompletedParent(t *testing.T) {
-	js := `const parent = { key: '260618113825-abcd-1-parent', kind: 'completed', status: 'success', review: false, issueLabel: '#1', runId: '260618113825-abcd-1-parent', issueNumber: 1, batchKey: 'batch-1' };
-const active = { key: '260618113825-abcd-1-active', kind: 'active', status: 'running', review: false, issueLabel: '#1', runId: '260618113825-abcd-1-active', issueNumber: 1, batchKey: 'batch-1' };
-const result = visibleRunForIssueGroup(1, [parent, active]);
-if (!result) throw new Error('expected visible row');
-if (result.key !== '260618113825-abcd-1-active') throw new Error('expected live active child as visible row, got ' + JSON.stringify(result.key));
-if (result.kind !== 'active') throw new Error('expected active kind for visible row, got ' + JSON.stringify(result.kind));
-if (!helpers.isRunAbortable(result, new Set())) throw new Error('expected live active visible row to keep Abort control');
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-func TestPortalRunsView_VisibleRunForIssueGroup_CompletedOnlyStillUsesCompletedRow(t *testing.T) {
-	js := `const parent = { key: '260618113825-abcd-2-parent', kind: 'completed', status: 'success', review: false, issueLabel: '#2', runId: '260618113825-abcd-2-parent', issueNumber: 2, reviewCount: 3, reviewVerdict: 'Approved' };
-const result = visibleRunForIssueGroup(2, [parent]);
-if (!result) throw new Error('expected visible row');
-if (result.key !== '260618113825-abcd-2-parent') throw new Error('expected completed row to stay visible, got ' + JSON.stringify(result.key));
-if (result.kind !== 'completed') throw new Error('expected completed kind to stay visible, got ' + JSON.stringify(result.kind));
-if (result.status !== 'success') throw new Error('expected completed status to stay visible, got ' + JSON.stringify(result.status));
-if (result.reviewVerdict !== 'Approved') throw new Error('expected existing completed summary verdict to stay visible, got ' + JSON.stringify(result.reviewVerdict));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestPortalRunsView_VisibleRunForIssueGroup_LiveReviewReprojectsKindOntoSourceRow
-// covers the kind/status re-projection rule from issue #1489.
-func TestPortalRunsView_VisibleRunForIssueGroup_LiveReviewReprojectsKindOntoSourceRow(t *testing.T) {
-	js := `const terminal = { key: 'review-1', kind: 'completed', status: 'success', review: true, issueLabel: '#7', runId: 'review-1', issueNumber: 7, prNumber: 11, startedAt: '2026-06-29T10:00:00Z' };
-const live = { key: 'review-2', kind: 'active', status: 'reviewing', review: true, issueLabel: '#7', runId: 'review-2', issueNumber: 7, prNumber: 12, startedAt: '2026-06-30T10:00:00Z' };
-const stub = visibleRunForIssueGroup(7, [terminal, live]);
-if (!stub) throw new Error('expected visible row for live review group');
-if (stub.kind !== 'active') throw new Error('expected kind=active for live group, got ' + JSON.stringify(stub.kind));
-if (stub.status !== 'reviewing') throw new Error('expected status=reviewing for live group, got ' + JSON.stringify(stub.status));
-if (stub.review !== true) throw new Error('expected review=true on visible row, got ' + JSON.stringify(stub.review));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestPortalRunsView_VisibleRunForIssueGroup_TerminalParentWinsOverLiveChild
-// is the regression test for issue #1362: when an issue has both a terminal
-// parent run and a live review child, the visible row must be the terminal
-// parent, not the live child. The review child must remain accessible in the
-// expanded selector.
-func TestPortalRunsView_VisibleRunForIssueGroup_TerminalParentWinsOverLiveChild(t *testing.T) {
-	js := `const parent = { key: '260618113825-abcd-1', kind: 'completed', status: 'success', review: false, issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1 };
-const liveChild = { key: 'PR42', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
-const result = visibleRunForIssueGroup(1, [parent, liveChild]);
-if (!result) throw new Error('expected visible row');
-if (result.key !== '260618113825-abcd-1') throw new Error('expected parent as visible row, got ' + JSON.stringify(result.key));
-if (result.status !== 'success') throw new Error('expected visible badge to be parent status (no live review flip), got ' + JSON.stringify(result.status));
-if (result.kind !== 'completed') throw new Error('expected completed kind, got ' + JSON.stringify(result.kind));
-if (result.review) throw new Error('expected review flag false for parent row, got ' + JSON.stringify(result.review));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestPortalRunsView_VisibleRunForIssueGroup_NewerSuccessWinsOverOlderAbortedWithReviews
-// is the regression test for issue #1825: when the same issue has two
-// terminal impl rows from different batches (older aborted carrying
-// review metadata, newer successful without), the visible row must be
-// the newer successful run — never the older aborted run. The backend
-// projection no longer stamps review metadata across batches, and the
-// shared pickCanonicalParent must pick the latest terminal parent by
-// FinishedAt rather than preferring parents that happen to carry
-// reviewCount/reviewVerdict from a previous batch.
-func TestPortalRunsView_VisibleRunForIssueGroup_NewerSuccessWinsOverOlderAbortedWithReviews(t *testing.T) {
-	js := `// The bug was that pickCanonicalParent preferred the older impl row
-// that carried reviewCount/reviewVerdict.
-const newerSuccess = {
-  key: 'impl-9744', kind: 'completed', status: 'success', review: false,
-  issueLabel: '#1793', runId: 'impl-9744', issueNumber: 1793,
-  startedAt: '2026-07-05T00:00:00Z', finishedAt: '2026-07-05T00:30:00Z',
-};
-const olderAborted = {
-  key: 'impl-2bf9', kind: 'completed', status: 'aborted', review: false,
-  issueLabel: '#1793', runId: 'impl-2bf9', issueNumber: 1793,
-  startedAt: '2026-07-04T00:00:00Z', finishedAt: '2026-07-04T00:30:00Z',
-  reviewCount: 1, reviewVerdict: 'Approved',
-};
-const result = visibleRunForIssueGroup(1793, [newerSuccess, olderAborted]);
-if (!result) throw new Error('expected visible row');
-if (result.runId !== 'impl-9744') throw new Error('expected newer successful parent as visible row, got ' + JSON.stringify(result.runId));
-if (result.status !== 'success') throw new Error('expected visible status=success (newer run wins), got ' + JSON.stringify(result.status));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
 func TestPortalRunsView_VisibleRunsForTable_SortsByStartedDesc(t *testing.T) {
-	js := `const runs = [
-  { key: '260618113825-abcd-1014', kind: 'completed', status: 'failure', issueLabel: '#1014', runId: '260618113825-abcd-1014', issueNumber: 1014, startedAt: '2026-06-29T04:34:39Z' },
-  { key: '260618113825-abcd-1401', kind: 'completed', status: 'failure', issueLabel: '#1401', runId: '260618113825-abcd-1401', issueNumber: 1401, startedAt: '2026-06-26T19:47:13Z' },
-  { key: '260618113825-abcd-1402', kind: 'completed', status: 'failure', issueLabel: '#1402', runId: '260618113825-abcd-1402', issueNumber: 1402, startedAt: '2026-06-27T00:12:51Z' },
-  { key: '260618113825-abcd-1467', kind: 'active', status: 'running', issueLabel: '#1467', runId: '260618113825-abcd-1467', issueNumber: 1467, startedAt: '2026-06-29T14:29:12Z' },
+	js := `const ids = (n) => { const id = '260618113825-abcd-' + ['1014', '1401', '1402', '1467'][n]; return { key: id, runId: id }; };
+const runs = [
+  { ...ids(0), kind: 'completed', status: 'failure', issueLabel: '#1014', issueNumber: 1014, groupVisible: true, startedAt: '2026-06-29T04:34:39Z' },
+  { ...ids(1), kind: 'completed', status: 'failure', issueLabel: '#1401', issueNumber: 1401, groupVisible: true, startedAt: '2026-06-26T19:47:13Z' },
+  { ...ids(2), kind: 'completed', status: 'failure', issueLabel: '#1402', issueNumber: 1402, groupVisible: true, startedAt: '2026-06-27T00:12:51Z' },
+  { ...ids(3), kind: 'active', status: 'running', issueLabel: '#1467', issueNumber: 1467, groupVisible: true, startedAt: '2026-06-29T14:29:12Z' },
 ];
 const visible = visibleRunsForTable(runs);
 const order = visible.map((run) => run.key).join(',');
@@ -4587,7 +4299,7 @@ console.log('PASS');
 // "issue-N" instead of the real run identifier. This test asserts on the
 // post-table run shape the renderer actually receives.
 func TestPortalRunsView_VisibleRunsForTable_ReviewMetaLineShowsRealRunID(t *testing.T) {
-	js := `const review = { key: '260622193226-a0c19-1227', kind: 'active', status: 'reviewing', review: true, issueLabel: '#1223', runId: '260622193226-a0c19-1227', issueNumber: 1223, prNumber: 5 };
+	js := `const review = { key: '260622193226-a0c19-1227', kind: 'active', status: 'reviewing', review: true, issueLabel: '#1223', runId: '260622193226-a0c19-1227', issueNumber: 1223, prNumber: 5, groupVisible: true };
 const visible = visibleRunsForTable([review]);
 if (visible.length !== 1) throw new Error('expected 1 visible row, got ' + visible.length);
 const rendered = visible[0];
@@ -4595,38 +4307,6 @@ if (rendered.runId !== '260622193226-a0c19-1227') throw new Error('expected visi
 const meta = helpers.renderRunMeta(rendered);
 if (!meta.includes('260622193226-a0c19-1227')) throw new Error('expected renderRunMeta to surface real run identifier, got ' + JSON.stringify(meta));
 if (meta.startsWith('issue-')) throw new Error('expected renderRunMeta not to start with synthetic "issue-" stub, got ' + JSON.stringify(meta));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestPortalRunsView_VisibleRunForIssueGroup_CanonicalParentIdentityStaysPut
-// is the regression test for issue #1525: when an issue group contains a
-// canonical implementation row AND one or more review child rows, the
-// visible row's batchKey/runId/issueTitle/startedAt must come from the
-// canonical parent row, never from a review child. The visible row's key
-// must equal the parent's key.
-func TestPortalRunsView_VisibleRunForIssueGroup_CanonicalParentIdentityStaysPut(t *testing.T) {
-	js := `const parent = {
-  key: '260618113825-abcd-1', kind: 'completed', status: 'success', review: false,
-  issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1,
-  batchKey: 'parent-batch', issueTitle: 'Fix login bug',
-  startedAt: '2025-01-01T00:00:00Z',
-};
-const review = {
-  key: 'PR42', kind: 'active', status: 'reviewing', review: true,
-  issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42,
-  batchKey: 'review-batch', issueTitle: 'Review PR42',
-  startedAt: '2025-02-01T00:00:00Z',
-};
-const result = visibleRunForIssueGroup(1, [parent, review]);
-if (!result) throw new Error('expected visible row');
-if (result.key !== '260618113825-abcd-1') throw new Error('expected canonical parent key issue-1, got ' + JSON.stringify(result.key));
-if (result.runId !== '260618113825-abcd-1') throw new Error('expected canonical parent runId, got ' + JSON.stringify(result.runId));
-if (result.batchKey !== 'parent-batch') throw new Error('expected canonical parent batchKey parent-batch, got ' + JSON.stringify(result.batchKey));
-if (result.issueTitle !== 'Fix login bug') throw new Error('expected canonical parent issueTitle, got ' + JSON.stringify(result.issueTitle));
-if (result.startedAt !== '2025-01-01T00:00:00Z') throw new Error('expected canonical parent startedAt, got ' + JSON.stringify(result.startedAt));
-if (result.review) throw new Error('expected review=false on canonical parent row, got ' + JSON.stringify(result.review));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
@@ -4641,7 +4321,7 @@ func TestPortalRunsView_VisibleRunsForTable_KeepsParentIssueVisible(t *testing.T
   key: '260618113825-abcd-1', kind: 'completed', status: 'success', review: false,
   issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1,
   batchKey: 'parent-batch', issueTitle: 'Fix login bug',
-  startedAt: '2025-01-01T00:00:00Z',
+  startedAt: '2025-01-01T00:00:00Z', groupVisible: true, subjects: ['260618113825-abcd-1', 'PR42'],
 };
 const review = {
   key: 'PR42', kind: 'active', status: 'reviewing', review: true,
@@ -4654,233 +4334,6 @@ if (visible.length !== 1) throw new Error('expected one visible row, got ' + vis
 if (visible[0].key !== '260618113825-abcd-1') throw new Error('expected visible row key issue-1, got ' + JSON.stringify(visible[0].key));
 if (visible[0].batchKey !== 'parent-batch') throw new Error('expected visible row batchKey from parent, got ' + JSON.stringify(visible[0].batchKey));
 if (visible[0].issueTitle !== 'Fix login bug') throw new Error('expected visible row issueTitle from parent, got ' + JSON.stringify(visible[0].issueTitle));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestPortalDiff_SubjectRunsFor_KeepsCanonicalParentFirst pins the subject
-// picker contract from issue #1525 AC3: when a row group has a canonical
-// parent and review children, the related subject list must lead with the
-// canonical parent so users can return to the implementation row by
-// selecting the parent option, AND every review child must remain
-// reachable as its own subject option.
-func TestPortalDiff_SubjectRunsFor_KeepsCanonicalParentFirst(t *testing.T) {
-	js := `const opts = { helpers, runs: [
-  { key: '260618113825-abcd-1', runId: '260618113825-abcd-1', kind: 'completed', status: 'success', review: false, issueNumber: 1, issueLabel: '#1' },
-  { key: 'PR42', runId: 'PR42', kind: 'active', status: 'reviewing', review: true, issueNumber: 1, issueLabel: 'PR42', prNumber: 42 },
-  { key: 'PR43', runId: 'PR43', kind: 'completed', status: 'success', review: true, issueNumber: 1, issueLabel: 'PR43', prNumber: 43 },
-] };
-const rowRun = opts.runs[0];
-const related = SandmanPortalDiff.subjectRunsFor(rowRun, opts);
-if (!Array.isArray(related) || related.length !== 3) throw new Error('expected 3 related subjects (parent + 2 reviews), got ' + JSON.stringify(related.length));
-if (related[0].review) throw new Error('expected first related subject to be the canonical parent, got review row first');
-if (related[0].runId !== '260618113825-abcd-1') throw new Error('expected first related subject runId issue-1, got ' + JSON.stringify(related[0].runId));
-const reviewIds = related.slice(1).map((r) => r.runId).sort();
-if (reviewIds[0] !== 'PR42' || reviewIds[1] !== 'PR43') throw new Error('expected review children PR42 and PR43 in related subjects, got ' + JSON.stringify(reviewIds));
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
-func TestPortalDiff_SubjectRunsFor_IncludesPreviousContinuationRun(t *testing.T) {
-	js := `const previous = {
-  key: 'old-run', runId: 'old-run', kind: 'completed', status: 'success', review: false,
-  issueNumber: 1, issueLabel: '#1', startedAt: '2026-07-06T10:00:00Z',
-};
-const continuation = {
-  key: 'new-run', runId: 'new-run', kind: 'active', status: 'running', review: false,
-  issueNumber: 1, issueLabel: '#1', startedAt: '2026-07-07T10:00:00Z',
-  events: [{ type: 'run.continued', payload: { previous_run_id: 'old-run' } }],
-};
-const opts = { helpers, runs: [continuation, previous] };
-const related = SandmanPortalDiff.subjectRunsFor(continuation, opts);
-const ids = related.map((run) => run.runId);
-if (ids.length !== 2) throw new Error('expected continuation plus previous run, got ' + JSON.stringify(ids));
-if (ids[0] !== 'new-run') throw new Error('expected current continuation first, got ' + JSON.stringify(ids));
-if (ids[1] !== 'old-run') throw new Error('expected previous run as sibling, got ' + JSON.stringify(ids));
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
-// TestPortalDiff_SubjectRunsFor_MultipleParentsPicksCanonical pins the
-// regression observed on issue #1855: an issue group can carry two impl
-// rows (one earlier abandoned, one later successful) plus sibling
-// reviews. The earlier parent pick required `parents.length === 1` to
-// fall back to the only parent; with two parents the dropdown lost
-// the parent entirely and listed only the reviews, breaking the
-// subject switcher. The table and the selector share pickCanonicalParent
-// (portal_diff.js): prefer an active (currently-running) parent,
-// otherwise the most-recent terminal impl — never the
-// olderAborted-with-reviewMetadata row, which is exactly the #1825
-// cross-batch guard's contract.
-func TestPortalDiff_SubjectRunsFor_MultipleParentsPicksCanonical(t *testing.T) {
-	js := `const opts = { helpers, runs: [
-  { key: '260706140827-1058-1855-PR1875', runId: '260706140827-1058-1855-PR1875', kind: 'completed', status: 'success', review: true, issueNumber: 1855, issueLabel: 'PR1875', prNumber: 1875, startedAt: '2026-07-06T14:08:32Z' },
-  { key: '260706134357-e39d-1855-PR1875', runId: '260706134357-e39d-1855-PR1875', kind: 'completed', status: 'success', review: true, issueNumber: 1855, issueLabel: 'PR1875', prNumber: 1875, startedAt: '2026-07-06T13:44:02Z' },
-  { key: '260706132041-fb4a-1855', runId: '260706132041-fb4a-1855', kind: 'completed', status: 'success', review: false, issueNumber: 1855, issueLabel: '#1855', startedAt: '2026-07-06T13:20:48Z' },
-  { key: '260706132006-2569-1855', runId: '260706132006-2569-1855', kind: 'completed', status: 'aborted', review: false, issueNumber: 1855, issueLabel: '#1855', startedAt: '2026-07-06T12:00:00Z' },
-] };
-const rowRun = opts.runs[0];
-const related = SandmanPortalDiff.subjectRunsFor(rowRun, opts);
-if (!Array.isArray(related) || related.length !== 3) throw new Error('expected 3 related subjects (parent + 2 reviews), got ' + JSON.stringify(related.length));
-if (related[0].review) throw new Error('expected first related subject to be the canonical parent, got review row first');
-if (related[0].runId !== '260706132041-fb4a-1855') throw new Error('expected canonical parent 260706132041-fb4a-1855 (caller-order), got ' + JSON.stringify(related[0].runId));
-const reviewIds = related.slice(1).map((r) => r.runId).sort();
-if (reviewIds[0] !== '260706134357-e39d-1855-PR1875' || reviewIds[1] !== '260706140827-1058-1855-PR1875') throw new Error('expected both reviews in related subjects, got ' + JSON.stringify(reviewIds));
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
-// TestPortalDiff_SubjectRunsFor_ActiveParentWinsOverOlderTerminals pins
-// the active-first branch of pickCanonicalParent: a currently-running
-// parent (kind === 'active') owns the issue group even when an older
-// successful impl exists in the caller's array. Within actives the
-// latest by startedAt wins.
-func TestPortalDiff_SubjectRunsFor_ActiveParentWinsOverOlderTerminals(t *testing.T) {
-	js := `const opts = { helpers, runs: [
-  { key: 'old-impl', runId: 'old-impl', kind: 'completed', status: 'success', review: false, issueNumber: 100, issueLabel: '#100', startedAt: '2026-07-06T10:00:00Z' },
-  { key: 'new-impl-active', runId: 'new-impl-active', kind: 'active', status: 'running', review: false, issueNumber: 100, issueLabel: '#100', startedAt: '2026-07-06T15:00:00Z' },
-  { key: 'newer-active', runId: 'newer-active', kind: 'active', status: 'running', review: false, issueNumber: 100, issueLabel: '#100', startedAt: '2026-07-06T15:30:00Z' },
-] };
-const rowRun = opts.runs[0];
-const related = SandmanPortalDiff.subjectRunsFor(rowRun, opts);
-if (related.length !== 1) throw new Error('expected 1 related subject (active parent only — no reviews), got ' + JSON.stringify(related.length));
-if (related[0].runId !== 'newer-active') throw new Error('expected newest active parent newer-active, got ' + JSON.stringify(related[0].runId));
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
-// TestPortalRunsView_VisibleRunForIssueGroup_LiveActiveParentKeepsIdentity
-// issue #1525: a live, active canonical parent row must
-// remain the visible row even when a later-started review child exists in
-// the same group, and the parent's identity fields must not be blended
-// with any review metadata. The badge status comes from the backend
-// projection; the frontend passes it through without re-deriving.
-func TestPortalRunsView_VisibleRunForIssueGroup_LiveActiveParentKeepsIdentity(t *testing.T) {
-	js := `const liveParent = {
-  key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', review: false,
-  issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1,
-  batchKey: 'parent-batch', issueTitle: 'Fix login bug',
-  startedAt: '2025-01-15T00:00:00Z',
-};
-const review = {
-  key: 'PR42', kind: 'active', status: 'reviewing', review: true,
-  issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42,
-  batchKey: 'review-batch', issueTitle: 'Review PR42',
-  startedAt: '2025-02-01T00:00:00Z',
-};
-const result = visibleRunForIssueGroup(1, [liveParent, review]);
-if (!result) throw new Error('expected visible row');
-if (result.key !== '260618113825-abcd-1') throw new Error('expected live parent as visible row, got ' + JSON.stringify(result.key));
-if (result.kind !== 'active') throw new Error('expected active kind, got ' + JSON.stringify(result.kind));
-if (result.status !== 'reviewing') throw new Error('expected visible badge to be reviewing (backend-provided), got ' + JSON.stringify(result.status));
-if (result.batchKey !== 'parent-batch') throw new Error('expected parent batchKey, got ' + JSON.stringify(result.batchKey));
-if (result.issueTitle !== 'Fix login bug') throw new Error('expected parent issueTitle, got ' + JSON.stringify(result.issueTitle));
-if (result.startedAt !== '2025-01-15T00:00:00Z') throw new Error('expected parent startedAt, got ' + JSON.stringify(result.startedAt));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestPortalRunsView_VisibleRunForIssueGroup_ArchivedParentKeepsIdentity
-// issue #1525: an archived canonical parent row must
-// remain the visible row when an active review child exists, and the
-// archived parent's identity fields must not be blended with the review
-// child's identity.
-func TestPortalRunsView_VisibleRunForIssueGroup_ArchivedParentKeepsIdentity(t *testing.T) {
-	js := `const archivedParent = {
-  key: '260618113825-abcd-1', kind: 'completed', status: 'success', review: false,
-  issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1,
-  batchKey: 'parent-batch', issueTitle: 'Fix login bug',
-  startedAt: '2024-12-01T00:00:00Z', archived: true,
-};
-const review = {
-  key: 'PR42', kind: 'active', status: 'reviewing', review: true,
-  issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42,
-  batchKey: 'review-batch', issueTitle: 'Review PR42',
-  startedAt: '2025-02-01T00:00:00Z',
-};
-const result = visibleRunForIssueGroup(1, [archivedParent, review]);
-if (!result) throw new Error('expected visible row');
-if (result.key !== '260618113825-abcd-1') throw new Error('expected archived parent as visible row, got ' + JSON.stringify(result.key));
-if (result.batchKey !== 'parent-batch') throw new Error('expected parent batchKey, got ' + JSON.stringify(result.batchKey));
-if (result.issueTitle !== 'Fix login bug') throw new Error('expected parent issueTitle, got ' + JSON.stringify(result.issueTitle));
-if (result.startedAt !== '2024-12-01T00:00:00Z') throw new Error('expected parent startedAt, got ' + JSON.stringify(result.startedAt));
-if (!result.archived) throw new Error('expected archived flag preserved, got ' + JSON.stringify(result.archived));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestPortalRunsView_VisibleRunForIssueGroup_CompletedParentWithVerdict
-// issue #1525: a completed canonical parent row with a
-// review verdict must remain the visible row when a review child exists,
-// and the parent's identity fields must not be blended with the review
-// child's identity. The parent's reviewVerdict is preserved as a
-// summary, not as a substitution for the parent's own data.
-func TestPortalRunsView_VisibleRunForIssueGroup_CompletedParentWithVerdict(t *testing.T) {
-	js := `const parent = {
-  key: '260618113825-abcd-1', kind: 'completed', status: 'success', review: false,
-  issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1,
-  batchKey: 'parent-batch', issueTitle: 'Fix login bug',
-  startedAt: '2025-01-01T00:00:00Z',
-  reviewCount: 2, reviewVerdict: 'Approved',
-};
-const review = {
-  key: 'PR42', kind: 'completed', status: 'success', review: true,
-  issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42,
-  batchKey: 'review-batch', issueTitle: 'Review PR42',
-  startedAt: '2025-01-15T00:00:00Z',
-};
-const result = visibleRunForIssueGroup(1, [parent, review]);
-if (!result) throw new Error('expected visible row');
-if (result.key !== '260618113825-abcd-1') throw new Error('expected completed parent as visible row, got ' + JSON.stringify(result.key));
-if (result.batchKey !== 'parent-batch') throw new Error('expected parent batchKey, got ' + JSON.stringify(result.batchKey));
-if (result.issueTitle !== 'Fix login bug') throw new Error('expected parent issueTitle, got ' + JSON.stringify(result.issueTitle));
-if (result.runId !== '260618113825-abcd-1') throw new Error('expected parent runId, got ' + JSON.stringify(result.runId));
-if (result.startedAt !== '2025-01-01T00:00:00Z') throw new Error('expected parent startedAt, got ' + JSON.stringify(result.startedAt));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestPortalRunsView_VisibleRunForIssueGroup_ReviewSubjectDoesNotChangeVisible
-// is the AC4 regression test for issue #1525: switching the expanded
-// subject selector to a review child must not change which row is
-// visible. The visible row is decided by visibleRunForIssueGroup on the
-// underlying group, not by the expanded subject; the two are
-// independent selections.
-func TestPortalRunsView_VisibleRunForIssueGroup_ReviewSubjectDoesNotChangeVisible(t *testing.T) {
-	js := `const parent = {
-  key: '260618113825-abcd-1', kind: 'completed', status: 'success', review: false,
-  issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1,
-  batchKey: 'parent-batch', issueTitle: 'Fix login bug',
-  startedAt: '2025-01-01T00:00:00Z',
-};
-const review1 = {
-  key: 'PR42', kind: 'active', status: 'reviewing', review: true,
-  issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42,
-  batchKey: 'review-batch', issueTitle: 'Review PR42',
-  startedAt: '2025-02-01T00:00:00Z',
-};
-const review2 = {
-  key: 'PR43', kind: 'completed', status: 'success', review: true,
-  issueLabel: 'PR43', runId: 'PR43', issueNumber: 1, prNumber: 43,
-  batchKey: 'review-batch-2', issueTitle: 'Review PR43',
-  startedAt: '2025-01-15T00:00:00Z',
-};
-// Visible row before any subject selection: parent.
-const before = visibleRunForIssueGroup(1, [parent, review1, review2]);
-if (!before || before.key !== '260618113825-abcd-1') throw new Error('expected visible row to be parent before subject switch, got ' + JSON.stringify(before && before.key));
-// Switching the subject selector to a review child must not influence
-// which row is visible — visibleRunForIssueGroup still picks the parent.
-const after = visibleRunForIssueGroup(1, [parent, review1, review2]);
-if (!after || after.key !== '260618113825-abcd-1') throw new Error('expected visible row to stay parent after subject switch, got ' + JSON.stringify(after && after.key));
-if (after.runId !== '260618113825-abcd-1' || after.batchKey !== 'parent-batch') throw new Error('expected parent identity to stay intact, got ' + JSON.stringify({ runId: after.runId, batchKey: after.batchKey }));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
@@ -4961,133 +4414,6 @@ for (const tc of cases) {
 console.log('PASS');
 `
 	runNodeScript(t, js)
-}
-
-// TestPortalRunsView_VisibleRunForIssueGroup_LiveReviewFlipsParentStatusToReviewing
-// verifies that the frontend passes through the parent row's status field
-// without re-deriving it. The synthetic literal here explicitly sets
-// status="reviewing" so the test pins the frontend's pass-through behavior
-// rather than asserting on backend projection (the backend no longer stamps
-// review metadata onto parent rows after the cross-batch aggregation
-// removal in issue #1825).
-func TestPortalRunsView_VisibleRunForIssueGroup_LiveReviewFlipsParentStatusToReviewing(t *testing.T) {
-	js := `const parent = {
-  key: '260618113825-abcd-1', kind: 'completed', status: 'reviewing', review: false,
-  issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1,
-  batchKey: 'parent-batch', issueTitle: 'Fix login bug',
-  startedAt: '2025-01-01T00:00:00Z',
-};
-const liveReview = {
-  key: 'PR42', kind: 'active', status: 'reviewing', review: true,
-  issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42,
-  batchKey: 'review-batch', issueTitle: 'Review PR42',
-  startedAt: '2025-02-01T00:00:00Z',
-};
-const result = visibleRunForIssueGroup(1, [parent, liveReview]);
-if (!result) throw new Error('expected visible row');
-if (result.key !== '260618113825-abcd-1') throw new Error('expected canonical parent key issue-1, got ' + JSON.stringify(result.key));
-if (result.runId !== '260618113825-abcd-1') throw new Error('expected canonical parent runId, got ' + JSON.stringify(result.runId));
-if (result.batchKey !== 'parent-batch') throw new Error('expected canonical parent batchKey parent-batch, got ' + JSON.stringify(result.batchKey));
-if (result.issueTitle !== 'Fix login bug') throw new Error('expected canonical parent issueTitle, got ' + JSON.stringify(result.issueTitle));
-if (result.startedAt !== '2025-01-01T00:00:00Z') throw new Error('expected canonical parent startedAt, got ' + JSON.stringify(result.startedAt));
-if (result.review) throw new Error('expected review=false on visible parent row, got ' + JSON.stringify(result.review));
-if (result.status !== 'reviewing') throw new Error('expected visible status=reviewing (backend-provided), got ' + JSON.stringify(result.status));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestPortalRunsView_VisibleRunForIssueGroup_CompletedReviewKeepsParentBadge
-// is slice #1527 acceptance criterion 3: when all review child rows have
-// completed (no live/active review children), the visible run's status must
-// revert to the canonical parent's own status — the badge does not flip.
-func TestPortalRunsView_VisibleRunForIssueGroup_CompletedReviewKeepsParentBadge(t *testing.T) {
-	js := `const parent = {
-  key: '260618113825-abcd-1', kind: 'completed', status: 'success', review: false,
-  issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1,
-  batchKey: 'parent-batch', issueTitle: 'Fix login bug',
-  startedAt: '2025-01-01T00:00:00Z',
-};
-const completedReview = {
-  key: 'PR42', kind: 'completed', status: 'success', review: true,
-  issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42,
-  batchKey: 'review-batch', issueTitle: 'Review PR42',
-  startedAt: '2025-01-15T00:00:00Z',
-};
-const result = visibleRunForIssueGroup(1, [parent, completedReview]);
-if (!result) throw new Error('expected visible row');
-if (result.key !== '260618113825-abcd-1') throw new Error('expected canonical parent key issue-1, got ' + JSON.stringify(result.key));
-if (result.status !== 'success') throw new Error('expected visible status=success (no live review child → no flip), got ' + JSON.stringify(result.status));
-if (result.liveReview) throw new Error('expected liveReview=false (no live review child), got ' + JSON.stringify(result.liveReview));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestPortalRunsView_VisibleRunForIssueGroup_NoReviewChildrenKeepsParentBadge
-// is slice #1527 acceptance criterion 4: a canonical parent with no review
-// children at all must produce a visible row whose status matches the
-// parent's own status, no badge flip.
-func TestPortalRunsView_VisibleRunForIssueGroup_NoReviewChildrenKeepsParentBadge(t *testing.T) {
-	js := `const parent = {
-  key: '260618113825-abcd-1', kind: 'completed', status: 'success', review: false,
-  issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1,
-  batchKey: 'parent-batch', issueTitle: 'Fix login bug',
-  startedAt: '2025-01-01T00:00:00Z',
-};
-const result = visibleRunForIssueGroup(1, [parent]);
-if (!result) throw new Error('expected visible row');
-if (result.status !== 'success') throw new Error('expected visible status=success (no review children → no flip), got ' + JSON.stringify(result.status));
-if (result.liveReview) throw new Error('expected liveReview=false (no review children), got ' + JSON.stringify(result.liveReview));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestPortalRunsView_VisibleRunForIssueGroup_LiveActiveParentFlipsBadgeViaChild
-// verifies that for a still-active parent with a live review child, the
-// badge status from the backend projection passes through unchanged.
-func TestPortalRunsView_VisibleRunForIssueGroup_LiveActiveParentFlipsBadgeViaChild(t *testing.T) {
-	js := `const parent = {
-  key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', review: false,
-  issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1,
-  batchKey: 'parent-batch', issueTitle: 'Fix login bug',
-  startedAt: '2025-01-15T00:00:00Z',
-};
-const liveReview = {
-  key: 'PR42', kind: 'active', status: 'reviewing', review: true,
-  issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42,
-  batchKey: 'review-batch', issueTitle: 'Review PR42',
-  startedAt: '2025-02-01T00:00:00Z',
-};
-const result = visibleRunForIssueGroup(1, [parent, liveReview]);
-if (!result) throw new Error('expected visible row');
-if (result.key !== '260618113825-abcd-1') throw new Error('expected canonical parent key, got ' + JSON.stringify(result.key));
-if (result.status !== 'reviewing') throw new Error('expected visible status=reviewing (backend-provided), got ' + JSON.stringify(result.status));
-if (result.batchKey !== 'parent-batch') throw new Error('expected parent batchKey, got ' + JSON.stringify(result.batchKey));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestPortalRunsView_VisibleRunForIssueGroup_OrphanReviewOnlyHasItsOwnStatus
-// is slice #1527 acceptance criterion 5: orphan review-only rows (no
-// canonical parent) must NOT trigger any extra badge flip logic — the
-// existing review-only stub synthesis presents its own live-reviewing or
-// terminal verdict status honestly.
-func TestPortalRunsView_VisibleRunForIssueGroup_OrphanReviewOnlyHasItsOwnStatus(t *testing.T) {
-	js := `const liveReview = {
-  key: '260622193226-a0c19-1227', kind: 'active', status: 'reviewing', review: true,
-  issueLabel: '#1223', runId: '260622193226-a0c19-1227', issueNumber: 1223, prNumber: 5,
-};
-const result = visibleRunForIssueGroup(1223, [liveReview]);
-if (!result) throw new Error('expected visible row');
-if (result.status !== 'reviewing') throw new Error('expected orphan review-only visible status=reviewing (the review is live), got ' + JSON.stringify(result.status));
-if (result.review !== true) throw new Error('expected orphan review-only stub review=true, got ' + JSON.stringify(result.review));
-if (result.reviewLive !== true) throw new Error('expected orphan review-only stub reviewLive=true, got ' + JSON.stringify(result.reviewLive));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
 }
 
 // TestPortalDiffUpdateDetailEvents_PollFingerprintUsesCheapTriplet (issue
@@ -5281,457 +4607,6 @@ try {
 	console.log('PASS');
 `
 	runNodeScript(t, js)
-}
-
-// --- Issue #1856: summarizeReviewGroup verdict extraction ---
-
-// Note: runInNewContext does not accept single-quoted strings that span
-// multiple lines, so the fixture logs are built with String.fromCharCode(10)
-// (= '\n') instead of literal newlines. This is a vm/parser constraint,
-// not a portal.html contract.
-
-// TestSummarizeReviewGroup_Verdict_EmptyLogReturnsEmptyVerdict pins the
-// steady-state default for issue #1856: a review child whose `log` is
-// missing or empty contributes no verdict, so the orphan-path stub and
-// the parent-enrichment path both render the counter line as "N review"
-// with no trailing dash. This is the realistic default in production
-// because the summary endpoint strips logs from each row.
-func TestSummarizeReviewGroup_Verdict_EmptyLogReturnsEmptyVerdict(t *testing.T) {
-	js := `const reviews = [
-  { key: 'r1', runId: 'r1', review: true, status: 'success', startedAt: '2026-07-01T00:00:00Z' },
-];
-const summary = summarizeReviewGroup(reviews);
-if (summary.verdict !== '') throw new Error('expected empty verdict when log is missing, got ' + JSON.stringify(summary.verdict));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestSummarizeReviewGroup_Verdict_EmptyStringLogReturnsEmptyVerdict pins
-// the same steady-state default with an explicit empty string log.
-func TestSummarizeReviewGroup_Verdict_EmptyStringLogReturnsEmptyVerdict(t *testing.T) {
-	js := `const reviews = [
-  { key: 'r1', runId: 'r1', review: true, status: 'success', startedAt: '2026-07-01T00:00:00Z', log: '' },
-];
-const summary = summarizeReviewGroup(reviews);
-if (summary.verdict !== '') throw new Error('expected empty verdict when log is empty string, got ' + JSON.stringify(summary.verdict));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestSummarizeReviewGroup_Verdict_NoDecisionSectionReturnsEmptyVerdict
-// pins the case where the run.log has content but no `## Decision`
-// section.
-func TestSummarizeReviewGroup_Verdict_NoDecisionSectionReturnsEmptyVerdict(t *testing.T) {
-	js := `const NL = String.fromCharCode(10);
-const reviews = [
-  { key: 'r1', runId: 'r1', review: true, status: 'success', startedAt: '2026-07-01T00:00:00Z', log: 'some other log content' + NL + '**APPROVED**' + NL },
-];
-const summary = summarizeReviewGroup(reviews);
-if (summary.verdict !== '') throw new Error('expected empty verdict when no ## Decision section, got ' + JSON.stringify(summary.verdict));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestSummarizeReviewGroup_Verdict_ApprovedMarker pins the canonical
-// "## Decision\n**APPROVED**" shape: verdict becomes "Approved".
-func TestSummarizeReviewGroup_Verdict_ApprovedMarker(t *testing.T) {
-	js := `const NL = String.fromCharCode(10);
-const reviews = [
-  { key: 'r1', runId: 'r1', review: true, status: 'success', startedAt: '2026-07-01T00:00:00Z', log: '## Decision' + NL + '**APPROVED**' + NL },
-];
-const summary = summarizeReviewGroup(reviews);
-if (summary.verdict !== 'Approved') throw new Error('expected verdict=Approved, got ' + JSON.stringify(summary.verdict));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestSummarizeReviewGroup_Verdict_ChangesRequestedMarker pins the
-// "**CHANGES_REQUESTED**" case.
-func TestSummarizeReviewGroup_Verdict_ChangesRequestedMarker(t *testing.T) {
-	js := `const NL = String.fromCharCode(10);
-const reviews = [
-  { key: 'r1', runId: 'r1', review: true, status: 'success', startedAt: '2026-07-01T00:00:00Z', log: '## Decision' + NL + '**CHANGES_REQUESTED**' + NL },
-];
-const summary = summarizeReviewGroup(reviews);
-if (summary.verdict !== 'Changes requested') throw new Error('expected verdict=Changes requested, got ' + JSON.stringify(summary.verdict));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestSummarizeReviewGroup_Verdict_GoRegexParityBare pins Go-side parity
-// for the bare marker line shape. issue #1938 retargeted
-// the server-side verdict reader from run.log to decision.md; the bare
-// marker rule is the only rule the new Go helper accepts (decision.md
-// is a controlled artefact with no shell prefix and no trailing
-// debris).
-func TestSummarizeReviewGroup_Verdict_GoRegexParityBare(t *testing.T) {
-	js := `const NL = String.fromCharCode(10);
-const reviews = [
-  { key: 'r1', runId: 'r1', review: true, status: 'success', startedAt: '2026-07-01T00:00:00Z', log: '## Decision' + NL + '**APPROVED**' + NL },
-];
-const summary = summarizeReviewGroup(reviews);
-if (summary.verdict !== 'Approved') throw new Error('bare marker must match the Go-side bare marker rule, got ' + JSON.stringify(summary.verdict));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestSummarizeReviewGroup_Verdict_JSOrphanDebrisStillTolerated pins the
-// JS-side orphan helper's tolerance of shell-debris shapes
-// (`**APPROVED**" 2>&1 | tail -5`). Issue #1938 retargeted the
-// Go server-side verdict reader to decision.md (no debris tolerated),
-// but the JS orphan-fallback path still reads each review's saved
-// run.log, where the same debris rule remains in place — the JS-side
-// debris regex must continue to accept these lines so orphan rows in
-// flight before issue #1938 still surface a verdict. This test gates that
-// behaviour so a future JS tidy-up does not silently drop orphan
-// verdicts for legacy runs.
-func TestSummarizeReviewGroup_Verdict_JSOrphanDebrisStillTolerated(t *testing.T) {
-	js := `const NL = String.fromCharCode(10);
-const reviews = [
-  { key: 'r1', runId: 'r1', review: true, status: 'success', startedAt: '2026-07-01T00:00:00Z', log: '## Decision' + NL + '**APPROVED**" 2>&1 | tail -5' + NL },
-];
-const summary = summarizeReviewGroup(reviews);
-if (summary.verdict !== 'Approved') throw new Error('with-debris marker must still match (JS orphan helper retains debris tolerance for legacy run.log), got ' + JSON.stringify(summary.verdict));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestSummarizeReviewGroup_Verdict_RejectsMidLineProse pins Go-side parity
-// for the negative case: mid-line prose like **APPROVED** is unrelated
-// prose is rejected (no false positive).
-func TestSummarizeReviewGroup_Verdict_RejectsMidLineProse(t *testing.T) {
-	js := `const NL = String.fromCharCode(10);
-const reviews = [
-  { key: 'r1', runId: 'r1', review: true, status: 'success', startedAt: '2026-07-01T00:00:00Z', log: '## Decision' + NL + '**APPROVED** is unrelated prose' + NL },
-];
-const summary = summarizeReviewGroup(reviews);
-if (summary.verdict !== '') throw new Error('mid-line prose must be rejected (Go regex parity), got ' + JSON.stringify(summary.verdict));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestSummarizeReviewGroup_Verdict_LatestReviewWinsTieBreak pins the
-// "latest review wins" contract: when two reviews have different
-// startedAt and disagree on the marker, the verdict comes from the
-// newer review. The existing summarizeReviewGroup sort puts the
-// newest startedAt first; the verdict scan walks the ordered list
-// in that order and returns the first recoverable marker.
-func TestSummarizeReviewGroup_Verdict_LatestReviewWinsTieBreak(t *testing.T) {
-	js := `const NL = String.fromCharCode(10);
-// r1 is older and has CHANGES_REQUESTED; r2 is newer and has
-// APPROVED. The verdict scan must pick r2's marker (newer wins).
-const reviews = [
-  { key: 'r1', runId: 'r1', review: true, status: 'success', startedAt: '2026-07-01T00:00:00Z', log: '## Decision' + NL + '**CHANGES_REQUESTED**' + NL },
-  { key: 'r2', runId: 'r2', review: true, status: 'success', startedAt: '2026-07-02T00:00:00Z', log: '## Decision' + NL + '**APPROVED**' + NL },
-];
-const summary = summarizeReviewGroup(reviews);
-// summarizeReviewGroup sorts by startedAt desc, so r2 (newer) is
-// ordered first. The verdict scan walks reviews in that order and
-// returns the verdict from the first review whose log has a marker.
-if (summary.verdict !== 'Approved') throw new Error('expected verdict from newer review (r2, APPROVED), got ' + JSON.stringify(summary.verdict));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestSummarizeReviewGroup_Verdict_LogLinePrefixStrips pins parity with
-// the Go-side stripLogLabel: each line may be prefixed with
-// "[<runID>] HH:MM:SS " by the agent output stream.
-func TestSummarizeReviewGroup_Verdict_LogLinePrefixStrips(t *testing.T) {
-	js := `const NL = String.fromCharCode(10);
-const reviews = [
-  { key: 'r1', runId: 'r1', review: true, status: 'success', startedAt: '2026-07-01T00:00:00Z', log: '[r1] 12:00:00 ## Decision' + NL + '[r1] 12:00:30 **APPROVED**' + NL },
-];
-const summary = summarizeReviewGroup(reviews);
-if (summary.verdict !== 'Approved') throw new Error('expected verdict=Approved after stripping [runID] HH:MM:SS prefix, got ' + JSON.stringify(summary.verdict));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestSummarizeReviewGroup_Verdict_OrphanPathPicksUpNewExtraction pins
-// the orphan path: with the new extraction, an orphan review-only group
-// whose log has a Decision marker must also surface the verdict through
-// the existing summary path (no separate code change in the orphan
-// branch). issue #1938's effect propagates to the orphan stub automatically.
-func TestSummarizeReviewGroup_Verdict_OrphanPathPicksUpNewExtraction(t *testing.T) {
-	js := `const NL = String.fromCharCode(10);
-const review = { key: 'r1', runId: 'r1', review: true, status: 'success', issueNumber: 1, prNumber: 5, startedAt: '2026-07-01T00:00:00Z', log: '## Decision' + NL + '**APPROVED**' + NL };
-const stub = visibleRunForIssueGroup(1, [review]);
-if (!stub) throw new Error('expected orphan stub row');
-if (stub.reviewVerdict !== 'Approved') throw new Error('expected orphan stub to surface Approved via new verdict extraction, got ' + JSON.stringify(stub.reviewVerdict));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// --- Issue #1856: visibleRunForIssueGroup parent enrichment ---
-
-// TestVisibleRunForIssueGroup_ParentStampsTwoReviews is AC 6 (a): a
-// completed parent with two terminal review children that each carry
-// an APPROVED marker in their run.log must surface reviewCount=2 and
-// reviewVerdict="Approved" on the visible parent row, with the
-// parent's identity fields preserved verbatim. After #1897 the server
-// (aggregateReviewChildren) stamps these onto the parent during compute;
-// the JS passes the server-stamped values through unchanged.
-func TestVisibleRunForIssueGroup_ParentStampsTwoReviews(t *testing.T) {
-	js := `const NL = String.fromCharCode(10);
-const parent = {
-  key: 'impl-1', kind: 'completed', status: 'success', review: false,
-  issueLabel: '#1', runId: 'impl-1', issueNumber: 1,
-  batchKey: 'parent-batch', issueTitle: 'Fix login bug',
-  startedAt: '2025-01-01T00:00:00Z',
-  // Server-stamped by aggregateReviewChildren (#1897).
-  reviewCount: 2, reviewVerdict: 'Approved',
-};
-const review1 = {
-  key: 'PR42', runId: 'PR42', kind: 'completed', status: 'success', review: true,
-  issueNumber: 1, prNumber: 42, startedAt: '2025-01-15T00:00:00Z',
-  log: '## Decision' + NL + '**APPROVED**' + NL,
-};
-const review2 = {
-  key: 'PR43', runId: 'PR43', kind: 'completed', status: 'success', review: true,
-  issueNumber: 1, prNumber: 43, startedAt: '2025-01-20T00:00:00Z',
-  log: '## Decision' + NL + '**APPROVED**' + NL,
-};
-const visible = visibleRunForIssueGroup(1, [parent, review1, review2]);
-if (!visible) throw new Error('expected visible row');
-if (visible.reviewCount !== 2) throw new Error('expected reviewCount=2, got ' + JSON.stringify(visible.reviewCount));
-if (visible.reviewVerdict !== 'Approved') throw new Error('expected reviewVerdict=Approved, got ' + JSON.stringify(visible.reviewVerdict));
-if (visible.key !== 'impl-1') throw new Error('expected parent key preserved, got ' + JSON.stringify(visible.key));
-if (visible.runId !== 'impl-1') throw new Error('expected parent runId preserved, got ' + JSON.stringify(visible.runId));
-if (visible.batchKey !== 'parent-batch') throw new Error('expected parent batchKey preserved, got ' + JSON.stringify(visible.batchKey));
-if (visible.issueTitle !== 'Fix login bug') throw new Error('expected parent issueTitle preserved, got ' + JSON.stringify(visible.issueTitle));
-if (visible.startedAt !== '2025-01-01T00:00:00Z') throw new Error('expected parent startedAt preserved, got ' + JSON.stringify(visible.startedAt));
-if (visible.status !== 'success') throw new Error('expected parent status preserved, got ' + JSON.stringify(visible.status));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestVisibleRunForIssueGroup_ParentStampsOneReview is AC 6 (b): a
-// completed parent with one terminal review child must surface
-// reviewCount=1 and reviewVerdict="Approved". After #1897 the server
-// (aggregateReviewChildren) stamps these onto the parent during compute;
-// the JS passes the server-stamped values through unchanged.
-func TestVisibleRunForIssueGroup_ParentStampsOneReview(t *testing.T) {
-	js := `const NL = String.fromCharCode(10);
-const parent = {
-  key: 'impl-2', kind: 'completed', status: 'success', review: false,
-  issueLabel: '#2', runId: 'impl-2', issueNumber: 2,
-  batchKey: 'parent-batch', issueTitle: 'Fix signup bug',
-  startedAt: '2025-01-01T00:00:00Z',
-  // Server-stamped by aggregateReviewChildren (#1897) from the sibling
-  // review's saved run.log; the JS must pass these through unchanged.
-  reviewCount: 1, reviewVerdict: 'Approved',
-};
-const review = {
-  key: 'PR44', runId: 'PR44', kind: 'completed', status: 'success', review: true,
-  issueNumber: 2, prNumber: 44, startedAt: '2025-01-15T00:00:00Z',
-  log: '## Decision' + NL + '**APPROVED**' + NL,
-};
-const visible = visibleRunForIssueGroup(2, [parent, review]);
-if (!visible) throw new Error('expected visible row');
-if (visible.reviewCount !== 1) throw new Error('expected reviewCount=1, got ' + JSON.stringify(visible.reviewCount));
-if (visible.reviewVerdict !== 'Approved') throw new Error('expected reviewVerdict=Approved, got ' + JSON.stringify(visible.reviewVerdict));
-if (visible.key !== 'impl-2') throw new Error('expected parent key preserved, got ' + JSON.stringify(visible.key));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestVisibleRunForIssueGroup_ParentNoReviewsNoStamp is AC 6 (c): a
-// completed parent with zero review children must not have
-// reviewCount/reviewVerdict stamped onto the visible row. The visible
-// row is the parent identity, unchanged.
-func TestVisibleRunForIssueGroup_ParentNoReviewsNoStamp(t *testing.T) {
-	js := `const parent = {
-  key: 'impl-3', kind: 'completed', status: 'success', review: false,
-  issueLabel: '#3', runId: 'impl-3', issueNumber: 3,
-  batchKey: 'parent-batch', issueTitle: 'Fix reset bug',
-  startedAt: '2025-01-01T00:00:00Z',
-};
-const visible = visibleRunForIssueGroup(3, [parent]);
-if (!visible) throw new Error('expected visible row');
-if (visible.reviewCount) throw new Error('expected no reviewCount when no review children, got ' + JSON.stringify(visible.reviewCount));
-if (visible.reviewVerdict) throw new Error('expected no reviewVerdict when no review children, got ' + JSON.stringify(visible.reviewVerdict));
-if (visible.key !== 'impl-3') throw new Error('expected parent key preserved, got ' + JSON.stringify(visible.key));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestVisibleRunForIssueGroup_ActiveParentLiveReviewShowsReviewingFlip is
-// AC 6 (d) post-#1897: a terminal parent alongside a live (non-terminal)
-// review child must show status="reviewing" — the server-side
-// aggregateReviewChildren flips the parent's badge when a live sibling
-// review exists (restored #1527/#1609 feature). reviewCount is stamped;
-// reviewVerdict stays empty (no terminal review child with a marker).
-func TestVisibleRunForIssueGroup_ActiveParentLiveReviewShowsReviewingFlip(t *testing.T) {
-	js := `const parent = {
-  key: 'impl-4', kind: 'completed', status: 'reviewing', review: false,
-  issueLabel: '#4', runId: 'impl-4', issueNumber: 4,
-  batchKey: 'parent-batch', issueTitle: 'Fix toggle bug',
-  startedAt: '2025-01-01T00:00:00Z',
-  // Server-stamped by aggregateReviewChildren (#1897): live sibling
-  // review flips the parent badge to "reviewing" and stamps reviewCount.
-  reviewCount: 1,
-};
-const liveReview = {
-  key: 'PR50', runId: 'PR50', kind: 'active', status: 'reviewing', review: true,
-  issueNumber: 4, prNumber: 50, startedAt: '2025-02-01T00:00:00Z',
-};
-const visible = visibleRunForIssueGroup(4, [parent, liveReview]);
-if (!visible) throw new Error('expected visible row');
-if (visible.status !== 'reviewing') throw new Error('expected visible status=reviewing (server flip for live review child), got ' + JSON.stringify(visible.status));
-if (visible.reviewCount !== 1) throw new Error('expected reviewCount=1, got ' + JSON.stringify(visible.reviewCount));
-// live review has no terminal marker, so verdict stays '' (omitted on
-// the wire via json,omitempty; treat undefined and '' equivalently).
-const verdict = visible.reviewVerdict || '';
-if (verdict !== '') throw new Error('expected empty reviewVerdict when only live review, got ' + JSON.stringify(visible.reviewVerdict));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestVisibleRunForIssueGroup_ActiveKindParentAlongsideLiveReview_FlipsToReviewing
-// pins AC 6 (d) for the active-parent path: when the parent row's own kind is
-// 'active' (the implementation is still in flight) and a live review
-// child is present, the server stamps status="reviewing" (badge-flip) and
-// reviewCount onto the parent; the JS passes them through, preserving
-// the parent's own identity fields (key, kind, runId).
-func TestVisibleRunForIssueGroup_ActiveKindParentAlongsideLiveReview_FlipsToReviewing(t *testing.T) {
-	js := `const parent = {
-  key: 'impl-4b', kind: 'active', status: 'reviewing', review: false,
-  issueLabel: '#4b', runId: 'impl-4b', issueNumber: 41,
-  batchKey: 'parent-batch', issueTitle: 'Fix live bug',
-  startedAt: '2025-01-01T00:00:00Z',
-  // Server-stamped by aggregateReviewChildren (#1897).
-  reviewCount: 1,
-};
-const liveReview = {
-  key: 'PR51', runId: 'PR51', kind: 'active', status: 'reviewing', review: true,
-  issueNumber: 41, prNumber: 51, startedAt: '2025-02-01T00:00:00Z',
-};
-const visible = visibleRunForIssueGroup(41, [parent, liveReview]);
-if (!visible) throw new Error('expected visible row');
-if (visible.kind !== 'active') throw new Error('expected active kind preserved, got ' + JSON.stringify(visible.kind));
-if (visible.status !== 'reviewing') throw new Error('expected reviewing status (server flip for live review child), got ' + JSON.stringify(visible.status));
-if (visible.reviewCount !== 1) throw new Error('expected reviewCount=1, got ' + JSON.stringify(visible.reviewCount));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestVisibleRunForIssueGroup_OrphanReviewOnlyPathUnchanged is AC 4:
-// the orphan review-only group path (no canonical parent) must remain
-// unchanged. The synthesized stub already gets reviewCount and
-// reviewVerdict from summarizeReviewGroup (propagation from issue #1938). The
-// visible row is the orphan stub, not the canonical parent shape.
-func TestVisibleRunForIssueGroup_OrphanReviewOnlyPathUnchanged(t *testing.T) {
-	js := `const NL = String.fromCharCode(10);
-const review1 = {
-  key: 'r1', runId: 'r1', kind: 'completed', status: 'success', review: true,
-  issueNumber: 5, prNumber: 60, startedAt: '2025-01-15T00:00:00Z',
-  log: '## Decision' + NL + '**APPROVED**' + NL,
-};
-const review2 = {
-  key: 'r2', runId: 'r2', kind: 'completed', status: 'success', review: true,
-  issueNumber: 5, prNumber: 61, startedAt: '2025-01-20T00:00:00Z',
-  log: '## Decision' + NL + '**APPROVED**' + NL,
-};
-const visible = visibleRunForIssueGroup(5, [review1, review2]);
-if (!visible) throw new Error('expected visible orphan stub row');
-if (visible.review !== true) throw new Error('expected review=true on orphan stub, got ' + JSON.stringify(visible.review));
-if (visible.reviewCount !== 2) throw new Error('expected orphan stub reviewCount=2, got ' + JSON.stringify(visible.reviewCount));
-if (visible.reviewVerdict !== 'Approved') throw new Error('expected orphan stub reviewVerdict=Approved, got ' + JSON.stringify(visible.reviewVerdict));
-if (visible.kind !== 'completed') throw new Error('expected orphan stub kind=completed, got ' + JSON.stringify(visible.kind));
-if (visible.status !== 'success') throw new Error('expected orphan stub status=success, got ' + JSON.stringify(visible.status));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestVisibleRunForIssueGroup_ParentEnrichmentNoFetch is AC 5: the
-// parent row's reviewCount/reviewVerdict arrive server-stamped on the
-// /api/runs?summary=1 payload (restored #1897); the JS must NOT fetch
-// sibling review logs to recompute them. Zero fetch calls expected.
-func TestVisibleRunForIssueGroup_ParentEnrichmentNoFetch(t *testing.T) {
-	js := `const NL = String.fromCharCode(10);
-let fetchCount = 0;
-const originalFetch = window.fetch;
-window.fetch = function() { fetchCount++; return Promise.reject(new Error('unexpected fetch')); };
-try {
-  const parent = {
-    key: 'impl-6', kind: 'completed', status: 'success', review: false,
-    issueLabel: '#6', runId: 'impl-6', issueNumber: 6,
-    batchKey: 'parent-batch', issueTitle: 'Fix six',
-    startedAt: '2025-01-01T00:00:00Z',
-    // Server-stamped by aggregateReviewChildren (#1897).
-    reviewCount: 1, reviewVerdict: 'Approved',
-  };
-  const review = {
-    key: 'PR66', runId: 'PR66', kind: 'completed', status: 'success', review: true,
-    issueNumber: 6, prNumber: 66, startedAt: '2025-01-15T00:00:00Z',
-    log: '## Decision' + NL + '**APPROVED**' + NL,
-  };
-  const visible = visibleRunForIssueGroup(6, [parent, review]);
-  if (!visible) throw new Error('expected visible row');
-  if (visible.reviewCount !== 1) throw new Error('expected reviewCount=1 (server-stamped, passed through), got ' + JSON.stringify(visible.reviewCount));
-  if (visible.reviewVerdict !== 'Approved') throw new Error('expected reviewVerdict=Approved (server-stamped), got ' + JSON.stringify(visible.reviewVerdict));
-  if (fetchCount !== 0) throw new Error('expected zero fetch calls (server stamps the verdict; JS must not refetch sibling logs), got ' + fetchCount);
-} finally {
-  window.fetch = originalFetch;
-}
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
-}
-
-// TestVisibleRunForIssueGroup_ParentServerStampAuthoritativeNotOverwritten
-// pins the #1897 contract: the server-stamped reviewCount/reviewVerdict on
-// the parent row are authoritative — the JS must NOT recompute or overwrite
-// them from sibling reviews. (Pre-#1897 the #1856 JS enrichment overwrote
-// stale Go projections; with server-side stamping restored, the parent's
-// own stamped values are the canonical source and must pass through
-// unchanged.) Identity fields are also preserved verbatim.
-func TestVisibleRunForIssueGroup_ParentServerStampAuthoritativeNotOverwritten(t *testing.T) {
-	js := `const NL = String.fromCharCode(10);
-const parent = {
-  key: 'impl-7', kind: 'completed', status: 'success', review: false,
-  issueLabel: '#7', runId: 'impl-7', issueNumber: 7,
-  batchKey: 'parent-batch', issueTitle: 'Fix seven',
-  startedAt: '2025-01-01T00:00:00Z',
-  // Server-stamped by aggregateReviewChildren (#1897). The JS must
-  // pass these through unchanged — NOT recompute from the sibling
-  // review's log (which the summary endpoint strips anyway).
-  reviewCount: 5, reviewVerdict: 'Changes requested',
-};
-const review = {
-  key: 'PR77', runId: 'PR77', kind: 'completed', status: 'success', review: true,
-  issueNumber: 7, prNumber: 77, startedAt: '2025-01-15T00:00:00Z',
-  log: '## Decision' + NL + '**APPROVED**' + NL,
-};
-const visible = visibleRunForIssueGroup(7, [parent, review]);
-if (!visible) throw new Error('expected visible row');
-// Server-stamped values are authoritative; JS must not overwrite with
-// sibling-derived values (which would be 1 / Approved here).
-if (visible.reviewCount !== 5) throw new Error('expected server-stamped reviewCount=5 preserved (JS must not overwrite), got ' + JSON.stringify(visible.reviewCount));
-if (visible.reviewVerdict !== 'Changes requested') throw new Error('expected server-stamped reviewVerdict preserved (JS must not overwrite), got ' + JSON.stringify(visible.reviewVerdict));
-// Identity fields preserved.
-if (visible.key !== 'impl-7') throw new Error('expected parent key preserved, got ' + JSON.stringify(visible.key));
-if (visible.batchKey !== 'parent-batch') throw new Error('expected parent batchKey preserved, got ' + JSON.stringify(visible.batchKey));
-console.log('PASS');
-`
-	runPortalHTMLScript(t, js)
 }
 
 // --- Issue #1856: renderRunMeta line shape for parent with reviews ---

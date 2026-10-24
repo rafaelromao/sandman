@@ -506,10 +506,11 @@
     if (!run) return false;
     const subjectKey = subjectRunValue(run);
     if (expandedKey === subjectKey || expandedKey === run.key) return true;
+    // A group row also owns the detail of every subject the server listed
+    // in its subjects; the page never groups rows by issue number itself.
     const expandedRun = expandedKey ? findRunByIdentity(expandedKey, opts) : null;
-    if (!expandedRun) return false;
-    if (!Number.isInteger(run.issueNumber) || run.issueNumber <= 0) return false;
-    return run.issueNumber === expandedRun.issueNumber;
+    if (!expandedRun || !Array.isArray(run.subjects)) return false;
+    return run.subjects.includes(expandedRun.runId) || run.subjects.includes(expandedRun.key);
   }
 
   function subjectRunLabel(run) {
@@ -517,104 +518,20 @@
     return subjectRunValue(run) || 'Run';
   }
 
-  // pickCanonicalParent chooses the single impl row that "owns" an issue
-  // group. Multiple impl rows for the same issueNumber appear when a prior
-  // run was abandoned or succeeded and a later run was launched. The table
-  // (visibleRunForIssueGroup in portal.html) and the subject selector both
-  // use this helper so they agree on one canonical row (issue #2799), and
-  // the rule mirrors the server's canonicalParentIsBetter, which picks the
-  // parent that aggregateReviewChildren stamps with review metadata:
-  //
-  //   1. Active parents beat terminal parents.
-  //   2. Among actives, the latest startedAt wins (an exact tie keeps the
-  //      earlier candidate, as the server rule does).
-  //   3. Among terminals, the latest finishedAt wins, then the latest
-  //      startedAt, then the greater runId. A newer terminal run therefore
-  //      wins over an older one that carries stale review metadata (#1825).
-  //
-  // Times compare as parsed instants (millisecond precision, where the server
-  // compares nanoseconds), never as strings, and the input order is not
-  // trusted. With no parents, a non-review fallback run owns itself.
-  function canonicalTime(value) {
-    const ts = Date.parse(value || '');
-    return Number.isFinite(ts) ? ts : 0;
-  }
-
-  function canonicalParentIsBetter(candidate, incumbent) {
-    const cActive = candidate.kind === 'active';
-    const iActive = incumbent.kind === 'active';
-    if (cActive !== iActive) return cActive;
-    if (cActive) return canonicalTime(candidate.startedAt) > canonicalTime(incumbent.startedAt);
-    const cFinished = canonicalTime(candidate.finishedAt);
-    const iFinished = canonicalTime(incumbent.finishedAt);
-    if (cFinished !== iFinished) return cFinished > iFinished;
-    const cStarted = canonicalTime(candidate.startedAt);
-    const iStarted = canonicalTime(incumbent.startedAt);
-    if (cStarted !== iStarted) return cStarted > iStarted;
-    return String(candidate.runId || '') > String(incumbent.runId || '');
-  }
-
-  function pickCanonicalParent(parents, run) {
-    if (!parents || !parents.length) {
-      return run && !run.review ? run : null;
-    }
-    return parents.reduce((best, candidate) => (canonicalParentIsBetter(candidate, best) ? candidate : best));
-  }
-
-  function previousRunIDForContinuation(run) {
-    const events = Array.isArray(run && run.events) ? run.events : [];
-    for (const event of events) {
-      if (!event || event.type !== 'run.continued') continue;
-      const payload = event.payload || {};
-      const previous = String(payload.previous_run_id || '').trim();
-      if (previous) return previous;
-    }
-    return '';
-  }
-
+  // subjectRunsFor resolves the detail subjects of a table row. The Go
+  // projection (projectIssueGroups) stamps the ordered runIds on the row the
+  // table shows for an issue group; the renderer only looks them up and
+  // never re-derives the group or its canonical parent.
   function subjectRunsFor(run, opts) {
-    const visible = Array.isArray(opts && opts.runs) ? opts.runs : [];
-    // Strict positive-integer guard: a missing/undefined/non-integer
-    // issueNumber must never be treated as a valid group key. The previous
-    // loose `<= 0` check let undefined through (undefined <= 0 is false),
-    // which grouped unrelated no-issue rows together by undefined and
-    // produced a giant spurious subject selector.
-    if (!run || !Number.isInteger(run.issueNumber) || run.issueNumber <= 0) return [];
+    const ids = Array.isArray(run && run.subjects) ? run.subjects : [];
+    const related = [];
     const seen = new Set();
-    const parents = [];
-    const reviews = [];
-    for (const candidate of visible) {
-      if (!candidate || candidate.issueNumber !== run.issueNumber) continue;
-      if (!isRowExpandable(candidate)) continue;
+    for (const id of ids) {
+      const candidate = findRunByIdentity(id, opts);
       const value = subjectRunValue(candidate);
       if (!value || seen.has(value)) continue;
       seen.add(value);
-      if (candidate.review) reviews.push(candidate);
-      else parents.push(candidate);
-    }
-    const canonicalParent = pickCanonicalParent(parents, run);
-    const related = [];
-    const relatedSeen = new Set();
-    const pushRelated = (candidate) => {
-      const value = subjectRunValue(candidate);
-      if (!value || relatedSeen.has(value)) return;
-      relatedSeen.add(value);
       related.push(candidate);
-    };
-    if (canonicalParent) pushRelated(canonicalParent);
-    const previousRunID = previousRunIDForContinuation(run);
-    const previousRun = previousRunID ? findRunByIdentity(previousRunID, opts) : null;
-    if (previousRun && previousRun.issueNumber === run.issueNumber && !previousRun.review) {
-      pushRelated(previousRun);
-    }
-    reviews.sort((a, b) => {
-      const aStarted = a.startedAt ? new Date(a.startedAt).getTime() : 0;
-      const bStarted = b.startedAt ? new Date(b.startedAt).getTime() : 0;
-      if (aStarted !== bStarted) return bStarted - aStarted;
-      return subjectRunValue(a).localeCompare(subjectRunValue(b));
-    });
-    for (const candidate of reviews) {
-      pushRelated(candidate);
     }
     return related;
   }
@@ -1314,7 +1231,7 @@
 
   function buildDetailContent(panel, rowRun, subjectRun, tabName, helpers, opts) {
     const subjectValue = subjectRunValue(subjectRun);
-    const subjectFp = subjectValue + '|' + subjectFingerprint(subjectRun, opts);
+    const subjectFp = subjectValue + '|' + subjectFingerprint(rowRun, opts);
     const subjectPicker = buildSubjectSelector(panel, rowRun, subjectRun, opts);
     if (subjectPicker) panel.appendChild(subjectPicker);
     buildTabsRow(panel, rowRun, tabName);
@@ -1414,7 +1331,7 @@
         setAttr(btn, 'aria-pressed', want);
       }
     }
-    const subjectFp = subjectRunValue(subjectRun) + '|' + subjectFingerprint(subjectRun, opts);
+    const subjectFp = subjectRunValue(subjectRun) + '|' + subjectFingerprint(run, opts);
     const subjectSelect = detailRow.querySelector('select[data-action="set-subject"]');
     if (subjectSelect && subjectSelect.value !== subjectValue) {
       subjectSelect.value = subjectValue;
@@ -1999,7 +1916,6 @@
     updateDetailPanelEvents,
     subjectRunValue,
     subjectRunsFor,
-    pickCanonicalParent,
     highlightJSON,
     highlightTerminalLog,
     cheapEventsFingerprint,
