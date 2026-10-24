@@ -3,6 +3,8 @@ package batch
 import (
 	"regexp"
 	"strings"
+
+	"github.com/rafaelromao/sandman/internal/reviewpub"
 )
 
 var (
@@ -12,7 +14,6 @@ var (
 	reviewFindingDirective         = regexp.MustCompile(`(?im)(?:^|[,.!?;:—–-]\s+)\s*(?:(?:[-*+]|\d+[.)])\s*)?(?:fix|change|remove|replace|add|use)\b|\b(?:must|please|needs?|should)\b`)
 	reviewFindingClauses           = regexp.MustCompile(`[;\n]|\.\s+`)
 	reviewFindingMetadata          = regexp.MustCompile(`(?i)^(?:scope|metrics?|files?|cognitive complexity|cyclomatic complexity|coverage|tools used)\s*:`)
-	reviewPublicationMarker        = regexp.MustCompile(`(?m)^[ \t]*<!-- sandman-publication:[0-9a-f]{64} -->[ \t]*$`)
 	reviewApprovalContradiction    = regexp.MustCompile(`(?i)\b(?:not\s+(?:yet\s+)?(?:approved|lgtm)|no\s+approval|changes\s+requested|subject\s+to|contingent\b|only\s+(?:if|after|once)|before\s+merging|(?:merge|approve)[^\n.!?]*(?:after|once|until|if|when)\b)`)
 	reviewMetadataRepair           = regexp.MustCompile(`(?i)\b(?:fix(?:ing)?|address(?:ing)?|repair(?:ing)?|resolve|correct|replace|remove|add|change|use|ensure|update|must|please|needs?|should)\b`)
 	reviewMetricNoConcern          = regexp.MustCompile(`(?i)^(?:the\s+)?metrics?(?:\s+signals?)?\s+(?:do(?:es)?\s+not|did\s+not)\s+(?:demonstrate|show|indicate|establish)\s+(?:(?:a|an|any|new|separate|additional|construct-specific|readability|or|change-risk|correctness|maintainability)\s+)*(?:concerns?|issues?|findings?|risks?)(?:\s+(?:in|for)\s+(?:this|the)\s+(?:diff|change|pull request))?[.!]?$`)
@@ -20,20 +21,31 @@ var (
 	reviewNoFollowup               = regexp.MustCompile(`(?i)^no\s+(?:(?:author\s+)?follow[- ]up|further\s+action)\s+(?:is\s+)?(?:required|needed|necessary)[.!]?$`)
 	reviewCIWaitAdvice             = regexp.MustCompile(`(?i)^(?:await|wait\s+for)\s+(?:the\s+)?(?:(?:pending|required|remaining|current-head)\s+)*(?:ci(?:\s+checks?)?|(?:required\s+)?checks?)(?:\s+to\s+(?:pass|finish|complete|turn\s+green))?(?:\s+before\s+merging)?[.!]?$`)
 	reviewQualityTag               = regexp.MustCompile("`\\[(?:control-flow|functional|OOP|public-api)\\]`")
-	reviewNoChangeStep             = regexp.MustCompile(`(?i)^(?:none(?:\s+required)?|no\s+(?:author\s+)?changes\s+(?:are\s+)?(?:requested|required|needed))[.!]?$`)
-	reviewNoQualityFinding         = regexp.MustCompile(`(?i)^(?:none\.\s+)?no\b[^\n.:]*\b(?:concern|finding)s?\b[^\n.:]*\b(?:found|filed|identified)\s*:`)
-	reviewAcceptanceEvidence       = regexp.MustCompile(`(?i)^(?:verification\s+against|how\s+each)\b`)
-	reviewMergeReadyAdvice         = regexp.MustCompile(`(?i)^merge\s+when\s+ready[.!]?$`)
-	reviewFindingSeverity          = regexp.MustCompile(`(?im)(?:^|[.;:!?][ \t]+)[ \t]*(?:(?:#{1,6}|[-*+]|\d+[.)])[ \t]*)?(?:Blocking|Important)\b`)
-	reviewFindingHeading           = regexp.MustCompile(`(?m)^[ \t]*#{1,6}(?:[ \t]|$)`)
-	reviewOpposingVerdict          = regexp.MustCompile(`(?i)(?:^|\W)_*(?:CHANGES_REQUESTED|NOT_APPROVED)_*(?:\W|$)`)
-	reviewQuotedCompound           = regexp.MustCompile("`[ \\t`]*[A-Za-z]+[ \\t`]*`(-[A-Za-z][A-Za-z0-9-]*)")
-	reviewUnmetCriterion           = regexp.MustCompile(`(?i)\b(?:criteri(?:on|a)|requirements?)\s+(?:(?:is|are|remains?|still|currently|has|have)\s+)*(?:not\s+(?:(?:yet|currently|fully|completely)\s+)?(?:met|satisfied|fulfilled|implemented|covered)|unmet|unsatisfied|unfulfilled|unimplemented|failing|fails?|failed)\b|\b(?:unmet|unsatisfied|unfulfilled|failed)\s+(?:acceptance\s+)?(?:criteri(?:on|a)|requirements?)\b`)
-	reviewUnresolvedDefect         = regexp.MustCompile(`(?i)\b(?:an?|the|this|that|current)\s+(?:unresolved|unfixed|unaddressed)\s+(?:defects?|bugs?|issues?|problems?)\b|\b(?:the|this|that|current)\s+(?:defects?|bugs?|issues?|problems?|code|implementation|handler|function)\s+(?:(?:is|are|remains?|still|currently)\s+)+(?:unresolved|unfixed|unaddressed|open|racy|unsafe|broken|incorrect|vulnerable)\b`)
-	reviewNegatedAssessment        = regexp.MustCompile(`(?i)\b(?:no|zero|none\s+of\s+the)\s+(?:(?:unmet|unsatisfied|unfulfilled|failed)\s+(?:acceptance\s+)?(?:criteri(?:on|a)|requirements?)|(?:acceptance\s+)?(?:criteria|requirements?)\s+(?:are|remain)\s+(?:unmet|unsatisfied|unfulfilled|failed))\b`)
-	reviewResolvedAssessment       = regexp.MustCompile(`(?i)\b(?:the\s+)?(?:(?:previously|formerly|prior)\s+)?(?:unmet|unsatisfied|unfulfilled|failed|unresolved|unfixed|unaddressed)\s+(?:acceptance\s+)?(?:criteri(?:on|a)|requirements?|defects?|bugs?|issues?|problems?)(?:\s+(?:in|for|of)\s+(?:code|(?:this|the)\s+(?:diff|change|implementation|code)))?\s+(?:(?:is|are)\s+(?:now\s+)?|(?:has|have)\s+been\s+)(?:met|satisfied|fulfilled|implemented|covered|resolved|fixed)\b`)
-	reviewAssessmentQualification  = regexp.MustCompile(`(?i)\b(?:but|except|however|although|yet|unless|until|apart\s+from|other\s+than)\b`)
-	reviewProseBlockStart          = regexp.MustCompile("^(?:#{1,6}(?:\\s|$)|[-*+]\\s+|[0-9]+[.)]\\s+|`{3,}|~{3,})")
+	reviewNoChangeStep             = regexp.MustCompile(`(?i)^(?:none(?:\s+required)?|no\s+(?:(?:author|code|implementation|further|additional)\s+)*changes\s+(?:are\s+)?(?:requested|required|needed))[.!]?$`)
+	// A negated declaration ("no code changes requested") is the opposite of
+	// a "changes requested" contradiction.
+	// "`[OOP]` rules do not apply" after construct tags are replaced, with an
+	// optional qualifier such as "Stateful".
+	reviewInapplicableRules    = regexp.MustCompile(`(?i)^(?:[a-z-]+\s+)?rule\s+rules\s+do\s+not\s+apply\.?$`)
+	reviewNegatedChangeRequest = regexp.MustCompile(`(?i)\bno\s+(?:(?:author|code|implementation|further|additional)\s+)*changes\s+(?:are\s+)?(?:requested|required|needed)\b`)
+	// Remarks addressed to the runtime or surrounding workflow (verify remote
+	// CI, publish a formal review, handle the publication gap) are not author
+	// repair requests. A remark that names the author is never one of them.
+	reviewRuntimeRemark           = regexp.MustCompile(`(?i)^(?:the\s+)?(?:surrounding\s+|managed\s+|sandman\s+)?(?:runtime|workflow|automation|orchestrator|merge\s+gate)\b`)
+	reviewAuthorAddressed         = regexp.MustCompile(`(?i)\b(?:author|implementor|implementer|you)\b`)
+	reviewNoQualityFinding        = regexp.MustCompile(`(?i)^(?:none\.\s+)?no\b[^\n.:]*\b(?:concern|finding)s?\b[^\n.:]*\b(?:found|filed|identified)\s*:`)
+	reviewAcceptanceEvidence      = regexp.MustCompile(`(?i)^(?:verification\s+against|how\s+each)\b`)
+	reviewMergeReadyAdvice        = regexp.MustCompile(`(?i)^merge\s+when\s+ready[.!]?$`)
+	reviewFindingSeverity         = regexp.MustCompile(`(?im)(?:^|[.;:!?][ \t]+)[ \t]*(?:(?:#{1,6}|[-*+]|\d+[.)])[ \t]*)?(?:Blocking|Important)\b`)
+	reviewFindingHeading          = regexp.MustCompile(`(?m)^[ \t]*#{1,6}(?:[ \t]|$)`)
+	reviewOpposingVerdict         = regexp.MustCompile(`(?i)(?:^|\W)_*(?:CHANGES_REQUESTED|NOT_APPROVED)_*(?:\W|$)`)
+	reviewQuotedCompound          = regexp.MustCompile("`[ \\t`]*[A-Za-z]+[ \\t`]*`(-[A-Za-z][A-Za-z0-9-]*)")
+	reviewUnmetCriterion          = regexp.MustCompile(`(?i)\b(?:criteri(?:on|a)|requirements?)\s+(?:(?:is|are|remains?|still|currently|has|have)\s+)*(?:not\s+(?:(?:yet|currently|fully|completely)\s+)?(?:met|satisfied|fulfilled|implemented|covered)|unmet|unsatisfied|unfulfilled|unimplemented|failing|fails?|failed)\b|\b(?:unmet|unsatisfied|unfulfilled|failed)\s+(?:acceptance\s+)?(?:criteri(?:on|a)|requirements?)\b`)
+	reviewUnresolvedDefect        = regexp.MustCompile(`(?i)\b(?:an?|the|this|that|current)\s+(?:unresolved|unfixed|unaddressed)\s+(?:defects?|bugs?|issues?|problems?)\b|\b(?:the|this|that|current)\s+(?:defects?|bugs?|issues?|problems?|code|implementation|handler|function)\s+(?:(?:is|are|remains?|still|currently)\s+)+(?:unresolved|unfixed|unaddressed|open|racy|unsafe|broken|incorrect|vulnerable)\b`)
+	reviewNegatedAssessment       = regexp.MustCompile(`(?i)\b(?:no|zero|none\s+of\s+the)\s+(?:(?:unmet|unsatisfied|unfulfilled|failed)\s+(?:acceptance\s+)?(?:criteri(?:on|a)|requirements?)|(?:acceptance\s+)?(?:criteria|requirements?)\s+(?:are|remain)\s+(?:unmet|unsatisfied|unfulfilled|failed))\b`)
+	reviewResolvedAssessment      = regexp.MustCompile(`(?i)\b(?:the\s+)?(?:(?:previously|formerly|prior)\s+)?(?:unmet|unsatisfied|unfulfilled|failed|unresolved|unfixed|unaddressed)\s+(?:acceptance\s+)?(?:criteri(?:on|a)|requirements?|defects?|bugs?|issues?|problems?)(?:\s+(?:in|for|of)\s+(?:code|(?:this|the)\s+(?:diff|change|implementation|code)))?\s+(?:(?:is|are)\s+(?:now\s+)?|(?:has|have)\s+been\s+)(?:met|satisfied|fulfilled|implemented|covered|resolved|fixed)\b`)
+	reviewAssessmentQualification = regexp.MustCompile(`(?i)\b(?:but|except|however|although|yet|unless|until|apart\s+from|other\s+than)\b`)
+	reviewProseBlockStart         = regexp.MustCompile("^(?:#{1,6}(?:\\s|$)|[-*+]\\s+|[0-9]+[.)]\\s+|`{3,}|~{3,})")
 )
 
 // reviewDecisionApprovalEvidenceFor returns informal approvals from the active
@@ -80,7 +92,12 @@ func (c *reviewClassification) reviewDecisionApprovalEvidenceFor(request reviewR
 }
 
 func reviewDecisionApprovedBody(body string) bool {
-	body = reviewPublicationMarker.ReplaceAllString(body, "")
+	// Sandman's own review daemon publishes a closed-set verdict. Trust it;
+	// prose rules remain for every other body and for unknown verdicts.
+	if verdict, published := reviewpub.PublishedVerdict(body); published && verdict != reviewpub.Unknown {
+		return verdict == reviewpub.Approved
+	}
+	body = reviewpub.StripMarkers(body)
 	structured := false
 	for _, section := range collectReviewApprovalSections(body) {
 		structured = structured || section.kind == "decision"
@@ -236,6 +253,7 @@ func reviewEvidencePermitsApproval(text string) bool {
 // irrelevant to directives, natural-language conditions and severity labels;
 // explicit verdict states keep underscores so CHANGES_REQUESTED is not lost.
 func reviewProsePermitsApproval(text string) bool {
+	text = reviewNegatedChangeRequest.ReplaceAllString(text, "no repair declared")
 	prose := reviewApprovalProse(text)
 	visible := reviewDirectiveProse(reviewJoinSoftLines(text))
 	return !reviewFindingDirective.MatchString(visible) &&
@@ -288,7 +306,7 @@ func noReviewFindingClause(clause string) bool {
 	if clause == "" {
 		return true
 	}
-	if strings.EqualFold(strings.TrimSpace(clause), "rule rules do not apply.") || strings.EqualFold(strings.TrimSpace(clause), "rule rules do not apply") {
+	if reviewInapplicableRules.MatchString(clause) {
 		return true
 	}
 	prose := reviewApprovalProse(clause)
@@ -342,7 +360,19 @@ func noRepairNextSteps(text string) bool {
 
 func reviewNextStepAdvice(clause string) bool {
 	clause = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(clause), "-*"))
-	return clause == "" || noReviewFindings(clause) || reviewNoChangeStep.MatchString(clause) || reviewNoFollowup.MatchString(clause) || reviewCIWaitAdvice.MatchString(clause) || reviewMergeReadyAdvice.MatchString(clause)
+	return clause == "" || noReviewFindings(clause) || reviewNoChangeStep.MatchString(clause) || reviewRuntimeAdvice(clause) || reviewNoFollowup.MatchString(clause) || reviewCIWaitAdvice.MatchString(clause) || reviewMergeReadyAdvice.MatchString(clause)
+}
+
+// reviewRuntimeAdvice reports a remark addressed to the runtime or surrounding
+// workflow, such as "The surrounding workflow should verify remote CI before
+// merging". It must not address the author or report a finding.
+func reviewRuntimeAdvice(clause string) bool {
+	clause = strings.TrimSpace(strings.Trim(reviewDirectiveProse(clause), " \t-*"))
+	return reviewRuntimeRemark.MatchString(clause) &&
+		!reviewAuthorAddressed.MatchString(clause) &&
+		!reviewFindingSeverity.MatchString(clause) &&
+		!reviewOpposingVerdict.MatchString(clause) &&
+		!reviewHasUnresolvedAssessment(clause)
 }
 
 // A path named "fix.go" is scope evidence, not an imperative. Preserve other

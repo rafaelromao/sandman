@@ -10,6 +10,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/reviewpub"
 )
 
 const approvingMetricsReview = `## Summary
@@ -50,7 +51,7 @@ func informalApprovalLifecycleFixture(t *testing.T, body string) (*runSession, *
 		fakeGitHubClient: fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: pr}},
 		comments: []github.PRComment{
 			{ID: "request", Body: "/sandman review", CreatedAt: now.Add(-time.Minute)},
-			{ID: "approval", Body: body, CreatedAt: now.Add(time.Minute)},
+			{ID: "approval", Body: answeringPublication(body, "request", time.Time{}, pr.HeadRefOid), CreatedAt: now.Add(time.Minute)},
 		},
 	}
 	opts := gateTestRunOptions()
@@ -126,10 +127,21 @@ func TestInformalApprovalLifecycle_RealReviewExplanationsAndCIAdvice(t *testing.
 	}
 }
 
+// answeringPublication rebinds a captured daemon publication to the fixture's
+// own trigger and head, as the daemon would have published it there. Bodies
+// that are not daemon publications are returned unchanged.
+func answeringPublication(body, triggerID string, triggerUpdatedAt time.Time, head string) string {
+	if !reviewpub.Published(body) {
+		return body
+	}
+	return strings.TrimRight(reviewpub.StripMarkers(body), "\n") + "\n\n" + reviewpub.Identity(reviewpub.TriggerKey(triggerID, triggerUpdatedAt), head)
+}
+
 func capturedApprovingReports(t *testing.T) map[string]string {
 	t.Helper()
 	reports := make(map[string]string)
-	for _, name := range []string{"approved-daemon-28-first.md", "approved-daemon-28-second.md", "approved-daemon-28-final.md", "approved-sandman-2818.md", "approved-sandman-2886.md"} {
+	for _, name := range []string{"approved-daemon-28-first.md", "approved-daemon-28-second.md", "approved-daemon-28-final.md", "approved-sandman-2818.md", "approved-sandman-2886.md",
+		"approved-daemon-29-first.md", "approved-daemon-29-second.md", "approved-daemon-29-third.md", "approved-daemon-29-fourth.md", "approved-daemon-29-fifth.md", "approved-daemon-29-final.md", "approved-daemon-30.md"} {
 		body, err := os.ReadFile("testdata/" + name)
 		if err != nil {
 			t.Fatal(err)

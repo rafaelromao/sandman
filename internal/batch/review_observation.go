@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/reviewpub"
 )
 
 // observeCurrentReviewEvidence reads the current pull-request response
@@ -33,12 +34,20 @@ func (s *runSession) observeCurrentReviewEvidence(ctx context.Context, request r
 		return windowEnd.IsZero() || at.Before(windowEnd)
 	}
 
+	triggerKey, triggerKnown := reviewRequestTriggerKey(comments, request)
 	topLevel := make([]map[string]any, 0)
 	for _, comment := range comments {
 		if strings.TrimSpace(comment.ID) == "" || !withinWindow(comment.CreatedAt) || strings.HasPrefix(comment.Body, request.TriggerPrefix) {
 			continue
 		}
-		topLevel = append(topLevel, reviewObservationSource(comment.ID, "top_level", "", comment.Body, comment.CreatedAt, "", request.HeadSHA))
+		source := reviewObservationSource(comment.ID, "top_level", "", comment.Body, comment.CreatedAt, "", request.HeadSHA)
+		if triggerKnown && reviewpub.Published(comment.Body) && !reviewpub.Answers(comment.Body, triggerKey, request.HeadSHA) {
+			// The daemon's publication identity binds a decision to one
+			// trigger revision and one reviewed head. A publication for any
+			// other request or head is not a response to this one.
+			source["head_status"] = "stale"
+		}
+		topLevel = append(topLevel, source)
 	}
 
 	formalReviews := make([]map[string]any, 0)
@@ -250,4 +259,17 @@ func reviewClassificationRequest(request reviewRequestEnvelope) map[string]any {
 		"deadline_at":           request.DeadlineAt,
 		"deadline_unix_seconds": request.DeadlineUnixSeconds,
 	}
+}
+
+// reviewRequestTriggerKey recomputes the daemon's key for the request's
+// trigger from its live revision, so a re-review of an edited trigger still
+// matches its publication.
+func reviewRequestTriggerKey(comments []github.PRComment, request reviewRequestEnvelope) (string, bool) {
+	triggerID := strings.TrimSpace(request.TriggerID)
+	for _, comment := range comments {
+		if triggerID != "" && strings.TrimSpace(comment.ID) == triggerID {
+			return reviewpub.TriggerKey(comment.ID, comment.UpdatedAt), true
+		}
+	}
+	return "", false
 }
