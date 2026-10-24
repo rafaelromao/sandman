@@ -331,7 +331,7 @@ Expensive scenarios are selected with `SANDMAN_E2E_GATES`. The value can be a si
 | `batch_id_rules` | `internal/cmd` | `TestBatchIDRules_*` |
 | `preset_matrix` | `internal/cmd` | none gated by this constant; the e2e-tagged preset-matrix harness (`preset_matrix_harness_e2e_test.go`) runs through `scripts/run-preset-matrix.sh` |
 | `base_branch_feature` | `internal/batch` | `TestRunBatch_BaseBranchFeature_CutsWorktreeFromFeatureBranch` |
-| `review_daemon` | `internal/cmd` | `TestReviewDaemonE2E_RealAgentInContainer` |
+| `review_daemon` | `internal/cmd` | `TestReviewDaemonE2E_CannedReviewerTriggerToPost` |
 | `lifecycle_commands` | `internal/cmd` | `TestLifecycle_*` |
 | `review_wait` | `internal/cmd` | `TestReviewWaitStabilization_*` |
 
@@ -495,8 +495,9 @@ all required Chromium-backed tests (continuity, subject switching, page renderin
 and visual layout). `test-browser` enables the `visual` build tag and requires a
 browser; `test-ci` excludes that same exact inventory. A Go AST contract checks
 the inventory against browser helper callers, preventing silently skipped scenarios.
-The built-binary Portal browser test retains its separate
-`SANDMAN_RUN_PORTAL_BINARY_E2E=1` opt-in; it was never part of default PR coverage. Node remains installed in both platform
+The built-binary Portal tests keep their separate
+`SANDMAN_RUN_PORTAL_BINARY_E2E=1` opt-in and stay out of default PR coverage;
+release regression sets it, so the unit tier runs them as required scenarios. Node remains installed in both platform
 jobs so production-module tests and JavaScript assertions remain in the race suite.
 
 Linux retains Podman with runc and its runtime probe. Default container tests are
