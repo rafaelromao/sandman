@@ -1131,8 +1131,8 @@ func TestRunSingle_RetryLifecycleTerminalizesAfterRetry(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure after lifecycle-owned gate handling", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want an rc2 wait after lifecycle-owned gate handling", result.Status)
 	}
 	if result.RetriesTotal != 2 {
 		t.Fatalf("RetriesTotal = %d, want 2", result.RetriesTotal)
@@ -2082,8 +2082,8 @@ func TestRunSingle_RetryMissingClosingReferenceFailsVerification(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure without verified closing reference", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want an rc2 wait without verified closing reference", result.Status)
 	}
 	if resetCalls != 0 {
 		t.Fatalf("reset calls = %d, want 0 after lifecycle terminalization", resetCalls)

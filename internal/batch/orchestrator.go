@@ -3237,6 +3237,11 @@ type runSession struct {
 	reviewRegistrationAttempted bool
 	reviewRegistrationObserved  bool
 
+	// lastResumeSignature is the resume signature that launched the current
+	// lifecycle relaunch (or entry resume). A decision that repeats it after
+	// the relaunch is a stall.
+	lastResumeSignature string
+
 	// resumeCount counts in-session agent relaunches triggered by a
 	// resume-worthy PR gate within this session (bounded by
 	// runSessionOptions.awaitResumeMax). It is the per-session cap state;
@@ -4268,24 +4273,36 @@ loop:
 						gateStatus, extras, _ = s.observeLifecycle(ctx, wt.WorkDir(), branch, logPath, runID, result, extras, hostPathsReady)
 					}
 					if gateStatus == "resume" {
-						if resumePrompt, resume := s.resumePromptFromGate(ctx, wt, branch, runID, extras); resume {
-							s.reuseSession = true
-							s.previousRunIDs = map[int]string{s.issueNumber: runID}
-							s.previousRunBatchIDs = map[int]string{s.issueNumber: s.batchID}
-							attemptRenderCfg.TaskPrompt = resumePrompt
-							continue relaunch
+						signature := resumeSignature(extras, s.liveHeadForSignature(ctx, branch))
+						// A relaunch that left the signature unchanged produced
+						// no new head, request or response: relaunching again
+						// on the same evidence cannot make progress.
+						if signature != s.lastResumeSignature || !stallsOnRepeat(extras) {
+							if resumePrompt, resume := s.resumePromptFromGate(ctx, wt, branch, runID, extras); resume {
+								s.lastResumeSignature = signature
+								s.reuseSession = true
+								s.previousRunIDs = map[int]string{s.issueNumber: runID}
+								s.previousRunBatchIDs = map[int]string{s.issueNumber: s.batchID}
+								attemptRenderCfg.TaskPrompt = resumePrompt
+								continue relaunch
+							}
 						}
-					}
-					if gateStatus == "resume" {
-						// An exhausted in-session resume budget ends the
-						// session for every gate, including CI remediation:
-						// a budget with no remaining relaunch cannot keep
-						// resolving, so it must not prolong a wait
-						// (issue #2743).
 						gate, _ := extras["gate"].(string)
-						gateStatus = "failure"
-						extras = remediationBudgetFailureEvidence(gate, extras,
-							"inspect the current pull-request remediation evidence and continue in a fresh session")
+						if formalChangesRequested(extras) || !isResumeGate(gate) || ctx.Err() != nil {
+							// Formal CHANGES_REQUESTED the implementor cannot
+							// address within its allowance stays terminal.
+							gateStatus = "failure"
+							extras = remediationBudgetFailureEvidence(gate, extras,
+								"inspect the current pull-request remediation evidence and continue in a fresh session")
+						} else {
+							// A stalled or exhausted relaunch on review, CI or
+							// request evidence waits for external recovery,
+							// as rc2 did (issue #2916).
+							extras = stalledAwaitExtras(extras, signature, latestStalledResumes(s.deps.eventLog, runID))
+							s.emitAwait(ctx, runID, result, extras)
+							result.Status = "await"
+							break loop
+						}
 					}
 					s.lifecycleTerminal = gateStatus == "success" || gateStatus == "failure" || gateStatus == "aborted"
 					result.Status = gateStatus

@@ -447,8 +447,8 @@ func TestRunExecutor_ResumeCapFallsBackToForegroundObservation(t *testing.T) {
 		Branches:    map[int]string{42: branch},
 		BaseBranch:  "main",
 	})
-	if !started || result.Status != "failure" {
-		t.Fatalf("run = (%t, %q), want bounded failure after merge resume leaves PR open", started, result.Status)
+	if !started || result.Status != "success" {
+		t.Fatalf("run = (%t, %q), want the exhausted merge resume to wait and observe the merge", started, result.Status)
 	}
 	if len(factory.created) != 2 {
 		t.Fatalf("agent launches = %d, want initial plus one resume", len(factory.created))

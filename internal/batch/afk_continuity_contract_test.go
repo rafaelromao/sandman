@@ -133,6 +133,17 @@ func (g *continuityGitHub) approved() bool {
 	return approved
 }
 
+// mergeable is the implementor's merge gate: an approved request, green CI
+// and a clean merge state.
+func (g *continuityGitHub) mergeable() bool {
+	if !g.approved() {
+		return false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.pr.StatusCheckRollup == "success" && g.pr.MergeStateStatus == "CLEAN" && g.pr.ReviewDecision != "CHANGES_REQUESTED"
+}
+
 func (g *continuityGitHub) head() string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -233,7 +244,7 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 		status := "success"
 		if index < len(sc.launches) && sc.launches[index] != nil {
 			status = sc.launches[index](g)
-		} else if g.approved() {
+		} else if g.mergeable() {
 			g.merge()
 		}
 		return AgentRunResult{IssueNumber: issue.Number, Status: status, Branch: branch}
@@ -421,6 +432,64 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 			},
 			want: "merged", maxLaunches: 1,
 		},
+		// #2914 / #2744: a feedback relaunch that produces no new head and no
+		// new request is evidence there is nothing to fix. After the entry
+		// launch and one unchanged in-session relaunch the Run waits instead
+		// of burning its allowance into REMEDIATION_BUDGET_EXHAUSTED, does not
+		// relaunch on the same evidence while waiting, and merges once the
+		// reviewer approves.
+		continuityScenario{
+			name: "stall/informal feedback without progress", pr: greenCleanPR(), retries: 3,
+			launches: []func(*continuityGitHub) string{requestReview},
+			polls: []func(*continuityGitHub){
+				func(g *continuityGitHub) { g.post("Please make the retry loop in `worker.go:12` keep the request.") },
+				nil,
+				nil,
+				func(g *continuityGitHub) { g.post("LGTM, approved.") },
+			},
+			want: "merged", maxLaunches: 4,
+		},
+		// The same stall ends in a wait when nothing external changes.
+		continuityScenario{
+			name: "stall/informal feedback waits", pr: greenCleanPR(), retries: 3,
+			launches: []func(*continuityGitHub) string{requestReview},
+			polls: []func(*continuityGitHub){
+				func(g *continuityGitHub) { g.post("Please make the retry loop in `worker.go:12` keep the request.") },
+				nil,
+				nil,
+			},
+			want: "waiting", maxLaunches: 3,
+		},
+		// rc2 awaited an unrepaired CI failure. Once the in-session relaunch
+		// allowance (three relaunches) leaves the head unchanged, the Run waits
+		// for external recovery (a rerun) without relaunching, then merges.
+		continuityScenario{
+			name: "stall/CI failure without progress", pr: github.PR{StatusCheckRollup: "failure", MergeStateStatus: "BLOCKED"}, retries: 3,
+			setup: func(g *continuityGitHub) {
+				g.trigger()
+				g.publish(reports["approved-daemon-30.md"])
+			},
+			launches: []func(*continuityGitHub) string{nil, nil},
+			polls: []func(*continuityGitHub){
+				nil,
+				func(g *continuityGitHub) { g.update(func(pr *github.PR) { pr.StatusCheckRollup, pr.MergeStateStatus = "success", "CLEAN" }) },
+			},
+			want: "merged", maxLaunches: 5,
+		},
+		// Negative control: a formal CHANGES_REQUESTED review the implementor
+		// cannot address stays terminal once its repair allowance is spent.
+		continuityScenario{
+			name: "negative/formal changes requested unrepaired", pr: github.PR{StatusCheckRollup: "success", ReviewDecision: "CHANGES_REQUESTED", MergeStateStatus: "BLOCKED"}, retries: 3,
+			launches: []func(*continuityGitHub) string{func(g *continuityGitHub) string {
+				g.trigger()
+				g.mu.Lock()
+				g.reviews = append(g.reviews, github.PRReview{ID: "formal", State: "CHANGES_REQUESTED", Body: "Fix `worker.go:12`.", CommitID: g.pr.HeadRefOid, CreatedAt: time.Now().Add(time.Second)})
+				g.mu.Unlock()
+				return "success"
+			}},
+			polls: []func(*continuityGitHub){nil, nil, nil},
+			want:  "failed:REMEDIATION_BUDGET_EXHAUSTED",
+		},
 		// Negative control: no review request was ever delivered. The
 		// implementor owes it; ordinary retries are spent, then the Run fails.
 		continuityScenario{
@@ -488,6 +557,16 @@ func TestAFKContinuityContract_RealIncidentsMergeOrWait(t *testing.T) {
 			}
 		})
 	}
+}
+
+// lastEvent returns the latest event of a type.
+func lastEvent(history []events.Event, eventType string) *events.Event {
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Type == eventType {
+			return &history[i]
+		}
+	}
+	return nil
 }
 
 func continuityEventSummary(history []events.Event) string {

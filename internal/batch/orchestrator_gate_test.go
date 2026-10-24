@@ -577,8 +577,8 @@ func TestExternalGate_RequestScopedApprovalResumesAfterReview(t *testing.T) {
 	if !started {
 		t.Fatalf("expected run to start, status=%q", result.Status)
 	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure after the resumed agent leaves merge work incomplete", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want an rc2 wait after the resumed agent leaves merge work incomplete", result.Status)
 	}
 	if len(factory.created) != 2 {
 		t.Fatalf("agent launches = %d, want 2 (initial + in-session resume)", len(factory.created))
@@ -601,8 +601,8 @@ func TestExternalGate_RequestScopedApprovalResumesAfterReview(t *testing.T) {
 	if got := resumedEvt.Payload["reason"]; got != "approval" {
 		t.Fatalf("resumed reason = %v, want approval", got)
 	}
-	if got := countEventsByType(logs, "run.await"); got != 0 {
-		t.Fatalf("run.await events = %d, want 0 after review approval", got)
+	if got := countEventsByType(logs, "run.await"); got != 1 {
+		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
 	}
 
 	task, err := os.ReadFile(filepath.Join(worktreePath, ".sandman", "task.md"))
@@ -2358,8 +2358,8 @@ func TestExternalGate_AgentFailureRetryPrecedesIdleReadyGateFailure(t *testing.T
 	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
 		IssueNumber: 42, Branches: map[int]string{42: branch}, BaseBranch: "main",
 	})
-	if !started || result.Status != "failure" {
-		t.Fatalf("idle ready gate after retry = (%t, %q), want started failure", started, result.Status)
+	if !started || result.Status != "await" {
+		t.Fatalf("idle ready gate after retry = (%t, %q), want an rc2 wait", started, result.Status)
 	}
 	if len(factory.created) != 3 {
 		t.Fatalf("agent launches = %d, want 3 (failure retry, implementation success, merge resume)", len(factory.created))
@@ -2374,12 +2374,12 @@ func TestExternalGate_AgentFailureRetryPrecedesIdleReadyGateFailure(t *testing.T
 	if findEvent(logs, "run.resumed") == nil {
 		t.Fatal("ready pull-request gate did not resume implementor-owned merge work")
 	}
-	if findEvent(logs, "run.await") != nil {
-		t.Fatal("idle gate unexpectedly emitted run.await")
+	if findEvent(logs, "run.await") == nil {
+		t.Fatal("exhausted relaunch allowance did not wait")
 	}
-	finished := findEvent(logs, "run.finished")
-	if finished == nil || finished.Payload["reason"] != "REMEDIATION_BUDGET_EXHAUSTED" {
-		t.Fatalf("finished event = %#v, want remediation-budget failure", finished)
+	finished := lastEvent(logs, "run.await")
+	if finished == nil || finished.Payload["reason"] != resumeStalledReason || findEvent(logs, "run.finished") != nil {
+		t.Fatalf("await event = %#v, want the stalled rc2 wait instead of a remediation-budget failure", finished)
 	}
 }
 
@@ -2500,15 +2500,15 @@ func TestExternalGate_ReviewTimeoutRetainsResponseCounters(t *testing.T) {
 	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
 		IssueNumber: 42, Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main",
 	})
-	if !started || result.Status != "failure" {
-		t.Fatalf("counter result = (%t, %q), want bounded timeout recovery failure", started, result.Status)
+	if !started || result.Status != "await" {
+		t.Fatalf("counter result = (%t, %q), want an rc2 wait after the expired request", started, result.Status)
 	}
 	logs, err := eventLog.Read()
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
-	awaitEvt := findEvent(logs, "run.finished")
-	if awaitEvt == nil {
+	awaitEvt := lastEvent(logs, "run.await")
+	if awaitEvt == nil || findEvent(logs, "run.finished") != nil {
 		t.Fatalf("run.await event not found: %v", logs)
 	}
 	request, ok := awaitEvt.Payload["review_request"].(map[string]any)
@@ -2721,8 +2721,8 @@ func TestExternalGate_HeadSidecarWithoutRequestCannotAuthorizeWaiting(t *testing
 	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
 		IssueNumber: 42, Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main",
 	})
-	if !started || result.Status != "failure" {
-		t.Fatalf("head-only state result = (%t, %q), want started failure", started, result.Status)
+	if !started || result.Status != "await" {
+		t.Fatalf("head-only state result = (%t, %q), want an rc2 wait", started, result.Status)
 	}
 	if len(factory.created) != 2 {
 		t.Fatalf("agent launches = %d, want initial launch plus ready-gate merge work", len(factory.created))
@@ -2737,12 +2737,12 @@ func TestExternalGate_HeadSidecarWithoutRequestCannotAuthorizeWaiting(t *testing
 	if findEvent(logs, "run.resumed") == nil {
 		t.Fatal("ready gate did not resume implementor-owned merge work")
 	}
-	if findEvent(logs, "run.await") != nil {
-		t.Fatal("head sidecar without a confirmed request authorized waiting")
+	if findEvent(logs, "run.await") == nil {
+		t.Fatal("exhausted relaunch allowance did not wait")
 	}
-	finished := findEvent(logs, "run.finished")
-	if finished == nil || finished.Payload["reason"] != "REMEDIATION_BUDGET_EXHAUSTED" {
-		t.Fatalf("head-only terminal event = %#v, want merge-resume budget failure", finished)
+	finished := lastEvent(logs, "run.await")
+	if finished == nil || finished.Payload["reason"] != resumeStalledReason || findEvent(logs, "run.finished") != nil {
+		t.Fatalf("head-only wait event = %#v, want the stalled rc2 wait instead of a merge-resume budget failure", finished)
 	}
 }
 
@@ -3027,8 +3027,8 @@ func TestExternalGate_LateCurrentHeadApprovalResumesMergeWorkWithoutWaiting(t *t
 		PreviousRunIDs: map[int]string{42: "prior-run"},
 		BaseBranch:     "main",
 	})
-	if !started || result.Status != "failure" {
-		t.Fatalf("late approval result = (%t, %q), want bounded failure after fake merge work remains incomplete", started, result.Status)
+	if !started || result.Status != "await" {
+		t.Fatalf("late approval result = (%t, %q), want an rc2 wait after fake merge work remains incomplete", started, result.Status)
 	}
 	if len(factory.created) != 2 {
 		t.Fatalf("agent launches = %d, want 2 (entry resume + in-session resume)", len(factory.created))
@@ -3050,8 +3050,8 @@ func TestExternalGate_LateCurrentHeadApprovalResumesMergeWorkWithoutWaiting(t *t
 	if resumedEvt == nil || resumedEvt.Payload["gate"] != gateReadyToMerge {
 		t.Fatalf("resumed event = %#v, want %q gate", resumedEvt, gateReadyToMerge)
 	}
-	if got := countEventsByType(logs, "run.await"); got != 0 {
-		t.Fatalf("run.await events = %d, want 0 after request-scoped approval", got)
+	if got := countEventsByType(logs, "run.await"); got != 1 {
+		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
 	}
 	request, ok := resumedEvt.Payload["review_request"].(map[string]any)
 	if !ok {
@@ -3062,8 +3062,8 @@ func TestExternalGate_LateCurrentHeadApprovalResumesMergeWorkWithoutWaiting(t *t
 		t.Fatalf("resumed classification = %#v, want retained classification", request["classification"])
 	}
 	states := events.ProjectRunStates(logs)
-	if len(states) != 1 || states[0].IsAwaiting() {
-		t.Fatalf("projected state = %#v, want terminal/non-await after approval resumption", states)
+	if len(states) != 1 || !states[0].IsAwaiting() || states[0].IsTerminal() {
+		t.Fatalf("projected state = %#v, want the rc2 wait after merge work stays incomplete", states)
 	}
 }
 
@@ -3730,8 +3730,8 @@ func TestRunSingle_ApprovedCleanOpenPRIsReadyToMergeWithoutRetry(t *testing.T) {
 		MergeStateStatus:  "CLEAN",
 	})
 
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure after bounded merge work", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want an rc2 wait after bounded merge work", result.Status)
 	}
 	if result.RetriesTotal != 1 {
 		t.Fatalf("retries total = %d, want 1", result.RetriesTotal)
@@ -3739,8 +3739,8 @@ func TestRunSingle_ApprovedCleanOpenPRIsReadyToMergeWithoutRetry(t *testing.T) {
 	if launches != 2 {
 		t.Fatalf("agent launches = %d, want 2 (initial plus ready-gate resume)", launches)
 	}
-	if got := countEventsByType(logs, "run.await"); got != 0 {
-		t.Fatalf("run.await events = %d, want 0 after the gate is ready", got)
+	if got := countEventsByType(logs, "run.await"); got != 1 {
+		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
 	}
 	if findEvent(logs, "run.resumed") == nil {
 		t.Fatal("ready gate did not resume the implementor for merge work")
@@ -3756,14 +3756,14 @@ func TestRunSingle_ApprovedCleanOpenPRWithoutChecksIsReadyToMerge(t *testing.T) 
 		MergeStateStatus: "CLEAN",
 	})
 
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure after bounded merge work", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want an rc2 wait after bounded merge work", result.Status)
 	}
 	if launches != 2 {
 		t.Fatalf("agent launches = %d, want 2 (initial plus ready-gate resume)", launches)
 	}
-	if got := countEventsByType(logs, "run.await"); got != 0 {
-		t.Fatalf("run.await events = %d, want 0 after the gate is ready", got)
+	if got := countEventsByType(logs, "run.await"); got != 1 {
+		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
 	}
 	if findEvent(logs, "run.resumed") == nil {
 		t.Fatal("ready gate did not resume the implementor for merge work")
@@ -3837,8 +3837,8 @@ func TestRunSingle_RestoresHostPathsBeforeExternalGateHeadCheck(t *testing.T) {
 	if !started {
 		t.Fatalf("expected run to start, status=%q", result.Status)
 	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want bounded merge-work failure", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want an rc2 wait after bounded merge work", result.Status)
 	}
 	if !sb.restoreHostPathsCalled {
 		t.Fatal("expected RestoreHostPaths before external gate check")
@@ -3847,8 +3847,8 @@ func TestRunSingle_RestoresHostPathsBeforeExternalGateHeadCheck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
-	if got := countEventsByType(logs, "run.await"); got != 0 {
-		t.Fatalf("run.await events = %d, want 0 after ready-gate resume", got)
+	if got := countEventsByType(logs, "run.await"); got != 1 {
+		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
 	}
 }
 
@@ -3913,15 +3913,15 @@ func TestRunSingle_ReadyGateResumesAndExhaustsBudgetWithoutAwait(t *testing.T) {
 	if !started {
 		t.Fatalf("expected run to start, status=%q", result.Status)
 	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want bounded failure after the ready-gate resume leaves merge work incomplete", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want an rc2 wait after the ready-gate resume leaves merge work incomplete", result.Status)
 	}
 	logs, err := eventLog.Read()
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
-	if got := countEventsByType(logs, "run.await"); got != 0 {
-		t.Fatalf("run.await events = %d, want 0 after ready-gate resume budget exhaustion", got)
+	if got := countEventsByType(logs, "run.await"); got != 1 {
+		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
 	}
 	if findEvent(logs, "run.resumed") == nil {
 		t.Fatalf("ready poll transition did not resume the agent in-session")
@@ -4014,8 +4014,8 @@ func TestRunSingle_FailedExternalGateAwaitsWithoutRetry(t *testing.T) {
 				}
 				return
 			}
-			if result.Status != "failure" {
-				t.Fatalf("status = %q, want failure after bounded CI remediation", result.Status)
+			if result.Status != "await" {
+				t.Fatalf("status = %q, want an rc2 wait after bounded CI remediation", result.Status)
 			}
 			if result.RetriesTotal != 1 {
 				t.Fatalf("retries total = %d, want 1", result.RetriesTotal)
@@ -4029,12 +4029,12 @@ func TestRunSingle_FailedExternalGateAwaitsWithoutRetry(t *testing.T) {
 			if launches != wantLaunches {
 				t.Fatalf("agent launches = %d, want %d", launches, wantLaunches)
 			}
-			if got := countEventsByType(logs, "run.await"); got != 0 {
-				t.Fatalf("run.await events = %d, want 0 after remediation budget exhaustion", got)
+			if got := countEventsByType(logs, "run.await"); got != 1 {
+				t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
 			}
-			finished := findEvent(logs, "run.finished")
-			if finished == nil || finished.Payload["reason"] != "REMEDIATION_BUDGET_EXHAUSTED" {
-				t.Fatalf("finished event = %#v, want remediation-budget failure", finished)
+			waiting := lastEvent(logs, "run.await")
+			if waiting == nil || waiting.Payload["reason"] != resumeStalledReason || findEvent(logs, "run.finished") != nil {
+				t.Fatalf("await event = %#v, want the stalled rc2 wait instead of a remediation-budget failure", waiting)
 			}
 			if tt.name == "failed CI" {
 				resumed := findEvent(logs, "run.resumed")

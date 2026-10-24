@@ -291,7 +291,7 @@ func TestWaitingContract_FreshRepairAllowanceAcrossExecutorReentry(t *testing.T)
 			IssueNumber: 42, Mode: ModeContinue, RunID: runID,
 			Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main",
 		})
-		if result.Status != "failure" {
+		if result.Status != "await" {
 			t.Fatalf("exhausted repair status=%q", result.Status)
 		}
 	}

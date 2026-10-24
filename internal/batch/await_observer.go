@@ -60,7 +60,27 @@ func (e *runExecutor) observeLifecycle(ctx context.Context, row RowSpec) (string
 		runID = buildRunID(row.IssueNumber, row.RunTS, row.RunShortID)
 	}
 	workDir := filepath.Join(e.deps.layout.WorktreeDir, branch)
-	return session.handleLifecycleDecision(ctx, workDir, branch, session.runLogPathFor(runID), runID, true)
+	status, extras, handled := session.handleLifecycleDecision(ctx, workDir, branch, session.runLogPathFor(runID), runID, true)
+	if !handled || (status != "resume" && status != "await") {
+		return status, extras, handled
+	}
+	// A wait entered because a relaunch stalled keeps waiting while the
+	// decision repeats a stalled signature: relaunching on unchanged evidence
+	// cannot make progress. A new head, request, response or gate proceeds.
+	stalled := latestStalledResumes(e.deps.eventLog, runID)
+	if len(stalled) == 0 {
+		return status, extras, handled
+	}
+	if status == "resume" {
+		signature := resumeSignature(extras, session.liveHeadForSignature(ctx, branch))
+		if containsSignature(stalled, signature) {
+			return "await", stalledAwaitExtras(extras, signature, stalled), true
+		}
+		return status, extras, handled
+	}
+	held := cloneLifecycleExtras(extras)
+	held[stalledResumesKey] = appendStalledResume(stalled[:len(stalled)-1], stalled[len(stalled)-1])
+	return status, held, handled
 }
 
 func (e *runExecutor) persistObservedAwait(ctx context.Context, row RowSpec, extras map[string]any) error {
