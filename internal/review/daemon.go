@@ -1090,6 +1090,9 @@ func (d *Daemon) loadPendingPosts() error {
 		}
 		runDir := filepath.Join(entry.Path, "runs", rowID)
 		if snapshot, err := readReviewSnapshot(runDir); err == nil && snapshot.Invalidated {
+			if err := removePendingPublicationMarker(runDir); err != nil {
+				d.logf("remove retired publication outbox %s: %v", runDir, err)
+			}
 			continue
 		}
 		reviewState := filepath.Join(runDir, "review-state.json")
@@ -2943,12 +2946,7 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 			if os.IsNotExist(statErr) {
 				// Stale entry: drop and fall through to launch.
 				d.logf("PR #%d comment %s: rehydrate entry stale, decision.md missing at tick time, falling through to launch (issue #1847)", prNumber, comment.ID)
-				d.pendingPostMu.Lock()
-				delete(d.pendingPost[prNumber], triggerKey)
-				if len(d.pendingPost[prNumber]) == 0 {
-					delete(d.pendingPost, prNumber)
-				}
-				d.pendingPostMu.Unlock()
+				d.dropPendingPost(prNumber, triggerKey)
 				return false
 			}
 			// Read failed for some other reason (perm denied, IO).
@@ -2967,12 +2965,7 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 			// drop-and-fallthrough to launch, mirroring the missing
 			// branch.
 			d.logf("PR #%d comment %s: rehydrate entry stale, decision.md is not a regular file at tick time, falling through to launch (issue #1949)", prNumber, comment.ID)
-			d.pendingPostMu.Lock()
-			delete(d.pendingPost[prNumber], triggerKey)
-			if len(d.pendingPost[prNumber]) == 0 {
-				delete(d.pendingPost, prNumber)
-			}
-			d.pendingPostMu.Unlock()
+			d.dropPendingPost(prNumber, triggerKey)
 			return false
 		}
 		var err error

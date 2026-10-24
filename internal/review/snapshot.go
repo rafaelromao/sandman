@@ -45,6 +45,11 @@ func invalidateReviewSnapshot(dir string, snapshot reviewSnapshot) error {
 	if err := writeReviewSnapshot(dir, snapshot); err != nil {
 		return fmt.Errorf("invalidate review provenance: %w", err)
 	}
+	// The publication bound to retired provenance can never be posted. A
+	// removal that fails here is reported and retried by the startup load.
+	if err := removePendingPublicationMarker(dir); err != nil {
+		return fmt.Errorf("%w; retire publication outbox: %v", errStaleReviewSnapshot, err)
+	}
 	return errStaleReviewSnapshot
 }
 
@@ -92,9 +97,10 @@ func (d *Daemon) currentReviewSnapshot(ctx context.Context, pr int, request, dir
 
 func (d *Daemon) handlePendingSnapshotFailure(ctx context.Context, pr int, request string, err error) bool {
 	if errors.Is(err, errStaleReviewSnapshot) {
-		d.pendingPostMu.Lock()
-		delete(d.pendingPost[pr], request)
-		d.pendingPostMu.Unlock()
+		if err != errStaleReviewSnapshot {
+			d.logf("PR #%d: %v", pr, err)
+		}
+		d.dropPendingPost(pr, request)
 		return false
 	}
 	d.observeHealthFailure(ctx, requestHealthKey(pr, request), "validate pending review snapshot", pr, err)

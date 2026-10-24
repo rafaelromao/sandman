@@ -7576,10 +7576,12 @@ type fakeContainerStarter struct {
 	buildImageTag   string
 	buildImageErr   error
 	buildImageCount int
+	buildImageRepo  string
 }
 
 func (f *fakeContainerStarter) BuildImage(ctx context.Context, repoPath string) (string, error) {
 	f.buildImageCount++
+	f.buildImageRepo = repoPath
 	if f.buildImageErr != nil {
 		return "", f.buildImageErr
 	}
@@ -9975,7 +9977,7 @@ func TestClearIssueArtifacts_RemovesWorktree(t *testing.T) {
 		},
 	}
 
-	ClearIssueArtifacts(42, branch, worktreeDir, el, io.Discard, "main", nil, batchesIndexPath)
+	ClearIssueArtifacts(42, branch, worktreeDir, el, io.Discard, "main", nil, batchesIndexPath, ".")
 
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 		t.Errorf("expected worktree to be removed, got %v", err)
@@ -10030,7 +10032,7 @@ func TestClearIssueArtifacts_DoesNotPruneSiblingContainerWorktree(t *testing.T) 
 		t.Fatalf("rewrite sibling registration gitdir: %v", err)
 	}
 
-	ClearIssueArtifacts(42, targetBranch, worktreeDir, &spyEventLog{}, io.Discard, "main", nil, "")
+	ClearIssueArtifacts(42, targetBranch, worktreeDir, &spyEventLog{}, io.Discard, "main", nil, "", ".")
 
 	if _, err := os.Stat(registration); err != nil {
 		t.Fatalf("sibling worktree registration was removed while clearing another issue: %v", err)
@@ -10049,7 +10051,7 @@ func TestClearIssueArtifacts_Idempotent(t *testing.T) {
 	initGitRepo(t, dir)
 
 	el := &spyEventLog{}
-	ClearIssueArtifacts(42, "42-nonexistent", ".sandman/worktrees", el, io.Discard, "main", nil, "")
+	ClearIssueArtifacts(42, "42-nonexistent", ".sandman/worktrees", el, io.Discard, "main", nil, "", ".")
 }
 
 func TestClearIssueArtifacts_RemovesOrphanWorktreeDirectory(t *testing.T) {
@@ -10109,7 +10111,7 @@ func TestClearIssueArtifacts_RemovesOrphanWorktreeDirectory(t *testing.T) {
 			{Type: "run.started", RunID: runID, Issue: 42, IssueRef: issueRef(42)},
 		},
 	}
-	ClearIssueArtifacts(42, branch, worktreeDir, el, io.Discard, "main", nil, batchesIndexPath)
+	ClearIssueArtifacts(42, branch, worktreeDir, el, io.Discard, "main", nil, batchesIndexPath, ".")
 
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 		t.Errorf("expected orphan worktree dir to be removed, got err=%v", err)
@@ -10143,7 +10145,7 @@ func TestClearIssueArtifacts_OnlyRemovesTargetIssue(t *testing.T) {
 		},
 	}
 
-	ClearIssueArtifacts(42, "42-fix-bug", ".sandman/worktrees", el, io.Discard, "main", nil, "")
+	ClearIssueArtifacts(42, "42-fix-bug", ".sandman/worktrees", el, io.Discard, "main", nil, "", ".")
 
 	// Issue 99 branch should still exist
 	revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/99-fix-bug")
@@ -10216,7 +10218,7 @@ func TestClearIssueArtifacts_ReconcilesStrandedWorktreeInMainRepo(t *testing.T) 
 		logBuf := &bytes.Buffer{}
 
 		trueVal := true
-		ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "")
+		ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "", ".")
 
 		// The branch must be gone from the main repo.
 		revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+branch)
@@ -10264,7 +10266,7 @@ func TestClearIssueArtifacts_ReconcilesStrandedWorktreeInMainRepo(t *testing.T) 
 		logBuf := &bytes.Buffer{}
 
 		trueVal := true
-		ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "")
+		ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "", ".")
 
 		// The branch must be gone.
 		revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+branch)
@@ -10323,7 +10325,7 @@ func TestClearIssueArtifacts_PreservesMainRepoBranch(t *testing.T) {
 	parentCommitBefore := runGit(t, dir, "rev-parse", "HEAD")
 
 	trueVal := true
-	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "")
+	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "", ".")
 
 	parentCommitAfter, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").CombinedOutput()
 	if err != nil {
@@ -10404,7 +10406,7 @@ func TestClearIssueArtifacts_ForeignWorktreeHolderPreserved(t *testing.T) {
 	parentCommitBefore := runGit(t, dir, "rev-parse", "HEAD")
 
 	trueVal := true
-	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "")
+	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "", ".")
 
 	// Parent HEAD commit must be unchanged: parent was on main, the
 	// branch was held by a foreign worktree, the recovery must not
@@ -10476,7 +10478,7 @@ func TestClearIssueArtifacts_NoReconcileKeepsBeltAndSuspenders(t *testing.T) {
 	el := &spyEventLog{}
 	logBuf := &bytes.Buffer{}
 
-	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", nil, "")
+	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", nil, "", ".")
 
 	// The branch should still exist (no recovery ran).
 	revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+branch)
@@ -10505,7 +10507,7 @@ func TestClearIssueArtifacts_ExplicitFalseReconcileKeepsBeltAndSuspenders(t *tes
 	logBuf := &bytes.Buffer{}
 
 	falseVal := false
-	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &falseVal, "")
+	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &falseVal, "", ".")
 
 	// The branch should still exist (no recovery ran).
 	revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+branch)
@@ -10549,7 +10551,7 @@ func TestClearIssueArtifacts_RemovesPrunableWorktree(t *testing.T) {
 	el := &spyEventLog{}
 	logBuf := &bytes.Buffer{}
 	trueVal := true
-	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "")
+	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "", ".")
 
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 		t.Errorf("expected prunable worktree dir to be removed, got err=%v", err)

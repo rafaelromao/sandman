@@ -404,7 +404,8 @@ func requireClaudeAgentE2E(t *testing.T) smokeProviderCase {
 
 // TestPresetMatrixHarness_RealClaudeAgentReuseSession runs the claude preset
 // in a container, then continues the same row with --reuse-session, which
-// renders Claude Code's --continue against the row's worktree.
+// resumes the exact session the first Run recorded (--resume <id>); the
+// continued Run must record that same session.
 func TestPresetMatrixHarness_RealClaudeAgentReuseSession(t *testing.T) {
 	tc := requireClaudeAgentE2E(t)
 	runSmokeProviderTwice(t, tc, "--continue", "--reuse-session")
