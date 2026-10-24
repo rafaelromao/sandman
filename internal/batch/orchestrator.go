@@ -1740,7 +1740,8 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	// same terminal as the row's own fence. Guarded by mu.
 	returnedAborts := make([]func(context.Context) AgentRunResult, len(req.Issues))
 	// abortReturned aborts an unfinished row whose goroutine returned it to
-	// the batch, applying the abort selected when it returned. Callers hold mu.
+	// the batch, applying the abort selected when it returned. Every path that
+	// stores an unfinished result registers that abort. Callers hold mu.
 	abortReturned := func(ctx context.Context, idx, issueNum int) {
 		abort := returnedAborts[idx]
 		if abort == nil {

@@ -62,10 +62,14 @@ func assertRecoveredRunAbortTerminal(t *testing.T, log []events.Event, layout pa
 	if _, err := os.Stat(filepath.Join(layout.WorktreeDir, "42-fix")); err != nil {
 		t.Fatalf("abort removed the worktree: %v", err)
 	}
+	projected := false
 	for _, state := range events.ProjectRunStates(log) {
-		if state.RunID == "row" && (state.Status() != "aborted" || !state.IsTerminal()) {
-			t.Fatalf("recovered Run projection = %+v, want terminal aborted", state)
+		if state.RunID == "row" {
+			projected = state.Status() == "aborted" && state.IsTerminal()
 		}
+	}
+	if !projected {
+		t.Fatalf("recovered Run projection = %+v, want terminal aborted", events.ProjectRunStates(log))
 	}
 	return aborted[0]
 }
