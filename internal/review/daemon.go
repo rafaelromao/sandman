@@ -1096,18 +1096,11 @@ func (d *Daemon) loadPendingPosts() error {
 		state, stateErr := seenStateReader(runDir)
 		marker, markerErr := readPendingPublicationMarker(runDir)
 		if markerErr == nil && marker.PR == entry.PR {
-			terminal := false
-			terminalStatus := ""
+			var terminalState *batchindex.ReviewState
 			if stateErr == nil {
-				for _, sc := range state.SeenComments {
-					if sc.CommentID == marker.CommentID && shouldSkipDedupStatus(sc.Status) {
-						terminal = true
-						terminalStatus = sc.Status
-						break
-					}
-				}
+				terminalState = &state
 			}
-			if !terminal {
+			if d.reconcileStartupOutbox(runDir, marker, terminalState) {
 				decisionDir := runDir
 				if marker.Body == "" {
 					var ok bool
@@ -1125,10 +1118,6 @@ func (d *Daemon) loadPendingPosts() error {
 					reviewState: reviewState,
 					body:        marker.Body,
 					since:       marker.Timestamp,
-				}
-			} else if terminalStatus == "success" {
-				if err := removePendingPublicationMarker(runDir); err != nil {
-					d.logf("remove acknowledged publication outbox %s: %v", runDir, err)
 				}
 			}
 		}
@@ -1656,7 +1645,7 @@ func hasLaterDaemonReviewResponse(trigger github.PRComment, comments []github.PR
 			continue
 		}
 		if hasMarkdownHeading(comment.Body, "Summary") && hasMarkdownHeading(comment.Body, "Decision") {
-			if !strings.HasSuffix(comment.Body, publicationIdentity(reviewTriggerKey(trigger), head)) {
+			if !publicationIdentified(comment.Body, reviewTriggerKey(trigger), head) {
 				continue
 			}
 			return true
@@ -1816,7 +1805,9 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) (operationErr erro
 	// A durable publication outbox takes precedence over terminal-cache
 	// filtering. Acknowledgement may have succeeded remotely while the
 	// local state write or outbox removal failed; recovery must inspect
-	// that body before any launch decision can discard the trigger.
+	// that body before any launch decision can discard the trigger. This is
+	// the sole rehydrate gate: tryRehydratePost returns false only after
+	// dropping a stale entry, so the trigger falls through to launch.
 	d.pendingPostMu.Lock()
 	pendingKeys := make(map[string]bool, len(d.pendingPost[prNumber]))
 	for key := range d.pendingPost[prNumber] {
@@ -1867,36 +1858,6 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) (operationErr erro
 	d.seenCacheMu.RUnlock()
 	if len(unprocessed) == 0 {
 		return nil
-	}
-
-	// Rehydrate-on-startup (issue #1847 S4): consult pendingPost for
-	// each remaining trigger. Issue #1849 (S6): the lazy-verify
-	// map is gone, so this is the SOLE rehydrate gate. TryRehydratePost
-	// returns true when the entry was handled (success, failure,
-	// ctx-cancel, or kept-for-retry) — the trigger is dropped from
-	// unprocessed. Returns false when the entry is stale (decision.md
-	// missing at tick time) — the trigger falls through to the launch
-	// path.
-	d.pendingPostMu.Lock()
-	hasPostEntry := map[string]bool{}
-	for cid := range d.pendingPost[prNumber] {
-		hasPostEntry[cid] = true
-	}
-	d.pendingPostMu.Unlock()
-	if len(hasPostEntry) > 0 {
-		var filtered []unseenTrigger
-		for _, t := range unprocessed {
-			if hasPostEntry[t.key] {
-				if d.tryRehydratePost(ctx, prNumber, t.comment) {
-					continue
-				}
-			}
-			filtered = append(filtered, t)
-		}
-		if len(filtered) == 0 {
-			return nil
-		}
-		unprocessed = filtered
 	}
 
 	// A later daemon response suppresses a fresh launch, but it must not
@@ -2689,15 +2650,8 @@ func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, comm
 		d.recordPendingPublication(prNumber, commentID, decisionDir, reviewRunFolder, "", state, preserveWorktree)
 		return err
 	}
-	redacted := publicationBody(RedactBody(string(body)), commentID, snapshot.Head)
-	if err := d.persistPublicationOutbox(reviewRunFolder, pendingPublicationMarker{
-		Version:   2,
-		PR:        prNumber,
-		CommentID: commentID,
-		RunID:     filepath.Base(reviewRunFolder),
-		Body:      redacted,
-		Timestamp: d.now(),
-	}); err != nil {
+	redacted, err := d.stagePublication(prNumber, commentID, reviewRunFolder, body, snapshot.Head)
+	if err != nil {
 		d.logf("PR #%d: persist publication outbox failed: %v; preserving the review worktree", prNumber, err)
 		if preserveWorktree != nil {
 			*preserveWorktree = true
@@ -2721,7 +2675,7 @@ func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, comm
 		d.recordPendingPublication(prNumber, commentID, decisionDir, reviewRunFolder, redacted, state, preserveWorktree)
 		return cerr
 	}
-	postErr := postWithRetry(ctx, d, prNumber, redacted, func() error {
+	postErr := postWithRetry(ctx, d, prNumber, commentID, snapshot.Head, redacted, func() error {
 		_, err := d.currentReviewSnapshot(ctx, prNumber, commentID, reviewRunFolder)
 		return err
 	})
@@ -2756,16 +2710,7 @@ func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, comm
 	if preserveWorktree != nil {
 		*preserveWorktree = false
 	}
-	if state != nil {
-		if err := state.MarkSeen(commentID, "success"); err != nil {
-			d.registerPendingPost(prNumber, commentID, decisionDir, reviewRunFolder, redacted)
-			return fmt.Errorf("mark %s success: %w", commentID, err)
-		}
-	}
-	if err := removePendingPublicationMarker(reviewRunFolder); err != nil {
-		d.logf("PR #%d: remove publication outbox: %v", prNumber, err)
-	}
-	return nil
+	return d.acknowledgePublication(prNumber, commentID, decisionDir, reviewRunFolder, redacted, state)
 }
 
 // postWithRetry calls CommentPoster.PostComment up to
@@ -2773,7 +2718,7 @@ func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, comm
 // postStepBackoffs[attempt-1]. Returns the last error from
 // PostComment on exhaustion, or ctx.Err() if the context is
 // cancelled at any point. Issue #1891.
-func postWithRetry(ctx context.Context, d *Daemon, prNumber int, body string, validate func() error) error {
+func postWithRetry(ctx context.Context, d *Daemon, prNumber int, triggerKey, head, body string, validate func() error) error {
 	var lastErr error
 	for attempt := 1; attempt <= PostStepMaxAttempts; attempt++ {
 		if cerr := ctx.Err(); cerr != nil {
@@ -2787,7 +2732,7 @@ func postWithRetry(ctx context.Context, d *Daemon, prNumber int, body string, va
 		// a failed post, the remote result is ambiguous, so exact-match
 		// lookup protects retries from duplicating a comment.
 		if attempt > 1 {
-			alreadyPosted, err := publicationAlreadyPosted(ctx, d, prNumber, body)
+			alreadyPosted, err := d.publicationLanded(ctx, prNumber, triggerKey, head)
 			if err != nil {
 				lastErr = err
 				if attempt < PostStepMaxAttempts {
@@ -2832,19 +2777,6 @@ func postWithRetry(ctx context.Context, d *Daemon, prNumber int, body string, va
 		return validate()
 	}
 	return lastErr
-}
-
-func publicationAlreadyPosted(ctx context.Context, d *Daemon, prNumber int, body string) (bool, error) {
-	comments, err := d.GitHub.ListPRComments(ctx, prNumber)
-	if err != nil {
-		return false, fmt.Errorf("list comments for publication recovery: %w", err)
-	}
-	for _, comment := range comments {
-		if comment.Body == body {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 // effectivePostBackoffs returns the backoff schedule used by
@@ -3054,19 +2986,13 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 			d.observeHealthFailure(ctx, requestHealthKey(prNumber, triggerKey), "read pending review decision", prNumber, err)
 			return true
 		}
-		body = []byte(publicationBody(RedactBody(string(body)), triggerKey, snapshot.Head))
-		if err := d.persistPublicationOutbox(filepath.Dir(entry.reviewState), pendingPublicationMarker{
-			Version:   2,
-			PR:        prNumber,
-			CommentID: triggerKey,
-			RunID:     filepath.Base(filepath.Dir(entry.reviewState)),
-			Body:      string(body),
-			Timestamp: d.now(),
-		}); err != nil {
+		staged, err := d.stagePublication(prNumber, triggerKey, filepath.Dir(entry.reviewState), body, snapshot.Head)
+		if err != nil {
 			d.logf("PR #%d comment %s: upgrade publication outbox: %v; keeping entry for retry", prNumber, comment.ID, err)
 			d.observeHealthFailure(ctx, requestHealthKey(prNumber, triggerKey), "upgrade pending publication outbox", prNumber, err)
 			return true
 		}
+		body = []byte(staged)
 		d.pendingPostMu.Lock()
 		if pending := d.pendingPost[prNumber]; pending != nil {
 			if current, ok := pending[triggerKey]; ok {
@@ -3076,7 +3002,7 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 		}
 		d.pendingPostMu.Unlock()
 	}
-	if !strings.HasSuffix(string(body), publicationIdentity(triggerKey, snapshot.Head)) {
+	if !publicationIdentified(string(body), triggerKey, snapshot.Head) {
 		return d.handlePendingSnapshotFailure(ctx, prNumber, triggerKey, invalidateReviewSnapshot(filepath.Dir(entry.reviewState), snapshot))
 	}
 
@@ -3089,7 +3015,7 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 		return true
 	}
 
-	alreadyPosted, lookupErr := publicationAlreadyPosted(ctx, d, prNumber, string(body))
+	alreadyPosted, lookupErr := d.publicationLanded(ctx, prNumber, triggerKey, snapshot.Head)
 	if lookupErr != nil {
 		d.logf("PR #%d comment %s: rehydrate publication lookup failed: %v; keeping entry", prNumber, comment.ID, lookupErr)
 		d.observeHealthFailure(ctx, requestHealthKey(prNumber, triggerKey), "observe pending review publication", prNumber, lookupErr)
@@ -3126,22 +3052,11 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 		d.observeHealthFailure(ctx, requestHealthKey(prNumber, triggerKey), "open pending review state", prNumber, storeErr)
 		return true
 	}
-	if err := store.MarkSeen(triggerKey, "success"); err != nil {
-		d.logf("PR #%d comment %s: MarkSeen(success) failed in rehydrate branch: %v; keeping entry (issue #1847)", prNumber, comment.ID, err)
+	if err := d.acknowledgePublication(prNumber, triggerKey, entry.runDir, filepath.Dir(entry.reviewState), string(body), store); err != nil {
+		d.logf("PR #%d comment %s: acknowledge publication failed in rehydrate branch: %v; keeping entry (issue #1847)", prNumber, comment.ID, err)
 		d.observeHealthFailure(ctx, requestHealthKey(prNumber, triggerKey), "acknowledge pending review publication", prNumber, err)
 		return true
 	}
-	if err := removePendingPublicationMarker(filepath.Dir(entry.reviewState)); err != nil {
-		d.logf("PR #%d comment %s: remove pending publication marker: %v", prNumber, comment.ID, err)
-	}
-
-	// Drop the entry from pendingPost under the dedicated mutex.
-	d.pendingPostMu.Lock()
-	delete(d.pendingPost[prNumber], triggerKey)
-	if len(d.pendingPost[prNumber]) == 0 {
-		delete(d.pendingPost, prNumber)
-	}
-	d.pendingPostMu.Unlock()
 	d.resolveHealthOperation(requestHealthKey(prNumber, triggerKey))
 	return true
 }
