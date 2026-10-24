@@ -1694,7 +1694,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		return nil, fmt.Errorf("override: failed to close open PR(s) before replacing branch(es): %s; worktree and branch preserved", strings.Join(overridePRCloseErrors, "; "))
 	}
 	for _, entry := range overrideBranches {
-		ClearIssueArtifacts(entry.issueNumber, entry.branch, layout.WorktreeDir, o.eventLog, o.errorLog, baseBranch, req.StrandedReconcile, layout.BatchesIndexPath)
+		ClearIssueArtifacts(entry.issueNumber, entry.branch, layout.WorktreeDir, o.eventLog, o.errorLog, baseBranch, req.StrandedReconcile, layout.BatchesIndexPath, layout.RepoRoot)
 	}
 
 	eventIndex := eventLogIndex{priorRunByIssue: map[int]bool{}, branchesByIssue: map[int][]string{}}
@@ -4984,16 +4984,21 @@ func closeOpenPRForBranch(ctx context.Context, branch string, ghClient github.Cl
 
 // `baseBranch` is accepted for API compatibility with prior call sites
 // but is no longer used by the recovery flow.
-func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, eventLog events.EventLog, logWriter io.Writer, baseBranch string, strandedReconcile *bool, batchesIndexPath string) {
+func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, eventLog events.EventLog, logWriter io.Writer, baseBranch string, strandedReconcile *bool, batchesIndexPath string, repoRoot string) {
 	wtPath := filepath.Join(worktreeDir, branch)
+	git := func(args ...string) *exec.Cmd {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoRoot
+		return cmd
+	}
 
 	// Remove worktree (may fail if already removed — idempotent)
-	if out, err := exec.Command("git", "worktree", "remove", "--force", wtPath).CombinedOutput(); err != nil {
+	if out, err := git("worktree", "remove", "--force", wtPath).CombinedOutput(); err != nil {
 		if (isPrunableWorktreeError(err, out) || isMissingWorktreeError(err, out)) && strandedReconcile != nil && *strandedReconcile {
 			if rmErr := os.RemoveAll(wtPath); rmErr != nil {
 				fmt.Fprintf(logWriter, "error: remove worktree dir %s for issue %d: %v\n", wtPath, issueNumber, rmErr)
 			}
-			if rmErr := sandbox.RemoveWorktreeRegistration(".", wtPath); rmErr != nil {
+			if rmErr := sandbox.RemoveWorktreeRegistration(repoRoot, wtPath); rmErr != nil {
 				fmt.Fprintf(logWriter, "error: remove worktree registration %s for issue %d: %v\n", wtPath, issueNumber, rmErr)
 			}
 		} else if !isMissingWorktreeError(err, out) {
@@ -5001,15 +5006,15 @@ func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, eve
 		}
 	}
 	// Delete branch (may fail if already deleted — idempotent)
-	if out, err := exec.Command("git", "branch", "-D", branch).CombinedOutput(); err != nil && !isMissingBranchError(err, out) {
+	if out, err := git("branch", "-D", branch).CombinedOutput(); err != nil && !isMissingBranchError(err, out) {
 		if strandedReconcile != nil && *strandedReconcile {
-			recoverBranchDeleteFromMainRepo(logWriter, branch, worktreeDir)
+			recoverBranchDeleteFromMainRepo(logWriter, repoRoot, branch, worktreeDir)
 			// Retry the delete from the main repo. If the recovery
 			// succeeded the branch is already gone (and `git branch -D`
 			// will report "not found", suppressed by
 			// isMissingBranchError); if recovery failed, surface the
 			// original failure.
-			if retryOut, retryErr := exec.Command("git", "branch", "-D", branch).CombinedOutput(); retryErr != nil && !isMissingBranchError(retryErr, retryOut) {
+			if retryOut, retryErr := git("branch", "-D", branch).CombinedOutput(); retryErr != nil && !isMissingBranchError(retryErr, retryOut) {
 				fmt.Fprintf(logWriter, "error: delete branch %s for issue %d: %v: %s\n", branch, issueNumber, retryErr, retryOut)
 			}
 		} else {
@@ -5067,13 +5072,13 @@ func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, eve
 //
 // On failure at any step, a warning is logged. The caller retries the
 // delete after this returns.
-func recoverBranchDeleteFromMainRepo(logWriter io.Writer, branch, worktreeBase string) {
+func recoverBranchDeleteFromMainRepo(logWriter io.Writer, repoRoot, branch, worktreeBase string) {
 	absBase, err := filepath.Abs(worktreeBase)
 	if err != nil {
 		fmt.Fprintf(logWriter, "warning: resolve worktree base for stranded recovery: %v\n", err)
 		return
 	}
-	if info, stranded := sandbox.StrandedWorktree(".", absBase, branch); stranded {
+	if info, stranded := sandbox.StrandedWorktree(repoRoot, absBase, branch); stranded {
 		delCmd := exec.Command("git", "branch", "-D", branch)
 		delCmd.Dir = info.Path
 		if out, err := delCmd.CombinedOutput(); err != nil {
@@ -5086,7 +5091,7 @@ func recoverBranchDeleteFromMainRepo(logWriter io.Writer, branch, worktreeBase s
 	// "foreign" entry when the main repo is on the branch and its
 	// path differs from the canonical worktree path; in that case we
 	// fall through to strategy 3 below.
-	if info, foreign := sandbox.ForeignStrandedWorktree(".", absBase, branch); foreign && !sandbox.SamePath(info.Path, ".") {
+	if info, foreign := sandbox.ForeignStrandedWorktree(repoRoot, absBase, branch); foreign && !sandbox.SamePath(info.Path, repoRoot) {
 		if err := sandbox.ReleaseBranchInWorktree(info.Path); err != nil {
 			fmt.Fprintf(logWriter, "warning: detach HEAD in foreign worktree %s: %v\n", info.Path, err)
 		}
@@ -5097,7 +5102,7 @@ func recoverBranchDeleteFromMainRepo(logWriter io.Writer, branch, worktreeBase s
 	// holders atomically with the ref-drop, closing the TOCTOU window
 	// where a sibling worktree could check out the branch between the
 	// parent's detach and the delete.
-	headRef, headErr := sandbox.CurrentBranchRef(".")
+	headRef, headErr := sandbox.CurrentBranchRef(repoRoot)
 	if headErr != nil {
 		fmt.Fprintf(logWriter, "warning: drop refs/heads/%s: main repo HEAD is not a symbolic ref — refusing to detach (foreign worktree holder race?): %v\n", branch, headErr)
 		return
@@ -5106,11 +5111,15 @@ func recoverBranchDeleteFromMainRepo(logWriter io.Writer, branch, worktreeBase s
 		fmt.Fprintf(logWriter, "warning: drop refs/heads/%s: main repo HEAD is %q, not the target branch — refusing to detach (foreign worktree holder race?)\n", branch, headRef)
 		return
 	}
-	if out, err := exec.Command("git", "checkout", "--detach").CombinedOutput(); err != nil {
+	detach := exec.Command("git", "checkout", "--detach")
+	detach.Dir = repoRoot
+	if out, err := detach.CombinedOutput(); err != nil {
 		fmt.Fprintf(logWriter, "warning: detach HEAD in main repo: %v: %s\n", err, out)
 		return
 	}
-	if out, err := exec.Command("git", "branch", "-D", branch).CombinedOutput(); err != nil {
+	drop := exec.Command("git", "branch", "-D", branch)
+	drop.Dir = repoRoot
+	if out, err := drop.CombinedOutput(); err != nil {
 		fmt.Fprintf(logWriter, "warning: drop branch refs/heads/%s in main repo via 'git branch -D': %v: %s\n", branch, err, out)
 	}
 }

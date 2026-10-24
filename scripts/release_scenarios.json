@@ -532,7 +532,7 @@
     },
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
-      "test": "TestReviewDaemonE2E_RealAgentInContainer",
+      "test": "TestReviewDaemonE2E_CannedReviewerTriggerToPost",
       "tier": "integration"
     },
     {
@@ -1003,6 +1003,16 @@
       "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestPythonBuildSecretIsTransient",
       "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalBuiltBinary_ServesEmbeddedLogOwnerAndTerminalSavedLog",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalBuiltBinary_BrowserContinuityReloadsAndRecoversAfterRestart",
+      "tier": "unit"
     }
   ]
 }
