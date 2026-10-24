@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -26,9 +27,16 @@ import (
 type hookedEventLog struct {
 	spyEventLog
 	hook func(events.Event)
+	// fail, when set, can reject an append before it is recorded.
+	fail func(events.Event) error
 }
 
 func (l *hookedEventLog) Log(event events.Event) error {
+	if l.fail != nil {
+		if err := l.fail(event); err != nil {
+			return err
+		}
+	}
 	err := l.spyEventLog.Log(event)
 	if err == nil && l.hook != nil {
 		l.hook(event)
@@ -77,7 +85,7 @@ type quotaPauseFixture struct {
 // startQuotaPauseFixture starts the batch. onPaused runs once, when 42 records
 // its usage-limit pause; onPausedAwait runs once, on the first run.await 42
 // persists after that.
-func startQuotaPauseFixture(t *testing.T, onPaused, onPausedAwait func(*quotaPauseFixture)) *quotaPauseFixture {
+func startQuotaPauseFixture(t *testing.T, onPaused, onPausedAwait func(*quotaPauseFixture), fail ...func(events.Event) error) *quotaPauseFixture {
 	t.Helper()
 	root := testenv.MkdirShort(t, "sm-accept-")
 	t.Chdir(root)
@@ -92,6 +100,9 @@ func startQuotaPauseFixture(t *testing.T, onPaused, onPausedAwait func(*quotaPau
 	start := clock.Now()
 	f := &quotaPauseFixture{t: t, layout: layout, clock: clock, limited: make(chan struct{}), done: make(chan struct{})}
 	f.log = &hookedEventLog{}
+	if len(fail) > 0 {
+		f.log.fail = fail[0]
+	}
 	f.log.events = readyContinuationEvents(acceptanceRunID, acceptanceRunID, start.Add(-2*time.Minute), start.Add(-time.Minute), start)
 	ready := FindReadyContinuations(f.log.snapshot(), layout)
 	if len(ready) != 1 {
@@ -351,5 +362,45 @@ func TestObservationAcceptance_ExecuteAwaitCheckpointsContinuation(t *testing.T)
 	}
 	if waitErr != nil || runID == "" || firstWait.PreviousRunID != runID || firstWait.PreviousBatchID == "" {
 		t.Fatalf("first external wait checkpointed without its continuation identity: run=%q wait=%+v err=%v", runID, *firstWait, waitErr)
+	}
+}
+
+func TestObservationAcceptance_UnacceptedPausedObservationAbortsRow(t *testing.T) {
+	var failed atomic.Bool
+	f := startQuotaPauseFixture(t,
+		func(f *quotaPauseFixture) {
+			f.client.setPR(acceptanceBranch, func(pr *github.PR) { pr.StatusCheckRollup, pr.CIExecutionID = "pending", "ci-a" })
+		},
+		func(f *quotaPauseFixture) {
+			f.clock.Advance(time.Minute)
+			f.client.setPR(acceptanceBranch, func(pr *github.PR) { pr.CIExecutionID = "ci-b" })
+		},
+		func(event events.Event) error {
+			if ciExecutionAwait(event, "ci-b") && failed.CompareAndSwap(false, true) {
+				return errors.New("event log temporarily unavailable")
+			}
+			return nil
+		},
+	)
+	var terminal events.RunState
+	f.eventually("row did not reach a terminal outcome after its observation could not be accepted", func() bool {
+		for _, state := range events.ProjectRunStates(f.log.snapshot()) {
+			if state.RunID == acceptanceRunID && state.IsTerminal() {
+				terminal = state
+				return true
+			}
+		}
+		return false
+	})
+	if !failed.Load() {
+		t.Fatal("await persistence was never rejected")
+	}
+	for _, event := range f.log.snapshot() {
+		if event.RunID == acceptanceRunID && event.Payload["reason"] == "AGENT_USAGE_LIMIT" {
+			t.Fatalf("unaccepted observation was reported as quota exhaustion: %+v", event)
+		}
+	}
+	if terminal.Status() != "aborted" {
+		t.Fatalf("unaccepted observation finished as %q, want aborted; events=%+v", terminal.Status(), f.log.snapshot())
 	}
 }

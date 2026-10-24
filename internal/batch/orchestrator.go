@@ -2468,6 +2468,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					var quotaTerminalStatus string
 					var quotaTerminalExtras map[string]any
 					quotaTerminal := errors.New("terminal observation during quota admission")
+					// An observation the row cannot make durable aborts it, like
+					// every other acceptance failure; it is not quota exhaustion.
+					quotaAcceptFailed := errors.New("observation not accepted during quota admission")
 					var quotaObserve func() error
 					if awaiting {
 						quotaObserve = func() error {
@@ -2476,7 +2479,10 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 								return issueCtx.Err()
 							}
 							if handled && (status == "await" || status == "resume" && !readyContinuation) {
-								return accept(status, extras)
+								if err := accept(status, extras); err != nil {
+									return fmt.Errorf("%w: %w", quotaAcceptFailed, err)
+								}
+								return nil
 							}
 							if handled && status != "resume" && status != "await" {
 								quotaTerminalStatus, quotaTerminalExtras = status, extras
@@ -2490,7 +2496,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 							res = executor.finishObserved(issueCtx, row, quotaTerminalStatus, quotaTerminalExtras)
 							break
 						}
-						if issueCtx.Err() != nil {
+						if errors.Is(err, quotaAcceptFailed) || issueCtx.Err() != nil {
 							abortRequested = true
 						} else {
 							res = executor.finishObserved(issueCtx, row, "failure", map[string]any{"reason": "AGENT_USAGE_LIMIT", "next_action": "resume with available provider quota after the exhausted recovery window"})
