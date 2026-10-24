@@ -104,6 +104,7 @@ func TestInformalApprovalLifecycle_RealReviewExplanationsAndCIAdvice(t *testing.
 		{"met criteria and resolved defects", "## Findings\nNone.\n\nVerification against the acceptance criteria:\nThe timeout criterion is met. The previous defect in worker.go is resolved. No defect is unresolved.\n\n## Suggested next steps\nNo author changes requested. No unresolved defects remain.\n\n## Decision\n**APPROVED**"},
 		{"negated unmet requirements", "## Findings\nNone.\n\nVerification against the acceptance criteria:\nNo unmet requirements remain in worker.go. No requirements are unmet.\n\n## Decision\n**APPROVED**"},
 		{"resolved failed requirement", "## Findings\nNone.\n\nVerification against the acceptance criteria:\nThe previously failed requirement in worker.go is now satisfied. The unresolved defect in worker.go is now fixed.\n\n## Suggested next steps\nNo author changes requested. The failed requirement in worker.go has been satisfied.\n\n## Decision\n**APPROVED**"},
+		{"wrapped resolved assessments", "## Findings\nNone.\n\nVerification against the acceptance criteria:\nNo unmet requirements remain\nin worker.go. The previously failed requirement in worker.go\nis now satisfied.\n\n## Suggested next steps\nNo author changes requested. The previously failed requirement in worker.go\nis now satisfied.\n\n## Decision\n**APPROVED**"},
 		{"no changes then CI wait", "## Findings\nNone.\n\n## Suggested next steps\nNone. Await the pending CI checks before merging.\n\n## Decision\n**APPROVED**"},
 		{"no author changes then CI wait", "## Findings\nNone.\n\n## Suggested next steps\nNo author changes requested; await the required CI checks before merging. A formal GitHub review cannot be submitted from this daemon run.\n\n## Decision\n**APPROVED**"},
 	} {
@@ -178,7 +179,11 @@ func TestInformalApprovalLifecycle_FailedCriteriaRemainActionable(t *testing.T) 
 		"The implementation remains unsafe: worker.go drops requests on timeout.",
 		"The handler is still broken: worker.go drops requests on timeout.",
 		"No unmet requirements remain in worker.go, except the timeout criterion.",
+		"No unmet requirements remain in worker.go,\nexcept the timeout criterion.",
 		"The previously failed requirement in worker.go is now satisfied, but the timeout criterion is not met.",
+		"The previously failed requirement in worker.go is now satisfied,\nbut the timeout criterion is not met.",
+		"Publication was unavailable\nFix the race in worker.go.",
+		"Merge\nwhen the race in worker.go is fixed.",
 		"The unresolved defect in worker.go is now fixed; the timeout criterion is not met.",
 	} {
 		for _, section := range []string{"## Findings\nNone.\n\nVerification against the acceptance criteria:\n", "## Suggested next steps\nNone.\n", "## Spec\n"} {

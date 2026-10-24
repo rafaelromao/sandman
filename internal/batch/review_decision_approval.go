@@ -33,6 +33,7 @@ var (
 	reviewNegatedAssessment        = regexp.MustCompile(`(?i)\b(?:no|zero|none\s+of\s+the)\s+(?:(?:unmet|unsatisfied|unfulfilled|failed)\s+(?:acceptance\s+)?(?:criteri(?:on|a)|requirements?)|(?:acceptance\s+)?(?:criteria|requirements?)\s+(?:are|remain)\s+(?:unmet|unsatisfied|unfulfilled|failed))\b`)
 	reviewResolvedAssessment       = regexp.MustCompile(`(?i)\b(?:the\s+)?(?:(?:previously|formerly|prior)\s+)?(?:unmet|unsatisfied|unfulfilled|failed|unresolved|unfixed|unaddressed)\s+(?:acceptance\s+)?(?:criteri(?:on|a)|requirements?|defects?|bugs?|issues?|problems?)(?:\s+(?:in|for|of)\s+(?:code|(?:this|the)\s+(?:diff|change|implementation|code)))?\s+(?:(?:is|are)\s+(?:now\s+)?|(?:has|have)\s+been\s+)(?:met|satisfied|fulfilled|implemented|covered|resolved|fixed)\b`)
 	reviewAssessmentQualification  = regexp.MustCompile(`(?i)\b(?:but|except|however|although|yet|unless|until|apart\s+from|other\s+than)\b`)
+	reviewProseBlockStart          = regexp.MustCompile("^(?:#{1,6}(?:\\s|$)|[-*+]\\s+|[0-9]+[.)]\\s+|`{3,}|~{3,})")
 )
 
 // reviewDecisionApprovalEvidenceFor returns informal approvals from the active
@@ -236,11 +237,11 @@ func reviewEvidencePermitsApproval(text string) bool {
 // explicit verdict states keep underscores so CHANGES_REQUESTED is not lost.
 func reviewProsePermitsApproval(text string) bool {
 	prose := reviewApprovalProse(text)
-	visible := reviewDirectiveProse(text)
+	visible := reviewDirectiveProse(reviewJoinSoftLines(text))
 	return !reviewFindingDirective.MatchString(visible) &&
 		!reviewApprovalContradiction.MatchString(visible) &&
 		!reviewFindingSeverity.MatchString(visible) &&
-		!reviewHasUnresolvedAssessment(visible) &&
+		!reviewHasUnresolvedAssessment(text) &&
 		!reviewOpposingVerdict.MatchString(prose)
 }
 
@@ -248,6 +249,7 @@ func reviewProsePermitsApproval(text string) bool {
 // Remove only bounded, unconditional success assertions; check every remaining
 // clause so a resolved historical requirement cannot hide another current one.
 func reviewHasUnresolvedAssessment(text string) bool {
+	text = reviewDirectiveProse(reviewJoinSoftLines(text))
 	for _, clause := range reviewFindingClauses.Split(text, -1) {
 		if !reviewAssessmentQualification.MatchString(clause) {
 			clause = reviewNegatedAssessment.ReplaceAllString(clause, "satisfied assessment")
@@ -258,6 +260,27 @@ func reviewHasUnresolvedAssessment(text string) bool {
 		}
 	}
 	return false
+}
+
+// A Markdown soft break does not end an assertion. Preserve paragraph, list
+// and heading boundaries while keeping a wrapped qualification with its claim.
+func reviewJoinSoftLines(text string) string {
+	var prose strings.Builder
+	previousBlank := true
+	for i, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if i > 0 {
+			visible := reviewDirectiveProse(line)
+			if previousBlank || line == "" || reviewProseBlockStart.MatchString(line) || reviewFindingDirective.MatchString(visible) || reviewFindingSeverity.MatchString(visible) {
+				prose.WriteByte('\n')
+			} else {
+				prose.WriteByte(' ')
+			}
+		}
+		prose.WriteString(line)
+		previousBlank = line == ""
+	}
+	return prose.String()
 }
 
 func noReviewFindingClause(clause string) bool {
@@ -285,6 +308,7 @@ func noReviewFindingClause(clause string) bool {
 }
 
 func noRepairNextSteps(text string) bool {
+	text = reviewJoinSoftLines(text)
 	// A no-change declaration may be followed by publication limitations,
 	// verification notes or merge/CI advice. None is an author repair request.
 	trimmed := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(text), "-*"))
