@@ -2,6 +2,8 @@ package batch_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/batch"
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
@@ -72,6 +75,18 @@ None.
 **APPROVED**
 `
 
+const composedStaleApproval = `## Summary
+Stale approval of the superseded head.
+
+## Findings
+
+## Suggested next steps
+None.
+
+## Decision
+**APPROVED**
+`
+
 // composedGitHub is the single shared fake GitHub. It satisfies
 // github.Client (used by the batch orchestrator), review.GitHubClient (used
 // by the daemon) and the optional formal/inline review listers so the
@@ -83,6 +98,10 @@ type composedGitHub struct {
 	comments  map[int][]github.PRComment
 	nextID    int
 	lastStamp time.Time
+	// mergedObservations counts runtime lookups of the parent branch that
+	// returned the merged pull request: the live evidence the lifecycle
+	// decision verifies before selecting success.
+	mergedObservations int
 }
 
 func newComposedGitHub() *composedGitHub {
@@ -141,6 +160,12 @@ func (g *composedGitHub) headFor(branch string) string {
 	return ""
 }
 
+func (g *composedGitHub) mergedObservationCount() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.mergedObservations
+}
+
 func (g *composedGitHub) commentsSnapshot(pr int) []github.PRComment {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -178,6 +203,9 @@ func (g *composedGitHub) FindPRByBranch(_ context.Context, branch string) (*gith
 	defer g.mu.Unlock()
 	for _, pr := range g.prs {
 		if pr.HeadRefName == branch {
+			if branch == composedParentBranch && pr.Merged {
+				g.mergedObservations++
+			}
 			snapshot := *pr
 			return &snapshot, nil
 		}
@@ -249,10 +277,16 @@ func (g *composedGitHub) CloseIssue(_ context.Context, number int, _ string) err
 func (g *composedGitHub) ClosePR(context.Context, int) error { return nil }
 
 // composedPoster lands the daemon's publication on the shared PR as the
-// daemon's login. When failNextAck is armed, it sabotages the review-state
-// acknowledgement of the publication it just landed: review-state.json is
-// replaced by a non-empty directory, so the atomic rename of the
-// acknowledgement fails (also for root) after the remote post succeeded.
+// daemon's login. When armed, it sabotages the review-state acknowledgement
+// of the publication it just landed: review-state.json is replaced by a
+// non-empty directory, so the acknowledgement's atomic rename fails (also for
+// root) after the remote post succeeded.
+//
+// The review package's own save-failure seam is unexported and unreachable
+// from package batch_test (review imports batch, so this proof cannot live in
+// package review), and adding a production seam only for this test is out of
+// scope. Failing the real filesystem write exercises the same acknowledgement
+// error path without touching production code.
 type composedPoster struct {
 	gh       *composedGitHub
 	baseDir  string
@@ -419,13 +453,17 @@ func (r *composedRunnable) Run(_ context.Context, renderer prompt.IssueRenderer,
 		gh.prs[composedParentPR] = &github.PR{
 			Number: composedParentPR, State: "open", HeadRefName: r.branch, HeadRefOid: "head-1",
 			BaseRefName: "main", Body: "Closes #42", StatusCheckRollup: "success",
-			MergeStateStatus: "CLEAN", ReviewDecision: "REVIEW_REQUIRED",
+			MergeStateStatus: "CLEAN",
 		}
 		gh.mu.Unlock()
 		gh.postComment(composedParentPR, composedImplementor, composedReviewCommand)
 	case r.issue.Number == composedParentIssue && r.attempt == 2:
 		// Address the request-scoped feedback: push a new head, then renew.
 		gh.mutatePR(composedParentPR, func(pr *github.PR) { pr.HeadRefOid = "head-2" })
+		// Negative control: an approval-shaped response that arrives after
+		// head-2 was pushed but belongs to the stale (head-1) request window.
+		// It must never authorize merge work for the renewed request.
+		gh.postComment(composedParentPR, composedDaemonLogin, composedStaleApproval)
 		gh.postComment(composedParentPR, composedImplementor, composedReviewCommand)
 	case r.issue.Number == composedParentIssue && r.attempt == 3:
 		// Approved with green checks: perform the merge work.
@@ -441,6 +479,54 @@ func (r *composedRunnable) Run(_ context.Context, renderer prompt.IssueRenderer,
 		gh.closeIssue(composedDependentIssue)
 	}
 	return batch.AgentRunResult{IssueNumber: r.issue.Number, Status: "success", Branch: r.branch}
+}
+
+// composedAwaitPoll replaces the foreground await-poll timer. When armed, the
+// first poll signals the test and blocks until released, so the test can act
+// as the outside world while the run waits.
+type composedAwaitPoll struct {
+	mu      sync.Mutex
+	armed   bool
+	waiting chan struct{}
+	resume  chan struct{}
+}
+
+func (p *composedAwaitPoll) arm() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.armed = true
+	p.waiting = make(chan struct{})
+	p.resume = make(chan struct{})
+}
+
+func (p *composedAwaitPoll) release() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	close(p.resume)
+}
+
+func (p *composedAwaitPoll) wait(ctx context.Context, _ time.Duration) error {
+	p.mu.Lock()
+	armed := p.armed
+	p.armed = false
+	waiting, resume := p.waiting, p.resume
+	p.mu.Unlock()
+	if !armed {
+		// Unarmed polls stay short and cancellable.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+			return nil
+		}
+	}
+	close(waiting)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-resume:
+		return nil
+	}
 }
 
 type composedLog struct {
@@ -466,6 +552,7 @@ type composedDaemon struct {
 	trigger chan struct{}
 	cancel  context.CancelFunc
 	done    chan error
+	stopped bool
 }
 
 func startComposedDaemon(t *testing.T, baseDir string, gh *composedGitHub, runner *composedReviewRunner, poster *composedPoster) *composedDaemon {
@@ -484,7 +571,9 @@ func startComposedDaemon(t *testing.T, baseDir string, gh *composedGitHub, runne
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- d.Run(ctx) }()
-	return &composedDaemon{log: daemonLog, d: d, trigger: trigger, cancel: cancel, done: done}
+	c := &composedDaemon{log: daemonLog, d: d, trigger: trigger, cancel: cancel, done: done}
+	t.Cleanup(func() { c.stop(t) })
+	return c
 }
 
 // until ticks the daemon until cond holds and the daemon is idle.
@@ -515,7 +604,10 @@ func (c *composedDaemon) until(t *testing.T, what string, cond func() bool) {
 func (c *composedDaemon) settle(t *testing.T, ticks int) {
 	t.Helper()
 	for i := 0; i < ticks; i++ {
-		c.trigger <- struct{}{}
+		select {
+		case c.trigger <- struct{}{}:
+		default:
+		}
 		time.Sleep(30 * time.Millisecond)
 		idle, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = c.d.WaitForIdle(idle)
@@ -525,6 +617,10 @@ func (c *composedDaemon) settle(t *testing.T, ticks int) {
 
 func (c *composedDaemon) stop(t *testing.T) {
 	t.Helper()
+	if c.stopped {
+		return
+	}
+	c.stopped = true
 	c.cancel()
 	select {
 	case err := <-c.done:
@@ -548,6 +644,21 @@ func composedRunStatus(result *batch.Result, issue int) string {
 	return "missing"
 }
 
+func lastParentEvent(t *testing.T, log *events.JSONLLogger, eventType string) events.Event {
+	t.Helper()
+	all, err := log.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := len(all) - 1; i >= 0; i-- {
+		if all[i].Issue == composedParentIssue && all[i].Type == eventType {
+			return all[i]
+		}
+	}
+	t.Fatalf("no parent %s event", eventType)
+	return events.Event{}
+}
+
 func composedRunState(t *testing.T, log *events.JSONLLogger, issue int) events.RunState {
 	t.Helper()
 	states, err := events.ReadRunStates(log)
@@ -569,10 +680,43 @@ func daemonTriggerKey(comment github.PRComment) string {
 	return fmt.Sprintf("%s@%d", comment.ID, comment.UpdatedAt.UTC().UnixNano())
 }
 
-func publicationsFor(comments []github.PRComment, trigger github.PRComment) int {
+// publicationMarker is the invisible publication identity the daemon binds
+// to the trigger revision and head it answers.
+func publicationMarker(trigger github.PRComment, head string) string {
+	sum := sha256.Sum256([]byte(daemonTriggerKey(trigger) + "\x00" + strings.ToLower(head)))
+	return fmt.Sprintf("<!-- sandman-publication:%x -->", sum[:])
+}
+
+// reviewStateStatus reads the daemon's durable review state for one trigger
+// revision across all review run folders.
+func reviewStateStatus(t *testing.T, baseDir string, trigger github.PRComment) string {
+	t.Helper()
+	files, _ := filepath.Glob(filepath.Join(baseDir, "batches", "*", "runs", "*", "review-state.json"))
+	for _, file := range files {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		var state batchindex.ReviewState
+		if json.Unmarshal(data, &state) != nil {
+			continue
+		}
+		for _, seen := range state.SeenComments {
+			if seen.CommentID == daemonTriggerKey(trigger) {
+				return seen.Status
+			}
+		}
+	}
+	return ""
+}
+
+// publicationsFor counts the daemon's comments carrying the publication
+// identity of (trigger, head).
+func publicationsFor(comments []github.PRComment, trigger github.PRComment, head string) int {
 	count := 0
+	marker := publicationMarker(trigger, head)
 	for _, comment := range comments {
-		if comment.AuthorLogin == composedDaemonLogin && comment.CreatedAt.After(trigger.CreatedAt) && strings.Contains(comment.Body, "<!-- sandman-publication:") {
+		if comment.AuthorLogin == composedDaemonLogin && strings.Contains(comment.Body, marker) {
 			count++
 		}
 	}
@@ -614,6 +758,7 @@ func TestComposedManagedReviewFlow_DaemonPublicationResumeApprovalMergeAndDepend
 		Git:            config.GitConfig{BaseBranch: "main"},
 		AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}},
 	}
+	awaitPoll := &composedAwaitPoll{}
 	orchestrator := func() *batch.Orchestrator {
 		return batch.NewOrchestrator(gh, &prompt.Engine{}, batch.ComposedTestConfigStore(batchCfg), log,
 			batch.WithErrorLog(io.Discard),
@@ -624,7 +769,7 @@ func TestComposedManagedReviewFlow_DaemonPublicationResumeApprovalMergeAndDepend
 					return head, nil
 				}
 				return "local-head", nil
-			}))
+			}, awaitPoll.wait))
 	}
 	invocation := 0
 	continuation := func() batch.Request {
@@ -679,17 +824,23 @@ func TestComposedManagedReviewFlow_DaemonPublicationResumeApprovalMergeAndDepend
 		t.Fatalf("runtime did not register the confirmed trigger %s: %s", firstTrigger.ID, registrationTrigger())
 	}
 
-	// Step 2: the daemon publishes requested changes exactly once.
+	// Step 2: the daemon publishes requested changes exactly once. Wait for
+	// the positive durable signal (the trigger is terminal-seen in memory and
+	// recorded as success on disk) before counting publications.
 	daemon1 := startComposedDaemon(t, sandmanDir, gh, reviewer, poster)
 	daemon1.until(t, "changes-requested publication acknowledged", func() bool {
-		return daemon1.d.IsTerminalSeen(composedParentPR, daemonTriggerKey(firstTrigger))
+		return daemon1.d.IsTerminalSeen(composedParentPR, daemonTriggerKey(firstTrigger)) &&
+			reviewStateStatus(t, sandmanDir, firstTrigger) == "success"
 	})
 	daemon1.settle(t, 2)
-	if posts := poster.posts(); len(posts) != 1 || !strings.Contains(posts[0], "CHANGES_REQUESTED") || !strings.Contains(posts[0], "<!-- sandman-publication:") {
-		t.Fatalf("first publication = %q, want one identified CHANGES_REQUESTED post", posts)
+	if posts := poster.posts(); len(posts) != 1 || !strings.Contains(posts[0], "CHANGES_REQUESTED") {
+		t.Fatalf("first publication = %q, want one CHANGES_REQUESTED post", posts)
 	}
-	if got := publicationsFor(gh.commentsSnapshot(composedParentPR), firstTrigger); got != 1 {
-		t.Fatalf("publications after first trigger = %d, want exactly 1", got)
+	if posts := poster.posts(); !strings.HasSuffix(strings.TrimSpace(posts[0]), publicationMarker(firstTrigger, "head-1")) {
+		t.Fatalf("first publication is not bound to trigger %s on head-1:\n%s", firstTrigger.ID, posts[0])
+	}
+	if got := publicationsFor(gh.commentsSnapshot(composedParentPR), firstTrigger, "head-1"); got != 1 {
+		t.Fatalf("publications for the first request = %d, want exactly 1", got)
 	}
 
 	// Step 3: A observes the feedback canonically and resumes the same RunID.
@@ -706,13 +857,52 @@ func TestComposedManagedReviewFlow_DaemonPublicationResumeApprovalMergeAndDepend
 	impl.mu.Lock()
 	resumedTask := impl.tasks[composedParentIssue][1]
 	impl.mu.Unlock()
-	if !strings.Contains(resumedTask, composedFeedbackAnchor) {
+	if !strings.Contains(resumedTask, composedFeedbackAnchor) || !strings.Contains(resumedTask, "REVIEW_INFORMAL_FEEDBACK") {
 		t.Fatalf("resumed task does not carry the observed review feedback:\n%s", resumedTask)
 	}
 	comments := gh.commentsSnapshot(composedParentPR)
 	renewedTrigger := comments[len(comments)-1]
 	if renewedTrigger.Body != composedReviewCommand || !strings.Contains(registrationTrigger(), renewedTrigger.ID) || !strings.Contains(registrationTrigger(), "head-2") {
 		t.Fatalf("renewed request %s on head-2 not registered: %s", renewedTrigger.ID, registrationTrigger())
+	}
+
+	// Steps 4 and 5 run inside ONE continuation, as a fresh `sandman run`
+	// would: the awaiting parent is re-admitted and observes the live PR in
+	// the foreground. Its first await poll is the negative control: the
+	// stale-request approval posted after head-2 must keep it waiting with no
+	// launch or merge. While it waits, the daemon approves head-2 (with a
+	// failed acknowledgement and a restart); the next observation resumes
+	// merge work.
+	awaitPoll.arm()
+	type batchOutcome struct {
+		result *batch.Result
+		err    error
+	}
+	finalDone := make(chan batchOutcome, 1)
+	finalRequest := continuation()
+	go func() {
+		result, err := orchestrator().RunBatch(context.Background(), finalRequest)
+		finalDone <- batchOutcome{result, err}
+	}()
+	select {
+	case <-awaitPoll.waiting:
+	case outcome := <-finalDone:
+		t.Fatalf("continuation finished before the approval existed: %+v err=%v", outcome.result, outcome.err)
+	case <-time.After(20 * time.Second):
+		t.Fatal("awaiting parent never polled for the renewed request")
+	}
+	if impl.launchCount(composedParentIssue) != 2 || gh.mergedObservationCount() != 0 {
+		t.Fatalf("stale approval authorized work: launches=%d", impl.launchCount(composedParentIssue))
+	}
+	// The live checks are green and CLEAN, so only the request-scoped review
+	// outcome holds the run: it must still be pending with no response
+	// counted for the renewed request.
+	await := lastParentEvent(t, log, "run.await")
+	diagnostic, _ := await.Payload["review_diagnostic"].(map[string]any)
+	request, _ := await.Payload["review_request"].(map[string]any)
+	counts, _ := request["response_counts"].(map[string]any)
+	if await.RunID != parentRunID || diagnostic["outcome"] != "pending" || request["head_sha"] != "head-2" || request["trigger_id"] != renewedTrigger.ID || fmt.Sprint(counts["top_level"]) != "0" {
+		t.Fatalf("stale approval was counted for the renewed request: %v", await.Payload)
 	}
 
 	// Step 4: approval of the new head; the acknowledgement fails after the
@@ -728,32 +918,50 @@ func TestComposedManagedReviewFlow_DaemonPublicationResumeApprovalMergeAndDepend
 		t.Fatal("approval acknowledged despite the failed review-state save")
 	}
 	daemon1.stop(t)
+	// The failed acknowledgement is surfaced durably: the publication outbox
+	// that recovery consumes is still pending next to the review state.
+	outbox := filepath.Join(filepath.Dir(sabotage.statePath), "pending-publication.json")
+	if _, err := os.Stat(outbox); err != nil {
+		t.Fatalf("failed acknowledgement left no pending outbox: %v\ndaemon log:\n%s", err, daemon1.log.String())
+	}
 	if err := sabotage.restore(); err != nil {
 		t.Fatalf("restore review state: %v", err)
 	}
 	daemon2 := startComposedDaemon(t, sandmanDir, gh, reviewer, poster)
 	daemon2.until(t, "restarted daemon acknowledges the landed approval", func() bool {
-		return daemon2.d.IsTerminalSeen(composedParentPR, daemonTriggerKey(renewedTrigger))
+		return daemon2.d.IsTerminalSeen(composedParentPR, daemonTriggerKey(renewedTrigger)) &&
+			reviewStateStatus(t, sandmanDir, renewedTrigger) == "success"
 	})
 	daemon2.settle(t, 3)
 	daemon2.stop(t)
-	if posts := poster.posts(); len(posts) != 2 || !strings.Contains(posts[1], "**APPROVED**") {
-		t.Fatalf("publications = %d, want exactly two (no duplicate after restart): %q", len(posts), posts)
+	if _, err := os.Stat(outbox); !os.IsNotExist(err) {
+		t.Fatalf("recovered publication outbox still present: %v", err)
 	}
-	if got := publicationsFor(gh.commentsSnapshot(composedParentPR), renewedTrigger); got != 1 {
+	if posts := poster.posts(); len(posts) != 2 || !strings.Contains(posts[1], "**APPROVED**") || !strings.HasSuffix(strings.TrimSpace(posts[1]), publicationMarker(renewedTrigger, "head-2")) {
+		t.Fatalf("publications = %d, want exactly two, the second bound to trigger %s on head-2: %q", len(posts), renewedTrigger.ID, posts)
+	}
+	if got := publicationsFor(gh.commentsSnapshot(composedParentPR), renewedTrigger, "head-2"); got != 1 {
 		t.Fatalf("approval publications = %d, want exactly 1", got)
 	}
 	if reviewer.Calls() != 2 {
 		t.Fatalf("review agent launches = %d, want 2 (recovery must not relaunch)", reviewer.Calls())
 	}
 
-	// Step 5: approval with green checks resumes merge work; merge is verified
-	// and only then is the dependent released.
-	for round := 0; round < 4 && impl.launchCount(composedDependentIssue) == 0; round++ {
-		result, err := orchestrator().RunBatch(context.Background(), continuation())
-		if err != nil {
-			t.Fatalf("approval continuation round %d: %v (result=%+v)", round, err, result)
-		}
+	awaitPoll.release()
+	var finalOutcome batchOutcome
+	select {
+	case finalOutcome = <-finalDone:
+	case <-time.After(30 * time.Second):
+		t.Fatal("approval continuation did not finish")
+	}
+	final, err := finalOutcome.result, finalOutcome.err
+	// Step 5: approval with green checks resumes merge work in that same
+	// continuation; merge is verified and only then is the dependent released.
+	if err != nil {
+		t.Fatalf("approval continuation: %v (result=%+v)", err, final)
+	}
+	if composedRunStatus(final, composedParentIssue) != "success" || composedRunStatus(final, composedDependentIssue) != "success" {
+		t.Fatalf("approval continuation = %+v, want parent and dependent success in one round", final.Runs)
 	}
 	parent := composedRunState(t, log, composedParentIssue)
 	if parent.RunID != parentRunID || parent.Status() != "success" || !parent.IsTerminal() {
@@ -765,10 +973,41 @@ func TestComposedManagedReviewFlow_DaemonPublicationResumeApprovalMergeAndDepend
 	if dependent := composedRunState(t, log, composedDependentIssue); dependent.Status() != "success" || dependent.RunID != dependentRunID {
 		t.Fatalf("dependent = RunID %q status %q, want admitted RunID %q success", dependent.RunID, dependent.Status(), dependentRunID)
 	}
-
+	// The third launch was the runtime's ready-to-merge resume, selected from
+	// the current-request approval of head-2 with green checks.
+	impl.mu.Lock()
+	mergeTask := impl.tasks[composedParentIssue][2]
+	order := append([]string(nil), impl.order...)
+	impl.mu.Unlock()
+	if !strings.Contains(mergeTask, "reason: REVIEW_APPROVED") || !strings.Contains(mergeTask, "head_sha: head-2") || !strings.Contains(mergeTask, renewedTrigger.ID) {
+		t.Fatalf("third launch was not the approved merge resume:\n%s", mergeTask)
+	}
+	queued := lastParentEvent(t, log, "run.capacity_queued")
+	approvedRequest, _ := queued.Payload["review_request"].(map[string]any)
+	approvedCounts, _ := approvedRequest["response_counts"].(map[string]any)
+	if queued.Payload["gate"] != "ready-to-merge" || queued.Payload["reason"] != "REVIEW_APPROVED" ||
+		approvedRequest["head_sha"] != "head-2" || approvedRequest["trigger_id"] != renewedTrigger.ID || fmt.Sprint(approvedCounts["top_level"]) != "1" {
+		t.Fatalf("merge resume selection = %v, want ready-to-merge REVIEW_APPROVED from the one head-2 response to %s", queued.Payload, renewedTrigger.ID)
+	}
+	// Verified merge: there is no dedicated merge event; the lifecycle
+	// decision selects success only after observing the live PR merged with
+	// closing intent. Prove that observation happened after the merge work,
+	// and that success followed directly without another execution slot.
+	if gh.mergedObservationCount() == 0 {
+		t.Fatal("runtime never observed the merged pull request before selecting success")
+	}
 	all, err := log.Read()
 	if err != nil {
 		t.Fatal(err)
+	}
+	var parentTail []string
+	for _, event := range all {
+		if event.Issue == composedParentIssue {
+			parentTail = append(parentTail, event.Type)
+		}
+	}
+	if n := len(parentTail); n < 2 || parentTail[n-2] != "run.continued" || parentTail[n-1] != "run.finished" {
+		t.Fatalf("parent lifecycle tail = %v, want the merge continuation to finish without another slot", parentTail)
 	}
 	parentFinished, dependentStarted := -1, -1
 	retries := 0
@@ -796,7 +1035,7 @@ func TestComposedManagedReviewFlow_DaemonPublicationResumeApprovalMergeAndDepend
 	if parentFinished < 0 || dependentStarted < parentFinished {
 		t.Fatalf("dependent released before parent closure: parent finished at %d, dependent started at %d", parentFinished, dependentStarted)
 	}
-	if impl.order[len(impl.order)-1] != fmt.Sprintf("%d#1", composedDependentIssue) {
-		t.Fatalf("launch order = %v, want dependent last", impl.order)
+	if order[len(order)-1] != fmt.Sprintf("%d#1", composedDependentIssue) {
+		t.Fatalf("launch order = %v, want dependent last", order)
 	}
 }

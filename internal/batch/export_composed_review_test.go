@@ -1,7 +1,9 @@
 package batch
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/config"
 )
@@ -12,10 +14,10 @@ import (
 // package. These helpers expose existing in-package fakes and the documented
 // WithRunSessionOpts seam without widening the production API.
 
-// ComposedTestRunSessionOpts injects the worktree head observation through
-// the documented WithRunSessionOpts seam.
-func ComposedTestRunSessionOpts(currentHead func(workDir string) (string, error)) OrchestratorOpt {
-	return WithRunSessionOpts(runSessionOptions{currentHead: currentHead})
+// ComposedTestRunSessionOpts injects the worktree head observation and the
+// foreground await-poll wait through the documented WithRunSessionOpts seam.
+func ComposedTestRunSessionOpts(currentHead func(workDir string) (string, error), awaitWait func(context.Context, time.Duration) error) OrchestratorOpt {
+	return WithRunSessionOpts(runSessionOptions{currentHead: currentHead, awaitWait: awaitWait})
 }
 
 // ComposedTestSandboxFactory creates directory-backed fake sandboxes under
