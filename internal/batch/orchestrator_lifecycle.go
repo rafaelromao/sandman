@@ -515,6 +515,10 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 		gate = lifecycleGate(checkPRExternalGateForPR(pr, headSHA, true))
 	}
 	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.State), "open") {
+		// Register a delivered review request before any admission filtering:
+		// a trigger posted during an attempt that then exited non-success is
+		// still a confirmed external operation of this Run (issue #2915).
+		registrationErr := s.ensureReviewRegistrationForPR(ctx, workDir, pr, headSHA, runID)
 		if attemptNeedsRetry(attemptStatus) {
 			// Avoid side effects for an attempt that has no lifecycle evidence
 			// worth evaluating. This is admission filtering only: it does not
@@ -531,7 +535,6 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 				return "", nil, false
 			}
 		}
-		registrationErr := s.ensureReviewRegistrationForPR(ctx, workDir, pr, headSHA, runID)
 		headChanged := errors.Is(registrationErr, errReviewRegistrationHeadChanged)
 		reviewRegistrationFailure = registrationErr != nil && !headChanged
 		refreshLivePR := headChanged ||

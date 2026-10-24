@@ -4062,6 +4062,7 @@ func (s *runSession) runOnce(
 	}
 
 	var terminalExtras map[string]any
+	ownedWorkRetry := false
 loop:
 	for attempt := 0; attempt < attempts; attempt++ {
 		if ctx.Err() != nil {
@@ -4113,6 +4114,12 @@ loop:
 			if result.ContextExhausted {
 				reason = contextExhaustedRetryReason
 			}
+			if ownedWorkRetry {
+				// The agent exited cleanly; the lifecycle selected work the
+				// implementor still owns. Keep it distinguishable from a crash.
+				reason = ownedWorkRetryReason
+			}
+			ownedWorkRetry = false
 			logRetry(s.deps.eventLog, runID, branch, attempt+1, attempts, result.Status, reason, logPath, s.issueNumber)
 		}
 
@@ -4186,7 +4193,12 @@ loop:
 
 			s.reviewRegistrationAttempted = false
 			s.reviewRegistrationObserved = false
-			s.reviewAttemptStartedAt = s.reviewNow()
+			if s.reviewAttemptStartedAt.IsZero() {
+				// The request window is session-scoped: a trigger delivered by
+				// an earlier attempt or relaunch of this session stays visible
+				// to later ones, which must not post a duplicate.
+				s.reviewAttemptStartedAt = s.reviewNow()
+			}
 			s.lifecyclePRSnapshot = nil
 			result, abortedByHeartbeat = s.withHeartbeat(ctx, runID, attempt, logPath, wt, func() AgentRunResult {
 				return s.withClosingReferenceGuard(ctx, branch, func() AgentRunResult {
@@ -4231,6 +4243,7 @@ loop:
 						// external await or a separate lifecycle-resume budget.
 						// Use the configured ordinary retry budget to perform it.
 						result.Status = "failure"
+						ownedWorkRetry = true
 						terminalExtras = cloneLifecycleExtras(extras)
 						delete(terminalExtras, "await")
 						delete(terminalExtras, "gate")

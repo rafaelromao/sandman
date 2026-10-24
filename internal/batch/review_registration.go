@@ -785,7 +785,9 @@ func latestReviewTrigger(comments []github.PRComment, prefix string, since time.
 		if strings.TrimSpace(comment.ID) == "" || !strings.HasPrefix(comment.Body, prefix) || comment.CreatedAt.IsZero() {
 			continue
 		}
-		if !since.IsZero() && comment.CreatedAt.Before(since) {
+		// GitHub stamps comments with second precision: a trigger posted in
+		// the same second the window opened belongs to the window.
+		if !since.IsZero() && comment.CreatedAt.Before(since.Truncate(time.Second)) {
 			continue
 		}
 		if !latest.CreatedAt.IsZero() && !comment.CreatedAt.After(latest.CreatedAt) {

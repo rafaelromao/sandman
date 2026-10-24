@@ -17,6 +17,12 @@ const defaultAwaitResumeMax = 3
 const gateReviewRequestRequired = "review-request-required"
 const gateOwnedWorkRequired = "implementor-work-required"
 
+// ownedWorkRetryReason is the run.retry reason for an attempt that exited
+// cleanly while the lifecycle selected work the implementor still owns
+// (publish the pull request, deliver the review request). It is not an
+// agent failure.
+const ownedWorkRetryReason = "lifecycle-owned-work"
+
 // Entry re-evaluation machinery for resuming agent work on PR lifecycle
 // transitions (issue #2595). A session that re-enters a run whose PR gate is
 // already resolvable must not launch the agent blindly: a merely pending gate
