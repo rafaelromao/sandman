@@ -4243,6 +4243,23 @@ loop:
 						// still take precedence below.
 						break relaunch
 					}
+					if isImplementorOwnedGateFailure(extras) && attempt+1 >= attempts && idleGateAwaitsReview(extras) {
+						// The configured attempts could not advance an idle
+						// gate on an open, current-head pull request. Nothing
+						// the implementor owns is left: the gate waits for a
+						// reviewer, as rc2 did (issue #2916).
+						hold := cloneLifecycleExtras(extras)
+						external, _ := hold["external_gate"].(string)
+						hold = continuityHold(hold, external)
+						// Remember the owned-work resume so observation does
+						// not relaunch the implementor on the same evidence.
+						owned := cloneLifecycleExtras(extras)
+						owned["gate"] = gateOwnedWorkRequired
+						hold[stalledResumesKey] = appendStalledResume(latestStalledResumes(s.deps.eventLog, runID), resumeSignature(owned, s.liveHeadForSignature(ctx, branch)))
+						s.emitAwait(ctx, runID, result, hold)
+						result.Status = "await"
+						break loop
+					}
 					if isImplementorOwnedGateFailure(extras) {
 						// A clean but incomplete handoff is owned work, not an
 						// external await or a separate lifecycle-resume budget.

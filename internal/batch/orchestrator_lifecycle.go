@@ -768,6 +768,7 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 		}
 		decision.extras["external_gate"] = string(previousGate)
 		decision.extras["expected_head_sha"] = headSHA
+		decision.extras["review_decision"] = strings.TrimSpace(pr.ReviewDecision)
 	}
 	if decision.action == lifecycleSuccess || decision.action == lifecycleFailure {
 		failureExtras := lifecycleFailureExtras(decision, s.issueNumber)
@@ -777,6 +778,15 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 			// cannot look like a wait.
 			if diagnostics := s.retainedReviewDiagnostics(ctx, workDir, branch, pr, headSHA); len(diagnostics) > 0 {
 				failureExtras = mergeLifecycleDiagnostics(failureExtras, diagnostics)
+			}
+			// AFK continuity: an open, current-head pull request whose only
+			// missing evidence is a recoverable gate waits for external
+			// recovery, as rc2 did, instead of ending the Run.
+			reason, _ := failureExtras["reason"].(string)
+			if !decision.completionFailure && lifecycleFailureRecoverable(reason) &&
+				strings.EqualFold(strings.TrimSpace(pr.State), "open") && strings.TrimSpace(headSHA) != "" &&
+				strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) {
+				return "await", continuityHold(failureExtras, string(decision.gate)), true
 			}
 		}
 		return lifecycleStatusRepr(decision), failureExtras, true

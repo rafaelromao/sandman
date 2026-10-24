@@ -23,6 +23,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -31,6 +32,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/reviewpub"
 	"github.com/rafaelromao/sandman/internal/testenv"
@@ -210,12 +212,19 @@ type continuityScenario struct {
 	forbidRetry bool
 	// ownedWorkRetries asserts that every retry was lifecycle owned work.
 	ownedWorkRetries bool
+	// reviewTimeout overrides the request deadline in seconds.
+	reviewTimeout int
+	// noReviewCommand runs without a delegated review command.
+	noReviewCommand bool
 }
 
 type continuityOutcome struct {
 	events   []events.Event
 	launches int
 	status   string
+	// observeAfterRestart observes the Run from a fresh executor over the
+	// same event log and worktree, as a restarted Sandman process would.
+	observeAfterRestart func() (string, map[string]any, bool)
 }
 
 func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcome {
@@ -277,6 +286,12 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 		Issues: []int{42}, Branches: map[int]string{42: continuityBranch}, RunTS: "261024134409", RunShortID: "afk", Retries: sc.retries, Parallel: 1,
 		PromptConfig: prompt.RenderConfig{ReviewCommand: continuityTrigger, ReviewTimeout: 1800},
 	}
+	if sc.reviewTimeout > 0 {
+		req.PromptConfig.ReviewTimeout = sc.reviewTimeout
+	}
+	if sc.noReviewCommand {
+		req.PromptConfig.ReviewCommand = ""
+	}
 	if sc.continueRun {
 		req.Mode = map[int]IssueMode{42: ModeContinue}
 	}
@@ -286,7 +301,21 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	return continuityOutcome{events: log.snapshot(), launches: launches, status: result.Runs[0].Status}
+	history := log.snapshot()
+	runID := ""
+	if len(history) > 0 {
+		runID = history[0].RunID
+	}
+	restart := func() (string, map[string]any, bool) {
+		fresh := NewOrchestrator(g, &noopRenderer{}, &fakeConfigStore{config: cfg}, log, WithErrorLog(io.Discard),
+			WithRunSessionOpts(runSessionOptions{currentHead: func(string) (string, error) { return g.head(), nil }}))
+		executor := fresh.newRunExecutorWith(context.Background(), BatchConfig{Cfg: cfg}, nil, nil, newBatchCoordinator(nil), nil, paths.NewLayout(cfg, root))
+		return executor.observeLifecycle(context.Background(), RowSpec{
+			IssueNumber: 42, RunID: runID, BaseBranch: "main", Branches: map[int]string{42: continuityBranch},
+			RenderCfg: prompt.RenderConfig{ReviewCommand: continuityTrigger, ReviewTimeout: 1800},
+		})
+	}
+	return continuityOutcome{events: history, launches: launches, status: result.Runs[0].Status, observeAfterRestart: restart}
 }
 
 // verdict reduces a Run's event history to the AFK-continuity outcome.
@@ -472,7 +501,9 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 			launches: []func(*continuityGitHub) string{nil, nil},
 			polls: []func(*continuityGitHub){
 				nil,
-				func(g *continuityGitHub) { g.update(func(pr *github.PR) { pr.StatusCheckRollup, pr.MergeStateStatus = "success", "CLEAN" }) },
+				func(g *continuityGitHub) {
+					g.update(func(pr *github.PR) { pr.StatusCheckRollup, pr.MergeStateStatus = "success", "CLEAN" })
+				},
 			},
 			want: "merged", maxLaunches: 5,
 		},
@@ -489,6 +520,33 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 			}},
 			polls: []func(*continuityGitHub){nil, nil, nil},
 			want:  "failed:REMEDIATION_BUDGET_EXHAUSTED",
+		},
+		// #2761: a request that expires with nothing else resolving waited in
+		// rc2. The implementor is resumed to re-request; when it does not, the
+		// Run waits for a reviewer instead of failing REVIEW_TIMEOUT.
+		continuityScenario{
+			name: "expired request without a response waits", pr: greenCleanPR(), retries: 3, reviewTimeout: 1,
+			launches: []func(*continuityGitHub) string{requestReview},
+			polls: []func(*continuityGitHub){
+				func(*continuityGitHub) { time.Sleep(1500 * time.Millisecond) },
+				nil,
+				nil,
+			},
+			want: "waiting",
+		},
+		// Without a delegated review command, a pull request blocked on a
+		// human review has nothing resolving it yet. rc2 waited; the Run
+		// waits and merges once the review approves it.
+		continuityScenario{
+			name: "idle gate without a review command waits", pr: github.PR{StatusCheckRollup: "success", ReviewDecision: "REVIEW_REQUIRED", MergeStateStatus: "BLOCKED"}, retries: 1, noReviewCommand: true,
+			polls: []func(*continuityGitHub){
+				nil,
+				func(g *continuityGitHub) {
+					g.update(func(pr *github.PR) { pr.ReviewDecision, pr.MergeStateStatus = "APPROVED", "CLEAN" })
+					g.post("LGTM, approved.")
+				},
+			},
+			want: "merged",
 		},
 		// Negative control: no review request was ever delivered. The
 		// implementor owes it; ordinary retries are spent, then the Run fails.
@@ -556,6 +614,78 @@ func TestAFKContinuityContract_RealIncidentsMergeOrWait(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A stalled wait survives a process restart: a fresh executor reads the
+// stalled signature through the event fold and keeps waiting instead of
+// relaunching the implementor on the same evidence. New evidence proceeds.
+func TestAFKContinuityContract_StalledWaitSurvivesRestart(t *testing.T) {
+	var stall continuityScenario
+	for _, sc := range continuityScenarios(t) {
+		if sc.name == "stall/informal feedback waits" {
+			stall = sc
+		}
+	}
+	outcome := runContinuityScenario(t, stall)
+	if outcome.verdict() != "waiting" {
+		t.Fatalf("stall outcome = %s, want waiting", outcome.verdict())
+	}
+	status, extras, handled := outcome.observeAfterRestart()
+	if !handled || status != "await" || extras[stalledResumesKey] == nil {
+		t.Fatalf("restarted observation = %s/%v (%t), want the stalled wait kept", status, extras, handled)
+	}
+}
+
+// Every lifecycle failure reason the batch package can emit is classified as
+// permanent or recoverable for the AFK-continuity guard. A new terminal reason
+// must be classified before it can end a Run whose pull request is open.
+func TestAFKContinuityContract_LifecycleFailureReasonsAreClassified(t *testing.T) {
+	// Reasons that never end a Run: they select a wait, a relaunch or merge
+	// work, or describe the non-lifecycle retry and quota paths.
+	nonTerminal := map[string]bool{
+		"PULL_REQUEST_READY": true, "REVIEW_APPROVED": true, actionableFeedbackReason: true,
+		informalFeedbackReason: true, resumeStalledReason: true, "CI_FAILURE": true, "MERGE_CONFLICT": true,
+		"PR_HEAD_RECONCILE_REQUIRED": true, "AGENT_USAGE_LIMIT": true,
+	}
+	reasonLiteral := regexp.MustCompile(`(?:"reason":\s*|Reason\s*=\s*|lifecycleGateFailureEvidence\(|lifecycleRemediationDecision\([^,]+,\s*)"([A-Z][A-Z_]+)"`)
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, file := range files {
+		if strings.HasSuffix(file, "_test.go") {
+			continue
+		}
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, match := range reasonLiteral.FindAllStringSubmatch(string(data), -1) {
+			seen[match[1]] = true
+		}
+	}
+	if !seen[idleGateReason] || !seen["PULL_REQUEST_CLOSED"] || !seen["REMEDIATION_BUDGET_EXHAUSTED"] {
+		t.Fatalf("reason scan found %v, want the lifecycle reason literals", seen)
+	}
+	for reason := range seen {
+		if nonTerminal[reason] {
+			continue
+		}
+		if _, ok := lifecycleFailureReasons[reason]; !ok {
+			t.Errorf("lifecycle reason %q is not classified for the AFK-continuity guard", reason)
+		}
+	}
+	for _, reason := range []string{idleGateReason, reviewTimeoutReason, "CI_WAIT_TIMEOUT"} {
+		if !lifecycleFailureRecoverable(reason) {
+			t.Errorf("%s must wait for external recovery, as rc2 did", reason)
+		}
+	}
+	for _, reason := range []string{"PULL_REQUEST_CLOSED", "REVIEW_REQUEST_REQUIRED", "REMEDIATION_BUDGET_EXHAUSTED", "merged-pr-missing-closing-reference", "SOMETHING_NEW"} {
+		if lifecycleFailureRecoverable(reason) {
+			t.Errorf("%s must stay terminal", reason)
+		}
 	}
 }
 

@@ -1080,8 +1080,11 @@ func TestRunSingle_InformalFeedbackResumesWithinSameAttempt(t *testing.T) {
 // A stale request cannot authorize another wait after implementor-owned
 // feedback work advances the pull-request head. The first current-head CI
 // await is valid; after the head drifts without a newly confirmed review
-// request, the continuation fails with evidence instead of parking again.
-func TestRunSingle_StaleReviewRequestFailsAfterHeadAdvance(t *testing.T) {
+// request, the continuation spends its owned-work attempts. Nothing the
+// implementor owns is left on the open, current-head pull request, so the Run
+// waits for a reviewer as rc2 did (issue #2916) instead of failing; the wait
+// is the AFK-continuity hold, not authority borrowed from the stale request.
+func TestRunSingle_StaleReviewRequestWaitsAfterHeadAdvance(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 
@@ -1180,8 +1183,8 @@ func TestRunSingle_StaleReviewRequestFailsAfterHeadAdvance(t *testing.T) {
 	if !started {
 		t.Fatalf("session 2 not started: %q", result.Status)
 	}
-	if result.Status != "failure" || len(resultFactory.created) != 4 {
-		t.Fatalf("session 2 = (%q, %d launches), want bounded owned-work recovery after head drift", result.Status, len(resultFactory.created))
+	if result.Status != "await" || len(resultFactory.created) != 4 {
+		t.Fatalf("session 2 = (%q, %d launches), want bounded owned-work recovery, then the rc2 wait, after head drift", result.Status, len(resultFactory.created))
 	}
 
 	logs, err := spyLog.Read()
@@ -1207,15 +1210,14 @@ func TestRunSingle_StaleReviewRequestFailsAfterHeadAdvance(t *testing.T) {
 			awaits = append(awaits, e)
 		}
 	}
-	if len(awaits) != 1 || awaits[0].Payload["gate"] != "pending" {
-		t.Fatalf("run.await events = %#v, want only the initial active current-head CI wait", awaits)
+	if len(awaits) != 2 || awaits[0].Payload["gate"] != "pending" {
+		t.Fatalf("run.await events = %#v, want the initial current-head CI wait and the continuity hold", awaits)
 	}
-	finished := findEvent(logs, "run.finished")
-	if finished == nil {
-		t.Fatalf("run.finished event not found: %v", logs)
+	if hold := awaits[1].Payload; hold["continuity_hold"] != true || hold["reason"] != idleGateReason {
+		t.Fatalf("final wait = %#v, want the structured idle-gate continuity hold", hold)
 	}
-	if status, _ := finished.Payload["status"].(string); status != "failure" || finished.Payload["reason"] != idleGateReason {
-		t.Fatalf("run.finished = %#v, want structured idle-gate failure", finished)
+	if finished := findEvent(logs, "run.finished"); finished != nil {
+		t.Fatalf("run.finished = %#v, want a wait instead of a terminal failure", finished)
 	}
 	if countEventsByType(logs, "run.started") != 1 || countEventsByType(logs, "run.continued") != 1 {
 		t.Fatalf("run.started = %d, run.continued = %d, want 1 and 1", countEventsByType(logs, "run.started"), countEventsByType(logs, "run.continued"))
@@ -1227,7 +1229,7 @@ func TestRunSingle_StaleReviewRequestFailsAfterHeadAdvance(t *testing.T) {
 			seq = append(seq, e.Type)
 		}
 	}
-	wantSeq := []string{"run.started", "run.await", "run.continued", "run.resumed"}
+	wantSeq := []string{"run.started", "run.await", "run.continued", "run.resumed", "run.await"}
 	if len(seq) != len(wantSeq) {
 		t.Fatalf("lifecycle sequence = %v, want %v", seq, wantSeq)
 	}

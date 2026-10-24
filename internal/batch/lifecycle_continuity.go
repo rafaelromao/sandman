@@ -187,18 +187,18 @@ func (s *runSession) liveHeadForSignature(ctx context.Context, branch string) st
 // permanent reason may end a Run whose pull request is open; a recoverable
 // one waits for external recovery instead.
 var lifecycleFailureReasons = map[string]bool{
-	"PULL_REQUEST_CLOSED":          true,  // closed without merge
-	"PULL_REQUEST_MISSING":         true,  // the implementor never published
-	"REVIEW_REQUEST_REQUIRED":      true,  // no review request was delivered
-	"merged-pr-missing-closing-reference": true, // merged without verifiable completion
-	"CI_WAIT_STATE_ERROR":                 true, // corrupt CI wait state
-	stateErrorReason:               true,  // corrupt review state, nothing resolving
-	lookupGateReason:               true,  // the pull request was not observed
-	"IMPLEMENTOR_ACTION_REQUIRED":  true,  // legacy verification fallback
-	"REMEDIATION_BUDGET_EXHAUSTED": true,  // formal CHANGES_REQUESTED left unrepaired
-	idleGateReason:                 false, // nothing resolving yet; waits like rc2
-	reviewTimeoutReason:            false, // expired request; waits like rc2
-	"CI_WAIT_TIMEOUT":              false, // bounded CI wait expired; waits like rc2
+	"PULL_REQUEST_CLOSED":                 true,  // closed without merge
+	"PULL_REQUEST_MISSING":                true,  // the implementor never published
+	"REVIEW_REQUEST_REQUIRED":             true,  // no review request was delivered
+	"merged-pr-missing-closing-reference": true,  // merged without verifiable completion
+	"CI_WAIT_STATE_ERROR":                 true,  // corrupt CI wait state
+	stateErrorReason:                      true,  // corrupt review state, nothing resolving
+	lookupGateReason:                      true,  // the pull request was not observed
+	"IMPLEMENTOR_ACTION_REQUIRED":         true,  // legacy verification fallback
+	"REMEDIATION_BUDGET_EXHAUSTED":        true,  // formal CHANGES_REQUESTED left unrepaired
+	idleGateReason:                        false, // nothing resolving yet; waits like rc2
+	reviewTimeoutReason:                   false, // expired request; waits like rc2
+	"CI_WAIT_TIMEOUT":                     false, // bounded CI wait expired; waits like rc2
 }
 
 // lifecycleFailureRecoverable reports whether a lifecycle failure reason
@@ -208,6 +208,18 @@ var lifecycleFailureReasons = map[string]bool{
 func lifecycleFailureRecoverable(reason string) bool {
 	permanent, known := lifecycleFailureReasons[reason]
 	return known && !permanent
+}
+
+// idleGateAwaitsReview reports an idle-gate owned-work outcome whose only
+// missing evidence is a review nobody has requested through Sandman: no
+// delegated review command applies and no formal CHANGES_REQUESTED review is
+// outstanding. The pull request's current head must be known.
+func idleGateAwaitsReview(extras map[string]any) bool {
+	reason, _ := extras["reason"].(string)
+	decision, _ := extras["review_decision"].(string)
+	head, _ := extras["expected_head_sha"].(string)
+	return reason == idleGateReason && strings.TrimSpace(head) != "" &&
+		!strings.EqualFold(strings.TrimSpace(decision), "CHANGES_REQUESTED")
 }
 
 // continuityHold turns a recoverable lifecycle failure into a wait. The
