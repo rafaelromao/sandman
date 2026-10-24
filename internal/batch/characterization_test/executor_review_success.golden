@@ -39,7 +39,7 @@ RunID: 260618113825-abcd-PR73
     "Branch": "",
     "PromptFlag": "inline",
     "TemplateFlag": "",
-    "PromptFile": ".sandman/prompt.md",
+    "PromptFile": "<tmp>/.sandman/prompt.md",
     "RenderedPromptFile": ".sandman/task.md",
     "TaskPrompt": "perform task",
     "ContextRecovery": false,

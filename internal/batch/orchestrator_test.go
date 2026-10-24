@@ -7576,10 +7576,12 @@ type fakeContainerStarter struct {
 	buildImageTag   string
 	buildImageErr   error
 	buildImageCount int
+	buildImageRepo  string
 }
 
 func (f *fakeContainerStarter) BuildImage(ctx context.Context, repoPath string) (string, error) {
 	f.buildImageCount++
+	f.buildImageRepo = repoPath
 	if f.buildImageErr != nil {
 		return "", f.buildImageErr
 	}
