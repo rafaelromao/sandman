@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -280,12 +281,40 @@ func runSmokeProviderTwice(t *testing.T, tc smokeProviderCase, secondArgs ...str
 		t.Fatalf("first smoke run failed: %v\noutput:\n%s", err, out)
 	}
 	assertSmokeProviderRun(t, out, tc, repoDir, issue)
+	first := recordedAgentSessions(t, repoDir)
 
 	out, err = executeSmokeRun(t, deps, runtime, issue.Number, secondArgs...)
 	if err != nil {
 		t.Fatalf("second smoke run failed: %v\noutput:\n%s", err, out)
 	}
 	assertSmokeProviderRun(t, out, tc, repoDir, issue)
+	if slices.Contains(secondArgs, "--reuse-session") {
+		assertReusedAgentSession(t, first, recordedAgentSessions(t, repoDir))
+	}
+}
+
+// assertReusedAgentSession checks that a reuse-session continuation kept the
+// agent's conversation: the continued Run records the same session the first
+// Run recorded, so the resumed agent retains what it learned before.
+func assertReusedAgentSession(t *testing.T, first, all map[string]string) {
+	t.Helper()
+	if len(first) != 1 {
+		t.Fatalf("first run recorded sessions %v, want exactly one", first)
+	}
+	var want string
+	for _, id := range first {
+		want = id
+	}
+	for dir, id := range all {
+		if _, ok := first[dir]; ok {
+			continue
+		}
+		if id != want {
+			t.Fatalf("continued Run %s recorded session %q, want the reused session %q", dir, id, want)
+		}
+		return
+	}
+	t.Fatalf("continued Run recorded no session; sessions = %v", all)
 }
 
 func requireSmokeE2E(t *testing.T) {
@@ -896,4 +925,21 @@ func TestCopySmokeAuthLayout_OpenCodeCopiesOnlyAuthentication(t *testing.T) {
 	if _, err := os.Stat(homePath(tempHome, "~/.config/opencode/node_modules")); !os.IsNotExist(err) {
 		t.Fatal("smoke fixture copied the host's mutable plugin dependencies")
 	}
+}
+
+// recordedAgentSessions returns the agent session IDs recorded in the Run
+// folders of repoDir, keyed by Run folder.
+func recordedAgentSessions(t *testing.T, repoDir string) map[string]string {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(repoDir, ".sandman", "batches", "*", "runs", "*", "session.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := make(map[string]string, len(paths))
+	for _, path := range paths {
+		if id, ok := batch.ReadAgentSessionID(filepath.Dir(path)); ok {
+			sessions[filepath.Dir(path)] = id
+		}
+	}
+	return sessions
 }
