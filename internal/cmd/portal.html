@@ -2597,7 +2597,12 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           // Keep the expanded subject's cached row when the server dropped it.
           // The server owns the issue group: when the payload already has a
           // visible row for the issue, the restored row loses its group stamps
-          // so it never comes back as a second visible row.
+          // so it never comes back as a second visible row. When the payload
+          // has no visible row for the issue, the restored row keeps them:
+          // stripping them would hide the expanded row across mixed batch
+          // payloads (TestPortalRefresh_LocksRowIdentityAcrossMixedBatchPayloads).
+          // Its subjects may name runs the server dropped; subjectRunsFor
+          // skips ids that no longer resolve.
           const cached = prevRuns.find((run) => run && (run.key === state.expandedRunKey || run.runId === state.expandedRunKey));
           if (cached && !nextRuns.some((run) => run && (run.key === cached.key || run.runId === cached.runId))) {
             const restored = { ...cached };

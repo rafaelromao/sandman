@@ -1322,7 +1322,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetailContent_ReviewSubjectModelShieldsPane(t *testing.T) {
 	js := `const body = makeMockBody();
-const parent = { key: 'impl-1', runId: 'impl-1', kind: 'active', status: 'running', issueLabel: '#1', issueNumber: 1, log: 'impl line 1' };
+const parent = { key: 'impl-1', runId: 'impl-1', kind: 'active', status: 'running', issueLabel: '#1', issueNumber: 1, subjects: ['impl-1', 'PR42'], log: 'impl line 1' };
 const review = { key: 'PR42', runId: 'PR42', kind: 'active', status: 'reviewing', issueLabel: 'PR42', issueNumber: 1, prNumber: 42, review: true, log: 'review line 1' };
 const accepted = helpers.logState(review);
 helpers.logState = () => accepted;
@@ -1357,7 +1357,7 @@ console.log('PASS');
 // the old streamPreFor returned null and dropped every streamed line.
 func TestPortalDiff_DetailRowKeying_SubjectScrollKeyVsParentDetailFor(t *testing.T) {
 	js := `const body = makeMockBody();
-const parent = { key: 'impl-1', runId: 'impl-1', kind: 'active', status: 'running', issueLabel: '#1', issueNumber: 1, log: 'p' };
+const parent = { key: 'impl-1', runId: 'impl-1', kind: 'active', status: 'running', issueLabel: '#1', issueNumber: 1, subjects: ['impl-1', 'PR42'], log: 'p' };
 const review = { key: 'PR42', runId: 'PR42', kind: 'active', status: 'reviewing', issueLabel: 'PR42', issueNumber: 1, prNumber: 42, review: true, log: 'r' };
 const opts = { helpers, stopGroups: new Set(), runs: [parent, review], visibleRuns: [parent], expandedKey: 'PR42', tabs: { PR42: 'log' } };
 SandmanPortalDiff.diffRuns(body, [parent], opts);
@@ -1929,7 +1929,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetail_SwitchingSubjectRestoresPlaceholder(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1, log: '' };
+const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1, subjects: ['260618113825-abcd-1', 'PR42'], log: '' };
 const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42, log: 'review log' };
 const stopGroups = new Set();
 const opts1 = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', tabs: { '260618113825-abcd-1': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
@@ -2361,7 +2361,7 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetail_SwitchingSubjectRoundTripReusesCachedPane(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1, log: 'parent log' };
+const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1, subjects: ['260618113825-abcd-1', 'PR42'], log: 'parent log' };
 const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42, log: 'review log' };
 const stopGroups = new Set();
 const optsParent = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', tabs: { '260618113825-abcd-1': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };

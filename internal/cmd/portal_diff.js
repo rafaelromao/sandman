@@ -506,10 +506,11 @@
     if (!run) return false;
     const subjectKey = subjectRunValue(run);
     if (expandedKey === subjectKey || expandedKey === run.key) return true;
+    // A group row also owns the detail of every subject the server listed
+    // in its subjects; the page never groups rows by issue number itself.
     const expandedRun = expandedKey ? findRunByIdentity(expandedKey, opts) : null;
-    if (!expandedRun) return false;
-    if (!Number.isInteger(run.issueNumber) || run.issueNumber <= 0) return false;
-    return run.issueNumber === expandedRun.issueNumber;
+    if (!expandedRun || !Array.isArray(run.subjects)) return false;
+    return run.subjects.includes(expandedRun.runId) || run.subjects.includes(expandedRun.key);
   }
 
   function subjectRunLabel(run) {

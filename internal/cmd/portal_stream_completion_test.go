@@ -21,7 +21,7 @@ func TestPortalStream_PaneUpdatesAfterStreamingRunCompletes(t *testing.T) {
 	js := `const body = makeMockBody();
 const parent = {
   key: 'impl-1', runId: 'impl-1', kind: 'active', status: 'running',
-  issueLabel: '#1', issueNumber: 1, socketPath: '/tmp/impl.sock', log: 'impl line',
+  issueLabel: '#1', issueNumber: 1, subjects: ['impl-1', 'PR42'], socketPath: '/tmp/impl.sock', log: 'impl line',
 };
 const review = {
   key: 'PR42', runId: 'PR42', kind: 'active', status: 'reviewing',

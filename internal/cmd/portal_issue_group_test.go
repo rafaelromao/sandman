@@ -2,10 +2,13 @@ package cmd
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/paths"
 )
 
@@ -362,4 +365,105 @@ func TestPortalIssueGroup_ActiveParentWinsOverOlderTerminals(t *testing.T) {
 		t.Fatalf("newest active parent is not the visible row")
 	}
 	assertSubjects(t, subjectsOf(t, runs), "newer-active")
+}
+
+// TestPortalIssueGroup_ExpandedSubjectMatchesOnlyServerSubjects pins that the
+// group row opens its detail for a subject only when the server listed it in
+// the row's subjects; sharing the issue number is not membership.
+func TestPortalIssueGroup_ExpandedSubjectMatchesOnlyServerSubjects(t *testing.T) {
+	runNodeScript(t, `const body = makeMockBody();
+const parent = { key: 'impl-new', runId: 'impl-new', kind: 'active', status: 'running', issueNumber: 1, issueLabel: '#1', groupVisible: true, subjects: ['impl-new', 'rev-1'] };
+const review = { key: 'rev-1', runId: 'rev-1', kind: 'completed', status: 'success', review: true, issueNumber: 1, issueLabel: 'PR 9', prNumber: 9 };
+const stray = { key: 'impl-old', runId: 'impl-old', kind: 'completed', status: 'aborted', issueNumber: 1, issueLabel: '#1' };
+const runs = [parent, review, stray];
+const strayOpts = { helpers, stopGroups: new Set(), expandedKey: 'impl-old', runs: runs, visibleRuns: [parent] };
+const strayRow = SandmanPortalDiff.insertRunRow(makeMockBody(), parent, strayOpts);
+if (strayRow.detailRow) throw new Error('group row opened for impl-old, which is not in the server subjects');
+const reviewOpts = { helpers, stopGroups: new Set(), expandedKey: 'rev-1', runs: runs, visibleRuns: [parent] };
+const reviewRow = SandmanPortalDiff.insertRunRow(body, parent, reviewOpts);
+if (!reviewRow.detailRow) throw new Error('group row must open for a listed subject');
+console.log('PASS');
+`)
+}
+
+// TestPortalIssueGroup_StaleSubjectIDsAreSkipped pins that a subject id which
+// no longer resolves to a run (for example on a restored row) is skipped.
+func TestPortalIssueGroup_StaleSubjectIDsAreSkipped(t *testing.T) {
+	runNodeScript(t, `const parent = { key: 'impl-1', runId: 'impl-1', kind: 'active', status: 'running', issueNumber: 1, groupVisible: true, subjects: ['impl-1', 'gone', 'rev-1'] };
+const review = { key: 'rev-1', runId: 'rev-1', kind: 'completed', status: 'success', review: true, issueNumber: 1 };
+const ids = SandmanPortalDiff.subjectRunsFor(parent, { runs: [parent, review] }).map((run) => run.runId);
+if (ids.join(',') !== 'impl-1,rev-1') throw new Error('subjects=' + ids.join(','));
+console.log('PASS');
+`)
+}
+
+// TestPortalIssueGroup_SubjectSwitchAndHiddenSubjectChangesRerender pins that
+// the detail panel, whose subject fingerprint is taken from the group row,
+// still re-renders when the subject switches and when a non-visible subject's
+// events change.
+func TestPortalIssueGroup_SubjectSwitchAndHiddenSubjectChangesRerender(t *testing.T) {
+	runNodeScript(t, `const body = makeMockBody();
+const parent = { key: 'impl-1', runId: 'impl-1', kind: 'active', status: 'running', issueNumber: 1, issueLabel: '#1', groupVisible: true, subjects: ['impl-1', 'rev-1'], events: [{ type: 'run.started', timestamp: 1, payload: { who: 'parent' } }] };
+const review = { key: 'rev-1', runId: 'rev-1', kind: 'active', status: 'reviewing', review: true, issueNumber: 1, issueLabel: 'PR 9', prNumber: 9, events: [{ type: 'run.started', timestamp: 2, payload: { who: 'review' } }] };
+const stopGroups = new Set();
+const tabs = { 'impl-1': 'events', 'rev-1': 'events' };
+SandmanPortalDiff.diffRuns(body, [parent], { helpers, stopGroups, expandedKey: 'impl-1', tabs, runs: [parent, review], visibleRuns: [parent] });
+const detail = () => body.querySelector('tr.detail-row[data-detail-for="impl-1"]');
+const json = () => detail().querySelector('pre[data-rendered-json]').getAttribute('data-rendered-json');
+if (json().indexOf('parent') < 0) throw new Error('expected parent events first, got ' + json());
+SandmanPortalDiff.diffRuns(body, [parent], { helpers, stopGroups, expandedKey: 'rev-1', tabs, runs: [parent, review], visibleRuns: [parent] });
+if (json().indexOf('review') < 0 || json().indexOf('parent') >= 0) throw new Error('switching subject did not re-render, got ' + json());
+const changed = Object.assign({}, review, { events: review.events.concat([{ type: 'run.finished', timestamp: 3, payload: { who: 'review-done' } }]) });
+SandmanPortalDiff.diffRuns(body, [parent], { helpers, stopGroups, expandedKey: 'rev-1', tabs, runs: [parent, changed], visibleRuns: [parent] });
+if (json().indexOf('review-done') < 0) throw new Error('hidden subject event change did not re-render, got ' + json());
+console.log('PASS');
+`)
+}
+
+// TestPortalIssueGroup_ComputeFoldsQueuedAndBlockedEvents folds real events
+// through the production compute path into the issue-group projection: an
+// initial-admission queued parent owns its group while the selector opens the
+// terminal parent, and a blocked parent keeps its outcome and is never a
+// subject.
+func TestPortalIssueGroup_ComputeFoldsQueuedAndBlockedEvents(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	eventsPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
+	review := func(runID string, issue int, at time.Time) []events.Event {
+		payload := map[string]any{"batch_id": "b-" + runID, "review": true, "pr_number": 900 + issue, "issue_number": issue}
+		return []events.Event{
+			{Type: "run.started", Timestamp: at, RunID: runID, Issue: issue, Payload: payload},
+			{Type: "run.finished", Timestamp: at.Add(time.Minute), RunID: runID, Issue: issue, Payload: map[string]any{"batch_id": "b-" + runID, "review": true, "status": "success"}},
+		}
+	}
+	log := []events.Event{
+		{Type: "run.started", Timestamp: base, RunID: "impl-77-done", Issue: 77, Payload: map[string]any{"batch_id": "b-77-done"}},
+		{Type: "run.finished", Timestamp: base.Add(10 * time.Minute), RunID: "impl-77-done", Issue: 77, Payload: map[string]any{"batch_id": "b-77-done", "status": "success"}},
+	}
+	log = append(log, review("rev-77", 77, base.Add(20*time.Minute))...)
+	log = append(log,
+		events.Event{Type: "run.queued", Timestamp: base.Add(30 * time.Minute), RunID: "impl-77-queued", Issue: 77, Payload: map[string]any{"batch_id": "b-77-queued", "initial_admission": true}},
+		events.Event{Type: "run.started", Timestamp: base, RunID: "impl-78-blocked", Issue: 78, Payload: map[string]any{"batch_id": "b-78"}},
+		events.Event{Type: "run.blocked", Timestamp: base.Add(5 * time.Minute), RunID: "impl-78-blocked", Issue: 78, Payload: map[string]any{"batch_id": "b-78"}},
+	)
+	log = append(log, review("rev-78", 78, base.Add(6*time.Minute))...)
+	writePortalLog(t, eventsPath, log)
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: eventsPath})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+	queued := findPortalRun(t, runs, "impl-77-queued")
+	if !queued.GroupVisible || queued.Status != "queued" {
+		t.Fatalf("queued parent GroupVisible=%v Status=%q, want the visible queued row", queued.GroupVisible, queued.Status)
+	}
+	assertSubjects(t, queued.Subjects, "impl-77-done", "rev-77")
+	blocked := findPortalRun(t, runs, "impl-78-blocked")
+	if !blocked.GroupVisible || blocked.Status != "blocked" || blocked.ReviewCount != 1 {
+		t.Fatalf("blocked parent GroupVisible=%v Status=%q ReviewCount=%d, want visible blocked row with one review", blocked.GroupVisible, blocked.Status, blocked.ReviewCount)
+	}
+	assertSubjects(t, blocked.Subjects, "rev-78")
 }
