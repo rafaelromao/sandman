@@ -101,6 +101,7 @@ func TestInformalApprovalLifecycle_RealReviewExplanationsAndCIAdvice(t *testing.
 		{"CI wait", "## Summary\nChanged worker.go.\n\n## Suggested next steps\nAwait the pending required CI checks.\n\n## Decision\n**APPROVED**"},
 		{"negative metric explanation", "## Summary\nChanged worker.go.\n\n## Findings\nNone. The metrics signals do not demonstrate a construct-specific readability or change-risk concern in this diff.\n\n## Decision\n**APPROVED**"},
 		{"no author followup", "## Summary\nChanged worker.go.\n\n## Suggested next steps\nNo author follow-up required.\n\n## Decision\n**APPROVED**"},
+		{"met criteria and resolved defects", "## Findings\nNone.\n\nVerification against the acceptance criteria:\nThe timeout criterion is met. The previous defect in worker.go is resolved. No defect is unresolved.\n\n## Suggested next steps\nNo author changes requested. No unresolved defects remain.\n\n## Decision\n**APPROVED**"},
 		{"no changes then CI wait", "## Findings\nNone.\n\n## Suggested next steps\nNone. Await the pending CI checks before merging.\n\n## Decision\n**APPROVED**"},
 		{"no author changes then CI wait", "## Findings\nNone.\n\n## Suggested next steps\nNo author changes requested; await the required CI checks before merging. A formal GitHub review cannot be submitted from this daemon run.\n\n## Decision\n**APPROVED**"},
 	} {
@@ -160,6 +161,35 @@ func TestInformalApprovalLifecycle_CapturedReports(t *testing.T) {
 				t.Fatalf("green CI = %s/%v, want approved merge work", status, extras)
 			}
 		})
+	}
+}
+
+func TestInformalApprovalLifecycle_FailedCriteriaRemainActionable(t *testing.T) {
+	for _, assessment := range []string{
+		"The timeout criterion is not met: worker.go drops requests on timeout.",
+		"The timeout criterion is **not** yet met: worker.go drops requests on timeout.",
+		"The acceptance criteria remain unsatisfied: worker.go drops requests on timeout.",
+		"An unmet requirement in worker.go drops requests on timeout.",
+		"The timeout criterion has failed: worker.go drops requests on timeout.",
+		"The defect is still unresolved: worker.go drops requests on timeout.",
+		"There is an unresolved defect in worker.go: requests disappear on timeout.",
+		"The implementation remains unsafe: worker.go drops requests on timeout.",
+		"The handler is still broken: worker.go drops requests on timeout.",
+	} {
+		for _, section := range []string{"## Findings\nNone.\n\nVerification against the acceptance criteria:\n", "## Suggested next steps\nNone.\n", "## Spec\n"} {
+			t.Run(section+assessment, func(t *testing.T) {
+				body := section + assessment + "\n\n## Decision\n**APPROVED**"
+				if reviewDecisionApprovedBody(body) {
+					t.Fatal("unmet criterion or unresolved defect established approval")
+				}
+				s, _, pr, workDir, _ := informalApprovalLifecycleFixture(t, body)
+				pr.StatusCheckRollup = "success"
+				status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+				if !handled || status != "resume" || extras["gate"] != gateActionableFeedback || extras["reason"] != informalFeedbackReason {
+					t.Fatalf("failed assessment = %s/%v, want actionable feedback", status, extras)
+				}
+			})
+		}
 	}
 }
 

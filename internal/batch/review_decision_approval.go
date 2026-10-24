@@ -28,6 +28,8 @@ var (
 	reviewFindingHeading           = regexp.MustCompile(`(?m)^[ \t]*#{1,6}(?:[ \t]|$)`)
 	reviewOpposingVerdict          = regexp.MustCompile(`(?i)(?:^|\W)_*(?:CHANGES_REQUESTED|NOT_APPROVED)_*(?:\W|$)`)
 	reviewQuotedCompound           = regexp.MustCompile("`[ \\t`]*[A-Za-z]+[ \\t`]*`(-[A-Za-z][A-Za-z0-9-]*)")
+	reviewUnmetCriterion           = regexp.MustCompile(`(?i)\b(?:criteri(?:on|a)|requirements?)\s+(?:(?:is|are|remains?|still|currently|has|have)\s+)*(?:not\s+(?:(?:yet|currently|fully|completely)\s+)?(?:met|satisfied|fulfilled|implemented|covered)|unmet|unsatisfied|unfulfilled|unimplemented|failing|fails?|failed)\b|\b(?:unmet|unsatisfied|unfulfilled|failed)\s+(?:acceptance\s+)?(?:criteri(?:on|a)|requirements?)\b`)
+	reviewUnresolvedDefect         = regexp.MustCompile(`(?i)\b(?:an?|the|this|that|current)\s+(?:unresolved|unfixed|unaddressed)\s+(?:defects?|bugs?|issues?|problems?)\b|\b(?:the|this|that|current)\s+(?:defects?|bugs?|issues?|problems?|code|implementation|handler|function)\s+(?:(?:is|are|remains?|still|currently)\s+)+(?:unresolved|unfixed|unaddressed|open|racy|unsafe|broken|incorrect|vulnerable)\b`)
 )
 
 // reviewDecisionApprovalEvidenceFor returns informal approvals from the active
@@ -235,6 +237,8 @@ func reviewProsePermitsApproval(text string) bool {
 	return !reviewFindingDirective.MatchString(visible) &&
 		!reviewApprovalContradiction.MatchString(visible) &&
 		!reviewFindingSeverity.MatchString(visible) &&
+		!reviewUnmetCriterion.MatchString(visible) &&
+		!reviewUnresolvedDefect.MatchString(visible) &&
 		!reviewOpposingVerdict.MatchString(prose)
 }
 
