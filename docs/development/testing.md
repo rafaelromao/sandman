@@ -60,6 +60,11 @@ COMMENTED approvals, request/head/window and real-feedback controls, pending-CI
 observations without premature relaunches, and same-RunID approval continuation
 through verified merge. Accepted informal approval is sufficient without a
 formal GitHub approval; its continuation prompt must preserve that contract.
+The captured reports in `internal/batch/testdata/approved-daemon-28-*.md` and
+`approved-sandman-{2818,2886}.md` cover quality tags, no-author-change wording,
+publication limitations and informational next steps. Classifier and lifecycle
+tests assert approval precedes informal feedback; executor tests cover ordinary
+`--continue` and capacity-ready re-entry through verified merge and issue closure.
 
 For OpenCode context rollover changes, the hermetic production-path coverage is:
 

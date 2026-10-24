@@ -3,6 +3,7 @@ package batch
 import (
 	"io"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -100,6 +101,12 @@ func TestInformalApprovalLifecycle_RealReviewExplanationsAndCIAdvice(t *testing.
 		{"CI wait", "## Summary\nChanged worker.go.\n\n## Suggested next steps\nAwait the pending required CI checks.\n\n## Decision\n**APPROVED**"},
 		{"negative metric explanation", "## Summary\nChanged worker.go.\n\n## Findings\nNone. The metrics signals do not demonstrate a construct-specific readability or change-risk concern in this diff.\n\n## Decision\n**APPROVED**"},
 		{"no author followup", "## Summary\nChanged worker.go.\n\n## Suggested next steps\nNo author follow-up required.\n\n## Decision\n**APPROVED**"},
+		{"met criteria and resolved defects", "## Findings\nNone.\n\nVerification against the acceptance criteria:\nThe timeout criterion is met. The previous defect in worker.go is resolved. No defect is unresolved.\n\n## Suggested next steps\nNo author changes requested. No unresolved defects remain.\n\n## Decision\n**APPROVED**"},
+		{"negated unmet requirements", "## Findings\nNone.\n\nVerification against the acceptance criteria:\nNo unmet requirements remain in worker.go. No requirements are unmet.\n\n## Decision\n**APPROVED**"},
+		{"resolved failed requirement", "## Findings\nNone.\n\nVerification against the acceptance criteria:\nThe previously failed requirement in worker.go is now satisfied. The unresolved defect in worker.go is now fixed.\n\n## Suggested next steps\nNo author changes requested. The failed requirement in worker.go has been satisfied.\n\n## Decision\n**APPROVED**"},
+		{"wrapped resolved assessments", "## Findings\nNone.\n\nVerification against the acceptance criteria:\nNo unmet requirements remain\nin worker.go. The previously failed requirement in worker.go\nis now satisfied.\n\n## Suggested next steps\nNo author changes requested. The previously failed requirement in worker.go\nis now satisfied.\n\n## Decision\n**APPROVED**"},
+		{"no changes then CI wait", "## Findings\nNone.\n\n## Suggested next steps\nNone. Await the pending CI checks before merging.\n\n## Decision\n**APPROVED**"},
+		{"no author changes then CI wait", "## Findings\nNone.\n\n## Suggested next steps\nNo author changes requested; await the required CI checks before merging. A formal GitHub review cannot be submitted from this daemon run.\n\n## Decision\n**APPROVED**"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _, pr, workDir, now := informalApprovalLifecycleFixture(t, tc.body)
@@ -119,6 +126,128 @@ func TestInformalApprovalLifecycle_RealReviewExplanationsAndCIAdvice(t *testing.
 	}
 }
 
+func capturedApprovingReports(t *testing.T) map[string]string {
+	t.Helper()
+	reports := make(map[string]string)
+	for _, name := range []string{"approved-daemon-28-first.md", "approved-daemon-28-second.md", "approved-daemon-28-final.md", "approved-sandman-2818.md", "approved-sandman-2886.md"} {
+		body, err := os.ReadFile("testdata/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reports[name] = string(body)
+	}
+	return reports
+}
+
+func TestInformalApprovalLifecycle_CapturedReports(t *testing.T) {
+	for name, body := range capturedApprovingReports(t) {
+		t.Run(name, func(t *testing.T) {
+			if !reviewDecisionApprovedBody(body) {
+				for _, section := range collectReviewApprovalSections(body) {
+					if !section.permitsApproval() {
+						t.Errorf("rejected %s section: %s", section.kind, section.text)
+					}
+				}
+				t.Fatal("captured approving report rejected")
+			}
+			s, _, pr, workDir, now := informalApprovalLifecycleFixture(t, body)
+			for range defaultAwaitResumeMax + 2 {
+				status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+				if !handled || status != "await" || extras["gate"] != "pending" || s.resumeCount != 0 {
+					t.Fatalf("pending CI = %s/%v, want wait without relaunch", status, extras)
+				}
+				*now = now.Add(time.Minute)
+			}
+			pr.StatusCheckRollup = "success"
+			status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+			if !handled || status != "resume" || extras["gate"] != gateReadyToMerge || extras["reason"] != "REVIEW_APPROVED" {
+				t.Fatalf("green CI = %s/%v, want approved merge work", status, extras)
+			}
+		})
+	}
+}
+
+func TestInformalApprovalLifecycle_FailedCriteriaRemainActionable(t *testing.T) {
+	for _, assessment := range []string{
+		"The timeout criterion is not met: worker.go drops requests on timeout.",
+		"The timeout criterion is **not** yet met: worker.go drops requests on timeout.",
+		"The acceptance criteria remain unsatisfied: worker.go drops requests on timeout.",
+		"An unmet requirement in worker.go drops requests on timeout.",
+		"The timeout criterion has failed: worker.go drops requests on timeout.",
+		"The defect is still unresolved: worker.go drops requests on timeout.",
+		"There is an unresolved defect in worker.go: requests disappear on timeout.",
+		"The implementation remains unsafe: worker.go drops requests on timeout.",
+		"The handler is still broken: worker.go drops requests on timeout.",
+		"No unmet requirements remain in worker.go, except the timeout criterion.",
+		"No unmet requirements remain in worker.go,\nexcept the timeout criterion.",
+		"The previously failed requirement in worker.go is now satisfied, but the timeout criterion is not met.",
+		"The previously failed requirement in worker.go is now satisfied,\nbut the timeout criterion is not met.",
+		"Publication was unavailable\nFix the race in worker.go.",
+		"Merge\nwhen the race in worker.go is fixed.",
+		"The unresolved defect in worker.go is now fixed; the timeout criterion is not met.",
+	} {
+		for _, section := range []string{"## Findings\nNone.\n\nVerification against the acceptance criteria:\n", "## Suggested next steps\nNone.\n", "## Spec\n"} {
+			t.Run(section+assessment, func(t *testing.T) {
+				body := section + assessment + "\n\n## Decision\n**APPROVED**"
+				if reviewDecisionApprovedBody(body) {
+					t.Fatal("unmet criterion or unresolved defect established approval")
+				}
+				s, _, pr, workDir, _ := informalApprovalLifecycleFixture(t, body)
+				pr.StatusCheckRollup = "success"
+				status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+				if !handled || status != "resume" || extras["gate"] != gateActionableFeedback || extras["reason"] != informalFeedbackReason {
+					t.Fatalf("failed assessment = %s/%v, want actionable feedback", status, extras)
+				}
+			})
+		}
+	}
+}
+
+func TestInformalApprovalClassifier_CapturedReportsAndContradictions(t *testing.T) {
+	for name, body := range capturedApprovingReports(t) {
+		t.Run(name, func(t *testing.T) {
+			c := informalClassificationForTest(t, func(raw map[string]any) {
+				sources := raw["sources"].(map[string]any)
+				records := sources["top_level"].([]any)
+				records[0].(map[string]any)["body"] = body
+			})
+			request := informalRequestForTest()
+			if got := c.reviewDecisionApprovalEvidenceFor(request, ""); len(got) != 1 {
+				t.Fatalf("approval evidence = %v", got)
+			}
+			if got := c.informalFeedbackEvidenceFor(request, ""); len(got) != 0 {
+				t.Fatalf("approving report produced feedback: %v", got)
+			}
+			for _, conflicting := range []string{
+				strings.Replace(body, "**APPROVED**", "**CHANGES_REQUESTED**", 1),
+				strings.Replace(body, "## Decision", "## Findings\n### Important\nFix the race in `worker.go`.\n\n## Decision", 1),
+			} {
+				if reviewDecisionApprovedBody(conflicting) || !informalReviewFeedbackConcrete(conflicting) {
+					t.Fatal("non-approval or important finding did not remain actionable")
+				}
+			}
+		})
+	}
+}
+
+func TestInformalApprovalLifecycle_ApprovalPrecedesFeedbackFacts(t *testing.T) {
+	for _, checks := range []string{"pending", "success"} {
+		t.Run(checks, func(t *testing.T) {
+			d := decideImplementationPRLifecycle(implementationPRFacts{
+				pr:      &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha", StatusCheckRollup: checks, MergeStateStatus: "CLEAN"},
+				headSHA: "current-sha", requireReview: true,
+				retainedEvidence: retainedReviewEvidence{
+					outcome: retainedReviewApproval, actionable: true,
+					informalFeedback: []informalFeedbackEvidence{{Body: "Fix `worker`."}},
+				},
+			})
+			if checks == "pending" && d.action != lifecycleAwait || checks == "success" && (d.action != lifecycleResume || d.gate != lifecycleGateReady) {
+				t.Fatalf("approval lost to feedback: %+v", d)
+			}
+		})
+	}
+}
+
 func capturedApprovalWithCIAdvice(t *testing.T) string {
 	t.Helper()
 	body, err := os.ReadFile("testdata/approved-with-ci-advice.md")
@@ -128,17 +257,21 @@ func capturedApprovalWithCIAdvice(t *testing.T) string {
 	return string(body)
 }
 
-func TestInformalApprovalLifecycle_SeparateFeedbackStillResumesRepair(t *testing.T) {
+func TestInformalApprovalLifecycle_ApprovalPrecedesSeparateFeedback(t *testing.T) {
 	s, client, pr, workDir, now := informalApprovalLifecycleFixture(t, approvingMetricsReview)
 	client.inline = []github.PRReviewComment{{ID: "feedback", Body: "Please fix the race in internal/batch/run_lifecycle.go before merging.", CommitID: pr.HeadRefOid, CreatedAt: now.Add(-30 * time.Second)}}
 	status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
-	if !handled || status != "resume" || extras["gate"] != gateActionableFeedback {
-		t.Fatalf("separate concrete feedback = (%s, %v, %t), want repair resume", status, extras, handled)
+	if !handled || status != "await" || extras["gate"] != "pending" {
+		t.Fatalf("approved request with pending CI = (%s, %v, %t), want CI wait", status, extras, handled)
 	}
 	request := extras["review_request"].(map[string]any)
-	feedback, ok := request["informal_feedback"].([]informalFeedbackEvidence)
-	if !ok || len(feedback) != 1 || feedback[0].ID != "feedback" {
-		t.Fatalf("retained feedback = %v, want only the independent requested change", request["informal_feedback"])
+	if request["informal_feedback"] != nil {
+		t.Fatalf("approved request retained feedback: %v", request)
+	}
+	pr.StatusCheckRollup = "success"
+	status, extras, handled = s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	if !handled || status != "resume" || extras["gate"] != gateReadyToMerge {
+		t.Fatalf("approved request with green CI = (%s, %v, %t), want merge work", status, extras, handled)
 	}
 }
 
@@ -245,6 +378,9 @@ func TestInformalApprovalLifecycle_AmbiguousDecisionsCannotAuthorizeMerge(t *tes
 		"## Findings\nNone.\nFix the race in worker.go before merging.\n\n## Decision\nAPPROVED",
 		"## Findings\nNone. Not good: this remains racy.\n\n## Decision\nAPPROVED",
 		"## Findings\nNone. This remains racy.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone.\n\nThis remains racy.\n\n## Decision\nAPPROVED",
+		"## Scope\nworker.go\n### Findings\nImportant: Fix the race in worker.go.\n\n## Decision\nAPPROVED",
+		"## Metrics\n### Decision\nCHANGES_REQUESTED\n\n## Decision\nAPPROVED",
 		"## Findings\nNone. The code is unsafe.\n\n## Decision\nAPPROVED",
 		"## Findings\nNone. The metrics reveal a correctness concern.\n\n## Decision\nAPPROVED",
 		"## Findings\nNone. The metrics signals are limited to a data race.\n\n## Decision\nAPPROVED",
@@ -272,6 +408,46 @@ func TestInformalApprovalLifecycle_AmbiguousDecisionsCannotAuthorizeMerge(t *tes
 		"## Decision\nAPPROVED\n\n## Merge conditions\n`fix` the race in worker.go.",
 		"## Decision\nAPPROVED\n\n## Merge conditions\nMerge only after fixing the race in worker.go.",
 		"## Summary\nNot approved: worker.go still has a race.\n\n## Decision\nAPPROVED",
+		"## Scope\nworker.go: approval is contingent on fixing the race before merging.\n\n## Findings\nNone.\n\n## Decision\nAPPROVED",
+		"## Metrics\nCognitive complexity: 12. Please fix the race in worker.go.\n\n## Decision\nAPPROVED",
+		"## Tools used\nworker.go: merge only after fixing the race.\n\n## Decision\nAPPROVED",
+		"## Scope\nworker.go: CHANGES_REQUESTED\n\n## Findings\nNone.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone.\n\nVerification against the acceptance criteria:\nMerge only after fixing the race in worker.go.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone.\n\nVerification against the acceptance criteria:\n### Decision\nCHANGES_REQUESTED\n\n## Decision\nAPPROVED",
+		"## Findings\nNone.\n\nVerification against the acceptance criteria:\nCHANGES_REQUESTED\n\n## Decision\nAPPROVED",
+		"## Findings\nNone.\n\nVerification against the acceptance criteria:\n`Fix` the race in worker.go.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone.\n\nVerification against the acceptance criteria:\n``Fix`` the race in worker.go.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone.\n\nVerification against the acceptance criteria:\n**`Fix`** the race in worker.go.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone.\n\nVerification against the acceptance criteria:\nYou `must` repair worker.go.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone.\n\nVerification against the acceptance criteria:\n- `Important`: worker.go races.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone.\n\nVerification against the acceptance criteria:\n- _Important_: worker.go races.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone.\n\nVerification against the acceptance criteria:\n- ***Important***: worker.go races.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone.\n\nVerification against the acceptance criteria:\n* Important: worker.go races.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone.\n\nVerification against the acceptance criteria:\n+ **Important**: worker.go races.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone.\n\nVerification against the acceptance criteria:\n1. Important: worker.go races.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone.\n\nVerification against the acceptance criteria:\nPublication was unavailable. Important: worker.go races.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone.\n\nVerification against the acceptance criteria:\nThis is **not** approved: worker.go still races.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone.\n\nVerification against the acceptance criteria:\nApproval is **subject** to repairing worker.go.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone.\n\nVerification against the acceptance criteria:\n### Merge conditions\nFix worker.go before merging.\n\n## Decision\nAPPROVED",
+		"## Suggested next steps\nNone. Await the pending CI checks before merging; fix the race in worker.go.\n\n## Decision\nAPPROVED",
+		"## Suggested next steps\nNone. Merge only; after fixing the race in worker.go.\n\n## Decision\nAPPROVED",
+		"## Suggested next steps\nNo author changes requested. Documentation is informational; fix the race in worker.go.\n\n## Decision\nAPPROVED",
+		"## Suggested next steps\nNone. **Fix** the race in worker.go.\n\n## Decision\nAPPROVED",
+		"## Suggested next steps\nNone. _Fix the race_ in worker.go.\n\n## Decision\nAPPROVED",
+		"## Suggested next steps\nNone.\n+ **Fix** the race in worker.go.\n\n## Decision\nAPPROVED",
+		"## Suggested next steps\nNone.\n1) **Fix** the race in worker.go.\n\n## Decision\nAPPROVED",
+		"## Suggested next steps\nNone.\n- Important: worker.go races.\n\n## Decision\nAPPROVED",
+		"## Suggested next steps\nNone. Publication was unavailable.\n- Important: worker.go races.\n\n## Decision\nAPPROVED",
+		"## Suggested next steps\nNo author changes requested. Publication was unavailable. Await the pending CI checks before merging.\n* **Blocking**: worker.go races.\n\n## Decision\nAPPROVED",
+		"## Suggested next steps\nNone.\n* **Blocking**: worker.go races.\n\n## Decision\nAPPROVED",
+		"## Suggested next steps\nNone.\n### Important\nworker.go races.\n\n## Decision\nAPPROVED",
+		"## Suggested next steps\nNone. This is **not** approved: worker.go races.\n\n## Decision\nAPPROVED",
+		"## Suggested next steps\nNone. _CHANGES_REQUESTED_: worker.go races.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone.\n\nVerification against the acceptance criteria:\n__NOT_APPROVED__: worker.go races.\n\n## Decision\nAPPROVED",
+		"## Scope\nworker.go: approval is **subject** to repairing the race.\n\n## Decision\nAPPROVED",
+		"## Suggested next steps\nNo author changes requested. You **must** repair worker.go.\n\n## Decision\nAPPROVED",
+		"## Findings\nNone. **Fix** the race in worker.go.\n\n## Decision\nAPPROVED",
+		"## Scope\nworker.go: **Fix** the race.\n\n## Decision\nAPPROVED",
 		"## Decision\nAPPROVED subject to fixing the race in worker.go.",
 		"## Decision\n'APPROVED'",
 		"No LGTM",

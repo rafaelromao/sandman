@@ -43,6 +43,10 @@ Managed merge work requires confirmed current-request/current-head delegated
 approval, including eligible informal approval; a pending request on a CLEAN PR
 stays waiting. Accepted informal approval waits for pending CI and resumes merge
 work when checks are green, without requiring a formal GitHub approval.
+Evaluate eligible approval before informal feedback, as in the standalone review
+loop. Scope tables, quality tags, no-change next steps and informational review
+prose must not turn an approving report into a repair relaunch. Formal requested
+changes, current-head CI failures and merge conflicts remain blocking.
 
 - **Event-sourced state**: Run status is a projection over the append-only `.sandman/events.jsonl`, not mutable records. `events.RunState` folds events into current state. If a status looks wrong, start by tracing the relevant event types and the fold/projection logic rather than searching for mutable status fields.
 - **Lifecycle versus artifacts**: `events.RunState.IsTerminal()` is the shared lifecycle predicate for status/history/Portal, archive, cleanup and recovery. Initial `run.queued` admissions tagged `initial_admission: true` are non-terminal; untagged historical records and explicit `terminal_placeholder` skipped records remain terminal. `run.capacity_queued` is non-terminal readiness evidence: started rows remain waiting. Index status and `run.json.status` describe artifacts/compatibility only and cannot authorize terminal operations. Read failures fail closed; missing events remain unknown. Preserve manifest/path validation and terminal outcomes during reclamation.

@@ -36,6 +36,10 @@ func (c *reviewClassification) informalFeedbackEvidenceFor(request reviewRequest
 	if c == nil || c.RequestState != "active" || c.Decision != "responded" || c.FormalDecision != "none" {
 		return nil
 	}
+	// Approval settles the request before heuristics inspect feedback surfaces.
+	if len(c.reviewDecisionApprovalEvidenceFor(request, windowEnd)) > 0 {
+		return nil
+	}
 	sources, ok := objectValue(c.Raw, "sources")
 	if !ok {
 		return nil
@@ -51,7 +55,7 @@ func (c *reviewClassification) informalFeedbackEvidenceFor(request reviewRequest
 				continue
 			}
 			body := strings.TrimSpace(stringValue(record, "body"))
-			if body == "" || strings.HasPrefix(body, request.TriggerPrefix) || reviewDecisionApprovedBody(body) || !informalFeedbackConcrete(body) {
+			if body == "" || strings.HasPrefix(body, request.TriggerPrefix) || reviewDecisionApprovedBody(body) || !informalReviewFeedbackConcrete(body) {
 				continue
 			}
 			timestamp := stringValue(record, "response_timestamp")
@@ -69,6 +73,31 @@ func (c *reviewClassification) informalFeedbackEvidenceFor(request reviewRequest
 		}
 	}
 	return evidence
+}
+
+// A structured report's scope table and metrics are not repair evidence. If
+// approval cannot be established, look for feedback in its actual assessment
+// sections instead of turning every backtick in the report into a finding.
+func informalReviewFeedbackConcrete(body string) bool {
+	sections := collectReviewApprovalSections(body)
+	structured := false
+	for _, section := range sections {
+		if section.kind == "decision" {
+			structured = true
+			if !unambiguousReviewApproval(section.text) {
+				return informalFeedbackConcrete(body)
+			}
+		}
+	}
+	if !structured {
+		return informalFeedbackConcrete(body)
+	}
+	for _, section := range sections {
+		if !section.permitsApproval() && informalFeedbackConcrete(section.text) {
+			return true
+		}
+	}
+	return false
 }
 
 // informalFeedbackLocator builds the source locator for an informal response

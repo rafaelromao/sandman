@@ -287,21 +287,11 @@ func decideRecoverableLifecycle(gate lifecycleGate, pr *github.PR, headSHA strin
 	}
 	reviewChangesRequested := pr != nil && strings.EqualFold(strings.TrimSpace(pr.ReviewDecision), "CHANGES_REQUESTED")
 	hardFailure := pr != nil && (strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "failure") || strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "DIRTY") || strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "CONFLICTING"))
-	if evidence.actionable && (gate != lifecycleGateFailed || (reviewChangesRequested && !hardFailure)) {
-		return lifecycleDecision{
-			action:  lifecycleResume,
-			gate:    lifecycleGate(gateActionableFeedback),
-			handled: true,
-			extras:  evidence.payload,
-		}
-	}
-	if gate != lifecycleGateFailed && len(evidence.informalFeedback) > 0 {
-		return lifecycleDecision{
-			action:  lifecycleResume,
-			gate:    lifecycleGate(gateActionableFeedback),
-			handled: true,
-			extras:  evidence.payload,
-		}
+	// Current-request approval is evaluated before any feedback. While CI is
+	// pending, keep the approved request waiting instead of spending a repair
+	// relaunch on comments that no longer gate this request.
+	if evidence.outcome == retainedReviewApproval && gate != lifecycleGateFailed && gate != lifecycleGateReady && ciActive(pr, headSHA) {
+		return decidedAwaitWithEvidence(gate, evidence, reviewChangesRequested, hardFailure)
 	}
 	if gate == lifecycleGateReady && evidence.outcome == retainedReviewApproval {
 		// The external gate has finished. Merge/readiness work belongs to
@@ -320,6 +310,22 @@ func decideRecoverableLifecycle(gate lifecycleGate, pr *github.PR, headSHA strin
 			gate:    lifecycleGate(gateReadyToMerge),
 			handled: true,
 			extras:  extras,
+		}
+	}
+	if evidence.outcome != retainedReviewApproval && evidence.actionable && (gate != lifecycleGateFailed || (reviewChangesRequested && !hardFailure)) {
+		return lifecycleDecision{
+			action:  lifecycleResume,
+			gate:    lifecycleGate(gateActionableFeedback),
+			handled: true,
+			extras:  evidence.payload,
+		}
+	}
+	if evidence.outcome != retainedReviewApproval && gate != lifecycleGateFailed && len(evidence.informalFeedback) > 0 {
+		return lifecycleDecision{
+			action:  lifecycleResume,
+			gate:    lifecycleGate(gateActionableFeedback),
+			handled: true,
+			extras:  evidence.payload,
 		}
 	}
 	if evidence.outcome == retainedReviewTimeout {
