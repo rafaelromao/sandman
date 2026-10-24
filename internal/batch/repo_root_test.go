@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 
@@ -53,17 +52,15 @@ func TestRunBatch_FromASubdirectoryRootsRepositoryOperationsAtTheRequestRoot(t *
 }
 
 // Container preflight from a repository subdirectory finds the repository's
-// .sandman/Dockerfile at the request root.
-func TestRunBatch_FromASubdirectoryFindsTheRepositoryDockerfile(t *testing.T) {
-	if _, err := sandbox.ResolveRuntime("podman"); err != nil {
-		t.Skip("container runtime unavailable")
-	}
+// .sandman/Dockerfile and builds its image at the request root.
+func TestRunBatch_FromASubdirectoryPreparesContainersAtTheRequestRoot(t *testing.T) {
 	root := testenv.MkdirShort(t, "sm-root-")
 	initGitRepo(t, root)
+	t.Setenv("HOME", t.TempDir())
 	if err := os.MkdirAll(filepath.Join(root, ".sandman"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".sandman", "Dockerfile"), []byte("FROM scratch\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".sandman", "Dockerfile"), []byte("FROM debian:bookworm-slim\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	subdir := filepath.Join(root, "nested")
@@ -71,13 +68,15 @@ func TestRunBatch_FromASubdirectoryFindsTheRepositoryDockerfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(subdir)
-	cfg := &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}
-	o := NewOrchestrator(&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}}, &noopRenderer{}, &fakeConfigStore{config: cfg}, nil,
-		WithErrorLog(io.Discard), WithRunnableFactory(&controlledRunnableFactory{}))
+	starter := &fakeContainerStarter{buildImageTag: "sandman-custom:latest"}
+	cfg := &config.Config{Agent: "opencode", Sandbox: "podman", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"opencode": {Command: "true"}}}
+	o := NewOrchestrator(&fakeGitHubClient{}, &noopRenderer{}, &fakeConfigStore{config: cfg}, nil,
+		WithErrorLog(io.Discard), WithContainerRuntimeFactory(&fakeContainerRuntimeFactory{starter: starter}), WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}))
 
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Sandbox: "podman", RequireDockerfile: true, RepoRoot: root})
-
-	if err != nil && strings.Contains(err.Error(), ".sandman/Dockerfile not found") {
-		t.Fatalf("preflight looked for the Dockerfile outside the request root: %v", err)
+	if _, err := o.RunBatch(context.Background(), Request{Sandbox: "podman", RequireDockerfile: true, RepoRoot: root}); err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if starter.buildImageCount != 1 || starter.buildImageRepo != root {
+		t.Fatalf("BuildImage calls = %d at %q, want one at the request root %q", starter.buildImageCount, starter.buildImageRepo, root)
 	}
 }
