@@ -326,16 +326,12 @@ func TestPortal_NoRunsReviewLiteralInPortalCode(t *testing.T) {
 }
 
 // TestPortal_DocComments_DescribeServerSideStampingAndOrphanJSPath pins the
-// documentation restored in #1897: the doc comments on portalRun.ReviewCount,
-// ReviewVerdict, and GroupedReview in portal_runs_view.go must describe that
-// these fields are stamped by the Go server via aggregateReviewChildren during
-// compute (the canonical writer for parent impl rows), with the orphan
-// review-only JS path (visibleRunForIssueGroup, portal.html) handling the
-// no-implementation-parent case. #1825 deleted the server stamping and #1856
-// moved it to JS; #1897 restored the server-side writer so the verdict
-// survives the summary endpoint's log-stripping. A future maintainer reading
-// the field comments must learn that aggregateReviewChildren is the canonical
-// writer for parent rows.
+// documentation of the issue group's single owner: the doc comments on
+// portalRun.ReviewCount, ReviewVerdict, and GroupedReview in
+// portal_runs_view.go must name projectIssueGroups as the writer for every
+// issue group, including the orphan review group (no implementation parent),
+// which the page no longer derives in JS. #1825 deleted the server stamping,
+// #1856 moved it to JS, #1897 restored it, and #2802 made it the only owner.
 func TestPortal_DocComments_DescribeServerSideStampingAndOrphanJSPath(t *testing.T) {
 	// Locate portal_runs_view.go next to this test file (the test cwd
 	// is the package directory, not the repo root).
@@ -361,22 +357,22 @@ func TestPortal_DocComments_DescribeServerSideStampingAndOrphanJSPath(t *testing
 		{
 			field: "ReviewCount",
 			required: []string{
-				"aggregateReviewChildren", // canonical Go writer (parent rows)
-				"orphan",                  // orphan review-only JS path
+				"projectIssueGroups", // canonical Go writer (parent rows)
+				"orphan",             // orphan review group, also server-owned
 			},
 		},
 		{
 			field: "ReviewVerdict",
 			required: []string{
-				"aggregateReviewChildren",       // canonical Go writer (parent rows)
+				"projectIssueGroups",            // canonical Go writer (parent rows)
 				"reviewVerdictFromDecisionFile", // verdict extraction helper (#1938)
 			},
 		},
 		{
 			field: "GroupedReview",
 			required: []string{
-				"aggregateReviewChildren", // canonical Go writer
-				"orphan",                  // orphan review-only JS path
+				"projectIssueGroups", // canonical Go writer
+				"orphan",             // orphan review group, also server-owned
 			},
 		},
 	}
@@ -447,7 +443,7 @@ func intPtr(v int) *int {
 // canonical row RunID (rather than the batchId). The review row stays
 // discoverable as a Review=true row in the same issue group, and the
 // canonical parent's own identity (RunID, BatchKey, IssueTitle, StartedAt)
-// is preserved. aggregateReviewChildren (restored in #1897) stamps
+// is preserved. projectIssueGroups (restored in #1897) stamps
 // ReviewCount/ReviewVerdict onto the parent from the sibling review's saved
 // run.log; the parent row carries those fields and, with a terminal review
 // child only, its status stays on its terminal run.finished value.
@@ -555,7 +551,7 @@ func TestPortal_ReviewAggregation_HonorsCanonicalRowID(t *testing.T) {
 // cold-load regression from #1825: a terminal parent impl row, served via the
 // summary endpoint (logs stripped by portalSummaryRuns), must carry the
 // ReviewCount and ReviewVerdict derived from its sibling review child's saved
-// run.log. #1825 deleted aggregateReviewChildren, so the verdict was silently
+// run.log. #1825 deleted projectIssueGroups, so the verdict was silently
 // elided on cold load; this test guards the server-side stamping restoration.
 func TestPortal_ParentImplRow_ReviewCountAndVerdictSurviveSummaryStrip(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "pvs")
@@ -616,7 +612,7 @@ func TestPortal_ParentImplRow_ReviewCountAndVerdictSurviveSummaryStrip(t *testin
 	}
 
 	// Summary endpoint strips Log/LogURL for transport. The verdict must
-	// survive because aggregateReviewChildren stamps ReviewVerdict (a
+	// survive because projectIssueGroups stamps ReviewVerdict (a
 	// separate field) during compute, before portalSummaryRuns blanks Log.
 	summary := portalSummaryRuns(runs)
 
@@ -641,9 +637,9 @@ func TestPortal_ParentImplRow_ReviewCountAndVerdictSurviveSummaryStrip(t *testin
 }
 
 // TestAggregateReviewChildren_StampLandsOnCanonicalParent pins the parent-pick
-// adaptation restored in #1897: aggregateReviewChildren must stamp
-// ReviewCount/ReviewVerdict onto the same parent that the JS pickCanonicalParent
-// displays (active parent with latest StartedAt; else terminal parent with
+// adaptation restored in #1897: projectIssueGroups must stamp
+// ReviewCount/ReviewVerdict onto the same parent it marks GroupVisible, the row
+// the table displays (active parent with latest StartedAt; else terminal parent with
 // latest FinishedAt), never onto a hidden sibling. This guards the #1825 fix
 // (newer successful run wins over older aborted run with review children) while
 // restoring server-side stamping: the older aborted parent stays clean and the
@@ -683,7 +679,7 @@ func TestAggregateReviewChildren_StampLandsOnCanonicalParent(t *testing.T) {
 		newFinished := time.Date(2026, 7, 5, 0, 30, 0, 0, time.UTC)
 		old := portalRun{IssueNumber: 1793, RunID: "impl-2bf9", Key: "impl-2bf9", Kind: "completed", Status: "aborted", StartedAt: reviewStarted.Add(-time.Hour), FinishedAt: &oldFinished}
 		new := portalRun{IssueNumber: 1793, RunID: "impl-9744", Key: "impl-9744", Kind: "completed", Status: "success", StartedAt: reviewStarted, FinishedAt: &newFinished}
-		runs := (&portalRunsView{}).aggregateReviewChildren(layout, []portalRun{old, new, makeReview()})
+		runs := (&portalRunsView{}).projectIssueGroups(layout, []portalRun{old, new, makeReview()})
 		var oldP, newP *portalRun
 		for i := range runs {
 			switch runs[i].RunID {
@@ -712,7 +708,7 @@ func TestAggregateReviewChildren_StampLandsOnCanonicalParent(t *testing.T) {
 		activeStarted := time.Date(2026, 7, 5, 1, 0, 0, 0, time.UTC)
 		term := portalRun{IssueNumber: 1793, RunID: "impl-old", Key: "impl-old", Kind: "completed", Status: "success", StartedAt: reviewStarted, FinishedAt: &termFinished}
 		active := portalRun{IssueNumber: 1793, RunID: "impl-live", Key: "impl-live", Kind: "active", Status: "running", StartedAt: activeStarted}
-		runs := (&portalRunsView{}).aggregateReviewChildren(layout, []portalRun{term, active, makeReview()})
+		runs := (&portalRunsView{}).projectIssueGroups(layout, []portalRun{term, active, makeReview()})
 		var activeP, termP *portalRun
 		for i := range runs {
 			switch runs[i].RunID {
@@ -755,7 +751,7 @@ func TestAggregateReviewChildren_StampLandsOnCanonicalParent(t *testing.T) {
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
 				parent := portalRun{IssueNumber: 1793, RunID: "impl-parent", Key: "impl-parent", Kind: tc.parentKind, Status: tc.status, StartedAt: reviewStarted}
-				got := (&portalRunsView{}).aggregateReviewChildren(layout, []portalRun{parent, liveReview})
+				got := (&portalRunsView{}).projectIssueGroups(layout, []portalRun{parent, liveReview})
 				if len(got) != 2 {
 					t.Fatalf("got %d rows, want parent and live review: %#v", len(got), got)
 				}
@@ -771,7 +767,7 @@ func TestAggregateReviewChildren_StampLandsOnCanonicalParent(t *testing.T) {
 		later := time.Date(2026, 7, 5, 1, 0, 0, 0, time.UTC)
 		a := portalRun{IssueNumber: 1793, RunID: "impl-a", Key: "impl-a", Kind: "active", Status: "running", StartedAt: earlier}
 		b := portalRun{IssueNumber: 1793, RunID: "impl-b", Key: "impl-b", Kind: "active", Status: "running", StartedAt: later}
-		runs := (&portalRunsView{}).aggregateReviewChildren(layout, []portalRun{a, b, makeReview()})
+		runs := (&portalRunsView{}).projectIssueGroups(layout, []portalRun{a, b, makeReview()})
 		var aP, bP *portalRun
 		for i := range runs {
 			switch runs[i].RunID {
@@ -1232,7 +1228,7 @@ func TestPortal_ReviewAggregation_HistoricalReviewRecoversIssueFromIdentity(t *t
 		t.Fatalf("review IssueNumber=%d, want %d recovered from the review identity (runFromState must fall back to identity parsing when the payload has no issue_number)", got, issueNumber)
 	}
 	if parent.Status != "success" {
-		t.Fatalf("parent Status=%q, want %q (terminal run.finished status preserved after aggregateReviewChildren removal)", parent.Status, "success")
+		t.Fatalf("parent Status=%q, want %q (terminal run.finished status preserved after projectIssueGroups removal)", parent.Status, "success")
 	}
 }
 
@@ -1425,7 +1421,7 @@ func TestPortal_Compute_ActiveReviewDoesNotDuplicateParentCount(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Impl run for the same issue so aggregateReviewChildren has a
+	// Impl run for the same issue so projectIssueGroups has a
 	// parent row to stamp. Starts well before batch.json.createdAt, so
 	// stateStartsInBatch filters it out of the review's
 	// latestRunStateForIssue lookup.

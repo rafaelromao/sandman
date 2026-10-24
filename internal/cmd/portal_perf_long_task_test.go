@@ -238,7 +238,7 @@ func TestPortalPerf_LongTaskProfile_SubjectSwitch(t *testing.T) {
 	outStr := runPortalDiffLongTaskScenario(t, `
 const recorder = longTaskRecorder({ thresholdMs: 50 });
 const body = makeMockBody();
-const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1, log: 'parent log', socketPath: '/tmp/sock' };
+const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1, subjects: ['260618113825-abcd-1', 'PR42'], log: 'parent log', socketPath: '/tmp/sock' };
 const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42, log: 'review log' };
 sandbox.state.runs = [parentRun, childReview];
 sandbox.state.expandedRunKey = '260618113825-abcd-1';
@@ -686,7 +686,6 @@ sandbox.findRunByKey = sandbox.findRunByIdentity;
 sandbox.subjectRunIdentity = function (run) { return run ? (run.runId || run.key || '') : ''; };
 sandbox.subjectTabKey = function (key) { return key || ''; };
 sandbox.isWaitStateRun = function () { return false; };
-sandbox.summarizeReviewGroup = function (group) { return { source: group && group[0] || null }; };
 sandbox.loadRunDetail = function () {};
 sandbox.findRunRowByIdentity = function () { return null; };
 sandbox.logSubscription = { select: function () {} };
