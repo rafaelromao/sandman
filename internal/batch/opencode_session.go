@@ -7,7 +7,6 @@ import (
 	"io"
 	"strings"
 	"sync"
-
 )
 
 // opencodeSessionKind is the OpenCode session identity recorded in a Run's
