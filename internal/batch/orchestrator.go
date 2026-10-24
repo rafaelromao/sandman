@@ -2456,12 +2456,24 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 							if issueCtx.Err() != nil {
 								return issueCtx.Err()
 							}
-							if handled && status == "await" && readyContinuation {
+							if handled && status == "await" {
 								if err := executor.persistObservedAwait(issueCtx, row, extras); err != nil {
 									return err
 								}
 								readyContinuation = false
 								if err := owner.checkpoint(row, false, awaitPollInterval(o.runSessionOpts, awaitPoll)); err != nil {
+									return err
+								}
+							}
+							if handled && status == "resume" && !readyContinuation {
+								if err := logCapacityQueuedContinuationAt(o.eventLog, executor.deps.runSessionOpts.runtimeNow(), runID, issueNum, issueBatchID, row, extras, req.IssueTitles[issueNum]); err != nil {
+									if o.errorLog != nil {
+										fmt.Fprintf(o.errorLog, "warning: persist ready continuation for issue %d: %v; keeping the run in its external wait\n", issueNum, err)
+									}
+									return nil
+								}
+								readyContinuation = true
+								if err := owner.checkpoint(row, true, 0); err != nil {
 									return err
 								}
 							}
@@ -2603,16 +2615,16 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					awaiting = true
 					continue
 				}
-				if err := waitForObservation(); err != nil {
-					abortRequested = true
-					break
-				}
 				row.Mode = ModeContinue
 				row.PreviousRunIDs = map[int]string{issueNum: runID}
 				row.PreviousRunBatchIDs = map[int]string{issueNum: issueBatchID}
 				row.ReuseSession = true
 				awaiting = true
 				readyContinuation = false
+				if err := waitForObservation(); err != nil {
+					abortRequested = true
+					break
+				}
 				continue
 			}
 			if issueCtx.Err() != nil && !events.RunStatusFromPayload(res.Status).IsTerminal() {
