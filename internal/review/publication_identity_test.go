@@ -35,6 +35,7 @@ func TestDaemon_RehydrateMatchesAnExistingPublicationByIdentity(t *testing.T) {
 	runner := &capturedRequest{}
 	poster := &fakeCommentPoster{}
 	d, dir, _ := newReviewLaunchTestDaemon(t, gh, runner, newReviewLaunchTestConfig())
+	d.authenticatedLogin = "sandman"
 	batchID := "outbox-identity-batch"
 	seedPriorReviewEntry(t, dir, batchID, prNumber, commentID, "pending")
 	writeDecisionForTest(t, dir, batchID, prNumber, commentID, body)
@@ -131,5 +132,39 @@ func TestDaemonReviewResponse_NormalizedPublicationIdentitySuppressesRelaunch(t 
 
 	if !hasLaterDaemonReviewResponse(trigger, comments, "sandman", "head") {
 		t.Fatal("normalized daemon publication should count as the trigger's response")
+	}
+}
+
+// A copy of the publication posted by someone else is not the daemon's
+// publication: restart recovery still posts it once.
+func TestDaemon_RehydrateIgnoresAPublicationCopyByAnotherAuthor(t *testing.T) {
+	const (
+		prNumber  = 2493
+		commentID = "c-outbox-quoted"
+		body      = "## Decision\n**APPROVED**\nquoted body\n"
+	)
+	trigger := github.PRComment{ID: commentID, Body: "/sandman review"}
+	boundBody := publicationBody(body, reviewTriggerKey(trigger), "head")
+	gh := &fakeGH{
+		prs:      []github.PR{{Number: prNumber, State: "open"}},
+		comments: map[int][]github.PRComment{prNumber: {trigger, {ID: "quoted", AuthorLogin: "someone-else", Body: boundBody}}},
+		prFetch:  map[int]*github.PR{prNumber: {Number: prNumber, Title: "quoted outbox", Body: "body"}},
+	}
+	poster := &fakeCommentPoster{}
+	d, dir, _ := newReviewLaunchTestDaemon(t, gh, &capturedRequest{}, newReviewLaunchTestConfig())
+	d.authenticatedLogin = "sandman" // Run resolves the daemon's login before its first tick.
+	batchID := "outbox-quoted-batch"
+	seedPriorReviewEntry(t, dir, batchID, prNumber, commentID, "pending")
+	writeDecisionForTest(t, dir, batchID, prNumber, commentID, body)
+	runDir := filepath.Join(dir, "batches", batchID, "runs", deriveReviewRowID(batchID, prNumber))
+	if err := writePendingPublicationMarker(runDir, pendingPublicationMarker{Version: 2, PR: prNumber, CommentID: reviewTriggerKey(trigger), Body: boundBody, Timestamp: time.Now()}); err != nil {
+		t.Fatalf("write outbox: %v", err)
+	}
+	d.CommentPoster = poster
+
+	tickAndWait(t, d, context.Background())
+
+	if poster.Calls() != 1 {
+		t.Fatalf("PostComment calls = %d, want the daemon's own publication posted once", poster.Calls())
 	}
 }

@@ -24,9 +24,14 @@ func publicationIdentified(body, triggerKey, head string) bool {
 }
 
 // publicationPosted reports whether any comment is the publication of
-// (triggerKey, head).
-func publicationPosted(comments []github.PRComment, triggerKey, head string) bool {
+// (triggerKey, head). When the daemon's login is known, only its own comments
+// count: a quoted copy by anyone else is not acknowledgement evidence.
+func publicationPosted(comments []github.PRComment, triggerKey, head, login string) bool {
+	login = strings.TrimSpace(login)
 	for _, comment := range comments {
+		if login != "" && !strings.EqualFold(strings.TrimSpace(comment.AuthorLogin), login) {
+			continue
+		}
 		if publicationIdentified(comment.Body, triggerKey, head) {
 			return true
 		}
@@ -42,7 +47,7 @@ func (d *Daemon) publicationLanded(ctx context.Context, prNumber int, triggerKey
 	if err != nil {
 		return false, fmt.Errorf("list comments for publication recovery: %w", err)
 	}
-	return publicationPosted(comments, triggerKey, head), nil
+	return publicationPosted(comments, triggerKey, head, d.authenticatedLogin), nil
 }
 
 // stagePublication renders the decision bound to its publication identity and
