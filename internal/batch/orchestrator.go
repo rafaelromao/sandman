@@ -320,7 +320,7 @@ func (o *Orchestrator) validateBatchBranchesWithIndex(ctx context.Context, req R
 		return nil
 	}
 
-	repoRoot, err := gitTopLevel(".")
+	repoRoot, err := gitTopLevel(o.requestRepoRoot(req))
 	if err != nil {
 		return fmt.Errorf("resolve repo root for branch validation: %w", err)
 	}
@@ -1640,7 +1640,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 	}
 	if !allContinue && req.PromptConfig.PromptFile == "" {
-		req.PromptConfig.PromptFile = filepath.Join(".", ".sandman", "prompt.md")
+		req.PromptConfig.PromptFile = filepath.Join(layout.RepoRoot, ".sandman", "prompt.md")
 	}
 	if req.PromptConfig.RenderedPromptFile == "" {
 		req.PromptConfig.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")
@@ -1719,7 +1719,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 
 	if len(req.Issues) == 0 && (req.PromptConfig.PromptFlag != "" || req.PromptConfig.TemplateFlag != "" || req.PromptConfig.TaskPrompt != "") {
-		return o.runPromptOnly(ctx, cfg, agentName, agentCfg, newBatchIdentityResolver(o, "."), policy.sandboxFactory, policy.containerAlloc, req, baseBranch, startDelay, parallel, retries, runIdleTimeout, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions, strandedReconcile, coord, layout)
+		return o.runPromptOnly(ctx, cfg, agentName, agentCfg, newBatchIdentityResolver(o, layout.RepoRoot), policy.sandboxFactory, policy.containerAlloc, req, baseBranch, startDelay, parallel, retries, runIdleTimeout, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions, strandedReconcile, coord, layout)
 	}
 
 	startGate := newBatchStartGate(effectiveParallel, startDelay, o.runSessionOpts.startWaiterQueued)
@@ -1759,7 +1759,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		yielded[num] = make(chan struct{})
 	}
 
-	batchIdentityResolver := newBatchIdentityResolver(o, ".")
+	batchIdentityResolver := newBatchIdentityResolver(o, layout.RepoRoot)
 	issueBatch, err := issueBatchLocation(layout, req)
 	if err != nil {
 		return nil, fmt.Errorf("resolve batch location: %w", err)
@@ -2663,7 +2663,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				continue
 			}
 			worktreePath := filepath.Join(layout.WorktreeDir, result.Branch)
-			if err := sandbox.RestoreWorktreeGitPaths(".", worktreePath); err != nil && o.eventLog != nil {
+			if err := sandbox.RestoreWorktreeGitPaths(layout.RepoRoot, worktreePath); err != nil && o.eventLog != nil {
 				_ = o.eventLog.Log(events.Event{
 					Type:      "run.warning",
 					Timestamp: time.Now(),
@@ -2695,7 +2695,8 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(ctx context.Context, cfg *c
 	if err != nil {
 		return nil, err
 	}
-	rm := sandbox.DetectRemoteScheme(".")
+	repoRoot := o.requestRepoRoot(req)
+	rm := sandbox.DetectRemoteScheme(repoRoot)
 	if rm == "ssh" {
 		startOpts.SSH = true
 	}
@@ -2705,7 +2706,7 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(ctx context.Context, cfg *c
 	if sbFactory == nil {
 		switch sandboxMode {
 		case "docker", "podman":
-			sbFactory = SharedContainerSandboxFactory{Binary: sandboxMode, RepoPath: "."}
+			sbFactory = SharedContainerSandboxFactory{Binary: sandboxMode, RepoPath: repoRoot}
 		default:
 			sbFactory = defaultSandboxFactory{}
 		}
@@ -2716,7 +2717,7 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(ctx context.Context, cfg *c
 	}
 
 	if req.RequireDockerfile {
-		dockerfilePath := filepath.Join(".", ".sandman", "Dockerfile")
+		dockerfilePath := filepath.Join(repoRoot, ".sandman", "Dockerfile")
 		if _, err := os.Stat(dockerfilePath); err != nil {
 			if os.IsNotExist(err) {
 				return nil, fmt.Errorf(".sandman/Dockerfile not found at %s; container mode requires a Dockerfile in the .sandman directory", dockerfilePath)
@@ -2730,7 +2731,7 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(ctx context.Context, cfg *c
 		defaultAgent = strings.TrimSpace(cfg.Agent)
 	}
 	expectedDefaultAgent, requiredAgents := dockerfileAgentExpectations(defaultAgent, req.Agent, agentCfg)
-	if err := scaffold.ValidateDockerfileMetadata(".", cfg.BuildTools, expectedDefaultAgent, requiredAgents); err != nil {
+	if err := scaffold.ValidateDockerfileMetadata(repoRoot, cfg.BuildTools, expectedDefaultAgent, requiredAgents); err != nil {
 		return nil, err
 	}
 
@@ -2753,7 +2754,7 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(ctx context.Context, cfg *c
 		return nil, fmt.Errorf("max_containers must be 0 or greater")
 	}
 
-	cleanup, err := PrepareContainerConfigMounts(ctx, ".", req.RunDir, &startOpts, o.lookupGHToken)
+	cleanup, err := PrepareContainerConfigMounts(ctx, repoRoot, req.RunDir, &startOpts, o.lookupGHToken)
 	if err != nil {
 		return nil, fmt.Errorf("prepare container config mounts: %w", err)
 	}
@@ -2763,12 +2764,12 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(ctx context.Context, cfg *c
 		containerFactory = defaultContainerRuntimeFactory{}
 	}
 	starter := containerFactory.New(sandboxMode)
-	image, err := starter.BuildImage(ctx, ".")
+	image, err := starter.BuildImage(ctx, repoRoot)
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("build container image: %w", err)
 	}
-	pool := newContainerPool(starter, image, ".", startOpts, containerCapacity, maxContainers)
+	pool := newContainerPool(starter, image, repoRoot, startOpts, containerCapacity, maxContainers)
 	pool.credentials = newCredentialSync(startOpts.ConfigMounts, credentialFiles(agentCfg))
 	return &sandboxExecutionPolicy{
 		mode:           sandboxMode,
@@ -3289,6 +3290,16 @@ func (s *runSession) copyQualityRulesIntoWorktree(branch string) error {
 		return fmt.Errorf("write %s: %w", target, err)
 	}
 	return nil
+}
+
+// repoRoot is the repository root every repository operation of the session
+// is rooted at: the batch layout's root, which a Request may set apart from
+// the process directory.
+func (s *runSession) repoRoot() string {
+	if root := s.deps.layout.RepoRoot; root != "" {
+		return root
+	}
+	return "."
 }
 
 // requestRepoRoot is the repository root a Request's relative RunDir and
@@ -4025,7 +4036,7 @@ func (s *runSession) runOnce(
 	prepareAttempt func(attempt int, previous AgentRunResult) (prompt.RenderConfig, *AgentRunResult),
 ) (AgentRunResult, map[string]any, bool) {
 	if s.renderCfg.PromptFile == "" {
-		s.renderCfg.PromptFile = filepath.Join(".", ".sandman", "prompt.md")
+		s.renderCfg.PromptFile = filepath.Join(s.repoRoot(), ".sandman", "prompt.md")
 	}
 	if s.renderCfg.RenderedPromptFile == "" {
 		s.renderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")

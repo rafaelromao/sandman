@@ -44,7 +44,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		return s.lifecycleEarlyAbort(ctx, branch), false
 	}
 	if s.mode != ModeContinue && !s.opts.repairHost {
-		if err := syncBaseBranch(s.deps.runSessionOpts, s.deps.sandboxFactory, ".", s.baseBranch); err != nil {
+		if err := syncBaseBranch(s.deps.runSessionOpts, s.deps.sandboxFactory, s.repoRoot(), s.baseBranch); err != nil {
 			if ctx.Err() != nil {
 				return s.lifecycleEarlyAbort(ctx, branch), false
 			}
@@ -79,12 +79,12 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		if fetchHead == nil {
 			fetchHead = sandbox.FetchReviewHead
 		}
-		if err := fetchHead(ctx, ".", s.prNumber, s.reviewHeadSHA); err != nil {
+		if err := fetchHead(ctx, s.repoRoot(), s.prNumber, s.reviewHeadSHA); err != nil {
 			return s.lifecycleEarlyFailure("fetch review snapshot", branch, s.runID, err), false
 		}
 		checkout = s.reviewHeadSHA
 	}
-	wt := s.sbFactory.NewSandbox(".", s.worktreeDir(), branch, checkout, container)
+	wt := s.sbFactory.NewSandbox(s.repoRoot(), s.worktreeDir(), branch, checkout, container)
 	opts, errResult, ok := s.startOptsFor(branch)
 	if !ok {
 		if issueDriven {
