@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/paths"
 )
@@ -49,5 +50,29 @@ func TestOpenCodePrepareLaunch_ContinuesWhenNoSessionWasRecorded(t *testing.T) {
 	run := &AgentRun{layout: paths.NewLayout(&config.Config{}, t.TempDir()), reuseSession: true, previousBatchID: "batch-0", previousRunID: "run-0"}
 	if session, continueFallback := (opencodeStrategy{builtInCommand: true}).PrepareLaunch(run); session != "" || !continueFallback {
 		t.Fatalf("PrepareLaunch = (%q, %t), want the --continue fallback", session, continueFallback)
+	}
+}
+
+// A record another agent kind wrote is no session of OpenCode's own, so the
+// fallback still applies; a damaged record is invalid and starts fresh.
+func TestOpenCodePrepareLaunch_ForeignAndDamagedRecords(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		kind         agentSessionKind
+		wantContinue bool
+	}{
+		{name: "foreign", kind: opencodeV2SessionKind, wantContinue: true},
+		{name: "damaged", kind: agentSessionKind{protocol: "garbage", provider: "opencode"}, wantContinue: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			layout := paths.NewLayout(&config.Config{}, t.TempDir())
+			if err := atomicfs.WriteAtomicJSON(layout.RunSessionPath("batch-0", "run-0"), agentSessionIdentity{Protocol: tc.kind.protocol, Provider: tc.kind.provider, SessionID: "ses-other"}, 0644); err != nil {
+				t.Fatal(err)
+			}
+			run := &AgentRun{layout: layout, reuseSession: true, previousBatchID: "batch-0", previousRunID: "run-0", sessionWarning: &bytes.Buffer{}}
+			if session, continueFallback := (opencodeStrategy{builtInCommand: true}).PrepareLaunch(run); session != "" || continueFallback != tc.wantContinue {
+				t.Fatalf("PrepareLaunch = (%q, %t), want (\"\", %t)", session, continueFallback, tc.wantContinue)
+			}
+		})
 	}
 }
