@@ -25,7 +25,7 @@ func TestDaemon_RehydrateMatchesAnExistingPublicationByIdentity(t *testing.T) {
 		commentID = "c-outbox-identity"
 		body      = "## Decision\n**APPROVED**\npersisted body\n"
 	)
-	trigger := github.PRComment{ID: commentID, Body: "/sandman review"}
+	trigger := github.PRComment{ID: commentID, AuthorLogin: "sandman", Body: "/sandman review"}
 	boundBody := publicationBody(body, reviewTriggerKey(trigger), "head")
 	gh := &fakeGH{
 		prs:      []github.PR{{Number: prNumber, State: "open"}},
@@ -143,7 +143,7 @@ func TestDaemon_RehydrateIgnoresAPublicationCopyByAnotherAuthor(t *testing.T) {
 		commentID = "c-outbox-quoted"
 		body      = "## Decision\n**APPROVED**\nquoted body\n"
 	)
-	trigger := github.PRComment{ID: commentID, Body: "/sandman review"}
+	trigger := github.PRComment{ID: commentID, AuthorLogin: "sandman", Body: "/sandman review"}
 	boundBody := publicationBody(body, reviewTriggerKey(trigger), "head")
 	gh := &fakeGH{
 		prs:      []github.PR{{Number: prNumber, State: "open"}},
