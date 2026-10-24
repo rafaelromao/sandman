@@ -124,6 +124,9 @@ func TaskWithReviewEvidence(content string, evidence map[string]any) string {
 	if evidence["reason"] == "REVIEW_APPROVED" {
 		b.WriteString("The runtime accepted approval for this request and head. A request-scoped informal approval is sufficient; formal GitHub approval is not required. This supersedes a preserved instruction to wait for formal approval: do not request a replacement review solely because no formal APPROVED review or aggregate reviewDecision is present. Revalidate the current request/head approval, green CI, and mergeability, then execute the normal merge gate.\n\n")
 	}
+	if reason, _ := evidence["reason"].(string); reason == "REVIEW_INFORMAL_FEEDBACK" || reason == "REVIEW_CHANGES_REQUESTED" {
+		b.WriteString("Address only concrete author changes the response requests. A current-head APPROVED report with no Blocking or Important findings and no author changes requested is an eligible informal approval, not feedback: formal GitHub approval is never required, so do not ask the reviewer or a maintainer for a formal approval, a reviewDecision, or publication work, and do not re-request review for it. Revalidate green CI and mergeability, then execute the normal merge gate.\n\n")
+	}
 	for _, key := range []string{"outcome", "reason", "next_action", "pull_request", "head_sha", "repository"} {
 		v, ok := evidence[key]
 		if !ok || v == nil {

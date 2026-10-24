@@ -188,7 +188,7 @@ called:
 - `sandman-review-request` for one managed review trigger. It is stateless and
   must not write managed lifecycle state; the runtime owns observation and
   lifecycle decisions.
-- `sandman-pr-merge` only if the PR is fully approved, required checks are green, and GitHub reports it mergeable.
+- `sandman-pr-merge` only if the PR is fully approved, required checks are green, and GitHub reports it mergeable. An eligible current-head informal approval (a request-scoped top-level APPROVED report with no Blocking or Important findings and no author changes requested) is full approval. A formal GitHub review is never required, because the author and the reviewer may share one account. Never ask the reviewer or a maintainer for a formal approval, a `reviewDecision`, or a publication workaround when informal approval is eligible, and never re-request review because a zero-finding APPROVED report lacks a formal review.
 
 ## Required Order
 
