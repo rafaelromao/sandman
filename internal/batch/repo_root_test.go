@@ -54,6 +54,9 @@ func TestRunBatch_FromASubdirectoryRootsRepositoryOperationsAtTheRequestRoot(t *
 // Container preflight from a repository subdirectory finds the repository's
 // .sandman/Dockerfile and builds its image at the request root.
 func TestRunBatch_FromASubdirectoryPreparesContainersAtTheRequestRoot(t *testing.T) {
+	if _, err := sandbox.ResolveRuntime("podman"); err != nil {
+		t.Skip("container runtime unavailable")
+	}
 	root := testenv.MkdirShort(t, "sm-root-")
 	initGitRepo(t, root)
 	t.Setenv("HOME", t.TempDir())
