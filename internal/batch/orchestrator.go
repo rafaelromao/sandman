@@ -1740,16 +1740,14 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	// same terminal as the row's own fence. Guarded by mu.
 	returnedAborts := make([]func(context.Context) AgentRunResult, len(req.Issues))
 	// abortReturned aborts an unfinished row whose goroutine returned it to
-	// the batch. A row returned before it had an executor is an unstarted
-	// admission and records only the abort. Callers hold mu.
-	abortReturned := func(ctx context.Context, idx, issueNum int, runID string) {
-		if abort := returnedAborts[idx]; abort != nil {
-			returnedAborts[idx] = nil
-			results[idx] = abort(ctx)
-		} else {
-			o.logAborted(issueNum, runID, nil)
-			results[idx].Status = "aborted"
+	// the batch, applying the abort selected when it returned. Callers hold mu.
+	abortReturned := func(ctx context.Context, idx, issueNum int) {
+		abort := returnedAborts[idx]
+		if abort == nil {
+			return
 		}
+		returnedAborts[idx] = nil
+		results[idx] = abort(ctx)
 		statuses[issueNum] = results[idx].Status
 		abortedCount++
 	}
@@ -1969,6 +1967,78 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				}
 			}()
 			_, recoveringRow := req.RecoveryWaits[issueNum]
+			mode := req.IssueMode(issueNum)
+			renderCfg := req.PromptConfig
+			if mode == ModeContinue {
+				if taskPrompt, ok := req.TaskPrompts[issueNum]; ok {
+					renderCfg.TaskPrompt = taskPrompt
+				}
+			}
+			issueBaseBranch := baseBranch
+			if mode == ModeContinue || recoveringRow {
+				if perIssueBaseBranch, ok := req.BaseBranches[issueNum]; ok && strings.TrimSpace(perIssueBaseBranch) != "" {
+					issueBaseBranch = perIssueBaseBranch
+				}
+			}
+
+			row := RowSpec{
+				IssueNumber:         issueNum,
+				Mode:                mode,
+				Branches:            req.Branches,
+				PreviousRunIDs:      req.PreviousRunIDs,
+				PreviousRunBatchIDs: req.PreviousRunBatchIDs,
+				RunID:               runID,
+				ReuseSession:        req.ReuseSession[issueNum],
+				BaseBranch:          issueBaseBranch,
+				ExternalBlockers:    req.Blocked[issueNum],
+				RenderCfg:           renderCfg,
+				OutputWriter:        req.OutputWriter,
+				RunTS:               req.RunTS,
+				RunShortID:          req.RunShortID,
+				BatchID:             issueBatchID,
+				BatchDir:            issueBatch.Dir,
+				QualityRulesFile:    req.QualityRulesFile,
+			}
+			bc := BatchConfig{
+				Cfg:                        cfg,
+				AgentName:                  agentName,
+				AgentCfg:                   agentCfg,
+				Variant:                    variant,
+				IdentityResolver:           batchIdentityResolver,
+				Parallel:                   parallel,
+				StartDelay:                 startDelay,
+				Retries:                    retries,
+				RunIdleTimeout:             runIdleTimeout,
+				ContextRolloverLiterals:    cfg.ContextErrorPhrases,
+				SandboxMode:                sandboxMode,
+				ContainerCapacity:          containerCapacityForLog,
+				ContainerCapacitySet:       req.ContainerCapacitySet,
+				MaxContainers:              maxContainersForLog,
+				MaxContainersSet:           req.MaxContainersSet,
+				DangerouslySkipPermissions: *dangerouslySkipPermissions,
+				StrandedReconcile:          strandedReconcile,
+			}
+			// The executor's parent context is the RunBatch ctx — it is only
+			// cancelled by an external abort (e.g. parent ctx
+			// cancellation), not by the per-issue abort or the
+			// session's normal end. The supervisor in execute
+			// uses it to decide whether to shut down the
+			// process; a normal session end (no parent abort)
+			// leaves the process alone.
+			executor := o.newRunExecutorWith(ctx, bc, policy.sandboxFactory, policy.containerAlloc, coord, coord, layout)
+			executor.deps.quotaProgress = quotaGate.modelProgress
+			executor.deps.quotaLimit = quotaGate.limit
+			// abortAdmission applies an explicit abort decided before the Run
+			// reaches its execution loop through the same terminal application
+			// as every other abort. A dependency cascade keeps its attribution.
+			abortAdmission := func(abortedBy []int) {
+				res := o.applyAbort(ctx, executor, row, AgentRunResult{}, abortedBy)
+				mu.Lock()
+				results[idx] = res
+				statuses[issueNum] = res.Status
+				abortedCount++
+				mu.Unlock()
+			}
 			if claimedStates[runID].IsTerminal() {
 				state := claimedStates[runID]
 				mu.Lock()
@@ -1978,12 +2048,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				return
 			}
 			if recoveryRejected[issueNum] || queueWriteFailed {
-				o.logAborted(issueNum, runID, nil)
-				mu.Lock()
-				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted"}
-				statuses[issueNum] = "aborted"
-				abortedCount++
-				mu.Unlock()
+				abortAdmission(nil)
 				return
 			}
 			yieldedCapacity := false
@@ -2000,7 +2065,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				// Active execution consumes cancellation through its ordinary abort
 				// path. Returned unfinished rows still belong to this batch.
 				if results[idx].Status != "" && !events.RunStatusFromPayload(results[idx].Status).IsTerminal() {
-					abortReturned(issueCtx, idx, issueNum, runID)
+					abortReturned(issueCtx, idx, issueNum)
 				}
 			}
 			leaseRetry := func(err error) {
@@ -2011,15 +2076,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				defer mu.Unlock()
 				return events.RunStatusFromPayload(results[idx].Status).IsTerminal()
 			}
-
-			// parentCtx is the RunBatch ctx — it is only
-			// cancelled by an external abort (e.g. parent ctx
-			// cancellation), not by the per-issue abort or the
-			// session's normal end. The supervisor in execute
-			// uses parentCtx to decide whether to shut down the
-			// process; a normal session end (no parent abort)
-			// leaves the process alone.
-			parentCtx := ctx
 
 			turnAdvanced := false
 			advanceTurn := func() {
@@ -2061,12 +2117,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					initialOwner, err = newWaitOwnerWithFailure(layout, initialBatch, record, recoveryNow, o.eventLog, ownerPulse(runID), leaseFailure, leaseRetry)
 				}
 				if err != nil {
-					o.logAborted(issueNum, runID, nil)
-					mu.Lock()
-					results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted"}
-					statuses[issueNum] = "aborted"
-					abortedCount++
-					mu.Unlock()
+					abortAdmission(nil)
 					return
 				}
 				trackWaitOwner(initialOwner)
@@ -2130,22 +2181,11 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				}
 			}
 			if issueCtx.Err() != nil {
-				o.logAborted(issueNum, runID, abortedBy)
-				mu.Lock()
-				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
-				statuses[issueNum] = "aborted"
-				abortedCount++
-				mu.Unlock()
+				abortAdmission(abortedBy)
 				return
 			}
 			if len(abortedBy) > 0 {
-				res := AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
-				o.logAborted(issueNum, runID, abortedBy)
-				mu.Lock()
-				results[idx] = res
-				statuses[issueNum] = res.Status
-				abortedCount++
-				mu.Unlock()
+				abortAdmission(abortedBy)
 				return
 			}
 			if len(stillBlockedBy) > 0 {
@@ -2162,16 +2202,15 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				mu.Lock()
 				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), RunID: runID, Status: "queued", Branch: req.Branches[issueNum]}
 				statuses[issueNum] = "queued"
+				queuedRes := results[idx]
+				returnedAborts[idx] = func(ctx context.Context) AgentRunResult {
+					return o.applyAbort(ctx, executor, row, queuedRes, nil)
+				}
 				mu.Unlock()
 				return
 			}
 			if err := issueCtx.Err(); err != nil {
-				o.logAborted(issueNum, runID, nil)
-				mu.Lock()
-				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
-				statuses[issueNum] = "aborted"
-				abortedCount++
-				mu.Unlock()
+				abortAdmission(nil)
 				return
 			}
 
@@ -2181,12 +2220,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				for waiting {
 					if err := issueCtx.Err(); err != nil {
 						turnMu.Unlock()
-						o.logAborted(issueNum, runID, nil)
-						mu.Lock()
-						results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
-						statuses[issueNum] = "aborted"
-						abortedCount++
-						mu.Unlock()
+						abortAdmission(nil)
 						return
 					}
 					if turn == servingTurn {
@@ -2198,38 +2232,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				turnMu.Unlock()
 			}
 
-			mode := req.IssueMode(issueNum)
-			renderCfg := req.PromptConfig
-			if mode == ModeContinue {
-				if taskPrompt, ok := req.TaskPrompts[issueNum]; ok {
-					renderCfg.TaskPrompt = taskPrompt
-				}
-			}
-			issueBaseBranch := baseBranch
-			if mode == ModeContinue || recoveringRow {
-				if perIssueBaseBranch, ok := req.BaseBranches[issueNum]; ok && strings.TrimSpace(perIssueBaseBranch) != "" {
-					issueBaseBranch = perIssueBaseBranch
-				}
-			}
-
-			row := RowSpec{
-				IssueNumber:         issueNum,
-				Mode:                mode,
-				Branches:            req.Branches,
-				PreviousRunIDs:      req.PreviousRunIDs,
-				PreviousRunBatchIDs: req.PreviousRunBatchIDs,
-				RunID:               runID,
-				ReuseSession:        req.ReuseSession[issueNum],
-				BaseBranch:          issueBaseBranch,
-				ExternalBlockers:    req.Blocked[issueNum],
-				RenderCfg:           renderCfg,
-				OutputWriter:        req.OutputWriter,
-				RunTS:               req.RunTS,
-				RunShortID:          req.RunShortID,
-				BatchID:             issueBatchID,
-				BatchDir:            issueBatch.Dir,
-				QualityRulesFile:    req.QualityRulesFile,
-			}
 			recovery, recovering := req.RecoveryWaits[issueNum]
 			if recovering && !recovery.InitialAdmission {
 				row.UsageLimitProbe = recovery.UsageLimitProbe
@@ -2249,34 +2251,10 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					payload["batch_id"], payload["recovered"] = issueBatchID, true
 					if err := o.eventLog.Log(events.Event{Type: "run.await", Timestamp: time.Now().UTC(), RunID: runID, Issue: issueNum, IssueRef: issueRef(issueNum), Payload: payload}); err != nil {
 						fmt.Fprintf(o.errorLog, "persist recovered wait ownership for run %s: %v\n", runID, err)
-						o.logAborted(issueNum, runID, nil)
-						mu.Lock()
-						results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted"}
-						statuses[issueNum] = "aborted"
-						abortedCount++
-						mu.Unlock()
+						abortAdmission(nil)
 						return
 					}
 				}
-			}
-			bc := BatchConfig{
-				Cfg:                        cfg,
-				AgentName:                  agentName,
-				AgentCfg:                   agentCfg,
-				Variant:                    variant,
-				IdentityResolver:           batchIdentityResolver,
-				Parallel:                   parallel,
-				StartDelay:                 startDelay,
-				Retries:                    retries,
-				RunIdleTimeout:             runIdleTimeout,
-				ContextRolloverLiterals:    cfg.ContextErrorPhrases,
-				SandboxMode:                sandboxMode,
-				ContainerCapacity:          containerCapacityForLog,
-				ContainerCapacitySet:       req.ContainerCapacitySet,
-				MaxContainers:              maxContainersForLog,
-				MaxContainersSet:           req.MaxContainersSet,
-				DangerouslySkipPermissions: *dangerouslySkipPermissions,
-				StrandedReconcile:          strandedReconcile,
 			}
 			clock := func() time.Time {
 				if o.runSessionOpts.now != nil {
@@ -2306,12 +2284,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				owner, ownerErr = newWaitOwnerWithFailure(layout, waitBatch, ownerRecord, clock, o.eventLog, ownerPulse(runID), leaseFailure, leaseRetry)
 			}
 			if ownerErr != nil {
-				o.logAborted(issueNum, runID, nil)
-				mu.Lock()
-				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted"}
-				statuses[issueNum] = "aborted"
-				abortedCount++
-				mu.Unlock()
+				abortAdmission(nil)
 				return
 			}
 			trackWaitOwner(owner)
@@ -2336,9 +2309,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			// Explicit abort is a terminal decision applied once, at the fence
 			// after the loop, rather than at each phase that observed it.
 			abortRequested := false
-			executor := o.newRunExecutorWith(parentCtx, bc, policy.sandboxFactory, policy.containerAlloc, coord, coord, layout)
-			executor.deps.quotaProgress = quotaGate.modelProgress
-			executor.deps.quotaLimit = quotaGate.limit
 			awaiting := req.ReadyContinuations[issueNum] || recovering && !recovery.InitialAdmission
 			readyContinuation := req.ReadyContinuations[issueNum]
 			var opportunity awaitOpportunity
@@ -2648,7 +2618,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				abortRequested = true
 			}
 			if abortRequested {
-				res = o.applyAbort(issueCtx, executor, row, res)
+				res = o.applyAbort(issueCtx, executor, row, res, nil)
 			}
 			mu.Lock()
 			results[idx] = res
@@ -2657,7 +2627,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			if !resStatus.IsTerminal() {
 				abortRow, abortRes := row, res
 				returnedAborts[idx] = func(ctx context.Context) AgentRunResult {
-					return o.applyAbort(ctx, executor, abortRow, abortRes)
+					return o.applyAbort(ctx, executor, abortRow, abortRes, nil)
 				}
 			}
 			if resStatus.IsFailure() {
@@ -2681,12 +2651,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			if events.RunStatusFromPayload(results[i].Status).IsTerminal() {
 				continue
 			}
-			issue := req.Issues[i]
-			id := strings.TrimSpace(req.RunIDs[issue])
-			if id == "" {
-				id = buildRunID(issue, req.RunTS, req.RunShortID)
-			}
-			abortReturned(ctx, i, issue, id)
+			abortReturned(ctx, i, req.Issues[i])
 		}
 		mu.Unlock()
 	}
@@ -2861,8 +2826,9 @@ func (o *Orchestrator) logAborted(issueNum int, runID string, abortedBy []int) {
 // abort decision itself selects run.aborted, even when the phase that
 // requested it failed without cancellation. A Run that never started records only the abort.
 // An unreadable event log cannot prove the Run unstarted, so it receives the
-// shared application too.
-func (o *Orchestrator) applyAbort(ctx context.Context, executor *runExecutor, row RowSpec, res AgentRunResult) AgentRunResult {
+// shared application too. A dependency cascade's abortedBy attribution is
+// recorded either way.
+func (o *Orchestrator) applyAbort(ctx context.Context, executor *runExecutor, row RowSpec, res AgentRunResult, abortedBy []int) AgentRunResult {
 	started := true
 	if o.eventLog != nil {
 		states, err := events.ReadRunStates(o.eventLog)
@@ -2873,9 +2839,13 @@ func (o *Orchestrator) applyAbort(ctx context.Context, executor *runExecutor, ro
 		}
 	}
 	if started {
-		return executor.abortObserved(ctx, row)
+		var extras map[string]any
+		if len(abortedBy) > 0 {
+			extras = map[string]any{"aborted_by": abortedBy}
+		}
+		return executor.abortObserved(ctx, row, extras)
 	}
-	o.logAborted(row.IssueNumber, row.RunID, nil)
+	o.logAborted(row.IssueNumber, row.RunID, abortedBy)
 	res.IssueNumber, res.Issue, res.Status = row.IssueNumber, issueRef(row.IssueNumber), "aborted"
 	if res.Branch == "" {
 		res.Branch = row.Branches[row.IssueNumber]

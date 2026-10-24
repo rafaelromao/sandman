@@ -140,7 +140,7 @@ func TestApplyAbort_StartedRunWithoutCancellationRecordsTheSelectedAbort(t *test
 	row := RowSpec{IssueNumber: 42, RunID: runID, BatchID: "261004120000-live-42", Branches: map[int]string{42: "42-parent"}, BaseBranch: "main"}
 	executor := o.newRunExecutor(context.Background(), bc, reviewWaitSchedulerSandboxFactory{}, nil)
 
-	result := o.applyAbort(context.Background(), executor, row, AgentRunResult{})
+	result := o.applyAbort(context.Background(), executor, row, AgentRunResult{}, nil)
 
 	if result.Status != "aborted" {
 		t.Fatalf("status = %q, want aborted", result.Status)

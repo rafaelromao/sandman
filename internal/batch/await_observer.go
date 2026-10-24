@@ -20,11 +20,12 @@ func (e *runExecutor) finishObserved(ctx context.Context, row RowSpec, status st
 // abortObserved applies an explicit abort decision through the same terminal
 // application. The decision, not the context's state, selects run.aborted, so
 // an abort requested by a phase that failed without cancellation is recorded
-// the same way as one requested by cancellation.
-func (e *runExecutor) abortObserved(ctx context.Context, row RowSpec) AgentRunResult {
+// the same way as one requested by cancellation. Extras carry the abort's
+// attribution, such as a dependency cascade's aborted_by.
+func (e *runExecutor) abortObserved(ctx context.Context, row RowSpec, extras map[string]any) AgentRunResult {
 	session := newRunSession(e, row)
 	session.explicitAbort = true
-	return e.applyObserved(ctx, session, row, "aborted", nil)
+	return e.applyObserved(ctx, session, row, "aborted", extras)
 }
 
 func (e *runExecutor) applyObserved(ctx context.Context, session *runSession, row RowSpec, status string, extras map[string]any) AgentRunResult {
