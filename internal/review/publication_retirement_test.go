@@ -39,7 +39,8 @@ func TestDaemon_InvalidatedPublicationRetiresItsOutbox(t *testing.T) {
 		prFetch:  map[int]*github.PR{prNumber: {Number: prNumber, Title: "moved head", Body: "body", HeadRefOid: "moved"}},
 	}
 	poster := &fakeCommentPoster{}
-	d, dir, _ := newReviewLaunchTestDaemon(t, gh, &capturedRequest{}, newReviewLaunchTestConfig())
+	runner := &capturedRequest{}
+	d, dir, _ := newReviewLaunchTestDaemon(t, gh, runner, newReviewLaunchTestConfig())
 	runDir := seedPendingOutbox(t, dir, "moved-head-batch", prNumber, trigger, body)
 	d.CommentPoster = poster
 
@@ -53,6 +54,12 @@ func TestDaemon_InvalidatedPublicationRetiresItsOutbox(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(runDir, pendingPublicationMarkerName)); !os.IsNotExist(err) {
 		t.Fatalf("outbox of invalidated provenance err = %v, want file removed", err)
+	}
+	if snapshot, err := readReviewSnapshot(runDir); err != nil || !snapshot.Invalidated {
+		t.Fatalf("snapshot = %+v (err %v), want invalidated provenance", snapshot, err)
+	}
+	if runner.Calls() != 1 {
+		t.Fatalf("RunBatch calls = %d, want the trigger relaunched for the new head", runner.Calls())
 	}
 }
 
