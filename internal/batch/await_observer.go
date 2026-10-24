@@ -34,7 +34,7 @@ func (e *runExecutor) applyObserved(ctx context.Context, session *runSession, ro
 	if factory == nil {
 		factory = defaultSandboxFactory{}
 	}
-	wt := factory.NewSandbox(".", session.worktreeDir(), branch, row.BaseBranch, nil)
+	wt := factory.NewSandbox(session.repoRoot(), session.worktreeDir(), branch, row.BaseBranch, nil)
 	result := AgentRunResult{IssueNumber: row.IssueNumber, Issue: issueRef(row.IssueNumber), Status: status, Branch: branch}
 	result.Status = session.finishDecidedTerminal(ctx, session.issueRunID(), result, extras, wt, branch)
 	return result

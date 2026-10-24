@@ -38,7 +38,7 @@ RunID:
     "Branch": "",
     "PromptFlag": "inline",
     "TemplateFlag": "",
-    "PromptFile": ".sandman/prompt.md",
+    "PromptFile": "<tmp>/.sandman/prompt.md",
     "RenderedPromptFile": ".sandman/task.md",
     "TaskPrompt": "perform task",
     "ContextRecovery": false,

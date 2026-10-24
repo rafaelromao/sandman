@@ -117,7 +117,8 @@ func testReviewSnapshotCheckout(t *testing.T, scenario string) {
 }
 
 func TestReviewSnapshotFetchUsesInjectedRunDependency(t *testing.T) {
-	t.Chdir(t.TempDir()) // deliberately no Git repository
+	root := t.TempDir()
+	t.Chdir(root) // deliberately no Git repository
 	called := false
 	wantErr := errors.New("injected fetch failure")
 	cfg := &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}
@@ -125,7 +126,7 @@ func TestReviewSnapshotFetchUsesInjectedRunDependency(t *testing.T) {
 		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
 		WithRunSessionOpts(runSessionOptions{reviewHeadFetch: func(_ context.Context, repo string, pr int, head string) error {
 			called = true
-			if repo != "." || pr != 36 || head != "expected-head" {
+			if repo != root || pr != 36 || head != "expected-head" {
 				t.Errorf("unexpected fetch inputs: repo=%s pr=%d head=%s", repo, pr, head)
 			}
 			return wantErr
