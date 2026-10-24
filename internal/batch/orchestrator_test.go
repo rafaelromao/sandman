@@ -10992,6 +10992,9 @@ func TestRunBatch_CascadesAbortFromBlockerToDependents(t *testing.T) {
 	if abortedBy, _ := abortedEvent.Payload["aborted_by"].([]int); !reflect.DeepEqual(abortedBy, []int{42}) {
 		t.Fatalf("expected aborted_by [42], got %#v", abortedEvent.Payload["aborted_by"])
 	}
+	if _, ok := abortedEvent.Payload["worktree_state"]; ok {
+		t.Fatalf("unstarted cascade abort payload = %v, want no worktree evidence", abortedEvent.Payload)
+	}
 
 	for i := range spyLog.events {
 		e := spyLog.events[i]
