@@ -48,7 +48,7 @@ queued → running ⇄ waiting → success / failure / aborted
 | Missing PR or undelivered review request | Perform bounded owned-work remediation (`run.retry` reason `lifecycle-owned-work`), then failure; never invent external waiting |
 | Review request delivered by an attempt that exited non-success | Register it and stay **waiting**; spend no ordinary retry |
 | Feedback relaunch leaves head, request and responses unchanged | Stay **waiting** (`RESUME_STALLED`); do not relaunch on the same evidence |
-| Relaunch allowance exhausted on review, CI, request or merge work | Stay **waiting** (`RESUME_STALLED`); formal `CHANGES_REQUESTED` left unrepaired finishes **failure** |
+| Relaunch allowance exhausted on review, CI (including an expired CI wait), request or merge work | Stay **waiting** (`RESUME_STALLED`); genuine requested changes (formal `CHANGES_REQUESTED` or the review daemon's `changes_requested` verdict) left unrepaired finish **failure** |
 | Review request expired with nothing else resolving, or (without a delegated review command) an idle gate after owned work | Stay **waiting** (continuity hold) on an open current-head PR |
 | Recognized provider usage limit | Wait and probe; do not spend ordinary retries immediately |
 | Quota recovers | Resume limited run and reopen sibling admission |
@@ -70,8 +70,9 @@ never becomes terminal-failed when the only missing evidence is review, CI, or
 a review request the runtime did not observe: it waits or proceeds to merge.
 
 Permanent outcomes remain terminal: a closed or merged-elsewhere pull request,
-explicit abort, a merged pull request without verifiable completion, formal
-`CHANGES_REQUESTED` the implementor cannot address within its relaunch
+explicit abort, a merged pull request without verifiable completion, genuine
+requested changes (formal `CHANGES_REQUESTED` or the review daemon's
+`changes_requested` verdict) the implementor cannot address within its relaunch
 allowance, no review request delivered at all (`REVIEW_REQUEST_REQUIRED`),
 corrupt review state with nothing resolving, an unobserved pull request, and
 agent authentication, usage-limit or operator stops. Every lifecycle failure

@@ -64,7 +64,7 @@ func TestReviewPublicationVerdict_EditedTriggerRevisionMatches(t *testing.T) {
 // prose rules, including the paraphrases the real daemon reports used.
 func TestReviewPublicationVerdict_ProseApprovalsWithoutPublication(t *testing.T) {
 	reports := capturedApprovingReports(t)
-	for _, name := range []string{"approved-daemon-29-first.md", "approved-daemon-29-fifth.md", "approved-daemon-29-final.md", "approved-daemon-30.md"} {
+	for _, name := range []string{"approved-daemon-29-first.md", "approved-daemon-29-second.md", "approved-daemon-29-third.md", "approved-daemon-29-fourth.md", "approved-daemon-29-fifth.md", "approved-daemon-29-final.md", "approved-daemon-30.md"} {
 		t.Run(name, func(t *testing.T) {
 			prose := reviewpub.StripMarkers(reports[name])
 			if !reviewDecisionApprovedBody(prose) {
@@ -118,6 +118,7 @@ func TestReviewPublicationVerdict_ProseVariantsAndContradictions(t *testing.T) {
 		{"conditional", report("Reviewed head abc.", "Approved once worker.go is fixed.")},
 		{"author directive", report("Reviewed head abc.", "No code changes requested. Author should fix worker.go before merging.")},
 		{"severity", "## Findings\n- Important: worker.go races.\n\n## Decision\n**APPROVED**\n"},
+		{"blocking severity", "## Findings\n- Blocking: worker.go drops the request.\n\n## Decision\n**APPROVED**\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if reviewDecisionApprovedBody(tc.body) {

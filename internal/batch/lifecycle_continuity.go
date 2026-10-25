@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/reviewpub"
 )
 
 // AFK continuity (issue #2916). A started Run whose pull request is open at
@@ -87,15 +88,45 @@ func collectResponseIDs(value any, ids map[string]bool) {
 // attempts on the same head.
 func stallsOnRepeat(extras map[string]any) bool {
 	gate, _ := extras["gate"].(string)
-	return gate == gateActionableFeedback
+	// Genuine requested changes keep their full relaunch allowance before
+	// their terminal outcome.
+	return gate == gateActionableFeedback && !formalChangesRequested(extras)
 }
 
-// formalChangesRequested reports repair evidence from a formal
-// CHANGES_REQUESTED review. It is the only review state whose unrepaired
-// relaunch allowance stays terminal.
+// formalChangesRequested reports genuine repair evidence: a formal
+// CHANGES_REQUESTED review, or a review daemon publication whose
+// machine-readable verdict requests changes. Only genuine requested changes
+// keep a terminal outcome once the relaunch allowance cannot address them.
 func formalChangesRequested(extras map[string]any) bool {
 	reason, _ := extras["reason"].(string)
-	return reason == actionableFeedbackReason
+	if reason == actionableFeedbackReason {
+		return true
+	}
+	if reason != informalFeedbackReason {
+		return false
+	}
+	request, ok := extras["review_request"]
+	if !ok {
+		return false
+	}
+	data, err := json.Marshal(request)
+	if err != nil {
+		return false
+	}
+	var decoded struct {
+		InformalFeedback []struct {
+			Body string `json:"body"`
+		} `json:"informal_feedback"`
+	}
+	if json.Unmarshal(data, &decoded) != nil {
+		return false
+	}
+	for _, feedback := range decoded.InformalFeedback {
+		if verdict, published := reviewpub.PublishedVerdict(feedback.Body); published && verdict == reviewpub.ChangesRequested {
+			return true
+		}
+	}
+	return false
 }
 
 // stalledAwaitExtras turns a resume the implementor cannot advance into a

@@ -42,6 +42,8 @@ const (
 	continuityBranch  = "42-work"
 	continuityPR      = 17
 	continuityTrigger = "/sandman review"
+	// continuityPriorRunID is the earlier, failed Run a continuation resumes.
+	continuityPriorRunID = "261024134409-3ba0-42"
 )
 
 // continuityGitHub is the one shared fake GitHub of a scenario: the PR, its
@@ -216,6 +218,11 @@ type continuityScenario struct {
 	reviewTimeout int
 	// noReviewCommand runs without a delegated review command.
 	noReviewCommand bool
+	// requireAwait asserts that the Run recorded a wait before its outcome.
+	requireAwait bool
+	// priorFailure seeds the event log with an earlier Run of the issue that
+	// finished with this failure reason; the scenario continues it.
+	priorFailure string
 }
 
 type continuityOutcome struct {
@@ -261,6 +268,10 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 	errStop := errors.New("operator stopped the scenario")
 	cfg := &config.Config{Agent: "test", Sandbox: "worktree", WorktreeDir: filepath.Join(root, "worktrees"), Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test": {Command: "true"}}}
 	log := &spyEventLog{}
+	const priorRunID = continuityPriorRunID
+	if sc.priorFailure != "" {
+		seedFailedRun(log, priorRunID, sc.priorFailure)
+	}
 	o := NewOrchestrator(g, &noopRenderer{}, &fakeConfigStore{config: cfg}, log, WithErrorLog(io.Discard), WithRunnableFactory(factory),
 		WithSandboxFactory(&retrySandboxFactory{sandbox: &retrySandbox{workDir: worktree}}),
 		WithRunSessionOpts(runSessionOptions{
@@ -295,6 +306,9 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 	if sc.continueRun {
 		req.Mode = map[int]IssueMode{42: ModeContinue}
 	}
+	if sc.priorFailure != "" {
+		req.PreviousRunIDs = map[int]string{42: priorRunID}
+	}
 	result, _ := o.RunBatch(ctx, req)
 	if result == nil || len(result.Runs) != 1 {
 		t.Fatalf("RunBatch = %+v", result)
@@ -303,8 +317,11 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 	defer mu.Unlock()
 	history := log.snapshot()
 	runID := ""
-	if len(history) > 0 {
-		runID = history[0].RunID
+	for _, event := range history {
+		if event.RunID != priorRunID {
+			runID = event.RunID
+			break
+		}
 	}
 	restart := func() (string, map[string]any, bool) {
 		fresh := NewOrchestrator(g, &noopRenderer{}, &fakeConfigStore{config: cfg}, log, WithErrorLog(io.Discard),
@@ -318,9 +335,28 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 	return continuityOutcome{events: history, launches: launches, status: result.Runs[0].Status, observeAfterRestart: restart}
 }
 
-// verdict reduces a Run's event history to the AFK-continuity outcome.
+// seedFailedRun records an earlier Run of the issue that ended with reason,
+// as the real #8 and #2 Runs did before `sandman run --continue`.
+func seedFailedRun(log *spyEventLog, runID, reason string) {
+	at := time.Now().Add(-time.Hour)
+	_ = log.Log(events.Event{Type: "run.started", RunID: runID, Issue: 42, Timestamp: at, Payload: map[string]any{"branch": continuityBranch, "base_branch": "main", "batch_id": "261024134409-3ba0"}})
+	for i := 1; i <= 3; i++ {
+		event := events.Event{Type: "run.retry", RunID: runID, Issue: 42, Timestamp: at.Add(time.Duration(i) * time.Minute), Payload: map[string]any{"reason": "agent-failed", "previous_status": "failure"}}
+		if reason == "REMEDIATION_BUDGET_EXHAUSTED" {
+			event = events.Event{Type: "run.resumed", RunID: runID, Issue: 42, Timestamp: event.Timestamp, Payload: map[string]any{"reason": "feedback", "gate": gateActionableFeedback}}
+		}
+		_ = log.Log(event)
+	}
+	_ = log.Log(events.Event{Type: "run.finished", RunID: runID, Issue: 42, Timestamp: at.Add(5 * time.Minute), Payload: map[string]any{"status": "failure", "reason": reason, "branch": continuityBranch}})
+}
+
+// verdict reduces the continued Run's event history to the AFK-continuity
+// outcome. A seeded earlier Run is history, not the outcome.
 func (o continuityOutcome) verdict() string {
 	for _, event := range o.events {
+		if event.RunID == continuityPriorRunID {
+			continue
+		}
 		if event.Type != "run.finished" {
 			continue
 		}
@@ -343,12 +379,24 @@ func (o continuityOutcome) verdict() string {
 }
 
 func (o continuityOutcome) count(eventType string) int {
-	return countEventsByType(o.events, eventType)
+	return countEventsByType(o.current(), eventType)
+}
+
+// current drops the seeded earlier Run, which is history the scenario
+// continues rather than part of its outcome.
+func (o continuityOutcome) current() []events.Event {
+	var current []events.Event
+	for _, event := range o.events {
+		if event.RunID != continuityPriorRunID {
+			current = append(current, event)
+		}
+	}
+	return current
 }
 
 func (o continuityOutcome) retryReasons() []string {
 	var reasons []string
-	for _, event := range o.events {
+	for _, event := range o.current() {
 		if event.Type == "run.retry" {
 			reason, _ := event.Payload["reason"].(string)
 			reasons = append(reasons, reason)
@@ -419,7 +467,7 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 		// #2915 (#8 / PR #30): the attempt that delivered the trigger exited
 		// non-success. The confirmed request is awaited, not retried.
 		continuityScenario{
-			name: "#2915 trigger from a failed attempt", pr: greenCleanPR(), retries: 3,
+			name: "#2915 trigger from a failed attempt", pr: greenCleanPR(), retries: 3, forbidRetry: true, requireAwait: true,
 			launches: []func(*continuityGitHub) string{func(g *continuityGitHub) string { g.trigger(); return "failure" }},
 			polls:    []func(*continuityGitHub){func(g *continuityGitHub) { g.publishLegacy(reports["approved-daemon-30.md"]) }},
 			want:     "merged", maxLaunches: 2,
@@ -445,7 +493,7 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 		// approval. Continuation observes it and merges, without a duplicate
 		// trigger and without retry budget.
 		continuityScenario{
-			name: "#2915 continue after REVIEW_REQUEST_REQUIRED", pr: greenCleanPR(), retries: 3, continueRun: true, forbidRetry: true,
+			name: "#2915 continue after REVIEW_REQUEST_REQUIRED", pr: greenCleanPR(), retries: 3, continueRun: true, forbidRetry: true, priorFailure: "REVIEW_REQUEST_REQUIRED",
 			setup: func(g *continuityGitHub) {
 				g.trigger()
 				g.publishLegacy(reports["approved-daemon-30.md"])
@@ -454,7 +502,7 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 		},
 		// `sandman run --continue` on the #2 / PR #29 final state.
 		continuityScenario{
-			name: "#2914 continue after REMEDIATION_BUDGET_EXHAUSTED", pr: greenCleanPR(), retries: 3, continueRun: true, forbidRetry: true,
+			name: "#2914 continue after REMEDIATION_BUDGET_EXHAUSTED", pr: greenCleanPR(), retries: 3, continueRun: true, forbidRetry: true, priorFailure: "REMEDIATION_BUDGET_EXHAUSTED",
 			setup: func(g *continuityGitHub) {
 				g.trigger()
 				g.publishLegacy(reports["approved-daemon-29-final.md"])
@@ -548,6 +596,32 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 			},
 			want: "merged",
 		},
+		// A paraphrased real report posted without any publication identity
+		// (as a human or another tool would) is judged by the prose rules and
+		// still merges.
+		continuityScenario{
+			name: "approved/real report without publication metadata", pr: github.PR{StatusCheckRollup: "pending", MergeStateStatus: "CLEAN"}, retries: 3,
+			launches: []func(*continuityGitHub) string{requestReview},
+			polls: []func(*continuityGitHub){
+				func(g *continuityGitHub) { g.post(reviewpub.StripMarkers(reports["approved-daemon-29-final.md"])) },
+				func(g *continuityGitHub) { g.update(func(pr *github.PR) { pr.StatusCheckRollup = "success" }) },
+			},
+			want: "merged", maxLaunches: 2,
+		},
+		// Negative control: the daemon's machine-readable CHANGES_REQUESTED is a
+		// genuine request for changes. When the implementor cannot address it
+		// within its relaunch allowance the Run ends, like a formal review.
+		continuityScenario{
+			name: "negative/daemon changes requested unrepaired", pr: greenCleanPR(), retries: 3,
+			launches: []func(*continuityGitHub) string{requestReview},
+			polls: []func(*continuityGitHub){
+				func(g *continuityGitHub) {
+					g.publish("## Findings\n- Blocking: `worker.go:12` drops the request on retry.\n\n## Decision\n**CHANGES_REQUESTED**\n")
+				},
+				nil, nil, nil,
+			},
+			want: "failed:REMEDIATION_BUDGET_EXHAUSTED",
+		},
 		// Negative control: no review request was ever delivered. The
 		// implementor owes it; ordinary retries are spent, then the Run fails.
 		continuityScenario{
@@ -591,6 +665,20 @@ func TestAFKContinuityContract_RealIncidentsMergeOrWait(t *testing.T) {
 			if got := outcome.verdict(); got != sc.want {
 				t.Fatalf("outcome = %s (status %q, launches %d), want %s\nevents: %s", got, outcome.status, outcome.launches, sc.want, continuityEventSummary(outcome.events))
 			}
+			if sc.requireAwait && outcome.count("run.await") == 0 {
+				t.Fatalf("the Run never waited\nevents: %s", continuityEventSummary(outcome.events))
+			}
+			if sc.want == "waiting" {
+				// The operator's stop is the only way out of the wait.
+				if last := outcome.events[len(outcome.events)-1]; last.Type != "run.aborted" {
+					t.Fatalf("waiting Run ended with %s, want the operator's abort", last.Type)
+				}
+			}
+			for _, event := range outcome.events {
+				if event.RunID != continuityPriorRunID && event.Type == "run.finished" && event.Payload["reason"] == "REVIEW_REQUEST_REQUIRED" &&!strings.HasPrefix(sc.want, "failed:REVIEW_REQUEST_REQUIRED") {
+					t.Fatalf("a delivered request was reported as missing\nevents: %s", continuityEventSummary(outcome.events))
+				}
+			}
 			if sc.maxLaunches > 0 && outcome.launches > sc.maxLaunches {
 				t.Fatalf("launches = %d, want at most %d\nevents: %s", outcome.launches, sc.maxLaunches, continuityEventSummary(outcome.events))
 			}
@@ -630,6 +718,15 @@ func TestAFKContinuityContract_StalledWaitSurvivesRestart(t *testing.T) {
 	outcome := runContinuityScenario(t, stall)
 	if outcome.verdict() != "waiting" {
 		t.Fatalf("stall outcome = %s, want waiting", outcome.verdict())
+	}
+	// The deadline-less wait projects as waiting until the operator's abort,
+	// which ends it terminally.
+	beforeAbort := events.ProjectRunStates(outcome.events[:len(outcome.events)-1])
+	if len(beforeAbort) != 1 || !beforeAbort[0].IsAwaiting() || beforeAbort[0].IsTerminal() {
+		t.Fatalf("stalled wait projection = %+v, want waiting", beforeAbort)
+	}
+	if final := events.ProjectRunStates(outcome.events); len(final) != 1 || !final[0].IsTerminal() || final[0].Status() != "aborted" {
+		t.Fatalf("aborted stalled wait projection = %+v, want aborted", final)
 	}
 	status, extras, handled := outcome.observeAfterRestart()
 	if !handled || status != "await" || extras[stalledResumesKey] == nil {
