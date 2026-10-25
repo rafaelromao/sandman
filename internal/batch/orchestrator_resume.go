@@ -165,6 +165,8 @@ func (s *runSession) prepareEntryResume(ctx context.Context, wt sandbox.Sandbox,
 	// Entry is not an in-session relaunch. Historical head/request counters
 	// cannot consume this session's existing resume allowance.
 	evidence := s.resumeEvidenceFor(ctx, branch, extras)
+	// The entry launch acts on this evidence: a repeat after it is a stall.
+	s.lastResumeSignature = s.pendingResumeSignature
 	taskContent, _, _ := ReadTaskContent(filepath.Join(wt.WorkDir(), ".sandman", "task.md"))
 	s.renderCfg.TaskPrompt = s.resumePromptFor(taskContent, evidence, s.renderCfg.ReviewTimeout)
 	return AgentRunResult{}, false, false

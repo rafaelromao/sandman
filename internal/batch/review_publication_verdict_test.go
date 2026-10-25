@@ -127,3 +127,35 @@ func TestReviewPublicationVerdict_ProseVariantsAndContradictions(t *testing.T) {
 		})
 	}
 }
+
+// A daemon approval whose author-facing prose contradicts it is not an
+// approval, even though the daemon stamped its APPROVED verdict. It is unsure,
+// so the Run waits instead of merging or relaunching for feedback.
+func TestReviewPublicationVerdict_ContradictedDaemonApprovalWaits(t *testing.T) {
+	for _, tc := range []struct{ name, decision string }{
+		{"author directive", "## Summary\nReviewed head abc.\n\n## Suggested next steps\nAuthor should fix worker.go before merging.\n\n## Decision\n**APPROVED**\n"},
+		{"not approved yet", "## Summary\nThis is not approved yet.\n\n## Suggested next steps\nNone.\n\n## Decision\n**APPROVED**\n"},
+		{"nested important finding", "## Summary\nReviewed head abc.\n\n## Findings\n### Spec\n- Important: the timeout criterion is unmet in worker.go.\n\n## Decision\n**APPROVED**\n"},
+		{"severity in spec", "## Spec\n1 finding; worst: Important. The timeout criterion is unmet.\n\n## Decision\n**APPROVED**\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			published := reviewpub.Body(tc.decision, "request", "current-sha")
+			if reviewDecisionApprovedBody(published) {
+				t.Fatal("contradicted daemon approval was accepted")
+			}
+			s, client, pr, workDir, _ := informalApprovalLifecycleFixture(t, "placeholder")
+			client.comments[1].Body = published
+			pr.StatusCheckRollup = "success"
+			status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+			if handled && status == "resume" && (extras["reason"] == "REVIEW_APPROVED" || extras["gate"] == gateActionableFeedback) {
+				t.Fatalf("contradicted daemon approval = %s/%v, want neither merge work nor a feedback relaunch", status, extras)
+			}
+		})
+	}
+	// Harmless runtime and publication remarks do not contradict it.
+	for name, body := range capturedApprovingReports(t) {
+		if publishedApprovalContradicted(body) {
+			t.Errorf("captured approval %s reads as contradicted", name)
+		}
+	}
+}

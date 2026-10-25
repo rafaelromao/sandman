@@ -60,6 +60,8 @@ type continuityGitHub struct {
 	// hideComments hides the conversation from the next n listings, like a
 	// lagging GitHub read after a successful post.
 	hideComments int
+	// heads counts the heads the implementor pushed.
+	heads int
 }
 
 func newContinuityGitHub(pr github.PR) *continuityGitHub {
@@ -82,7 +84,7 @@ func (g *continuityGitHub) post(body string) github.PRComment {
 	g.nextID++
 	stamp := time.Now().UTC().Truncate(time.Second)
 	if !stamp.After(g.stamp) {
-		stamp = g.stamp.Add(time.Second)
+		stamp = g.stamp.Add(time.Millisecond)
 	}
 	g.stamp = stamp
 	comment := github.PRComment{ID: fmt.Sprint(g.nextID), Body: body, AuthorLogin: "sandman-bot", CreatedAt: stamp, UpdatedAt: stamp}
@@ -146,6 +148,58 @@ func (g *continuityGitHub) mergeable() bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.pr.StatusCheckRollup == "success" && g.pr.MergeStateStatus == "CLEAN" && g.pr.ReviewDecision != "CHANGES_REQUESTED"
+}
+
+// formalReview submits a formal review on the current head and updates the
+// aggregate review decision, as GitHub does.
+func (g *continuityGitHub) formalReview(state string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.nextID++
+	stamp := time.Now().UTC().Truncate(time.Second)
+	if !stamp.After(g.stamp) {
+		stamp = g.stamp.Add(time.Millisecond)
+	}
+	g.stamp = stamp
+	g.reviews = append(g.reviews, github.PRReview{ID: fmt.Sprint(g.nextID), State: state, Body: "Fix `worker.go:12`.", CommitID: g.pr.HeadRefOid, CreatedAt: stamp})
+	g.pr.ReviewDecision = state
+	if state == "APPROVED" {
+		g.pr.MergeStateStatus = "CLEAN"
+	} else {
+		g.pr.MergeStateStatus = "BLOCKED"
+	}
+}
+
+// fixAndRerequest is an implementor that addresses formal requested changes
+// on the current head by pushing a new head and requesting review again, and
+// merges once the request is approved.
+func fixAndRerequest(g *continuityGitHub) string {
+	g.mu.Lock()
+	var trigger time.Time
+	for _, comment := range g.comments {
+		if strings.HasPrefix(comment.Body, continuityTrigger) {
+			trigger = comment.CreatedAt
+		}
+	}
+	changes := false
+	for _, review := range g.reviews {
+		if review.State == "CHANGES_REQUESTED" && review.CreatedAt.After(trigger) && review.CommitID == g.pr.HeadRefOid {
+			changes = true
+		}
+	}
+	approved := g.pr.ReviewDecision == "APPROVED" && g.pr.MergeStateStatus == "CLEAN" && g.pr.StatusCheckRollup == "success"
+	if changes {
+		g.heads++
+		g.pr.HeadRefOid = fmt.Sprintf("head-%d", g.heads+1)
+	}
+	g.mu.Unlock()
+	switch {
+	case changes:
+		g.trigger()
+	case approved:
+		g.merge()
+	}
+	return "success"
 }
 
 func (g *continuityGitHub) head() string {
@@ -621,6 +675,28 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 				nil, nil, nil,
 			},
 			want: "failed:REMEDIATION_BUDGET_EXHAUSTED",
+		},
+		// Productive multi-round review (rc2 kept going): four rounds of formal
+		// CHANGES_REQUESTED, each addressed with a new head and a new request.
+		// GitHub keeps the aggregate CHANGES_REQUESTED until the reviewer
+		// re-reviews, so between rounds the Run waits for the re-review. The
+		// relaunch allowance is per repair round, not per Run.
+		continuityScenario{
+			name: "formal changes requested over several rounds", pr: greenCleanPR(), retries: 3,
+			launches: []func(*continuityGitHub) string{requestReview, fixAndRerequest, fixAndRerequest, fixAndRerequest, fixAndRerequest, fixAndRerequest, fixAndRerequest},
+			polls: []func(*continuityGitHub){
+				func(g *continuityGitHub) { g.formalReview("CHANGES_REQUESTED") },
+				nil,
+				func(g *continuityGitHub) { g.formalReview("CHANGES_REQUESTED") },
+				nil,
+				func(g *continuityGitHub) { g.formalReview("CHANGES_REQUESTED") },
+				nil,
+				func(g *continuityGitHub) { g.formalReview("CHANGES_REQUESTED") },
+				nil,
+				func(g *continuityGitHub) { g.formalReview("APPROVED") },
+				nil, nil,
+			},
+			want: "merged",
 		},
 		// Negative control: no review request was ever delivered. The
 		// implementor owes it; ordinary retries are spent, then the Run fails.

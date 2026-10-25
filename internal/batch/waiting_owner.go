@@ -139,6 +139,11 @@ func (o *waitOwner) checkpoint(row RowSpec, ready bool, nextPoll time.Duration) 
 			record.OperationDeadline = deadline
 			record.OperationID = fmt.Sprintf("%s:%d", gate, deadline.Unix())
 		}
+		if continuityHoldPayload(state.AwaitEvent.Payload) {
+			// A continuity hold waits for external recovery without an
+			// operation deadline; it keeps the ordinary ownerless grace.
+			record.OperationID, record.OperationDeadline = continuityHoldOperation(row.RunID), time.Time{}
+		}
 		if state.AwaitReason() == "usage-limit" {
 			record.UsageLimitProbe = true
 			record.OperationID, record.OperationDeadline = "quota:"+row.RunID, time.Time{}

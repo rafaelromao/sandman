@@ -88,15 +88,24 @@ rollup and merge state. A wait entered because a relaunch stalled records its
 signatures in `run.await` (`stalled_resumes`). Observation reads them through
 the event fold, so a restart keeps waiting instead of relaunching on the same
 evidence; a new head, request, response or gate proceeds. A continuity hold
-(`continuity_hold`) waits without an operation deadline; it stays abortable
-and resumes when the gate changes.
+(`continuity_hold`) waits without an operation deadline; it stays abortable,
+resumes when the gate changes, and its schedule checkpoint uses the stable
+`hold:<RunID>` recovery identity, so restart discovery re-enters it within the
+ordinary ownerless grace. The relaunch allowance belongs to one repair round
+(request and head): a new head or request starts a fresh allowance, and the
+entry launch counts as the round's first relaunch. An unreadable event log
+fails closed into a wait. Exhausted remediation of unusable CI wait state
+(`CI_WAIT_STATE_ERROR`) stays terminal.
 
 Sandman's own review daemon publishes a machine-readable verdict trailer
 (`<!-- sandman-verdict:approved|changes_requested -->`) directly before the
 publication identity, which binds the decision to one trigger revision and one
 reviewed head. The runtime trusts that verdict (or, for older publications,
 the closed-set `## Decision` token) and treats a publication bound to another
-trigger or head as stale. The verdict is additive: human, third-party and
+trigger or head as stale. An APPROVED verdict beside author-facing
+contradictions (an opposing verdict, a labelled Blocking or Important finding,
+or a repair directive addressed to the author) is not an approval; such an
+unsure report waits. The verdict is additive: human, third-party and
 paraphrased approvals keep the prose rules, and an unknown daemon verdict is
 never repair evidence.
 

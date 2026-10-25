@@ -95,7 +95,13 @@ func reviewDecisionApprovedBody(body string) bool {
 	// Sandman's own review daemon publishes a closed-set verdict. Trust it;
 	// prose rules remain for every other body and for unknown verdicts.
 	if verdict, published := reviewpub.PublishedVerdict(body); published && verdict != reviewpub.Unknown {
-		return verdict == reviewpub.Approved
+		if verdict != reviewpub.Approved {
+			return false
+		}
+		if !publishedApprovalContradicted(body) {
+			return true
+		}
+		// A contradicted daemon approval is judged by the prose rules below.
 	}
 	body = reviewpub.StripMarkers(body)
 	structured := false
@@ -108,6 +114,39 @@ func reviewDecisionApprovedBody(body string) bool {
 	// Ordinary informal approval needs no Decision heading. Keep its stricter
 	// affirmative-prose boundary; section exceptions require a structured verdict.
 	return structured || unambiguousReviewApproval(body)
+}
+
+// publishedApprovalContradicted reports author-facing prose that contradicts
+// a daemon APPROVED verdict: an opposing verdict ("not approved", "changes
+// requested", CHANGES_REQUESTED), a labelled Blocking or Important finding, or
+// a repair directive addressed to the author. Remarks addressed to the runtime
+// or surrounding workflow, CI-wait advice, negated "no changes requested"
+// declarations and review history do not contradict it.
+func publishedApprovalContradicted(body string) bool {
+	for _, section := range collectReviewApprovalSections(reviewpub.StripMarkers(body)) {
+		switch section.kind {
+		case "history", "decision":
+			continue
+		case "findings":
+			if strings.TrimSpace(section.text) == "" || noReviewFindings(section.text) {
+				continue
+			}
+		}
+		text := reviewNegatedChangeRequest.ReplaceAllString(reviewJoinSoftLines(section.text), "no repair declared")
+		for _, clause := range reviewFindingClauses.Split(text, -1) {
+			if strings.TrimSpace(clause) == "" || reviewRuntimeAdvice(clause) || reviewNextStepAdvice(clause) {
+				continue
+			}
+			visible := reviewDirectiveProse(clause)
+			if reviewOpposingVerdict.MatchString(reviewApprovalProse(clause)) ||
+				reviewApprovalContradiction.MatchString(visible) ||
+				reviewFindingSeverity.MatchString(visible) ||
+				(reviewAuthorAddressed.MatchString(visible) && reviewFindingDirective.MatchString(visible)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type reviewApprovalTextSection struct{ kind, text string }

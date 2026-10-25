@@ -62,7 +62,9 @@ leaves head, request and responses unchanged stops relaunching; `run.await`
 restart. A trigger delivered by any attempt of a session (including a failed
 one) is registered; owned-work retries log `lifecycle-owned-work`. The review
 daemon stamps a verdict trailer before its publication identity; the runtime
-trusts it additively (prose approvals stay accepted). Every lifecycle reason is
+trusts it additively (prose approvals stay accepted) unless author-facing prose
+contradicts it. Relaunch allowances are per repair round (request, head); holds
+recover under the `hold:<RunID>` identity. Every lifecycle reason is
 classified in one place and `TestAFKContinuityContract_*` replays the incidents.
 
 - **Event-sourced state**: Run status is a projection over the append-only `.sandman/events.jsonl`, not mutable records. `events.RunState` folds events into current state. If a status looks wrong, start by tracing the relevant event types and the fold/projection logic rather than searching for mutable status fields.

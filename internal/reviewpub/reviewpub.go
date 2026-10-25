@@ -129,9 +129,10 @@ func StripMarkers(body string) string {
 
 // DecisionVerdict reads the single `## Decision` section of a review report.
 // Only the closed tokens APPROVED and CHANGES_REQUESTED, alone on the
-// decision line, are verdicts. The reviewer contract derives the decision
-// from the findings (any Blocking or Important finding requests changes), so
-// an APPROVED decision whose Findings label one is ChangesRequested.
+// decision line, are verdicts. An APPROVED decision whose Findings label a
+// Blocking or Important finding contradicts itself and is Unknown, so the
+// prose rules decide; explicit empty entries such as "Blocking findings: none"
+// are not findings.
 func DecisionVerdict(body string) Verdict {
 	verdict := Unknown
 	decisions := 0
@@ -139,14 +140,25 @@ func DecisionVerdict(body string) Verdict {
 	section := ""
 	pendingDecision := false
 	pendingGroup := false
+	findingsLevel := 0
 	for _, raw := range strings.Split(body, "\n") {
 		line := strings.TrimSpace(raw)
 		if strings.HasPrefix(line, "#") {
+			level := len(line) - len(strings.TrimLeft(line, "#"))
 			heading := strings.TrimSpace(strings.TrimLeft(line, "#"))
 			if section == "findings" && severityItem.MatchString(heading) {
 				// A severity group nested under Findings stays in that section;
 				// it is a finding unless its first entry says there is none.
 				pendingGroup = true
+				continue
+			}
+			if name, _ := splitHeading(heading); section == "findings" && level > findingsLevel && !strings.EqualFold(name, "decision") {
+				// Any deeper heading (for example "### Spec") stays inside
+				// Findings, so its labelled findings still count.
+				if pendingGroup {
+					contradicted = true
+					pendingGroup = false
+				}
 				continue
 			}
 			if pendingGroup {
@@ -164,6 +176,7 @@ func DecisionVerdict(body string) Verdict {
 				}
 			case "findings":
 				section = "findings"
+				findingsLevel = level
 			}
 			continue
 		}
@@ -202,7 +215,9 @@ func DecisionVerdict(body string) Verdict {
 		return Unknown
 	}
 	if verdict == Approved && contradicted {
-		return ChangesRequested
+		// An APPROVED decision beside a labelled severe finding is unsure:
+		// the trailer carries no verdict and the prose rules decide.
+		return Unknown
 	}
 	return verdict
 }
@@ -210,10 +225,22 @@ func DecisionVerdict(body string) Verdict {
 // emptyFinding reports an explicit empty severity entry such as
 // "Blocking: none" or a group whose only entry is "None.".
 func emptyFinding(text string) bool {
-	text = strings.ToLower(strings.Trim(strings.TrimSpace(text), "*_:-–— \t."))
-	text = strings.TrimSpace(strings.TrimLeft(text, "-*+ "))
-	switch strings.Trim(text, "*_:-–— \t.") {
-	case "none", "n/a", "0", "":
+	text = strings.ToLower(strings.TrimSpace(text))
+	for {
+		trimmed := strings.TrimSpace(strings.Trim(text, "*_:-–—/()[] \t."))
+		for _, word := range []string{"blocking", "important", "findings", "finding", "issues", "issue", "items", "item", "or", "and"} {
+			if strings.HasPrefix(trimmed, word) && (len(trimmed) == len(word) || strings.ContainsAny(trimmed[len(word):len(word)+1], " :-–—/()*_.,")) {
+				trimmed = trimmed[len(word):]
+			}
+		}
+		trimmed = strings.TrimSpace(strings.Trim(trimmed, "*_:-–—/()[] \t.,"))
+		if trimmed == text {
+			break
+		}
+		text = trimmed
+	}
+	switch text {
+	case "none", "n/a", "0", "", "no", "nothing":
 		return true
 	}
 	return false

@@ -230,13 +230,18 @@ func TestInformalApprovalClassifier_CapturedReportsAndContradictions(t *testing.
 			if got := c.informalFeedbackEvidenceFor(request, ""); len(got) != 0 {
 				t.Fatalf("approving report produced feedback: %v", got)
 			}
-			for _, conflicting := range []string{
-				strings.Replace(body, "**APPROVED**", "**CHANGES_REQUESTED**", 1),
-				strings.Replace(body, "## Decision", "## Findings\n### Important\nFix the race in `worker.go`.\n\n## Decision", 1),
-			} {
-				if reviewDecisionApprovedBody(conflicting) || !informalReviewFeedbackConcrete(conflicting) {
-					t.Fatal("non-approval or important finding did not remain actionable")
-				}
+			changes := strings.Replace(body, "**APPROVED**", "**CHANGES_REQUESTED**", 1)
+			if reviewDecisionApprovedBody(changes) || !informalReviewFeedbackConcrete(changes) {
+				t.Fatal("a CHANGES_REQUESTED decision did not remain actionable")
+			}
+			contradictory := strings.Replace(body, "## Decision", "## Findings\n### Important\nFix the race in `worker.go`.\n\n## Decision", 1)
+			if reviewDecisionApprovedBody(contradictory) {
+				t.Fatal("an APPROVED report with an Important finding established approval")
+			}
+			if reviewpub.Published(contradictory) == informalReviewFeedbackConcrete(contradictory) {
+				// A daemon publication that contradicts itself is unsure, so it
+				// waits; an unpublished report keeps the prose feedback rules.
+				t.Fatalf("contradictory report feedback = %t for a published=%t body, want feedback only without publication", informalReviewFeedbackConcrete(contradictory), reviewpub.Published(contradictory))
 			}
 		})
 	}

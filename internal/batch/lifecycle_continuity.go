@@ -3,6 +3,7 @@ package batch
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -229,6 +230,16 @@ func (s *runSession) continuityDecision(ctx context.Context, branch, runID, stat
 	// a relaunch that pushed a new head counts as progress.
 	signature := resumeSignature(signatureExtras, s.decisionPRHead)
 	s.pendingResumeSignature = signature
+	if readErr != nil {
+		// Without the Run's stalled signatures a relaunch may repeat stalled
+		// evidence: fail closed and keep waiting, carrying any signatures the
+		// decision already holds.
+		prior := stalledResumes(extras)
+		if isImplementorOwnedGateFailure(extras) {
+			return "await", s.ownedWorkHold(extras, signature, prior)
+		}
+		return "await", stalledAwaitExtras(extras, signature, prior)
+	}
 	if isImplementorOwnedGateFailure(extras) {
 		if containsSignature(stalled, signature) {
 			return "await", s.ownedWorkHold(extras, signature, stalled)
@@ -241,23 +252,62 @@ func (s *runSession) continuityDecision(ctx context.Context, branch, runID, stat
 		}
 		return status, extras
 	}
-	if readErr != nil || containsSignature(stalled, signature) {
+	if containsSignature(stalled, signature) {
 		return "await", stalledAwaitExtras(extras, signature, stalled)
+	}
+	if s.lastResumeSignature != "" && repairRound(signature) != repairRound(s.lastResumeSignature) {
+		// The relaunch allowance belongs to one repair round (request and
+		// head). A new head or a new request is progress and starts a fresh
+		// allowance; stall detection still catches no-progress repeats.
+		s.resumeCount = 0
 	}
 	gate, _ := extras["gate"].(string)
 	repeated := signature == s.lastResumeSignature && stallsOnRepeat(extras)
 	if !isResumeGate(gate) || (!repeated && s.resumeCount < s.resumeCapFor()) {
 		return status, extras
 	}
-	if formalChangesRequested(extras) {
-		// Formal CHANGES_REQUESTED the implementor cannot address within its
-		// allowance stays terminal.
+	if formalChangesRequested(extras) || exhaustionTerminal(extras) {
+		// Genuine requested changes the implementor cannot address within its
+		// allowance, and unusable CI wait state, stay terminal.
 		return "failure", remediationBudgetFailureEvidence(gate, extras,
 			"inspect the current pull-request remediation evidence and continue in a fresh session")
 	}
 	// A stalled or exhausted relaunch on review, CI, request or merge
 	// evidence waits for external recovery, as rc2 did (issue #2916).
 	return "await", stalledAwaitExtras(extras, signature, stalled)
+}
+
+// repairRound identifies the request and head a resume signature acts on.
+func repairRound(signature string) string {
+	var decoded struct {
+		Head    string `json:"head"`
+		Trigger any    `json:"trigger"`
+	}
+	if json.Unmarshal([]byte(signature), &decoded) != nil {
+		return signature
+	}
+	return fmt.Sprintf("%s|%v", decoded.Head, decoded.Trigger)
+}
+
+// exhaustionTerminal reports resume reasons whose exhausted remediation is a
+// permanent failure rather than a wait: unusable CI wait state has no external
+// operation that could resolve it.
+func exhaustionTerminal(extras map[string]any) bool {
+	reason, _ := extras["reason"].(string)
+	return reason == "CI_WAIT_STATE_ERROR"
+}
+
+// continuityHoldPayload reports a wait entered by the AFK-continuity rules
+// (a stalled relaunch or a continuity hold). Such a wait has no operation
+// deadline: its recovery identity is the Run itself.
+func continuityHoldPayload(payload map[string]any) bool {
+	stalled, _ := payload["resume_stalled"].(bool)
+	hold, _ := payload["continuity_hold"].(bool)
+	return stalled || hold
+}
+
+func continuityHoldOperation(runID string) string {
+	return "hold:" + runID
 }
 
 // ownedWorkHold is the continuity hold for owned work nothing can advance. It
