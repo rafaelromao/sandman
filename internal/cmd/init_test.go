@@ -1334,7 +1334,7 @@ func TestInit_ReviewTimeoutRejectsValuesBelowMinimum(t *testing.T) {
 	}
 }
 
-func TestInit_VariantFlagForEveryBuiltInAgent(t *testing.T) {
+func TestInit_ModelSettingsForEveryBuiltInAgent(t *testing.T) {
 	for agent := range config.BuiltInAgentPresets {
 		t.Run(agent, func(t *testing.T) {
 			dir := t.TempDir()
@@ -1343,7 +1343,7 @@ func TestInit_VariantFlagForEveryBuiltInAgent(t *testing.T) {
 			cmd := NewInitCmd()
 			cmd.SetOut(&bytes.Buffer{})
 			cmd.SetIn(strings.NewReader(""))
-			cmd.SetArgs([]string{"--build-tools", "generic", "--agent", agent, "--variant", "high"})
+			cmd.SetArgs([]string{"--build-tools", "generic", "--agent", agent, "--model", "implementation-model", "--variant", "high", "--review-model", "review-model", "--review-variant", "  low  "})
 			if err := cmd.Execute(); err != nil {
 				t.Fatal(err)
 			}
@@ -1354,6 +1354,68 @@ func TestInit_VariantFlagForEveryBuiltInAgent(t *testing.T) {
 			if cfg.DefaultAgent != agent || cfg.Variant != "high" {
 				t.Fatalf("init lost shared variant: agent=%q variant=%q", cfg.DefaultAgent, cfg.Variant)
 			}
+			if cfg.DefaultModel != "implementation-model" || cfg.DefaultReviewModel != "review-model" || cfg.ReviewVariant != "low" {
+				t.Fatalf("init lost independent model settings: model=%q review_model=%q review_variant=%q", cfg.DefaultModel, cfg.DefaultReviewModel, cfg.ReviewVariant)
+			}
 		})
+	}
+}
+
+func TestInit_IndependentReviewSettings(t *testing.T) {
+	for agent := range config.BuiltInAgentPresets {
+		for _, setting := range []string{"defaults", "model", "variant"} {
+			t.Run(agent+"/"+setting, func(t *testing.T) {
+				t.Chdir(t.TempDir())
+				installInitHostVersion(t, scaffold.DefaultBuiltInAgentVersion(agent))
+				cmd := NewInitCmd()
+				cmd.SetOut(&bytes.Buffer{})
+				cmd.SetIn(strings.NewReader(""))
+				args := []string{"--build-tools", "generic", "--agent", agent}
+				wantModel, wantVariant := config.DefaultModelForAgent(agent), ""
+				if setting == "model" {
+					args = append(args, "--review-model", "custom-review")
+					wantModel = "custom-review"
+				}
+				if setting == "variant" {
+					args = append(args, "--review-variant", "  high  ")
+					wantVariant = "high"
+				}
+				cmd.SetArgs(args)
+				if err := cmd.Execute(); err != nil {
+					t.Fatal(err)
+				}
+				cfg, err := config.Load(filepath.Join(".sandman", "config.yaml"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if cfg.DefaultModel != config.DefaultModelForAgent(agent) || cfg.Variant != "" || cfg.DefaultReviewModel != wantModel || cfg.ReviewVariant != wantVariant {
+					t.Fatalf("unexpected model settings: implementation=%q/%q review=%q/%q", cfg.DefaultModel, cfg.Variant, cfg.DefaultReviewModel, cfg.ReviewVariant)
+				}
+			})
+		}
+	}
+}
+
+func TestInit_ReviewSettingsPreserveExistingConfig(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for i, input := range []string{"", "y\n"} {
+		cmd := newInitCommandForTest(t)
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetIn(strings.NewReader(input))
+		model, variant, reviewModel, reviewVariant := "original", "high", "original-review", "low"
+		if i == 1 {
+			model, variant, reviewModel, reviewVariant = "replacement", "low", "replacement-review", "high"
+		}
+		cmd.SetArgs([]string{"--build-tools", "generic", "--model", model, "--variant", variant, "--review-model", reviewModel, "--review-variant", reviewVariant})
+		if err := cmd.Execute(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg, err := config.Load(filepath.Join(".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DefaultModel != "original" || cfg.Variant != "high" || cfg.DefaultReviewModel != "original-review" || cfg.ReviewVariant != "low" {
+		t.Fatalf("preserved config changed: implementation=%q/%q review=%q/%q", cfg.DefaultModel, cfg.Variant, cfg.DefaultReviewModel, cfg.ReviewVariant)
 	}
 }

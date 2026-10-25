@@ -93,6 +93,8 @@ type Options struct {
 	Agent           string // --agent override
 	Model           string // --model override
 	Variant         string // --variant override
+	ReviewModel     string // --review-model override
+	ReviewVariant   string // --review-variant override
 	Parallel        int    // --parallel override (-1 = use config default)
 	ParallelReviews int    // --parallel-reviews override (-1 = use config default)
 	ReviewCommand   string // --review-command override
@@ -677,6 +679,10 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	if model == "" {
 		model = config.DefaultModelForAgent(defaultAgent)
 	}
+	reviewModel := opts.ReviewModel
+	if reviewModel == "" {
+		reviewModel = config.DefaultModelForAgent(defaultAgent)
+	}
 
 	retries, err := resolveRetries(opts.Retries)
 	if err != nil {
@@ -697,7 +703,8 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		DefaultModel:          model,
 		Variant:               strings.TrimSpace(opts.Variant),
 		DefaultReviewAgent:    defaultAgent,
-		DefaultReviewModel:    config.DefaultModelForAgent(defaultAgent),
+		DefaultReviewModel:    reviewModel,
+		ReviewVariant:         strings.TrimSpace(opts.ReviewVariant),
 		BuildTools:            preset.Name,
 		ReviewCommand:         effectiveReviewCommand(opts.ReviewCommand),
 		DefaultParallel:       parallel,
