@@ -453,8 +453,8 @@ func TestRunExecutor_ResumeCapFallsBackToForegroundObservation(t *testing.T) {
 	if len(factory.created) != 2 {
 		t.Fatalf("agent launches = %d, want initial plus one resume", len(factory.created))
 	}
-	if len(waits) != 0 {
-		t.Fatalf("lifecycle waits = %v, want [] after the resolved ready gate exhausts its resume budget", waits)
+	if len(waits) != 1 || waits[0] != 5*time.Second {
+		t.Fatalf("lifecycle waits = %v, want one foreground observation after the ready gate exhausts its resume budget", waits)
 	}
 	logs, err := eventLog.Read()
 	if err != nil {
@@ -466,8 +466,8 @@ func TestRunExecutor_ResumeCapFallsBackToForegroundObservation(t *testing.T) {
 	if countEventsByType(logs, "run.resumed") != 1 {
 		t.Fatalf("run.resumed events = %d, want 1", countEventsByType(logs, "run.resumed"))
 	}
-	if countEventsByType(logs, "run.await") != 0 {
-		t.Fatalf("run.await events = %d, want 0 after review completion", countEventsByType(logs, "run.await"))
+	if waiting := lastEvent(logs, "run.await"); countEventsByType(logs, "run.await") != 1 || waiting.Payload["reason"] != resumeStalledReason {
+		t.Fatalf("run.await events = %d, want the one stalled rc2 wait before the merge is observed", countEventsByType(logs, "run.await"))
 	}
 }
 

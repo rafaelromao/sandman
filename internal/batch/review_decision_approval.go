@@ -22,11 +22,11 @@ var (
 	reviewCIWaitAdvice             = regexp.MustCompile(`(?i)^(?:await|wait\s+for)\s+(?:the\s+)?(?:(?:pending|required|remaining|current-head)\s+)*(?:ci(?:\s+checks?)?|(?:required\s+)?checks?)(?:\s+to\s+(?:pass|finish|complete|turn\s+green))?(?:\s+before\s+merging)?[.!]?$`)
 	reviewQualityTag               = regexp.MustCompile("`\\[(?:control-flow|functional|OOP|public-api)\\]`")
 	reviewNoChangeStep             = regexp.MustCompile(`(?i)^(?:none(?:\s+required)?|no\s+(?:(?:author|code|implementation|further|additional)\s+)*changes\s+(?:are\s+)?(?:requested|required|needed))[.!]?$`)
-	// A negated declaration ("no code changes requested") is the opposite of
-	// a "changes requested" contradiction.
 	// "`[OOP]` rules do not apply" after construct tags are replaced, with an
 	// optional qualifier such as "Stateful".
-	reviewInapplicableRules    = regexp.MustCompile(`(?i)^(?:[a-z-]+\s+)?rule\s+rules\s+do\s+not\s+apply\.?$`)
+	reviewInapplicableRules = regexp.MustCompile(`(?i)^(?:[a-z-]+\s+)?rule\s+rules\s+do\s+not\s+apply\.?$`)
+	// A negated declaration ("no code changes requested") is the opposite of
+	// a "changes requested" contradiction.
 	reviewNegatedChangeRequest = regexp.MustCompile(`(?i)\bno\s+(?:(?:author|code|implementation|further|additional)\s+)*changes\s+(?:are\s+)?(?:requested|required|needed)\b`)
 	// Remarks addressed to the runtime or surrounding workflow (verify remote
 	// CI, publish a formal review, handle the publication gap) are not author

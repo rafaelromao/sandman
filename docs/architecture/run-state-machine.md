@@ -49,7 +49,7 @@ queued → running ⇄ waiting → success / failure / aborted
 | Review request delivered by an attempt that exited non-success | Register it and stay **waiting**; spend no ordinary retry |
 | Feedback relaunch leaves head, request and responses unchanged | Stay **waiting** (`RESUME_STALLED`); do not relaunch on the same evidence |
 | Relaunch allowance exhausted on review, CI, request or merge work | Stay **waiting** (`RESUME_STALLED`); formal `CHANGES_REQUESTED` left unrepaired finishes **failure** |
-| Review request expired, or idle gate after owned work, with nothing resolving | Stay **waiting** (continuity hold) on an open current-head PR |
+| Review request expired with nothing else resolving, or (without a delegated review command) an idle gate after owned work | Stay **waiting** (continuity hold) on an open current-head PR |
 | Recognized provider usage limit | Wait and probe; do not spend ordinary retries immediately |
 | Quota recovers | Resume limited run and reopen sibling admission |
 | Quota recovers, then CI becomes pending | Restore ordinary CI observation without another agent launch |
@@ -79,7 +79,9 @@ reason is classified once as permanent or recoverable; the AFK-continuity
 contract suite fails on an unclassified reason and replays the real incidents
 that motivated the rule.
 
-A resume signature identifies what a relaunch acts on: gate, reason, live
+One continuity decision applies these rules to every lifecycle decision;
+the attempt loop, entry continuation and runtime observation consume its
+action unchanged. A resume signature identifies what a relaunch acts on: gate, reason, live
 head, request trigger and the request's response identities, excluding CI
 rollup and merge state. A wait entered because a relaunch stalled records its
 signatures in `run.await` (`stalled_resumes`). Observation reads them through

@@ -2321,7 +2321,7 @@ func TestExternalGate_LateFormalChangesRequestedRejectsStaleEvidence(t *testing.
 	}
 }
 
-func TestExternalGate_AgentFailureRetryPrecedesIdleReadyGateFailure(t *testing.T) {
+func TestExternalGate_AgentFailureRetryPrecedesReadyGateWait(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 	branch := gateTestBranch
@@ -2377,9 +2377,9 @@ func TestExternalGate_AgentFailureRetryPrecedesIdleReadyGateFailure(t *testing.T
 	if findEvent(logs, "run.await") == nil {
 		t.Fatal("exhausted relaunch allowance did not wait")
 	}
-	finished := lastEvent(logs, "run.await")
-	if finished == nil || finished.Payload["reason"] != resumeStalledReason || findEvent(logs, "run.finished") != nil {
-		t.Fatalf("await event = %#v, want the stalled rc2 wait instead of a remediation-budget failure", finished)
+	waiting := lastEvent(logs, "run.await")
+	if waiting == nil || waiting.Payload["reason"] != resumeStalledReason || findEvent(logs, "run.finished") != nil {
+		t.Fatalf("await event = %#v, want the stalled rc2 wait instead of a remediation-budget failure", waiting)
 	}
 }
 
@@ -2674,7 +2674,7 @@ func TestExternalGate_MergedRetainedRequestTakesPrecedenceOverFailedMetadata(t *
 	}
 }
 
-func TestExternalGate_HeadSidecarWithoutRequestCannotAuthorizeWaiting(t *testing.T) {
+func TestExternalGate_HeadSidecarWithoutRequestCannotAuthorizeRequestWait(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 	worktreePath := filepath.Join(workDir, "worktree")
@@ -2740,9 +2740,9 @@ func TestExternalGate_HeadSidecarWithoutRequestCannotAuthorizeWaiting(t *testing
 	if findEvent(logs, "run.await") == nil {
 		t.Fatal("exhausted relaunch allowance did not wait")
 	}
-	finished := lastEvent(logs, "run.await")
-	if finished == nil || finished.Payload["reason"] != resumeStalledReason || findEvent(logs, "run.finished") != nil {
-		t.Fatalf("head-only wait event = %#v, want the stalled rc2 wait instead of a merge-resume budget failure", finished)
+	waiting := lastEvent(logs, "run.await")
+	if waiting == nil || waiting.Payload["reason"] != resumeStalledReason || findEvent(logs, "run.finished") != nil {
+		t.Fatalf("head-only wait event = %#v, want the stalled rc2 wait instead of a merge-resume budget failure", waiting)
 	}
 }
 
@@ -2968,7 +2968,7 @@ func writeRetainedCurrentHeadApproval(t *testing.T, workDir string) {
 	}
 }
 
-func TestExternalGate_LateCurrentHeadApprovalResumesMergeWorkWithoutWaiting(t *testing.T) {
+func TestExternalGate_LateCurrentHeadApprovalResumesMergeWorkBeforeWaiting(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 	worktreePath := filepath.Join(workDir, "worktree")
@@ -3867,7 +3867,7 @@ func (c *perRunGateSequenceClient) FindPRByBranch(context.Context, string) (*git
 	return c.responses[index], nil
 }
 
-func TestRunSingle_ReadyGateResumesAndExhaustsBudgetWithoutAwait(t *testing.T) {
+func TestRunSingle_ReadyGateResumesAndExhaustsBudgetThenWaits(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 

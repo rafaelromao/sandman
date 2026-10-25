@@ -116,19 +116,16 @@ func TestUsageLimitDoesNotOverrideVerifiedMergedCompletion(t *testing.T) {
 func TestUsageLimitAwaitRetriesAfterFiveHours(t *testing.T) {
 	result, sandbox, log, waits := runUsageLimitBatch(t, 31, 0, 1)
 
-	if result.Runs[0].Status != "aborted" {
-		t.Fatalf("status = %q, want the continuity hold after the fresh retry leaves the PR open, stopped by the operator", result.Runs[0].Status)
-	}
-	if hold := lastEvent(log.snapshot(), "run.await"); hold == nil || hold.Payload["continuity_hold"] != true || findEvent(log.snapshot(), "run.finished") != nil {
-		t.Fatalf("final wait = %#v, want the continuity hold instead of a terminal failure", hold)
+	if result.Runs[0].Status != "failure" {
+		t.Fatalf("status = %q, want failure after the fresh retry has no merged PR", result.Runs[0].Status)
 	}
 	if got := sandbox.attemptCount(); got != 32 {
 		t.Fatalf("agent attempts = %d, want initial plus 30 probes and one fresh ordinary retry", got)
 	}
-	if len(waits) < 30 {
-		t.Fatalf("await waits = %d, want 30 quota polls before the continuity hold", len(waits))
+	if len(waits) != 30 {
+		t.Fatalf("await waits = %d, want 30", len(waits))
 	}
-	for _, wait := range waits[:30] {
+	for _, wait := range waits {
 		if wait != usageLimitPollInterval {
 			t.Fatalf("await waits = %v, want every wait to be 10m", waits)
 		}
@@ -140,8 +137,8 @@ func TestUsageLimitAwaitRetriesAfterFiveHours(t *testing.T) {
 	if strings.Contains(commands[len(commands)-1], "--session") {
 		t.Fatalf("commands = %q, want the ordinary retry to start a fresh session", commands)
 	}
-	if got := countEventsByType(log.snapshot(), "run.await"); got != 31 {
-		t.Fatalf("run.await events = %d, want 30 quota waits and the continuity hold", got)
+	if got := countEventsByType(log.snapshot(), "run.await"); got != 30 {
+		t.Fatalf("run.await events = %d, want 30", got)
 	}
 	if got := countEventsByType(log.snapshot(), "run.retry"); got != 1 {
 		t.Fatalf("run.retry events = %d, want the historical ordinary retry at quota expiry", got)
@@ -270,11 +267,6 @@ func runUsageLimitBatchCase(t *testing.T, failures, idleTimeout, retries int, fi
 		awaitWait: func(_ context.Context, delay time.Duration) error {
 			waits = append(waits, delay)
 			clockNow = clockNow.Add(delay)
-			if len(waits) > 40 {
-				// The operator stops a Run that keeps waiting after quota
-				// recovery (the AFK-continuity hold).
-				return context.Canceled
-			}
 			return nil
 		},
 	}

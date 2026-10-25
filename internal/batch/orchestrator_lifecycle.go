@@ -485,7 +485,20 @@ func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branc
 	return s.handleLifecycleDecisionForAttempt(ctx, workDir, branch, logPath, runID, hostPathsReady, "success")
 }
 
+// handleLifecycleDecisionForAttempt selects the lifecycle action for an
+// attempt and applies the AFK-continuity rules to it once, so every adapter
+// consumes the same final action.
 func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool, attemptStatus string) (string, map[string]any, bool) {
+	status, extras, handled := s.decideLifecycleForAttempt(ctx, workDir, branch, logPath, runID, hostPathsReady, attemptStatus)
+	if !handled || ctx.Err() != nil {
+		return status, extras, handled
+	}
+	status, extras = s.continuityDecision(ctx, branch, runID, status, extras)
+	return status, extras, true
+}
+
+func (s *runSession) decideLifecycleForAttempt(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool, attemptStatus string) (string, map[string]any, bool) {
+	s.decisionPRHead = ""
 	if s.deps.githubClient == nil {
 		return "", nil, false
 	}
@@ -729,6 +742,7 @@ func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, work
 			evidence.payload["review_request"] = resolved
 		}
 	}
+	s.decisionPRHead = strings.TrimSpace(pr.HeadRefOid)
 	decision = decideImplementationPRLifecycle(implementationPRFacts{
 		pr:               pr,
 		headSHA:          headSHA,
@@ -952,7 +966,17 @@ func (s *runSession) observeLifecycle(ctx context.Context, workDir, branch, logP
 			resume["gate"] = gate
 			resume["reason"] = lifecycleDeadlineReason(gate)
 			resume["next_action"] = lifecycleDeadlineNextAction(gate)
-			return "resume", resume, true
+			// The expired deadline selects remediation through the same
+			// continuity decision as every other resume.
+			status, next := s.continuityDecision(ctx, branch, runID, "resume", resume)
+			if status != "await" {
+				return status, next, true
+			}
+			// A stalled or exhausted remediation keeps observing the gate
+			// without the expired deadline.
+			extras = next
+			delete(extras, "review_request")
+			delete(extras, "ci_wait")
 		}
 		interval := plan[len(plan)-1]
 		if index < len(plan) {

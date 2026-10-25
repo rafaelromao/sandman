@@ -144,21 +144,99 @@ func stalledResumes(payload map[string]any) []string {
 }
 
 // latestStalledResumes folds the Run's events and returns the stalled
-// signatures of its current wait. Read failures return none: the worst case
-// is one more bounded relaunch, never a terminal outcome.
-func latestStalledResumes(log events.EventLog, runID string) []string {
+// signatures of its current wait. A read failure is returned so the caller
+// fails closed: it keeps waiting rather than relaunching on evidence that may
+// already have stalled.
+func latestStalledResumes(log events.EventLog, runID string) ([]string, error) {
 	if log == nil || strings.TrimSpace(runID) == "" {
-		return nil
+		return nil, nil
 	}
 	states, err := events.ReadRunStates(log)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	state, ok := states[runID]
 	if !ok || state.AwaitEvent == nil {
-		return nil
+		return nil, nil
 	}
-	return stalledResumes(state.AwaitEvent.Payload)
+	return stalledResumes(state.AwaitEvent.Payload), nil
+}
+
+// continuityDecision applies the AFK-continuity rules to one lifecycle
+// decision. It is the only place that turns a selected resume into a wait or
+// a terminal remediation failure; every adapter (the attempt loop, entry
+// continuation and runtime observation) consumes its result unchanged.
+//
+//   - A resume whose signature a stalled wait already recorded keeps waiting:
+//     relaunching on unchanged evidence cannot make progress, also after a
+//     restart, because the signatures are read through the event fold.
+//   - In-session, a feedback relaunch that left the signature unchanged, or an
+//     exhausted relaunch allowance, waits; formal CHANGES_REQUESTED left
+//     unrepaired fails instead.
+//   - On the final owned-work attempt, an idle gate with no delegated review
+//     command and no formal requested changes waits for a reviewer.
+func (s *runSession) continuityDecision(ctx context.Context, branch, runID, status string, extras map[string]any) (string, map[string]any) {
+	if status != "resume" && status != "await" {
+		return status, extras
+	}
+	stalled, readErr := latestStalledResumes(s.deps.eventLog, runID)
+	if status == "await" {
+		if len(stalled) == 0 {
+			return status, extras
+		}
+		// Keep the stalled signatures with every later wait of this Run.
+		held := cloneLifecycleExtras(extras)
+		held[stalledResumesKey] = appendStalledResume(stalled[:len(stalled)-1], stalled[len(stalled)-1])
+		return status, held
+	}
+	signatureExtras := extras
+	if isImplementorOwnedGateFailure(extras) {
+		signatureExtras = cloneLifecycleExtras(extras)
+		signatureExtras["gate"] = gateOwnedWorkRequired
+	}
+	// The decision's own pull-request observation supplies the live head, so
+	// a relaunch that pushed a new head counts as progress.
+	signature := resumeSignature(signatureExtras, s.decisionPRHead)
+	s.pendingResumeSignature = signature
+	if isImplementorOwnedGateFailure(extras) {
+		if containsSignature(stalled, signature) {
+			return "await", s.ownedWorkHold(extras, signature, stalled)
+		}
+		if s.finalOwnedWorkAttempt && strings.TrimSpace(s.renderCfg.ReviewCommand) == "" && idleGateAwaitsReview(extras) {
+			// The configured attempts could not advance an idle gate on an
+			// open, current-head pull request and no delegated review applies:
+			// the gate waits for a reviewer, as rc2 did.
+			return "await", s.ownedWorkHold(extras, signature, stalled)
+		}
+		return status, extras
+	}
+	if readErr != nil || containsSignature(stalled, signature) {
+		return "await", stalledAwaitExtras(extras, signature, stalled)
+	}
+	gate, _ := extras["gate"].(string)
+	repeated := signature == s.lastResumeSignature && stallsOnRepeat(extras)
+	if !isResumeGate(gate) || (!repeated && s.resumeCount < s.resumeCapFor()) {
+		return status, extras
+	}
+	if formalChangesRequested(extras) {
+		// Formal CHANGES_REQUESTED the implementor cannot address within its
+		// allowance stays terminal.
+		return "failure", remediationBudgetFailureEvidence(gate, extras,
+			"inspect the current pull-request remediation evidence and continue in a fresh session")
+	}
+	// A stalled or exhausted relaunch on review, CI, request or merge
+	// evidence waits for external recovery, as rc2 did (issue #2916).
+	return "await", stalledAwaitExtras(extras, signature, stalled)
+}
+
+// ownedWorkHold is the continuity hold for owned work nothing can advance. It
+// remembers the owned-work signature so observation does not relaunch the
+// implementor on the same evidence.
+func (s *runSession) ownedWorkHold(extras map[string]any, signature string, stalled []string) map[string]any {
+	external, _ := extras["external_gate"].(string)
+	hold := continuityHold(extras, external)
+	hold[stalledResumesKey] = appendStalledResume(stalled, signature)
+	return hold
 }
 
 func containsSignature(list []string, signature string) bool {
@@ -168,19 +246,6 @@ func containsSignature(list []string, signature string) bool {
 		}
 	}
 	return false
-}
-
-// liveHeadForSignature reads the pull request's current head so a relaunch
-// that pushed a new head counts as progress.
-func (s *runSession) liveHeadForSignature(ctx context.Context, branch string) string {
-	if s.deps.githubClient == nil {
-		return ""
-	}
-	pr, err := s.deps.githubClient.FindPRByBranch(ctx, branch)
-	if err != nil || pr == nil {
-		return ""
-	}
-	return pr.HeadRefOid
 }
 
 // Lifecycle failure reasons, classified for the AFK-continuity guard. A

@@ -3241,6 +3241,15 @@ type runSession struct {
 	// lifecycle relaunch (or entry resume). A decision that repeats it after
 	// the relaunch is a stall.
 	lastResumeSignature string
+	// pendingResumeSignature is the signature of the latest resume decision;
+	// it becomes lastResumeSignature when the session relaunches on it.
+	pendingResumeSignature string
+	// decisionPRHead is the pull-request head the latest lifecycle decision
+	// observed; it identifies progress in a resume signature.
+	decisionPRHead string
+	// finalOwnedWorkAttempt reports that the current attempt is the last
+	// ordinary attempt, so owned work nothing can advance may wait.
+	finalOwnedWorkAttempt bool
 
 	// resumeCount counts in-session agent relaunches triggered by a
 	// resume-worthy PR gate within this session (bounded by
@@ -4224,6 +4233,7 @@ loop:
 			s.lifecycleAlreadyResolved = alreadyResolved
 			if s.isIssueDriven() && ctx.Err() == nil {
 				hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
+				s.finalOwnedWorkAttempt = attempt+1 >= attempts
 				if gateStatus, extras, handled := s.handleLifecycleDecisionForAttempt(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady, result.Status); handled {
 					if stop := s.operatorStopFor(result); stop != nil && gateStatus != "success" && gateStatus != "aborted" {
 						// The agent could not act, and a resume, await
@@ -4243,24 +4253,7 @@ loop:
 						// still take precedence below.
 						break relaunch
 					}
-					if isImplementorOwnedGateFailure(extras) && attempt+1 >= attempts && idleGateAwaitsReview(extras) {
-						// The configured attempts could not advance an idle
-						// gate on an open, current-head pull request. Nothing
-						// the implementor owns is left: the gate waits for a
-						// reviewer, as rc2 did (issue #2916).
-						hold := cloneLifecycleExtras(extras)
-						external, _ := hold["external_gate"].(string)
-						hold = continuityHold(hold, external)
-						// Remember the owned-work resume so observation does
-						// not relaunch the implementor on the same evidence.
-						owned := cloneLifecycleExtras(extras)
-						owned["gate"] = gateOwnedWorkRequired
-						hold[stalledResumesKey] = appendStalledResume(latestStalledResumes(s.deps.eventLog, runID), resumeSignature(owned, s.liveHeadForSignature(ctx, branch)))
-						s.emitAwait(ctx, runID, result, hold)
-						result.Status = "await"
-						break loop
-					}
-					if isImplementorOwnedGateFailure(extras) {
+					if gateStatus != "await" && isImplementorOwnedGateFailure(extras) {
 						// A clean but incomplete handoff is owned work, not an
 						// external await or a separate lifecycle-resume budget.
 						// Use the configured ordinary retry budget to perform it.
@@ -4290,36 +4283,21 @@ loop:
 						gateStatus, extras, _ = s.observeLifecycle(ctx, wt.WorkDir(), branch, logPath, runID, result, extras, hostPathsReady)
 					}
 					if gateStatus == "resume" {
-						signature := resumeSignature(extras, s.liveHeadForSignature(ctx, branch))
-						// A relaunch that left the signature unchanged produced
-						// no new head, request or response: relaunching again
-						// on the same evidence cannot make progress.
-						if signature != s.lastResumeSignature || !stallsOnRepeat(extras) {
-							if resumePrompt, resume := s.resumePromptFromGate(ctx, wt, branch, runID, extras); resume {
-								s.lastResumeSignature = signature
-								s.reuseSession = true
-								s.previousRunIDs = map[int]string{s.issueNumber: runID}
-								s.previousRunBatchIDs = map[int]string{s.issueNumber: s.batchID}
-								attemptRenderCfg.TaskPrompt = resumePrompt
-								continue relaunch
-							}
+						// The continuity decision already turned a stalled or
+						// exhausted relaunch into a wait or a terminal
+						// failure; a resume here is a relaunch to perform.
+						if resumePrompt, resume := s.resumePromptFromGate(ctx, wt, branch, runID, extras); resume {
+							s.lastResumeSignature = s.pendingResumeSignature
+							s.reuseSession = true
+							s.previousRunIDs = map[int]string{s.issueNumber: runID}
+							s.previousRunBatchIDs = map[int]string{s.issueNumber: s.batchID}
+							attemptRenderCfg.TaskPrompt = resumePrompt
+							continue relaunch
 						}
 						gate, _ := extras["gate"].(string)
-						if formalChangesRequested(extras) || !isResumeGate(gate) || ctx.Err() != nil {
-							// Formal CHANGES_REQUESTED the implementor cannot
-							// address within its allowance stays terminal.
-							gateStatus = "failure"
-							extras = remediationBudgetFailureEvidence(gate, extras,
-								"inspect the current pull-request remediation evidence and continue in a fresh session")
-						} else {
-							// A stalled or exhausted relaunch on review, CI or
-							// request evidence waits for external recovery,
-							// as rc2 did (issue #2916).
-							extras = stalledAwaitExtras(extras, signature, latestStalledResumes(s.deps.eventLog, runID))
-							s.emitAwait(ctx, runID, result, extras)
-							result.Status = "await"
-							break loop
-						}
+						gateStatus = "failure"
+						extras = remediationBudgetFailureEvidence(gate, extras,
+							"inspect the current pull-request remediation evidence and continue in a fresh session")
 					}
 					s.lifecycleTerminal = gateStatus == "success" || gateStatus == "failure" || gateStatus == "aborted"
 					result.Status = gateStatus

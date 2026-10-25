@@ -53,7 +53,7 @@ permanent failure it cannot handle or wait for external recovery, and only
 where rc2 would not have resolved it. An open current-head PR whose only
 missing evidence is review, CI or an unobserved request waits or merges; it
 never terminal-fails. Exhausted relaunch allowances on review, CI, request or
-merge work, expired requests and idle gates after owned work wait
+merge work, expired requests and (without a review command) idle gates after owned work wait
 (`RESUME_STALLED`, `continuity_hold`); only formal CHANGES_REQUESTED left
 unrepaired, a closed PR, abort, unverifiable completion, no delivered request
 and other classified permanent reasons stay terminal. A feedback relaunch that

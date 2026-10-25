@@ -389,7 +389,7 @@ func TestEntryReevaluation_ModeContinueTopLevelApprovalResumesAgentWithEvidence(
 // In-session resume: after the agent completes cleanly and the gate is
 // ready-to-merge, the run relaunches the agent in the same attempt (no
 // run.retry) with the merge evidence attached, bounded by the resume cap;
-// if the agent leaves merge work incomplete, the run fails instead of waiting.
+// if the agent leaves merge work incomplete, the run waits as rc2 did.
 func TestRunSingle_ReadyToMergeResumesWithinSameAttempt(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
@@ -799,16 +799,16 @@ func TestRunSingle_CIFailurePrecedesActionableEvidenceAndExhaustsBudget(t *testi
 	if got := countEventsByType(logs, "run.await"); got != 1 {
 		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
 	}
-	finished := lastEvent(logs, "run.await")
-	if finished == nil || finished.Payload["reason"] != resumeStalledReason || findEvent(logs, "run.finished") != nil {
-		t.Fatalf("await event = %#v, want the stalled rc2 wait instead of a remediation-budget failure", finished)
+	waiting := lastEvent(logs, "run.await")
+	if waiting == nil || waiting.Payload["reason"] != resumeStalledReason || findEvent(logs, "run.finished") != nil {
+		t.Fatalf("await event = %#v, want the stalled rc2 wait instead of a remediation-budget failure", waiting)
 	}
 }
 
 // Retained concrete informal feedback resumes a continuation session at entry
 // (gate actionable-feedback, REVIEW_INFORMAL_FEEDBACK): after the entry launch
-// and one in-session remediation relaunch, exhausted feedback work fails
-// instead of becoming another wait.
+// and one in-session remediation relaunch, exhausted feedback work waits
+// (RESUME_STALLED) instead of failing.
 func TestEntryReevaluation_ModeContinueInformalFeedbackResumesAgentWithEvidence(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
@@ -1080,11 +1080,8 @@ func TestRunSingle_InformalFeedbackResumesWithinSameAttempt(t *testing.T) {
 // A stale request cannot authorize another wait after implementor-owned
 // feedback work advances the pull-request head. The first current-head CI
 // await is valid; after the head drifts without a newly confirmed review
-// request, the continuation spends its owned-work attempts. Nothing the
-// implementor owns is left on the open, current-head pull request, so the Run
-// waits for a reviewer as rc2 did (issue #2916) instead of failing; the wait
-// is the AFK-continuity hold, not authority borrowed from the stale request.
-func TestRunSingle_StaleReviewRequestWaitsAfterHeadAdvance(t *testing.T) {
+// request, the continuation fails with evidence instead of parking again.
+func TestRunSingle_StaleReviewRequestFailsAfterHeadAdvance(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 
@@ -1183,8 +1180,8 @@ func TestRunSingle_StaleReviewRequestWaitsAfterHeadAdvance(t *testing.T) {
 	if !started {
 		t.Fatalf("session 2 not started: %q", result.Status)
 	}
-	if result.Status != "await" || len(resultFactory.created) != 4 {
-		t.Fatalf("session 2 = (%q, %d launches), want bounded owned-work recovery, then the rc2 wait, after head drift", result.Status, len(resultFactory.created))
+	if result.Status != "failure" || len(resultFactory.created) != 4 {
+		t.Fatalf("session 2 = (%q, %d launches), want bounded owned-work recovery after head drift", result.Status, len(resultFactory.created))
 	}
 
 	logs, err := spyLog.Read()
@@ -1210,14 +1207,15 @@ func TestRunSingle_StaleReviewRequestWaitsAfterHeadAdvance(t *testing.T) {
 			awaits = append(awaits, e)
 		}
 	}
-	if len(awaits) != 2 || awaits[0].Payload["gate"] != "pending" {
-		t.Fatalf("run.await events = %#v, want the initial current-head CI wait and the continuity hold", awaits)
+	if len(awaits) != 1 || awaits[0].Payload["gate"] != "pending" {
+		t.Fatalf("run.await events = %#v, want only the initial active current-head CI wait", awaits)
 	}
-	if hold := awaits[1].Payload; hold["continuity_hold"] != true || hold["reason"] != idleGateReason {
-		t.Fatalf("final wait = %#v, want the structured idle-gate continuity hold", hold)
+	finished := findEvent(logs, "run.finished")
+	if finished == nil {
+		t.Fatalf("run.finished event not found: %v", logs)
 	}
-	if finished := findEvent(logs, "run.finished"); finished != nil {
-		t.Fatalf("run.finished = %#v, want a wait instead of a terminal failure", finished)
+	if status, _ := finished.Payload["status"].(string); status != "failure" || finished.Payload["reason"] != idleGateReason {
+		t.Fatalf("run.finished = %#v, want structured idle-gate failure", finished)
 	}
 	if countEventsByType(logs, "run.started") != 1 || countEventsByType(logs, "run.continued") != 1 {
 		t.Fatalf("run.started = %d, run.continued = %d, want 1 and 1", countEventsByType(logs, "run.started"), countEventsByType(logs, "run.continued"))
@@ -1229,7 +1227,7 @@ func TestRunSingle_StaleReviewRequestWaitsAfterHeadAdvance(t *testing.T) {
 			seq = append(seq, e.Type)
 		}
 	}
-	wantSeq := []string{"run.started", "run.await", "run.continued", "run.resumed", "run.await"}
+	wantSeq := []string{"run.started", "run.await", "run.continued", "run.resumed"}
 	if len(seq) != len(wantSeq) {
 		t.Fatalf("lifecycle sequence = %v, want %v", seq, wantSeq)
 	}

@@ -1087,7 +1087,7 @@ func TestCheckPRMergedAtHead(t *testing.T) {
 	}
 }
 
-func TestRunSingle_RetryLifecycleTerminalizesAfterRetry(t *testing.T) {
+func TestRunSingle_RetryLifecycleWaitsAfterRetry(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -2036,7 +2036,7 @@ func TestRunSingle_PreRetryGuardShortCircuitsOnMergedPR(t *testing.T) {
 	}
 }
 
-func TestRunSingle_RetryMissingClosingReferenceFailsVerification(t *testing.T) {
+func TestRunSingle_RetryWithoutVerifiedMergeWaits(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
