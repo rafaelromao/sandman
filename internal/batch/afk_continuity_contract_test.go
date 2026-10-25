@@ -675,7 +675,7 @@ func TestAFKContinuityContract_RealIncidentsMergeOrWait(t *testing.T) {
 				}
 			}
 			for _, event := range outcome.events {
-				if event.RunID != continuityPriorRunID && event.Type == "run.finished" && event.Payload["reason"] == "REVIEW_REQUEST_REQUIRED" &&!strings.HasPrefix(sc.want, "failed:REVIEW_REQUEST_REQUIRED") {
+				if event.RunID != continuityPriorRunID && event.Type == "run.finished" && event.Payload["reason"] == "REVIEW_REQUEST_REQUIRED" && !strings.HasPrefix(sc.want, "failed:REVIEW_REQUEST_REQUIRED") {
 					t.Fatalf("a delivered request was reported as missing\nevents: %s", continuityEventSummary(outcome.events))
 				}
 			}
