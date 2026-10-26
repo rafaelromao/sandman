@@ -399,11 +399,13 @@ func (r *composedReviewRunner) Calls() int {
 // composedImplementation is the implementation agent fake behind the
 // RunnableFactory seam. It acts as the implementor on the shared GitHub.
 type composedImplementation struct {
-	gh       *composedGitHub
-	mu       sync.Mutex
-	launches map[int]int
-	order    []string
-	tasks    map[int][]string
+	gh                      *composedGitHub
+	afterFirstReviewRequest func(*composedGitHub, github.PRComment)
+	finishAfterFeedback     bool
+	mu                      sync.Mutex
+	launches                map[int]int
+	order                   []string
+	tasks                   map[int][]string
 }
 
 func (f *composedImplementation) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) batch.Runnable {
@@ -456,15 +458,26 @@ func (r *composedRunnable) Run(_ context.Context, renderer prompt.IssueRenderer,
 			MergeStateStatus: "CLEAN",
 		}
 		gh.mu.Unlock()
-		gh.postComment(composedParentPR, composedImplementor, composedReviewCommand)
+		trigger := gh.postComment(composedParentPR, composedImplementor, composedReviewCommand)
+		if f.afterFirstReviewRequest != nil {
+			f.afterFirstReviewRequest(gh, trigger)
+		}
 	case r.issue.Number == composedParentIssue && r.attempt == 2:
-		// Address the request-scoped feedback: push a new head, then renew.
-		gh.mutatePR(composedParentPR, func(pr *github.PR) { pr.HeadRefOid = "head-2" })
-		// Negative control: an approval-shaped response that arrives after
-		// head-2 was pushed but belongs to the stale (head-1) request window.
-		// It must never authorize merge work for the renewed request.
-		gh.postComment(composedParentPR, composedDaemonLogin, composedStaleApproval)
-		gh.postComment(composedParentPR, composedImplementor, composedReviewCommand)
+		if f.finishAfterFeedback {
+			gh.mutatePR(composedParentPR, func(pr *github.PR) {
+				pr.State = "merged"
+				pr.Merged = true
+			})
+			gh.closeIssue(composedParentIssue)
+		} else {
+			// Address the request-scoped feedback: push a new head, then renew.
+			gh.mutatePR(composedParentPR, func(pr *github.PR) { pr.HeadRefOid = "head-2" })
+			// Negative control: an approval-shaped response that arrives after
+			// head-2 was pushed but belongs to the stale (head-1) request window.
+			// It must never authorize merge work for the renewed request.
+			gh.postComment(composedParentPR, composedDaemonLogin, composedStaleApproval)
+			gh.postComment(composedParentPR, composedImplementor, composedReviewCommand)
+		}
 	case r.issue.Number == composedParentIssue && r.attempt == 3:
 		// Approved with green checks: perform the merge work.
 		gh.mutatePR(composedParentPR, func(pr *github.PR) { pr.State = "merged"; pr.Merged = true })
@@ -1037,5 +1050,143 @@ func TestComposedManagedReviewFlow_DaemonPublicationResumeApprovalMergeAndDepend
 	}
 	if order[len(order)-1] != fmt.Sprintf("%d#1", composedDependentIssue) {
 		t.Fatalf("launch order = %v, want dependent last", order)
+	}
+}
+
+func TestComposedManagedReviewFlow_TriggerHistoryRequestsRemainLifecycleConsumable(t *testing.T) {
+	cases := []struct {
+		name    string
+		history func(*composedGitHub, github.PRComment)
+	}{
+		{
+			name: "same-head re-request after informal approval",
+			history: func(gh *composedGitHub, _ github.PRComment) {
+				gh.postComment(composedParentPR, "informal-reviewer", "I approve this same head.")
+				gh.postComment(composedParentPR, composedImplementor, composedReviewCommand)
+			},
+		},
+		{
+			name: "backlogged request from an earlier attempt",
+		},
+		{
+			name: "earlier answer belongs to another head",
+			history: func(gh *composedGitHub, trigger github.PRComment) {
+				stale := composedStaleApproval + "\n" + publicationMarker(trigger, "stale-head")
+				gh.postComment(composedParentPR, composedDaemonLogin, stale)
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := testenv.MkdirShort(t, "sm-composed-history-")
+			t.Chdir(root)
+			batch.ComposedTestInitGitRepo(t, root)
+			sandmanDir := filepath.Join(root, ".sandman")
+			gh := newComposedGitHub()
+			impl := &composedImplementation{gh: gh, afterFirstReviewRequest: tc.history, finishAfterFeedback: true}
+			reviewer := &composedReviewRunner{gh: gh}
+			poster := &composedPoster{gh: gh, baseDir: sandmanDir}
+			log := &events.JSONLLogger{Path: filepath.Join(sandmanDir, "events.jsonl")}
+			layout := paths.NewLayout(&config.Config{WorktreeDir: ".sandman/worktrees"}, root)
+			batchCfg := &config.Config{
+				Agent:          "test-agent",
+				Sandbox:        "worktree",
+				WorktreeDir:    ".sandman/worktrees",
+				Git:            config.GitConfig{BaseBranch: "main"},
+				AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}},
+			}
+			orchestrator := func() *batch.Orchestrator {
+				return batch.NewOrchestrator(gh, &prompt.Engine{}, batch.ComposedTestConfigStore(batchCfg), log,
+					batch.WithErrorLog(io.Discard),
+					batch.WithSandboxFactory(batch.ComposedTestSandboxFactory{}),
+					batch.WithRunnableFactory(impl),
+					batch.ComposedTestRunSessionOpts(func(workDir string) (string, error) {
+						if head := gh.headFor(filepath.Base(workDir)); head != "" {
+							return head, nil
+						}
+						return "local-head", nil
+					}, func(ctx context.Context, _ time.Duration) error {
+						select {
+						case <-ctx.Done():
+							return ctx.Err()
+						case <-time.After(10 * time.Millisecond):
+							return nil
+						}
+					}))
+			}
+
+			first, err := orchestrator().RunBatch(context.Background(), batch.Request{
+				Issues:       []int{composedParentIssue},
+				RunTS:        "261026120000",
+				RunShortID:   "history",
+				Parallel:     1,
+				Branches:     map[int]string{composedParentIssue: composedParentBranch},
+				PromptConfig: prompt.RenderConfig{ReviewCommand: composedReviewCommand},
+			})
+			if err != nil {
+				t.Fatalf("initial batch: %v", err)
+			}
+			if got := composedRunStatus(first, composedParentIssue); got != "await" {
+				t.Fatalf("initial status = %q, want await", got)
+			}
+			comments := gh.commentsSnapshot(composedParentPR)
+			var selected github.PRComment
+			for _, comment := range comments {
+				if _, ok := review.ParseTrigger(comment.Body); ok && comment.AuthorLogin == composedImplementor {
+					if selected.ID == "" || comment.CreatedAt.After(selected.CreatedAt) {
+						selected = comment
+					}
+				}
+			}
+			if selected.ID == "" {
+				t.Fatal("implementation attempt did not leave a review request")
+			}
+			registrationPath := paths.NewLayout(nil, filepath.Join(root, ".sandman", "worktrees", composedParentBranch)).PRReviewRegistrationPath(composedParentPR)
+			registration, err := os.ReadFile(registrationPath)
+			if err != nil || !strings.Contains(string(registration), selected.ID) {
+				t.Fatalf("runtime did not register selected trigger %s: registration=%s err=%v", selected.ID, registration, err)
+			}
+
+			daemon := startComposedDaemon(t, sandmanDir, gh, reviewer, poster)
+			daemon.until(t, "selected request publication acknowledged", func() bool {
+				return daemon.d.IsTerminalSeen(composedParentPR, daemonTriggerKey(selected)) && reviewStateStatus(t, sandmanDir, selected) == "success"
+			})
+			if got := publicationsFor(gh.commentsSnapshot(composedParentPR), selected, "head-1"); got != 1 {
+				t.Fatalf("publication count for selected request = %d, want 1", got)
+			}
+			daemon.stop(t)
+
+			// The lifecycle must consume the selected report, not time out on a
+			// request the daemon silently filtered from the comment history.
+			raw, err := log.Read()
+			if err != nil {
+				t.Fatal(err)
+			}
+			continuation := batch.Request{
+				RunTS:        "261026120001",
+				RunShortID:   "history-cont",
+				Parallel:     1,
+				PromptConfig: prompt.RenderConfig{ReviewCommand: composedReviewCommand},
+			}
+			if err := batch.ApplyReadyContinuations(&continuation, batch.FindReadyContinuations(raw, layout), layout, 1800); err != nil {
+				t.Fatalf("apply continuation: %v", err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			continued, err := orchestrator().RunBatch(ctx, continuation)
+			if err != nil {
+				registration, _ := os.ReadFile(registrationPath)
+				t.Fatalf("review continuation: %v; launches=%d publications=%q registration=%s comments=%q", err, impl.launchCount(composedParentIssue), poster.posts(), registration, gh.commentsSnapshot(composedParentPR))
+			}
+			if composedRunStatus(continued, composedParentIssue) != "success" || impl.launchCount(composedParentIssue) != 2 {
+				t.Fatalf("continuation status=%q launches=%d, want feedback resume and verified merge", composedRunStatus(continued, composedParentIssue), impl.launchCount(composedParentIssue))
+			}
+			impl.mu.Lock()
+			resumedTask := impl.tasks[composedParentIssue][1]
+			impl.mu.Unlock()
+			if !strings.Contains(resumedTask, "REVIEW_INFORMAL_FEEDBACK") || !strings.Contains(resumedTask, composedFeedbackAnchor) {
+				t.Fatalf("continued task did not consume the selected review report:\n%s", resumedTask)
+			}
+		})
 	}
 }

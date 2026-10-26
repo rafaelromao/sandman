@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -1626,42 +1625,6 @@ func reviewTriggerKey(comment github.PRComment) string {
 	return reviewpub.TriggerKey(comment.ID, comment.UpdatedAt)
 }
 
-func reviewTriggerTimestamp(comment github.PRComment) time.Time {
-	if !comment.UpdatedAt.IsZero() {
-		return comment.UpdatedAt
-	}
-	return comment.CreatedAt
-}
-
-func hasLaterDaemonReviewResponse(trigger github.PRComment, comments []github.PRComment, authenticatedLogin, head string) bool {
-	if strings.TrimSpace(authenticatedLogin) == "" {
-		return false
-	}
-	triggeredAt := reviewTriggerTimestamp(trigger)
-	for _, comment := range comments {
-		if !comment.CreatedAt.After(triggeredAt) || !strings.EqualFold(strings.TrimSpace(comment.AuthorLogin), strings.TrimSpace(authenticatedLogin)) {
-			continue
-		}
-		if hasMarkdownHeading(comment.Body, "Summary") && hasMarkdownHeading(comment.Body, "Decision") {
-			if !publicationIdentified(comment.Body, reviewTriggerKey(trigger), head) {
-				continue
-			}
-			return true
-		}
-	}
-	return false
-}
-
-func hasMarkdownHeading(body, heading string) bool {
-	want := "## " + heading
-	for _, line := range strings.Split(body, "\n") {
-		if strings.EqualFold(strings.TrimSpace(line), want) {
-			return true
-		}
-	}
-	return false
-}
-
 // processPR scans one PR's comments and launches a review agent for the
 // newest unseen /sandman review trigger. The per-PR slot (issue #1481
 // issue #1481 — see acquirePRSlot / releasePRSlot) preserves the trigger
@@ -1691,212 +1654,89 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) (operationErr erro
 		return nil
 	}
 
-	sort.Slice(comments, func(i, j int) bool {
-		return comments[i].CreatedAt.Before(comments[j].CreatedAt)
-	})
-
-	// priorReviewExists is computed from the raw comment list (before
-	// any trigger / bot-shaped filter) and feeds the {{PRIOR_REVIEW_EXISTS}}
-	// substitution in the review prompt (issue #1892). The flag tells
-	// the review agent whether to render the `## Previous review
-	// progress` section at all. IsReviewRequest excludes implementor
-	// triggers (`/sandman review …`, `@bot /sandman review …`) so they
-	// are NOT counted as prior reviews. Bot self-posts (filtered out of
-	// the trigger list by LooksLikeBotReviewBody below) ARE counted as
-	// prior reviews — they are reviews of the PR, just not fresh
-	// triggers. The two filters answer different questions and coexist.
-	priorReviewExists := false
-	var priorReviewEntries []string
-	for _, c := range comments {
-		if !IsReviewRequest(c.Body) {
-			priorReviewExists = true
-			priorReviewEntries = append(priorReviewEntries, c.Body)
-		}
-	}
 	// Conversation comments do not include GitHub's formal reviews or inline
 	// review comments. Supply those sources through optional client capabilities
 	// so daemon reviewers can account for the complete authoritative history
 	// without making pull-request API calls from the review worktree.
+	var formalReviews []github.PRReview
 	if lister, ok := d.GitHub.(github.PRReviewLister); ok {
-		reviews, listErr := lister.ListPRReviews(ctx, prNumber)
+		var listErr error
+		formalReviews, listErr = lister.ListPRReviews(ctx, prNumber)
 		if listErr != nil {
 			return fmt.Errorf("list formal reviews for PR #%d: %w", prNumber, listErr)
-		} else {
-			for _, review := range reviews {
-				priorReviewExists = true
-				priorReviewEntries = append(priorReviewEntries, fmt.Sprintf("### Formal review (%s)\n\n%s", review.State, review.Body))
-			}
 		}
 	}
+	var inlineReviews []github.PRReviewComment
 	if lister, ok := d.GitHub.(github.PRReviewCommentLister); ok {
-		inline, listErr := lister.ListPRReviewComments(ctx, prNumber)
+		var listErr error
+		inlineReviews, listErr = lister.ListPRReviewComments(ctx, prNumber)
 		if listErr != nil {
 			return fmt.Errorf("list inline reviews for PR #%d: %w", prNumber, listErr)
-		} else {
-			for _, comment := range inline {
-				priorReviewExists = true
-				location := comment.Path
-				if comment.Line > 0 {
-					location = fmt.Sprintf("%s:%d", location, comment.Line)
+		}
+	}
+
+	selection, err := selectReviewTriggers(ctx, triggerSelectionInput{
+		Comments:             comments,
+		FormalReviews:        formalReviews,
+		InlineReviewComments: inlineReviews,
+		AuthenticatedLogin:   d.authenticatedLogin,
+		Now:                  d.now(),
+		ReconcileRevision: func(_ context.Context, comment github.PRComment, key string) error {
+			return d.reconcileCommentRevision(prNumber, comment, key)
+		},
+		PendingPublicationSnapshot: func(candidates []reviewTrigger) map[string]bool {
+			d.pendingPostMu.Lock()
+			defer d.pendingPostMu.Unlock()
+			pending := make(map[string]bool, len(candidates))
+			for _, candidate := range candidates {
+				if _, ok := d.pendingPost[prNumber][candidate.key]; ok {
+					pending[candidate.key] = true
 				}
-				priorReviewEntries = append(priorReviewEntries, fmt.Sprintf("### Inline review (%s)\n\n%s", location, comment.Body))
 			}
-		}
-	}
-	priorReviewContext := ""
-	if len(priorReviewEntries) > 0 {
-		priorReviewContext = "## Authoritative prior review entries\n\n" + strings.Join(priorReviewEntries, "\n\n---\n\n")
-	}
-
-	type unseenTrigger struct {
-		comment github.PRComment
-		focus   string
-		key     string
-	}
-	var triggers []unseenTrigger
-	for _, comment := range comments {
-		if d.authenticatedLogin != "" && (strings.TrimSpace(comment.AuthorLogin) == "" || !strings.EqualFold(comment.AuthorLogin, d.authenticatedLogin)) {
-			continue
-		}
-		// Self-post filter (issue #1648, ordering fixed by #1702):
-		// runs BEFORE ParseTrigger so a comment whose body matches
-		// a hash the bot has previously posted is dropped before its
-		// body is parsed for a trigger. This protects the daemon
-		// from re-triggering a review on the bot's own review-body,
-		// which contains the literal `/sandman review` substring in
-		// its `## Previous review progress` section. The
-		// Structural self-defence (issues #1821 / #1848): a body
-		// that carries the `## Previous review progress` heading
-		// AND the literal `/sandman review` trigger substring is
-		// overwhelmingly likely to be a previous bot review
-		// body, not a fresh implementor trigger. Post-#1848 the
-		// `SelfPostStore` is gone and this sniff is the SOLE
-		// gate that drops bot-shaped bodies before
-		// `ParseTrigger`. Daemon-side redaction (issue #1845)
-		// makes this a defence-in-depth measure — the bot body
-		// never contains the trigger substring in the normal
-		// case — but it remains the structural last line of
-		// defence against a previous bot review re-matching the
-		// trigger regex. The asymmetric contract — bot bodies
-		// are flagged, bare implementor triggers are not — is
-		// pinned by `TestLooksLikeBotReviewBody` in
-		// `trigger_test.go`.
-		if LooksLikeBotReviewBody(comment.Body) {
-			d.logf("PR #%d: comment %s structurally matches a bot review body; dropping before ParseTrigger (issue #1821 self-defence)", prNumber, comment.ID)
-			continue
-		}
-		focus, ok := ParseTrigger(comment.Body)
-		if ok {
-			triggers = append(triggers, unseenTrigger{comment: comment, focus: focus, key: reviewTriggerKey(comment)})
-			continue
-		}
-	}
-	if len(triggers) == 0 {
-		return nil
-	}
-	for _, trigger := range triggers {
-		if err := d.reconcileCommentRevision(prNumber, trigger.comment, trigger.key); err != nil {
-			return err
-		}
-	}
-
-	// A durable publication outbox takes precedence over terminal-cache
-	// filtering. Acknowledgement may have succeeded remotely while the
-	// local state write or outbox removal failed; recovery must inspect
-	// that body before any launch decision can discard the trigger. This is
-	// the sole rehydrate gate: tryRehydratePost returns false only after
-	// dropping a stale entry, so the trigger falls through to launch.
-	d.pendingPostMu.Lock()
-	pendingKeys := make(map[string]bool, len(d.pendingPost[prNumber]))
-	for key := range d.pendingPost[prNumber] {
-		pendingKeys[key] = true
-	}
-	d.pendingPostMu.Unlock()
-	if len(pendingKeys) > 0 {
-		remaining := make([]unseenTrigger, 0, len(triggers))
-		for _, trigger := range triggers {
-			if pendingKeys[trigger.key] && d.tryRehydratePost(ctx, prNumber, trigger.comment) {
-				continue
+			return pending
+		},
+		RehydratePublication: func(ctx context.Context, comment github.PRComment) bool {
+			return d.tryRehydratePost(ctx, prNumber, comment)
+		},
+		DurableStateSnapshot: func(candidates []reviewTrigger) triggerDurableState {
+			d.seenCacheMu.RLock()
+			defer d.seenCacheMu.RUnlock()
+			state := triggerDurableState{
+				TerminalSeen:  make(map[string]bool, len(candidates)),
+				NextAttemptAt: make(map[string]time.Time, len(candidates)),
 			}
-			remaining = append(remaining, trigger)
-		}
-		triggers = remaining
-		if len(triggers) == 0 {
-			return nil
+			for _, candidate := range candidates {
+				state.TerminalSeen[candidate.key] = d.seenCache[prNumber][candidate.key]
+				state.NextAttemptAt[candidate.key] = d.NextAttemptAt(prNumber, candidate.key)
+			}
+			return state
+		},
+		CurrentHead: func(ctx context.Context) (string, error) {
+			pr, err := d.GitHub.FetchPR(ctx, prNumber)
+			if err != nil {
+				return "", err
+			}
+			if pr == nil || strings.TrimSpace(pr.HeadRefOid) == "" {
+				return "", errors.New("missing current head")
+			}
+			return pr.HeadRefOid, nil
+		},
+	})
+	if err != nil {
+		return err
+	}
+	for key, disposition := range selection.Dispositions {
+		if disposition == triggerDispositionTerminal {
+			d.logf("comment %s already terminal-seen, skipping", key)
 		}
 	}
-
-	// Cross-run dedup: read terminal-seen membership from the
-	// per-process in-memory cache populated at construction
-	// (issue #1480). ADR-0034 §3 accepts the rename-loser
-	// trade-off; the cache only short-circuits what is already
-	// persisted on disk. The read lock must be held across the
-	// per-trigger lookup because the inner map is shared with
-	// MarkTerminalSeen / Forget on sibling PRs in the same tick
-	// (slice-A PR review, race-detector finding).
-	d.seenCacheMu.RLock()
-	var unprocessed []unseenTrigger
-	for _, t := range triggers {
-		if d.seenCache[prNumber][t.key] {
-			d.logf("comment %s already terminal-seen, skipping", t.key)
-			continue
-		}
-		// Issue #2211: per-trigger retry-budget gate. Skips
-		// triggers whose persisted NextAttemptAt is in the
-		// future, without acquiring a slot and without log spam
-		// — the next tick after the stamp elapses will retry
-		// the launch. The stamp is per-(prNumber, commentID)
-		// so a fresh trigger on the same PR is not blocked by
-		// an older comment's stamp.
-		if stamp := d.NextAttemptAt(prNumber, t.key); !stamp.IsZero() && stamp.After(d.now()) {
-			continue
-		}
-		unprocessed = append(unprocessed, t)
+	for _, trigger := range selection.Answered {
+		d.logf("PR #%d request comment %s has a later daemon review response %s; skipping", prNumber, trigger.Trigger.comment.ID, trigger.Response.ID)
 	}
-	d.seenCacheMu.RUnlock()
-	if len(unprocessed) == 0 {
+	if selection.Launch == nil {
 		return nil
 	}
-
-	// A later daemon response suppresses a fresh launch, but it must not
-	// prevent a matching pending publication from being acknowledged first.
-	// Filter the remaining launch candidates before newest-trigger selection
-	// and superseded marking, preserving the seen-cache and retry gates above.
-	responseHead := ""
-	if d.authenticatedLogin != "" {
-		pr, err := d.GitHub.FetchPR(ctx, prNumber)
-		if err != nil {
-			return fmt.Errorf("observe response head: %w", err)
-		}
-		if pr == nil || strings.TrimSpace(pr.HeadRefOid) == "" {
-			return errors.New("observe response head: missing current head")
-		}
-		responseHead = pr.HeadRefOid
-	}
-	filtered := unprocessed[:0]
-	for _, trigger := range unprocessed {
-		if hasLaterDaemonReviewResponse(trigger.comment, comments, d.authenticatedLogin, responseHead) {
-			d.logf("PR #%d request comment %s has a later daemon review response; skipping", prNumber, trigger.comment.ID)
-			continue
-		}
-		filtered = append(filtered, trigger)
-	}
-	unprocessed = filtered
-	if len(unprocessed) == 0 {
-		return nil
-	}
-
-	// Lazy verify (issue #1482) is gone (issue #1849);
-	// no in-memory pendingSet filter is needed — the seen-cache
-	// short-circuit (driven by MarkSeen on success / failure) is
-	// the sole deduplication gate.
-
-	newest := unprocessed[0]
-	for i := 1; i < len(unprocessed); i++ {
-		if unprocessed[i].comment.CreatedAt.After(newest.comment.CreatedAt) {
-			newest = unprocessed[i]
-		}
-	}
+	newest := *selection.Launch
 
 	comment := newest.comment
 	focus := newest.focus
@@ -1923,7 +1763,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) (operationErr erro
 		return nil
 	}
 	statePath := d.ReviewStatePath(reviewRunFolder)
-	for _, trigger := range unprocessed {
+	for _, trigger := range selection.Eligible {
 		d.trackReviewStatePath(prNumber, trigger.key, statePath)
 	}
 
@@ -1943,10 +1783,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) (operationErr erro
 	// Superseded marking is independent of RunBatch and stays
 	// synchronous so the goroutine and the sync preamble never
 	// touch the ReviewStateStore concurrently.
-	for _, t := range unprocessed {
-		if t.key == newest.key {
-			continue
-		}
+	for _, t := range selection.Superseded {
 		if state.IsSeen(t.key) {
 			continue
 		}
@@ -1973,7 +1810,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) (operationErr erro
 		defer d.inFlight.Done()
 		defer d.releasePRSlot(prNumber)
 
-		launchErr := d.launchReviewRevision(ctx, prNumber, focus, newest.key, comment.ID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs, state, priorReviewExists, priorReviewContext)
+		launchErr := d.launchReviewRevision(ctx, prNumber, focus, newest.key, comment.ID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs, state, selection.PriorReviewExists, selection.PriorReviewContext)
 		if launchErr != nil {
 			var reported *reportedLaunchFailure
 			if !errors.As(launchErr, &reported) {
