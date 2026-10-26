@@ -105,7 +105,7 @@ Emitted at the top of each retry iteration in the orchestrator's `for attempt` l
 | `previous_status` | `result.Status` from the previous iteration, verbatim (`failure` or `aborted` in practice; the spec's `idle_timeout` value is unreachable today because `withHeartbeat` flips non-success to `aborted` before the next attempt's `run.retry` fires) |
 | `branch` | Branch the run is operating on |
 | `last_log_lines` | `["line 1", "line 2", "line 3"]` — Up to 3 trailing lines from the agent log at retry time |
-| `reason` | Closed retry cause: `agent-stalled`, `agent-failed`, `sandbox-timeout`, `kill-timeout`, `manual`, or `context-exhausted` |
+| `reason` | Closed retry cause: `agent-stalled`, `agent-failed`, `sandbox-timeout`, `kill-timeout`, `manual`, `context-exhausted`, or `lifecycle-owned-work` |
 
 #### `run.idle_timeout`
 Emitted when the heartbeat watchdog detects that the agent has produced no log output for the configured `run_idle_timeout` duration. The watchdog then kills the agent process and the run terminates as `aborted`. This event is diagnostic; the terminal status is set by the subsequent `run.aborted` event.

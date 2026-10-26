@@ -2,7 +2,6 @@ package review
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +23,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/reviewlaunch"
+	"github.com/rafaelromao/sandman/internal/reviewpub"
 	"github.com/rafaelromao/sandman/internal/runid"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/rafaelromao/sandman/internal/socketpath"
@@ -162,8 +162,6 @@ type pendingPostEntry struct {
 
 const pendingPublicationMarkerName = "pending-publication.json"
 
-const publicationIdentityPrefix = "<!-- sandman-publication:"
-
 type pendingPublicationMarker struct {
 	Version   int       `json:"version"`
 	PR        int       `json:"pr"`
@@ -173,16 +171,16 @@ type pendingPublicationMarker struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
-// publicationBody keeps the rendered decision unchanged while adding an
+// publicationBody keeps the rendered decision unchanged while adding the
+// machine-readable verdict (when the decision carries a closed-set one) and an
 // invisible request identity. Body equality alone cannot distinguish a new
 // review from an older request with the same decision text during recovery.
 func publicationBody(redacted, triggerKey, head string) string {
-	return strings.TrimRight(redacted, "\n") + "\n\n" + publicationIdentity(triggerKey, head)
+	return reviewpub.Body(redacted, triggerKey, head)
 }
 
 func publicationIdentity(triggerKey, head string) string {
-	identity := sha256.Sum256([]byte(triggerKey + "\x00" + strings.ToLower(head)))
-	return publicationIdentityPrefix + fmt.Sprintf("%x", identity[:]) + " -->\n"
+	return reviewpub.Identity(triggerKey, head)
 }
 
 // Daemon polls the repo for /sandman review comments and launches review
@@ -1625,10 +1623,7 @@ func (d *Daemon) markCommentsRead(pr github.PR) {
 // reviewTriggerKey identifies one immutable revision of a GitHub comment.
 // Raw IDs remain reserved for GitHub API calls such as reactions.
 func reviewTriggerKey(comment github.PRComment) string {
-	if comment.UpdatedAt.IsZero() {
-		return comment.ID
-	}
-	return fmt.Sprintf("%s@%d", comment.ID, comment.UpdatedAt.UTC().UnixNano())
+	return reviewpub.TriggerKey(comment.ID, comment.UpdatedAt)
 }
 
 func reviewTriggerTimestamp(comment github.PRComment) time.Time {

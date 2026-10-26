@@ -44,8 +44,12 @@ queued → running ⇄ waiting → success / failure / aborted
 | Current-request actionable feedback | Resume implementation when capacity permits |
 | Current-request approval with green CI | Resume merge work when capacity permits |
 | Next action ready, capacity occupied | Stay **waiting**, reason capacity |
-| CI failure or merge conflict | Resume bounded repair; never await self-owned work |
-| Missing PR or undelivered review request | Perform bounded owned-work remediation, then failure; never invent external waiting |
+| CI failure or merge conflict | Resume bounded repair; when the relaunch allowance leaves the head unchanged, stay **waiting** for external recovery (rc2 behaviour) |
+| Missing PR or undelivered review request | Perform bounded owned-work remediation (`run.retry` reason `lifecycle-owned-work`), then failure; never invent external waiting |
+| Review request delivered by an attempt that exited non-success | Register it and stay **waiting**; spend no ordinary retry |
+| Feedback relaunch leaves head, request and responses unchanged | Stay **waiting** (`RESUME_STALLED`); do not relaunch on the same evidence |
+| Relaunch allowance exhausted on review, CI (including an expired CI wait), request or merge work | Stay **waiting** (`RESUME_STALLED`); genuine requested changes (formal `CHANGES_REQUESTED` or the review daemon's `changes_requested` verdict) left unrepaired finish **failure** |
+| Review request expired with nothing else resolving, or (without a delegated review command) an idle gate after owned work | Stay **waiting** (continuity hold) on an open current-head PR |
 | Recognized provider usage limit | Wait and probe; do not spend ordinary retries immediately |
 | Quota recovers | Resume limited run and reopen sibling admission |
 | Quota recovers, then CI becomes pending | Restore ordinary CI observation without another agent launch |
@@ -55,6 +59,55 @@ queued → running ⇄ waiting → success / failure / aborted
 | Same RunID resumes in another batch | Preserve active duration; update current ownership |
 | New RunID for a manual continuation | Start a fresh clock |
 | Linked reviewer active | Portal may show **reviewing**; underlying lifecycle remains inspectable |
+
+## AFK continuity
+
+After v1.0.0-rc.2 a started Run may stop only for a permanent failure it
+cannot handle, or wait for external recovery, and only where rc2 would not
+have resolved it. If rc2 would have merged or kept waiting, the Run must not
+fail. Concretely, a started Run whose pull request is open at its current head
+never becomes terminal-failed when the only missing evidence is review, CI, or
+a review request the runtime did not observe: it waits or proceeds to merge.
+
+Permanent outcomes remain terminal: a closed or merged-elsewhere pull request,
+explicit abort, a merged pull request without verifiable completion, genuine
+requested changes (formal `CHANGES_REQUESTED` or the review daemon's
+`changes_requested` verdict) the implementor cannot address within its relaunch
+allowance, no review request delivered at all (`REVIEW_REQUEST_REQUIRED`),
+corrupt review state with nothing resolving, an unobserved pull request, and
+agent authentication, usage-limit or operator stops. Every lifecycle failure
+reason is classified once as permanent or recoverable; the AFK-continuity
+contract suite fails on an unclassified reason and replays the real incidents
+that motivated the rule.
+
+One continuity decision applies these rules to every lifecycle decision;
+the attempt loop, entry continuation and runtime observation consume its
+action unchanged. A resume signature identifies what a relaunch acts on: gate, reason, live
+head, request trigger and the request's response identities, excluding CI
+rollup and merge state. A wait entered because a relaunch stalled records its
+signatures in `run.await` (`stalled_resumes`). Observation reads them through
+the event fold, so a restart keeps waiting instead of relaunching on the same
+evidence; a new head, request, response or gate proceeds. A continuity hold
+(`continuity_hold`) waits without an operation deadline; it stays abortable,
+resumes when the gate changes, and its schedule checkpoint uses the stable
+`hold:<RunID>` recovery identity, so restart discovery re-enters it within the
+ordinary ownerless grace. The relaunch allowance belongs to one repair round
+(request and head): a new head or request starts a fresh allowance, and the
+entry launch counts as the round's first relaunch. An unreadable event log
+fails closed into a wait. Exhausted remediation of unusable CI wait state
+(`CI_WAIT_STATE_ERROR`) stays terminal.
+
+Sandman's own review daemon publishes a machine-readable verdict trailer
+(`<!-- sandman-verdict:approved|changes_requested -->`) directly before the
+publication identity, which binds the decision to one trigger revision and one
+reviewed head. The runtime trusts that verdict (or, for older publications,
+the closed-set `## Decision` token) and treats a publication bound to another
+trigger or head as stale. An APPROVED verdict beside author-facing
+contradictions (an opposing verdict, a labelled Blocking or Important finding,
+or a repair directive addressed to the author) is not an approval; such an
+unsure report waits. The verdict is additive: human, third-party and
+paraphrased approvals keep the prose rules, and an unknown daemon verdict is
+never repair evidence.
 
 ## Action and admission rules
 
@@ -119,7 +172,7 @@ alternate lifecycle authority.
 | Standalone CI | **60 minutes** and at most **three fixes** per current head within an invocation | New head or fresh invocation |
 | Delegated review | Configured `review_timeout`; default 1,800 seconds, minimum 240 seconds | New confirmed request |
 | Implementation provider quota | **Five hours of accumulated completed polling**, ten-minute intervals, then final boundary probe and configured ordinary retries | Verified recovery followed by a new quota episode; re-entry/restart preserves consumed polling |
-| Implementation lifecycle relaunch | Default **three in-session relaunches**, entry excluded | Fresh executor session |
+| Implementation lifecycle relaunch | Default **three in-session relaunches**, entry excluded; a feedback relaunch that changes nothing ends the allowance; exhaustion waits | Fresh executor session with a new resume signature |
 | Ordinary execution retry | Configured retry budget, including owned publication/review delivery recovery | Ordinary retry policy |
 | Ownerless recovery | **Five minutes**, capped by an existing operation deadline | Live owner renewal, never repeated discovery |
 

@@ -5,6 +5,8 @@ import (
 	"math"
 	"regexp"
 	"strings"
+
+	"github.com/rafaelromao/sandman/internal/reviewpub"
 )
 
 const informalFeedbackReason = "REVIEW_INFORMAL_FEEDBACK"
@@ -79,6 +81,12 @@ func (c *reviewClassification) informalFeedbackEvidenceFor(request reviewRequest
 // approval cannot be established, look for feedback in its actual assessment
 // sections instead of turning every backtick in the report into a finding.
 func informalReviewFeedbackConcrete(body string) bool {
+	// A daemon publication is feedback exactly when its verdict requests
+	// changes. An unknown daemon verdict is never repair evidence: when unsure,
+	// the run waits instead of relaunching the implementor.
+	if verdict, published := reviewpub.PublishedVerdict(body); published {
+		return verdict == reviewpub.ChangesRequested
+	}
 	sections := collectReviewApprovalSections(body)
 	structured := false
 	for _, section := range sections {

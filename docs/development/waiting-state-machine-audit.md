@@ -519,3 +519,23 @@ arriving concurrently with quota/cancellation.
 The intended endpoint is a transition table that every writer, observer,
 scheduler adapter, and reader obeys. A passing test for one isolated gate is
 insufficient evidence that the composed state machine is correct.
+
+## Revision: AFK continuity (#2916)
+
+The later #2914 and #2915 incidents showed that several rows above turned states
+v1.0.0-rc.2 resolved (by merging or by waiting) into terminal failures. The
+governing rule is now AFK continuity, documented in
+`docs/architecture/run-state-machine.md`:
+
+- B6 and C3/C4: owned work and repair keep their bounded attempts. When those
+  leave an open, current-head pull request unchanged, the Run waits
+  (`continuity_hold` or `RESUME_STALLED`) instead of failing. Formal
+  CHANGES_REQUESTED left unrepaired stays terminal.
+- A review request delivered by an attempt that exited non-success is
+  registered and awaited. Owned-work retries record `lifecycle-owned-work`
+  rather than `agent-failed`.
+- A stalled relaunch persists its resume signature in `run.await`, so the
+  observer and restarts do not relaunch on unchanged evidence.
+- Every lifecycle failure reason is classified as permanent or recoverable in
+  one table. `TestAFKContinuityContract_*` replays the real incidents, and the
+  `contracts` target runs it.

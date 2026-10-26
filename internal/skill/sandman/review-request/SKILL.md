@@ -17,7 +17,11 @@ head, configured review command, and any request-scoped context.
    A refusal caused by an unanswered trigger, malformed evidence, ambiguous
    ordering, stale head, or failed lookup is a delivery refusal.
 3. Post exactly one `{{REVIEW_COMMAND}}` trigger. Never silently retry by
-   posting a replacement trigger.
+   posting a replacement trigger. Any text after the command asks for a code
+   review of the current head only. It never asks the reviewer for a formal
+   approval, a review decision, publication work, or a statement about
+   publication limits: an eligible informal approval already satisfies the
+   approval gate.
 4. Re-read the pull request and confirm the returned comment against the live
    head, command prefix, comment identity, and valid server timestamp.
 5. Return one `review-request/v1` structured confirmed-request envelope containing the repository,

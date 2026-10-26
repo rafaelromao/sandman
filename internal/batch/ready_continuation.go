@@ -147,7 +147,11 @@ func reconcileRecoveryWait(record daemon.RunWait, state events.RunState) (daemon
 		if state.AwaitEvent == nil {
 			return record, true, false
 		}
-		if deadline, gate, ok := lifecycleDeadline(state.AwaitEvent.Payload); ok {
+		if continuityHoldPayload(state.AwaitEvent.Payload) {
+			// A continuity hold has no operation deadline. It stays
+			// recoverable within the ordinary ownerless grace.
+			record.OperationID, record.OperationDeadline = continuityHoldOperation(state.RunID), time.Time{}
+		} else if deadline, gate, ok := lifecycleDeadline(state.AwaitEvent.Payload); ok {
 			record.OperationDeadline = deadline
 			record.OperationID = fmt.Sprintf("%s:%d", gate, deadline.Unix())
 		} else {

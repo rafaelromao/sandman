@@ -3237,6 +3237,20 @@ type runSession struct {
 	reviewRegistrationAttempted bool
 	reviewRegistrationObserved  bool
 
+	// lastResumeSignature is the resume signature that launched the current
+	// lifecycle relaunch (or entry resume). A decision that repeats it after
+	// the relaunch is a stall.
+	lastResumeSignature string
+	// pendingResumeSignature is the signature of the latest resume decision;
+	// it becomes lastResumeSignature when the session relaunches on it.
+	pendingResumeSignature string
+	// decisionPRHead is the pull-request head the latest lifecycle decision
+	// observed; it identifies progress in a resume signature.
+	decisionPRHead string
+	// finalOwnedWorkAttempt reports that the current attempt is the last
+	// ordinary attempt, so owned work nothing can advance may wait.
+	finalOwnedWorkAttempt bool
+
 	// resumeCount counts in-session agent relaunches triggered by a
 	// resume-worthy PR gate within this session (bounded by
 	// runSessionOptions.awaitResumeMax). It is the per-session cap state;
@@ -4062,6 +4076,7 @@ func (s *runSession) runOnce(
 	}
 
 	var terminalExtras map[string]any
+	ownedWorkRetry := false
 loop:
 	for attempt := 0; attempt < attempts; attempt++ {
 		if ctx.Err() != nil {
@@ -4113,6 +4128,12 @@ loop:
 			if result.ContextExhausted {
 				reason = contextExhaustedRetryReason
 			}
+			if ownedWorkRetry {
+				// The agent exited cleanly; the lifecycle selected work the
+				// implementor still owns. Keep it distinguishable from a crash.
+				reason = ownedWorkRetryReason
+			}
+			ownedWorkRetry = false
 			logRetry(s.deps.eventLog, runID, branch, attempt+1, attempts, result.Status, reason, logPath, s.issueNumber)
 		}
 
@@ -4186,7 +4207,12 @@ loop:
 
 			s.reviewRegistrationAttempted = false
 			s.reviewRegistrationObserved = false
-			s.reviewAttemptStartedAt = s.reviewNow()
+			if s.reviewAttemptStartedAt.IsZero() {
+				// The request window is session-scoped: a trigger delivered by
+				// an earlier attempt or relaunch of this session stays visible
+				// to later ones, which must not post a duplicate.
+				s.reviewAttemptStartedAt = s.reviewNow()
+			}
 			s.lifecyclePRSnapshot = nil
 			result, abortedByHeartbeat = s.withHeartbeat(ctx, runID, attempt, logPath, wt, func() AgentRunResult {
 				return s.withClosingReferenceGuard(ctx, branch, func() AgentRunResult {
@@ -4207,6 +4233,7 @@ loop:
 			s.lifecycleAlreadyResolved = alreadyResolved
 			if s.isIssueDriven() && ctx.Err() == nil {
 				hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
+				s.finalOwnedWorkAttempt = attempt+1 >= attempts
 				if gateStatus, extras, handled := s.handleLifecycleDecisionForAttempt(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady, result.Status); handled {
 					if stop := s.operatorStopFor(result); stop != nil && gateStatus != "success" && gateStatus != "aborted" {
 						// The agent could not act, and a resume, await
@@ -4226,11 +4253,12 @@ loop:
 						// still take precedence below.
 						break relaunch
 					}
-					if isImplementorOwnedGateFailure(extras) {
+					if gateStatus != "await" && isImplementorOwnedGateFailure(extras) {
 						// A clean but incomplete handoff is owned work, not an
 						// external await or a separate lifecycle-resume budget.
 						// Use the configured ordinary retry budget to perform it.
 						result.Status = "failure"
+						ownedWorkRetry = true
 						terminalExtras = cloneLifecycleExtras(extras)
 						delete(terminalExtras, "await")
 						delete(terminalExtras, "gate")
@@ -4255,20 +4283,17 @@ loop:
 						gateStatus, extras, _ = s.observeLifecycle(ctx, wt.WorkDir(), branch, logPath, runID, result, extras, hostPathsReady)
 					}
 					if gateStatus == "resume" {
+						// The continuity decision already turned a stalled or
+						// exhausted relaunch into a wait or a terminal
+						// failure; a resume here is a relaunch to perform.
 						if resumePrompt, resume := s.resumePromptFromGate(ctx, wt, branch, runID, extras); resume {
+							s.lastResumeSignature = s.pendingResumeSignature
 							s.reuseSession = true
 							s.previousRunIDs = map[int]string{s.issueNumber: runID}
 							s.previousRunBatchIDs = map[int]string{s.issueNumber: s.batchID}
 							attemptRenderCfg.TaskPrompt = resumePrompt
 							continue relaunch
 						}
-					}
-					if gateStatus == "resume" {
-						// An exhausted in-session resume budget ends the
-						// session for every gate, including CI remediation:
-						// a budget with no remaining relaunch cannot keep
-						// resolving, so it must not prolong a wait
-						// (issue #2743).
 						gate, _ := extras["gate"].(string)
 						gateStatus = "failure"
 						extras = remediationBudgetFailureEvidence(gate, extras,

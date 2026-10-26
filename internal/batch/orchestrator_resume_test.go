@@ -346,8 +346,8 @@ func TestEntryReevaluation_ModeContinueTopLevelApprovalResumesAgentWithEvidence(
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure after ready-gate resume budget is exhausted", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want an rc2 wait after ready-gate resume budget is exhausted", result.Status)
 	}
 	if got := len(resultFactory.created); got != 2 {
 		t.Fatalf("agent launches = %d, want 2 (entry resume + in-session resume)", got)
@@ -381,15 +381,15 @@ func TestEntryReevaluation_ModeContinueTopLevelApprovalResumesAgentWithEvidence(
 	if !ok || request["outcome"] != "approved" || request["review_decision_approval"] == nil {
 		t.Fatalf("run.resumed omitted current-head top-level approval evidence: %#v", resumedEvt.Payload)
 	}
-	if got := countEventsByType(logs, "run.await"); got != 0 {
-		t.Fatalf("run.await events = %d, want 0 after ready-gate resume budget exhaustion", got)
+	if got := countEventsByType(logs, "run.await"); got != 1 {
+		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
 	}
 }
 
 // In-session resume: after the agent completes cleanly and the gate is
 // ready-to-merge, the run relaunches the agent in the same attempt (no
 // run.retry) with the merge evidence attached, bounded by the resume cap;
-// if the agent leaves merge work incomplete, the run fails instead of waiting.
+// if the agent leaves merge work incomplete, the run waits as rc2 did.
 func TestRunSingle_ReadyToMergeResumesWithinSameAttempt(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
@@ -436,8 +436,8 @@ func TestRunSingle_ReadyToMergeResumesWithinSameAttempt(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure after ready-gate resume budget is exhausted", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want an rc2 wait after ready-gate resume budget is exhausted", result.Status)
 	}
 	if got := len(resultFactory.created); got != 2 {
 		t.Fatalf("agent launches = %d, want 2 (initial + one resumed relaunch)", got)
@@ -465,8 +465,8 @@ func TestRunSingle_ReadyToMergeResumesWithinSameAttempt(t *testing.T) {
 	if resumedEvt == nil || resumedEvt.Payload["reason"] != "approval" {
 		t.Fatalf("run.resumed reason = %v, want approval", resumedEvt.Payload["reason"])
 	}
-	if got := countEventsByType(logs, "run.await"); got != 0 {
-		t.Fatalf("run.await events = %d, want 0 after ready-gate resume budget exhaustion", got)
+	if got := countEventsByType(logs, "run.await"); got != 1 {
+		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
 	}
 }
 
@@ -783,8 +783,8 @@ func TestRunSingle_CIFailurePrecedesActionableEvidenceAndExhaustsBudget(t *testi
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure after CI remediation budget is exhausted", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want an rc2 wait after CI remediation budget is exhausted", result.Status)
 	}
 	if got := len(resultFactory.created); got != 2 {
 		t.Fatalf("agent launches = %d, want entry launch plus remediation resume", got)
@@ -796,19 +796,19 @@ func TestRunSingle_CIFailurePrecedesActionableEvidenceAndExhaustsBudget(t *testi
 	if got := countEventsByType(logs, "run.resumed"); got != 1 {
 		t.Fatalf("run.resumed events = %d, want 1 remediation relaunch", got)
 	}
-	if got := countEventsByType(logs, "run.await"); got != 0 {
-		t.Fatalf("run.await events = %d, want 0 after remediation budget exhaustion", got)
+	if got := countEventsByType(logs, "run.await"); got != 1 {
+		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
 	}
-	finished := findEvent(logs, "run.finished")
-	if finished == nil || finished.Payload["reason"] != "REMEDIATION_BUDGET_EXHAUSTED" {
-		t.Fatalf("finished event = %#v, want remediation-budget failure", finished)
+	waiting := lastEvent(logs, "run.await")
+	if waiting == nil || waiting.Payload["reason"] != resumeStalledReason || findEvent(logs, "run.finished") != nil {
+		t.Fatalf("await event = %#v, want the stalled rc2 wait instead of a remediation-budget failure", waiting)
 	}
 }
 
 // Retained concrete informal feedback resumes a continuation session at entry
-// (gate actionable-feedback, REVIEW_INFORMAL_FEEDBACK): after the entry launch
-// and one in-session remediation relaunch, exhausted feedback work fails
-// instead of becoming another wait.
+// (gate actionable-feedback, REVIEW_INFORMAL_FEEDBACK). When the entry launch
+// leaves head, request and responses unchanged, the feedback found nothing to
+// fix: the Run waits (RESUME_STALLED) instead of relaunching or failing.
 func TestEntryReevaluation_ModeContinueInformalFeedbackResumesAgentWithEvidence(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
@@ -862,22 +862,17 @@ func TestEntryReevaluation_ModeContinueInformalFeedbackResumesAgentWithEvidence(
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure after actionable-feedback resume budget is exhausted", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want an rc2 wait after actionable-feedback resume budget is exhausted", result.Status)
 	}
-	if got := len(resultFactory.created); got != 2 {
-		t.Fatalf("agent launches = %d, want 2 (entry resume + one in-session relaunch)", got)
+	if got := len(resultFactory.created); got != 1 {
+		t.Fatalf("agent launches = %d, want 1: an unchanged feedback relaunch after the entry launch stalls", got)
 	}
-	if got := len(resultFactory.configs); got != 2 {
-		t.Fatalf("captured configs = %d, want 2", got)
+	if got := len(resultFactory.configs); got != 1 {
+		t.Fatalf("captured configs = %d, want 1", got)
 	}
-	for i, cfg := range resultFactory.configs {
-		if !strings.Contains(cfg.TaskPrompt, "REVIEW_INFORMAL_FEEDBACK") {
-			t.Fatalf("config %d prompt missing informal-feedback reason:\n%s", i, cfg.TaskPrompt)
-		}
-		if !strings.Contains(cfg.TaskPrompt, "socketpath.go") {
-			t.Fatalf("config %d prompt missing informal feedback body:\n%s", i, cfg.TaskPrompt)
-		}
+	if !strings.Contains(resultFactory.configs[0].TaskPrompt, "REVIEW_INFORMAL_FEEDBACK") || !strings.Contains(resultFactory.configs[0].TaskPrompt, "socketpath.go") {
+		t.Fatalf("entry prompt missing informal-feedback evidence:\n%s", resultFactory.configs[0].TaskPrompt)
 	}
 	logs, err := spyLog.Read()
 	if err != nil {
@@ -886,18 +881,15 @@ func TestEntryReevaluation_ModeContinueInformalFeedbackResumesAgentWithEvidence(
 	if got := countEventsByType(logs, "run.retry"); got != 0 {
 		t.Fatalf("run.retry events = %d, want 0 (resume must not consume retry budget)", got)
 	}
-	resumedEvt := findEvent(logs, "run.resumed")
-	if resumedEvt == nil || resumedEvt.Payload["gate"] != gateActionableFeedback {
-		t.Fatalf("run.resumed gate = %v, want actionable-feedback", resumedEvt.Payload["gate"])
+	if got := countEventsByType(logs, "run.resumed"); got != 0 {
+		t.Fatalf("run.resumed events = %d, want 0: the feedback left nothing new to act on", got)
 	}
-	if got := countEventsByType(logs, "run.resumed"); got != 1 {
-		t.Fatalf("run.resumed events = %d, want exactly 1 (entry relaunch emits no run.resumed; one in-session relaunch does)", got)
+	waiting := lastEvent(logs, "run.await")
+	if waiting == nil || waiting.Payload["reason"] != resumeStalledReason || waiting.Payload["stalled_reason"] != informalFeedbackReason {
+		t.Fatalf("await event = %#v, want the stalled informal-feedback wait", waiting)
 	}
-	if got := countEventsByType(logs, "run.await"); got != 0 {
-		t.Fatalf("run.await events = %d, want 0 after review feedback has finished", got)
-	}
-	if request, ok := resumedEvt.Payload["review_request"].(map[string]any); !ok || request["informal_feedback"] == nil {
-		t.Fatalf("run.resumed review request missing informal feedback: %#v", resumedEvt.Payload["review_request"])
+	if request, ok := waiting.Payload["review_request"].(map[string]any); !ok || request["informal_feedback"] == nil {
+		t.Fatalf("stalled wait lost the informal feedback evidence: %#v", waiting.Payload["review_request"])
 	}
 }
 
@@ -1037,20 +1029,17 @@ func TestRunSingle_InformalFeedbackResumesWithinSameAttempt(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure after informal-feedback remediation budget is exhausted", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want an rc2 wait after informal-feedback remediation budget is exhausted", result.Status)
 	}
-	if got := len(resultFactory.created); got != 2 {
-		t.Fatalf("agent launches = %d, want 2 (entry resume + informal-feedback resume)", got)
+	if got := len(resultFactory.created); got != 1 {
+		t.Fatalf("agent launches = %d, want 1: an unchanged feedback relaunch after the entry launch stalls", got)
 	}
-	if got := len(resultFactory.configs); got != 2 {
-		t.Fatalf("captured configs = %d, want 2", got)
+	if got := len(resultFactory.configs); got != 1 {
+		t.Fatalf("captured configs = %d, want 1", got)
 	}
-	if !strings.Contains(resultFactory.configs[1].TaskPrompt, "REVIEW_INFORMAL_FEEDBACK") {
-		t.Fatalf("resumed prompt missing informal-feedback evidence:\n%s", resultFactory.configs[1].TaskPrompt)
-	}
-	if !strings.Contains(resultFactory.configs[1].TaskPrompt, "socketpath.go") {
-		t.Fatalf("resumed prompt missing informal feedback body:\n%s", resultFactory.configs[1].TaskPrompt)
+	if !strings.Contains(resultFactory.configs[0].TaskPrompt, "REVIEW_INFORMAL_FEEDBACK") || !strings.Contains(resultFactory.configs[0].TaskPrompt, "socketpath.go") {
+		t.Fatalf("entry prompt missing informal-feedback evidence:\n%s", resultFactory.configs[0].TaskPrompt)
 	}
 	logs, err := spyLog.Read()
 	if err != nil {
@@ -1059,21 +1048,15 @@ func TestRunSingle_InformalFeedbackResumesWithinSameAttempt(t *testing.T) {
 	if got := countEventsByType(logs, "run.retry"); got != 0 {
 		t.Fatalf("run.retry events = %d, want 0 (resume must not consume retry budget)", got)
 	}
-	resumedEvt := findEvent(logs, "run.resumed")
-	if resumedEvt == nil || resumedEvt.Payload["gate"] != gateActionableFeedback {
-		t.Fatalf("run.resumed gate = %v, want actionable-feedback", resumedEvt.Payload["gate"])
+	if got := countEventsByType(logs, "run.resumed"); got != 0 {
+		t.Fatalf("run.resumed events = %d, want 0: the feedback left nothing new to act on", got)
 	}
-	if got := countEventsByType(logs, "run.resumed"); got != 1 {
-		t.Fatalf("run.resumed events = %d, want exactly 1", got)
+	waiting := lastEvent(logs, "run.await")
+	if waiting == nil || waiting.Payload["reason"] != resumeStalledReason || waiting.Payload["stalled_reason"] != informalFeedbackReason {
+		t.Fatalf("await event = %#v, want the stalled informal-feedback wait", waiting)
 	}
-	if got, _ := resumedEvt.Payload["reason"].(string); got != "feedback" {
-		t.Fatalf("run.resumed reason = %v, want feedback", resumedEvt.Payload["reason"])
-	}
-	if request, ok := resumedEvt.Payload["review_request"].(map[string]any); !ok || request["informal_feedback"] == nil {
-		t.Fatalf("run.resumed review request missing informal feedback: %#v", resumedEvt.Payload["review_request"])
-	}
-	if got := countEventsByType(logs, "run.await"); got != 0 {
-		t.Fatalf("run.await events = %d, want 0 after review feedback has finished", got)
+	if request, ok := waiting.Payload["review_request"].(map[string]any); !ok || request["informal_feedback"] == nil {
+		t.Fatalf("stalled wait lost the informal feedback evidence: %#v", waiting.Payload["review_request"])
 	}
 }
 

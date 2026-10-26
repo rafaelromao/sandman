@@ -15,9 +15,28 @@ Merge the PR only when all merge gates pass.
 - Required checks green
 - The tracker reports the change request mergeable
 
+## What "fully approved" means
+
+The change request is fully approved when the current head has an eligible
+approval for the latest review request and nothing requests changes. Either
+of these is full approval on its own:
+
+- a formal APPROVED review on the current head;
+- an eligible informal approval: a top-level response to the latest review
+  request on the current head whose decision is APPROVED, with no Blocking or
+  Important findings and no author changes requested.
+
+A formal review is never required. The author and the reviewer may share one
+account, and the tracker does not let an author formally approve their own
+change request. When an eligible informal approval exists, do not ask the
+reviewer or a maintainer for a formal review, a review decision, or a
+publication workaround, and do not post another review request for the same
+head.
+
 ## Workflow
 
-1. Confirm the change request is fully approved.
+1. Confirm the change request is fully approved, formally or informally, as
+   defined above.
 2. Confirm required checks are green.
 3. Confirm the tracker reports the change request mergeable.
 4. Merge with squash: `gh pr merge --squash`. Do not pass `--delete-branch`; the local branch must remain in this worktree for downstream sandman tooling (next run, --continue, --override).
