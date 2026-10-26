@@ -150,7 +150,7 @@ func TestWaitingContract_TerminalObservationUsesResolvedContainerPolicy(t *testi
 	log := &spyEventLog{}
 	o := NewOrchestrator(nil, nil, nil, log, WithErrorLog(io.Discard))
 	executor := o.newRunExecutor(context.Background(), BatchConfig{Cfg: &config.Config{Sandbox: "podman"}, SandboxMode: "podman"}, resolved, nil)
-	result := executor.finishObserved(context.Background(), RowSpec{IssueNumber: 42, RunID: "observed", Branches: map[int]string{42: "42-work"}, BaseBranch: "main"}, "success", nil)
+	result := executor.finishObserved(context.Background(), RowSpec{IssueNumber: 42, RunID: "observed", Branches: map[int]string{42: "42-work"}, BaseBranch: "main"}, lifecycleVerdict{Action: lifecycleSuccess})
 	if result.Status != "success" || created != 1 || sb.starts != 0 || sb.started != 0 || sb.stops != 1 || !sb.hostPathsRestored {
 		t.Fatalf("resolved cleanup skipped or execution started: result=%+v created=%d sandbox=%+v", result, created, sb)
 	}
@@ -184,7 +184,7 @@ func TestWaitingContract_TerminalObservationReclaimsExistingWorktreeWithoutStart
 		RunID:       "observed-reclaim",
 		Branches:    map[int]string{42: branch},
 		BaseBranch:  "main",
-	}, "success", nil)
+	}, lifecycleVerdict{Action: lifecycleSuccess})
 
 	if result.Status != "success" || observed == nil || observed.starts != 0 {
 		t.Fatalf("terminal observation started execution: result=%+v sandbox=%+v", result, observed)
@@ -207,7 +207,7 @@ func TestWaitingContract_TerminalObservationKeepsSuccessWhenCleanupFails(t *test
 	sb := &fakeSandbox{workDir: t.TempDir(), stopError: stopErr}
 	o := NewOrchestrator(nil, nil, nil, log, WithErrorLog(io.Discard))
 	executor := o.newRunExecutor(context.Background(), BatchConfig{}, &fakeSandboxFactory{sandbox: sb}, nil)
-	result := executor.finishObserved(context.Background(), RowSpec{IssueNumber: 42, RunID: "observed-cleanup-failure", Branches: map[int]string{42: "42-work"}}, "success", nil)
+	result := executor.finishObserved(context.Background(), RowSpec{IssueNumber: 42, RunID: "observed-cleanup-failure", Branches: map[int]string{42: "42-work"}}, lifecycleVerdict{Action: lifecycleSuccess})
 
 	if result.Status != "success" || sb.startCalled {
 		t.Fatalf("cleanup failure changed lifecycle or started execution: result=%+v sandbox=%+v", result, sb)
@@ -314,8 +314,10 @@ func TestWaitingContract_TerminalObservationDropsActiveWaitMarkers(t *testing.T)
 	log := &spyEventLog{}
 	o := NewOrchestrator(nil, nil, nil, log, WithErrorLog(io.Discard))
 	executor := o.newRunExecutor(context.Background(), BatchConfig{}, &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: root}}, nil)
-	result := executor.finishObserved(context.Background(), RowSpec{IssueNumber: 42, RunID: "terminal-observation", Branches: map[int]string{42: "42-work"}}, "failure", map[string]any{
-		"reason": "REMEDIATION_BUDGET_EXHAUSTED", "await": true, "await_reason": "ci-failure", "gate": "ci-failure", "head_sha": "head",
+	result := executor.finishObserved(context.Background(), RowSpec{IssueNumber: 42, RunID: "terminal-observation", Branches: map[int]string{42: "42-work"}}, lifecycleVerdict{
+		Action: lifecycleFailure, Evidence: map[string]any{
+			"reason": "REMEDIATION_BUDGET_EXHAUSTED", "await": true, "await_reason": "ci-failure", "gate": "ci-failure", "head_sha": "head",
+		},
 	})
 	finished := findEvent(log.snapshot(), "run.finished")
 	if result.Status != "failure" || finished == nil {
@@ -336,7 +338,7 @@ func TestWaitingContract_CancelledRemediationDoesNotResume(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	s := &runSession{deps: runDeps{githubClient: &fakeGitHubClient{}}}
-	_, resume := s.resumePromptFromGate(ctx, &fakeSandbox{workDir: root}, "branch", "run", map[string]any{"gate": gateReadyToMerge, "pull_request": 17, "head_sha": "head"})
+	_, resume := s.resumePromptFromGate(ctx, &fakeSandbox{workDir: root}, "branch", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: map[string]any{"gate": gateReadyToMerge, "pull_request": 17, "head_sha": "head"}})
 	if resume || s.resumeCount != 0 {
 		t.Fatal("cancelled repair resumed or consumed the session allowance")
 	}
@@ -632,9 +634,9 @@ func TestWaitingContract_AdmissionToAwaitPreservesOperationAfterCrash(t *testing
 	if len(ready) != 1 || ready[0].Wait == nil || ready[0].Wait.Ready || !ready[0].Wait.OperationDeadline.Equal(now.Add(30*time.Minute).Truncate(time.Second)) {
 		t.Fatalf("new CI operation lost across admission/crash: %+v", ready)
 	}
-	status, _, handled := session.priorObservation("row", "42-fix", "head")
-	if !handled || status != "await" {
-		t.Fatalf("established CI operation could not survive transient observation: %q handled=%v", status, handled)
+	verdict, handled := newLifecycleObserver(session).priorObservation("row", "42-fix", "head")
+	if !handled || verdict.Action != lifecycleAwait {
+		t.Fatalf("established CI operation could not survive transient observation: %v handled=%v", verdict.Action, handled)
 	}
 }
 
@@ -887,7 +889,8 @@ func TestWaitingContract_ObservationErrorKeepsOnlyEstablishedDeadline(t *testing
 				issueNumber: 42, issueState: "open", runID: "row",
 				opts: runSessionOptions{currentHead: func(string) (string, error) { return "current-sha", nil }},
 			}
-			status, extras, _ := s.handleLifecycleDecision(context.Background(), root, gateTestBranch, "", "row", true)
+			verdict := s.observeLifecycleWithHostPathsForTest(context.Background(), root, gateTestBranch, "", "row", true)
+			status, extras := verdict.status(), verdict.Evidence
 			want := "failure"
 			if established {
 				want = "await"

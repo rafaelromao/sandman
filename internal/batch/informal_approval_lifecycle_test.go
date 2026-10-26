@@ -71,7 +71,8 @@ func informalApprovalLifecycleFixture(t *testing.T, body string) (*runSession, *
 func TestInformalApprovalLifecycle_MetricsReviewAwaitsCIThenResumesMerge(t *testing.T) {
 	s, _, pr, workDir, now := informalApprovalLifecycleFixture(t, approvingMetricsReview)
 	for i := 0; i < defaultAwaitResumeMax+2; i++ {
-		status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+		observedLifecycle74 := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+		status, extras, handled := observedLifecycle74.status(), observedLifecycle74.Evidence, observedLifecycle74.handled()
 		if !handled || status != "await" || extras["gate"] != "pending" {
 			t.Fatalf("pending CI observation %d = (%s, %v, %t), want await/pending after informal approval", i, status, extras["gate"], handled)
 		}
@@ -85,7 +86,8 @@ func TestInformalApprovalLifecycle_MetricsReviewAwaitsCIThenResumesMerge(t *test
 		*now = now.Add(time.Minute)
 	}
 	pr.StatusCheckRollup = "success"
-	status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	observedLifecycle88 := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	status, extras, handled := observedLifecycle88.status(), observedLifecycle88.Evidence, observedLifecycle88.handled()
 	if !handled || status != "resume" || extras["gate"] != gateReadyToMerge || extras["reason"] != "REVIEW_APPROVED" {
 		t.Fatalf("green CI = (%s, %v, %t), want approval merge resume", status, extras, handled)
 	}
@@ -112,14 +114,16 @@ func TestInformalApprovalLifecycle_RealReviewExplanationsAndCIAdvice(t *testing.
 		t.Run(tc.name, func(t *testing.T) {
 			s, _, pr, workDir, now := informalApprovalLifecycleFixture(t, tc.body)
 			for range defaultAwaitResumeMax + 2 {
-				status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+				observedLifecycle115 := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+				status, extras, handled := observedLifecycle115.status(), observedLifecycle115.Evidence, observedLifecycle115.handled()
 				if !handled || status != "await" || extras["gate"] != "pending" || s.resumeCount != 0 {
 					t.Fatalf("approved review with pending CI = %s/%v (%v), want await without repair launches", status, extras["gate"], extras["reason"])
 				}
 				*now = now.Add(time.Minute)
 			}
 			pr.StatusCheckRollup = "success"
-			status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+			observedLifecycle122 := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+			status, extras, handled := observedLifecycle122.status(), observedLifecycle122.Evidence, observedLifecycle122.handled()
 			if !handled || status != "resume" || extras["gate"] != gateReadyToMerge {
 				t.Fatalf("approved review with green CI = %s/%v, want merge resume", status, extras["gate"])
 			}
@@ -164,14 +168,16 @@ func TestInformalApprovalLifecycle_CapturedReports(t *testing.T) {
 			}
 			s, _, pr, workDir, now := informalApprovalLifecycleFixture(t, body)
 			for range defaultAwaitResumeMax + 2 {
-				status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+				observedLifecycle167 := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+				status, extras, handled := observedLifecycle167.status(), observedLifecycle167.Evidence, observedLifecycle167.handled()
 				if !handled || status != "await" || extras["gate"] != "pending" || s.resumeCount != 0 {
 					t.Fatalf("pending CI = %s/%v, want wait without relaunch", status, extras)
 				}
 				*now = now.Add(time.Minute)
 			}
 			pr.StatusCheckRollup = "success"
-			status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+			observedLifecycle174 := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+			status, extras, handled := observedLifecycle174.status(), observedLifecycle174.Evidence, observedLifecycle174.handled()
 			if !handled || status != "resume" || extras["gate"] != gateReadyToMerge || extras["reason"] != "REVIEW_APPROVED" {
 				t.Fatalf("green CI = %s/%v, want approved merge work", status, extras)
 			}
@@ -206,7 +212,8 @@ func TestInformalApprovalLifecycle_FailedCriteriaRemainActionable(t *testing.T) 
 				}
 				s, _, pr, workDir, _ := informalApprovalLifecycleFixture(t, body)
 				pr.StatusCheckRollup = "success"
-				status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+				observedLifecycle209 := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+				status, extras, handled := observedLifecycle209.status(), observedLifecycle209.Evidence, observedLifecycle209.handled()
 				if !handled || status != "resume" || extras["gate"] != gateActionableFeedback || extras["reason"] != informalFeedbackReason {
 					t.Fatalf("failed assessment = %s/%v, want actionable feedback", status, extras)
 				}
@@ -277,7 +284,8 @@ func capturedApprovalWithCIAdvice(t *testing.T) string {
 func TestInformalApprovalLifecycle_ApprovalPrecedesSeparateFeedback(t *testing.T) {
 	s, client, pr, workDir, now := informalApprovalLifecycleFixture(t, approvingMetricsReview)
 	client.inline = []github.PRReviewComment{{ID: "feedback", Body: "Please fix the race in internal/batch/run_lifecycle.go before merging.", CommitID: pr.HeadRefOid, CreatedAt: now.Add(-30 * time.Second)}}
-	status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	observedLifecycle280 := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	status, extras, handled := observedLifecycle280.status(), observedLifecycle280.Evidence, observedLifecycle280.handled()
 	if !handled || status != "await" || extras["gate"] != "pending" {
 		t.Fatalf("approved request with pending CI = (%s, %v, %t), want CI wait", status, extras, handled)
 	}
@@ -286,7 +294,8 @@ func TestInformalApprovalLifecycle_ApprovalPrecedesSeparateFeedback(t *testing.T
 		t.Fatalf("approved request retained feedback: %v", request)
 	}
 	pr.StatusCheckRollup = "success"
-	status, extras, handled = s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	observedLifecycle289 := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	status, extras, handled = observedLifecycle289.status(), observedLifecycle289.Evidence, observedLifecycle289.handled()
 	if !handled || status != "resume" || extras["gate"] != gateReadyToMerge {
 		t.Fatalf("approved request with green CI = (%s, %v, %t), want merge work", status, extras, handled)
 	}
@@ -313,13 +322,15 @@ func TestInformalApprovalLifecycle_OrdinaryAndCommentedApprovalsSuffice(t *testi
 				client.comments = client.comments[:1]
 				client.reviews = []github.PRReview{{ID: "commented", State: tc.source, Body: tc.body, CommitID: tc.commit, CreatedAt: now.Add(-time.Minute)}}
 			}
-			status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+			observedLifecycle316 := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+			status, extras, handled := observedLifecycle316.status(), observedLifecycle316.Evidence, observedLifecycle316.handled()
 			request, _ := extras["review_request"].(map[string]any)
 			if !handled || status != "await" || request["operation_resolved"] != true {
 				t.Fatalf("informal approval with pending CI = (%s, %v, %t), want resolved-review CI await", status, extras, handled)
 			}
 			pr.StatusCheckRollup = "success"
-			status, extras, handled = s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+			observedLifecycle322 := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+			status, extras, handled = observedLifecycle322.status(), observedLifecycle322.Evidence, observedLifecycle322.handled()
 			if !handled || status != "resume" || extras["gate"] != gateReadyToMerge || extras["reason"] != "REVIEW_APPROVED" {
 				t.Fatalf("informal approval with green CI = (%s, %v, %t), want approved merge resume without formal approval", status, extras, handled)
 			}
@@ -356,7 +367,8 @@ func TestInformalApprovalLifecycle_RequestBoundariesAndFormalPrecedence(t *testi
 			s, client, pr, workDir, now := informalApprovalLifecycleFixture(t, approvingMetricsReview)
 			tc.mutate(client, pr, *now)
 			pr.StatusCheckRollup = "success"
-			status, extras, _ := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+			verdict := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+			status, extras := verdict.status(), verdict.Evidence
 			if status == "resume" && extras["gate"] == gateReadyToMerge {
 				t.Fatal("ineligible or contradicted approval authorized merge")
 			}
@@ -371,7 +383,8 @@ func TestInformalApprovalLifecycle_OnTimeResponseSurvivesDelayedReentry(t *testi
 	// observed by a fresh executor after capacity delay or process downtime.
 	*now = time.Date(2026, 10, 13, 3, 0, 0, 0, time.UTC)
 	pr.StatusCheckRollup = "success"
-	status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	observedLifecycle374 := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	status, extras, handled := observedLifecycle374.status(), observedLifecycle374.Evidence, observedLifecycle374.handled()
 	if !handled || status != "resume" || extras["gate"] != gateReadyToMerge {
 		t.Fatalf("late observation of an on-time approval = (%s, %v, %t), want merge resume", status, extras, handled)
 	}
@@ -476,7 +489,8 @@ func TestInformalApprovalLifecycle_AmbiguousDecisionsCannotAuthorizeMerge(t *tes
 		t.Run(body, func(t *testing.T) {
 			s, _, pr, workDir, _ := informalApprovalLifecycleFixture(t, body)
 			pr.StatusCheckRollup = "success"
-			status, extras, _ := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+			verdict := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+			status, extras := verdict.status(), verdict.Evidence
 			if status == "resume" && extras["gate"] == gateReadyToMerge {
 				t.Fatal("ambiguous/conditional/quoted decision authorized merge")
 			}

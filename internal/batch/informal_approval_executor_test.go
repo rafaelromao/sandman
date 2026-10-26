@@ -52,7 +52,8 @@ func TestInformalApprovalExecutor_ReadyContinuationSurvivesGitHubTimeout(t *test
 	body := capturedApprovingReports(t)["approved-daemon-28-final.md"]
 	s, client, pr, workDir, now := informalApprovalLifecycleFixture(t, body)
 	pr.StatusCheckRollup = "success"
-	status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	observedLifecycle55 := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	status, extras, handled := observedLifecycle55.status(), observedLifecycle55.Evidence, observedLifecycle55.handled()
 	if !handled || status != "resume" || extras["reason"] != "REVIEW_APPROVED" {
 		t.Fatalf("initial ready decision = %s/%v", status, extras)
 	}

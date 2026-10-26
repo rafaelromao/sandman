@@ -440,25 +440,6 @@ func lifecycleRemediationDecision(gate, reason, nextAction string, pr *github.PR
 	return lifecycleDecision{action: lifecycleResume, gate: lifecycleGate(gate), handled: true, extras: extras}
 }
 
-// lifecycleStatusRepr maps a decided action to the status string the run
-// session records, keeping the decision point independent of runSession.
-func lifecycleStatusRepr(d lifecycleDecision) string {
-	switch d.action {
-	case lifecycleSuccess:
-		return "success"
-	case lifecycleFailure:
-		return "failure"
-	case lifecycleAwait:
-		return "await"
-	case lifecycleResume:
-		return "resume"
-	case lifecycleAborted:
-		return "aborted"
-	default:
-		return ""
-	}
-}
-
 // lifecycleFailureExtras returns the terminal extras for a lifecycle failure
 // decision, deferring to the existing completion diagnostic for merged
 // PRs missing the closing reference. Policy-failure evidence (reason,
@@ -474,33 +455,10 @@ func lifecycleFailureExtras(d lifecycleDecision, issueNumber int) map[string]any
 	return cloneLifecycleExtras(d.failureExtras)
 }
 
-// handleLifecycleDecision turns an AgentRun exit into the result selected by
-// the lifecycle decision point. It gathers live PR facts and retained review
-// evidence, while event and prompt writing remain adapter concerns.
-func (s *runSession) handleLifecycleDecisionAfterAgent(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool) (string, map[string]any, bool) {
-	return s.handleLifecycleDecisionForAttempt(ctx, workDir, branch, logPath, runID, hostPathsReady, "success")
-}
-
-func (s *runSession) handleLifecycleDecision(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool) (string, map[string]any, bool) {
-	return s.handleLifecycleDecisionForAttempt(ctx, workDir, branch, logPath, runID, hostPathsReady, "success")
-}
-
-// handleLifecycleDecisionForAttempt selects the lifecycle action for an
-// attempt and applies the AFK-continuity rules to it once, so every adapter
-// consumes the same final action.
-func (s *runSession) handleLifecycleDecisionForAttempt(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool, attemptStatus string) (string, map[string]any, bool) {
-	status, extras, handled := s.decideLifecycleForAttempt(ctx, workDir, branch, logPath, runID, hostPathsReady, attemptStatus)
-	if !handled || ctx.Err() != nil {
-		return status, extras, handled
-	}
-	status, extras = s.continuityDecision(ctx, branch, runID, status, extras)
-	return status, extras, true
-}
-
-func (s *runSession) decideLifecycleForAttempt(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool, attemptStatus string) (string, map[string]any, bool) {
+func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool, attemptStatus string) lifecycleVerdict {
 	s.decisionPRHead = ""
 	if s.deps.githubClient == nil {
-		return "", nil, false
+		return lifecycleVerdict{}
 	}
 	headSHA, currentHeadErr := s.currentGateHeadSnapshot(workDir)
 	worktreeHeadSHA := headSHA
@@ -545,7 +503,7 @@ func (s *runSession) decideLifecycleForAttempt(ctx context.Context, workDir, bra
 				!strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "CONFLICTING") &&
 				!evidence.actionable && len(evidence.informalFeedback) == 0 &&
 				!(evidence.outcome == retainedReviewApproval && gate == lifecycleGateReady) {
-				return "", nil, false
+				return lifecycleVerdict{}
 			}
 		}
 		headChanged := errors.Is(registrationErr, errReviewRegistrationHeadChanged)
@@ -585,17 +543,17 @@ func (s *runSession) decideLifecycleForAttempt(ctx context.Context, workDir, bra
 			// Preserve the verifier fallback for an already-resolved task with
 			// no pull request, while still routing observed PRs through the
 			// lifecycle decision above.
-			return "", nil, false
+			return lifecycleVerdict{}
 		}
 		if attemptNeedsRetry(attemptStatus) {
-			return "", nil, false
+			return lifecycleVerdict{}
 		}
 		if strings.EqualFold(strings.TrimSpace(s.issueState), "closed") {
 			// A closed work item with no PR has no pending publication or
 			// external operation to resolve. Preserve the existing closed
 			// issue completion path; only an open issue with no PR is a
 			// missing-publication failure.
-			return "", nil, false
+			return lifecycleVerdict{}
 		}
 		// A missing pull request is implementor-owned work (push the branch,
 		// create the PR), not an external publication wait. There is no
@@ -606,52 +564,52 @@ func (s *runSession) decideLifecycleForAttempt(ctx context.Context, workDir, bra
 		// without an initiated operation.
 		// See issue #2743.
 		if ctx.Err() != nil {
-			return "aborted", nil, true
+			return lifecycleVerdict{Action: lifecycleAborted}
 		}
-		return "resume", map[string]any{
+		return lifecycleVerdict{Action: lifecycleResume, Evidence: map[string]any{
 			"reason":      missingPRReason,
 			"next_action": missingPRNextAction,
 			"branch":      branch,
 			"gate":        gateOwnedWorkRequired,
-		}, true
+		}}
 	}
 	if refreshUnavailable {
 		// Re-observe only previously authorized evidence with its fixed
 		// identity/deadline; without it there is no safe pending fallback.
 		if ctx.Err() != nil {
-			return "aborted", nil, true
+			return lifecycleVerdict{Action: lifecycleAborted}
 		}
-		if status, extras, ok := s.priorObservation(runID, branch, worktreeHeadSHA); ok {
-			return status, extras, true
+		if verdict, ok := s.priorObservation(runID, branch, worktreeHeadSHA); ok {
+			return verdict
 		}
 		if attemptNeedsRetry(attemptStatus) {
-			return "", nil, false
+			return lifecycleVerdict{}
 		}
-		return "failure", map[string]any{
+		return lifecycleVerdict{Action: lifecycleFailure, Evidence: map[string]any{
 			"reason":       lookupGateReason,
 			"next_action":  lookupGateNextAction,
 			"branch":       branch,
 			"lookup_error": "refresh-failed",
-		}, true
+		}}
 	}
 	if err != nil {
 		// Transport failure cannot create an operation. An already admitted
 		// bounded operation may be re-observed without renewing its deadline.
 		if ctx.Err() != nil {
-			return "aborted", nil, true
+			return lifecycleVerdict{Action: lifecycleAborted}
 		}
-		if status, extras, ok := s.priorObservation(runID, branch, worktreeHeadSHA); ok {
-			return status, extras, true
+		if verdict, ok := s.priorObservation(runID, branch, worktreeHeadSHA); ok {
+			return verdict
 		}
 		if attemptNeedsRetry(attemptStatus) {
-			return "", nil, false
+			return lifecycleVerdict{}
 		}
-		return "failure", map[string]any{
+		return lifecycleVerdict{Action: lifecycleFailure, Evidence: map[string]any{
 			"reason":       lookupGateReason,
 			"next_action":  lookupGateNextAction,
 			"branch":       branch,
 			"lookup_error": "lookup-failed",
-		}, true
+		}}
 	}
 
 	// Merged PRs resolve before retained evidence is consulted, so stale or
@@ -667,7 +625,7 @@ func (s *runSession) decideLifecycleForAttempt(ctx context.Context, workDir, bra
 	})
 	if decision.needMergeFacts {
 		if ctx.Err() != nil {
-			return "aborted", nil, true
+			return lifecycleVerdict{Action: lifecycleAborted}
 		}
 		merged := pr != nil && (pr.Merged || strings.EqualFold(strings.TrimSpace(pr.State), "merged"))
 		mergeFacts = &mergedMergeFacts{
@@ -681,7 +639,7 @@ func (s *runSession) decideLifecycleForAttempt(ctx context.Context, workDir, bra
 			attemptStatus: attemptStatus,
 		})
 		if ctx.Err() != nil {
-			return "aborted", nil, true
+			return lifecycleVerdict{Action: lifecycleAborted}
 		}
 	}
 	// The probe runs without retained evidence: it may only terminalize
@@ -689,10 +647,10 @@ func (s *runSession) decideLifecycleForAttempt(ctx context.Context, workDir, bra
 	// gates need the retained evidence below before the decision can select
 	// resume, await, or a policy failure (issue #2743).
 	if decision.action == lifecycleSuccess || (decision.action == lifecycleFailure && decision.completionFailure) {
-		return lifecycleStatusRepr(decision), lifecycleFailureExtras(decision, s.issueNumber), true
+		return lifecycleVerdict{Action: decision.action, Evidence: lifecycleFailureExtras(decision, s.issueNumber), Kind: lifecycleVerdictCompletion}
 	}
 	if ctx.Err() != nil {
-		return "aborted", nil, true
+		return lifecycleVerdict{Action: lifecycleAborted}
 	}
 	// A confirmed in-deadline review request is an actively resolving
 	// external operation even before the review run starts. Gather it here,
@@ -708,7 +666,7 @@ func (s *runSession) decideLifecycleForAttempt(ctx context.Context, workDir, bra
 		evidence.stateError = true
 	}
 	if ctx.Err() != nil {
-		return "aborted", nil, true
+		return lifecycleVerdict{Action: lifecycleAborted}
 	}
 	if strings.EqualFold(strings.TrimSpace(pr.State), "open") &&
 		strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) {
@@ -724,14 +682,14 @@ func (s *runSession) decideLifecycleForAttempt(ctx context.Context, workDir, bra
 			}
 		}
 		if ctx.Err() != nil {
-			return "aborted", nil, true
+			return lifecycleVerdict{Action: lifecycleAborted}
 		}
 		if ciErr != nil {
-			return "resume", map[string]any{
+			return lifecycleVerdict{Action: lifecycleResume, Evidence: map[string]any{
 				"gate":        gateCIWaitTimeout,
 				"reason":      "CI_WAIT_STATE_ERROR",
 				"next_action": "inspect the persisted CI wait state and repair the current pull-request checks",
-			}, true
+			}}
 		}
 		evidence.payload = mergeLifecycleDiagnostics(evidence.payload, ciEvidence)
 	}
@@ -771,7 +729,7 @@ func (s *runSession) decideLifecycleForAttempt(ctx context.Context, workDir, bra
 			deadlines["pull_request"] = pr.Number
 			deadlines["head_sha"] = headSHA
 			deadlines = mergeLifecycleDiagnostics(deadlines, s.retainedReviewDiagnostics(ctx, workDir, branch, pr, headSHA))
-			return "resume", deadlines, true
+			return lifecycleVerdict{Action: lifecycleResume, Evidence: deadlines}
 		}
 	}
 	if decision.action == lifecycleFailure && isImplementorOwnedGateFailure(decision.failureExtras) && !evidence.stateError && strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) {
@@ -800,13 +758,17 @@ func (s *runSession) decideLifecycleForAttempt(ctx context.Context, workDir, bra
 			if !decision.completionFailure && lifecycleFailureRecoverable(reason) &&
 				strings.EqualFold(strings.TrimSpace(pr.State), "open") && strings.TrimSpace(headSHA) != "" &&
 				strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) {
-				return "await", continuityHold(failureExtras, string(decision.gate)), true
+				return lifecycleVerdict{Action: lifecycleAwait, Evidence: continuityHold(failureExtras, string(decision.gate))}
 			}
 		}
-		return lifecycleStatusRepr(decision), failureExtras, true
+		verdict := lifecycleVerdict{Action: decision.action, Evidence: failureExtras}
+		if decision.gate == lifecycleGateUnavailable {
+			verdict.Kind = lifecycleVerdictClosedPR
+		}
+		return verdict
 	}
 	if !decision.handled {
-		return "", nil, false
+		return lifecycleVerdict{}
 	}
 	extras := decision.extras
 	if diagnostics := s.retainedReviewDiagnostics(ctx, workDir, branch, pr, headSHA); len(diagnostics) > 0 {
@@ -822,8 +784,7 @@ func (s *runSession) decideLifecycleForAttempt(ctx context.Context, workDir, bra
 		extras["gate"] = string(decision.gate)
 	}
 	extras["await"] = true
-	status := lifecycleStatusRepr(decision)
-	if headReconcileErr != nil && (status == "await" || status == "resume") {
+	if headReconcileErr != nil && (decision.action == lifecycleAwait || decision.action == lifecycleResume) {
 		extras["gate"] = gatePRHeadChanged
 		extras["reason"] = "PR_HEAD_RECONCILE_REQUIRED"
 		extras["pull_request"] = pr.Number
@@ -835,9 +796,9 @@ func (s *runSession) decideLifecycleForAttempt(ctx context.Context, workDir, bra
 			nextAction += "; then " + strings.TrimSpace(action)
 		}
 		extras["next_action"] = nextAction
-		return "resume", extras, true
+		return lifecycleVerdict{Action: lifecycleResume, Evidence: extras}
 	}
-	return status, extras, true
+	return lifecycleVerdict{Action: decision.action, Evidence: extras}
 }
 
 func (s *runSession) lifecyclePRForBranch(ctx context.Context, branch string) (*github.PR, error) {
@@ -951,69 +912,6 @@ func (s *runSession) waitForLifecyclePoll(ctx context.Context, interval time.Dur
 		return ctx.Err()
 	case <-timer.C:
 		return nil
-	}
-}
-
-// observeLifecycle keeps a recoverable lifecycle decision in the foreground.
-// The final configured interval repeats after the initial plan. A resume-worthy
-// transition is returned to the caller so the existing bounded resume path can
-// relaunch without consuming an agent retry.
-func (s *runSession) observeLifecycle(ctx context.Context, workDir, branch, logPath, runID string, result AgentRunResult, extras map[string]any, hostPathsReady bool) (string, map[string]any, bool) {
-	plan := s.lifecyclePollIntervals(extras)
-	for index := 0; ; index++ {
-		if deadline, gate, ok := lifecycleDeadline(extras); ok && !s.runtimeNow().Before(deadline) {
-			resume := cloneLifecycleExtras(extras)
-			resume["gate"] = gate
-			resume["reason"] = lifecycleDeadlineReason(gate)
-			resume["next_action"] = lifecycleDeadlineNextAction(gate)
-			// The expired deadline selects remediation through the same
-			// continuity decision as every other resume.
-			status, next := s.continuityDecision(ctx, branch, runID, "resume", resume)
-			if status != "await" {
-				return status, next, true
-			}
-			// A stalled or exhausted remediation keeps observing the gate
-			// without the expired deadline.
-			extras = next
-			delete(extras, "review_request")
-			delete(extras, "ci_wait")
-		}
-		interval := plan[len(plan)-1]
-		if index < len(plan) {
-			interval = plan[index]
-		}
-		if err := s.waitForLifecyclePoll(ctx, interval); err != nil {
-			if errors.Is(err, errLifecycleObservationTestStop) {
-				return "await", extras, true
-			}
-			return "aborted", nil, true
-		}
-		status, nextExtras, handled := s.handleLifecycleDecisionForAttempt(ctx, workDir, branch, logPath, runID, hostPathsReady, result.Status)
-		if !handled {
-			if ctx.Err() != nil {
-				return "aborted", nil, true
-			}
-			// The observer no longer has evidence for an active external
-			// operation. Never turn an unhandled lookup/state into a synthetic
-			// pending wait (issue #2743).
-			status = "failure"
-			nextExtras = lifecycleGateFailureEvidence(idleGateReason, idleGateNextAction, lifecycleGateNone, nil, "")
-		}
-		if status == "resume" {
-			gate, _ := nextExtras["gate"].(string)
-			if isResumeGate(gate) {
-				return status, nextExtras, true
-			}
-			// An exhausted in-session resume budget ends the observation
-			// for every gate, including CI remediation (issue #2743).
-			return "failure", remediationBudgetFailureEvidence(gate, nextExtras,
-				"inspect the current pull-request remediation evidence and start a new run after advancing the pull-request head"), true
-		}
-		if status == "await" {
-			s.emitAwait(ctx, runID, result, nextExtras)
-			continue
-		}
-		return status, nextExtras, true
 	}
 }
 

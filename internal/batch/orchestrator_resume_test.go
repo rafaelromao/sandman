@@ -1323,8 +1323,10 @@ func TestResumePromptFromGate_CIFailureAndConflictRelaunchWithoutRetry(t *testin
 			}, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			promptText, resume := s.resumePromptFromGate(context.Background(), &fakeSandbox{workDir: workDir}, "42-fix", "run-1", map[string]any{
-				"gate": tc.gate, "reason": tc.reason, "pull_request": 17, "head_sha": tc.gate,
+			promptText, resume := s.resumePromptFromGate(context.Background(), &fakeSandbox{workDir: workDir}, "42-fix", "run-1", lifecycleVerdict{
+				Action: lifecycleResume, Evidence: map[string]any{
+					"gate": tc.gate, "reason": tc.reason, "pull_request": 17, "head_sha": tc.gate,
+				},
 			})
 			if !resume || !strings.Contains(promptText, tc.reason) {
 				t.Fatalf("resume = (%q, %t), want prompt with %s", promptText, resume, tc.reason)

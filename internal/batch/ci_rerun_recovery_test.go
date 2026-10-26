@@ -37,7 +37,8 @@ func TestCIRerunRecoversExpiredWaitWithoutPoisonedTask(t *testing.T) {
 			}
 			pr := &github.PR{Number: 17, State: "open", HeadRefOid: "head", StatusCheckRollup: "pending", CIExecutionID: "rerun-checks"}
 			session := &runSession{issueNumber: 42, deps: runDeps{githubClient: &fakeGitHubClient{prs: map[string]*github.PR{"42-work": pr}}, errorLog: io.Discard}, opts: runSessionOptions{now: func() time.Time { return now }, currentHead: func(string) (string, error) { return "head", nil }}}
-			status, extras, handled := session.handleLifecycleDecision(context.Background(), root, "42-work", "", "row", true)
+			observedLifecycle40 := session.observeLifecycleWithHostPathsForTest(context.Background(), root, "42-work", "", "row", true)
+			status, extras, handled := observedLifecycle40.status(), observedLifecycle40.Evidence, observedLifecycle40.handled()
 			if !handled || status != "await" || extras["gate"] != "pending" {
 				t.Fatalf("fresh CI rerun forced repeated timeout remediation: status=%s extras=%+v handled=%v", status, extras, handled)
 			}
@@ -46,13 +47,15 @@ func TestCIRerunRecoversExpiredWaitWithoutPoisonedTask(t *testing.T) {
 				t.Fatalf("new execution did not get its bounded wait: registration=%+v error=%v", registered, err)
 			}
 			now = now.Add(10 * time.Minute)
-			status, _, _ = session.handleLifecycleDecision(context.Background(), root, "42-work", "", "row", true)
+			observedLifecycle50 := session.observeLifecycleWithHostPathsForTest(context.Background(), root, "42-work", "", "row", true)
+			status = observedLifecycle50.status()
 			unchanged, err := readCIWaitRegistration(path)
 			if err != nil || status != "await" || unchanged.DeadlineUnixSeconds != registered.DeadlineUnixSeconds {
 				t.Fatalf("re-observation renewed current execution: status=%s registration=%+v error=%v", status, unchanged, err)
 			}
 			now = time.Unix(registered.DeadlineUnixSeconds, 0).UTC()
-			status, extras, _ = session.handleLifecycleDecision(context.Background(), root, "42-work", "", "row", true)
+			observedLifecycle56 := session.observeLifecycleWithHostPathsForTest(context.Background(), root, "42-work", "", "row", true)
+			status, extras = observedLifecycle56.status(), observedLifecycle56.Evidence
 			if status != "resume" || extras["gate"] != gateCIWaitTimeout {
 				t.Fatalf("same execution escaped its hard bound: status=%s extras=%+v", status, extras)
 			}
@@ -249,7 +252,8 @@ func TestCIRerunRecoveryUsesPersistedGenerationAfterTransportFailure(t *testing.
 		t.Fatal(err)
 	}
 	client.prs["42-fix"].CIExecutionID = "rerun-checks"
-	status, extras, handled := e.observeLifecycle(context.Background(), row)
+	observedLifecycle252 := e.observeRowLifecycle(context.Background(), row)
+	status, extras, handled := observedLifecycle252.status(), observedLifecycle252.Evidence, observedLifecycle252.handled()
 	if !handled || status != "await" {
 		t.Fatalf("rerun observation status=%q handled=%v extras=%#v", status, handled, extras)
 	}
@@ -269,7 +273,8 @@ func TestCIRerunRecoveryUsesPersistedGenerationAfterTransportFailure(t *testing.
 	}
 	client.findPRErr = errors.New("temporary transport failure")
 	restart := newRunSession(e, row)
-	status, extras, handled = restart.handleLifecycleDecision(context.Background(), root, "42-fix", "", "row", true)
+	observedLifecycle272 := restart.observeLifecycleWithHostPathsForTest(context.Background(), root, "42-fix", "", "row", true)
+	status, extras, handled = observedLifecycle272.status(), observedLifecycle272.Evidence, observedLifecycle272.handled()
 	if !handled || status != "await" {
 		t.Fatalf("transport recovery status=%q handled=%v extras=%#v", status, handled, extras)
 	}

@@ -285,7 +285,7 @@ type continuityOutcome struct {
 	status   string
 	// observeAfterRestart observes the Run from a fresh executor over the
 	// same event log and worktree, as a restarted Sandman process would.
-	observeAfterRestart func() (string, map[string]any, bool)
+	observeAfterRestart func() lifecycleVerdict
 }
 
 func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcome {
@@ -377,11 +377,11 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 			break
 		}
 	}
-	restart := func() (string, map[string]any, bool) {
+	restart := func() lifecycleVerdict {
 		fresh := NewOrchestrator(g, &noopRenderer{}, &fakeConfigStore{config: cfg}, log, WithErrorLog(io.Discard),
 			WithRunSessionOpts(runSessionOptions{currentHead: func(string) (string, error) { return g.head(), nil }}))
 		executor := fresh.newRunExecutorWith(context.Background(), BatchConfig{Cfg: cfg}, nil, nil, newBatchCoordinator(nil), nil, paths.NewLayout(cfg, root))
-		return executor.observeLifecycle(context.Background(), RowSpec{
+		return executor.observeRowLifecycle(context.Background(), RowSpec{
 			IssueNumber: 42, RunID: runID, BaseBranch: "main", Branches: map[int]string{42: continuityBranch},
 			RenderCfg: prompt.RenderConfig{ReviewCommand: continuityTrigger, ReviewTimeout: 1800},
 		})
@@ -804,9 +804,9 @@ func TestAFKContinuityContract_StalledWaitSurvivesRestart(t *testing.T) {
 	if final := events.ProjectRunStates(outcome.events); len(final) != 1 || !final[0].IsTerminal() || final[0].Status() != "aborted" {
 		t.Fatalf("aborted stalled wait projection = %+v, want aborted", final)
 	}
-	status, extras, handled := outcome.observeAfterRestart()
-	if !handled || status != "await" || extras[stalledResumesKey] == nil {
-		t.Fatalf("restarted observation = %s/%v (%t), want the stalled wait kept", status, extras, handled)
+	verdict := outcome.observeAfterRestart()
+	if verdict.Action != lifecycleAwait || verdict.Evidence[stalledResumesKey] == nil {
+		t.Fatalf("restarted observation = %v/%v, want the stalled wait kept", verdict.Action, verdict.Evidence)
 	}
 }
 

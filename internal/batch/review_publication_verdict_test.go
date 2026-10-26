@@ -14,7 +14,8 @@ func TestReviewPublicationVerdict_DaemonChangesRequestedIsFeedback(t *testing.T)
 		reviewpub.Marker(reviewpub.ChangesRequested) + "\n" + reviewpub.Identity("request", "current-sha")
 	s, _, pr, workDir, _ := informalApprovalLifecycleFixture(t, body)
 	pr.StatusCheckRollup = "success"
-	status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	observedLifecycle17 := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	status, extras, handled := observedLifecycle17.status(), observedLifecycle17.Evidence, observedLifecycle17.handled()
 	if !handled || status != "resume" || extras["gate"] != gateActionableFeedback {
 		t.Fatalf("daemon changes requested = %s/%v, want actionable feedback", status, extras)
 	}
@@ -26,7 +27,8 @@ func TestReviewPublicationVerdict_UnknownDaemonVerdictIsNeverFeedback(t *testing
 	body := "## Summary\nSee `worker.go:12` for the retry loop.\n\n## Decision\nPending a second look at worker.go.\n\n" + reviewpub.Identity("request", "current-sha")
 	s, _, pr, workDir, _ := informalApprovalLifecycleFixture(t, body)
 	pr.StatusCheckRollup = "success"
-	status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	observedLifecycle29 := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	status, extras, handled := observedLifecycle29.status(), observedLifecycle29.Evidence, observedLifecycle29.handled()
 	if handled && status == "resume" && extras["gate"] == gateActionableFeedback {
 		t.Fatalf("unknown daemon verdict = %s/%v, must not relaunch for feedback", status, extras)
 	}
@@ -39,7 +41,8 @@ func TestReviewPublicationVerdict_PublicationForAnotherHeadIsStale(t *testing.T)
 	s, client, pr, workDir, _ := informalApprovalLifecycleFixture(t, "placeholder")
 	client.comments[1].Body = body
 	pr.StatusCheckRollup = "success"
-	status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	observedLifecycle42 := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	status, extras, handled := observedLifecycle42.status(), observedLifecycle42.Evidence, observedLifecycle42.handled()
 	if !handled || status != "await" || extras["reason"] == "REVIEW_APPROVED" {
 		t.Fatalf("approval of another head = %s/%v, want the current request to keep waiting", status, extras)
 	}
@@ -54,7 +57,8 @@ func TestReviewPublicationVerdict_EditedTriggerRevisionMatches(t *testing.T) {
 	client.comments[1].Body = "## Decision\n**APPROVED**\n\n" + reviewpub.Marker(reviewpub.Approved) + "\n" +
 		reviewpub.Identity(reviewpub.TriggerKey("request", edited), "current-sha")
 	pr.StatusCheckRollup = "success"
-	status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	observedLifecycle57 := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	status, extras, handled := observedLifecycle57.status(), observedLifecycle57.Evidence, observedLifecycle57.handled()
 	if !handled || status != "resume" || extras["reason"] != "REVIEW_APPROVED" {
 		t.Fatalf("review of the edited trigger = %s/%v, want approval", status, extras)
 	}
@@ -150,7 +154,8 @@ func TestReviewPublicationVerdict_ContradictedDaemonApprovalWaits(t *testing.T) 
 			s, client, pr, workDir, _ := informalApprovalLifecycleFixture(t, "placeholder")
 			client.comments[1].Body = published
 			pr.StatusCheckRollup = "success"
-			status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+			observedLifecycle153 := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+			status, extras, handled := observedLifecycle153.status(), observedLifecycle153.Evidence, observedLifecycle153.handled()
 			if handled && status == "resume" && (extras["reason"] == "REVIEW_APPROVED" || extras["gate"] == gateActionableFeedback) {
 				t.Fatalf("contradicted daemon approval = %s/%v, want neither merge work nor a feedback relaunch", status, extras)
 			}

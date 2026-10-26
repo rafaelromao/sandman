@@ -13,8 +13,8 @@ import (
 // finishObserved applies an authoritative terminal observation without acquiring
 // execution capacity or starting an agent/container. Cleanup uses the resolved
 // sandbox policy; observation never re-arbitrates the selected lifecycle action.
-func (e *runExecutor) finishObserved(ctx context.Context, row RowSpec, status string, extras map[string]any) AgentRunResult {
-	return e.applyObserved(ctx, newRunSession(e, row), row, status, extras)
+func (e *runExecutor) finishObserved(ctx context.Context, row RowSpec, verdict lifecycleVerdict) AgentRunResult {
+	return e.applyObserved(ctx, newRunSession(e, row), row, verdict)
 }
 
 // abortObserved applies an explicit abort decision through the same terminal
@@ -25,32 +25,32 @@ func (e *runExecutor) finishObserved(ctx context.Context, row RowSpec, status st
 func (e *runExecutor) abortObserved(ctx context.Context, row RowSpec, extras map[string]any) AgentRunResult {
 	session := newRunSession(e, row)
 	session.explicitAbort = true
-	return e.applyObserved(ctx, session, row, "aborted", extras)
+	return e.applyObserved(ctx, session, row, lifecycleVerdict{Action: lifecycleAborted, Evidence: extras})
 }
 
-func (e *runExecutor) applyObserved(ctx context.Context, session *runSession, row RowSpec, status string, extras map[string]any) AgentRunResult {
+func (e *runExecutor) applyObserved(ctx context.Context, session *runSession, row RowSpec, verdict lifecycleVerdict) AgentRunResult {
 	branch := row.Branches[row.IssueNumber]
 	factory := e.sbFactory
 	if factory == nil {
 		factory = defaultSandboxFactory{}
 	}
 	wt := factory.NewSandbox(session.repoRoot(), session.worktreeDir(), branch, row.BaseBranch, nil)
-	result := AgentRunResult{IssueNumber: row.IssueNumber, Issue: issueRef(row.IssueNumber), Status: status, Branch: branch}
-	result.Status = session.finishDecidedTerminal(ctx, session.issueRunID(), result, extras, wt, branch)
+	result := AgentRunResult{IssueNumber: row.IssueNumber, Issue: issueRef(row.IssueNumber), Status: verdict.status(), Branch: branch}
+	result.Status = session.finishDecidedTerminal(ctx, session.issueRunID(), result, verdict.Evidence, wt, branch)
 	return result
 }
 
-// observeLifecycle rechecks an awaiting continuation without acquiring an
+// lifecycleObserverForRow prepares the observation module without acquiring an
 // execution slot or starting a sandbox. A resolved gate can therefore be
 // durably queued before the scheduler waits for capacity.
-func (e *runExecutor) observeLifecycle(ctx context.Context, row RowSpec) (string, map[string]any, bool) {
+func (e *runExecutor) lifecycleObserverForRow(ctx context.Context, row RowSpec) (lifecycleObservation, lifecycleObservationRequest, bool) {
 	if row.IssueNumber <= 0 || e.deps.githubClient == nil {
-		return "", nil, false
+		return nil, lifecycleObservationRequest{}, false
 	}
 	session := newRunSession(e, row)
 	branch := strings.TrimSpace(row.Branches[row.IssueNumber])
 	if branch == "" {
-		return "", nil, false
+		return nil, lifecycleObservationRequest{}, false
 	}
 	if issue, err := e.deps.githubClient.FetchIssue(ctx, row.IssueNumber); err == nil && issue != nil {
 		session.issueState = issue.State
@@ -60,7 +60,18 @@ func (e *runExecutor) observeLifecycle(ctx context.Context, row RowSpec) (string
 		runID = buildRunID(row.IssueNumber, row.RunTS, row.RunShortID)
 	}
 	workDir := filepath.Join(e.deps.layout.WorktreeDir, branch)
-	return session.handleLifecycleDecision(ctx, workDir, branch, session.runLogPathFor(runID), runID, true)
+	return newLifecycleObserver(session), lifecycleObservationRequest{
+		WorkDir: workDir, Branch: branch, LogPath: session.runLogPathFor(runID), RunID: runID,
+		HostPathsReady: true, AttemptStatus: "success",
+	}, true
+}
+
+func (e *runExecutor) observeRowLifecycle(ctx context.Context, row RowSpec) lifecycleVerdict {
+	observer, request, ready := e.lifecycleObserverForRow(ctx, row)
+	if !ready {
+		return lifecycleVerdict{}
+	}
+	return observer.Observe(ctx, request)
 }
 
 func (e *runExecutor) persistObservedAwait(ctx context.Context, row RowSpec, extras map[string]any) error {

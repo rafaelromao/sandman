@@ -269,7 +269,8 @@ func TestLifecycle_FailedAttemptsLoadRetainedReviewEvidenceBeforeRetry(t *testin
 					},
 					renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
 				}
-				status, extras, handled := session.handleLifecycleDecisionForAttempt(context.Background(), workDir, gateTestBranch, "", "run-test", true, attemptStatus)
+				observedLifecycle272 := session.observeLifecycleAttemptForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true, attemptStatus)
+				status, extras, handled := observedLifecycle272.status(), observedLifecycle272.Evidence, observedLifecycle272.handled()
 				if !handled || status != "resume" {
 					t.Fatalf("lifecycle result = (%q, %#v, %t), want handled resume", status, extras, handled)
 				}
@@ -308,9 +309,6 @@ func TestDecideImplementationPRLifecycle_MergedWithClosingIntent(t *testing.T) {
 	})
 	if d.action != lifecycleSuccess || !d.handled {
 		t.Fatalf("decision = %+v, want handled lifecycleSuccess", d)
-	}
-	if got := lifecycleStatusRepr(d); got != "success" {
-		t.Fatalf("status = %q, want success", got)
 	}
 	if d.completionFailure || d.needMergeFacts {
 		t.Fatalf("decision carries unexpected flags: %+v", d)
@@ -351,9 +349,6 @@ func TestDecideImplementationPRLifecycle_MergedMissingClosingRefRequestsFacts(t 
 	})
 	if withRef.action != lifecycleFailure || !withRef.handled || !withRef.completionFailure {
 		t.Fatalf("decision = %+v, want handled lifecycleFailure with completionFailure", withRef)
-	}
-	if got := lifecycleStatusRepr(withRef); got != "failure" {
-		t.Fatalf("status = %q, want failure", got)
 	}
 	extras := lifecycleFailureExtras(withRef, 42)
 	completion, ok := extras["completion"].(map[string]any)
@@ -873,7 +868,8 @@ func TestLifecycle_VerifiedMergedCompletionSurvivesLaterLegacyLookup(t *testing.
 		deps:        runDeps{githubClient: client, errorLog: io.Discard},
 		opts:        gateTestRunOptions(),
 	}
-	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	observedLifecycle870 := session.observeLifecycleForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := observedLifecycle870.status(), observedLifecycle870.Evidence, observedLifecycle870.handled()
 	if !handled || status != "success" || extras != nil {
 		t.Fatalf("lifecycle result = (%q, %#v, %t), want immutable success", status, extras, handled)
 	}
