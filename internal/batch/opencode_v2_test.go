@@ -76,6 +76,51 @@ printf '%s\n' '{"type":"text","sessionID":"ses-v2","part":{"text":"done"}}'
 	}
 }
 
+func TestOpenCodeV2_RendersChunkedToolEventsToLiveAndSavedLogs(t *testing.T) {
+	root := t.TempDir()
+	layout := paths.NewLayout(&config.Config{}, root)
+	var live bytes.Buffer
+	const (
+		firstChunk = `{"type":"tool_use","sessionID":"ses-v2-log","part":{"tool":"shell","state":{"status":"completed","input":{"command":"git status --short --branch && git branch --show-current`
+		lastChunk  = ` && git log -1 --oneline","workdir":"/workspace/repo"}}}}` + "\n"
+		want       = "$ git status --short --branch && git branch --show-current && git log -1 --oneline @ /workspace/repo"
+	)
+	sb := &fakeSandbox{workDir: root}
+	sb.execFunc = func(_ context.Context, _ string, stdout, _ io.Writer) error {
+		for _, chunk := range []string{firstChunk, lastChunk} {
+			if _, err := io.WriteString(stdout, chunk); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	run := NewAgentRunWithLayout(nil, "test", sb, layout)
+	run.preset = "opencode-v2"
+	run.runFolder = filepath.Join(root, "run")
+	run.outputWriter = &live
+
+	result := run.Run(context.Background(), &spyRenderer{result: "prompt"}, config.BuiltInAgentPresets["opencode-v2"].Command, prompt.RenderConfig{})
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success", result.Status)
+	}
+	logData, err := os.ReadFile(filepath.Join(run.runFolder, "run.log"))
+	if err != nil {
+		t.Fatalf("read run log: %v", err)
+	}
+	for name, output := range map[string]string{"saved run.log": string(logData), "live output": live.String()} {
+		if !strings.Contains(output, want) {
+			t.Errorf("%s = %q, want readable tool event %q", name, output, want)
+		}
+		if strings.Contains(output, `\u0026\u0026`) || strings.Contains(output, `"command"`) {
+			t.Errorf("%s contains raw JSON tool input: %q", name, output)
+		}
+	}
+	identity, err := os.ReadFile(filepath.Join(run.runFolder, "session.json"))
+	if err != nil || !strings.Contains(string(identity), `"session_id": "ses-v2-log"`) {
+		t.Fatalf("session metadata = %s, %v; want captured v2 session", identity, err)
+	}
+}
+
 func TestOpenCodeV2_DoesNotReuseV1Identity(t *testing.T) {
 	root := t.TempDir()
 	layout := paths.NewLayout(&config.Config{}, root)

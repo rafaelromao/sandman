@@ -195,7 +195,7 @@ func formatToolEvent(event map[string]any, tool string) string {
 		} else if path != "" {
 			detail = path
 		}
-	case "bash":
+	case "bash", "shell":
 		if cmd, _ := input["command"].(string); cmd != "" {
 			detail = truncateString(strings.TrimSpace(cmd), 120)
 			if workdir, _ := input["workdir"].(string); workdir != "" && workdir != "." && workdir != "/tmp" {
@@ -263,7 +263,7 @@ func formatToolEvent(event map[string]any, tool string) string {
 }
 
 func formatToolLabel(tool, detail string) string {
-	if tool == "bash" {
+	if tool == "bash" || tool == "shell" {
 		if detail == "" {
 			return "$"
 		}
