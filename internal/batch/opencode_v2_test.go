@@ -81,13 +81,30 @@ func TestOpenCodeV2_RendersChunkedToolEventsToLiveAndSavedLogs(t *testing.T) {
 	layout := paths.NewLayout(&config.Config{}, root)
 	var live bytes.Buffer
 	const (
-		firstChunk = `{"type":"tool_use","sessionID":"ses-v2-log","part":{"tool":"shell","state":{"status":"completed","input":{"command":"git status --short --branch && git branch --show-current`
-		lastChunk  = ` && git log -1 --oneline","workdir":"/workspace/repo"}}}}` + "\n"
-		want       = "$ git status --short --branch && git branch --show-current && git log -1 --oneline @ /workspace/repo"
+		firstChunk  = `{"type":"tool_use","sessionID":"ses-v2-log","part":{"tool":"shell","state":{"status":"completed","input":{"command":"git status --short --branch && git branch --show-current`
+		lastChunk   = ` && git log -1 --oneline","workdir":"/workspace/repo"}}}}` + "\n"
+		want        = "$ git status --short --branch && git branch --show-current && git log -1 --oneline @ /workspace/repo"
+		wantRead    = "→ Read /workspace/repo/AGENTS.md (offset 1, limit 200)"
+		wantSkill   = `→ Skill "sandman-run"`
+		wantPatch   = "→ Edit /workspace/repo/main.go"
+		wantAgent   = "→ Subagent explore: Audit tool schemas"
+		wantWrite   = "→ Write /workspace/repo/new.txt"
+		wantEdit    = "→ Edit /workspace/repo/changed.txt"
+		wantError   = "→ Read /workspace/repo/private.txt (offset 2, limit 10) (error: permission denied)"
+		wantUnknown = `future_tool {"query":"`
 	)
+	readEvent := `{"type":"tool_use","part":{"tool":"read","state":{"status":"completed","input":{"path":"/workspace/repo/AGENTS.md","offset":1,"limit":200}}}}` + "\n"
+	skillEvent := `{"type":"tool_use","part":{"tool":"skill","state":{"status":"completed","input":{"id":"sandman-run"}}}}` + "\n"
+	patchEvent := `{"type":"tool_use","part":{"tool":"patch","state":{"status":"completed","input":{"patchText":"*** Begin Patch\n*** Update File: /workspace/repo/main.go\n@@\n-old\n+new\n*** End Patch"}}}}` + "\n"
+	agentEvent := `{"type":"tool_use","part":{"tool":"subagent","state":{"status":"completed","input":{"agent":"explore","description":"Audit tool schemas","prompt":"Inspect the supported OpenCode v2 tool inputs."}}}}` + "\n"
+	writeEvent := `{"type":"tool_use","part":{"tool":"write","state":{"status":"completed","input":{"path":"/workspace/repo/new.txt","content":"file contents"}}}}` + "\n"
+	editEvent := `{"type":"tool_use","part":{"tool":"edit","state":{"status":"completed","input":{"path":"/workspace/repo/changed.txt","oldString":"before","newString":"after"}}}}` + "\n"
+	errorEvent := `{"type":"tool_use","part":{"tool":"read","state":{"status":"error","input":{"path":"/workspace/repo/private.txt","offset":2,"limit":10},"error":"permission denied"}}}` + "\n"
+	unknownInput := strings.Repeat("x", 300)
+	unknownEvent := `{"type":"tool_use","part":{"tool":"future_tool","state":{"status":"completed","input":{"query":"` + unknownInput + `"}}}}` + "\n"
 	sb := &fakeSandbox{workDir: root}
 	sb.execFunc = func(_ context.Context, _ string, stdout, _ io.Writer) error {
-		for _, chunk := range []string{firstChunk, lastChunk} {
+		for _, chunk := range []string{firstChunk, lastChunk, readEvent, skillEvent, patchEvent, agentEvent, writeEvent, editEvent, errorEvent, unknownEvent} {
 			if _, err := io.WriteString(stdout, chunk); err != nil {
 				return err
 			}
@@ -111,7 +128,28 @@ func TestOpenCodeV2_RendersChunkedToolEventsToLiveAndSavedLogs(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Errorf("%s = %q, want readable tool event %q", name, output, want)
 		}
-		if strings.Contains(output, `\u0026\u0026`) || strings.Contains(output, `"command"`) {
+		if !strings.Contains(output, wantRead) {
+			t.Errorf("%s = %q, want readable read event %q", name, output, wantRead)
+		}
+		if !strings.Contains(output, wantSkill) {
+			t.Errorf("%s = %q, want readable skill event %q", name, output, wantSkill)
+		}
+		if !strings.Contains(output, wantPatch) {
+			t.Errorf("%s = %q, want readable patch event %q", name, output, wantPatch)
+		}
+		if !strings.Contains(output, wantAgent) {
+			t.Errorf("%s = %q, want readable delegated-agent event %q", name, output, wantAgent)
+		}
+		if !strings.Contains(output, wantWrite) || !strings.Contains(output, wantEdit) {
+			t.Errorf("%s = %q, want readable V2 filesystem paths %q and %q", name, output, wantWrite, wantEdit)
+		}
+		if !strings.Contains(output, wantError) {
+			t.Errorf("%s = %q, want readable error event %q", name, output, wantError)
+		}
+		if !strings.Contains(output, wantUnknown) || strings.Contains(output, unknownInput) {
+			t.Errorf("%s = %q, want a useful but bounded unknown-tool diagnostic", name, output)
+		}
+		if strings.Contains(output, `\u0026\u0026`) || strings.Contains(output, `"command"`) || strings.Contains(output, `"path"`) || strings.Contains(output, `"id"`) || strings.Contains(output, `"patchText"`) || strings.Contains(output, `"prompt"`) || strings.Contains(output, `"content"`) || strings.Contains(output, `"oldString"`) {
 			t.Errorf("%s contains raw JSON tool input: %q", name, output)
 		}
 	}

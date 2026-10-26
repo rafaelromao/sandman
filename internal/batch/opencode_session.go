@@ -159,8 +159,12 @@ func formatToolEvent(event map[string]any, tool string) string {
 	var detail string
 	switch tool {
 	case "read":
-		if v, _ := input["filePath"].(string); v != "" {
-			detail = v
+		path, _ := input["filePath"].(string)
+		if path == "" {
+			path, _ = input["path"].(string)
+		}
+		if path != "" {
+			detail = path
 			pagination := make([]string, 0, 2)
 			if offset, ok := input["offset"]; ok && offset != nil {
 				pagination = append(pagination, "offset "+formatToolInputValue(offset))
@@ -209,8 +213,10 @@ func formatToolEvent(event map[string]any, tool string) string {
 			detail = name
 		} else if name, _ := input["skill"].(string); name != "" {
 			detail = name
+		} else if name, _ := input["id"].(string); name != "" {
+			detail = name
 		}
-	case "edit", "write", "apply_patch":
+	case "edit", "write", "apply_patch", "patch":
 		if fp, _ := input["filePath"].(string); fp != "" {
 			detail = fp
 		} else if fp, _ := input["path"].(string); fp != "" {
@@ -242,6 +248,8 @@ func formatToolEvent(event map[string]any, tool string) string {
 		detail = formatPTYEvent(tool, input, state)
 	case "task":
 		detail, _ = input["description"].(string)
+	case "subagent":
+		detail = formatSubagentInput(input)
 	default:
 		if len(input) > 0 {
 			if b, err := json.Marshal(input); err == nil {
@@ -292,6 +300,8 @@ func formatToolLabel(tool, detail string) string {
 		"edit":        "→ Edit",
 		"write":       "→ Write",
 		"apply_patch": "→ Edit",
+		"patch":       "→ Edit",
+		"subagent":    "→ Subagent",
 		"todowrite":   "→ Task",
 		"question":    "→ Task",
 		"task":        "→ Task",
@@ -304,6 +314,22 @@ func formatToolLabel(tool, detail string) string {
 		return label
 	}
 	return label + " " + detail
+}
+
+func formatSubagentInput(input map[string]any) string {
+	agent, _ := input["agent"].(string)
+	description, _ := input["description"].(string)
+	if description == "" {
+		description, _ = input["prompt"].(string)
+	}
+	description = truncateString(description, 80)
+	if agent != "" && description != "" {
+		return truncateString(agent, 40) + ": " + description
+	}
+	if description != "" {
+		return description
+	}
+	return truncateString(agent, 80)
 }
 
 func formatPTYSpawn(input, state map[string]any) string {
