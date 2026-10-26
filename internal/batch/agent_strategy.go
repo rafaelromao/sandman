@@ -275,11 +275,15 @@ func (opencodeStrategy) PersistSession(run *AgentRun, stdout, stderr outputParse
 }
 
 func (s opencodeStrategy) NewOutputParsers(warnings io.Writer) (outputParser, outputParser) {
+	return s.newOutputParsers(warnings, false)
+}
+
+func (s opencodeStrategy) newOutputParsers(warnings io.Writer, includeFilter bool) (outputParser, outputParser) {
 	if !s.builtInCommand {
 		return nil, nil
 	}
 	capture := &opencodeSessionCapture{}
-	return newSharedOpenCodeOutput(nil, warnings, false, capture), newSharedOpenCodeOutput(nil, warnings, true, capture)
+	return newSharedOpenCodeOutputWithIncludeFilter(nil, warnings, false, capture, includeFilter), newSharedOpenCodeOutputWithIncludeFilter(nil, warnings, true, capture, includeFilter)
 }
 
 func (opencodeStrategy) ContextRolloverDetector(literals []string, onTrigger func()) *contextRolloverDetector {
@@ -319,6 +323,9 @@ func (s opencodeV2Strategy) ModelFlag(model, variant string) string {
 }
 func (opencodeV2Strategy) VariantFlag(string) string                                      { return "" }
 func (opencodeV2Strategy) LaunchEnv(env map[string]string, _, _ string) map[string]string { return env }
+func (s opencodeV2Strategy) NewOutputParsers(warnings io.Writer) (outputParser, outputParser) {
+	return s.opencodeStrategy.newOutputParsers(warnings, true)
+}
 
 var opencodeV2SessionKind = agentSessionKind{protocol: "opencode-session/v2", provider: "opencode-v2"}
 

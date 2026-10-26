@@ -18,6 +18,7 @@ type opencodeOutput struct {
 	warning       io.Writer
 	capture       *opencodeSessionCapture
 	stderr        bool
+	includeFilter bool
 	modelProgress func()
 	buf           bytes.Buffer
 }
@@ -40,7 +41,11 @@ func newOpenCodeOutput(dst, warning io.Writer, stderr bool) *opencodeOutput {
 }
 
 func newSharedOpenCodeOutput(dst, warning io.Writer, stderr bool, capture *opencodeSessionCapture) *opencodeOutput {
-	return &opencodeOutput{dst: dst, warning: warning, stderr: stderr, capture: capture}
+	return newSharedOpenCodeOutputWithIncludeFilter(dst, warning, stderr, capture, false)
+}
+
+func newSharedOpenCodeOutputWithIncludeFilter(dst, warning io.Writer, stderr bool, capture *opencodeSessionCapture, includeFilter bool) *opencodeOutput {
+	return &opencodeOutput{dst: dst, warning: warning, stderr: stderr, capture: capture, includeFilter: includeFilter}
 }
 
 func (w *opencodeOutput) Write(p []byte) (int, error) {
@@ -136,7 +141,7 @@ func (w *opencodeOutput) writeLine(line []byte, newline bool) error {
 		}
 	case "tool", "tool_use", "tool_result":
 		if tool := eventTool(event); tool != "" {
-			return w.writeText(formatToolEvent(event, tool))
+			return w.writeText(formatToolEvent(event, tool, w.includeFilter))
 		}
 	}
 	return w.writeText(formatUnhandledOpenCodeJSON(value))
@@ -152,15 +157,19 @@ func formatUnhandledOpenCodeJSON(value any) string {
 	return string(formatted)
 }
 
-func formatToolEvent(event map[string]any, tool string) string {
+func formatToolEvent(event map[string]any, tool string, includeFilter bool) string {
 	input := toolInput(event)
 	state := toolState(event)
 	status, _ := state["status"].(string)
 	var detail string
 	switch tool {
 	case "read":
-		if v, _ := input["filePath"].(string); v != "" {
-			detail = v
+		path, _ := input["filePath"].(string)
+		if path == "" {
+			path, _ = input["path"].(string)
+		}
+		if path != "" {
+			detail = path
 			pagination := make([]string, 0, 2)
 			if offset, ok := input["offset"]; ok && offset != nil {
 				pagination = append(pagination, "offset "+formatToolInputValue(offset))
@@ -175,11 +184,16 @@ func formatToolEvent(event map[string]any, tool string) string {
 	case "grep":
 		pattern, _ := input["pattern"].(string)
 		path, _ := input["path"].(string)
-		if path == "" {
-			path, _ = input["include"].(string)
+		include, _ := input["include"].(string)
+		explicitPath := path != ""
+		if !explicitPath {
+			path = include
 		}
 		if pattern != "" && path != "" {
 			detail = fmt.Sprintf("%q in %s", truncateString(pattern, 60), path)
+			if includeFilter && include != "" && explicitPath {
+				detail += " (include " + truncateString(include, 60) + ")"
+			}
 		} else if pattern != "" {
 			detail = fmt.Sprintf("%q", truncateString(pattern, 60))
 		} else if path != "" {
@@ -195,7 +209,7 @@ func formatToolEvent(event map[string]any, tool string) string {
 		} else if path != "" {
 			detail = path
 		}
-	case "bash":
+	case "bash", "shell":
 		if cmd, _ := input["command"].(string); cmd != "" {
 			detail = truncateString(strings.TrimSpace(cmd), 120)
 			if workdir, _ := input["workdir"].(string); workdir != "" && workdir != "." && workdir != "/tmp" {
@@ -209,8 +223,10 @@ func formatToolEvent(event map[string]any, tool string) string {
 			detail = name
 		} else if name, _ := input["skill"].(string); name != "" {
 			detail = name
+		} else if name, _ := input["id"].(string); name != "" {
+			detail = name
 		}
-	case "edit", "write", "apply_patch":
+	case "edit", "write", "apply_patch", "patch":
 		if fp, _ := input["filePath"].(string); fp != "" {
 			detail = fp
 		} else if fp, _ := input["path"].(string); fp != "" {
@@ -235,6 +251,14 @@ func formatToolEvent(event map[string]any, tool string) string {
 			detail = truncateString(q, 80)
 		} else if header, _ := input["header"].(string); header != "" {
 			detail = truncateString(header, 80)
+		} else if questions, ok := input["questions"].([]any); ok {
+			for _, value := range questions {
+				question, _ := value.(map[string]any)
+				if q, _ := question["question"].(string); q != "" {
+					detail = truncateString(q, 80)
+					break
+				}
+			}
 		}
 	case "pty_spawn":
 		detail = formatPTYSpawn(input, state)
@@ -242,6 +266,8 @@ func formatToolEvent(event map[string]any, tool string) string {
 		detail = formatPTYEvent(tool, input, state)
 	case "task":
 		detail, _ = input["description"].(string)
+	case "subagent":
+		detail = formatSubagentInput(input)
 	default:
 		if len(input) > 0 {
 			if b, err := json.Marshal(input); err == nil {
@@ -263,7 +289,7 @@ func formatToolEvent(event map[string]any, tool string) string {
 }
 
 func formatToolLabel(tool, detail string) string {
-	if tool == "bash" {
+	if tool == "bash" || tool == "shell" {
 		if detail == "" {
 			return "$"
 		}
@@ -292,6 +318,8 @@ func formatToolLabel(tool, detail string) string {
 		"edit":        "→ Edit",
 		"write":       "→ Write",
 		"apply_patch": "→ Edit",
+		"patch":       "→ Edit",
+		"subagent":    "→ Subagent",
 		"todowrite":   "→ Task",
 		"question":    "→ Task",
 		"task":        "→ Task",
@@ -304,6 +332,22 @@ func formatToolLabel(tool, detail string) string {
 		return label
 	}
 	return label + " " + detail
+}
+
+func formatSubagentInput(input map[string]any) string {
+	agent, _ := input["agent"].(string)
+	description, _ := input["description"].(string)
+	if description == "" {
+		description, _ = input["prompt"].(string)
+	}
+	description = truncateString(description, 80)
+	if agent != "" && description != "" {
+		return truncateString(agent, 40) + ": " + description
+	}
+	if description != "" {
+		return description
+	}
+	return truncateString(agent, 80)
 }
 
 func formatPTYSpawn(input, state map[string]any) string {
