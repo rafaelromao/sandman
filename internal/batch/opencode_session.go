@@ -241,6 +241,14 @@ func formatToolEvent(event map[string]any, tool string) string {
 			detail = truncateString(q, 80)
 		} else if header, _ := input["header"].(string); header != "" {
 			detail = truncateString(header, 80)
+		} else if questions, ok := input["questions"].([]any); ok {
+			for _, value := range questions {
+				question, _ := value.(map[string]any)
+				if q, _ := question["question"].(string); q != "" {
+					detail = truncateString(q, 80)
+					break
+				}
+			}
 		}
 	case "pty_spawn":
 		detail = formatPTYSpawn(input, state)
