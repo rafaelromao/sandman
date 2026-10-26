@@ -119,7 +119,7 @@ func (o *waitOwner) checkpoint(row RowSpec, ready bool, nextPoll time.Duration) 
 	record := o.record
 	if o.log != nil {
 		record.InitialAdmission = !state.HasStarted()
-	} else if !ready || row.UsageLimitProbe || row.Mode == ModeContinue {
+	} else if !ready || row.quotaAllowance.probing() || row.Mode == ModeContinue {
 		record.InitialAdmission = false
 	}
 	if !record.InitialAdmission {
@@ -129,7 +129,8 @@ func (o *waitOwner) checkpoint(row RowSpec, ready bool, nextPoll time.Duration) 
 	if record.Branch == "" {
 		record.Branch = row.Branches[row.IssueNumber]
 	}
-	record.Ready, record.UsageLimitProbe = ready, row.UsageLimitProbe
+	record.Ready, record.UsageLimitProbe = ready, row.quotaAllowance.probing()
+	record.ReuseSession = row.quotaAllowance.allowSessionReuse(row.ReuseSession)
 	record.PreviousRunID = row.PreviousRunIDs[row.IssueNumber]
 	record.PreviousBatchID = row.PreviousRunBatchIDs[row.IssueNumber]
 	record.NextPollAt = o.now().Add(nextPoll)
@@ -152,7 +153,7 @@ func (o *waitOwner) checkpoint(row RowSpec, ready bool, nextPoll time.Duration) 
 	if ready && !record.UsageLimitProbe {
 		record.OperationID, record.OperationDeadline = "capacity", time.Time{}
 	}
-	if row.UsageLimitProbe {
+	if row.quotaAllowance.probing() {
 		record.OperationID, record.OperationDeadline = "quota:"+row.RunID, time.Time{}
 	}
 	at := o.now()

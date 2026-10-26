@@ -402,7 +402,7 @@ func TestWaitingOwnerNilLogPreservesQuotaSchedule(t *testing.T) {
 	}
 	defer owner.close()
 	deadline := now.Add(5 * time.Hour)
-	if err := owner.checkpoint(RowSpec{RunID: "row", IssueNumber: 42, Branches: map[int]string{42: "42-work"}, UsageLimitProbe: true, UsageLimitDeadline: deadline}, false, usageLimitPollInterval); err != nil {
+	if err := owner.checkpoint(RowSpec{RunID: "row", IssueNumber: 42, Branches: map[int]string{42: "42-work"}, quotaAllowance: usageLimitAllowance{probe: true, deadline: deadline}}, false, usageLimitPollInterval); err != nil {
 		t.Fatal(err)
 	}
 	record, err := daemon.ReadRunWaitAt(layout, batch, "row")
@@ -1348,7 +1348,7 @@ func TestWaitingContract_ConsumedQuotaPollingStillPermitsOrdinaryRetries(t *test
 	e := o.newRunExecutor(context.Background(), BatchConfig{
 		Cfg: &config.Config{}, AgentCfg: config.BuiltInAgentPresets["opencode"].Agent("opencode"), IdentityResolver: noopIdentityResolver(), Retries: 1,
 	}, &freshSandboxFactory{}, nil)
-	result, _ := e.Execute(context.Background(), RowSpec{IssueNumber: 42, RunID: "row", Mode: ModeContinue, UsageLimitProbe: true, Branches: map[int]string{42: "42-limit"}})
+	result, _ := e.Execute(context.Background(), RowSpec{IssueNumber: 42, RunID: "row", Mode: ModeContinue, quotaAllowance: usageLimitAllowance{probe: true}, Branches: map[int]string{42: "42-limit"}})
 	if result.Status != "failure" || len(factory.created) != 2 || !result.UsageLimitReached || countEventsByType(log.snapshot(), "run.await") != 1 || countEventsByType(log.snapshot(), "run.retry") != 1 {
 		t.Fatalf("consumed polling renewed waiting or vetoed ordinary retries: result=%#v starts=%v events=%+v", result, factory.created, log.snapshot())
 	}
@@ -1383,12 +1383,11 @@ func TestWaitingContract_ExpiredQuotaProbeStillFinishesVerifiedMerge(t *testing.
 		AgentCfg: config.BuiltInAgentPresets["opencode"].Agent("opencode"),
 	}, &freshSandboxFactory{}, nil)
 	result, started := e.Execute(context.Background(), RowSpec{
-		IssueNumber:        42,
-		RunID:              "row",
-		Mode:               ModeContinue,
-		UsageLimitProbe:    true,
-		UsageLimitDeadline: now.Add(-time.Minute),
-		Branches:           map[int]string{42: branch},
+		IssueNumber:    42,
+		RunID:          "row",
+		Mode:           ModeContinue,
+		quotaAllowance: usageLimitAllowance{probe: true, deadline: now.Add(-time.Minute)},
+		Branches:       map[int]string{42: branch},
 	})
 	if started || result.Status != "success" {
 		t.Fatalf("expired quota probe = (started=%t, result=%#v), want observation-only success", started, result)
