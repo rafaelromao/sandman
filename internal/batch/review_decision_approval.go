@@ -119,13 +119,18 @@ func reviewDecisionApprovedBody(body string) bool {
 // publishedApprovalContradicted reports author-facing prose that contradicts
 // a daemon APPROVED verdict: an opposing verdict ("not approved", "changes
 // requested", CHANGES_REQUESTED), a labelled Blocking or Important finding, or
-// a repair directive addressed to the author. Remarks addressed to the runtime
+// an author-work repair directive or unresolved assessment. Remarks addressed to the runtime
 // or surrounding workflow, CI-wait advice, negated "no changes requested"
 // declarations and review history do not contradict it.
 func publishedApprovalContradicted(body string) bool {
 	for _, section := range collectReviewApprovalSections(reviewpub.StripMarkers(body)) {
 		switch section.kind {
-		case "history", "decision":
+		case "history":
+			continue
+		case "decision":
+			if !section.permitsApproval() {
+				return true
+			}
 			continue
 		case "findings":
 			if strings.TrimSpace(section.text) == "" || noReviewFindings(section.text) {
@@ -137,11 +142,7 @@ func publishedApprovalContradicted(body string) bool {
 			if strings.TrimSpace(clause) == "" || reviewRuntimeAdvice(clause) || reviewNextStepAdvice(clause) {
 				continue
 			}
-			visible := reviewDirectiveProse(clause)
-			if reviewOpposingVerdict.MatchString(reviewApprovalProse(clause)) ||
-				reviewApprovalContradiction.MatchString(visible) ||
-				reviewFindingSeverity.MatchString(visible) ||
-				(reviewAuthorAddressed.MatchString(visible) && reviewFindingDirective.MatchString(visible)) {
+			if !reviewProsePermitsApproval(clause) {
 				return true
 			}
 		}
