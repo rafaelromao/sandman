@@ -40,6 +40,17 @@ func TestUsageLimitAllowanceAccruesCompletedPoll(t *testing.T) {
 	}
 }
 
+func TestUsageLimitAllowanceDoesNotAccruePartialPoll(t *testing.T) {
+	allowance, err := restoreUsageLimitAllowance(map[string]any{"usage_limit_waited_seconds": 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := allowance.completedPoll(usageLimitPollInterval - time.Second)
+	if got := updated.persistedEvidence()["usage_limit_waited_seconds"]; got != 0 {
+		t.Fatalf("partial poll accrued %v seconds, want 0", got)
+	}
+}
+
 func TestUsageLimitAllowanceReportsFiveHourExhaustion(t *testing.T) {
 	allowance, err := restoreUsageLimitAllowance(map[string]any{
 		"usage_limit_waited_seconds": int((usageLimitRetryWindow - usageLimitPollInterval) / time.Second),

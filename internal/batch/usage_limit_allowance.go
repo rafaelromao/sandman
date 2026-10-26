@@ -100,17 +100,20 @@ func (a usageLimitAllowance) clear() usageLimitAllowance {
 	return usageLimitAllowance{}
 }
 
+// completedPoll accrues only a full configured quota interval. A recovered
+// schedule may wait only its remaining delay after downtime; that partial wait
+// is not a completed ten-minute poll.
 func (a usageLimitAllowance) completedPoll(interval time.Duration) usageLimitAllowance {
-	if interval <= 0 || a.waited >= usageLimitRetryWindow {
+	if interval != usageLimitPollInterval || a.waited >= usageLimitRetryWindow {
 		return a
 	}
 	if a.waited < 0 {
 		a.waited = 0
 	}
-	if interval >= usageLimitRetryWindow-a.waited {
+	if usageLimitPollInterval >= usageLimitRetryWindow-a.waited {
 		a.waited = usageLimitRetryWindow
 	} else {
-		a.waited += interval
+		a.waited += usageLimitPollInterval
 	}
 	return a
 }
