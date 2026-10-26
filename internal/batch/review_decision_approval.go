@@ -32,6 +32,7 @@ var (
 	// CI, publish a formal review, handle the publication gap) are not author
 	// repair requests. A remark that names the author is never one of them.
 	reviewRuntimeRemark           = regexp.MustCompile(`(?i)^(?:the\s+)?(?:surrounding\s+|managed\s+|sandman\s+)?(?:runtime|workflow|automation|orchestrator|merge\s+gate)\b`)
+	reviewRuntimeRepair           = regexp.MustCompile(`(?i)\b(?:fix(?:ed|es|ing)?|repair(?:ed|s|ing)?|correct(?:ed|s|ing)?|resolv(?:e|ed|es|ing)|replac(?:e|ed|es|ing)|remov(?:e|ed|es|ing)|chang(?:e|ed|es|ing)|add(?:ed|s|ing)?)\b`)
 	reviewAuthorAddressed         = regexp.MustCompile(`(?i)\b(?:author|implementor|implementer|you)\b`)
 	reviewNoQualityFinding        = regexp.MustCompile(`(?i)^(?:none\.\s+)?no\b[^\n.:]*\b(?:concern|finding)s?\b[^\n.:]*\b(?:found|filed|identified)\s*:`)
 	reviewAcceptanceEvidence      = regexp.MustCompile(`(?i)^(?:verification\s+against|how\s+each)\b`)
@@ -410,6 +411,7 @@ func reviewRuntimeAdvice(clause string) bool {
 	clause = strings.TrimSpace(strings.Trim(reviewDirectiveProse(clause), " \t-*"))
 	return reviewRuntimeRemark.MatchString(clause) &&
 		!reviewAuthorAddressed.MatchString(clause) &&
+		!reviewRuntimeRepair.MatchString(clause) &&
 		!reviewFindingSeverity.MatchString(clause) &&
 		!reviewOpposingVerdict.MatchString(clause) &&
 		!reviewHasUnresolvedAssessment(clause)

@@ -133,6 +133,7 @@ func TestReviewPublicationVerdict_ProseVariantsAndContradictions(t *testing.T) {
 // so the Run waits instead of merging or relaunching for feedback.
 func TestReviewPublicationVerdict_ContradictedDaemonApprovalWaits(t *testing.T) {
 	for _, tc := range []struct{ name, decision string }{
+		{"runtime merge prohibition", "## Suggested next steps\nThe surrounding workflow must not merge until the race in worker.go:12 is fixed.\n\n## Decision\n**APPROVED**\n"},
 		{"direct imperative", "## Suggested next steps\nFix the race in `worker.go:12`.\n\n## Decision\n**APPROVED**\n"},
 		{"decision condition", "## Decision\n**APPROVED**\nOnly after the race is fixed.\n"},
 		{"unmet criterion", "## Summary\nThe timeout criterion is unmet.\n\n## Decision\n**APPROVED**\n"},
