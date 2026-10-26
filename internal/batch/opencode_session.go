@@ -18,6 +18,7 @@ type opencodeOutput struct {
 	warning       io.Writer
 	capture       *opencodeSessionCapture
 	stderr        bool
+	includeFilter bool
 	modelProgress func()
 	buf           bytes.Buffer
 }
@@ -40,7 +41,11 @@ func newOpenCodeOutput(dst, warning io.Writer, stderr bool) *opencodeOutput {
 }
 
 func newSharedOpenCodeOutput(dst, warning io.Writer, stderr bool, capture *opencodeSessionCapture) *opencodeOutput {
-	return &opencodeOutput{dst: dst, warning: warning, stderr: stderr, capture: capture}
+	return newSharedOpenCodeOutputWithIncludeFilter(dst, warning, stderr, capture, false)
+}
+
+func newSharedOpenCodeOutputWithIncludeFilter(dst, warning io.Writer, stderr bool, capture *opencodeSessionCapture, includeFilter bool) *opencodeOutput {
+	return &opencodeOutput{dst: dst, warning: warning, stderr: stderr, capture: capture, includeFilter: includeFilter}
 }
 
 func (w *opencodeOutput) Write(p []byte) (int, error) {
@@ -136,7 +141,7 @@ func (w *opencodeOutput) writeLine(line []byte, newline bool) error {
 		}
 	case "tool", "tool_use", "tool_result":
 		if tool := eventTool(event); tool != "" {
-			return w.writeText(formatToolEvent(event, tool))
+			return w.writeText(formatToolEvent(event, tool, w.includeFilter))
 		}
 	}
 	return w.writeText(formatUnhandledOpenCodeJSON(value))
@@ -152,7 +157,7 @@ func formatUnhandledOpenCodeJSON(value any) string {
 	return string(formatted)
 }
 
-func formatToolEvent(event map[string]any, tool string) string {
+func formatToolEvent(event map[string]any, tool string, includeFilter bool) string {
 	input := toolInput(event)
 	state := toolState(event)
 	status, _ := state["status"].(string)
@@ -179,11 +184,16 @@ func formatToolEvent(event map[string]any, tool string) string {
 	case "grep":
 		pattern, _ := input["pattern"].(string)
 		path, _ := input["path"].(string)
-		if path == "" {
-			path, _ = input["include"].(string)
+		include, _ := input["include"].(string)
+		explicitPath := path != ""
+		if !explicitPath {
+			path = include
 		}
 		if pattern != "" && path != "" {
 			detail = fmt.Sprintf("%q in %s", truncateString(pattern, 60), path)
+			if includeFilter && include != "" && explicitPath {
+				detail += " (include " + truncateString(include, 60) + ")"
+			}
 		} else if pattern != "" {
 			detail = fmt.Sprintf("%q", truncateString(pattern, 60))
 		} else if path != "" {

@@ -91,6 +91,7 @@ func TestOpenCodeV2_RendersChunkedToolEventsToLiveAndSavedLogs(t *testing.T) {
 		wantWrite    = "→ Write /workspace/repo/new.txt"
 		wantEdit     = "→ Edit /workspace/repo/changed.txt"
 		wantGrep     = `✱ Grep "TODO" in /workspace/repo (include **/*.go)`
+		wantGlob     = `✱ Glob "**/*.go" in /workspace/repo`
 		wantQuestion = "→ Task Choose a recovery strategy"
 		wantError    = "→ Read /workspace/repo/private.txt (offset 2, limit 10) (error: permission denied)"
 		wantUnknown  = `future_tool {"query":"`
@@ -102,6 +103,7 @@ func TestOpenCodeV2_RendersChunkedToolEventsToLiveAndSavedLogs(t *testing.T) {
 	writeEvent := `{"type":"tool_use","part":{"tool":"write","state":{"status":"completed","input":{"path":"/workspace/repo/new.txt","content":"file contents"}}}}` + "\n"
 	editEvent := `{"type":"tool_use","part":{"tool":"edit","state":{"status":"completed","input":{"path":"/workspace/repo/changed.txt","oldString":"before","newString":"after"}}}}` + "\n"
 	grepEvent := `{"type":"tool_use","part":{"tool":"grep","state":{"status":"completed","input":{"pattern":"TODO","path":"/workspace/repo","include":"**/*.go","literal":true,"caseSensitive":false,"limit":20}}}}` + "\n"
+	globEvent := `{"type":"tool_use","part":{"tool":"glob","state":{"status":"completed","input":{"pattern":"**/*.go","path":"/workspace/repo","hidden":true,"limit":25}}}}` + "\n"
 	questionEvent := `{"type":"tool_use","part":{"tool":"question","state":{"status":"completed","input":{"questions":[{"question":"Choose a recovery strategy","header":"Recovery","options":[{"label":"Retry","description":"Try again"}]}]}}}}` + "\n"
 	errorFirstChunk := `{"type":"tool_use","part":{"tool":"read","state":{"status":"error","input":{"path":"/workspace/repo/private.txt","offset":2`
 	errorLastChunk := `,"limit":10},"error":"permission denied"}}}` + "\n"
@@ -109,7 +111,7 @@ func TestOpenCodeV2_RendersChunkedToolEventsToLiveAndSavedLogs(t *testing.T) {
 	unknownEvent := `{"type":"tool_use","part":{"tool":"future_tool","state":{"status":"completed","input":{"query":"` + unknownInput + `"}}}}` + "\n"
 	sb := &fakeSandbox{workDir: root}
 	sb.execFunc = func(_ context.Context, _ string, stdout, _ io.Writer) error {
-		for _, chunk := range []string{firstChunk, lastChunk, readEvent, skillEvent, patchEvent, agentEvent, writeEvent, editEvent, grepEvent, questionEvent, errorFirstChunk, errorLastChunk, unknownEvent} {
+		for _, chunk := range []string{firstChunk, lastChunk, readEvent, skillEvent, patchEvent, agentEvent, writeEvent, editEvent, grepEvent, globEvent, questionEvent, errorFirstChunk, errorLastChunk, unknownEvent} {
 			if _, err := io.WriteString(stdout, chunk); err != nil {
 				return err
 			}
@@ -150,6 +152,9 @@ func TestOpenCodeV2_RendersChunkedToolEventsToLiveAndSavedLogs(t *testing.T) {
 		}
 		if !strings.Contains(output, wantGrep) {
 			t.Errorf("%s = %q, want readable V2 search details %q", name, output, wantGrep)
+		}
+		if !strings.Contains(output, wantGlob) {
+			t.Errorf("%s = %q, want readable V2 glob details %q", name, output, wantGlob)
 		}
 		if !strings.Contains(output, wantQuestion) {
 			t.Errorf("%s = %q, want readable V2 question details %q", name, output, wantQuestion)
