@@ -278,12 +278,22 @@ func TestTriggerSelection_ReconcilesEditedRevisionBeforePendingLookup(t *testing
 			events = append(events, "rehydrate")
 			return got.ID == trigger.ID
 		},
+		DurableStateSnapshot: func(candidates []reviewTrigger) triggerDurableState {
+			if len(events) == 0 || events[len(events)-1] != "rehydrate" {
+				t.Fatal("terminal-cache lookup occurred before pending-publication recovery")
+			}
+			if len(candidates) != 0 {
+				t.Fatalf("durable-state candidates = %+v, want rehydrated revision excluded", candidates)
+			}
+			events = append(events, "durable")
+			return triggerDurableState{TerminalSeen: map[string]bool{key: true}}
+		},
 	})
 	if err != nil {
 		t.Fatalf("select review trigger: %v", err)
 	}
-	if got := strings.Join(events, ","); got != "reconcile,pending,rehydrate" {
-		t.Fatalf("selection order = %q, want reconcile,pending,rehydrate", got)
+	if got := strings.Join(events, ","); got != "reconcile,pending,rehydrate,durable" {
+		t.Fatalf("selection order = %q, want reconcile,pending,rehydrate,durable", got)
 	}
 	if selection.Launch != nil || selection.Dispositions[key] != triggerDispositionRehydrated {
 		t.Fatalf("selection = %+v, want edited revision rehydrated without launch", selection)
@@ -303,6 +313,8 @@ func TestTriggerSelection_CommentHistoriesPinFilterOrder(t *testing.T) {
 	type historyCase struct {
 		name             string
 		comments         []github.PRComment
+		formalReviews    []github.PRReview
+		inlineReviews    []github.PRReviewComment
 		pendingIDs       []string
 		terminalIDs      []string
 		retryIDs         []string
@@ -311,8 +323,47 @@ func TestTriggerSelection_CommentHistoriesPinFilterOrder(t *testing.T) {
 		wantSuperseded   []string
 		wantDispositions map[string]triggerDisposition
 		wantHeadLookups  int
+		wantPriorReview  bool
+		wantPriorContext []string
+		wantFilteredIDs  []string
 	}
+	answeredRequest := request("answered", 0)
+	acceptedAnswer := github.PRComment{
+		ID:          "accepted-answer",
+		AuthorLogin: "maintainer",
+		Body:        publicationBody("## Summary\nReviewed.\n\n## Decision\n**APPROVED**", reviewTriggerKey(answeredRequest), "current-head"),
+		CreatedAt:   answeredRequest.CreatedAt.Add(time.Minute),
+	}
+	retryRequest := request("retry", 0)
+	retryAnswer := github.PRComment{
+		ID:          "retry-answer",
+		AuthorLogin: "maintainer",
+		Body:        publicationBody("## Summary\nReviewed.\n\n## Decision\n**APPROVED**", reviewTriggerKey(retryRequest), "current-head"),
+		CreatedAt:   retryRequest.CreatedAt.Add(time.Minute),
+	}
+	oldRequest := request("old-backlog", 0)
+	oldRequest.CreatedAt = now.AddDate(-3, 0, 0)
 	cases := []historyCase{
+		{
+			name: "authenticated request launches while foreign and bot-shaped requests are filtered",
+			comments: []github.PRComment{
+				request("authorized", 0),
+				{ID: "foreign", Body: "/sandman review", AuthorLogin: "other-maintainer", CreatedAt: now.Add(time.Minute)},
+				{ID: "bot-review", Body: "## Previous review progress\nEarlier /sandman review request\n\n## Decision\nAPPROVED", AuthorLogin: "maintainer", CreatedAt: now.Add(2 * time.Minute)},
+			},
+			formalReviews:    []github.PRReview{{State: "APPROVED", Body: "Formal history."}},
+			inlineReviews:    []github.PRReviewComment{{Path: "internal/review/selector.go", Line: 42, Body: "Inline history."}},
+			wantLaunch:       "authorized",
+			wantDispositions: map[string]triggerDisposition{"authorized": triggerDispositionLaunch},
+			wantHeadLookups:  1,
+			wantPriorReview:  true,
+			wantPriorContext: []string{
+				"Earlier /sandman review request",
+				"### Formal review (APPROVED)\n\nFormal history.",
+				"### Inline review (internal/review/selector.go:42)\n\nInline history.",
+			},
+			wantFilteredIDs: []string{"foreign", "bot-review"},
+		},
 		{
 			name:             "pending publication precedes terminal cache",
 			comments:         []github.PRComment{request("pending", 0)},
@@ -329,14 +380,19 @@ func TestTriggerSelection_CommentHistoriesPinFilterOrder(t *testing.T) {
 			wantDispositions: map[string]triggerDisposition{"terminal": triggerDispositionTerminal},
 		},
 		{
-			name:            "retry stamp precedes response lookup",
-			comments:        nil,
-			wantHeadLookups: 0,
+			name:             "retry stamp precedes response lookup",
+			comments:         []github.PRComment{retryRequest, retryAnswer},
+			retryIDs:         []string{"retry"},
+			wantDispositions: map[string]triggerDisposition{"retry": triggerDispositionBackoff},
+			wantPriorReview:  true,
 		},
 		{
-			name:            "answered request is removed before newest selection",
-			comments:        nil,
-			wantHeadLookups: 0,
+			name:             "answered request is removed before newest selection",
+			comments:         []github.PRComment{answeredRequest, acceptedAnswer, request("older-eligible", -1)},
+			wantLaunch:       "older-eligible",
+			wantDispositions: map[string]triggerDisposition{"answered": triggerDispositionAnswered, "older-eligible": triggerDispositionLaunch},
+			wantHeadLookups:  1,
+			wantPriorReview:  true,
 		},
 		{
 			name:             "newest eligible request alone supersedes older request",
@@ -346,31 +402,14 @@ func TestTriggerSelection_CommentHistoriesPinFilterOrder(t *testing.T) {
 			wantDispositions: map[string]triggerDisposition{"older": triggerDispositionSuperseded, "newer": triggerDispositionLaunch},
 			wantHeadLookups:  1,
 		},
+		{
+			name:             "old unsuperseded request remains eligible",
+			comments:         []github.PRComment{oldRequest},
+			wantLaunch:       "old-backlog",
+			wantDispositions: map[string]triggerDisposition{"old-backlog": triggerDispositionLaunch},
+			wantHeadLookups:  1,
+		},
 	}
-	answeredRequest := request("answered", 0)
-	acceptedAnswer := github.PRComment{
-		ID:          "accepted-answer",
-		AuthorLogin: "maintainer",
-		Body:        publicationBody("## Summary\nReviewed.\n\n## Decision\n**APPROVED**", reviewTriggerKey(answeredRequest), "current-head"),
-		CreatedAt:   answeredRequest.CreatedAt.Add(time.Minute),
-	}
-	cases[3].comments = []github.PRComment{answeredRequest, acceptedAnswer, request("older-eligible", -1)}
-	cases[3].wantLaunch = "older-eligible"
-	cases[3].wantDispositions = map[string]triggerDisposition{
-		"answered":       triggerDispositionAnswered,
-		"older-eligible": triggerDispositionLaunch,
-	}
-	cases[3].wantHeadLookups = 1
-	retryRequest := request("retry", 0)
-	retryAnswer := github.PRComment{
-		ID:          "retry-answer",
-		AuthorLogin: "maintainer",
-		Body:        publicationBody("## Summary\nReviewed.\n\n## Decision\n**APPROVED**", reviewTriggerKey(retryRequest), "current-head"),
-		CreatedAt:   retryRequest.CreatedAt.Add(time.Minute),
-	}
-	cases[2].comments = []github.PRComment{retryRequest, retryAnswer}
-	cases[2].retryIDs = []string{"retry"}
-	cases[2].wantDispositions = map[string]triggerDisposition{"retry": triggerDispositionBackoff}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -393,12 +432,14 @@ func TestTriggerSelection_CommentHistoriesPinFilterOrder(t *testing.T) {
 			headLookups := 0
 			rehydrations := 0
 			selection, err := selectReviewTriggers(context.Background(), triggerSelectionInput{
-				Comments:            tc.comments,
-				AuthenticatedLogin:  "maintainer",
-				Now:                 now,
-				TerminalSeen:        terminal,
-				NextAttemptAt:       retry,
-				PendingPublications: pending,
+				Comments:             tc.comments,
+				FormalReviews:        tc.formalReviews,
+				InlineReviewComments: tc.inlineReviews,
+				AuthenticatedLogin:   "maintainer",
+				Now:                  now,
+				TerminalSeen:         terminal,
+				NextAttemptAt:        retry,
+				PendingPublications:  pending,
 				RehydratePublication: func(_ context.Context, comment github.PRComment) bool {
 					rehydrations++
 					return comment.ID == tc.rehydrateID
@@ -437,8 +478,25 @@ func TestTriggerSelection_CommentHistoriesPinFilterOrder(t *testing.T) {
 					t.Errorf("disposition for %s = %q, want %q", id, got, want)
 				}
 			}
+			for _, id := range tc.wantFilteredIDs {
+				for _, comment := range tc.comments {
+					if comment.ID == id {
+						if _, ok := selection.Dispositions[reviewTriggerKey(comment)]; ok {
+							t.Errorf("filtered trigger %q has disposition %q", id, selection.Dispositions[reviewTriggerKey(comment)])
+						}
+					}
+				}
+			}
 			if headLookups != tc.wantHeadLookups {
 				t.Errorf("current-head lookups = %d, want %d", headLookups, tc.wantHeadLookups)
+			}
+			if selection.PriorReviewExists != tc.wantPriorReview {
+				t.Errorf("prior review exists = %t, want %t", selection.PriorReviewExists, tc.wantPriorReview)
+			}
+			for _, want := range tc.wantPriorContext {
+				if !strings.Contains(selection.PriorReviewContext, want) {
+					t.Errorf("prior review context %q does not contain %q", selection.PriorReviewContext, want)
+				}
 			}
 			if tc.rehydrateID != "" && rehydrations != 1 {
 				t.Errorf("publication rehydrate calls = %d, want 1", rehydrations)

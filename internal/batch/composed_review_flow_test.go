@@ -402,6 +402,7 @@ type composedImplementation struct {
 	gh                      *composedGitHub
 	afterFirstReviewRequest func(*composedGitHub, github.PRComment)
 	finishAfterFeedback     bool
+	failFirstAttempt        bool
 	mu                      sync.Mutex
 	launches                map[int]int
 	order                   []string
@@ -491,7 +492,11 @@ func (r *composedRunnable) Run(_ context.Context, renderer prompt.IssueRenderer,
 		gh.mu.Unlock()
 		gh.closeIssue(composedDependentIssue)
 	}
-	return batch.AgentRunResult{IssueNumber: r.issue.Number, Status: "success", Branch: r.branch}
+	status := "success"
+	if r.issue.Number == composedParentIssue && r.attempt == 1 && f.failFirstAttempt {
+		status = "failure"
+	}
+	return batch.AgentRunResult{IssueNumber: r.issue.Number, Status: status, Branch: r.branch}
 }
 
 // composedAwaitPoll replaces the foreground await-poll timer. When armed, the
@@ -1055,21 +1060,27 @@ func TestComposedManagedReviewFlow_DaemonPublicationResumeApprovalMergeAndDepend
 
 func TestComposedManagedReviewFlow_TriggerHistoryRequestsRemainLifecycleConsumable(t *testing.T) {
 	cases := []struct {
-		name    string
-		history func(*composedGitHub, github.PRComment)
+		name             string
+		history          func(*composedGitHub, github.PRComment)
+		failFirstAttempt bool
+		wantRequestCount int
 	}{
 		{
-			name: "same-head re-request after informal approval",
+			name:             "same-head re-request after informal approval",
+			wantRequestCount: 2,
 			history: func(gh *composedGitHub, _ github.PRComment) {
 				gh.postComment(composedParentPR, "informal-reviewer", "I approve this same head.")
 				gh.postComment(composedParentPR, composedImplementor, composedReviewCommand)
 			},
 		},
 		{
-			name: "backlogged request from an earlier attempt",
+			name:             "request posted by failed attempt",
+			failFirstAttempt: true,
+			wantRequestCount: 1,
 		},
 		{
-			name: "earlier answer belongs to another head",
+			name:             "earlier answer belongs to another head",
+			wantRequestCount: 1,
 			history: func(gh *composedGitHub, trigger github.PRComment) {
 				stale := composedStaleApproval + "\n" + publicationMarker(trigger, "stale-head")
 				gh.postComment(composedParentPR, composedDaemonLogin, stale)
@@ -1083,7 +1094,7 @@ func TestComposedManagedReviewFlow_TriggerHistoryRequestsRemainLifecycleConsumab
 			batch.ComposedTestInitGitRepo(t, root)
 			sandmanDir := filepath.Join(root, ".sandman")
 			gh := newComposedGitHub()
-			impl := &composedImplementation{gh: gh, afterFirstReviewRequest: tc.history, finishAfterFeedback: true}
+			impl := &composedImplementation{gh: gh, afterFirstReviewRequest: tc.history, finishAfterFeedback: true, failFirstAttempt: tc.failFirstAttempt}
 			reviewer := &composedReviewRunner{gh: gh}
 			poster := &composedPoster{gh: gh, baseDir: sandmanDir}
 			log := &events.JSONLLogger{Path: filepath.Join(sandmanDir, "events.jsonl")}
@@ -1129,14 +1140,23 @@ func TestComposedManagedReviewFlow_TriggerHistoryRequestsRemainLifecycleConsumab
 			if got := composedRunStatus(first, composedParentIssue); got != "await" {
 				t.Fatalf("initial status = %q, want await", got)
 			}
+			initialRunID := composedRunState(t, log, composedParentIssue).RunID
+			if initialRunID == "" {
+				t.Fatal("initial implementation attempt has no RunID")
+			}
 			comments := gh.commentsSnapshot(composedParentPR)
 			var selected github.PRComment
+			requestCount := 0
 			for _, comment := range comments {
 				if _, ok := review.ParseTrigger(comment.Body); ok && comment.AuthorLogin == composedImplementor {
+					requestCount++
 					if selected.ID == "" || comment.CreatedAt.After(selected.CreatedAt) {
 						selected = comment
 					}
 				}
+			}
+			if requestCount != tc.wantRequestCount {
+				t.Fatalf("implementation review requests = %d, want %d", requestCount, tc.wantRequestCount)
 			}
 			if selected.ID == "" {
 				t.Fatal("implementation attempt did not leave a review request")
@@ -1177,6 +1197,10 @@ func TestComposedManagedReviewFlow_TriggerHistoryRequestsRemainLifecycleConsumab
 			if err != nil {
 				registration, _ := os.ReadFile(registrationPath)
 				t.Fatalf("review continuation: %v; launches=%d publications=%q registration=%s comments=%q", err, impl.launchCount(composedParentIssue), poster.posts(), registration, gh.commentsSnapshot(composedParentPR))
+			}
+			finalState := composedRunState(t, log, composedParentIssue)
+			if finalState.RunID != initialRunID {
+				t.Fatalf("review continuation changed RunID: %q -> %q", initialRunID, finalState.RunID)
 			}
 			if composedRunStatus(continued, composedParentIssue) != "success" || impl.launchCount(composedParentIssue) != 2 {
 				t.Fatalf("continuation status=%q launches=%d, want feedback resume and verified merge", composedRunStatus(continued, composedParentIssue), impl.launchCount(composedParentIssue))
