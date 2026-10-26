@@ -549,6 +549,11 @@ func TestOpenCodeOutput_RendersToolDetails(t *testing.T) {
 			want:  "✱ Grep \"hello.*world\" in /tmp/demo\n",
 		},
 		{
+			name:  "grep preserves v1 output when include is also present",
+			input: `{"type":"tool_use","part":{"tool":"grep","state":{"status":"completed","input":{"pattern":"hello.*world","path":"/tmp/demo","include":"**/*.go"}}}}` + "\n",
+			want:  "✱ Grep \"hello.*world\" in /tmp/demo\n",
+		},
+		{
 			name:  "glob with pattern",
 			input: `{"type":"tool_use","part":{"tool":"glob","state":{"status":"completed","input":{"pattern":"**/*.go","path":"/tmp"}}}}` + "\n",
 			want:  "✱ Glob \"**/*.go\" in /tmp\n",
