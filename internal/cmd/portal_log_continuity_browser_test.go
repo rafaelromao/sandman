@@ -195,6 +195,7 @@ func TestPortalLogContinuityBrowser_OrphanReviewKeepsAbortAndClock(t *testing.T)
 	now := time.Now().UTC().Truncate(time.Second)
 	orphanReview := map[string]any{
 		"key": "review-2799", "runId": "review-2799", "kind": "active", "status": "reviewing", "review": true,
+		"queuedLike": false, "canAbort": true, "canArchive": false,
 		"issueNumber": 2799, "issueLabel": "PR2810", "prNumber": 2810, "batchKey": "batch-2799",
 		"startedAt": now.Add(-40 * time.Minute).Format(time.RFC3339), "duration": "30m",
 		"activeDurationSeconds": 1800, "executionSince": now.Add(-10 * time.Minute).Format(time.RFC3339),
