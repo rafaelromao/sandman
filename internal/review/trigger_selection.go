@@ -19,12 +19,14 @@ type reviewTrigger struct {
 type triggerDisposition string
 
 const (
-	triggerDispositionRehydrated triggerDisposition = "rehydrated"
-	triggerDispositionTerminal   triggerDisposition = "terminal-seen"
-	triggerDispositionBackoff    triggerDisposition = "backoff"
-	triggerDispositionAnswered   triggerDisposition = "answered"
-	triggerDispositionLaunch     triggerDisposition = "launch"
-	triggerDispositionSuperseded triggerDisposition = "superseded"
+	triggerDispositionRehydrated      triggerDisposition = "rehydrated"
+	triggerDispositionFilteredAuthor  triggerDisposition = "filtered-author"
+	triggerDispositionFilteredBotBody triggerDisposition = "filtered-bot-body"
+	triggerDispositionTerminal        triggerDisposition = "terminal-seen"
+	triggerDispositionBackoff         triggerDisposition = "backoff"
+	triggerDispositionAnswered        triggerDisposition = "answered"
+	triggerDispositionLaunch          triggerDisposition = "launch"
+	triggerDispositionSuperseded      triggerDisposition = "superseded"
 )
 
 type triggerSelectionInput struct {
@@ -96,9 +98,15 @@ func selectReviewTriggers(ctx context.Context, input triggerSelectionInput) (tri
 	var candidates []reviewTrigger
 	for _, comment := range comments {
 		if input.AuthenticatedLogin != "" && (strings.TrimSpace(comment.AuthorLogin) == "" || !strings.EqualFold(strings.TrimSpace(comment.AuthorLogin), input.AuthenticatedLogin)) {
+			if _, ok := ParseTrigger(comment.Body); ok {
+				selection.Dispositions[reviewTriggerKey(comment)] = triggerDispositionFilteredAuthor
+			}
 			continue
 		}
 		if LooksLikeBotReviewBody(comment.Body) {
+			if _, ok := ParseTrigger(comment.Body); ok {
+				selection.Dispositions[reviewTriggerKey(comment)] = triggerDispositionFilteredBotBody
+			}
 			continue
 		}
 		focus, ok := ParseTrigger(comment.Body)

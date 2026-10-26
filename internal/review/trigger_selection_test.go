@@ -325,7 +325,6 @@ func TestTriggerSelection_CommentHistoriesPinFilterOrder(t *testing.T) {
 		wantHeadLookups  int
 		wantPriorReview  bool
 		wantPriorContext []string
-		wantFilteredIDs  []string
 	}
 	answeredRequest := request("answered", 0)
 	acceptedAnswer := github.PRComment{
@@ -351,18 +350,21 @@ func TestTriggerSelection_CommentHistoriesPinFilterOrder(t *testing.T) {
 				{ID: "foreign", Body: "/sandman review", AuthorLogin: "other-maintainer", CreatedAt: now.Add(time.Minute)},
 				{ID: "bot-review", Body: "## Previous review progress\nEarlier /sandman review request\n\n## Decision\nAPPROVED", AuthorLogin: "maintainer", CreatedAt: now.Add(2 * time.Minute)},
 			},
-			formalReviews:    []github.PRReview{{State: "APPROVED", Body: "Formal history."}},
-			inlineReviews:    []github.PRReviewComment{{Path: "internal/review/selector.go", Line: 42, Body: "Inline history."}},
-			wantLaunch:       "authorized",
-			wantDispositions: map[string]triggerDisposition{"authorized": triggerDispositionLaunch},
-			wantHeadLookups:  1,
-			wantPriorReview:  true,
+			formalReviews: []github.PRReview{{State: "APPROVED", Body: "Formal history."}},
+			inlineReviews: []github.PRReviewComment{{Path: "internal/review/selector.go", Line: 42, Body: "Inline history."}},
+			wantLaunch:    "authorized",
+			wantDispositions: map[string]triggerDisposition{
+				"authorized": triggerDispositionLaunch,
+				"foreign":    triggerDispositionFilteredAuthor,
+				"bot-review": triggerDispositionFilteredBotBody,
+			},
+			wantHeadLookups: 1,
+			wantPriorReview: true,
 			wantPriorContext: []string{
 				"Earlier /sandman review request",
 				"### Formal review (APPROVED)\n\nFormal history.",
 				"### Inline review (internal/review/selector.go:42)\n\nInline history.",
 			},
-			wantFilteredIDs: []string{"foreign", "bot-review"},
 		},
 		{
 			name:             "pending publication precedes terminal cache",
@@ -476,15 +478,6 @@ func TestTriggerSelection_CommentHistoriesPinFilterOrder(t *testing.T) {
 				}
 				if got := selection.Dispositions[key]; got != want {
 					t.Errorf("disposition for %s = %q, want %q", id, got, want)
-				}
-			}
-			for _, id := range tc.wantFilteredIDs {
-				for _, comment := range tc.comments {
-					if comment.ID == id {
-						if _, ok := selection.Dispositions[reviewTriggerKey(comment)]; ok {
-							t.Errorf("filtered trigger %q has disposition %q", id, selection.Dispositions[reviewTriggerKey(comment)])
-						}
-					}
 				}
 			}
 			if headLookups != tc.wantHeadLookups {
