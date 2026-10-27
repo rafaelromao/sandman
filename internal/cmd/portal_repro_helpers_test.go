@@ -76,7 +76,7 @@ const renderRunMeta = (run) => {
     const reviewPart = count + ' review' + (count === 1 ? '' : 's');
     counterParts.push(reviewPart + ' - ' + (run.reviewVerdict || 'Unclear'));
   }
-  if (run.runId && String(run.status || '').toLowerCase() !== 'queued' && String(run.status || '').toLowerCase() !== 'blocked') lines.push('Run: ' + run.runId);
+  if (run.runId && !run.queuedLike) lines.push('Run: ' + run.runId);
   if (counterParts.length) lines.push(counterParts.join(' - '));
   return lines.length ? lines.join('\n') : 'Run';
 };
@@ -86,20 +86,13 @@ const renderTerminalContent = (text) => {
   return value.split('\n').map((line) => '<span>' + escapeHTML(line) + '</span>').join('\n');
 };
 const isRunAbortable = (run, abortReservations) => {
-  if (!run || run.kind !== 'active') return false;
-  if (run.status !== 'running' && run.status !== 'queued' && run.status !== 'blocked') return false;
-  if (!run.batchKey) return false;
+  if (!run || !run.canAbort) return false;
   const reservationKey = run.key + ':' + String(run.issueNumber != null ? run.issueNumber : '');
   if (abortReservations && abortReservations.has && abortReservations.has(reservationKey)) return false;
   return true;
 };
 const isRunArchivable = (run) => {
-  if (!run || run.kind !== 'completed') return false;
-  if (run.archived) return false;
-  if (run.unavailable) return false;
-  if (run.sourceExists === false) return false;
-  if (!run.runId) return false;
-  return true;
+  return !!(run && run.canArchive);
 };
 const helpers = {
   escapeHTML, formatTime, formatDuration, formatBranch, formatIssueTitle, formatSource,
@@ -207,7 +200,7 @@ const SandmanPortalDiff = diffSandbox.SandmanPortalDiff;
 func TestReproNormalize_DiscardsQueuedExpandedState(t *testing.T) {
 	js := `
 const state = { expandedRunKey: 'r1', tabs: { 'r1': 'log' }, commandFormCollapsed: false, showArchived: false, activeBatches: false, sortBy: 'started', sortDir: 'desc' };
-const runs = [{ key: 'r1', runId: 'r1', kind: 'active', status: 'queued' }];
+const runs = [{ key: 'r1', runId: 'r1', kind: 'active', status: 'queued', queuedLike: true }];
 const allRuns = runs;
 const result = SandmanPortalState.normalize(state, runs, allRuns);
 if (result.state.expandedRunKey !== null) throw new Error('expected expandedRunKey to be null, got ' + JSON.stringify(result.state.expandedRunKey));
@@ -289,7 +282,7 @@ console.log('PASS');
 
 func TestReproRenderRunMeta_OmitsRunLineForQueued(t *testing.T) {
 	js := `
-const run = { batchKey: 'b1', runId: 'r1', status: 'queued' };
+const run = { batchKey: 'b1', runId: 'r1', status: 'queued', queuedLike: true };
 const result = helpers.renderRunMeta(run);
 if (result.indexOf('Batch: b1') === -1) throw new Error('expected Batch: b1, got ' + JSON.stringify(result));
 if (result.indexOf('Run: r1') !== -1) throw new Error('expected no Run: r1 for queued, got ' + JSON.stringify(result));
@@ -311,7 +304,7 @@ console.log('PASS');
 func TestReproNormalize_ClearsQueuedRunTabEntries(t *testing.T) {
 	js := `
 const state = { expandedRunKey: null, tabs: { 'r1': 'log' }, commandFormCollapsed: false, showArchived: false, activeBatches: false, sortBy: 'started', sortDir: 'desc' };
-const runs = [{ key: 'r1', runId: 'r1', kind: 'active', status: 'queued' }];
+const runs = [{ key: 'r1', runId: 'r1', kind: 'active', status: 'queued', queuedLike: true }];
 const allRuns = runs;
 const result = SandmanPortalState.normalize(state, runs, allRuns);
 if (result.state.tabs['r1'] !== undefined) throw new Error('expected queued run tab cleared, got ' + JSON.stringify(result.state.tabs));
@@ -324,7 +317,7 @@ console.log('PASS');
 func TestReproNormalize_BlockedRunClearsExpandedState(t *testing.T) {
 	js := `
 const state = { expandedRunKey: 'r1', tabs: { 'r1': 'events' }, commandFormCollapsed: false, showArchived: false, activeBatches: false, sortBy: 'started', sortDir: 'desc' };
-const runs = [{ key: 'r1', runId: 'r1', kind: 'active', status: 'blocked' }];
+const runs = [{ key: 'r1', runId: 'r1', kind: 'active', status: 'blocked', queuedLike: true }];
 const allRuns = runs;
 const result = SandmanPortalState.normalize(state, runs, allRuns);
 if (result.state.expandedRunKey !== null) throw new Error('expected expandedRunKey=null for blocked run, got ' + JSON.stringify(result.state.expandedRunKey));

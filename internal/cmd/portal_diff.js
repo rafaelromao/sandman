@@ -135,10 +135,7 @@
   // statuses, including terminal ones, remain expandable so the user can
   // still inspect finished runs.
   function isRowExpandable(run) {
-    if (!run) return true;
-    const s = String(run.status || '').toLowerCase();
-    if (s === 'queued' || s === 'blocked') return false;
-    return true;
+    return !run || !run.queuedLike;
   }
 
   function snapshotCellState(run, opts) {
@@ -1553,7 +1550,7 @@
     // re-engages the moment status flips to running / reviewing (where
     // startedAt is anchored on run.started) and the terminal path uses
     // the server-stamped Finished - Started.
-    if (run && (run.status === 'queued' || run.status === 'blocked')) return '—';
+    if (run && run.queuedLike) return '—';
     // Status may be promoted to "reviewing" by a linked live review even
     // while the implementation is waiting. Trust the event-derived waiting
     // signal over an executionSince value retained by a stale client row.
@@ -1574,7 +1571,7 @@
 
   function durationSortValue(run) {
     const status = String(run && run.status || '').trim().toLowerCase();
-    if (status === 'queued' || status === 'blocked') return 0;
+    if (run && run.queuedLike) return 0;
     const baseline = Number(run && run.activeDurationSeconds);
     const finished = Date.parse(run && run.finishedAt);
     const terminal = !!(run && run.kind === 'completed')
@@ -1583,7 +1580,7 @@
     if (terminal) {
       return Number.isFinite(baseline) && baseline >= 0 ? baseline * 1000 : 0;
     }
-    const waiting = !!(run && run.waiting) || status === 'waiting';
+    const waiting = !!(run && run.waiting);
     if (waiting) return Number.isFinite(baseline) && baseline >= 0 ? baseline * 1000 : 0;
     if (Number.isFinite(baseline) && baseline >= 0) {
       const executionSince = Date.parse(run && run.executionSince || '');

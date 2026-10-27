@@ -363,8 +363,8 @@ func TestPortalPerf_LongTaskProfile_Archive(t *testing.T) {
 	outStr := runPortalDiffLongTaskScenario(t, `
 const recorder = longTaskRecorder({ thresholdMs: 50 });
 const body = makeMockBody();
-const runOld = { key: '260618113825-abcd-2', kind: 'completed', status: 'success', issueLabel: '#2', runId: '260618113825-abcd-2', issueNumber: 2, archived: false, sourceExists: true, log: 'archive me' };
-const runNew = Object.assign({}, runOld, { archived: true });
+const runOld = { key: '260618113825-abcd-2', kind: 'completed', status: 'success', issueLabel: '#2', runId: '260618113825-abcd-2', issueNumber: 2, archived: false, sourceExists: true, canArchive: true, log: 'archive me' };
+const runNew = Object.assign({}, runOld, { archived: true, canArchive: false });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
@@ -416,8 +416,8 @@ func TestPortalPerf_LongTaskProfile_ArchivedToggle(t *testing.T) {
 	outStr := runPortalDiffLongTaskScenario(t, `
 const recorder = longTaskRecorder({ thresholdMs: 50 });
 const body = makeMockBody();
-const runOld = { key: '260618113825-abcd-3', kind: 'completed', status: 'success', issueLabel: '#3', runId: '260618113825-abcd-3', issueNumber: 3, archived: false, sourceExists: true, log: 'toggle archive' };
-const runNew = Object.assign({}, runOld, { archived: true });
+const runOld = { key: '260618113825-abcd-3', kind: 'completed', status: 'success', issueLabel: '#3', runId: '260618113825-abcd-3', issueNumber: 3, archived: false, sourceExists: true, canArchive: true, log: 'toggle archive' };
+const runNew = Object.assign({}, runOld, { archived: true, canArchive: false });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);

@@ -777,8 +777,8 @@ func TestPortalDiffDiffRuns_SubjectSelectorSkipsQueuedAndBlockedPlaceholders(t *
 	js := `const body = makeMockBody();
 const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', review: false, issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1 , subjects: ['260618113825-abcd-1', 'PR42', 'queued-1', 'blocked-1'] };
 const review = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
-const queued = { key: 'queued-1', kind: 'active', status: 'queued', review: false, issueLabel: '#1 queued', runId: 'queued-1', issueNumber: 1 };
-const blocked = { key: 'blocked-1', kind: 'active', status: 'blocked', review: false, issueLabel: '#1 blocked', runId: 'blocked-1', issueNumber: 1 };
+const queued = { key: 'queued-1', kind: 'active', status: 'queued', queuedLike: true, review: false, issueLabel: '#1 queued', runId: 'queued-1', issueNumber: 1 };
+const blocked = { key: 'blocked-1', kind: 'active', status: 'blocked', queuedLike: true, review: false, issueLabel: '#1 blocked', runId: 'blocked-1', issueNumber: 1 };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', runs: [parentRun, review, queued, blocked], visibleRuns: [parentRun] };
 const result = SandmanPortalDiff.diffRuns(body, [parentRun], opts);
@@ -1192,8 +1192,8 @@ console.log('PASS');
 func TestPortalDiffDiffRuns_AbortButtonsAllowedOnSharedSocketRows(t *testing.T) {
 	js := `const body = makeMockBody();
 const runs = [
-  { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', issueNumber: 41, socketPath: '/tmp/sock', batchKey: 'run-41-1' },
-  { key: 'b', kind: 'active', status: 'queued', issueLabel: 'B', runId: 'r2', issueNumber: 42, socketPath: '/tmp/sock', batchKey: 'run-42-1' },
+  { key: 'a', kind: 'active', status: 'running', canAbort: true, issueLabel: 'A', runId: 'r1', issueNumber: 41, socketPath: '/tmp/sock', batchKey: 'run-41-1' },
+  { key: 'b', kind: 'active', status: 'queued', queuedLike: true, canAbort: true, issueLabel: 'B', runId: 'r2', issueNumber: 42, socketPath: '/tmp/sock', batchKey: 'run-42-1' },
 ];
 const abortReservations = new Set();
 const opts = { helpers, abortReservations, expandedKey: null };
@@ -1471,7 +1471,7 @@ console.log('PASS');
 func TestPortalDiffBuildDurationCell_NoStaleLineForQueuedStatus(t *testing.T) {
 	js := `const body = makeMockBody();
 const stale = new Date(Date.now() - 90*1000).toISOString();
-const run = { key: 'a', kind: 'active', status: 'queued', issueLabel: '#42', runId: 'r1', lastOutputAt: stale, duration: 1200 };
+const run = { key: 'a', kind: 'active', status: 'queued', queuedLike: true, issueLabel: '#42', runId: 'r1', lastOutputAt: stale, duration: 1200 };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 SandmanPortalDiff.insertRunRow(body, run, opts);
@@ -1487,7 +1487,7 @@ console.log('PASS');
 func TestPortalDiffBuildDurationCell_NoStaleLineForBlockedStatus(t *testing.T) {
 	js := `const body = makeMockBody();
 const stale = new Date(Date.now() - 90*1000).toISOString();
-const run = { key: 'a', kind: 'active', status: 'blocked', issueLabel: '#42', runId: 'r1', lastOutputAt: stale, duration: 1200 };
+const run = { key: 'a', kind: 'active', status: 'blocked', queuedLike: true, issueLabel: '#42', runId: 'r1', lastOutputAt: stale, duration: 1200 };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 SandmanPortalDiff.insertRunRow(body, run, opts);
@@ -1549,7 +1549,7 @@ console.log('PASS');
 func TestPortalDiffRefreshLiveTimeCells_QueuedRowDurationIsEmDash(t *testing.T) {
 	js := `const body = makeMockBody();
 const queuedAt = new Date(Date.now() - 30*60*1000).toISOString();
-const run = { key: 'a', kind: 'active', status: 'queued', issueLabel: '#42', runId: 'r1', startedAt: queuedAt, duration: '' };
+const run = { key: 'a', kind: 'active', status: 'queued', queuedLike: true, issueLabel: '#42', runId: 'r1', startedAt: queuedAt, duration: '' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 SandmanPortalDiff.insertRunRow(body, run, opts);
@@ -1576,7 +1576,7 @@ console.log('PASS');
 func TestPortalDiffRefreshLiveTimeCells_BlockedRowDurationIsEmDash(t *testing.T) {
 	js := `const body = makeMockBody();
 const blockedAt = new Date(Date.now() - 30*60*1000).toISOString();
-const run = { key: 'b', kind: 'active', status: 'blocked', issueLabel: '#42', runId: 'b1', startedAt: blockedAt, duration: '' };
+const run = { key: 'b', kind: 'active', status: 'blocked', queuedLike: true, issueLabel: '#42', runId: 'b1', startedAt: blockedAt, duration: '' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 SandmanPortalDiff.insertRunRow(body, run, opts);
@@ -1763,8 +1763,8 @@ console.log('PASS');
 func TestPortalDiffDiffRuns_AbortButtonHiddenForRowsFromFinishedBatch(t *testing.T) {
 	js := `const body = makeMockBody();
 const abortReservations = new Set();
-const activeRun = { key: 'run-42-1-42', kind: 'active', status: 'running', issueLabel: '#42', runId: 'r1', issueNumber: 42, socketPath: '/tmp/sock', batchKey: 'run-42-1' };
-const historicalBlocked = { key: 'run-old-1', kind: 'active', status: 'blocked', issueLabel: '#42', runId: 'r-old', issueNumber: 42, socketPath: '/tmp/sock', batchKey: '' };
+const activeRun = { key: 'run-42-1-42', kind: 'active', status: 'running', canAbort: true, issueLabel: '#42', runId: 'r1', issueNumber: 42, socketPath: '/tmp/sock', batchKey: 'run-42-1' };
+const historicalBlocked = { key: 'run-old-1', kind: 'active', status: 'blocked', queuedLike: true, canAbort: false, issueLabel: '#42', runId: 'r-old', issueNumber: 42, socketPath: '/tmp/sock', batchKey: '' };
 if (!helpers.isRunAbortable(activeRun, abortReservations)) throw new Error('active run with batchKey should be abortable');
 if (helpers.isRunAbortable(historicalBlocked, abortReservations)) throw new Error('historical blocked row with empty batchKey should NOT be abortable');
 
@@ -1788,10 +1788,10 @@ if (!match) throw new Error('production isRunAbortable predicate missing');
 const productionIsRunAbortable = vm.runInNewContext(match[0] + '\n; isRunAbortable', { String });
 const productionHelpers = Object.assign({}, helpers, { isRunAbortable: productionIsRunAbortable });
 const waitingRun = {
-  key: 'run-2797', kind: 'active', status: 'waiting', waiting: true,
+  key: 'run-2797', kind: 'active', status: 'waiting', waiting: true, canAbort: true,
   issueLabel: '#2797', issueNumber: 2797, runId: 'run-2797', batchKey: 'batch-2797',
 };
-const terminalWaitingRun = Object.assign({}, waitingRun, { finishedAt: '2026-10-13T12:00:00Z' });
+const terminalWaitingRun = Object.assign({}, waitingRun, { finishedAt: '2026-10-13T12:00:00Z', canAbort: false });
 const waitingReservations = new Set();
 if (!productionIsRunAbortable(waitingRun, waitingReservations)) throw new Error('unfinished waiting row should be abortable');
 if (productionIsRunAbortable(terminalWaitingRun, new Set())) throw new Error('terminal waiting row should not be abortable');
@@ -1811,7 +1811,7 @@ console.log('PASS');
 func TestPortalDiffDiffRuns_AbortButtonHiddenWhenRunDirSocketVanishes(t *testing.T) {
 	js := `const body = makeMockBody();
 const abortReservations = new Set();
-const deadDaemonRun = { key: 'run-42-1-42', kind: 'active', status: 'running', issueLabel: '#42', runId: 'r1', issueNumber: 42, socketPath: '/tmp/sock', batchKey: '' };
+const deadDaemonRun = { key: 'run-42-1-42', kind: 'active', status: 'running', canAbort: false, issueLabel: '#42', runId: 'r1', issueNumber: 42, socketPath: '/tmp/sock', batchKey: '' };
 if (helpers.isRunAbortable(deadDaemonRun, abortReservations)) throw new Error('run with empty batchKey (vanished socket) should NOT be abortable');
 
 const opts = { helpers, abortReservations, expandedKey: null };
@@ -3115,7 +3115,7 @@ const renderRunMeta = (run) => {
     const reviewPart = count + ' review' + (count === 1 ? '' : 's');
     counterParts.push(reviewPart + ' - ' + (run.reviewVerdict || 'Unclear'));
   }
-  if (run.runId && String(run.status || '').toLowerCase() !== 'queued' && String(run.status || '').toLowerCase() !== 'blocked') lines.push('Run: ' + run.runId);
+   if (run.runId && !run.queuedLike) lines.push('Run: ' + run.runId);
   if (counterParts.length) lines.push(counterParts.join(' - '));
   return lines.length ? lines.join('\n') : 'Run';
 };
@@ -3125,20 +3125,13 @@ const renderTerminalContent = (text) => {
   return value.split('\n').map((line) => '<span>' + escapeHTML(line) + '</span>').join('\n');
 };
 const isRunAbortable = (run, abortReservations) => {
-  if (!run || run.kind !== 'active') return false;
-  if (run.status !== 'running' && run.status !== 'queued' && run.status !== 'blocked') return false;
-  if (!run.batchKey) return false;
+  if (!run || !run.canAbort) return false;
   const reservationKey = run.key + ':' + String(run.issueNumber != null ? run.issueNumber : '');
   if (abortReservations && abortReservations.has && abortReservations.has(reservationKey)) return false;
   return true;
 };
 const isRunArchivable = (run) => {
-  if (!run || run.kind !== 'completed') return false;
-  if (run.archived) return false;
-  if (run.unavailable) return false;
-  if (run.sourceExists === false) return false;
-  if (!run.runId) return false;
-  return true;
+  return !!(run && run.canArchive);
 };
 const helpers = {
   escapeHTML, formatTime, formatDuration, formatBranch, formatIssueTitle, formatSource,
@@ -4374,10 +4367,10 @@ console.log('PASS');
 }
 
 func TestRenderRunMeta_QueuedRow_SuppressesRunLabel(t *testing.T) {
-	js := `const run = { key: '260618113825-abcd-42', runId: '', batchKey: '260618113825-abcd', kind: 'active', status: 'queued' };
+	js := `const run = { key: 'queued-row-42', runId: '', batchKey: 'batch-42', kind: 'active', status: 'queued', queuedLike: true };
 const meta = helpers.renderRunMeta(run);
 if (meta.indexOf('Batch:') < 0) throw new Error('expected Batch: in meta for queued row, got ' + JSON.stringify(meta));
-if (meta.indexOf('260618113825-abcd') < 0) throw new Error('expected batchKey value in Batch: label, got ' + JSON.stringify(meta));
+if (meta.indexOf('batch-42') < 0) throw new Error('expected batchKey value in Batch: label, got ' + JSON.stringify(meta));
 if (meta.indexOf('Run:') >= 0) throw new Error('expected no Run: in meta for queued row, got ' + JSON.stringify(meta));
 console.log('PASS');
 `
@@ -4386,11 +4379,11 @@ console.log('PASS');
 
 func TestRenderRunMeta_QueuedAndBlockedRows_SuppressRunLabelForSyntheticRunID(t *testing.T) {
 	js := `const cases = [
-  { status: 'queued', runId: '260618113825-abcd-42' },
-  { status: 'blocked', runId: '260618113825-abcd-43' },
+  { status: 'queued', queuedLike: true, runId: '260618113825-abcd-42' },
+  { status: 'blocked', queuedLike: true, runId: '260618113825-abcd-43' },
 ];
 for (const tc of cases) {
-  const run = { key: tc.runId, runId: tc.runId, batchKey: '260618113825-abcd', kind: 'active', status: tc.status };
+  const run = { key: tc.runId, runId: tc.runId, batchKey: '260618113825-abcd', kind: 'active', status: tc.status, queuedLike: tc.queuedLike };
   const meta = helpers.renderRunMeta(run);
   if (meta.indexOf('Batch:') < 0) throw new Error('expected Batch: in meta for ' + tc.status + ' row, got ' + JSON.stringify(meta));
   if (meta.indexOf('260618113825-abcd') < 0) throw new Error('expected batchKey value in Batch: label for ' + tc.status + ' row, got ' + JSON.stringify(meta));
@@ -4403,11 +4396,11 @@ console.log('PASS');
 
 func TestPortalDiffSubjectRunValue_QueuedAndBlockedRowsReturnEmptyForSyntheticRunID(t *testing.T) {
 	js := `const cases = [
-  { status: 'queued', runId: '260618113825-abcd-42' },
-  { status: 'blocked', runId: '260618113825-abcd-43' },
+  { status: 'queued', queuedLike: true, runId: '260618113825-abcd-42' },
+  { status: 'blocked', queuedLike: true, runId: '260618113825-abcd-43' },
 ];
 for (const tc of cases) {
-  const run = { key: tc.runId, runId: tc.runId, batchKey: '260618113825-abcd', kind: 'active', status: tc.status };
+  const run = { key: tc.runId, runId: tc.runId, batchKey: '260618113825-abcd', kind: 'active', status: tc.status, queuedLike: tc.queuedLike };
   const value = SandmanPortalDiff.subjectRunValue(run);
   if (value !== '') throw new Error('expected empty subjectRunValue for ' + tc.status + ' row with synthetic RunID, got ' + JSON.stringify(value));
 }
