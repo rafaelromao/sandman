@@ -9,10 +9,12 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
@@ -50,6 +52,42 @@ func TestUsageLimitAwaitResumesSameSessionWithIdleTimeoutDisabled(t *testing.T) 
 			t.Fatalf("run.await payload = %#v, want usage-limit polling metadata", event.Payload)
 		}
 	}
+}
+
+func TestUsageLimitAccountingWriteFailureKeepsFreshOrdinaryRetries(t *testing.T) {
+	spy := &spyEventLog{}
+	log := &failedQuotaReadyEventLog{spyEventLog: spy}
+	result, sandbox, _, waits := runUsageLimitBatchCaseWithEventLog(t, 2, 0, 1, true, 0, spy, log)
+	if !log.failed.Load() {
+		t.Fatal("test did not trigger the quota evidence write failure")
+	}
+	if result == nil || len(result.Runs) != 1 || result.Runs[0].Status != "success" || sandbox.attemptCount() != 3 {
+		t.Fatalf("failed quota accounting blocked configured ordinary retry: result=%+v attempts=%d", result, sandbox.attemptCount())
+	}
+	if len(waits) != 1 || waits[0] != usageLimitPollInterval {
+		t.Fatalf("failed quota accounting allowed another quota wait: waits=%v", waits)
+	}
+	commands := sandbox.commandsSnapshot()
+	if len(commands) != 3 {
+		t.Fatalf("commands after quota accounting failure = %d, want 3: %v", len(commands), commands)
+	}
+	for i, command := range commands[1:] {
+		if strings.Contains(command, "--session 'usage-limit-session'") {
+			t.Fatalf("ordinary retry %d reused the prior agent session after accounting failed: %s", i+1, command)
+		}
+	}
+}
+
+type failedQuotaReadyEventLog struct {
+	*spyEventLog
+	failed atomic.Bool
+}
+
+func (l *failedQuotaReadyEventLog) Log(event events.Event) error {
+	if event.Type == "run.capacity_queued" && event.Payload["reason"] == "quota-probe-ready" && l.failed.CompareAndSwap(false, true) {
+		return errors.New("quota accounting write failed")
+	}
+	return l.spyEventLog.Log(event)
 }
 
 func TestUsageLimitDuringPRRemediationRetainsQuotaRecovery(t *testing.T) {
@@ -212,6 +250,12 @@ func runUsageLimitBatch(t *testing.T, failures, idleTimeout, retries int) (*Resu
 
 func runUsageLimitBatchCase(t *testing.T, failures, idleTimeout, retries int, finishOnSuccess bool, cancelOnAttempt int, gate ...string) (*Result, *usageLimitRetrySandbox, *spyEventLog, []time.Duration) {
 	t.Helper()
+	log := &spyEventLog{}
+	return runUsageLimitBatchCaseWithEventLog(t, failures, idleTimeout, retries, finishOnSuccess, cancelOnAttempt, log, log, gate...)
+}
+
+func runUsageLimitBatchCaseWithEventLog(t *testing.T, failures, idleTimeout, retries int, finishOnSuccess bool, cancelOnAttempt int, log *spyEventLog, eventLog events.EventLog, gate ...string) (*Result, *usageLimitRetrySandbox, *spyEventLog, []time.Duration) {
+	t.Helper()
 	root := t.TempDir()
 	t.Chdir(root)
 	initGitRepo(t, root)
@@ -227,7 +271,6 @@ func runUsageLimitBatchCase(t *testing.T, failures, idleTimeout, retries int, fi
 			}
 		}
 	}
-	log := &spyEventLog{}
 	var waits []time.Duration
 	client := &reviewWaitSchedulerGitHubClient{fakeGitHubClient: fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, Title: "Usage limit", State: "closed"}},
@@ -273,7 +316,7 @@ func runUsageLimitBatchCase(t *testing.T, failures, idleTimeout, retries int, fi
 	if len(gate) > 0 {
 		opts.currentHead = func(string) (string, error) { return "current-sha", nil }
 	}
-	o := NewOrchestrator(client, &retryRenderer{result: "# Task\n\nRetry safely."}, &fakeConfigStore{config: cfg}, log,
+	o := NewOrchestrator(client, &retryRenderer{result: "# Task\n\nRetry safely."}, &fakeConfigStore{config: cfg}, eventLog,
 		WithErrorLog(io.Discard),
 		WithSandboxFactory(&usageLimitRetrySandboxFactory{sandbox: sb}),
 		WithRunnableFactory(&usageLimitRetryRunnableFactory{}),

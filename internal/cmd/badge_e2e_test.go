@@ -14,6 +14,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/scaffold"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
@@ -110,6 +111,7 @@ func TestBadge_E2E_HappyPath(t *testing.T) {
 	badgeHook := batch.NewBadgeHookerWith(rec, lister, controlReader, controlWriter)
 
 	deps := badgeTestDeps(repoDir, badgeHook)
+	installInitHostVersion(t, scaffold.DefaultBuiltInAgentVersion("opencode"))
 	runRootCommand(t, deps, "init", "--agent", "opencode")
 	runRootCommand(t, deps, "config", "set", "review_command", "/oc review")
 
@@ -166,6 +168,7 @@ func TestBadge_E2E_MarkerPRSeeded_ShortCircuitsBadgeHook(t *testing.T) {
 	badgeHook := batch.NewBadgeHookerWith(rec, lister, controlReader, controlWriter)
 
 	deps := badgeTestDeps(repoDir, badgeHook)
+	installInitHostVersion(t, scaffold.DefaultBuiltInAgentVersion("opencode"))
 	runRootCommand(t, deps, "init", "--agent", "opencode")
 	runRootCommand(t, deps, "config", "set", "review_command", "/oc review")
 

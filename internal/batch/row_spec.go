@@ -31,15 +31,13 @@ type RowSpec struct {
 	PreviousRunIDs      map[int]string
 	PreviousRunBatchIDs map[int]string
 	ReuseSession        bool
-	// UsageLimitProbe re-enters an agent session after a usage-limit poll.
-	// It bypasses PR lifecycle entry evaluation so the agent itself is probed.
-	UsageLimitProbe    bool
-	UsageLimitWaited   time.Duration
-	UsageLimitDeadline time.Time
-	BaseBranch         string
-	ExternalBlockers   []int
-	RenderCfg          prompt.RenderConfig
-	OutputWriter       io.Writer
+	// quotaAllowance carries the implementation quota recovery state across row
+	// execution, polling, and scheduler re-entry.
+	quotaAllowance   usageLimitAllowance
+	BaseBranch       string
+	ExternalBlockers []int
+	RenderCfg        prompt.RenderConfig
+	OutputWriter     io.Writer
 	// ID minting — issue-driven path.
 	RunTS      string
 	RunShortID string
@@ -194,17 +192,16 @@ func (o *Orchestrator) newRunExecutorWith(parentCtx context.Context, bc BatchCon
 // (per-issue for issue-driven, the RunBatch ctx for prompt-only).
 func (e *runExecutor) Execute(ctx context.Context, row RowSpec) (AgentRunResult, bool) {
 	s := newRunSession(e, row)
-	if s.usageLimitRestoreErr != nil {
-		// Unavailable accounting cannot authorize another quota window, but
-		// it cannot remove the historical ordinary recovery attempts either.
-		s.usageLimitWaited = usageLimitRetryWindow
-		s.reuseSession = false
-		if s.deps.errorLog != nil {
-			fmt.Fprintf(s.deps.errorLog, "warning: quota recovery accounting unavailable; continuing without additional quota waits: %v\n", s.usageLimitRestoreErr)
+	if s.quotaAllowance.probing() {
+		if err := s.restoreQuotaAccounting(); err != nil {
+			if s.deps.errorLog != nil {
+				fmt.Fprintf(s.deps.errorLog, "warning: quota recovery accounting unavailable; continuing without additional quota waits: %v\n", err)
+			}
 		}
 	}
+	s.reuseSession = s.quotaAllowance.allowSessionReuse(s.reuseSession)
 	if s.isIssueDriven() {
-		if s.usageLimitProbe {
+		if s.quotaAllowance.probing() {
 			// A quota probe is not a terminal lifecycle authority. Verified
 			// completion still wins without another agent/container launch.
 			if ctx.Err() == nil {
@@ -254,9 +251,7 @@ func newRunSession(e *runExecutor, row RowSpec) *runSession {
 		previousRunIDs:             row.PreviousRunIDs,
 		previousRunBatchIDs:        row.PreviousRunBatchIDs,
 		reuseSession:               row.ReuseSession,
-		usageLimitProbe:            row.UsageLimitProbe,
-		usageLimitWaited:           row.UsageLimitWaited,
-		usageLimitDeadline:         row.UsageLimitDeadline,
+		quotaAllowance:             row.quotaAllowance,
 		identityResolver:           bc.IdentityResolver,
 		branches:                   row.Branches,
 		renderCfg:                  renderCfg,
@@ -304,9 +299,6 @@ func newRunSession(e *runExecutor, row RowSpec) *runSession {
 		opts:                    opts,
 		reviewRegistrationStore: opts.reviewRegistrationStore,
 		reviewRegistrationNow:   opts.reviewRegistrationNow,
-	}
-	if session.usageLimitProbe {
-		session.usageLimitRestoreErr = session.restoreQuotaAccounting()
 	}
 	return session
 }
