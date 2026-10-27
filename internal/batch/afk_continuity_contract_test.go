@@ -781,6 +781,81 @@ func TestAFKContinuityContract_RealIncidentsMergeOrWait(t *testing.T) {
 	}
 }
 
+// A failed security check can require external disposition. Once unchanged CI
+// repair stalls, a new merge conflict is still actionable even on the same head.
+func TestAFKContinuityContract_StalledCIRecoversForNewMergeConflict(t *testing.T) {
+	noChange := func(*continuityGitHub) string { return "success" }
+	outcome := runContinuityScenario(t, continuityScenario{
+		name:    "stalled CI does not hide a new merge conflict",
+		pr:      github.PR{StatusCheckRollup: "failure", MergeStateStatus: "CLEAN"},
+		retries: 3,
+		setup: func(g *continuityGitHub) {
+			g.trigger()
+			g.publish("APPROVED")
+		},
+		launches: []func(*continuityGitHub) string{
+			noChange, noChange, noChange, noChange,
+			func(g *continuityGitHub) string {
+				g.update(func(pr *github.PR) {
+					pr.HeadRefOid = "head-2"
+					pr.MergeStateStatus = "CLEAN"
+					pr.StatusCheckRollup = "success"
+				})
+				g.trigger()
+				g.publish("APPROVED")
+				if g.mergeable() {
+					g.merge()
+				}
+				return "success"
+			},
+		},
+		polls: []func(*continuityGitHub){
+			nil, // Unchanged failed CI must not relaunch forever.
+			func(g *continuityGitHub) { g.update(func(pr *github.PR) { pr.MergeStateStatus = "DIRTY" }) },
+		},
+	})
+	if got := outcome.verdict(); got != "merged" || outcome.launches != 5 {
+		t.Fatalf("new merge conflict after stalled CI = %s (%d launches), want merged (5 launches)\nevents: %s", got, outcome.launches, continuityEventSummary(outcome.events))
+	}
+	if outcome.count("run.await") == 0 {
+		t.Fatal("expected a stalled CI wait before the conflict appeared")
+	}
+	resumedConflict := false
+	for _, event := range outcome.current() {
+		if (event.Type == "run.resumed" || event.Type == "run.capacity_queued") && event.Payload["reason"] == "MERGE_CONFLICT" {
+			resumedConflict = true
+		}
+	}
+	if !resumedConflict {
+		t.Fatalf("new merge conflict did not select conflict remediation\nevents: %s", continuityEventSummary(outcome.events))
+	}
+}
+
+func TestAFKContinuityContract_StalledCIConflictRecoverySurvivesRestart(t *testing.T) {
+	var live *continuityGitHub
+	outcome := runContinuityScenario(t, continuityScenario{
+		pr:      github.PR{StatusCheckRollup: "failure", MergeStateStatus: "CLEAN"},
+		retries: 3,
+		setup: func(g *continuityGitHub) {
+			live = g
+			g.trigger()
+			g.publish("APPROVED")
+		},
+	})
+	if got := outcome.verdict(); got != "waiting" || outcome.launches != 4 {
+		t.Fatalf("unchanged CI = %s (%d launches), want waiting after 4 launches", got, outcome.launches)
+	}
+	verdict := outcome.observeAfterRestart()
+	if !verdict.handled() || verdict.Action != lifecycleAwait {
+		t.Fatalf("unchanged CI after restart = %s, want await", verdict.status())
+	}
+	live.update(func(pr *github.PR) { pr.MergeStateStatus = "CONFLICTING" })
+	verdict = outcome.observeAfterRestart()
+	if !verdict.handled() || verdict.Action != lifecycleResume || verdict.Evidence["reason"] != "MERGE_CONFLICT" {
+		t.Fatalf("new conflict after restart = %s/%v, want conflict repair resume", verdict.status(), verdict.Evidence)
+	}
+}
+
 // A stalled wait survives a process restart: a fresh executor reads the
 // stalled signature through the event fold and keeps waiting instead of
 // relaunching the implementor on the same evidence. New evidence proceeds.

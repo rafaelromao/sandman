@@ -145,7 +145,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	s.emitStarted(issue, branch, runID)
 
 	logPath := s.runLogPathFor(runID)
-	if issueDriven && !s.usageLimitProbe {
+	if issueDriven && !s.quotaAllowance.probing() {
 		if entryResult, entryStarted, handled := s.tryEntryResume(ctx, branch, wt, logPath, runID); handled {
 			retainEndpoint = entryStarted && entryResult.Status == "await"
 			return entryResult, entryStarted
@@ -177,15 +177,17 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		// Provider quota recovery is non-terminal and retains the per-run
 		// endpoint for the batch-owned polling continuation.
 		if !s.lifecycleTerminal && s.shouldAwaitUsageLimit(result) {
-			s.usageLimitDeadline = s.runtimeNow().Add(usageLimitRetryWindow - s.usageLimitWaited)
-			result.UsageLimitDeadline = s.usageLimitDeadline
-			result.Status = s.emitAwait(ctx, runID, result, map[string]any{
-				"await_reason":                      "usage-limit",
-				"usage_limit_poll_seconds":          int(usageLimitPollInterval / time.Second),
-				"usage_limit_waited_seconds":        int(s.usageLimitWaited / time.Second),
-				"usage_limit_retry_window_seconds":  int(usageLimitRetryWindow / time.Second),
-				"usage_limit_deadline_unix_seconds": s.usageLimitDeadline.Unix(),
-			})
+			s.quotaAllowance = s.quotaAllowance.startProbe(s.runtimeNow())
+			result.UsageLimitDeadline = s.quotaAllowance.deadlineEstimate()
+			extras := map[string]any{
+				"await_reason":                     "usage-limit",
+				"usage_limit_poll_seconds":         int(usageLimitPollInterval / time.Second),
+				"usage_limit_retry_window_seconds": int(usageLimitRetryWindow / time.Second),
+			}
+			for key, value := range s.quotaAllowance.persistedEvidence() {
+				extras[key] = value
+			}
+			result.Status = s.emitAwait(ctx, runID, result, extras)
 		}
 		if result.Status == "await" {
 			retainEndpoint = true

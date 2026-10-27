@@ -404,12 +404,66 @@ func TestWaitingOwnerNilLogPreservesQuotaSchedule(t *testing.T) {
 	}
 	defer owner.close()
 	deadline := now.Add(5 * time.Hour)
-	if err := owner.checkpoint(RowSpec{RunID: "row", IssueNumber: 42, Branches: map[int]string{42: "42-work"}, UsageLimitProbe: true, UsageLimitDeadline: deadline}, false, usageLimitPollInterval); err != nil {
+	if err := owner.checkpoint(RowSpec{RunID: "row", IssueNumber: 42, Branches: map[int]string{42: "42-work"}, quotaAllowance: usageLimitAllowance{probe: true, deadline: deadline}}, false, usageLimitPollInterval); err != nil {
 		t.Fatal(err)
 	}
 	record, err := daemon.ReadRunWaitAt(layout, batch, "row")
 	if err != nil || record.InitialAdmission || !record.UsageLimitProbe || !record.OperationDeadline.IsZero() || record.OperationID != "quota:row" || !record.LeaseExpiresAt.Equal(now.Add(daemon.RunRecoveryGrace)) {
 		t.Fatalf("nil logger lost runtime-derived quota schedule: %+v err=%v", record, err)
+	}
+}
+
+func TestWaitingContract_DegradedQuotaAccountingSurvivesSchedulerRestart(t *testing.T) {
+	root := testenv.MkdirShort(t, "sm-quota-degraded-restart-")
+	t.Chdir(root)
+	layout := paths.NewLayout(nil, root)
+	batch := layout.LocateBatch("batch", "")
+	now := time.Now().UTC()
+	log := &spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "row", Issue: 42, Timestamp: now.Add(-time.Minute), Payload: map[string]any{"branch": "42-work", "batch_id": "batch"}},
+		{Type: "run.await", RunID: "row", Issue: 42, Timestamp: now, Payload: map[string]any{
+			"await_reason": "usage-limit", "usage_limit_waited_seconds": 600,
+			"usage_limit_deadline_unix_seconds": now.Add(4*time.Hour + 50*time.Minute).Unix(),
+		}},
+	}}
+	record := daemon.RunWait{
+		Protocol: "run-wait/v1", RunID: "row", BatchID: "batch", Issue: 42,
+		Branch: "42-work", BaseBranch: "main", Ready: true, ReuseSession: true,
+		UsageLimitProbe: true, OperationID: "quota:row",
+	}
+	owner, err := newWaitOwner(layout, batch, record, func() time.Time { return now }, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := RowSpec{
+		RunID: "row", IssueNumber: 42, Mode: ModeContinue, ReuseSession: true,
+		Branches:       map[int]string{42: "42-work"},
+		quotaAllowance: usageLimitAllowance{probe: true}.withoutAccounting(),
+	}
+	if err := owner.checkpoint(row, true, 0); err != nil {
+		owner.close()
+		t.Fatal(err)
+	}
+	owner.close()
+
+	recovered, err := daemon.ReadRunWaitAt(layout, batch, "row")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !recovered.UsageLimitAccountingUnavailable || recovered.ReuseSession || !recovered.UsageLimitProbe {
+		t.Fatalf("scheduler checkpoint lost degraded quota policy: %+v", recovered)
+	}
+	states, err := events.ReadRunStates(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := states["row"]
+	allowance, err := (usageLimitAllowance{}).restoreCheckpoint(quotaPollingEvidence(state), recovered.UsageLimitAccountingUnavailable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allowance.canWait() || allowance.allowSessionReuse(recovered.ReuseSession) {
+		t.Fatalf("restart restored quota waits or session reuse after accounting failed: allowance=%+v wait=%+v", allowance, recovered)
 	}
 }
 
@@ -1351,7 +1405,7 @@ func TestWaitingContract_ConsumedQuotaPollingStillPermitsOrdinaryRetries(t *test
 	e := o.newRunExecutor(context.Background(), BatchConfig{
 		Cfg: &config.Config{}, AgentCfg: config.BuiltInAgentPresets["opencode"].Agent("opencode"), IdentityResolver: noopIdentityResolver(), Retries: 1,
 	}, &freshSandboxFactory{}, nil)
-	result, _ := e.Execute(context.Background(), RowSpec{IssueNumber: 42, RunID: "row", Mode: ModeContinue, UsageLimitProbe: true, Branches: map[int]string{42: "42-limit"}})
+	result, _ := e.Execute(context.Background(), RowSpec{IssueNumber: 42, RunID: "row", Mode: ModeContinue, quotaAllowance: usageLimitAllowance{probe: true}, Branches: map[int]string{42: "42-limit"}})
 	if result.Status != "failure" || len(factory.created) != 2 || !result.UsageLimitReached || countEventsByType(log.snapshot(), "run.await") != 1 || countEventsByType(log.snapshot(), "run.retry") != 1 {
 		t.Fatalf("consumed polling renewed waiting or vetoed ordinary retries: result=%#v starts=%v events=%+v", result, factory.created, log.snapshot())
 	}
@@ -1386,12 +1440,11 @@ func TestWaitingContract_ExpiredQuotaProbeStillFinishesVerifiedMerge(t *testing.
 		AgentCfg: config.BuiltInAgentPresets["opencode"].Agent("opencode"),
 	}, &freshSandboxFactory{}, nil)
 	result, started := e.Execute(context.Background(), RowSpec{
-		IssueNumber:        42,
-		RunID:              "row",
-		Mode:               ModeContinue,
-		UsageLimitProbe:    true,
-		UsageLimitDeadline: now.Add(-time.Minute),
-		Branches:           map[int]string{42: branch},
+		IssueNumber:    42,
+		RunID:          "row",
+		Mode:           ModeContinue,
+		quotaAllowance: usageLimitAllowance{probe: true, deadline: now.Add(-time.Minute)},
+		Branches:       map[int]string{42: branch},
 	})
 	if started || result.Status != "success" {
 		t.Fatalf("expired quota probe = (started=%t, result=%#v), want observation-only success", started, result)

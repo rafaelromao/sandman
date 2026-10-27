@@ -30,48 +30,20 @@ func quotaPollingEvidence(state events.RunState) map[string]any {
 	return nil
 }
 
-func quotaPollingWaited(value any) (time.Duration, bool) {
-	var seconds int64
-	switch typed := value.(type) {
-	case int:
-		seconds = int64(typed)
-	case int64:
-		seconds = typed
-	case float64:
-		if typed < 0 || typed > float64(usageLimitRetryWindow/time.Second) || typed != float64(int64(typed)) {
-			return 0, false
-		}
-		seconds = int64(typed)
-	default:
-		return 0, false
-	}
-	if seconds < 0 || seconds > int64(usageLimitRetryWindow/time.Second) {
-		return 0, false
-	}
-	return time.Duration(seconds) * time.Second, true
-}
-
 func (s *runSession) restoreQuotaAccounting() error {
 	states, err := events.ReadRunStates(s.deps.eventLog)
 	if err != nil {
+		s.quotaAllowance = s.quotaAllowance.withoutAccounting()
 		return err
 	}
 	state, ok := states[s.issueRunID()]
 	evidence := quotaPollingEvidence(state)
 	if !ok || evidence == nil {
+		s.quotaAllowance = s.quotaAllowance.withoutAccounting()
 		return fmt.Errorf("quota probe has no validated operation evidence")
 	}
-	waited, ok := quotaPollingWaited(evidence["usage_limit_waited_seconds"])
-	if !ok {
-		return fmt.Errorf("quota probe has no valid completed-poll accounting")
-	}
-	// A completed poll may already have advanced the in-memory row beyond
-	// its last await. Reconstruction must never erase that accounted wait.
-	s.usageLimitWaited = max(s.usageLimitWaited, waited)
-	if seconds, ok := lifecycleDeadlineSeconds(evidence["usage_limit_deadline_unix_seconds"]); ok {
-		s.usageLimitDeadline = time.Unix(seconds, 0)
-	}
-	return nil
+	s.quotaAllowance, err = s.quotaAllowance.restore(evidence)
+	return err
 }
 
 // priorObservation permits transport re-observation only for a current,

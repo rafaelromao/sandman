@@ -87,7 +87,10 @@ head, request trigger and the request's response identities, excluding CI
 rollup and merge state. A wait entered because a relaunch stalled records its
 signatures in `run.await` (`stalled_resumes`). Observation reads them through
 the event fold, so a restart keeps waiting instead of relaunching on the same
-evidence; a new head, request, response or gate proceeds. A continuity hold
+evidence; a new head, request, response or gate proceeds. Newly actionable merge
+conflicts must not be hidden behind unchanged failed CI: conflict remediation
+takes priority, allowing integration to produce a new head
+whose checks and review must be revalidated. A continuity hold
 (`continuity_hold`) waits without an operation deadline; it stays abortable,
 resumes when the gate changes, and its schedule checkpoint uses the stable
 `hold:<RunID>` recovery identity, so restart discovery re-enters it within the
