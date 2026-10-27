@@ -253,7 +253,7 @@ func reviewTimeoutHandoffFromArtifacts(artifacts *reviewTimeoutArtifacts, curren
 			State:          artifacts.State,
 			ResponseCounts: counts,
 			Classification: classification,
-			Outcome:        retainedReviewObservationOutcome(classification, artifacts.Request, artifacts.State, counts),
+			Outcome:        retainedReviewObservationOutcome(classification, artifacts.Request, artifacts.State),
 		}, nil
 	case "timed_out":
 		outcome := retainedReviewTimeout
@@ -264,7 +264,7 @@ func reviewTimeoutHandoffFromArtifacts(artifacts *reviewTimeoutArtifacts, curren
 			if classification.RequestState == "superseded" && len(classification.RequestedChanges) > 0 {
 				return nil, fmt.Errorf("timed-out review wait request was superseded")
 			}
-			outcome = retainedReviewObservationOutcome(classification, artifacts.Request, artifacts.State, artifacts.ResponseCounts)
+			outcome = retainedReviewObservationOutcome(classification, artifacts.Request, artifacts.State)
 		}
 		return &reviewTimeoutHandoff{
 			Request:        artifacts.Request,
@@ -380,7 +380,7 @@ func retainedReviewClassificationOutcome(classification *reviewClassification, r
 	return retainedReviewPending
 }
 
-func retainedReviewObservationOutcome(classification *reviewClassification, request reviewRequestEnvelope, state reviewWaitState, counts reviewResponseCounts) retainedReviewOutcome {
+func retainedReviewObservationOutcome(classification *reviewClassification, request reviewRequestEnvelope, state reviewWaitState) retainedReviewOutcome {
 	if classification == nil {
 		if state.State == "timed_out" || state.ObservedState == "timed_out" {
 			return retainedReviewTimeout
@@ -389,10 +389,22 @@ func retainedReviewObservationOutcome(classification *reviewClassification, requ
 	}
 	outcome := retainedReviewClassificationOutcome(classification, request)
 	if outcome != retainedReviewPending ||
-		classification.RequestState != "active" || classification.Decision != "pending" ||
-		counts != (reviewResponseCounts{}) {
+		classification.RequestState != "active" {
 		return outcome
 	}
+	if classification.Decision == "pending" && classification.ResponseCounts != (reviewResponseCounts{}) {
+		return outcome
+	}
+	if classification.Decision != "pending" && classification.Decision != "responded" {
+		return outcome
+	}
+	if classification.Decision == "responded" &&
+		len(classification.informalFeedbackEvidenceFor(request, classification.WindowEnd)) > 0 {
+		return outcome
+	}
+	// A non-actionable acknowledgement is still a response record, but it does
+	// not resolve an expired review request. Keep the original timeout so the
+	// delivered request remains recoverable rather than becoming a new request.
 	if state.State == "timed_out" || state.ObservedState == "timed_out" {
 		return retainedReviewTimeout
 	}
@@ -731,7 +743,18 @@ func validateLateRequestEvidence(evidence map[string]any, source string, request
 func reviewTriggerKeyMatchesRequest(triggerKey string, request reviewRequestEnvelope) bool {
 	triggerKey = strings.TrimSpace(triggerKey)
 	triggerID := strings.TrimSpace(request.TriggerID)
-	return triggerID != "" && (triggerKey == triggerID || strings.HasPrefix(triggerKey, triggerID+"@"))
+	if triggerID == "" || triggerKey == "" {
+		return false
+	}
+	keyID := triggerKey
+	if revisionSeparator := strings.LastIndex(triggerKey, "@"); revisionSeparator >= 0 {
+		revision := triggerKey[revisionSeparator+1:]
+		if !isDecimal(revision) {
+			return false
+		}
+		keyID = triggerKey[:revisionSeparator]
+	}
+	return reviewTriggerIdentity(keyID) == reviewTriggerIdentity(triggerID)
 }
 
 func validateFormalEvidence(evidence map[string]any, state, expectedHead string) error {

@@ -965,9 +965,9 @@ func TestReviewWaitV1RetainsTimedOutRequestOnReentry(t *testing.T) {
 	if !strings.Contains(string(state), `"response_counts":{"top_level":0,"formal_reviews":0,"inline_comments":0}`) {
 		t.Fatalf("timed-out state missing explicit zero response counters: %s", state)
 	}
-	third := runReviewWait(t, helper, requestFile, filepath.Join(t.TempDir(), "missing-observer"), true)
-	if third.State != "timed_out" || third.Elapsed != second.Elapsed {
-		t.Fatalf("repeated continuation = %q/%d, want cached timed_out/%d after one recheck", third.State, third.Elapsed, second.Elapsed)
+	third := runReviewWait(t, helper, requestFile, writePendingReviewObserver(t), true)
+	if third.State != "timed_out" || third.Elapsed != second.Elapsed || third.Lifecycle != "resumed" {
+		t.Fatalf("repeated continuation = %q/%d/%q, want a bounded resumed timed_out observation with unchanged elapsed %d", third.State, third.Elapsed, third.Lifecycle, second.Elapsed)
 	}
 	operationStarted, startedOK := afterState["late_approval_recheck_started_unix"].(float64)
 	operationDeadline, deadlineOK := afterState["late_approval_recheck_deadline_unix"].(float64)
@@ -1078,13 +1078,24 @@ exit 2
 	if err := os.WriteFile(gh, []byte(ghScript), 0o700); err != nil {
 		t.Fatalf("write gh shim: %v", err)
 	}
-	lateClock := filepath.Join(t.TempDir(), "late-clock.sh")
-	if err := os.WriteFile(lateClock, []byte("#!/bin/sh\nprintf '%s\\n' "+strconv.FormatInt(deadline.Add(time.Minute).Unix(), 10)+"\n"), 0o700); err != nil {
-		t.Fatalf("write late clock: %v", err)
+	emptyLateClock := filepath.Join(t.TempDir(), "empty-late-clock.sh")
+	if err := os.WriteFile(emptyLateClock, []byte("#!/bin/sh\nprintf '%s\\n' "+strconv.FormatInt(deadline.Add(30*time.Second).Unix(), 10)+"\n"), 0o700); err != nil {
+		t.Fatalf("write empty late clock: %v", err)
+	}
+	empty := runReviewWaitWithEnv(t, helper, requestFile, writePendingReviewObserver(t), true, map[string]string{
+		"SANDMAN_REVIEW_WAIT_CLOCK": emptyLateClock,
+	})
+	if empty.State != "timed_out" {
+		t.Fatalf("empty late recheck = %q, want timed_out", empty.State)
+	}
+
+	subsequentLateClock := filepath.Join(t.TempDir(), "late-clock-again.sh")
+	if err := os.WriteFile(subsequentLateClock, []byte("#!/bin/sh\nprintf '%s\\n' "+strconv.FormatInt(deadline.Add(2*time.Minute).Unix(), 10)+"\n"), 0o700); err != nil {
+		t.Fatalf("write subsequent late clock: %v", err)
 	}
 	second := runReviewWaitWithEnv(t, helper, requestFile, observer, true, map[string]string{
 		"PATH":                      bin + ":" + os.Getenv("PATH"),
-		"SANDMAN_REVIEW_WAIT_CLOCK": lateClock,
+		"SANDMAN_REVIEW_WAIT_CLOCK": subsequentLateClock,
 	})
 	classification := decodeReviewClassification(t, second)
 	if second.State != "responded" || second.Lifecycle != "resumed" {
@@ -1098,6 +1109,65 @@ exit 2
 	}
 	if len(classification.Formal.ApprovalEvidence) != 1 || string(classification.Formal.ApprovalEvidence[0].ID) != `"2001"` {
 		t.Fatalf("late formal approval evidence = %+v, want current-head approval 2001", classification.Formal.ApprovalEvidence)
+	}
+}
+
+func TestReviewWaitV1LateApprovalRetainsPreDeadlineFormalBlocker(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	observer := filepath.Join(wd, "pr-review", "review-observe-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	triggeredAt := time.Date(2026, 8, 11, 18, 0, 1, 0, time.UTC)
+	deadline := triggeredAt.Add(30 * time.Minute)
+	writeReviewWaitRequestValues(t, requestFile, "1001", triggeredAt.Format(time.RFC3339Nano), "unix:"+strconv.FormatInt(deadline.Unix(), 10), int(triggeredAt.Unix()), int(deadline.Unix()), 1800)
+	deadlineClock := filepath.Join(t.TempDir(), "deadline-clock.sh")
+	if err := os.WriteFile(deadlineClock, []byte("#!/bin/sh\nprintf '%s\\n' "+strconv.FormatInt(deadline.Unix(), 10)+"\n"), 0o700); err != nil {
+		t.Fatalf("write deadline clock: %v", err)
+	}
+	initial := runReviewWaitWithEnv(t, helper, requestFile, writePendingReviewObserver(t), true, map[string]string{
+		"SANDMAN_REVIEW_WAIT_CLOCK": deadlineClock,
+	})
+	if initial.State != "timed_out" {
+		t.Fatalf("initial review wait = %q, want timed_out", initial.State)
+	}
+
+	bin := t.TempDir()
+	gh := filepath.Join(bin, "gh")
+	ghScript := `#!/bin/sh
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  printf '%s\n' '{"headRefOid":"abc123","comments":[{"id":"1001","url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","createdAt":"` + triggeredAt.Format(time.RFC3339Nano) + `"},{"id":"1002","url":"https://github.com/owner/repo/pull/42#issuecomment-1002","body":"LGTM, approved.","createdAt":"` + deadline.Add(time.Minute).Format(time.RFC3339Nano) + `"}],"reviewDecision":"","mergeStateStatus":"CLEAN"}'
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */reviews) printf '%s\n' '[{"id":2001,"state":"CHANGES_REQUESTED","submitted_at":"` + deadline.Add(-time.Minute).Format(time.RFC3339Nano) + `","commit_id":"abc123","body":"Please fix the regression."}]' ;;
+    */comments) printf '%s\n' '[]' ;;
+    *) exit 2 ;;
+  esac
+  exit 0
+fi
+exit 2
+`
+	if err := os.WriteFile(gh, []byte(ghScript), 0o700); err != nil {
+		t.Fatalf("write gh shim: %v", err)
+	}
+	lateClock := filepath.Join(t.TempDir(), "late-clock.sh")
+	if err := os.WriteFile(lateClock, []byte("#!/bin/sh\nprintf '%s\\n' "+strconv.FormatInt(deadline.Add(time.Minute).Unix(), 10)+"\n"), 0o700); err != nil {
+		t.Fatalf("write late clock: %v", err)
+	}
+	result := runReviewWaitWithEnv(t, helper, requestFile, observer, true, map[string]string{
+		"PATH":                      bin + ":" + os.Getenv("PATH"),
+		"SANDMAN_REVIEW_WAIT_CLOCK": lateClock,
+	})
+	classification := decodeReviewClassification(t, result)
+	if result.State != "responded" || classification.Formal.Decision != "changes_requested" || len(classification.Formal.RequestedChanges) != 1 {
+		t.Fatalf("late approval with pre-deadline blocker = state %q/formal %q/requested %d, want blocker preserved", result.State, classification.Formal.Decision, len(classification.Formal.RequestedChanges))
+	}
+	if len(classification.Sources.TopLevel) != 1 || len(classification.Sources.FormalReviews) != 1 {
+		t.Fatalf("late classification sources = top-level %d/formal %d, want late approval and pre-deadline blocker", len(classification.Sources.TopLevel), len(classification.Sources.FormalReviews))
 	}
 }
 

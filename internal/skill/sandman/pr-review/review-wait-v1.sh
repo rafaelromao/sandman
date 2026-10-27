@@ -207,7 +207,7 @@ if [ -e "$state_file" ]; then
 	fi
 fi
 
-if [ "$prior_state" = "responded" ] || [ "$prior_state" = "unavailable" ] || { [ "$prior_state" = "timed_out" ] && [ "$prior_late_recheck_done" = true ]; }; then
+if [ "$prior_state" = "responded" ] || [ "$prior_state" = "unavailable" ]; then
 	prior_observed_head=$(jq -r '.observed_head_sha // ""' "$state_file")
 	prior_elapsed=$(jq -r '.elapsed_seconds // 0' "$state_file")
 	jq -cn \
@@ -492,7 +492,7 @@ persist_late_approval_recheck_window() {
 	deadline=$2
 	state_tmp=$state_file.tmp.$$
 	if ! jq -cn --slurpfile state "$state_file" --argjson started "$started" --argjson deadline "$deadline" \
-		'$state[0] + {late_approval_recheck_started_unix:$started,late_approval_recheck_deadline_unix:$deadline}' >"$state_tmp" ||
+		'$state[0] + {late_approval_recheck_started_unix:$started,late_approval_recheck_deadline_unix:$deadline,late_approval_recheck_done:false}' >"$state_tmp" ||
 		! chmod 600 "$state_tmp" || ! mv -f "$state_tmp" "$state_file"; then
 		rm -f "$state_tmp"
 		return 1
@@ -501,6 +501,9 @@ persist_late_approval_recheck_window() {
 
 validate_late_recheck() {
 	printf '%s' "$observer_json" | jq -e --argjson request "$request_json" --argjson observed_now "$late_completed_now" '
+		def timestamp_key:
+			if type != "string" or (test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$") | not) then null
+			else capture("^(?<base>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\\.(?<fraction>[0-9]{1,9}))?Z$") as $parts | $parts.base + "." + (((($parts.fraction // "") + "000000000")[0:9])) + "Z" end;
 		def timestamp_epoch:
 			if type != "string" or (test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$") | not) then null
 			else capture("^(?<base>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\\.(?<fraction>[0-9]{1,9}))?Z$") as $parts | try (($parts.base + "Z") | fromdateiso8601) catch null end;
@@ -512,6 +515,14 @@ validate_late_recheck() {
 				$event != null and
 				$evidence.response_timestamp > (($request.deadline_unix_seconds | todateiso8601) | sub("Z$"; ".000000000Z")) and
 				$event <= $observed_now);
+		def request_source($source):
+			. as $evidence |
+			($evidence.source == $source) and ($evidence.late_approval != true) and
+			($evidence.id | type == "string" and length > 0) and
+			(($evidence.response_timestamp | timestamp_key) as $event |
+				($request.trigger_created_at | timestamp_key) as $start |
+				($request.deadline_unix_seconds | todateiso8601 | sub("Z$"; ".000000000Z")) as $deadline |
+				$event != null and $start != null and $event > $start and $event <= $deadline);
 		def positive_body:
 			(.body | type == "string") and (.body | test("(?i)(approved|\\blgtm\\b|looks? (good|great)|nice work|good work|ship it|thumbs up|\\+1|all good|all set|good to go|no major issues|minor issues only)"));
 		(.state == "responded") and (.late_approval_only == true) and
@@ -532,15 +543,15 @@ validate_late_recheck() {
 		($classification.window.next_trigger == null) and
 		($classification.boundary_evidence.request == $classification.request) and
 		($classification.boundary_evidence.sources == $classification.sources) and
-		($classification.sources.top_level | type == "array" and all(.[]; late_source("top_level") and .head_status == "current" and (.body | type == "string") and ((.body | startswith($request.trigger_prefix)) | not))) and
-		($classification.sources.formal_reviews | type == "array" and all(.[]; late_source("formal_review") and (.state | IN("APPROVED", "COMMENTED", "CHANGES_REQUESTED")) and (.head_status | IN("current", "stale", "unknown")))) and
-		($classification.sources.inline_comments | type == "array" and length == 0) and
+		($classification.sources.top_level | type == "array" and all(.[]; (late_source("top_level") or request_source("top_level")) and .head_status == "current" and (.body | type == "string") and ((.body | startswith($request.trigger_prefix)) | not))) and
+		($classification.sources.formal_reviews | type == "array" and all(.[]; (late_source("formal_review") or request_source("formal_review")) and (.state | IN("APPROVED", "COMMENTED", "CHANGES_REQUESTED")) and (.head_status | IN("current", "stale", "unknown")))) and
+		($classification.sources.inline_comments | type == "array" and all(.[]; request_source("inline_comment"))) and
 		($classification.response_counts.top_level == ($classification.sources.top_level | length)) and
 		($classification.response_counts.formal_reviews == ($classification.sources.formal_reviews | length)) and
 		($classification.response_counts.inline_comments == 0) and
 		(($classification.formal.requested_changes | type == "array")) and
 		(($classification.formal.approval_evidence | type == "array")) and
-		(($classification.formal.approval_evidence | all(.[]; late_source("formal_review") and .state == "APPROVED" and .head_status == "current")))
+		(($classification.formal.approval_evidence | all(.[]; (late_source("formal_review") or request_source("formal_review")) and .state == "APPROVED" and .head_status == "current")))
 	' >/dev/null 2>&1
 }
 
@@ -556,8 +567,9 @@ has_late_approval_candidate() {
 }
 
 if [ "$late_approval_only" = true ]; then
-	# The one-shot late check gets its own fixed bound. Persist this window so
-	# restarting the same request cannot renew the observation budget.
+	# Each explicit late continuation gets one fixed, bounded evidence read.
+	# Persist its window so a process restart cannot renew that read; an empty
+	# completed read may be followed by another bounded read on later re-entry.
 	late_started_now=$(now 2>/dev/null) || {
 		emit_unavailable late-observation-clock-unavailable
 		exit 0
@@ -570,7 +582,7 @@ if [ "$late_approval_only" = true ]; then
 	esac
 	late_recheck_started=$(jq -r '.late_approval_recheck_started_unix // empty' "$state_file")
 	late_recheck_deadline=$(jq -r '.late_approval_recheck_deadline_unix // empty' "$state_file")
-	if [ -z "$late_recheck_started" ]; then
+	if [ "$prior_late_recheck_done" = true ] || [ -z "$late_recheck_started" ]; then
 		late_recheck_started=$late_started_now
 		late_recheck_deadline=$((late_recheck_started + 60))
 		if ! persist_late_approval_recheck_window "$late_recheck_started" "$late_recheck_deadline"; then

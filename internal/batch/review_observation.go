@@ -204,7 +204,7 @@ func (s *runSession) observeCurrentReviewEvidence(ctx context.Context, request r
 		State:          state,
 		ResponseCounts: responseCounts,
 		Classification: classification,
-		Outcome:        retainedReviewObservationOutcome(classification, request, state, responseCounts),
+		Outcome:        retainedReviewObservationOutcome(classification, request, state),
 	}, nil
 }
 
@@ -314,7 +314,7 @@ func reviewClassificationRequest(request reviewRequestEnvelope) map[string]any {
 func reviewRequestTriggerKey(comments []github.PRComment, request reviewRequestEnvelope) (string, bool) {
 	triggerID := strings.TrimSpace(request.TriggerID)
 	for _, comment := range comments {
-		if triggerID != "" && strings.TrimSpace(comment.ID) == triggerID {
+		if triggerID != "" && reviewTriggerIdentity(comment.ID) == reviewTriggerIdentity(triggerID) {
 			return reviewpub.TriggerKey(comment.ID, comment.UpdatedAt), true
 		}
 	}

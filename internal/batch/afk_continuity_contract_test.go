@@ -257,6 +257,9 @@ type continuityScenario struct {
 	// expired before this Run starts. lateApproval, when present, is published
 	// for that original trigger after its deadline.
 	expiredRequest bool
+	// boilerplateResponse adds a non-actionable acknowledgement inside the
+	// confirmed request window before its deadline expires.
+	boilerplateResponse bool
 	// expiredWithoutTimeoutSidecar leaves only the confirmed request record;
 	// the first live observation discovers that its deadline already elapsed.
 	expiredWithoutTimeoutSidecar bool
@@ -324,6 +327,23 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 	cfg := &config.Config{Agent: "test", Sandbox: "worktree", WorktreeDir: filepath.Join(root, "worktrees"), Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test": {Command: "true"}}}
 	if sc.expiredRequest {
 		seedExpiredContinuityReviewRequest(t, g, worktree)
+		if sc.boilerplateResponse {
+			g.mu.Lock()
+			var trigger github.PRComment
+			for _, comment := range g.comments {
+				if strings.HasPrefix(comment.Body, continuityTrigger) {
+					trigger = comment
+					break
+				}
+			}
+			g.nextID++
+			stamp := trigger.CreatedAt.Add(time.Minute)
+			g.comments = append(g.comments, github.PRComment{
+				ID: fmt.Sprint(g.nextID), Body: "Thanks.", AuthorLogin: "reviewer",
+				CreatedAt: stamp, UpdatedAt: stamp,
+			})
+			g.mu.Unlock()
+		}
 		if sc.expiredWithoutTimeoutSidecar {
 			path := paths.NewLayout(nil, worktree).PRReviewRegistrationPath(continuityPR)
 			registration, err := readFileReviewRegistration(path)
@@ -767,6 +787,13 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 			expiredRequest: true, launches: []func(*continuityGitHub) string{nil, nil, nil, nil},
 			polls: []func(*continuityGitHub){nil, nil, nil, nil},
 			want:  "waiting", maxLaunches: 4, requireAwait: true, expectOneTrigger: true,
+		},
+		continuityScenario{
+			name: "expired delivered request with boilerplate acknowledgement waits after unchanged launch exhaustion", pr: greenCleanPR(), retries: 3,
+			expiredRequest: true, boilerplateResponse: true,
+			launches: []func(*continuityGitHub) string{nil, nil, nil, nil},
+			polls:    []func(*continuityGitHub){nil, nil, nil, nil},
+			want:     "waiting", maxLaunches: 4, requireAwait: true, expectOneTrigger: true,
 		},
 		continuityScenario{
 			name: "expired delivered request without timeout sidecar waits after unchanged launch exhaustion", pr: greenCleanPR(), retries: 3,

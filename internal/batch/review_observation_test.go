@@ -66,3 +66,37 @@ func TestObserveCurrentReviewEvidence_IgnoresMismatchedDaemonPublication(t *test
 		t.Fatalf("informal feedback = %+v, want only the current-head report %q", evidence, current.ID)
 	}
 }
+
+func TestReviewRequestTriggerKeyMatchesRetainedCommentURL(t *testing.T) {
+	triggeredAt := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	trigger := github.PRComment{
+		ID:        "1001",
+		Body:      "/sandman review",
+		CreatedAt: triggeredAt,
+		UpdatedAt: triggeredAt.Add(time.Second),
+	}
+	request := reviewRequestEnvelope{
+		TriggerID:           "https://github.com/owner/repo/pull/17#issuecomment-1001",
+		TriggerPrefix:       "/sandman review",
+		HeadSHA:             "head-1",
+		DeadlineUnixSeconds: int(triggeredAt.Add(30 * time.Minute).Unix()),
+	}
+
+	triggerKey, ok := reviewRequestTriggerKey([]github.PRComment{trigger}, request)
+	if !ok {
+		t.Fatal("review request trigger key was not resolved from URL-identified trigger")
+	}
+	if !reviewTriggerKeyMatchesRequest(triggerKey, request) {
+		t.Fatalf("trigger key %q does not match retained URL identity %q", triggerKey, request.TriggerID)
+	}
+	body := reviewpub.Body("## Summary\nReviewed the current diff.\n\n## Decision\n**APPROVED**", triggerKey, request.HeadSHA)
+	evidence := map[string]any{
+		"body":                  body,
+		"head_status":           "current",
+		"response_timestamp":    triggeredAt.Add(31 * time.Minute).Format(time.RFC3339Nano),
+		"late_request_evidence": true,
+	}
+	if !validateLateRequestEvidence(evidence, "top_level", request, "", triggerKey) {
+		t.Fatalf("valid late publication for URL-identified trigger was rejected: key=%q published=%t answers=%t approved=%t evidence=%v", triggerKey, reviewpub.Published(body), reviewpub.Answers(body, triggerKey, request.HeadSHA), reviewDecisionApprovedBody(body), evidence)
+	}
+}

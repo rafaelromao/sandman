@@ -233,8 +233,9 @@ classification_json=$(jq -cn \
 		(parsed_event_timestamp($source)) as $event |
 		if $event == null then false
 		elif $late_approval_only then
-			$event.key > $deadline and
+			$event.key > $start and
 			$event.epoch <= $late_observation_now and
+			($source != "inline_comment" or $event.key <= $deadline) and
 			($window_end == null or $event.key < $window_end)
 		else
 			$event.key > $start and
@@ -242,12 +243,13 @@ classification_json=$(jq -cn \
 			($window_end == null or $event.key < $window_end)
 		end;
 	def with_metadata($source; $head):
+		(parsed_event_timestamp($source)) as $event |
 		require_event_id |
 		.id = event_id |
 		.source = $source |
 		.response_timestamp = (parsed_event_timestamp($source) | .key) |
 		.head_status = (if $source == "top_level" then "current" else head_status($head) end) |
-		if $late_approval_only then .late_approval = true else . end;
+		if $late_approval_only and $event.key > (($deadline_unix_seconds | todateiso8601) | sub("Z$"; ".000000000Z")) then .late_approval = true else . end;
 
 	($trigger_created_at | timestamp_parts) as $trigger_parts |
 	(($deadline_unix_seconds | todateiso8601) | sub("Z$"; ".000000000Z")) as $deadline_key |

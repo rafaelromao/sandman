@@ -325,7 +325,7 @@ func canonicalReviewHandoff(registration *reviewRequestRegistration, currentHead
 	if err != nil {
 		return nil, err
 	}
-	outcome := retainedReviewObservationOutcome(classification, registration.Request, registration.State, counts)
+	outcome := retainedReviewObservationOutcome(classification, registration.Request, registration.State)
 	return &reviewTimeoutHandoff{
 		Request:        registration.Request,
 		State:          registration.State,

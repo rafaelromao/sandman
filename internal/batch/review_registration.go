@@ -519,7 +519,9 @@ func (s *runSession) importLegacyReviewEvidence(ctx context.Context, workDir, re
 func preserveUnansweredReviewTimeout(existing *reviewRequestRegistration, observed *reviewTimeoutHandoff) bool {
 	return existing != nil && existing.State.ObservedState == "timed_out" &&
 		observed != nil && observed.Classification != nil &&
-		observed.Classification.RequestState == "active" && observed.ResponseCounts == (reviewResponseCounts{})
+		observed.Classification.RequestState == "active" &&
+		retainedReviewClassificationOutcome(observed.Classification, observed.Request) == retainedReviewPending &&
+		len(observed.Classification.informalFeedbackEvidenceFor(observed.Request, observed.Classification.WindowEnd)) == 0
 }
 
 func validateReviewRegistrationGeneration(registration reviewRequestRegistration, repository string, pr *github.PR) error {
