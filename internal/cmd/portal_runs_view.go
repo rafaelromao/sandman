@@ -32,6 +32,8 @@ type portalEvent struct {
 }
 
 type portalRun struct {
+	displayStatusEvidence portalDisplayStatusEvidence
+
 	Key    string `json:"key"`
 	RunID  string `json:"runId"`
 	Kind   string `json:"kind"`
@@ -39,6 +41,9 @@ type portalRun struct {
 	// Waiting preserves the event-derived lifecycle phase separately from
 	// Status, which may be promoted to "reviewing" by a live linked review.
 	Waiting     bool       `json:"waiting,omitempty"`
+	QueuedLike  bool       `json:"queuedLike"`
+	CanAbort    bool       `json:"canAbort"`
+	CanArchive  bool       `json:"canArchive"`
 	IssueLabel  string     `json:"issueLabel"`
 	IssueNumber int        `json:"issueNumber,omitempty"`
 	Branch      string     `json:"branch,omitempty"`
@@ -203,6 +208,15 @@ type portalRun struct {
 	// Empty when the batch cannot be resolved (the caller treats empty as
 	// Unclear).
 	RunDir string `json:"-"`
+}
+
+type portalDisplayStatusEvidence struct {
+	fromRunState bool
+	lifecycle    string
+	active       bool
+	waiting      bool
+	review       bool
+	activeSocket bool
 }
 
 type portalActiveRun struct {
@@ -648,7 +662,6 @@ func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventLis
 	runs = filtered
 
 	runs = v.dedupRuns(runs)
-	runs = v.projectIssueGroups(layout, runs)
 	for i := range runs {
 		// Active runs are never marked archived, even if a directory
 		// matching the run ID happens to exist under .sandman/archive.
@@ -695,6 +708,7 @@ func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventLis
 		}
 		runs[i].LastOutputAt = &at
 	}
+	runs = v.projectIssueGroups(layout, runs)
 	sort.SliceStable(runs, func(i, j int) bool {
 		if runs[i].Kind != runs[j].Kind {
 			return runs[i].Kind == "active"
@@ -1092,9 +1106,9 @@ func (v *portalRunsView) projectIssueGroups(layout paths.Layout, runs []portalRu
 			}
 			continue
 		}
-		if summary.live && runs[visible].FinishedAt == nil && !isTerminalStatus(runs[visible].Status) {
-			runs[visible].Status = "reviewing"
-		}
+	}
+	for i := range runs {
+		v.projectRowDisplayStatus(&runs[i])
 	}
 	return runs
 }
@@ -2166,10 +2180,6 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	}
 	activeDurationSeconds, executionSince := executionClockForPortal(runState)
 
-	status := v.statusOrDefault(runState.Status(), runState.IsActive() || (runState.Status() == "" && activeSocket), runState.IsReview())
-	if runState.Status() == "waiting" && !runState.IsReview() {
-		status = "waiting"
-	}
 	startedAt := runState.StartedAt()
 	var finishedAt *time.Time
 	if runState.Finished != nil {
@@ -2198,8 +2208,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		Key:                   runID,
 		RunID:                 runID,
 		Kind:                  v.kindForRun(runState),
-		Status:                status,
-		Waiting:               runState.Status() == "waiting",
+		Status:                runState.Status(),
 		IssueLabel:            issueLabel,
 		IssueNumber:           issueNumber,
 		IssueTitle:            v.issueTitleFromPayload(runState.Started.Payload),
@@ -2220,6 +2229,14 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		Attempts:              v.attemptsForRun(runState),
 		LastRetryReason:       runState.LastRetryReason(),
 		BatchKey:              batchKey,
+		displayStatusEvidence: portalDisplayStatusEvidence{
+			fromRunState: true,
+			lifecycle:    runState.Status(),
+			active:       runState.IsActive(),
+			waiting:      runState.Status() == "waiting",
+			review:       runState.IsReview(),
+			activeSocket: activeSocket,
+		},
 	}
 	if review {
 		portalRun.PRNumber = prNumber
@@ -2240,10 +2257,10 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 			portalRun.IssueLabel = fmt.Sprintf("#%d", issueNum)
 		}
 	}
-	if status == "blocked" {
+	if portalRun.Status == "blocked" {
 		portalRun.Log = v.portalBlockedMessage(runState.Finished.Payload)
 	}
-	if status == "aborted" {
+	if portalRun.Status == "aborted" {
 		portalRun.Kind = "completed"
 	}
 	if active != nil {
@@ -2295,6 +2312,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 			portalRun.RunDir = runDir
 		}
 	}
+	v.projectRowDisplayStatus(&portalRun)
 	return portalRun
 }
 
@@ -2439,6 +2457,37 @@ func (v *portalRunsView) statusOrDefault(status string, active bool, isReview bo
 		return "completed"
 	}
 	return status
+}
+
+// projectRowDisplayStatus is the single owner of the Portal row's display
+// status flags. Constructors and the issue-group projection provide lifecycle
+// and active-evidence inputs; the page and renderer consume these stamped
+// values instead of deriving wait-state or action availability themselves.
+func (v *portalRunsView) projectRowDisplayStatus(run *portalRun) {
+	if run == nil {
+		return
+	}
+	status := strings.TrimSpace(run.Status)
+	evidence := run.displayStatusEvidence
+	if evidence.fromRunState {
+		active := evidence.active || (evidence.lifecycle == "" && evidence.activeSocket)
+		status = v.statusOrDefault(evidence.lifecycle, active, evidence.review)
+		if evidence.waiting && !evidence.review {
+			status = "waiting"
+		}
+		run.Waiting = evidence.waiting
+	}
+	if run.ReviewLive && run.FinishedAt == nil && !isTerminalStatus(status) {
+		status = "reviewing"
+	}
+	run.Status = status
+	status = strings.ToLower(strings.TrimSpace(status))
+	run.QueuedLike = status == "queued" || status == "blocked"
+	run.CanAbort = run.Kind == "active" && run.FinishedAt == nil &&
+		(run.Waiting || status == "running" || status == "reviewing" || status == "queued" || status == "blocked") &&
+		run.BatchKey != ""
+	run.CanArchive = run.Kind == "completed" && !run.Archived && !run.Unavailable &&
+		run.SourceExists && run.RunID != ""
 }
 
 func (v *portalRunsView) durationForRun(runState events.RunState) string {

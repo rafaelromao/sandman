@@ -42,8 +42,7 @@
   }
 
   function isWaitStateRun(run) {
-    const status = String(run && run.status || '').trim().toLowerCase();
-    return status === 'queued' || status === 'blocked';
+    return !!(run && run.queuedLike);
   }
 
   function cleanTabs(value) {
