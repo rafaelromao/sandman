@@ -2069,7 +2069,7 @@ func TestExternalGate_ClassificationUsesConfiguredTriggerPrefix(t *testing.T) {
 		"top_level":       []any{source},
 		"formal_reviews":  []any{},
 		"inline_comments": []any{},
-	}, request, "")
+	}, request, "", "")
 	if err == nil {
 		t.Fatal("configured review trigger was accepted as response evidence")
 	}

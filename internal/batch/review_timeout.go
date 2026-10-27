@@ -13,6 +13,7 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
+	"github.com/rafaelromao/sandman/internal/reviewpub"
 )
 
 const (
@@ -100,6 +101,7 @@ type reviewClassification struct {
 	Raw              map[string]any
 	RequestState     string
 	Decision         string
+	TriggerKey       string
 	ResponseCounts   reviewResponseCounts
 	FormalDecision   string
 	RequestedChanges []map[string]any
@@ -329,6 +331,9 @@ func decodeReviewClassification(evidence *reviewWaitEvidence, request reviewRequ
 		return nil, err
 	}
 	classification.Decision = classification.Raw["decision"].(string)
+	if triggerKey, ok := classification.Raw["trigger_key"].(string); ok {
+		classification.TriggerKey = triggerKey
+	}
 	classification.ResponseCounts, err = reviewClassificationResponseCounts(classification.Raw)
 	if err != nil {
 		return nil, err
@@ -449,7 +454,11 @@ func validateReviewClassification(raw map[string]any, request reviewRequestEnvel
 	if !ok {
 		return fmt.Errorf("review classification sources are missing")
 	}
-	topLevel, formalReviews, inlineComments, err := validateClassificationSources(sources, request, windowEnd)
+	triggerKey, triggerKeyOK := raw["trigger_key"].(string)
+	if _, exists := raw["trigger_key"]; exists && !triggerKeyOK {
+		return fmt.Errorf("review classification trigger key is invalid")
+	}
+	topLevel, formalReviews, inlineComments, err := validateClassificationSources(sources, request, windowEnd, triggerKey)
 	if err != nil {
 		return err
 	}
@@ -532,6 +541,9 @@ func validateReviewClassification(raw map[string]any, request reviewRequestEnvel
 	if !ok || !reflect.DeepEqual(boundarySources, sources) {
 		return fmt.Errorf("review classification boundary sources are inconsistent")
 	}
+	if boundaryTriggerKey, exists := boundary["trigger_key"]; exists && !classificationValueEqual(boundaryTriggerKey, triggerKey) {
+		return fmt.Errorf("review classification boundary trigger key is inconsistent")
+	}
 	return nil
 }
 
@@ -598,7 +610,7 @@ func classificationValueEqual(got, want any) bool {
 	return reflect.DeepEqual(got, want)
 }
 
-func validateClassificationSources(sources map[string]any, request reviewRequestEnvelope, windowEnd string) ([]map[string]any, []map[string]any, []map[string]any, error) {
+func validateClassificationSources(sources map[string]any, request reviewRequestEnvelope, windowEnd, triggerKey string) ([]map[string]any, []map[string]any, []map[string]any, error) {
 	arrays := make([][]map[string]any, 3)
 	for i, key := range []string{"top_level", "formal_reviews", "inline_comments"} {
 		value, ok := sources[key]
@@ -641,12 +653,53 @@ func validateClassificationSources(sources map[string]any, request reviewRequest
 					return nil, nil, nil, fmt.Errorf("review classification formal source has invalid state")
 				}
 			}
-			if !classificationTimestampInWindow(stringValue(evidence, "response_timestamp"), request, windowEnd) {
+			if !classificationTimestampInWindow(stringValue(evidence, "response_timestamp"), request, windowEnd) &&
+				!validateLateApprovalEvidence(evidence, key, request, windowEnd, triggerKey) {
 				return nil, nil, nil, fmt.Errorf("review classification source %s is outside the request window", key)
 			}
 		}
 	}
 	return arrays[0], arrays[1], arrays[2], nil
+}
+
+func validateLateApprovalEvidence(evidence map[string]any, source string, request reviewRequestEnvelope, windowEnd, triggerKey string) bool {
+	lateApproval, ok := evidence["late_approval"].(bool)
+	if !ok || !lateApproval {
+		return false
+	}
+	timestamp, err := time.Parse(time.RFC3339Nano, stringValue(evidence, "response_timestamp"))
+	if err != nil || !timestamp.After(time.Unix(int64(request.DeadlineUnixSeconds), 0).UTC()) {
+		return false
+	}
+	if strings.TrimSpace(windowEnd) != "" {
+		end, err := time.Parse(time.RFC3339Nano, windowEnd)
+		if err != nil || !timestamp.Before(end) {
+			return false
+		}
+	}
+	switch source {
+	case "top_level":
+		body, ok := evidence["body"].(string)
+		if !ok || stringValue(evidence, "head_status") != "current" || strings.HasPrefix(body, request.TriggerPrefix) || !reviewDecisionApprovedBody(body) {
+			return false
+		}
+		if reviewpub.Published(body) {
+			return reviewTriggerKeyMatchesRequest(triggerKey, request) && reviewpub.Answers(body, triggerKey, request.HeadSHA)
+		}
+		return true
+	case "formal_reviews":
+		commitID, validCommitID := evidenceCommitID(evidence)
+		return strings.EqualFold(stringValue(evidence, "state"), "APPROVED") &&
+			stringValue(evidence, "head_status") == "current" && validCommitID && strings.EqualFold(commitID, request.HeadSHA)
+	default:
+		return false
+	}
+}
+
+func reviewTriggerKeyMatchesRequest(triggerKey string, request reviewRequestEnvelope) bool {
+	triggerKey = strings.TrimSpace(triggerKey)
+	triggerID := strings.TrimSpace(request.TriggerID)
+	return triggerID != "" && (triggerKey == triggerID || strings.HasPrefix(triggerKey, triggerID+"@"))
 }
 
 func validateFormalEvidence(evidence map[string]any, state, expectedHead string) error {
@@ -926,6 +979,9 @@ func reviewEvidenceWithinCanonicalDeadline(handoff *reviewTimeoutHandoff, reques
 			return false
 		}
 		for _, record := range records {
+			if lateApproval, _ := record["late_approval"].(bool); lateApproval {
+				continue
+			}
 			timestamp, err := time.Parse(time.RFC3339Nano, stringValue(record, "response_timestamp"))
 			if err != nil || timestamp.After(deadline) {
 				return false

@@ -76,7 +76,8 @@ func (c *reviewClassification) reviewDecisionApprovalEvidenceFor(request reviewR
 				continue
 			}
 			timestamp := stringValue(record, "response_timestamp")
-			if !classificationTimestampInWindow(timestamp, request, windowEnd) {
+			lateApproval, _ := record["late_approval"].(bool)
+			if !classificationTimestampInWindow(timestamp, request, windowEnd) && !lateApproval {
 				continue
 			}
 			approvals = append(approvals, map[string]any{

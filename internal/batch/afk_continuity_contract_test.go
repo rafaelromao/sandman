@@ -251,6 +251,11 @@ type continuityScenario struct {
 	pr      github.PR
 	retries int
 	setup   func(g *continuityGitHub)
+	// expiredRequest seeds a delivered request whose bounded observation has
+	// expired before this Run starts. lateApproval, when present, is published
+	// for that original trigger after its deadline.
+	expiredRequest bool
+	lateApproval   string
 	// launches[i] is the effect and exit status of the i-th agent launch. A
 	// nil or unscripted launch is a well-behaved implementor: it merges once a
 	// review response approves the request, and otherwise exits cleanly.
@@ -274,6 +279,9 @@ type continuityScenario struct {
 	noReviewCommand bool
 	// requireAwait asserts that the Run recorded a wait before its outcome.
 	requireAwait bool
+	// expectOneTrigger asserts the recovery path did not replace the
+	// confirmed request with a new review trigger.
+	expectOneTrigger bool
 	// priorFailure seeds the event log with an earlier Run of the issue that
 	// finished with this failure reason; the scenario continues it.
 	priorFailure string
@@ -283,6 +291,7 @@ type continuityOutcome struct {
 	events   []events.Event
 	launches int
 	status   string
+	triggers int
 	// observeAfterRestart observes the Run from a fresh executor over the
 	// same event log and worktree, as a restarted Sandman process would.
 	observeAfterRestart func() (string, map[string]any, bool)
@@ -304,6 +313,13 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 	if sc.setup != nil {
 		sc.setup(g)
 	}
+	cfg := &config.Config{Agent: "test", Sandbox: "worktree", WorktreeDir: filepath.Join(root, "worktrees"), Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test": {Command: "true"}}}
+	if sc.expiredRequest {
+		seedExpiredContinuityReviewRequest(t, g, worktree)
+		if sc.lateApproval != "" {
+			g.publish(sc.lateApproval)
+		}
+	}
 	var mu sync.Mutex
 	launches, polls := 0, 0
 	factory := &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
@@ -320,7 +336,6 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 		return AgentRunResult{IssueNumber: issue.Number, Status: status, Branch: branch}
 	}}
 	errStop := errors.New("operator stopped the scenario")
-	cfg := &config.Config{Agent: "test", Sandbox: "worktree", WorktreeDir: filepath.Join(root, "worktrees"), Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test": {Command: "true"}}}
 	log := &spyEventLog{}
 	const priorRunID = continuityPriorRunID
 	if sc.priorFailure != "" {
@@ -386,7 +401,50 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 			RenderCfg: prompt.RenderConfig{ReviewCommand: continuityTrigger, ReviewTimeout: 1800},
 		})
 	}
-	return continuityOutcome{events: history, launches: launches, status: result.Runs[0].Status, observeAfterRestart: restart}
+	return continuityOutcome{events: history, launches: launches, status: result.Runs[0].Status, triggers: g.triggerCount(), observeAfterRestart: restart}
+}
+
+func seedExpiredContinuityReviewRequest(t *testing.T, g *continuityGitHub, worktree string) {
+	t.Helper()
+	trigger := g.trigger()
+	registeredAt := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second)
+	triggerAt := registeredAt.Add(-time.Minute)
+	g.mu.Lock()
+	for index := range g.comments {
+		if g.comments[index].ID == trigger.ID {
+			g.comments[index].CreatedAt = triggerAt
+			g.comments[index].UpdatedAt = triggerAt
+			trigger = g.comments[index]
+			break
+		}
+	}
+	g.mu.Unlock()
+	pr := &github.PR{Number: continuityPR, State: "open", HeadRefName: continuityBranch, HeadRefOid: g.head()}
+	registrationSession := &runSession{
+		deps:                   runDeps{githubClient: g, layout: paths.NewLayout(nil, worktree)},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: continuityTrigger, ReviewTimeout: 1800},
+		reviewAttemptStartedAt: triggerAt.Add(-time.Minute),
+		opts: runSessionOptions{
+			reviewRegistrationNow: func() time.Time { return registeredAt },
+			currentHead:           func(string) (string, error) { return g.head(), nil },
+		},
+	}
+	if err := registrationSession.registerReviewRequest(t.Context(), worktree, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("seed confirmed review request: %v", err)
+	}
+	markInformalApprovalRequestTimedOut(t, worktree)
+}
+
+func (g *continuityGitHub) triggerCount() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	count := 0
+	for _, comment := range g.comments {
+		if strings.HasPrefix(comment.Body, continuityTrigger) {
+			count++
+		}
+	}
+	return count
 }
 
 // seedFailedRun records an earlier Run of the issue that ended with reason,
@@ -554,6 +612,17 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 			},
 			want: "merged", maxLaunches: 1,
 		},
+		// #2927: a confirmed request's observation deadline elapsed and the
+		// original Run already failed. Continuation rehydrates that same
+		// request, accepts its late current-head daemon approval, and advances
+		// through normal merge work without rewriting the old failure or
+		// delivering a replacement trigger.
+		continuityScenario{
+			name: "#2927 continue after expired request with late approval", pr: greenCleanPR(), retries: 3,
+			continueRun: true, forbidRetry: true, priorFailure: "REVIEW_REQUEST_REQUIRED",
+			expiredRequest: true, lateApproval: reports["approved-daemon-30.md"],
+			want: "merged", maxLaunches: 1,
+		},
 		// `sandman run --continue` on the #2 / PR #29 final state.
 		continuityScenario{
 			name: "#2914 continue after REMEDIATION_BUDGET_EXHAUSTED", pr: greenCleanPR(), retries: 3, continueRun: true, forbidRetry: true, priorFailure: "REMEDIATION_BUDGET_EXHAUSTED",
@@ -635,6 +704,19 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 				nil,
 			},
 			want: "waiting",
+		},
+		// A timeout followed by unchanged implementation work must stay
+		// recoverable; once the same reviewer eventually approves, the Run
+		// resumes ordinary merge work without a replacement request.
+		continuityScenario{
+			name: "expired request late approval after unchanged implementation", pr: greenCleanPR(), retries: 3, reviewTimeout: 1,
+			launches: []func(*continuityGitHub) string{requestReview, nil, nil},
+			polls: []func(*continuityGitHub){
+				func(*continuityGitHub) { time.Sleep(1500 * time.Millisecond) },
+				nil,
+				func(g *continuityGitHub) { g.publish(reports["approved-daemon-30.md"]) },
+			},
+			want: "merged", maxLaunches: 4, requireAwait: true, expectOneTrigger: true,
 		},
 		// Without a delegated review command, a pull request blocked on a
 		// human review has nothing resolving it yet. rc2 waited; the Run
@@ -771,6 +853,24 @@ func TestAFKContinuityContract_RealIncidentsMergeOrWait(t *testing.T) {
 			}
 			if sc.forbidRetry && len(outcome.retryReasons()) > 0 {
 				t.Fatalf("continuation spent retry budget: %v\nevents: %s", outcome.retryReasons(), continuityEventSummary(outcome.events))
+			}
+			if sc.lateApproval != "" {
+				if outcome.triggers != 1 {
+					t.Fatalf("late approval caused a replacement review trigger: got %d triggers\nevents: %s", outcome.triggers, continuityEventSummary(outcome.events))
+				}
+				priorFailureRetained := false
+				for _, event := range outcome.events {
+					if event.RunID == continuityPriorRunID && event.Type == "run.finished" && event.Payload["reason"] == sc.priorFailure {
+						priorFailureRetained = true
+						break
+					}
+				}
+				if !priorFailureRetained {
+					t.Fatalf("continuation rewrote or lost prior terminal evidence %q", sc.priorFailure)
+				}
+			}
+			if sc.expectOneTrigger && outcome.triggers != 1 {
+				t.Fatalf("recovery caused a replacement review trigger: got %d triggers\nevents: %s", outcome.triggers, continuityEventSummary(outcome.events))
 			}
 			for _, reason := range outcome.retryReasons() {
 				if reason == "agent-failed" && !strings.HasPrefix(sc.want, "failed:") && !strings.Contains(sc.name, "agent crash") {
