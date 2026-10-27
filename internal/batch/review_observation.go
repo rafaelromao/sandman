@@ -40,13 +40,13 @@ func (s *runSession) observeCurrentReviewEvidence(ctx context.Context, request r
 		if strings.TrimSpace(comment.ID) == "" || !withinWindow(comment.CreatedAt) || strings.HasPrefix(comment.Body, request.TriggerPrefix) {
 			continue
 		}
-		source := reviewObservationSource(comment.ID, "top_level", "", comment.Body, comment.CreatedAt, "", request.HeadSHA)
 		if triggerKnown && reviewpub.Published(comment.Body) && !reviewpub.Answers(comment.Body, triggerKey, request.HeadSHA) {
-			// The daemon's publication identity binds a decision to one
-			// trigger revision and one reviewed head. A publication for any
-			// other request or head is not a response to this one.
-			source["head_status"] = "stale"
+			// A daemon publication bound to another request revision or head is
+			// not response evidence for this request. Exclude it rather than
+			// invalidating the whole classification with a stale top-level source.
+			continue
 		}
+		source := reviewObservationSource(comment.ID, "top_level", "", comment.Body, comment.CreatedAt, "", request.HeadSHA)
 		topLevel = append(topLevel, source)
 	}
 
