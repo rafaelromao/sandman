@@ -405,6 +405,18 @@ func TestDecideImplementationPRLifecycle_NonResolvedGates(t *testing.T) {
 			wantGate: lifecycleGate("merge-conflict"), wantAction: lifecycleResume,
 		},
 		{
+			name: "dirty merge takes priority over failed CI",
+			pr: &github.PR{Number: 42, State: "open", StatusCheckRollup: "failure",
+				ReviewDecision: "APPROVED", MergeStateStatus: "DIRTY", HeadRefOid: "current-sha"},
+			wantGate: lifecycleGate("merge-conflict"), wantAction: lifecycleResume,
+		},
+		{
+			name: "conflicting merge takes priority over failed CI",
+			pr: &github.PR{Number: 42, State: "open", StatusCheckRollup: "failure",
+				ReviewDecision: "APPROVED", MergeStateStatus: "CONFLICTING", HeadRefOid: "current-sha"},
+			wantGate: lifecycleGate("merge-conflict"), wantAction: lifecycleResume,
+		},
+		{
 			// A stale changes-requested decision with no actionable
 			// evidence and no confirmed request has no active resolver:
 			// fail instead of waiting (issue #2743).
