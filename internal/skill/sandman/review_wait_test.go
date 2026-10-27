@@ -286,7 +286,7 @@ printf '%s\n' $((calls + 1)) > "$SANDMAN_REVIEW_WAIT_CLOCK_STATE"
 		"SANDMAN_REVIEW_WAIT_CLOCK":       clock,
 		"SANDMAN_REVIEW_WAIT_CLOCK_STATE": clockState,
 	})
-	replayed := runReviewWait(t, helper, requestFile, filepath.Join(t.TempDir(), "missing-observer"), true)
+	replayed := runReviewWait(t, helper, requestFile, writePendingReviewObserver(t), true)
 
 	if result.State != "timed_out" {
 		t.Fatalf("state = %q, want timed_out after observer overhead reaches deadline", result.State)
@@ -931,8 +931,12 @@ func TestReviewWaitV1RetainsTimedOutRequestOnReentry(t *testing.T) {
 	writeReviewWaitRequest(t, requestFile, "1001", "2026-08-11T18:00:01Z", "2026-08-11T18:30:01Z")
 	timedOutObserver := writeReviewObserver(t, `{"state":"timed_out","observed_head_sha":"abc123","reason":"request-deadline-exhausted","snapshot":{"comments":[],"reviews":[],"inline_comments":[]}}`)
 	first := runReviewWait(t, helper, requestFile, timedOutObserver, true)
+	stateBefore, err := os.ReadFile(requestFile + ".state")
+	if err != nil {
+		t.Fatalf("read timed-out state before continuation: %v", err)
+	}
 
-	second := runReviewWait(t, helper, requestFile, filepath.Join(t.TempDir(), "missing-observer"), true)
+	second := runReviewWait(t, helper, requestFile, writePendingReviewObserver(t), true)
 
 	if first.State != "timed_out" || second.State != "timed_out" {
 		t.Fatalf("states = %q then %q, want timed_out for both observations", first.State, second.State)
@@ -941,8 +945,62 @@ func TestReviewWaitV1RetainsTimedOutRequestOnReentry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read timed-out state: %v", err)
 	}
+	var beforeState, afterState map[string]any
+	if err := json.Unmarshal(stateBefore, &beforeState); err != nil {
+		t.Fatalf("decode original timeout state: %v", err)
+	}
+	if err := json.Unmarshal(state, &afterState); err != nil {
+		t.Fatalf("decode timeout state after re-observation: %v", err)
+	}
+	if afterState["late_approval_recheck_done"] != true {
+		t.Fatalf("timeout state is missing one-shot recheck marker: %s", state)
+	}
+	for _, key := range []string{"state", "observed_head_sha", "elapsed_seconds", "deadline_unix_seconds", "evidence"} {
+		before, _ := json.Marshal(beforeState[key])
+		after, _ := json.Marshal(afterState[key])
+		if string(before) != string(after) {
+			t.Fatalf("late re-observation changed original %s: before %s, after %s", key, before, after)
+		}
+	}
 	if !strings.Contains(string(state), `"response_counts":{"top_level":0,"formal_reviews":0,"inline_comments":0}`) {
 		t.Fatalf("timed-out state missing explicit zero response counters: %s", state)
+	}
+	third := runReviewWait(t, helper, requestFile, filepath.Join(t.TempDir(), "missing-observer"), true)
+	if third.State != "timed_out" || third.Elapsed != second.Elapsed {
+		t.Fatalf("repeated continuation = %q/%d, want cached timed_out/%d after one recheck", third.State, third.Elapsed, second.Elapsed)
+	}
+	operationStarted, startedOK := afterState["late_approval_recheck_started_unix"].(float64)
+	operationDeadline, deadlineOK := afterState["late_approval_recheck_deadline_unix"].(float64)
+	if !startedOK || !deadlineOK || operationDeadline != operationStarted+60 {
+		t.Fatalf("late recheck operation window = start %v/deadline %v, want one persisted 60-second bound", afterState["late_approval_recheck_started_unix"], afterState["late_approval_recheck_deadline_unix"])
+	}
+	// Simulate a process restart during the bounded one-shot operation. Its
+	// original deadline must be reused rather than renewed from restart time.
+	afterState["late_approval_recheck_done"] = false
+	interrupted, err := json.Marshal(afterState)
+	if err != nil {
+		t.Fatalf("marshal interrupted timeout state: %v", err)
+	}
+	if err := os.WriteFile(requestFile+".state", interrupted, 0o600); err != nil {
+		t.Fatalf("persist interrupted timeout state: %v", err)
+	}
+	deadlineClock := filepath.Join(t.TempDir(), "late-deadline-clock.sh")
+	if err := os.WriteFile(deadlineClock, []byte("#!/bin/sh\nprintf '%s\\n' "+strconv.FormatInt(int64(operationDeadline), 10)+"\n"), 0o700); err != nil {
+		t.Fatalf("write persisted deadline clock: %v", err)
+	}
+	observerCalled := filepath.Join(t.TempDir(), "late-observer-called")
+	lateObserver := filepath.Join(t.TempDir(), "late-observer.sh")
+	if err := os.WriteFile(lateObserver, []byte("#!/bin/sh\ntouch '"+observerCalled+"'\nprintf '%s\\n' '{\"state\":\"pending\",\"observed_head_sha\":\"abc123\"}'\n"), 0o700); err != nil {
+		t.Fatalf("write late observer: %v", err)
+	}
+	interruptedResume := runReviewWaitWithEnv(t, helper, requestFile, lateObserver, true, map[string]string{
+		"SANDMAN_REVIEW_WAIT_CLOCK": deadlineClock,
+	})
+	if interruptedResume.State != "timed_out" {
+		t.Fatalf("expired one-shot recheck resume = %q, want timed_out", interruptedResume.State)
+	}
+	if _, err := os.Stat(observerCalled); !os.IsNotExist(err) {
+		t.Fatalf("restarted operation past its persisted deadline invoked observer: stat error=%v", err)
 	}
 	if second.Lifecycle != "resumed" || second.ObservedHead != "abc123" {
 		t.Fatalf("timed-out reentry = lifecycle %q/head %q, want resumed/abc123", second.Lifecycle, second.ObservedHead)
@@ -966,7 +1024,7 @@ func TestExternalGate_SameTriggerReentryRetainsTimedOutRequest(t *testing.T) {
 	first := runReviewWaitWithEnv(t, helper, requestFile, observer, true, map[string]string{
 		"SANDMAN_REVIEW_WAIT_CLOCK": clock,
 	})
-	second := runReviewWaitWithEnv(t, helper, requestFile, filepath.Join(t.TempDir(), "missing-observer"), true, map[string]string{
+	second := runReviewWaitWithEnv(t, helper, requestFile, observer, true, map[string]string{
 		"SANDMAN_REVIEW_WAIT_CLOCK": clock,
 	})
 	if first.State != "timed_out" || second.State != "timed_out" || second.Lifecycle != "resumed" {
@@ -974,6 +1032,72 @@ func TestExternalGate_SameTriggerReentryRetainsTimedOutRequest(t *testing.T) {
 	}
 	if second.Request.TriggerID != "1001" || second.Request.DeadlineUnix != 4102443200 || second.Request.TimeoutSeconds != 200 {
 		t.Fatalf("same-trigger replay request = %+v, want trigger 1001/deadline 4102443200/budget 200", second.Request)
+	}
+}
+
+func TestReviewWaitV1ReobservesTimedOutRequestForLateCurrentHeadApproval(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	observer := filepath.Join(wd, "pr-review", "review-observe-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	triggeredAt := time.Date(2026, 8, 11, 18, 0, 1, 0, time.UTC)
+	deadline := triggeredAt.Add(30 * time.Minute)
+	writeReviewWaitRequestValues(t, requestFile, "1001", triggeredAt.Format(time.RFC3339Nano), "unix:"+strconv.FormatInt(deadline.Unix(), 10), int(triggeredAt.Unix()), int(deadline.Unix()), 1800)
+
+	deadlineClock := filepath.Join(t.TempDir(), "deadline-clock.sh")
+	if err := os.WriteFile(deadlineClock, []byte("#!/bin/sh\nprintf '%s\\n' "+strconv.FormatInt(deadline.Unix(), 10)+"\n"), 0o700); err != nil {
+		t.Fatalf("write deadline clock: %v", err)
+	}
+	first := runReviewWaitWithEnv(t, helper, requestFile, writePendingReviewObserver(t), true, map[string]string{
+		"SANDMAN_REVIEW_WAIT_CLOCK": deadlineClock,
+	})
+	if first.State != "timed_out" {
+		t.Fatalf("initial result = %q, want timed_out", first.State)
+	}
+
+	bin := t.TempDir()
+	gh := filepath.Join(bin, "gh")
+	ghScript := `#!/bin/sh
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  printf '%s\n' '{"headRefOid":"abc123","comments":[{"id":"1001","url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","createdAt":"` + triggeredAt.Format(time.RFC3339Nano) + `"},{"id":"1002","url":"https://github.com/owner/repo/pull/42#issuecomment-1002","body":"LGTM, approved.","createdAt":"` + deadline.Add(time.Minute).Format(time.RFC3339Nano) + `"}],"reviewDecision":"","mergeStateStatus":"CLEAN"}'
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */reviews) printf '%s\n' '[{"id":2001,"state":"APPROVED","submitted_at":"` + deadline.Add(time.Minute).Format(time.RFC3339Nano) + `","commit_id":"abc123","body":""}]' ;;
+    */comments) printf '%s\n' '[]' ;;
+    *) exit 2 ;;
+  esac
+  exit 0
+fi
+exit 2
+`
+	if err := os.WriteFile(gh, []byte(ghScript), 0o700); err != nil {
+		t.Fatalf("write gh shim: %v", err)
+	}
+	lateClock := filepath.Join(t.TempDir(), "late-clock.sh")
+	if err := os.WriteFile(lateClock, []byte("#!/bin/sh\nprintf '%s\\n' "+strconv.FormatInt(deadline.Add(time.Minute).Unix(), 10)+"\n"), 0o700); err != nil {
+		t.Fatalf("write late clock: %v", err)
+	}
+	second := runReviewWaitWithEnv(t, helper, requestFile, observer, true, map[string]string{
+		"PATH":                      bin + ":" + os.Getenv("PATH"),
+		"SANDMAN_REVIEW_WAIT_CLOCK": lateClock,
+	})
+	classification := decodeReviewClassification(t, second)
+	if second.State != "responded" || second.Lifecycle != "resumed" {
+		t.Fatalf("late re-observation = %q/%q reason=%q, want responded/resumed", second.State, second.Lifecycle, second.Reason)
+	}
+	if second.Elapsed != first.Elapsed {
+		t.Fatalf("late re-observation elapsed = %d, original timeout elapsed = %d; polling history must not reset", second.Elapsed, first.Elapsed)
+	}
+	if classification.Request.TriggerID != "1001" || classification.Request.DeadlineUnix != int(deadline.Unix()) {
+		t.Fatalf("late approval request = %+v, want same trigger and original deadline", classification.Request)
+	}
+	if len(classification.Formal.ApprovalEvidence) != 1 || string(classification.Formal.ApprovalEvidence[0].ID) != `"2001"` {
+		t.Fatalf("late formal approval evidence = %+v, want current-head approval 2001", classification.Formal.ApprovalEvidence)
 	}
 }
 

@@ -50,8 +50,9 @@ var (
 )
 
 // reviewDecisionApprovalEvidenceFor returns informal approvals from the active
-// request window. COMMENTED reviews without commit identity remain eligible;
-// explicitly stale reviews and formal approval ambiguity retain precedence.
+// request window or an approved late observation. COMMENTED reviews without
+// commit identity remain eligible; explicitly stale reviews and formal
+// approval ambiguity retain precedence.
 func (c *reviewClassification) reviewDecisionApprovalEvidenceFor(request reviewRequestEnvelope, windowEnd string) []map[string]any {
 	if c == nil || c.RequestState != "active" || c.Decision != "responded" || c.FormalDecision != "none" {
 		return nil
@@ -76,8 +77,8 @@ func (c *reviewClassification) reviewDecisionApprovalEvidenceFor(request reviewR
 				continue
 			}
 			timestamp := stringValue(record, "response_timestamp")
-			lateApproval, _ := record["late_approval"].(bool)
-			if !classificationTimestampInWindow(timestamp, request, windowEnd) && !lateApproval {
+			lateEvidence, _ := record["late_request_evidence"].(bool)
+			if !classificationTimestampInWindow(timestamp, request, windowEnd) && !lateEvidence {
 				continue
 			}
 			approvals = append(approvals, map[string]any{

@@ -6,12 +6,17 @@
 set -u
 
 request_file=
+late_approval_only=false
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 		--request-file)
 			[ "$#" -ge 2 ] || exit 2
 			request_file=$2
 			shift 2
+			;;
+		--late-approval-only)
+			late_approval_only=true
+			shift
 			;;
 		*)
 			exit 2
@@ -73,6 +78,7 @@ emit_timed_out() {
 }
 
 check_before_operation() {
+	[ "$late_approval_only" = true ] && return 0
 	operation_now=$(now 2>/dev/null) || return 125
 	case "$operation_now" in
 		''|*[!0-9]*) return 125 ;;
@@ -158,6 +164,17 @@ inline_json=$(jq -s 'if length > 0 and all(.[]; type == "array" and all(.[]; typ
 	exit 0
 }
 
+late_observation_now=$(now 2>/dev/null) || {
+	jq -cn '{state:"unavailable",observed_head_sha:"",reason:"clock-unavailable",snapshot:null}'
+	exit 0
+}
+case "$late_observation_now" in
+	''|*[!0-9]*)
+		jq -cn '{state:"unavailable",observed_head_sha:"",reason:"clock-invalid",snapshot:null}'
+		exit 0
+	;;
+esac
+
 classification_json=$(jq -cn \
 	--arg repository "$repository" \
 	--argjson pull_request "$pull_request" \
@@ -168,6 +185,8 @@ classification_json=$(jq -cn \
 	--arg trigger_created_at "$trigger_created_at" \
 	--arg deadline_at "$(printf '%s\n' "$request_json" | jq -r '.deadline_at // ""')" \
 	--argjson deadline_unix_seconds "$(printf '%s\n' "$request_json" | jq -r '.deadline_unix_seconds // 0')" \
+	--argjson late_approval_only "$late_approval_only" \
+	--argjson late_observation_now "$late_observation_now" \
 	--argjson reviews "$reviews_json" \
 	--argjson inline "$inline_json" \
 	--slurpfile view "$view_file" \
@@ -213,6 +232,10 @@ classification_json=$(jq -cn \
 	def in_window($start; $window_end; $deadline; $source):
 		(parsed_event_timestamp($source)) as $event |
 		if $event == null then false
+		elif $late_approval_only then
+			$event.key > $deadline and
+			$event.epoch <= $late_observation_now and
+			($window_end == null or $event.key < $window_end)
 		else
 			$event.key > $start and
 			$event.key <= $deadline and
@@ -223,7 +246,8 @@ classification_json=$(jq -cn \
 		.id = event_id |
 		.source = $source |
 		.response_timestamp = (parsed_event_timestamp($source) | .key) |
-		.head_status = (if $source == "top_level" then "current" else head_status($head) end);
+		.head_status = (if $source == "top_level" then "current" else head_status($head) end) |
+		if $late_approval_only then .late_approval = true else . end;
 
 	($trigger_created_at | timestamp_parts) as $trigger_parts |
 	(($deadline_unix_seconds | todateiso8601) | sub("Z$"; ".000000000Z")) as $deadline_key |
@@ -357,4 +381,5 @@ jq -cn \
 	--argjson inline "$inline_json" \
 	--argjson counts "$response_counts" \
 	--argjson classification "$classification_json" \
-	'{state:$state,observed_head_sha:$observed_head_sha,reason:$reason,snapshot:{pull_request_view:$view[0],formal_reviews:$reviews,inline_comments:$inline,response_counts:$counts,classification:$classification}}'
+	--argjson late_approval_only "$late_approval_only" \
+	'{state:$state,observed_head_sha:$observed_head_sha,reason:(if $late_approval_only then "late-approval-recheck" else $reason end),late_approval_only:$late_approval_only,snapshot:{pull_request_view:$view[0],formal_reviews:$reviews,inline_comments:$inline,response_counts:$counts,classification:$classification}}'

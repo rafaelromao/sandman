@@ -58,7 +58,7 @@ func (s *runSession) observeCurrentReviewEvidence(ctx context.Context, request r
 		}
 		source := reviewObservationSource(comment.ID, "top_level", "", comment.Body, comment.CreatedAt, "", request.HeadSHA)
 		if lateApproval {
-			source["late_approval"] = true
+			source["late_request_evidence"] = true
 		}
 		topLevel = append(topLevel, source)
 	}
@@ -75,14 +75,13 @@ func (s *runSession) observeCurrentReviewEvidence(ctx context.Context, request r
 			if strings.TrimSpace(review.ID) == "" {
 				continue
 			}
-			lateApproval := !withinWindow(review.CreatedAt) && lateApprovalWindow(review.CreatedAt) &&
-				strings.EqualFold(strings.TrimSpace(review.State), "APPROVED") && strings.EqualFold(strings.TrimSpace(review.CommitID), request.HeadSHA)
-			if !withinWindow(review.CreatedAt) && !lateApproval {
+			lateReview := !withinWindow(review.CreatedAt) && lateApprovalWindow(review.CreatedAt) && lateReviewObservationEvidence(review, request.HeadSHA)
+			if !withinWindow(review.CreatedAt) && !lateReview {
 				continue
 			}
 			source := reviewObservationSource(review.ID, "formal_review", strings.ToUpper(review.State), review.Body, review.CreatedAt, review.CommitID, request.HeadSHA)
-			if lateApproval {
-				source["late_approval"] = true
+			if lateReview {
+				source["late_request_evidence"] = true
 			}
 			formalReviews = append(formalReviews, source)
 		}
@@ -198,13 +197,37 @@ func (s *runSession) observeCurrentReviewEvidence(ctx context.Context, request r
 	if err != nil {
 		return nil, err
 	}
+	responseCounts := reviewResponseCounts{TopLevel: len(topLevel), FormalReviews: len(formalReviews), Inline: len(inlineComments)}
+	state := reviewWaitState{State: "responded", Lifecycle: "started", Reason: "responded", ObservedAt: now.Format(time.RFC3339Nano), Evidence: evidence}
 	return &reviewTimeoutHandoff{
 		Request:        request,
-		State:          reviewWaitState{State: "responded", Lifecycle: "started", Reason: "responded", ObservedAt: now.Format(time.RFC3339Nano), Evidence: evidence},
-		ResponseCounts: reviewResponseCounts{TopLevel: len(topLevel), FormalReviews: len(formalReviews), Inline: len(inlineComments)},
+		State:          state,
+		ResponseCounts: responseCounts,
 		Classification: classification,
-		Outcome:        retainedReviewClassificationOutcome(classification, request),
+		Outcome:        retainedReviewObservationOutcome(classification, request, state, responseCounts),
 	}, nil
+}
+
+func lateReviewApproval(review github.PRReview, expectedHead string) bool {
+	switch strings.ToUpper(strings.TrimSpace(review.State)) {
+	case "APPROVED":
+		return strings.EqualFold(strings.TrimSpace(review.CommitID), expectedHead)
+	case "COMMENTED":
+		commitID := strings.TrimSpace(review.CommitID)
+		return (commitID == "" || strings.EqualFold(commitID, expectedHead)) && reviewDecisionApprovedBody(review.Body)
+	default:
+		return false
+	}
+}
+
+func lateReviewObservationEvidence(review github.PRReview, expectedHead string) bool {
+	if strings.EqualFold(strings.TrimSpace(review.State), "CHANGES_REQUESTED") {
+		// Formal requested changes remain blocking even when they arrive after
+		// the observation deadline. They are retained as response evidence, not
+		// treated as an approval.
+		return true
+	}
+	return lateReviewApproval(review, expectedHead)
 }
 
 func reviewObservationSource(id, source, state, body string, at time.Time, commitID, head string) map[string]any {

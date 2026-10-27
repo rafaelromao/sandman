@@ -325,10 +325,7 @@ func canonicalReviewHandoff(registration *reviewRequestRegistration, currentHead
 	if err != nil {
 		return nil, err
 	}
-	outcome := retainedReviewClassificationOutcome(classification, registration.Request)
-	if classification == nil && registration.State.ObservedState == "timed_out" {
-		outcome = retainedReviewTimeout
-	}
+	outcome := retainedReviewObservationOutcome(classification, registration.Request, registration.State, counts)
 	return &reviewTimeoutHandoff{
 		Request:        registration.Request,
 		State:          registration.State,

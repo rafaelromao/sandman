@@ -183,6 +183,28 @@ func TestInformalApprovalLifecycle_LateApprovalRequiresCurrentUnsupersededEviden
 			},
 		},
 		{
+			name: "stale COMMENTED review head",
+			mutate: func(client *registrationGitHubClient, pr *github.PR, now *time.Time) {
+				client.comments[1].Body = "Thanks for the review."
+				client.comments[1].CreatedAt = now.Add(31 * time.Minute)
+				client.reviews = []github.PRReview{{
+					ID: "stale-commented", State: "COMMENTED", Body: "LGTM, approved.", CommitID: "old-sha", CreatedAt: now.Add(31 * time.Minute),
+				}}
+				pr.ReviewDecision = "APPROVED"
+			},
+		},
+		{
+			name: "contradictory late COMMENTED review",
+			mutate: func(client *registrationGitHubClient, pr *github.PR, now *time.Time) {
+				client.comments[1].Body = "Thanks for the review."
+				client.comments[1].CreatedAt = now.Add(31 * time.Minute)
+				client.reviews = []github.PRReview{{
+					ID: "contradictory-commented", State: "COMMENTED", Body: "## Findings\n- Important: the criterion is unmet in worker.go.\n\n## Decision\n**APPROVED**", CreatedAt: now.Add(31 * time.Minute),
+				}}
+				pr.ReviewDecision = "APPROVED"
+			},
+		},
+		{
 			name: "superseded by newer trigger",
 			mutate: func(client *registrationGitHubClient, pr *github.PR, now *time.Time) {
 				client.comments[1].Body = reviewpub.Body(approvingMetricsReview, "request", pr.HeadRefOid)
@@ -219,6 +241,43 @@ func TestInformalApprovalLifecycle_LateApprovalRequiresCurrentUnsupersededEviden
 				t.Fatalf("ineligible late evidence authorized merge work: (%s, %v, %t)", status, extras, handled)
 			}
 		})
+	}
+}
+
+func TestInformalApprovalLifecycle_LateRequestedChangesRemainBlocking(t *testing.T) {
+	s, client, pr, workDir, now := informalApprovalLifecycleFixture(t, approvingMetricsReview)
+	markInformalApprovalRequestTimedOut(t, workDir)
+	client.comments[1].Body = reviewpub.Body(approvingMetricsReview, "request", pr.HeadRefOid)
+	client.comments[1].CreatedAt = now.Add(31 * time.Minute)
+	client.reviews = []github.PRReview{{
+		ID:        "late-requested-changes",
+		State:     "CHANGES_REQUESTED",
+		CommitID:  pr.HeadRefOid,
+		Body:      "The current diff still needs a correction.",
+		CreatedAt: now.Add(31 * time.Minute),
+	}}
+	*now = now.Add(32 * time.Minute)
+	pr.StatusCheckRollup = "success"
+	pr.ReviewDecision = "APPROVED"
+	pr.MergeStateStatus = "CLEAN"
+
+	registration, err := readFileReviewRegistration(paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number))
+	if err != nil {
+		t.Fatalf("read timed-out registration: %v", err)
+	}
+	handoff, err := s.observeCurrentReviewEvidence(t.Context(), registration.Request, pr, client.comments)
+	if err != nil || handoff == nil {
+		t.Fatalf("observe late requested changes: handoff=%+v err=%v", handoff, err)
+	}
+	if handoff.Outcome == retainedReviewApproval {
+		t.Fatalf("late formal requested changes were ignored in favor of approval: %+v", handoff)
+	}
+	if handoff.Classification.FormalDecision != "changes_requested" || len(handoff.Classification.RequestedChanges) != 1 {
+		t.Fatalf("late formal review did not retain one blocking requested-changes record: %+v", handoff.Classification)
+	}
+	source := handoff.Classification.RequestedChanges[0]
+	if source["id"] != "late-requested-changes" || source["late_request_evidence"] != true {
+		t.Fatalf("late requested-changes source = %v, want marked blocking source", source)
 	}
 }
 
@@ -264,6 +323,29 @@ func TestInformalApprovalLifecycle_LateFormalCurrentHeadApprovalResumes(t *testi
 	request, ok := extras["review_request"].(map[string]any)
 	if !ok || request["trigger_id"] != "request" || request["outcome"] != "approved" {
 		t.Fatalf("formal approval evidence = %v, want the original request approved", extras["review_request"])
+	}
+}
+
+func TestInformalApprovalLifecycle_LateCommentedReviewApprovalResumes(t *testing.T) {
+	s, client, pr, workDir, now := informalApprovalLifecycleFixture(t, "Thanks for the review.")
+	markInformalApprovalRequestTimedOut(t, workDir)
+	client.reviews = []github.PRReview{{
+		ID:        "commented-approval",
+		State:     "COMMENTED",
+		Body:      "LGTM, approved.",
+		CreatedAt: now.Add(31 * time.Minute),
+	}}
+	*now = now.Add(32 * time.Minute)
+	pr.StatusCheckRollup = "success"
+	pr.MergeStateStatus = "CLEAN"
+
+	status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	if !handled || status != "resume" || extras["gate"] != gateReadyToMerge || extras["reason"] != "REVIEW_APPROVED" {
+		t.Fatalf("late COMMENTED review approval = (%s, %v, %t), want normal merge work", status, extras, handled)
+	}
+	request, ok := extras["review_request"].(map[string]any)
+	if !ok || request["trigger_id"] != "request" || request["outcome"] != "approved" {
+		t.Fatalf("COMMENTED review approval evidence = %v, want approval for the original request", extras["review_request"])
 	}
 }
 

@@ -29,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
@@ -50,13 +51,14 @@ const (
 // conversation, formal reviews and the issue.
 type continuityGitHub struct {
 	fakeGitHubClient
-	mu         sync.Mutex
-	pr         github.PR
-	issueState string
-	comments   []github.PRComment
-	reviews    []github.PRReview
-	nextID     int
-	stamp      time.Time
+	mu          sync.Mutex
+	pr          github.PR
+	issueState  string
+	comments    []github.PRComment
+	reviews     []github.PRReview
+	nextID      int
+	stamp       time.Time
+	clockOffset time.Duration
 	// hideComments hides the conversation from the next n listings, like a
 	// lagging GitHub read after a successful post.
 	hideComments int
@@ -82,7 +84,7 @@ func (g *continuityGitHub) post(body string) github.PRComment {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.nextID++
-	stamp := time.Now().UTC().Truncate(time.Second)
+	stamp := time.Now().UTC().Add(g.clockOffset).Truncate(time.Second)
 	if !stamp.After(g.stamp) {
 		stamp = g.stamp.Add(time.Millisecond)
 	}
@@ -255,7 +257,10 @@ type continuityScenario struct {
 	// expired before this Run starts. lateApproval, when present, is published
 	// for that original trigger after its deadline.
 	expiredRequest bool
-	lateApproval   string
+	// expiredWithoutTimeoutSidecar leaves only the confirmed request record;
+	// the first live observation discovers that its deadline already elapsed.
+	expiredWithoutTimeoutSidecar bool
+	lateApproval                 string
 	// launches[i] is the effect and exit status of the i-th agent launch. A
 	// nil or unscripted launch is a well-behaved implementor: it merges once a
 	// review response approves the request, and otherwise exits cleanly.
@@ -275,6 +280,9 @@ type continuityScenario struct {
 	ownedWorkRetries bool
 	// reviewTimeout overrides the request deadline in seconds.
 	reviewTimeout int
+	// expireAfterFirstAwait advances the managed review clock beyond the
+	// confirmed request's deadline without sleeping.
+	expireAfterFirstAwait bool
 	// noReviewCommand runs without a delegated review command.
 	noReviewCommand bool
 	// requireAwait asserts that the Run recorded a wait before its outcome.
@@ -316,12 +324,27 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 	cfg := &config.Config{Agent: "test", Sandbox: "worktree", WorktreeDir: filepath.Join(root, "worktrees"), Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test": {Command: "true"}}}
 	if sc.expiredRequest {
 		seedExpiredContinuityReviewRequest(t, g, worktree)
+		if sc.expiredWithoutTimeoutSidecar {
+			path := paths.NewLayout(nil, worktree).PRReviewRegistrationPath(continuityPR)
+			registration, err := readFileReviewRegistration(path)
+			if err != nil {
+				t.Fatalf("read expired request registration: %v", err)
+			}
+			registration.State.ObservedState = ""
+			registration.State.ObservedReason = ""
+			registration.State.ObservedAt = ""
+			registration.State.Evidence = nil
+			if err := atomicfs.WriteAtomicJSON(path, registration, 0o600); err != nil {
+				t.Fatalf("remove timeout observation sidecar: %v", err)
+			}
+		}
 		if sc.lateApproval != "" {
 			g.publish(sc.lateApproval)
 		}
 	}
 	var mu sync.Mutex
 	launches, polls := 0, 0
+	reviewClockOffset := time.Duration(0)
 	factory := &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
 		mu.Lock()
 		index := launches
@@ -357,7 +380,21 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 				if sc.polls[index] != nil {
 					sc.polls[index](g)
 				}
+				if sc.expireAfterFirstAwait && index == 0 {
+					mu.Lock()
+					reviewClockOffset += 2 * time.Hour
+					mu.Unlock()
+					g.mu.Lock()
+					g.clockOffset += 2 * time.Hour
+					g.mu.Unlock()
+				}
 				return ctx.Err()
+			},
+			reviewRegistrationNow: func() time.Time {
+				mu.Lock()
+				offset := reviewClockOffset
+				mu.Unlock()
+				return time.Now().UTC().Add(offset)
 			},
 		}))
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -432,7 +469,25 @@ func seedExpiredContinuityReviewRequest(t *testing.T, g *continuityGitHub, workt
 	if err := registrationSession.registerReviewRequest(t.Context(), worktree, pr, pr.HeadRefOid); err != nil {
 		t.Fatalf("seed confirmed review request: %v", err)
 	}
-	markInformalApprovalRequestTimedOut(t, worktree)
+	path := paths.NewLayout(nil, worktree).PRReviewRegistrationPath(pr.Number)
+	registration, err := readFileReviewRegistration(path)
+	if err != nil {
+		t.Fatalf("read confirmed review request: %v", err)
+	}
+	handoff, err := registrationSession.observeCurrentReviewEvidence(t.Context(), registration.Request, pr, g.comments)
+	if err != nil || handoff == nil || handoff.Classification == nil {
+		t.Fatalf("seed empty expired observation: handoff=%+v err=%v", handoff, err)
+	}
+	canonical, err := canonicalReviewRegistration(registration, handoff, pr.HeadRefOid)
+	if err != nil {
+		t.Fatalf("canonicalize empty expired observation: %v", err)
+	}
+	canonical.State.ObservedState = "timed_out"
+	canonical.State.ObservedReason = "request-deadline-exhausted"
+	canonical.State.ObservedAt = time.Unix(int64(registration.Request.DeadlineUnixSeconds), 0).UTC().Format(time.RFC3339Nano)
+	if err := atomicfs.WriteAtomicJSON(path, canonical, 0o600); err != nil {
+		t.Fatalf("persist empty expired observation: %v", err)
+	}
 }
 
 func (g *continuityGitHub) triggerCount() int {
@@ -692,27 +747,40 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 			polls: []func(*continuityGitHub){nil, nil, nil},
 			want:  "failed:REMEDIATION_BUDGET_EXHAUSTED",
 		},
-		// #2761: a request that expires with nothing else resolving waited in
-		// rc2. The implementor is resumed to re-request; when it does not, the
-		// Run waits for a reviewer instead of failing REVIEW_TIMEOUT.
+		// A request that expires without a response is recovered with the
+		// configured minimum deadline, advanced deterministically in the test
+		// clock. Unchanged implementation retries exhaust into a wait, not a
+		// REVIEW_REQUEST_REQUIRED terminal failure.
 		continuityScenario{
-			name: "expired request without a response waits", pr: greenCleanPR(), retries: 3, reviewTimeout: 1,
-			launches: []func(*continuityGitHub) string{requestReview},
-			polls: []func(*continuityGitHub){
-				func(*continuityGitHub) { time.Sleep(1500 * time.Millisecond) },
-				nil,
-				nil,
-			},
-			want: "waiting",
+			name: "expired request without a response waits after unchanged implementation retries", pr: greenCleanPR(), retries: 3, reviewTimeout: 240,
+			expireAfterFirstAwait: true,
+			launches:              []func(*continuityGitHub) string{requestReview, nil, nil, nil},
+			polls:                 []func(*continuityGitHub){nil, nil, nil, nil},
+			want:                  "waiting", maxLaunches: 4, requireAwait: true, expectOneTrigger: true,
+		},
+		// A confirmed delivered request remains external review work after its
+		// deadline, even when unchanged implementation attempts exhaust their
+		// in-session relaunch allowance. It must not become a missing-request
+		// terminal failure.
+		continuityScenario{
+			name: "expired delivered request with timeout evidence waits after unchanged launch exhaustion", pr: greenCleanPR(), retries: 3,
+			expiredRequest: true, launches: []func(*continuityGitHub) string{nil, nil, nil, nil},
+			polls: []func(*continuityGitHub){nil, nil, nil, nil},
+			want:  "waiting", maxLaunches: 4, requireAwait: true, expectOneTrigger: true,
+		},
+		continuityScenario{
+			name: "expired delivered request without timeout sidecar waits after unchanged launch exhaustion", pr: greenCleanPR(), retries: 3,
+			expiredRequest: true, expiredWithoutTimeoutSidecar: true,
+			want: "waiting", maxLaunches: 4, requireAwait: true, expectOneTrigger: true,
 		},
 		// A timeout followed by unchanged implementation work must stay
 		// recoverable; once the same reviewer eventually approves, the Run
 		// resumes ordinary merge work without a replacement request.
 		continuityScenario{
-			name: "expired request late approval after unchanged implementation", pr: greenCleanPR(), retries: 3, reviewTimeout: 1,
-			launches: []func(*continuityGitHub) string{requestReview, nil, nil},
+			name: "expired request late approval after unchanged implementation", pr: greenCleanPR(), retries: 3, reviewTimeout: 240,
+			expireAfterFirstAwait: true,
+			launches:              []func(*continuityGitHub) string{requestReview, nil, nil},
 			polls: []func(*continuityGitHub){
-				func(*continuityGitHub) { time.Sleep(1500 * time.Millisecond) },
 				nil,
 				func(g *continuityGitHub) { g.publish(reports["approved-daemon-30.md"]) },
 			},

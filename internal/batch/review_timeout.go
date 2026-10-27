@@ -253,7 +253,7 @@ func reviewTimeoutHandoffFromArtifacts(artifacts *reviewTimeoutArtifacts, curren
 			State:          artifacts.State,
 			ResponseCounts: counts,
 			Classification: classification,
-			Outcome:        retainedReviewClassificationOutcome(classification, artifacts.Request),
+			Outcome:        retainedReviewObservationOutcome(classification, artifacts.Request, artifacts.State, counts),
 		}, nil
 	case "timed_out":
 		outcome := retainedReviewTimeout
@@ -264,7 +264,7 @@ func reviewTimeoutHandoffFromArtifacts(artifacts *reviewTimeoutArtifacts, curren
 			if classification.RequestState == "superseded" && len(classification.RequestedChanges) > 0 {
 				return nil, fmt.Errorf("timed-out review wait request was superseded")
 			}
-			outcome = retainedReviewClassificationOutcome(classification, artifacts.Request)
+			outcome = retainedReviewObservationOutcome(classification, artifacts.Request, artifacts.State, artifacts.ResponseCounts)
 		}
 		return &reviewTimeoutHandoff{
 			Request:        artifacts.Request,
@@ -378,6 +378,29 @@ func retainedReviewClassificationOutcome(classification *reviewClassification, r
 		return retainedReviewApproval
 	}
 	return retainedReviewPending
+}
+
+func retainedReviewObservationOutcome(classification *reviewClassification, request reviewRequestEnvelope, state reviewWaitState, counts reviewResponseCounts) retainedReviewOutcome {
+	if classification == nil {
+		if state.State == "timed_out" || state.ObservedState == "timed_out" {
+			return retainedReviewTimeout
+		}
+		return retainedReviewPending
+	}
+	outcome := retainedReviewClassificationOutcome(classification, request)
+	if outcome != retainedReviewPending ||
+		classification.RequestState != "active" || classification.Decision != "pending" ||
+		counts != (reviewResponseCounts{}) {
+		return outcome
+	}
+	if state.State == "timed_out" || state.ObservedState == "timed_out" {
+		return retainedReviewTimeout
+	}
+	observedAt, err := time.Parse(time.RFC3339Nano, state.ObservedAt)
+	if err != nil || observedAt.Before(time.Unix(int64(request.DeadlineUnixSeconds), 0).UTC()) {
+		return outcome
+	}
+	return retainedReviewTimeout
 }
 
 func currentFormalApprovalEvidence(classification *reviewClassification, request reviewRequestEnvelope) bool {
@@ -654,7 +677,7 @@ func validateClassificationSources(sources map[string]any, request reviewRequest
 				}
 			}
 			if !classificationTimestampInWindow(stringValue(evidence, "response_timestamp"), request, windowEnd) &&
-				!validateLateApprovalEvidence(evidence, key, request, windowEnd, triggerKey) {
+				!validateLateRequestEvidence(evidence, key, request, windowEnd, triggerKey) {
 				return nil, nil, nil, fmt.Errorf("review classification source %s is outside the request window", key)
 			}
 		}
@@ -662,9 +685,9 @@ func validateClassificationSources(sources map[string]any, request reviewRequest
 	return arrays[0], arrays[1], arrays[2], nil
 }
 
-func validateLateApprovalEvidence(evidence map[string]any, source string, request reviewRequestEnvelope, windowEnd, triggerKey string) bool {
-	lateApproval, ok := evidence["late_approval"].(bool)
-	if !ok || !lateApproval {
+func validateLateRequestEvidence(evidence map[string]any, source string, request reviewRequestEnvelope, windowEnd, triggerKey string) bool {
+	lateEvidence, ok := evidence["late_request_evidence"].(bool)
+	if !ok || !lateEvidence {
 		return false
 	}
 	timestamp, err := time.Parse(time.RFC3339Nano, stringValue(evidence, "response_timestamp"))
@@ -689,8 +712,17 @@ func validateLateApprovalEvidence(evidence map[string]any, source string, reques
 		return true
 	case "formal_reviews":
 		commitID, validCommitID := evidenceCommitID(evidence)
-		return strings.EqualFold(stringValue(evidence, "state"), "APPROVED") &&
-			stringValue(evidence, "head_status") == "current" && validCommitID && strings.EqualFold(commitID, request.HeadSHA)
+		switch strings.ToUpper(stringValue(evidence, "state")) {
+		case "CHANGES_REQUESTED":
+			return true
+		case "APPROVED":
+			return stringValue(evidence, "head_status") == "current" && validCommitID && strings.EqualFold(commitID, request.HeadSHA)
+		case "COMMENTED":
+			body, bodyOK := evidence["body"].(string)
+			return bodyOK && stringValue(evidence, "head_status") != "stale" && reviewDecisionApprovedBody(body)
+		default:
+			return false
+		}
 	default:
 		return false
 	}
@@ -979,7 +1011,7 @@ func reviewEvidenceWithinCanonicalDeadline(handoff *reviewTimeoutHandoff, reques
 			return false
 		}
 		for _, record := range records {
-			if lateApproval, _ := record["late_approval"].(bool); lateApproval {
+			if lateEvidence, _ := record["late_request_evidence"].(bool); lateEvidence {
 				continue
 			}
 			timestamp, err := time.Parse(time.RFC3339Nano, stringValue(record, "response_timestamp"))
