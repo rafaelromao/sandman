@@ -41,6 +41,13 @@ func (a usageLimitAllowance) restore(evidence map[string]any) (usageLimitAllowan
 	return a, nil
 }
 
+func (a usageLimitAllowance) restoreCheckpoint(evidence map[string]any, accountingUnavailable bool) (usageLimitAllowance, error) {
+	if accountingUnavailable {
+		a = a.withoutAccounting()
+	}
+	return a.restore(evidence)
+}
+
 func (a usageLimitAllowance) canWait() bool {
 	return a.policy().quotaWaitAllowed
 }
@@ -77,6 +84,10 @@ func (a usageLimitAllowance) policy() usageLimitAllowancePolicy {
 func (a usageLimitAllowance) withoutAccounting() usageLimitAllowance {
 	a.accountingUnavailable = true
 	return a
+}
+
+func (a usageLimitAllowance) accountingUnavailableForCheckpoint() bool {
+	return a.accountingUnavailable
 }
 
 func (a usageLimitAllowance) withDeadline(now time.Time) usageLimitAllowance {

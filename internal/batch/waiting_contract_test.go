@@ -411,6 +411,60 @@ func TestWaitingOwnerNilLogPreservesQuotaSchedule(t *testing.T) {
 	}
 }
 
+func TestWaitingContract_DegradedQuotaAccountingSurvivesSchedulerRestart(t *testing.T) {
+	root := testenv.MkdirShort(t, "sm-quota-degraded-restart-")
+	t.Chdir(root)
+	layout := paths.NewLayout(nil, root)
+	batch := layout.LocateBatch("batch", "")
+	now := time.Now().UTC()
+	log := &spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "row", Issue: 42, Timestamp: now.Add(-time.Minute), Payload: map[string]any{"branch": "42-work", "batch_id": "batch"}},
+		{Type: "run.await", RunID: "row", Issue: 42, Timestamp: now, Payload: map[string]any{
+			"await_reason": "usage-limit", "usage_limit_waited_seconds": 600,
+			"usage_limit_deadline_unix_seconds": now.Add(4*time.Hour + 50*time.Minute).Unix(),
+		}},
+	}}
+	record := daemon.RunWait{
+		Protocol: "run-wait/v1", RunID: "row", BatchID: "batch", Issue: 42,
+		Branch: "42-work", BaseBranch: "main", Ready: true, ReuseSession: true,
+		UsageLimitProbe: true, OperationID: "quota:row",
+	}
+	owner, err := newWaitOwner(layout, batch, record, func() time.Time { return now }, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := RowSpec{
+		RunID: "row", IssueNumber: 42, Mode: ModeContinue, ReuseSession: true,
+		Branches:       map[int]string{42: "42-work"},
+		quotaAllowance: usageLimitAllowance{probe: true}.withoutAccounting(),
+	}
+	if err := owner.checkpoint(row, true, 0); err != nil {
+		owner.close()
+		t.Fatal(err)
+	}
+	owner.close()
+
+	recovered, err := daemon.ReadRunWaitAt(layout, batch, "row")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !recovered.UsageLimitAccountingUnavailable || recovered.ReuseSession || !recovered.UsageLimitProbe {
+		t.Fatalf("scheduler checkpoint lost degraded quota policy: %+v", recovered)
+	}
+	states, err := events.ReadRunStates(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := states["row"]
+	allowance, err := (usageLimitAllowance{}).restoreCheckpoint(quotaPollingEvidence(state), recovered.UsageLimitAccountingUnavailable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allowance.canWait() || allowance.allowSessionReuse(recovered.ReuseSession) {
+		t.Fatalf("restart restored quota waits or session reuse after accounting failed: allowance=%+v wait=%+v", allowance, recovered)
+	}
+}
+
 func TestWaitingContract_RenewalFailureStopsActiveExecution(t *testing.T) {
 	root := testenv.MkdirShort(t, "sm-renew-fail-")
 	t.Chdir(root)

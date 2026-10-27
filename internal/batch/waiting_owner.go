@@ -130,6 +130,7 @@ func (o *waitOwner) checkpoint(row RowSpec, ready bool, nextPoll time.Duration) 
 		record.Branch = row.Branches[row.IssueNumber]
 	}
 	record.Ready, record.UsageLimitProbe = ready, row.quotaAllowance.probing()
+	record.UsageLimitAccountingUnavailable = row.quotaAllowance.accountingUnavailableForCheckpoint()
 	record.ReuseSession = row.quotaAllowance.allowSessionReuse(row.ReuseSession)
 	record.PreviousRunID = row.PreviousRunIDs[row.IssueNumber]
 	record.PreviousBatchID = row.PreviousRunBatchIDs[row.IssueNumber]

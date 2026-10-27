@@ -166,25 +166,26 @@ func PruneRunClaims(sandmanDir string, states map[string]events.RunState) (int, 
 // RunWait carries ownership/schedule evidence only. Lifecycle and terminality
 // remain exclusively event-derived, including initial admission descriptors.
 type RunWait struct {
-	Protocol          string    `json:"protocol"`
-	RunID             string    `json:"run_id"`
-	BatchID           string    `json:"batch_id"`
-	Issue             int       `json:"issue"`
-	Branch            string    `json:"branch"`
-	BaseBranch        string    `json:"base_branch"`
-	PreviousRunID     string    `json:"previous_run_id,omitempty"`
-	PreviousBatchID   string    `json:"previous_batch_id,omitempty"`
-	InitialAdmission  bool      `json:"initial_admission"`
-	AdmissionMode     int       `json:"admission_mode"`
-	Dependencies      []int     `json:"dependencies,omitempty"`
-	ReuseSession      bool      `json:"reuse_session,omitempty"`
-	Ready             bool      `json:"ready"`
-	UsageLimitProbe   bool      `json:"usage_limit_probe,omitempty"`
-	OperationID       string    `json:"operation_id"`
-	OperationDeadline time.Time `json:"operation_deadline,omitempty"`
-	LeaseExpiresAt    time.Time `json:"lease_expires_at"`
-	NextPollAt        time.Time `json:"next_poll_at,omitempty"`
-	RecoveryEventAt   time.Time `json:"-"` // event-only compatibility provenance
+	Protocol                        string    `json:"protocol"`
+	RunID                           string    `json:"run_id"`
+	BatchID                         string    `json:"batch_id"`
+	Issue                           int       `json:"issue"`
+	Branch                          string    `json:"branch"`
+	BaseBranch                      string    `json:"base_branch"`
+	PreviousRunID                   string    `json:"previous_run_id,omitempty"`
+	PreviousBatchID                 string    `json:"previous_batch_id,omitempty"`
+	InitialAdmission                bool      `json:"initial_admission"`
+	AdmissionMode                   int       `json:"admission_mode"`
+	Dependencies                    []int     `json:"dependencies,omitempty"`
+	ReuseSession                    bool      `json:"reuse_session,omitempty"`
+	Ready                           bool      `json:"ready"`
+	UsageLimitProbe                 bool      `json:"usage_limit_probe,omitempty"`
+	UsageLimitAccountingUnavailable bool      `json:"usage_limit_accounting_unavailable,omitempty"`
+	OperationID                     string    `json:"operation_id"`
+	OperationDeadline               time.Time `json:"operation_deadline,omitempty"`
+	LeaseExpiresAt                  time.Time `json:"lease_expires_at"`
+	NextPollAt                      time.Time `json:"next_poll_at,omitempty"`
+	RecoveryEventAt                 time.Time `json:"-"` // event-only compatibility provenance
 }
 
 // Quota is bounded by accounted polling, not a wall-clock exhaustion estimate.

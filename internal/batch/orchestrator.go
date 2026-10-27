@@ -2233,7 +2233,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				row.quotaAllowance = row.quotaAllowance.withProbe(recovery.UsageLimitProbe)
 				if recovery.UsageLimitProbe {
 					evidence := quotaPollingEvidence(claimedStates[runID])
-					row.quotaAllowance, _ = row.quotaAllowance.restore(evidence)
+					row.quotaAllowance, _ = row.quotaAllowance.restoreCheckpoint(evidence, recovery.UsageLimitAccountingUnavailable)
 					row.ReuseSession = row.quotaAllowance.allowSessionReuse(row.ReuseSession)
 				}
 				if !recovery.Ready && claimedStates[runID].AwaitEvent != nil && o.eventLog != nil {
