@@ -65,6 +65,7 @@ type rowDriverGateFake struct {
 	paused        bool
 	pauseChecks   int
 	waitErr       error
+	onWait        func()
 	clock         *rowDriverClockFake
 	events        *[]string
 	readyEvidence []map[string]any
@@ -102,12 +103,18 @@ func (f *rowDriverGateFake) WaitQuota(_ context.Context, observe func() (rowObse
 	return rowObservationOutcome{}, nil
 }
 
-func (f *rowDriverGateFake) Wait(_ context.Context, interval time.Duration) error {
+func (f *rowDriverGateFake) Wait(ctx context.Context, interval time.Duration) error {
 	f.record("wait")
 	if f.clock != nil {
 		f.clock.now = f.clock.now.Add(interval)
 	}
-	return f.waitErr
+	if f.onWait != nil {
+		f.onWait()
+	}
+	if f.waitErr != nil {
+		return f.waitErr
+	}
+	return ctx.Err()
 }
 
 func (f *rowDriverGateFake) RecordQuotaPaused(RunSpec, ContinuationCursor, bool, bool, time.Time) error {
@@ -287,6 +294,33 @@ func TestRowDriverAbortFenceStopsAfterWaitFailure(t *testing.T) {
 
 	if got.Result.Status != "aborted" || abort.calls != 1 {
 		t.Fatalf("Drive = %+v, abort calls %d; want one terminal abort", got, abort.calls)
+	}
+	if executor.observeCalls != 1 || executor.executeCalls != 0 || gates.acquires != 0 {
+		t.Fatalf("post-abort work: observations=%d executions=%d admissions=%d", executor.observeCalls, executor.executeCalls, gates.acquires)
+	}
+	if got := events[len(events)-1]; got != "abort" {
+		t.Fatalf("last event = %q, want abort fence", got)
+	}
+}
+
+func TestRowDriverExplicitAbortDuringWaitStopsFurtherWork(t *testing.T) {
+	var events []string
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	gates := &rowDriverGateFake{events: &events, onWait: cancel}
+	executor := &rowDriverExecutorFake{
+		events:       &events,
+		observations: []lifecycleVerdict{{Action: lifecycleAwait, Evidence: map[string]any{"gate": "review"}}},
+	}
+	abort := &rowDriverAbortFake{events: &events}
+	run := RunSpec{RunID: "run-42", IssueNumber: 42, BatchID: "batch-a", Branch: "42-fix", BaseBranch: "main"}
+	got := newRowDriver(executor, gates, &rowDriverClockFake{}, abort).Drive(ctx, run, ContinuationCursor{}, rowDriverOptions{
+		Awaiting: true, ReleaseAwaitCapacity: true,
+		PollInterval: func(int) time.Duration { return time.Minute },
+	})
+
+	if got.Result.Status != "aborted" || abort.calls != 1 {
+		t.Fatalf("Drive = %+v, abort calls %d; want one explicit terminal abort", got, abort.calls)
 	}
 	if executor.observeCalls != 1 || executor.executeCalls != 0 || gates.acquires != 0 {
 		t.Fatalf("post-abort work: observations=%d executions=%d admissions=%d", executor.observeCalls, executor.executeCalls, gates.acquires)
