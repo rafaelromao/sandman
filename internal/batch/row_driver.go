@@ -289,6 +289,10 @@ func (d *rowDriver) drive(ctx context.Context, run RunSpec, state *rowDriverStat
 				opts.AdvanceTurn()
 			}
 			outcome, err := d.gates.WaitQuota(ctx, observe, opts.PollInterval(state.awaitPoll))
+			if ctx.Err() != nil {
+				abortRequested = true
+				break
+			}
 			if outcome.Kind == rowObservationTerminal {
 				result = d.executor.FinishObserved(ctx, run, state.cursor, outcome.Verdict)
 				break
@@ -318,6 +322,13 @@ func (d *rowDriver) drive(ctx context.Context, run RunSpec, state *rowDriverStat
 		var err error
 		var outcome rowObservationOutcome
 		state.opportunity, outcome, err = d.gates.Acquire(ctx, state.awaiting, state.opportunity, observe, opts.PollInterval(state.awaitPoll))
+		if ctx.Err() != nil {
+			if err == nil && outcome.Kind == rowObservationNone {
+				d.gates.Release(false)
+			}
+			abortRequested = true
+			break
+		}
 		if outcome.Kind == rowObservationAdmissionChanged {
 			if outcome.Verdict.Action == lifecycleAwait {
 				if err := accept(outcome.Verdict); err != nil {
