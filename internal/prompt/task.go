@@ -124,14 +124,30 @@ func EnsureCIOwnershipContext(content string) string {
 
 const reviewEvidenceHeading = "## Review Evidence"
 
+// TaskDirective is a runtime-selected instruction to add to a resumed task.
+// It is separate from the diagnostic evidence map so prompt composition never
+// infers owned work from persisted reason or gate strings.
+type TaskDirective uint8
+
+const (
+	TaskDirectiveNone TaskDirective = iota
+	TaskDirectiveCIRemediation
+)
+
 // TaskWithReviewEvidence appends a canonical "## Review Evidence" section to
 // preserved task content when the runtime resumes an agent session with
-// request-scoped review evidence (actionable feedback or a ready-to-merge
-// approval). When no evidence is present (nil or empty map) the content is
-// returned byte-identical so continuation replay without evidence stays
-// unchanged. An earlier evidence section from a previous resume is replaced
-// so the agent always sees the latest request-scoped evidence.
+// request-scoped review evidence. Prompt-specific remediation instructions
+// require the explicit directive API below; evidence strings alone never
+// select them.
 func TaskWithReviewEvidence(content string, evidence map[string]any) string {
+	return TaskWithReviewEvidenceAndDirective(content, evidence, TaskDirectiveNone)
+}
+
+// TaskWithReviewEvidenceAndDirective appends request-scoped evidence and the
+// instruction explicitly selected by the runtime lifecycle decision. When no
+// evidence is present, content remains byte-identical. Earlier evidence is
+// replaced so the agent always sees the latest request-scoped facts.
+func TaskWithReviewEvidenceAndDirective(content string, evidence map[string]any, directive TaskDirective) string {
 	if len(evidence) == 0 {
 		return content
 	}
@@ -143,7 +159,7 @@ func TaskWithReviewEvidence(content string, evidence map[string]any) string {
 	if evidence["reason"] == "REVIEW_APPROVED" {
 		b.WriteString("The runtime accepted approval for this request and head. A request-scoped informal approval is sufficient; formal GitHub approval is not required. This supersedes a preserved instruction to wait for formal approval: do not request a replacement review solely because no formal APPROVED review or aggregate reviewDecision is present. Revalidate the current request/head approval, green CI, and mergeability, then execute the normal merge gate.\n\n")
 	}
-	if reason, _ := evidence["reason"].(string); reason == "CI_FAILURE" || evidence["gate"] == "ci-failure" {
+	if directive == TaskDirectiveCIRemediation {
 		b.WriteString("A failed required check on the current pull request head is implementation work you own. Diagnose the concrete failure and either make and validate the narrow repair or initiate an authorized, bounded rerun of the identified current-head execution. Pending sibling checks, review delivery, or approval do not transfer this work to the runtime. Do not hand off an untouched failure.\n\n")
 		b.WriteString("The canary's no-retry rule applies within one job invocation; it does not prohibit a bounded rerun of the existing failed execution. A transient provider or network timeout may justify rerunning that identified execution after verifying its repository, pull request, source head, workflow run, and failed job. Do not blindly rerun deterministic source failures, use workflow_dispatch as a replacement for the existing run, or invent credentials or permissions.\n\n")
 		b.WriteString("The runtime owns asynchronous observation and admission, not CI repair. After the failure has been diagnosed and the corrective action is actually complete, verify the current head and live check execution. Only when no implementor-owned work remains and required checks are queued or running should you checkpoint and yield for runtime observation.\n\n")

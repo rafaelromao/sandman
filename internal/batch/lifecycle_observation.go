@@ -21,10 +21,11 @@ type lifecycleObservationRequest struct {
 // lifecycleVerdict is the selected lifecycle action and the evidence used to
 // apply it. lifecycleNone means the observation did not select an action.
 type lifecycleVerdict struct {
-	Action          lifecycleAction
-	Evidence        map[string]any
-	Kind            lifecycleVerdictKind
-	ImplementorWork bool
+	Action           lifecycleAction
+	Evidence         map[string]any
+	Kind             lifecycleVerdictKind
+	ImplementorWork  bool
+	ciRepairRequired bool
 }
 
 type lifecycleVerdictKind uint8

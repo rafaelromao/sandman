@@ -88,8 +88,12 @@ func setDefaultEvidence(evidence map[string]any, key string, value any) {
 // preserved task content with the request-scoped evidence attached, wrapped
 // in the canonical continuation prompt. Without evidence the output is
 // byte-identical to today's continuation.
-func (s *runSession) resumePromptFor(taskContent string, evidence map[string]any, reviewTimeout int) string {
-	return prompt.ContinuationTaskPromptWithReviewTimeout(prompt.TaskWithReviewEvidence(taskContent, evidence), reviewTimeout)
+func (s *runSession) resumePromptFor(taskContent string, evidence map[string]any, reviewTimeout int, ciRepairRequired bool) string {
+	directive := prompt.TaskDirectiveNone
+	if ciRepairRequired {
+		directive = prompt.TaskDirectiveCIRemediation
+	}
+	return prompt.ContinuationTaskPromptWithReviewTimeout(prompt.TaskWithReviewEvidenceAndDirective(taskContent, evidence, directive), reviewTimeout)
 }
 
 // tryEntryResume re-evaluates the external gate at session entry for resume
@@ -168,7 +172,7 @@ func (s *runSession) prepareEntryResume(ctx context.Context, wt sandbox.Sandbox,
 	// The entry launch acts on this evidence: a repeat after it is a stall.
 	s.lastResumeSignature = s.pendingResumeSignature
 	taskContent, _, _ := ReadTaskContent(filepath.Join(wt.WorkDir(), ".sandman", "task.md"))
-	s.renderCfg.TaskPrompt = s.resumePromptFor(taskContent, evidence, s.renderCfg.ReviewTimeout)
+	s.renderCfg.TaskPrompt = s.resumePromptFor(taskContent, evidence, s.renderCfg.ReviewTimeout, verdict.ciRepairRequired)
 	return AgentRunResult{}, false, false
 }
 
@@ -201,7 +205,7 @@ func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbo
 	taskContent, _, _ := ReadTaskContent(filepath.Join(wt.WorkDir(), ".sandman", "task.md"))
 	s.resumeCount++
 	s.emitResume(ctx, runID, branch, gate, evidence)
-	return s.resumePromptFor(taskContent, evidence, s.renderCfg.ReviewTimeout), true
+	return s.resumePromptFor(taskContent, evidence, s.renderCfg.ReviewTimeout, verdict.ciRepairRequired), true
 }
 
 // emitResume writes the run.resumed event (issue #2595). It records the

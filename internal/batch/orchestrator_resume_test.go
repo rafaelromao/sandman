@@ -1430,9 +1430,23 @@ func TestResumePromptFromGate_CIFailureAndConflictRelaunchWithoutRetry(t *testin
 func TestResumePromptFor_NoEvidenceIsByteIdenticalContinuation(t *testing.T) {
 	s := &runSession{}
 	task := "# Task\n\nDo the work.\n"
-	got := s.resumePromptFor(task, nil, 0)
+	got := s.resumePromptFor(task, nil, 0, false)
 	want := prompt.ContinuationTaskPromptWithReviewTimeout(task, 0)
 	if got != want {
 		t.Fatalf("no-evidence resume prompt diverges from continuation prompt:\ngot:  %s\nwant: %s", got, want)
+	}
+}
+
+func TestResumePromptFor_CIRepairInstructionsRequireSelectedLifecycleDirective(t *testing.T) {
+	s := &runSession{}
+	task := "# Task\n\nCI failure observed.\n"
+	evidence := map[string]any{"reason": "CI_FAILURE", "gate": "ci-failure"}
+	withoutDirective := s.resumePromptFor(task, evidence, 0, false)
+	if strings.Contains(withoutDirective, "Diagnose the concrete failure") {
+		t.Fatal("CI evidence strings alone added corrective prompt instructions")
+	}
+	withDirective := s.resumePromptFor(task, evidence, 0, true)
+	if !strings.Contains(withDirective, "Diagnose the concrete failure") {
+		t.Fatal("selected CI remediation action did not add corrective prompt instructions")
 	}
 }

@@ -274,13 +274,13 @@ func TestAwaitingRowLifecycle_ReobservesOnlyTheRetainedWorkflowPrerequisite(t *t
 	}}
 	row := RowSpec{IssueNumber: 42, RunID: "run-rerun-prerequisite", Branches: map[int]string{42: gateTestBranch}}
 	continued := e.observeAwaitingRowLifecycle(t.Context(), row)
-	if continued.Action != lifecycleAwait || continued.Evidence["gate"] != string(lifecycleGatePending) {
+	if continued.Action != lifecycleAwait || continued.Evidence["gate"] != string(lifecycleGatePending) || continued.ciRepairRequired {
 		t.Fatalf("same identified active workflow prerequisite should remain awaited: %+v", continued)
 	}
 
 	client.prs[gateTestBranch].CIActiveFailedWorkflowRunID = ""
 	withoutPrerequisite := e.observeAwaitingRowLifecycle(t.Context(), row)
-	if withoutPrerequisite.Action != lifecycleResume || withoutPrerequisite.Evidence["reason"] != "CI_FAILURE" {
+	if withoutPrerequisite.Action != lifecycleResume || withoutPrerequisite.Evidence["reason"] != "CI_FAILURE" || !withoutPrerequisite.ciRepairRequired {
 		t.Fatalf("completed or changed workflow prerequisite must return CI repair to the implementation agent: %+v", withoutPrerequisite)
 	}
 }
@@ -304,7 +304,7 @@ func TestAwaitingRowLifecycle_FailedCIWithUnrelatedActiveCheckResumesImplementat
 	}}
 	row := RowSpec{IssueNumber: 42, RunID: "run-pending-ci", Branches: map[int]string{42: gateTestBranch}}
 	verdict := e.observeAwaitingRowLifecycle(t.Context(), row)
-	if verdict.Action != lifecycleResume || verdict.Evidence["reason"] != "CI_FAILURE" {
+	if verdict.Action != lifecycleResume || verdict.Evidence["reason"] != "CI_FAILURE" || !verdict.ciRepairRequired {
 		t.Fatalf("a failed check discovered during a pending-CI wait must return to implementation, not await unrelated active CI: %+v", verdict)
 	}
 }

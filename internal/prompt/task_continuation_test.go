@@ -426,13 +426,18 @@ The implementation is complete on current-head-sha.
 
 Leave CI observation to the runtime and end the agent session.
 `
-	got := TaskWithReviewEvidence(content, map[string]any{
+	evidence := map[string]any{
 		"reason":       "CI_FAILURE",
 		"gate":         "ci-failure",
 		"outcome":      "ci-failure",
 		"pull_request": 2930,
 		"head_sha":     "current-head-sha",
-	})
+	}
+	withoutDirective := TaskWithReviewEvidence(content, evidence)
+	if strings.Contains(withoutDirective, "Diagnose the concrete failure") {
+		t.Fatal("CI evidence strings alone selected corrective prompt instructions")
+	}
+	got := TaskWithReviewEvidenceAndDirective(content, evidence, TaskDirectiveCIRemediation)
 
 	for _, required := range []string{
 		"A failed required check on the current pull request head is implementation work you own.",
