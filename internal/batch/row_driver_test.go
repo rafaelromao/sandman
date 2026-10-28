@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 )
@@ -327,5 +328,37 @@ func TestRowDriverExplicitAbortDuringWaitStopsFurtherWork(t *testing.T) {
 	}
 	if got := events[len(events)-1]; got != "abort" {
 		t.Fatalf("last event = %q, want abort fence", got)
+	}
+}
+
+func TestRowTurnControllerRunsAbortCallbackOutsideTurnLock(t *testing.T) {
+	mu := &sync.Mutex{}
+	servingTurn := 0
+	controller := &rowTurnController{
+		enabled:        true,
+		turn:           1,
+		mu:             mu,
+		cond:           sync.NewCond(mu),
+		servingTurn:    &servingTurn,
+		completedTurns: map[int]struct{}{},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	aborted := false
+	callbackHeldLock := false
+	continued := controller.Wait(ctx, func() {
+		aborted = true
+		callbackHeldLock = !mu.TryLock()
+		if !callbackHeldLock {
+			mu.Unlock()
+		}
+	})
+
+	if continued || !aborted {
+		t.Fatalf("Wait = %t, abort callback called = %t; want abort", continued, aborted)
+	}
+	if callbackHeldLock {
+		t.Fatal("abort callback ran while the shared turn lock was held")
 	}
 }

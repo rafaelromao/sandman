@@ -150,13 +150,14 @@ func (t *rowTurnController) Wait(ctx context.Context, abort func()) bool {
 		return true
 	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	for *t.servingTurn != t.turn {
 		if ctx.Err() != nil {
+			t.mu.Unlock()
 			abort()
 			return false
 		}
 		t.cond.Wait()
 	}
+	t.mu.Unlock()
 	return true
 }
