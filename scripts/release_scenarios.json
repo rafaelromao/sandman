@@ -325,6 +325,11 @@
     },
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestCIRemediationPoisonedTaskRealAgent",
+      "tier": "live"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestPresetMatrixHarness_GenericBuildsWithEditedDockerfile",
       "tier": "integration"
     },

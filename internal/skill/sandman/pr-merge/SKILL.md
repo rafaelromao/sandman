@@ -48,3 +48,5 @@ head.
 
 - Do not merge if any gate is false.
 - Do not merge if mergeability is ambiguous.
+
+If required CI is failing, return to implementation-owned diagnosis and repair; do not treat a pending sibling check, review approval, or a saved blocker as permission to merge or hand off an untouched failure. A narrow source, test, configuration, or workflow change needed to repair the required checks is within implementation scope. For a diagnosed transient provider/network timeout, the implementation agent may use the bounded existing-run recovery action in the implementation capability; never bypass a required check.

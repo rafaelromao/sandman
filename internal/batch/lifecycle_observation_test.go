@@ -3,6 +3,7 @@ package batch
 import (
 	"context"
 	"io"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -148,5 +149,61 @@ func TestLifecycleObservation_VerdictTable(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLifecycleObservation_FailedCIWithActiveSiblingKeepsRuntimePrerequisiteWait(t *testing.T) {
+	now := time.Unix(2_000, 0).UTC()
+	workDir := t.TempDir()
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+		prs: map[string]*github.PR{gateTestBranch: {
+			Number: 17, State: "open", HeadRefOid: "current-sha", CIExecutionID: "checks-with-pending-sibling",
+			StatusCheckRollup: "failure", CIHasActiveChecks: true, MergeStateStatus: "BLOCKED",
+		}},
+	}
+	log := &spyEventLog{}
+	session := &runSession{
+		issueNumber: 42,
+		deps:        runDeps{githubClient: client, eventLog: log, errorLog: io.Discard},
+		opts: runSessionOptions{
+			now:         func() time.Time { return now },
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
+	}
+	observer := newLifecycleObserver(session)
+	request := lifecycleObservationRequest{
+		WorkDir: workDir, Branch: gateTestBranch, RunID: "run-cannot-rerun-yet", HostPathsReady: true,
+		AttemptStatus: "success",
+	}
+
+	entry := observer.Observe(t.Context(), request)
+	if entry.Action != lifecycleResume || entry.Evidence["gate"] != "ci-failure" {
+		t.Fatalf("initial entry must launch the implementation agent to diagnose/repair despite active siblings: %+v", entry)
+	}
+
+	request.AfterAgentAttempt = true
+	blockedRerun := observer.Observe(t.Context(), request)
+	if blockedRerun.Action != lifecycleAwait || blockedRerun.Evidence["gate"] != string(lifecycleGatePending) || blockedRerun.Evidence["reason"] != "CI_FAILURE" {
+		t.Fatalf("after the agent diagnoses the failure, the runtime must own observation of the active workflow prerequisite: %+v", blockedRerun)
+	}
+	ciWait, ok := blockedRerun.Evidence["ci_wait"].(map[string]any)
+	if !ok || ciWait["execution_id"] != "checks-with-pending-sibling" {
+		t.Fatalf("prerequisite await lost identified CI execution: %#v", blockedRerun.Evidence)
+	}
+	initialDeadline, ok := ciWait["deadline_unix_seconds"].(int64)
+	if !ok {
+		t.Fatalf("CI wait deadline has unexpected type %T", ciWait["deadline_unix_seconds"])
+	}
+
+	client.prs[gateTestBranch].CIHasActiveChecks = false
+	now = now.Add(2 * time.Minute)
+	completedPrerequisite := observer.Observe(t.Context(), request)
+	if completedPrerequisite.Action != lifecycleResume || completedPrerequisite.Evidence["gate"] != "ci-failure" {
+		t.Fatalf("completed workflow prerequisite must return failed CI to implementation ownership: %+v", completedPrerequisite)
+	}
+	retained, err := readCIWaitRegistration(filepath.Join(workDir, ".sandman", "state", "17.ci_wait.json"))
+	if err != nil || retained.DeadlineUnixSeconds != initialDeadline {
+		t.Fatalf("same CI execution deadline changed across the prerequisite: registration=%+v error=%v", retained, err)
 	}
 }

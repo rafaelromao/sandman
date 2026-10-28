@@ -9,12 +9,13 @@ import (
 // lifecycleObservationRequest describes one runtime observation of an
 // implementation pull request.
 type lifecycleObservationRequest struct {
-	WorkDir        string
-	Branch         string
-	LogPath        string
-	RunID          string
-	HostPathsReady bool
-	AttemptStatus  string
+	WorkDir           string
+	Branch            string
+	LogPath           string
+	RunID             string
+	HostPathsReady    bool
+	AttemptStatus     string
+	AfterAgentAttempt bool
 }
 
 // lifecycleVerdict is the selected lifecycle action and the evidence used to
@@ -58,6 +59,7 @@ func (o *lifecycleObserver) Observe(ctx context.Context, request lifecycleObserv
 		request.RunID,
 		request.HostPathsReady,
 		request.AttemptStatus,
+		request.AfterAgentAttempt,
 	)
 	if !verdict.handled() || ctx.Err() != nil {
 		return verdict

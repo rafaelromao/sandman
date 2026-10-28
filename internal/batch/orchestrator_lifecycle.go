@@ -78,13 +78,14 @@ type mergedMergeFacts struct {
 // whose wait state is still pending. A requested review counts as an ongoing
 // external operation even before the review run starts (issue #2743).
 type implementationPRFacts struct {
-	pr               *github.PR
-	headSHA          string
-	mergeFacts       *mergedMergeFacts
-	retainedEvidence retainedReviewEvidence
-	reviewRequested  bool
-	attemptStatus    string
-	requireReview    bool
+	pr                *github.PR
+	headSHA           string
+	mergeFacts        *mergedMergeFacts
+	retainedEvidence  retainedReviewEvidence
+	reviewRequested   bool
+	attemptStatus     string
+	afterAgentAttempt bool
+	requireReview     bool
 }
 
 // lifecycleDecision is the outcome of decideImplementationPRLifecycle. The
@@ -169,7 +170,7 @@ func decideImplementationPRLifecycle(in implementationPRFacts) lifecycleDecision
 			completionFailure: true,
 		}
 	case lifecycleGateFailed, lifecycleGatePending, lifecycleGateReady:
-		decision := decideRecoverableLifecycle(gate, in.pr, in.headSHA, in.retainedEvidence, in.reviewRequested, in.attemptStatus)
+		decision := decideRecoverableLifecycle(gate, in.pr, in.headSHA, in.retainedEvidence, in.reviewRequested, in.attemptStatus, in.afterAgentAttempt)
 		if in.requireReview && decision.action == lifecycleResume && decision.gate == lifecycleGateReady && in.retainedEvidence.outcome != retainedReviewApproval {
 			return lifecycleRemediationDecision(gateReviewRequestRequired, "REVIEW_REQUEST_REQUIRED", "deliver a confirmed current-head delegated-review request and obtain request-scoped approval before merge work", in.pr, in.retainedEvidence.payload)
 		}
@@ -240,7 +241,7 @@ func remediationBudgetFailureEvidence(gate string, evidence map[string]any, next
 	return extras
 }
 
-func decideRecoverableLifecycle(gate lifecycleGate, pr *github.PR, headSHA string, evidence retainedReviewEvidence, reviewRequested bool, attemptStatus string) lifecycleDecision {
+func decideRecoverableLifecycle(gate lifecycleGate, pr *github.PR, headSHA string, evidence retainedReviewEvidence, reviewRequested bool, attemptStatus string, afterAgentAttempt bool) lifecycleDecision {
 	// CI failures and merge conflicts are branch-owned work, not external work
 	// that can make progress while the agent waits. Handle these typed facts
 	// before the failed-attempt guard and legacy gate/evidence rules below.
@@ -250,6 +251,19 @@ func decideRecoverableLifecycle(gate lifecycleGate, pr *github.PR, headSHA strin
 		return lifecycleRemediationDecision("merge-conflict", "MERGE_CONFLICT", "rebase or merge the base branch, resolve conflicts, and push a new head", pr, evidence.payload)
 	}
 	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "failure") {
+		if afterAgentAttempt && pr.CIHasActiveChecks && strings.TrimSpace(headSHA) != "" && strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) {
+			extras := cloneLifecycleExtras(evidence.payload)
+			if extras == nil {
+				extras = map[string]any{}
+			}
+			extras["pull_request"] = pr.Number
+			extras["head_sha"] = pr.HeadRefOid
+			extras["reason"] = "CI_FAILURE"
+			extras["next_action"] = "wait for the active current-head workflow execution to finish, then resume implementation-owned CI remediation"
+			extras["gate"] = string(lifecycleGatePending)
+			extras["await"] = true
+			return lifecycleDecision{action: lifecycleAwait, gate: lifecycleGatePending, handled: true, extras: extras}
+		}
 		return lifecycleRemediationDecision("ci-failure", "CI_FAILURE", "inspect current-head CI with gh pr checks and repair the failing checks", pr, evidence.payload)
 	}
 	if attemptNeedsRetry(attemptStatus) &&
@@ -413,6 +427,9 @@ func ciActive(pr *github.PR, headSHA string) bool {
 		!strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) {
 		return false
 	}
+	if pr.CIHasActiveChecks {
+		return true
+	}
 	switch strings.ToLower(strings.TrimSpace(pr.StatusCheckRollup)) {
 	case "pending", "in_progress", "queued":
 		return true
@@ -457,7 +474,7 @@ func lifecycleFailureExtras(d lifecycleDecision, issueNumber int) map[string]any
 	return cloneLifecycleExtras(d.failureExtras)
 }
 
-func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool, attemptStatus string) lifecycleVerdict {
+func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool, attemptStatus string, afterAgentAttempt bool) lifecycleVerdict {
 	s.decisionPRHead = ""
 	if s.deps.githubClient == nil {
 		return lifecycleVerdict{}
@@ -621,9 +638,10 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 	// repository lookups.
 	var mergeFacts *mergedMergeFacts
 	decision := decideImplementationPRLifecycle(implementationPRFacts{
-		pr:            pr,
-		headSHA:       headSHA,
-		attemptStatus: attemptStatus,
+		pr:                pr,
+		headSHA:           headSHA,
+		attemptStatus:     attemptStatus,
+		afterAgentAttempt: afterAgentAttempt,
 	})
 	if decision.needMergeFacts {
 		if ctx.Err() != nil {
@@ -635,10 +653,11 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 			mergedWithoutClosingRef: merged && !pr.ClosesIssue(s.issueNumber),
 		}
 		decision = decideImplementationPRLifecycle(implementationPRFacts{
-			pr:            pr,
-			headSHA:       headSHA,
-			mergeFacts:    mergeFacts,
-			attemptStatus: attemptStatus,
+			pr:                pr,
+			headSHA:           headSHA,
+			mergeFacts:        mergeFacts,
+			attemptStatus:     attemptStatus,
+			afterAgentAttempt: afterAgentAttempt,
 		})
 		if ctx.Err() != nil {
 			return lifecycleVerdict{Action: lifecycleAborted}
@@ -704,13 +723,14 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 	}
 	s.decisionPRHead = strings.TrimSpace(pr.HeadRefOid)
 	decision = decideImplementationPRLifecycle(implementationPRFacts{
-		pr:               pr,
-		headSHA:          headSHA,
-		mergeFacts:       mergeFacts,
-		retainedEvidence: evidence,
-		reviewRequested:  reviewRequested,
-		attemptStatus:    attemptStatus,
-		requireReview:    strings.TrimSpace(s.renderCfg.ReviewCommand) != "",
+		pr:                pr,
+		headSHA:           headSHA,
+		mergeFacts:        mergeFacts,
+		retainedEvidence:  evidence,
+		reviewRequested:   reviewRequested,
+		attemptStatus:     attemptStatus,
+		afterAgentAttempt: afterAgentAttempt,
+		requireReview:     strings.TrimSpace(s.renderCfg.ReviewCommand) != "",
 	})
 	if strings.EqualFold(pr.State, "open") && !evidence.stateError {
 		deadlines := cloneLifecycleExtras(evidence.payload)

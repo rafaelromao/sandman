@@ -10,6 +10,16 @@ import (
 
 const continuationFreshnessGuardHeading = "## Continuation Freshness Guard"
 const contextRecoveryGuardHeading = "## Context Recovery Guard"
+const ciOwnershipContextHeading = "## Sandman Failed CI Remediation Context"
+
+const ciOwnershipContext = `## Sandman Failed CI Remediation Context
+
+A failed required check on the current pull request head remains implementation work you own. Pending sibling checks, review delivery, approval, a saved blocker, or historical runtime-wait directions do not transfer an untouched failure to Sandman. Diagnose the concrete current-head failure and either make and validate the narrow repair or initiate an authorized, bounded recovery action before yielding.
+
+
+For deterministic source, test, configuration, or workflow failures, make the required repair and validate it. For a verified provider-pin deprecation, update the coordinated documented pins. For a diagnosed transient provider or network timeout, use the authorized helper in the shared Sandman skill to rerun the identified failed execution after verifying its repository, pull request, source head, workflow run, and job identity. The canary's one CLI invocation and no-retry-loop rule applies within one job invocation; it does not prohibit a bounded rerun of the existing execution, and workflow_dispatch is not a prerequisite. Do not blindly rerun deterministic failures, invent credentials or permissions, or manufacture green evidence.
+
+The runtime owns asynchronous observation and admission, not CI repair. Verify the corrective action and current-head execution first. Only after no implementor-owned work remains and required checks are queued or running should you checkpoint and yield for runtime observation.`
 
 const (
 	reviewTimeoutContextHeading = "## Sandman Runtime Context"
@@ -81,10 +91,10 @@ func ContextRecoveryTaskPrompt(content string, reviewTimeout int) string {
 		if reviewTimeout > 0 {
 			content = EnsureReviewTimeoutContext(content, reviewTimeout)
 		}
-		return trimTrailingNewlines(content) + "\n"
+		return EnsureCIOwnershipContext(trimTrailingNewlines(content) + "\n")
 	}
 	content = continuationTaskPrompt(content, reviewTimeout)
-	return trimTrailingNewlines(content) + "\n\n" + contextRecoveryGuard + "\n"
+	return EnsureCIOwnershipContext(trimTrailingNewlines(content) + "\n\n" + contextRecoveryGuard + "\n")
 }
 
 func continuationTaskPrompt(content string, reviewTimeout int) string {
@@ -100,7 +110,16 @@ func continuationTaskPrompt(content string, reviewTimeout int) string {
 		effective := (&config.Config{ReviewTimeout: reviewTimeout}).EffectiveReviewTimeout()
 		guard += fmt.Sprintf("\n\nCurrent AgentRun delegated review response timeout is `%d` seconds; it supersedes any persisted timeout wording above.", effective)
 	}
-	return trimTrailingNewlines(content) + "\n\n" + guard + "\n"
+	return EnsureCIOwnershipContext(trimTrailingNewlines(content) + "\n\n" + guard + "\n")
+}
+
+// EnsureCIOwnershipContext appends the canonical implementation-owned failed
+// CI guidance while preserving all non-runtime task content. The section is
+// replaced on each composition so fresh custom templates and continuations
+// receive the same idempotent instruction without changing generic rendering.
+func EnsureCIOwnershipContext(content string) string {
+	content = removeCanonicalSection(content, ciOwnershipContextHeading)
+	return trimTrailingNewlines(content) + "\n\n" + ciOwnershipContext + "\n"
 }
 
 const reviewEvidenceHeading = "## Review Evidence"
@@ -123,6 +142,11 @@ func TaskWithReviewEvidence(content string, evidence map[string]any) string {
 	b.WriteString("The pull request gate resumed this session with request-scoped evidence. Revalidate the evidence against the live pull request and the worktree head before acting; stale evidence must never drive merge work on its own.\n\n")
 	if evidence["reason"] == "REVIEW_APPROVED" {
 		b.WriteString("The runtime accepted approval for this request and head. A request-scoped informal approval is sufficient; formal GitHub approval is not required. This supersedes a preserved instruction to wait for formal approval: do not request a replacement review solely because no formal APPROVED review or aggregate reviewDecision is present. Revalidate the current request/head approval, green CI, and mergeability, then execute the normal merge gate.\n\n")
+	}
+	if reason, _ := evidence["reason"].(string); reason == "CI_FAILURE" || evidence["gate"] == "ci-failure" {
+		b.WriteString("A failed required check on the current pull request head is implementation work you own. Diagnose the concrete failure and either make and validate the narrow repair or initiate an authorized, bounded rerun of the identified current-head execution. Pending sibling checks, review delivery, or approval do not transfer this work to the runtime. Do not hand off an untouched failure.\n\n")
+		b.WriteString("The canary's no-retry rule applies within one job invocation; it does not prohibit a bounded rerun of the existing failed execution. A transient provider or network timeout may justify rerunning that identified execution after verifying its repository, pull request, source head, workflow run, and failed job. Do not blindly rerun deterministic source failures, use workflow_dispatch as a replacement for the existing run, or invent credentials or permissions.\n\n")
+		b.WriteString("The runtime owns asynchronous observation and admission, not CI repair. After the failure has been diagnosed and the corrective action is actually complete, verify the current head and live check execution. Only when no implementor-owned work remains and required checks are queued or running should you checkpoint and yield for runtime observation.\n\n")
 	}
 	if reason, _ := evidence["reason"].(string); reason == "REVIEW_INFORMAL_FEEDBACK" || reason == "REVIEW_CHANGES_REQUESTED" {
 		b.WriteString("Address only concrete author changes the response requests. A current-head APPROVED report with no Blocking or Important findings and no author changes requested is an eligible informal approval, not feedback: formal GitHub approval is never required, so do not ask the reviewer or a maintainer for a formal approval, a reviewDecision, or publication work, and do not re-request review for it. Revalidate green CI and mergeability, then execute the normal merge gate.\n\n")
@@ -219,6 +243,16 @@ func removeCanonicalGuard(content string) string {
 		}
 		end := guardSectionEnd(content, idx)
 		content = content[:idx] + content[end:]
+	}
+}
+
+func removeCanonicalSection(content, heading string) string {
+	for {
+		idx := strings.Index(content, heading)
+		if idx < 0 {
+			return content
+		}
+		content = content[:idx] + content[guardSectionEnd(content, idx):]
 	}
 }
 

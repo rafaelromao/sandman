@@ -404,3 +404,75 @@ func TestTaskWithReviewEvidence_AcceptedInformalApprovalDoesNotRequireFormalRevi
 		t.Fatal("feedback-only continuation acquired an approval instruction")
 	}
 }
+
+func TestTaskWithReviewEvidence_CIFailureKeepsRemediationOwned(t *testing.T) {
+	content := `# Task
+
+## Checkpoint
+
+The implementation is complete on current-head-sha.
+
+## CI Findings
+
+- opencode-canary timed out after 60 seconds.
+- build-macos is still pending.
+- Current-head review is approved.
+
+## Blockers
+
+- CI_PROVIDER_TIMEOUT_NO_RETRY_BUDGET
+
+## Next Step
+
+Leave CI observation to the runtime and end the agent session.
+`
+	got := TaskWithReviewEvidence(content, map[string]any{
+		"reason":       "CI_FAILURE",
+		"gate":         "ci-failure",
+		"outcome":      "ci-failure",
+		"pull_request": 2930,
+		"head_sha":     "current-head-sha",
+	})
+
+	for _, required := range []string{
+		"A failed required check on the current pull request head is implementation work you own.",
+		"Diagnose the concrete failure and either make and validate the narrow repair or initiate an authorized, bounded rerun of the identified current-head execution.",
+		"Pending sibling checks, review delivery, or approval do not transfer this work to the runtime.",
+		"The canary's no-retry rule applies within one job invocation; it does not prohibit a bounded rerun of the existing failed execution.",
+		"Do not hand off an untouched failure.",
+	} {
+		if !strings.Contains(got, required) {
+			t.Errorf("CI failure continuation omitted corrective authority %q:\n%s", required, got)
+		}
+	}
+	for _, preserved := range []string{
+		"The implementation is complete on current-head-sha.",
+		"CI_PROVIDER_TIMEOUT_NO_RETRY_BUDGET",
+		"Leave CI observation to the runtime and end the agent session.",
+	} {
+		if !strings.Contains(got, preserved) {
+			t.Errorf("historical task content %q was not preserved:\n%s", preserved, got)
+		}
+	}
+	if strings.Index(got, "Do not hand off an untouched failure.") < strings.Index(got, "Leave CI observation to the runtime") {
+		t.Fatalf("corrective authority must follow and supersede the saved handoff instruction:\n%s", got)
+	}
+}
+
+func TestEnsureCIOwnershipContextIsIdempotentAndPreservesTaskCheckpoint(t *testing.T) {
+	content := "# Task\n\n## Checkpoint\n\nKeep this user-owned checkpoint.\n\n## Sandman Failed CI Remediation Context\n\nOld runtime guidance.\n"
+	once := EnsureCIOwnershipContext(content)
+	twice := EnsureCIOwnershipContext(once)
+	if twice != once {
+		t.Fatalf("CI ownership composition is not idempotent:\nonce:\n%s\ntwice:\n%s", once, twice)
+	}
+	if strings.Count(twice, "## Sandman Failed CI Remediation Context") != 1 {
+		t.Fatalf("canonical CI section count != 1:\n%s", twice)
+	}
+	if !strings.Contains(twice, "Keep this user-owned checkpoint.") {
+		t.Fatalf("user checkpoint was not preserved:\n%s", twice)
+	}
+	if strings.Contains(twice, "Old runtime guidance.") {
+		t.Fatalf("stale canonical CI guidance was not replaced:\n%s", twice)
+	}
+}

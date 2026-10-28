@@ -262,6 +262,40 @@ func ciExecutionIDFromJSON(raw json.RawMessage) string {
 	return fmt.Sprintf("checks:%x", sha256.Sum256([]byte(strings.Join(ordered, "\x00"))))
 }
 
+// ciHasActiveChecksFromJSON preserves the active-check fact that a failure-first
+// rollup intentionally hides. It is used only to retain ownership until an
+// already-running current-head workflow reaches a state where GitHub accepts a
+// targeted rerun.
+func ciHasActiveChecksFromJSON(raw json.RawMessage) bool {
+	trimmed := strings.TrimSpace(string(raw))
+	var legacy string
+	if err := json.Unmarshal(raw, &legacy); err == nil {
+		switch strings.ToLower(strings.TrimSpace(legacy)) {
+		case "pending", "in_progress", "queued":
+			return true
+		default:
+			return false
+		}
+	}
+	var checks []statusCheckRun
+	if err := json.Unmarshal(raw, &checks); err != nil || len(checks) == 0 || trimmed == "null" {
+		return false
+	}
+	for _, check := range checks {
+		status := strings.ToUpper(strings.TrimSpace(check.Status))
+		if status != "" && status != "COMPLETED" {
+			return true
+		}
+		if status == "" {
+			switch strings.ToUpper(strings.TrimSpace(check.State)) {
+			case "PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS":
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // rollupStateFromJSON converts the raw `gh pr list --json
 // statusCheckRollup` value into the canonical rollup string the rest of
 // the codebase compares against in T4CheapGate.
@@ -648,6 +682,7 @@ func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, err
 		ReviewDecision:     payload.ReviewDecision,
 		MergeStateStatus:   payload.MergeStateStatus,
 		StatusCheckRollup:  rollupStateFromJSON(payload.StatusCheckRollup),
+		CIHasActiveChecks:  ciHasActiveChecksFromJSON(payload.StatusCheckRollup),
 		CIExecutionID:      ciExecutionIDFromJSON(payload.StatusCheckRollup),
 	}, nil
 }

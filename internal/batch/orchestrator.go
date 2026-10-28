@@ -2380,7 +2380,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			}
 			for {
 				if row.quotaAllowance.probing() {
-					verdict := executor.observeRowLifecycle(issueCtx, row)
+					verdict := executor.observeAwaitingRowLifecycle(issueCtx, row)
 					if verdict.supersedesQuotaProbe() {
 						res = executor.finishObserved(issueCtx, row, verdict)
 						quotaGate.report(issueNum, res, true)
@@ -2401,7 +2401,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					}
 				}
 				if awaiting && !readyContinuation && !row.quotaAllowance.probing() {
-					verdict := executor.observeRowLifecycle(issueCtx, row)
+					verdict := executor.observeAwaitingRowLifecycle(issueCtx, row)
 					if issueCtx.Err() != nil {
 						abortRequested = true
 						break
@@ -2461,7 +2461,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					var quotaObserve func() error
 					if awaiting {
 						quotaObserve = func() error {
-							verdict := executor.observeRowLifecycle(issueCtx, row)
+							verdict := executor.observeAwaitingRowLifecycle(issueCtx, row)
 							if issueCtx.Err() != nil {
 								return issueCtx.Err()
 							}
@@ -2497,7 +2497,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				admissionChanged := errors.New("lifecycle changed during execution admission")
 				if awaiting && readyContinuation && !row.quotaAllowance.probing() {
 					observe := func() error {
-						verdict := executor.observeRowLifecycle(issueCtx, row)
+						verdict := executor.observeAwaitingRowLifecycle(issueCtx, row)
 						if issueCtx.Err() != nil {
 							return issueCtx.Err()
 						}
@@ -4215,7 +4215,7 @@ loop:
 				s.finalOwnedWorkAttempt = attempt+1 >= attempts
 				verdict := newLifecycleObserver(s).Observe(ctx, lifecycleObservationRequest{
 					WorkDir: wt.WorkDir(), Branch: branch, LogPath: logPath, RunID: runID,
-					HostPathsReady: hostPathsReady, AttemptStatus: result.Status,
+					HostPathsReady: hostPathsReady, AttemptStatus: result.Status, AfterAgentAttempt: true,
 				})
 				if verdict.handled() {
 					if stop := s.operatorStopFor(result); stop != nil && verdict.Action != lifecycleSuccess && verdict.Action != lifecycleAborted {

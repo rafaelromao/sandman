@@ -74,6 +74,19 @@ func (e *runExecutor) observeRowLifecycle(ctx context.Context, row RowSpec) life
 	return observer.Observe(ctx, request)
 }
 
+// observeAwaitingRowLifecycle re-observes an already-admitted external wait.
+// A failed check with active siblings stays in this wait until the containing
+// workflow completes; the next ready continuation returns CI remediation to
+// the implementation agent.
+func (e *runExecutor) observeAwaitingRowLifecycle(ctx context.Context, row RowSpec) lifecycleVerdict {
+	observer, request, ready := e.lifecycleObserverForRow(ctx, row)
+	if !ready {
+		return lifecycleVerdict{}
+	}
+	request.AfterAgentAttempt = true
+	return observer.Observe(ctx, request)
+}
+
 func (e *runExecutor) persistObservedAwait(ctx context.Context, row RowSpec, extras map[string]any) error {
 	if err := ctx.Err(); err != nil {
 		return err

@@ -428,6 +428,18 @@ func TestRollupStateFromJSON_MixedPendingAndFailureIsFailure(t *testing.T) {
 	}
 }
 
+func TestCLIClient_FindPRByBranch_PreservesActiveSiblingsAlongsideFailure(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":18,"state":"open","headRefName":"failure-branch","headRefOid":"source-head","statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"FAILURE","name":"opencode-canary"},{"__typename":"CheckRun","status":"IN_PROGRESS","name":"build-macos"}]}]`}}}
+	client := &CLIClient{runner: runner}
+	pr, err := client.FindPRByBranch(context.Background(), "failure-branch")
+	if err != nil || pr == nil {
+		t.Fatalf("FindPRByBranch() = (%+v, %v)", pr, err)
+	}
+	if pr.StatusCheckRollup != "failure" || !pr.CIHasActiveChecks {
+		t.Fatalf("mixed failed/pending rollup = (%q, active=%t), want failure plus active siblings", pr.StatusCheckRollup, pr.CIHasActiveChecks)
+	}
+}
+
 func TestCLIClient_FindPRByBranch_StatusCheckRollupArrayWithFailure(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":18,"state":"open","mergedAt":null,"headRefName":"failure-branch","headRefOid":"def456","reviewDecision":"APPROVED","mergeStateStatus":"DIRTY","statusCheckRollup":[{"__typename":"CheckRun","conclusion":"SUCCESS","status":"COMPLETED","name":"build"},{"__typename":"CheckRun","conclusion":"FAILURE","status":"COMPLETED","name":"lint"}]}]`}}}
 	client := &CLIClient{runner: runner}

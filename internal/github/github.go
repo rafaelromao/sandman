@@ -41,6 +41,9 @@ type PR struct {
 	ReviewDecision    string
 	MergeStateStatus  string
 	StatusCheckRollup string
+	// CIHasActiveChecks remains true when a failed check coexists with queued or
+	// running siblings in the same current-head check rollup.
+	CIHasActiveChecks bool
 	// CIExecutionID identifies the observed check executions independently of
 	// their status. A rerun can change this identity without changing the head.
 	CIExecutionID      string
