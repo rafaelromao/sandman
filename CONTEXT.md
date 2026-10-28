@@ -37,7 +37,7 @@ A built-in agent model identifier overridden via `sandman run --model`. Each Age
 _Avoid_: agent model, default model.
 
 **AgentRun**:
-One logical execution against one work item, identified by RunID. Its lifecycle and terminality come exclusively from append-only events. Initial queued admission is unfinished; started work never returns to queued. Same RunID preserves accumulated active duration across waits and batches; new RunID starts fresh. Artifact availability and ownership cannot revise outcomes. See `docs/architecture/run-state-machine.md` for the full transition contract.
+One logical execution against one work item, identified by RunID. Its lifecycle and terminality come exclusively from append-only events. Initial queued admission is unfinished; started work never returns to queued. A continuation preserves the same AgentRun identity and accumulated active duration while its execution mode, session-reuse choice, and prior-run reference advance. A new RunID starts fresh. Artifact availability and ownership cannot revise outcomes. See `docs/architecture/run-state-machine.md` for the full transition contract.
 _Avoid_: Run, job, task.
 
 **Prompt-only run**:

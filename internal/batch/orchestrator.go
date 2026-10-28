@@ -755,12 +755,15 @@ func (g *batchStartGate) AcquireAwaiting(ctx context.Context, opportunity awaitO
 }
 
 func (g *batchStartGate) acquire(ctx context.Context, waiter *batchStartWaiter) (awaitOpportunity, error) {
-	return g.acquireObserved(ctx, waiter, nil, 0)
+	opportunity, _, err := g.acquireObserved(ctx, waiter, nil, 0)
+	return opportunity, err
 }
 
 // Keep the same queued waiter while observing lifecycle changes; observations
 // never claim execution capacity and do not change fairness opportunities.
-func (g *batchStartGate) acquireObserved(ctx context.Context, waiter *batchStartWaiter, observe func() error, interval time.Duration) (awaitOpportunity, error) {
+// A selected lifecycle action is returned as typed data, separate from gate
+// operation errors; callers do not smuggle observations through sentinels.
+func (g *batchStartGate) acquireObserved(ctx context.Context, waiter *batchStartWaiter, observe func() (rowObservationOutcome, error), interval time.Duration) (awaitOpportunity, rowObservationOutcome, error) {
 	acquired := false
 	defer func() {
 		if !acquired {
@@ -769,23 +772,27 @@ func (g *batchStartGate) acquireObserved(ctx context.Context, waiter *batchStart
 	}()
 	for {
 		if observe != nil {
-			if err := observe(); err != nil {
-				return awaitOpportunity{}, err
+			outcome, err := observe()
+			if err != nil {
+				return awaitOpportunity{}, rowObservationOutcome{}, err
+			}
+			if outcome.Kind != rowObservationNone {
+				return awaitOpportunity{}, outcome, nil
 			}
 		}
 		wake, wait, opportunity, ok, err := g.tryAcquire(ctx, waiter)
 		if err != nil {
-			return awaitOpportunity{}, err
+			return awaitOpportunity{}, rowObservationOutcome{}, err
 		}
 		if ok {
 			acquired = true
-			return opportunity, nil
+			return opportunity, rowObservationOutcome{}, nil
 		}
 		if observe != nil && (wait <= 0 || wait > interval) {
 			wait = interval
 		}
 		if err := waitForStartGate(ctx, wake, wait); err != nil {
-			return awaitOpportunity{}, err
+			return awaitOpportunity{}, rowObservationOutcome{}, err
 		}
 	}
 }
@@ -2047,8 +2054,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				abortAdmission(nil)
 				return
 			}
-			yieldedCapacity := false
-
 			issueCtx, issueCancel := context.WithCancel(ctx)
 			coord.registerIssueCancel(issueNum, issueCancel)
 			defer coord.unregisterIssueCancel(issueNum)
@@ -2073,33 +2078,15 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				return events.RunStatusFromPayload(results[idx].Status).IsTerminal()
 			}
 
-			turnAdvanced := false
-			advanceTurn := func() {
-				if effectiveParallel != 1 {
-					return
-				}
-				turnMu.Lock()
-				if turnAdvanced {
-					turnMu.Unlock()
-					return
-				}
-				turnAdvanced = true
-				completedTurns[turn] = struct{}{}
-				for {
-					if _, ok := completedTurns[servingTurn]; !ok {
-						break
-					}
-					delete(completedTurns, servingTurn)
-					servingTurn++
-				}
-				turnCond.Broadcast()
-				turnMu.Unlock()
+			turnControl := &rowTurnController{
+				enabled: effectiveParallel == 1, turn: turn, mu: &turnMu, cond: turnCond,
+				servingTurn: &servingTurn, completedTurns: completedTurns,
 			}
-			defer advanceTurn()
+			defer turnControl.Advance()
 			if req.ReadyContinuations[issueNum] || recoveringRow && !req.RecoveryWaits[issueNum].InitialAdmission {
 				// Observation is slot-free. Started waiting rows compete through
 				// the start gate only when their selected action needs execution.
-				advanceTurn()
+				turnControl.Advance()
 			}
 			var initialOwner *waitOwner
 			if !claimedStates[runID].HasStarted() {
@@ -2140,7 +2127,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 						// Keep the dependent registered until its prerequisite's
 						// terminal transition. Only its serial turn is released;
 						// yielding must not return the dependent as queued.
-						advanceTurn()
+						turnControl.Advance()
 						select {
 						case <-completed[blocker]:
 						case <-issueCtx.Done():
@@ -2210,22 +2197,8 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				return
 			}
 
-			if effectiveParallel == 1 && !turnAdvanced {
-				turnMu.Lock()
-				waiting := true
-				for waiting {
-					if err := issueCtx.Err(); err != nil {
-						turnMu.Unlock()
-						abortAdmission(nil)
-						return
-					}
-					if turn == servingTurn {
-						waiting = false
-						continue
-					}
-					turnCond.Wait()
-				}
-				turnMu.Unlock()
+			if !turnControl.Advanced() && !turnControl.Wait(issueCtx, func() { abortAdmission(nil) }) {
+				return
 			}
 
 			recovery, recovering := req.RecoveryWaits[issueNum]
@@ -2287,329 +2260,31 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				initialOwner.close()
 				initialOwner = nil
 			}
-			var res AgentRunResult
-			var started bool
-			awaitPoll := 0
 			defer func() {
 				if err := coord.stopCommandServer(issueNum); err != nil {
 					fmt.Fprintf(o.errorLog, "error: stop command server for issue %d: %v\n", issueNum, err)
 				}
 			}()
-			// Explicit abort is a terminal decision applied once, at the fence
-			// after the loop, rather than at each phase that observed it.
-			abortRequested := false
+			var res AgentRunResult
+			driverClock := rowDriverClockFunc(clock)
+			runSpec, cursor := runSpecFromRow(row)
 			awaiting := req.ReadyContinuations[issueNum] || recovering && !recovery.InitialAdmission
-			readyContinuation := req.ReadyContinuations[issueNum]
-			var opportunity awaitOpportunity
-			// wait blocks for one delay without advancing the poll plan.
-			wait := func(interval time.Duration) error {
-				awaitWait := o.runSessionOpts.awaitWait
-				if awaitWait == nil {
-					awaitWait = waitForAwaitPoll
-				}
-				return awaitWait(issueCtx, interval)
-			}
-			// nextPoll is the delay before the next observation: a quota
-			// probe polls on the usage-limit cadence, and a recovered schedule
-			// keeps its persisted poll time until its first ordinary wait.
-			nextPoll := func() time.Duration {
-				if row.quotaAllowance.probing() {
-					return usageLimitPollInterval
-				}
-				if recovering && recovery.NextPollAt.After(clock()) {
-					return recovery.NextPollAt.Sub(clock())
-				}
-				return awaitPollInterval(o.runSessionOpts, awaitPoll)
-			}
-			// accept makes one selected observation durable in a fixed order:
-			// persist its evidence, apply that kind's persist-failure policy,
-			// update the row's readiness, then checkpoint the wait sidecar.
-			// "await" with nil evidence was already persisted by the executor.
-			acceptQuotaReady := func() error {
-				row.quotaAllowance = row.quotaAllowance.startProbe(clock())
-				extras := map[string]any{
-					"gate": "usage-limit", "reason": "quota-probe-ready", "next_action": "recheck provider availability and continue through configured ordinary retries when polling is consumed",
-				}
-				for key, value := range row.quotaAllowance.quotaReadyEvidence() {
-					extras[key] = value
-				}
-				if err := logCapacityQueuedContinuationAt(o.eventLog, clock(), runID, issueNum, issueBatchID, row, extras, req.IssueTitles[issueNum]); err != nil {
-					// Failed accounting cannot renew a quota allowance or veto
-					// the already available ordinary recovery attempts.
-					row.quotaAllowance = row.quotaAllowance.withoutAccounting()
-					row.ReuseSession = row.quotaAllowance.allowSessionReuse(row.ReuseSession)
-					if o.errorLog != nil {
-						fmt.Fprintf(o.errorLog, "warning: persist completed quota poll for run %s; continuing without further quota waits: %v\n", runID, err)
-					}
-				}
-				awaiting, readyContinuation = true, true
-				return owner.checkpoint(row, true, 0)
-			}
-			accept := func(verdict lifecycleVerdict) error {
-				switch verdict.Action {
-				case lifecycleAwait:
-					if verdict.Evidence != nil {
-						if err := executor.persistObservedAwait(issueCtx, row, verdict.Evidence); err != nil {
-							return err
-						}
-					}
-					awaiting, readyContinuation = true, false
-				case lifecycleResume:
-					if err := logCapacityQueuedContinuationAt(o.eventLog, executor.deps.runSessionOpts.runtimeNow(), runID, issueNum, issueBatchID, row, verdict.Evidence, req.IssueTitles[issueNum]); err != nil {
-						if o.errorLog != nil {
-							fmt.Fprintf(o.errorLog, "warning: persist ready continuation for issue %d: %v; keeping the run in its external wait\n", issueNum, err)
-						}
-					} else {
-						awaiting, readyContinuation = true, true
-					}
-				}
-				if readyContinuation {
-					return owner.checkpoint(row, true, 0)
-				}
-				return owner.checkpoint(row, false, nextPoll())
-			}
-			// waitNext waits for the next ordinary observation, consuming a
-			// recovered poll time once and advancing the poll plan.
-			waitNext := func() error {
-				interval := nextPoll()
-				if recovering && recovery.NextPollAt.After(clock()) {
-					recovering = false
-				}
-				awaitPoll++
-				return wait(interval)
-			}
-			for {
-				if row.quotaAllowance.probing() {
-					verdict := executor.observeRowLifecycle(issueCtx, row)
-					if verdict.supersedesQuotaProbe() {
-						res = executor.finishObserved(issueCtx, row, verdict)
-						quotaGate.report(issueNum, res, true)
-						break
-					}
-					if recovering && recovery.NextPollAt.After(clock()) {
-						interval := recovery.NextPollAt.Sub(clock())
-						if err := wait(interval); err != nil {
-							abortRequested = true
-							break
-						}
-						row.quotaAllowance = row.quotaAllowance.completedPoll(interval)
-						recovering = false
-						if err := acceptQuotaReady(); err != nil {
-							abortRequested = true
-							break
-						}
-					}
-				}
-				if awaiting && !readyContinuation && !row.quotaAllowance.probing() {
-					verdict := executor.observeRowLifecycle(issueCtx, row)
-					if issueCtx.Err() != nil {
-						abortRequested = true
-						break
-					}
-					if !verdict.handled() {
-						verdict = failureForUnhandledObservation(verdict)
-					}
-					if verdict.Action != lifecycleAwait && verdict.Action != lifecycleResume {
-						res = executor.finishObserved(issueCtx, row, verdict)
-						break
-					}
-					if err := accept(verdict); err != nil {
-						abortRequested = true
-						break
-					}
-					if !readyContinuation {
-						if err := waitNext(); err != nil {
-							abortRequested = true
-							break
-						}
-						continue
-					}
-				}
-				if !row.quotaAllowance.probing() && quotaGate.paused() {
-					extras := map[string]any{
-						"gate":        "usage-limit",
-						"reason":      "usage-limit-paused",
-						"next_action": "resume after provider usage limit resets; Sandman did not start another run while suspended",
-					}
-					if o.eventLog != nil && (!awaiting || readyContinuation) {
-						if err := logCapacityQueuedContinuationAt(o.eventLog, executor.deps.runSessionOpts.runtimeNow(), runID, issueNum, issueBatchID, row, extras, req.IssueTitles[issueNum]); err != nil {
-							if o.errorLog != nil {
-								fmt.Fprintf(o.errorLog, "warning: persist usage-limit pause for issue %d: %v\n", issueNum, err)
-							}
-						}
-					}
-					advanceTurn()
-					if err := owner.checkpoint(row, !awaiting || readyContinuation, 0); err != nil {
-						abortRequested = true
-						break
-					}
-					if !o.runSessionOpts.releaseAwaitCapacity {
-						// Yielding executors return unfinished intent to their
-						// caller; an active quota owner still blocks new launches.
-						status := "queued"
-						if awaiting {
-							status = "await"
-						}
-						res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: status, Branch: row.Branches[issueNum]}
-						break
-					}
-					var quotaTerminalVerdict lifecycleVerdict
-					quotaTerminal := errors.New("terminal observation during quota admission")
-					// An observation the row cannot make durable aborts it, like
-					// every other acceptance failure; it is not quota exhaustion.
-					quotaAcceptFailed := errors.New("observation not accepted during quota admission")
-					var quotaObserve func() error
-					if awaiting {
-						quotaObserve = func() error {
-							verdict := executor.observeRowLifecycle(issueCtx, row)
-							if issueCtx.Err() != nil {
-								return issueCtx.Err()
-							}
-							if verdict.Action == lifecycleAwait || verdict.Action == lifecycleResume && !readyContinuation {
-								if err := accept(verdict); err != nil {
-									return fmt.Errorf("%w: %w", quotaAcceptFailed, err)
-								}
-								return nil
-							}
-							if verdict.handled() && verdict.Action != lifecycleResume && verdict.Action != lifecycleAwait {
-								quotaTerminalVerdict = verdict
-								return quotaTerminal
-							}
-							return nil
-						}
-					}
-					if err := quotaGate.waitObserved(issueCtx, quotaObserve, awaitPollInterval(o.runSessionOpts, awaitPoll)); err != nil {
-						if errors.Is(err, quotaTerminal) {
-							res = executor.finishObserved(issueCtx, row, quotaTerminalVerdict)
-							break
-						}
-						if errors.Is(err, quotaAcceptFailed) || issueCtx.Err() != nil {
-							abortRequested = true
-						} else {
-							res = executor.finishObserved(issueCtx, row, lifecycleVerdict{Action: lifecycleFailure, Evidence: map[string]any{"reason": "AGENT_USAGE_LIMIT", "next_action": "resume with available provider quota after the exhausted recovery window"}})
-						}
-						break
-					}
-					continue
-				}
-				var err error
-				var admissionVerdict lifecycleVerdict
-				admissionChanged := errors.New("lifecycle changed during execution admission")
-				if awaiting && readyContinuation && !row.quotaAllowance.probing() {
-					observe := func() error {
-						verdict := executor.observeRowLifecycle(issueCtx, row)
-						if issueCtx.Err() != nil {
-							return issueCtx.Err()
-						}
-						if !verdict.handled() {
-							verdict = failureForUnhandledObservation(verdict)
-						}
-						if verdict.Action != lifecycleResume {
-							admissionVerdict = verdict
-							return admissionChanged
-						}
-						return nil
-					}
-					opportunity, err = startGate.acquireObserved(issueCtx, &batchStartWaiter{awaiting: true, lastChance: opportunity.lastChance, ordinaryStartsAtChance: opportunity.ordinaryStarts}, observe, awaitPollInterval(o.runSessionOpts, awaitPoll))
-				} else if awaiting {
-					opportunity, err = startGate.AcquireAwaiting(issueCtx, opportunity)
-				} else {
-					opportunity, err = startGate.AcquireWithOpportunity(issueCtx, false)
-				}
-				if errors.Is(err, admissionChanged) {
-					if admissionVerdict.Action == lifecycleAwait {
-						if err := accept(admissionVerdict); err != nil {
-							abortRequested = true
-							break
-						}
-						if err := waitNext(); err != nil {
-							abortRequested = true
-							break
-						}
-						continue
-					}
-					res = executor.finishObserved(issueCtx, row, admissionVerdict)
-					break
-				}
-				if err != nil {
-					abortRequested = true
-					break
-				}
-				// Quota can close while an ordinary row is blocked inside Acquire.
-				// Revalidate at the actual launch boundary, without pacing a start
-				// that never happened.
-				if !row.quotaAllowance.probing() && quotaGate.paused() {
-					startGate.ReleaseWithoutDelay()
-					continue
-				}
-				res, started = executor.Execute(issueCtx, row)
-				if res.Branch != "" {
-					row.Branches = map[int]string{issueNum: res.Branch}
-				}
-				quotaGate.report(issueNum, res, row.quotaAllowance.probing())
-				if !res.UsageLimitReached {
-					row.quotaAllowance = row.quotaAllowance.clear()
-				}
-				if started {
-					startGate.Release()
-				} else {
-					startGate.ReleaseWithoutDelay()
-				}
-				if res.Status == "await" && !o.runSessionOpts.releaseAwaitCapacity {
-					interval := awaitPollInterval(o.runSessionOpts, awaitPoll)
-					if res.UsageLimitReached {
-						row.quotaAllowance = row.quotaAllowance.continueProbe(res.UsageLimitDeadline)
-						interval = usageLimitPollInterval
-					}
-					if err := owner.checkpoint(row, false, interval); err != nil {
-						abortRequested = true
-					}
-				}
-				if res.Status != "await" || !o.runSessionOpts.releaseAwaitCapacity {
-					break
-				}
-				if !yieldedCapacity {
-					close(yielded[issueNum])
-					yieldedCapacity = true
-				}
-				advanceTurn()
-				// The returned await continues this Run, so its continuation
-				// identity belongs to the first wait checkpoint.
-				row.Mode = ModeContinue
-				row.PreviousRunIDs = map[int]string{issueNum: runID}
-				row.PreviousRunBatchIDs = map[int]string{issueNum: issueBatchID}
-				row.ReuseSession = true
-				if res.UsageLimitReached {
-					row.quotaAllowance = row.quotaAllowance.continueProbe(res.UsageLimitDeadline)
-					if err := accept(lifecycleVerdict{Action: lifecycleAwait}); err != nil {
-						abortRequested = true
-						break
-					}
-					if err := wait(usageLimitPollInterval); err != nil {
-						abortRequested = true
-						break
-					}
-					row.quotaAllowance = row.quotaAllowance.completedPoll(usageLimitPollInterval)
-					if err := acceptQuotaReady(); err != nil {
-						abortRequested = true
-						break
-					}
-					continue
-				}
-				if err := accept(lifecycleVerdict{Action: lifecycleAwait}); err != nil {
-					abortRequested = true
-					break
-				}
-				if err := waitNext(); err != nil {
-					abortRequested = true
-					break
-				}
-				continue
-			}
-			if issueCtx.Err() != nil && !events.RunStatusFromPayload(res.Status).IsTerminal() {
-				abortRequested = true
-			}
-			if abortRequested {
+			driver := newRowDriver(executor, &batchRowDriverGates{
+				startGate: startGate, quotaGate: quotaGate, owner: owner, log: o.eventLog,
+				title: req.IssueTitles[issueNum], issue: issueNum, batchID: issueBatchID,
+				options: o.runSessionOpts, errorLog: o.errorLog,
+			}, driverClock, batchRowDriverActions{orchestrator: o, executor: executor})
+			driverOutcome := driver.Drive(issueCtx, runSpec, cursor, rowDriverOptions{
+				Awaiting: awaiting, Ready: req.ReadyContinuations[issueNum],
+				ReleaseAwaitCapacity: o.runSessionOpts.releaseAwaitCapacity,
+				Recovering:           recovering, NextPollAt: recovery.NextPollAt,
+				AdvanceTurn:  turnControl.Advance,
+				OnYield:      func() { close(yielded[issueNum]) },
+				PollInterval: func(poll int) time.Duration { return awaitPollInterval(o.runSessionOpts, poll) },
+			})
+			res = driverOutcome.Result
+			row = runSpec.row(driverOutcome.Cursor)
+			if driverOutcome.Err != nil {
 				res = o.applyAbort(issueCtx, executor, row, res, nil)
 			}
 			mu.Lock()
@@ -4515,7 +4190,8 @@ func (s *runSession) restoreHostPathsBeforeExternalGate(wt sandbox.Sandbox) bool
 // cross the positional shim (#2231) keep compiling unchanged.
 func (o *Orchestrator) runSingleRow(ctx context.Context, parentCtx context.Context, row RowSpec, bc BatchConfig, sbFactory SandboxFactory, containerAlloc containerAllocator) (AgentRunResult, bool) {
 	coord := newBatchCoordinator(nil)
-	return o.newRunExecutorWith(parentCtx, bc, sbFactory, containerAlloc, coord, coord, o.layout).Execute(ctx, row)
+	run, cursor := runSpecFromRow(row)
+	return o.newRunExecutorWith(parentCtx, bc, sbFactory, containerAlloc, coord, coord, o.layout).ExecuteRun(ctx, run, cursor)
 }
 
 // prepareIssueAttempt preserves issue-specific merged-PR checks, Task recovery,
@@ -4755,7 +4431,8 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 	if !ok {
 		return nil, fmt.Errorf("batch coordination does not support commands")
 	}
-	result, started := o.newRunExecutorWith(ctx, bc, sbFactory, containerAlloc, coord, commander, layout).Execute(ctx, row)
+	run, cursor := runSpecFromRow(row)
+	result, started := o.newRunExecutorWith(ctx, bc, sbFactory, containerAlloc, coord, commander, layout).ExecuteRun(ctx, run, cursor)
 	if !started {
 		if result.OperationalError != nil {
 			return &Result{Runs: []AgentRunResult{result}}, fmt.Errorf("prompt-only run failed: %w", result.OperationalError)
@@ -4780,7 +4457,8 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 // sites that still cross the positional shim (#2231) keep compiling unchanged.
 func (o *Orchestrator) runPromptOnlyRow(ctx context.Context, row RowSpec, bc BatchConfig, sbFactory SandboxFactory, containerAlloc containerAllocator) (AgentRunResult, bool) {
 	coord := newBatchCoordinator(nil)
-	return o.newRunExecutorWith(ctx, bc, sbFactory, containerAlloc, coord, coord, o.layout).Execute(ctx, row)
+	run, cursor := runSpecFromRow(row)
+	return o.newRunExecutorWith(ctx, bc, sbFactory, containerAlloc, coord, coord, o.layout).ExecuteRun(ctx, run, cursor)
 }
 
 // preparePromptAttempt keeps prompt-only/review reset and continuation policy
