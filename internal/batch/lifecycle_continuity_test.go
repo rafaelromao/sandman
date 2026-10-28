@@ -1,7 +1,6 @@
 package batch
 
 import (
-	"context"
 	"errors"
 	"testing"
 	"time"
@@ -24,15 +23,16 @@ func (unreadableEventLog) Read() ([]events.Event, error) {
 func TestContinuityDecision_UnreadableEventLogKeepsWaiting(t *testing.T) {
 	s := &runSession{deps: runDeps{eventLog: unreadableEventLog{}}, decisionPRHead: "head-1"}
 	owned := map[string]any{"gate": gateReviewRequestRequired, "reason": "REVIEW_REQUEST_REQUIRED"}
-	if status, extras := s.continuityDecision(context.Background(), "b", "run", "resume", owned); status != "await" || extras["continuity_hold"] != true {
-		t.Fatalf("owned work with an unreadable log = %s/%v, want a continuity hold", status, extras)
+	ownedVerdict := applyContinuityForTest(s, "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: owned, ImplementorWork: true})
+	if ownedVerdict.Action != lifecycleAwait || ownedVerdict.Evidence["continuity_hold"] != true {
+		t.Fatalf("owned work with an unreadable log = %v/%v, want a continuity hold", ownedVerdict.Action, ownedVerdict.Evidence)
 	}
 	feedback := map[string]any{"gate": gateActionableFeedback, "reason": informalFeedbackReason, stalledResumesKey: []any{"earlier"}}
-	status, extras := s.continuityDecision(context.Background(), "b", "run", "resume", feedback)
-	if status != "await" || extras["reason"] != resumeStalledReason {
-		t.Fatalf("feedback with an unreadable log = %s/%v, want a stalled wait", status, extras)
+	feedbackVerdict := applyContinuityForTest(s, "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: feedback})
+	if feedbackVerdict.Action != lifecycleAwait || feedbackVerdict.Evidence["reason"] != resumeStalledReason {
+		t.Fatalf("feedback with an unreadable log = %v/%v, want a stalled wait", feedbackVerdict.Action, feedbackVerdict.Evidence)
 	}
-	if list := stalledResumes(extras); len(list) != 2 || list[0] != "earlier" {
+	if list := stalledResumes(feedbackVerdict.Evidence); len(list) != 2 || list[0] != "earlier" {
 		t.Fatalf("stalled signatures = %v, want the earlier signature carried forward", list)
 	}
 }
@@ -48,9 +48,9 @@ func TestContinuityDecision_CIWaitStateErrorStaysTerminal(t *testing.T) {
 	} {
 		s := &runSession{decisionPRHead: "head-1"}
 		s.resumeCount = s.resumeCapFor()
-		status, extras := s.continuityDecision(context.Background(), "b", "run", "resume", map[string]any{"gate": gateCIWaitTimeout, "reason": tc.reason})
-		if status != tc.want {
-			t.Fatalf("%s after the allowance = %s/%v, want %s", tc.reason, status, extras, tc.want)
+		verdict := applyContinuityForTest(s, "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: map[string]any{"gate": gateCIWaitTimeout, "reason": tc.reason}})
+		if verdict.status() != tc.want {
+			t.Fatalf("%s after the allowance = %v/%v, want %s", tc.reason, verdict.Action, verdict.Evidence, tc.want)
 		}
 	}
 }
@@ -62,13 +62,15 @@ func TestContinuityDecision_AllowanceIsPerRepairRound(t *testing.T) {
 	s := &runSession{decisionPRHead: "head-1"}
 	s.lastResumeSignature = resumeSignature(extras, "head-1")
 	s.resumeCount = s.resumeCapFor()
-	if status, _ := s.continuityDecision(context.Background(), "b", "run", "resume", extras); status != "failure" {
-		t.Fatalf("exhausted formal changes on the same head = %s, want the terminal budget failure", status)
+	verdict := applyContinuityForTest(s, "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: extras})
+	if verdict.Action != lifecycleFailure {
+		t.Fatalf("exhausted formal changes on the same head = %v, want the terminal budget failure", verdict.Action)
 	}
 	s.decisionPRHead = "head-2"
 	s.resumeCount = s.resumeCapFor()
-	if status, _ := s.continuityDecision(context.Background(), "b", "run", "resume", extras); status != "resume" || s.resumeCount != 0 {
-		t.Fatalf("formal changes on a new head = %s (count %d), want a fresh repair round", status, s.resumeCount)
+	verdict = applyContinuityForTest(s, "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: extras})
+	if verdict.Action != lifecycleResume || s.resumeCount != 0 {
+		t.Fatalf("formal changes on a new head = %v (count %d), want a fresh repair round", verdict.Action, s.resumeCount)
 	}
 }
 

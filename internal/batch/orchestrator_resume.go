@@ -102,11 +102,14 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 		return AgentRunResult{}, false, false
 	}
 	hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
-	gateStatus, extras, handled := s.handleLifecycleDecision(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady)
-	if !handled {
+	verdict := newLifecycleObserver(s).Observe(ctx, lifecycleObservationRequest{
+		WorkDir: wt.WorkDir(), Branch: branch, LogPath: logPath, RunID: runID,
+		HostPathsReady: hostPathsReady, AttemptStatus: "success",
+	})
+	if !verdict.handled() {
 		return AgentRunResult{}, false, false
 	}
-	if gateStatus == "failure" && isImplementorOwnedGateFailure(extras) {
+	if verdict.Action == lifecycleFailure && verdict.ImplementorWork {
 		// An idle gate at session entry means nobody is resolving yet and
 		// the next step is implementor-owned work (push, create the PR,
 		// request review): launch the agent instead of terminalizing or
@@ -115,48 +118,45 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 		// decision.
 		return AgentRunResult{}, false, false
 	}
-	if gateStatus == "success" || gateStatus == "failure" || gateStatus == "aborted" {
+	if verdict.terminal() {
 		result := AgentRunResult{
 			IssueNumber:  s.issueNumber,
 			Issue:        issueRef(s.issueNumber),
-			Status:       gateStatus,
+			Status:       verdict.status(),
 			Branch:       branch,
 			RetriesTotal: 1,
 		}
-		result.Status = s.finishDecidedTerminal(ctx, runID, result, extras, wt, branch)
+		result.Status = s.finishDecidedTerminal(ctx, runID, result, verdict.Evidence, wt, branch)
 		return result, true, true
 	}
-	if gateStatus != "await" && gateStatus != "resume" {
+	if verdict.Action != lifecycleAwait && verdict.Action != lifecycleResume {
 		return AgentRunResult{}, false, false
 	}
-	if gateStatus == "await" {
+	if verdict.Action == lifecycleAwait {
 		result := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "await", Branch: branch, RetriesTotal: 1}
 		if !s.opts.foregroundLifecycle {
-			result.Status = s.emitAwait(ctx, runID, result, extras)
+			result.Status = s.emitAwait(ctx, runID, result, verdict.Evidence)
 			return result, true, true
 		}
-		s.emitAwait(ctx, runID, result, extras)
-		gateStatus, nextExtras, handled := s.observeLifecycle(ctx, wt.WorkDir(), branch, logPath, runID, result, extras, hostPathsReady)
-		if !handled {
-			return AgentRunResult{}, false, false
+		s.emitAwait(ctx, runID, result, verdict.Evidence)
+		verdict = newLifecycleObserver(s).waitForTransition(ctx, lifecycleObservationRequest{
+			WorkDir: wt.WorkDir(), Branch: branch, LogPath: logPath, RunID: runID,
+			HostPathsReady: hostPathsReady, AttemptStatus: result.Status,
+		}, result, verdict)
+		if verdict.Action == lifecycleResume {
+			return s.prepareEntryResume(ctx, wt, branch, runID, verdict)
 		}
-		if gateStatus == "resume" {
-			gate, _ := nextExtras["gate"].(string)
-			if isResumeGate(gate) {
-				return s.prepareEntryResume(ctx, wt, branch, runID, nextExtras)
-			}
-		}
-		result.Status = gateStatus
-		if gateStatus == "await" {
+		result.Status = verdict.status()
+		if verdict.Action == lifecycleAwait {
 			return result, true, true
 		}
-		result.Status = s.finishDecidedTerminal(ctx, runID, result, nextExtras, wt, branch)
+		result.Status = s.finishDecidedTerminal(ctx, runID, result, verdict.Evidence, wt, branch)
 		return result, true, true
 	}
-	return s.prepareEntryResume(ctx, wt, branch, runID, extras)
+	return s.prepareEntryResume(ctx, wt, branch, runID, verdict)
 }
 
-func (s *runSession) prepareEntryResume(ctx context.Context, wt sandbox.Sandbox, branch, runID string, extras map[string]any) (AgentRunResult, bool, bool) {
+func (s *runSession) prepareEntryResume(ctx context.Context, wt sandbox.Sandbox, branch, runID string, verdict lifecycleVerdict) (AgentRunResult, bool, bool) {
 	if ctx.Err() != nil {
 		result := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "aborted", Branch: branch, RetriesTotal: 1}
 		result.Status = s.finishDecidedTerminal(ctx, runID, result, nil, wt, branch)
@@ -164,7 +164,7 @@ func (s *runSession) prepareEntryResume(ctx context.Context, wt sandbox.Sandbox,
 	}
 	// Entry is not an in-session relaunch. Historical head/request counters
 	// cannot consume this session's existing resume allowance.
-	evidence := s.resumeEvidenceFor(ctx, branch, extras)
+	evidence := s.resumeEvidenceFor(ctx, branch, verdict.Evidence)
 	// The entry launch acts on this evidence: a repeat after it is a stall.
 	s.lastResumeSignature = s.pendingResumeSignature
 	taskContent, _, _ := ReadTaskContent(filepath.Join(wt.WorkDir(), ".sandman", "task.md"))
@@ -189,40 +189,19 @@ func (s *runSession) resumeCapFor() int {
 // gate-handling (await / terminal) untouched when it is false — in
 // particular, when the per-session resume cap is exhausted the gate
 // terminalizes as failure instead of entering another wait.
-func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbox, branch, runID string, extras map[string]any) (string, bool) {
-	if s.deps.githubClient == nil || ctx.Err() != nil || s.resumeCount >= s.resumeCapFor() {
+func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbox, branch, runID string, verdict lifecycleVerdict) (string, bool) {
+	if s.deps.githubClient == nil || ctx.Err() != nil || verdict.Action != lifecycleResume || s.resumeCount >= s.resumeCapFor() {
 		return "", false
 	}
-	gate, _ := extras["gate"].(string)
-	if !isResumeGate(gate) {
-		return "", false
-	}
-	evidence := s.resumeEvidenceFor(ctx, branch, extras)
+	evidence := s.resumeEvidenceFor(ctx, branch, verdict.Evidence)
 	if ctx.Err() != nil {
 		return "", false
 	}
+	gate, _ := evidence["gate"].(string)
 	taskContent, _, _ := ReadTaskContent(filepath.Join(wt.WorkDir(), ".sandman", "task.md"))
 	s.resumeCount++
 	s.emitResume(ctx, runID, branch, gate, evidence)
 	return s.resumePromptFor(taskContent, evidence, s.renderCfg.ReviewTimeout), true
-}
-
-// isImplementorOwnedGateFailure reports lifecycle failures whose next step
-// belongs to the implementor (missing PR publication or an idle gate). At
-// session entry, launch the agent to perform that work instead of terminalizing
-// before it gets an opportunity.
-func isImplementorOwnedGateFailure(extras map[string]any) bool {
-	reason, _ := extras["reason"].(string)
-	return reason == idleGateReason || reason == missingPRReason || reason == "REVIEW_REQUEST_REQUIRED"
-}
-
-func isResumeGate(gate string) bool {
-	switch gate {
-	case gateReadyToMerge, gateActionableFeedback, gateReviewTimeout, gateCIWaitTimeout, gatePRHeadChanged, gateReviewRequestRequired, gateOwnedWorkRequired, "ci-failure", "merge-conflict":
-		return true
-	default:
-		return false
-	}
 }
 
 // emitResume writes the run.resumed event (issue #2595). It records the

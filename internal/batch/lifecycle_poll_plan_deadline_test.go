@@ -181,11 +181,11 @@ func TestObserveLifecycleUsesInjectedClockForDeadline(t *testing.T) {
 			},
 		},
 	}
-	status, extras, handled := s.observeLifecycle(context.Background(), "", "", "", "run", AgentRunResult{}, map[string]any{
+	verdict := newLifecycleObserver(s).waitForTransition(context.Background(), lifecycleObservationRequest{RunID: "run"}, AgentRunResult{}, lifecycleVerdict{Action: lifecycleAwait, Evidence: map[string]any{
 		"review_request": map[string]any{"deadline_unix_seconds": deadline.Unix()},
-	}, true)
-	if !handled || status != "resume" {
-		t.Fatalf("observation = (%q, %#v, %t), want injected-clock deadline resume", status, extras, handled)
+	}})
+	if verdict.Action != lifecycleResume {
+		t.Fatalf("observation = (%v, %#v), want injected-clock deadline resume", verdict.Action, verdict.Evidence)
 	}
 	if waits != 0 {
 		t.Fatalf("lifecycle waits = %d, want no wait after injected deadline", waits)

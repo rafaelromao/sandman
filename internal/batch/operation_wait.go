@@ -49,14 +49,14 @@ func (s *runSession) restoreQuotaAccounting() error {
 // priorObservation permits transport re-observation only for a current,
 // previously authorized operation. Historical awaits on ready/terminal rows,
 // incomplete identities and absent deadlines authorize no synthetic wait.
-func (s *runSession) priorObservation(runID, branch, head string) (string, map[string]any, bool) {
+func (s *lifecycleObserver) priorObservation(runID, branch, head string) (lifecycleVerdict, bool) {
 	states, err := events.ReadRunStates(s.deps.eventLog)
 	if err != nil {
-		return "", nil, false
+		return lifecycleVerdict{}, false
 	}
 	state, ok := states[runID]
 	if !ok || !state.IsAwaiting() || state.IsCapacityQueued() || state.AwaitEvent == nil || state.Branch() != branch || head == "" {
-		return "", nil, false
+		return lifecycleVerdict{}, false
 	}
 	extras := cloneLifecycleExtras(state.AwaitEvent.Payload)
 	valid := false
@@ -85,14 +85,14 @@ func (s *runSession) priorObservation(runID, branch, head string) (string, map[s
 	}
 	deadline, gate, bounded := lifecycleDeadline(extras)
 	if !valid || !bounded {
-		return "", nil, false
+		return lifecycleVerdict{}, false
 	}
 	if !s.runtimeNow().Before(deadline) {
 		extras["gate"] = gate
 		extras["reason"] = lifecycleDeadlineReason(gate)
 		extras["next_action"] = lifecycleDeadlineNextAction(gate)
-		return "resume", extras, true
+		return lifecycleVerdict{Action: lifecycleResume, Evidence: extras}, true
 	}
 	extras["observation_error"] = "transport-unavailable; retaining established operation deadline"
-	return "await", extras, true
+	return lifecycleVerdict{Action: lifecycleAwait, Evidence: extras}, true
 }

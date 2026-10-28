@@ -305,7 +305,7 @@ type continuityOutcome struct {
 	triggers int
 	// observeAfterRestart observes the Run from a fresh executor over the
 	// same event log and worktree, as a restarted Sandman process would.
-	observeAfterRestart func() (string, map[string]any, bool)
+	observeAfterRestart func() lifecycleVerdict
 }
 
 func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcome {
@@ -449,11 +449,11 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 			break
 		}
 	}
-	restart := func() (string, map[string]any, bool) {
+	restart := func() lifecycleVerdict {
 		fresh := NewOrchestrator(g, &noopRenderer{}, &fakeConfigStore{config: cfg}, log, WithErrorLog(io.Discard),
 			WithRunSessionOpts(runSessionOptions{currentHead: func(string) (string, error) { return g.head(), nil }}))
 		executor := fresh.newRunExecutorWith(context.Background(), BatchConfig{Cfg: cfg}, nil, nil, newBatchCoordinator(nil), nil, paths.NewLayout(cfg, root))
-		return executor.observeLifecycle(context.Background(), RowSpec{
+		return executor.observeRowLifecycle(context.Background(), RowSpec{
 			IssueNumber: 42, RunID: runID, BaseBranch: "main", Branches: map[int]string{42: continuityBranch},
 			RenderCfg: prompt.RenderConfig{ReviewCommand: continuityTrigger, ReviewTimeout: 1800},
 		})
@@ -1040,14 +1040,14 @@ func TestAFKContinuityContract_StalledCIConflictRecoverySurvivesRestart(t *testi
 	if got := outcome.verdict(); got != "waiting" || outcome.launches != 4 {
 		t.Fatalf("unchanged CI = %s (%d launches), want waiting after 4 launches", got, outcome.launches)
 	}
-	status, _, handled := outcome.observeAfterRestart()
-	if !handled || status != "await" {
-		t.Fatalf("unchanged CI after restart = %s (%t), want await", status, handled)
+	verdict := outcome.observeAfterRestart()
+	if !verdict.handled() || verdict.Action != lifecycleAwait {
+		t.Fatalf("unchanged CI after restart = %s, want await", verdict.status())
 	}
 	live.update(func(pr *github.PR) { pr.MergeStateStatus = "CONFLICTING" })
-	status, extras, handled := outcome.observeAfterRestart()
-	if !handled || status != "resume" || extras["reason"] != "MERGE_CONFLICT" {
-		t.Fatalf("new conflict after restart = %s/%v (%t), want conflict repair resume", status, extras, handled)
+	verdict = outcome.observeAfterRestart()
+	if !verdict.handled() || verdict.Action != lifecycleResume || verdict.Evidence["reason"] != "MERGE_CONFLICT" {
+		t.Fatalf("new conflict after restart = %s/%v, want conflict repair resume", verdict.status(), verdict.Evidence)
 	}
 }
 
@@ -1074,9 +1074,9 @@ func TestAFKContinuityContract_StalledWaitSurvivesRestart(t *testing.T) {
 	if final := events.ProjectRunStates(outcome.events); len(final) != 1 || !final[0].IsTerminal() || final[0].Status() != "aborted" {
 		t.Fatalf("aborted stalled wait projection = %+v, want aborted", final)
 	}
-	status, extras, handled := outcome.observeAfterRestart()
-	if !handled || status != "await" || extras[stalledResumesKey] == nil {
-		t.Fatalf("restarted observation = %s/%v (%t), want the stalled wait kept", status, extras, handled)
+	verdict := outcome.observeAfterRestart()
+	if verdict.Action != lifecycleAwait || verdict.Evidence[stalledResumesKey] == nil {
+		t.Fatalf("restarted observation = %v/%v, want the stalled wait kept", verdict.Action, verdict.Evidence)
 	}
 }
 

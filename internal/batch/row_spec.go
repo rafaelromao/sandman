@@ -205,9 +205,9 @@ func (e *runExecutor) Execute(ctx context.Context, row RowSpec) (AgentRunResult,
 			// A quota probe is not a terminal lifecycle authority. Verified
 			// completion still wins without another agent/container launch.
 			if ctx.Err() == nil {
-				if status, extras, handled := e.observeLifecycle(ctx, row); handled &&
-					(status == "success" || extras["reason"] == "PULL_REQUEST_CLOSED" || extras["completion"] != nil) {
-					result := e.finishObserved(ctx, row, status, extras)
+				verdict := e.observeRowLifecycle(ctx, row)
+				if verdict.supersedesQuotaProbe() {
+					result := e.finishObserved(ctx, row, verdict)
 					result.UsageLimitReached = true
 					return result, false
 				}
