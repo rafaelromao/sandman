@@ -534,9 +534,9 @@ validate_late_recheck() {
 				$event != null and $start != null and $event > $start and $event <= $deadline);
 		def positive_body:
 			(.body | type == "string") and (.body | test("(?i)(approved|\\blgtm\\b|looks? (good|great)|nice work|good work|ship it|thumbs up|\\+1|all good|all set|good to go|no major issues|minor issues only)"));
+		(.snapshot.classification) as $classification |
 		(.state == "responded") and (.late_approval_only == true) and
 		(.observed_head_sha == $request.head_sha) and
-		(.snapshot.classification) as $classification |
 		($classification | type == "object") and
 		($classification.protocol == "review-classification/v1") and
 		($classification.request.repository == $request.repository) and
