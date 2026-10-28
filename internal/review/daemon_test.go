@@ -141,6 +141,56 @@ func TestDaemonProcessesEditedReviewTriggerAsNewRevision(t *testing.T) {
 	}
 }
 
+func TestDaemonRepeatedTerminalSeenObservationsAreSilent(t *testing.T) {
+	const (
+		prNumber  = 17
+		commentID = "terminal-seen"
+	)
+	createdAt := time.Date(2026, time.August, 1, 12, 0, 0, 0, time.UTC)
+	comment := github.PRComment{
+		ID:        commentID,
+		Body:      "/sandman review",
+		CreatedAt: createdAt,
+		UpdatedAt: createdAt,
+	}
+	gh := &fakeGH{
+		prs:      []github.PR{{Number: prNumber, State: "open"}},
+		comments: map[int][]github.PRComment{prNumber: {comment}},
+		prFetch:  map[int]*github.PR{prNumber: {Number: prNumber, Title: "T", Body: "B"}},
+	}
+	runner := newDecisionRunner()
+	d, buf, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+		WorktreeDir:        ".sandman/worktrees",
+	})
+
+	tickAndWait(t, d, context.Background())
+	key := reviewTriggerKey(comment)
+	if !d.IsTerminalSeen(prNumber, key) {
+		t.Fatalf("review request %q was not terminal-seen after completion", key)
+	}
+	completedLaunches := runner.Calls()
+	if completedLaunches != 1 {
+		t.Fatalf("initial review launches = %d, want 1", completedLaunches)
+	}
+	logOffset := len(buf.String())
+
+	for i := 0; i < 2; i++ {
+		tickAndWait(t, d, context.Background())
+		if got := runner.Calls(); got != completedLaunches {
+			t.Fatalf("after repeated observation %d, review launches = %d, want %d", i+1, got, completedLaunches)
+		}
+	}
+	if !d.IsTerminalSeen(prNumber, key) {
+		t.Fatalf("review request %q lost terminal-seen state after repeated observations", key)
+	}
+	repeatedOutput := buf.String()[logOffset:]
+	if strings.Contains(repeatedOutput, "already terminal-seen, skipping") {
+		t.Fatalf("repeated terminal-seen observations emitted routine skip logs: %q", repeatedOutput)
+	}
+}
+
 func TestDaemonMigratesLegacyTerminalStateBeforeRevisionDedup(t *testing.T) {
 	const (
 		prNumber  = 17
@@ -2301,8 +2351,8 @@ func TestDaemon_ClaimFailureSkipsComment(t *testing.T) {
 	if runner.calls != 0 {
 		t.Errorf("expected no batch runs when comment is already claimed, got %d", runner.calls)
 	}
-	if !strings.Contains(buf.String(), "already claimed") && !strings.Contains(buf.String(), "already terminal-seen") {
-		t.Errorf("expected 'already claimed' or 'already terminal-seen' log, got %q", buf.String())
+	if strings.Contains(buf.String(), "already terminal-seen, skipping") {
+		t.Errorf("terminal-seen comment emitted a routine skip log: %q", buf.String())
 	}
 }
 
