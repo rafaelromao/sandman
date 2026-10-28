@@ -110,7 +110,9 @@ func TestReviewClaudeQuotaPauseClearsAfterCleanProbe(t *testing.T) {
 	}
 
 	runner.reviewResult = &batch.Result{Runs: []batch.AgentRunResult{{Status: "success"}}}
-	now = now.Add(10 * time.Minute)
+	// The confirmed request's default observation deadline is 30 minutes.
+	// Quota recovery after 31 minutes must still admit the original review.
+	now = now.Add(31 * time.Minute)
 	d.Clock = func() time.Time { return now }
 	tickAndWait(t, d, context.Background())
 	if runner.probeCalls != 1 {
@@ -121,6 +123,13 @@ func TestReviewClaudeQuotaPauseClearsAfterCleanProbe(t *testing.T) {
 	}
 	if paused := readQuotaPauseFlag(t, d); paused {
 		t.Fatal("quota-pause.json still records the pause after a clean probe")
+	}
+	// The clean probe clears the daemon-wide pause; the following tick must
+	// resume the retained trigger instead of aging it out with the parent's
+	// observation deadline.
+	tickAndWait(t, d, context.Background())
+	if runner.reviewCalls != 2 {
+		t.Fatalf("quota-delayed review calls = %d, want original review retried after recovery", runner.reviewCalls)
 	}
 }
 

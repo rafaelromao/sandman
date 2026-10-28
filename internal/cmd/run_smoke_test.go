@@ -567,13 +567,40 @@ func addSmokeDockerDeps(repoDir, provider, buildTools string) error {
 		return err
 	}
 	if _, ok := config.BuiltInAgentPresets[provider]; ok {
-		// Every built-in preset's CLI binary is named after the preset.
-		data = append(data, []byte(fmt.Sprintf("RUN command -v %s >/dev/null\n", provider))...)
+		// Resolve the executable from the preset command: OpenCode v2, for
+		// example, is a distinct protocol preset but still installs `opencode`.
+		command := strings.Fields(config.BuiltInAgentPresets[provider].Command)
+		if len(command) == 0 {
+			return fmt.Errorf("built-in agent %q has an empty command", provider)
+		}
+		data = append(data, []byte(fmt.Sprintf("RUN command -v %s >/dev/null\n", command[0]))...)
 	}
 	if dep, ok := smokeDockerDeps[buildTools]; ok {
 		data = append(data, []byte(dep)...)
 	}
 	return os.WriteFile(dockerfilePath, data, 0644)
+}
+
+func TestAddSmokeDockerDepsUsesPresetCommandExecutable(t *testing.T) {
+	repoDir := t.TempDir()
+	sandmanDir := filepath.Join(repoDir, ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+		t.Fatalf("create .sandman: %v", err)
+	}
+	dockerfilePath := filepath.Join(sandmanDir, "Dockerfile")
+	if err := os.WriteFile(dockerfilePath, []byte("FROM debian:stable-slim\n"), 0644); err != nil {
+		t.Fatalf("write Dockerfile: %v", err)
+	}
+	if err := addSmokeDockerDeps(repoDir, "opencode-v2", "generic"); err != nil {
+		t.Fatalf("add smoke dependencies: %v", err)
+	}
+	got, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	if !strings.Contains(string(got), "RUN command -v opencode >/dev/null\n") || strings.Contains(string(got), "RUN command -v opencode-v2 >/dev/null\n") {
+		t.Fatalf("OpenCode v2 smoke executable assertion = %q, want the preset command executable opencode", got)
+	}
 }
 
 func customizeSmokeConfig(repoDir, provider, model string) (*config.Config, error) {

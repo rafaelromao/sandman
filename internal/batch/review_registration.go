@@ -463,6 +463,14 @@ func (s *runSession) importLegacyReviewEvidence(ctx context.Context, workDir, re
 	}
 	if comments, listErr := s.deps.githubClient.ListPRComments(ctx, pr.Number); listErr == nil {
 		if handoff, observeErr := s.observeCurrentReviewEvidence(ctx, existing.Request, pr, comments); observeErr == nil && handoff != nil {
+			if preserveUnansweredReviewTimeout(existing, handoff) {
+				// An empty re-observation does not turn an expired, delivered
+				// request back into an unanswered request that was never sent.
+				// Keep the timeout evidence so lifecycle recovery remains
+				// restart-safe; a late eligible approval or a newer trigger still
+				// advances the canonical observation below.
+				return nil
+			}
 			canonical, canonicalErr := canonicalReviewRegistration(*existing, handoff, currentHead)
 			if canonicalErr != nil {
 				return canonicalErr
@@ -506,6 +514,15 @@ func (s *runSession) importLegacyReviewEvidence(ctx context.Context, workDir, re
 		return fmt.Errorf("import legacy review evidence: %w", err)
 	}
 	return nil
+}
+
+func preserveUnansweredReviewTimeout(existing *reviewRequestRegistration, observed *reviewTimeoutHandoff) bool {
+	return existing != nil && existing.State.ObservedState == "timed_out" &&
+		observed != nil && observed.Classification != nil &&
+		observed.Classification.RequestState == "active" &&
+		retainedReviewClassificationOutcome(observed.Classification, observed.Request) == retainedReviewPending &&
+		!observed.hasActionableFeedback() &&
+		len(observed.Classification.informalFeedbackEvidenceFor(observed.Request, observed.Classification.WindowEnd)) == 0
 }
 
 func validateReviewRegistrationGeneration(registration reviewRequestRegistration, repository string, pr *github.PR) error {
