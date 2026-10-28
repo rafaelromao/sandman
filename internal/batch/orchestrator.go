@@ -2324,43 +2324,44 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			// accept makes one selected observation durable in a fixed order:
 			// persist its evidence, apply that kind's persist-failure policy,
 			// update the row's readiness, then checkpoint the wait sidecar.
-			// "await" with nil extras was already persisted by the executor;
-			// "quota-ready" is a completed quota poll.
-			accept := func(status string, extras map[string]any) error {
-				switch status {
-				case "await":
-					if extras != nil {
-						if err := executor.persistObservedAwait(issueCtx, row, extras); err != nil {
+			// "await" with nil evidence was already persisted by the executor.
+			acceptQuotaReady := func() error {
+				row.quotaAllowance = row.quotaAllowance.startProbe(clock())
+				extras := map[string]any{
+					"gate": "usage-limit", "reason": "quota-probe-ready", "next_action": "recheck provider availability and continue through configured ordinary retries when polling is consumed",
+				}
+				for key, value := range row.quotaAllowance.quotaReadyEvidence() {
+					extras[key] = value
+				}
+				if err := logCapacityQueuedContinuationAt(o.eventLog, clock(), runID, issueNum, issueBatchID, row, extras, req.IssueTitles[issueNum]); err != nil {
+					// Failed accounting cannot renew a quota allowance or veto
+					// the already available ordinary recovery attempts.
+					row.quotaAllowance = row.quotaAllowance.withoutAccounting()
+					row.ReuseSession = row.quotaAllowance.allowSessionReuse(row.ReuseSession)
+					if o.errorLog != nil {
+						fmt.Fprintf(o.errorLog, "warning: persist completed quota poll for run %s; continuing without further quota waits: %v\n", runID, err)
+					}
+				}
+				awaiting, readyContinuation = true, true
+				return owner.checkpoint(row, true, 0)
+			}
+			accept := func(verdict lifecycleVerdict) error {
+				switch verdict.Action {
+				case lifecycleAwait:
+					if verdict.Evidence != nil {
+						if err := executor.persistObservedAwait(issueCtx, row, verdict.Evidence); err != nil {
 							return err
 						}
 					}
 					awaiting, readyContinuation = true, false
-				case "resume":
-					if err := logCapacityQueuedContinuationAt(o.eventLog, executor.deps.runSessionOpts.runtimeNow(), runID, issueNum, issueBatchID, row, extras, req.IssueTitles[issueNum]); err != nil {
+				case lifecycleResume:
+					if err := logCapacityQueuedContinuationAt(o.eventLog, executor.deps.runSessionOpts.runtimeNow(), runID, issueNum, issueBatchID, row, verdict.Evidence, req.IssueTitles[issueNum]); err != nil {
 						if o.errorLog != nil {
 							fmt.Fprintf(o.errorLog, "warning: persist ready continuation for issue %d: %v; keeping the run in its external wait\n", issueNum, err)
 						}
 					} else {
 						awaiting, readyContinuation = true, true
 					}
-				case "quota-ready":
-					row.quotaAllowance = row.quotaAllowance.startProbe(clock())
-					extras := map[string]any{
-						"gate": "usage-limit", "reason": "quota-probe-ready", "next_action": "recheck provider availability and continue through configured ordinary retries when polling is consumed",
-					}
-					for key, value := range row.quotaAllowance.quotaReadyEvidence() {
-						extras[key] = value
-					}
-					if err := logCapacityQueuedContinuationAt(o.eventLog, clock(), runID, issueNum, issueBatchID, row, extras, req.IssueTitles[issueNum]); err != nil {
-						// Failed accounting cannot renew a quota allowance or veto
-						// the already available ordinary recovery attempts.
-						row.quotaAllowance = row.quotaAllowance.withoutAccounting()
-						row.ReuseSession = row.quotaAllowance.allowSessionReuse(row.ReuseSession)
-						if o.errorLog != nil {
-							fmt.Fprintf(o.errorLog, "warning: persist completed quota poll for run %s; continuing without further quota waits: %v\n", runID, err)
-						}
-					}
-					awaiting, readyContinuation = true, true
 				}
 				if readyContinuation {
 					return owner.checkpoint(row, true, 0)
@@ -2379,9 +2380,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			}
 			for {
 				if row.quotaAllowance.probing() {
-					status, extras, handled := executor.observeLifecycle(issueCtx, row)
-					if handled && (status == "success" || extras["reason"] == "PULL_REQUEST_CLOSED" || extras["completion"] != nil) {
-						res = executor.finishObserved(issueCtx, row, status, extras)
+					verdict := executor.observeRowLifecycle(issueCtx, row)
+					if verdict.supersedesQuotaProbe() {
+						res = executor.finishObserved(issueCtx, row, verdict)
 						quotaGate.report(issueNum, res, true)
 						break
 					}
@@ -2393,27 +2394,26 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 						}
 						row.quotaAllowance = row.quotaAllowance.completedPoll(interval)
 						recovering = false
-						if err := accept("quota-ready", nil); err != nil {
+						if err := acceptQuotaReady(); err != nil {
 							abortRequested = true
 							break
 						}
 					}
 				}
 				if awaiting && !readyContinuation && !row.quotaAllowance.probing() {
-					status, extras, handled := executor.observeLifecycle(issueCtx, row)
+					verdict := executor.observeRowLifecycle(issueCtx, row)
 					if issueCtx.Err() != nil {
 						abortRequested = true
 						break
 					}
-					if !handled {
-						status = "failure"
-						extras = lifecycleGateFailureEvidence(idleGateReason, idleGateNextAction, lifecycleGateNone, nil, "")
+					if !verdict.handled() {
+						verdict = failureForUnhandledObservation(verdict)
 					}
-					if status != "await" && status != "resume" {
-						res = executor.finishObserved(issueCtx, row, status, extras)
+					if verdict.Action != lifecycleAwait && verdict.Action != lifecycleResume {
+						res = executor.finishObserved(issueCtx, row, verdict)
 						break
 					}
-					if err := accept(status, extras); err != nil {
+					if err := accept(verdict); err != nil {
 						abortRequested = true
 						break
 					}
@@ -2453,8 +2453,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 						res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: status, Branch: row.Branches[issueNum]}
 						break
 					}
-					var quotaTerminalStatus string
-					var quotaTerminalExtras map[string]any
+					var quotaTerminalVerdict lifecycleVerdict
 					quotaTerminal := errors.New("terminal observation during quota admission")
 					// An observation the row cannot make durable aborts it, like
 					// every other acceptance failure; it is not quota exhaustion.
@@ -2462,18 +2461,18 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					var quotaObserve func() error
 					if awaiting {
 						quotaObserve = func() error {
-							status, extras, handled := executor.observeLifecycle(issueCtx, row)
+							verdict := executor.observeRowLifecycle(issueCtx, row)
 							if issueCtx.Err() != nil {
 								return issueCtx.Err()
 							}
-							if handled && (status == "await" || status == "resume" && !readyContinuation) {
-								if err := accept(status, extras); err != nil {
+							if verdict.Action == lifecycleAwait || verdict.Action == lifecycleResume && !readyContinuation {
+								if err := accept(verdict); err != nil {
 									return fmt.Errorf("%w: %w", quotaAcceptFailed, err)
 								}
 								return nil
 							}
-							if handled && status != "resume" && status != "await" {
-								quotaTerminalStatus, quotaTerminalExtras = status, extras
+							if verdict.handled() && verdict.Action != lifecycleResume && verdict.Action != lifecycleAwait {
+								quotaTerminalVerdict = verdict
 								return quotaTerminal
 							}
 							return nil
@@ -2481,34 +2480,32 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					}
 					if err := quotaGate.waitObserved(issueCtx, quotaObserve, awaitPollInterval(o.runSessionOpts, awaitPoll)); err != nil {
 						if errors.Is(err, quotaTerminal) {
-							res = executor.finishObserved(issueCtx, row, quotaTerminalStatus, quotaTerminalExtras)
+							res = executor.finishObserved(issueCtx, row, quotaTerminalVerdict)
 							break
 						}
 						if errors.Is(err, quotaAcceptFailed) || issueCtx.Err() != nil {
 							abortRequested = true
 						} else {
-							res = executor.finishObserved(issueCtx, row, "failure", map[string]any{"reason": "AGENT_USAGE_LIMIT", "next_action": "resume with available provider quota after the exhausted recovery window"})
+							res = executor.finishObserved(issueCtx, row, lifecycleVerdict{Action: lifecycleFailure, Evidence: map[string]any{"reason": "AGENT_USAGE_LIMIT", "next_action": "resume with available provider quota after the exhausted recovery window"}})
 						}
 						break
 					}
 					continue
 				}
 				var err error
-				var admissionStatus string
-				var admissionExtras map[string]any
+				var admissionVerdict lifecycleVerdict
 				admissionChanged := errors.New("lifecycle changed during execution admission")
 				if awaiting && readyContinuation && !row.quotaAllowance.probing() {
 					observe := func() error {
-						status, extras, handled := executor.observeLifecycle(issueCtx, row)
+						verdict := executor.observeRowLifecycle(issueCtx, row)
 						if issueCtx.Err() != nil {
 							return issueCtx.Err()
 						}
-						if !handled {
-							status = "failure"
-							extras = lifecycleGateFailureEvidence(idleGateReason, idleGateNextAction, lifecycleGateNone, nil, "")
+						if !verdict.handled() {
+							verdict = failureForUnhandledObservation(verdict)
 						}
-						if status != "resume" {
-							admissionStatus, admissionExtras = status, extras
+						if verdict.Action != lifecycleResume {
+							admissionVerdict = verdict
 							return admissionChanged
 						}
 						return nil
@@ -2520,8 +2517,8 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					opportunity, err = startGate.AcquireWithOpportunity(issueCtx, false)
 				}
 				if errors.Is(err, admissionChanged) {
-					if admissionStatus == "await" {
-						if err := accept("await", admissionExtras); err != nil {
+					if admissionVerdict.Action == lifecycleAwait {
+						if err := accept(admissionVerdict); err != nil {
 							abortRequested = true
 							break
 						}
@@ -2531,7 +2528,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 						}
 						continue
 					}
-					res = executor.finishObserved(issueCtx, row, admissionStatus, admissionExtras)
+					res = executor.finishObserved(issueCtx, row, admissionVerdict)
 					break
 				}
 				if err != nil {
@@ -2584,7 +2581,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				row.ReuseSession = true
 				if res.UsageLimitReached {
 					row.quotaAllowance = row.quotaAllowance.continueProbe(res.UsageLimitDeadline)
-					if err := accept("await", nil); err != nil {
+					if err := accept(lifecycleVerdict{Action: lifecycleAwait}); err != nil {
 						abortRequested = true
 						break
 					}
@@ -2593,13 +2590,13 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 						break
 					}
 					row.quotaAllowance = row.quotaAllowance.completedPoll(usageLimitPollInterval)
-					if err := accept("quota-ready", nil); err != nil {
+					if err := acceptQuotaReady(); err != nil {
 						abortRequested = true
 						break
 					}
 					continue
 				}
-				if err := accept("await", nil); err != nil {
+				if err := accept(lifecycleVerdict{Action: lifecycleAwait}); err != nil {
 					abortRequested = true
 					break
 				}
@@ -4216,8 +4213,12 @@ loop:
 			if s.isIssueDriven() && ctx.Err() == nil {
 				hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
 				s.finalOwnedWorkAttempt = attempt+1 >= attempts
-				if gateStatus, extras, handled := s.handleLifecycleDecisionForAttempt(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady, result.Status); handled {
-					if stop := s.operatorStopFor(result); stop != nil && gateStatus != "success" && gateStatus != "aborted" {
+				verdict := newLifecycleObserver(s).Observe(ctx, lifecycleObservationRequest{
+					WorkDir: wt.WorkDir(), Branch: branch, LogPath: logPath, RunID: runID,
+					HostPathsReady: hostPathsReady, AttemptStatus: result.Status,
+				})
+				if verdict.handled() {
+					if stop := s.operatorStopFor(result); stop != nil && verdict.Action != lifecycleSuccess && verdict.Action != lifecycleAborted {
 						// The agent could not act, and a resume, await
 						// re-entry or retry would fail the same way.
 						// Like the usage-limit rule below, this consumes the
@@ -4227,7 +4228,7 @@ loop:
 						terminalExtras = s.finishOperatorStop(&result, terminalExtras, stop)
 						break loop
 					}
-					if result.UsageLimitReached && !result.ContextExhausted && (gateStatus == "resume" || gateStatus == "await") {
+					if result.UsageLimitReached && !result.ContextExhausted && (verdict.Action == lifecycleResume || verdict.Action == lifecycleAwait) {
 						// A provider refusal did not perform the selected PR work.
 						// Leave non-terminal gate arbitration to quota recovery and,
 						// after its polling allowance, configured ordinary retries.
@@ -4235,40 +4236,43 @@ loop:
 						// still take precedence below.
 						break relaunch
 					}
-					if gateStatus != "await" && isImplementorOwnedGateFailure(extras) {
+					if verdict.Action != lifecycleAwait && verdict.ImplementorWork {
 						// A clean but incomplete handoff is owned work, not an
 						// external await or a separate lifecycle-resume budget.
 						// Use the configured ordinary retry budget to perform it.
 						result.Status = "failure"
 						ownedWorkRetry = true
-						terminalExtras = cloneLifecycleExtras(extras)
+						terminalExtras = cloneLifecycleExtras(verdict.Evidence)
 						delete(terminalExtras, "await")
 						delete(terminalExtras, "gate")
 						continue loop
 					}
-					if gateStatus == "success" || gateStatus == "failure" || gateStatus == "aborted" {
+					if verdict.terminal() {
 						// A terminal lifecycle decision is authoritative. Do not
 						// let the legacy post-decision PR arbitration replace it.
 						s.lifecycleTerminal = true
-						result.Status = gateStatus
-						terminalExtras = mergeBlockerExtras(terminalExtras, extras)
+						result.Status = verdict.status()
+						terminalExtras = mergeBlockerExtras(terminalExtras, verdict.Evidence)
 						break loop
 					}
-					observe := gateStatus == "await"
+					observe := verdict.Action == lifecycleAwait
 					if observe {
 						if !s.opts.foregroundLifecycle {
-							s.emitAwait(ctx, runID, result, extras)
-							result.Status = gateStatus
+							s.emitAwait(ctx, runID, result, verdict.Evidence)
+							result.Status = verdict.status()
 							break loop
 						}
-						s.emitAwait(ctx, runID, result, extras)
-						gateStatus, extras, _ = s.observeLifecycle(ctx, wt.WorkDir(), branch, logPath, runID, result, extras, hostPathsReady)
+						s.emitAwait(ctx, runID, result, verdict.Evidence)
+						verdict = newLifecycleObserver(s).waitForTransition(ctx, lifecycleObservationRequest{
+							WorkDir: wt.WorkDir(), Branch: branch, LogPath: logPath, RunID: runID,
+							HostPathsReady: hostPathsReady, AttemptStatus: result.Status,
+						}, result, verdict)
 					}
-					if gateStatus == "resume" {
+					if verdict.Action == lifecycleResume {
 						// The continuity decision already turned a stalled or
 						// exhausted relaunch into a wait or a terminal
 						// failure; a resume here is a relaunch to perform.
-						if resumePrompt, resume := s.resumePromptFromGate(ctx, wt, branch, runID, extras); resume {
+						if resumePrompt, resume := s.resumePromptFromGate(ctx, wt, branch, runID, verdict); resume {
 							s.lastResumeSignature = s.pendingResumeSignature
 							s.reuseSession = true
 							s.previousRunIDs = map[int]string{s.issueNumber: runID}
@@ -4276,14 +4280,12 @@ loop:
 							attemptRenderCfg.TaskPrompt = resumePrompt
 							continue relaunch
 						}
-						gate, _ := extras["gate"].(string)
-						gateStatus = "failure"
-						extras = remediationBudgetFailureEvidence(gate, extras,
+						verdict = newLifecycleObserver(s).resumeUnavailable(ctx, verdict,
 							"inspect the current pull-request remediation evidence and continue in a fresh session")
 					}
-					s.lifecycleTerminal = gateStatus == "success" || gateStatus == "failure" || gateStatus == "aborted"
-					result.Status = gateStatus
-					terminalExtras = mergeBlockerExtras(terminalExtras, extras)
+					s.lifecycleTerminal = verdict.terminal()
+					result.Status = verdict.status()
+					terminalExtras = mergeBlockerExtras(terminalExtras, verdict.Evidence)
 					break loop
 				}
 			}
@@ -4397,18 +4399,20 @@ loop:
 					}
 					if events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
 						hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
-						if gateStatus, extras, handled := s.handleLifecycleDecisionAfterAgent(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled {
-							if gateStatus == "resume" {
-								// This legacy verification fallback is past the
-								// in-session resume point. Never turn a resolved
-								// gate into an await here; fail with the owned
-								// action and let the next session resume it.
-								gateStatus = "failure"
-								extras = lifecycleGateFailureEvidence("IMPLEMENTOR_ACTION_REQUIRED", "resume the implementation to complete current pull-request feedback or merge work", lifecycleGateNone, nil, "")
-							}
-							s.lifecycleTerminal = gateStatus == "success" || gateStatus == "failure" || gateStatus == "aborted"
-							result.Status = gateStatus
-							terminalExtras = mergeBlockerExtras(terminalExtras, extras)
+						verdict := newLifecycleObserver(s).Observe(ctx, lifecycleObservationRequest{
+							WorkDir: wt.WorkDir(), Branch: branch, LogPath: logPath, RunID: runID,
+							HostPathsReady: hostPathsReady, AttemptStatus: "success",
+						})
+						if verdict.handled() {
+							// This legacy verification fallback is past the in-session
+							// resume point. The observer owns the resume-to-failure
+							// override, and preserves its structured next action.
+							verdict = newLifecycleObserver(s).failUnperformedResume(verdict,
+								"IMPLEMENTOR_ACTION_REQUIRED",
+								"resume the implementation to complete current pull-request feedback or merge work")
+							s.lifecycleTerminal = verdict.terminal()
+							result.Status = verdict.status()
+							terminalExtras = mergeBlockerExtras(terminalExtras, verdict.Evidence)
 							break loop
 						}
 					}
