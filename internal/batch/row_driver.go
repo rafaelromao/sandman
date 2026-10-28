@@ -349,6 +349,11 @@ func (d *rowDriver) drive(ctx context.Context, run RunSpec, state *rowDriverStat
 			d.gates.Release(false)
 			continue
 		}
+		if ctx.Err() != nil {
+			d.gates.Release(false)
+			abortRequested = true
+			break
+		}
 		var started bool
 		result, started = d.executor.ExecuteRun(ctx, run, state.cursor)
 		state.started = state.started || started

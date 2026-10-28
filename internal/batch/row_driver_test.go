@@ -71,6 +71,7 @@ type rowDriverGateFake struct {
 	pauseChecks   int
 	waitErr       error
 	onWait        func()
+	onAcquire     func()
 	clock         *rowDriverClockFake
 	events        *[]string
 	readyEvidence []map[string]any
@@ -84,6 +85,9 @@ func (f *rowDriverGateFake) Acquire(_ context.Context, _ bool, opportunity await
 		if err != nil || outcome.Kind != rowObservationNone {
 			return opportunity, outcome, err
 		}
+	}
+	if f.onAcquire != nil {
+		f.onAcquire()
 	}
 	return opportunity, rowObservationOutcome{}, nil
 }
@@ -393,5 +397,26 @@ func TestRowDriverExplicitAbortDuringQuotaProbeObservation(t *testing.T) {
 		if event == "finish" {
 			t.Fatal("finished an observed verdict after explicit cancellation")
 		}
+	}
+}
+
+func TestRowDriverExplicitAbortAfterAdmissionPreventsLaunch(t *testing.T) {
+	var events []string
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	gates := &rowDriverGateFake{events: &events, onAcquire: cancel}
+	executor := &rowDriverExecutorFake{events: &events, started: true}
+	abort := &rowDriverAbortFake{events: &events}
+	run := RunSpec{RunID: "run-42", IssueNumber: 42, BatchID: "batch-a", Branch: "42-fix", BaseBranch: "main"}
+	got := newRowDriver(executor, gates, &rowDriverClockFake{}, abort).Drive(ctx, run, ContinuationCursor{})
+
+	if got.Result.Status != "aborted" || abort.calls != 1 {
+		t.Fatalf("Drive = %+v, abort calls %d; want one explicit terminal abort", got, abort.calls)
+	}
+	if executor.executeCalls != 0 || gates.acquires != 1 || gates.releases != 1 {
+		t.Fatalf("launch fence: executions=%d admissions=%d releases=%d", executor.executeCalls, gates.acquires, gates.releases)
+	}
+	if got := events[len(events)-1]; got != "abort" {
+		t.Fatalf("last event = %q, want abort fence", got)
 	}
 }
