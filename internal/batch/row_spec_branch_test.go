@@ -14,7 +14,10 @@ func TestResolvedBranchIsFrozenIntoRunSpec(t *testing.T) {
 	orchestrator := &Orchestrator{githubClient: client}
 	req := Request{Issues: []int{42}}
 
-	resolved := orchestrator.resolveRunBranches(context.Background(), req, "main")
+	resolved, err := orchestrator.resolveRunBranches(context.Background(), req, "main")
+	if err != nil {
+		t.Fatalf("resolve run branches: %v", err)
+	}
 	if got, want := resolved.Branches[42], "42-pending-lifecycle"; got != want {
 		t.Fatalf("resolved branch = %q, want %q", got, want)
 	}

@@ -310,7 +310,7 @@ func collectIssueBranchesFromIndex(issueNumber int, title string, recordedBranch
 // crosses the executor seam. Fresh runs used to derive a missing branch later
 // inside runSession.prepareInputs, which left await observations with no branch
 // once they re-entered through the row driver.
-func (o *Orchestrator) resolveRunBranches(ctx context.Context, req Request, baseBranch string) Request {
+func (o *Orchestrator) resolveRunBranches(ctx context.Context, req Request, baseBranch string) (Request, error) {
 	branches := make(map[int]string, len(req.Branches)+len(req.Issues))
 	for issue, branch := range req.Branches {
 		branches[issue] = branch
@@ -329,19 +329,24 @@ func (o *Orchestrator) resolveRunBranches(ctx context.Context, req Request, base
 		}
 		title := strings.TrimSpace(req.IssueTitles[issueNumber])
 		if title == "" {
-			if o.githubClient != nil {
-				issue, err := o.githubClient.FetchIssue(ctx, issueNumber)
-				if err == nil && issue != nil {
-					title = issue.Title
-					req.IssueTitles[issueNumber] = title
+			if o.githubClient == nil {
+				return req, fmt.Errorf("resolve branch for issue %d: GitHub client is unavailable and no issue title was provided", issueNumber)
+			}
+			issue, err := o.githubClient.FetchIssue(ctx, issueNumber)
+			if err != nil {
+				if ctx.Err() != nil {
+					return req, nil
 				}
+				return req, fmt.Errorf("resolve branch for issue %d: fetch issue: %w", issueNumber, err)
 			}
+			if issue == nil {
+				return req, fmt.Errorf("resolve branch for issue %d: fetch issue returned no issue", issueNumber)
+			}
+			title = strings.TrimSpace(issue.Title)
 			if title == "" {
-				// The row executor owns the normal issue-fetch failure path and
-				// its terminal event. Do not turn a failed pre-resolution lookup
-				// into a batch-level error.
-				continue
+				return req, fmt.Errorf("resolve branch for issue %d: fetched issue has no title", issueNumber)
 			}
+			req.IssueTitles[issueNumber] = title
 		}
 		branchBase := strings.TrimSpace(req.BaseBranches[issueNumber])
 		if branchBase == "" {
@@ -349,7 +354,7 @@ func (o *Orchestrator) resolveRunBranches(ctx context.Context, req Request, base
 		}
 		req.Branches[issueNumber] = BranchName(issueNumber, title, branchBase)
 	}
-	return req
+	return req, nil
 }
 
 func (o *Orchestrator) validateBatchBranches(ctx context.Context, req Request, baseBranch string) error {
@@ -1751,7 +1756,10 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 
 	phaseStarted = time.Now()
-	req = o.resolveRunBranches(ctx, req, baseBranch)
+	req, err = o.resolveRunBranches(ctx, req, baseBranch)
+	if err != nil {
+		return nil, err
+	}
 	if err := o.validateBatchBranchesWithIndex(ctx, req, baseBranch, eventIndex); err != nil {
 		return nil, err
 	}

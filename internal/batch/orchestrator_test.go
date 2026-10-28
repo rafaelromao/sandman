@@ -4354,7 +4354,7 @@ func TestRunBatch_LifecycleErrorsPrintedToStderr(t *testing.T) {
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
 		WithErrorLog(&buf),
 	)
-	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}, IssueTitles: map[int]string{42: "test issue"}})
 	if !strings.Contains(buf.String(), "github api error") {
 		t.Errorf("expected fetch error on stderr, got: %s", buf.String())
 	}
@@ -4387,7 +4387,7 @@ func TestRunBatch_EmitsTerminalEventOnFetchIssueFailure(t *testing.T) {
 		WithErrorLog(io.Discard),
 	)
 
-	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}, Parallel: 1})
+	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}, IssueTitles: map[int]string{42: "test issue"}, Parallel: 1})
 
 	finished := findEvent(spyLog.events, "run.finished")
 	if finished == nil {
