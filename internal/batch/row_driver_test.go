@@ -16,6 +16,7 @@ type rowDriverExecutorFake struct {
 	started      bool
 	results      []AgentRunResult
 	observations []lifecycleVerdict
+	onObserve    func()
 	events       *[]string
 	observeCalls int
 	executeCalls int
@@ -36,6 +37,9 @@ func (f *rowDriverExecutorFake) ExecuteRun(_ context.Context, run RunSpec, curso
 func (f *rowDriverExecutorFake) ObserveRun(context.Context, RunSpec, ContinuationCursor) lifecycleVerdict {
 	f.observeCalls++
 	f.record("observe")
+	if f.onObserve != nil {
+		f.onObserve()
+	}
 	if len(f.observations) == 0 {
 		return lifecycleVerdict{}
 	}
@@ -360,5 +364,34 @@ func TestRowTurnControllerRunsAbortCallbackOutsideTurnLock(t *testing.T) {
 	}
 	if callbackHeldLock {
 		t.Fatal("abort callback ran while the shared turn lock was held")
+	}
+}
+
+func TestRowDriverExplicitAbortDuringQuotaProbeObservation(t *testing.T) {
+	var events []string
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	executor := &rowDriverExecutorFake{
+		onObserve:    cancel,
+		events:       &events,
+		observations: []lifecycleVerdict{{Action: lifecycleSuccess}},
+	}
+	gates := &rowDriverGateFake{events: &events}
+	abort := &rowDriverAbortFake{events: &events}
+	run := RunSpec{RunID: "run-42", IssueNumber: 42, BatchID: "batch-a", Branch: "42-fix", BaseBranch: "main"}
+	got := newRowDriver(executor, gates, &rowDriverClockFake{}, abort).Drive(ctx, run, ContinuationCursor{
+		quotaAllowance: usageLimitAllowance{probe: true},
+	})
+
+	if got.Result.Status != "aborted" || abort.calls != 1 {
+		t.Fatalf("Drive = %+v, abort calls %d; want explicit abort to win over observed success", got, abort.calls)
+	}
+	if executor.observeCalls != 1 || executor.executeCalls != 0 || gates.acquires != 0 {
+		t.Fatalf("post-abort work: observations=%d executions=%d admissions=%d", executor.observeCalls, executor.executeCalls, gates.acquires)
+	}
+	for _, event := range events {
+		if event == "finish" {
+			t.Fatal("finished an observed verdict after explicit cancellation")
+		}
 	}
 }

@@ -201,6 +201,10 @@ func (d *rowDriver) drive(ctx context.Context, run RunSpec, state *rowDriverStat
 		}
 		if state.cursor.quotaAllowance.probing() {
 			verdict := d.executor.ObserveRun(ctx, run, state.cursor)
+			if ctx.Err() != nil {
+				abortRequested = true
+				break
+			}
 			if verdict.supersedesQuotaProbe() {
 				result = d.executor.FinishObserved(ctx, run, state.cursor, verdict)
 				d.gates.Report(result, true)
