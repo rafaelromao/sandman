@@ -62,6 +62,7 @@ func runSpecFromRow(row RowSpec) (RunSpec, ContinuationCursor) {
 	if branch == "" {
 		branch = row.Branches[0]
 	}
+	continuationKey := rowContinuationKey(row.IssueNumber, row.Review)
 	return RunSpec{
 			RunID: row.RunID, IssueNumber: row.IssueNumber, BatchID: row.BatchID,
 			BatchDir: row.BatchDir, Branch: branch, BaseBranch: row.BaseBranch,
@@ -75,10 +76,17 @@ func runSpecFromRow(row RowSpec) (RunSpec, ContinuationCursor) {
 			},
 		}, ContinuationCursor{
 			Mode: row.Mode, ReuseSession: row.ReuseSession,
-			PreviousRunID:      row.PreviousRunIDs[row.IssueNumber],
-			PreviousRunBatchID: row.PreviousRunBatchIDs[row.IssueNumber],
+			PreviousRunID:      row.PreviousRunIDs[continuationKey],
+			PreviousRunBatchID: row.PreviousRunBatchIDs[continuationKey],
 			quotaAllowance:     row.quotaAllowance,
 		}
+}
+
+func rowContinuationKey(issueNumber int, review bool) int {
+	if issueNumber == 0 || review {
+		return 0
+	}
+	return issueNumber
 }
 
 func cloneRowRenderConfig(cfg prompt.RenderConfig) prompt.RenderConfig {
@@ -97,11 +105,12 @@ func (run RunSpec) row(cursor ContinuationCursor) RowSpec {
 	if run.IssueNumber == 0 || run.details != nil && run.details.review {
 		branches[0] = run.Branch
 	}
+	continuationKey := rowContinuationKey(run.IssueNumber, run.details != nil && run.details.review)
 	row := RowSpec{
 		IssueNumber: run.IssueNumber, Mode: cursor.Mode,
 		Branches:            branches,
-		PreviousRunIDs:      map[int]string{run.IssueNumber: cursor.PreviousRunID},
-		PreviousRunBatchIDs: map[int]string{run.IssueNumber: cursor.PreviousRunBatchID},
+		PreviousRunIDs:      map[int]string{continuationKey: cursor.PreviousRunID},
+		PreviousRunBatchIDs: map[int]string{continuationKey: cursor.PreviousRunBatchID},
 		ReuseSession:        cursor.ReuseSession, quotaAllowance: cursor.quotaAllowance,
 		BaseBranch: run.BaseBranch, RunTS: run.RunTS, RunShortID: run.RunShortID,
 		BatchID: run.BatchID, BatchDir: run.BatchDir, BatchTS: run.BatchTS,
