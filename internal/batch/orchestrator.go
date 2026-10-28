@@ -329,13 +329,16 @@ func (o *Orchestrator) resolveRunBranches(ctx context.Context, req Request, base
 		}
 		title := strings.TrimSpace(req.IssueTitles[issueNumber])
 		if title == "" {
+			if err := ctx.Err(); err != nil {
+				return req, err
+			}
 			if o.githubClient == nil {
 				return req, fmt.Errorf("resolve branch for issue %d: GitHub client is unavailable and no issue title was provided", issueNumber)
 			}
 			issue, err := o.githubClient.FetchIssue(ctx, issueNumber)
 			if err != nil {
 				if ctx.Err() != nil {
-					return req, nil
+					return req, ctx.Err()
 				}
 				return req, fmt.Errorf("resolve branch for issue %d: fetch issue: %w", issueNumber, err)
 			}
@@ -1758,6 +1761,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	phaseStarted = time.Now()
 	req, err = o.resolveRunBranches(ctx, req, baseBranch)
 	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if err := o.validateBatchBranchesWithIndex(ctx, req, baseBranch, eventIndex); err != nil {

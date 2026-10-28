@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/rafaelromao/sandman/internal/github"
@@ -31,5 +32,16 @@ func TestResolvedBranchIsFrozenIntoRunSpec(t *testing.T) {
 	}
 	if got := resolved.IssueTitles[42]; got != "Pending lifecycle" {
 		t.Fatalf("resolved issue title = %q, want fetched title", got)
+	}
+}
+
+func TestResolveRunBranchesStopsOnExplicitCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	orchestrator := &Orchestrator{githubClient: &fakeGitHubClient{err: errors.New("must not fetch after cancellation")}}
+
+	_, err := orchestrator.resolveRunBranches(ctx, Request{Issues: []int{42}}, "main")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("resolveRunBranches error = %v, want context.Canceled", err)
 	}
 }
