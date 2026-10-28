@@ -130,7 +130,8 @@ func TestInformalApprovalLifecycle_LateCurrentHeadApprovalResumesWithoutNewReque
 	// attempt, as continuation/restart does after the original implementation
 	// run has already stopped.
 	restarted := &runSession{deps: s.deps, renderCfg: s.renderCfg, opts: s.opts}
-	status, extras, handled := restarted.handleLifecycleDecisionForAttempt(t.Context(), workDir, gateTestBranch, "", "same-run", true, "failure")
+	lateApproval := restarted.observeLifecycleAttemptForTest(t.Context(), workDir, gateTestBranch, "", "same-run", true, "failure")
+	status, extras, handled := lateApproval.status(), lateApproval.Evidence, lateApproval.handled()
 	if !handled || status != "resume" || extras["gate"] != gateReadyToMerge || extras["reason"] != "REVIEW_APPROVED" {
 		t.Fatalf("late approval = (%s, %v, %t), want current-head approval to resume normal merge work", status, extras, handled)
 	}
@@ -152,7 +153,8 @@ func TestInformalApprovalLifecycle_ExpiredDeliveredRequestRemainsTimeoutWithoutA
 	pr.ReviewDecision = "REVIEW_REQUIRED"
 	pr.MergeStateStatus = "BLOCKED"
 
-	status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	verdict := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	status, extras, handled := verdict.status(), verdict.Evidence, verdict.handled()
 	if !handled || status != "resume" || extras["gate"] != gateReviewTimeout || extras["reason"] != reviewTimeoutReason {
 		t.Fatalf("expired delivered request = (%s, %v, %t), want recoverable timeout evidence", status, extras, handled)
 	}
@@ -238,7 +240,8 @@ func TestInformalApprovalLifecycle_LateApprovalRequiresCurrentUnsupersededEviden
 			if evidence.outcome == retainedReviewApproval {
 				t.Fatalf("ineligible late evidence was classified as approval: %+v", evidence)
 			}
-			status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+			verdict := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+			status, extras, handled := verdict.status(), verdict.Evidence, verdict.handled()
 			if !handled || (status == "resume" && extras["gate"] == gateReadyToMerge) {
 				t.Fatalf("ineligible late evidence authorized merge work: (%s, %v, %t)", status, extras, handled)
 			}
@@ -282,7 +285,8 @@ func TestInformalApprovalLifecycle_LateRequestedChangesRemainBlocking(t *testing
 		t.Fatalf("late requested-changes source = %v, want marked blocking source", source)
 	}
 
-	status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	verdict := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	status, extras, handled := verdict.status(), verdict.Evidence, verdict.handled()
 	if !handled || status != "resume" || extras["gate"] != gateActionableFeedback || extras["reason"] != actionableFeedbackReason {
 		t.Fatalf("late formal requested changes lifecycle = (%s, %v, %t), want actionable repair after canonical import", status, extras, handled)
 	}
@@ -303,7 +307,8 @@ func TestInformalApprovalLifecycle_LateCurrentHeadApprovalWaitsForCI(t *testing.
 	pr.StatusCheckRollup = "pending"
 	pr.MergeStateStatus = "CLEAN"
 
-	status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	verdict := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	status, extras, handled := verdict.status(), verdict.Evidence, verdict.handled()
 	if !handled || status != "await" || extras["gate"] != "pending" {
 		t.Fatalf("late approval with pending CI = (%s, %v, %t), want await/pending", status, extras, handled)
 	}
@@ -330,7 +335,8 @@ func TestInformalApprovalLifecycle_LateFormalCurrentHeadApprovalResumes(t *testi
 	pr.ReviewDecision = "APPROVED"
 	pr.MergeStateStatus = "CLEAN"
 
-	status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	verdict := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	status, extras, handled := verdict.status(), verdict.Evidence, verdict.handled()
 	if !handled || status != "resume" || extras["gate"] != gateReadyToMerge || extras["reason"] != "REVIEW_APPROVED" {
 		t.Fatalf("late formal approval = (%s, %v, %t), want normal merge work", status, extras, handled)
 	}
@@ -353,7 +359,8 @@ func TestInformalApprovalLifecycle_LateCommentedReviewApprovalResumes(t *testing
 	pr.StatusCheckRollup = "success"
 	pr.MergeStateStatus = "CLEAN"
 
-	status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	verdict := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	status, extras, handled := verdict.status(), verdict.Evidence, verdict.handled()
 	if !handled || status != "resume" || extras["gate"] != gateReadyToMerge || extras["reason"] != "REVIEW_APPROVED" {
 		t.Fatalf("late COMMENTED review approval = (%s, %v, %t), want normal merge work", status, extras, handled)
 	}
