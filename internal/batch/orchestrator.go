@@ -306,6 +306,52 @@ func collectIssueBranchesFromIndex(issueNumber int, title string, recordedBranch
 	return branches
 }
 
+// resolveRunBranches freezes each issue's branch before the immutable RunSpec
+// crosses the executor seam. Fresh runs used to derive a missing branch later
+// inside runSession.prepareInputs, which left await observations with no branch
+// once they re-entered through the row driver.
+func (o *Orchestrator) resolveRunBranches(ctx context.Context, req Request, baseBranch string) Request {
+	branches := make(map[int]string, len(req.Branches)+len(req.Issues))
+	for issue, branch := range req.Branches {
+		branches[issue] = branch
+	}
+	req.Branches = branches
+
+	titles := make(map[int]string, len(req.IssueTitles)+len(req.Issues))
+	for issue, title := range req.IssueTitles {
+		titles[issue] = title
+	}
+	req.IssueTitles = titles
+
+	for _, issueNumber := range req.Issues {
+		if req.Branches[issueNumber] != "" {
+			continue
+		}
+		title := strings.TrimSpace(req.IssueTitles[issueNumber])
+		if title == "" {
+			if o.githubClient != nil {
+				issue, err := o.githubClient.FetchIssue(ctx, issueNumber)
+				if err == nil && issue != nil {
+					title = issue.Title
+					req.IssueTitles[issueNumber] = title
+				}
+			}
+			if title == "" {
+				// The row executor owns the normal issue-fetch failure path and
+				// its terminal event. Do not turn a failed pre-resolution lookup
+				// into a batch-level error.
+				continue
+			}
+		}
+		branchBase := strings.TrimSpace(req.BaseBranches[issueNumber])
+		if branchBase == "" {
+			branchBase = baseBranch
+		}
+		req.Branches[issueNumber] = BranchName(issueNumber, title, branchBase)
+	}
+	return req
+}
+
 func (o *Orchestrator) validateBatchBranches(ctx context.Context, req Request, baseBranch string) error {
 	return o.validateBatchBranchesWithIndex(ctx, req, baseBranch, readEventLogIndex(o.eventLog))
 }
@@ -1705,6 +1751,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 
 	phaseStarted = time.Now()
+	req = o.resolveRunBranches(ctx, req, baseBranch)
 	if err := o.validateBatchBranchesWithIndex(ctx, req, baseBranch, eventIndex); err != nil {
 		return nil, err
 	}
