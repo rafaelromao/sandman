@@ -71,6 +71,16 @@ now() {
 	fi
 }
 
+sha256_stdin() {
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum | awk '{print $1}'
+	elif command -v shasum >/dev/null 2>&1; then
+		shasum -a 256 | awk '{print $1}'
+	else
+		return 1
+	fi
+}
+
 emit_timed_out() {
 	observed_head_sha=${1:-}
 	jq -cn --arg observed_head_sha "$observed_head_sha" \
@@ -105,6 +115,7 @@ check_deadline_or_exit() {
 tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/sandman-review-observe.XXXXXX") || exit 2
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 view_file=$tmp_dir/view.json
+publication_comments_file=$tmp_dir/publication-comments.json
 reviews_file=$tmp_dir/reviews.json
 inline_file=$tmp_dir/inline.json
 
@@ -145,14 +156,86 @@ if [ "$observed_head" != "$head_sha" ]; then
 fi
 
 if ! jq -e --arg trigger_id "$trigger_id" --arg prefix "$trigger_prefix" --arg created_at "$trigger_created_at" '
+	def confirmed_trigger:
+		((.url // "") == $trigger_id) or ((.id | tostring) == $trigger_id) or
+		(($trigger_id | test("^[0-9]+$")) and ((.url // "") | endswith("#issuecomment-" + $trigger_id)));
 	any(.comments[]?;
-		(((.url // "") == $trigger_id) or ((.id | tostring) == $trigger_id)) and
+		confirmed_trigger and
 		((.body // "") | startswith($prefix)) and
 		((.createdAt // .created_at // "") == $created_at))
 ' "$view_file" >/dev/null 2>&1
 then
 	jq -cn '{state:"unavailable",observed_head_sha:"",reason:"confirmed-trigger-not-found",snapshot:null}'
 	exit 0
+fi
+
+# The review daemon binds its report to the numeric trigger comment ID, the
+# trigger revision timestamp, and the reviewed head. The GitHub CLI view exposes
+# an issue-comment node ID and may omit updatedAt, so use the REST issue-comment
+# record when a daemon publication needs to be validated. If that read fails,
+# publication_identity stays empty and the daemon publication fails closed;
+# ordinary human approval prose remains eligible.
+publication_comments_json='[]'
+has_daemon_publication=false
+if [ "$late_approval_only" = true ] && jq -e '
+	any(.comments[]?; ((.body // "") | test("(?m)^[ \\t]*<!-- sandman-publication:[0-9a-f]{64} -->[ \\t]*$")))
+' "$view_file" >/dev/null 2>&1; then
+	has_daemon_publication=true
+	if gh api "repos/$repository/issues/$pull_request/comments" --paginate >"$publication_comments_file" 2>/dev/null; then
+		publication_comments_json=$(jq -s '
+			if length > 0 and all(.[]; type == "array" and all(.[]; type == "object")) then add
+			else error("issue comments must be arrays of objects") end
+		' "$publication_comments_file" 2>/dev/null) || publication_comments_json='[]'
+	fi
+fi
+
+publication_trigger_key=
+if [ "$has_daemon_publication" = true ]; then
+	publication_trigger_key=$(jq -ner --arg trigger_id "$trigger_id" --arg prefix "$trigger_prefix" --arg created_at "$trigger_created_at" --argjson issue_comments "$publication_comments_json" '
+	def numeric_comment_id:
+		if ((.url? // "") | test("#issuecomment-[0-9]+$")) then
+			(.url | capture("#issuecomment-(?<id>[0-9]+)$").id)
+		elif ((.html_url? // "") | test("#issuecomment-[0-9]+$")) then
+			(.html_url | capture("#issuecomment-(?<id>[0-9]+)$").id)
+		elif (.id? | type) == "number" then (.id | tostring)
+		elif (.id? | type) == "string" and (.id | test("^[0-9]+$")) then .id
+		else "" end;
+	def timestamp_nanos:
+		if type != "string" or (test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$") | not) then null
+		else
+			capture("^(?<base>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\\.(?<fraction>[0-9]{1,9}))?Z$") as $parts |
+			(try (($parts.base + "Z") | fromdateiso8601) catch null) as $seconds |
+			if $seconds == null then null else ($seconds | tostring) + (((($parts.fraction // "") + "000000000")[0:9])) end
+		end;
+	def requested_numeric_id:
+		if ($trigger_id | test("#issuecomment-[0-9]+$")) then ($trigger_id | capture("#issuecomment-(?<id>[0-9]+)$").id)
+		elif ($trigger_id | test("^[0-9]+$")) then $trigger_id
+		else "" end;
+	[
+		$issue_comments[]
+		| select(
+			(numeric_comment_id) as $id | $id != "" and $id == requested_numeric_id
+		)
+		| select((.body // "") | startswith($prefix))
+		| select((.created_at // .createdAt // "") == $created_at)
+		| . as $trigger
+		| ($trigger | numeric_comment_id) as $id
+		| ([$trigger.updated_at, $trigger.updatedAt] | map(select(type == "string" and length > 0)) | first // "" | timestamp_nanos) as $revision
+		| select($id != "")
+		| if $revision == null then $id else $id + "@" + $revision end
+	] | if length == 1 then .[0] else error("confirmed trigger revision is ambiguous") end
+' 2>/dev/null) || publication_trigger_key=
+fi
+publication_identity=
+if [ -n "$publication_trigger_key" ]; then
+	head_sha_lower=$(printf '%s\n' "$head_sha" | jq -Rr 'ascii_downcase')
+	publication_hash=$(printf '%s\000%s' "$publication_trigger_key" "$head_sha_lower" | sha256_stdin 2>/dev/null) || publication_hash=
+	case "$publication_hash" in
+		*[!0-9a-f]*|'') publication_hash= ;;
+	esac
+	if [ "${#publication_hash}" -eq 64 ]; then
+		publication_identity="<!-- sandman-publication:$publication_hash -->"
+	fi
 fi
 
 reviews_json=$(jq -s 'if length > 0 and all(.[]; type == "array" and all(.[]; type == "object")) then add else error("formal reviews must be arrays of objects") end' "$reviews_file" 2>/dev/null) || {
@@ -183,6 +266,7 @@ classification_json=$(jq -cn \
 	--arg trigger_id "$trigger_id" \
 	--arg trigger_prefix "$trigger_prefix" \
 	--arg trigger_created_at "$trigger_created_at" \
+	--arg publication_identity "$publication_identity" \
 	--arg deadline_at "$(printf '%s\n' "$request_json" | jq -r '.deadline_at // ""')" \
 	--argjson deadline_unix_seconds "$(printf '%s\n' "$request_json" | jq -r '.deadline_unix_seconds // 0')" \
 	--argjson late_approval_only "$late_approval_only" \
@@ -214,10 +298,22 @@ classification_json=$(jq -cn \
 		if (.state? | type) == "string" then (.state | ascii_upcase) else "" end;
 	def body:
 		if (.body? | type) == "string" then .body else "" end;
+	def body_publication_identity:
+		[split("\n")[] | select(test("\\S"))] as $lines |
+		if ($lines | length) == 0 then null
+		else
+			$lines[-1] as $last |
+			if ($last | test("^[ \\t]*<!-- sandman-publication:[0-9a-f]{64} -->[ \\t]*$")) then
+				$last | capture("^[ \\t]*<!-- sandman-publication:(?<digest>[0-9a-f]{64}) -->[ \\t]*$").digest
+			else null end
+		end;
 	def event_id:
 		if (.id? | type) == "string" then (if (.id | length) > 0 then .id else "" end)
 		elif (.id? | type) == "number" then (.id | tostring)
 		else "" end;
+	def confirmed_trigger:
+		((.url // "") == $trigger_id) or ((.id | tostring) == $trigger_id) or
+		(($trigger_id | test("^[0-9]+$")) and ((.url // "") | endswith("#issuecomment-" + $trigger_id)));
 	def require_event_id:
 		event_id as $id | if $id == "" then error("missing event id") else .id = $id end;
 	def commit_id:
@@ -249,6 +345,12 @@ classification_json=$(jq -cn \
 		.source = $source |
 		.response_timestamp = (parsed_event_timestamp($source) | .key) |
 		.head_status = (if $source == "top_level" then "current" else head_status($head) end) |
+		if $source == "top_level" then
+			if $late_approval_only then
+				(body | body_publication_identity) as $publication |
+				.publication_status = (if $publication == null then "unpublished" elif "<!-- sandman-publication:" + $publication + " -->" == $publication_identity then "matched" else "mismatched" end)
+			else .publication_status = "not_checked" end
+		else . end |
 		if $late_approval_only and $event.key > (($deadline_unix_seconds | todateiso8601) | sub("Z$"; ".000000000Z")) then .late_approval = true else . end;
 
 	($trigger_created_at | timestamp_parts) as $trigger_parts |
@@ -264,7 +366,7 @@ classification_json=$(jq -cn \
 			| (parsed_event_timestamp("top_level")) as $event
 			| if $event == null then error("invalid next trigger timestamp")
 			  else
-				select(((if (.url? | type) == "string" then .url else "" end) != $trigger_id or (event_timestamp("top_level") != $trigger_created_at)) and event_id != $trigger_id)
+				select((confirmed_trigger | not) or event_timestamp("top_level") != $trigger_created_at)
 				| select($event.key >= $trigger_time)
 				| if $event.key == $trigger_time then error("ambiguous trigger boundary")
 				  else
@@ -281,6 +383,7 @@ classification_json=$(jq -cn \
 			| select(in_window($trigger_time; $next_trigger_time; $deadline_key; "top_level"))
 			| select((body | startswith($trigger_prefix)) | not)
 			| with_metadata("top_level"; $head_sha)
+			| select(($late_approval_only | not) or .publication_status != "mismatched")
 		] as $top_level |
 		[
 			$reviews[]

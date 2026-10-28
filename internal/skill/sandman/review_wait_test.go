@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/rafaelromao/sandman/internal/reviewpub"
 )
 
 type reviewWaitResult struct {
@@ -1171,6 +1173,112 @@ exit 2
 	}
 	if len(classification.Sources.TopLevel) != 1 || len(classification.Sources.FormalReviews) != 1 {
 		t.Fatalf("late classification sources = top-level %d/formal %d, want late approval and pre-deadline blocker", len(classification.Sources.TopLevel), len(classification.Sources.FormalReviews))
+	}
+}
+
+func TestReviewWaitV1LateDaemonApprovalMustMatchConfirmedRequestAndHead(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	observer := filepath.Join(wd, "pr-review", "review-observe-v1.sh")
+	triggeredAt := time.Date(2026, 8, 11, 18, 0, 1, 0, time.UTC)
+	deadline := triggeredAt.Add(30 * time.Minute)
+	lateAt := deadline.Add(time.Minute)
+	editedAt := triggeredAt.Add(30 * time.Second)
+	triggerID := "1001"
+	triggerURL := "https://github.com/owner/repo/pull/42#issuecomment-1001"
+
+	for _, tc := range []struct {
+		name            string
+		triggerRevision time.Time
+		publicationKey  string
+		head            string
+		wantState       string
+	}{
+		{name: "matching request revision and head", triggerRevision: triggeredAt, publicationKey: reviewpub.TriggerKey("1001", triggeredAt), head: "abc123", wantState: "responded"},
+		{name: "matching edited trigger revision", triggerRevision: editedAt, publicationKey: reviewpub.TriggerKey("1001", editedAt), head: "abc123", wantState: "responded"},
+		{name: "unversioned trigger", publicationKey: "1001", head: "abc123", wantState: "responded"},
+		{name: "prior trigger revision", triggerRevision: editedAt, publicationKey: reviewpub.TriggerKey("1001", triggeredAt), head: "abc123", wantState: "timed_out"},
+		{name: "superseded request", triggerRevision: triggeredAt, publicationKey: reviewpub.TriggerKey("9999", triggeredAt), head: "abc123", wantState: "timed_out"},
+		{name: "stale head", triggerRevision: triggeredAt, publicationKey: reviewpub.TriggerKey("1001", triggeredAt), head: "oldsha", wantState: "timed_out"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+			writeReviewWaitRequestValues(t, requestFile, triggerID, triggeredAt.Format(time.RFC3339Nano), "unix:"+strconv.FormatInt(deadline.Unix(), 10), int(triggeredAt.Unix()), int(deadline.Unix()), 1800)
+			deadlineClock := filepath.Join(t.TempDir(), "deadline-clock.sh")
+			if err := os.WriteFile(deadlineClock, []byte("#!/bin/sh\nprintf '%s\\n' "+strconv.FormatInt(deadline.Unix(), 10)+"\n"), 0o700); err != nil {
+				t.Fatalf("write deadline clock: %v", err)
+			}
+			first := runReviewWaitWithEnv(t, helper, requestFile, writePendingReviewObserver(t), true, map[string]string{
+				"SANDMAN_REVIEW_WAIT_CLOCK": deadlineClock,
+			})
+			if first.State != "timed_out" {
+				t.Fatalf("initial wait = %q, want timed_out", first.State)
+			}
+
+			triggerComment := map[string]any{
+				"id": "IC_kwDOFAKE1001", "url": triggerURL, "body": "/sandman review",
+				"createdAt": triggeredAt.Format(time.RFC3339Nano), "updatedAt": nil,
+			}
+			publication := reviewpub.Body("## Summary\nReviewed the current diff.\n\n## Findings\nNone.\n\n## Suggested next steps\nNo changes required.\n\n## Decision\n**APPROVED**", tc.publicationKey, tc.head)
+			approvalComment := map[string]any{
+				"id": 1002, "url": "https://github.com/owner/repo/pull/42#issuecomment-1002", "body": publication,
+				"createdAt": lateAt.Format(time.RFC3339Nano), "updatedAt": lateAt.Format(time.RFC3339Nano),
+			}
+			view, err := json.Marshal(map[string]any{
+				"headRefOid": "abc123", "comments": []any{triggerComment, approvalComment},
+				"reviewDecision": "", "mergeStateStatus": "CLEAN",
+			})
+			if err != nil {
+				t.Fatalf("marshal pull request view: %v", err)
+			}
+			restTriggerComment := map[string]any{
+				"id": 1001, "html_url": triggerURL, "body": "/sandman review",
+				"created_at": triggeredAt.Format(time.RFC3339Nano),
+			}
+			if !tc.triggerRevision.IsZero() {
+				restTriggerComment["updated_at"] = tc.triggerRevision.Format(time.RFC3339Nano)
+			}
+			issueComments, err := json.Marshal([]any{
+				restTriggerComment,
+				map[string]any{
+					"id": 1002, "html_url": "https://github.com/owner/repo/pull/42#issuecomment-1002", "body": publication,
+					"created_at": lateAt.Format(time.RFC3339Nano), "updated_at": lateAt.Format(time.RFC3339Nano),
+				},
+			})
+			if err != nil {
+				t.Fatalf("marshal REST issue comments: %v", err)
+			}
+			bin := t.TempDir()
+			gh := filepath.Join(bin, "gh")
+			ghScript := "#!/bin/sh\nif [ \"$1\" = \"pr\" ] && [ \"$2\" = \"view\" ]; then\n  printf '%s\\n' '" + string(view) + "'\n  exit 0\nfi\nif [ \"$1\" = \"api\" ] && [ \"$2\" = \"repos/owner/repo/issues/42/comments\" ]; then\n  printf '%s\\n' '" + string(issueComments) + "'\n  exit 0\nfi\nif [ \"$1\" = \"api\" ]; then\n  printf '%s\\n' '[]'\n  exit 0\nfi\nexit 2\n"
+			if err := os.WriteFile(gh, []byte(ghScript), 0o700); err != nil {
+				t.Fatalf("write gh shim: %v", err)
+			}
+			lateClock := filepath.Join(t.TempDir(), "late-clock.sh")
+			if err := os.WriteFile(lateClock, []byte("#!/bin/sh\nprintf '%s\\n' "+strconv.FormatInt(lateAt.Unix(), 10)+"\n"), 0o700); err != nil {
+				t.Fatalf("write late clock: %v", err)
+			}
+			result := runReviewWaitWithEnv(t, helper, requestFile, observer, true, map[string]string{
+				"PATH":                      bin + ":" + os.Getenv("PATH"),
+				"SANDMAN_REVIEW_WAIT_CLOCK": lateClock,
+			})
+			if result.State != tc.wantState {
+				t.Fatalf("late daemon publication state = %q/%q, want %q", result.State, result.Reason, tc.wantState)
+			}
+			if tc.wantState != "responded" {
+				if result.Reason != "request-deadline-exhausted" {
+					t.Fatalf("late mismatched publication reason = %q, want request-deadline-exhausted", result.Reason)
+				}
+				return
+			}
+			classification := decodeReviewClassification(t, result)
+			if len(classification.Sources.TopLevel) != 1 || !strings.Contains(classification.Sources.TopLevel[0].Body, "sandman-publication:") {
+				t.Fatalf("matching late daemon publication evidence = %+v, want one request-scoped publication", classification.Sources.TopLevel)
+			}
+		})
 	}
 }
 

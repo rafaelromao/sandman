@@ -552,7 +552,7 @@ validate_late_recheck() {
 		($classification.window.next_trigger == null) and
 		($classification.boundary_evidence.request == $classification.request) and
 		($classification.boundary_evidence.sources == $classification.sources) and
-		($classification.sources.top_level | type == "array" and all(.[]; (late_source("top_level") or request_source("top_level")) and .head_status == "current" and (.body | type == "string") and ((.body | startswith($request.trigger_prefix)) | not))) and
+		($classification.sources.top_level | type == "array" and all(.[]; (late_source("top_level") or request_source("top_level")) and .head_status == "current" and (.publication_status | IN("unpublished", "matched")) and (.body | type == "string") and ((.body | startswith($request.trigger_prefix)) | not))) and
 		($classification.sources.formal_reviews | type == "array" and all(.[]; (late_source("formal_review") or request_source("formal_review")) and (.state | IN("APPROVED", "COMMENTED", "CHANGES_REQUESTED")) and (.head_status | IN("current", "stale", "unknown")))) and
 		($classification.sources.inline_comments | type == "array" and all(.[]; request_source("inline_comment"))) and
 		($classification.response_counts.top_level == ($classification.sources.top_level | length)) and
@@ -571,7 +571,7 @@ has_late_approval_candidate() {
 		.snapshot.classification as $classification |
 		(any($classification.formal.approval_evidence[]; true)) or
 		any($classification.sources.formal_reviews[]; .state == "COMMENTED" and (.head_status != "stale") and positive_body) or
-		any($classification.sources.top_level[]; .head_status == "current" and positive_body)
+		any($classification.sources.top_level[]; .head_status == "current" and (.publication_status | IN("unpublished", "matched")) and positive_body)
 	' >/dev/null 2>&1
 }
 
