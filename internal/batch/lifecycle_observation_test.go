@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 func TestLifecycleObservation_VerifiedMergeWinsOverRetainedReview(t *testing.T) {
@@ -159,7 +161,7 @@ func TestLifecycleObservation_FailedCIWithActiveSiblingKeepsRuntimePrerequisiteW
 		issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
 		prs: map[string]*github.PR{gateTestBranch: {
 			Number: 17, State: "open", HeadRefOid: "current-sha", CIExecutionID: "checks-with-pending-sibling",
-			StatusCheckRollup: "failure", CIHasActiveChecks: true, MergeStateStatus: "BLOCKED",
+			StatusCheckRollup: "failure", CIHasActiveChecks: true, CIActiveFailedWorkflowRunID: "workflow-101", MergeStateStatus: "BLOCKED",
 		}},
 	}
 	log := &spyEventLog{}
@@ -191,12 +193,17 @@ func TestLifecycleObservation_FailedCIWithActiveSiblingKeepsRuntimePrerequisiteW
 	if !ok || ciWait["execution_id"] != "checks-with-pending-sibling" {
 		t.Fatalf("prerequisite await lost identified CI execution: %#v", blockedRerun.Evidence)
 	}
+	prerequisite, ok := blockedRerun.Evidence["ci_rerun_prerequisite"].(map[string]any)
+	if !ok || prerequisite["workflow_run_id"] != "workflow-101" || prerequisite["head_sha"] != "current-sha" || prerequisite["pull_request"] != 17 {
+		t.Fatalf("prerequisite await lost its typed workflow identity: %#v", blockedRerun.Evidence)
+	}
 	initialDeadline, ok := ciWait["deadline_unix_seconds"].(int64)
 	if !ok {
 		t.Fatalf("CI wait deadline has unexpected type %T", ciWait["deadline_unix_seconds"])
 	}
 
 	client.prs[gateTestBranch].CIHasActiveChecks = false
+	client.prs[gateTestBranch].CIActiveFailedWorkflowRunID = ""
 	now = now.Add(2 * time.Minute)
 	completedPrerequisite := observer.Observe(t.Context(), request)
 	if completedPrerequisite.Action != lifecycleResume || completedPrerequisite.Evidence["gate"] != "ci-failure" {
@@ -205,5 +212,99 @@ func TestLifecycleObservation_FailedCIWithActiveSiblingKeepsRuntimePrerequisiteW
 	retained, err := readCIWaitRegistration(filepath.Join(workDir, ".sandman", "state", "17.ci_wait.json"))
 	if err != nil || retained.DeadlineUnixSeconds != initialDeadline {
 		t.Fatalf("same CI execution deadline changed across the prerequisite: registration=%+v error=%v", retained, err)
+	}
+}
+
+func TestLifecycleObservation_FailedCIWithUnrelatedActiveWorkflowResumesImplementation(t *testing.T) {
+	workDir := t.TempDir()
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+		prs: map[string]*github.PR{gateTestBranch: {
+			Number: 17, State: "open", HeadRefOid: "current-sha", CIExecutionID: "checks-with-unrelated-active-workflow",
+			StatusCheckRollup: "failure", CIHasActiveChecks: true, MergeStateStatus: "BLOCKED",
+		}},
+	}
+	session := &runSession{
+		issueNumber: 42,
+		deps:        runDeps{githubClient: client, errorLog: io.Discard},
+		opts: runSessionOptions{
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
+	}
+	verdict := newLifecycleObserver(session).Observe(t.Context(), lifecycleObservationRequest{
+		WorkDir: workDir, Branch: gateTestBranch, RunID: "run-unrelated-active", HostPathsReady: true,
+		AttemptStatus: "success", AfterAgentAttempt: true,
+	})
+	if verdict.Action != lifecycleResume || verdict.Evidence["reason"] != "CI_FAILURE" {
+		t.Fatalf("unrelated active workflow deferred implementation-owned CI remediation: %+v", verdict)
+	}
+}
+
+func TestAwaitingRowLifecycle_ReobservesOnlyTheRetainedWorkflowPrerequisite(t *testing.T) {
+	root := t.TempDir()
+	now := time.Unix(2_000, 0).UTC()
+	ciWait := map[string]any{
+		"protocol": ciWaitProtocol, "pull_request": 17, "head_sha": "current-sha", "execution_id": "checks-101",
+		"started_unix_seconds": now.Unix(), "deadline_unix_seconds": now.Add(ciWaitTimeout).Unix(),
+		"effective_timeout_seconds": int64(ciWaitTimeout / time.Second),
+	}
+	prerequisite := map[string]any{
+		"protocol": "ci-rerun-prerequisite/v1", "pull_request": 17, "head_sha": "current-sha", "workflow_run_id": "workflow-101",
+	}
+	log := &spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-rerun-prerequisite", Issue: 42, Timestamp: now.Add(-time.Minute), Payload: map[string]any{"branch": gateTestBranch}},
+		{Type: "run.await", RunID: "run-rerun-prerequisite", Issue: 42, Timestamp: now, Payload: map[string]any{
+			"await": true, "await_reason": "pending", "branch": gateTestBranch,
+			"ci_wait": ciWait, "ci_rerun_prerequisite": prerequisite,
+		}},
+	}}
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+		prs: map[string]*github.PR{gateTestBranch: {
+			Number: 17, State: "open", HeadRefOid: "current-sha", CIExecutionID: "checks-101",
+			StatusCheckRollup: "failure", CIHasActiveChecks: true, CIActiveFailedWorkflowRunID: "workflow-101", MergeStateStatus: "BLOCKED",
+		}},
+	}
+	e := &runExecutor{deps: runDeps{
+		githubClient: client, eventLog: log, layout: paths.NewLayout(nil, root), errorLog: io.Discard,
+		runSessionOpts: runSessionOptions{
+			now:         func() time.Time { return now },
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
+	}}
+	row := RowSpec{IssueNumber: 42, RunID: "run-rerun-prerequisite", Branches: map[int]string{42: gateTestBranch}}
+	continued := e.observeAwaitingRowLifecycle(t.Context(), row)
+	if continued.Action != lifecycleAwait || continued.Evidence["gate"] != string(lifecycleGatePending) {
+		t.Fatalf("same identified active workflow prerequisite should remain awaited: %+v", continued)
+	}
+
+	client.prs[gateTestBranch].CIActiveFailedWorkflowRunID = ""
+	withoutPrerequisite := e.observeAwaitingRowLifecycle(t.Context(), row)
+	if withoutPrerequisite.Action != lifecycleResume || withoutPrerequisite.Evidence["reason"] != "CI_FAILURE" {
+		t.Fatalf("completed or changed workflow prerequisite must return CI repair to the implementation agent: %+v", withoutPrerequisite)
+	}
+}
+
+func TestAwaitingRowLifecycle_FailedCIWithUnrelatedActiveCheckResumesImplementation(t *testing.T) {
+	root := t.TempDir()
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+		prs: map[string]*github.PR{gateTestBranch: {
+			Number: 17, State: "open", HeadRefOid: "current-sha", CIExecutionID: "checks-with-unrelated-active-workflow",
+			StatusCheckRollup: "failure", CIHasActiveChecks: true, MergeStateStatus: "BLOCKED",
+		}},
+	}
+	e := &runExecutor{deps: runDeps{
+		githubClient: client,
+		layout:       paths.NewLayout(nil, root),
+		errorLog:     io.Discard,
+		runSessionOpts: runSessionOptions{
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
+	}}
+	row := RowSpec{IssueNumber: 42, RunID: "run-pending-ci", Branches: map[int]string{42: gateTestBranch}}
+	verdict := e.observeAwaitingRowLifecycle(t.Context(), row)
+	if verdict.Action != lifecycleResume || verdict.Evidence["reason"] != "CI_FAILURE" {
+		t.Fatalf("a failed check discovered during a pending-CI wait must return to implementation, not await unrelated active CI: %+v", verdict)
 	}
 }

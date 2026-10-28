@@ -44,6 +44,10 @@ type PR struct {
 	// CIHasActiveChecks remains true when a failed check coexists with queued or
 	// running siblings in the same current-head check rollup.
 	CIHasActiveChecks bool
+	// CIActiveFailedWorkflowRunID is populated only when check execution links
+	// identify exactly one workflow run containing both a failed job and an
+	// active sibling. It is empty for unrelated, missing, or ambiguous links.
+	CIActiveFailedWorkflowRunID string
 	// CIExecutionID identifies the observed check executions independently of
 	// their status. A rerun can change this identity without changing the head.
 	CIExecutionID      string

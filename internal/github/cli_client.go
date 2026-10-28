@@ -26,6 +26,8 @@ const DefaultCallTimeout = 30 * time.Second
 // blockedByHeadingPattern parses blocker headings; see docs/usage/issue-body-formats.md.
 var blockedByHeadingPattern = regexp.MustCompile(`(?im)^\s*##\s+(?:blocked by|depends on|blocked-by)\s*$`)
 
+var githubActionsJobURLPattern = regexp.MustCompile(`(?i)^https://github\.com/[^/?#]+/[^/?#]+/actions/runs/([1-9][0-9]*)/job/[1-9][0-9]*/?(?:[?#].*)?$`)
+
 // IsBlockedByHeading reports whether `heading` carries the canonical
 // H2 text of a blocker section. Exposed so other parsers (e.g.
 // `SpecificationResolver`'s candidate harvest in
@@ -294,6 +296,54 @@ func ciHasActiveChecksFromJSON(raw json.RawMessage) bool {
 		}
 	}
 	return false
+}
+
+// ciRerunBlockedWorkflowRunIDFromJSON identifies the containing workflow run
+// that prevents a targeted job rerun: exactly one run must have both a failed
+// completed job and a non-completed sibling. URLs that do not expose GitHub
+// Actions job identity, legacy status contexts, and ambiguous multiple runs
+// fail closed.
+func ciRerunBlockedWorkflowRunIDFromJSON(raw json.RawMessage) string {
+	var checks []statusCheckRun
+	if err := json.Unmarshal(raw, &checks); err != nil || len(checks) == 0 {
+		return ""
+	}
+	type runState struct {
+		failed bool
+		active bool
+	}
+	runs := make(map[string]runState)
+	for _, check := range checks {
+		match := githubActionsJobURLPattern.FindStringSubmatch(strings.TrimSpace(check.DetailsURL))
+		if len(match) != 2 {
+			continue
+		}
+		state := runs[match[1]]
+		status := strings.ToUpper(strings.TrimSpace(check.Status))
+		if status == "COMPLETED" {
+			conclusion := strings.ToUpper(strings.TrimSpace(check.Conclusion))
+			if conclusion != "" && conclusion != "SUCCESS" && conclusion != "SKIPPED" && conclusion != "NEUTRAL" {
+				state.failed = true
+			}
+		} else {
+			switch status {
+			case "QUEUED", "IN_PROGRESS", "WAITING", "PENDING", "REQUESTED", "CANCEL_REQUESTED":
+				state.active = true
+			}
+		}
+		runs[match[1]] = state
+	}
+	var blockedRunID string
+	for runID, state := range runs {
+		if !state.failed || !state.active {
+			continue
+		}
+		if blockedRunID != "" {
+			return ""
+		}
+		blockedRunID = runID
+	}
+	return blockedRunID
 }
 
 // rollupStateFromJSON converts the raw `gh pr list --json
@@ -670,20 +720,21 @@ func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, err
 		linkedIssueNumbers, _ = c.fetchPRClosingIssueNumbers(ctx, payload.Number)
 	}
 	return &PR{
-		Number:             payload.Number,
-		State:              payload.State,
-		Body:               payload.Body,
-		Merged:             strings.TrimSpace(payload.MergedAt) != "",
-		HeadRefName:        payload.HeadRefName,
-		HeadRefOid:         payload.HeadRefOid,
-		linkedIssueNumber:  firstLinkedIssueNumber(linkedIssueNumbers),
-		linkedIssueNumbers: linkedIssueNumbers,
-		UpdatedAt:          parseGitHubTime(payload.UpdatedAt),
-		ReviewDecision:     payload.ReviewDecision,
-		MergeStateStatus:   payload.MergeStateStatus,
-		StatusCheckRollup:  rollupStateFromJSON(payload.StatusCheckRollup),
-		CIHasActiveChecks:  ciHasActiveChecksFromJSON(payload.StatusCheckRollup),
-		CIExecutionID:      ciExecutionIDFromJSON(payload.StatusCheckRollup),
+		Number:                      payload.Number,
+		State:                       payload.State,
+		Body:                        payload.Body,
+		Merged:                      strings.TrimSpace(payload.MergedAt) != "",
+		HeadRefName:                 payload.HeadRefName,
+		HeadRefOid:                  payload.HeadRefOid,
+		linkedIssueNumber:           firstLinkedIssueNumber(linkedIssueNumbers),
+		linkedIssueNumbers:          linkedIssueNumbers,
+		UpdatedAt:                   parseGitHubTime(payload.UpdatedAt),
+		ReviewDecision:              payload.ReviewDecision,
+		MergeStateStatus:            payload.MergeStateStatus,
+		StatusCheckRollup:           rollupStateFromJSON(payload.StatusCheckRollup),
+		CIHasActiveChecks:           ciHasActiveChecksFromJSON(payload.StatusCheckRollup),
+		CIActiveFailedWorkflowRunID: ciRerunBlockedWorkflowRunIDFromJSON(payload.StatusCheckRollup),
+		CIExecutionID:               ciExecutionIDFromJSON(payload.StatusCheckRollup),
 	}, nil
 }
 

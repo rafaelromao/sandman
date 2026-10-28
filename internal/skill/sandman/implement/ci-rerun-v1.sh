@@ -91,6 +91,7 @@ run_file=$tmp_dir/run.json
 jobs_file=$tmp_dir/jobs.json
 after_run_file=$tmp_dir/after-run.json
 after_jobs_file=$tmp_dir/after-jobs.json
+after_pr_file=$tmp_dir/after-pr.json
 
 api_pr="repos/$repository/pulls/$pull_request"
 api_run="repos/$repository/actions/runs/$run_id"
@@ -145,6 +146,11 @@ jq -c --argjson job_id "$job_id" --argjson run_id "$run_id" --argjson attempt "$
 	"$jobs_file" >"$job_file" || refuse "failed-job-evidence-invalid"
 job_status=$(jq -er '.status' "$job_file") || refuse "failed-job-status-invalid"
 job_conclusion=$(jq -r '.conclusion // ""' "$job_file")
+job_name=$(jq -er '.name | strings | select(length > 0)' "$job_file") || refuse "failed-job-name-invalid"
+job_workflow_name=$(jq -r '.workflow_name // ""' "$job_file")
+prior_quality_gate_id=$(jq -r --argjson run_id "$run_id" --argjson attempt "$run_attempt" \
+	'[.[] | select(.run_id == $run_id and .run_attempt == $attempt and .name == "quality-gate") | .id][0] // 0' \
+	"$jobs_file") || refuse "quality-gate-evidence-invalid"
 
 case "$run_status:$job_status:$run_conclusion:$job_conclusion" in
 	*:queued:*:*|*:in_progress:*:*) waiting "recovery-already-active" "$run_attempt" ;;
@@ -167,6 +173,9 @@ fi
 if ! gh api "$api_run" >"$after_run_file" 2>/dev/null; then
 	uncertain "rerun-readback-failed" "$run_attempt"
 fi
+if ! gh api "$api_pr" >"$after_pr_file" 2>/dev/null; then
+	uncertain "pull-request-readback-failed" "$run_attempt"
+fi
 if ! gh api --paginate "$api_jobs" >"$tmp_dir/after-jobs-pages.jsonl" 2>/dev/null; then
 	uncertain "rerun-jobs-readback-failed" "$run_attempt"
 fi
@@ -178,20 +187,49 @@ if ! jq -e --arg repository "$repository" --arg head "$head_sha" --arg tested "$
 	--argjson pull_request "$pull_request" --argjson run_id "$run_id" '
 	type == "object" and .id == $run_id and
 	((.repository.full_name // "" | ascii_downcase) == ($repository | ascii_downcase)) and
+	.event == "pull_request" and
 	.head_sha == $tested and
 	([.pull_requests[]? | select(.number == $pull_request and .head.sha == $head)] | length) == 1
 ' "$after_run_file" >/dev/null 2>&1; then
 	uncertain "rerun-readback-identity-changed" "$run_attempt"
 fi
+if ! jq -e --arg repository "$repository" --arg head "$head_sha" --argjson pull_request "$pull_request" '
+	type == "object" and .number == $pull_request and .state == "open" and
+	.head.sha == $head and (.merged_at == null) and
+	((.base.repo.full_name // "" | ascii_downcase) == ($repository | ascii_downcase))
+' "$after_pr_file" >/dev/null 2>&1; then
+	uncertain "pull-request-readback-identity-changed" "$run_attempt"
+fi
 after_attempt=$(jq -er '.run_attempt' "$after_run_file") || uncertain "rerun-attempt-readback-invalid" "$run_attempt"
 after_status=$(jq -er '.status' "$after_run_file") || uncertain "rerun-status-readback-invalid" "$run_attempt"
-if [ "$after_attempt" -gt "$run_attempt" ]; then
-	emit confirmed "rerun-accepted" "$after_attempt"
+
+if [ "$after_attempt" -gt "$run_attempt" ] &&
+	jq -e --argjson job_id "$job_id" --argjson run_id "$run_id" --argjson attempt "$after_attempt" \
+		--arg job_name "$job_name" --arg workflow_name "$job_workflow_name" '
+		[.[] | select(.id != $job_id and .run_id == $run_id and .run_attempt == $attempt and
+			.name == $job_name and ($workflow_name == "" or .workflow_name == $workflow_name) and
+			(.status == "queued" or .status == "in_progress" or .status == "completed"))] | length == 1
+	' "$after_jobs_file" >/dev/null 2>&1 &&
+	jq -e --argjson run_id "$run_id" --argjson attempt "$after_attempt" --argjson previous_id "$prior_quality_gate_id" '
+		[.[] | select(.id != $previous_id and .run_id == $run_id and .run_attempt == $attempt and
+			.name == "quality-gate" and
+			(.status == "queued" or .status == "in_progress" or .status == "completed"))] | length == 1
+	' "$after_jobs_file" >/dev/null 2>&1; then
+	emit confirmed "selected-job-and-quality-gate-rerun-observed" "$after_attempt"
 	exit 0
 fi
 
-if [ "$after_status" = "in_progress" ] || [ "$after_status" = "queued" ]; then
-	waiting "recovery-already-active" "$after_attempt"
+if [ "$post_succeeded" -eq 0 ] && grep -Eiq 'workflow run containing this job is already running' "$post_error" &&
+	{ [ "$after_status" = "in_progress" ] || [ "$after_status" = "queued" ]; } &&
+	jq -e --argjson job_id "$job_id" --argjson run_id "$run_id" --argjson attempt "$run_attempt" '
+		[.[] | select(.id == $job_id and .run_id == $run_id and .run_attempt == $attempt and
+			.status == "completed" and (.conclusion == "failure" or .conclusion == "timed_out"))] | length == 1
+	' "$after_jobs_file" >/dev/null 2>&1 &&
+	jq -e --argjson job_id "$job_id" --argjson run_id "$run_id" --argjson attempt "$run_attempt" '
+		[.[] | select(.id != $job_id and .run_id == $run_id and .run_attempt == $attempt and
+			(.status == "queued" or .status == "in_progress"))] | length > 0
+	' "$after_jobs_file" >/dev/null 2>&1; then
+	waiting "workflow-still-running" "$after_attempt"
 fi
 if [ "$post_succeeded" -eq 0 ]; then
 	if grep -Eiq '403|resource not accessible|permission|not authorized' "$post_error"; then

@@ -167,6 +167,19 @@ func TestCIRerunHelperFailsClosedOnStaleIdentityAndDeniedOrAmbiguousSubmission(t
 		{name: "wrong job id", mutate: func(f *ciRerunFixture) { f.Jobs[0]["id"] = 111 }, state: "refused"},
 		{name: "denied mutation", mode: "denied", state: "refused", posts: 1},
 		{name: "ambiguous mutation", mode: "ambiguous", state: "confirmed", posts: 1},
+		{name: "source head changed during mutation", mode: "pr-head-changed", state: "uncertain", posts: 1},
+		{name: "unrelated job advanced after ambiguous mutation", mutate: func(f *ciRerunFixture) {
+			f.Jobs = append(f.Jobs, map[string]any{
+				"id": 876543210, "run_id": 12345, "run_attempt": 1,
+				"name": "build-macos", "status": "completed", "conclusion": "failure",
+			})
+		}, mode: "unrelated-job", state: "uncertain", posts: 1},
+		{name: "selected job advanced without aggregate", mutate: func(f *ciRerunFixture) {
+			f.Jobs = append(f.Jobs, map[string]any{
+				"id": 765432109, "run_id": 12345, "run_attempt": 1,
+				"name": "quality-gate", "status": "completed", "conclusion": "failure",
+			})
+		}, mode: "selected-only", state: "uncertain", posts: 1},
 		{name: "unconfirmed mutation", mode: "uncertain", state: "uncertain", posts: 1},
 	}
 	for _, tt := range tests {
@@ -311,7 +324,7 @@ if method == 'POST':
     state['actions'] = state.get('actions') or []
     state['actions'].append(method + ' ' + route)
     mode = state.get('mode')
-    if mode in ('accept', 'ambiguous'):
+    if mode in ('accept', 'ambiguous', 'pr-head-changed'):
         state['run']['run_attempt'] += 1
         state['run']['status'] = 'in_progress'
         state['run']['conclusion'] = None
@@ -324,8 +337,29 @@ if method == 'POST':
         }, {'id': old['id'] + 2, 'run_id': old['run_id'],
             'run_attempt': state['run']['run_attempt'], 'name': 'quality-gate',
             'status': 'queued', 'conclusion': None, 'head_sha': old.get('head_sha')}] + other_jobs
+        if mode == 'pr-head-changed':
+            state['pr']['head']['sha'] = 'new-source-head'
+    elif mode == 'unrelated-job':
+        state['run']['run_attempt'] += 1
+        state['run']['status'] = 'in_progress'
+        state['run']['conclusion'] = None
+        state['jobs'].append({
+            'id': 876543211, 'run_id': 12345, 'run_attempt': state['run']['run_attempt'],
+            'name': 'build-macos', 'status': 'queued', 'conclusion': None,
+        })
+    elif mode == 'selected-only':
+        state['run']['run_attempt'] += 1
+        state['run']['status'] = 'in_progress'
+        state['run']['conclusion'] = None
+        old = state['jobs'][0]
+        other_jobs = [job for job in state['jobs'] if job['id'] != old['id']]
+        state['jobs'] = [{
+            'id': old['id'] + 1, 'run_id': old['run_id'],
+            'run_attempt': state['run']['run_attempt'], 'name': old['name'],
+            'status': 'queued', 'conclusion': None, 'head_sha': old.get('head_sha')
+        }] + other_jobs
     with open(path, 'w') as f: json.dump(state, f)
-    if mode in ('denied', 'ambiguous', 'uncertain'):
+    if mode in ('denied', 'ambiguous', 'unrelated-job', 'selected-only', 'uncertain'):
         message = 'HTTP 403 Resource not accessible by integration' if mode == 'denied' else 'request result intentionally ambiguous'
         print(message, file=sys.stderr)
         sys.exit(1)

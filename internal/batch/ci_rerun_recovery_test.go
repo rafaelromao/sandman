@@ -15,6 +15,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
+	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
@@ -160,6 +161,104 @@ func TestCIRerunRemediationYieldsOnceThenCompletes(t *testing.T) {
 	states := events.ProjectRunStates(log.snapshot())
 	if len(states) != 1 || !states[0].IsTerminal() || states[0].Status() != "success" {
 		t.Fatalf("completion projection=%+v", states)
+	}
+}
+
+func TestCIRerunPendingWaitFailureWithUnrelatedActivityRequiresRecordedRepairAndMergeActions(t *testing.T) {
+	root := testenv.MkdirShort(t, "sm-ci-action-recovery-")
+	t.Chdir(root)
+	initGitRepo(t, root)
+	worktree := filepath.Join(root, "worktrees", "42-work")
+	if err := os.MkdirAll(filepath.Join(worktree, ".sandman"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktree, ".sandman", "task.md"), []byte("# Task\nRepair CI and complete the pull request.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	client := &reviewWaitSchedulerGitHubClient{comments: []github.PRComment{{
+		ID: "https://github.com/owner/repo/pull/17#issuecomment-1001", Body: "/sandman review", CreatedAt: now,
+	}}, fakeGitHubClient: fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, State: "closed"}},
+		prs: map[string]*github.PR{"42-work": {
+			Number: 17, State: "open", HeadRefName: "42-work", HeadRefOid: "head", Body: "Closes #42",
+			StatusCheckRollup: "pending", ReviewDecision: "APPROVED", MergeStateStatus: "BLOCKED", CIExecutionID: "checks-first",
+		}},
+	}}
+	launches, polls := 0, 0
+	var actions []string
+	factory := &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
+		launches++
+		switch launches {
+		case 2:
+			// The recorded GitHub recovery action precedes the fake state
+			// transition to the replacement current-head execution.
+			actions = append(actions, "POST /repos/owner/repo/actions/jobs/987654321/rerun")
+			client.setPR(branch, func(pr *github.PR) {
+				pr.StatusCheckRollup, pr.CIExecutionID = "pending", "checks-rerun"
+				pr.CIHasActiveChecks = false
+				pr.CIActiveFailedWorkflowRunID = ""
+				pr.MergeStateStatus = "BLOCKED"
+			})
+		case 3:
+			actions = append(actions, "gh pr merge 17 --merge")
+			client.setPR(branch, func(pr *github.PR) {
+				pr.State, pr.Merged, pr.StatusCheckRollup = "merged", true, "success"
+				pr.ReviewDecision, pr.MergeStateStatus = "APPROVED", "CLEAN"
+			})
+		}
+		return AgentRunResult{IssueNumber: issue.Number, Status: "success", Branch: branch}
+	}}
+	cfg := &config.Config{Agent: "test", Sandbox: "worktree", WorktreeDir: filepath.Join(root, "worktrees"), Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test": {Command: "true"}}}
+	log := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, log,
+		WithErrorLog(io.Discard),
+		WithRunnableFactory(factory),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: &retrySandbox{workDir: worktree}}),
+		WithRunSessionOpts(runSessionOptions{
+			releaseAwaitCapacity: true,
+			now:                  func() time.Time { return now },
+			currentHead:          func(string) (string, error) { return "head", nil },
+			awaitWait: func(context.Context, time.Duration) error {
+				polls++
+				if polls == 1 {
+					client.setPR("42-work", func(pr *github.PR) {
+						pr.StatusCheckRollup = "failure"
+						pr.CIHasActiveChecks = true
+						// The only active check belongs to a different workflow;
+						// no workflow-run identity authorizes deferring diagnosis.
+						pr.CIActiveFailedWorkflowRunID = ""
+						pr.MergeStateStatus = "BLOCKED"
+					})
+					writeRespondedApprovalForCanonicalRequest(t, worktree, 17)
+				} else {
+					client.setPR("42-work", func(pr *github.PR) {
+						pr.StatusCheckRollup, pr.ReviewDecision, pr.MergeStateStatus = "success", "APPROVED", "CLEAN"
+					})
+				}
+				return nil
+			},
+		}),
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	result, err := o.RunBatch(ctx, Request{Issues: []int{42}, Branches: map[int]string{42: "42-work"}, RunTS: "261028221500", RunShortID: "ci-action-recovery", Retries: 3, Parallel: 1, PromptConfig: prompt.RenderConfig{ReviewCommandSet: true}})
+	if err != nil || result == nil || result.Runs[0].Status != "success" {
+		t.Fatalf("managed CI recovery did not complete: result=%+v error=%v launches=%d polls=%d actions=%v events=%+v", result, err, launches, polls, actions, log.snapshot())
+	}
+	if launches != 3 || polls != 2 || len(actions) != 2 || actions[0] != "POST /repos/owner/repo/actions/jobs/987654321/rerun" || actions[1] != "gh pr merge 17 --merge" {
+		t.Fatalf("expected recorded rerun then merge after two external polls: launches=%d polls=%d actions=%v", launches, polls, actions)
+	}
+	if countEventsByType(log.snapshot(), "run.retry") != 0 || countEventsByType(log.snapshot(), "run.await") < 2 {
+		t.Fatalf("CI recovery consumed generic retries or skipped capacity-releasing waits: %+v", log.snapshot())
+	}
+	states := events.ProjectRunStates(log.snapshot())
+	if len(states) != 1 || !states[0].IsTerminal() || states[0].Status() != "success" {
+		t.Fatalf("completion was not independently projected from the verified merged PR: %+v", states)
+	}
+	registered, err := readCIWaitRegistration(filepath.Join(worktree, ".sandman", "state", "17.ci_wait.json"))
+	if err != nil || registered.ExecutionID != "checks-rerun" {
+		t.Fatalf("confirmed replacement execution did not become the observed CI generation: registration=%+v error=%v", registered, err)
 	}
 }
 

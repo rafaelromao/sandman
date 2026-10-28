@@ -429,7 +429,7 @@ func TestRollupStateFromJSON_MixedPendingAndFailureIsFailure(t *testing.T) {
 }
 
 func TestCLIClient_FindPRByBranch_PreservesActiveSiblingsAlongsideFailure(t *testing.T) {
-	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":18,"state":"open","headRefName":"failure-branch","headRefOid":"source-head","statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"FAILURE","name":"opencode-canary"},{"__typename":"CheckRun","status":"IN_PROGRESS","name":"build-macos"}]}]`}}}
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":18,"state":"open","headRefName":"failure-branch","headRefOid":"source-head","statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"FAILURE","name":"opencode-canary","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},{"__typename":"CheckRun","status":"IN_PROGRESS","name":"build-macos","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"},{"__typename":"CheckRun","status":"IN_PROGRESS","name":"portal-browser","detailsUrl":"https://github.com/o/r/actions/runs/202/job/21"}]}]`}}}
 	client := &CLIClient{runner: runner}
 	pr, err := client.FindPRByBranch(context.Background(), "failure-branch")
 	if err != nil || pr == nil {
@@ -437,6 +437,59 @@ func TestCLIClient_FindPRByBranch_PreservesActiveSiblingsAlongsideFailure(t *tes
 	}
 	if pr.StatusCheckRollup != "failure" || !pr.CIHasActiveChecks {
 		t.Fatalf("mixed failed/pending rollup = (%q, active=%t), want failure plus active siblings", pr.StatusCheckRollup, pr.CIHasActiveChecks)
+	}
+	if pr.CIActiveFailedWorkflowRunID != "101" {
+		t.Fatalf("same-workflow rerun prerequisite = %q, want workflow run 101", pr.CIActiveFailedWorkflowRunID)
+	}
+}
+
+func TestCIRerunBlockedWorkflowRunIDRequiresFailedAndActiveJobsInSameRun(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "same workflow with unrelated active workflow",
+			raw: `[{"status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},` +
+				`{"status":"IN_PROGRESS","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"},` +
+				`{"status":"IN_PROGRESS","detailsUrl":"https://github.com/o/r/actions/runs/202/job/21"}]`,
+			want: "101",
+		},
+		{
+			name: "only unrelated active workflow",
+			raw: `[{"status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},` +
+				`{"status":"IN_PROGRESS","detailsUrl":"https://github.com/o/r/actions/runs/202/job/21"}]`,
+		},
+		{
+			name: "missing workflow identity",
+			raw: `[{"status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://example.test/check/11"},` +
+				`{"status":"IN_PROGRESS","detailsUrl":"https://example.test/check/12"}]`,
+		},
+		{
+			name: "lookalike host is not GitHub execution identity",
+			raw: `[{"status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://evil.example/github.com/o/r/actions/runs/101/job/11"},` +
+				`{"status":"IN_PROGRESS","detailsUrl":"https://evil.example/o/r/actions/runs/101/job/12"}]`,
+		},
+		{
+			name: "unknown check status is not active evidence",
+			raw: `[{"status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},` +
+				`{"status":"STALE","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"}]`,
+		},
+		{
+			name: "ambiguous multiple blocked workflows",
+			raw: `[{"status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},` +
+				`{"status":"IN_PROGRESS","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"},` +
+				`{"status":"COMPLETED","conclusion":"TIMED_OUT","detailsUrl":"https://github.com/o/r/actions/runs/202/job/21"},` +
+				`{"status":"QUEUED","detailsUrl":"https://github.com/o/r/actions/runs/202/job/22"}]`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := ciRerunBlockedWorkflowRunIDFromJSON([]byte(test.raw)); got != test.want {
+				t.Fatalf("blocked workflow run id = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 

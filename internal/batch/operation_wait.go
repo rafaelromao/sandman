@@ -96,3 +96,42 @@ func (s *lifecycleObserver) priorObservation(runID, branch, head string) (lifecy
 	extras["observation_error"] = "transport-unavailable; retaining established operation deadline"
 	return lifecycleVerdict{Action: lifecycleAwait, Evidence: extras}, true
 }
+
+func (s *lifecycleObserver) retainedCIRerunPrerequisite(runID, branch, head string, prNumber int, workflowRunID string) map[string]any {
+	if prNumber <= 0 || strings.TrimSpace(head) == "" || strings.TrimSpace(workflowRunID) == "" {
+		return nil
+	}
+	states, err := events.ReadRunStates(s.deps.eventLog)
+	if err != nil {
+		return nil
+	}
+	state, ok := states[runID]
+	if !ok || !state.IsAwaiting() || state.IsCapacityQueued() || state.AwaitEvent == nil || state.Branch() != branch {
+		return nil
+	}
+	ci, ok := state.AwaitEvent.Payload["ci_wait"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	data, err := json.Marshal(ci)
+	if err != nil {
+		return nil
+	}
+	var registration ciWaitRegistration
+	if json.Unmarshal(data, &registration) != nil || registration.HeadSHA != head || registration.PullRequest != prNumber {
+		return nil
+	}
+	if _, err := ciWaitEvidenceFromRegistration(registration, prNumber); err != nil {
+		return nil
+	}
+	prerequisite := map[string]any{
+		"protocol":        "ci-rerun-prerequisite/v1",
+		"pull_request":    prNumber,
+		"head_sha":        head,
+		"workflow_run_id": strings.TrimSpace(workflowRunID),
+	}
+	if !retainedCIRerunPrerequisiteMatches(state.AwaitEvent.Payload, prerequisite) {
+		return nil
+	}
+	return map[string]any{ciRerunPrerequisiteKey: prerequisite}
+}
