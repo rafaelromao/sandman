@@ -1068,7 +1068,7 @@ fi
 if [ "$1" = "api" ]; then
   case "$2" in
     */reviews) printf '%s\n' '[{"id":2001,"state":"APPROVED","submitted_at":"` + deadline.Add(time.Minute).Format(time.RFC3339Nano) + `","commit_id":"abc123","body":""}]' ;;
-    */comments) printf '%s\n' '[]' ;;
+    */comments) printf '%s\n' '[{"id":3001,"body":"Thanks.","created_at":"` + deadline.Add(-time.Minute).Format(time.RFC3339Nano) + `","commit_id":"abc123","path":"worker.go","line":1}]' ;;
     *) exit 2 ;;
   esac
   exit 0
@@ -1109,6 +1109,9 @@ exit 2
 	}
 	if len(classification.Formal.ApprovalEvidence) != 1 || string(classification.Formal.ApprovalEvidence[0].ID) != `"2001"` {
 		t.Fatalf("late formal approval evidence = %+v, want current-head approval 2001", classification.Formal.ApprovalEvidence)
+	}
+	if classification.ResponseCounts.Inline != 1 || len(classification.Sources.Inline) != 1 {
+		t.Fatalf("late approval response counts/sources = %d/%d, want retained pre-deadline inline acknowledgement", classification.ResponseCounts.Inline, len(classification.Sources.Inline))
 	}
 }
 

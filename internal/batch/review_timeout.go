@@ -1095,7 +1095,12 @@ func (h *reviewTimeoutHandoff) hasActionableFeedback() bool {
 	}
 	currentEvidence := false
 	for _, evidence := range h.Classification.RequestedChanges {
-		if !strings.EqualFold(stringValue(evidence, "state"), "CHANGES_REQUESTED") || !classificationTimestampInWindow(stringValue(evidence, "response_timestamp"), h.Request, h.Classification.WindowEnd) {
+		if !strings.EqualFold(stringValue(evidence, "state"), "CHANGES_REQUESTED") {
+			return false
+		}
+		withinRequest := classificationTimestampInWindow(stringValue(evidence, "response_timestamp"), h.Request, h.Classification.WindowEnd)
+		lateForRequest := validateLateRequestEvidence(evidence, "formal_reviews", h.Request, h.Classification.WindowEnd, h.Classification.TriggerKey)
+		if !withinRequest && !lateForRequest {
 			return false
 		}
 		if stringValue(evidence, "head_status") == "current" {

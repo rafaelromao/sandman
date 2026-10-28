@@ -519,6 +519,15 @@ validate_late_recheck() {
 			. as $evidence |
 			($evidence.source == $source) and ($evidence.late_approval != true) and
 			($evidence.id | type == "string" and length > 0) and
+			($source == "top_level" and $evidence.head_status == "current" or
+				($source != "top_level" and
+					(if $evidence.head_status == "current" then
+						($evidence.commit_id // $evidence.commitId // "") == $request.head_sha
+					elif $evidence.head_status == "stale" then
+						($evidence.commit_id // $evidence.commitId // "") != "" and ($evidence.commit_id // $evidence.commitId // "") != $request.head_sha
+					elif $evidence.head_status == "unknown" then
+						($evidence.commit_id // $evidence.commitId // "") == ""
+					else false end))) and
 			(($evidence.response_timestamp | timestamp_key) as $event |
 				($request.trigger_created_at | timestamp_key) as $start |
 				($request.deadline_unix_seconds | todateiso8601 | sub("Z$"; ".000000000Z")) as $deadline |
@@ -548,7 +557,7 @@ validate_late_recheck() {
 		($classification.sources.inline_comments | type == "array" and all(.[]; request_source("inline_comment"))) and
 		($classification.response_counts.top_level == ($classification.sources.top_level | length)) and
 		($classification.response_counts.formal_reviews == ($classification.sources.formal_reviews | length)) and
-		($classification.response_counts.inline_comments == 0) and
+		($classification.response_counts.inline_comments == ($classification.sources.inline_comments | length)) and
 		(($classification.formal.requested_changes | type == "array")) and
 		(($classification.formal.approval_evidence | type == "array")) and
 		(($classification.formal.approval_evidence | all(.[]; (late_source("formal_review") or request_source("formal_review")) and .state == "APPROVED" and .head_status == "current")))

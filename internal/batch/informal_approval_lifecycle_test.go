@@ -279,6 +279,18 @@ func TestInformalApprovalLifecycle_LateRequestedChangesRemainBlocking(t *testing
 	if source["id"] != "late-requested-changes" || source["late_request_evidence"] != true {
 		t.Fatalf("late requested-changes source = %v, want marked blocking source", source)
 	}
+
+	status, extras, handled := s.lifecycleDecisionForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+	if !handled || status != "resume" || extras["gate"] != gateActionableFeedback || extras["reason"] != actionableFeedbackReason {
+		t.Fatalf("late formal requested changes lifecycle = (%s, %v, %t), want actionable repair after canonical import", status, extras, handled)
+	}
+	registration, err = readFileReviewRegistration(paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number))
+	if err != nil {
+		t.Fatalf("read registration after late blocker import: %v", err)
+	}
+	if registration.State.ObservedState != "responded" || registration.State.Evidence == nil || registration.State.Evidence.ResponseCounts == nil || registration.State.Evidence.ResponseCounts.FormalReviews == nil || *registration.State.Evidence.ResponseCounts.FormalReviews != 1 {
+		t.Fatalf("late blocker was not canonically retained: state=%q evidence=%+v", registration.State.ObservedState, registration.State.Evidence)
+	}
 }
 
 func TestInformalApprovalLifecycle_LateCurrentHeadApprovalWaitsForCI(t *testing.T) {

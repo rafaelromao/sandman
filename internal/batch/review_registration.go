@@ -521,6 +521,7 @@ func preserveUnansweredReviewTimeout(existing *reviewRequestRegistration, observ
 		observed != nil && observed.Classification != nil &&
 		observed.Classification.RequestState == "active" &&
 		retainedReviewClassificationOutcome(observed.Classification, observed.Request) == retainedReviewPending &&
+		!observed.hasActionableFeedback() &&
 		len(observed.Classification.informalFeedbackEvidenceFor(observed.Request, observed.Classification.WindowEnd)) == 0
 }
 
