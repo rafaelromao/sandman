@@ -60,13 +60,14 @@ func (f *rowDriverExecutorFake) record(event string) {
 }
 
 type rowDriverGateFake struct {
-	acquires    int
-	releases    int
-	paused      bool
-	pauseChecks int
-	waitErr     error
-	clock       *rowDriverClockFake
-	events      *[]string
+	acquires      int
+	releases      int
+	paused        bool
+	pauseChecks   int
+	waitErr       error
+	clock         *rowDriverClockFake
+	events        *[]string
+	readyEvidence []map[string]any
 }
 
 func (f *rowDriverGateFake) Acquire(_ context.Context, _ bool, opportunity awaitOpportunity, observe func() (rowObservationOutcome, error), _ time.Duration) (awaitOpportunity, rowObservationOutcome, error) {
@@ -114,8 +115,17 @@ func (f *rowDriverGateFake) RecordQuotaPaused(RunSpec, ContinuationCursor, bool,
 	return nil
 }
 
-func (f *rowDriverGateFake) RecordReady(RunSpec, ContinuationCursor, map[string]any, time.Time) error {
-	f.record("record-ready")
+func (f *rowDriverGateFake) RecordReady(_ RunSpec, _ ContinuationCursor, evidence map[string]any, _ time.Time) error {
+	copy := make(map[string]any, len(evidence))
+	for key, value := range evidence {
+		copy[key] = value
+	}
+	f.readyEvidence = append(f.readyEvidence, copy)
+	if evidence["reason"] == "quota-probe-ready" {
+		f.record("record-quota-ready")
+	} else {
+		f.record("record-ready")
+	}
 	return nil
 }
 
@@ -213,18 +223,23 @@ func TestRowDriverAdvancesCursorWithoutChangingRunIdentity(t *testing.T) {
 	}
 }
 
-func TestRowDriverAcceptsAwaitResumeThenWaitsForQuotaAdmission(t *testing.T) {
+func TestRowDriverAcceptsAwaitResumeThenQuotaReadyAdmission(t *testing.T) {
 	var events []string
 	now := &rowDriverClockFake{now: time.Date(2026, time.October, 28, 12, 0, 0, 0, time.UTC)}
 	gates := &rowDriverGateFake{paused: true, clock: now, events: &events}
 	executor := &rowDriverExecutorFake{
 		started: true, events: &events,
 		result: AgentRunResult{IssueNumber: 42, RunID: "run-42", Branch: "42-fix", Status: "success"},
+		results: []AgentRunResult{
+			{IssueNumber: 42, RunID: "run-42", Branch: "42-fix", Status: "await", UsageLimitReached: true, UsageLimitDeadline: now.now.Add(usageLimitRetryWindow)},
+			{IssueNumber: 42, RunID: "run-42", Branch: "42-fix", Status: "success"},
+		},
 		observations: []lifecycleVerdict{
 			{Action: lifecycleAwait, Evidence: map[string]any{"gate": "review"}},
 			{Action: lifecycleResume, Evidence: map[string]any{"gate": "review"}},
 			{Action: lifecycleResume}, // quota wait observation
 			{Action: lifecycleResume}, // admission observation
+			{Action: lifecycleResume}, // quota probe observation
 		},
 	}
 	run := RunSpec{RunID: "run-42", IssueNumber: 42, BatchID: "batch-a", Branch: "42-fix", BaseBranch: "main"}
@@ -237,17 +252,22 @@ func TestRowDriverAcceptsAwaitResumeThenWaitsForQuotaAdmission(t *testing.T) {
 	if got.Result.Status != "success" || !got.Started {
 		t.Fatalf("Drive = %+v, want successful started result", got)
 	}
-	if got.Cursor.Mode != ModeContinue || got.Cursor.PreviousRunID != "" || got.Cursor.PreviousRunBatchID != "" {
-		t.Fatalf("terminal cursor = %+v, want unchanged continuation identity", got.Cursor)
+	if got.Cursor.Mode != ModeContinue || got.Cursor.PreviousRunID != run.RunID || got.Cursor.PreviousRunBatchID != run.BatchID || !got.Cursor.ReuseSession {
+		t.Fatalf("terminal cursor = %+v, want same-Run continuation identity", got.Cursor)
 	}
 	wantEvents := []string{
 		"observe", "persist-await", "checkpoint-await", "wait",
 		"observe", "record-ready", "checkpoint-ready",
 		"quota-check", "record-quota-paused", "checkpoint-ready", "quota-wait", "observe",
 		"quota-check", "acquire", "observe", "quota-check", "execute", "release",
+		"checkpoint-await", "wait", "record-quota-ready", "checkpoint-ready",
+		"observe", "acquire", "execute", "release",
 	}
 	if !reflect.DeepEqual(events, wantEvents) {
 		t.Fatalf("driver event order = %v, want %v", events, wantEvents)
+	}
+	if len(gates.readyEvidence) != 2 || gates.readyEvidence[1]["usage_limit_waited_seconds"] != int(usageLimitPollInterval/time.Second) || gates.readyEvidence[1]["usage_limit_probe"] != true {
+		t.Fatalf("ready evidence = %#v, want completed quota-poll evidence after await/resume", gates.readyEvidence)
 	}
 }
 
