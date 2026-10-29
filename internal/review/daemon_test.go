@@ -1080,7 +1080,7 @@ func TestDaemon_TickSkipsSeenComment(t *testing.T) {
 		},
 	}
 	runner := &capturedRequest{}
-	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+	d, buf, _ := newDaemonForTest(t, gh, runner, &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
 	})
@@ -1132,11 +1132,14 @@ func TestDaemon_TickSkipsSeenComment(t *testing.T) {
 		t.Fatalf("InvalidateSeenCache: %v", err)
 	}
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
-	if runner.calls != 0 {
-		t.Errorf("expected no batch runs, got %d", runner.calls)
+	for observation := 1; observation <= 3; observation++ {
+		tickAndWait(t, d, context.Background())
+		if runner.calls != 0 {
+			t.Errorf("observation %d: expected no batch runs, got %d", observation, runner.calls)
+		}
+		if strings.Contains(buf.String(), "already terminal-seen, skipping") {
+			t.Errorf("observation %d: terminal-seen comment should be skipped silently, got %q", observation, buf.String())
+		}
 	}
 }
 
@@ -2301,8 +2304,8 @@ func TestDaemon_ClaimFailureSkipsComment(t *testing.T) {
 	if runner.calls != 0 {
 		t.Errorf("expected no batch runs when comment is already claimed, got %d", runner.calls)
 	}
-	if !strings.Contains(buf.String(), "already claimed") && !strings.Contains(buf.String(), "already terminal-seen") {
-		t.Errorf("expected 'already claimed' or 'already terminal-seen' log, got %q", buf.String())
+	if strings.Contains(buf.String(), "already terminal-seen, skipping") {
+		t.Errorf("terminal-seen comment should be skipped silently, got %q", buf.String())
 	}
 }
 
