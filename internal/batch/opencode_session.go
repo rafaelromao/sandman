@@ -28,6 +28,7 @@ type opencodeSessionCapture struct {
 	sessionID       string
 	sessionNotFound bool
 	onSession       func()
+	ciRerunAction   *ciRerunActionEvidence
 }
 
 func (w *opencodeOutput) setSessionObserved(onSession func()) {
@@ -141,10 +142,70 @@ func (w *opencodeOutput) writeLine(line []byte, newline bool) error {
 		}
 	case "tool", "tool_use", "tool_result":
 		if tool := eventTool(event); tool != "" {
+			w.captureCIRerunAction(eventType, event, tool)
 			return w.writeText(formatToolEvent(event, tool, w.includeFilter))
 		}
 	}
 	return w.writeText(formatUnhandledOpenCodeJSON(value))
+}
+
+func (w *opencodeOutput) CIRerunAction() *ciRerunActionEvidence {
+	w.capture.mu.Lock()
+	defer w.capture.mu.Unlock()
+	if w.capture.ciRerunAction == nil {
+		return nil
+	}
+	evidence := *w.capture.ciRerunAction
+	return &evidence
+}
+
+func (w *opencodeOutput) captureCIRerunAction(eventType string, event map[string]any, tool string) {
+	if !strings.EqualFold(tool, "bash") && !strings.EqualFold(tool, "shell") {
+		return
+	}
+	if eventType != "tool_use" && eventType != "tool" && eventType != "tool_result" {
+		return
+	}
+	state := toolState(event)
+	status, _ := state["status"].(string)
+	if !strings.EqualFold(status, "completed") || toolErrorMessage(state) != "" {
+		return
+	}
+	input := toolInput(event)
+	command, _ := input["command"].(string)
+	if command == "" {
+		command, _ = input["cmd"].(string)
+	}
+	if evidence := ciRerunHelperToolEvidence(command, structuredToolText(state)); evidence != nil {
+		w.capture.mu.Lock()
+		w.capture.ciRerunAction = evidence
+		w.capture.mu.Unlock()
+	}
+}
+
+func structuredToolText(value any) string {
+	switch value := value.(type) {
+	case string:
+		return value
+	case []any:
+		var parts []string
+		for _, item := range value {
+			if text := structuredToolText(item); text != "" {
+				parts = append(parts, text)
+			}
+		}
+		return strings.Join(parts, "\n")
+	case map[string]any:
+		var parts []string
+		for _, key := range []string{"stdout", "output", "result", "content", "text"} {
+			if text := structuredToolText(value[key]); text != "" {
+				parts = append(parts, text)
+			}
+		}
+		return strings.Join(parts, "\n")
+	default:
+		return ""
+	}
 }
 
 // formatUnhandledOpenCodeJSON keeps valid protocol additions readable while
@@ -496,6 +557,9 @@ func toolState(event map[string]any) map[string]any {
 		if state, ok := part["state"].(map[string]any); ok {
 			return state
 		}
+	}
+	if state, ok := event["state"].(map[string]any); ok {
+		return state
 	}
 	return nil
 }

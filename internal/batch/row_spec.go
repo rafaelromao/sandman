@@ -308,6 +308,10 @@ func (e *runExecutor) ObserveRun(ctx context.Context, run RunSpec, cursor Contin
 	return e.observeRowLifecycle(ctx, run.row(cursor))
 }
 
+func (e *runExecutor) ObserveAwaitingRun(ctx context.Context, run RunSpec, cursor ContinuationCursor) lifecycleVerdict {
+	return e.observeAwaitingRowLifecycle(ctx, run.row(cursor))
+}
+
 func (e *runExecutor) PersistAwait(ctx context.Context, run RunSpec, cursor ContinuationCursor, evidence map[string]any) error {
 	return e.persistObservedAwait(ctx, run.row(cursor), evidence)
 }

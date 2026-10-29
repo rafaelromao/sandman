@@ -141,6 +141,7 @@ func charNetIssueAbort(t *testing.T) (context.Context, Request, *Orchestrator, *
 		},
 		prs: map[string]*github.PR{"42-fix-bug": mergedPR("42-fix-bug", "")},
 	}
+	runnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond, running: make(chan struct{})}
 	cfg := &config.Config{
 		Agent:       "test-agent",
 		Sandbox:     "worktree",
@@ -152,12 +153,12 @@ func charNetIssueAbort(t *testing.T) (context.Context, Request, *Orchestrator, *
 	}
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, el,
 		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{process: makeFakeProcess(), workDir: filepath.Join(dir, "wt", "42")}}),
-		WithRunnableFactory(&blockingRunnableFactory{runnable: &blockingRunnable{delayAfterCancel: 100 * time.Millisecond}}),
+		WithRunnableFactory(&blockingRunnableFactory{runnable: runnable}),
 	)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
-		time.Sleep(50 * time.Millisecond)
+		<-runnable.running
 		cancel()
 	}()
 	req := Request{Issues: []int{42}, RunTS: orchTestRunTS, RunShortID: orchTestRunShortID}
@@ -218,6 +219,7 @@ func charNetPromptOnlyAbort(t *testing.T) (context.Context, Request, *Orchestrat
 
 	el := &events.JSONLLogger{Path: filepath.Join(dir, "events.jsonl")}
 	client := &fakeGitHubClient{}
+	runnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond, running: make(chan struct{})}
 	cfg := &config.Config{
 		Agent:       "test-agent",
 		Sandbox:     "worktree",
@@ -229,12 +231,12 @@ func charNetPromptOnlyAbort(t *testing.T) (context.Context, Request, *Orchestrat
 	}
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, el,
 		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{process: makeFakeProcess(), workDir: filepath.Join(dir, "wt", "prompt-only")}}),
-		WithRunnableFactory(&blockingRunnableFactory{runnable: &blockingRunnable{delayAfterCancel: 100 * time.Millisecond}}),
+		WithRunnableFactory(&blockingRunnableFactory{runnable: runnable}),
 	)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
-		time.Sleep(50 * time.Millisecond)
+		<-runnable.running
 		cancel()
 	}()
 	req := Request{

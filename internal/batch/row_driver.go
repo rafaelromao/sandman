@@ -9,7 +9,7 @@ import (
 
 type rowDriverExecutor interface {
 	ExecuteRun(context.Context, RunSpec, ContinuationCursor) (AgentRunResult, bool)
-	ObserveRun(context.Context, RunSpec, ContinuationCursor) lifecycleVerdict
+	ObserveAwaitingRun(context.Context, RunSpec, ContinuationCursor) lifecycleVerdict
 	PersistAwait(context.Context, RunSpec, ContinuationCursor, map[string]any) error
 	FinishObserved(context.Context, RunSpec, ContinuationCursor, lifecycleVerdict) AgentRunResult
 }
@@ -200,7 +200,7 @@ func (d *rowDriver) drive(ctx context.Context, run RunSpec, state *rowDriverStat
 			break
 		}
 		if state.cursor.quotaAllowance.probing() {
-			verdict := d.executor.ObserveRun(ctx, run, state.cursor)
+			verdict := d.executor.ObserveAwaitingRun(ctx, run, state.cursor)
 			if ctx.Err() != nil {
 				abortRequested = true
 				break
@@ -225,7 +225,7 @@ func (d *rowDriver) drive(ctx context.Context, run RunSpec, state *rowDriverStat
 			}
 		}
 		if state.awaiting && !state.ready && !state.cursor.quotaAllowance.probing() {
-			verdict := d.executor.ObserveRun(ctx, run, state.cursor)
+			verdict := d.executor.ObserveAwaitingRun(ctx, run, state.cursor)
 			if ctx.Err() != nil {
 				abortRequested = true
 				break
@@ -269,7 +269,7 @@ func (d *rowDriver) drive(ctx context.Context, run RunSpec, state *rowDriverStat
 			var observe func() (rowObservationOutcome, error)
 			if state.awaiting {
 				observe = func() (rowObservationOutcome, error) {
-					verdict := d.executor.ObserveRun(ctx, run, state.cursor)
+					verdict := d.executor.ObserveAwaitingRun(ctx, run, state.cursor)
 					if ctx.Err() != nil {
 						return rowObservationOutcome{}, ctx.Err()
 					}
@@ -306,7 +306,7 @@ func (d *rowDriver) drive(ctx context.Context, run RunSpec, state *rowDriverStat
 		var observe func() (rowObservationOutcome, error)
 		if state.awaiting && state.ready && !state.cursor.quotaAllowance.probing() {
 			observe = func() (rowObservationOutcome, error) {
-				verdict := d.executor.ObserveRun(ctx, run, state.cursor)
+				verdict := d.executor.ObserveAwaitingRun(ctx, run, state.cursor)
 				if ctx.Err() != nil {
 					return rowObservationOutcome{}, ctx.Err()
 				}

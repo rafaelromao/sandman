@@ -3,6 +3,7 @@ package batch
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -71,6 +72,58 @@ func TestClaudeOutput_RendersStreamJSONReadably(t *testing.T) {
 	}
 	if parser.UsageLimitReached() {
 		t.Fatal("successful stream reported a usage limit")
+	}
+}
+
+func TestClaudeOutput_CapturesRerunEvidenceFromMatchedBashToolResult(t *testing.T) {
+	stdout, _ := newClaudeOutputs()
+	var parser outputParser = stdout
+	var output bytes.Buffer
+	parser.setDestination(&output)
+	reporter, ok := parser.(ciRerunActionReporter)
+	if !ok {
+		t.Fatal("Claude output parser does not expose trusted helper invocation evidence")
+	}
+	evidence := ciRerunActionEvidence{
+		Protocol: "ci-rerun/v1", State: "waiting", Reason: "workflow-still-running",
+		Repository: "owner/repo", PullRequest: 17, SourceHeadSHA: "source-head",
+		TestedSHA: "tested-merge-sha", Diagnosis: "transient-provider-timeout",
+		RunID: "101", JobID: "987654321", JobName: "opencode-canary", ObservedAttempt: 2,
+	}
+	receipt, err := json.Marshal(evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := `sh "$HOME/.agents/skills/sandman/implement/ci-rerun-v1.sh" --repository owner/repo --pull-request 17 --head-sha source-head --tested-sha tested-merge-sha --run-id 101 --job-id 987654321 --diagnosis transient-provider-timeout`
+	writeRecord := func(record map[string]any) {
+		t.Helper()
+		data, err := json.Marshal(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := parser.Write(append(data, '\n')); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeRecord(map[string]any{"type": "assistant", "message": map[string]any{"content": []any{map[string]any{"type": "text", "text": string(receipt)}}}})
+	if got := reporter.CIRerunAction(); got != nil {
+		t.Fatalf("ordinary assistant text authorized a helper wait: %+v", got)
+	}
+	writeRecord(map[string]any{"type": "assistant", "message": map[string]any{"content": []any{
+		map[string]any{"type": "tool_use", "id": "rerun-1", "name": "Bash", "input": map[string]any{"command": command}},
+	}}})
+	writeRecord(map[string]any{"type": "user", "message": map[string]any{"content": []any{
+		map[string]any{"type": "tool_result", "tool_use_id": "other-call", "content": string(receipt)},
+	}}})
+	if got := reporter.CIRerunAction(); got != nil {
+		t.Fatalf("unmatched tool result authorized a helper wait: %+v", got)
+	}
+	writeRecord(map[string]any{"type": "user", "message": map[string]any{"content": []any{
+		map[string]any{"type": "tool_result", "tool_use_id": "rerun-1", "content": string(receipt)},
+	}}})
+	got := reporter.CIRerunAction()
+	if got == nil || got.RunID != evidence.RunID || got.JobID != evidence.JobID || got.State != evidence.State {
+		t.Fatalf("matched helper invocation evidence = %+v, want %+v", got, evidence)
 	}
 }
 

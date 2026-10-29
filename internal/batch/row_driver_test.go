@@ -10,16 +10,17 @@ import (
 )
 
 type rowDriverExecutorFake struct {
-	gotRun       RunSpec
-	gotCursor    ContinuationCursor
-	result       AgentRunResult
-	started      bool
-	results      []AgentRunResult
-	observations []lifecycleVerdict
-	onObserve    func()
-	events       *[]string
-	observeCalls int
-	executeCalls int
+	gotRun            RunSpec
+	gotCursor         ContinuationCursor
+	result            AgentRunResult
+	started           bool
+	results           []AgentRunResult
+	observations      []lifecycleVerdict
+	onObserve         func()
+	events            *[]string
+	observeCalls      int
+	executeCalls      int
+	awaitObserveCalls int
 }
 
 func (f *rowDriverExecutorFake) ExecuteRun(_ context.Context, run RunSpec, cursor ContinuationCursor) (AgentRunResult, bool) {
@@ -46,6 +47,11 @@ func (f *rowDriverExecutorFake) ObserveRun(context.Context, RunSpec, Continuatio
 	verdict := f.observations[0]
 	f.observations = f.observations[1:]
 	return verdict
+}
+
+func (f *rowDriverExecutorFake) ObserveAwaitingRun(ctx context.Context, run RunSpec, cursor ContinuationCursor) lifecycleVerdict {
+	f.awaitObserveCalls++
+	return f.ObserveRun(ctx, run, cursor)
 }
 
 func (f *rowDriverExecutorFake) PersistAwait(context.Context, RunSpec, ContinuationCursor, map[string]any) error {
@@ -273,6 +279,9 @@ func TestRowDriverAcceptsAwaitResumeThenQuotaReadyAdmission(t *testing.T) {
 
 	if got.Result.Status != "success" || !got.Started {
 		t.Fatalf("Drive = %+v, want successful started result", got)
+	}
+	if executor.awaitObserveCalls == 0 {
+		t.Fatal("row driver did not use the awaiting-row observation path")
 	}
 	if got.Cursor.Mode != ModeContinue || got.Cursor.PreviousRunID != run.RunID || got.Cursor.PreviousRunBatchID != run.BatchID || !got.Cursor.ReuseSession {
 		t.Fatalf("terminal cursor = %+v, want same-Run continuation identity", got.Cursor)
