@@ -179,6 +179,7 @@ func TestLifecycleObservation_FailedCIWithActiveSiblingKeepsRuntimePrerequisiteW
 			StatusCheckRollup: "failure", CIHasActiveChecks: true, CIActiveFailedWorkflowRunID: "101",
 			CIActiveFailedWorkflowRunFailedCheckNames: []string{"opencode-canary"},
 			CIActiveFailedWorkflowRunFailedChecks:     failedCIChecks("101", "opencode-canary"), MergeStateStatus: "BLOCKED",
+			CIActiveFailedWorkflowRunCheckNames: []string{"opencode-canary", "build-macos"},
 		}},
 	}
 	log := &spyEventLog{}
@@ -248,6 +249,7 @@ func TestLifecycleObservation_FailedCIWithActiveSiblingKeepsRuntimePrerequisiteW
 	client.prs[gateTestBranch].CIActiveFailedWorkflowRunID = "101"
 	client.prs[gateTestBranch].CIActiveFailedWorkflowRunFailedCheckNames = []string{"opencode-canary", "quality-gate"}
 	client.prs[gateTestBranch].CIActiveFailedWorkflowRunFailedChecks = failedCIChecks("101", "opencode-canary", "quality-gate")
+	client.prs[gateTestBranch].CIActiveFailedWorkflowRunCheckNames = []string{"opencode-canary", "quality-gate", "build-macos"}
 	client.prs[gateTestBranch].CIExecutionID = "checks-rerun-attempt-2"
 	request.CIRerunAction = captureCIRerunActionFromOpenCodeToolEvent(t,
 		`sh "$HOME/.agents/skills/sandman/implement/ci-rerun-v1.sh" --repository owner/repo --pull-request 17 --head-sha current-sha --tested-sha tested-merge-sha --run-id 101 --job-id 987654321 --diagnosis transient-provider-timeout`,
@@ -331,6 +333,7 @@ func TestLifecycleObservation_RerunReceiptDoesNotMaskSameWorkflowFailure(t *test
 			StatusCheckRollup: "failure", CIHasActiveChecks: true, CIActiveFailedWorkflowRunID: "101",
 			CIActiveFailedWorkflowRunFailedCheckNames: []string{"opencode-canary", "source-tests"},
 			CIActiveFailedWorkflowRunFailedChecks:     failedCIChecks("101", "opencode-canary", "source-tests"),
+			CIActiveFailedWorkflowRunCheckNames:       []string{"opencode-canary", "source-tests", "build-macos"},
 			MergeStateStatus:                          "BLOCKED",
 		}},
 	}
@@ -362,8 +365,9 @@ func TestAwaitingRowLifecycle_ReobservesOnlyTheRetainedWorkflowPrerequisite(t *t
 	}
 	prerequisite := map[string]any{
 		"protocol": "ci-rerun-prerequisite/v1", "repository": "owner/repo", "pull_request": 17, "head_sha": "current-sha", "workflow_run_id": "101",
-		"failed_check_names": []string{"opencode-canary"},
-		"failed_checks":      failedCIChecks("101", "opencode-canary"),
+		"failed_check_names":   []string{"opencode-canary"},
+		"failed_checks":        failedCIChecks("101", "opencode-canary"),
+		"workflow_check_names": []string{"opencode-canary", "build-macos"},
 	}
 	action := map[string]any{
 		"protocol": "ci-rerun/v1", "state": "waiting", "reason": "workflow-still-running", "repository": "owner/repo",
@@ -384,6 +388,7 @@ func TestAwaitingRowLifecycle_ReobservesOnlyTheRetainedWorkflowPrerequisite(t *t
 			StatusCheckRollup: "failure", CIHasActiveChecks: true, CIActiveFailedWorkflowRunID: "101",
 			CIActiveFailedWorkflowRunFailedCheckNames: []string{"opencode-canary"},
 			CIActiveFailedWorkflowRunFailedChecks:     failedCIChecks("101", "opencode-canary"), MergeStateStatus: "BLOCKED",
+			CIActiveFailedWorkflowRunCheckNames: []string{"opencode-canary", "build-macos"},
 		}},
 	}
 	e := &runExecutor{deps: runDeps{
@@ -419,7 +424,8 @@ func TestCIRerunActionEvidenceIsCurrentAttemptAndMatchesWorkflowIdentity(t *test
 	prerequisite := map[string]any{
 		"protocol": "ci-rerun-prerequisite/v1", "repository": "owner/repo", "pull_request": 17,
 		"head_sha": "current-sha", "workflow_run_id": "101", "failed_check_names": []any{"opencode-canary", "quality-gate"},
-		"failed_checks": failedCIChecks("101", "opencode-canary", "quality-gate"),
+		"failed_checks":        failedCIChecks("101", "opencode-canary", "quality-gate"),
+		"workflow_check_names": []any{"opencode-canary", "quality-gate", "build-macos"},
 	}
 	command := `sh "$HOME/.agents/skills/sandman/implement/ci-rerun-v1.sh" --repository owner/repo --pull-request 17 --head-sha current-sha --tested-sha tested-merge-sha --run-id 101 --job-id 987654321 --diagnosis transient-provider-timeout`
 	current := ciRerunHelperToolEvidence(command, string(line))
@@ -441,6 +447,15 @@ func TestCIRerunActionEvidenceIsCurrentAttemptAndMatchesWorkflowIdentity(t *test
 	}
 	if current.matchesPrerequisite(withoutExecutionLinks) {
 		t.Fatal("name-only legacy evidence authorized waiting without failed-check execution identities")
+	}
+	withoutWorkflowNames := make(map[string]any, len(prerequisite)-1)
+	for key, value := range prerequisite {
+		if key != "workflow_check_names" {
+			withoutWorkflowNames[key] = value
+		}
+	}
+	if current.matchesPrerequisite(withoutWorkflowNames) {
+		t.Fatal("helper evidence authorized waiting without names for all workflow executions")
 	}
 	duplicateIdentity := make(map[string]any, len(prerequisite))
 	for key, value := range prerequisite {
@@ -500,14 +515,16 @@ func TestCIRerunActionEvidenceDoesNotMaskIndependentFailureInSameWorkflow(t *tes
 	prerequisite := map[string]any{
 		"protocol": "ci-rerun-prerequisite/v1", "repository": "owner/repo", "pull_request": 17,
 		"head_sha": "current-sha", "workflow_run_id": "101",
-		"failed_check_names": []any{"opencode-canary", "source-tests"},
-		"failed_checks":      failedCIChecks("101", "opencode-canary", "source-tests"),
+		"failed_check_names":   []any{"opencode-canary", "source-tests"},
+		"failed_checks":        failedCIChecks("101", "opencode-canary", "source-tests"),
+		"workflow_check_names": []any{"opencode-canary", "source-tests", "build-macos"},
 	}
 	if action.matchesPrerequisite(prerequisite) {
 		t.Fatal("rerun receipt for opencode-canary authorized waiting while source-tests was independently failed")
 	}
 	prerequisite["failed_check_names"] = []any{"opencode-canary", "quality-gate"}
 	prerequisite["failed_checks"] = failedCIChecks("101", "opencode-canary", "quality-gate")
+	prerequisite["workflow_check_names"] = []any{"opencode-canary", "quality-gate", "build-macos"}
 	if !action.matchesPrerequisite(prerequisite) {
 		t.Fatal("dependent quality-gate failure should remain covered by the selected-job rerun")
 	}
@@ -521,6 +538,7 @@ func TestLifecycleObservation_RerunReceiptDoesNotMaskDuplicateSameNameFailures(t
 			StatusCheckRollup: "failure", CIHasActiveChecks: true, CIActiveFailedWorkflowRunID: "101",
 			CIActiveFailedWorkflowRunFailedCheckNames: []string{"opencode-canary", "opencode-canary"},
 			CIActiveFailedWorkflowRunFailedChecks:     failedCIChecks("101", "opencode-canary", "opencode-canary"),
+			CIActiveFailedWorkflowRunCheckNames:       []string{"build-macos", "opencode-canary", "opencode-canary"},
 			MergeStateStatus:                          "BLOCKED",
 		}},
 	}
@@ -561,6 +579,25 @@ func TestLifecycleDecisionRejectsDuplicateNamesFromParsedGitHubRollup(t *testing
 		retainedReviewEvidence{payload: map[string]any{ciRerunActionKey: action.payload()}}, false, "success", true)
 	if decision.action != lifecycleResume || !decision.ciRepairRequired {
 		t.Fatalf("database job ID for one same-name check authorized waiting for both parsed failures: %+v", decision)
+	}
+}
+
+func TestLifecycleDecisionDoesNotAwaitForActiveAndFailedSameNameChecks(t *testing.T) {
+	client := github.NewCLIClient(github.WithRunner(lifecycleCLIResultRunner{output: `[{"number":17,"state":"open","headRefName":"42-fix","headRefOid":"current-sha","statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"TIMED_OUT","name":"opencode-canary","detailsUrl":"https://github.com/owner/repo/actions/runs/101/job/14"},{"__typename":"CheckRun","status":"IN_PROGRESS","name":"opencode-canary","detailsUrl":"https://github.com/owner/repo/actions/runs/101/job/11"},{"__typename":"CheckRun","status":"IN_PROGRESS","name":"build-macos","detailsUrl":"https://github.com/owner/repo/actions/runs/101/job/12"}]}]`}))
+	client.RepoOverride = "owner/repo"
+	pr, err := client.FindPRByBranch(t.Context(), "42-fix")
+	if err != nil || pr == nil {
+		t.Fatalf("parse current PR check rollup: pr=%+v err=%v", pr, err)
+	}
+	action := ciRerunActionEvidence{
+		Protocol: "ci-rerun/v1", State: "waiting", Reason: "recovery-already-active",
+		Repository: "owner/repo", PullRequest: 17, SourceHeadSHA: "current-sha", TestedSHA: "tested-merge-sha",
+		Diagnosis: "transient-provider-timeout", RunID: "101", JobID: "987654321", JobName: "opencode-canary", ObservedAttempt: 1,
+	}
+	decision := decideRecoverableLifecycle(lifecycleGatePending, pr, "current-sha", "owner/repo",
+		retainedReviewEvidence{payload: map[string]any{ciRerunActionKey: action.payload()}}, false, "success", true)
+	if decision.action != lifecycleResume || !decision.ciRepairRequired {
+		t.Fatalf("receipt for active opencode-canary authorized waiting for the failed same-name check: %+v", decision)
 	}
 }
 

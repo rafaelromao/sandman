@@ -480,6 +480,10 @@ func TestCLIClient_FindPRByBranch_PreservesMultipleFailedChecksInRerunWorkflow(t
 	if !reflect.DeepEqual(pr.CIActiveFailedWorkflowRunFailedCheckNames, want) {
 		t.Fatalf("failed check identities = %v, want %v", pr.CIActiveFailedWorkflowRunFailedCheckNames, want)
 	}
+	wantWorkflowNames := []string{"build-macos", "opencode-canary", "source-tests"}
+	if !reflect.DeepEqual(pr.CIActiveFailedWorkflowRunCheckNames, wantWorkflowNames) {
+		t.Fatalf("all workflow check names = %v, want %v", pr.CIActiveFailedWorkflowRunCheckNames, wantWorkflowNames)
+	}
 }
 
 func TestCLIClient_FindPRByBranch_PreservesDuplicateFailedCheckNamesInRerunWorkflow(t *testing.T) {
@@ -492,6 +496,10 @@ func TestCLIClient_FindPRByBranch_PreservesDuplicateFailedCheckNamesInRerunWorkf
 	want := []string{"opencode-canary", "opencode-canary"}
 	if !reflect.DeepEqual(pr.CIActiveFailedWorkflowRunFailedCheckNames, want) {
 		t.Fatalf("failed check multiplicity = %v, want %v", pr.CIActiveFailedWorkflowRunFailedCheckNames, want)
+	}
+	wantWorkflowNames := []string{"build-macos", "opencode-canary", "opencode-canary"}
+	if !reflect.DeepEqual(pr.CIActiveFailedWorkflowRunCheckNames, wantWorkflowNames) {
+		t.Fatalf("all workflow check names = %v, want %v", pr.CIActiveFailedWorkflowRunCheckNames, wantWorkflowNames)
 	}
 	if len(pr.CIActiveFailedWorkflowRunFailedChecks) != 2 {
 		t.Fatalf("failed check execution identities = %v, want both checks", pr.CIActiveFailedWorkflowRunFailedChecks)
@@ -527,9 +535,14 @@ func TestCIRerunBlockedWorkflowRunIDRequiresFailedAndActiveJobsInSameRun(t *test
 		{
 			name: "same workflow with unrelated active workflow",
 			raw: `[{"status":"COMPLETED","conclusion":"FAILURE","name":"opencode-canary","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},` +
-				`{"status":"IN_PROGRESS","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"},` +
+				`{"status":"IN_PROGRESS","name":"build-macos","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"},` +
 				`{"status":"IN_PROGRESS","detailsUrl":"https://github.com/o/r/actions/runs/202/job/21"}]`,
 			want: "101",
+		},
+		{
+			name: "unnamed same-workflow execution is ambiguous",
+			raw: `[{"status":"COMPLETED","conclusion":"FAILURE","name":"opencode-canary","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},` +
+				`{"status":"IN_PROGRESS","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"}]`,
 		},
 		{
 			name: "separate completed failure remains actionable",

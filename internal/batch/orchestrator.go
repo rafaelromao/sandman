@@ -3220,9 +3220,15 @@ type runSession struct {
 	// lifecycle relaunch (or entry resume). A decision that repeats it after
 	// the relaunch is a stall.
 	lastResumeSignature string
+	// lastResumeRound is the request/head identity for the in-session relaunch
+	// allowance. It is separate from the stall signature because CI stalls
+	// intentionally ignore review-request response changes.
+	lastResumeRound string
 	// pendingResumeSignature is the signature of the latest resume decision;
 	// it becomes lastResumeSignature when the session relaunches on it.
 	pendingResumeSignature string
+	// pendingResumeRound becomes lastResumeRound when the selected resume launches.
+	pendingResumeRound string
 	// decisionPRHead is the pull-request head the latest lifecycle decision
 	// observed; it identifies progress in a resume signature.
 	decisionPRHead string
@@ -4275,6 +4281,7 @@ loop:
 						// failure; a resume here is a relaunch to perform.
 						if resumePrompt, resume := s.resumePromptFromGate(ctx, wt, branch, runID, verdict); resume {
 							s.lastResumeSignature = s.pendingResumeSignature
+							s.lastResumeRound = s.pendingResumeRound
 							s.reuseSession = true
 							s.previousRunIDs = map[int]string{s.issueNumber: runID}
 							s.previousRunBatchIDs = map[int]string{s.issueNumber: s.batchID}

@@ -56,6 +56,10 @@ type PR struct {
 	// display name and provider execution link. Names are not unique, so callers
 	// must not use a display-name match alone to identify a failed job.
 	CIActiveFailedWorkflowRunFailedChecks []CIFailedCheck
+	// CIActiveFailedWorkflowRunCheckNames preserves every named check execution
+	// from the identified workflow run, including active siblings. A rerun wait
+	// must reject a selected job name that is ambiguous across that full set.
+	CIActiveFailedWorkflowRunCheckNames []string
 	// CIExecutionID identifies the observed check executions independently of
 	// their status. A rerun can change this identity without changing the head.
 	CIExecutionID      string

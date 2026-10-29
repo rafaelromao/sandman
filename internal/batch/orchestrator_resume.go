@@ -171,6 +171,7 @@ func (s *runSession) prepareEntryResume(ctx context.Context, wt sandbox.Sandbox,
 	evidence := s.resumeEvidenceFor(ctx, branch, verdict.Evidence)
 	// The entry launch acts on this evidence: a repeat after it is a stall.
 	s.lastResumeSignature = s.pendingResumeSignature
+	s.lastResumeRound = s.pendingResumeRound
 	taskContent, _, _ := ReadTaskContent(filepath.Join(wt.WorkDir(), ".sandman", "task.md"))
 	s.renderCfg.TaskPrompt = s.resumePromptFor(taskContent, evidence, s.renderCfg.ReviewTimeout, verdict.ciRepairRequired)
 	return AgentRunResult{}, false, false

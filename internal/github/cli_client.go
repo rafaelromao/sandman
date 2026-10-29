@@ -304,6 +304,7 @@ func ciHasActiveChecksFromJSON(raw json.RawMessage) bool {
 type ciRerunWorkflowEvidence struct {
 	RunID        string
 	FailedChecks []CIFailedCheck
+	CheckNames   []string
 }
 
 // ciRerunBlockedWorkflowFromJSON identifies the containing workflow run that
@@ -318,6 +319,8 @@ func ciRerunBlockedWorkflowFromJSON(raw json.RawMessage) *ciRerunWorkflowEvidenc
 	}
 	type runState struct {
 		failedChecks []CIFailedCheck
+		checkNames   []string
+		unknownName  bool
 		active       bool
 	}
 	runs := make(map[string]runState)
@@ -339,8 +342,13 @@ func ciRerunBlockedWorkflowFromJSON(raw json.RawMessage) *ciRerunWorkflowEvidenc
 			continue
 		}
 		state := runs[match[1]]
+		name := strings.TrimSpace(check.Name)
+		if name == "" {
+			state.unknownName = true
+		} else {
+			state.checkNames = append(state.checkNames, name)
+		}
 		if failed {
-			name := strings.TrimSpace(check.Name)
 			if name == "" {
 				unidentifiedFailure = true
 				continue
@@ -368,7 +376,12 @@ func ciRerunBlockedWorkflowFromJSON(raw json.RawMessage) *ciRerunWorkflowEvidenc
 		if blocked != nil {
 			return nil
 		}
-		blocked = &ciRerunWorkflowEvidence{RunID: runID, FailedChecks: state.failedChecks}
+		if state.unknownName {
+			// The selected job name cannot be proven unique when another
+			// execution in this workflow has no name in the rollup.
+			return nil
+		}
+		blocked = &ciRerunWorkflowEvidence{RunID: runID, FailedChecks: state.failedChecks, CheckNames: state.checkNames}
 	}
 	if blocked == nil {
 		return nil
@@ -384,6 +397,7 @@ func ciRerunBlockedWorkflowFromJSON(raw json.RawMessage) *ciRerunWorkflowEvidenc
 	sort.Slice(blocked.FailedChecks, func(i, j int) bool {
 		return blocked.FailedChecks[i].DetailsURL < blocked.FailedChecks[j].DetailsURL
 	})
+	sort.Strings(blocked.CheckNames)
 	return blocked
 }
 
@@ -766,9 +780,11 @@ func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, err
 	var activeFailedWorkflowRunID string
 	var activeFailedWorkflowFailedCheckNames []string
 	var activeFailedWorkflowFailedChecks []CIFailedCheck
+	var activeFailedWorkflowCheckNames []string
 	if rerunEvidence != nil {
 		activeFailedWorkflowRunID = rerunEvidence.RunID
 		activeFailedWorkflowFailedChecks = append([]CIFailedCheck(nil), rerunEvidence.FailedChecks...)
+		activeFailedWorkflowCheckNames = append([]string(nil), rerunEvidence.CheckNames...)
 		activeFailedWorkflowFailedCheckNames = make([]string, 0, len(activeFailedWorkflowFailedChecks))
 		for _, check := range activeFailedWorkflowFailedChecks {
 			activeFailedWorkflowFailedCheckNames = append(activeFailedWorkflowFailedCheckNames, check.Name)
@@ -797,6 +813,7 @@ func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, err
 		CIActiveFailedWorkflowRunID: activeFailedWorkflowRunID,
 		CIActiveFailedWorkflowRunFailedCheckNames: activeFailedWorkflowFailedCheckNames,
 		CIActiveFailedWorkflowRunFailedChecks:     activeFailedWorkflowFailedChecks,
+		CIActiveFailedWorkflowRunCheckNames:       activeFailedWorkflowCheckNames,
 		CIExecutionID:                             ciExecutionIDFromJSON(payload.StatusCheckRollup),
 	}, nil
 }

@@ -173,7 +173,11 @@ func (e ciRerunActionEvidence) matchesPrerequisite(prerequisite map[string]any) 
 	if !ok {
 		return false
 	}
-	return ciRerunFailuresCoveredBySelectedJob(failedChecks, e.JobName)
+	workflowCheckNames, ok := ciRerunWorkflowCheckNames(prerequisite["workflow_check_names"])
+	if !ok {
+		return false
+	}
+	return ciRerunFailuresCoveredBySelectedJob(failedChecks, workflowCheckNames, e.JobName)
 }
 
 func ciRerunFailedChecks(value any) ([]github.CIFailedCheck, bool) {
@@ -219,9 +223,49 @@ func ciRerunFailedChecks(value any) ([]github.CIFailedCheck, bool) {
 	return checks, true
 }
 
-func ciRerunFailuresCoveredBySelectedJob(failedChecks []github.CIFailedCheck, selectedJobName string) bool {
+func ciRerunWorkflowCheckNames(value any) ([]string, bool) {
+	var names []string
+	switch values := value.(type) {
+	case []string:
+		names = append(names, values...)
+	case []any:
+		if len(values) == 0 {
+			return nil, false
+		}
+		for _, value := range values {
+			name, ok := value.(string)
+			if !ok {
+				return nil, false
+			}
+			names = append(names, name)
+		}
+	default:
+		return nil, false
+	}
+	if len(names) == 0 {
+		return nil, false
+	}
+	for index := range names {
+		names[index] = strings.TrimSpace(names[index])
+		if names[index] == "" {
+			return nil, false
+		}
+	}
+	return names, true
+}
+
+func ciRerunFailuresCoveredBySelectedJob(failedChecks []github.CIFailedCheck, workflowCheckNames []string, selectedJobName string) bool {
 	selectedJobName = strings.TrimSpace(selectedJobName)
-	if selectedJobName == "" || len(failedChecks) == 0 {
+	if selectedJobName == "" || len(failedChecks) == 0 || len(workflowCheckNames) == 0 {
+		return false
+	}
+	selectedWorkflowChecks := 0
+	for _, name := range workflowCheckNames {
+		if strings.EqualFold(strings.TrimSpace(name), selectedJobName) {
+			selectedWorkflowChecks++
+		}
+	}
+	if selectedWorkflowChecks != 1 {
 		return false
 	}
 	selectedFailures := 0

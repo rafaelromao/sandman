@@ -218,6 +218,7 @@ func TestCIRerunPendingWaitFailureWithUnrelatedActivityRequiresRecordedRepairAnd
 				pr.CIActiveFailedWorkflowRunID = "12345"
 				pr.CIActiveFailedWorkflowRunFailedCheckNames = []string{"opencode-canary", "quality-gate"}
 				pr.CIActiveFailedWorkflowRunFailedChecks = failedCIChecks("12345", "opencode-canary", "quality-gate")
+				pr.CIActiveFailedWorkflowRunCheckNames = []string{"build-macos", "opencode-canary", "quality-gate"}
 				pr.MergeStateStatus = "BLOCKED"
 			})
 		case 3:
@@ -333,6 +334,8 @@ func TestManagedCIRerunCancellationBeforePostAbortsWithoutRelaunch(t *testing.T)
 		prs: map[string]*github.PR{"42-work": {
 			Number: 17, State: "open", HeadRefName: "42-work", HeadRefOid: "head", Body: "Closes #42",
 			StatusCheckRollup: "failure", CIHasActiveChecks: true, CIActiveFailedWorkflowRunID: "12345", CIExecutionID: "checks-current",
+			CIActiveFailedWorkflowRunFailedChecks: []github.CIFailedCheck{{Name: "opencode-canary", DetailsURL: "https://github.com/owner/repo/actions/runs/12345/job/11"}},
+			CIActiveFailedWorkflowRunCheckNames:   []string{"opencode-canary", "build-macos"},
 		}},
 	}}
 	cfg := &config.Config{Agent: "test", Sandbox: "worktree", WorktreeDir: filepath.Join(root, "worktrees"), Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test": {Command: "true"}}}
@@ -496,6 +499,7 @@ func TestConfirmedCIRerunReceiptSurvivesOrdinaryPendingWait(t *testing.T) {
 	client.prs["42-work"].CIActiveFailedWorkflowRunID = "101"
 	client.prs["42-work"].CIActiveFailedWorkflowRunFailedCheckNames = []string{"opencode-canary", "quality-gate"}
 	client.prs["42-work"].CIActiveFailedWorkflowRunFailedChecks = failedCIChecks("101", "opencode-canary", "quality-gate")
+	client.prs["42-work"].CIActiveFailedWorkflowRunCheckNames = []string{"build-macos", "opencode-canary", "quality-gate"}
 	client.prs["42-work"].MergeStateStatus = "BLOCKED"
 	reobserved := e.observeAwaitingRowLifecycle(context.Background(), row)
 	if reobserved.Action != lifecycleAwait || reobserved.Evidence["gate"] != string(lifecycleGatePending) || reobserved.ciRepairRequired {

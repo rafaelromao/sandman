@@ -154,7 +154,9 @@ func (o *lifecycleObserver) applyContinuity(branch, runID string, verdict lifecy
 		}
 	}
 	signature := resumeSignature(signatureEvidence, o.decisionPRHead)
+	allowanceRound := repairRound(verdict.Evidence, o.decisionPRHead)
 	o.pendingResumeSignature = signature
+	o.pendingResumeRound = allowanceRound
 	if readErr != nil {
 		prior := stalledResumes(verdict.Evidence)
 		if verdict.ImplementorWork {
@@ -179,7 +181,7 @@ func (o *lifecycleObserver) applyContinuity(branch, runID string, verdict lifecy
 		verdict.Evidence = stalledAwaitExtras(verdict.Evidence, signature, stalled)
 		return verdict
 	}
-	if o.lastResumeSignature != "" && repairRound(signature) != repairRound(o.lastResumeSignature) {
+	if o.lastResumeRound != "" && allowanceRound != o.lastResumeRound {
 		o.resumeCount = 0
 	}
 	gate, _ := verdict.Evidence["gate"].(string)

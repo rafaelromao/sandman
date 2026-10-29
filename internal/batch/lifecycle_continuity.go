@@ -200,17 +200,23 @@ func latestStalledResumes(log events.EventLog, runID string) ([]string, error) {
 }
 
 // repairRound identifies the request and head whose relaunch allowance is in
-// use. A changed CI execution advances failed-CI evidence but does not create
-// another request/head allowance.
-func repairRound(signature string) string {
-	var decoded struct {
-		Head    string `json:"head"`
-		Trigger any    `json:"trigger"`
+// use. It is deliberately independent from resumeSignature: a CI stall ignores
+// review response changes, but that must not create a new request/head budget.
+func repairRound(evidence map[string]any, liveHead string) string {
+	head := strings.ToLower(strings.TrimSpace(liveHead))
+	if head == "" {
+		head = strings.ToLower(strings.TrimSpace(stringEvidence(evidence, "head_sha")))
 	}
-	if json.Unmarshal([]byte(signature), &decoded) != nil {
-		return signature
+	var trigger any
+	if request, ok := evidence["review_request"]; ok {
+		if data, err := json.Marshal(request); err == nil {
+			var object map[string]any
+			if json.Unmarshal(data, &object) == nil {
+				trigger = object["trigger_id"]
+			}
+		}
 	}
-	return fmt.Sprintf("%s|%v", decoded.Head, decoded.Trigger)
+	return fmt.Sprintf("%s|%v", head, trigger)
 }
 
 // exhaustionTerminal reports resume reasons whose exhausted remediation is a

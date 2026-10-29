@@ -61,6 +61,7 @@ func TestContinuityDecision_AllowanceIsPerRepairRound(t *testing.T) {
 	extras := map[string]any{"gate": gateActionableFeedback, "reason": actionableFeedbackReason}
 	s := &runSession{decisionPRHead: "head-1"}
 	s.lastResumeSignature = resumeSignature(extras, "head-1")
+	s.lastResumeRound = repairRound(extras, "head-1")
 	s.resumeCount = s.resumeCapFor()
 	verdict := applyContinuityForTest(s, "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: extras})
 	if verdict.Action != lifecycleFailure {
@@ -71,6 +72,34 @@ func TestContinuityDecision_AllowanceIsPerRepairRound(t *testing.T) {
 	verdict = applyContinuityForTest(s, "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: extras})
 	if verdict.Action != lifecycleResume || s.resumeCount != 0 {
 		t.Fatalf("formal changes on a new head = %v (count %d), want a fresh repair round", verdict.Action, s.resumeCount)
+	}
+}
+
+func TestContinuityDecision_AllowanceDoesNotResetAcrossGatesForSameRequest(t *testing.T) {
+	request := map[string]any{"trigger_id": "request-1"}
+	ci := map[string]any{"gate": "ci-failure", "reason": "CI_FAILURE", "review_request": request}
+	merge := map[string]any{"gate": gateReadyToMerge, "reason": "READY_TO_MERGE", "review_request": request}
+	for _, tc := range []struct {
+		name, priorGate string
+		prior, current  map[string]any
+	}{
+		{name: "CI to merge", priorGate: "ci-failure", prior: ci, current: merge},
+		{name: "merge to CI", priorGate: gateReadyToMerge, prior: merge, current: ci},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := &runSession{
+				decisionPRHead:      "head-1",
+				lastResumeSignature: resumeSignature(tc.prior, "head-1"),
+				lastResumeRound:     repairRound(tc.prior, "head-1"),
+				resumeCount:         defaultAwaitResumeMax,
+			}
+			verdict := applyContinuityForTest(session, "42-work", "run-gate-transition", lifecycleVerdict{
+				Action: lifecycleResume, Evidence: cloneLifecycleExtras(tc.current),
+			})
+			if verdict.Action != lifecycleAwait || session.resumeCount != defaultAwaitResumeMax {
+				t.Fatalf("same request/head transition reset the exhausted relaunch allowance: verdict=%+v count=%d", verdict, session.resumeCount)
+			}
+		})
 	}
 }
 
