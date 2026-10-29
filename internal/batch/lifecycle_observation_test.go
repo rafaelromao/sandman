@@ -247,6 +247,35 @@ func TestLifecycleObservation_FailedCIWithActiveSiblingKeepsRuntimePrerequisiteW
 	}
 }
 
+func TestLifecycleObservation_RerunReceiptDoesNotMaskUnidentifiedErrorContext(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+		prs: map[string]*github.PR{gateTestBranch: {
+			Number: 17, State: "open", HeadRefOid: "current-sha", CIExecutionID: "checks-with-error-context",
+			StatusCheckRollup: "failure", CIHasActiveChecks: true, MergeStateStatus: "BLOCKED",
+		}},
+	}
+	log := &spyEventLog{}
+	session := &runSession{
+		issueNumber: 42,
+		deps:        runDeps{githubClient: client, eventLog: log, errorLog: io.Discard},
+		opts: runSessionOptions{
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
+	}
+	request := lifecycleObservationRequest{
+		WorkDir: t.TempDir(), Branch: gateTestBranch, RunID: "run-error-context", HostPathsReady: true,
+		AttemptStatus: "success", AfterAgentAttempt: true,
+		CIRerunAction: captureCIRerunActionFromOpenCodeToolEvent(t,
+			`sh "$HOME/.agents/skills/sandman/implement/ci-rerun-v1.sh" --repository owner/repo --pull-request 17 --head-sha current-sha --tested-sha tested-merge-sha --run-id 101 --job-id 987654321 --diagnosis transient-provider-timeout`,
+			`{"protocol":"ci-rerun/v1","state":"waiting","reason":"workflow-still-running","repository":"owner/repo","pull_request":17,"source_head_sha":"current-sha","tested_sha":"tested-merge-sha","diagnosis":"transient-provider-timeout","run_id":"101","job_id":"987654321","observed_attempt":1}`),
+	}
+	verdict := newLifecycleObserver(session).Observe(t.Context(), request)
+	if verdict.Action != lifecycleResume || verdict.Evidence["reason"] != "CI_FAILURE" || !verdict.ciRepairRequired {
+		t.Fatalf("receipt for the active workflow masked an unidentified error context: %+v", verdict)
+	}
+}
+
 func TestLifecycleObservation_FailedCIWithUnrelatedActiveWorkflowResumesImplementation(t *testing.T) {
 	workDir := t.TempDir()
 	client := &fakeGitHubClient{

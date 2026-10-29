@@ -484,6 +484,12 @@ func TestCIRerunBlockedWorkflowRunIDRequiresFailedAndActiveJobsInSameRun(t *test
 				`{"__typename":"StatusContext","state":"FAILURE","context":"legacy-failing-check"} ]`,
 		},
 		{
+			name: "unidentified error remains actionable",
+			raw: `[ {"status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},` +
+				`{"status":"IN_PROGRESS","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"},` +
+				`{"__typename":"StatusContext","state":"ERROR","context":"legacy-error-check"} ]`,
+		},
+		{
 			name: "only unrelated active workflow",
 			raw: `[{"status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},` +
 				`{"status":"IN_PROGRESS","detailsUrl":"https://github.com/o/r/actions/runs/202/job/21"}]`,

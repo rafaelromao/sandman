@@ -319,7 +319,7 @@ func ciRerunBlockedWorkflowRunIDFromJSON(raw json.RawMessage) string {
 		status := strings.ToUpper(strings.TrimSpace(check.Status))
 		conclusion := strings.ToUpper(strings.TrimSpace(check.Conclusion))
 		checkState := strings.ToUpper(strings.TrimSpace(check.State))
-		failed := checkState == "FAILURE" || (status == "COMPLETED" && conclusion != "" &&
+		failed := (checkState == "FAILURE" || checkState == "ERROR") || (status == "COMPLETED" && conclusion != "" &&
 			conclusion != "SUCCESS" && conclusion != "SKIPPED" && conclusion != "NEUTRAL")
 		if len(match) != 2 {
 			if failed {
