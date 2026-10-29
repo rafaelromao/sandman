@@ -1725,11 +1725,6 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) (operationErr erro
 	if err != nil {
 		return err
 	}
-	for key, disposition := range selection.Dispositions {
-		if disposition == triggerDispositionTerminal {
-			d.logf("comment %s already terminal-seen, skipping", key)
-		}
-	}
 	for _, trigger := range selection.Answered {
 		d.logf("PR #%d request comment %s has a later daemon review response %s; skipping", prNumber, trigger.Trigger.comment.ID, trigger.Response.ID)
 	}
