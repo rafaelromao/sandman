@@ -29,9 +29,11 @@ const (
 )
 
 // resumeSignature identifies what a lifecycle relaunch is asked to act on:
-// the selected gate and reason, the live pull-request head, the review
-// request and the identities of its responses. CI rollup and merge state are
-// excluded so a flapping check cannot make the same evidence look new.
+// the selected gate and reason, the live pull-request head, and (where
+// relevant) the review request and identities of its responses. A failed CI
+// repair is scoped to its check execution instead: review delivery or approval
+// does not advance that work. CI rollup and merge state are excluded so a
+// flapping check cannot make the same evidence look new.
 func resumeSignature(extras map[string]any, liveHead string) string {
 	gate, _ := extras["gate"].(string)
 	reason, _ := extras["reason"].(string)
@@ -40,7 +42,11 @@ func resumeSignature(extras map[string]any, liveHead string) string {
 		head, _ = extras["head_sha"].(string)
 	}
 	signature := map[string]any{"gate": gate, "reason": reason, "head": strings.ToLower(strings.TrimSpace(head))}
-	if request, ok := extras["review_request"]; ok {
+	if gate == "ci-failure" && reason == "CI_FAILURE" {
+		if executionID := strings.TrimSpace(stringEvidence(extras, "ci_execution_id")); executionID != "" {
+			signature["ci_execution_id"] = executionID
+		}
+	} else if request, ok := extras["review_request"]; ok {
 		var decoded any
 		if data, err := json.Marshal(request); err == nil && json.Unmarshal(data, &decoded) == nil {
 			if object, ok := decoded.(map[string]any); ok {
@@ -196,11 +202,17 @@ func latestStalledResumes(log events.EventLog, runID string) ([]string, error) {
 // repairRound identifies the request and head a resume signature acts on.
 func repairRound(signature string) string {
 	var decoded struct {
-		Head    string `json:"head"`
-		Trigger any    `json:"trigger"`
+		Gate          string `json:"gate"`
+		Reason        string `json:"reason"`
+		Head          string `json:"head"`
+		Trigger       any    `json:"trigger"`
+		CIExecutionID string `json:"ci_execution_id"`
 	}
 	if json.Unmarshal([]byte(signature), &decoded) != nil {
 		return signature
+	}
+	if decoded.Gate == "ci-failure" && decoded.Reason == "CI_FAILURE" {
+		return fmt.Sprintf("%s|ci:%s", decoded.Head, decoded.CIExecutionID)
 	}
 	return fmt.Sprintf("%s|%v", decoded.Head, decoded.Trigger)
 }
@@ -238,11 +250,38 @@ func (s *runSession) ownedWorkHold(extras map[string]any, signature string, stal
 
 func containsSignature(list []string, signature string) bool {
 	for _, existing := range list {
-		if existing == signature {
+		if resumeSignaturesEquivalent(existing, signature) {
 			return true
 		}
 	}
 	return false
+}
+
+// resumeSignaturesEquivalent preserves historical stalled signatures while
+// comparing failed-CI work by its actual identity. Older signatures included
+// review trigger/response identities; those fields never advance CI repair.
+// If an older signature has no CI execution identity, retain its hold
+// conservatively because there is no baseline from which to prove progress.
+func resumeSignaturesEquivalent(left, right string) bool {
+	if left == right {
+		return true
+	}
+	var a, b struct {
+		Gate          string `json:"gate"`
+		Reason        string `json:"reason"`
+		Head          string `json:"head"`
+		CIExecutionID string `json:"ci_execution_id"`
+	}
+	if json.Unmarshal([]byte(left), &a) != nil || json.Unmarshal([]byte(right), &b) != nil {
+		return false
+	}
+	if a.Gate != "ci-failure" || b.Gate != "ci-failure" || a.Reason != "CI_FAILURE" || b.Reason != "CI_FAILURE" {
+		return false
+	}
+	if a.Head != b.Head {
+		return false
+	}
+	return a.CIExecutionID == "" || b.CIExecutionID == "" || a.CIExecutionID == b.CIExecutionID
 }
 
 // Lifecycle failure reasons, classified for the AFK-continuity guard. A

@@ -74,6 +74,51 @@ func TestContinuityDecision_AllowanceIsPerRepairRound(t *testing.T) {
 	}
 }
 
+func TestContinuityDecision_StalledCIFailureTracksExecutionNotReviewResponse(t *testing.T) {
+	prior := map[string]any{
+		"gate": "ci-failure", "reason": "CI_FAILURE", "ci_execution_id": "checks-1",
+		"review_request": map[string]any{
+			"trigger_id":     "trigger-1",
+			"formal_reviews": []any{map[string]any{"id": "review-1"}},
+		},
+	}
+	priorSignature := resumeSignature(prior, "head-1")
+	log := &spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-ci", Payload: map[string]any{"branch": "42-work"}},
+		{Type: "run.await", RunID: "run-ci", Payload: map[string]any{
+			"await": true, "resume_stalled": true, stalledResumesKey: []any{priorSignature},
+		}},
+	}}
+	current := map[string]any{
+		"gate": "ci-failure", "reason": "CI_FAILURE",
+		"review_request": map[string]any{
+			"trigger_id":        "trigger-1",
+			"informal_feedback": []any{map[string]any{"id": "approval-1"}},
+		},
+	}
+	session := &runSession{
+		deps:                runDeps{eventLog: log},
+		decisionPRHead:      "head-1",
+		lastResumeSignature: priorSignature,
+	}
+	unchangedExecution := applyContinuityForTest(session, "42-work", "run-ci", lifecycleVerdict{
+		Action: lifecycleResume, Evidence: current, ciRepairRequired: true, ciExecutionID: "checks-1",
+	})
+	if unchangedExecution.Action != lifecycleAwait {
+		t.Fatalf("approval appearing on the same failed CI execution = %s, want await", unchangedExecution.status())
+	}
+
+	newExecution := cloneLifecycleExtras(current)
+	session.lastResumeSignature = priorSignature
+	session.resumeCount = defaultAwaitResumeMax
+	changedExecution := applyContinuityForTest(session, "42-work", "run-ci", lifecycleVerdict{
+		Action: lifecycleResume, Evidence: newExecution, ciRepairRequired: true, ciExecutionID: "checks-2",
+	})
+	if changedExecution.Action != lifecycleResume || session.resumeCount != 0 {
+		t.Fatalf("new failed CI execution = %s (resume count %d), want resume with a fresh execution allowance", changedExecution.status(), session.resumeCount)
+	}
+}
+
 // A continuity wait has no operation deadline. Its schedule checkpoint still
 // names a recovery operation, and restart discovery re-enters it within the
 // ordinary ownerless grace instead of dropping it for a missing deadline.

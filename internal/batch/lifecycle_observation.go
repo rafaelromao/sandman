@@ -26,6 +26,7 @@ type lifecycleVerdict struct {
 	Kind             lifecycleVerdictKind
 	ImplementorWork  bool
 	ciRepairRequired bool
+	ciExecutionID    string
 }
 
 type lifecycleVerdictKind uint8
@@ -143,6 +144,14 @@ func (o *lifecycleObserver) applyContinuity(branch, runID string, verdict lifecy
 	if verdict.ImplementorWork {
 		signatureEvidence = cloneLifecycleExtras(verdict.Evidence)
 		signatureEvidence["gate"] = gateOwnedWorkRequired
+	} else if verdict.ciRepairRequired && stringEvidence(verdict.Evidence, "reason") == "CI_FAILURE" {
+		signatureEvidence = cloneLifecycleExtras(verdict.Evidence)
+		signatureEvidence["gate"] = "ci-failure"
+		if verdict.ciExecutionID != "" {
+			signatureEvidence["ci_execution_id"] = verdict.ciExecutionID
+		} else {
+			delete(signatureEvidence, "ci_execution_id")
+		}
 	}
 	signature := resumeSignature(signatureEvidence, o.decisionPRHead)
 	o.pendingResumeSignature = signature

@@ -105,6 +105,7 @@ type lifecycleDecision struct {
 	completionFailure bool
 	needMergeFacts    bool
 	ciRepairRequired  bool
+	ciExecutionID     string
 	extras            map[string]any
 	// failureExtras carries structured terminal-failure evidence (reason,
 	// next_action) for policy failures. It never carries "gate" or "await":
@@ -315,6 +316,7 @@ func decideRecoverableLifecycle(gate lifecycleGate, pr *github.PR, headSHA, repo
 		}
 		decision := lifecycleRemediationDecision("ci-failure", "CI_FAILURE", "inspect current-head CI with gh pr checks and repair the failing checks", pr, evidence.payload)
 		decision.ciRepairRequired = true
+		decision.ciExecutionID = strings.TrimSpace(pr.CIExecutionID)
 		return decision
 	}
 	if attemptNeedsRetry(attemptStatus) &&
@@ -888,7 +890,10 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 		extras["next_action"] = nextAction
 		return lifecycleVerdict{Action: lifecycleResume, Evidence: extras}
 	}
-	return lifecycleVerdict{Action: decision.action, Evidence: extras, ciRepairRequired: decision.ciRepairRequired}
+	return lifecycleVerdict{
+		Action: decision.action, Evidence: extras,
+		ciRepairRequired: decision.ciRepairRequired, ciExecutionID: decision.ciExecutionID,
+	}
 }
 
 func (s *runSession) lifecyclePRForBranch(ctx context.Context, branch string) (*github.PR, error) {

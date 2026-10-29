@@ -56,13 +56,14 @@ func TestLifecycleObservation_VerifiedMergeWinsOverRetainedReview(t *testing.T) 
 func TestLifecycleObservation_VerdictTable(t *testing.T) {
 	now := time.Unix(2_000, 0).UTC()
 	tests := []struct {
-		name       string
-		pr         *github.PR
-		prepare    func(*testing.T, string)
-		wantAction lifecycleAction
-		wantKind   lifecycleVerdictKind
-		wantGate   string
-		wantWait   string
+		name              string
+		pr                *github.PR
+		prepare           func(*testing.T, string)
+		wantAction        lifecycleAction
+		wantKind          lifecycleVerdictKind
+		wantGate          string
+		wantWait          string
+		wantCIExecutionID string
 	}{
 		{
 			name: "await current-head CI with execution identity and deadline",
@@ -84,10 +85,11 @@ func TestLifecycleObservation_VerdictTable(t *testing.T) {
 		},
 		{
 			name: "resume current-head CI remediation",
-			pr: &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha", StatusCheckRollup: "failure",
+			pr: &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha", CIExecutionID: "failed-checks-2", StatusCheckRollup: "failure",
 				MergeStateStatus: "CLEAN"},
-			wantAction: lifecycleResume,
-			wantGate:   "ci-failure",
+			wantAction:        lifecycleResume,
+			wantGate:          "ci-failure",
+			wantCIExecutionID: "failed-checks-2",
 		},
 		{
 			name: "resume approved clean PR for merge work",
@@ -147,6 +149,9 @@ func TestLifecycleObservation_VerdictTable(t *testing.T) {
 			}
 			if tt.wantGate != "" && stringEvidence(verdict.Evidence, "gate") != tt.wantGate {
 				t.Fatalf("verdict gate = %q, want %q; evidence=%#v", stringEvidence(verdict.Evidence, "gate"), tt.wantGate, verdict.Evidence)
+			}
+			if tt.wantCIExecutionID != "" && verdict.ciExecutionID != tt.wantCIExecutionID {
+				t.Fatalf("CI execution identity = %q, want %q", verdict.ciExecutionID, tt.wantCIExecutionID)
 			}
 			if tt.wantWait != "" {
 				wait, ok := verdict.Evidence[tt.wantWait].(map[string]any)
