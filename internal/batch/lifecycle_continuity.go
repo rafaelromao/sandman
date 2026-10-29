@@ -199,20 +199,16 @@ func latestStalledResumes(log events.EventLog, runID string) ([]string, error) {
 	return stalledResumes(state.AwaitEvent.Payload), nil
 }
 
-// repairRound identifies the request and head a resume signature acts on.
+// repairRound identifies the request and head whose relaunch allowance is in
+// use. A changed CI execution advances failed-CI evidence but does not create
+// another request/head allowance.
 func repairRound(signature string) string {
 	var decoded struct {
-		Gate          string `json:"gate"`
-		Reason        string `json:"reason"`
-		Head          string `json:"head"`
-		Trigger       any    `json:"trigger"`
-		CIExecutionID string `json:"ci_execution_id"`
+		Head    string `json:"head"`
+		Trigger any    `json:"trigger"`
 	}
 	if json.Unmarshal([]byte(signature), &decoded) != nil {
 		return signature
-	}
-	if decoded.Gate == "ci-failure" && decoded.Reason == "CI_FAILURE" {
-		return fmt.Sprintf("%s|ci:%s", decoded.Head, decoded.CIExecutionID)
 	}
 	return fmt.Sprintf("%s|%v", decoded.Head, decoded.Trigger)
 }

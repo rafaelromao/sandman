@@ -84,10 +84,14 @@ One continuity decision applies these rules to every lifecycle decision;
 the attempt loop, entry continuation and runtime observation consume its
 action unchanged. A resume signature identifies what a relaunch acts on: gate, reason, live
 head, request trigger and the request's response identities, excluding CI
-rollup and merge state. A wait entered because a relaunch stalled records its
+rollup and merge state. Failed-CI repair is scoped to its identified check
+execution instead of review trigger/response identities: review delivery or
+approval alone does not make unchanged failed-CI work new. A wait entered
+because a relaunch stalled records its
 signatures in `run.await` (`stalled_resumes`). Observation reads them through
 the event fold, so a restart keeps waiting instead of relaunching on the same
-evidence; a new head, request, response or gate proceeds. Newly actionable merge
+evidence; a changed CI execution is new evidence and may resume within the
+existing request/head relaunch allowance. Newly actionable merge
 conflicts must not be hidden behind unchanged failed CI: conflict remediation
 takes priority, allowing integration to produce a new head
 whose checks and review must be revalidated. A continuity hold
@@ -96,7 +100,8 @@ resumes when the gate changes, and its schedule checkpoint uses the stable
 `hold:<RunID>` recovery identity, so restart discovery re-enters it within the
 ordinary ownerless grace. The relaunch allowance belongs to one repair round
 (request and head): a new head or request starts a fresh allowance, and the
-entry launch counts as the round's first relaunch. An unreadable event log
+entry launch counts as the round's first relaunch; a changed CI execution does
+not reset that allowance. An unreadable event log
 fails closed into a wait. Exhausted remediation of unusable CI wait state
 (`CI_WAIT_STATE_ERROR`) stays terminal.
 

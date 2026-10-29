@@ -108,14 +108,29 @@ func TestContinuityDecision_StalledCIFailureTracksExecutionNotReviewResponse(t *
 		t.Fatalf("approval appearing on the same failed CI execution = %s, want await", unchangedExecution.status())
 	}
 
-	newExecution := cloneLifecycleExtras(current)
-	session.lastResumeSignature = priorSignature
-	session.resumeCount = defaultAwaitResumeMax
-	changedExecution := applyContinuityForTest(session, "42-work", "run-ci", lifecycleVerdict{
-		Action: lifecycleResume, Evidence: newExecution, ciRepairRequired: true, ciExecutionID: "checks-2",
+	newExecutionSession := &runSession{
+		deps:                runDeps{eventLog: log},
+		decisionPRHead:      "head-1",
+		lastResumeSignature: priorSignature,
+	}
+	changedExecution := applyContinuityForTest(newExecutionSession, "42-work", "run-ci", lifecycleVerdict{
+		Action: lifecycleResume, Evidence: cloneLifecycleExtras(current), ciRepairRequired: true, ciExecutionID: "checks-2",
 	})
-	if changedExecution.Action != lifecycleResume || session.resumeCount != 0 {
-		t.Fatalf("new failed CI execution = %s (resume count %d), want resume with a fresh execution allowance", changedExecution.status(), session.resumeCount)
+	if changedExecution.Action != lifecycleResume {
+		t.Fatalf("new failed CI execution with allowance available = %s, want resume", changedExecution.status())
+	}
+
+	exhaustedSession := &runSession{
+		deps:                runDeps{eventLog: log},
+		decisionPRHead:      "head-1",
+		lastResumeSignature: priorSignature,
+		resumeCount:         defaultAwaitResumeMax,
+	}
+	exhaustedExecution := applyContinuityForTest(exhaustedSession, "42-work", "run-ci", lifecycleVerdict{
+		Action: lifecycleResume, Evidence: cloneLifecycleExtras(current), ciRepairRequired: true, ciExecutionID: "checks-2",
+	})
+	if exhaustedExecution.Action != lifecycleAwait || exhaustedSession.resumeCount != defaultAwaitResumeMax {
+		t.Fatalf("new failed CI execution after allowance exhaustion = %s (resume count %d), want await without resetting the request/head allowance", exhaustedExecution.status(), exhaustedSession.resumeCount)
 	}
 }
 
