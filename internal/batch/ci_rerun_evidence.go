@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+
+	"github.com/rafaelromao/sandman/internal/github"
 )
 
 const ciRerunActionKey = "ci_rerun_action"
@@ -167,51 +169,69 @@ func (e ciRerunActionEvidence) matchesPrerequisite(prerequisite map[string]any) 
 	if !e.matchesPullRequest(e.PullRequest, repository, head) || e.RunID != strings.TrimSpace(workflowRunID) {
 		return false
 	}
-	failedNames, ok := ciRerunFailedCheckNames(prerequisite["failed_check_names"])
+	failedChecks, ok := ciRerunFailedChecks(prerequisite["failed_checks"])
 	if !ok {
 		return false
 	}
-	return ciRerunFailuresCoveredBySelectedJob(failedNames, e.JobName)
+	return ciRerunFailuresCoveredBySelectedJob(failedChecks, e.JobName)
 }
 
-func ciRerunFailedCheckNames(value any) ([]string, bool) {
-	switch names := value.(type) {
-	case []string:
-		if len(names) == 0 {
-			return nil, false
-		}
-		return names, true
+func ciRerunFailedChecks(value any) ([]github.CIFailedCheck, bool) {
+	var checks []github.CIFailedCheck
+	switch values := value.(type) {
+	case []github.CIFailedCheck:
+		checks = append(checks, values...)
 	case []any:
-		if len(names) == 0 {
+		if len(values) == 0 {
 			return nil, false
 		}
-		result := make([]string, 0, len(names))
-		for _, value := range names {
-			name, ok := value.(string)
-			if !ok || strings.TrimSpace(name) == "" {
+		checks = make([]github.CIFailedCheck, 0, len(values))
+		for _, value := range values {
+			item, ok := value.(map[string]any)
+			if !ok {
 				return nil, false
 			}
-			result = append(result, strings.TrimSpace(name))
+			name, nameOK := item["name"].(string)
+			detailsURL, urlOK := item["details_url"].(string)
+			if !nameOK || !urlOK {
+				return nil, false
+			}
+			checks = append(checks, github.CIFailedCheck{Name: name, DetailsURL: detailsURL})
 		}
-		return result, true
 	default:
 		return nil, false
 	}
+	if len(checks) == 0 {
+		return nil, false
+	}
+	identities := make(map[string]struct{}, len(checks))
+	for index := range checks {
+		checks[index].Name = strings.TrimSpace(checks[index].Name)
+		checks[index].DetailsURL = strings.TrimSpace(checks[index].DetailsURL)
+		if checks[index].Name == "" || checks[index].DetailsURL == "" {
+			return nil, false
+		}
+		if _, duplicate := identities[checks[index].DetailsURL]; duplicate {
+			return nil, false
+		}
+		identities[checks[index].DetailsURL] = struct{}{}
+	}
+	return checks, true
 }
 
-func ciRerunFailuresCoveredBySelectedJob(failedNames []string, selectedJobName string) bool {
+func ciRerunFailuresCoveredBySelectedJob(failedChecks []github.CIFailedCheck, selectedJobName string) bool {
 	selectedJobName = strings.TrimSpace(selectedJobName)
-	if selectedJobName == "" || len(failedNames) == 0 {
+	if selectedJobName == "" || len(failedChecks) == 0 {
 		return false
 	}
-	selectedFailed := false
-	for _, name := range failedNames {
-		name = strings.TrimSpace(name)
-		if name == "" {
+	selectedFailures := 0
+	for _, check := range failedChecks {
+		name := strings.TrimSpace(check.Name)
+		if name == "" || strings.TrimSpace(check.DetailsURL) == "" {
 			return false
 		}
 		if strings.EqualFold(name, selectedJobName) {
-			selectedFailed = true
+			selectedFailures++
 			continue
 		}
 		if strings.EqualFold(name, "quality-gate") {
@@ -219,7 +239,7 @@ func ciRerunFailuresCoveredBySelectedJob(failedNames []string, selectedJobName s
 		}
 		return false
 	}
-	return selectedFailed
+	return selectedFailures == 1
 }
 
 func (e ciRerunActionEvidence) matchesPullRequest(pullRequest int, repository, head string) bool {

@@ -217,6 +217,7 @@ func TestCIRerunPendingWaitFailureWithUnrelatedActivityRequiresRecordedRepairAnd
 				pr.CIHasActiveChecks = true
 				pr.CIActiveFailedWorkflowRunID = "12345"
 				pr.CIActiveFailedWorkflowRunFailedCheckNames = []string{"opencode-canary", "quality-gate"}
+				pr.CIActiveFailedWorkflowRunFailedChecks = failedCIChecks("12345", "opencode-canary", "quality-gate")
 				pr.MergeStateStatus = "BLOCKED"
 			})
 		case 3:
@@ -494,6 +495,7 @@ func TestConfirmedCIRerunReceiptSurvivesOrdinaryPendingWait(t *testing.T) {
 	client.prs["42-work"].CIHasActiveChecks = true
 	client.prs["42-work"].CIActiveFailedWorkflowRunID = "101"
 	client.prs["42-work"].CIActiveFailedWorkflowRunFailedCheckNames = []string{"opencode-canary", "quality-gate"}
+	client.prs["42-work"].CIActiveFailedWorkflowRunFailedChecks = failedCIChecks("101", "opencode-canary", "quality-gate")
 	client.prs["42-work"].MergeStateStatus = "BLOCKED"
 	reobserved := e.observeAwaitingRowLifecycle(context.Background(), row)
 	if reobserved.Action != lifecycleAwait || reobserved.Evidence["gate"] != string(lifecycleGatePending) || reobserved.ciRepairRequired {

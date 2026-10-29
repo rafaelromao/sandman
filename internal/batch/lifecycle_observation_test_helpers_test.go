@@ -2,7 +2,21 @@ package batch
 
 import (
 	"context"
+	"fmt"
+
+	"github.com/rafaelromao/sandman/internal/github"
 )
+
+func failedCIChecks(runID string, names ...string) []github.CIFailedCheck {
+	checks := make([]github.CIFailedCheck, 0, len(names))
+	for index, name := range names {
+		checks = append(checks, github.CIFailedCheck{
+			Name:       name,
+			DetailsURL: fmt.Sprintf("https://github.com/owner/repo/actions/runs/%s/job/%d", runID, index+11),
+		})
+	}
+	return checks
+}
 
 func (s *runSession) observeLifecycleForTest(ctx context.Context, workDir, branch, logPath, runID string) lifecycleVerdict {
 	return s.observeLifecycleWithHostPathsForTest(ctx, workDir, branch, logPath, runID, true)

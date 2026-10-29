@@ -482,6 +482,27 @@ func TestCLIClient_FindPRByBranch_PreservesMultipleFailedChecksInRerunWorkflow(t
 	}
 }
 
+func TestCLIClient_FindPRByBranch_PreservesDuplicateFailedCheckNamesInRerunWorkflow(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":18,"state":"open","headRefName":"failure-branch","headRefOid":"source-head","statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"FAILURE","name":"opencode-canary","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},{"__typename":"CheckRun","status":"COMPLETED","conclusion":"TIMED_OUT","name":"opencode-canary","detailsUrl":"https://github.com/o/r/actions/runs/101/job/14"},{"__typename":"CheckRun","status":"IN_PROGRESS","name":"build-macos","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"}]}]`}}}
+	client := &CLIClient{runner: runner}
+	pr, err := client.FindPRByBranch(context.Background(), "failure-branch")
+	if err != nil || pr == nil {
+		t.Fatalf("FindPRByBranch() = (%+v, %v)", pr, err)
+	}
+	want := []string{"opencode-canary", "opencode-canary"}
+	if !reflect.DeepEqual(pr.CIActiveFailedWorkflowRunFailedCheckNames, want) {
+		t.Fatalf("failed check multiplicity = %v, want %v", pr.CIActiveFailedWorkflowRunFailedCheckNames, want)
+	}
+	if len(pr.CIActiveFailedWorkflowRunFailedChecks) != 2 {
+		t.Fatalf("failed check execution identities = %v, want both checks", pr.CIActiveFailedWorkflowRunFailedChecks)
+	}
+	first, second := pr.CIActiveFailedWorkflowRunFailedChecks[0], pr.CIActiveFailedWorkflowRunFailedChecks[1]
+	if first.Name != second.Name || first.DetailsURL == second.DetailsURL ||
+		!strings.Contains(first.DetailsURL, "/job/11") || !strings.Contains(second.DetailsURL, "/job/14") {
+		t.Fatalf("duplicate-name failures lost their distinct browser execution links: %+v", pr.CIActiveFailedWorkflowRunFailedChecks)
+	}
+}
+
 func TestCLIClient_FindPRByBranch_DoesNotSelectRerunPrerequisiteOverSeparateFailure(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":18,"state":"open","headRefName":"failure-branch","headRefOid":"source-head","statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"FAILURE","name":"opencode-canary","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},{"__typename":"CheckRun","status":"IN_PROGRESS","name":"build-macos","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"},{"__typename":"CheckRun","status":"COMPLETED","conclusion":"FAILURE","name":"source-tests","detailsUrl":"https://github.com/o/r/actions/runs/202/job/21"}]}]`}}}
 	client := &CLIClient{runner: runner}

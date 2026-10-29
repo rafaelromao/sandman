@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/github"
 )
 
 func (s *runSession) runtimeNow() time.Time {
@@ -98,7 +99,7 @@ func (s *lifecycleObserver) priorObservation(runID, branch, head string) (lifecy
 	return lifecycleVerdict{Action: lifecycleAwait, Evidence: extras}, true
 }
 
-func (s *lifecycleObserver) retainedCIRerunEvidence(ctx context.Context, runID, branch, head string, prNumber int, workflowRunID, repository string, failedCheckNames []string) map[string]any {
+func (s *lifecycleObserver) retainedCIRerunEvidence(ctx context.Context, runID, branch, head string, prNumber int, workflowRunID, repository string, failedChecks []github.CIFailedCheck) map[string]any {
 	if prNumber <= 0 || strings.TrimSpace(head) == "" {
 		return nil
 	}
@@ -146,13 +147,21 @@ func (s *lifecycleObserver) retainedCIRerunEvidence(ctx context.Context, runID, 
 		// workflow as a rerun prerequisite.
 		return evidence
 	}
+	if len(failedChecks) == 0 {
+		return nil
+	}
+	checkNames := make([]string, 0, len(failedChecks))
+	for _, check := range failedChecks {
+		checkNames = append(checkNames, check.Name)
+	}
 	prerequisite := map[string]any{
 		"protocol":           "ci-rerun-prerequisite/v1",
 		"repository":         repository,
 		"pull_request":       prNumber,
 		"head_sha":           head,
 		"workflow_run_id":    strings.TrimSpace(workflowRunID),
-		"failed_check_names": append([]string(nil), failedCheckNames...),
+		"failed_check_names": checkNames,
+		"failed_checks":      append([]github.CIFailedCheck(nil), failedChecks...),
 	}
 	if !action.matchesPrerequisite(prerequisite) {
 		return nil
