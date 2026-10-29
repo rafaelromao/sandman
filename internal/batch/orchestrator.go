@@ -2380,7 +2380,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			}
 			for {
 				if row.quotaAllowance.probing() {
-					verdict := executor.observeRowLifecycle(issueCtx, row)
+					verdict := executor.observeAwaitingRowLifecycle(issueCtx, row)
 					if verdict.supersedesQuotaProbe() {
 						res = executor.finishObserved(issueCtx, row, verdict)
 						quotaGate.report(issueNum, res, true)
@@ -2401,7 +2401,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					}
 				}
 				if awaiting && !readyContinuation && !row.quotaAllowance.probing() {
-					verdict := executor.observeRowLifecycle(issueCtx, row)
+					verdict := executor.observeAwaitingRowLifecycle(issueCtx, row)
 					if issueCtx.Err() != nil {
 						abortRequested = true
 						break
@@ -2461,7 +2461,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 					var quotaObserve func() error
 					if awaiting {
 						quotaObserve = func() error {
-							verdict := executor.observeRowLifecycle(issueCtx, row)
+							verdict := executor.observeAwaitingRowLifecycle(issueCtx, row)
 							if issueCtx.Err() != nil {
 								return issueCtx.Err()
 							}
@@ -2497,7 +2497,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				admissionChanged := errors.New("lifecycle changed during execution admission")
 				if awaiting && readyContinuation && !row.quotaAllowance.probing() {
 					observe := func() error {
-						verdict := executor.observeRowLifecycle(issueCtx, row)
+						verdict := executor.observeAwaitingRowLifecycle(issueCtx, row)
 						if issueCtx.Err() != nil {
 							return issueCtx.Err()
 						}
@@ -3220,9 +3220,15 @@ type runSession struct {
 	// lifecycle relaunch (or entry resume). A decision that repeats it after
 	// the relaunch is a stall.
 	lastResumeSignature string
+	// lastResumeRound is the request/head identity for the in-session relaunch
+	// allowance. It is separate from the stall signature because CI stalls
+	// intentionally ignore review-request response changes.
+	lastResumeRound string
 	// pendingResumeSignature is the signature of the latest resume decision;
 	// it becomes lastResumeSignature when the session relaunches on it.
 	pendingResumeSignature string
+	// pendingResumeRound becomes lastResumeRound when the selected resume launches.
+	pendingResumeRound string
 	// decisionPRHead is the pull-request head the latest lifecycle decision
 	// observed; it identifies progress in a resume signature.
 	decisionPRHead string
@@ -4214,8 +4220,9 @@ loop:
 				hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
 				s.finalOwnedWorkAttempt = attempt+1 >= attempts
 				verdict := newLifecycleObserver(s).Observe(ctx, lifecycleObservationRequest{
-					WorkDir: wt.WorkDir(), Branch: branch, LogPath: logPath, RunID: runID,
-					HostPathsReady: hostPathsReady, AttemptStatus: result.Status,
+					WorkDir: wt.WorkDir(), Branch: branch, RunID: runID,
+					HostPathsReady: hostPathsReady, AttemptStatus: result.Status, AfterAgentAttempt: true,
+					CIRerunAction: result.ciRerunAction,
 				})
 				if verdict.handled() {
 					if stop := s.operatorStopFor(result); stop != nil && verdict.Action != lifecycleSuccess && verdict.Action != lifecycleAborted {
@@ -4264,7 +4271,7 @@ loop:
 						}
 						s.emitAwait(ctx, runID, result, verdict.Evidence)
 						verdict = newLifecycleObserver(s).waitForTransition(ctx, lifecycleObservationRequest{
-							WorkDir: wt.WorkDir(), Branch: branch, LogPath: logPath, RunID: runID,
+							WorkDir: wt.WorkDir(), Branch: branch, RunID: runID,
 							HostPathsReady: hostPathsReady, AttemptStatus: result.Status,
 						}, result, verdict)
 					}
@@ -4274,6 +4281,7 @@ loop:
 						// failure; a resume here is a relaunch to perform.
 						if resumePrompt, resume := s.resumePromptFromGate(ctx, wt, branch, runID, verdict); resume {
 							s.lastResumeSignature = s.pendingResumeSignature
+							s.lastResumeRound = s.pendingResumeRound
 							s.reuseSession = true
 							s.previousRunIDs = map[int]string{s.issueNumber: runID}
 							s.previousRunBatchIDs = map[int]string{s.issueNumber: s.batchID}
@@ -4400,7 +4408,7 @@ loop:
 					if events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
 						hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
 						verdict := newLifecycleObserver(s).Observe(ctx, lifecycleObservationRequest{
-							WorkDir: wt.WorkDir(), Branch: branch, LogPath: logPath, RunID: runID,
+							WorkDir: wt.WorkDir(), Branch: branch, RunID: runID,
 							HostPathsReady: hostPathsReady, AttemptStatus: "success",
 						})
 						if verdict.handled() {

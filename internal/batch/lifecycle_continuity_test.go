@@ -61,6 +61,7 @@ func TestContinuityDecision_AllowanceIsPerRepairRound(t *testing.T) {
 	extras := map[string]any{"gate": gateActionableFeedback, "reason": actionableFeedbackReason}
 	s := &runSession{decisionPRHead: "head-1"}
 	s.lastResumeSignature = resumeSignature(extras, "head-1")
+	s.lastResumeRound = repairRound(extras, "head-1")
 	s.resumeCount = s.resumeCapFor()
 	verdict := applyContinuityForTest(s, "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: extras})
 	if verdict.Action != lifecycleFailure {
@@ -71,6 +72,94 @@ func TestContinuityDecision_AllowanceIsPerRepairRound(t *testing.T) {
 	verdict = applyContinuityForTest(s, "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: extras})
 	if verdict.Action != lifecycleResume || s.resumeCount != 0 {
 		t.Fatalf("formal changes on a new head = %v (count %d), want a fresh repair round", verdict.Action, s.resumeCount)
+	}
+}
+
+func TestContinuityDecision_AllowanceDoesNotResetAcrossGatesForSameRequest(t *testing.T) {
+	request := map[string]any{"trigger_id": "request-1"}
+	ci := map[string]any{"gate": "ci-failure", "reason": "CI_FAILURE", "review_request": request}
+	merge := map[string]any{"gate": gateReadyToMerge, "reason": "READY_TO_MERGE", "review_request": request}
+	for _, tc := range []struct {
+		name, priorGate string
+		prior, current  map[string]any
+	}{
+		{name: "CI to merge", priorGate: "ci-failure", prior: ci, current: merge},
+		{name: "merge to CI", priorGate: gateReadyToMerge, prior: merge, current: ci},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := &runSession{
+				decisionPRHead:      "head-1",
+				lastResumeSignature: resumeSignature(tc.prior, "head-1"),
+				lastResumeRound:     repairRound(tc.prior, "head-1"),
+				resumeCount:         defaultAwaitResumeMax,
+			}
+			verdict := applyContinuityForTest(session, "42-work", "run-gate-transition", lifecycleVerdict{
+				Action: lifecycleResume, Evidence: cloneLifecycleExtras(tc.current),
+			})
+			if verdict.Action != lifecycleAwait || session.resumeCount != defaultAwaitResumeMax {
+				t.Fatalf("same request/head transition reset the exhausted relaunch allowance: verdict=%+v count=%d", verdict, session.resumeCount)
+			}
+		})
+	}
+}
+
+func TestContinuityDecision_StalledCIFailureTracksExecutionNotReviewResponse(t *testing.T) {
+	prior := map[string]any{
+		"gate": "ci-failure", "reason": "CI_FAILURE", "ci_execution_id": "checks-1",
+		"review_request": map[string]any{
+			"trigger_id":     "trigger-1",
+			"formal_reviews": []any{map[string]any{"id": "review-1"}},
+		},
+	}
+	priorSignature := resumeSignature(prior, "head-1")
+	log := &spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-ci", Payload: map[string]any{"branch": "42-work"}},
+		{Type: "run.await", RunID: "run-ci", Payload: map[string]any{
+			"await": true, "resume_stalled": true, stalledResumesKey: []any{priorSignature},
+		}},
+	}}
+	current := map[string]any{
+		"gate": "ci-failure", "reason": "CI_FAILURE",
+		"review_request": map[string]any{
+			"trigger_id":        "trigger-1",
+			"informal_feedback": []any{map[string]any{"id": "approval-1"}},
+		},
+	}
+	session := &runSession{
+		deps:                runDeps{eventLog: log},
+		decisionPRHead:      "head-1",
+		lastResumeSignature: priorSignature,
+	}
+	unchangedExecution := applyContinuityForTest(session, "42-work", "run-ci", lifecycleVerdict{
+		Action: lifecycleResume, Evidence: current, ciRepairRequired: true, ciExecutionID: "checks-1",
+	})
+	if unchangedExecution.Action != lifecycleAwait {
+		t.Fatalf("approval appearing on the same failed CI execution = %s, want await", unchangedExecution.status())
+	}
+
+	newExecutionSession := &runSession{
+		deps:                runDeps{eventLog: log},
+		decisionPRHead:      "head-1",
+		lastResumeSignature: priorSignature,
+	}
+	changedExecution := applyContinuityForTest(newExecutionSession, "42-work", "run-ci", lifecycleVerdict{
+		Action: lifecycleResume, Evidence: cloneLifecycleExtras(current), ciRepairRequired: true, ciExecutionID: "checks-2",
+	})
+	if changedExecution.Action != lifecycleResume {
+		t.Fatalf("new failed CI execution with allowance available = %s, want resume", changedExecution.status())
+	}
+
+	exhaustedSession := &runSession{
+		deps:                runDeps{eventLog: log},
+		decisionPRHead:      "head-1",
+		lastResumeSignature: priorSignature,
+		resumeCount:         defaultAwaitResumeMax,
+	}
+	exhaustedExecution := applyContinuityForTest(exhaustedSession, "42-work", "run-ci", lifecycleVerdict{
+		Action: lifecycleResume, Evidence: cloneLifecycleExtras(current), ciRepairRequired: true, ciExecutionID: "checks-2",
+	})
+	if exhaustedExecution.Action != lifecycleAwait || exhaustedSession.resumeCount != defaultAwaitResumeMax {
+		t.Fatalf("new failed CI execution after allowance exhaustion = %s (resume count %d), want await without resetting the request/head allowance", exhaustedExecution.status(), exhaustedSession.resumeCount)
 	}
 }
 

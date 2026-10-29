@@ -12,11 +12,12 @@ does not own the iterative review loop.
 
 ## Scope
 
-This skill implements an open work item by modifying the current repository's source code, tests, and configuration files. It does NOT create or modify skill definitions, documentation, or any meta-infrastructure.
+This skill implements an open work item by modifying the current repository's source code, tests, and configuration files. It also updates user-facing shared guidance when the work item explicitly requires it; it does not otherwise change capability definitions or repository meta-infrastructure.
 
 ## Prerequisites
 
 - `gh` CLI authenticated
+- `jq` installed for the bounded CI rerun helper
 - Working directory at repo root
 - `sandman-plan`, `sandman-tdd`, `sandman-code-review`, and `sandman-back-merge` skills available
 
@@ -39,6 +40,29 @@ You need to follow all steps in this workflow. Make sure you have gone through a
 5. **Never yield for work this workflow owns.** Finish back-merge, commit/push, pull-request creation, and post-create body verification autonomously. Do not ask whether those actions are authorized; the user's request to implement the work item already authorizes them. A checklist transition such as `PR-Review` is not permission to stop before the PR exists. A missing PR or unpushed branch is not an external wait. If an owned action cannot be completed after bounded recovery, record the exact failure and next action and fail the run; do not report success or ask the operator to resume it manually.
 
 6. **Yield only to an operation already in progress.** A confirmed review request is ongoing from successful delivery, even before a reviewer begins; current-head CI may also resolve while you wait when checks are queued or running. In a Sandman-managed run, checkpoint that confirmed request or current-head CI and yield for runtime observation. Do not yield for a generic pending gate, missing checks, a stale head, an unconfirmed review comment, a lookup failure, or an exhausted operation budget. When the reviewer responds, continue the implementation/merge work autonomously; if no external operation is actively resolving a blocker, fail with a specific next action instead of waiting.
+
+### Failed current-head CI recovery
+
+A failed required check on the current pull-request head remains implementation work, even when another check is pending or a reviewer has approved. Diagnose the actual failure first. Repair and validate deterministic source, test, configuration, or workflow failures; update the coordinated pins for a verified provider deprecation. Do not rerun deterministic failures.
+
+For a diagnosed transient provider or network timeout, one authorized rerun of the identified failed workflow job is a bounded recovery action. The canary's single `opencode run` invocation and no-retry-loop rule applies to each job invocation; it does not prohibit a rerun of the existing failed execution. `workflow_dispatch` is not required. Keep the PR source head distinct from the workflow's tested SHA, and use the job database ID reported by GitHub rather than a job URL number.
+
+Before acting, verify the live PR source head, workflow run, tested SHA, current attempt, failed job, and repository linkage. Then invoke the installed helper once:
+
+```bash
+sh "$HOME/.agents/skills/sandman/implement/ci-rerun-v1.sh" \
+  --repository OWNER/REPO \
+  --pull-request PR_NUMBER \
+  --head-sha PR_SOURCE_SHA \
+  --tested-sha WORKFLOW_TESTED_SHA \
+  --run-id WORKFLOW_RUN_ID \
+  --job-id FAILED_JOB_DATABASE_ID \
+  --diagnosis transient-provider-timeout
+```
+
+Use `transient-network-timeout` only for a verified network timeout. The helper performs at most one mutation attempt and checks GitHub read-back. A `confirmed` result means a new attempt was observed; `waiting` means the workflow/recovery is already active and should be left to runtime observation in a managed run; `uncertain` or `refused` is not permission to submit again. Resolve ambiguous evidence by re-reading live GitHub state before any further action. Never invent credentials or permissions, rerun a source failure, dispatch a replacement workflow, or weaken a required check.
+
+Only after the failure is diagnosed and the corrective action has actually completed may you yield to runtime observation. A saved blocker or a promise to repair is not a corrective action.
 
 ### 1. Setup branch
 

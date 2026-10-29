@@ -125,6 +125,13 @@ func (s claudeStrategy) NewOutputParsers(io.Writer) (outputParser, outputParser)
 	return newClaudeOutputs(s.readOnlyModes...)
 }
 
+func (s claudeStrategy) CIRerunAction(stdout, stderr outputParser) *ciRerunActionEvidence {
+	if !s.builtInCommand {
+		return nil
+	}
+	return ciRerunActionFromParsers(stdout, stderr)
+}
+
 func (claudeStrategy) ContextRolloverDetector([]string, func()) *contextRolloverDetector {
 	return nil
 }
