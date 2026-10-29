@@ -35,7 +35,7 @@ When changing lifecycle behavior:
 
 ## Preserve dependency-injection seams
 
-Command code should stay testable through explicit dependencies. The per-run seam is `RunExecutor`; its executor reaches shared batch state only through the narrow `runCoordination` interface, implemented by the per-batch coordinator that `RunBatch` creates and owns. Prefer changing existing seams over introducing hidden globals or constructing deep concrete dependencies inline.
+Command code should stay testable through explicit dependencies. `RunBatch` owns batch-wide scheduling; the per-row `rowDriver` owns lifecycle waits, observation acceptance, quota admission, execution re-entry, and the abort fence. Its `RunExecutor` seam receives an immutable `RunSpec` and an advancing `ContinuationCursor`, so a Run's identity and branch do not change during re-entry. Shared batch state remains behind the narrow `runCoordination` interface implemented by the per-batch coordinator. Prefer changing existing seams over introducing hidden globals or constructing deep concrete dependencies inline.
 
 When writing tests, fake the documented boundary rather than mocking deep implementation details.
 

@@ -81,10 +81,14 @@ func (g *batchQuotaGate) limit(issue int) {
 }
 
 func (g *batchQuotaGate) wait(ctx context.Context) error {
-	return g.waitObserved(ctx, nil, 0)
+	_, err := g.waitObserved(ctx, nil, 0)
+	return err
 }
 
-func (g *batchQuotaGate) waitObserved(ctx context.Context, observe func() error, interval time.Duration) error {
+// waitObserved returns a selected lifecycle verdict independently of an
+// operational gate error. Await/resume observations that were accepted by the
+// callback return an empty verdict and keep waiting.
+func (g *batchQuotaGate) waitObserved(ctx context.Context, observe func() (rowObservationOutcome, error), interval time.Duration) (rowObservationOutcome, error) {
 	var tick <-chan time.Time
 	if observe != nil {
 		if interval <= 0 {
@@ -96,19 +100,23 @@ func (g *batchQuotaGate) waitObserved(ctx context.Context, observe func() error,
 	}
 	for {
 		if observe != nil {
-			if err := observe(); err != nil {
-				return err
+			outcome, err := observe()
+			if err != nil {
+				return rowObservationOutcome{}, err
+			}
+			if outcome.Kind != rowObservationNone {
+				return outcome, nil
 			}
 		}
 		g.mu.Lock()
 		paused, wake := len(g.limited) > 0, g.wake
 		g.mu.Unlock()
 		if !paused {
-			return ctx.Err()
+			return rowObservationOutcome{}, ctx.Err()
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return rowObservationOutcome{}, ctx.Err()
 		case <-wake:
 		case <-tick:
 		}
