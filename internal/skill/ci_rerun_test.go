@@ -45,6 +45,9 @@ func TestCIRerunHelperRecordsOneDatabaseIDActionAndConfirmsNewAttempt(t *testing
 	if result["state"] != "confirmed" || result["observed_attempt"] != float64(5) {
 		t.Fatalf("rerun was not confirmed by a new execution read-back: %#v", result)
 	}
+	if result["job_name"] != "opencode-canary" {
+		t.Fatalf("selected job name was not preserved for lifecycle evidence: %#v", result)
+	}
 	if len(fixture.Actions) != 1 || !strings.Contains(fixture.Actions[0], "/actions/jobs/987654321/rerun") {
 		t.Fatalf("actions=%v, want one POST to the selected database job id", fixture.Actions)
 	}

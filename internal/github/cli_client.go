@@ -232,6 +232,7 @@ type statusCheckRun struct {
 	Status     string `json:"status"`
 	State      string `json:"state"`
 	DetailsURL string `json:"detailsUrl"`
+	Name       string `json:"name"`
 }
 
 // ciExecutionIDFromJSON identifies the current check executions from their
@@ -285,12 +286,14 @@ func ciHasActiveChecksFromJSON(raw json.RawMessage) bool {
 	}
 	for _, check := range checks {
 		status := strings.ToUpper(strings.TrimSpace(check.Status))
-		if status != "" && status != "COMPLETED" {
+		switch status {
+		case "QUEUED", "IN_PROGRESS", "WAITING", "PENDING", "REQUESTED", "CANCEL_REQUESTED":
 			return true
-		}
-		if status == "" {
+		case "COMPLETED":
+			continue
+		case "":
 			switch strings.ToUpper(strings.TrimSpace(check.State)) {
-			case "PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS":
+			case "PENDING", "QUEUED", "IN_PROGRESS":
 				return true
 			}
 		}
@@ -298,19 +301,23 @@ func ciHasActiveChecksFromJSON(raw json.RawMessage) bool {
 	return false
 }
 
-// ciRerunBlockedWorkflowRunIDFromJSON identifies the containing workflow run
-// that prevents a targeted job rerun: exactly one run must have both a failed
-// completed job and a non-completed sibling, and it must be the only source
-// of failed CI. URLs that do not expose GitHub Actions job identity, legacy
-// status contexts, and ambiguous or independently failing workflows fail closed.
-func ciRerunBlockedWorkflowRunIDFromJSON(raw json.RawMessage) string {
+type ciRerunWorkflowEvidence struct {
+	RunID            string
+	FailedCheckNames []string
+}
+
+// ciRerunBlockedWorkflowFromJSON identifies the containing workflow run that
+// prevents a targeted job rerun: exactly one run must contain failed and active
+// checks, it must be the only source of failed CI, and every failed check must
+// have a name that can be matched against the helper's selected job.
+func ciRerunBlockedWorkflowFromJSON(raw json.RawMessage) *ciRerunWorkflowEvidence {
 	var checks []statusCheckRun
 	if err := json.Unmarshal(raw, &checks); err != nil || len(checks) == 0 {
-		return ""
+		return nil
 	}
 	type runState struct {
-		failed bool
-		active bool
+		failedCheckNames []string
+		active           bool
 	}
 	runs := make(map[string]runState)
 	unidentifiedFailure := false
@@ -332,7 +339,12 @@ func ciRerunBlockedWorkflowRunIDFromJSON(raw json.RawMessage) string {
 		}
 		state := runs[match[1]]
 		if failed {
-			state.failed = true
+			name := strings.TrimSpace(check.Name)
+			if name == "" {
+				unidentifiedFailure = true
+				continue
+			}
+			state.failedCheckNames = appendUniqueCheckName(state.failedCheckNames, name)
 		} else {
 			switch status {
 			case "QUEUED", "IN_PROGRESS", "WAITING", "PENDING", "REQUESTED", "CANCEL_REQUESTED":
@@ -342,30 +354,48 @@ func ciRerunBlockedWorkflowRunIDFromJSON(raw json.RawMessage) string {
 		runs[match[1]] = state
 	}
 	if unidentifiedFailure {
-		return ""
+		return nil
 	}
-	var blockedRunID string
+	var blocked *ciRerunWorkflowEvidence
 	for runID, state := range runs {
-		if !state.failed || !state.active {
+		if len(state.failedCheckNames) == 0 || !state.active {
 			continue
 		}
-		if blockedRunID != "" {
-			return ""
+		if blocked != nil {
+			return nil
 		}
-		blockedRunID = runID
+		blocked = &ciRerunWorkflowEvidence{RunID: runID, FailedCheckNames: state.failedCheckNames}
 	}
-	if blockedRunID == "" {
-		return ""
+	if blocked == nil {
+		return nil
 	}
 	for runID, state := range runs {
-		if runID != blockedRunID && state.failed {
+		if runID != blocked.RunID && len(state.failedCheckNames) > 0 {
 			// The special wait is valid only when the containing workflow is
 			// the sole source of failed CI. A separate completed failure is
 			// actionable and must remain implementation-owned immediately.
-			return ""
+			return nil
 		}
 	}
-	return blockedRunID
+	sort.Strings(blocked.FailedCheckNames)
+	return blocked
+}
+
+func ciRerunBlockedWorkflowRunIDFromJSON(raw json.RawMessage) string {
+	evidence := ciRerunBlockedWorkflowFromJSON(raw)
+	if evidence == nil {
+		return ""
+	}
+	return evidence.RunID
+}
+
+func appendUniqueCheckName(names []string, name string) []string {
+	for _, existing := range names {
+		if strings.EqualFold(existing, name) {
+			return names
+		}
+	}
+	return append(names, name)
 }
 
 // rollupStateFromJSON converts the raw `gh pr list --json
@@ -735,6 +765,13 @@ func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, err
 		return nil, nil
 	}
 	payload := payloads[0]
+	rerunEvidence := ciRerunBlockedWorkflowFromJSON(payload.StatusCheckRollup)
+	var activeFailedWorkflowRunID string
+	var activeFailedWorkflowFailedCheckNames []string
+	if rerunEvidence != nil {
+		activeFailedWorkflowRunID = rerunEvidence.RunID
+		activeFailedWorkflowFailedCheckNames = append([]string(nil), rerunEvidence.FailedCheckNames...)
+	}
 	var linkedIssueNumbers []int
 	if strings.TrimSpace(payload.MergedAt) != "" || strings.EqualFold(payload.State, "merged") {
 		// Native references enrich the parsed PR, but a transient GraphQL
@@ -755,8 +792,9 @@ func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, err
 		MergeStateStatus:            payload.MergeStateStatus,
 		StatusCheckRollup:           rollupStateFromJSON(payload.StatusCheckRollup),
 		CIHasActiveChecks:           ciHasActiveChecksFromJSON(payload.StatusCheckRollup),
-		CIActiveFailedWorkflowRunID: ciRerunBlockedWorkflowRunIDFromJSON(payload.StatusCheckRollup),
-		CIExecutionID:               ciExecutionIDFromJSON(payload.StatusCheckRollup),
+		CIActiveFailedWorkflowRunID: activeFailedWorkflowRunID,
+		CIActiveFailedWorkflowRunFailedCheckNames: activeFailedWorkflowFailedCheckNames,
+		CIExecutionID: ciExecutionIDFromJSON(payload.StatusCheckRollup),
 	}, nil
 }
 

@@ -12,6 +12,7 @@ tested_sha=
 run_id=
 job_id=
 diagnosis=
+job_name=
 
 usage() {
 	cat >&2 <<'EOF'
@@ -51,11 +52,12 @@ emit() {
 		--arg state "$state" \
 		--arg run_id "$run_id" \
 		--arg job_id "$job_id" \
+		--arg job_name "$job_name" \
 		--argjson pull_request "${pull_request:-0}" \
 		--argjson run_attempt "${observed_attempt:-0}" \
 		'{protocol:"ci-rerun/v1",state:$state,reason:$reason,repository:$repository,
 		  pull_request:$pull_request,source_head_sha:$head_sha,tested_sha:$tested_sha,
-		  diagnosis:$diagnosis,run_id:$run_id,job_id:$job_id,observed_attempt:$run_attempt}'
+		  diagnosis:$diagnosis,run_id:$run_id,job_id:$job_id,job_name:$job_name,observed_attempt:$run_attempt}'
 }
 
 waiting() {

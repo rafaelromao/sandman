@@ -98,7 +98,7 @@ func (s *lifecycleObserver) priorObservation(runID, branch, head string) (lifecy
 	return lifecycleVerdict{Action: lifecycleAwait, Evidence: extras}, true
 }
 
-func (s *lifecycleObserver) retainedCIRerunEvidence(ctx context.Context, runID, branch, head string, prNumber int, workflowRunID, repository string) map[string]any {
+func (s *lifecycleObserver) retainedCIRerunEvidence(ctx context.Context, runID, branch, head string, prNumber int, workflowRunID, repository string, failedCheckNames []string) map[string]any {
 	if prNumber <= 0 || strings.TrimSpace(head) == "" {
 		return nil
 	}
@@ -147,11 +147,12 @@ func (s *lifecycleObserver) retainedCIRerunEvidence(ctx context.Context, runID, 
 		return evidence
 	}
 	prerequisite := map[string]any{
-		"protocol":        "ci-rerun-prerequisite/v1",
-		"repository":      repository,
-		"pull_request":    prNumber,
-		"head_sha":        head,
-		"workflow_run_id": strings.TrimSpace(workflowRunID),
+		"protocol":           "ci-rerun-prerequisite/v1",
+		"repository":         repository,
+		"pull_request":       prNumber,
+		"head_sha":           head,
+		"workflow_run_id":    strings.TrimSpace(workflowRunID),
+		"failed_check_names": append([]string(nil), failedCheckNames...),
 	}
 	if !action.matchesPrerequisite(prerequisite) {
 		return nil

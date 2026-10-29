@@ -216,6 +216,7 @@ func TestCIRerunPendingWaitFailureWithUnrelatedActivityRequiresRecordedRepairAnd
 				pr.StatusCheckRollup, pr.CIExecutionID = "failure", "checks-rerun"
 				pr.CIHasActiveChecks = true
 				pr.CIActiveFailedWorkflowRunID = "12345"
+				pr.CIActiveFailedWorkflowRunFailedCheckNames = []string{"opencode-canary", "quality-gate"}
 				pr.MergeStateStatus = "BLOCKED"
 			})
 		case 3:
@@ -469,7 +470,7 @@ func TestConfirmedCIRerunReceiptSurvivesOrdinaryPendingWait(t *testing.T) {
 	action := &ciRerunActionEvidence{
 		Protocol: "ci-rerun/v1", State: "confirmed", Reason: "selected-job-and-quality-gate-rerun-observed",
 		Repository: "owner/repo", PullRequest: 17, SourceHeadSHA: "head", TestedSHA: "tested-sha",
-		Diagnosis: "transient-provider-timeout", RunID: "101", JobID: "987654321", ObservedAttempt: 2,
+		Diagnosis: "transient-provider-timeout", RunID: "101", JobID: "987654321", JobName: "opencode-canary", ObservedAttempt: 2,
 	}
 	request := lifecycleObservationRequest{
 		WorkDir: workDir, Branch: "42-work", RunID: row.RunID, HostPathsReady: true,
@@ -492,6 +493,7 @@ func TestConfirmedCIRerunReceiptSurvivesOrdinaryPendingWait(t *testing.T) {
 	client.prs["42-work"].StatusCheckRollup = "failure"
 	client.prs["42-work"].CIHasActiveChecks = true
 	client.prs["42-work"].CIActiveFailedWorkflowRunID = "101"
+	client.prs["42-work"].CIActiveFailedWorkflowRunFailedCheckNames = []string{"opencode-canary", "quality-gate"}
 	client.prs["42-work"].MergeStateStatus = "BLOCKED"
 	reobserved := e.observeAwaitingRowLifecycle(context.Background(), row)
 	if reobserved.Action != lifecycleAwait || reobserved.Evidence["gate"] != string(lifecycleGatePending) || reobserved.ciRepairRequired {

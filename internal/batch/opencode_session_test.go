@@ -501,7 +501,7 @@ func TestOpenCodeOutput_CapturesRerunEvidenceOnlyFromCompletedHelperToolInvocati
 		Protocol: "ci-rerun/v1", State: "waiting", Reason: "workflow-still-running",
 		Repository: "owner/repo", PullRequest: 17, SourceHeadSHA: "source-head",
 		TestedSHA: "tested-merge-sha", Diagnosis: "transient-provider-timeout",
-		RunID: "101", JobID: "987654321", ObservedAttempt: 2,
+		RunID: "101", JobID: "987654321", JobName: "opencode-canary", ObservedAttempt: 2,
 	}
 	receipt, err := json.Marshal(evidence)
 	if err != nil {

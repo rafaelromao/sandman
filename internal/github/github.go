@@ -48,6 +48,10 @@ type PR struct {
 	// identify exactly one workflow run containing both a failed job and an
 	// active sibling. It is empty for unrelated, missing, or ambiguous links.
 	CIActiveFailedWorkflowRunID string
+	// CIActiveFailedWorkflowRunFailedCheckNames preserves the failed check names
+	// from that identified run so a recovery receipt for one job cannot defer
+	// independent failures in the same workflow.
+	CIActiveFailedWorkflowRunFailedCheckNames []string
 	// CIExecutionID identifies the observed check executions independently of
 	// their status. A rerun can change this identity without changing the head.
 	CIExecutionID      string

@@ -22,6 +22,7 @@ type ciRerunActionEvidence struct {
 	Diagnosis       string `json:"diagnosis"`
 	RunID           string `json:"run_id"`
 	JobID           string `json:"job_id"`
+	JobName         string `json:"job_name"`
 	ObservedAttempt int    `json:"observed_attempt"`
 }
 
@@ -163,8 +164,62 @@ func (e ciRerunActionEvidence) matchesPrerequisite(prerequisite map[string]any) 
 	repository, _ := prerequisite["repository"].(string)
 	head, _ := prerequisite["head_sha"].(string)
 	workflowRunID, _ := prerequisite["workflow_run_id"].(string)
-	return e.matchesPullRequest(e.PullRequest, repository, head) &&
-		e.RunID == strings.TrimSpace(workflowRunID)
+	if !e.matchesPullRequest(e.PullRequest, repository, head) || e.RunID != strings.TrimSpace(workflowRunID) {
+		return false
+	}
+	failedNames, ok := ciRerunFailedCheckNames(prerequisite["failed_check_names"])
+	if !ok {
+		return false
+	}
+	return ciRerunFailuresCoveredBySelectedJob(failedNames, e.JobName)
+}
+
+func ciRerunFailedCheckNames(value any) ([]string, bool) {
+	switch names := value.(type) {
+	case []string:
+		if len(names) == 0 {
+			return nil, false
+		}
+		return names, true
+	case []any:
+		if len(names) == 0 {
+			return nil, false
+		}
+		result := make([]string, 0, len(names))
+		for _, value := range names {
+			name, ok := value.(string)
+			if !ok || strings.TrimSpace(name) == "" {
+				return nil, false
+			}
+			result = append(result, strings.TrimSpace(name))
+		}
+		return result, true
+	default:
+		return nil, false
+	}
+}
+
+func ciRerunFailuresCoveredBySelectedJob(failedNames []string, selectedJobName string) bool {
+	selectedJobName = strings.TrimSpace(selectedJobName)
+	if selectedJobName == "" || len(failedNames) == 0 {
+		return false
+	}
+	selectedFailed := false
+	for _, name := range failedNames {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return false
+		}
+		if strings.EqualFold(name, selectedJobName) {
+			selectedFailed = true
+			continue
+		}
+		if strings.EqualFold(name, "quality-gate") {
+			continue
+		}
+		return false
+	}
+	return selectedFailed
 }
 
 func (e ciRerunActionEvidence) matchesPullRequest(pullRequest int, repository, head string) bool {
@@ -185,7 +240,7 @@ func (e ciRerunActionEvidence) matchesPullRequest(pullRequest int, repository, h
 		return false
 	}
 	if pullRequest <= 0 || e.PullRequest != pullRequest ||
-		strings.TrimSpace(repository) == "" || strings.TrimSpace(head) == "" {
+		strings.TrimSpace(repository) == "" || strings.TrimSpace(head) == "" || strings.TrimSpace(e.JobName) == "" {
 		return false
 	}
 	return strings.EqualFold(strings.TrimSpace(e.Repository), strings.TrimSpace(repository)) &&

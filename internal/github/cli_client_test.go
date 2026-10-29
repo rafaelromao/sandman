@@ -441,6 +441,45 @@ func TestCLIClient_FindPRByBranch_PreservesActiveSiblingsAlongsideFailure(t *tes
 	if pr.CIActiveFailedWorkflowRunID != "101" {
 		t.Fatalf("same-workflow rerun prerequisite = %q, want workflow run 101", pr.CIActiveFailedWorkflowRunID)
 	}
+	if len(pr.CIActiveFailedWorkflowRunFailedCheckNames) != 1 || pr.CIActiveFailedWorkflowRunFailedCheckNames[0] != "opencode-canary" {
+		t.Fatalf("failed check identities = %v, want the failed canary", pr.CIActiveFailedWorkflowRunFailedCheckNames)
+	}
+}
+
+func TestCIHasActiveChecksFromJSONRequiresRecognizedActiveEvidence(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{name: "in-progress check run", raw: `[{"status":"IN_PROGRESS"}]`, want: true},
+		{name: "stale check run", raw: `[{"status":"STALE"}]`},
+		{name: "expected status context", raw: `[{"state":"EXPECTED"}]`},
+		{name: "legacy pending context", raw: `[{"state":"PENDING"}]`, want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := ciHasActiveChecksFromJSON([]byte(test.raw)); got != test.want {
+				t.Fatalf("active checks = %t, want %t for %s", got, test.want, test.raw)
+			}
+		})
+	}
+}
+
+func TestCLIClient_FindPRByBranch_PreservesMultipleFailedChecksInRerunWorkflow(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":18,"state":"open","headRefName":"failure-branch","headRefOid":"source-head","statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"TIMED_OUT","name":"opencode-canary","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},{"__typename":"CheckRun","status":"COMPLETED","conclusion":"FAILURE","name":"source-tests","detailsUrl":"https://github.com/o/r/actions/runs/101/job/13"},{"__typename":"CheckRun","status":"IN_PROGRESS","name":"build-macos","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"}]}]`}}}
+	client := &CLIClient{runner: runner}
+	pr, err := client.FindPRByBranch(context.Background(), "failure-branch")
+	if err != nil || pr == nil {
+		t.Fatalf("FindPRByBranch() = (%+v, %v)", pr, err)
+	}
+	if pr.CIActiveFailedWorkflowRunID != "101" {
+		t.Fatalf("identified workflow = %q, want run 101", pr.CIActiveFailedWorkflowRunID)
+	}
+	want := []string{"opencode-canary", "source-tests"}
+	if !reflect.DeepEqual(pr.CIActiveFailedWorkflowRunFailedCheckNames, want) {
+		t.Fatalf("failed check identities = %v, want %v", pr.CIActiveFailedWorkflowRunFailedCheckNames, want)
+	}
 }
 
 func TestCLIClient_FindPRByBranch_DoesNotSelectRerunPrerequisiteOverSeparateFailure(t *testing.T) {
@@ -466,7 +505,7 @@ func TestCIRerunBlockedWorkflowRunIDRequiresFailedAndActiveJobsInSameRun(t *test
 	}{
 		{
 			name: "same workflow with unrelated active workflow",
-			raw: `[{"status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},` +
+			raw: `[{"status":"COMPLETED","conclusion":"FAILURE","name":"opencode-canary","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},` +
 				`{"status":"IN_PROGRESS","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"},` +
 				`{"status":"IN_PROGRESS","detailsUrl":"https://github.com/o/r/actions/runs/202/job/21"}]`,
 			want: "101",

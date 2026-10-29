@@ -256,11 +256,12 @@ func ciRerunPrerequisiteFor(pr *github.PR, headSHA, repository string) map[strin
 		return nil
 	}
 	return map[string]any{
-		"protocol":        "ci-rerun-prerequisite/v1",
-		"repository":      strings.TrimSpace(repository),
-		"pull_request":    pr.Number,
-		"head_sha":        strings.TrimSpace(headSHA),
-		"workflow_run_id": workflowRunID,
+		"protocol":           "ci-rerun-prerequisite/v1",
+		"repository":         strings.TrimSpace(repository),
+		"pull_request":       pr.Number,
+		"head_sha":           strings.TrimSpace(headSHA),
+		"workflow_run_id":    workflowRunID,
+		"failed_check_names": append([]string(nil), pr.CIActiveFailedWorkflowRunFailedCheckNames...),
 	}
 }
 
@@ -735,7 +736,8 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 		ciRerunAction.matchesPullRequest(pr.Number, repository, headSHA) {
 		evidence.payload = mergeLifecycleDiagnostics(evidence.payload, map[string]any{ciRerunActionKey: ciRerunAction.payload()})
 	}
-	if ciRerunEvidence := s.retainedCIRerunEvidence(ctx, runID, branch, headSHA, pr.Number, pr.CIActiveFailedWorkflowRunID, repository); ciRerunEvidence != nil {
+	if ciRerunEvidence := s.retainedCIRerunEvidence(ctx, runID, branch, headSHA, pr.Number,
+		pr.CIActiveFailedWorkflowRunID, repository, pr.CIActiveFailedWorkflowRunFailedCheckNames); ciRerunEvidence != nil {
 		evidence.payload = mergeLifecycleDiagnostics(evidence.payload, ciRerunEvidence)
 	}
 	if reviewRegistrationFailure {

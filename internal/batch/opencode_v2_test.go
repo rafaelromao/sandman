@@ -182,7 +182,7 @@ func TestAgentRun_OpenCodeCarriesStructuredCIRerunEvidenceInResult(t *testing.T)
 	evidence := ciRerunActionEvidence{
 		Protocol: "ci-rerun/v1", State: "waiting", Reason: "workflow-still-running",
 		Repository: "owner/repo", PullRequest: 17, SourceHeadSHA: "head", TestedSHA: "tested-sha",
-		Diagnosis: "transient-provider-timeout", RunID: "101", JobID: "987654321", ObservedAttempt: 1,
+		Diagnosis: "transient-provider-timeout", RunID: "101", JobID: "987654321", JobName: "opencode-canary", ObservedAttempt: 1,
 	}
 	receipt, err := json.Marshal(evidence)
 	if err != nil {
