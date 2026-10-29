@@ -61,12 +61,24 @@ func (e *runExecutor) lifecycleObserverForRow(ctx context.Context, row RowSpec) 
 	}
 	workDir := filepath.Join(e.deps.layout.WorktreeDir, branch)
 	return newLifecycleObserver(session), lifecycleObservationRequest{
-		WorkDir: workDir, Branch: branch, LogPath: session.runLogPathFor(runID), RunID: runID,
+		WorkDir: workDir, Branch: branch, RunID: runID,
 		HostPathsReady: true, AttemptStatus: "success",
 	}, true
 }
 
 func (e *runExecutor) observeRowLifecycle(ctx context.Context, row RowSpec) lifecycleVerdict {
+	observer, request, ready := e.lifecycleObserverForRow(ctx, row)
+	if !ready {
+		return lifecycleVerdict{}
+	}
+	return observer.Observe(ctx, request)
+}
+
+// observeAwaitingRowLifecycle re-observes an already-admitted external wait.
+// Re-observation is not an agent attempt: if CI has failed since the row
+// yielded, implementation ownership resumes unless a previously selected,
+// identity-valid workflow prerequisite still authorizes waiting.
+func (e *runExecutor) observeAwaitingRowLifecycle(ctx context.Context, row RowSpec) lifecycleVerdict {
 	observer, request, ready := e.lifecycleObserverForRow(ctx, row)
 	if !ready {
 		return lifecycleVerdict{}
@@ -113,6 +125,21 @@ func mergeRetainedAwaitEvidence(previous, observed map[string]any) map[string]an
 }
 
 func awaitOperationChanged(previous, observed map[string]any) bool {
+	for _, key := range []string{ciRerunPrerequisiteKey, ciRerunActionKey} {
+		previousValue, previousOK := previous[key]
+		observedValue, observedOK := observed[key]
+		if previousOK != observedOK {
+			return true
+		}
+		if !previousOK {
+			continue
+		}
+		previousData, previousErr := json.Marshal(previousValue)
+		observedData, observedErr := json.Marshal(observedValue)
+		if previousErr != nil || observedErr != nil || string(previousData) != string(observedData) {
+			return true
+		}
+	}
 	identityBound := false
 	for _, operation := range []string{"ci_wait", "review_request"} {
 		previousSignature, previousOK := awaitIdentitySignature(previous, operation)

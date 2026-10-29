@@ -130,8 +130,8 @@ func TestInformalApprovalLifecycle_LateCurrentHeadApprovalResumesWithoutNewReque
 	// attempt, as continuation/restart does after the original implementation
 	// run has already stopped.
 	restarted := &runSession{deps: s.deps, renderCfg: s.renderCfg, opts: s.opts}
-	lateApproval := restarted.observeLifecycleAttemptForTest(t.Context(), workDir, gateTestBranch, "", "same-run", true, "failure")
-	status, extras, handled := lateApproval.status(), lateApproval.Evidence, lateApproval.handled()
+	verdict := restarted.observeLifecycleAttemptForTest(t.Context(), workDir, gateTestBranch, "", "same-run", true, "failure")
+	status, extras, handled := verdict.status(), verdict.Evidence, verdict.handled()
 	if !handled || status != "resume" || extras["gate"] != gateReadyToMerge || extras["reason"] != "REVIEW_APPROVED" {
 		t.Fatalf("late approval = (%s, %v, %t), want current-head approval to resume normal merge work", status, extras, handled)
 	}

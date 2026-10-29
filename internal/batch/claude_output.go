@@ -37,6 +37,8 @@ type claudeOutputState struct {
 	sessionID         string
 	sessionNotFound   bool
 	onSession         func()
+	ciRerunCommands   map[string]string
+	ciRerunAction     *ciRerunActionEvidence
 	usageLimitReached bool
 	authFailed        bool
 	permissionDenials []string
@@ -55,7 +57,7 @@ func claudeReadOnlyModeDiagnostic(mode string) string {
 }
 
 func newClaudeOutputs(readOnlyModes ...string) (outputParser, outputParser) {
-	state := &claudeOutputState{readOnlyModes: readOnlyModes}
+	state := &claudeOutputState{readOnlyModes: readOnlyModes, ciRerunCommands: make(map[string]string)}
 	return &claudeOutput{state: state, stdout: true}, &claudeOutput{state: state}
 }
 
@@ -126,6 +128,16 @@ func (w *claudeOutput) SessionID() string {
 	w.state.mu.Lock()
 	defer w.state.mu.Unlock()
 	return w.state.sessionID
+}
+
+func (w *claudeOutput) CIRerunAction() *ciRerunActionEvidence {
+	w.state.mu.Lock()
+	defer w.state.mu.Unlock()
+	if w.state.ciRerunAction == nil {
+		return nil
+	}
+	evidence := *w.state.ciRerunAction
+	return &evidence
 }
 
 func (w *claudeOutput) setSessionObserved(onSession func()) {
@@ -238,6 +250,12 @@ func (w *claudeOutput) writeLine(line []byte, newline bool) error {
 	if recordType == "result" && claudeAuthFailureLine(text) {
 		w.recordAuthFailure()
 	}
+	switch recordType {
+	case "assistant":
+		w.captureCIRerunToolUses(record)
+	case "user":
+		w.captureCIRerunToolResults(record)
+	}
 	if recordType == "result" && claudeUsageLimitLine(text) {
 		w.state.mu.Lock()
 		alreadyReached := w.state.usageLimitReached
@@ -276,6 +294,55 @@ func (w *claudeOutput) writeLine(line []byte, newline bool) error {
 		}
 	}
 	return nil
+}
+
+func (w *claudeOutput) captureCIRerunToolUses(record map[string]any) {
+	for _, block := range claudeContentBlocks(record) {
+		if block["type"] != "tool_use" {
+			continue
+		}
+		name, _ := block["name"].(string)
+		if !strings.EqualFold(name, "bash") {
+			continue
+		}
+		id, _ := block["id"].(string)
+		input, _ := block["input"].(map[string]any)
+		command, _ := input["command"].(string)
+		if id == "" || command == "" {
+			continue
+		}
+		if _, ok := ciRerunHelperCommandWords(command); !ok {
+			continue
+		}
+		w.state.mu.Lock()
+		w.state.ciRerunCommands[id] = command
+		w.state.mu.Unlock()
+	}
+}
+
+func (w *claudeOutput) captureCIRerunToolResults(record map[string]any) {
+	for _, block := range claudeContentBlocks(record) {
+		if block["type"] != "tool_result" {
+			continue
+		}
+		id, _ := block["tool_use_id"].(string)
+		if id == "" {
+			continue
+		}
+		w.state.mu.Lock()
+		command := w.state.ciRerunCommands[id]
+		delete(w.state.ciRerunCommands, id)
+		w.state.mu.Unlock()
+		if command == "" || block["is_error"] == true {
+			continue
+		}
+		output := claudeToolResultText(block["content"])
+		if evidence := ciRerunHelperToolEvidence(command, output); evidence != nil {
+			w.state.mu.Lock()
+			w.state.ciRerunAction = evidence
+			w.state.mu.Unlock()
+		}
+	}
 }
 
 // readOnlyModeAtInit recognises a session whose system/init record reports a

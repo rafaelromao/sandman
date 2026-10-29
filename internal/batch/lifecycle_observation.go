@@ -9,21 +9,24 @@ import (
 // lifecycleObservationRequest describes one runtime observation of an
 // implementation pull request.
 type lifecycleObservationRequest struct {
-	WorkDir        string
-	Branch         string
-	LogPath        string
-	RunID          string
-	HostPathsReady bool
-	AttemptStatus  string
+	WorkDir           string
+	Branch            string
+	RunID             string
+	HostPathsReady    bool
+	AttemptStatus     string
+	AfterAgentAttempt bool
+	CIRerunAction     *ciRerunActionEvidence
 }
 
 // lifecycleVerdict is the selected lifecycle action and the evidence used to
 // apply it. lifecycleNone means the observation did not select an action.
 type lifecycleVerdict struct {
-	Action          lifecycleAction
-	Evidence        map[string]any
-	Kind            lifecycleVerdictKind
-	ImplementorWork bool
+	Action           lifecycleAction
+	Evidence         map[string]any
+	Kind             lifecycleVerdictKind
+	ImplementorWork  bool
+	ciRepairRequired bool
+	ciExecutionID    string
 }
 
 type lifecycleVerdictKind uint8
@@ -54,10 +57,11 @@ func (o *lifecycleObserver) Observe(ctx context.Context, request lifecycleObserv
 		ctx,
 		request.WorkDir,
 		request.Branch,
-		request.LogPath,
 		request.RunID,
 		request.HostPathsReady,
 		request.AttemptStatus,
+		request.AfterAgentAttempt,
+		request.CIRerunAction,
 	)
 	if !verdict.handled() || ctx.Err() != nil {
 		return verdict
@@ -140,9 +144,19 @@ func (o *lifecycleObserver) applyContinuity(branch, runID string, verdict lifecy
 	if verdict.ImplementorWork {
 		signatureEvidence = cloneLifecycleExtras(verdict.Evidence)
 		signatureEvidence["gate"] = gateOwnedWorkRequired
+	} else if verdict.ciRepairRequired && stringEvidence(verdict.Evidence, "reason") == "CI_FAILURE" {
+		signatureEvidence = cloneLifecycleExtras(verdict.Evidence)
+		signatureEvidence["gate"] = "ci-failure"
+		if verdict.ciExecutionID != "" {
+			signatureEvidence["ci_execution_id"] = verdict.ciExecutionID
+		} else {
+			delete(signatureEvidence, "ci_execution_id")
+		}
 	}
 	signature := resumeSignature(signatureEvidence, o.decisionPRHead)
+	allowanceRound := repairRound(verdict.Evidence, o.decisionPRHead)
 	o.pendingResumeSignature = signature
+	o.pendingResumeRound = allowanceRound
 	if readErr != nil {
 		prior := stalledResumes(verdict.Evidence)
 		if verdict.ImplementorWork {
@@ -167,7 +181,7 @@ func (o *lifecycleObserver) applyContinuity(branch, runID string, verdict lifecy
 		verdict.Evidence = stalledAwaitExtras(verdict.Evidence, signature, stalled)
 		return verdict
 	}
-	if o.lastResumeSignature != "" && repairRound(signature) != repairRound(o.lastResumeSignature) {
+	if o.lastResumeRound != "" && allowanceRound != o.lastResumeRound {
 		o.resumeCount = 0
 	}
 	gate, _ := verdict.Evidence["gate"].(string)

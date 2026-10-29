@@ -1,12 +1,14 @@
 package batch
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/github"
 )
 
 func (s *runSession) runtimeNow() time.Time {
@@ -95,4 +97,76 @@ func (s *lifecycleObserver) priorObservation(runID, branch, head string) (lifecy
 	}
 	extras["observation_error"] = "transport-unavailable; retaining established operation deadline"
 	return lifecycleVerdict{Action: lifecycleAwait, Evidence: extras}, true
+}
+
+func (s *lifecycleObserver) retainedCIRerunEvidence(ctx context.Context, runID, branch, head string, prNumber int, workflowRunID, repository string, failedChecks []github.CIFailedCheck, workflowCheckNames []string) map[string]any {
+	if prNumber <= 0 || strings.TrimSpace(head) == "" {
+		return nil
+	}
+	states, err := events.ReadRunStates(s.deps.eventLog)
+	if err != nil {
+		return nil
+	}
+	state, ok := states[runID]
+	if !ok || !state.IsAwaiting() || state.IsCapacityQueued() || state.AwaitEvent == nil || state.Branch() != branch {
+		return nil
+	}
+	ci, ok := state.AwaitEvent.Payload["ci_wait"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	data, err := json.Marshal(ci)
+	if err != nil {
+		return nil
+	}
+	var registration ciWaitRegistration
+	if json.Unmarshal(data, &registration) != nil || registration.HeadSHA != head || registration.PullRequest != prNumber {
+		return nil
+	}
+	if _, err := ciWaitEvidenceFromRegistration(registration, prNumber); err != nil {
+		return nil
+	}
+	action, ok := ciRerunActionFromPayload(state.AwaitEvent.Payload[ciRerunActionKey])
+	if !ok {
+		return nil
+	}
+	if strings.TrimSpace(repository) == "" {
+		repository, err = s.deps.githubClient.RepoName(ctx)
+		if err != nil {
+			return nil
+		}
+		repository = strings.TrimSpace(repository)
+	}
+	if !action.matchesPullRequest(prNumber, repository, head) {
+		return nil
+	}
+	evidence := map[string]any{ciRerunActionKey: action.payload()}
+	if strings.TrimSpace(workflowRunID) == "" {
+		// The helper receipt can be retained while replacement checks are
+		// ordinary pending CI, before the rollup identifies the containing
+		// workflow as a rerun prerequisite.
+		return evidence
+	}
+	if len(failedChecks) == 0 || len(workflowCheckNames) == 0 {
+		return nil
+	}
+	checkNames := make([]string, 0, len(failedChecks))
+	for _, check := range failedChecks {
+		checkNames = append(checkNames, check.Name)
+	}
+	prerequisite := map[string]any{
+		"protocol":             "ci-rerun-prerequisite/v1",
+		"repository":           repository,
+		"pull_request":         prNumber,
+		"head_sha":             head,
+		"workflow_run_id":      strings.TrimSpace(workflowRunID),
+		"failed_check_names":   checkNames,
+		"failed_checks":        append([]github.CIFailedCheck(nil), failedChecks...),
+		"workflow_check_names": append([]string(nil), workflowCheckNames...),
+	}
+	if !action.matchesPrerequisite(prerequisite) {
+		return nil
+	}
+	evidence[ciRerunPrerequisiteKey] = prerequisite
+	return evidence
 }
