@@ -19,6 +19,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/rafaelromao/sandman/internal/skill"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
@@ -286,6 +287,103 @@ func TestCIRerunPendingWaitFailureWithUnrelatedActivityRequiresRecordedRepairAnd
 	registered, err := readCIWaitRegistration(filepath.Join(worktree, ".sandman", "state", "17.ci_wait.json"))
 	if err != nil || registered.ExecutionID != "checks-rerun" {
 		t.Fatalf("confirmed replacement execution did not become the observed CI generation: registration=%+v error=%v", registered, err)
+	}
+}
+
+func TestCIRerunCancellationBeforeMutationPreventsHelperPost(t *testing.T) {
+	root := t.TempDir()
+	gh := newRecordingCIRerunGH(t, root)
+	installCIRerunHelperForManagedTest(t, root)
+	commandText := `sh "$HOME/.agents/skills/sandman/implement/ci-rerun-v1.sh" --repository owner/repo --pull-request 17 --head-sha head --tested-sha tested-merge-sha --run-id 12345 --job-id 987654321 --diagnosis transient-provider-timeout`
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	command := exec.CommandContext(ctx, "sh", "-c", commandText)
+	command.Env = gh.env
+	if output, err := command.CombinedOutput(); !errors.Is(err, context.Canceled) {
+		t.Fatalf("pre-cancelled helper command = (%v, %s), want context cancellation", err, output)
+	}
+	if actions := gh.actions(t); len(actions) != 0 {
+		t.Fatalf("pre-cancelled recovery mutated GitHub: %v", actions)
+	}
+}
+
+func TestManagedCIRerunCancellationBeforePostAbortsWithoutRelaunch(t *testing.T) {
+	root := testenv.MkdirShort(t, "sm-ci-cancel-recovery-")
+	t.Chdir(root)
+	initGitRepo(t, root)
+	worktree := filepath.Join(root, "worktrees", "42-work")
+	if err := os.MkdirAll(filepath.Join(worktree, ".sandman"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktree, ".sandman", "task.md"), []byte("# Task\nRepair current-head CI.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gh := newRecordingCIRerunGH(t, root)
+	installCIRerunHelperForManagedTest(t, root)
+	readyPath := filepath.Join(root, "gh-jobs-ready")
+	cancelPath := filepath.Join(root, "gh-cancel")
+	configureRecordingCIRerunGHBlock(t, gh, readyPath, cancelPath)
+	helperCommand := `sh "$HOME/.agents/skills/sandman/implement/ci-rerun-v1.sh" --repository owner/repo --pull-request 17 --head-sha head --tested-sha tested-merge-sha --run-id 12345 --job-id 987654321 --diagnosis transient-provider-timeout`
+	factory := &cancellableCIRerunRunnableFactory{gh: gh, helperCommand: helperCommand}
+	now := time.Now().UTC().Truncate(time.Second)
+	client := &reviewWaitSchedulerGitHubClient{fakeGitHubClient: fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, State: "closed"}},
+		prs: map[string]*github.PR{"42-work": {
+			Number: 17, State: "open", HeadRefName: "42-work", HeadRefOid: "head", Body: "Closes #42",
+			StatusCheckRollup: "failure", CIHasActiveChecks: true, CIActiveFailedWorkflowRunID: "12345", CIExecutionID: "checks-current",
+		}},
+	}}
+	cfg := &config.Config{Agent: "test", Sandbox: "worktree", WorktreeDir: filepath.Join(root, "worktrees"), Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test": {Command: "true"}}}
+	log := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, log,
+		WithErrorLog(io.Discard),
+		WithRunnableFactory(factory),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: &retrySandbox{workDir: worktree}}),
+		WithRunSessionOpts(runSessionOptions{now: func() time.Time { return now }, currentHead: func(string) (string, error) { return "head", nil }}),
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	type batchOutcome struct {
+		result *Result
+		err    error
+	}
+	done := make(chan batchOutcome, 1)
+	go func() {
+		result, err := o.RunBatch(ctx, Request{Issues: []int{42}, Branches: map[int]string{42: "42-work"}, RunTS: "261029112000", RunShortID: "cancel-ci-rerun", Retries: 3, Parallel: 1})
+		done <- batchOutcome{result: result, err: err}
+	}()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(readyPath); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatal("helper did not reach the pre-mutation job lookup")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	if err := os.WriteFile(cancelPath, []byte("cancelled"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var outcome batchOutcome
+	select {
+	case outcome = <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("cancelled CI recovery did not stop the managed run")
+	}
+	if outcome.result == nil || len(outcome.result.Runs) != 1 || outcome.result.Runs[0].Status != "aborted" {
+		t.Fatalf("cancelled CI recovery result = %+v (error %v), want an aborted run", outcome.result, outcome.err)
+	}
+	if factory.created != 1 {
+		t.Fatalf("cancellation launched another implementation attempt: launches=%d", factory.created)
+	}
+	if actions := gh.actions(t); len(actions) != 0 {
+		t.Fatalf("cancellation before the rerun POST allowed a GitHub mutation: %v", actions)
+	}
+	if countEventsByType(log.snapshot(), "run.retry") != 0 || countEventsByType(log.snapshot(), "run.continued") != 0 || countEventsByType(log.snapshot(), "run.aborted") != 1 {
+		t.Fatalf("cancellation did not prevent later retry/continuation: %+v", log.snapshot())
 	}
 }
 
@@ -647,6 +745,58 @@ func runCIRerunHelperForManagedTest(t *testing.T, gh recordingCIRerunGH, helperP
 	return string(output)
 }
 
+func configureRecordingCIRerunGHBlock(t *testing.T, gh recordingCIRerunGH, readyPath, cancelPath string) {
+	t.Helper()
+	data, err := os.ReadFile(gh.fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatal(err)
+	}
+	state["block_jobs"] = true
+	state["jobs_ready_path"] = readyPath
+	state["cancel_path"] = cancelPath
+	data, err = json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(gh.fixture, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type cancellableCIRerunRunnableFactory struct {
+	gh            recordingCIRerunGH
+	helperCommand string
+	created       int
+}
+
+func (f *cancellableCIRerunRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
+	f.created++
+	return &cancellableCIRerunRunnable{issue: issue, branch: branch, worktree: sb.WorkDir(), gh: f.gh, helperCommand: f.helperCommand}
+}
+
+type cancellableCIRerunRunnable struct {
+	issue         *github.Issue
+	branch        string
+	worktree      string
+	gh            recordingCIRerunGH
+	helperCommand string
+}
+
+func (r *cancellableCIRerunRunnable) Run(ctx context.Context, _ prompt.IssueRenderer, _ string, _ prompt.RenderConfig) AgentRunResult {
+	command := exec.CommandContext(ctx, "sh", "-c", r.helperCommand)
+	command.Env = r.gh.env
+	_, err := command.CombinedOutput()
+	status := "failed"
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+		status = "aborted"
+	}
+	return AgentRunResult{IssueNumber: r.issue.Number, Status: status, Branch: r.branch, WorktreePath: r.worktree}
+}
+
 func captureCIRerunActionFromOpenCodeToolEvent(t *testing.T, command, output string) *ciRerunActionEvidence {
 	t.Helper()
 	var parser outputParser = newOpenCodeOutput(io.Discard, io.Discard, false)
@@ -685,7 +835,7 @@ func (gh recordingCIRerunGH) actions(t *testing.T) []string {
 }
 
 const recordingCIRerunGHScript = `#!/usr/bin/env python3
-import json, os, sys
+import json, os, sys, time
 path = os.environ['CI_RERUN_FIXTURE']
 with open(path) as f: state = json.load(f)
 args = sys.argv[1:]
@@ -726,6 +876,10 @@ if route == 'repos/owner/repo/pulls/17':
 elif route == 'repos/owner/repo/actions/runs/12345':
     print(json.dumps(state['run']))
 elif route == 'repos/owner/repo/actions/runs/12345/jobs?filter=latest&per_page=100':
+    if state.get('block_jobs'):
+        with open(state['jobs_ready_path'], 'w') as f: f.write('ready')
+        while not os.path.exists(state['cancel_path']): time.sleep(0.01)
+        sys.exit(130)
     print(json.dumps({'total_count': len(state['jobs']), 'jobs': state['jobs']}))
 else:
     sys.exit(2)

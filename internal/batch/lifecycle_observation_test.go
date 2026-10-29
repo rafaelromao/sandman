@@ -263,12 +263,16 @@ func TestLifecycleObservation_FailedCIWithUnrelatedActiveWorkflowResumesImplemen
 			currentHead: func(string) (string, error) { return "current-sha", nil },
 		},
 	}
-	verdict := newLifecycleObserver(session).Observe(t.Context(), lifecycleObservationRequest{
+	request := lifecycleObservationRequest{
 		WorkDir: workDir, Branch: gateTestBranch, RunID: "run-unrelated-active", HostPathsReady: true,
 		AttemptStatus: "success", AfterAgentAttempt: true,
-	})
-	if verdict.Action != lifecycleResume || verdict.Evidence["reason"] != "CI_FAILURE" {
-		t.Fatalf("unrelated active workflow deferred implementation-owned CI remediation: %+v", verdict)
+		CIRerunAction: captureCIRerunActionFromOpenCodeToolEvent(t,
+			`sh "$HOME/.agents/skills/sandman/implement/ci-rerun-v1.sh" --repository owner/repo --pull-request 17 --head-sha current-sha --tested-sha tested-merge-sha --run-id 101 --job-id 987654321 --diagnosis transient-provider-timeout`,
+			`{"protocol":"ci-rerun/v1","state":"waiting","reason":"workflow-still-running","repository":"owner/repo","pull_request":17,"source_head_sha":"current-sha","tested_sha":"tested-merge-sha","diagnosis":"transient-provider-timeout","run_id":"101","job_id":"987654321","observed_attempt":1}`),
+	}
+	verdict := newLifecycleObserver(session).Observe(t.Context(), request)
+	if verdict.Action != lifecycleResume || verdict.Evidence["reason"] != "CI_FAILURE" || !verdict.ciRepairRequired {
+		t.Fatalf("valid receipt for one workflow deferred a separate failed workflow: %+v", verdict)
 	}
 }
 

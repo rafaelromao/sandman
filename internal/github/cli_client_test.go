@@ -443,6 +443,21 @@ func TestCLIClient_FindPRByBranch_PreservesActiveSiblingsAlongsideFailure(t *tes
 	}
 }
 
+func TestCLIClient_FindPRByBranch_DoesNotSelectRerunPrerequisiteOverSeparateFailure(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":18,"state":"open","headRefName":"failure-branch","headRefOid":"source-head","statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"FAILURE","name":"opencode-canary","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},{"__typename":"CheckRun","status":"IN_PROGRESS","name":"build-macos","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"},{"__typename":"CheckRun","status":"COMPLETED","conclusion":"FAILURE","name":"source-tests","detailsUrl":"https://github.com/o/r/actions/runs/202/job/21"}]}]`}}}
+	client := &CLIClient{runner: runner}
+	pr, err := client.FindPRByBranch(context.Background(), "failure-branch")
+	if err != nil || pr == nil {
+		t.Fatalf("FindPRByBranch() = (%+v, %v)", pr, err)
+	}
+	if pr.StatusCheckRollup != "failure" || !pr.CIHasActiveChecks {
+		t.Fatalf("mixed failed/pending rollup = (%q, active=%t), want failure plus active checks", pr.StatusCheckRollup, pr.CIHasActiveChecks)
+	}
+	if pr.CIActiveFailedWorkflowRunID != "" {
+		t.Fatalf("selected rerun prerequisite %q despite independent failed workflow 202", pr.CIActiveFailedWorkflowRunID)
+	}
+}
+
 func TestCIRerunBlockedWorkflowRunIDRequiresFailedAndActiveJobsInSameRun(t *testing.T) {
 	tests := []struct {
 		name string
@@ -455,6 +470,18 @@ func TestCIRerunBlockedWorkflowRunIDRequiresFailedAndActiveJobsInSameRun(t *test
 				`{"status":"IN_PROGRESS","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"},` +
 				`{"status":"IN_PROGRESS","detailsUrl":"https://github.com/o/r/actions/runs/202/job/21"}]`,
 			want: "101",
+		},
+		{
+			name: "separate completed failure remains actionable",
+			raw: `[ {"status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},` +
+				`{"status":"IN_PROGRESS","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"},` +
+				`{"status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://github.com/o/r/actions/runs/202/job/21"} ]`,
+		},
+		{
+			name: "unidentified failure remains actionable",
+			raw: `[ {"status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},` +
+				`{"status":"IN_PROGRESS","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"},` +
+				`{"__typename":"StatusContext","state":"FAILURE","context":"legacy-failing-check"} ]`,
 		},
 		{
 			name: "only unrelated active workflow",

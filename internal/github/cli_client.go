@@ -300,9 +300,9 @@ func ciHasActiveChecksFromJSON(raw json.RawMessage) bool {
 
 // ciRerunBlockedWorkflowRunIDFromJSON identifies the containing workflow run
 // that prevents a targeted job rerun: exactly one run must have both a failed
-// completed job and a non-completed sibling. URLs that do not expose GitHub
-// Actions job identity, legacy status contexts, and ambiguous multiple runs
-// fail closed.
+// completed job and a non-completed sibling, and it must be the only source
+// of failed CI. URLs that do not expose GitHub Actions job identity, legacy
+// status contexts, and ambiguous or independently failing workflows fail closed.
 func ciRerunBlockedWorkflowRunIDFromJSON(raw json.RawMessage) string {
 	var checks []statusCheckRun
 	if err := json.Unmarshal(raw, &checks); err != nil || len(checks) == 0 {
@@ -313,18 +313,26 @@ func ciRerunBlockedWorkflowRunIDFromJSON(raw json.RawMessage) string {
 		active bool
 	}
 	runs := make(map[string]runState)
+	unidentifiedFailure := false
 	for _, check := range checks {
 		match := githubActionsJobURLPattern.FindStringSubmatch(strings.TrimSpace(check.DetailsURL))
+		status := strings.ToUpper(strings.TrimSpace(check.Status))
+		conclusion := strings.ToUpper(strings.TrimSpace(check.Conclusion))
+		checkState := strings.ToUpper(strings.TrimSpace(check.State))
+		failed := checkState == "FAILURE" || (status == "COMPLETED" && conclusion != "" &&
+			conclusion != "SUCCESS" && conclusion != "SKIPPED" && conclusion != "NEUTRAL")
 		if len(match) != 2 {
+			if failed {
+				// An unlinked failure cannot be proven to belong to the
+				// diagnosed workflow, so it must not be hidden by waiting for
+				// another workflow's active sibling.
+				unidentifiedFailure = true
+			}
 			continue
 		}
 		state := runs[match[1]]
-		status := strings.ToUpper(strings.TrimSpace(check.Status))
-		if status == "COMPLETED" {
-			conclusion := strings.ToUpper(strings.TrimSpace(check.Conclusion))
-			if conclusion != "" && conclusion != "SUCCESS" && conclusion != "SKIPPED" && conclusion != "NEUTRAL" {
-				state.failed = true
-			}
+		if failed {
+			state.failed = true
 		} else {
 			switch status {
 			case "QUEUED", "IN_PROGRESS", "WAITING", "PENDING", "REQUESTED", "CANCEL_REQUESTED":
@@ -332,6 +340,9 @@ func ciRerunBlockedWorkflowRunIDFromJSON(raw json.RawMessage) string {
 			}
 		}
 		runs[match[1]] = state
+	}
+	if unidentifiedFailure {
+		return ""
 	}
 	var blockedRunID string
 	for runID, state := range runs {
@@ -342,6 +353,17 @@ func ciRerunBlockedWorkflowRunIDFromJSON(raw json.RawMessage) string {
 			return ""
 		}
 		blockedRunID = runID
+	}
+	if blockedRunID == "" {
+		return ""
+	}
+	for runID, state := range runs {
+		if runID != blockedRunID && state.failed {
+			// The special wait is valid only when the containing workflow is
+			// the sole source of failed CI. A separate completed failure is
+			// actionable and must remain implementation-owned immediately.
+			return ""
+		}
 	}
 	return blockedRunID
 }
