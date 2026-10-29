@@ -53,6 +53,9 @@ type agentStrategy interface {
 	// agent's structured stream into readable output, or nil parsers to keep
 	// the raw stream.
 	NewOutputParsers(warnings io.Writer) (stdout, stderr outputParser)
+	// CIRerunAction returns CI recovery evidence captured by this strategy's
+	// structured output parsers during the current launch, if any.
+	CIRerunAction(stdout, stderr outputParser) *ciRerunActionEvidence
 
 	// ContextRolloverDetector returns the detector that stops an attempt on a
 	// repeated context-limit failure, or nil when the agent handles context
@@ -192,6 +195,10 @@ func (passthroughStrategy) NewOutputParsers(io.Writer) (outputParser, outputPars
 	return nil, nil
 }
 
+func (passthroughStrategy) CIRerunAction(outputParser, outputParser) *ciRerunActionEvidence {
+	return nil
+}
+
 func (passthroughStrategy) ContextRolloverDetector([]string, func()) *contextRolloverDetector {
 	return nil
 }
@@ -272,6 +279,10 @@ func (s opencodeStrategy) RetryAfterMissingSession(run *AgentRun, priorSession s
 
 func (opencodeStrategy) PersistSession(run *AgentRun, stdout, stderr outputParser) {
 	run.persistSession(opencodeSessionKind, firstSessionID(stdout, stderr))
+}
+
+func (opencodeStrategy) CIRerunAction(stdout, stderr outputParser) *ciRerunActionEvidence {
+	return ciRerunActionFromParsers(stdout, stderr)
 }
 
 func (s opencodeStrategy) NewOutputParsers(warnings io.Writer) (outputParser, outputParser) {

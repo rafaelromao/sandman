@@ -202,6 +202,7 @@ type AgentRunResult struct {
 	// OperationalError preserves preparation diagnostics for prompt-only callers.
 	OperationalError   error     `json:"-"`
 	UsageLimitDeadline time.Time `json:"-"`
+	ciRerunAction      *ciRerunActionEvidence
 	IssueNumber        int
 	Issue              *int
 	Status             string

@@ -152,9 +152,13 @@ prior_quality_gate_id=$(jq -r --argjson run_id "$run_id" --argjson attempt "$run
 	'[.[] | select(.run_id == $run_id and .run_attempt == $attempt and .name == "quality-gate") | .id][0] // 0' \
 	"$jobs_file") || refuse "quality-gate-evidence-invalid"
 
+case "$job_status" in
+	queued|in_progress) waiting "recovery-already-active" "$run_attempt" ;;
+esac
+case "$run_status" in
+	queued|in_progress) waiting "workflow-still-running" "$run_attempt" ;;
+esac
 case "$run_status:$job_status:$run_conclusion:$job_conclusion" in
-	*:queued:*:*|*:in_progress:*:*) waiting "recovery-already-active" "$run_attempt" ;;
-	queued:*:*:*|in_progress:*:*:*) waiting "workflow-still-running" "$run_attempt" ;;
 	completed:completed:failure:failure|completed:completed:failure:timed_out) ;;
 	completed:completed:*:failure|completed:completed:*:timed_out) ;;
 	*) refuse "current-execution-is-not-rerunnable" ;;

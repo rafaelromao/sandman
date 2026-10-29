@@ -11,11 +11,11 @@ import (
 type lifecycleObservationRequest struct {
 	WorkDir           string
 	Branch            string
-	LogPath           string
 	RunID             string
 	HostPathsReady    bool
 	AttemptStatus     string
 	AfterAgentAttempt bool
+	CIRerunAction     *ciRerunActionEvidence
 }
 
 // lifecycleVerdict is the selected lifecycle action and the evidence used to
@@ -56,11 +56,11 @@ func (o *lifecycleObserver) Observe(ctx context.Context, request lifecycleObserv
 		ctx,
 		request.WorkDir,
 		request.Branch,
-		request.LogPath,
 		request.RunID,
 		request.HostPathsReady,
 		request.AttemptStatus,
 		request.AfterAgentAttempt,
+		request.CIRerunAction,
 	)
 	if !verdict.handled() || ctx.Err() != nil {
 		return verdict

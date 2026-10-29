@@ -15,7 +15,7 @@ func (s *runSession) observeLifecycleWithHostPathsForTest(ctx context.Context, w
 func (s *runSession) observeLifecycleAttemptForTest(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool, attemptStatus string) lifecycleVerdict {
 	var observer lifecycleObservation = newLifecycleObserver(s)
 	return observer.Observe(ctx, lifecycleObservationRequest{
-		WorkDir: workDir, Branch: branch, LogPath: logPath, RunID: runID,
+		WorkDir: workDir, Branch: branch, RunID: runID,
 		HostPathsReady: hostPathsReady, AttemptStatus: attemptStatus,
 	})
 }

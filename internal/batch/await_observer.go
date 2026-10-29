@@ -61,7 +61,7 @@ func (e *runExecutor) lifecycleObserverForRow(ctx context.Context, row RowSpec) 
 	}
 	workDir := filepath.Join(e.deps.layout.WorktreeDir, branch)
 	return newLifecycleObserver(session), lifecycleObservationRequest{
-		WorkDir: workDir, Branch: branch, LogPath: session.runLogPathFor(runID), RunID: runID,
+		WorkDir: workDir, Branch: branch, RunID: runID,
 		HostPathsReady: true, AttemptStatus: "success",
 	}, true
 }
@@ -125,6 +125,21 @@ func mergeRetainedAwaitEvidence(previous, observed map[string]any) map[string]an
 }
 
 func awaitOperationChanged(previous, observed map[string]any) bool {
+	for _, key := range []string{ciRerunPrerequisiteKey, ciRerunActionKey} {
+		previousValue, previousOK := previous[key]
+		observedValue, observedOK := observed[key]
+		if previousOK != observedOK {
+			return true
+		}
+		if !previousOK {
+			continue
+		}
+		previousData, previousErr := json.Marshal(previousValue)
+		observedData, observedErr := json.Marshal(observedValue)
+		if previousErr != nil || observedErr != nil || string(previousData) != string(observedData) {
+			return true
+		}
+	}
 	identityBound := false
 	for _, operation := range []string{"ci_wait", "review_request"} {
 		previousSignature, previousOK := awaitIdentitySignature(previous, operation)

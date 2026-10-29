@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"path/filepath"
 	"testing"
@@ -161,7 +162,7 @@ func TestLifecycleObservation_FailedCIWithActiveSiblingKeepsRuntimePrerequisiteW
 		issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
 		prs: map[string]*github.PR{gateTestBranch: {
 			Number: 17, State: "open", HeadRefOid: "current-sha", CIExecutionID: "checks-with-pending-sibling",
-			StatusCheckRollup: "failure", CIHasActiveChecks: true, CIActiveFailedWorkflowRunID: "workflow-101", MergeStateStatus: "BLOCKED",
+			StatusCheckRollup: "failure", CIHasActiveChecks: true, CIActiveFailedWorkflowRunID: "101", MergeStateStatus: "BLOCKED",
 		}},
 	}
 	log := &spyEventLog{}
@@ -185,17 +186,30 @@ func TestLifecycleObservation_FailedCIWithActiveSiblingKeepsRuntimePrerequisiteW
 	}
 
 	request.AfterAgentAttempt = true
+	untouchedFailure := observer.Observe(t.Context(), request)
+	if untouchedFailure.Action != lifecycleResume || untouchedFailure.Evidence["reason"] != "CI_FAILURE" || !untouchedFailure.ciRepairRequired {
+		t.Fatalf("an agent exit without a helper result must retain CI remediation ownership: %+v", untouchedFailure)
+	}
+	request.CIRerunAction = captureCIRerunActionFromOpenCodeToolEvent(t,
+		`sh "$HOME/.agents/skills/sandman/implement/ci-rerun-v1.sh" --repository owner/repo --pull-request 17 --head-sha current-sha --tested-sha tested-merge-sha --run-id 101 --job-id 987654321 --diagnosis transient-provider-timeout`,
+		`{"protocol":"ci-rerun/v1","state":"waiting","reason":"workflow-still-running","repository":"owner/repo","pull_request":17,"source_head_sha":"current-sha","tested_sha":"tested-merge-sha","diagnosis":"transient-provider-timeout","run_id":"101","job_id":"987654321","observed_attempt":1}`)
+	if request.CIRerunAction == nil {
+		t.Fatal("structured helper tool result was not captured")
+	}
 	blockedRerun := observer.Observe(t.Context(), request)
 	if blockedRerun.Action != lifecycleAwait || blockedRerun.Evidence["gate"] != string(lifecycleGatePending) || blockedRerun.Evidence["reason"] != "CI_FAILURE" {
-		t.Fatalf("after the agent diagnoses the failure, the runtime must own observation of the active workflow prerequisite: %+v", blockedRerun)
+		t.Fatalf("verified helper result should authorize observation of its active workflow prerequisite: %+v", blockedRerun)
 	}
 	ciWait, ok := blockedRerun.Evidence["ci_wait"].(map[string]any)
 	if !ok || ciWait["execution_id"] != "checks-with-pending-sibling" {
 		t.Fatalf("prerequisite await lost identified CI execution: %#v", blockedRerun.Evidence)
 	}
 	prerequisite, ok := blockedRerun.Evidence["ci_rerun_prerequisite"].(map[string]any)
-	if !ok || prerequisite["workflow_run_id"] != "workflow-101" || prerequisite["head_sha"] != "current-sha" || prerequisite["pull_request"] != 17 {
+	if !ok || prerequisite["workflow_run_id"] != "101" || prerequisite["head_sha"] != "current-sha" || prerequisite["pull_request"] != 17 {
 		t.Fatalf("prerequisite await lost its typed workflow identity: %#v", blockedRerun.Evidence)
+	}
+	if action, ok := blockedRerun.Evidence["ci_rerun_action"].(map[string]any); !ok || action["job_id"] != "987654321" {
+		t.Fatalf("prerequisite await lost the diagnosed helper result: %#v", blockedRerun.Evidence["ci_rerun_action"])
 	}
 	initialDeadline, ok := ciWait["deadline_unix_seconds"].(int64)
 	if !ok {
@@ -212,6 +226,24 @@ func TestLifecycleObservation_FailedCIWithActiveSiblingKeepsRuntimePrerequisiteW
 	retained, err := readCIWaitRegistration(filepath.Join(workDir, ".sandman", "state", "17.ci_wait.json"))
 	if err != nil || retained.DeadlineUnixSeconds != initialDeadline {
 		t.Fatalf("same CI execution deadline changed across the prerequisite: registration=%+v error=%v", retained, err)
+	}
+
+	client.prs[gateTestBranch].CIHasActiveChecks = true
+	client.prs[gateTestBranch].CIActiveFailedWorkflowRunID = "101"
+	client.prs[gateTestBranch].CIExecutionID = "checks-rerun-attempt-2"
+	request.CIRerunAction = captureCIRerunActionFromOpenCodeToolEvent(t,
+		`sh "$HOME/.agents/skills/sandman/implement/ci-rerun-v1.sh" --repository owner/repo --pull-request 17 --head-sha current-sha --tested-sha tested-merge-sha --run-id 101 --job-id 987654321 --diagnosis transient-provider-timeout`,
+		`{"protocol":"ci-rerun/v1","state":"confirmed","reason":"selected-job-and-quality-gate-rerun-observed","repository":"owner/repo","pull_request":17,"source_head_sha":"current-sha","tested_sha":"tested-merge-sha","diagnosis":"transient-provider-timeout","run_id":"101","job_id":"987654321","observed_attempt":2}`)
+	if request.CIRerunAction == nil {
+		t.Fatal("confirmed helper rerun result was not captured")
+	}
+	confirmedRerun := observer.Observe(t.Context(), request)
+	if confirmedRerun.Action != lifecycleAwait || confirmedRerun.Evidence["gate"] != string(lifecycleGatePending) {
+		t.Fatalf("confirmed new attempt should authorize waiting while the failure-first rollup remains visible: %+v", confirmedRerun)
+	}
+	newCI, ok := confirmedRerun.Evidence["ci_wait"].(map[string]any)
+	if !ok || newCI["execution_id"] != "checks-rerun-attempt-2" || newCI["deadline_unix_seconds"] != now.Add(ciWaitTimeout).Unix() {
+		t.Fatalf("confirmed rerun did not start a deadline for its verified new execution: %#v", confirmedRerun.Evidence)
 	}
 }
 
@@ -249,20 +281,25 @@ func TestAwaitingRowLifecycle_ReobservesOnlyTheRetainedWorkflowPrerequisite(t *t
 		"effective_timeout_seconds": int64(ciWaitTimeout / time.Second),
 	}
 	prerequisite := map[string]any{
-		"protocol": "ci-rerun-prerequisite/v1", "pull_request": 17, "head_sha": "current-sha", "workflow_run_id": "workflow-101",
+		"protocol": "ci-rerun-prerequisite/v1", "repository": "owner/repo", "pull_request": 17, "head_sha": "current-sha", "workflow_run_id": "101",
+	}
+	action := map[string]any{
+		"protocol": "ci-rerun/v1", "state": "waiting", "reason": "workflow-still-running", "repository": "owner/repo",
+		"pull_request": 17, "source_head_sha": "current-sha", "tested_sha": "tested-merge-sha",
+		"diagnosis": "transient-provider-timeout", "run_id": "101", "job_id": "987654321", "observed_attempt": 1,
 	}
 	log := &spyEventLog{events: []events.Event{
 		{Type: "run.started", RunID: "run-rerun-prerequisite", Issue: 42, Timestamp: now.Add(-time.Minute), Payload: map[string]any{"branch": gateTestBranch}},
 		{Type: "run.await", RunID: "run-rerun-prerequisite", Issue: 42, Timestamp: now, Payload: map[string]any{
 			"await": true, "await_reason": "pending", "branch": gateTestBranch,
-			"ci_wait": ciWait, "ci_rerun_prerequisite": prerequisite,
+			"ci_wait": ciWait, "ci_rerun_prerequisite": prerequisite, "ci_rerun_action": action,
 		}},
 	}}
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
 		prs: map[string]*github.PR{gateTestBranch: {
 			Number: 17, State: "open", HeadRefOid: "current-sha", CIExecutionID: "checks-101",
-			StatusCheckRollup: "failure", CIHasActiveChecks: true, CIActiveFailedWorkflowRunID: "workflow-101", MergeStateStatus: "BLOCKED",
+			StatusCheckRollup: "failure", CIHasActiveChecks: true, CIActiveFailedWorkflowRunID: "101", MergeStateStatus: "BLOCKED",
 		}},
 	}
 	e := &runExecutor{deps: runDeps{
@@ -282,6 +319,70 @@ func TestAwaitingRowLifecycle_ReobservesOnlyTheRetainedWorkflowPrerequisite(t *t
 	withoutPrerequisite := e.observeAwaitingRowLifecycle(t.Context(), row)
 	if withoutPrerequisite.Action != lifecycleResume || withoutPrerequisite.Evidence["reason"] != "CI_FAILURE" || !withoutPrerequisite.ciRepairRequired {
 		t.Fatalf("completed or changed workflow prerequisite must return CI repair to the implementation agent: %+v", withoutPrerequisite)
+	}
+}
+
+func TestCIRerunActionEvidenceIsCurrentAttemptAndMatchesWorkflowIdentity(t *testing.T) {
+	valid := ciRerunActionEvidence{
+		Protocol: "ci-rerun/v1", State: "waiting", Reason: "workflow-still-running",
+		Repository: "owner/repo", PullRequest: 17, SourceHeadSHA: "current-sha", TestedSHA: "tested-merge-sha",
+		Diagnosis: "transient-provider-timeout", RunID: "101", JobID: "987654321", ObservedAttempt: 4,
+	}
+	line, err := json.Marshal(valid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prerequisite := map[string]any{
+		"protocol": "ci-rerun-prerequisite/v1", "repository": "owner/repo", "pull_request": 17,
+		"head_sha": "current-sha", "workflow_run_id": "101",
+	}
+	command := `sh "$HOME/.agents/skills/sandman/implement/ci-rerun-v1.sh" --repository owner/repo --pull-request 17 --head-sha current-sha --tested-sha tested-merge-sha --run-id 101 --job-id 987654321 --diagnosis transient-provider-timeout`
+	current := ciRerunHelperToolEvidence(command, string(line))
+	if current == nil || !current.matchesPrerequisite(prerequisite) {
+		t.Fatalf("structured current helper result did not match its prerequisite: %+v", current)
+	}
+	confirmed := valid
+	confirmed.State = "confirmed"
+	confirmed.Reason = "selected-job-and-quality-gate-rerun-observed"
+	confirmed.ObservedAttempt = 5
+	if !confirmed.matchesPrerequisite(prerequisite) {
+		t.Fatalf("confirmed new execution did not match its prerequisite: %+v", confirmed)
+	}
+	for name, mutate := range map[string]func(*ciRerunActionEvidence){
+		"repository":   func(e *ciRerunActionEvidence) { e.Repository = "other/repo" },
+		"pull request": func(e *ciRerunActionEvidence) { e.PullRequest++ },
+		"source head":  func(e *ciRerunActionEvidence) { e.SourceHeadSHA = "old-head" },
+		"workflow run": func(e *ciRerunActionEvidence) { e.RunID = "102" },
+		"zero run id":  func(e *ciRerunActionEvidence) { e.RunID = "0" },
+		"job id":       func(e *ciRerunActionEvidence) { e.JobID = "not-a-database-id" },
+		"diagnosis":    func(e *ciRerunActionEvidence) { e.Diagnosis = "deterministic-source-failure" },
+		"confirmed without a new attempt": func(e *ciRerunActionEvidence) {
+			e.State, e.Reason, e.ObservedAttempt = "confirmed", "selected-job-and-quality-gate-rerun-observed", 1
+		},
+		"reason": func(e *ciRerunActionEvidence) { e.Reason = "rerun-submission-not-confirmed" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			evidence := valid
+			mutate(&evidence)
+			data, err := json.Marshal(evidence)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if action := ciRerunHelperToolEvidence(command, string(data)); action != nil && action.matchesPrerequisite(prerequisite) {
+				t.Fatalf("mismatched helper evidence authorized a wait: %+v", evidence)
+			}
+		})
+	}
+	for name, suffix := range map[string]string{
+		"ordinary echo": `; printf '%s' ` + string(line),
+		"pipeline":      ` | cat`,
+		"substitution":  `$(printf x)`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if action := ciRerunHelperToolEvidence(command+suffix, string(line)); action != nil {
+				t.Fatalf("composed shell command authorized helper evidence: %+v", action)
+			}
+		})
 	}
 }
 

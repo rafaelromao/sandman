@@ -3,6 +3,7 @@ package batch
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
@@ -172,6 +174,54 @@ func TestOpenCodeV2_RendersChunkedToolEventsToLiveAndSavedLogs(t *testing.T) {
 	identity, err := os.ReadFile(filepath.Join(run.runFolder, "session.json"))
 	if err != nil || !strings.Contains(string(identity), `"session_id": "ses-v2-log"`) {
 		t.Fatalf("session metadata = %s, %v; want captured v2 session", identity, err)
+	}
+}
+
+func TestAgentRun_OpenCodeCarriesStructuredCIRerunEvidenceInResult(t *testing.T) {
+	root := t.TempDir()
+	evidence := ciRerunActionEvidence{
+		Protocol: "ci-rerun/v1", State: "waiting", Reason: "workflow-still-running",
+		Repository: "owner/repo", PullRequest: 17, SourceHeadSHA: "head", TestedSHA: "tested-sha",
+		Diagnosis: "transient-provider-timeout", RunID: "101", JobID: "987654321", ObservedAttempt: 1,
+	}
+	receipt, err := json.Marshal(evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := `sh "$HOME/.agents/skills/sandman/implement/ci-rerun-v1.sh" --repository owner/repo --pull-request 17 --head-sha head --tested-sha tested-sha --run-id 101 --job-id 987654321 --diagnosis transient-provider-timeout`
+	toolEvent, err := json.Marshal(map[string]any{
+		"type": "tool_use",
+		"part": map[string]any{"tool": "shell", "state": map[string]any{
+			"status": "completed", "input": map[string]any{"command": command}, "output": string(receipt),
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sb := &fakeSandbox{workDir: root, execFunc: func(_ context.Context, _ string, stdout, _ io.Writer) error {
+		_, err := stdout.Write(append(toolEvent, '\n'))
+		return err
+	}}
+	run := NewAgentRunWithLayout(&github.Issue{Number: 17}, "17-work", sb, paths.NewLayout(&config.Config{}, root))
+	run.preset = "opencode-v2"
+	result := run.Run(context.Background(), &spyRenderer{result: "task"}, config.BuiltInAgentPresets["opencode-v2"].Command, prompt.RenderConfig{})
+	if result.Status != "success" {
+		t.Fatalf("agent status = %q", result.Status)
+	}
+	if result.ciRerunAction == nil || result.ciRerunAction.JobID != evidence.JobID || result.ciRerunAction.RunID != evidence.RunID {
+		t.Fatalf("agent result lost structured helper evidence: %+v", result.ciRerunAction)
+	}
+	sb.execFunc = func(_ context.Context, _ string, stdout, _ io.Writer) error {
+		textEvent, err := json.Marshal(map[string]any{"type": "text", "part": map[string]any{"text": string(receipt)}})
+		if err != nil {
+			return err
+		}
+		_, err = io.WriteString(stdout, string(textEvent)+"\n")
+		return err
+	}
+	nextAttempt := run.Run(context.Background(), &spyRenderer{result: "task"}, config.BuiltInAgentPresets["opencode-v2"].Command, prompt.RenderConfig{})
+	if nextAttempt.ciRerunAction != nil {
+		t.Fatalf("previous-attempt helper evidence survived a new launch: %+v", nextAttempt.ciRerunAction)
 	}
 }
 

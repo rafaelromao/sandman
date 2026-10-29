@@ -107,7 +107,7 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 	}
 	hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
 	verdict := newLifecycleObserver(s).Observe(ctx, lifecycleObservationRequest{
-		WorkDir: wt.WorkDir(), Branch: branch, LogPath: logPath, RunID: runID,
+		WorkDir: wt.WorkDir(), Branch: branch, RunID: runID,
 		HostPathsReady: hostPathsReady, AttemptStatus: "success",
 	})
 	if !verdict.handled() {
@@ -144,7 +144,7 @@ func (s *runSession) tryEntryResume(ctx context.Context, branch string, wt sandb
 		}
 		s.emitAwait(ctx, runID, result, verdict.Evidence)
 		verdict = newLifecycleObserver(s).waitForTransition(ctx, lifecycleObservationRequest{
-			WorkDir: wt.WorkDir(), Branch: branch, LogPath: logPath, RunID: runID,
+			WorkDir: wt.WorkDir(), Branch: branch, RunID: runID,
 			HostPathsReady: hostPathsReady, AttemptStatus: result.Status,
 		}, result, verdict)
 		if verdict.Action == lifecycleResume {

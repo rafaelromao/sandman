@@ -2,10 +2,13 @@ package batch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +19,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/skill"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
@@ -186,28 +190,45 @@ func TestCIRerunPendingWaitFailureWithUnrelatedActivityRequiresRecordedRepairAnd
 		}},
 	}}
 	launches, polls := 0, 0
-	var actions []string
+	ciHelper := newRecordingCIRerunGH(t, root)
+	installedHelper := installCIRerunHelperForManagedTest(t, root)
+	helperCommand := `sh "$HOME/.agents/skills/sandman/implement/ci-rerun-v1.sh" --repository owner/repo --pull-request 17 --head-sha head --tested-sha tested-merge-sha --run-id 12345 --job-id 987654321 --diagnosis transient-provider-timeout`
 	factory := &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
 		launches++
+		var actionForResult *ciRerunActionEvidence
 		switch launches {
 		case 2:
-			// The recorded GitHub recovery action precedes the fake state
-			// transition to the replacement current-head execution.
-			actions = append(actions, "POST /repos/owner/repo/actions/jobs/987654321/rerun")
+			// Execute the installed helper against a recording fake GitHub CLI.
+			// Only after its confirmed read-back do we advance the lifecycle fake.
+			output := runCIRerunHelperForManagedTest(t, ciHelper, installedHelper, helperCommand)
+			if !strings.Contains(output, `"state":"confirmed"`) {
+				t.Fatalf("rerun helper did not confirm its action: %s", output)
+			}
+			actionForResult = captureCIRerunActionFromOpenCodeToolEvent(t, helperCommand, output)
+			if actionForResult == nil {
+				t.Fatalf("actual installed helper output was not captured from its structured shell tool result: %s", output)
+			}
 			client.setPR(branch, func(pr *github.PR) {
-				pr.StatusCheckRollup, pr.CIExecutionID = "pending", "checks-rerun"
-				pr.CIHasActiveChecks = false
-				pr.CIActiveFailedWorkflowRunID = ""
+				// GitHub may keep the prior failure in its rollup while the
+				// confirmed replacement attempt and aggregate job are queued.
+				// The structured helper receipt must authorize this wait.
+				pr.StatusCheckRollup, pr.CIExecutionID = "failure", "checks-rerun"
+				pr.CIHasActiveChecks = true
+				pr.CIActiveFailedWorkflowRunID = "12345"
 				pr.MergeStateStatus = "BLOCKED"
 			})
 		case 3:
-			actions = append(actions, "gh pr merge 17 --merge")
+			merge := exec.Command(ciHelper.ghPath, "pr", "merge", "17", "--merge")
+			merge.Env = ciHelper.env
+			if output, err := merge.CombinedOutput(); err != nil {
+				t.Fatalf("record merge command: %v: %s", err, output)
+			}
 			client.setPR(branch, func(pr *github.PR) {
 				pr.State, pr.Merged, pr.StatusCheckRollup = "merged", true, "success"
 				pr.ReviewDecision, pr.MergeStateStatus = "APPROVED", "CLEAN"
 			})
 		}
-		return AgentRunResult{IssueNumber: issue.Number, Status: "success", Branch: branch}
+		return AgentRunResult{IssueNumber: issue.Number, Status: "success", Branch: branch, ciRerunAction: actionForResult}
 	}}
 	cfg := &config.Config{Agent: "test", Sandbox: "worktree", WorktreeDir: filepath.Join(root, "worktrees"), Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test": {Command: "true"}}}
 	log := &spyEventLog{}
@@ -231,6 +252,11 @@ func TestCIRerunPendingWaitFailureWithUnrelatedActivityRequiresRecordedRepairAnd
 						pr.MergeStateStatus = "BLOCKED"
 					})
 					writeRespondedApprovalForCanonicalRequest(t, worktree, 17)
+				} else if polls == 2 {
+					client.setPR("42-work", func(pr *github.PR) {
+						pr.StatusCheckRollup, pr.CIHasActiveChecks = "pending", true
+						pr.CIActiveFailedWorkflowRunID = ""
+					})
 				} else {
 					client.setPR("42-work", func(pr *github.PR) {
 						pr.StatusCheckRollup, pr.ReviewDecision, pr.MergeStateStatus = "success", "APPROVED", "CLEAN"
@@ -244,10 +270,11 @@ func TestCIRerunPendingWaitFailureWithUnrelatedActivityRequiresRecordedRepairAnd
 	defer cancel()
 	result, err := o.RunBatch(ctx, Request{Issues: []int{42}, Branches: map[int]string{42: "42-work"}, RunTS: "261028221500", RunShortID: "ci-action-recovery", Retries: 3, Parallel: 1, PromptConfig: prompt.RenderConfig{ReviewCommandSet: true}})
 	if err != nil || result == nil || result.Runs[0].Status != "success" {
-		t.Fatalf("managed CI recovery did not complete: result=%+v error=%v launches=%d polls=%d actions=%v events=%+v", result, err, launches, polls, actions, log.snapshot())
+		t.Fatalf("managed CI recovery did not complete: result=%+v error=%v launches=%d polls=%d events=%+v", result, err, launches, polls, log.snapshot())
 	}
-	if launches != 3 || polls != 2 || len(actions) != 2 || actions[0] != "POST /repos/owner/repo/actions/jobs/987654321/rerun" || actions[1] != "gh pr merge 17 --merge" {
-		t.Fatalf("expected recorded rerun then merge after two external polls: launches=%d polls=%d actions=%v", launches, polls, actions)
+	actions := ciHelper.actions(t)
+	if launches != 3 || polls != 3 || len(actions) != 2 || actions[0] != "POST repos/owner/repo/actions/jobs/987654321/rerun" || actions[1] != "gh pr merge 17 --merge" {
+		t.Fatalf("expected actual helper rerun then merge after three external polls: launches=%d polls=%d actions=%v", launches, polls, actions)
 	}
 	if countEventsByType(log.snapshot(), "run.retry") != 0 || countEventsByType(log.snapshot(), "run.await") < 2 {
 		t.Fatalf("CI recovery consumed generic retries or skipped capacity-releasing waits: %+v", log.snapshot())
@@ -316,6 +343,65 @@ func TestCIRerunObservedWhileParkedPersistsLatestAwaitEvidence(t *testing.T) {
 	ciWait, ok := latest.Payload["ci_wait"].(map[string]any)
 	if !ok || ciWait["execution_id"] != "rerun-checks" || ciWait["deadline_unix_seconds"] != now.Add(ciWaitTimeout).Unix() {
 		t.Fatalf("latest await lost rerun evidence: %#v", latest.Payload)
+	}
+}
+
+func TestConfirmedCIRerunReceiptSurvivesOrdinaryPendingWait(t *testing.T) {
+	root := t.TempDir()
+	workDir := filepath.Join(root, "worktrees", "42-work")
+	if err := os.MkdirAll(filepath.Join(workDir, ".sandman", "state"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, State: "closed"}},
+		prs: map[string]*github.PR{"42-work": {
+			Number: 17, State: "open", HeadRefOid: "head", StatusCheckRollup: "pending", CIExecutionID: "checks-rerun-attempt-2",
+		}},
+	}
+	log := &spyEventLog{events: []events.Event{{
+		Type: "run.started", RunID: "run-confirmed-rerun-retained", Issue: 42, Timestamp: now.Add(-time.Minute),
+		Payload: map[string]any{"branch": "42-work", "batch_id": "batch"},
+	}}}
+	e := &runExecutor{deps: runDeps{
+		githubClient: client, eventLog: log, layout: paths.NewLayout(nil, root), errorLog: io.Discard,
+		runSessionOpts: runSessionOptions{now: func() time.Time { return now }, currentHead: func(string) (string, error) { return "head", nil }},
+	}}
+	row := RowSpec{RunID: "run-confirmed-rerun-retained", IssueNumber: 42, BatchID: "batch", BaseBranch: "main", Branches: map[int]string{42: "42-work"}}
+	action := &ciRerunActionEvidence{
+		Protocol: "ci-rerun/v1", State: "confirmed", Reason: "selected-job-and-quality-gate-rerun-observed",
+		Repository: "owner/repo", PullRequest: 17, SourceHeadSHA: "head", TestedSHA: "tested-sha",
+		Diagnosis: "transient-provider-timeout", RunID: "101", JobID: "987654321", ObservedAttempt: 2,
+	}
+	request := lifecycleObservationRequest{
+		WorkDir: workDir, Branch: "42-work", RunID: row.RunID, HostPathsReady: true,
+		AttemptStatus: "success", AfterAgentAttempt: true, CIRerunAction: action,
+	}
+	if !action.matchesPullRequest(17, "owner/repo", "head") {
+		t.Fatalf("test receipt does not match expected live PR identity: %+v", action)
+	}
+	first := newLifecycleObserver(newRunSession(e, row)).Observe(context.Background(), request)
+	if first.Action != lifecycleAwait || first.Evidence["gate"] != string(lifecycleGatePending) {
+		t.Fatalf("verified rerun with pending checks should await: %+v", first)
+	}
+	if _, ok := first.Evidence[ciRerunActionKey].(map[string]any); !ok {
+		t.Fatalf("ordinary pending-CI await dropped the confirmed rerun receipt: verdict=%+v evidence=%#v", first, first.Evidence)
+	}
+	if err := e.persistObservedAwait(context.Background(), row, first.Evidence); err != nil {
+		t.Fatal(err)
+	}
+
+	client.prs["42-work"].StatusCheckRollup = "failure"
+	client.prs["42-work"].CIHasActiveChecks = true
+	client.prs["42-work"].CIActiveFailedWorkflowRunID = "101"
+	client.prs["42-work"].MergeStateStatus = "BLOCKED"
+	reobserved := e.observeAwaitingRowLifecycle(context.Background(), row)
+	if reobserved.Action != lifecycleAwait || reobserved.Evidence["gate"] != string(lifecycleGatePending) || reobserved.ciRepairRequired {
+		t.Fatalf("retained receipt should authorize only its matching failed-workflow prerequisite: %+v", reobserved)
+	}
+	prerequisite, ok := reobserved.Evidence[ciRerunPrerequisiteKey].(map[string]any)
+	if !ok || prerequisite["workflow_run_id"] != "101" || prerequisite["head_sha"] != "head" {
+		t.Fatalf("re-observation lost the matching workflow prerequisite: %#v", reobserved.Evidence)
 	}
 }
 
@@ -485,3 +571,163 @@ func TestObservedAwaitRetainsOmittedCIWhenReviewChanges(t *testing.T) {
 		t.Fatalf("changed review evidence was not persisted: %#v", latest)
 	}
 }
+
+type recordingCIRerunGH struct {
+	ghPath  string
+	fixture string
+	env     []string
+}
+
+func newRecordingCIRerunGH(t *testing.T, root string) recordingCIRerunGH {
+	t.Helper()
+	bin := filepath.Join(root, "fake-gh-bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ghPath := filepath.Join(bin, "gh")
+	if err := os.WriteFile(ghPath, []byte(recordingCIRerunGHScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fixture := filepath.Join(root, "recording-gh-state.json")
+	state := map[string]any{
+		"actions": []string{},
+		"pr": map[string]any{
+			"number": 17, "state": "open", "merged_at": nil,
+			"head": map[string]any{"sha": "head"},
+			"base": map[string]any{"repo": map[string]any{"full_name": "owner/repo"}},
+		},
+		"run": map[string]any{
+			"id": 12345, "run_attempt": 1, "status": "completed", "conclusion": "failure",
+			"event": "pull_request", "head_sha": "tested-merge-sha",
+			"repository":    map[string]any{"full_name": "owner/repo"},
+			"pull_requests": []any{map[string]any{"number": 17, "head": map[string]any{"sha": "head"}}},
+		},
+		"jobs": []any{
+			map[string]any{"id": 987654321, "run_id": 12345, "run_attempt": 1, "name": "opencode-canary", "workflow_name": "CI", "status": "completed", "conclusion": "failure"},
+			map[string]any{"id": 987654320, "run_id": 12345, "run_attempt": 1, "name": "quality-gate", "workflow_name": "CI", "status": "completed", "conclusion": "failure"},
+		},
+	}
+	data, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fixture, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := make([]string, 0, len(os.Environ())+2)
+	for _, item := range os.Environ() {
+		if !strings.HasPrefix(item, "PATH=") && !strings.HasPrefix(item, "HOME=") && !strings.HasPrefix(item, "CI_RERUN_FIXTURE=") {
+			env = append(env, item)
+		}
+	}
+	env = append(env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "CI_RERUN_FIXTURE="+fixture, "HOME="+filepath.Join(root, "agent-home"))
+	return recordingCIRerunGH{ghPath: ghPath, fixture: fixture, env: env}
+}
+
+func installCIRerunHelperForManagedTest(t *testing.T, root string) string {
+	t.Helper()
+	home := filepath.Join(root, "agent-home")
+	if err := skill.Sync(skill.SyncOptions{HomeDir: home, ReviewCommand: "/sandman review"}); err != nil {
+		t.Fatalf("install shared CI recovery capability: %v", err)
+	}
+	return filepath.Join(home, ".agents", "skills", "sandman", "implement", "ci-rerun-v1.sh")
+}
+
+func runCIRerunHelperForManagedTest(t *testing.T, gh recordingCIRerunGH, helperPath, commandText string) string {
+	t.Helper()
+	if _, err := os.Stat(helperPath); err != nil {
+		t.Fatalf("installed helper is unavailable: %v", err)
+	}
+	command := exec.Command("sh", "-c", commandText)
+	command.Env = gh.env
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("execute installed CI rerun helper: %v: %s", err, output)
+	}
+	return string(output)
+}
+
+func captureCIRerunActionFromOpenCodeToolEvent(t *testing.T, command, output string) *ciRerunActionEvidence {
+	t.Helper()
+	var parser outputParser = newOpenCodeOutput(io.Discard, io.Discard, false)
+	reporter, ok := parser.(ciRerunActionReporter)
+	if !ok {
+		t.Fatal("OpenCode parser does not expose helper tool evidence")
+	}
+	event, err := json.Marshal(map[string]any{
+		"type": "tool_use",
+		"part": map[string]any{"tool": "bash", "state": map[string]any{
+			"status": "completed", "input": map[string]any{"command": command}, "output": output,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parser.Write(append(event, '\n')); err != nil {
+		t.Fatal(err)
+	}
+	return reporter.CIRerunAction()
+}
+
+func (gh recordingCIRerunGH) actions(t *testing.T) []string {
+	t.Helper()
+	data, err := os.ReadFile(gh.fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state struct {
+		Actions []string `json:"actions"`
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatal(err)
+	}
+	return state.Actions
+}
+
+const recordingCIRerunGHScript = `#!/usr/bin/env python3
+import json, os, sys
+path = os.environ['CI_RERUN_FIXTURE']
+with open(path) as f: state = json.load(f)
+args = sys.argv[1:]
+if args[:1] == ['pr']:
+    if args[1:3] == ['merge', '17']:
+        state['actions'].append('gh ' + ' '.join(args))
+        with open(path, 'w') as f: json.dump(state, f)
+        print('merged')
+        sys.exit(0)
+    sys.exit(9)
+if args[:1] != ['api']:
+    sys.exit(9)
+method, route = 'GET', None
+i = 1
+while i < len(args):
+    if args[i] in ('--method', '-X'):
+        method = args[i + 1].upper(); i += 2
+    elif args[i] == '-H':
+        i += 2
+    elif not args[i].startswith('-'):
+        route = args[i]; i += 1
+    else:
+        i += 1
+if method == 'POST':
+    state['actions'].append('POST ' + route)
+    state['run']['run_attempt'] = 2
+    state['run']['status'] = 'in_progress'
+    state['run']['conclusion'] = None
+    state['jobs'] = [
+        {'id': 987654322, 'run_id': 12345, 'run_attempt': 2, 'name': 'opencode-canary', 'workflow_name': 'CI', 'status': 'queued', 'conclusion': None},
+        {'id': 987654323, 'run_id': 12345, 'run_attempt': 2, 'name': 'quality-gate', 'workflow_name': 'CI', 'status': 'queued', 'conclusion': None},
+    ]
+    with open(path, 'w') as f: json.dump(state, f)
+    print('{}')
+    sys.exit(0)
+if route == 'repos/owner/repo/pulls/17':
+    print(json.dumps(state['pr']))
+elif route == 'repos/owner/repo/actions/runs/12345':
+    print(json.dumps(state['run']))
+elif route == 'repos/owner/repo/actions/runs/12345/jobs?filter=latest&per_page=100':
+    print(json.dumps({'total_count': len(state['jobs']), 'jobs': state['jobs']}))
+else:
+    sys.exit(2)
+with open(path, 'w') as f: json.dump(state, f)
+`

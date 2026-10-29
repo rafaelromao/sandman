@@ -4214,8 +4214,9 @@ loop:
 				hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
 				s.finalOwnedWorkAttempt = attempt+1 >= attempts
 				verdict := newLifecycleObserver(s).Observe(ctx, lifecycleObservationRequest{
-					WorkDir: wt.WorkDir(), Branch: branch, LogPath: logPath, RunID: runID,
+					WorkDir: wt.WorkDir(), Branch: branch, RunID: runID,
 					HostPathsReady: hostPathsReady, AttemptStatus: result.Status, AfterAgentAttempt: true,
+					CIRerunAction: result.ciRerunAction,
 				})
 				if verdict.handled() {
 					if stop := s.operatorStopFor(result); stop != nil && verdict.Action != lifecycleSuccess && verdict.Action != lifecycleAborted {
@@ -4264,7 +4265,7 @@ loop:
 						}
 						s.emitAwait(ctx, runID, result, verdict.Evidence)
 						verdict = newLifecycleObserver(s).waitForTransition(ctx, lifecycleObservationRequest{
-							WorkDir: wt.WorkDir(), Branch: branch, LogPath: logPath, RunID: runID,
+							WorkDir: wt.WorkDir(), Branch: branch, RunID: runID,
 							HostPathsReady: hostPathsReady, AttemptStatus: result.Status,
 						}, result, verdict)
 					}
@@ -4400,7 +4401,7 @@ loop:
 					if events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
 						hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
 						verdict := newLifecycleObserver(s).Observe(ctx, lifecycleObservationRequest{
-							WorkDir: wt.WorkDir(), Branch: branch, LogPath: logPath, RunID: runID,
+							WorkDir: wt.WorkDir(), Branch: branch, RunID: runID,
 							HostPathsReady: hostPathsReady, AttemptStatus: "success",
 						})
 						if verdict.handled() {

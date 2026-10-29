@@ -49,6 +49,7 @@ type AgentRun struct {
 	status                  string
 	contextExhausted        bool
 	usageLimitReached       bool
+	ciRerunAction           *ciRerunActionEvidence
 	permissionDenials       []string
 	modelProgress           func()
 	usageLimit              func()
@@ -204,6 +205,7 @@ func (r *AgentRun) execute(ctx context.Context, command string, stdout, stderr i
 // repo's `.sandman/`. The path is intentionally literal because the
 // worktree has its own `.sandman/` directory that the layout does not own.
 func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
+	r.ciRerunAction = nil
 	renderedPromptFile := renderCfg.RenderedPromptFile
 	if renderedPromptFile == "" {
 		renderedPromptFile = filepath.Join(".", ".sandman", "task.md")
@@ -323,6 +325,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		}
 	}
 	execErr := r.execute(attemptCtx, renderedCmd, stdout, stderr, parsedStdout, parsedStderr)
+	r.ciRerunAction = strategy.CIRerunAction(parsedStdout, parsedStderr)
 	r.permissionDenials = parsersPermissionDenials(parsedStdout, parsedStderr)
 	if stopped := parsersReadOnlyPermissionMode(parsedStdout, parsedStderr); stopped != nil && ctx.Err() == nil {
 		// A session in a read-only permission mode cannot do the run's work,
@@ -365,6 +368,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 				fallbackOut, fallbackErr := strategy.NewOutputParsers(r.warningWriter())
 				persistSessionsAsObserved(strategy, r, fallbackOut, fallbackErr)
 				execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, fallbackOut, fallbackErr)
+				r.ciRerunAction = strategy.CIRerunAction(fallbackOut, fallbackErr)
 				r.permissionDenials = parsersPermissionDenials(parsedStdout, parsedStderr, fallbackOut, fallbackErr)
 				parsedStdout, parsedStderr = fallbackOut, fallbackErr
 				strategy.PersistSession(r, fallbackOut, fallbackErr)
@@ -386,6 +390,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 			relaunchOut, relaunchErr := strategy.NewOutputParsers(r.warningWriter())
 			persistSessionsAsObserved(strategy, r, relaunchOut, relaunchErr)
 			execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, relaunchOut, relaunchErr)
+			r.ciRerunAction = strategy.CIRerunAction(relaunchOut, relaunchErr)
 			r.permissionDenials = parsersPermissionDenials(parsedStdout, parsedStderr, relaunchOut, relaunchErr)
 			parsedStdout, parsedStderr = relaunchOut, relaunchErr
 			strategy.PersistSession(r, relaunchOut, relaunchErr)
@@ -507,6 +512,7 @@ func (r *AgentRun) Result() AgentRunResult {
 		PermissionDenials: r.permissionDenials,
 		CleanupError:      r.cleanupError,
 		OperationalError:  r.operationalError,
+		ciRerunAction:     r.ciRerunAction,
 	}
 }
 

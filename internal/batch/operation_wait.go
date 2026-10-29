@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -97,8 +98,8 @@ func (s *lifecycleObserver) priorObservation(runID, branch, head string) (lifecy
 	return lifecycleVerdict{Action: lifecycleAwait, Evidence: extras}, true
 }
 
-func (s *lifecycleObserver) retainedCIRerunPrerequisite(runID, branch, head string, prNumber int, workflowRunID string) map[string]any {
-	if prNumber <= 0 || strings.TrimSpace(head) == "" || strings.TrimSpace(workflowRunID) == "" {
+func (s *lifecycleObserver) retainedCIRerunEvidence(ctx context.Context, runID, branch, head string, prNumber int, workflowRunID, repository string) map[string]any {
+	if prNumber <= 0 || strings.TrimSpace(head) == "" {
 		return nil
 	}
 	states, err := events.ReadRunStates(s.deps.eventLog)
@@ -124,14 +125,37 @@ func (s *lifecycleObserver) retainedCIRerunPrerequisite(runID, branch, head stri
 	if _, err := ciWaitEvidenceFromRegistration(registration, prNumber); err != nil {
 		return nil
 	}
+	action, ok := ciRerunActionFromPayload(state.AwaitEvent.Payload[ciRerunActionKey])
+	if !ok {
+		return nil
+	}
+	if strings.TrimSpace(repository) == "" {
+		repository, err = s.deps.githubClient.RepoName(ctx)
+		if err != nil {
+			return nil
+		}
+		repository = strings.TrimSpace(repository)
+	}
+	if !action.matchesPullRequest(prNumber, repository, head) {
+		return nil
+	}
+	evidence := map[string]any{ciRerunActionKey: action.payload()}
+	if strings.TrimSpace(workflowRunID) == "" {
+		// The helper receipt can be retained while replacement checks are
+		// ordinary pending CI, before the rollup identifies the containing
+		// workflow as a rerun prerequisite.
+		return evidence
+	}
 	prerequisite := map[string]any{
 		"protocol":        "ci-rerun-prerequisite/v1",
+		"repository":      repository,
 		"pull_request":    prNumber,
 		"head_sha":        head,
 		"workflow_run_id": strings.TrimSpace(workflowRunID),
 	}
-	if !retainedCIRerunPrerequisiteMatches(state.AwaitEvent.Payload, prerequisite) {
+	if !action.matchesPrerequisite(prerequisite) {
 		return nil
 	}
-	return map[string]any{ciRerunPrerequisiteKey: prerequisite}
+	evidence[ciRerunPrerequisiteKey] = prerequisite
+	return evidence
 }
