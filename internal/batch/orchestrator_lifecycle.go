@@ -544,7 +544,11 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 	}
 	var headReconcileErr error
 	pr, err := s.lifecyclePRForBranch(ctx, branch)
-	if err == nil && currentHeadErr == nil && hostPathsReady && s.historicalClosedPR(pr, worktreeHeadSHA, runID) {
+	knownHead := ""
+	if currentHeadErr == nil && hostPathsReady {
+		knownHead = worktreeHeadSHA
+	}
+	if err == nil && s.historicalClosedPR(pr, knownHead, runID) {
 		pr = nil
 	}
 	repository := ""
@@ -917,38 +921,74 @@ func (s *runSession) lifecyclePRForBranch(ctx context.Context, branch string) (*
 }
 
 // historicalClosedPR excludes an old, unmerged PR on a reused branch from
-// this Run's lifecycle. Head drift alone is not enough: a PR closed during
-// this Run remains authoritative even if the agent has unpushed commits.
-// Read the original admission, not the latest continuation, so quota probes
-// and restart cannot turn a current Run's closure into historical evidence.
-// Unknown evidence deliberately retains the ordinary closed-PR decision.
+// this Run's lifecycle. A closed PR is authoritative (PULL_REQUEST_CLOSED)
+// only when it is proven to belong to this logical Run: its head equals the
+// Run's known head, or it closed at or after the Run's original fresh
+// admission. A closure before that admission is history whatever the Run's
+// head, including a continued Run with no commits (issue #2940).
+//
+// The original admission is read through the run.continued previous_run_id
+// chain: `sandman run --continue` starts a new RunID, and in-session quota
+// probes or restarts reuse it, so neither can turn a closure during the
+// logical Run into history. Unknown evidence (no closure time, no resolvable
+// admission, unreadable events) never makes a closed PR terminal while the
+// work item is open; the Run continues to owned publication work instead. On
+// a closed work item, or for an "already resolved" task, it keeps the
+// closed-PR decision, so an unplaced closure cannot become a completion path.
 func (s *runSession) historicalClosedPR(pr *github.PR, headSHA, runID string) bool {
-	if pr == nil || pr.Merged || !strings.EqualFold(strings.TrimSpace(pr.State), "closed") ||
-		strings.TrimSpace(headSHA) == "" || strings.TrimSpace(pr.HeadRefOid) == "" ||
-		strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) ||
-		pr.UpdatedAt.IsZero() || runID == "" || s.deps.eventLog == nil {
+	if pr == nil || pr.Merged || !strings.EqualFold(strings.TrimSpace(pr.State), "closed") {
 		return false
+	}
+	if strings.TrimSpace(headSHA) != "" && strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) {
+		return false
+	}
+	closedAt := pr.ClosedAt
+	if closedAt.IsZero() {
+		// UpdatedAt never precedes the closure, so it can only make an old
+		// closure look current, never the reverse.
+		closedAt = pr.UpdatedAt
+	}
+	admitted, admissionKnown := s.originalAdmission(runID)
+	if admissionKnown && !closedAt.IsZero() {
+		// GitHub timestamps have second precision. A closure in the
+		// admission second cannot prove that it predates this Run.
+		return closedAt.Before(admitted.Truncate(time.Second))
+	}
+	return !strings.EqualFold(strings.TrimSpace(s.issueState), "closed") && !s.lifecycleAlreadyResolved
+}
+
+// originalAdmission returns the timestamp of the fresh run.started that
+// admitted the logical Run runID belongs to, following continuation links.
+func (s *runSession) originalAdmission(runID string) (time.Time, bool) {
+	if runID == "" || s.deps.eventLog == nil {
+		return time.Time{}, false
 	}
 	log, err := s.deps.eventLog.Read()
 	if err != nil {
-		return false
+		return time.Time{}, false
 	}
-	for _, event := range log {
-		if event.RunID != runID {
-			continue
+	visited := map[string]bool{}
+	for runID != "" && !visited[runID] {
+		visited[runID] = true
+		next := ""
+		for _, event := range log {
+			if event.RunID != runID {
+				continue
+			}
+			if event.Type == "run.started" {
+				return event.Timestamp, !event.Timestamp.IsZero()
+			}
+			if event.Type == "run.continued" {
+				previous, _ := event.Payload["previous_run_id"].(string)
+				if previous = strings.TrimSpace(previous); previous != runID {
+					next = previous
+				}
+				break
+			}
 		}
-		switch event.Type {
-		case "run.started":
-			// GitHub timestamps have second precision. A closure in the
-			// admission second cannot prove that it predates this Run.
-			return !event.Timestamp.IsZero() && pr.UpdatedAt.Before(event.Timestamp.Truncate(time.Second))
-		case "run.continued":
-			// A continuation without the original fresh admission cannot
-			// establish that this PR predates the logical Run.
-			return false
-		}
+		runID = next
 	}
-	return false
+	return time.Time{}, false
 }
 
 func cloneLifecycleExtras(extras map[string]any) map[string]any {

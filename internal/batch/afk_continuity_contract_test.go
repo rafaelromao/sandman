@@ -296,6 +296,8 @@ type continuityScenario struct {
 	// priorFailure seeds the event log with an earlier Run of the issue that
 	// finished with this failure reason; the scenario continues it.
 	priorFailure string
+	// worktreeHead overrides the Run's local head; by default it is the PR's.
+	worktreeHead func(g *continuityGitHub) string
 }
 
 type continuityOutcome struct {
@@ -388,7 +390,12 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 		WithSandboxFactory(&retrySandboxFactory{sandbox: &retrySandbox{workDir: worktree}}),
 		WithRunSessionOpts(runSessionOptions{
 			releaseAwaitCapacity: true,
-			currentHead:          func(string) (string, error) { return g.head(), nil },
+			currentHead: func(string) (string, error) {
+				if sc.worktreeHead != nil {
+					return sc.worktreeHead(g), nil
+				}
+				return g.head(), nil
+			},
 			awaitWait: func(ctx context.Context, _ time.Duration) error {
 				mu.Lock()
 				index := polls
@@ -883,6 +890,37 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 		continuityScenario{
 			name: "negative/no trigger at all", pr: greenCleanPR(), retries: 2, ownedWorkRetries: true,
 			want: "failed:REVIEW_REQUEST_REQUIRED", maxLaunches: 3,
+		},
+		// #2940 (#2 / PR #29): an old PR on the reused branch was closed
+		// unmerged days before the Run's fresh admission. The Run stopped on a
+		// usage limit with no commits, and `sandman run --continue` started a
+		// new RunID. The old closure is history: the implementation continues,
+		// publishes a new PR and merges once it is approved.
+		continuityScenario{
+			name: "#2940 continue with no commits past a historical closed PR", retries: 3, continueRun: true, forbidRetry: true,
+			priorFailure: "AGENT_USAGE_LIMIT",
+			pr: github.PR{
+				State: "closed", HeadRefOid: "old-head",
+				ClosedAt: time.Now().Add(-6 * 24 * time.Hour), UpdatedAt: time.Now().Add(-6 * 24 * time.Hour),
+			},
+			worktreeHead: func(g *continuityGitHub) string {
+				g.mu.Lock()
+				defer g.mu.Unlock()
+				if g.pr.State == "closed" {
+					return "base-head" // no commits ahead of the base branch
+				}
+				return g.pr.HeadRefOid
+			},
+			launches: []func(*continuityGitHub) string{func(g *continuityGitHub) string {
+				g.update(func(pr *github.PR) {
+					pr.State, pr.HeadRefOid, pr.ClosedAt = "open", "head-new", time.Time{}
+					pr.StatusCheckRollup, pr.MergeStateStatus = "success", "CLEAN"
+				})
+				g.trigger()
+				return "success"
+			}},
+			polls: []func(*continuityGitHub){func(g *continuityGitHub) { g.publish(reports["approved-daemon-30.md"]) }},
+			want:  "merged", maxLaunches: 2, requireAwait: true,
 		},
 		// Negative control: a closed pull request is permanent.
 		continuityScenario{

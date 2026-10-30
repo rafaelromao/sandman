@@ -1179,9 +1179,12 @@ func TestRunSingle_ClosedPRTerminalizesBeforeRetry(t *testing.T) {
 	oldHeadFn := currentBranchHeadFn
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
-	pr := &github.PR{Number: 17, State: "closed", Merged: false, HeadRefName: branch}
+	// The PR closes during this Run (after its admission); a closure the Run
+	// cannot place is not terminal evidence (issue #2940).
+	pr := &github.PR{Number: 17, State: "closed", Merged: false, HeadRefName: branch, ClosedAt: time.Now().Add(time.Hour)}
 	var resetCalls int
 	o := &Orchestrator{
+		eventLog:     &spyEventLog{},
 		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, prs: map[string]*github.PR{branch: pr}},
 		renderer:     renderer,
 		errorLog:     io.Discard,
@@ -2324,7 +2327,8 @@ func TestRunSingle_LogsRetryCounters(t *testing.T) {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
 
-	pr := &github.PR{Number: 42, State: "closed", Merged: false, HeadRefName: branch}
+	// The PR closes during this Run; an unplaced closure is not terminal.
+	pr := &github.PR{Number: 42, State: "closed", Merged: false, HeadRefName: branch, ClosedAt: time.Now().Add(time.Hour)}
 	// Flip Merged only on the post-attempt check after both attempts have
 	// run (fifth FindPRByBranch call). The closing-reference guard now
 	// performs an immediate observation, so the pre-retry guard does not
