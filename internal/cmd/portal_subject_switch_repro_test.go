@@ -133,6 +133,34 @@ func runPortalChromium(t *testing.T, page string) (string, string) {
 	return runPortalChromiumWithVirtualTimeBudget(t, page, 10000)
 }
 
+func TestPortalChromium_DOMOutputExcludesStderr(t *testing.T) {
+	chromium := filepath.Join(t.TempDir(), "chromium")
+	script := `#!/bin/sh
+for arg do
+  case "$arg" in
+    --screenshot=*) printf x > "${arg#--screenshot=}" ;;
+  esac
+done
+printf '<pre id="portal-repro">{"value":"first'
+printf '\nChromium diagnostic\n' >&2
+printf 'last"}</pre>'
+`
+	if err := os.WriteFile(chromium, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SANDMAN_PORTAL_CHROMIUM", chromium)
+	dom, _ := runPortalChromium(t, "<html></html>")
+	var result struct {
+		Value string `json:"value"`
+	}
+	if err := json.Unmarshal([]byte(extractPortalMarker(t, dom, "portal-repro")), &result); err != nil {
+		t.Fatalf("stderr corrupted the DOM JSON: %v", err)
+	}
+	if result.Value != "firstlast" {
+		t.Fatalf("DOM value = %q, want firstlast", result.Value)
+	}
+}
+
 func runPortalChromiumWithVirtualTimeBudget(t *testing.T, page string, budgetMS int) (string, string) {
 	t.Helper()
 	chromium := requirePortalContinuityTool(t, "chromium")
@@ -153,9 +181,12 @@ func runPortalChromiumWithVirtualTimeBudget(t *testing.T, page string, budgetMS 
 		"--screenshot="+screenshotPath,
 		"file://"+outPath,
 	)
-	out, err := cmd.CombinedOutput()
+	// Chromium diagnostics must not be interleaved into the serialized DOM.
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("chromium repro failed: %v\n%s", err, out)
+		t.Fatalf("chromium repro failed: %v\nstdout:\n%s\nstderr:\n%s", err, out, stderr.String())
 	}
 	if info, err := os.Stat(screenshotPath); err != nil {
 		t.Fatalf("chromium screenshot missing: %v", err)
