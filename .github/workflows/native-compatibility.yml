@@ -89,7 +89,7 @@ jobs:
 
   darwin-arm64:
     name: Native Compatibility (darwin/arm64)
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 45
     env:
       CI: "true"
