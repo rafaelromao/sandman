@@ -5655,7 +5655,8 @@ func TestRunBatch_StartDelay_WaitsAfterRunFinishesBeforeNextStart(t *testing.T) 
 		secondStarted = started1
 	case <-done:
 		t.Fatalf("batch returned early: err=%v logs=%s", <-errCh, errBuf.String())
-	case <-time.After(250 * time.Millisecond):
+	// Initial repository setup is not part of the start-delay contract.
+	case <-time.After(5 * time.Second):
 		t.Fatalf("expected first run to start; sandbox started=%v created=%v logs=%s", sb.startCalled, factory.created, errBuf.String())
 	}
 	assertNoSignal(t, secondStarted, "second run started before first completed")
