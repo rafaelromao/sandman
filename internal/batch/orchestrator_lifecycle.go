@@ -204,7 +204,7 @@ const (
 	stateErrorReason     = "REVIEW_STATE_ERROR"
 	stateErrorNextAction = "inspect the retained review state for the pull request, repair or clear the corrupt artifacts, and continue with a confirmed review request"
 	lookupGateReason     = "GATE_LOOKUP_FAILED"
-	lookupGateNextAction = "retry the run after GitHub is reachable; no wait state was recorded"
+	lookupGateNextAction = "GitHub stayed unavailable for 24 hours; once it recovers, run `sandman run <issue> --continue`, which starts a fresh 24-hour recovery window"
 )
 
 // lifecycleGateFailureEvidence identifies the unusable gate snapshot and
@@ -663,43 +663,26 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 			"gate":        gateOwnedWorkRequired,
 		}}
 	}
-	if refreshUnavailable {
-		// Re-observe only previously authorized evidence with its fixed
-		// identity/deadline; without it there is no safe pending fallback.
+	if refreshUnavailable || err != nil {
+		// GitHub could not be observed. That is an external outage that
+		// usually recovers, not evidence about the pull request: the Run waits
+		// for GitHub (issue #2938). An established review or CI operation is
+		// retained unchanged; its deadline is judged after recovery.
 		if ctx.Err() != nil {
 			return lifecycleVerdict{Action: lifecycleAborted}
 		}
-		if verdict, ok := s.priorObservation(runID, branch, worktreeHeadSHA); ok {
-			return verdict
+		lookupError := "lookup-failed"
+		if refreshUnavailable {
+			lookupError = "refresh-failed"
 		}
-		if attemptNeedsRetry(attemptStatus) {
+		retained, established := s.priorOperationEvidence(runID, branch, worktreeHeadSHA)
+		if !established && attemptNeedsRetry(attemptStatus) {
+			// A failed agent attempt with nothing resolving keeps its
+			// ordinary retry path.
 			return lifecycleVerdict{}
 		}
-		return lifecycleVerdict{Action: lifecycleFailure, Evidence: map[string]any{
-			"reason":       lookupGateReason,
-			"next_action":  lookupGateNextAction,
-			"branch":       branch,
-			"lookup_error": "refresh-failed",
-		}}
-	}
-	if err != nil {
-		// Transport failure cannot create an operation. An already admitted
-		// bounded operation may be re-observed without renewing its deadline.
-		if ctx.Err() != nil {
-			return lifecycleVerdict{Action: lifecycleAborted}
-		}
-		if verdict, ok := s.priorObservation(runID, branch, worktreeHeadSHA); ok {
-			return verdict
-		}
-		if attemptNeedsRetry(attemptStatus) {
-			return lifecycleVerdict{}
-		}
-		return lifecycleVerdict{Action: lifecycleFailure, Evidence: map[string]any{
-			"reason":       lookupGateReason,
-			"next_action":  lookupGateNextAction,
-			"branch":       branch,
-			"lookup_error": "lookup-failed",
-		}}
+		retained["lookup_error"] = lookupError
+		return lifecycleVerdict{Action: lifecycleAwait, Evidence: retained, Kind: lifecycleVerdictGitHubUnavailable}
 	}
 
 	// Merged PRs resolve before retained evidence is consulted, so stale or

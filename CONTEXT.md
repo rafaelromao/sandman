@@ -155,12 +155,24 @@ request the runtime did not observe: it waits for external recovery or proceeds
 to merge, wherever v1.0.0-rc.2 would have merged or kept waiting. Terminal
 failure is reserved for classified permanent reasons (closed pull request,
 explicit abort, unverifiable completion, formal requested changes left
-unrepaired, no review request delivered). A stalled relaunch records a
+unrepaired, no review request delivered, GitHub unavailable for a whole
+**GitHub recovery window**). A stalled relaunch records a
 **resume signature** (gate, reason, live head, request trigger and response
 identities) in the wait so observation does not relaunch on unchanged evidence;
 a recoverable failure becomes a **continuity hold**.
 _Avoid_: remediation exhaustion as failure, idle failure.
 _See_: Managed review lifecycle, Publication verdict.
+
+**GitHub recovery window**:
+The bounded wait (`await_reason: github-unavailable`) a Run enters when a
+pull-request lookup or refresh fails. Recovery is attempted hourly, each attempt
+skipped while githubstatus.com reports a GitHub outage; an unreachable status
+page attempts anyway. The window starts at its first failure, survives restart
+in the `run.await` evidence (`github_recovery`), and ends the Run with
+`GATE_LOOKUP_FAILED` only after 24 hours. `sandman run --continue` starts a new
+RunID and therefore a fresh window; explicit abort ends it.
+_Avoid_: lookup failure as a permanent outcome.
+_See_: AFK continuity.
 
 **Publication verdict**:
 The closed-set decision (`approved` or `changes_requested`) the review daemon
@@ -168,7 +180,9 @@ stamps as a trailer directly before the publication identity of its posted
 report. The identity binds the report to one trigger revision and one reviewed
 head; a report bound to another request or head is stale. The runtime trusts
 the verdict additively: reports without it keep the prose approval rules, and an
-unknown verdict is never repair evidence.
+unknown verdict is never repair evidence. Only the Findings, Suggested next steps
+and Decision sections may contradict a published approval; descriptive sections
+(Summary, Standards, Spec, Quality check) never veto it.
 _See_: Informal approval, AFK continuity.
 
 **Informal approval**:

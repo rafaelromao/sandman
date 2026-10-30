@@ -48,55 +48,46 @@ func (s *runSession) restoreQuotaAccounting() error {
 	return err
 }
 
-// priorObservation permits transport re-observation only for a current,
-// previously authorized operation. Historical awaits on ready/terminal rows,
-// incomplete identities and absent deadlines authorize no synthetic wait.
-func (s *lifecycleObserver) priorObservation(runID, branch, head string) (lifecycleVerdict, bool) {
+// priorOperationEvidence returns the identity-valid review or CI operation of
+// the Run's current wait, with its established deadline unchanged. Historical
+// awaits on ready/terminal rows and incomplete identities contribute nothing.
+// It always returns a usable map; established reports whether it holds one.
+func (s *lifecycleObserver) priorOperationEvidence(runID, branch, head string) (map[string]any, bool) {
+	evidence := map[string]any{}
 	states, err := events.ReadRunStates(s.deps.eventLog)
 	if err != nil {
-		return lifecycleVerdict{}, false
+		return evidence, false
 	}
 	state, ok := states[runID]
 	if !ok || !state.IsAwaiting() || state.IsCapacityQueued() || state.AwaitEvent == nil || state.Branch() != branch || head == "" {
-		return lifecycleVerdict{}, false
+		return evidence, false
 	}
-	extras := cloneLifecycleExtras(state.AwaitEvent.Payload)
 	valid := false
-	if ci, ok := extras["ci_wait"].(map[string]any); ok {
+	if ci, ok := state.AwaitEvent.Payload["ci_wait"].(map[string]any); ok {
 		data, _ := json.Marshal(ci)
 		var registration ciWaitRegistration
 		if json.Unmarshal(data, &registration) == nil && strings.EqualFold(registration.HeadSHA, head) {
-			_, validationErr := ciWaitEvidenceFromRegistration(registration, registration.PullRequest)
-			valid = validationErr == nil && registration.PullRequest > 0
-		}
-		if !valid {
-			delete(extras, "ci_wait")
+			if _, validationErr := ciWaitEvidenceFromRegistration(registration, registration.PullRequest); validationErr == nil && registration.PullRequest > 0 {
+				evidence["ci_wait"] = cloneLifecycleExtras(ci)
+				valid = true
+			}
 		}
 	}
-	if request, ok := extras["review_request"].(map[string]any); ok {
+	if request, ok := state.AwaitEvent.Payload["review_request"].(map[string]any); ok {
 		data, _ := json.Marshal(request)
 		var envelope reviewRequestEnvelope
-		requestValid := json.Unmarshal(data, &envelope) == nil && envelope.Protocol == "review-wait/v1" &&
+		if json.Unmarshal(data, &envelope) == nil && envelope.Protocol == "review-wait/v1" &&
 			strings.EqualFold(envelope.HeadSHA, head) && envelope.TriggerID != "" && envelope.Repository != "" && envelope.PullRequest > 0 &&
 			envelope.TriggerCreatedAt != "" && envelope.ConfirmedAt != "" && envelope.TriggerPrefix != "" && len(envelope.PollPlan) > 0 &&
-			envelope.EffectiveTimeout > 0 && envelope.StartedUnixSeconds >= 0 && envelope.DeadlineUnixSeconds == envelope.StartedUnixSeconds+envelope.EffectiveTimeout
-		valid = valid || requestValid
-		if !requestValid {
-			delete(extras, "review_request")
+			envelope.EffectiveTimeout > 0 && envelope.StartedUnixSeconds >= 0 && envelope.DeadlineUnixSeconds == envelope.StartedUnixSeconds+envelope.EffectiveTimeout {
+			evidence["review_request"] = cloneLifecycleExtras(request)
+			valid = true
 		}
 	}
-	deadline, gate, bounded := lifecycleDeadline(extras)
-	if !valid || !bounded {
-		return lifecycleVerdict{}, false
+	if _, _, bounded := lifecycleDeadline(evidence); !valid || !bounded {
+		return map[string]any{}, false
 	}
-	if !s.runtimeNow().Before(deadline) {
-		extras["gate"] = gate
-		extras["reason"] = lifecycleDeadlineReason(gate)
-		extras["next_action"] = lifecycleDeadlineNextAction(gate)
-		return lifecycleVerdict{Action: lifecycleResume, Evidence: extras}, true
-	}
-	extras["observation_error"] = "transport-unavailable; retaining established operation deadline"
-	return lifecycleVerdict{Action: lifecycleAwait, Evidence: extras}, true
+	return evidence, true
 }
 
 func (s *lifecycleObserver) retainedCIRerunEvidence(ctx context.Context, runID, branch, head string, prNumber int, workflowRunID, repository string, failedChecks []github.CIFailedCheck, workflowCheckNames []string) map[string]any {

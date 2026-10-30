@@ -3320,17 +3320,13 @@ func TestExternalGate_LateApprovalLookupFailureCannotFallThroughToAggregateAppro
 	}
 	observedLifecycle3307 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
 	status, extras, handled := observedLifecycle3307.status(), observedLifecycle3307.Evidence, observedLifecycle3307.handled()
-	// Issue #2743: a failed gate lookup is not an external operation being
-	// resolved. The run fails instead of waiting, and the aggregate
-	// approval is never consulted as a fallback.
-	if !handled || status != "failure" {
-		t.Fatalf("lookup failure result = (%q, %#v, %t), want failure", status, extras, handled)
+	// Issue #2938: a failed gate lookup waits for GitHub to recover, and the
+	// aggregate approval is never consulted as a fallback.
+	if !handled || status != "await" {
+		t.Fatalf("lookup failure result = (%q, %#v, %t), want a GitHub recovery wait", status, extras, handled)
 	}
-	if extras["reason"] != lookupGateReason {
-		t.Fatalf("lookup failure reason = %v, want %q", extras["reason"], lookupGateReason)
-	}
-	if _, ok := extras["gate"]; ok {
-		t.Fatalf("lookup failure carries gate: %#v", extras)
+	if extras["gate"] != gateGitHubUnavailable || extras["reason"] != githubUnavailableReason {
+		t.Fatalf("lookup failure = %#v, want the github-unavailable wait", extras)
 	}
 }
 
@@ -4217,16 +4213,12 @@ func TestHandleExternalGateInitialLookupErrorRecoversToPending(t *testing.T) {
 		opts: gateTestRunOptions(),
 	}
 
-	// Issue #2743: the failed lookup fails instead of waiting. A retry
-	// observes the recovered live gate and awaits it, bounding the recovery
-	// through ordinary re-evaluation rather than an unsupported wait.
+	// Issue #2938: the failed lookup waits for GitHub to recover. The next
+	// observation sees the recovered live gate and awaits it.
 	observedLifecycle4205 := session.observeLifecycleForTest(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
 	status, extras, handled := observedLifecycle4205.status(), observedLifecycle4205.Evidence, observedLifecycle4205.handled()
-	if !handled || status != "failure" {
-		t.Fatalf("recovered gate = (%q, %#v, %t), want failure on lookup error", status, extras, handled)
-	}
-	if extras["reason"] != lookupGateReason {
-		t.Fatalf("recovered gate reason = %v, want %q", extras["reason"], lookupGateReason)
+	if !handled || status != "await" || extras["gate"] != gateGitHubUnavailable {
+		t.Fatalf("lookup error = (%q, %#v, %t), want a GitHub recovery wait", status, extras, handled)
 	}
 	observedLifecycle4212 := session.observeLifecycleForTest(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
 	status, extras, handled = observedLifecycle4212.status(), observedLifecycle4212.Evidence, observedLifecycle4212.handled()

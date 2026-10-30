@@ -220,6 +220,7 @@ type runDeps struct {
 	verifyPath               VerifyPathFunc
 	quotaProgress            func(int)
 	quotaLimit               func(int)
+	githubStatus             github.StatusChecker // gates GitHub recovery attempts; nil attempts
 }
 
 // runCoordination is the narrow interface the elevated executor uses for the
@@ -286,6 +287,7 @@ func (o *Orchestrator) newRunExecutorWith(parentCtx context.Context, bc BatchCon
 			errorLog:                 o.errorLog,
 			runSessionOpts:           o.runSessionOpts,
 			verifyPath:               o.verifyPath,
+			githubStatus:             o.githubStatus,
 		},
 		coord:          coord,
 		commander:      commander,

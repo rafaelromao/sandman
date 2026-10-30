@@ -35,6 +35,9 @@ const (
 	lifecycleVerdictOrdinary lifecycleVerdictKind = iota
 	lifecycleVerdictCompletion
 	lifecycleVerdictClosedPR
+	// lifecycleVerdictGitHubUnavailable is a wait for GitHub to recover from
+	// a failed pull-request lookup or refresh (issue #2938).
+	lifecycleVerdictGitHubUnavailable
 )
 
 // lifecycleObservation is the single operation callers use to observe an
@@ -53,6 +56,12 @@ func newLifecycleObserver(session *runSession) *lifecycleObserver {
 }
 
 func (o *lifecycleObserver) Observe(ctx context.Context, request lifecycleObservationRequest) lifecycleVerdict {
+	recovery, recoveryBase, recovering := o.githubRecoveryWindow(request.RunID)
+	if recovering {
+		if verdict, handled := o.observeGitHubRecovery(ctx, request, &recovery, recoveryBase); handled {
+			return verdict
+		}
+	}
 	verdict := o.decideLifecycleForAttempt(
 		ctx,
 		request.WorkDir,
@@ -63,6 +72,9 @@ func (o *lifecycleObserver) Observe(ctx context.Context, request lifecycleObserv
 		request.AfterAgentAttempt,
 		request.CIRerunAction,
 	)
+	if verdict.Kind == lifecycleVerdictGitHubUnavailable && ctx.Err() == nil {
+		return o.recordGitHubLookupFailure(request, verdict, recovery, recovering)
+	}
 	if !verdict.handled() || ctx.Err() != nil {
 		return verdict
 	}
@@ -77,7 +89,8 @@ func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifec
 	verdict := initial
 	plan := o.lifecyclePollIntervals(verdict.Evidence)
 	for index := 0; ; index++ {
-		if deadline, gate, ok := lifecycleDeadline(verdict.Evidence); ok && !o.runtimeNow().Before(deadline) {
+		_, githubWait := githubRecoveryNextAttempt(verdict.Evidence)
+		if deadline, gate, ok := lifecycleDeadline(verdict.Evidence); ok && !githubWait && !o.runtimeNow().Before(deadline) {
 			evidence := cloneLifecycleExtras(verdict.Evidence)
 			evidence["gate"] = gate
 			evidence["reason"] = lifecycleDeadlineReason(gate)
@@ -97,6 +110,10 @@ func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifec
 		interval := plan[len(plan)-1]
 		if index < len(plan) {
 			interval = plan[index]
+		}
+		if next, ok := githubRecoveryNextAttempt(verdict.Evidence); ok {
+			// Sleep until the next hourly recovery attempt.
+			interval = max(next.Sub(o.runtimeNow()), 0)
 		}
 		if err := o.waitForLifecyclePoll(ctx, interval); err != nil {
 			if errors.Is(err, errLifecycleObservationTestStop) {

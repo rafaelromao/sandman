@@ -158,6 +158,11 @@ func (d *rowDriver) drive(ctx context.Context, run RunSpec, state *rowDriverStat
 				}
 			}
 			state.awaiting, state.ready = true, false
+			if next, ok := githubRecoveryNextAttempt(verdict.Evidence); ok && next.After(d.clock.Now()) {
+				// A GitHub recovery wait sleeps until its next hourly attempt
+				// instead of re-observing every poll interval.
+				state.recovering, state.nextPollAt = true, next
+			}
 		case lifecycleResume:
 			if err := d.gates.RecordReady(run, state.cursor, verdict.Evidence, d.clock.Now()); err != nil {
 				state.awaiting, state.ready = true, false

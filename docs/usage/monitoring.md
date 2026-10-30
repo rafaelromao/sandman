@@ -154,7 +154,7 @@ The run timer pauses for every suspension, including ready-but-capacity-delayed 
 | Field | Description |
 |-------|-------------|
 | `await` | Always `true` |
-| `await_reason` | Lifecycle reason such as `"pending"`, `"failed"`, `"review-timeout"`, `"ready-to-merge"`, `"actionable-feedback"`, or `"usage-limit"` (a built-in OpenCode or Claude Code attempt stopped at a provider usage limit and polls for the reset) |
+| `await_reason` | Lifecycle reason such as `"pending"`, `"failed"`, `"review-timeout"`, `"ready-to-merge"`, `"actionable-feedback"`, `"usage-limit"` (a built-in OpenCode or Claude Code attempt stopped at a provider usage limit and polls for the reset), or `"github-unavailable"` (a pull-request lookup failed; the Run retries hourly when githubstatus.com reports GitHub healthy and fails with `GATE_LOOKUP_FAILED` after 24 hours; `github_recovery` records the window start, next attempt and last status check, and `sandman run <n> --continue` starts a fresh window) |
 | `gate` | Lifecycle state at await time |
 | `branch` | Branch name |
 | `base_branch` | Base branch name |
