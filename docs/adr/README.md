@@ -4,7 +4,7 @@ This directory contains Architectural Decision Records (ADRs) for Sandman.
 
 ## What is an ADR?
 
-An ADR is a document that captures an important architectural decision made along with its context and consequences. ADRs are immutable: once accepted or rejected, they are not modified (though they may be superseded by a new ADR).
+An ADR is a document that captures an important architectural decision made along with its context and consequences. ADRs are immutable: once accepted or rejected, they are not modified (though they may be superseded by a new ADR). When a later change alters part of an accepted decision without a new ADR, a dated `> **Later change (annotated <date>, #<issue>):**` blockquote may be appended after the affected passage. It names the change that superseded the passage and leaves the original text and Status untouched.
 
 ## When to Write an ADR
 

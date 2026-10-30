@@ -16,7 +16,19 @@ import (
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
+// Reconstructed terminal record matching the incident's rendered result.
+const claudeLongSessionUsageLimitResult = `{"type":"result","subtype":"success","is_error":true,"num_turns":209,"duration_ms":2265000,"total_cost_usd":9.26,"result":"You've hit your session limit · resets 4am (UTC)"}`
+
 func TestUsageLimitAwait_ClaudeResumesTheExactRecordedSession(t *testing.T) {
+	testClaudeUsageLimitRecovery(t, false)
+}
+
+func TestAFKContinuityContract_ClaudeLimitWithHistoricalClosedPR(t *testing.T) {
+	testClaudeUsageLimitRecovery(t, true)
+}
+
+func testClaudeUsageLimitRecovery(t *testing.T, historicalClosedPR bool) {
+	t.Helper()
 	root := t.TempDir()
 	t.Chdir(root)
 	initGitRepo(t, root)
@@ -29,7 +41,23 @@ func TestUsageLimitAwait_ClaudeResumesTheExactRecordedSession(t *testing.T) {
 		issues: map[int]*github.Issue{42: {Number: 42, Title: "Claude usage limit", State: "closed"}},
 		prs:    map[string]*github.PR{branch: {Number: 7, State: "open", Body: "Closes #42", HeadRefName: branch}},
 	}}
-	sb.onSuccess = func() { client.setPR(branch, func(pr *github.PR) { pr.State, pr.Merged = "merged", true }) }
+	if historicalClosedPR {
+		sb.limitStream = `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","rateLimitType":"five_hour","utilization":0.99}}` + "\n" +
+			`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"five_hour"}}` + "\n" +
+			claudeLongSessionUsageLimitResult + "\n"
+		client.setPR(branch, func(pr *github.PR) {
+			pr.State = "closed"
+			pr.HeadRefOid = "historical-head"
+			pr.UpdatedAt = time.Now().Add(-24 * time.Hour)
+		})
+	}
+	sb.onSuccess = func() {
+		client.setPR(branch, func(pr *github.PR) {
+			pr.Number = 8 // Recovery publishes a new PR, rather than reopening history.
+			pr.HeadRefOid = "current-head"
+			pr.State, pr.Merged = "merged", true
+		})
+	}
 	cfg := &config.Config{
 		Agent:          "claude",
 		DefaultAgent:   "claude",
@@ -43,6 +71,7 @@ func TestUsageLimitAwait_ClaudeResumesTheExactRecordedSession(t *testing.T) {
 		WithSandboxFactory(&claudeUsageLimitSandboxFactory{sandbox: sb}),
 		WithRunnableFactory(&usageLimitRetryRunnableFactory{}),
 		WithRunSessionOpts(runSessionOptions{
+			currentHead:          func(string) (string, error) { return "current-head", nil },
 			releaseAwaitCapacity: true,
 			awaitWait: func(_ context.Context, delay time.Duration) error {
 				waits = append(waits, delay)
@@ -93,7 +122,17 @@ func TestUsageLimitAwait_ClaudeResumesTheExactRecordedSession(t *testing.T) {
 	if got := countEventsByType(log.snapshot(), "run.retry"); got != 0 {
 		t.Fatalf("run.retry events = %d, want 0", got)
 	}
+	var originalRunID string
 	for _, event := range log.snapshot() {
+		if event.Type == "run.started" {
+			originalRunID = event.RunID
+		}
+		if originalRunID != "" && event.RunID != originalRunID {
+			t.Fatalf("recovery changed RunID from %q to %q", originalRunID, event.RunID)
+		}
+		if event.Type == "run.finished" && event.Payload["status"] == "failure" {
+			t.Fatalf("quota recovery terminal-failed: %#v", event.Payload)
+		}
 		if event.Type == "run.await" && event.Payload["await_reason"] != "usage-limit" {
 			t.Fatalf("run.await payload = %#v, want await_reason usage-limit", event.Payload)
 		}
@@ -115,9 +154,10 @@ func TestUsageLimitAwait_ExcludesCustomClaudeCommand(t *testing.T) {
 }
 
 type claudeUsageLimitSandbox struct {
-	workDir   string
-	failures  int
-	onSuccess func()
+	workDir     string
+	failures    int
+	onSuccess   func()
+	limitStream string
 
 	mu       sync.Mutex
 	attempts int
@@ -136,7 +176,11 @@ func (s *claudeUsageLimitSandbox) Exec(_ context.Context, command string, stdout
 	s.mu.Unlock()
 	_, _ = io.WriteString(stdout, `{"type":"system","subtype":"init","session_id":"`+recordedClaudeSession+`"}`+"\n")
 	if attempt <= s.failures {
-		_, _ = io.WriteString(stdout, claudeUsageLimitResult+"\n")
+		stream := s.limitStream
+		if stream == "" {
+			stream = claudeUsageLimitResult + "\n"
+		}
+		_, _ = io.WriteString(stdout, stream)
 		return errors.New("exit status 1")
 	}
 	_, _ = io.WriteString(stdout, `{"type":"result","subtype":"success","is_error":false,"result":"done"}`+"\n")

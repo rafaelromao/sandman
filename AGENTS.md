@@ -33,23 +33,61 @@ Implementation quota gates are batch-local; reviewer gates remain daemon-wide.
 RunID advisory claims and atomic ownership/schedule leases preserve valid
 ownerless intent for five minutes, capped by its operation deadline. Normal
 admission rehydrates within grace; explicit terminal abort cannot be reclaimed.
+A live owner retries transient lease-renewal I/O failures until the next renewal
+would outlast its last successful renewal's uncapped grace; invalid ownership
+(foreign identity, changed deadline, corrupt record) still aborts immediately.
+`sandman clean --stale`/`--all` reclaim claim files of event-terminal Runs only.
 Quota schedules have no hard operation deadline and retain the same recovery
 grace; missing/invalid accounting disables further quota waits, not bounded execution.
+A failed PR lookup/refresh waits (`github-unavailable`) instead of failing: hourly
+attempts, each skipped while githubstatus.com reports a GitHub outage (unreachable
+status page = attempt), terminal `GATE_LOOKUP_FAILED` only after 24 hours from the
+window's first failure. The bound is the wait's operation deadline; restart keeps
+window and next attempt; `--continue` (new RunID) attempts at once in a fresh window;
+abort ends it. Retained review/CI deadlines are judged only after recovery.
 Managed merge work requires confirmed current-request/current-head delegated
 approval, including eligible informal approval; a pending request on a CLEAN PR
 stays waiting. Accepted informal approval waits for pending CI and resumes merge
 work when checks are green, without requiring a formal GitHub approval.
+Evaluate eligible approval before informal feedback, as in the standalone review
+loop. Scope tables, quality tags, no-change next steps and informational review
+prose must not turn an approving report into a repair relaunch. Formal requested
+changes, current-head CI failures and merge conflicts remain blocking.
+
+AFK continuity (rule since v1.0.0-rc.2): a started Run may stop only for a
+permanent failure it cannot handle or wait for external recovery, and only
+where rc2 would not have resolved it. An open current-head PR whose only
+missing evidence is review, CI or an unobserved request waits or merges; it
+never terminal-fails. Exhausted relaunch allowances on review, CI, request or
+merge work, expired requests and (without a review command) idle gates after owned work wait
+(`RESUME_STALLED`, `continuity_hold`); only formal CHANGES_REQUESTED left
+unrepaired, a closed PR, abort, unverifiable completion, no delivered request
+and other classified permanent reasons stay terminal. A feedback relaunch that
+leaves head, request and responses unchanged stops relaunching; `run.await`
+`stalled_resumes` keeps observation from relaunching on that evidence after
+restart. A closed unmerged PR is terminal only when proven to be the Run's (same
+head, or `closedAt` at/after the original admission found through `run.continued`
+`previous_run_id`); an unplaced closure continues owned work while the issue is
+open. A trigger delivered by any attempt of a session (including a failed
+one) is registered; owned-work retries log `lifecycle-owned-work`. The review
+daemon stamps a verdict trailer before its publication identity; the runtime
+trusts it additively (prose approvals stay accepted) unless its Findings, Suggested
+next steps or Decision section contradicts it; descriptive sections (Summary, Spec,
+Quality check, ...) never veto it. Every `testdata/approved-*.md` report is a
+corpus test. Relaunch allowances are per repair round (request, head); holds
+recover under the `hold:<RunID>` identity. Every lifecycle reason is
+classified in one place and `TestAFKContinuityContract_*` replays the incidents.
 
 - **Event-sourced state**: Run status is a projection over the append-only `.sandman/events.jsonl`, not mutable records. `events.RunState` folds events into current state. If a status looks wrong, start by tracing the relevant event types and the fold/projection logic rather than searching for mutable status fields.
 - **Lifecycle versus artifacts**: `events.RunState.IsTerminal()` is the shared lifecycle predicate for status/history/Portal, archive, cleanup and recovery. Initial `run.queued` admissions tagged `initial_admission: true` are non-terminal; untagged historical records and explicit `terminal_placeholder` skipped records remain terminal. `run.capacity_queued` is non-terminal readiness evidence: started rows remain waiting. Index status and `run.json.status` describe artifacts/compatibility only and cannot authorize terminal operations. Read failures fail closed; missing events remain unknown. Preserve manifest/path validation and terminal outcomes during reclamation.
-- **Portal waiting state**: Started implementation suspension projects as waiting for authorized external work or delayed execution admission. `run.capacity_queued` records ready/capacity metadata without returning a started row to queued. Continuation/resume returns it to running and preserves accumulated active time. A live linked review promotes any non-terminal parent to reviewing; terminal parents retain their outcomes. Transient observation failure may re-observe only prior identity-valid operation evidence within its unchanged deadline.
+- **Portal waiting state**: Started implementation suspension projects as waiting for authorized external work or delayed execution admission. `run.capacity_queued` records ready/capacity metadata without returning a started row to queued. Continuation/resume returns it to running and preserves accumulated active time. A live linked review promotes any non-terminal parent to reviewing; terminal parents retain their outcomes. The issue group (visible row, retained review metadata, subjects) is projected once in Go; the page and renderer only look rows up and never re-derive it. A transient observation failure projects as a `github-unavailable` wait that retains only prior identity-valid operation evidence, with its deadline unchanged.
 - **Context rollover**: A repeated OpenCode context-limit failure stops only the active attempt, preserves its worktree and Task, and records `context-exhausted` on the ordinary retry path. The next attempt must be a clean session reconstructed from the preserved Task; do not add a nested retry loop or mutable run-state shortcut. The rollover detector belongs to the OpenCode strategy; the `claude` preset relies on Claude Code's automatic compaction, and a failed compaction takes the ordinary retry path.
 - **Implementation pull-request lifecycle**: Clean exits are evaluated by one runtime-owned lifecycle decision before event, task, log, portal, or dependency projections. Verified merged completion wins over retained review evidence; recoverable open pull-request states await or resume; terminal `blocked` is reserved for dependency outcomes.
 - **Managed review lifecycle**: A confirmed current-head request waits without consuming generic retry budget, resumes the same RunID for actionable feedback, renews at a new request/head boundary, resumes for current-head approval and green checks, verifies merge without another execution slot, and releases dependents only after terminal closure. Restart rehydrates event and wait evidence; explicit abort revokes continuation. Canonical evidence is authoritative after validated migration, while stale or mismatched legacy evidence remains diagnostic-only.
-- **Factory seams**: `cmd.Dependencies` (`internal/cmd/root.go`) is the top-level dependency injection struct. The per-run seam is `RunExecutor{Execute(ctx, row RowSpec)}` (`internal/batch/row_spec.go`); its implementation holds a `runDeps` struct (github.Client, prompt.IssueRenderer, events.EventLog, RunnableFactory, SandboxFactory, paths.Layout, heartbeatTickInterval, errorLog, runSessionOptions, verifyPath) and a narrow `runCoordination` interface (`*Orchestrator` implements it; RunBatch owns the state). Test injection of the orchestrator's behavior goes through `OrchestratorOpt` options on `NewOrchestrator` — `WithRunnableFactory`, `WithSandboxFactory`, `WithContainerRuntimeFactory`, `WithErrorLog`, `WithRunSessionOpts`, `WithHeartbeatTickInterval`, `WithVerifyPath` (and `WithBadgeHooker` for production). `batch.Request` is the public batch input (issues, config, flags) — it does **not** carry factories. Inject fakes at the `runDeps`/`OrchestratorOpt` seams rather than mocking deep concrete types.
-- **Agent strategy seam**: `strategyFor(preset, command)` in `internal/batch/agent_strategy.go` is the only place that may inspect the agent name; agent-specific flags, launch environment, session reuse, output parsing, and failure classification (context rollover, usage limits, and authentication failures) are methods on the selected `agentStrategy` (OpenCode, Claude, passthrough). Recognised usage limits enter `run.await` with quota-reset polling (ten-minute polls for up to five hours, same-session resume); the review daemon uses the strategy's provider-wide quota recovery gate for reviewer launches. Adding an agent = a preset entry in `config.BuiltInAgentPresets` + an installer entry in the scaffold's `agentInstallers` + a strategy type. `TestAgentSelection_NoAgentNameComparisonsOutsideStrategy` fails on any `== "opencode"`-style comparison elsewhere.
+- **Factory seams**: `cmd.Dependencies` (`internal/cmd/root.go`) is the top-level dependency injection struct. `RunBatch` owns batch-wide scheduling; its per-row `rowDriver` owns wait/observation acceptance, quota admission, execution re-entry, and abort fencing. The per-run executor seam is `RunExecutor{ExecuteRun(ctx, run RunSpec, cursor ContinuationCursor)}` (`internal/batch/row_spec.go`): `RunSpec` freezes Run/issue/batch/branch/base identity, while the cursor carries advancing mode, session-reuse, and prior-Run identity. The executor holds `runDeps` (github.Client, prompt.IssueRenderer, events.EventLog, RunnableFactory, SandboxFactory, paths.Layout, heartbeatTickInterval, errorLog, runSessionOptions, verifyPath, githubStatus) and a narrow `runCoordination` interface (implemented by the per-batch `*batchCoordinator` that `RunBatch` creates and owns in `internal/batch/orchestrator.go`; batch preparation, `batch.Preparer` in `internal/batch/preparation.go`, owns the Specification/dependency graph before execution). Test injection of the orchestrator's behavior goes through `OrchestratorOpt` options on `NewOrchestrator` — `WithRunnableFactory`, `WithSandboxFactory`, `WithContainerRuntimeFactory`, `WithErrorLog`, `WithRunSessionOpts`, `WithHeartbeatTickInterval`, `WithVerifyPath` (and `WithBadgeHooker`/`WithGitHubStatus` for production; `WithGitHubStatus` injects the githubstatus.com checker into `runDeps.githubStatus`, nil = attempt). `batch.Request` is the public batch input (issues, config, flags) — it does **not** carry factories. Inject fakes at the row-driver/executor/gate interfaces and documented `runDeps`/`OrchestratorOpt` seams rather than mocking deep concrete types.
+- **Agent strategy seam**: `strategyFor(preset, command)` in `internal/batch/agent_strategy.go` is the only place that may inspect the agent name; agent-specific flags, launch environment, session reuse, output parsing, and failure classification (context rollover, usage limits, and authentication failures) are methods on the selected `agentStrategy` (OpenCode, Claude, passthrough). Recognised usage limits enter `run.await` with quota-reset polling (ten-minute polls for up to five hours, same-session resume); the review daemon uses the strategy's provider-wide quota recovery gate for reviewer launches. OpenCode v1 (`opencode`) and v2 (`opencode-v2`) are explicit presets; never select a launch protocol by probing the host. V2 folds the variant into the model and records its own session kind. Adding an agent = a preset entry in `config.BuiltInAgentPresets` + an installer entry in the scaffold's `agentInstallers` + a strategy type. `TestAgentSelection_NoAgentNameComparisonsOutsideStrategy` fails on any `== "opencode"`-style comparison elsewhere.
 - **Sandbox interface** (`internal/sandbox/sandbox.go`): the abstract isolation contract implemented by `WorktreeSandbox` and `ContainerSandbox`. After the parent-map consolidation (#2244), the interface has 9 methods and `Start(opts SandboxStart) error` is the only configuration entry point — the previous 4-setter pre-Start dance (SetOverride / SetStrandedReconcile / SetGitIdentity / SetContinue) is gone. `SandboxStart{Override, Continue, StrandedReconcile, Identity}` plus `SandboxIdentity{Name, Email}` are the value types callers build per row; production builds them via `runSession.startOptsFor(branch)`. `RestoreHostPaths()` is a separate post-Start protocol and stays unchanged.
-- **Shared worktree safety**: Sandman processes and agents must never invoke repository-wide `git worktree prune`, including from review or test sandboxes. Containers share the parent `.git` metadata but may not resolve host paths recorded for sibling worktrees; a global prune can erase live registrations. Remove only the exact temporary worktree owned by the current operation, or use Sandman's path-scoped recovery. The agent sandbox places a Git guard first on `PATH`; do not bypass it with an absolute Git executable.
+- **Shared worktree safety**: Sandman processes and agents must never invoke repository-wide `git worktree prune`, including from review or test sandboxes. Containers share the parent `.git` metadata but may not resolve host paths recorded for sibling worktrees; a global prune can erase live registrations. Remove only the exact temporary worktree owned by the current operation, or use Sandman's path-scoped recovery. The agent sandbox places a Git guard first on `PATH`; do not bypass it with an absolute Git executable. The guard runs every Git command with `gc.worktreePruneExpire=never`, because `git gc` (including automatic gc) runs its own repository-wide worktree prune outside `PATH`. Each guard removes its own directory from `PATH` before delegating, so guards nest when an agent runs Sandman's own tests.
 - **Filesystem as data store**: There is no database. State lives in flat files under `.sandman/` (manifests, logs, review state), written atomically via temp-file + `os.Rename`. The review daemon's provider-wide quota recovery gate is `.sandman/reviews/quota-pause.json`; it applies to review agents whose strategy awaits usage limits (OpenCode and Claude Code, each with its own usage-limit rule) and is daemon-wide, never per-PR. Implementation runs use the same usage-limit rule with `run.await` polling instead of the quota file. IPC uses Unix domain sockets.
 - **Agent session reuse**: Supported OpenCode and Claude Code runs write the observed session identity to the current Run's `session.json` atomically, as soon as it is observed. Each strategy accepts only its own protocol. The Portal shows it as `agentSessionId`. Runtime-owned await re-entry reuses it; ordinary `--continue` is fresh unless `--reuse-session` is explicitly selected. Missing exact OpenCode sessions use one narrow OpenCode `--continue` fallback; unrelated failures do not. The `claude` preset resumes the exact recorded UUID with `--resume`. It never renders Claude Code's working-directory-scoped `--continue`, because container worktrees share `/workspace` paths and `~/.claude/projects` is live-mounted from the host. A missing or invalid Claude session starts fresh (ADR-0057).
 
@@ -79,9 +117,9 @@ If the task involves CLI wiring, root command setup, or substitution in tests:
 
 If a task involves execution flow, runners, or sandbox lifecycle:
 
-- Start with `RunExecutor` and `RowSpec` (`internal/batch/row_spec.go`); the per-run seam is `Execute(ctx, row RowSpec)`. `batch.Request` is the public batch input that feeds it.
+- Start with the row driver and `RunExecutor` (`internal/batch/row_driver.go`, `internal/batch/row_spec.go`); `ExecuteRun(ctx, run RunSpec, cursor ContinuationCursor)` receives one immutable identity and its continuation state. `batch.Request` is the public batch input that feeds batch-wide scheduling.
 - Trace `runDeps` for the test/constructor seam and `OrchestratorOpt` (`WithRunnableFactory`, `WithSandboxFactory`, `WithContainerRuntimeFactory`, `WithErrorLog`, `WithRunSessionOpts`, ...) for test injection. `RunnableFactory` and `SandboxFactory` are the factory interface types inside `runDeps`.
-- Keep orchestration logic testable by preserving the `RunExecutor`/`runDeps`/`OrchestratorOpt` interface seams.
+- Keep row lifecycle and orchestration testable through the `rowDriver` executor/gate seams and preserve the `RunExecutor`/`runDeps`/`OrchestratorOpt` injection paths.
 
 ### Agent-specific behaviour
 
@@ -114,8 +152,9 @@ Always run dependency or blast-radius checks before changing:
 
 - Event definitions or event-fold/projection logic.
 - Shared command wiring or `cmd.Dependencies`.
-- The per-run seam: `RunExecutor` interface, `RowSpec`/`BatchConfig`, `runDeps` (incl. `RunnableFactory`/`SandboxFactory` and their implementations), and `runCoordination`.
-- `OrchestratorOpt` options on `NewOrchestrator` (`WithRunnableFactory`, `WithSandboxFactory`, `WithContainerRuntimeFactory`, `WithErrorLog`, `WithRunSessionOpts`, `WithHeartbeatTickInterval`, `WithVerifyPath`, `WithBadgeHooker`).
+- The per-run seam: `rowDriver`, `RunExecutor`, `RunSpec`/`ContinuationCursor`, `RowSpec`/`BatchConfig`, `runDeps` (incl. `RunnableFactory`/`SandboxFactory` and their implementations), and `runCoordination` (implemented by the per-batch `batchCoordinator`).
+- Batch preparation (`batch.Preparer`, `internal/batch/preparation.go`), which owns Specification discovery and the dependency graph before execution.
+- `OrchestratorOpt` options on `NewOrchestrator` (`WithRunnableFactory`, `WithSandboxFactory`, `WithContainerRuntimeFactory`, `WithErrorLog`, `WithRunSessionOpts`, `WithHeartbeatTickInterval`, `WithVerifyPath`, `WithBadgeHooker`, `WithGitHubStatus`).
 - The agent strategy seam: the `agentStrategy` interface, `strategyFor`, and the strategy registry (`internal/batch/agent_strategy.go`); the OpenCode launch golden (`internal/batch/agent_strategy_test/opencode_launches.golden`) must stay byte-identical unless OpenCode behaviour is meant to change.
 - Files with high blast radius.
 - Persistence code under `.sandman/`.
@@ -127,7 +166,7 @@ If a file has high blast radius, prefer the smallest safe change and inspect dep
 
 When writing or updating tests:
 
-- Mock or fake at the documented seams: `cmd.Dependencies` (top level); `runDeps` fields and `OrchestratorOpt` options (`WithRunnableFactory`, `WithSandboxFactory`, `WithContainerRuntimeFactory`, `WithErrorLog`, `WithRunSessionOpts`, `WithHeartbeatTickInterval`, `WithVerifyPath`) for orchestrator-level injection; `RunnableFactory`/`SandboxFactory` fakes that satisfy the factory interfaces.
+- Mock or fake at the documented seams: `cmd.Dependencies` (top level); `runDeps` fields and `OrchestratorOpt` options (`WithRunnableFactory`, `WithSandboxFactory`, `WithContainerRuntimeFactory`, `WithErrorLog`, `WithRunSessionOpts`, `WithHeartbeatTickInterval`, `WithVerifyPath`, `WithGitHubStatus`) for orchestrator-level injection; `RunnableFactory`/`SandboxFactory` fakes that satisfy the factory interfaces.
 - Do not mock deep concrete internals when an interface seam already exists.
 - Preserve event-sourced behavior in tests; verify projections/folds rather than inventing alternate mutable-state shortcuts.
 
@@ -289,7 +328,7 @@ retain full action commit pins with readable version comments. Release automatio
 retains write permissions; validation defaults to contents read and semantic title
 validation gets pull-request read. Existing protection contexts remain in place.
 
-The Go language minimum remains 1.25; `toolchain go1.26.9` selects a patched
+The Go language minimum remains 1.25; `toolchain go1.26.10` selects a patched
 standard library for normal builds; `.go-version` selects the same patched
 toolchain explicitly in setup-go and security scans. Keep automatic
 toolchain selection enabled. Staticcheck retains its isolated Go 1.25.0 runner
@@ -322,10 +361,34 @@ live administrator verification. See `docs/development/releasing.md` for recover
 Claude provider E2Es are manual-only (`Full Regression - Linux`, `run_claude`).
 Automatic live release validation uses OpenCode and never requires Claude credentials.
 
-Regular CI runs one tool-free OpenCode canary request on Linux (60-second
-provider deadline, three-minute job, no containers or retries), using the release
-manifest's exact CLI/model. A provider deprecation failure instructs the implementor
-to update the scaffold fallback, release manifest and release workflow pin together.
+Regular CI runs one tool-free `opencode run` invocation for its OpenCode canary on
+Linux (60-second provider deadline, three-minute job, no containers, and no retry
+loop inside that job), using the release manifest's exact CLI/model. This process
+contract does not claim to count physical HTTP requests made internally by the CLI.
+After diagnosing a transient provider/network timeout on the identified current-head
+execution, the implementation agent may initiate one authorized, bounded GitHub
+rerun; this is a new job invocation, not an in-job retry. Rerunning the existing
+execution does not require `workflow_dispatch`. A provider deprecation failure
+instructs the implementor to update the scaffold fallback, release manifest and
+release workflow pin together.
 The canary is mandatory in the aggregate quality gate; full provider E2Es remain
 release-only, and Claude provider E2Es remain manual-only. The existing OPENCODE_API_KEY repository secret is required and is forwarded
 by the Release reusable-CI caller.
+
+The regular Linux build also selects the credential-free fake subagent permission
+container scenario. Its image must expose the fake gh on the image PATH for
+pre-agent auth setup. Keep this selection narrow; it makes no provider requests.
+
+Python toolchain image builds mount an optional `github_token` build secret for
+mise downloads and artifact-attestation verification. Image builders share the
+same argument helper; token values never become build arguments or image ENV.
+The release runner supplies `MISE_GITHUB_TOKEN` independently of fake GitHub CLI
+credentials. Local builds without a token still work subject to GitHub API limits.
+Regular Linux CI tests the generated install instruction with a fake installer,
+both with and without authentication, and checks that the secret is absent from
+subsequent layers, runtime environment, and image history.
+
+Maintainers can add the `release-validation` label to a same-repository PR to
+run the full Linux release regression tiers before merging a release repair.
+New commits rerun that opt-in validation. Fork PRs receive no provider secrets;
+Claude remains excluded and requires the existing manual workflow input.

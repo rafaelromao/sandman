@@ -326,6 +326,38 @@ func TestAgentRun_Prepare_RendersAndWritesPrompt(t *testing.T) {
 	}
 }
 
+func TestAgentRun_Prepare_AddsManagedCIOwnershipToCustomTemplate(t *testing.T) {
+	issue := &github.Issue{Number: 42, Title: "Fix bug", Body: "Users cannot log in."}
+	sb := &fakeSandbox{}
+	spy := &spyRenderer{result: "# Custom task\n\nKeep this custom checkpoint.\n"}
+	run := NewAgentRun(issue, "42-fix-bug", sb)
+
+	if err := run.Prepare(spy, prompt.RenderConfig{}); err != nil {
+		t.Fatalf("prepare custom managed task: %v", err)
+	}
+	if !strings.Contains(sb.writePromptContent, "Keep this custom checkpoint.") {
+		t.Fatalf("managed composition lost custom task content:\n%s", sb.writePromptContent)
+	}
+	if !strings.Contains(sb.writePromptContent, "A failed required check on the current pull request head remains implementation work you own.") {
+		t.Fatalf("managed custom task omitted failed-CI ownership guidance:\n%s", sb.writePromptContent)
+	}
+}
+
+func TestAgentRun_PrepareDoesNotAddImplementationCIOwnershipToReviewer(t *testing.T) {
+	issue := &github.Issue{Number: 42, Title: "Review change"}
+	sb := &fakeSandbox{}
+	spy := &spyRenderer{result: "# Reviewer task\n\nReview the change.\n"}
+	run := NewAgentRun(issue, "42-review", sb)
+	run.review = true
+
+	if err := run.Prepare(spy, prompt.RenderConfig{}); err != nil {
+		t.Fatalf("prepare reviewer task: %v", err)
+	}
+	if strings.Contains(sb.writePromptContent, "Sandman Failed CI Remediation Context") || strings.Contains(sb.writePromptContent, "implementation work you own") {
+		t.Fatalf("implementation repair authority leaked into reviewer prompt:\n%s", sb.writePromptContent)
+	}
+}
+
 func TestAgentRun_Prepare_RenderError(t *testing.T) {
 	issue := &github.Issue{Number: 42, Title: "Fix bug"}
 	sb := &fakeSandbox{}

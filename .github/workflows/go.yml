@@ -274,6 +274,11 @@ jobs:
           SANDMAN_E2E_GATES: ""
         run: bash scripts/ci_report.sh race-linux make build-check test-ci
 
+      - name: Fake subagent container permissions
+        env:
+          SANDMAN_E2E_GATES: opencode_subagent
+        run: bash scripts/ci_report.sh container-permissions go test -tags e2e -json -count=1 -timeout=12m ./internal/cmd -run '^Test(OpencodeSubagentPermissionAllowAll|PermissionFakeAgentHomeIsolatedFromHostState|PythonBuildSecretIsTransient)$'
+
       - name: Report Go coverage and evaluate policy
         if: ${{ always() && hashFiles('reports/coverage.out') != '' }}
         env:

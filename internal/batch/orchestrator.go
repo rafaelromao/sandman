@@ -53,10 +53,38 @@ func BatchIDForIssue(firstIssueNum, n int, ts, shortid string) string {
 	return runid.NewBatchID(runid.KindIssue, n, fmt.Sprintf("%d", firstIssueNum), ts, shortid)
 }
 
-func issueBatchIDForRequest(req Request) string {
+// issueBatchLocation pairs the issue Batch's public identity with its frozen
+// directory. A supplied RunDir is that frozen directory, so its identity comes
+// from the index rather than its basename, which may be another Batch's
+// public ID. A freshly minted identity uses its canonical directory.
+func issueBatchLocation(layout paths.Layout, req Request) (paths.BatchLocation, error) {
 	if runDir := strings.TrimSpace(req.RunDir); runDir != "" {
-		return filepath.Base(runDir)
+		return daemon.BatchLocationForDir(layout, layout.ResolvePath(filepath.Clean(runDir)))
 	}
+	id := issueBatchIDForRequest(req)
+	if id == "" {
+		return paths.BatchLocation{}, nil
+	}
+	return layout.LocateBatch(id, ""), nil
+}
+
+// rowWaitBatch is where a row's waiting ownership lives. Rows without an
+// issue Batch fall back to the identity their RunID encodes, resolved to the
+// frozen location the index records for it.
+func rowWaitBatch(layout paths.Layout, issueBatch paths.BatchLocation, runID string) (paths.BatchLocation, error) {
+	if issueBatch.ID != "" {
+		return issueBatch, nil
+	}
+	id := batchIDFromRunID(runID)
+	if id == "" {
+		id = runID
+	}
+	return daemon.ResolveBatchLocation(layout, id)
+}
+
+// issueBatchIDForRequest mints the public ID of a new issue Batch. A
+// supplied RunDir is resolved by issueBatchLocation instead.
+func issueBatchIDForRequest(req Request) string {
 	if len(req.Issues) > 0 {
 		return BatchIDForIssue(req.Issues[0], len(req.Issues), req.RunTS, req.RunShortID)
 	}
@@ -66,23 +94,34 @@ func issueBatchIDForRequest(req Request) string {
 	return req.RunTS + "-" + req.RunShortID
 }
 
-// batchIDForPromptOnly returns the public batch ID for a prompt-only run.
-// runDir is either the batch directory `<batches>/<batchID>` or a run folder
-// `<batches>/<batchID>/runs/<runID>`; any other shape returns "" so the
-// caller keeps its historical derivation. Without runDir it falls back to
-// the user run ID, then to the canonical `<ts>-<sid>-prompt` identity.
-func batchIDForPromptOnly(ts, shortid, userRunID, runDir string) string {
-	if runDir != "" {
-		runDir = filepath.Clean(runDir)
-		parent := filepath.Dir(runDir)
-		switch filepath.Base(parent) {
-		case "runs":
-			return filepath.Base(filepath.Dir(parent))
-		case "batches":
-			return filepath.Base(runDir)
-		}
-		return ""
+// promptOnlyBatchLocation pairs a prompt-only or review Batch's public
+// identity with its frozen directory. runDir is either that directory or one
+// of its run folders (`<batch>/runs/<runID>`); the identity owning it comes
+// from the index, never from the directory's basename, which may be another
+// Batch's public ID. A directory of either shape that the index cannot read
+// or attribute to one owner is an error, as for issue Batches. Any other
+// shape yields the zero location, so run folders keep deriving their Batch
+// from the RunID. Without runDir the identity is minted by
+// batchIDForPromptOnly.
+func promptOnlyBatchLocation(layout paths.Layout, ts, shortid, userRunID, runDir string) (paths.BatchLocation, error) {
+	if runDir == "" {
+		return paths.BatchLocation{ID: batchIDForPromptOnly(ts, shortid, userRunID)}, nil
 	}
+	batchDir := filepath.Clean(runDir)
+	parent := filepath.Dir(batchDir)
+	switch filepath.Base(parent) {
+	case "runs":
+		batchDir = filepath.Dir(parent)
+	case "batches":
+	default:
+		return paths.BatchLocation{}, nil
+	}
+	return daemon.BatchLocationForDir(layout, layout.ResolvePath(batchDir))
+}
+
+// batchIDForPromptOnly mints the public batch ID of a prompt-only run without
+// a RunDir: the user run ID, else the canonical `<ts>-<sid>-prompt` identity.
+func batchIDForPromptOnly(ts, shortid, userRunID string) string {
 	if userRunID != "" {
 		return userRunID
 	}
@@ -99,11 +138,6 @@ func issueRef(num int) *int {
 
 var branchExists = sandbox.BranchExists
 var branchValidationEnabled = true
-
-const (
-	usageLimitPollInterval = 10 * time.Minute
-	usageLimitRetryWindow  = 5 * time.Hour
-)
 
 func resolveRetries(req Request, cfg *config.Config) int {
 	if req.Retries >= 0 {
@@ -272,6 +306,60 @@ func collectIssueBranchesFromIndex(issueNumber int, title string, recordedBranch
 	return branches
 }
 
+// resolveRunBranches freezes each issue's branch before the immutable RunSpec
+// crosses the executor seam. Fresh runs used to derive a missing branch later
+// inside runSession.prepareInputs, which left await observations with no branch
+// once they re-entered through the row driver.
+func (o *Orchestrator) resolveRunBranches(ctx context.Context, req Request, baseBranch string) (Request, error) {
+	branches := make(map[int]string, len(req.Branches)+len(req.Issues))
+	for issue, branch := range req.Branches {
+		branches[issue] = branch
+	}
+	req.Branches = branches
+
+	titles := make(map[int]string, len(req.IssueTitles)+len(req.Issues))
+	for issue, title := range req.IssueTitles {
+		titles[issue] = title
+	}
+	req.IssueTitles = titles
+
+	for _, issueNumber := range req.Issues {
+		if req.Branches[issueNumber] != "" {
+			continue
+		}
+		title := strings.TrimSpace(req.IssueTitles[issueNumber])
+		if title == "" {
+			if err := ctx.Err(); err != nil {
+				return req, err
+			}
+			if o.githubClient == nil {
+				return req, fmt.Errorf("resolve branch for issue %d: GitHub client is unavailable and no issue title was provided", issueNumber)
+			}
+			issue, err := o.githubClient.FetchIssue(ctx, issueNumber)
+			if err != nil {
+				if ctx.Err() != nil {
+					return req, ctx.Err()
+				}
+				return req, fmt.Errorf("resolve branch for issue %d: fetch issue: %w", issueNumber, err)
+			}
+			if issue == nil {
+				return req, fmt.Errorf("resolve branch for issue %d: fetch issue returned no issue", issueNumber)
+			}
+			title = strings.TrimSpace(issue.Title)
+			if title == "" {
+				return req, fmt.Errorf("resolve branch for issue %d: fetched issue has no title", issueNumber)
+			}
+			req.IssueTitles[issueNumber] = title
+		}
+		branchBase := strings.TrimSpace(req.BaseBranches[issueNumber])
+		if branchBase == "" {
+			branchBase = baseBranch
+		}
+		req.Branches[issueNumber] = BranchName(issueNumber, title, branchBase)
+	}
+	return req, nil
+}
+
 func (o *Orchestrator) validateBatchBranches(ctx context.Context, req Request, baseBranch string) error {
 	return o.validateBatchBranchesWithIndex(ctx, req, baseBranch, readEventLogIndex(o.eventLog))
 }
@@ -281,7 +369,7 @@ func (o *Orchestrator) validateBatchBranchesWithIndex(ctx context.Context, req R
 		return nil
 	}
 
-	repoRoot, err := gitTopLevel(".")
+	repoRoot, err := gitTopLevel(o.requestRepoRoot(req))
 	if err != nil {
 		return fmt.Errorf("resolve repo root for branch validation: %w", err)
 	}
@@ -375,6 +463,8 @@ type Orchestrator struct {
 	heartbeatTickInterval    time.Duration
 	closingGuardTickInterval time.Duration
 	errorLog                 io.Writer
+	// githubStatus gates GitHub recovery attempts (WithGitHubStatus).
+	githubStatus github.StatusChecker
 
 	// lookupGHToken resolves the host GitHub auth token for hydrating the
 	// copied gh hosts.yml in container config snapshots. It runs once per
@@ -721,12 +811,15 @@ func (g *batchStartGate) AcquireAwaiting(ctx context.Context, opportunity awaitO
 }
 
 func (g *batchStartGate) acquire(ctx context.Context, waiter *batchStartWaiter) (awaitOpportunity, error) {
-	return g.acquireObserved(ctx, waiter, nil, 0)
+	opportunity, _, err := g.acquireObserved(ctx, waiter, nil, 0)
+	return opportunity, err
 }
 
 // Keep the same queued waiter while observing lifecycle changes; observations
 // never claim execution capacity and do not change fairness opportunities.
-func (g *batchStartGate) acquireObserved(ctx context.Context, waiter *batchStartWaiter, observe func() error, interval time.Duration) (awaitOpportunity, error) {
+// A selected lifecycle action is returned as typed data, separate from gate
+// operation errors; callers do not smuggle observations through sentinels.
+func (g *batchStartGate) acquireObserved(ctx context.Context, waiter *batchStartWaiter, observe func() (rowObservationOutcome, error), interval time.Duration) (awaitOpportunity, rowObservationOutcome, error) {
 	acquired := false
 	defer func() {
 		if !acquired {
@@ -735,23 +828,27 @@ func (g *batchStartGate) acquireObserved(ctx context.Context, waiter *batchStart
 	}()
 	for {
 		if observe != nil {
-			if err := observe(); err != nil {
-				return awaitOpportunity{}, err
+			outcome, err := observe()
+			if err != nil {
+				return awaitOpportunity{}, rowObservationOutcome{}, err
+			}
+			if outcome.Kind != rowObservationNone {
+				return awaitOpportunity{}, outcome, nil
 			}
 		}
 		wake, wait, opportunity, ok, err := g.tryAcquire(ctx, waiter)
 		if err != nil {
-			return awaitOpportunity{}, err
+			return awaitOpportunity{}, rowObservationOutcome{}, err
 		}
 		if ok {
 			acquired = true
-			return opportunity, nil
+			return opportunity, rowObservationOutcome{}, nil
 		}
 		if observe != nil && (wait <= 0 || wait > interval) {
 			wait = interval
 		}
 		if err := waitForStartGate(ctx, wake, wait); err != nil {
-			return awaitOpportunity{}, err
+			return awaitOpportunity{}, rowObservationOutcome{}, err
 		}
 	}
 }
@@ -1388,6 +1485,14 @@ func WithVerifyPath(v VerifyPathFunc) OrchestratorOpt {
 	return func(o *Orchestrator) { o.verifyPath = v }
 }
 
+// WithGitHubStatus sets the GitHub health check that gates hourly recovery
+// attempts after a failed pull-request lookup. Production wiring passes the
+// githubstatus.com client; without it every attempt proceeds, so tests make
+// no network calls.
+func WithGitHubStatus(checker github.StatusChecker) OrchestratorOpt {
+	return func(o *Orchestrator) { o.githubStatus = checker }
+}
+
 // NewBadgeHooker returns a BadgeHooker that suggests a Built with Sandman
 // badge PR after a batch with merged Sandman-managed PRs. The hook is silent
 // to the operator — it writes nothing to any user-visible stream and
@@ -1476,7 +1581,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		delete(o.coordinators, coord)
 		o.coordinatorsMu.Unlock()
 	}()
-	layout := paths.NewLayout(cfg, o.layout.RepoRoot)
+	layout := paths.NewLayout(cfg, o.requestRepoRoot(req))
 	retries := resolveRetries(req, cfg)
 	runIdleTimeout := resolveRunIdleTimeout(req, cfg)
 	reviewTimeout, err := resolveReviewTimeout(req, cfg)
@@ -1601,7 +1706,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 	}
 	if !allContinue && req.PromptConfig.PromptFile == "" {
-		req.PromptConfig.PromptFile = filepath.Join(".", ".sandman", "prompt.md")
+		req.PromptConfig.PromptFile = filepath.Join(layout.RepoRoot, ".sandman", "prompt.md")
 	}
 	if req.PromptConfig.RenderedPromptFile == "" {
 		req.PromptConfig.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")
@@ -1655,7 +1760,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		return nil, fmt.Errorf("override: failed to close open PR(s) before replacing branch(es): %s; worktree and branch preserved", strings.Join(overridePRCloseErrors, "; "))
 	}
 	for _, entry := range overrideBranches {
-		ClearIssueArtifacts(entry.issueNumber, entry.branch, layout.WorktreeDir, o.eventLog, o.errorLog, baseBranch, req.StrandedReconcile, layout.BatchesIndexPath)
+		ClearIssueArtifacts(entry.issueNumber, entry.branch, layout.WorktreeDir, o.eventLog, o.errorLog, baseBranch, req.StrandedReconcile, layout.BatchesIndexPath, layout.RepoRoot)
 	}
 
 	eventIndex := eventLogIndex{priorRunByIssue: map[int]bool{}, branchesByIssue: map[int][]string{}}
@@ -1664,6 +1769,13 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 
 	phaseStarted = time.Now()
+	req, err = o.resolveRunBranches(ctx, req, baseBranch)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := o.validateBatchBranchesWithIndex(ctx, req, baseBranch, eventIndex); err != nil {
 		return nil, err
 	}
@@ -1680,7 +1792,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 
 	if len(req.Issues) == 0 && (req.PromptConfig.PromptFlag != "" || req.PromptConfig.TemplateFlag != "" || req.PromptConfig.TaskPrompt != "") {
-		return o.runPromptOnly(ctx, cfg, agentName, agentCfg, newBatchIdentityResolver(o, "."), policy.sandboxFactory, policy.containerAlloc, req, baseBranch, startDelay, parallel, retries, runIdleTimeout, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions, strandedReconcile, coord, layout)
+		return o.runPromptOnly(ctx, cfg, agentName, agentCfg, newBatchIdentityResolver(o, layout.RepoRoot), policy.sandboxFactory, policy.containerAlloc, req, baseBranch, startDelay, parallel, retries, runIdleTimeout, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions, strandedReconcile, coord, layout)
 	}
 
 	startGate := newBatchStartGate(effectiveParallel, startDelay, o.runSessionOpts.startWaiterQueued)
@@ -1696,6 +1808,23 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	failureCount := 0
 	abortedCount := 0
 	statuses := make(map[int]string, len(req.Issues))
+	// returnedAborts holds, per row returned unfinished to the batch, the
+	// selected abort application for its Run, so a later abort applies the
+	// same terminal as the row's own fence. Guarded by mu.
+	returnedAborts := make([]func(context.Context) AgentRunResult, len(req.Issues))
+	// abortReturned aborts an unfinished row whose goroutine returned it to
+	// the batch, applying the abort selected when it returned. Every path that
+	// stores an unfinished result registers that abort. Callers hold mu.
+	abortReturned := func(ctx context.Context, idx, issueNum int) {
+		abort := returnedAborts[idx]
+		if abort == nil {
+			return
+		}
+		returnedAborts[idx] = nil
+		results[idx] = abort(ctx)
+		statuses[issueNum] = results[idx].Status
+		abortedCount++
+	}
 	completed := make(map[int]chan struct{}, len(req.Issues))
 	yielded := make(map[int]chan struct{}, len(req.Issues))
 	for _, num := range req.Issues {
@@ -1703,8 +1832,12 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		yielded[num] = make(chan struct{})
 	}
 
-	batchIdentityResolver := newBatchIdentityResolver(o, ".")
-	issueBatchID := issueBatchIDForRequest(req)
+	batchIdentityResolver := newBatchIdentityResolver(o, layout.RepoRoot)
+	issueBatch, err := issueBatchLocation(layout, req)
+	if err != nil {
+		return nil, fmt.Errorf("resolve batch location: %w", err)
+	}
+	issueBatchID := issueBatch.ID
 	claims := make(map[int]*daemon.RunClaim, len(ordered))
 	for _, num := range ordered {
 		id := strings.TrimSpace(req.RunIDs[num])
@@ -1767,18 +1900,19 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			recoveryRejected[issue] = true
 			continue
 		}
-		currentBatchDir, err := daemon.ResolveBatchDir(layout, recovery.BatchID)
-		if err != nil {
+		currentBatch, err := daemon.ResolveBatchLocation(layout, recovery.BatchID)
+		if err != nil || currentBatch.ID == "" {
 			recoveryRejected[issue] = true
 			continue
 		}
-		current, err := daemon.ReadRunWait(currentBatchDir, recovery.RunID)
+		current, err := daemon.ReadRunWaitAt(layout, currentBatch, recovery.RunID)
 		if os.IsNotExist(err) && !recovery.RecoveryEventAt.IsZero() {
 			if legacy, valid := legacyRecoveryWait(claimedStates[recovery.RunID]); valid && legacy.RecoveryEventAt.Equal(recovery.RecoveryEventAt) && legacy.RecoverableAt(recoveryNow()) {
 				current = legacy
-				currentBatchDir, err = daemon.ResolveBatchDir(layout, current.BatchID)
+				currentBatch, err = daemon.ResolveBatchLocation(layout, current.BatchID)
 				if err == nil {
-					err = daemon.RenewRunWait(currentBatchDir, current, recoveryNow())
+					current.BatchID = currentBatch.ID
+					err = daemon.RenewRunWait(layout, currentBatch, current, recoveryNow())
 				}
 			}
 		}
@@ -1792,30 +1926,18 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			continue
 		}
 		if changed {
-			currentBatchDir, err := daemon.ResolveBatchDir(layout, current.BatchID)
-			if err != nil {
-				recoveryRejected[issue] = true
-				continue
-			}
-			if err := daemon.RenewRunWait(currentBatchDir, reconciled, recoveryNow()); err != nil {
+			if err := daemon.RenewRunWait(layout, currentBatch, reconciled, recoveryNow()); err != nil {
 				recoveryRejected[issue] = true
 				continue
 			}
 			current = reconciled
 		}
-		newBatchID := issueBatchID
-		if newBatchID == "" {
-			newBatchID = batchIDFromRunID(current.RunID)
-			if newBatchID == "" {
-				newBatchID = current.RunID
-			}
-		}
-		currentBatchDir, err = daemon.ResolveBatchDir(layout, current.BatchID)
+		newBatch, err := rowWaitBatch(layout, issueBatch, current.RunID)
 		if err != nil {
 			recoveryRejected[issue] = true
 			continue
 		}
-		current, err = daemon.TransferRunWait(layout, currentBatchDir, layout.BatchDir(newBatchID), current.RunID, recoveryNow())
+		current, err = daemon.TransferRunWait(layout, currentBatch, newBatch, current.RunID, recoveryNow())
 		if err != nil {
 			recoveryRejected[issue] = true
 			continue
@@ -1919,6 +2041,78 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				}
 			}()
 			_, recoveringRow := req.RecoveryWaits[issueNum]
+			mode := req.IssueMode(issueNum)
+			renderCfg := req.PromptConfig
+			if mode == ModeContinue {
+				if taskPrompt, ok := req.TaskPrompts[issueNum]; ok {
+					renderCfg.TaskPrompt = taskPrompt
+				}
+			}
+			issueBaseBranch := baseBranch
+			if mode == ModeContinue || recoveringRow {
+				if perIssueBaseBranch, ok := req.BaseBranches[issueNum]; ok && strings.TrimSpace(perIssueBaseBranch) != "" {
+					issueBaseBranch = perIssueBaseBranch
+				}
+			}
+
+			row := RowSpec{
+				IssueNumber:         issueNum,
+				Mode:                mode,
+				Branches:            req.Branches,
+				PreviousRunIDs:      req.PreviousRunIDs,
+				PreviousRunBatchIDs: req.PreviousRunBatchIDs,
+				RunID:               runID,
+				ReuseSession:        req.ReuseSession[issueNum],
+				BaseBranch:          issueBaseBranch,
+				ExternalBlockers:    req.Blocked[issueNum],
+				RenderCfg:           renderCfg,
+				OutputWriter:        req.OutputWriter,
+				RunTS:               req.RunTS,
+				RunShortID:          req.RunShortID,
+				BatchID:             issueBatchID,
+				BatchDir:            issueBatch.Dir,
+				QualityRulesFile:    req.QualityRulesFile,
+			}
+			bc := BatchConfig{
+				Cfg:                        cfg,
+				AgentName:                  agentName,
+				AgentCfg:                   agentCfg,
+				Variant:                    variant,
+				IdentityResolver:           batchIdentityResolver,
+				Parallel:                   parallel,
+				StartDelay:                 startDelay,
+				Retries:                    retries,
+				RunIdleTimeout:             runIdleTimeout,
+				ContextRolloverLiterals:    cfg.ContextErrorPhrases,
+				SandboxMode:                sandboxMode,
+				ContainerCapacity:          containerCapacityForLog,
+				ContainerCapacitySet:       req.ContainerCapacitySet,
+				MaxContainers:              maxContainersForLog,
+				MaxContainersSet:           req.MaxContainersSet,
+				DangerouslySkipPermissions: *dangerouslySkipPermissions,
+				StrandedReconcile:          strandedReconcile,
+			}
+			// The executor's parent context is the RunBatch ctx — it is only
+			// cancelled by an external abort (e.g. parent ctx
+			// cancellation), not by the per-issue abort or the
+			// session's normal end. The supervisor in execute
+			// uses it to decide whether to shut down the
+			// process; a normal session end (no parent abort)
+			// leaves the process alone.
+			executor := o.newRunExecutorWith(ctx, bc, policy.sandboxFactory, policy.containerAlloc, coord, coord, layout)
+			executor.deps.quotaProgress = quotaGate.modelProgress
+			executor.deps.quotaLimit = quotaGate.limit
+			// abortAdmission applies an explicit abort decided before the Run
+			// reaches its execution loop through the same terminal application
+			// as every other abort. A dependency cascade keeps its attribution.
+			abortAdmission := func(abortedBy []int) {
+				res := o.applyAbort(ctx, executor, row, AgentRunResult{}, abortedBy)
+				mu.Lock()
+				results[idx] = res
+				statuses[issueNum] = res.Status
+				abortedCount++
+				mu.Unlock()
+			}
 			if claimedStates[runID].IsTerminal() {
 				state := claimedStates[runID]
 				mu.Lock()
@@ -1928,16 +2122,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				return
 			}
 			if recoveryRejected[issueNum] || queueWriteFailed {
-				o.logAborted(issueNum, runID, nil)
-				mu.Lock()
-				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted"}
-				statuses[issueNum] = "aborted"
-				abortedCount++
-				mu.Unlock()
+				abortAdmission(nil)
 				return
 			}
-			yieldedCapacity := false
-
 			issueCtx, issueCancel := context.WithCancel(ctx)
 			coord.registerIssueCancel(issueNum, issueCancel)
 			defer coord.unregisterIssueCancel(issueNum)
@@ -1950,10 +2137,11 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				// Active execution consumes cancellation through its ordinary abort
 				// path. Returned unfinished rows still belong to this batch.
 				if results[idx].Status != "" && !events.RunStatusFromPayload(results[idx].Status).IsTerminal() {
-					o.logAborted(issueNum, runID, nil)
-					results[idx].Status, statuses[issueNum] = "aborted", "aborted"
-					abortedCount++
+					abortReturned(issueCtx, idx, issueNum)
 				}
+			}
+			leaseRetry := func(err error) {
+				fmt.Fprintf(o.errorLog, "warning: renew ownership for run %s: %v; retrying while the last lease is valid\n", runID, err)
 			}
 			rowTerminal := func() bool {
 				mu.Lock()
@@ -1961,66 +2149,29 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				return events.RunStatusFromPayload(results[idx].Status).IsTerminal()
 			}
 
-			// parentCtx is the RunBatch ctx — it is only
-			// cancelled by an external abort (e.g. parent ctx
-			// cancellation), not by the per-issue abort or the
-			// session's normal end. The supervisor in execute
-			// uses parentCtx to decide whether to shut down the
-			// process; a normal session end (no parent abort)
-			// leaves the process alone.
-			parentCtx := ctx
-
-			turnAdvanced := false
-			advanceTurn := func() {
-				if effectiveParallel != 1 {
-					return
-				}
-				turnMu.Lock()
-				if turnAdvanced {
-					turnMu.Unlock()
-					return
-				}
-				turnAdvanced = true
-				completedTurns[turn] = struct{}{}
-				for {
-					if _, ok := completedTurns[servingTurn]; !ok {
-						break
-					}
-					delete(completedTurns, servingTurn)
-					servingTurn++
-				}
-				turnCond.Broadcast()
-				turnMu.Unlock()
+			turnControl := &rowTurnController{
+				enabled: effectiveParallel == 1, turn: turn, mu: &turnMu, cond: turnCond,
+				servingTurn: &servingTurn, completedTurns: completedTurns,
 			}
-			defer advanceTurn()
+			defer turnControl.Advance()
 			if req.ReadyContinuations[issueNum] || recoveringRow && !req.RecoveryWaits[issueNum].InitialAdmission {
 				// Observation is slot-free. Started waiting rows compete through
 				// the start gate only when their selected action needs execution.
-				advanceTurn()
+				turnControl.Advance()
 			}
 			var initialOwner *waitOwner
 			if !claimedStates[runID].HasStarted() {
-				initialBatchID := issueBatchID
-				if initialBatchID == "" {
-					initialBatchID = batchIDFromRunID(runID)
-					if initialBatchID == "" {
-						initialBatchID = runID
-					}
-				}
+				initialBatch, err := rowWaitBatch(layout, issueBatch, runID)
 				initialBaseBranch := req.BaseBranches[issueNum]
 				if initialBaseBranch == "" {
 					initialBaseBranch = baseBranch
 				}
-				record := daemon.RunWait{Protocol: "run-wait/v1", RunID: runID, BatchID: initialBatchID, Issue: issueNum, Branch: req.Branches[issueNum], BaseBranch: initialBaseBranch, InitialAdmission: true, AdmissionMode: int(req.IssueMode(issueNum)), Dependencies: append([]int(nil), blockers...), ReuseSession: req.ReuseSession[issueNum], Ready: true, OperationID: "admission", PreviousRunID: req.PreviousRunIDs[issueNum], PreviousBatchID: req.PreviousRunBatchIDs[issueNum]}
-				var err error
-				initialOwner, err = newWaitOwnerWithFailure(layout.BatchDir(initialBatchID), record, recoveryNow, o.eventLog, ownerPulse(runID), leaseFailure)
+				record := daemon.RunWait{Protocol: "run-wait/v1", RunID: runID, BatchID: initialBatch.ID, Issue: issueNum, Branch: req.Branches[issueNum], BaseBranch: initialBaseBranch, InitialAdmission: true, AdmissionMode: int(req.IssueMode(issueNum)), Dependencies: append([]int(nil), blockers...), ReuseSession: req.ReuseSession[issueNum], Ready: true, OperationID: "admission", PreviousRunID: req.PreviousRunIDs[issueNum], PreviousBatchID: req.PreviousRunBatchIDs[issueNum]}
+				if err == nil {
+					initialOwner, err = newWaitOwnerWithFailure(layout, initialBatch, record, recoveryNow, o.eventLog, ownerPulse(runID), leaseFailure, leaseRetry)
+				}
 				if err != nil {
-					o.logAborted(issueNum, runID, nil)
-					mu.Lock()
-					results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted"}
-					statuses[issueNum] = "aborted"
-					abortedCount++
-					mu.Unlock()
+					abortAdmission(nil)
 					return
 				}
 				trackWaitOwner(initialOwner)
@@ -2047,7 +2198,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 						// Keep the dependent registered until its prerequisite's
 						// terminal transition. Only its serial turn is released;
 						// yielding must not return the dependent as queued.
-						advanceTurn()
+						turnControl.Advance()
 						select {
 						case <-completed[blocker]:
 						case <-issueCtx.Done():
@@ -2084,22 +2235,11 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				}
 			}
 			if issueCtx.Err() != nil {
-				o.logAborted(issueNum, runID, abortedBy)
-				mu.Lock()
-				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
-				statuses[issueNum] = "aborted"
-				abortedCount++
-				mu.Unlock()
+				abortAdmission(abortedBy)
 				return
 			}
 			if len(abortedBy) > 0 {
-				res := AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
-				o.logAborted(issueNum, runID, abortedBy)
-				mu.Lock()
-				results[idx] = res
-				statuses[issueNum] = res.Status
-				abortedCount++
-				mu.Unlock()
+				abortAdmission(abortedBy)
 				return
 			}
 			if len(stillBlockedBy) > 0 {
@@ -2116,120 +2256,39 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				mu.Lock()
 				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), RunID: runID, Status: "queued", Branch: req.Branches[issueNum]}
 				statuses[issueNum] = "queued"
+				queuedRes := results[idx]
+				returnedAborts[idx] = func(ctx context.Context) AgentRunResult {
+					return o.applyAbort(ctx, executor, row, queuedRes, nil)
+				}
 				mu.Unlock()
 				return
 			}
 			if err := issueCtx.Err(); err != nil {
-				o.logAborted(issueNum, runID, nil)
-				mu.Lock()
-				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
-				statuses[issueNum] = "aborted"
-				abortedCount++
-				mu.Unlock()
+				abortAdmission(nil)
 				return
 			}
 
-			if effectiveParallel == 1 && !turnAdvanced {
-				turnMu.Lock()
-				waiting := true
-				for waiting {
-					if err := issueCtx.Err(); err != nil {
-						turnMu.Unlock()
-						o.logAborted(issueNum, runID, nil)
-						mu.Lock()
-						results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
-						statuses[issueNum] = "aborted"
-						abortedCount++
-						mu.Unlock()
-						return
-					}
-					if turn == servingTurn {
-						waiting = false
-						continue
-					}
-					turnCond.Wait()
-				}
-				turnMu.Unlock()
+			if !turnControl.Advanced() && !turnControl.Wait(issueCtx, func() { abortAdmission(nil) }) {
+				return
 			}
 
-			mode := req.IssueMode(issueNum)
-			renderCfg := req.PromptConfig
-			if mode == ModeContinue {
-				if taskPrompt, ok := req.TaskPrompts[issueNum]; ok {
-					renderCfg.TaskPrompt = taskPrompt
-				}
-			}
-			issueBaseBranch := baseBranch
-			if mode == ModeContinue || recoveringRow {
-				if perIssueBaseBranch, ok := req.BaseBranches[issueNum]; ok && strings.TrimSpace(perIssueBaseBranch) != "" {
-					issueBaseBranch = perIssueBaseBranch
-				}
-			}
-
-			row := RowSpec{
-				IssueNumber:         issueNum,
-				Mode:                mode,
-				Branches:            req.Branches,
-				PreviousRunIDs:      req.PreviousRunIDs,
-				PreviousRunBatchIDs: req.PreviousRunBatchIDs,
-				RunID:               runID,
-				ReuseSession:        req.ReuseSession[issueNum],
-				BaseBranch:          issueBaseBranch,
-				ExternalBlockers:    req.Blocked[issueNum],
-				RenderCfg:           renderCfg,
-				OutputWriter:        req.OutputWriter,
-				RunTS:               req.RunTS,
-				RunShortID:          req.RunShortID,
-				BatchID:             issueBatchID,
-				QualityRulesFile:    req.QualityRulesFile,
-			}
 			recovery, recovering := req.RecoveryWaits[issueNum]
 			if recovering && !recovery.InitialAdmission {
-				row.UsageLimitProbe = recovery.UsageLimitProbe
+				row.quotaAllowance = row.quotaAllowance.withProbe(recovery.UsageLimitProbe)
 				if recovery.UsageLimitProbe {
 					evidence := quotaPollingEvidence(claimedStates[runID])
-					if waited, ok := quotaPollingWaited(evidence["usage_limit_waited_seconds"]); ok {
-						row.UsageLimitWaited = waited
-					} else {
-						row.UsageLimitWaited = usageLimitRetryWindow
-					}
-					if seconds, ok := lifecycleDeadlineSeconds(evidence["usage_limit_deadline_unix_seconds"]); ok {
-						row.UsageLimitDeadline = time.Unix(seconds, 0)
-					}
+					row.quotaAllowance, _ = row.quotaAllowance.restoreCheckpoint(evidence, recovery.UsageLimitAccountingUnavailable)
+					row.ReuseSession = row.quotaAllowance.allowSessionReuse(row.ReuseSession)
 				}
 				if !recovery.Ready && claimedStates[runID].AwaitEvent != nil && o.eventLog != nil {
 					payload := cloneLifecycleExtras(claimedStates[runID].AwaitEvent.Payload)
 					payload["batch_id"], payload["recovered"] = issueBatchID, true
 					if err := o.eventLog.Log(events.Event{Type: "run.await", Timestamp: time.Now().UTC(), RunID: runID, Issue: issueNum, IssueRef: issueRef(issueNum), Payload: payload}); err != nil {
 						fmt.Fprintf(o.errorLog, "persist recovered wait ownership for run %s: %v\n", runID, err)
-						o.logAborted(issueNum, runID, nil)
-						mu.Lock()
-						results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted"}
-						statuses[issueNum] = "aborted"
-						abortedCount++
-						mu.Unlock()
+						abortAdmission(nil)
 						return
 					}
 				}
-			}
-			bc := BatchConfig{
-				Cfg:                        cfg,
-				AgentName:                  agentName,
-				AgentCfg:                   agentCfg,
-				Variant:                    variant,
-				IdentityResolver:           batchIdentityResolver,
-				Parallel:                   parallel,
-				StartDelay:                 startDelay,
-				Retries:                    retries,
-				RunIdleTimeout:             runIdleTimeout,
-				ContextRolloverLiterals:    cfg.ContextErrorPhrases,
-				SandboxMode:                sandboxMode,
-				ContainerCapacity:          containerCapacityForLog,
-				ContainerCapacitySet:       req.ContainerCapacitySet,
-				MaxContainers:              maxContainersForLog,
-				MaxContainersSet:           req.MaxContainersSet,
-				DangerouslySkipPermissions: *dangerouslySkipPermissions,
-				StrandedReconcile:          strandedReconcile,
 			}
 			clock := func() time.Time {
 				if o.runSessionOpts.now != nil {
@@ -2237,19 +2296,13 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				}
 				return time.Now().UTC()
 			}
-			waitBatchID := issueBatchID
-			if waitBatchID == "" {
-				waitBatchID = batchIDFromRunID(runID)
-				if waitBatchID == "" {
-					waitBatchID = runID
-				}
-			}
+			waitBatch, waitBatchErr := rowWaitBatch(layout, issueBatch, runID)
 			waitBranch := row.Branches[issueNum]
 			if waitBranch == "" {
 				waitBranch = claimedStates[runID].Branch()
 			}
 			ownerRecord := daemon.RunWait{
-				Protocol: "run-wait/v1", RunID: runID, BatchID: waitBatchID, Issue: issueNum,
+				Protocol: "run-wait/v1", RunID: runID, BatchID: waitBatch.ID, Issue: issueNum,
 				Branch: waitBranch, BaseBranch: issueBaseBranch, InitialAdmission: !claimedStates[runID].HasStarted(), AdmissionMode: int(row.Mode), OperationID: "admission", Ready: true,
 				PreviousRunID: row.PreviousRunIDs[issueNum], PreviousBatchID: row.PreviousRunBatchIDs[issueNum],
 				Dependencies: append([]int(nil), blockers...),
@@ -2257,16 +2310,15 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			}
 			if recovering {
 				ownerRecord = recovery
-				ownerRecord.BatchID = waitBatchID
+				ownerRecord.BatchID = waitBatch.ID
 			}
-			owner, ownerErr := newWaitOwnerWithFailure(layout.BatchDir(waitBatchID), ownerRecord, clock, o.eventLog, ownerPulse(runID), leaseFailure)
+			var owner *waitOwner
+			ownerErr := waitBatchErr
+			if ownerErr == nil {
+				owner, ownerErr = newWaitOwnerWithFailure(layout, waitBatch, ownerRecord, clock, o.eventLog, ownerPulse(runID), leaseFailure, leaseRetry)
+			}
 			if ownerErr != nil {
-				o.logAborted(issueNum, runID, nil)
-				mu.Lock()
-				results[idx] = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted"}
-				statuses[issueNum] = "aborted"
-				abortedCount++
-				mu.Unlock()
+				abortAdmission(nil)
 				return
 			}
 			trackWaitOwner(owner)
@@ -2279,348 +2331,43 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				initialOwner.close()
 				initialOwner = nil
 			}
-			var res AgentRunResult
-			var started bool
-			awaitPoll := 0
-			usageLimitWaited := row.UsageLimitWaited
 			defer func() {
 				if err := coord.stopCommandServer(issueNum); err != nil {
 					fmt.Fprintf(o.errorLog, "error: stop command server for issue %d: %v\n", issueNum, err)
 				}
 			}()
-			executor := o.newRunExecutorWith(parentCtx, bc, policy.sandboxFactory, policy.containerAlloc, coord, coord, layout)
-			executor.deps.quotaProgress = quotaGate.modelProgress
-			executor.deps.quotaLimit = quotaGate.limit
+			var res AgentRunResult
+			driverClock := rowDriverClockFunc(clock)
+			runSpec, cursor := runSpecFromRow(row)
 			awaiting := req.ReadyContinuations[issueNum] || recovering && !recovery.InitialAdmission
-			readyContinuation := req.ReadyContinuations[issueNum]
-			var opportunity awaitOpportunity
-			markQuotaProbeReady := func() error {
-				row.UsageLimitProbe = true
-				row.UsageLimitWaited = min(usageLimitWaited, usageLimitRetryWindow)
-				row.UsageLimitDeadline = clock().Add(max(0, usageLimitRetryWindow-row.UsageLimitWaited))
-				extras := map[string]any{
-					"gate": "usage-limit", "reason": "quota-probe-ready", "next_action": "recheck provider availability and continue through configured ordinary retries when polling is consumed",
-					"usage_limit_probe": true, "usage_limit_waited_seconds": int(row.UsageLimitWaited / time.Second), "usage_limit_deadline_unix_seconds": row.UsageLimitDeadline.Unix(),
-				}
-				if err := logCapacityQueuedContinuationAt(o.eventLog, clock(), runID, issueNum, issueBatchID, row, extras, req.IssueTitles[issueNum]); err != nil {
-					// Failed accounting cannot renew a quota allowance or veto
-					// the already available ordinary recovery attempts.
-					usageLimitWaited, row.UsageLimitWaited = usageLimitRetryWindow, usageLimitRetryWindow
-					row.ReuseSession = false
-					if o.errorLog != nil {
-						fmt.Fprintf(o.errorLog, "warning: persist completed quota poll for run %s; continuing without further quota waits: %v\n", runID, err)
-					}
-				}
-				awaiting, readyContinuation = true, true
-				return owner.checkpoint(row, true, 0)
-			}
-			waitForObservation := func() error {
-				interval := awaitPollInterval(o.runSessionOpts, awaitPoll)
-				if recovering && recovery.NextPollAt.After(clock()) {
-					interval = recovery.NextPollAt.Sub(clock())
-					recovering = false
-				}
-				if err := owner.checkpoint(row, false, interval); err != nil {
-					return err
-				}
-				awaitPoll++
-				awaitWait := o.runSessionOpts.awaitWait
-				if awaitWait == nil {
-					awaitWait = waitForAwaitPoll
-				}
-				return awaitWait(issueCtx, interval)
-			}
-			for {
-				if row.UsageLimitProbe {
-					status, extras, handled := executor.observeLifecycle(issueCtx, row)
-					if handled && (status == "success" || extras["reason"] == "PULL_REQUEST_CLOSED" || extras["completion"] != nil) {
-						res = executor.finishObserved(issueCtx, row, status, extras)
-						quotaGate.report(issueNum, res, true)
-						break
-					}
-					if recovering && recovery.NextPollAt.After(clock()) {
-						interval := recovery.NextPollAt.Sub(clock())
-						wait := o.runSessionOpts.awaitWait
-						if wait == nil {
-							wait = waitForAwaitPoll
-						}
-						if err := wait(issueCtx, interval); err != nil {
-							o.logAborted(issueNum, runID, nil)
-							res.Status = "aborted"
-							break
-						}
-						usageLimitWaited += interval
-						if err := markQuotaProbeReady(); err != nil {
-							o.logAborted(issueNum, runID, nil)
-							res.Status = "aborted"
-							break
-						}
-						recovering = false
-					}
-				}
-				if awaiting && !readyContinuation && !row.UsageLimitProbe {
-					status, extras, handled := executor.observeLifecycle(issueCtx, row)
-					if issueCtx.Err() != nil {
-						o.logAborted(issueNum, runID, nil)
-						res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
-						break
-					}
-					if handled && status == "await" {
-						if err := executor.persistObservedAwait(issueCtx, row, extras); err != nil {
-							o.logAborted(issueNum, runID, nil)
-							res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
-							break
-						}
-						if err := waitForObservation(); err != nil {
-							o.logAborted(issueNum, runID, nil)
-							res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
-							break
-						}
-						continue
-					}
-					if !handled {
-						status = "failure"
-						extras = lifecycleGateFailureEvidence(idleGateReason, idleGateNextAction, lifecycleGateNone, nil, "")
-					}
-					if status != "resume" {
-						res = executor.finishObserved(issueCtx, row, status, extras)
-						break
-					}
-					if o.eventLog != nil {
-						if err := logCapacityQueuedContinuationAt(o.eventLog, executor.deps.runSessionOpts.runtimeNow(), runID, issueNum, issueBatchID, row, extras, req.IssueTitles[issueNum]); err != nil {
-							if o.errorLog != nil {
-								fmt.Fprintf(o.errorLog, "warning: persist ready continuation for issue %d: %v; keeping the run in its external wait\n", issueNum, err)
-							}
-							if waitErr := waitForObservation(); waitErr != nil {
-								o.logAborted(issueNum, runID, nil)
-								res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
-								break
-							}
-							continue
-						}
-					}
-					readyContinuation = true
-					if err := owner.checkpoint(row, true, 0); err != nil {
-						o.logAborted(issueNum, runID, nil)
-						res.Status = "aborted"
-						break
-					}
-				}
-				if !row.UsageLimitProbe && quotaGate.paused() {
-					extras := map[string]any{
-						"gate":        "usage-limit",
-						"reason":      "usage-limit-paused",
-						"next_action": "resume after provider usage limit resets; Sandman did not start another run while suspended",
-					}
-					if o.eventLog != nil && (!awaiting || readyContinuation) {
-						if err := logCapacityQueuedContinuationAt(o.eventLog, executor.deps.runSessionOpts.runtimeNow(), runID, issueNum, issueBatchID, row, extras, req.IssueTitles[issueNum]); err != nil {
-							if o.errorLog != nil {
-								fmt.Fprintf(o.errorLog, "warning: persist usage-limit pause for issue %d: %v\n", issueNum, err)
-							}
-						}
-					}
-					advanceTurn()
-					if err := owner.checkpoint(row, !awaiting || readyContinuation, 0); err != nil {
-						o.logAborted(issueNum, runID, nil)
-						res.Status = "aborted"
-						break
-					}
-					if !o.runSessionOpts.releaseAwaitCapacity {
-						// Yielding executors return unfinished intent to their
-						// caller; an active quota owner still blocks new launches.
-						status := "queued"
-						if awaiting {
-							status = "await"
-						}
-						res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: status, Branch: row.Branches[issueNum]}
-						break
-					}
-					var quotaTerminalStatus string
-					var quotaTerminalExtras map[string]any
-					quotaTerminal := errors.New("terminal observation during quota admission")
-					var quotaObserve func() error
-					if awaiting {
-						quotaObserve = func() error {
-							status, extras, handled := executor.observeLifecycle(issueCtx, row)
-							if issueCtx.Err() != nil {
-								return issueCtx.Err()
-							}
-							if handled && status == "await" && readyContinuation {
-								if err := executor.persistObservedAwait(issueCtx, row, extras); err != nil {
-									return err
-								}
-								readyContinuation = false
-								if err := owner.checkpoint(row, false, awaitPollInterval(o.runSessionOpts, awaitPoll)); err != nil {
-									return err
-								}
-							}
-							if handled && status != "resume" && status != "await" {
-								quotaTerminalStatus, quotaTerminalExtras = status, extras
-								return quotaTerminal
-							}
-							return nil
-						}
-					}
-					if err := quotaGate.waitObserved(issueCtx, quotaObserve, awaitPollInterval(o.runSessionOpts, awaitPoll)); err != nil {
-						if errors.Is(err, quotaTerminal) {
-							res = executor.finishObserved(issueCtx, row, quotaTerminalStatus, quotaTerminalExtras)
-							break
-						}
-						if issueCtx.Err() != nil {
-							o.logAborted(issueNum, runID, nil)
-							res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
-						} else {
-							res = executor.finishObserved(issueCtx, row, "failure", map[string]any{"reason": "AGENT_USAGE_LIMIT", "next_action": "resume with available provider quota after the exhausted recovery window"})
-						}
-						break
-					}
-					continue
-				}
-				var err error
-				var admissionStatus string
-				var admissionExtras map[string]any
-				admissionChanged := errors.New("lifecycle changed during execution admission")
-				if awaiting && readyContinuation && !row.UsageLimitProbe {
-					observe := func() error {
-						status, extras, handled := executor.observeLifecycle(issueCtx, row)
-						if issueCtx.Err() != nil {
-							return issueCtx.Err()
-						}
-						if !handled {
-							status = "failure"
-							extras = lifecycleGateFailureEvidence(idleGateReason, idleGateNextAction, lifecycleGateNone, nil, "")
-						}
-						if status != "resume" {
-							admissionStatus, admissionExtras = status, extras
-							return admissionChanged
-						}
-						return nil
-					}
-					opportunity, err = startGate.acquireObserved(issueCtx, &batchStartWaiter{awaiting: true, lastChance: opportunity.lastChance, ordinaryStartsAtChance: opportunity.ordinaryStarts}, observe, awaitPollInterval(o.runSessionOpts, awaitPoll))
-				} else if awaiting {
-					opportunity, err = startGate.AcquireAwaiting(issueCtx, opportunity)
-				} else {
-					opportunity, err = startGate.AcquireWithOpportunity(issueCtx, false)
-				}
-				if errors.Is(err, admissionChanged) {
-					if admissionStatus == "await" {
-						if err := executor.persistObservedAwait(issueCtx, row, admissionExtras); err != nil {
-							o.logAborted(issueNum, runID, nil)
-							res.Status = "aborted"
-							break
-						}
-						readyContinuation = false
-						if err := waitForObservation(); err != nil {
-							o.logAborted(issueNum, runID, nil)
-							res.Status = "aborted"
-							break
-						}
-						continue
-					}
-					res = executor.finishObserved(issueCtx, row, admissionStatus, admissionExtras)
-					break
-				}
-				if err != nil {
-					o.logAborted(issueNum, runID, nil)
-					res = AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
-					break
-				}
-				// Quota can close while an ordinary row is blocked inside Acquire.
-				// Revalidate at the actual launch boundary, without pacing a start
-				// that never happened.
-				if !row.UsageLimitProbe && quotaGate.paused() {
-					startGate.ReleaseWithoutDelay()
-					continue
-				}
-				res, started = executor.Execute(issueCtx, row)
-				if res.Branch != "" {
-					row.Branches = map[int]string{issueNum: res.Branch}
-				}
-				quotaGate.report(issueNum, res, row.UsageLimitProbe)
-				if !res.UsageLimitReached {
-					row.UsageLimitProbe = false
-					row.UsageLimitDeadline = time.Time{}
-					usageLimitWaited, row.UsageLimitWaited = 0, 0
-				}
-				if started {
-					startGate.Release()
-				} else {
-					startGate.ReleaseWithoutDelay()
-				}
-				if res.Status == "await" && !o.runSessionOpts.releaseAwaitCapacity {
-					interval := awaitPollInterval(o.runSessionOpts, awaitPoll)
-					if res.UsageLimitReached {
-						row.UsageLimitProbe, row.UsageLimitDeadline = true, res.UsageLimitDeadline
-						interval = usageLimitPollInterval
-					}
-					if err := owner.checkpoint(row, false, interval); err != nil {
-						o.logAborted(issueNum, runID, nil)
-						res.Status = "aborted"
-					}
-				}
-				if res.Status != "await" || !o.runSessionOpts.releaseAwaitCapacity {
-					break
-				}
-				if !yieldedCapacity {
-					close(yielded[issueNum])
-					yieldedCapacity = true
-				}
-				advanceTurn()
-				if res.UsageLimitReached {
-					interval := usageLimitPollInterval
-					row.UsageLimitDeadline = res.UsageLimitDeadline
-					row.UsageLimitProbe = true
-					if err := owner.checkpoint(row, false, interval); err != nil {
-						o.logAborted(issueNum, runID, nil)
-						res.Status = "aborted"
-						break
-					}
-					awaitWait := o.runSessionOpts.awaitWait
-					if awaitWait == nil {
-						awaitWait = waitForAwaitPoll
-					}
-					if err := awaitWait(issueCtx, interval); err != nil {
-						o.logAborted(issueNum, runID, nil)
-						res.Status = "aborted"
-						break
-					}
-					usageLimitWaited += interval
-					row.Mode = ModeContinue
-					row.PreviousRunIDs = map[int]string{issueNum: runID}
-					row.PreviousRunBatchIDs = map[int]string{issueNum: issueBatchID}
-					row.ReuseSession = true
-					row.UsageLimitProbe = true
-					row.UsageLimitDeadline = res.UsageLimitDeadline
-					row.UsageLimitWaited = usageLimitWaited
-					if err := markQuotaProbeReady(); err != nil {
-						o.logAborted(issueNum, runID, nil)
-						res.Status = "aborted"
-						break
-					}
-					awaiting = true
-					continue
-				}
-				if err := waitForObservation(); err != nil {
-					o.logAborted(issueNum, runID, nil)
-					res.Status = "aborted"
-					break
-				}
-				row.Mode = ModeContinue
-				row.PreviousRunIDs = map[int]string{issueNum: runID}
-				row.PreviousRunBatchIDs = map[int]string{issueNum: issueBatchID}
-				row.ReuseSession = true
-				awaiting = true
-				readyContinuation = false
-				continue
+			driver := newRowDriver(executor, &batchRowDriverGates{
+				startGate: startGate, quotaGate: quotaGate, owner: owner, log: o.eventLog,
+				title: req.IssueTitles[issueNum], issue: issueNum, batchID: issueBatchID,
+				options: o.runSessionOpts, errorLog: o.errorLog,
+			}, driverClock, batchRowDriverActions{orchestrator: o, executor: executor})
+			driverOutcome := driver.Drive(issueCtx, runSpec, cursor, rowDriverOptions{
+				Awaiting: awaiting, Ready: req.ReadyContinuations[issueNum],
+				ReleaseAwaitCapacity: o.runSessionOpts.releaseAwaitCapacity,
+				Recovering:           recovering, NextPollAt: recovery.NextPollAt,
+				AdvanceTurn:  turnControl.Advance,
+				OnYield:      func() { close(yielded[issueNum]) },
+				PollInterval: func(poll int) time.Duration { return awaitPollInterval(o.runSessionOpts, poll) },
+			})
+			res = driverOutcome.Result
+			row = runSpec.row(driverOutcome.Cursor)
+			if driverOutcome.Err != nil {
+				res = o.applyAbort(issueCtx, executor, row, res, nil)
 			}
 			mu.Lock()
-			if issueCtx.Err() != nil && !events.RunStatusFromPayload(res.Status).IsTerminal() {
-				o.logAborted(issueNum, runID, nil)
-				res.Status = "aborted"
-			}
 			results[idx] = res
 			statuses[issueNum] = res.Status
 			resStatus := events.RunStatusFromPayload(res.Status)
+			if !resStatus.IsTerminal() {
+				abortRow, abortRes := row, res
+				returnedAborts[idx] = func(ctx context.Context) AgentRunResult {
+					return o.applyAbort(ctx, executor, abortRow, abortRes, nil)
+				}
+			}
 			if resStatus.IsFailure() {
 				failureCount++
 			}
@@ -2636,20 +2383,15 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		// The batch retains RunID claims through this final cancellation fence.
 		// A returned await/initial queue is still unfinished owned intent;
 		// preserve terminal siblings and prevent later grace-based reclamation.
+		// Wait owners still renew here, so a lease failure may race this fence.
+		mu.Lock()
 		for i := range results {
 			if events.RunStatusFromPayload(results[i].Status).IsTerminal() {
 				continue
 			}
-			issue := req.Issues[i]
-			id := strings.TrimSpace(req.RunIDs[issue])
-			if id == "" {
-				id = buildRunID(issue, req.RunTS, req.RunShortID)
-			}
-			o.logAborted(issue, id, nil)
-			results[i].Status = "aborted"
-			statuses[issue] = "aborted"
-			abortedCount++
+			abortReturned(ctx, i, req.Issues[i])
 		}
+		mu.Unlock()
 	}
 
 	if policy.mode == "docker" || policy.mode == "podman" {
@@ -2658,7 +2400,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				continue
 			}
 			worktreePath := filepath.Join(layout.WorktreeDir, result.Branch)
-			if err := sandbox.RestoreWorktreeGitPaths(".", worktreePath); err != nil && o.eventLog != nil {
+			if err := sandbox.RestoreWorktreeGitPaths(layout.RepoRoot, worktreePath); err != nil && o.eventLog != nil {
 				_ = o.eventLog.Log(events.Event{
 					Type:      "run.warning",
 					Timestamp: time.Now(),
@@ -2690,7 +2432,8 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(ctx context.Context, cfg *c
 	if err != nil {
 		return nil, err
 	}
-	rm := sandbox.DetectRemoteScheme(".")
+	repoRoot := o.requestRepoRoot(req)
+	rm := sandbox.DetectRemoteScheme(repoRoot)
 	if rm == "ssh" {
 		startOpts.SSH = true
 	}
@@ -2700,7 +2443,7 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(ctx context.Context, cfg *c
 	if sbFactory == nil {
 		switch sandboxMode {
 		case "docker", "podman":
-			sbFactory = SharedContainerSandboxFactory{Binary: sandboxMode, RepoPath: "."}
+			sbFactory = SharedContainerSandboxFactory{Binary: sandboxMode, RepoPath: repoRoot}
 		default:
 			sbFactory = defaultSandboxFactory{}
 		}
@@ -2711,7 +2454,7 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(ctx context.Context, cfg *c
 	}
 
 	if req.RequireDockerfile {
-		dockerfilePath := filepath.Join(".", ".sandman", "Dockerfile")
+		dockerfilePath := filepath.Join(repoRoot, ".sandman", "Dockerfile")
 		if _, err := os.Stat(dockerfilePath); err != nil {
 			if os.IsNotExist(err) {
 				return nil, fmt.Errorf(".sandman/Dockerfile not found at %s; container mode requires a Dockerfile in the .sandman directory", dockerfilePath)
@@ -2725,7 +2468,7 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(ctx context.Context, cfg *c
 		defaultAgent = strings.TrimSpace(cfg.Agent)
 	}
 	expectedDefaultAgent, requiredAgents := dockerfileAgentExpectations(defaultAgent, req.Agent, agentCfg)
-	if err := scaffold.ValidateDockerfileMetadata(".", cfg.BuildTools, expectedDefaultAgent, requiredAgents); err != nil {
+	if err := scaffold.ValidateDockerfileMetadata(repoRoot, cfg.BuildTools, expectedDefaultAgent, requiredAgents); err != nil {
 		return nil, err
 	}
 
@@ -2748,7 +2491,7 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(ctx context.Context, cfg *c
 		return nil, fmt.Errorf("max_containers must be 0 or greater")
 	}
 
-	cleanup, err := PrepareContainerConfigMounts(ctx, ".", req.RunDir, &startOpts, o.lookupGHToken)
+	cleanup, err := PrepareContainerConfigMounts(ctx, repoRoot, req.RunDir, &startOpts, o.lookupGHToken)
 	if err != nil {
 		return nil, fmt.Errorf("prepare container config mounts: %w", err)
 	}
@@ -2758,12 +2501,12 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(ctx context.Context, cfg *c
 		containerFactory = defaultContainerRuntimeFactory{}
 	}
 	starter := containerFactory.New(sandboxMode)
-	image, err := starter.BuildImage(ctx, ".")
+	image, err := starter.BuildImage(ctx, repoRoot)
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("build container image: %w", err)
 	}
-	pool := newContainerPool(starter, image, ".", startOpts, containerCapacity, maxContainers)
+	pool := newContainerPool(starter, image, repoRoot, startOpts, containerCapacity, maxContainers)
 	pool.credentials = newCredentialSync(startOpts.ConfigMounts, credentialFiles(agentCfg))
 	return &sandboxExecutionPolicy{
 		mode:           sandboxMode,
@@ -2814,6 +2557,39 @@ func (o *Orchestrator) logAborted(issueNum int, runID string, abortedBy []int) {
 	}); err != nil {
 		fmt.Fprintf(o.errorLog, "event log write failed: run.aborted (issue=%d run=%s): %v\n", issueNum, runID, err)
 	}
+}
+
+// applyAbort applies an explicit abort decision. A Run the event log shows as
+// started receives the shared terminal application, so its event, artifact
+// manifest and worktree evidence match every other terminal decision. The
+// abort decision itself selects run.aborted, even when the phase that
+// requested it failed without cancellation. A Run that never started records only the abort.
+// An unreadable event log cannot prove the Run unstarted, so it receives the
+// shared application too. A dependency cascade's abortedBy attribution is
+// recorded either way.
+func (o *Orchestrator) applyAbort(ctx context.Context, executor *runExecutor, row RowSpec, res AgentRunResult, abortedBy []int) AgentRunResult {
+	started := true
+	if o.eventLog != nil {
+		states, err := events.ReadRunStates(o.eventLog)
+		if err != nil {
+			fmt.Fprintf(o.errorLog, "warning: read run state before aborting run %s: %v\n", row.RunID, err)
+		} else {
+			started = states[row.RunID].HasStarted()
+		}
+	}
+	if started {
+		var extras map[string]any
+		if len(abortedBy) > 0 {
+			extras = map[string]any{"aborted_by": abortedBy}
+		}
+		return executor.abortObserved(ctx, row, extras)
+	}
+	o.logAborted(row.IssueNumber, row.RunID, abortedBy)
+	res.IssueNumber, res.Issue, res.Status = row.IssueNumber, issueRef(row.IssueNumber), "aborted"
+	if res.Branch == "" {
+		res.Branch = row.Branches[row.IssueNumber]
+	}
+	return res
 }
 
 // mapRetryReason picks the closed-vocabulary reason for a run.retry emit
@@ -3035,6 +2811,7 @@ type runSessionOptions struct {
 	waitOwnerPulse             func(string) <-chan time.Time
 	now                        func() time.Time
 	baseBranchSync             func(repoPath, sourceBranch string) error
+	reviewHeadFetch            func(context.Context, string, int, string) error
 	baseBranchSyncMu           *sync.Mutex
 	contextRolloverLiterals    []string
 	contextRolloverLiteralsSet bool
@@ -3069,31 +2846,32 @@ type runSessionOptions struct {
 // is built by runSingle / runPromptOnlySingle. A session is short-lived: it
 // lives for one execute call and is discarded on return.
 type runSession struct {
-	deps      runDeps
-	coord     runCoordination
-	commander daemon.IssueCommander
+	// explicitAbort records a selected abort decision, so its terminal is a
+	// run.aborted whatever the state of the context it is applied under.
+	explicitAbort bool
+	reviewHeadSHA string
+	deps          runDeps
+	coord         runCoordination
+	commander     daemon.IssueCommander
 
 	// Inputs captured from the runSingle / runPromptOnlySingle call site.
-	issueNumber          int
-	issueState           string
-	cfg                  *config.Config
-	agentName            string
-	agentCfg             config.Agent
-	variant              string
-	mode                 IssueMode
-	previousRunIDs       map[int]string
-	previousRunBatchIDs  map[int]string
-	reuseSession         bool
-	usageLimitProbe      bool
-	usageLimitWaited     time.Duration
-	usageLimitDeadline   time.Time
-	usageLimitRestoreErr error
-	identityResolver     *gitIdentityResolver
-	branches             map[int]string
-	renderCfg            prompt.RenderConfig
-	outputWriter         io.Writer
-	sbFactory            SandboxFactory
-	containerAlloc       containerAllocator
+	issueNumber         int
+	issueState          string
+	cfg                 *config.Config
+	agentName           string
+	agentCfg            config.Agent
+	variant             string
+	mode                IssueMode
+	previousRunIDs      map[int]string
+	previousRunBatchIDs map[int]string
+	reuseSession        bool
+	quotaAllowance      usageLimitAllowance
+	identityResolver    *gitIdentityResolver
+	branches            map[int]string
+	renderCfg           prompt.RenderConfig
+	outputWriter        io.Writer
+	sbFactory           SandboxFactory
+	containerAlloc      containerAllocator
 	// credentials is the leased container's credential reconcile, set when
 	// the row acquires its container; nil outside container mode.
 	credentials                *credentialSync
@@ -3130,6 +2908,10 @@ type runSession struct {
 	// comes from (batchTS, batchShortID). Empty is treated as a guard failure by
 	// the execute path (returns AgentRunResult{Status: "failure", ...}).
 	batchID string
+
+	// batchDir is batchID's frozen directory when the caller resolved one;
+	// empty means the canonical <batchesDir>/<batchID>.
+	batchDir string
 
 	// batchTS and batchShortID are the timestamp and short-id components
 	// of the auto-generated batch id for prompt-only runs. Used to
@@ -3179,6 +2961,26 @@ type runSession struct {
 	reviewAttemptStartedAt      time.Time
 	reviewRegistrationAttempted bool
 	reviewRegistrationObserved  bool
+
+	// lastResumeSignature is the resume signature that launched the current
+	// lifecycle relaunch (or entry resume). A decision that repeats it after
+	// the relaunch is a stall.
+	lastResumeSignature string
+	// lastResumeRound is the request/head identity for the in-session relaunch
+	// allowance. It is separate from the stall signature because CI stalls
+	// intentionally ignore review-request response changes.
+	lastResumeRound string
+	// pendingResumeSignature is the signature of the latest resume decision;
+	// it becomes lastResumeSignature when the session relaunches on it.
+	pendingResumeSignature string
+	// pendingResumeRound becomes lastResumeRound when the selected resume launches.
+	pendingResumeRound string
+	// decisionPRHead is the pull-request head the latest lifecycle decision
+	// observed; it identifies progress in a resume signature.
+	decisionPRHead string
+	// finalOwnedWorkAttempt reports that the current attempt is the last
+	// ordinary attempt, so owned work nothing can advance may wait.
+	finalOwnedWorkAttempt bool
 
 	// resumeCount counts in-session agent relaunches triggered by a
 	// resume-worthy PR gate within this session (bounded by
@@ -3244,17 +3046,24 @@ func (s *runSession) copyQualityRulesIntoWorktree(branch string) error {
 	return nil
 }
 
-// orchestratorWorktreeDir resolves the worktree base directory
-// for orchestrator-level code (outside a runSession) like the
-// post-run cleanup walker.
-func (o *Orchestrator) orchestratorWorktreeDir(cfg *config.Config) string {
-	if o.layout.RepoRoot != "" {
-		return o.layout.WorktreeDir
+// repoRoot is the repository root every repository operation of the session
+// is rooted at: the batch layout's root, which a Request may set apart from
+// the process directory.
+func (s *runSession) repoRoot() string {
+	if root := s.deps.layout.RepoRoot; root != "" {
+		return root
 	}
-	if cfg != nil {
-		return strings.TrimSpace(cfg.WorktreeDir)
+	return "."
+}
+
+// requestRepoRoot is the repository root a Request's relative RunDir and
+// Batch locations resolve against: the root its caller resolved, else the
+// orchestrator's own.
+func (o *Orchestrator) requestRepoRoot(req Request) string {
+	if root := strings.TrimSpace(req.RepoRoot); root != "" {
+		return root
 	}
-	return ""
+	return o.layout.RepoRoot
 }
 
 // runFolderFor returns the per-run folder path under the batch for the
@@ -3272,7 +3081,16 @@ func (s *runSession) runFolderFor(runID string) string {
 	if batchID == "" {
 		return filepath.Join(s.deps.layout.BatchesDir, "runs", runID)
 	}
-	return s.deps.layout.RunFolder(batchID, runID)
+	return s.batchLocation(batchID).Run(runID).Dir
+}
+
+// batchLocation returns the session Batch's frozen location, or the
+// canonical location of any other batchID.
+func (s *runSession) batchLocation(batchID string) paths.BatchLocation {
+	if batchID == s.batchID && s.batchDir != "" {
+		return paths.BatchLocation{ID: batchID, Dir: s.batchDir}
+	}
+	return s.deps.layout.LocateBatch(batchID, "")
 }
 
 // runLogPathFor returns the per-row run.log path. Mirrors runFolderFor
@@ -3285,7 +3103,7 @@ func (s *runSession) runLogPathFor(runID string) string {
 	if batchID == "" {
 		return filepath.Join(s.deps.layout.BatchesDir, "runs", runID, "run.log")
 	}
-	return s.deps.layout.RunLogPath(batchID, runID)
+	return s.batchLocation(batchID).Run(runID).LogPath()
 }
 
 // batchIDFromRunID derives a stable batch directory name from a
@@ -3627,6 +3445,9 @@ func (s *runSession) emitTerminal(ctx context.Context, runID string, result Agen
 
 func (s *runSession) emitNormalizedTerminal(ctx context.Context, runID string, result AgentRunResult, extras map[string]any) string {
 	terminalEventType, terminalStatus := terminalRunEvent(ctx, result.Status)
+	if s.explicitAbort {
+		terminalEventType, terminalStatus = "run.aborted", "aborted"
+	}
 	s.updateRunManifestStatus(runID, batchindex.RunManifestStatus(terminalStatus))
 	if s.deps.eventLog == nil {
 		return terminalStatus
@@ -3937,7 +3758,7 @@ func hasBlockingOpenPR(errorLog io.Writer, branch string) (map[string]any, bool)
 // status. Failures are logged to errorLog and ignored; the event log remains
 // authoritative.
 func (s *runSession) updateRunManifestStatus(runID string, status batchindex.RunManifestStatus) {
-	batchDir := s.deps.layout.BatchDir(s.batchID)
+	batchDir := s.batchLocation(s.batchID).Dir
 	if s.batchID == "" {
 		batchDir = s.deps.layout.BatchesDir
 	}
@@ -3969,7 +3790,7 @@ func (s *runSession) runOnce(
 	prepareAttempt func(attempt int, previous AgentRunResult) (prompt.RenderConfig, *AgentRunResult),
 ) (AgentRunResult, map[string]any, bool) {
 	if s.renderCfg.PromptFile == "" {
-		s.renderCfg.PromptFile = filepath.Join(".", ".sandman", "prompt.md")
+		s.renderCfg.PromptFile = filepath.Join(s.repoRoot(), ".sandman", "prompt.md")
 	}
 	if s.renderCfg.RenderedPromptFile == "" {
 		s.renderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")
@@ -3986,6 +3807,7 @@ func (s *runSession) runOnce(
 	}
 
 	var terminalExtras map[string]any
+	ownedWorkRetry := false
 loop:
 	for attempt := 0; attempt < attempts; attempt++ {
 		if ctx.Err() != nil {
@@ -4037,6 +3859,12 @@ loop:
 			if result.ContextExhausted {
 				reason = contextExhaustedRetryReason
 			}
+			if ownedWorkRetry {
+				// The agent exited cleanly; the lifecycle selected work the
+				// implementor still owns. Keep it distinguishable from a crash.
+				reason = ownedWorkRetryReason
+			}
+			ownedWorkRetry = false
 			logRetry(s.deps.eventLog, runID, branch, attempt+1, attempts, result.Status, reason, logPath, s.issueNumber)
 		}
 
@@ -4110,7 +3938,12 @@ loop:
 
 			s.reviewRegistrationAttempted = false
 			s.reviewRegistrationObserved = false
-			s.reviewAttemptStartedAt = s.reviewNow()
+			if s.reviewAttemptStartedAt.IsZero() {
+				// The request window is session-scoped: a trigger delivered by
+				// an earlier attempt or relaunch of this session stays visible
+				// to later ones, which must not post a duplicate.
+				s.reviewAttemptStartedAt = s.reviewNow()
+			}
 			s.lifecyclePRSnapshot = nil
 			result, abortedByHeartbeat = s.withHeartbeat(ctx, runID, attempt, logPath, wt, func() AgentRunResult {
 				return s.withClosingReferenceGuard(ctx, branch, func() AgentRunResult {
@@ -4131,8 +3964,14 @@ loop:
 			s.lifecycleAlreadyResolved = alreadyResolved
 			if s.isIssueDriven() && ctx.Err() == nil {
 				hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
-				if gateStatus, extras, handled := s.handleLifecycleDecisionForAttempt(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady, result.Status); handled {
-					if stop := s.operatorStopFor(result); stop != nil && gateStatus != "success" && gateStatus != "aborted" {
+				s.finalOwnedWorkAttempt = attempt+1 >= attempts
+				verdict := newLifecycleObserver(s).Observe(ctx, lifecycleObservationRequest{
+					WorkDir: wt.WorkDir(), Branch: branch, RunID: runID,
+					HostPathsReady: hostPathsReady, AttemptStatus: result.Status, AfterAgentAttempt: true,
+					CIRerunAction: result.ciRerunAction,
+				})
+				if verdict.handled() {
+					if stop := s.operatorStopFor(result); stop != nil && verdict.Action != lifecycleSuccess && verdict.Action != lifecycleAborted {
 						// The agent could not act, and a resume, await
 						// re-entry or retry would fail the same way.
 						// Like the usage-limit rule below, this consumes the
@@ -4142,7 +3981,7 @@ loop:
 						terminalExtras = s.finishOperatorStop(&result, terminalExtras, stop)
 						break loop
 					}
-					if result.UsageLimitReached && !result.ContextExhausted && (gateStatus == "resume" || gateStatus == "await") {
+					if result.UsageLimitReached && !result.ContextExhausted && (verdict.Action == lifecycleResume || verdict.Action == lifecycleAwait) {
 						// A provider refusal did not perform the selected PR work.
 						// Leave non-terminal gate arbitration to quota recovery and,
 						// after its polling allowance, configured ordinary retries.
@@ -4150,57 +3989,57 @@ loop:
 						// still take precedence below.
 						break relaunch
 					}
-					if isImplementorOwnedGateFailure(extras) {
+					if verdict.Action != lifecycleAwait && verdict.ImplementorWork {
 						// A clean but incomplete handoff is owned work, not an
 						// external await or a separate lifecycle-resume budget.
 						// Use the configured ordinary retry budget to perform it.
 						result.Status = "failure"
-						terminalExtras = cloneLifecycleExtras(extras)
+						ownedWorkRetry = true
+						terminalExtras = cloneLifecycleExtras(verdict.Evidence)
 						delete(terminalExtras, "await")
 						delete(terminalExtras, "gate")
 						continue loop
 					}
-					if gateStatus == "success" || gateStatus == "failure" || gateStatus == "aborted" {
+					if verdict.terminal() {
 						// A terminal lifecycle decision is authoritative. Do not
 						// let the legacy post-decision PR arbitration replace it.
 						s.lifecycleTerminal = true
-						result.Status = gateStatus
-						terminalExtras = mergeBlockerExtras(terminalExtras, extras)
+						result.Status = verdict.status()
+						terminalExtras = mergeBlockerExtras(terminalExtras, verdict.Evidence)
 						break loop
 					}
-					observe := gateStatus == "await"
+					observe := verdict.Action == lifecycleAwait
 					if observe {
 						if !s.opts.foregroundLifecycle {
-							s.emitAwait(ctx, runID, result, extras)
-							result.Status = gateStatus
+							s.emitAwait(ctx, runID, result, verdict.Evidence)
+							result.Status = verdict.status()
 							break loop
 						}
-						s.emitAwait(ctx, runID, result, extras)
-						gateStatus, extras, _ = s.observeLifecycle(ctx, wt.WorkDir(), branch, logPath, runID, result, extras, hostPathsReady)
+						s.emitAwait(ctx, runID, result, verdict.Evidence)
+						verdict = newLifecycleObserver(s).waitForTransition(ctx, lifecycleObservationRequest{
+							WorkDir: wt.WorkDir(), Branch: branch, RunID: runID,
+							HostPathsReady: hostPathsReady, AttemptStatus: result.Status,
+						}, result, verdict)
 					}
-					if gateStatus == "resume" {
-						if resumePrompt, resume := s.resumePromptFromGate(ctx, wt, branch, runID, extras); resume {
+					if verdict.Action == lifecycleResume {
+						// The continuity decision already turned a stalled or
+						// exhausted relaunch into a wait or a terminal
+						// failure; a resume here is a relaunch to perform.
+						if resumePrompt, resume := s.resumePromptFromGate(ctx, wt, branch, runID, verdict); resume {
+							s.lastResumeSignature = s.pendingResumeSignature
+							s.lastResumeRound = s.pendingResumeRound
 							s.reuseSession = true
 							s.previousRunIDs = map[int]string{s.issueNumber: runID}
 							s.previousRunBatchIDs = map[int]string{s.issueNumber: s.batchID}
 							attemptRenderCfg.TaskPrompt = resumePrompt
 							continue relaunch
 						}
-					}
-					if gateStatus == "resume" {
-						// An exhausted in-session resume budget ends the
-						// session for every gate, including CI remediation:
-						// a budget with no remaining relaunch cannot keep
-						// resolving, so it must not prolong a wait
-						// (issue #2743).
-						gate, _ := extras["gate"].(string)
-						gateStatus = "failure"
-						extras = remediationBudgetFailureEvidence(gate, extras,
+						verdict = newLifecycleObserver(s).resumeUnavailable(ctx, verdict,
 							"inspect the current pull-request remediation evidence and continue in a fresh session")
 					}
-					s.lifecycleTerminal = gateStatus == "success" || gateStatus == "failure" || gateStatus == "aborted"
-					result.Status = gateStatus
-					terminalExtras = mergeBlockerExtras(terminalExtras, extras)
+					s.lifecycleTerminal = verdict.terminal()
+					result.Status = verdict.status()
+					terminalExtras = mergeBlockerExtras(terminalExtras, verdict.Evidence)
 					break loop
 				}
 			}
@@ -4314,18 +4153,20 @@ loop:
 					}
 					if events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
 						hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
-						if gateStatus, extras, handled := s.handleLifecycleDecisionAfterAgent(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled {
-							if gateStatus == "resume" {
-								// This legacy verification fallback is past the
-								// in-session resume point. Never turn a resolved
-								// gate into an await here; fail with the owned
-								// action and let the next session resume it.
-								gateStatus = "failure"
-								extras = lifecycleGateFailureEvidence("IMPLEMENTOR_ACTION_REQUIRED", "resume the implementation to complete current pull-request feedback or merge work", lifecycleGateNone, nil, "")
-							}
-							s.lifecycleTerminal = gateStatus == "success" || gateStatus == "failure" || gateStatus == "aborted"
-							result.Status = gateStatus
-							terminalExtras = mergeBlockerExtras(terminalExtras, extras)
+						verdict := newLifecycleObserver(s).Observe(ctx, lifecycleObservationRequest{
+							WorkDir: wt.WorkDir(), Branch: branch, RunID: runID,
+							HostPathsReady: hostPathsReady, AttemptStatus: "success",
+						})
+						if verdict.handled() {
+							// This legacy verification fallback is past the in-session
+							// resume point. The observer owns the resume-to-failure
+							// override, and preserves its structured next action.
+							verdict = newLifecycleObserver(s).failUnperformedResume(verdict,
+								"IMPLEMENTOR_ACTION_REQUIRED",
+								"resume the implementation to complete current pull-request feedback or merge work")
+							s.lifecycleTerminal = verdict.terminal()
+							result.Status = verdict.status()
+							terminalExtras = mergeBlockerExtras(terminalExtras, verdict.Evidence)
 							break loop
 						}
 					}
@@ -4408,7 +4249,7 @@ func (s *runSession) shouldAwaitUsageLimit(result AgentRunResult) bool {
 		result.UsageLimitReached &&
 		!result.ContextExhausted &&
 		!events.RunStatusFromPayload(result.Status).IsSuccess() &&
-		s.usageLimitWaited >= 0 && s.usageLimitWaited < usageLimitRetryWindow
+		s.quotaAllowance.canWait()
 }
 
 func (s *runSession) restoreHostPathsBeforeExternalGate(wt sandbox.Sandbox) bool {
@@ -4428,7 +4269,8 @@ func (s *runSession) restoreHostPathsBeforeExternalGate(wt sandbox.Sandbox) bool
 // cross the positional shim (#2231) keep compiling unchanged.
 func (o *Orchestrator) runSingleRow(ctx context.Context, parentCtx context.Context, row RowSpec, bc BatchConfig, sbFactory SandboxFactory, containerAlloc containerAllocator) (AgentRunResult, bool) {
 	coord := newBatchCoordinator(nil)
-	return o.newRunExecutorWith(parentCtx, bc, sbFactory, containerAlloc, coord, coord, o.layout).Execute(ctx, row)
+	run, cursor := runSpecFromRow(row)
+	return o.newRunExecutorWith(parentCtx, bc, sbFactory, containerAlloc, coord, coord, o.layout).ExecuteRun(ctx, run, cursor)
 }
 
 // prepareIssueAttempt preserves issue-specific merged-PR checks, Task recovery,
@@ -4618,6 +4460,10 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 			variant = strings.TrimSpace(cfg.Variant)
 		}
 	}
+	promptOnlyBatch, err := promptOnlyBatchLocation(layout, req.BatchTS, req.BatchShortID, req.RunID, req.RunDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve prompt-only batch: %w", err)
+	}
 	row := RowSpec{
 		IssueNumber:         req.IssueNumber,
 		Mode:                req.IssueMode(0),
@@ -4628,12 +4474,14 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 		BaseBranch:          baseBranch,
 		RenderCfg:           req.PromptConfig,
 		OutputWriter:        req.OutputWriter,
-		BatchID:             batchIDForPromptOnly(req.BatchTS, req.BatchShortID, req.RunID, req.RunDir),
+		BatchID:             promptOnlyBatch.ID,
+		BatchDir:            promptOnlyBatch.Dir,
 		BatchTS:             req.BatchTS,
 		BatchShortID:        req.BatchShortID,
 		RunID:               req.RunID,
 		UserProvidedRunID:   req.RunID,
 		Review:              req.Review,
+		ReviewHeadSHA:       req.ReviewHeadSHA,
 		PRNumber:            req.PRNumber,
 		ReviewFocus:         req.ReviewFocus,
 		PortalHidden:        req.PortalHidden,
@@ -4662,7 +4510,8 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 	if !ok {
 		return nil, fmt.Errorf("batch coordination does not support commands")
 	}
-	result, started := o.newRunExecutorWith(ctx, bc, sbFactory, containerAlloc, coord, commander, layout).Execute(ctx, row)
+	run, cursor := runSpecFromRow(row)
+	result, started := o.newRunExecutorWith(ctx, bc, sbFactory, containerAlloc, coord, commander, layout).ExecuteRun(ctx, run, cursor)
 	if !started {
 		if result.OperationalError != nil {
 			return &Result{Runs: []AgentRunResult{result}}, fmt.Errorf("prompt-only run failed: %w", result.OperationalError)
@@ -4687,7 +4536,8 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 // sites that still cross the positional shim (#2231) keep compiling unchanged.
 func (o *Orchestrator) runPromptOnlyRow(ctx context.Context, row RowSpec, bc BatchConfig, sbFactory SandboxFactory, containerAlloc containerAllocator) (AgentRunResult, bool) {
 	coord := newBatchCoordinator(nil)
-	return o.newRunExecutorWith(ctx, bc, sbFactory, containerAlloc, coord, coord, o.layout).Execute(ctx, row)
+	run, cursor := runSpecFromRow(row)
+	return o.newRunExecutorWith(ctx, bc, sbFactory, containerAlloc, coord, coord, o.layout).ExecuteRun(ctx, run, cursor)
 }
 
 // preparePromptAttempt keeps prompt-only/review reset and continuation policy
@@ -4695,7 +4545,11 @@ func (o *Orchestrator) runPromptOnlyRow(ctx context.Context, row RowSpec, bc Bat
 func (s *runSession) preparePromptAttempt(ctx context.Context, branch string, wt sandbox.Sandbox, logPath string, attempt int, previous AgentRunResult) (prompt.RenderConfig, *AgentRunResult) {
 	if attempt > 0 {
 		if !previous.ContextExhausted {
-			if err := resetRetryBranch(s.deps.runSessionOpts, ctx, wt, branch, s.baseBranch); err != nil {
+			checkout := s.baseBranch
+			if s.reviewHeadSHA != "" {
+				checkout = s.reviewHeadSHA
+			}
+			if err := resetRetryBranch(s.deps.runSessionOpts, ctx, wt, branch, checkout); err != nil {
 				fmt.Fprintf(s.deps.errorLog, "error: reset retry branch for prompt-only run: %v\n", err)
 				return prompt.RenderConfig{}, &AgentRunResult{Status: "failure", Branch: branch, RetriesTotal: attempt, Review: s.review, RunID: s.runID}
 			}
@@ -4707,6 +4561,11 @@ func (s *runSession) preparePromptAttempt(ctx context.Context, branch string, wt
 		}
 	}
 	attemptCfg := s.renderCfg
+	if s.reviewHeadSHA != "" {
+		if err := sandbox.VerifyReviewHead(ctx, wt, s.reviewHeadSHA); err != nil {
+			return prompt.RenderConfig{}, &AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: s.runID, OperationalError: err}
+		}
+	}
 	if s.mode == ModeContinue || attempt > 0 {
 		taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
 		taskContent, taskExists, err := ReadTaskContent(taskPath)
@@ -4893,16 +4752,21 @@ func closeOpenPRForBranch(ctx context.Context, branch string, ghClient github.Cl
 
 // `baseBranch` is accepted for API compatibility with prior call sites
 // but is no longer used by the recovery flow.
-func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, eventLog events.EventLog, logWriter io.Writer, baseBranch string, strandedReconcile *bool, batchesIndexPath string) {
+func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, eventLog events.EventLog, logWriter io.Writer, baseBranch string, strandedReconcile *bool, batchesIndexPath string, repoRoot string) {
 	wtPath := filepath.Join(worktreeDir, branch)
+	git := func(args ...string) *exec.Cmd {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoRoot
+		return cmd
+	}
 
 	// Remove worktree (may fail if already removed — idempotent)
-	if out, err := exec.Command("git", "worktree", "remove", "--force", wtPath).CombinedOutput(); err != nil {
+	if out, err := git("worktree", "remove", "--force", wtPath).CombinedOutput(); err != nil {
 		if (isPrunableWorktreeError(err, out) || isMissingWorktreeError(err, out)) && strandedReconcile != nil && *strandedReconcile {
 			if rmErr := os.RemoveAll(wtPath); rmErr != nil {
 				fmt.Fprintf(logWriter, "error: remove worktree dir %s for issue %d: %v\n", wtPath, issueNumber, rmErr)
 			}
-			if rmErr := sandbox.RemoveWorktreeRegistration(".", wtPath); rmErr != nil {
+			if rmErr := sandbox.RemoveWorktreeRegistration(repoRoot, wtPath); rmErr != nil {
 				fmt.Fprintf(logWriter, "error: remove worktree registration %s for issue %d: %v\n", wtPath, issueNumber, rmErr)
 			}
 		} else if !isMissingWorktreeError(err, out) {
@@ -4910,15 +4774,15 @@ func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, eve
 		}
 	}
 	// Delete branch (may fail if already deleted — idempotent)
-	if out, err := exec.Command("git", "branch", "-D", branch).CombinedOutput(); err != nil && !isMissingBranchError(err, out) {
+	if out, err := git("branch", "-D", branch).CombinedOutput(); err != nil && !isMissingBranchError(err, out) {
 		if strandedReconcile != nil && *strandedReconcile {
-			recoverBranchDeleteFromMainRepo(logWriter, branch, worktreeDir)
+			recoverBranchDeleteFromMainRepo(logWriter, repoRoot, branch, worktreeDir)
 			// Retry the delete from the main repo. If the recovery
 			// succeeded the branch is already gone (and `git branch -D`
 			// will report "not found", suppressed by
 			// isMissingBranchError); if recovery failed, surface the
 			// original failure.
-			if retryOut, retryErr := exec.Command("git", "branch", "-D", branch).CombinedOutput(); retryErr != nil && !isMissingBranchError(retryErr, retryOut) {
+			if retryOut, retryErr := git("branch", "-D", branch).CombinedOutput(); retryErr != nil && !isMissingBranchError(retryErr, retryOut) {
 				fmt.Fprintf(logWriter, "error: delete branch %s for issue %d: %v: %s\n", branch, issueNumber, retryErr, retryOut)
 			}
 		} else {
@@ -4976,13 +4840,13 @@ func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, eve
 //
 // On failure at any step, a warning is logged. The caller retries the
 // delete after this returns.
-func recoverBranchDeleteFromMainRepo(logWriter io.Writer, branch, worktreeBase string) {
+func recoverBranchDeleteFromMainRepo(logWriter io.Writer, repoRoot, branch, worktreeBase string) {
 	absBase, err := filepath.Abs(worktreeBase)
 	if err != nil {
 		fmt.Fprintf(logWriter, "warning: resolve worktree base for stranded recovery: %v\n", err)
 		return
 	}
-	if info, stranded := sandbox.StrandedWorktree(".", absBase, branch); stranded {
+	if info, stranded := sandbox.StrandedWorktree(repoRoot, absBase, branch); stranded {
 		delCmd := exec.Command("git", "branch", "-D", branch)
 		delCmd.Dir = info.Path
 		if out, err := delCmd.CombinedOutput(); err != nil {
@@ -4995,7 +4859,7 @@ func recoverBranchDeleteFromMainRepo(logWriter io.Writer, branch, worktreeBase s
 	// "foreign" entry when the main repo is on the branch and its
 	// path differs from the canonical worktree path; in that case we
 	// fall through to strategy 3 below.
-	if info, foreign := sandbox.ForeignStrandedWorktree(".", absBase, branch); foreign && !sandbox.SamePath(info.Path, ".") {
+	if info, foreign := sandbox.ForeignStrandedWorktree(repoRoot, absBase, branch); foreign && !sandbox.SamePath(info.Path, repoRoot) {
 		if err := sandbox.ReleaseBranchInWorktree(info.Path); err != nil {
 			fmt.Fprintf(logWriter, "warning: detach HEAD in foreign worktree %s: %v\n", info.Path, err)
 		}
@@ -5006,7 +4870,7 @@ func recoverBranchDeleteFromMainRepo(logWriter io.Writer, branch, worktreeBase s
 	// holders atomically with the ref-drop, closing the TOCTOU window
 	// where a sibling worktree could check out the branch between the
 	// parent's detach and the delete.
-	headRef, headErr := sandbox.CurrentBranchRef(".")
+	headRef, headErr := sandbox.CurrentBranchRef(repoRoot)
 	if headErr != nil {
 		fmt.Fprintf(logWriter, "warning: drop refs/heads/%s: main repo HEAD is not a symbolic ref — refusing to detach (foreign worktree holder race?): %v\n", branch, headErr)
 		return
@@ -5015,11 +4879,15 @@ func recoverBranchDeleteFromMainRepo(logWriter io.Writer, branch, worktreeBase s
 		fmt.Fprintf(logWriter, "warning: drop refs/heads/%s: main repo HEAD is %q, not the target branch — refusing to detach (foreign worktree holder race?)\n", branch, headRef)
 		return
 	}
-	if out, err := exec.Command("git", "checkout", "--detach").CombinedOutput(); err != nil {
+	detach := exec.Command("git", "checkout", "--detach")
+	detach.Dir = repoRoot
+	if out, err := detach.CombinedOutput(); err != nil {
 		fmt.Fprintf(logWriter, "warning: detach HEAD in main repo: %v: %s\n", err, out)
 		return
 	}
-	if out, err := exec.Command("git", "branch", "-D", branch).CombinedOutput(); err != nil {
+	drop := exec.Command("git", "branch", "-D", branch)
+	drop.Dir = repoRoot
+	if out, err := drop.CombinedOutput(); err != nil {
 		fmt.Fprintf(logWriter, "warning: drop branch refs/heads/%s in main repo via 'git branch -D': %v: %s\n", branch, err, out)
 	}
 }

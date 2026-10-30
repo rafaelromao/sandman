@@ -3,6 +3,7 @@ package batch
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -91,7 +92,7 @@ func TestPriorOpenCodeSession_CanonicalInvalidDoesNotUseLegacy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, found, err := priorOpenCodeSession(layout, "batch-1", "run-1")
+	_, found, err := priorAgentSession(layout, "batch-1", "run-1", opencodeSessionKind)
 	if err == nil || found {
 		t.Fatalf("invalid canonical metadata = found %t, err %v; want no identity and an error", found, err)
 	}
@@ -489,6 +490,50 @@ func TestOpenCodeOutput_SuppressesStructuralEvents(t *testing.T) {
 	}
 }
 
+func TestOpenCodeOutput_CapturesRerunEvidenceOnlyFromCompletedHelperToolInvocation(t *testing.T) {
+	var out strings.Builder
+	var parsed outputParser = newOpenCodeOutput(&out, io.Discard, false)
+	reporter, ok := parsed.(ciRerunActionReporter)
+	if !ok {
+		t.Fatal("OpenCode output parser does not expose trusted helper invocation evidence")
+	}
+	evidence := ciRerunActionEvidence{
+		Protocol: "ci-rerun/v1", State: "waiting", Reason: "workflow-still-running",
+		Repository: "owner/repo", PullRequest: 17, SourceHeadSHA: "source-head",
+		TestedSHA: "tested-merge-sha", Diagnosis: "transient-provider-timeout",
+		RunID: "101", JobID: "987654321", JobName: "opencode-canary", ObservedAttempt: 2,
+	}
+	receipt, err := json.Marshal(evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := `sh "$HOME/.agents/skills/sandman/implement/ci-rerun-v1.sh" --repository owner/repo --pull-request 17 --head-sha source-head --tested-sha tested-merge-sha --run-id 101 --job-id 987654321 --diagnosis transient-provider-timeout`
+	writeEvent := func(event map[string]any) {
+		t.Helper()
+		data, err := json.Marshal(event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := parsed.Write(append(data, '\n')); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeEvent(map[string]any{"type": "text", "part": map[string]any{"text": string(receipt)}})
+	if got := reporter.CIRerunAction(); got != nil {
+		t.Fatalf("ordinary model text authorized a helper wait: %+v", got)
+	}
+	writeEvent(map[string]any{
+		"type": "tool_use",
+		"part": map[string]any{"tool": "bash", "state": map[string]any{
+			"status": "completed", "input": map[string]any{"command": command}, "output": string(receipt),
+		}},
+	})
+	got := reporter.CIRerunAction()
+	if got == nil || got.RunID != evidence.RunID || got.JobID != evidence.JobID || got.State != "waiting" {
+		t.Fatalf("completed helper invocation evidence = %+v, want %+v", got, evidence)
+	}
+}
+
 func TestOpenCodeOutput_FormatsUnhandledValidJSON(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -546,6 +591,11 @@ func TestOpenCodeOutput_RendersToolDetails(t *testing.T) {
 		{
 			name:  "grep with pattern and path",
 			input: `{"type":"tool_use","part":{"tool":"grep","state":{"status":"completed","input":{"pattern":"hello.*world","path":"/tmp/demo"}}}}` + "\n",
+			want:  "✱ Grep \"hello.*world\" in /tmp/demo\n",
+		},
+		{
+			name:  "grep preserves v1 output when include is also present",
+			input: `{"type":"tool_use","part":{"tool":"grep","state":{"status":"completed","input":{"pattern":"hello.*world","path":"/tmp/demo","include":"**/*.go"}}}}` + "\n",
 			want:  "✱ Grep \"hello.*world\" in /tmp/demo\n",
 		},
 		{

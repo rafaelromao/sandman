@@ -834,7 +834,7 @@ func TestRunPromptOnly_RefreshesTaskPromptOnRetry(t *testing.T) {
 		Branches:          map[int]string{0: branch},
 		BaseBranch:        "main",
 		RenderCfg:         prompt.RenderConfig{ReviewTimeout: 600},
-		BatchID:           batchIDForPromptOnly("", "", "run-prompt-refresh", ""),
+		BatchID:           batchIDForPromptOnly("", "", "run-prompt-refresh"),
 		RunID:             "run-prompt-refresh",
 		UserProvidedRunID: "run-prompt-refresh",
 	}
@@ -919,7 +919,7 @@ func TestRunPromptOnly_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 		Mode:              ModeFresh,
 		Branches:          map[int]string{0: branch},
 		BaseBranch:        "main",
-		BatchID:           batchIDForPromptOnly("", "", "run-prompt-123", ""),
+		BatchID:           batchIDForPromptOnly("", "", "run-prompt-123"),
 		RunID:             "run-prompt-123",
 		UserProvidedRunID: "run-prompt-123",
 	}
@@ -1003,7 +1003,7 @@ func TestRunPromptOnly_EmitsZeroRunRetryEventsOnSingleAttempt(t *testing.T) {
 		Mode:              ModeFresh,
 		Branches:          map[int]string{0: branch},
 		BaseBranch:        "main",
-		BatchID:           batchIDForPromptOnly("", "", "run-prompt-456", ""),
+		BatchID:           batchIDForPromptOnly("", "", "run-prompt-456"),
 		RunID:             "run-prompt-456",
 		UserProvidedRunID: "run-prompt-456",
 	}

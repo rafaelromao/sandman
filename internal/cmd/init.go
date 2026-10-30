@@ -57,9 +57,12 @@ func NewInitCmd() *cobra.Command {
 			agent, _ := cmd.Flags().GetString("agent")
 			model, _ := cmd.Flags().GetString("model")
 			variant, _ := cmd.Flags().GetString("variant")
+			reviewModel, _ := cmd.Flags().GetString("review-model")
+			reviewVariant, _ := cmd.Flags().GetString("review-variant")
 			parallel, _ := cmd.Flags().GetInt("parallel")
 			parallelReviews, _ := cmd.Flags().GetInt("parallel-reviews")
 			reviewCommand, _ := cmd.Flags().GetString("review-command")
+			caCerts, _ := cmd.Flags().GetStringArray("ca-cert")
 
 			retriesOverride, err := resolveInitInt(cmd, "retries")
 			if err != nil {
@@ -96,12 +99,15 @@ func NewInitCmd() *cobra.Command {
 				Agent:            agent,
 				Model:            model,
 				Variant:          variant,
+				ReviewModel:      reviewModel,
+				ReviewVariant:    reviewVariant,
 				Parallel:         parallel,
 				ParallelReviews:  parallelReviews,
 				ReviewCommand:    reviewCommand,
 				Retries:          retriesOverride,
 				RunIdleTimeout:   runIdleTimeoutOverride,
 				ReviewTimeout:    reviewTimeoutOverride,
+				CACerts:          caCerts,
 				Writer:           cmd.OutOrStdout(),
 				DiagnosticWriter: diagnosticWriter,
 			}, prompter); err != nil {
@@ -128,11 +134,14 @@ func NewInitCmd() *cobra.Command {
 	cmd.Flags().String("agent", "", "Default built-in agent preset ("+strings.Join(scaffold.KnownAgents, ", ")+")")
 	cmd.Flags().String("model", "", "Default model for the agent")
 	cmd.Flags().String("variant", "", "Default implementation model variant")
+	cmd.Flags().String("review-model", "", "Default model for the review agent")
+	cmd.Flags().String("review-variant", "", "Default review model variant")
 	cmd.Flags().Int("parallel", -1, fmt.Sprintf("Default parallel container count (-1 = use config default %d)", config.DefaultParallel))
 	cmd.Flags().Int("parallel-reviews", -1, fmt.Sprintf("Default parallel reviews count (-1 = use built-in default of %d)", config.DefaultReviewParallel))
 	cmd.Flags().String("review-command", "", "Review command to store in config and install into shared skills")
 	cmd.Flags().Int("retries", -1, fmt.Sprintf("Persist `retries` in scaffolded config (-1 = use built-in default of %d)", config.DefaultRetries))
 	cmd.Flags().Int("run-idle-timeout", -1, fmt.Sprintf("Persist `run_idle_timeout` in scaffolded config (-1 = use built-in default of %d)", config.DefaultRunIdleTimeout))
+	cmd.Flags().StringArray("ca-cert", nil, "Trust a CA certificate in the sandbox image: a PEM file path, \"auto\" to capture a TLS-inspection proxy's root from this host, or \"none\" to remove trusted certificates (repeatable)")
 	cmd.Flags().Int("review-timeout", 0, fmt.Sprintf("Persist `review_timeout` in scaffolded config (seconds; default %d, minimum %d; 0 is invalid)", config.DefaultReviewTimeout, config.MinReviewTimeout))
 
 	return cmd

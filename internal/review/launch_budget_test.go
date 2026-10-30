@@ -197,7 +197,7 @@ func TestReviewerRequestArtifactsStayExclusiveAcrossHeads(t *testing.T) {
 	initReviewTestGitRepo(t, root)
 	base := filepath.Join(root, ".sandman")
 	cfg := &config.Config{DefaultReviewAgent: "custom", DefaultReviewModel: "model", WorktreeDir: filepath.Join(base, "worktrees")}
-	gh := &fakeGH{prFetch: map[int]*github.PR{17: {Number: 17, HeadRefOid: "H1"}}}
+	gh := &fakeGH{prFetch: map[int]*github.PR{17: {Number: 17, HeadRefOid: "H1"}}, comments: map[int][]github.PRComment{17: {{ID: "request", Body: "/sandman review"}}}}
 	started, release := make(chan struct{}), make(chan struct{})
 	var calls, posts atomic.Int32
 	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
@@ -263,13 +263,13 @@ func TestReviewerRequestArtifactsStayExclusiveAcrossHeads(t *testing.T) {
 	close(release)
 	select {
 	case err := <-done:
-		if err != nil {
+		if !errors.Is(err, errStaleReviewSnapshot) {
 			t.Fatal(err)
 		}
 	case <-ctx.Done():
 		t.Fatal("H1 publication/cleanup did not finish")
 	}
-	if posts.Load() != 1 || gitWorktreeHasBranch(t, cfg.WorktreeDir, branch) {
+	if posts.Load() != 0 || gitWorktreeHasBranch(t, cfg.WorktreeDir, branch) {
 		t.Fatal("owner did not finish publication and cleanup")
 	}
 	claim, err := reviewlaunch.ClaimLaunch(filepath.Join(base, "state"), 17, "request", "")

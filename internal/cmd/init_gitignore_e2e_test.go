@@ -58,7 +58,7 @@ func TestInit_GitignoreAndUntrackRegression(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	cmd := NewInitCmd()
+	cmd := newInitCommandForTest(t)
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader("y\n"))
 	cmd.SetArgs([]string{"--build-tools", "generic"})

@@ -17,6 +17,7 @@ const run = {
   key: 'q-1',
   kind: 'active',
   status: 'queued',
+  queuedLike: true,
   issueLabel: '#42',
   issueNumber: 42,
   batchKey: 'b-42',
@@ -50,6 +51,7 @@ const run = {
   key: 'b-1',
   kind: 'active',
   status: 'blocked',
+  queuedLike: true,
   issueLabel: '#43',
   issueNumber: 43,
   batchKey: 'b-43',
@@ -117,6 +119,7 @@ const run = {
   key: 'q-x',
   kind: 'active',
   status: 'queued',
+  queuedLike: true,
   issueLabel: '#99',
   issueNumber: 99,
   batchKey: 'b-99',
@@ -146,7 +149,7 @@ func TestPortalDiff_UpdateRunRowCells_RunningToQueuedRemovesToggleAttrs(t *testi
 const runOld = {
   key: 't-1', kind: 'active', status: 'running', issueLabel: '#1', runId: 't-1',
 };
-const runNew = Object.assign({}, runOld, { status: 'queued' });
+const runNew = Object.assign({}, runOld, { status: 'queued', queuedLike: true });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 't-1' };
 const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
@@ -175,7 +178,7 @@ func TestPortalDiff_UpdateRunRowCells_RunningToBlockedRemovesToggleAttrs(t *test
 const runOld = {
   key: 't-2', kind: 'active', status: 'running', issueLabel: '#2', runId: 't-2',
 };
-const runNew = Object.assign({}, runOld, { status: 'blocked' });
+const runNew = Object.assign({}, runOld, { status: 'blocked', queuedLike: true });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 't-2' };
 const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
@@ -202,9 +205,9 @@ console.log('PASS');
 func TestPortalDiff_UpdateRunRowCells_QueuedToRunningRestoresToggleAttrs(t *testing.T) {
 	js := `const body = makeMockBody();
 const runOld = {
-  key: 't-3', kind: 'active', status: 'queued', issueLabel: '#3', runId: 't-3',
+  key: 't-3', kind: 'active', status: 'queued', queuedLike: true, issueLabel: '#3', runId: 't-3',
 };
-const runNew = Object.assign({}, runOld, { status: 'running' });
+const runNew = Object.assign({}, runOld, { status: 'running', queuedLike: false });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
@@ -234,7 +237,7 @@ func TestPortalDiff_DiffRuns_RunningToQueuedRemovesDetailRowUnderExpandedKey(t *
 const runRunning = {
   key: 'd-1', kind: 'active', status: 'running', issueLabel: '#1', runId: 'd-1',
 };
-const runQueued = Object.assign({}, runRunning, { status: 'queued' });
+const runQueued = Object.assign({}, runRunning, { status: 'queued', queuedLike: true });
 const stopGroups = new Set();
 const opts1 = { helpers, stopGroups, expandedKey: 'd-1', runs: [runRunning] };
 SandmanPortalDiff.insertRunRow(body, runRunning, opts1);
@@ -260,9 +263,9 @@ console.log('PASS');
 func TestPortalDiff_UpdateRunRowCells_QueuedToCompletedRestoresExpandable(t *testing.T) {
 	js := `const body = makeMockBody();
 const runOld = {
-  key: 't-4', kind: 'active', status: 'queued', issueLabel: '#4', runId: 't-4',
+  key: 't-4', kind: 'active', status: 'queued', queuedLike: true, issueLabel: '#4', runId: 't-4',
 };
-const runNew = Object.assign({}, runOld, { kind: 'completed', status: 'success' });
+const runNew = Object.assign({}, runOld, { kind: 'completed', status: 'success', queuedLike: false });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
@@ -294,6 +297,8 @@ const run = {
   key: 'q-2',
   kind: 'active',
   status: 'queued',
+  queuedLike: true,
+  canAbort: true,
   issueLabel: '#7',
   issueNumber: 7,
   batchKey: 'b-7',
@@ -328,7 +333,7 @@ func TestPortalDiff_UpdateRunRowCells_RemovesStaleAriaControlsOnTransition(t *te
 const runOld = {
   key: 'a-1', kind: 'active', status: 'running', issueLabel: '#10', runId: 'a-1',
 };
-const runNew = Object.assign({}, runOld, { status: 'queued' });
+const runNew = Object.assign({}, runOld, { status: 'queued', queuedLike: true });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
@@ -353,7 +358,7 @@ console.log('PASS');
 func TestPortalDiff_UpdateRunRowCells_QueuedToQueuedIsNoOpOnToggleAttrs(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = {
-  key: 'n-1', kind: 'active', status: 'queued', issueLabel: '#11', runId: 'n-1',
+  key: 'n-1', kind: 'active', status: 'queued', queuedLike: true, issueLabel: '#11', runId: 'n-1',
 };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
@@ -395,7 +400,7 @@ console.log('PASS counters=' + JSON.stringify(counters));
 func TestPortalDiff_InsertRunRow_QueuedRowWithMatchingExpandedKeyHasBothGuards(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = {
-  key: 'c-1', kind: 'active', status: 'queued', issueLabel: '#12', runId: 'c-1',
+  key: 'c-1', kind: 'active', status: 'queued', queuedLike: true, issueLabel: '#12', runId: 'c-1',
 };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'c-1', runs: [run] };

@@ -120,9 +120,11 @@ func TestRunExecutor_MissingPRDoesNotAwait(t *testing.T) {
 }
 
 // An open pull request with no actively resolving operation (no running CI,
-// no confirmed request, no live approval) is idle work, not a wait: the run
-// must fail instead of parking in waiting (issue #2743).
-func TestRunExecutor_IdleGateWithoutRequestFailsInsteadOfWaiting(t *testing.T) {
+// no confirmed request, no live approval) is idle work first: the
+// implementor gets its owned-work attempts (issue #2743). Once those cannot
+// advance the gate, the only missing evidence is a review, so the Run waits
+// for it as rc2 did (issue #2916) instead of failing.
+func TestRunExecutor_IdleGateWithoutRequestWaitsAfterOwnedWork(t *testing.T) {
 	idlePR := &github.PR{
 		Number:            17,
 		State:             "open",
@@ -132,18 +134,21 @@ func TestRunExecutor_IdleGateWithoutRequestFailsInsteadOfWaiting(t *testing.T) {
 		MergeStateStatus:  "BLOCKED",
 	}
 	result, logs, _ := runIdleGateCase(t, ModeFresh, "", idlePR)
-	if got := countEventsByType(logs, "run.await"); got != 0 {
-		t.Fatalf("run.await events = %d, want 0 (idle gate has no active resolver)", got)
+	if got := countEventsByType(logs, "run.await"); got != 1 {
+		t.Fatalf("run.await events = %d, want the continuity hold after owned work", got)
 	}
-	if result.Status != "failure" {
-		t.Fatalf("result status = %q, want failure", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("result status = %q, want await", result.Status)
 	}
-	finished := findEvent(logs, "run.finished")
-	if finished == nil || finished.Payload["reason"] != idleGateReason {
-		t.Fatalf("finished reason = %v, want %q", finished, idleGateReason)
+	if findEvent(logs, "run.finished") != nil {
+		t.Fatal("idle gate on an open current-head pull request terminalized")
 	}
-	if finished.Payload["external_gate"] != string(lifecycleGatePending) || finished.Payload["expected_head_sha"] != "current-sha" {
-		t.Fatalf("terminal failure omitted idle-gate evidence: %#v", finished.Payload)
+	hold := lastEvent(logs, "run.await")
+	if hold.Payload["reason"] != idleGateReason || hold.Payload["continuity_hold"] != true {
+		t.Fatalf("wait reason = %v, want the %q continuity hold", hold.Payload, idleGateReason)
+	}
+	if hold.Payload["gate"] != string(lifecycleGatePending) || hold.Payload["expected_head_sha"] != "current-sha" {
+		t.Fatalf("wait omitted idle-gate evidence: %#v", hold.Payload)
 	}
 }
 

@@ -135,10 +135,7 @@
   // statuses, including terminal ones, remain expandable so the user can
   // still inspect finished runs.
   function isRowExpandable(run) {
-    if (!run) return true;
-    const s = String(run.status || '').toLowerCase();
-    if (s === 'queued' || s === 'blocked') return false;
-    return true;
+    return !run || !run.queuedLike;
   }
 
   function snapshotCellState(run, opts) {
@@ -506,10 +503,11 @@
     if (!run) return false;
     const subjectKey = subjectRunValue(run);
     if (expandedKey === subjectKey || expandedKey === run.key) return true;
+    // A group row also owns the detail of every subject the server listed
+    // in its subjects; the page never groups rows by issue number itself.
     const expandedRun = expandedKey ? findRunByIdentity(expandedKey, opts) : null;
-    if (!expandedRun) return false;
-    if (!Number.isInteger(run.issueNumber) || run.issueNumber <= 0) return false;
-    return run.issueNumber === expandedRun.issueNumber;
+    if (!expandedRun || !Array.isArray(run.subjects)) return false;
+    return run.subjects.includes(expandedRun.runId) || run.subjects.includes(expandedRun.key);
   }
 
   function subjectRunLabel(run) {
@@ -517,93 +515,20 @@
     return subjectRunValue(run) || 'Run';
   }
 
-  // pickCanonicalParent chooses the single impl row that "owns" an issue
-  // group in the subject selector. Multiple impl rows for the same
-  // issueNumber appear when a prior run was abandoned or succeeded and a
-  // later run was launched; the selector needs one canonical row to act
-  // as the parent's identity, plus the sibling reviews.
-  //
-  // Pick logic mirrors the table-visibility helper pickCanonicalParent
-  // in portal.html (used by visibleRunForIssueGroup), so the dropdown's
-  // canonical option agrees with the visible table row:
-  //
-  //   1. The currently-running parent (kind === 'active'), if any.
-  //      Within actives, the latest by startedAt wins. The
-  //      startedAt-desc filter is a tiebreaker — reviews and prior
-  //      impl rows can never surface because they live in the
-  //      reviews / parents splits separately.
-  //   2. Otherwise, parents[0] — the caller's order is authoritative.
-  //      visibleRunsForTable sorts runs by startedAt desc, so
-  //      parents[0] is the most-recent terminal impl row. The
-  //      #1825 contract forbids preferring a parent that carries
-  //      stale review metadata over a newer parent that does not —
-  //      the table-visibility helper enforces this by trusting
-  //      caller order, and so do we.
-  function pickCanonicalParent(parents, run) {
-    if (!parents || !parents.length) {
-      return run && !run.review ? run : null;
-    }
-    const liveActive = parents.filter((candidate) => candidate.kind === 'active');
-    if (liveActive.length) {
-      return liveActive.reduce((best, candidate) => (candidate.startedAt > best.startedAt ? candidate : best));
-    }
-    return parents[0];
-  }
-
-  function previousRunIDForContinuation(run) {
-    const events = Array.isArray(run && run.events) ? run.events : [];
-    for (const event of events) {
-      if (!event || event.type !== 'run.continued') continue;
-      const payload = event.payload || {};
-      const previous = String(payload.previous_run_id || '').trim();
-      if (previous) return previous;
-    }
-    return '';
-  }
-
+  // subjectRunsFor resolves the detail subjects of a table row. The Go
+  // projection (projectIssueGroups) stamps the ordered runIds on the row the
+  // table shows for an issue group; the renderer only looks them up and
+  // never re-derives the group or its canonical parent.
   function subjectRunsFor(run, opts) {
-    const visible = Array.isArray(opts && opts.runs) ? opts.runs : [];
-    // Strict positive-integer guard: a missing/undefined/non-integer
-    // issueNumber must never be treated as a valid group key. The previous
-    // loose `<= 0` check let undefined through (undefined <= 0 is false),
-    // which grouped unrelated no-issue rows together by undefined and
-    // produced a giant spurious subject selector.
-    if (!run || !Number.isInteger(run.issueNumber) || run.issueNumber <= 0) return [];
+    const ids = Array.isArray(run && run.subjects) ? run.subjects : [];
+    const related = [];
     const seen = new Set();
-    const parents = [];
-    const reviews = [];
-    for (const candidate of visible) {
-      if (!candidate || candidate.issueNumber !== run.issueNumber) continue;
-      if (!isRowExpandable(candidate)) continue;
+    for (const id of ids) {
+      const candidate = findRunByIdentity(id, opts);
       const value = subjectRunValue(candidate);
       if (!value || seen.has(value)) continue;
       seen.add(value);
-      if (candidate.review) reviews.push(candidate);
-      else parents.push(candidate);
-    }
-    const canonicalParent = pickCanonicalParent(parents, run);
-    const related = [];
-    const relatedSeen = new Set();
-    const pushRelated = (candidate) => {
-      const value = subjectRunValue(candidate);
-      if (!value || relatedSeen.has(value)) return;
-      relatedSeen.add(value);
       related.push(candidate);
-    };
-    if (canonicalParent) pushRelated(canonicalParent);
-    const previousRunID = previousRunIDForContinuation(run);
-    const previousRun = previousRunID ? findRunByIdentity(previousRunID, opts) : null;
-    if (previousRun && previousRun.issueNumber === run.issueNumber && !previousRun.review) {
-      pushRelated(previousRun);
-    }
-    reviews.sort((a, b) => {
-      const aStarted = a.startedAt ? new Date(a.startedAt).getTime() : 0;
-      const bStarted = b.startedAt ? new Date(b.startedAt).getTime() : 0;
-      if (aStarted !== bStarted) return bStarted - aStarted;
-      return subjectRunValue(a).localeCompare(subjectRunValue(b));
-    });
-    for (const candidate of reviews) {
-      pushRelated(candidate);
     }
     return related;
   }
@@ -1303,7 +1228,7 @@
 
   function buildDetailContent(panel, rowRun, subjectRun, tabName, helpers, opts) {
     const subjectValue = subjectRunValue(subjectRun);
-    const subjectFp = subjectValue + '|' + subjectFingerprint(subjectRun, opts);
+    const subjectFp = subjectValue + '|' + subjectFingerprint(rowRun, opts);
     const subjectPicker = buildSubjectSelector(panel, rowRun, subjectRun, opts);
     if (subjectPicker) panel.appendChild(subjectPicker);
     buildTabsRow(panel, rowRun, tabName);
@@ -1403,7 +1328,7 @@
         setAttr(btn, 'aria-pressed', want);
       }
     }
-    const subjectFp = subjectRunValue(subjectRun) + '|' + subjectFingerprint(subjectRun, opts);
+    const subjectFp = subjectRunValue(subjectRun) + '|' + subjectFingerprint(run, opts);
     const subjectSelect = detailRow.querySelector('select[data-action="set-subject"]');
     if (subjectSelect && subjectSelect.value !== subjectValue) {
       subjectSelect.value = subjectValue;
@@ -1625,7 +1550,7 @@
     // re-engages the moment status flips to running / reviewing (where
     // startedAt is anchored on run.started) and the terminal path uses
     // the server-stamped Finished - Started.
-    if (run && (run.status === 'queued' || run.status === 'blocked')) return '—';
+    if (run && run.queuedLike) return '—';
     // Status may be promoted to "reviewing" by a linked live review even
     // while the implementation is waiting. Trust the event-derived waiting
     // signal over an executionSince value retained by a stale client row.
@@ -1646,7 +1571,7 @@
 
   function durationSortValue(run) {
     const status = String(run && run.status || '').trim().toLowerCase();
-    if (status === 'queued' || status === 'blocked') return 0;
+    if (run && run.queuedLike) return 0;
     const baseline = Number(run && run.activeDurationSeconds);
     const finished = Date.parse(run && run.finishedAt);
     const terminal = !!(run && run.kind === 'completed')
@@ -1655,7 +1580,7 @@
     if (terminal) {
       return Number.isFinite(baseline) && baseline >= 0 ? baseline * 1000 : 0;
     }
-    const waiting = !!(run && run.waiting) || status === 'waiting';
+    const waiting = !!(run && run.waiting);
     if (waiting) return Number.isFinite(baseline) && baseline >= 0 ? baseline * 1000 : 0;
     if (Number.isFinite(baseline) && baseline >= 0) {
       const executionSince = Date.parse(run && run.executionSince || '');

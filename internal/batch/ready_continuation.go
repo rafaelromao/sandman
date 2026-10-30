@@ -60,9 +60,12 @@ func FindReadyContinuations(eventLog []events.Event, layout paths.Layout) []Read
 		if batchID == "" {
 			batchID = state.BatchID()
 		}
-		batchLocation, ok := resolvedBatchLocation(idx, layout, batchID)
-		if !ok {
-			continue
+		batchLocation := layout.LocateBatch(batchID, "")
+		if batchID != "" {
+			var ok bool
+			if batchLocation, ok = idx.LocateBatchIdentity(layout, batchID); !ok {
+				continue
+			}
 		}
 		if batchID != "" && daemon.IsRunActive(batchLocation.Dir) {
 			continue
@@ -72,7 +75,7 @@ func FindReadyContinuations(eventLog []events.Event, layout paths.Layout) []Read
 			continue
 		}
 		_ = claim.Close()
-		wait, waitErr := daemon.ReadRunWaitAt(batchLocation.Dir, batchLocation.ID, state.RunID)
+		wait, waitErr := daemon.ReadRunWaitAt(layout, batchLocation, state.RunID)
 		if waitErr == nil {
 			var valid bool
 			wait, _, valid = reconcileRecoveryWait(wait, state)
@@ -117,21 +120,6 @@ func FindReadyContinuations(eventLog []events.Event, layout paths.Layout) []Read
 	return ready
 }
 
-func resolvedBatchLocation(idx *batchindex.Index, layout paths.Layout, batchID string) (paths.BatchLocation, bool) {
-	if batchID == "" {
-		return layout.LocateBatch(batchID, ""), true
-	}
-	if batch := idx.ResolveBatchIdentity(batchID); batch != nil {
-		return batch.Location(layout), true
-	}
-	for _, batch := range idx.Batches {
-		if batch.Path != "" && filepath.Base(batch.Path) == batchID {
-			return paths.BatchLocation{}, false
-		}
-	}
-	return layout.LocateBatch(batchID, ""), true
-}
-
 // Events determine whether execution has started. Reconcile a sidecar left
 // between the authoritative await event and its schedule checkpoint.
 func reconcileRecoveryWait(record daemon.RunWait, state events.RunState) (daemon.RunWait, bool, bool) {
@@ -159,7 +147,16 @@ func reconcileRecoveryWait(record daemon.RunWait, state events.RunState) (daemon
 		if state.AwaitEvent == nil {
 			return record, true, false
 		}
-		if deadline, gate, ok := lifecycleDeadline(state.AwaitEvent.Payload); ok {
+		if id, deadline, ok := githubRecoveryOperation(state.AwaitEvent.Payload); ok {
+			// A GitHub recovery wait keeps its 24-hour window and its next
+			// hourly attempt across restart.
+			record.OperationID, record.OperationDeadline = id, deadline
+			record.NextPollAt, _ = githubRecoveryNextAttempt(state.AwaitEvent.Payload)
+		} else if continuityHoldPayload(state.AwaitEvent.Payload) {
+			// A continuity hold has no operation deadline. It stays
+			// recoverable within the ordinary ownerless grace.
+			record.OperationID, record.OperationDeadline = continuityHoldOperation(state.RunID), time.Time{}
+		} else if deadline, gate, ok := lifecycleDeadline(state.AwaitEvent.Payload); ok {
 			record.OperationDeadline = deadline
 			record.OperationID = fmt.Sprintf("%s:%d", gate, deadline.Unix())
 		} else {

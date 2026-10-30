@@ -155,7 +155,7 @@ func TestAggregateReviewChildren_NewPendingReviewSuppressesOlderPublishedVerdict
 		FinishedAt:  publicationTimePtr(newFinishedAt),
 	}
 
-	runs := (&portalRunsView{}).aggregateReviewChildren(layout, []portalRun{parent, oldReview, newReview})
+	runs := (&portalRunsView{}).projectIssueGroups(layout, []portalRun{parent, oldReview, newReview})
 	got := findImplementationPortalRun(t, runs, issueNumber)
 	if !got.ReviewPendingPublication {
 		t.Fatalf("ReviewPendingPublication=false, want true for the newest pending review")
@@ -211,7 +211,7 @@ func TestAggregateReviewChildren_NewPublishedReviewOverridesOlderPendingReview(t
 		FinishedAt:  publicationTimePtr(newFinishedAt),
 	}
 
-	runs := (&portalRunsView{}).aggregateReviewChildren(layout, []portalRun{parent, oldReview, newReview})
+	runs := (&portalRunsView{}).projectIssueGroups(layout, []portalRun{parent, oldReview, newReview})
 	got := findImplementationPortalRun(t, runs, issueNumber)
 	if got.ReviewPendingPublication {
 		t.Fatalf("ReviewPendingPublication=true, want false for the newest published review")
@@ -444,7 +444,7 @@ func TestAggregateReviewChildren_MalformedPublicationStateFailsClosed(t *testing
 
 			parent := portalRun{IssueNumber: 2472, RunID: "impl", Kind: "completed", Status: "success", StartedAt: finishedAt.Add(-10 * time.Minute), FinishedAt: publicationTimePtr(finishedAt.Add(-5 * time.Minute))}
 			review := portalRun{IssueNumber: 2472, Review: true, RunID: "review-run", BatchKey: "unsafe-review", RunDir: runDir, Kind: "completed", Status: "success", StartedAt: finishedAt.Add(-time.Minute), FinishedAt: publicationTimePtr(finishedAt)}
-			runs := (&portalRunsView{}).aggregateReviewChildren(layout, []portalRun{parent, review})
+			runs := (&portalRunsView{}).projectIssueGroups(layout, []portalRun{parent, review})
 			got := findImplementationPortalRun(t, runs, 2472)
 			if !got.ReviewPendingPublication {
 				t.Fatalf("ReviewPendingPublication=false, want true for %s publication state", tc.name)
@@ -468,7 +468,7 @@ func TestAggregateReviewChildren_PublishedWithoutDecisionIsUnclear(t *testing.T)
 
 	parent := portalRun{IssueNumber: 2472, RunID: "impl", Kind: "completed", Status: "success", StartedAt: finishedAt.Add(-10 * time.Minute), FinishedAt: publicationTimePtr(finishedAt.Add(-5 * time.Minute))}
 	review := portalRun{IssueNumber: 2472, Review: true, RunID: "review-run", BatchKey: "published-review", RunDir: runDir, Kind: "completed", Status: "success", StartedAt: finishedAt.Add(-time.Minute), FinishedAt: publicationTimePtr(finishedAt)}
-	runs := (&portalRunsView{}).aggregateReviewChildren(layout, []portalRun{parent, review})
+	runs := (&portalRunsView{}).projectIssueGroups(layout, []portalRun{parent, review})
 	got := findImplementationPortalRun(t, runs, 2472)
 	if got.ReviewPendingPublication {
 		t.Fatalf("ReviewPendingPublication=true, want false after successful publication")
@@ -490,7 +490,7 @@ func TestAggregateReviewChildren_TerminalReviewWithoutFinishedAtUsesStartedAt(t 
 
 	parent := portalRun{IssueNumber: 2472, RunID: "impl", Kind: "completed", Status: "success", StartedAt: startedAt.Add(-10 * time.Minute), FinishedAt: publicationTimePtr(startedAt.Add(-5 * time.Minute))}
 	review := portalRun{IssueNumber: 2472, Review: true, RunID: "review-run", BatchKey: "terminal-review", RunDir: runDir, Kind: "completed", Status: "success", StartedAt: startedAt}
-	runs := (&portalRunsView{}).aggregateReviewChildren(layout, []portalRun{parent, review})
+	runs := (&portalRunsView{}).projectIssueGroups(layout, []portalRun{parent, review})
 	got := findImplementationPortalRun(t, runs, 2472)
 	if !got.ReviewPendingPublication {
 		t.Fatalf("ReviewPendingPublication=false, want true for terminal review without FinishedAt")

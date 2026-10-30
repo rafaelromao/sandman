@@ -25,9 +25,7 @@ func TestOpencodeSubagentPermissionAllowAll(t *testing.T) {
 	if !testenv.E2EGateAllowed(testenv.E2EScenarioOpencodeSubagent) {
 		t.Skip("set SANDMAN_E2E_GATES=opencode_subagent (or all) to run opencode subagent permission e2e")
 	}
-	if os.Getenv("CI") != "" && !testenv.FullRegression() {
-		t.Skip("skip e2e in CI")
-	}
+	// This credential-free shell fixture is also selected by the Linux CI job.
 	if !podmanAvailable(t) {
 		return
 	}
@@ -59,6 +57,11 @@ func TestOpencodeSubagentPermissionAllowAll(t *testing.T) {
 	forcePodmanSandbox(t, repoDir)
 	writeMergedFakeGHShimForContainer(t, filepath.Join(repoDir, ".sandman", "bin"))
 	installPermissionFakeOpenCodeForContainer(t, repoDir)
+	// Host `sandman run` probes `opencode --version`; resolving the container
+	// fake there would hang the probe until the run deadline.
+	if path, err := exec.LookPath("opencode"); err == nil && strings.HasPrefix(path, repoDir) {
+		t.Fatalf("host PATH resolves the container-only fake opencode at %s", path)
+	}
 
 	out, err = runSandmanBinaryWithTimeout(t, binPath, repoDir, 10*time.Minute, "run", "--verbose", "--sandbox", "podman", "1")
 	if err != nil {
@@ -234,7 +237,9 @@ exit 0
 	// This permission test runs a shell fake, so it must not first download
 	// the real agent, mise, Go and complexity analyzers. Release tiers run on
 	// independent runners and cannot reuse another tier's warmed image cache.
-	dockerfile := "FROM alpine\nRUN apk add --no-cache git bash coreutils\nCOPY .sandman/bin/opencode /usr/local/bin/opencode\nRUN chmod +x /usr/local/bin/opencode\n"
+	// Container startup runs gh auth setup-git before the agent command adds
+	// the worktree shim directory to PATH, so install the gh fake globally too.
+	dockerfile := "FROM alpine\nRUN apk add --no-cache git bash coreutils\nCOPY .sandman/bin/opencode .sandman/bin/gh /usr/local/bin/\nRUN chmod +x /usr/local/bin/opencode /usr/local/bin/gh\n"
 	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0644); err != nil {
 		t.Fatalf("write fake-agent Dockerfile: %v", err)
 	}
@@ -276,18 +281,15 @@ func runSandmanBinaryWithTimeout(t *testing.T, binPath, workDir string, timeout 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	ghBin := filepath.Join(workDir, ".sandman", "bin")
 	cmd := exec.CommandContext(ctx, binPath, args...)
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = 20 * time.Second
 	cmd.Dir = workDir
+	// The inherited PATH already resolves the host gh shim. .sandman/bin holds
+	// container-only fakes (gh, opencode), so it stays off the host PATH: host
+	// `sandman run` probes `opencode --version` before the batch starts, and
+	// the fake agent would hang that probe.
 	cmd.Env = append(os.Environ(),
-		// Host-side sandman should resolve the dedicated host gh shim first.
-		// The container-only gh shim under .sandman/bin is copied into the image
-		// separately, and prepending it here makes the host process try to use a
-		// script whose shim_dir is /workspace/.sandman/bin (container path), which
-		// fails before the container even starts.
-		"PATH="+os.Getenv("PATH")+string(os.PathListSeparator)+ghBin,
 		"GH_TOKEN=fake",
 		"GITHUB_TOKEN=fake",
 	)

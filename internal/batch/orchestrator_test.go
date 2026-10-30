@@ -1087,7 +1087,7 @@ func TestCheckPRMergedAtHead(t *testing.T) {
 	}
 }
 
-func TestRunSingle_RetryLifecycleTerminalizesAfterRetry(t *testing.T) {
+func TestRunSingle_RetryLifecycleWaitsAfterRetry(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -1131,8 +1131,8 @@ func TestRunSingle_RetryLifecycleTerminalizesAfterRetry(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure after lifecycle-owned gate handling", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want an rc2 wait after lifecycle-owned gate handling", result.Status)
 	}
 	if result.RetriesTotal != 2 {
 		t.Fatalf("RetriesTotal = %d, want 2", result.RetriesTotal)
@@ -1179,9 +1179,12 @@ func TestRunSingle_ClosedPRTerminalizesBeforeRetry(t *testing.T) {
 	oldHeadFn := currentBranchHeadFn
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
-	pr := &github.PR{Number: 17, State: "closed", Merged: false, HeadRefName: branch}
+	// The PR closes during this Run (after its admission); a closure the Run
+	// cannot place is not terminal evidence (issue #2940).
+	pr := &github.PR{Number: 17, State: "closed", Merged: false, HeadRefName: branch, ClosedAt: time.Now().Add(time.Hour)}
 	var resetCalls int
 	o := &Orchestrator{
+		eventLog:     &spyEventLog{},
 		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, prs: map[string]*github.PR{branch: pr}},
 		renderer:     renderer,
 		errorLog:     io.Discard,
@@ -2036,7 +2039,7 @@ func TestRunSingle_PreRetryGuardShortCircuitsOnMergedPR(t *testing.T) {
 	}
 }
 
-func TestRunSingle_RetryMissingClosingReferenceFailsVerification(t *testing.T) {
+func TestRunSingle_RetryWithoutVerifiedMergeWaits(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -2082,8 +2085,8 @@ func TestRunSingle_RetryMissingClosingReferenceFailsVerification(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure without verified closing reference", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want an rc2 wait without verified closing reference", result.Status)
 	}
 	if resetCalls != 0 {
 		t.Fatalf("reset calls = %d, want 0 after lifecycle terminalization", resetCalls)
@@ -2324,7 +2327,8 @@ func TestRunSingle_LogsRetryCounters(t *testing.T) {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
 
-	pr := &github.PR{Number: 42, State: "closed", Merged: false, HeadRefName: branch}
+	// The PR closes during this Run; an unplaced closure is not terminal.
+	pr := &github.PR{Number: 42, State: "closed", Merged: false, HeadRefName: branch, ClosedAt: time.Now().Add(time.Hour)}
 	// Flip Merged only on the post-attempt check after both attempts have
 	// run (fifth FindPRByBranch call). The closing-reference guard now
 	// performs an immediate observation, so the pre-retry guard does not
@@ -4354,7 +4358,7 @@ func TestRunBatch_LifecycleErrorsPrintedToStderr(t *testing.T) {
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
 		WithErrorLog(&buf),
 	)
-	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}, IssueTitles: map[int]string{42: "test issue"}})
 	if !strings.Contains(buf.String(), "github api error") {
 		t.Errorf("expected fetch error on stderr, got: %s", buf.String())
 	}
@@ -4387,7 +4391,7 @@ func TestRunBatch_EmitsTerminalEventOnFetchIssueFailure(t *testing.T) {
 		WithErrorLog(io.Discard),
 	)
 
-	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}, Parallel: 1})
+	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}, IssueTitles: map[int]string{42: "test issue"}, Parallel: 1})
 
 	finished := findEvent(spyLog.events, "run.finished")
 	if finished == nil {
@@ -7576,10 +7580,12 @@ type fakeContainerStarter struct {
 	buildImageTag   string
 	buildImageErr   error
 	buildImageCount int
+	buildImageRepo  string
 }
 
 func (f *fakeContainerStarter) BuildImage(ctx context.Context, repoPath string) (string, error) {
 	f.buildImageCount++
+	f.buildImageRepo = repoPath
 	if f.buildImageErr != nil {
 		return "", f.buildImageErr
 	}
@@ -9975,7 +9981,7 @@ func TestClearIssueArtifacts_RemovesWorktree(t *testing.T) {
 		},
 	}
 
-	ClearIssueArtifacts(42, branch, worktreeDir, el, io.Discard, "main", nil, batchesIndexPath)
+	ClearIssueArtifacts(42, branch, worktreeDir, el, io.Discard, "main", nil, batchesIndexPath, ".")
 
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 		t.Errorf("expected worktree to be removed, got %v", err)
@@ -10030,7 +10036,7 @@ func TestClearIssueArtifacts_DoesNotPruneSiblingContainerWorktree(t *testing.T) 
 		t.Fatalf("rewrite sibling registration gitdir: %v", err)
 	}
 
-	ClearIssueArtifacts(42, targetBranch, worktreeDir, &spyEventLog{}, io.Discard, "main", nil, "")
+	ClearIssueArtifacts(42, targetBranch, worktreeDir, &spyEventLog{}, io.Discard, "main", nil, "", ".")
 
 	if _, err := os.Stat(registration); err != nil {
 		t.Fatalf("sibling worktree registration was removed while clearing another issue: %v", err)
@@ -10049,7 +10055,7 @@ func TestClearIssueArtifacts_Idempotent(t *testing.T) {
 	initGitRepo(t, dir)
 
 	el := &spyEventLog{}
-	ClearIssueArtifacts(42, "42-nonexistent", ".sandman/worktrees", el, io.Discard, "main", nil, "")
+	ClearIssueArtifacts(42, "42-nonexistent", ".sandman/worktrees", el, io.Discard, "main", nil, "", ".")
 }
 
 func TestClearIssueArtifacts_RemovesOrphanWorktreeDirectory(t *testing.T) {
@@ -10109,7 +10115,7 @@ func TestClearIssueArtifacts_RemovesOrphanWorktreeDirectory(t *testing.T) {
 			{Type: "run.started", RunID: runID, Issue: 42, IssueRef: issueRef(42)},
 		},
 	}
-	ClearIssueArtifacts(42, branch, worktreeDir, el, io.Discard, "main", nil, batchesIndexPath)
+	ClearIssueArtifacts(42, branch, worktreeDir, el, io.Discard, "main", nil, batchesIndexPath, ".")
 
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 		t.Errorf("expected orphan worktree dir to be removed, got err=%v", err)
@@ -10143,7 +10149,7 @@ func TestClearIssueArtifacts_OnlyRemovesTargetIssue(t *testing.T) {
 		},
 	}
 
-	ClearIssueArtifacts(42, "42-fix-bug", ".sandman/worktrees", el, io.Discard, "main", nil, "")
+	ClearIssueArtifacts(42, "42-fix-bug", ".sandman/worktrees", el, io.Discard, "main", nil, "", ".")
 
 	// Issue 99 branch should still exist
 	revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/99-fix-bug")
@@ -10216,7 +10222,7 @@ func TestClearIssueArtifacts_ReconcilesStrandedWorktreeInMainRepo(t *testing.T) 
 		logBuf := &bytes.Buffer{}
 
 		trueVal := true
-		ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "")
+		ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "", ".")
 
 		// The branch must be gone from the main repo.
 		revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+branch)
@@ -10264,7 +10270,7 @@ func TestClearIssueArtifacts_ReconcilesStrandedWorktreeInMainRepo(t *testing.T) 
 		logBuf := &bytes.Buffer{}
 
 		trueVal := true
-		ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "")
+		ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "", ".")
 
 		// The branch must be gone.
 		revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+branch)
@@ -10323,7 +10329,7 @@ func TestClearIssueArtifacts_PreservesMainRepoBranch(t *testing.T) {
 	parentCommitBefore := runGit(t, dir, "rev-parse", "HEAD")
 
 	trueVal := true
-	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "")
+	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "", ".")
 
 	parentCommitAfter, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").CombinedOutput()
 	if err != nil {
@@ -10404,7 +10410,7 @@ func TestClearIssueArtifacts_ForeignWorktreeHolderPreserved(t *testing.T) {
 	parentCommitBefore := runGit(t, dir, "rev-parse", "HEAD")
 
 	trueVal := true
-	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "")
+	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "", ".")
 
 	// Parent HEAD commit must be unchanged: parent was on main, the
 	// branch was held by a foreign worktree, the recovery must not
@@ -10476,7 +10482,7 @@ func TestClearIssueArtifacts_NoReconcileKeepsBeltAndSuspenders(t *testing.T) {
 	el := &spyEventLog{}
 	logBuf := &bytes.Buffer{}
 
-	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", nil, "")
+	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", nil, "", ".")
 
 	// The branch should still exist (no recovery ran).
 	revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+branch)
@@ -10505,7 +10511,7 @@ func TestClearIssueArtifacts_ExplicitFalseReconcileKeepsBeltAndSuspenders(t *tes
 	logBuf := &bytes.Buffer{}
 
 	falseVal := false
-	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &falseVal, "")
+	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &falseVal, "", ".")
 
 	// The branch should still exist (no recovery ran).
 	revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+branch)
@@ -10549,7 +10555,7 @@ func TestClearIssueArtifacts_RemovesPrunableWorktree(t *testing.T) {
 	el := &spyEventLog{}
 	logBuf := &bytes.Buffer{}
 	trueVal := true
-	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "")
+	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "", ".")
 
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 		t.Errorf("expected prunable worktree dir to be removed, got err=%v", err)
@@ -10991,6 +10997,9 @@ func TestRunBatch_CascadesAbortFromBlockerToDependents(t *testing.T) {
 	}
 	if abortedBy, _ := abortedEvent.Payload["aborted_by"].([]int); !reflect.DeepEqual(abortedBy, []int{42}) {
 		t.Fatalf("expected aborted_by [42], got %#v", abortedEvent.Payload["aborted_by"])
+	}
+	if _, ok := abortedEvent.Payload["worktree_state"]; ok {
+		t.Fatalf("unstarted cascade abort payload = %v, want no worktree evidence", abortedEvent.Payload)
 	}
 
 	for i := range spyLog.events {
@@ -12661,18 +12670,21 @@ func TestLogAborted_EventLogWriteErrorIsSurfacedOnErrorLog(t *testing.T) {
 	}
 }
 
-// TestBatchIDForPromptOnly_RunDirShapes pins the batch-directory and
-// per-run-folder RunDir shapes; anything else yields the empty result.
-func TestBatchIDForPromptOnly_RunDirShapes(t *testing.T) {
+// TestPromptOnlyBatchLocation_RunDirShapes pins the batch-directory and
+// per-run-folder RunDir shapes of unindexed canonical Batches, which keep
+// their directory name as identity; anything else yields the empty result.
+func TestPromptOnlyBatchLocation_RunDirShapes(t *testing.T) {
 	const promptBatch = "260504123456-ab12-prompt"
 	const namedBatch = "260504123456-ab12-prompt-my-run"
+	root := t.TempDir()
+	layout := paths.NewLayout(&config.Config{}, root)
 	tests := []struct {
 		name   string
 		runDir string
 		want   string
 	}{
 		{"relative batch dir", filepath.Join(".sandman", "batches", promptBatch), promptBatch},
-		{"absolute batch dir", filepath.Join(string(filepath.Separator), "repo", ".sandman", "batches", promptBatch), promptBatch},
+		{"absolute batch dir", filepath.Join(root, ".sandman", "batches", promptBatch), promptBatch},
 		{"batch dir with trailing separator", filepath.Join(".sandman", "batches", promptBatch) + string(filepath.Separator), promptBatch},
 		{"batch dir with user run id", filepath.Join(".sandman", "batches", namedBatch), namedBatch},
 		{"per-run folder", filepath.Join(".sandman", "batches", promptBatch, "runs", promptBatch), promptBatch},
@@ -12683,9 +12695,9 @@ func TestBatchIDForPromptOnly_RunDirShapes(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := batchIDForPromptOnly(orchTestRunTS, orchTestRunShortID, "", tc.runDir)
-			if got != tc.want {
-				t.Fatalf("batchIDForPromptOnly(runDir=%q) = %q, want %q", tc.runDir, got, tc.want)
+			location, err := promptOnlyBatchLocation(layout, orchTestRunTS, orchTestRunShortID, "", tc.runDir)
+			if got := location.ID; err != nil || got != tc.want {
+				t.Fatalf("promptOnlyBatchLocation(runDir=%q) = %q, %v; want %q", tc.runDir, got, err, tc.want)
 			}
 		})
 	}
@@ -12701,10 +12713,10 @@ func TestBatchIDForPromptOnly_RunDirShapes(t *testing.T) {
 func TestBatchIDForPromptOnly_EmptyRunIDAndRunDir_EmitsTsSid(t *testing.T) {
 	want := runid.NewBatchID(runid.KindPromptOnly, 1, "", orchTestRunTS, orchTestRunShortID)
 
-	got := batchIDForPromptOnly(orchTestRunTS, orchTestRunShortID, "", "")
+	got := batchIDForPromptOnly(orchTestRunTS, orchTestRunShortID, "")
 
 	if got != want {
-		t.Fatalf("batchIDForPromptOnly(%q, %q, \"\", \"\") = %q, want %q (must route through runid.NewBatchID for ts-sid shape)",
+		t.Fatalf("batchIDForPromptOnly(%q, %q, \"\") = %q, want %q (must route through runid.NewBatchID for ts-sid shape)",
 			orchTestRunTS, orchTestRunShortID, got, want)
 	}
 

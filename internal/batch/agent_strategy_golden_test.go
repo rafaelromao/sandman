@@ -30,6 +30,7 @@ import (
 
 type agentLaunchGoldenCase struct {
 	name          string
+	review        bool
 	preset        string
 	command       string
 	model         string
@@ -105,7 +106,11 @@ func runAgentLaunchGoldenCase(t *testing.T, tc agentLaunchGoldenCase) string {
 	layout := paths.NewLayout(&config.Config{}, root)
 	runFolder := filepath.Join(root, "run")
 	if tc.priorSession != "" {
-		if err := writeAgentSession(layout.RunSessionPath("prior-batch", "prior-run"), opencodeSessionKind, tc.priorSession); err != nil {
+		kind := opencodeSessionKind
+		if tc.preset == "opencode-v2" {
+			kind = opencodeV2SessionKind
+		}
+		if err := writeAgentSession(layout.RunSessionPath("prior-batch", "prior-run"), kind, tc.priorSession); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -116,6 +121,7 @@ func runAgentLaunchGoldenCase(t *testing.T, tc agentLaunchGoldenCase) string {
 	var warnings bytes.Buffer
 	run := NewAgentRunWithLayout(&github.Issue{Number: 42, Title: "Golden"}, "42-golden", sb, layout)
 	run.preset = tc.preset
+	run.review = tc.review
 	run.model = tc.model
 	run.variant = tc.variant
 	run.dangerouslySkipPermissions = tc.skip
@@ -198,5 +204,35 @@ func TestAgentStrategyGolden_OpenCodeLaunches(t *testing.T) {
 	}
 	if got := captured.String(); got != string(want) {
 		t.Fatalf("OpenCode launch golden mismatch\n--- want\n%s\n--- got\n%s", want, got)
+	}
+}
+
+func TestAgentStrategyGolden_OpenCodeV2Launches(t *testing.T) {
+	var captured strings.Builder
+	for _, tc := range agentLaunchGoldenCases() {
+		if tc.preset == "opencode" {
+			tc.preset = "opencode-v2"
+			if tc.command == config.BuiltInAgentPresets["opencode"].Command {
+				tc.command = config.BuiltInAgentPresets["opencode-v2"].Command
+			}
+		}
+		captured.WriteString(runAgentLaunchGoldenCase(t, tc))
+	}
+	tc := agentLaunchGoldenCases()[1]
+	tc.preset, tc.command = "opencode-v2", config.BuiltInAgentPresets["opencode-v2"].Command
+	tc.name, tc.review = "builtin-review-model-variant", true
+	captured.WriteString(runAgentLaunchGoldenCase(t, tc))
+	path := filepath.Join("agent_strategy_test", "opencode_v2_launches.golden")
+	if os.Getenv("SANDMAN_AGENT_STRATEGY_UPDATE") == "1" {
+		if err := os.WriteFile(path, []byte(captured.String()), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if captured.String() != string(want) {
+		t.Fatalf("v2 launch golden mismatch\n%s", captured.String())
 	}
 }
