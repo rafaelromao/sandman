@@ -1,6 +1,6 @@
 # Agent Compatibility
 
-Sandman includes two built-in presets: `opencode` and `claude`. Claude Code
+Sandman includes three built-in presets: `opencode` (v1), `opencode-v2`, and `claude`. Claude Code
 support is available but experimental in v1; OpenCode remains the default.
 
 ## Built-in presets
@@ -8,6 +8,7 @@ support is available but experimental in v1; OpenCode remains the default.
 | Preset | Display Name | Default model | Command Template |
 |--------|-------------|---------------|------------------|
 | `opencode` | OpenCode | `opencode/big-pickle` | `opencode run --format json ...` |
+| `opencode-v2` | OpenCode v2 | `opencode/big-pickle` | `opencode run --format json ... --model provider/model#variant` |
 | `claude` | Claude Code | `sonnet` | `claude -p --output-format stream-json --verbose ...` |
 
 The `opencode` preset uses OpenCode's structured JSON output so Sandman can retain
@@ -26,6 +27,73 @@ handling, and failure classification) is selected once per launch from the
 preset. A custom `command` under a built-in preset keeps that preset's failure
 classification and environment rules, but Sandman injects no model, variant, or
 session flags into it.
+
+## Model variants
+
+Sandman's public CLI is the same for every built-in agent: use `--variant`.
+Keep the model and variant separate in Sandman commands and configuration:
+
+```bash
+sandman run --agent opencode-v2 --model provider/model --variant high 42
+sandman run --continue --variant high 42
+sandman review --agent opencode-v2 --model provider/model --variant high
+sandman init --agent opencode-v2 --variant high
+```
+
+Select `opencode`, `opencode-v2`, or `claude` with `--agent` and use the same
+`--variant` option. In configuration, set `variant` for implementation and
+`review_variant` for reviews. A CLI override wins over configuration;
+`--variant ""` disables the configured variant. Continuations use the current
+CLI/config value rather than restoring a prior run's variant.
+
+Only the agent invocation changes:
+
+| Preset | Sandman input | Native agent argument |
+| --- | --- | --- |
+| `opencode` | `--variant high` | `--variant 'high'` |
+| `opencode-v2` | `--variant high` | `--model 'provider/model#high'` |
+| `claude` | `--variant high` | `--effort 'high'` |
+
+When v2 receives a variant without a resolved model, Sandman attaches it to the
+preset's default model (`opencode/big-pickle`). An explicitly configured model
+still takes precedence. With neither model nor variant set, v2 keeps using its
+own CLI default. Custom commands retain their configured invocation.
+
+## OpenCode generations
+
+Choose the generation explicitly:
+
+```bash
+sandman init --agent opencode       # OpenCode v1: opencode-ai@1.x
+sandman init --agent opencode-v2    # OpenCode v2: @opencode/cli@2.x
+```
+
+Both presets probe `opencode --version` and pin the matching host version.
+If OpenCode is absent, each uses its own bundled fallback. A host of the wrong
+major fails before writing files and suggests the matching preset. Existing
+`opencode` projects continue to use v1; changing the host CLI does not silently
+change their launch protocol. Switch with `sandman init --agent opencode-v2`.
+
+V1 sends `variant` / `review_variant` as `--variant`. V2 combines them with the
+selected model (`--model 'provider/model#variant'`), replacing an existing suffix
+when an explicit variant is configured. With an empty variant, a model's existing
+suffix is preserved. Sandman users keep passing `--variant`; the native
+`#variant` suffix is produced automatically. V2 uses `--auto`
+for unattended permission approval and does not inject v1's `OPENCODE_PERMISSION`
+default; explicit v2 permission denials still apply.
+
+V2 live-mounts the entire `~/.local/share/opencode` data directory for current
+credentials and sessions. Sandman creates it if missing, so a new database,
+WAL/SHM sidecars and database replacements stay on the host after container cleanup. It does not depend on the legacy
+`auth.json` containing refreshed OAuth tokens. Standard stable-channel paths are
+supported; custom `OPENCODE_DB` and XDG overrides require matching manual mounts.
+V1 and v2 have separate session metadata; each reuses its own session, with one
+`--continue` fallback when an exact session is missing. JSON output, usage-limit
+waiting and context rollover share the OpenCode parser and detectors.
+
+Both npm packages expose the executable `opencode`. Use separate images for v1
+and v2; installing both globally into one image overwrites that executable.
+Either preset can share an image with Claude Code.
 
 ## OpenCode shell strategy
 

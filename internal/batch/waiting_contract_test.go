@@ -150,7 +150,7 @@ func TestWaitingContract_TerminalObservationUsesResolvedContainerPolicy(t *testi
 	log := &spyEventLog{}
 	o := NewOrchestrator(nil, nil, nil, log, WithErrorLog(io.Discard))
 	executor := o.newRunExecutor(context.Background(), BatchConfig{Cfg: &config.Config{Sandbox: "podman"}, SandboxMode: "podman"}, resolved, nil)
-	result := executor.finishObserved(context.Background(), RowSpec{IssueNumber: 42, RunID: "observed", Branches: map[int]string{42: "42-work"}, BaseBranch: "main"}, "success", nil)
+	result := executor.finishObserved(context.Background(), RowSpec{IssueNumber: 42, RunID: "observed", Branches: map[int]string{42: "42-work"}, BaseBranch: "main"}, lifecycleVerdict{Action: lifecycleSuccess})
 	if result.Status != "success" || created != 1 || sb.starts != 0 || sb.started != 0 || sb.stops != 1 || !sb.hostPathsRestored {
 		t.Fatalf("resolved cleanup skipped or execution started: result=%+v created=%d sandbox=%+v", result, created, sb)
 	}
@@ -184,7 +184,7 @@ func TestWaitingContract_TerminalObservationReclaimsExistingWorktreeWithoutStart
 		RunID:       "observed-reclaim",
 		Branches:    map[int]string{42: branch},
 		BaseBranch:  "main",
-	}, "success", nil)
+	}, lifecycleVerdict{Action: lifecycleSuccess})
 
 	if result.Status != "success" || observed == nil || observed.starts != 0 {
 		t.Fatalf("terminal observation started execution: result=%+v sandbox=%+v", result, observed)
@@ -207,7 +207,7 @@ func TestWaitingContract_TerminalObservationKeepsSuccessWhenCleanupFails(t *test
 	sb := &fakeSandbox{workDir: t.TempDir(), stopError: stopErr}
 	o := NewOrchestrator(nil, nil, nil, log, WithErrorLog(io.Discard))
 	executor := o.newRunExecutor(context.Background(), BatchConfig{}, &fakeSandboxFactory{sandbox: sb}, nil)
-	result := executor.finishObserved(context.Background(), RowSpec{IssueNumber: 42, RunID: "observed-cleanup-failure", Branches: map[int]string{42: "42-work"}}, "success", nil)
+	result := executor.finishObserved(context.Background(), RowSpec{IssueNumber: 42, RunID: "observed-cleanup-failure", Branches: map[int]string{42: "42-work"}}, lifecycleVerdict{Action: lifecycleSuccess})
 
 	if result.Status != "success" || sb.startCalled {
 		t.Fatalf("cleanup failure changed lifecycle or started execution: result=%+v sandbox=%+v", result, sb)
@@ -291,7 +291,7 @@ func TestWaitingContract_FreshRepairAllowanceAcrossExecutorReentry(t *testing.T)
 			IssueNumber: 42, Mode: ModeContinue, RunID: runID,
 			Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main",
 		})
-		if result.Status != "failure" {
+		if result.Status != "await" {
 			t.Fatalf("exhausted repair status=%q", result.Status)
 		}
 	}
@@ -314,8 +314,10 @@ func TestWaitingContract_TerminalObservationDropsActiveWaitMarkers(t *testing.T)
 	log := &spyEventLog{}
 	o := NewOrchestrator(nil, nil, nil, log, WithErrorLog(io.Discard))
 	executor := o.newRunExecutor(context.Background(), BatchConfig{}, &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: root}}, nil)
-	result := executor.finishObserved(context.Background(), RowSpec{IssueNumber: 42, RunID: "terminal-observation", Branches: map[int]string{42: "42-work"}}, "failure", map[string]any{
-		"reason": "REMEDIATION_BUDGET_EXHAUSTED", "await": true, "await_reason": "ci-failure", "gate": "ci-failure", "head_sha": "head",
+	result := executor.finishObserved(context.Background(), RowSpec{IssueNumber: 42, RunID: "terminal-observation", Branches: map[int]string{42: "42-work"}}, lifecycleVerdict{
+		Action: lifecycleFailure, Evidence: map[string]any{
+			"reason": "REMEDIATION_BUDGET_EXHAUSTED", "await": true, "await_reason": "ci-failure", "gate": "ci-failure", "head_sha": "head",
+		},
 	})
 	finished := findEvent(log.snapshot(), "run.finished")
 	if result.Status != "failure" || finished == nil {
@@ -336,7 +338,7 @@ func TestWaitingContract_CancelledRemediationDoesNotResume(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	s := &runSession{deps: runDeps{githubClient: &fakeGitHubClient{}}}
-	_, resume := s.resumePromptFromGate(ctx, &fakeSandbox{workDir: root}, "branch", "run", map[string]any{"gate": gateReadyToMerge, "pull_request": 17, "head_sha": "head"})
+	_, resume := s.resumePromptFromGate(ctx, &fakeSandbox{workDir: root}, "branch", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: map[string]any{"gate": gateReadyToMerge, "pull_request": 17, "head_sha": "head"}})
 	if resume || s.resumeCount != 0 {
 		t.Fatal("cancelled repair resumed or consumed the session allowance")
 	}
@@ -402,12 +404,66 @@ func TestWaitingOwnerNilLogPreservesQuotaSchedule(t *testing.T) {
 	}
 	defer owner.close()
 	deadline := now.Add(5 * time.Hour)
-	if err := owner.checkpoint(RowSpec{RunID: "row", IssueNumber: 42, Branches: map[int]string{42: "42-work"}, UsageLimitProbe: true, UsageLimitDeadline: deadline}, false, usageLimitPollInterval); err != nil {
+	if err := owner.checkpoint(RowSpec{RunID: "row", IssueNumber: 42, Branches: map[int]string{42: "42-work"}, quotaAllowance: usageLimitAllowance{probe: true, deadline: deadline}}, false, usageLimitPollInterval); err != nil {
 		t.Fatal(err)
 	}
 	record, err := daemon.ReadRunWaitAt(layout, batch, "row")
 	if err != nil || record.InitialAdmission || !record.UsageLimitProbe || !record.OperationDeadline.IsZero() || record.OperationID != "quota:row" || !record.LeaseExpiresAt.Equal(now.Add(daemon.RunRecoveryGrace)) {
 		t.Fatalf("nil logger lost runtime-derived quota schedule: %+v err=%v", record, err)
+	}
+}
+
+func TestWaitingContract_DegradedQuotaAccountingSurvivesSchedulerRestart(t *testing.T) {
+	root := testenv.MkdirShort(t, "sm-quota-degraded-restart-")
+	t.Chdir(root)
+	layout := paths.NewLayout(nil, root)
+	batch := layout.LocateBatch("batch", "")
+	now := time.Now().UTC()
+	log := &spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "row", Issue: 42, Timestamp: now.Add(-time.Minute), Payload: map[string]any{"branch": "42-work", "batch_id": "batch"}},
+		{Type: "run.await", RunID: "row", Issue: 42, Timestamp: now, Payload: map[string]any{
+			"await_reason": "usage-limit", "usage_limit_waited_seconds": 600,
+			"usage_limit_deadline_unix_seconds": now.Add(4*time.Hour + 50*time.Minute).Unix(),
+		}},
+	}}
+	record := daemon.RunWait{
+		Protocol: "run-wait/v1", RunID: "row", BatchID: "batch", Issue: 42,
+		Branch: "42-work", BaseBranch: "main", Ready: true, ReuseSession: true,
+		UsageLimitProbe: true, OperationID: "quota:row",
+	}
+	owner, err := newWaitOwner(layout, batch, record, func() time.Time { return now }, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := RowSpec{
+		RunID: "row", IssueNumber: 42, Mode: ModeContinue, ReuseSession: true,
+		Branches:       map[int]string{42: "42-work"},
+		quotaAllowance: usageLimitAllowance{probe: true}.withoutAccounting(),
+	}
+	if err := owner.checkpoint(row, true, 0); err != nil {
+		owner.close()
+		t.Fatal(err)
+	}
+	owner.close()
+
+	recovered, err := daemon.ReadRunWaitAt(layout, batch, "row")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !recovered.UsageLimitAccountingUnavailable || recovered.ReuseSession || !recovered.UsageLimitProbe {
+		t.Fatalf("scheduler checkpoint lost degraded quota policy: %+v", recovered)
+	}
+	states, err := events.ReadRunStates(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := states["row"]
+	allowance, err := (usageLimitAllowance{}).restoreCheckpoint(quotaPollingEvidence(state), recovered.UsageLimitAccountingUnavailable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allowance.canWait() || allowance.allowSessionReuse(recovered.ReuseSession) {
+		t.Fatalf("restart restored quota waits or session reuse after accounting failed: allowance=%+v wait=%+v", allowance, recovered)
 	}
 }
 
@@ -458,6 +514,89 @@ func TestWaitingContract_RenewalFailureStopsActiveExecution(t *testing.T) {
 	if result == nil || result.Runs[0].Status != "aborted" || len(states) != 1 || !states[0].IsTerminal() || states[0].Status() != "aborted" || len(factory.created) != 1 {
 		t.Fatalf("lease failure retained execution: result=%+v states=%+v", result, states)
 	}
+}
+
+// retryLog signals each retried ownership renewal written to the error log.
+type retryLog struct{ retried chan struct{} }
+
+func (l retryLog) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), "retrying while the last lease is valid") {
+		select {
+		case l.retried <- struct{}{}:
+		default:
+		}
+	}
+	return len(p), nil
+}
+
+func TestWaitingContract_TransientRenewalFailureKeepsActiveExecution(t *testing.T) {
+	root := testenv.MkdirShort(t, "sm-renew-retry-")
+	t.Chdir(root)
+	initGitRepo(t, root)
+	started := make(chan struct{})
+	var cancelled atomic.Bool
+	pulse := make(chan time.Time)
+	log := &spyEventLog{}
+	errorLog := retryLog{retried: make(chan struct{}, 1)}
+	factory := &controlledRunnableFactory{runnables: map[int]Runnable{42: waitingRunnableFunction(func(ctx context.Context) AgentRunResult {
+		close(started)
+		<-ctx.Done()
+		cancelled.Store(true)
+		return AgentRunResult{IssueNumber: 42, Status: "aborted", Branch: "42-work"}
+	})}}
+	cfg := &config.Config{Agent: "test", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"test": {Command: "true"}}}
+	o := NewOrchestrator(&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}}, &noopRenderer{}, &fakeConfigStore{config: cfg}, log, WithErrorLog(errorLog), WithRunnableFactory(factory), WithSandboxFactory(reviewWaitSchedulerSandboxFactory{}), WithRunSessionOpts(runSessionOptions{waitOwnerPulse: func(string) <-chan time.Time { return pulse }}))
+	request := Request{Issues: []int{42}, RunTS: "261005120000", RunShortID: "retry", Branches: map[int]string{42: "42-work"}}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan struct{})
+	go func() { defer close(done); _, _ = o.RunBatch(ctx, request) }()
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("agent did not start")
+	}
+	layout := paths.NewLayout(cfg, root)
+	waiting := filepath.Join(layout.StateDir, "waiting")
+	record := filepath.Join(waiting, buildRunID(42, request.RunTS, request.RunShortID)+".json")
+	// A regular file in place of the directory fails the renewal with ENOTDIR,
+	// even for root.
+	if err := os.RemoveAll(waiting); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(waiting, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pulse <- time.Now()
+	select {
+	case <-errorLog.retried:
+	case <-ctx.Done():
+		t.Fatal("transient renewal failure was not retried")
+	}
+	if err := os.Remove(waiting); err != nil {
+		t.Fatal(err)
+	}
+	pulse <- time.Now()
+	for {
+		if _, err := os.Stat(record); err == nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("ownership was not renewed after the transient failure")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	if cancelled.Load() {
+		t.Fatal("transient renewal failure cancelled active execution")
+	}
+	for _, state := range events.ProjectRunStates(log.snapshot()) {
+		if state.IsTerminal() {
+			t.Fatalf("transient renewal failure ended the row: %+v", state)
+		}
+	}
+	cancel()
+	<-done
 }
 
 func TestWaitingContract_ReviewerLaunchHistoryCannotPreemptApproval(t *testing.T) {
@@ -549,9 +688,9 @@ func TestWaitingContract_AdmissionToAwaitPreservesOperationAfterCrash(t *testing
 	if len(ready) != 1 || ready[0].Wait == nil || ready[0].Wait.Ready || !ready[0].Wait.OperationDeadline.Equal(now.Add(30*time.Minute).Truncate(time.Second)) {
 		t.Fatalf("new CI operation lost across admission/crash: %+v", ready)
 	}
-	status, _, handled := session.priorObservation("row", "42-fix", "head")
-	if !handled || status != "await" {
-		t.Fatalf("established CI operation could not survive transient observation: %q handled=%v", status, handled)
+	retained, established := newLifecycleObserver(session).priorOperationEvidence("row", "42-fix", "head")
+	if _, ok := retained["ci_wait"]; !established || !ok {
+		t.Fatalf("established CI operation could not survive transient observation: %v established=%v", retained, established)
 	}
 }
 
@@ -804,13 +943,11 @@ func TestWaitingContract_ObservationErrorKeepsOnlyEstablishedDeadline(t *testing
 				issueNumber: 42, issueState: "open", runID: "row",
 				opts: runSessionOptions{currentHead: func(string) (string, error) { return "current-sha", nil }},
 			}
-			status, extras, _ := s.handleLifecycleDecision(context.Background(), root, gateTestBranch, "", "row", true)
-			want := "failure"
-			if established {
-				want = "await"
-			}
-			if status != want {
-				t.Fatalf("established=%v observation=%q, want %s", established, status, want)
+			verdict := s.observeLifecycleWithHostPathsForTest(context.Background(), root, gateTestBranch, "", "row", true)
+			status, extras := verdict.status(), verdict.Evidence
+			// Issue #2938: either way the Run waits for GitHub to recover.
+			if status != "await" || extras["gate"] != gateGitHubUnavailable {
+				t.Fatalf("established=%v observation=%q %v, want the GitHub recovery wait", established, status, extras)
 			}
 			if established {
 				deadline, _, ok := lifecycleDeadline(extras)
@@ -1265,7 +1402,7 @@ func TestWaitingContract_ConsumedQuotaPollingStillPermitsOrdinaryRetries(t *test
 	e := o.newRunExecutor(context.Background(), BatchConfig{
 		Cfg: &config.Config{}, AgentCfg: config.BuiltInAgentPresets["opencode"].Agent("opencode"), IdentityResolver: noopIdentityResolver(), Retries: 1,
 	}, &freshSandboxFactory{}, nil)
-	result, _ := e.Execute(context.Background(), RowSpec{IssueNumber: 42, RunID: "row", Mode: ModeContinue, UsageLimitProbe: true, Branches: map[int]string{42: "42-limit"}})
+	result, _ := e.Execute(context.Background(), RowSpec{IssueNumber: 42, RunID: "row", Mode: ModeContinue, quotaAllowance: usageLimitAllowance{probe: true}, Branches: map[int]string{42: "42-limit"}})
 	if result.Status != "failure" || len(factory.created) != 2 || !result.UsageLimitReached || countEventsByType(log.snapshot(), "run.await") != 1 || countEventsByType(log.snapshot(), "run.retry") != 1 {
 		t.Fatalf("consumed polling renewed waiting or vetoed ordinary retries: result=%#v starts=%v events=%+v", result, factory.created, log.snapshot())
 	}
@@ -1300,12 +1437,11 @@ func TestWaitingContract_ExpiredQuotaProbeStillFinishesVerifiedMerge(t *testing.
 		AgentCfg: config.BuiltInAgentPresets["opencode"].Agent("opencode"),
 	}, &freshSandboxFactory{}, nil)
 	result, started := e.Execute(context.Background(), RowSpec{
-		IssueNumber:        42,
-		RunID:              "row",
-		Mode:               ModeContinue,
-		UsageLimitProbe:    true,
-		UsageLimitDeadline: now.Add(-time.Minute),
-		Branches:           map[int]string{42: branch},
+		IssueNumber:    42,
+		RunID:          "row",
+		Mode:           ModeContinue,
+		quotaAllowance: usageLimitAllowance{probe: true, deadline: now.Add(-time.Minute)},
+		Branches:       map[int]string{42: branch},
 	})
 	if started || result.Status != "success" {
 		t.Fatalf("expired quota probe = (started=%t, result=%#v), want observation-only success", started, result)

@@ -2,12 +2,12 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/opencode"
@@ -20,12 +20,17 @@ var errProbe = errors.New("probe failed")
 
 // withProbe installs a stub for opencode.VersionProbe that returns the
 // given version and error for the duration of t, restoring the
-// production seam when t finishes.
-func withProbe(t *testing.T, version string, err error) {
+// production seam when t finishes. It returns the stub's call count.
+func withProbe(t *testing.T, version string, err error) *int {
 	t.Helper()
 	prev := opencode.VersionProbe
 	t.Cleanup(func() { opencode.VersionProbe = prev })
-	opencode.VersionProbe = func() (string, error) { return version, err }
+	calls := 0
+	opencode.VersionProbe = func() (string, error) {
+		calls++
+		return version, err
+	}
+	return &calls
 }
 
 // withDockerfilePin writes a synthetic .sandman/Dockerfile at dir
@@ -207,41 +212,33 @@ func TestWarnOpencodeVersionMismatch_SilentWhenAgentNotOpencode(t *testing.T) {
 	}
 }
 
+// TestWarnOpencodeVersionMismatch_SilentWhenProbeFails pins that any
+// probe failure, including the bounded probe's timeout, takes the silent
+// no-probe path. The opencode package covers the real host execution
+// behind the seam.
 func TestWarnOpencodeVersionMismatch_SilentWhenProbeFails(t *testing.T) {
-	dir := t.TempDir()
-	withProbe(t, "", errProbe)
-	withDockerfilePin(t, dir, "1.15.0")
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "probe error", err: errProbe},
+		{name: "probe timeout", err: context.DeadlineExceeded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			calls := withProbe(t, "", tc.err)
+			withDockerfilePin(t, dir, "1.15.0")
 
-	cmd, buf, _ := newWarningTestCmd(t)
-	warnOpencodeVersionMismatch(cmd, "opencode", "podman", dir, defaultCfgSandbox(""))
-	if got := buf.String(); got != "" {
-		t.Errorf("probe failure must be silent; got:\n%s", got)
-	}
-}
+			cmd, errBuf, outBuf := newWarningTestCmd(t)
+			warnOpencodeVersionMismatch(cmd, "opencode", "podman", dir, defaultCfgSandbox(""))
 
-// TestWarnOpencodeVersionMismatch_HangingHostProbeStaysSilent runs the
-// production probe against a host opencode that never answers. The
-// bounded probe must let run/review startup continue, and its timeout
-// must stay as silent as a missing binary.
-func TestWarnOpencodeVersionMismatch_HangingHostProbeStaysSilent(t *testing.T) {
-	binDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(binDir, "opencode"), []byte("#!/bin/sh\nexec /bin/sleep 600\n"), 0o755); err != nil {
-		t.Fatalf("write fake opencode: %v", err)
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	dir := t.TempDir()
-	withDockerfilePin(t, dir, "1.15.0")
-
-	cmd, errBuf, outBuf := newWarningTestCmd(t)
-	start := time.Now()
-	warnOpencodeVersionMismatch(cmd, "opencode", "podman", dir, defaultCfgSandbox(""))
-	elapsed := time.Since(start)
-
-	if limit := opencode.VersionProbeTimeout + 10*time.Second; elapsed > limit {
-		t.Fatalf("hanging host probe blocked startup for %s, want under %s", elapsed, limit)
-	}
-	if errBuf.Len() != 0 || outBuf.Len() != 0 {
-		t.Errorf("probe timeout must be silent; stderr:\n%s\nstdout:\n%s", errBuf.String(), outBuf.String())
+			if *calls != 1 {
+				t.Fatalf("probe calls = %d, want 1", *calls)
+			}
+			if errBuf.Len() != 0 || outBuf.Len() != 0 {
+				t.Errorf("probe failure must be silent; stderr:\n%s\nstdout:\n%s", errBuf.String(), outBuf.String())
+			}
+		})
 	}
 }
 
@@ -292,5 +289,29 @@ func TestWarnOpencodeVersionMismatch_UsesCatalogWhenNoDockerfile(t *testing.T) {
 	warnOpencodeVersionMismatch(cmd, "opencode", "podman", dir, defaultCfgSandbox(""))
 	if got := buf.String(); !strings.Contains(got, "warning") {
 		t.Errorf("missing Dockerfile must surface catalog pin; got:\n%s", got)
+	}
+}
+
+func TestWarnOpencodeVersionMismatch_V2Pin(t *testing.T) {
+	dir := t.TempDir()
+	withDockerfilePin(t, dir, "2.1.2")
+	path := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, bytes.ReplaceAll(data, []byte("opencode-ai"), []byte("@opencode/cli")), 0644); err != nil {
+		t.Fatal(err)
+	}
+	withProbe(t, "2.1.2", nil)
+	cmd, stderr, _ := newWarningTestCmd(t)
+	warnOpencodeVersionMismatch(cmd, "opencode-v2", "docker", dir, defaultCfgSandbox(""))
+	if stderr.Len() != 0 {
+		t.Fatalf("matching v2 image warned: %s", stderr)
+	}
+	withProbe(t, "2.1.3", nil)
+	warnOpencodeVersionMismatch(cmd, "opencode-v2", "docker", dir, defaultCfgSandbox(""))
+	if !strings.Contains(stderr.String(), "sandbox version (2.1.2)") {
+		t.Fatalf("wrong mismatch: %s", stderr)
 	}
 }

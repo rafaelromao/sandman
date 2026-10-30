@@ -2,14 +2,12 @@ package review
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +22,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/reviewlaunch"
+	"github.com/rafaelromao/sandman/internal/reviewpub"
 	"github.com/rafaelromao/sandman/internal/runid"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/rafaelromao/sandman/internal/socketpath"
@@ -162,8 +161,6 @@ type pendingPostEntry struct {
 
 const pendingPublicationMarkerName = "pending-publication.json"
 
-const publicationIdentityPrefix = "<!-- sandman-publication:"
-
 type pendingPublicationMarker struct {
 	Version   int       `json:"version"`
 	PR        int       `json:"pr"`
@@ -173,13 +170,16 @@ type pendingPublicationMarker struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
-// publicationBody keeps the rendered decision unchanged while adding an
+// publicationBody keeps the rendered decision unchanged while adding the
+// machine-readable verdict (when the decision carries a closed-set one) and an
 // invisible request identity. Body equality alone cannot distinguish a new
 // review from an older request with the same decision text during recovery.
-func publicationBody(redacted, triggerKey string) string {
-	identity := sha256.Sum256([]byte(triggerKey))
-	return strings.TrimRight(redacted, "\n") + "\n\n" +
-		publicationIdentityPrefix + fmt.Sprintf("%x", identity[:]) + " -->\n"
+func publicationBody(redacted, triggerKey, head string) string {
+	return reviewpub.Body(redacted, triggerKey, head)
+}
+
+func publicationIdentity(triggerKey, head string) string {
+	return reviewpub.Identity(triggerKey, head)
 }
 
 // Daemon polls the repo for /sandman review comments and launches review
@@ -483,6 +483,10 @@ func (d *Daemon) quotaProbeRecovered(ctx context.Context) bool {
 		Agent:   d.effectiveAgent(),
 		Model:   d.effectiveModel(),
 		Variant: d.effectiveVariant(),
+		// The review variant is already resolved, even when it is empty. Quota
+		// probes are ordinary prompt-only runs, so leaving this unset would
+		// substitute the implementation variant during batch preparation.
+		VariantSet: true,
 		PromptConfig: prompt.RenderConfig{
 			PromptFlag: "quota-probe",
 		},
@@ -1082,22 +1086,21 @@ func (d *Daemon) loadPendingPosts() error {
 			continue
 		}
 		runDir := filepath.Join(entry.Path, "runs", rowID)
+		if snapshot, err := readReviewSnapshot(runDir); err == nil && snapshot.Invalidated {
+			if err := removePendingPublicationMarker(runDir); err != nil {
+				d.logf("remove retired publication outbox %s: %v", runDir, err)
+			}
+			continue
+		}
 		reviewState := filepath.Join(runDir, "review-state.json")
 		state, stateErr := seenStateReader(runDir)
 		marker, markerErr := readPendingPublicationMarker(runDir)
 		if markerErr == nil && marker.PR == entry.PR {
-			terminal := false
-			terminalStatus := ""
+			var terminalState *batchindex.ReviewState
 			if stateErr == nil {
-				for _, sc := range state.SeenComments {
-					if sc.CommentID == marker.CommentID && shouldSkipDedupStatus(sc.Status) {
-						terminal = true
-						terminalStatus = sc.Status
-						break
-					}
-				}
+				terminalState = &state
 			}
-			if !terminal {
+			if d.reconcileStartupOutbox(runDir, marker, terminalState) {
 				decisionDir := runDir
 				if marker.Body == "" {
 					var ok bool
@@ -1115,10 +1118,6 @@ func (d *Daemon) loadPendingPosts() error {
 					reviewState: reviewState,
 					body:        marker.Body,
 					since:       marker.Timestamp,
-				}
-			} else if terminalStatus == "success" {
-				if err := removePendingPublicationMarker(runDir); err != nil {
-					d.logf("remove acknowledged publication outbox %s: %v", runDir, err)
 				}
 			}
 		}
@@ -1176,6 +1175,19 @@ func (d *Daemon) SocketPath() string {
 		return d.Layout.ReviewSocketPath()
 	}
 	return socketpath.Path(filepath.Join(d.BaseDir, "reviews", "review.sock"))
+}
+
+// repoRoot is the host repository whose .sandman directory the daemon
+// writes review Batches into: the layout's root, else the parent of a
+// .sandman BaseDir. A legacy BaseDir outside any .sandman layout has none.
+func (d *Daemon) repoRoot() string {
+	if d.Layout.RepoRoot != "" {
+		return d.Layout.RepoRoot
+	}
+	if filepath.Base(d.BaseDir) == ".sandman" {
+		return filepath.Dir(d.BaseDir)
+	}
+	return ""
 }
 
 // SocketAddr returns the address the daemon is listening on. The
@@ -1610,43 +1622,7 @@ func (d *Daemon) markCommentsRead(pr github.PR) {
 // reviewTriggerKey identifies one immutable revision of a GitHub comment.
 // Raw IDs remain reserved for GitHub API calls such as reactions.
 func reviewTriggerKey(comment github.PRComment) string {
-	if comment.UpdatedAt.IsZero() {
-		return comment.ID
-	}
-	return fmt.Sprintf("%s@%d", comment.ID, comment.UpdatedAt.UTC().UnixNano())
-}
-
-func reviewTriggerTimestamp(comment github.PRComment) time.Time {
-	if !comment.UpdatedAt.IsZero() {
-		return comment.UpdatedAt
-	}
-	return comment.CreatedAt
-}
-
-func hasLaterDaemonReviewResponse(trigger github.PRComment, comments []github.PRComment, authenticatedLogin string) bool {
-	if strings.TrimSpace(authenticatedLogin) == "" {
-		return false
-	}
-	triggeredAt := reviewTriggerTimestamp(trigger)
-	for _, comment := range comments {
-		if !comment.CreatedAt.After(triggeredAt) || !strings.EqualFold(strings.TrimSpace(comment.AuthorLogin), strings.TrimSpace(authenticatedLogin)) {
-			continue
-		}
-		if hasMarkdownHeading(comment.Body, "Summary") && hasMarkdownHeading(comment.Body, "Decision") {
-			return true
-		}
-	}
-	return false
-}
-
-func hasMarkdownHeading(body, heading string) bool {
-	want := "## " + heading
-	for _, line := range strings.Split(body, "\n") {
-		if strings.EqualFold(strings.TrimSpace(line), want) {
-			return true
-		}
-	}
-	return false
+	return reviewpub.TriggerKey(comment.ID, comment.UpdatedAt)
 }
 
 // processPR scans one PR's comments and launches a review agent for the
@@ -1678,229 +1654,84 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) (operationErr erro
 		return nil
 	}
 
-	sort.Slice(comments, func(i, j int) bool {
-		return comments[i].CreatedAt.Before(comments[j].CreatedAt)
-	})
-
-	// priorReviewExists is computed from the raw comment list (before
-	// any trigger / bot-shaped filter) and feeds the {{PRIOR_REVIEW_EXISTS}}
-	// substitution in the review prompt (issue #1892). The flag tells
-	// the review agent whether to render the `## Previous review
-	// progress` section at all. IsReviewRequest excludes implementor
-	// triggers (`/sandman review …`, `@bot /sandman review …`) so they
-	// are NOT counted as prior reviews. Bot self-posts (filtered out of
-	// the trigger list by LooksLikeBotReviewBody below) ARE counted as
-	// prior reviews — they are reviews of the PR, just not fresh
-	// triggers. The two filters answer different questions and coexist.
-	priorReviewExists := false
-	var priorReviewEntries []string
-	for _, c := range comments {
-		if !IsReviewRequest(c.Body) {
-			priorReviewExists = true
-			priorReviewEntries = append(priorReviewEntries, c.Body)
-		}
-	}
 	// Conversation comments do not include GitHub's formal reviews or inline
 	// review comments. Supply those sources through optional client capabilities
 	// so daemon reviewers can account for the complete authoritative history
 	// without making pull-request API calls from the review worktree.
+	var formalReviews []github.PRReview
 	if lister, ok := d.GitHub.(github.PRReviewLister); ok {
-		reviews, listErr := lister.ListPRReviews(ctx, prNumber)
+		var listErr error
+		formalReviews, listErr = lister.ListPRReviews(ctx, prNumber)
 		if listErr != nil {
 			return fmt.Errorf("list formal reviews for PR #%d: %w", prNumber, listErr)
-		} else {
-			for _, review := range reviews {
-				priorReviewExists = true
-				priorReviewEntries = append(priorReviewEntries, fmt.Sprintf("### Formal review (%s)\n\n%s", review.State, review.Body))
-			}
 		}
 	}
+	var inlineReviews []github.PRReviewComment
 	if lister, ok := d.GitHub.(github.PRReviewCommentLister); ok {
-		inline, listErr := lister.ListPRReviewComments(ctx, prNumber)
+		var listErr error
+		inlineReviews, listErr = lister.ListPRReviewComments(ctx, prNumber)
 		if listErr != nil {
 			return fmt.Errorf("list inline reviews for PR #%d: %w", prNumber, listErr)
-		} else {
-			for _, comment := range inline {
-				priorReviewExists = true
-				location := comment.Path
-				if comment.Line > 0 {
-					location = fmt.Sprintf("%s:%d", location, comment.Line)
-				}
-				priorReviewEntries = append(priorReviewEntries, fmt.Sprintf("### Inline review (%s)\n\n%s", location, comment.Body))
-			}
-		}
-	}
-	priorReviewContext := ""
-	if len(priorReviewEntries) > 0 {
-		priorReviewContext = "## Authoritative prior review entries\n\n" + strings.Join(priorReviewEntries, "\n\n---\n\n")
-	}
-
-	type unseenTrigger struct {
-		comment github.PRComment
-		focus   string
-		key     string
-	}
-	var triggers []unseenTrigger
-	for _, comment := range comments {
-		if d.authenticatedLogin != "" && (strings.TrimSpace(comment.AuthorLogin) == "" || !strings.EqualFold(comment.AuthorLogin, d.authenticatedLogin)) {
-			continue
-		}
-		// Self-post filter (issue #1648, ordering fixed by #1702):
-		// runs BEFORE ParseTrigger so a comment whose body matches
-		// a hash the bot has previously posted is dropped before its
-		// body is parsed for a trigger. This protects the daemon
-		// from re-triggering a review on the bot's own review-body,
-		// which contains the literal `/sandman review` substring in
-		// its `## Previous review progress` section. The
-		// Structural self-defence (issues #1821 / #1848): a body
-		// that carries the `## Previous review progress` heading
-		// AND the literal `/sandman review` trigger substring is
-		// overwhelmingly likely to be a previous bot review
-		// body, not a fresh implementor trigger. Post-#1848 the
-		// `SelfPostStore` is gone and this sniff is the SOLE
-		// gate that drops bot-shaped bodies before
-		// `ParseTrigger`. Daemon-side redaction (issue #1845)
-		// makes this a defence-in-depth measure — the bot body
-		// never contains the trigger substring in the normal
-		// case — but it remains the structural last line of
-		// defence against a previous bot review re-matching the
-		// trigger regex. The asymmetric contract — bot bodies
-		// are flagged, bare implementor triggers are not — is
-		// pinned by `TestLooksLikeBotReviewBody` in
-		// `trigger_test.go`.
-		if LooksLikeBotReviewBody(comment.Body) {
-			d.logf("PR #%d: comment %s structurally matches a bot review body; dropping before ParseTrigger (issue #1821 self-defence)", prNumber, comment.ID)
-			continue
-		}
-		focus, ok := ParseTrigger(comment.Body)
-		if ok {
-			triggers = append(triggers, unseenTrigger{comment: comment, focus: focus, key: reviewTriggerKey(comment)})
-			continue
-		}
-	}
-	if len(triggers) == 0 {
-		return nil
-	}
-	for _, trigger := range triggers {
-		if err := d.reconcileCommentRevision(prNumber, trigger.comment, trigger.key); err != nil {
-			return err
 		}
 	}
 
-	// A durable publication outbox takes precedence over terminal-cache
-	// filtering. Acknowledgement may have succeeded remotely while the
-	// local state write or outbox removal failed; recovery must inspect
-	// that body before any launch decision can discard the trigger.
-	d.pendingPostMu.Lock()
-	pendingKeys := make(map[string]bool, len(d.pendingPost[prNumber]))
-	for key := range d.pendingPost[prNumber] {
-		pendingKeys[key] = true
-	}
-	d.pendingPostMu.Unlock()
-	if len(pendingKeys) > 0 {
-		remaining := make([]unseenTrigger, 0, len(triggers))
-		for _, trigger := range triggers {
-			if pendingKeys[trigger.key] && d.tryRehydratePost(ctx, prNumber, trigger.comment) {
-				continue
-			}
-			remaining = append(remaining, trigger)
-		}
-		triggers = remaining
-		if len(triggers) == 0 {
-			return nil
-		}
-	}
-
-	// Cross-run dedup: read terminal-seen membership from the
-	// per-process in-memory cache populated at construction
-	// (issue #1480). ADR-0034 §3 accepts the rename-loser
-	// trade-off; the cache only short-circuits what is already
-	// persisted on disk. The read lock must be held across the
-	// per-trigger lookup because the inner map is shared with
-	// MarkTerminalSeen / Forget on sibling PRs in the same tick
-	// (slice-A PR review, race-detector finding).
-	d.seenCacheMu.RLock()
-	var unprocessed []unseenTrigger
-	for _, t := range triggers {
-		if d.seenCache[prNumber][t.key] {
-			d.logf("comment %s already terminal-seen, skipping", t.key)
-			continue
-		}
-		// Issue #2211: per-trigger retry-budget gate. Skips
-		// triggers whose persisted NextAttemptAt is in the
-		// future, without acquiring a slot and without log spam
-		// — the next tick after the stamp elapses will retry
-		// the launch. The stamp is per-(prNumber, commentID)
-		// so a fresh trigger on the same PR is not blocked by
-		// an older comment's stamp.
-		if stamp := d.NextAttemptAt(prNumber, t.key); !stamp.IsZero() && stamp.After(d.now()) {
-			continue
-		}
-		unprocessed = append(unprocessed, t)
-	}
-	d.seenCacheMu.RUnlock()
-	if len(unprocessed) == 0 {
-		return nil
-	}
-
-	// Rehydrate-on-startup (issue #1847 S4): consult pendingPost for
-	// each remaining trigger. Issue #1849 (S6): the lazy-verify
-	// map is gone, so this is the SOLE rehydrate gate. TryRehydratePost
-	// returns true when the entry was handled (success, failure,
-	// ctx-cancel, or kept-for-retry) — the trigger is dropped from
-	// unprocessed. Returns false when the entry is stale (decision.md
-	// missing at tick time) — the trigger falls through to the launch
-	// path.
-	d.pendingPostMu.Lock()
-	hasPostEntry := map[string]bool{}
-	for cid := range d.pendingPost[prNumber] {
-		hasPostEntry[cid] = true
-	}
-	d.pendingPostMu.Unlock()
-	if len(hasPostEntry) > 0 {
-		var filtered []unseenTrigger
-		for _, t := range unprocessed {
-			if hasPostEntry[t.key] {
-				if d.tryRehydratePost(ctx, prNumber, t.comment) {
-					continue
+	selection, err := selectReviewTriggers(ctx, triggerSelectionInput{
+		Comments:             comments,
+		FormalReviews:        formalReviews,
+		InlineReviewComments: inlineReviews,
+		AuthenticatedLogin:   d.authenticatedLogin,
+		Now:                  d.now(),
+		ReconcileRevision: func(_ context.Context, comment github.PRComment, key string) error {
+			return d.reconcileCommentRevision(prNumber, comment, key)
+		},
+		PendingPublicationSnapshot: func(candidates []reviewTrigger) map[string]bool {
+			d.pendingPostMu.Lock()
+			defer d.pendingPostMu.Unlock()
+			pending := make(map[string]bool, len(candidates))
+			for _, candidate := range candidates {
+				if _, ok := d.pendingPost[prNumber][candidate.key]; ok {
+					pending[candidate.key] = true
 				}
 			}
-			filtered = append(filtered, t)
-		}
-		if len(filtered) == 0 {
-			return nil
-		}
-		unprocessed = filtered
+			return pending
+		},
+		RehydratePublication: func(ctx context.Context, comment github.PRComment) bool {
+			return d.tryRehydratePost(ctx, prNumber, comment)
+		},
+		DurableStateSnapshot: func(candidates []reviewTrigger) triggerDurableState {
+			d.seenCacheMu.RLock()
+			defer d.seenCacheMu.RUnlock()
+			state := triggerDurableState{
+				TerminalSeen:  make(map[string]bool, len(candidates)),
+				NextAttemptAt: make(map[string]time.Time, len(candidates)),
+			}
+			for _, candidate := range candidates {
+				state.TerminalSeen[candidate.key] = d.seenCache[prNumber][candidate.key]
+				state.NextAttemptAt[candidate.key] = d.NextAttemptAt(prNumber, candidate.key)
+			}
+			return state
+		},
+		CurrentHead: func(ctx context.Context) (string, error) {
+			pr, err := d.GitHub.FetchPR(ctx, prNumber)
+			if err != nil {
+				return "", err
+			}
+			if pr == nil || strings.TrimSpace(pr.HeadRefOid) == "" {
+				return "", errors.New("missing current head")
+			}
+			return pr.HeadRefOid, nil
+		},
+	})
+	if err != nil {
+		return err
 	}
-
-	// A later daemon response suppresses a fresh launch, but it must not
-	// prevent a matching pending publication from being acknowledged first.
-	// Keep this filter before seen-cache, retry-budget, and newest-trigger
-	// handling so answered requests retain their existing launch semantics.
-	filtered := triggers[:0]
-	for _, trigger := range triggers {
-		if hasLaterDaemonReviewResponse(trigger.comment, comments, d.authenticatedLogin) {
-			d.logf("PR #%d request comment %s has a later daemon review response; skipping", prNumber, trigger.comment.ID)
-			continue
-		}
-		filtered = append(filtered, trigger)
+	for _, trigger := range selection.Answered {
+		d.logf("PR #%d request comment %s has a later daemon review response %s; skipping", prNumber, trigger.Trigger.comment.ID, trigger.Response.ID)
 	}
-	triggers = filtered
-	if len(triggers) == 0 {
+	if selection.Launch == nil {
 		return nil
 	}
-
-	// Lazy verify (issue #1482) is gone (issue #1849);
-	// no in-memory pendingSet filter is needed — the seen-cache
-	// short-circuit (driven by MarkSeen on success / failure) is
-	// the sole deduplication gate.
-
-	newest := unprocessed[0]
-	for i := 1; i < len(unprocessed); i++ {
-		if unprocessed[i].comment.CreatedAt.After(newest.comment.CreatedAt) {
-			newest = unprocessed[i]
-		}
-	}
+	newest := *selection.Launch
 
 	comment := newest.comment
 	focus := newest.focus
@@ -1927,7 +1758,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) (operationErr erro
 		return nil
 	}
 	statePath := d.ReviewStatePath(reviewRunFolder)
-	for _, trigger := range unprocessed {
+	for _, trigger := range selection.Eligible {
 		d.trackReviewStatePath(prNumber, trigger.key, statePath)
 	}
 
@@ -1947,10 +1778,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) (operationErr erro
 	// Superseded marking is independent of RunBatch and stays
 	// synchronous so the goroutine and the sync preamble never
 	// touch the ReviewStateStore concurrently.
-	for _, t := range unprocessed {
-		if t.key == newest.key {
-			continue
-		}
+	for _, t := range selection.Superseded {
 		if state.IsSeen(t.key) {
 			continue
 		}
@@ -1977,7 +1805,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) (operationErr erro
 		defer d.inFlight.Done()
 		defer d.releasePRSlot(prNumber)
 
-		launchErr := d.launchReviewRevision(ctx, prNumber, focus, newest.key, comment.ID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs, state, priorReviewExists, priorReviewContext)
+		launchErr := d.launchReviewRevision(ctx, prNumber, focus, newest.key, comment.ID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs, state, selection.PriorReviewExists, selection.PriorReviewContext)
 		if launchErr != nil {
 			var reported *reportedLaunchFailure
 			if !errors.As(launchErr, &reported) {
@@ -2349,6 +2177,9 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	if pr == nil {
 		return d.recordLaunchFailure(ctx, triggerKey, state, errors.New("fetch PR: empty response"))
 	}
+	if strings.TrimSpace(pr.HeadRefOid) == "" {
+		return d.recordLaunchFailure(ctx, triggerKey, state, errors.New("fetch PR: missing review head"))
+	}
 	if pr != nil {
 		if strings.TrimSpace(pr.HeadRefOid) == "" {
 			launchClaim, lookupClaim = lookupClaim, nil
@@ -2394,11 +2225,7 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	// ".sandman"-suffix guard keeps the translation a no-op for
 	// tests (newDaemonForTest passes a tmp dir directly, no
 	// .sandman layout).
-	repoRoot := ""
-	if filepath.Base(d.BaseDir) == ".sandman" {
-		repoRoot = filepath.Dir(d.BaseDir)
-	}
-	agentRunDir := sandbox.ContainerVisiblePath(d.reviewWorktreePath(prNumber, triggerKey), repoRoot, sandboxMode)
+	agentRunDir := sandbox.ContainerVisiblePath(d.reviewWorktreePath(prNumber, triggerKey), d.repoRoot(), sandboxMode)
 
 	acceptanceCriteria := ""
 	if linkedIssue := pr.LinkedIssueNumber(); linkedIssue > 0 {
@@ -2471,8 +2298,14 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	}
 	d.logf("repo=%s agent=%s model=%s pr=%d", repoName, agentName, modelName, prNumber)
 
+	if err := writeReviewSnapshot(reviewRunFolder, reviewSnapshot{Version: 1, PR: prNumber, Request: triggerKey, Head: pr.HeadRefOid}); err != nil {
+		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("persist review snapshot: %w", err))
+	}
+	rendered = fmt.Sprintf("## Review snapshot\n\nCheckout commit: `%s`\nComparison base: `origin/%s`\n\n", pr.HeadRefOid, pr.BaseRefName) + rendered
 	req := batch.Request{
 		Agent:                agentName,
+		BaseBranch:           pr.BaseRefName,
+		ReviewHeadSHA:        pr.HeadRefOid,
 		Model:                modelName,
 		Variant:              d.effectiveVariant(),
 		VariantSet:           d.VariantSet,
@@ -2494,6 +2327,7 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 		ReviewFocus:  focus,
 		RunID:        perRowRunID,
 		RunDir:       reviewRunFolder,
+		RepoRoot:     d.repoRoot(),
 		WorktreeDir:  d.reviewWorktreeBase(),
 		// Issue #2367: the daemon has just materialised the rules file
 		// (initPromptTemplate above) at d.QualityRulesPath(). The
@@ -2638,15 +2472,16 @@ func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, comm
 		*preserveWorktree = true
 	}
 
-	redacted := publicationBody(RedactBody(string(body)), commentID)
-	if err := d.persistPublicationOutbox(reviewRunFolder, pendingPublicationMarker{
-		Version:   2,
-		PR:        prNumber,
-		CommentID: commentID,
-		RunID:     filepath.Base(reviewRunFolder),
-		Body:      redacted,
-		Timestamp: d.now(),
-	}); err != nil {
+	snapshot, snapshotErr := d.currentReviewSnapshot(ctx, prNumber, commentID, reviewRunFolder)
+	if err := snapshotErr; err != nil {
+		if errors.Is(err, errStaleReviewSnapshot) {
+			return d.recordLaunchFailure(ctx, commentID, state, err)
+		}
+		d.recordPendingPublication(prNumber, commentID, decisionDir, reviewRunFolder, "", state, preserveWorktree)
+		return err
+	}
+	redacted, err := d.stagePublication(prNumber, commentID, reviewRunFolder, body, snapshot.Head)
+	if err != nil {
 		d.logf("PR #%d: persist publication outbox failed: %v; preserving the review worktree", prNumber, err)
 		if preserveWorktree != nil {
 			*preserveWorktree = true
@@ -2670,8 +2505,14 @@ func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, comm
 		d.recordPendingPublication(prNumber, commentID, decisionDir, reviewRunFolder, redacted, state, preserveWorktree)
 		return cerr
 	}
-	postErr := postWithRetry(ctx, d, prNumber, redacted)
+	postErr := postWithRetry(ctx, d, prNumber, commentID, snapshot.Head, redacted, func() error {
+		_, err := d.currentReviewSnapshot(ctx, prNumber, commentID, reviewRunFolder)
+		return err
+	})
 	if postErr != nil {
+		if errors.Is(postErr, errStaleReviewSnapshot) {
+			return d.recordLaunchFailure(ctx, commentID, state, postErr)
+		}
 		if cerr := ctx.Err(); cerr != nil {
 			d.logf("PR #%d: ctx cancelled during post; retaining durable decision for publication recovery", prNumber)
 			d.recordPendingPublication(prNumber, commentID, decisionDir, reviewRunFolder, redacted, state, preserveWorktree)
@@ -2699,16 +2540,7 @@ func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, comm
 	if preserveWorktree != nil {
 		*preserveWorktree = false
 	}
-	if state != nil {
-		if err := state.MarkSeen(commentID, "success"); err != nil {
-			d.registerPendingPost(prNumber, commentID, decisionDir, reviewRunFolder, redacted)
-			return fmt.Errorf("mark %s success: %w", commentID, err)
-		}
-	}
-	if err := removePendingPublicationMarker(reviewRunFolder); err != nil {
-		d.logf("PR #%d: remove publication outbox: %v", prNumber, err)
-	}
-	return nil
+	return d.acknowledgePublication(prNumber, commentID, decisionDir, reviewRunFolder, redacted, state)
 }
 
 // postWithRetry calls CommentPoster.PostComment up to
@@ -2716,18 +2548,21 @@ func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, comm
 // postStepBackoffs[attempt-1]. Returns the last error from
 // PostComment on exhaustion, or ctx.Err() if the context is
 // cancelled at any point. Issue #1891.
-func postWithRetry(ctx context.Context, d *Daemon, prNumber int, body string) error {
+func postWithRetry(ctx context.Context, d *Daemon, prNumber int, triggerKey, head, body string, validate func() error) error {
 	var lastErr error
 	for attempt := 1; attempt <= PostStepMaxAttempts; attempt++ {
 		if cerr := ctx.Err(); cerr != nil {
 			return cerr
+		}
+		if err := validate(); err != nil {
+			return err
 		}
 		// The first post belongs to this decision and must not be
 		// suppressed by an identical body from an older request. After
 		// a failed post, the remote result is ambiguous, so exact-match
 		// lookup protects retries from duplicating a comment.
 		if attempt > 1 {
-			alreadyPosted, err := publicationAlreadyPosted(ctx, d, prNumber, body)
+			alreadyPosted, err := d.publicationLanded(ctx, prNumber, triggerKey, head)
 			if err != nil {
 				lastErr = err
 				if attempt < PostStepMaxAttempts {
@@ -2743,7 +2578,10 @@ func postWithRetry(ctx context.Context, d *Daemon, prNumber int, body string) er
 				continue
 			}
 			if alreadyPosted {
-				return nil
+				return validate()
+			}
+			if err := validate(); err != nil {
+				return err
 			}
 		}
 		if err := d.CommentPoster.PostComment(ctx, prNumber, body); err != nil {
@@ -2766,22 +2604,9 @@ func postWithRetry(ctx context.Context, d *Daemon, prNumber int, body string) er
 		if attempt > 1 {
 			d.logf("PR #%d: post succeeded on attempt %d/%d", prNumber, attempt, PostStepMaxAttempts)
 		}
-		return nil
+		return validate()
 	}
 	return lastErr
-}
-
-func publicationAlreadyPosted(ctx context.Context, d *Daemon, prNumber int, body string) (bool, error) {
-	comments, err := d.GitHub.ListPRComments(ctx, prNumber)
-	if err != nil {
-		return false, fmt.Errorf("list comments for publication recovery: %w", err)
-	}
-	for _, comment := range comments {
-		if comment.Body == body {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 // effectivePostBackoffs returns the backoff schedule used by
@@ -2936,6 +2761,10 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 	}
 	d.pendingPostMu.Unlock()
 
+	snapshot, snapshotErr := d.currentReviewSnapshot(ctx, prNumber, triggerKey, filepath.Dir(entry.reviewState))
+	if err := snapshotErr; err != nil {
+		return d.handlePendingSnapshotFailure(ctx, prNumber, triggerKey, err)
+	}
 	body := []byte(entry.body)
 	if entry.body == "" {
 		decisionPath := filepath.Join(entry.runDir, "decision.md")
@@ -2944,12 +2773,7 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 			if os.IsNotExist(statErr) {
 				// Stale entry: drop and fall through to launch.
 				d.logf("PR #%d comment %s: rehydrate entry stale, decision.md missing at tick time, falling through to launch (issue #1847)", prNumber, comment.ID)
-				d.pendingPostMu.Lock()
-				delete(d.pendingPost[prNumber], triggerKey)
-				if len(d.pendingPost[prNumber]) == 0 {
-					delete(d.pendingPost, prNumber)
-				}
-				d.pendingPostMu.Unlock()
+				d.dropPendingPost(prNumber, triggerKey)
 				return false
 			}
 			// Read failed for some other reason (perm denied, IO).
@@ -2968,12 +2792,7 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 			// drop-and-fallthrough to launch, mirroring the missing
 			// branch.
 			d.logf("PR #%d comment %s: rehydrate entry stale, decision.md is not a regular file at tick time, falling through to launch (issue #1949)", prNumber, comment.ID)
-			d.pendingPostMu.Lock()
-			delete(d.pendingPost[prNumber], triggerKey)
-			if len(d.pendingPost[prNumber]) == 0 {
-				delete(d.pendingPost, prNumber)
-			}
-			d.pendingPostMu.Unlock()
+			d.dropPendingPost(prNumber, triggerKey)
 			return false
 		}
 		var err error
@@ -2987,19 +2806,13 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 			d.observeHealthFailure(ctx, requestHealthKey(prNumber, triggerKey), "read pending review decision", prNumber, err)
 			return true
 		}
-		body = []byte(publicationBody(RedactBody(string(body)), triggerKey))
-		if err := d.persistPublicationOutbox(filepath.Dir(entry.reviewState), pendingPublicationMarker{
-			Version:   2,
-			PR:        prNumber,
-			CommentID: triggerKey,
-			RunID:     filepath.Base(filepath.Dir(entry.reviewState)),
-			Body:      string(body),
-			Timestamp: d.now(),
-		}); err != nil {
+		staged, err := d.stagePublication(prNumber, triggerKey, filepath.Dir(entry.reviewState), body, snapshot.Head)
+		if err != nil {
 			d.logf("PR #%d comment %s: upgrade publication outbox: %v; keeping entry for retry", prNumber, comment.ID, err)
 			d.observeHealthFailure(ctx, requestHealthKey(prNumber, triggerKey), "upgrade pending publication outbox", prNumber, err)
 			return true
 		}
+		body = []byte(staged)
 		d.pendingPostMu.Lock()
 		if pending := d.pendingPost[prNumber]; pending != nil {
 			if current, ok := pending[triggerKey]; ok {
@@ -3008,6 +2821,9 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 			}
 		}
 		d.pendingPostMu.Unlock()
+	}
+	if !publicationIdentified(string(body), triggerKey, snapshot.Head) {
+		return d.handlePendingSnapshotFailure(ctx, prNumber, triggerKey, invalidateReviewSnapshot(filepath.Dir(entry.reviewState), snapshot))
 	}
 
 	// Honour ctx cancellation observed between ReadFile and the
@@ -3019,11 +2835,14 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 		return true
 	}
 
-	alreadyPosted, lookupErr := publicationAlreadyPosted(ctx, d, prNumber, string(body))
+	alreadyPosted, lookupErr := d.publicationLanded(ctx, prNumber, triggerKey, snapshot.Head)
 	if lookupErr != nil {
 		d.logf("PR #%d comment %s: rehydrate publication lookup failed: %v; keeping entry", prNumber, comment.ID, lookupErr)
 		d.observeHealthFailure(ctx, requestHealthKey(prNumber, triggerKey), "observe pending review publication", prNumber, lookupErr)
 		return true
+	}
+	if _, err := d.currentReviewSnapshot(ctx, prNumber, triggerKey, filepath.Dir(entry.reviewState)); err != nil {
+		return d.handlePendingSnapshotFailure(ctx, prNumber, triggerKey, err)
 	}
 	if !alreadyPosted {
 		lookupErr = d.CommentPoster.PostComment(ctx, prNumber, string(body))
@@ -3032,6 +2851,9 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 		d.logf("PR #%d comment %s: rehydrate post failed: %v; keeping entry for next-tick retry (issue #1847)", prNumber, comment.ID, lookupErr)
 		d.observeHealthFailure(ctx, requestHealthKey(prNumber, triggerKey), "publish pending review decision", prNumber, lookupErr)
 		return true
+	}
+	if _, err := d.currentReviewSnapshot(ctx, prNumber, triggerKey, filepath.Dir(entry.reviewState)); err != nil {
+		return d.handlePendingSnapshotFailure(ctx, prNumber, triggerKey, err)
 	}
 
 	// Successful post. MarkSeen("success") on the per-run store
@@ -3050,22 +2872,11 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 		d.observeHealthFailure(ctx, requestHealthKey(prNumber, triggerKey), "open pending review state", prNumber, storeErr)
 		return true
 	}
-	if err := store.MarkSeen(triggerKey, "success"); err != nil {
-		d.logf("PR #%d comment %s: MarkSeen(success) failed in rehydrate branch: %v; keeping entry (issue #1847)", prNumber, comment.ID, err)
+	if err := d.acknowledgePublication(prNumber, triggerKey, entry.runDir, filepath.Dir(entry.reviewState), string(body), store); err != nil {
+		d.logf("PR #%d comment %s: acknowledge publication failed in rehydrate branch: %v; keeping entry (issue #1847)", prNumber, comment.ID, err)
 		d.observeHealthFailure(ctx, requestHealthKey(prNumber, triggerKey), "acknowledge pending review publication", prNumber, err)
 		return true
 	}
-	if err := removePendingPublicationMarker(filepath.Dir(entry.reviewState)); err != nil {
-		d.logf("PR #%d comment %s: remove pending publication marker: %v", prNumber, comment.ID, err)
-	}
-
-	// Drop the entry from pendingPost under the dedicated mutex.
-	d.pendingPostMu.Lock()
-	delete(d.pendingPost[prNumber], triggerKey)
-	if len(d.pendingPost[prNumber]) == 0 {
-		delete(d.pendingPost, prNumber)
-	}
-	d.pendingPostMu.Unlock()
 	d.resolveHealthOperation(requestHealthKey(prNumber, triggerKey))
 	return true
 }

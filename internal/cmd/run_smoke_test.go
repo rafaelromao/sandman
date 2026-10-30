@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -280,12 +281,40 @@ func runSmokeProviderTwice(t *testing.T, tc smokeProviderCase, secondArgs ...str
 		t.Fatalf("first smoke run failed: %v\noutput:\n%s", err, out)
 	}
 	assertSmokeProviderRun(t, out, tc, repoDir, issue)
+	first := recordedAgentSessions(t, repoDir)
 
 	out, err = executeSmokeRun(t, deps, runtime, issue.Number, secondArgs...)
 	if err != nil {
 		t.Fatalf("second smoke run failed: %v\noutput:\n%s", err, out)
 	}
 	assertSmokeProviderRun(t, out, tc, repoDir, issue)
+	if slices.Contains(secondArgs, "--reuse-session") {
+		assertReusedAgentSession(t, first, recordedAgentSessions(t, repoDir))
+	}
+}
+
+// assertReusedAgentSession checks that a reuse-session continuation kept the
+// agent's conversation: the continued Run records the same session the first
+// Run recorded, so the resumed agent retains what it learned before.
+func assertReusedAgentSession(t *testing.T, first, all map[string]string) {
+	t.Helper()
+	if len(first) != 1 {
+		t.Fatalf("first run recorded sessions %v, want exactly one", first)
+	}
+	var want string
+	for _, id := range first {
+		want = id
+	}
+	for dir, id := range all {
+		if _, ok := first[dir]; ok {
+			continue
+		}
+		if id != want {
+			t.Fatalf("continued Run %s recorded session %q, want the reused session %q", dir, id, want)
+		}
+		return
+	}
+	t.Fatalf("continued Run recorded no session; sessions = %v", all)
 }
 
 func requireSmokeE2E(t *testing.T) {
@@ -538,13 +567,40 @@ func addSmokeDockerDeps(repoDir, provider, buildTools string) error {
 		return err
 	}
 	if _, ok := config.BuiltInAgentPresets[provider]; ok {
-		// Every built-in preset's CLI binary is named after the preset.
-		data = append(data, []byte(fmt.Sprintf("RUN command -v %s >/dev/null\n", provider))...)
+		// Resolve the executable from the preset command: OpenCode v2, for
+		// example, is a distinct protocol preset but still installs `opencode`.
+		command := strings.Fields(config.BuiltInAgentPresets[provider].Command)
+		if len(command) == 0 {
+			return fmt.Errorf("built-in agent %q has an empty command", provider)
+		}
+		data = append(data, []byte(fmt.Sprintf("RUN command -v %s >/dev/null\n", command[0]))...)
 	}
 	if dep, ok := smokeDockerDeps[buildTools]; ok {
 		data = append(data, []byte(dep)...)
 	}
 	return os.WriteFile(dockerfilePath, data, 0644)
+}
+
+func TestAddSmokeDockerDepsUsesPresetCommandExecutable(t *testing.T) {
+	repoDir := t.TempDir()
+	sandmanDir := filepath.Join(repoDir, ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+		t.Fatalf("create .sandman: %v", err)
+	}
+	dockerfilePath := filepath.Join(sandmanDir, "Dockerfile")
+	if err := os.WriteFile(dockerfilePath, []byte("FROM debian:stable-slim\n"), 0644); err != nil {
+		t.Fatalf("write Dockerfile: %v", err)
+	}
+	if err := addSmokeDockerDeps(repoDir, "opencode-v2", "generic"); err != nil {
+		t.Fatalf("add smoke dependencies: %v", err)
+	}
+	got, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	if !strings.Contains(string(got), "RUN command -v opencode >/dev/null\n") || strings.Contains(string(got), "RUN command -v opencode-v2 >/dev/null\n") {
+		t.Fatalf("OpenCode v2 smoke executable assertion = %q, want the preset command executable opencode", got)
+	}
 }
 
 func customizeSmokeConfig(repoDir, provider, model string) (*config.Config, error) {
@@ -637,7 +693,7 @@ func preflightSmokeImage(t *testing.T, runtime, repoDir, provider, buildTools st
 	// (UnixNano) so concurrent tests do not collide, and Cleanup
 	// removes it when the test finishes.
 	tag := fmt.Sprintf("sandman-smoke-%s-%d:latest", provider, time.Now().UnixNano())
-	cmd := exec.Command(runtime, "build", "-t", tag, "-f", filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)
+	cmd := exec.Command(runtime, sandbox.ImageBuildArgs(tag, filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Skipf("skip %s smoke: container image build unavailable: %v\n%s", provider, err, out)
 	}
@@ -896,4 +952,21 @@ func TestCopySmokeAuthLayout_OpenCodeCopiesOnlyAuthentication(t *testing.T) {
 	if _, err := os.Stat(homePath(tempHome, "~/.config/opencode/node_modules")); !os.IsNotExist(err) {
 		t.Fatal("smoke fixture copied the host's mutable plugin dependencies")
 	}
+}
+
+// recordedAgentSessions returns the agent session IDs recorded in the Run
+// folders of repoDir, keyed by Run folder.
+func recordedAgentSessions(t *testing.T, repoDir string) map[string]string {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(repoDir, ".sandman", "batches", "*", "runs", "*", "session.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := make(map[string]string, len(paths))
+	for _, path := range paths {
+		if id, ok := batch.ReadAgentSessionID(filepath.Dir(path)); ok {
+			sessions[filepath.Dir(path)] = id
+		}
+	}
+	return sessions
 }

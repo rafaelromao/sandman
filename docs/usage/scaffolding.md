@@ -125,7 +125,7 @@ Useful init flags:
 
 | Flag | Purpose |
 |------|---------|
-| `--agent` | Default built-in agent preset (`opencode` or `claude`); it is installed in the Dockerfile and written as `agent` and `review_agent`, with the preset's default model |
+| `--agent` | Default built-in agent preset (`opencode`, `opencode-v2`, or `claude`); it is installed in the Dockerfile and written as `agent` and `review_agent`, with the preset's default model |
 | `--model` | Default agent model |
 | `--variant` | Default provider-specific implementation model variant |
 | `--build-tools` | Build-tools preset |
@@ -136,6 +136,12 @@ Useful init flags:
 | `--retries` | Persist default retry count |
 | `--run-idle-timeout` | Persist idle timeout in seconds |
 | `--review-timeout` | Persist delegated review response timeout in seconds; minimum `240`, default `1800` |
+
+OpenCode generations are separate presets: `opencode` installs `opencode-ai@1.x`,
+while `opencode-v2` installs `@opencode/cli@2.x`. Each pins its detected host
+version or its own fallback when the CLI is absent. Select `--agent opencode-v2`
+on a v2 host; a mismatched major fails before writing the scaffold. The default
+remains `opencode` for existing projects. See [OpenCode generations](agent-compatibility.md#opencode-generations).
 
 ## Changing presets later
 
@@ -152,7 +158,7 @@ The config value controls future runs, and re-running `init` regenerates the sca
 
 The scaffolded Dockerfile starts with `# sandman ...` metadata comments. `# sandman installed-agents:` lists the built-in agent presets installed in the image; `init` installs only the default agent. Before a container run, Sandman requires `installed-agents` to contain the run agent's preset, so a missing agent fails early with a metadata error instead of `command not found` inside the container. `# sandman default-agent:` must match the config `agent` only when the run uses that default agent; a run that selects another agent with `--agent`, or a review run, depends only on its own agent.
 
-To use both presets from one image, add the second agent's install line and list both in the header:
+To use OpenCode and Claude Code from one image, add the second agent's install line and list both in the header:
 
 ```dockerfile
 # sandman installed-agents: opencode, claude

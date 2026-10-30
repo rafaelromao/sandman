@@ -13,10 +13,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var opencodeAIPinRe = regexp.MustCompile(`(?m)^RUN\s+npm install -g opencode-ai@([A-Za-z0-9._\-+]+)\s*$`)
+var opencodePinRe = regexp.MustCompile(`(?m)^RUN\s+npm install -g (?:opencode-ai|@opencode/cli)@([A-Za-z0-9._\-+]+)\s*$`)
 
 func ParseOpencodePinFromDockerfile(content string) (string, bool) {
-	match := opencodeAIPinRe.FindStringSubmatch(content)
+	match := opencodePinRe.FindStringSubmatch(content)
 	if match == nil {
 		return "", false
 	}
@@ -72,7 +72,7 @@ func FormatMismatchWarning(hostVersion, sandboxVersion, repoRoot string) string 
 // resolved default when sandboxFlag is empty. repoRoot is the
 // host-absolute repository path used to locate .sandman/Dockerfile.
 func warnOpencodeVersionMismatch(cmd *cobra.Command, agentName, sandboxFlag, repoRoot string, cfg *config.Config) {
-	if agentName != "opencode" {
+	if agentName != "opencode" && agentName != "opencode-v2" {
 		return
 	}
 	sandboxMode := strings.TrimSpace(sandboxFlag)
@@ -83,7 +83,7 @@ func warnOpencodeVersionMismatch(cmd *cobra.Command, agentName, sandboxFlag, rep
 		return
 	}
 	pin, _ := readDockerfilePin(repoRoot)
-	catalogDefault := scaffoldDefaultOpencodeVersion()
+	catalogDefault := scaffold.DefaultBuiltInAgentVersion(agentName)
 	sandboxVersion := ResolveSandboxVersion(sandboxMode, "", pin, catalogDefault)
 	if sandboxVersion == "" {
 		return

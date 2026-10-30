@@ -96,8 +96,8 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--template` | — | Path to prompt template file |
 | `--prompt-arg` | — | Custom template substitution (`KEY=VALUE`, repeatable) |
 | `--model` | `model` from config | Override the model passed to the agent for built-in presets |
-| `--variant` | `variant` from config | Override the implementation model variant; forwarded to the built-in command only when non-empty (`--variant` for OpenCode, `--effort` for Claude Code) |
-| `--agent` | `agent` from config (`opencode`) | Agent preset for this run (built-in `opencode` or `claude`, or a custom provider under `agents` in config); on `--continue` uses the current CLI/config value, not the prior run's stored agent |
+| `--variant` | `variant` from config | Override the implementation model variant using the same flag for every built-in agent; Sandman translates it to the native syntax ([mapping](agent-compatibility.md#model-variants)); `--variant ""` disables the configured variant |
+| `--agent` | `agent` from config (`opencode`) | Agent preset for this run (built-in `opencode`, `opencode-v2`, or `claude`, or a custom provider under `agents` in config); on `--continue` uses the current CLI/config value, not the prior run's stored agent |
 | `--run-id` | — | Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection |
 | `--run-idle-timeout` | config `run_idle_timeout` (`3600`) | Treat an AgentRun as stuck if it produces no output for N seconds; explicit `0` disables the timeout |
 | `--review-timeout` | config `review_timeout` (`1800`) | Override the absolute per-confirmed-request delegated review deadline in seconds; minimum `240` |
@@ -118,8 +118,8 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 - `--container-capacity` accepts `0` as unlimited mode (no per-container cap)
 - `--max-containers` caps the number of `ContainerSandbox` instances; `0` means no cap (unbounded pool growth)
 - `--model` only applies to built-in presets; if omitted, Sandman uses `model` from config when the agent shares the default `agent`'s preset, then the agent provider's configured model, then the preset's default model (`opencode/big-pickle`, `sonnet`)
-- `--variant` is trimmed and treated as opaque provider-specific text; when omitted, Sandman uses `variant` from config. On `--continue`, current CLI/config values replace the prior event value. Non-empty values are safely passed as one argument to the built-in command (`--variant` for OpenCode, `--effort` for Claude Code); custom commands are unchanged.
-- `--agent` selects the agent preset for this run (built-in `opencode` or `claude`, or a custom provider under `agents` in config); if omitted, Sandman uses `agent` from config. In container mode the Dockerfile's `installed-agents` header must list the agent's preset
+- `--variant` is trimmed and treated as opaque provider-specific text; when omitted, Sandman uses `variant` from config. On `--continue`, current CLI/config values replace the prior event value. Non-empty values are safely passed as one argument to the built-in command (`--variant` for OpenCode v1, `#variant` on the model for `opencode-v2`, `--effort` for Claude Code); custom commands are unchanged.
+- `--agent` selects the agent preset for this run (built-in `opencode`, `opencode-v2`, or `claude`, or a custom provider under `agents` in config); if omitted, Sandman uses `agent` from config. In container mode the Dockerfile's `installed-agents` header must list the agent's preset
 - `--continue` cannot be combined with `--override`
 - `--reuse-session` requires `--continue`; it applies independently to each continued row and never to promoted or fresh rows
 - Runtime-owned re-entry after an external pull-request wait reuses the prior conversation automatically (the exact OpenCode session, or Claude Code's `--continue`); ordinary retries and context-rollover retries remain fresh
@@ -186,11 +186,13 @@ The temp-dir and `sandman-smoke-*` image sweep runs in every mode — `--all`, `
 
 | Flag | Description |
 |------|-------------|
-| `--all` | Run the full cleanup sequence: recover stale runs, remove orphaned test batches, remove archived batches, reclaim completed active batches (daemon gone, all runs terminal or all rows archived), then sweep Sandman-owned temp dirs and `sandman-smoke-*` images. Live or in-flight active batches are preserved. |
+| `--all` | Run the full cleanup sequence: recover stale runs, remove orphaned test batches, remove archived batches, reclaim completed active batches (daemon gone, all runs terminal or all rows archived), remove terminal Runs' claim files, then sweep Sandman-owned temp dirs and `sandman-smoke-*` images. Live or in-flight active batches are preserved. |
 | `--archived` | Remove archived batches |
 | `--dry-run` | Print intended deletions without performing I/O |
-| `--stale` | Recover stale runs in dead batches by emitting `run.aborted` events |
+| `--stale` | Recover stale runs in dead batches by emitting `run.aborted` events, then remove the `.sandman/state/run-claims/<RunID>.lock` files of event-terminal Runs |
 | `--orphaned` | Remove orphaned test batch directories (no matching run.started event and no live daemon socket) |
+
+Claim-file cleanup keeps the claims of unfinished Runs, of Runs with no events, and of any claim still held by a live process; `--dry-run` never removes them.
 
 `--all` is mutually exclusive with `--archived`, `--stale`, and `--orphaned` (it is the umbrella flag, not a combiner). `--stale` is mutually exclusive with `--archived`, `--dry-run`, and `--orphaned`. `--orphaned` is mutually exclusive with `--archived`, `--stale`, and `--all`. `--archived` and `--dry-run` can be combined.
 

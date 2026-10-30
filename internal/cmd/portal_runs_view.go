@@ -32,6 +32,8 @@ type portalEvent struct {
 }
 
 type portalRun struct {
+	displayStatusEvidence portalDisplayStatusEvidence
+
 	Key    string `json:"key"`
 	RunID  string `json:"runId"`
 	Kind   string `json:"kind"`
@@ -39,6 +41,9 @@ type portalRun struct {
 	// Waiting preserves the event-derived lifecycle phase separately from
 	// Status, which may be promoted to "reviewing" by a live linked review.
 	Waiting     bool       `json:"waiting,omitempty"`
+	QueuedLike  bool       `json:"queuedLike"`
+	CanAbort    bool       `json:"canAbort"`
+	CanArchive  bool       `json:"canArchive"`
 	IssueLabel  string     `json:"issueLabel"`
 	IssueNumber int        `json:"issueNumber,omitempty"`
 	Branch      string     `json:"branch,omitempty"`
@@ -71,17 +76,15 @@ type portalRun struct {
 	// The field is omitted from JSON when false to preserve the existing /api/runs
 	// contract for implementation runs.
 	Review bool `json:"review,omitempty"`
-	// ReviewCount summarizes child review runs owned by a canonical issue row.
-	// Stamped by aggregateReviewChildren during compute (restored in #1897
-	// after #1825 deleted it): for each issue with sibling review rows, the
-	// count lands on the canonical parent implementation row (the same row
-	// the JS pickCanonicalParent displays). The orphan review-only JS path
-	// (visibleRunForIssueGroup, portal.html) also derives a count for its
-	// synthetic row when no implementation parent exists.
+	// ReviewCount summarizes child review runs owned by an issue group.
+	// Stamped by projectIssueGroups during compute (restored in #1897
+	// after #1825 deleted it) on the GroupVisible row: the canonical parent
+	// implementation row, or the newest review of an orphan review group
+	// (no implementation parent). The page never derives the count.
 	ReviewCount int `json:"reviewCount,omitempty"`
 	// ReviewVerdict carries the latest terminal review status for canonical
 	// issue rows and terminal review children. Stamped by
-	// aggregateReviewChildren during compute (restored in #1897). Sourced from
+	// projectIssueGroups during compute (restored in #1897). Sourced from
 	// `<runDir>/decision.md` — the controlled
 	// artefact the review agent publishes by writing to that path before
 	// exiting (see internal/prompt/default_pr_review_prompt.md:124).
@@ -89,11 +92,8 @@ type portalRun struct {
 	// from the latest published terminal review child's decision.md before
 	// portalSummaryRuns blanks Log for transport, so the verdict survives
 	// the summary endpoint. An unpublished or unsafe latest review clears
-	// the verdict. The orphan
-	// review-only JS path (visibleRunForIssueGroup, portal.html)
-	// opportunistically recovers a verdict from an already-loaded sibling
-	// review.log, but the server stamp is the canonical source for
-	// parent rows.
+	// the verdict. The server stamp is the only source, including for the
+	// visible row of an orphan review group.
 	ReviewVerdict string `json:"reviewVerdict,omitempty"`
 	// ReviewPendingPublication is true when a terminal review has not
 	// established a successfully published decision. It is separate from the
@@ -102,7 +102,7 @@ type portalRun struct {
 	ReviewPendingPublication bool `json:"reviewPendingPublication,omitempty"`
 	// ReviewLive is the server stamp that tells the JS counter line a
 	// review child is currently in flight (status "reviewing", no
-	// FinishedAt). Stamped by aggregateReviewChildren when at least one
+	// FinishedAt). Stamped by projectIssueGroups when at least one
 	// sibling review row has Status == "reviewing"; omitted from JSON
 	// (zero value) when every sibling review is terminal. The field is
 	// purely additive: it does NOT mutate the parent's Status field, so
@@ -113,14 +113,23 @@ type portalRun struct {
 	// finishes (issue #2109).
 	ReviewLive bool `json:"reviewLive,omitempty"`
 	// GroupedReview marks review rows that are owned by an issue-parent row.
-	// Set by aggregateReviewChildren during compute (restored in #1897) for
+	// Set by projectIssueGroups during compute (restored in #1897) for
 	// every review row that has a resolved linked issue (IssueNumber > 0) so
 	// it can be folded into the parent issue's group. Issue #1919
 	// tightened the contract: orphan reviews (no linked issue, IssueNumber
-	// == 0) keep GroupedReview=false and render via the orphan review-only
-	// JS path (visibleRunForIssueGroup, portal.html), which hardcodes
-	// groupedReview=false on its synthetic row.
+	// == 0) keep GroupedReview=false and render as standalone rows; the
+	// visible row of an orphan linked review group is also unset.
 	GroupedReview bool `json:"groupedReview,omitempty"`
+	// GroupVisible marks the one row the Portal table shows for an issue
+	// group. Stamped by projectIssueGroups, the single owner of the group:
+	// the page renders rows without an issue plus GroupVisible rows and never
+	// re-derives the canonical parent.
+	GroupVisible bool `json:"groupVisible,omitempty"`
+	// Subjects lists, on the GroupVisible row only, the runIds the detail
+	// subject selector offers, in order: the canonical parent, its
+	// continuation predecessor, then reviews newest first. Queued and blocked
+	// rows are never subjects. Stamped by projectIssueGroups.
+	Subjects []string `json:"subjects,omitempty"`
 	// PRNumber mirrors payload.pr_number from the run.started event. Only
 	// meaningful when Review is true; omitted from JSON otherwise.
 	PRNumber int `json:"prNumber,omitempty"`
@@ -199,6 +208,15 @@ type portalRun struct {
 	// Empty when the batch cannot be resolved (the caller treats empty as
 	// Unclear).
 	RunDir string `json:"-"`
+}
+
+type portalDisplayStatusEvidence struct {
+	fromRunState bool
+	lifecycle    string
+	active       bool
+	waiting      bool
+	review       bool
+	activeSocket bool
 }
 
 type portalActiveRun struct {
@@ -451,7 +469,7 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 
 func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventList []events.Event, eventsByRun map[string][]portalEvent, activeInstances []portalActiveRun, idx *batchindex.Index) ([]portalRun, error) {
 	// issue #1938: build the paths.Layout once per
-	// compute() so aggregateReviewChildren can locate each terminal
+	// compute() so projectIssueGroups can locate each terminal
 	// review child's <runDir>/decision.md via the canonical seam
 	// from #1937. The pointer is reused for every verdict
 	// read in the loop below; one paths.NewLayout call per compute
@@ -644,7 +662,6 @@ func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventLis
 	runs = filtered
 
 	runs = v.dedupRuns(runs)
-	runs = v.aggregateReviewChildren(layout, runs)
 	for i := range runs {
 		// Active runs are never marked archived, even if a directory
 		// matching the run ID happens to exist under .sandman/archive.
@@ -691,6 +708,7 @@ func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventLis
 		}
 		runs[i].LastOutputAt = &at
 	}
+	runs = v.projectIssueGroups(layout, runs)
 	sort.SliceStable(runs, func(i, j int) bool {
 		if runs[i].Kind != runs[j].Kind {
 			return runs[i].Kind == "active"
@@ -954,32 +972,32 @@ func (v *portalRunsView) dedupRuns(runs []portalRun) []portalRun {
 	return result
 }
 
-// aggregateReviewChildren stamps ReviewCount, ReviewVerdict,
-// ReviewPendingPublication, and the live "reviewing" badge-flip onto the
-// canonical parent implementation row for each issue that has sibling
-// review-only children. A verdict is read only from the latest terminal
-// review whose publication state is successful; pending or unsafe publication
-// evidence clears the verdict before portalSummaryRuns blanks Log for
-// transport.
-// Restored per issue #1897 after #1825 deleted it (and retargeted to the
-// decision.md artefact by #1938); the parent pick mirrors
-// the JS pickCanonicalParent (see portal_diff.js) so the stamp lands on the
-// row the portal actually displays.
+// projectIssueGroups is the single owner of the Portal issue group. For each
+// issue (IssueNumber > 0) it picks the row the table displays, stamps it with
+// GroupVisible and the ordered Subjects the detail selector offers, and
+// stamps ReviewCount, ReviewVerdict, ReviewPendingPublication, ReviewLive and
+// the live "reviewing" badge-flip onto that row. The page and the renderer
+// only look these fields up; they never re-derive the group.
+//
+// The visible row is the canonical implementation parent (canonicalParentIsBetter,
+// compared at nanosecond precision). An orphan linked review group (no
+// implementation parent) is shown through its newest live review, else its
+// newest review, labelled "PR n (#N)"; its Kind and Status stay as
+// events.RunState projects them so Abort stays available.
+//
+// A verdict is read only from the latest terminal review whose publication
+// state is successful; pending or unsafe publication evidence clears the
+// verdict before portalSummaryRuns blanks Log for transport.
 //
 // Rows without a BatchKey (orphan historical rows) or without a RunDir
 // (the row never resolved to a backing folder) yield ("", false) from the
-// helper and the verdict surfaces as "Unclear" — same fallback the
-// previous log-based parser produced for an empty log.
+// verdict helper and the verdict surfaces as "Unclear".
 //
 // LIVE-RUN ATOMICITY INVARIANT (issue #1981): when a parent run is terminal
-// (success/failure/aborted), its Status must NOT be overwritten to
-// "reviewing" even when a live review child exists. The portal's compute
-// path (Snapshot -> loadSummaryState -> discoverActiveRuns) must observe a
-// consistent snapshot of the event log and active run state; a parent's
-// terminal Status and a child's live=true must not be observed in the wrong
-// order. This is enforced by isTerminalStatus: only non-terminal parents
+// (success/failure/aborted/blocked), its Status must NOT be overwritten to
+// "reviewing" even when a live review child exists. Only non-terminal parents
 // have their Status promoted to "reviewing" when a live child is present.
-func (v *portalRunsView) aggregateReviewChildren(layout paths.Layout, runs []portalRun) []portalRun {
+func (v *portalRunsView) projectIssueGroups(layout paths.Layout, runs []portalRun) []portalRun {
 	if len(runs) == 0 {
 		return runs
 	}
@@ -993,94 +1011,221 @@ func (v *portalRunsView) aggregateReviewChildren(layout paths.Layout, runs []por
 		latestRunID        string
 		latestOutcomeSet   bool
 	}
-	parents := make(map[int]int)
-	summaries := make(map[int]*reviewSummary)
+	type issueGroup struct {
+		parents []int
+		reviews []int
+		summary reviewSummary
+	}
+	groups := make(map[int]*issueGroup)
+	order := make([]int, 0)
 	for i := range runs {
+		runs[i].GroupVisible = false
+		runs[i].Subjects = nil
 		run := runs[i]
 		if run.IssueNumber <= 0 {
 			continue
 		}
-		if run.Review {
-			summary := summaries[run.IssueNumber]
-			if summary == nil {
-				summary = &reviewSummary{}
-				summaries[run.IssueNumber] = summary
-			}
-			summary.count++
-			if run.Status == "reviewing" {
-				summary.live = true
-			}
-			if run.FinishedAt != nil || isTerminalStatus(run.Status) {
-				run.ReviewPendingPublication = reviewPublicationPending(layout, run)
-				runs[i].ReviewPendingPublication = run.ReviewPendingPublication
-				verdict := ""
-				if !run.ReviewPendingPublication {
-					verdict = "Unclear"
-					if vv, ok := reviewVerdictForRun(layout, run); ok {
-						verdict = vv
-					}
-				}
-				runs[i].ReviewVerdict = verdict
-				effectiveAt := run.StartedAt
-				if run.FinishedAt != nil {
-					effectiveAt = *run.FinishedAt
-				}
-				if !summary.latestOutcomeSet || reviewOutcomeIsNewer(
-					effectiveAt,
-					run.StartedAt,
-					run.RunID,
-					summary.latestEffectiveAt,
-					summary.latestStartedAt,
-					summary.latestRunID,
-				) {
-					summary.latestOutcomeSet = true
-					summary.latestEffectiveAt = effectiveAt
-					summary.latestStartedAt = run.StartedAt
-					summary.latestRunID = run.RunID
-					summary.pendingPublication = run.ReviewPendingPublication
-					summary.verdict = verdict
-				}
-			}
+		group := groups[run.IssueNumber]
+		if group == nil {
+			group = &issueGroup{}
+			groups[run.IssueNumber] = group
+			order = append(order, run.IssueNumber)
+		}
+		if !run.Review {
+			group.parents = append(group.parents, i)
 			continue
 		}
-		if idx, ok := parents[run.IssueNumber]; !ok || canonicalParentIsBetter(run, runs[idx]) {
-			parents[run.IssueNumber] = i
+		group.reviews = append(group.reviews, i)
+		// Issue #1919: only reviews with a resolved linked issue group
+		// under the issue; orphan reviews without an issue stay standalone.
+		runs[i].GroupedReview = true
+		summary := &group.summary
+		summary.count++
+		if run.Status == "reviewing" {
+			summary.live = true
+		}
+		if run.FinishedAt != nil || isTerminalStatus(run.Status) {
+			run.ReviewPendingPublication = reviewPublicationPending(layout, run)
+			runs[i].ReviewPendingPublication = run.ReviewPendingPublication
+			verdict := ""
+			if !run.ReviewPendingPublication {
+				verdict = "Unclear"
+				if vv, ok := reviewVerdictForRun(layout, run); ok {
+					verdict = vv
+				}
+			}
+			runs[i].ReviewVerdict = verdict
+			effectiveAt := reviewEffectiveAt(run)
+			if !summary.latestOutcomeSet || reviewOutcomeIsNewer(
+				effectiveAt,
+				run.StartedAt,
+				run.RunID,
+				summary.latestEffectiveAt,
+				summary.latestStartedAt,
+				summary.latestRunID,
+			) {
+				summary.latestOutcomeSet = true
+				summary.latestEffectiveAt = effectiveAt
+				summary.latestStartedAt = run.StartedAt
+				summary.latestRunID = run.RunID
+				summary.pendingPublication = run.ReviewPendingPublication
+				summary.verdict = verdict
+			}
 		}
 	}
-	for issueNumber, summary := range summaries {
-		idx, ok := parents[issueNumber]
-		if !ok || summary.count == 0 {
+	for _, issueNumber := range order {
+		group := groups[issueNumber]
+		visible := -1
+		for _, idx := range group.parents {
+			if visible < 0 || canonicalParentIsBetter(runs[idx], runs[visible]) {
+				visible = idx
+			}
+		}
+		orphan := visible < 0
+		if orphan {
+			visible = newestReviewForOrphanGroup(runs, group.reviews)
+		}
+		if visible < 0 {
 			continue
 		}
-		runs[idx].ReviewCount = summary.count
-		runs[idx].ReviewVerdict = summary.verdict
-		runs[idx].ReviewPendingPublication = summary.pendingPublication
-		runs[idx].ReviewLive = summary.live
-		if summary.live && runs[idx].FinishedAt == nil && !isTerminalStatus(runs[idx].Status) {
-			runs[idx].Status = "reviewing"
+		runs[visible].GroupVisible = true
+		runs[visible].Subjects = issueGroupSubjects(runs, group.parents, group.reviews, visible)
+		summary := group.summary
+		if summary.count == 0 {
+			continue
+		}
+		runs[visible].ReviewCount = summary.count
+		runs[visible].ReviewVerdict = summary.verdict
+		runs[visible].ReviewPendingPublication = summary.pendingPublication
+		runs[visible].ReviewLive = summary.live
+		if orphan {
+			runs[visible].GroupedReview = false
+			runs[visible].IssueLabel = "#" + strconv.Itoa(issueNumber)
+			if runs[visible].PRNumber > 0 {
+				runs[visible].IssueLabel = "PR " + strconv.Itoa(runs[visible].PRNumber) + " (#" + strconv.Itoa(issueNumber) + ")"
+			}
+			continue
 		}
 	}
 	for i := range runs {
-		// Issue #1919: only reviews with a resolved linked
-		// issue group under the parent issue row. Orphan reviews
-		// (no linked issue, IssueNumber == 0) stay as standalone
-		// "PR <n>" rows; the JS orphan path renders them
-		// outside the issue group. Setting GroupedReview=true for
-		// every review row would let the JS-grouped path consume an
-		// orphan row that has no parent.
-		if runs[i].Review && runs[i].IssueNumber > 0 {
-			runs[i].GroupedReview = true
-		}
+		v.projectRowDisplayStatus(&runs[i])
 	}
 	return runs
 }
 
+func reviewEffectiveAt(run portalRun) time.Time {
+	if run.FinishedAt != nil {
+		return *run.FinishedAt
+	}
+	return run.StartedAt
+}
+
+// newestReviewForOrphanGroup picks the review that represents an issue group
+// without an implementation parent: the newest live review, else the newest
+// review by effective time (FinishedAt, else StartedAt), StartedAt and RunID.
+func newestReviewForOrphanGroup(runs []portalRun, reviews []int) int {
+	best := -1
+	bestLive := false
+	for _, idx := range reviews {
+		live := runs[idx].Status == "reviewing"
+		if best < 0 || (live && !bestLive) || (live == bestLive && reviewOutcomeIsNewer(
+			reviewEffectiveAt(runs[idx]), runs[idx].StartedAt, runs[idx].RunID,
+			reviewEffectiveAt(runs[best]), runs[best].StartedAt, runs[best].RunID,
+		)) {
+			best = idx
+			bestLive = live
+		}
+	}
+	return best
+}
+
+// issueGroupSubjects returns the runIds the detail selector offers for the
+// visible row of an issue group, in order: the canonical expandable parent,
+// the visible row's continuation predecessor, then reviews newest first.
+// Queued and blocked rows are never subjects.
+func issueGroupSubjects(runs []portalRun, parents, reviews []int, visible int) []string {
+	subjects := make([]string, 0, len(parents)+len(reviews))
+	seen := make(map[string]struct{})
+	push := func(idx int) {
+		if !isSubjectRun(runs[idx]) {
+			return
+		}
+		id := strings.TrimSpace(runs[idx].RunID)
+		if id == "" {
+			id = strings.TrimSpace(runs[idx].Key)
+		}
+		if id == "" {
+			return
+		}
+		if _, dup := seen[id]; dup {
+			return
+		}
+		seen[id] = struct{}{}
+		subjects = append(subjects, id)
+	}
+	parent := -1
+	for _, idx := range parents {
+		if !isSubjectRun(runs[idx]) {
+			continue
+		}
+		if parent < 0 || canonicalParentIsBetter(runs[idx], runs[parent]) {
+			parent = idx
+		}
+	}
+	if parent >= 0 {
+		push(parent)
+	}
+	if previous := continuationPredecessor(runs[visible]); previous != "" {
+		for _, idx := range parents {
+			if runs[idx].RunID == previous || runs[idx].Key == previous {
+				push(idx)
+				break
+			}
+		}
+	}
+	ordered := append([]int(nil), reviews...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		a, b := runs[ordered[i]], runs[ordered[j]]
+		if !a.StartedAt.Equal(b.StartedAt) {
+			return a.StartedAt.After(b.StartedAt)
+		}
+		return a.RunID < b.RunID
+	})
+	for _, idx := range ordered {
+		push(idx)
+	}
+	return subjects
+}
+
+// isSubjectRun reports whether a row can be opened as a detail subject;
+// queued and blocked rows have no run detail to show.
+func isSubjectRun(run portalRun) bool {
+	status := strings.ToLower(strings.TrimSpace(run.Status))
+	return status != "queued" && status != "blocked"
+}
+
+// continuationPredecessor returns the previous_run_id recorded on the row's
+// run.continued event, or "" when the row is not a continuation.
+func continuationPredecessor(run portalRun) string {
+	for _, event := range run.Events {
+		if event.Type != "run.continued" {
+			continue
+		}
+		if previous, ok := event.Payload["previous_run_id"].(string); ok {
+			if previous = strings.TrimSpace(previous); previous != "" {
+				return previous
+			}
+		}
+	}
+	return ""
+}
+
 // canonicalParentIsBetter reports whether candidate is a "more canonical"
-// parent than incumbent. The shared JS pickCanonicalParent in portal_diff.js
-// mirrors this rule for the table and the subject selector: active parents
+// parent than incumbent. projectIssueGroups uses it to pick the row the
+// table shows and the first subject of the selector: active parents
 // win over terminal parents; within active, the latest StartedAt wins; within
 // terminal, the latest FinishedAt wins (then StartedAt, then RunID). Used by
-// aggregateReviewChildren, which runs before the sort.SliceStable at compute,
+// projectIssueGroups, which runs before the sort.SliceStable at compute,
 // so the comparison must be explicit rather than rely on slice order.
 func canonicalParentIsBetter(candidate, incumbent portalRun) bool {
 	cActive := candidate.Kind == "active"
@@ -2024,7 +2169,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	if runState.IsReview() && issueNumber == 0 {
 		// Orphan review row (no resolved issue): prefer the explicit
 		// "PR <prNumber>" label so the table cell matches the
-		// convention used by the visibleRunForIssueGroup fallback
+		// convention used by the orphan review group label in projectIssueGroups
 		// (issue #2296/#1526). When
 		// even the PR number is missing, fall back to the raw runID —
 		// a degraded but non-leaking display for an exotic edge case.
@@ -2035,10 +2180,6 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	}
 	activeDurationSeconds, executionSince := executionClockForPortal(runState)
 
-	status := v.statusOrDefault(runState.Status(), runState.IsActive() || (runState.Status() == "" && activeSocket), runState.IsReview())
-	if runState.Status() == "waiting" && !runState.IsReview() {
-		status = "waiting"
-	}
 	startedAt := runState.StartedAt()
 	var finishedAt *time.Time
 	if runState.Finished != nil {
@@ -2067,8 +2208,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		Key:                   runID,
 		RunID:                 runID,
 		Kind:                  v.kindForRun(runState),
-		Status:                status,
-		Waiting:               runState.Status() == "waiting",
+		Status:                runState.Status(),
 		IssueLabel:            issueLabel,
 		IssueNumber:           issueNumber,
 		IssueTitle:            v.issueTitleFromPayload(runState.Started.Payload),
@@ -2089,6 +2229,14 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		Attempts:              v.attemptsForRun(runState),
 		LastRetryReason:       runState.LastRetryReason(),
 		BatchKey:              batchKey,
+		displayStatusEvidence: portalDisplayStatusEvidence{
+			fromRunState: true,
+			lifecycle:    runState.Status(),
+			active:       runState.IsActive(),
+			waiting:      runState.Status() == "waiting",
+			review:       runState.IsReview(),
+			activeSocket: activeSocket,
+		},
 	}
 	if review {
 		portalRun.PRNumber = prNumber
@@ -2109,10 +2257,10 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 			portalRun.IssueLabel = fmt.Sprintf("#%d", issueNum)
 		}
 	}
-	if status == "blocked" {
+	if portalRun.Status == "blocked" {
 		portalRun.Log = v.portalBlockedMessage(runState.Finished.Payload)
 	}
-	if status == "aborted" {
+	if portalRun.Status == "aborted" {
 		portalRun.Kind = "completed"
 	}
 	if active != nil {
@@ -2164,6 +2312,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 			portalRun.RunDir = runDir
 		}
 	}
+	v.projectRowDisplayStatus(&portalRun)
 	return portalRun
 }
 
@@ -2310,6 +2459,37 @@ func (v *portalRunsView) statusOrDefault(status string, active bool, isReview bo
 	return status
 }
 
+// projectRowDisplayStatus is the single owner of the Portal row's display
+// status flags. Constructors and the issue-group projection provide lifecycle
+// and active-evidence inputs; the page and renderer consume these stamped
+// values instead of deriving wait-state or action availability themselves.
+func (v *portalRunsView) projectRowDisplayStatus(run *portalRun) {
+	if run == nil {
+		return
+	}
+	status := strings.TrimSpace(run.Status)
+	evidence := run.displayStatusEvidence
+	if evidence.fromRunState {
+		active := evidence.active || (evidence.lifecycle == "" && evidence.activeSocket)
+		status = v.statusOrDefault(evidence.lifecycle, active, evidence.review)
+		if evidence.waiting && !evidence.review {
+			status = "waiting"
+		}
+		run.Waiting = evidence.waiting
+	}
+	if run.ReviewLive && run.FinishedAt == nil && !isTerminalStatus(status) {
+		status = "reviewing"
+	}
+	run.Status = status
+	status = strings.ToLower(strings.TrimSpace(status))
+	run.QueuedLike = status == "queued" || status == "blocked"
+	run.CanAbort = run.Kind == "active" && run.FinishedAt == nil &&
+		(run.Waiting || status == "running" || status == "reviewing" || status == "queued" || status == "blocked") &&
+		run.BatchKey != ""
+	run.CanArchive = run.Kind == "completed" && !run.Archived && !run.Unavailable &&
+		run.SourceExists && run.RunID != ""
+}
+
 func (v *portalRunsView) durationForRun(runState events.RunState) string {
 	return runState.DurationAt(v.currentTime()).String()
 }
@@ -2438,7 +2618,7 @@ func (v *portalRunsView) reviewContext(runState events.RunState) (bool, int) {
 // that has no associated issue number (i.e. the row survives as a
 // passthrough, not grouped under a canonical implementation row). It
 // uses the "PR <N>" form (issue #2296), matching the orphan-with-issue
-// fallback in portal.html's visibleRunForIssueGroup (issue #1526 /
+// group label stamped by projectIssueGroups (issue #1526 /
 // #1667). When even the PR number is missing, the raw runID is returned
 // — a degraded display for the exotic case of a review run with neither
 // an issue nor a PR.

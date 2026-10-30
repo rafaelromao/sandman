@@ -14,12 +14,18 @@ started capacity-ready work remains waiting. Same RunID keeps its duration and
 current ownership across batches. Preserve managed CI/review hard deadlines and
 completed quota polling across executor re-entry. Quota exhaustion estimates are
 diagnostic, not schedule/ownership deadlines; downtime and capacity delay consume
-no polling allowance. Keep the historical three in-session relaunches (entry
+no polling allowance. A failed pull-request lookup waits (`github-unavailable`)
+with hourly, githubstatus.com-gated attempts and a 24-hour per-RunID bound before
+`GATE_LOOKUP_FAILED`; `--continue` opens a fresh window. Keep the historical three in-session relaunches (entry
 excluded), standalone CI's 60-minute/three-fix invocation-local bounds, and
 configured ordinary retries. Obsolete cumulative repair ledgers cannot deny
 execution. See the [AFK exit baseline](afk-exit-regression-baseline.md) when
 evaluating added exit conditions. RunID claims fence lease renewal,
 takeover and terminal cancellation; lease/schedule data is not a status record.
+A live owner retries transient renewal I/O failures while its last renewal's
+uncapped recovery grace outlasts the next renewal; invalid ownership fails
+closed at once. Claim files may be unlinked only while held and only for
+event-terminal Runs; claimants revalidate the locked inode against the path.
 Tests must cover composed quota → recovery → CI/review and wait → restart/abort
 paths, including concurrent launch-boundary admission revalidation.
 
@@ -31,7 +37,7 @@ When changing lifecycle behavior:
 
 ## Preserve dependency-injection seams
 
-Command code should stay testable through explicit dependencies. The per-run seam is `RunExecutor`; its executor reaches shared batch state only through the narrow `runCoordination` interface, implemented by the per-batch coordinator that `RunBatch` creates and owns. Prefer changing existing seams over introducing hidden globals or constructing deep concrete dependencies inline.
+Command code should stay testable through explicit dependencies. `RunBatch` owns batch-wide scheduling; the per-row `rowDriver` owns lifecycle waits, observation acceptance, quota admission, execution re-entry, and the abort fence. Its `RunExecutor` seam receives an immutable `RunSpec` and an advancing `ContinuationCursor`, so a Run's identity and branch do not change during re-entry. Shared batch state remains behind the narrow `runCoordination` interface implemented by the per-batch coordinator. Prefer changing existing seams over introducing hidden globals or constructing deep concrete dependencies inline.
 
 When writing tests, fake the documented boundary rather than mocking deep implementation details.
 
@@ -41,6 +47,7 @@ Sandman supports more than one agent CLI. Everything that differs between agents
 
 - Never branch on an agent or preset name at a call site; add or change a strategy method, or a registry field, instead. `TestAgentSelection_NoAgentNameComparisonsOutsideStrategy` enforces this.
 - Adding an agent means a preset entry, an installer entry, and one strategy type.
+- OpenCode v1 (`opencode`) and v2 (`opencode-v2`) are separate presets. Share compatible JSON parsing and failure detectors, but keep command flags, installer pins, permission defaults and session identity generation-specific. Never choose the protocol from a host probe during launch.
 - Behaviour an agent does not support is documented as a limitation in `docs/usage/agent-compatibility.md`, not emulated with a special case.
 
 ## Preserve atomic filesystem writes

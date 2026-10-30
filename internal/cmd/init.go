@@ -57,6 +57,8 @@ func NewInitCmd() *cobra.Command {
 			agent, _ := cmd.Flags().GetString("agent")
 			model, _ := cmd.Flags().GetString("model")
 			variant, _ := cmd.Flags().GetString("variant")
+			reviewModel, _ := cmd.Flags().GetString("review-model")
+			reviewVariant, _ := cmd.Flags().GetString("review-variant")
 			parallel, _ := cmd.Flags().GetInt("parallel")
 			parallelReviews, _ := cmd.Flags().GetInt("parallel-reviews")
 			reviewCommand, _ := cmd.Flags().GetString("review-command")
@@ -97,6 +99,8 @@ func NewInitCmd() *cobra.Command {
 				Agent:            agent,
 				Model:            model,
 				Variant:          variant,
+				ReviewModel:      reviewModel,
+				ReviewVariant:    reviewVariant,
 				Parallel:         parallel,
 				ParallelReviews:  parallelReviews,
 				ReviewCommand:    reviewCommand,
@@ -130,6 +134,8 @@ func NewInitCmd() *cobra.Command {
 	cmd.Flags().String("agent", "", "Default built-in agent preset ("+strings.Join(scaffold.KnownAgents, ", ")+")")
 	cmd.Flags().String("model", "", "Default model for the agent")
 	cmd.Flags().String("variant", "", "Default implementation model variant")
+	cmd.Flags().String("review-model", "", "Default model for the review agent")
+	cmd.Flags().String("review-variant", "", "Default review model variant")
 	cmd.Flags().Int("parallel", -1, fmt.Sprintf("Default parallel container count (-1 = use config default %d)", config.DefaultParallel))
 	cmd.Flags().Int("parallel-reviews", -1, fmt.Sprintf("Default parallel reviews count (-1 = use built-in default of %d)", config.DefaultReviewParallel))
 	cmd.Flags().String("review-command", "", "Review command to store in config and install into shared skills")

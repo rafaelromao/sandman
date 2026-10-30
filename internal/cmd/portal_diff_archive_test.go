@@ -14,6 +14,7 @@ const run = {
   issueLabel: '#42',
   runId: '260618113825-abcd-archive-1',
   archived: false,
+  canArchive: true,
 };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
@@ -43,6 +44,7 @@ const run = {
   runId: '260618113825-abcd-archive-stale',
   archived: false,
   sourceExists: false,
+  canArchive: false,
 };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
@@ -70,6 +72,7 @@ const run = {
   archived: false,
   sourceExists: true,
   batchKey: '260618113825-abcd-42',
+  canArchive: false,
 };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
@@ -97,6 +100,7 @@ const run = {
   runId: '260618113825-abcd-archive-3',
   archived: true,
   sourceExists: false,
+  canArchive: false,
 };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
@@ -124,8 +128,9 @@ const runOld = {
   runId: '260618113825-abcd-archive-4',
   archived: false,
   sourceExists: true,
+  canArchive: true,
 };
-const runNew = Object.assign({}, runOld, { archived: true });
+const runNew = Object.assign({}, runOld, { archived: true, canArchive: false });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
@@ -155,8 +160,9 @@ const runOld = {
   runId: '260618113825-abcd-archive-5',
   archived: true,
   sourceExists: true,
+  canArchive: false,
 };
-const runNew = Object.assign({}, runOld, { archived: false });
+const runNew = Object.assign({}, runOld, { archived: false, canArchive: true });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
@@ -185,6 +191,7 @@ const run = {
   runId: '260618113825-abcd-archive-6',
   archived: false,
   sourceExists: true,
+  canArchive: true,
 };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };

@@ -49,7 +49,7 @@ func TestQuotaAccountingRestoresPollingWithoutChargingDowntime(t *testing.T) {
 	opts.now = func() time.Time { return now }
 	o := NewOrchestrator(client, &noopRenderer{}, nil, log, WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(sbFactory), WithRunSessionOpts(opts))
 	result, _ := o.newRunExecutor(context.Background(), BatchConfig{Cfg: &config.Config{WorktreeDir: "worktrees"}, AgentCfg: config.BuiltInAgentPresets["opencode"].Agent("opencode"), IdentityResolver: noopIdentityResolver(), Retries: 1}, sbFactory, nil).Execute(context.Background(), RowSpec{
-		IssueNumber: 42, Mode: ModeContinue, RunID: "row", UsageLimitProbe: true, Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main",
+		IssueNumber: 42, Mode: ModeContinue, RunID: "row", quotaAllowance: usageLimitAllowance{probe: true}, Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main",
 	})
 	states := events.ProjectRunStates(log.snapshot())
 	if result.Status != "await" || launches != 1 || len(states) != 1 || states[0].AwaitEvent == nil {
@@ -96,7 +96,7 @@ func TestQuotaAccountingUnavailableStillPermitsOrdinaryRecovery(t *testing.T) {
 			})}}
 			sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: root}}
 			o := NewOrchestrator(client, &noopRenderer{}, nil, eventLog, WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(sbFactory), WithRunSessionOpts(gateTestRunOptions()))
-			result, _ := o.newRunExecutor(context.Background(), BatchConfig{Cfg: &config.Config{WorktreeDir: "worktrees"}, AgentCfg: config.BuiltInAgentPresets["opencode"].Agent("opencode"), IdentityResolver: noopIdentityResolver(), Retries: 1}, sbFactory, nil).Execute(context.Background(), RowSpec{IssueNumber: 42, Mode: ModeContinue, RunID: "row", UsageLimitProbe: true, Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main"})
+			result, _ := o.newRunExecutor(context.Background(), BatchConfig{Cfg: &config.Config{WorktreeDir: "worktrees"}, AgentCfg: config.BuiltInAgentPresets["opencode"].Agent("opencode"), IdentityResolver: noopIdentityResolver(), Retries: 1}, sbFactory, nil).Execute(context.Background(), RowSpec{IssueNumber: 42, Mode: ModeContinue, RunID: "row", quotaAllowance: usageLimitAllowance{probe: true}, Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main"})
 			wantAwaits := 0
 			if kind != "missing-operation" {
 				wantAwaits = 1 // Existing evidence only; no new wait may be invented.
@@ -210,7 +210,7 @@ func TestQuotaOwnershipEstimateDoesNotChangeOperationOrGrace(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer owner.close()
-	row := RowSpec{IssueNumber: 42, RunID: "row", Mode: ModeContinue, UsageLimitProbe: true, UsageLimitDeadline: now.Add(time.Hour), Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main"}
+	row := RowSpec{IssueNumber: 42, RunID: "row", Mode: ModeContinue, quotaAllowance: usageLimitAllowance{probe: true, deadline: now.Add(time.Hour)}, Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main"}
 	if err := owner.checkpoint(row, false, usageLimitPollInterval); err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestQuotaOwnershipEstimateDoesNotChangeOperationOrGrace(t *testing.T) {
 		t.Fatal(err)
 	}
 	now = now.Add(2 * time.Hour) // Capacity/downtime cannot consume polling.
-	row.UsageLimitDeadline = now.Add(usageLimitRetryWindow - 10*time.Minute)
+	row.quotaAllowance = row.quotaAllowance.continueProbe(now.Add(usageLimitRetryWindow - 10*time.Minute))
 	if err := owner.checkpoint(row, true, 0); err != nil {
 		t.Fatalf("recomputed quota estimate vetoed ownership: %v", err)
 	}

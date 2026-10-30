@@ -60,6 +60,11 @@ COMMENTED approvals, request/head/window and real-feedback controls, pending-CI
 observations without premature relaunches, and same-RunID approval continuation
 through verified merge. Accepted informal approval is sufficient without a
 formal GitHub approval; its continuation prompt must preserve that contract.
+The captured reports in `internal/batch/testdata/approved-daemon-28-*.md` and
+`approved-sandman-{2818,2886}.md` cover quality tags, no-author-change wording,
+publication limitations and informational next steps. Classifier and lifecycle
+tests assert approval precedes informal feedback; executor tests cover ordinary
+`--continue` and capacity-ready re-entry through verified merge and issue closure.
 
 For OpenCode context rollover changes, the hermetic production-path coverage is:
 
@@ -326,7 +331,7 @@ Expensive scenarios are selected with `SANDMAN_E2E_GATES`. The value can be a si
 | `batch_id_rules` | `internal/cmd` | `TestBatchIDRules_*` |
 | `preset_matrix` | `internal/cmd` | none gated by this constant; the e2e-tagged preset-matrix harness (`preset_matrix_harness_e2e_test.go`) runs through `scripts/run-preset-matrix.sh` |
 | `base_branch_feature` | `internal/batch` | `TestRunBatch_BaseBranchFeature_CutsWorktreeFromFeatureBranch` |
-| `review_daemon` | `internal/cmd` | `TestReviewDaemonE2E_RealAgentInContainer` |
+| `review_daemon` | `internal/cmd` | `TestReviewDaemonE2E_CannedReviewerTriggerToPost` |
 | `lifecycle_commands` | `internal/cmd` | `TestLifecycle_*` |
 | `review_wait` | `internal/cmd` | `TestReviewWaitStabilization_*` |
 
@@ -490,8 +495,9 @@ all required Chromium-backed tests (continuity, subject switching, page renderin
 and visual layout). `test-browser` enables the `visual` build tag and requires a
 browser; `test-ci` excludes that same exact inventory. A Go AST contract checks
 the inventory against browser helper callers, preventing silently skipped scenarios.
-The built-binary Portal browser test retains its separate
-`SANDMAN_RUN_PORTAL_BINARY_E2E=1` opt-in; it was never part of default PR coverage. Node remains installed in both platform
+The built-binary Portal tests keep their separate
+`SANDMAN_RUN_PORTAL_BINARY_E2E=1` opt-in and stay out of default PR coverage;
+release regression sets it, so the unit tier runs them as required scenarios. Node remains installed in both platform
 jobs so production-module tests and JavaScript assertions remain in the race suite.
 
 Linux retains Podman with runc and its runtime probe. Default container tests are
@@ -612,10 +618,16 @@ API returned an empty list; legacy protection/admin access remains unverified.
 An authorized repository administrator must apply/verify strict required checks.
 A merge queue would also require `merge_group` CI and title-gate support first.
 
-Regular CI runs one tool-free OpenCode canary request on Linux (60-second
-provider deadline, three-minute job, no containers or retries), using the release
-manifest's exact CLI/model. A provider deprecation failure instructs the implementor
-to update the scaffold fallback, release manifest and release workflow pin together.
+Regular CI runs one tool-free `opencode run` invocation for its OpenCode canary on
+Linux (60-second provider deadline, three-minute job, no containers, and no retry
+loop inside that job), using the release manifest's exact CLI/model. This process
+contract does not claim to count physical HTTP requests made internally by the CLI.
+After diagnosing a transient provider/network timeout on the identified current-head
+execution, the implementation agent may initiate one authorized, bounded GitHub
+rerun; this is a new job invocation, not an in-job retry. Rerunning the existing
+execution does not require `workflow_dispatch`. A provider deprecation failure
+instructs the implementor to update the scaffold fallback, release manifest and
+release workflow pin together.
 The canary is mandatory in the aggregate quality gate; full provider E2Es remain
 release-only, and Claude provider E2Es remain manual-only. The existing OPENCODE_API_KEY repository secret is required and is forwarded
 by the Release reusable-CI caller.
@@ -627,3 +639,17 @@ auth setup succeeds before the agent adds the worktree's shim directory. This
 exercises the real container startup and permission forwarding without a provider
 request. Diagnostics are included as `container-permissions` in the existing
 Linux build reports; the broader provider suites remain release-only.
+
+Python toolchain image builds mount an optional `github_token` build secret for
+mise downloads and artifact-attestation verification. Image builders share the
+same argument helper; token values never become build arguments or image ENV.
+The release runner supplies `MISE_GITHUB_TOKEN` independently of fake GitHub CLI
+credentials. Local builds without a token still work subject to GitHub API limits.
+Regular Linux CI tests the generated install instruction with a fake installer,
+both with and without authentication, and checks that the secret is absent from
+subsequent layers, runtime environment, and image history.
+
+Maintainers can add the `release-validation` label to a same-repository PR to
+run the full Linux release regression tiers before merging a release repair.
+New commits rerun that opt-in validation. Fork PRs receive no provider secrets;
+Claude remains excluded and requires the existing manual workflow input.

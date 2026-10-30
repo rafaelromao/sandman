@@ -93,6 +93,8 @@ type Options struct {
 	Agent           string // --agent override
 	Model           string // --model override
 	Variant         string // --variant override
+	ReviewModel     string // --review-model override
+	ReviewVariant   string // --review-variant override
 	Parallel        int    // --parallel override (-1 = use config default)
 	ParallelReviews int    // --parallel-reviews override (-1 = use config default)
 	ReviewCommand   string // --review-command override
@@ -235,7 +237,8 @@ var KnownBuildToolsPresets = func() []string {
 }()
 
 var builtInAgentVersionCatalog = map[string][]string{
-	"opencode": {"1.19.3", "1.18.0", "1.15.0", "1.14.0", "1.13.0"},
+	"opencode-v2": {"2.1.2"},
+	"opencode":    {"1.19.3", "1.18.0", "1.15.0", "1.14.0", "1.13.0"},
 	// 2.1.277 is the floor: the first Claude Code release that reads
 	// AGENTS.md natively.
 	"claude": {"2.1.283"},
@@ -251,6 +254,7 @@ type agentInstaller struct {
 	// probeHostVersion returns the agent version installed on the host, or
 	// is nil when init always pins the catalog head.
 	probeHostVersion func() (string, error)
+	validateVersion  func(string) error
 }
 
 // InstallCommand renders the Dockerfile instruction that installs version.
@@ -280,9 +284,26 @@ func (i agentInstaller) ProbeHostVersion() (string, bool) {
 var agentInstallers = map[string]agentInstaller{
 	"opencode": {
 		packageName: "opencode-ai",
+		validateVersion: func(version string) error {
+			if !strings.HasPrefix(version, "1.") {
+				return fmt.Errorf("unsupported OpenCode version %q: the opencode preset requires OpenCode V1; use --agent opencode-v2 for a V2 host, or install opencode-ai@%s and retry init", version, DefaultBuiltInAgentVersion("opencode"))
+			}
+			return nil
+		},
 		// Late-bound so tests can replace probeOpencodeVersion.
 		probeHostVersion: func() (string, error) { return probeOpencodeVersion() },
 	},
+	"opencode-v2": {
+		packageName:      "@opencode/cli",
+		probeHostVersion: func() (string, error) { return probeOpencodeVersion() },
+		validateVersion: func(version string) error {
+			if !strings.HasPrefix(version, "2.") {
+				return fmt.Errorf("unsupported OpenCode version %q: the opencode-v2 preset requires OpenCode V2; use --agent opencode for a V1 host, or install @opencode/cli@2.1.2 and retry init", version)
+			}
+			return nil
+		},
+	},
+
 	"claude": {
 		packageName: "@anthropic-ai/claude-code",
 	},
@@ -566,6 +587,17 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return err
 	}
 
+	defaultAgent, err := s.resolveDefaultAgent(opts, preserved)
+	if err != nil {
+		return err
+	}
+	agentVersion := resolveAgentVersion(defaultAgent)
+	if validate := agentInstallers[defaultAgent].validateVersion; validate != nil {
+		if err := validate(agentVersion); err != nil {
+			return err
+		}
+	}
+
 	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
 		return fmt.Errorf("create .sandman: %w", err)
 	}
@@ -573,11 +605,6 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		if err := writeCACertDir(caCertsDir(sandmanDir), caCerts.certs); err != nil {
 			return err
 		}
-	}
-
-	defaultAgent, err := s.resolveDefaultAgent(opts, preserved)
-	if err != nil {
-		return err
 	}
 
 	preset, err := s.resolveBuildToolsPreset(repoRoot, opts, p)
@@ -652,6 +679,10 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	if model == "" {
 		model = config.DefaultModelForAgent(defaultAgent)
 	}
+	reviewModel := opts.ReviewModel
+	if reviewModel == "" {
+		reviewModel = config.DefaultModelForAgent(defaultAgent)
+	}
 
 	retries, err := resolveRetries(opts.Retries)
 	if err != nil {
@@ -672,7 +703,8 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		DefaultModel:          model,
 		Variant:               strings.TrimSpace(opts.Variant),
 		DefaultReviewAgent:    defaultAgent,
-		DefaultReviewModel:    config.DefaultModelForAgent(defaultAgent),
+		DefaultReviewModel:    reviewModel,
+		ReviewVariant:         strings.TrimSpace(opts.ReviewVariant),
 		BuildTools:            preset.Name,
 		ReviewCommand:         effectiveReviewCommand(opts.ReviewCommand),
 		DefaultParallel:       parallel,
@@ -702,7 +734,6 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		}
 	}
 
-	agentVersion := resolveAgentVersion(defaultAgent)
 	dockerfile := s.renderBuildToolsDockerfile(preset, defaultAgent, agentVersion, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion, rubyVersion, rustVersion, javaVersion, caCertFingerprints(caCerts.certs))
 	dockerfilePath := layout.DockerfilePath()
 	if err := atomicfs.WriteAtomic(dockerfilePath, []byte(dockerfile), 0644); err != nil {
@@ -2478,7 +2509,8 @@ func renderNodeInstallCommand(version string) string {
 
 func renderPythonInstallCommand(version string) string {
 	var out strings.Builder
-	out.WriteString(fmt.Sprintf("RUN mise use -g --pin python@%s\n", version))
+	out.WriteString(fmt.Sprintf(`RUN --mount=type=secret,id=github_token if [ -s /run/secrets/github_token ]; then export GITHUB_TOKEN="$(cat /run/secrets/github_token)"; export MISE_GITHUB_TOKEN="$GITHUB_TOKEN"; fi; mise use -g --pin python@%s
+`, version))
 	out.WriteString("RUN pip3 install uv\n")
 	out.WriteString("RUN ln -sf \"$(dirname \"$(mise which python3)\")/uv\" /usr/local/bin/uv\n")
 	return out.String()

@@ -228,7 +228,7 @@ func TestPortal_StartupPreservesAwaitingRunWithUnexpiredLease(t *testing.T) {
 
 func TestPortal_LiveReviewKeepsRunningAndReviewingPresentation(t *testing.T) {
 	started := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
-	runs := (&portalRunsView{}).aggregateReviewChildren(paths.NewLayout(nil, t.TempDir()), []portalRun{
+	runs := (&portalRunsView{}).projectIssueGroups(paths.NewLayout(nil, t.TempDir()), []portalRun{
 		{IssueNumber: 42, RunID: "impl-42", Key: "impl-42", Kind: "active", Status: "running", StartedAt: started},
 		{IssueNumber: 42, RunID: "review-42", Key: "review-42", Kind: "active", Status: "reviewing", Review: true, StartedAt: started.Add(time.Minute)},
 	})

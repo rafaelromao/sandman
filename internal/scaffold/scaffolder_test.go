@@ -1931,7 +1931,7 @@ func TestScaffold_PythonPresetWritesPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(content, "FROM debian:bookworm-slim") {
 		t.Fatalf("Dockerfile missing Debian base image, got:\n%s", content)
 	}
-	if !strings.Contains(content, "RUN mise use -g --pin python@") {
+	if !strings.Contains(content, "mise use -g --pin python@") {
 		t.Fatalf("Dockerfile missing pinned python install, got:\n%s", content)
 	}
 	if !strings.Contains(content, "RUN pip3 install uv") {
@@ -1991,7 +1991,7 @@ func TestScaffold_AllAgentPresets_GeneratePythonPresetFiles(t *testing.T) {
 			if !strings.Contains(content, "# sandman build-tools: python") {
 				t.Fatalf("Dockerfile missing python build-tools metadata, got:\n%s", content)
 			}
-			if !strings.Contains(content, "RUN mise use -g --pin python@"+wantPythonVersion) {
+			if !strings.Contains(content, "mise use -g --pin python@"+wantPythonVersion) {
 				t.Fatalf("Dockerfile missing pinned python install %q, got:\n%s", wantPythonVersion, content)
 			}
 			if !strings.Contains(content, "RUN pip3 install uv") {
@@ -3901,6 +3901,20 @@ func TestScaffold_OpencodeFallsBackToCatalogWhenProbeFails(t *testing.T) {
 	if !strings.Contains(string(data), "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {
 		t.Errorf("expected Dockerfile to fall back to catalog head %q when probe fails, got:\n%s",
 			DefaultBuiltInAgentVersion("opencode"), string(data))
+	}
+}
+
+func TestScaffold_RejectsUnsupportedOpenCodeBeforeWriting(t *testing.T) {
+	dir := t.TempDir()
+	prev := probeOpencodeVersion
+	probeOpencodeVersion = func() (string, error) { return "3.0.0", nil }
+	t.Cleanup(func() { probeOpencodeVersion = prev })
+	err := (&Scaffolder{}).Scaffold(dir, Options{BuildTools: "generic", Agent: "opencode"}, &fakePrompter{confirm: true})
+	if err == nil || !strings.Contains(err.Error(), "OpenCode V1") {
+		t.Fatalf("want supported-generation guidance, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".sandman")); !os.IsNotExist(err) {
+		t.Fatalf("unsupported host must not write a scaffold: %v", err)
 	}
 }
 

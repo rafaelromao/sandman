@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -10,18 +11,26 @@ import (
 	"github.com/rafaelromao/sandman/internal/paths"
 )
 
+// leaseRenewInterval is how often a live owner renews its schedule lease.
+const leaseRenewInterval = 30 * time.Second
+
 // waitOwner keeps schedule evidence fresh while the logical row is suspended.
 // The enclosing row holds its exclusive RunID claim until terminal persistence.
 type waitOwner struct {
-	mu       sync.Mutex
-	layout   paths.Layout
-	batch    paths.BatchLocation
-	record   daemon.RunWait
-	now      func() time.Time
-	log      events.EventLog
-	done     chan struct{}
-	stopped  chan struct{}
-	stopOnce sync.Once
+	mu     sync.Mutex
+	layout paths.Layout
+	batch  paths.BatchLocation
+	record daemon.RunWait
+	now    func() time.Time
+	log    events.EventLog
+	// renewedAt is when the lease was last written successfully. Retries
+	// are measured from it against the uncapped recovery grace: a lease
+	// capped by its operation deadline cannot be extended by renewal, and
+	// the held RunID claim, not the lease, protects the live row.
+	renewedAt time.Time
+	done      chan struct{}
+	stopped   chan struct{}
+	stopOnce  sync.Once
 }
 
 func newWaitOwner(layout paths.Layout, batch paths.BatchLocation, record daemon.RunWait, now func() time.Time, log events.EventLog, pulse ...<-chan time.Time) (*waitOwner, error) {
@@ -29,23 +38,28 @@ func newWaitOwner(layout paths.Layout, batch paths.BatchLocation, record daemon.
 	if len(pulse) > 0 {
 		ticks = pulse[0]
 	}
-	return newWaitOwnerWithFailure(layout, batch, record, now, log, ticks, nil)
+	return newWaitOwnerWithFailure(layout, batch, record, now, log, ticks, nil, nil)
 }
 
 // The owner renews record at batch's frozen location; record must carry the
-// Batch's public identity, never its physical directory name.
-func newWaitOwnerWithFailure(layout paths.Layout, batch paths.BatchLocation, record daemon.RunWait, now func() time.Time, log events.EventLog, pulse <-chan time.Time, onFailure func(error)) (*waitOwner, error) {
-	if err := daemon.RenewRunWait(layout, batch, record, now()); err != nil {
+// Batch's public identity, never its physical directory name. A renewal that
+// fails with ErrRunWaitInvalid calls onFailure at once. Any other failure is
+// reported to onRetry and retried on later ticks; onFailure is called only
+// once the last successful renewal's recovery grace would lapse before the
+// next renewal.
+func newWaitOwnerWithFailure(layout paths.Layout, batch paths.BatchLocation, record daemon.RunWait, now func() time.Time, log events.EventLog, pulse <-chan time.Time, onFailure, onRetry func(error)) (*waitOwner, error) {
+	renewedAt := now()
+	if err := daemon.RenewRunWait(layout, batch, record, renewedAt); err != nil {
 		return nil, err
 	}
-	owner := &waitOwner{layout: layout, batch: batch, record: record, now: now, log: log, done: make(chan struct{}), stopped: make(chan struct{})}
+	owner := &waitOwner{layout: layout, batch: batch, record: record, now: now, log: log, renewedAt: renewedAt, done: make(chan struct{}), stopped: make(chan struct{})}
 	go func() {
 		defer close(owner.stopped)
 		var ticks <-chan time.Time
 		if pulse != nil {
 			ticks = pulse
 		} else {
-			ticker := time.NewTicker(30 * time.Second)
+			ticker := time.NewTicker(leaseRenewInterval)
 			defer ticker.Stop()
 			ticks = ticker.C
 		}
@@ -55,18 +69,37 @@ func newWaitOwnerWithFailure(layout paths.Layout, batch paths.BatchLocation, rec
 				return
 			case <-ticks:
 				owner.mu.Lock()
-				err := daemon.RenewRunWait(owner.layout, owner.batch, owner.record, owner.now())
-				owner.mu.Unlock()
-				if err != nil {
-					if onFailure != nil {
-						onFailure(err)
-					}
-					return
+				at := owner.now()
+				err := daemon.RenewRunWait(owner.layout, owner.batch, owner.record, at)
+				if err == nil {
+					owner.renewedAt = at
 				}
+				renewedAt := owner.renewedAt
+				owner.mu.Unlock()
+				if err == nil {
+					continue
+				}
+				if renewalRetryable(err, at, renewedAt) {
+					if onRetry != nil {
+						onRetry(err)
+					}
+					continue
+				}
+				if onFailure != nil {
+					onFailure(err)
+				}
+				return
 			}
 		}
 	}()
 	return owner, nil
+}
+
+// renewalRetryable reports whether a failed renewal at at may be retried: the
+// failure is not invalid ownership, and the next renewal still lands inside the
+// uncapped recovery grace of the last successful renewal.
+func renewalRetryable(err error, at, renewedAt time.Time) bool {
+	return !errors.Is(err, daemon.ErrRunWaitInvalid) && at.Add(leaseRenewInterval).Before(renewedAt.Add(daemon.RunRecoveryGrace))
 }
 
 func (o *waitOwner) checkpoint(row RowSpec, ready bool, nextPoll time.Duration) error {
@@ -86,7 +119,7 @@ func (o *waitOwner) checkpoint(row RowSpec, ready bool, nextPoll time.Duration) 
 	record := o.record
 	if o.log != nil {
 		record.InitialAdmission = !state.HasStarted()
-	} else if !ready || row.UsageLimitProbe || row.Mode == ModeContinue {
+	} else if !ready || row.quotaAllowance.probing() || row.Mode == ModeContinue {
 		record.InitialAdmission = false
 	}
 	if !record.InitialAdmission {
@@ -96,7 +129,9 @@ func (o *waitOwner) checkpoint(row RowSpec, ready bool, nextPoll time.Duration) 
 	if record.Branch == "" {
 		record.Branch = row.Branches[row.IssueNumber]
 	}
-	record.Ready, record.UsageLimitProbe = ready, row.UsageLimitProbe
+	record.Ready, record.UsageLimitProbe = ready, row.quotaAllowance.probing()
+	record.UsageLimitAccountingUnavailable = row.quotaAllowance.accountingUnavailableForCheckpoint()
+	record.ReuseSession = row.quotaAllowance.allowSessionReuse(row.ReuseSession)
 	record.PreviousRunID = row.PreviousRunIDs[row.IssueNumber]
 	record.PreviousBatchID = row.PreviousRunBatchIDs[row.IssueNumber]
 	record.NextPollAt = o.now().Add(nextPoll)
@@ -106,6 +141,16 @@ func (o *waitOwner) checkpoint(row RowSpec, ready bool, nextPoll time.Duration) 
 			record.OperationDeadline = deadline
 			record.OperationID = fmt.Sprintf("%s:%d", gate, deadline.Unix())
 		}
+		if id, deadline, ok := githubRecoveryOperation(state.AwaitEvent.Payload); ok {
+			// A GitHub recovery wait is bounded by its 24-hour window; retained
+			// review or CI deadlines are not enforced while GitHub is down.
+			record.OperationID, record.OperationDeadline = id, deadline
+		}
+		if continuityHoldPayload(state.AwaitEvent.Payload) {
+			// A continuity hold waits for external recovery without an
+			// operation deadline; it keeps the ordinary ownerless grace.
+			record.OperationID, record.OperationDeadline = continuityHoldOperation(row.RunID), time.Time{}
+		}
 		if state.AwaitReason() == "usage-limit" {
 			record.UsageLimitProbe = true
 			record.OperationID, record.OperationDeadline = "quota:"+row.RunID, time.Time{}
@@ -114,13 +159,15 @@ func (o *waitOwner) checkpoint(row RowSpec, ready bool, nextPoll time.Duration) 
 	if ready && !record.UsageLimitProbe {
 		record.OperationID, record.OperationDeadline = "capacity", time.Time{}
 	}
-	if row.UsageLimitProbe {
+	if row.quotaAllowance.probing() {
 		record.OperationID, record.OperationDeadline = "quota:"+row.RunID, time.Time{}
 	}
-	if err := daemon.RenewRunWait(o.layout, o.batch, record, o.now()); err != nil {
+	at := o.now()
+	if err := daemon.RenewRunWait(o.layout, o.batch, record, at); err != nil {
 		return err
 	}
 	o.record = record
+	o.renewedAt = at
 	return nil
 }
 
