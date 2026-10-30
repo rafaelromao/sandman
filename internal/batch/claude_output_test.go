@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -141,6 +142,51 @@ func TestClaudeOutput_RecognisesUsageLimitBeforeRendering(t *testing.T) {
 	_, echo := renderClaudeStream(t, `{"type":"assistant","message":{"content":[{"type":"text","text":"You've hit your session limit"}]}}`+"\n")
 	if echo.UsageLimitReached() {
 		t.Fatal("assistant echo of the limit message was treated as a usage limit")
+	}
+}
+
+// Reconstructs the stream-json shape behind the October 29 incident's
+// rendered tail. The original raw stream was not saved in run.log.
+func TestClaudeOutput_LongSessionLimitAfterWarnings(t *testing.T) {
+	for _, chunkSize := range []int{1, 17, 4096} {
+		t.Run(strconv.Itoa(chunkSize), func(t *testing.T) {
+			stdout, stderr := newClaudeOutputs()
+			var out bytes.Buffer
+			stdout.setDestination(&out)
+			stderr.setDestination(&out)
+			write := func(parser outputParser, text string) {
+				t.Helper()
+				for len(text) > 0 {
+					n := min(chunkSize, len(text))
+					if _, err := parser.Write([]byte(text[:n])); err != nil {
+						t.Fatal(err)
+					}
+					text = text[n:]
+				}
+			}
+			for range 209 {
+				write(stdout, `{"type":"assistant","message":{"content":[{"type":"text","text":"Working on the implementation."}]}}`+"\n")
+			}
+			for _, utilization := range []string{"0.92", "0.94", "0.95", "0.96", "0.97", "0.98", "0.99"} {
+				write(stdout, `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","rateLimitType":"five_hour","utilization":`+utilization+`}}`+"\n")
+			}
+			write(stderr, "A provider diagnostic on stderr\n")
+			write(stdout, `{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"five_hour"}}`+"\n")
+			write(stdout, `{"type":"assistant","message":{"content":[{"type":"text","text":"You've hit your session limit · resets 4am (UTC)"}]}}`+"\n")
+			if stdout.UsageLimitReached() {
+				t.Fatal("warning/rejection events or assistant text independently triggered quota recovery")
+			}
+			write(stdout, claudeLongSessionUsageLimitResult) // Exercise the trailing partial-line flush too.
+			if err := stdout.Flush(); err != nil {
+				t.Fatal(err)
+			}
+			if !stdout.UsageLimitReached() || !stderr.UsageLimitReached() {
+				t.Fatal("long-session terminal limit was lost from shared parser state")
+			}
+			if !strings.Contains(out.String(), "Result: error · 209 turns · 37m45s · $9.26\nError: You've hit your session limit · resets 4am (UTC)\n") {
+				t.Fatalf("terminal rendering missing from output tail: %s", out.String())
+			}
+		})
 	}
 }
 

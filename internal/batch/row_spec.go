@@ -64,22 +64,22 @@ func runSpecFromRow(row RowSpec) (RunSpec, ContinuationCursor) {
 	}
 	continuationKey := rowContinuationKey(row.IssueNumber, row.Review)
 	return RunSpec{
-			RunID: row.RunID, IssueNumber: row.IssueNumber, BatchID: row.BatchID,
-			BatchDir: row.BatchDir, Branch: branch, BaseBranch: row.BaseBranch,
-			RunTS: row.RunTS, RunShortID: row.RunShortID, BatchTS: row.BatchTS,
-			BatchShortID: row.BatchShortID, UserProvidedRunID: row.UserProvidedRunID,
-			details: &runSpecDetails{
-				externalBlockers: append([]int(nil), row.ExternalBlockers...),
-				renderCfg:        cloneRowRenderConfig(row.RenderCfg), outputWriter: row.OutputWriter, review: row.Review,
-				reviewHeadSHA: row.ReviewHeadSHA, prNumber: row.PRNumber, reviewFocus: row.ReviewFocus,
-				portalHidden: row.PortalHidden, qualityRulesFile: row.QualityRulesFile,
-			},
-		}, ContinuationCursor{
-			Mode: row.Mode, ReuseSession: row.ReuseSession,
-			PreviousRunID:      row.PreviousRunIDs[continuationKey],
-			PreviousRunBatchID: row.PreviousRunBatchIDs[continuationKey],
-			quotaAllowance:     row.quotaAllowance,
-		}
+		RunID: row.RunID, IssueNumber: row.IssueNumber, BatchID: row.BatchID,
+		BatchDir: row.BatchDir, Branch: branch, BaseBranch: row.BaseBranch,
+		RunTS: row.RunTS, RunShortID: row.RunShortID, BatchTS: row.BatchTS,
+		BatchShortID: row.BatchShortID, UserProvidedRunID: row.UserProvidedRunID,
+		details: &runSpecDetails{
+			externalBlockers: append([]int(nil), row.ExternalBlockers...),
+			renderCfg:        cloneRowRenderConfig(row.RenderCfg), outputWriter: row.OutputWriter, review: row.Review,
+			reviewHeadSHA: row.ReviewHeadSHA, prNumber: row.PRNumber, reviewFocus: row.ReviewFocus,
+			portalHidden: row.PortalHidden, qualityRulesFile: row.QualityRulesFile,
+		},
+	}, ContinuationCursor{
+		Mode: row.Mode, ReuseSession: row.ReuseSession,
+		PreviousRunID:      row.PreviousRunIDs[continuationKey],
+		PreviousRunBatchID: row.PreviousRunBatchIDs[continuationKey],
+		quotaAllowance:     row.quotaAllowance,
+	}
 }
 
 func rowContinuationKey(issueNumber int, review bool) int {

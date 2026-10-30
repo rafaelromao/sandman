@@ -544,6 +544,9 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 	}
 	var headReconcileErr error
 	pr, err := s.lifecyclePRForBranch(ctx, branch)
+	if err == nil && currentHeadErr == nil && hostPathsReady && s.historicalClosedPR(pr, worktreeHeadSHA, runID) {
+		pr = nil
+	}
 	repository := ""
 	gate := lifecycleGateNone
 	refreshUnavailable := false
@@ -911,6 +914,39 @@ func (s *runSession) lifecyclePRForBranch(ctx context.Context, branch string) (*
 		}
 	}
 	return lookupPRForExternalGate(ctx, s.deps.githubClient, branch)
+}
+
+// historicalClosedPR excludes an old, unmerged PR on a reused branch from
+// this Run's lifecycle. Head drift alone is not enough: a PR closed during
+// this Run remains authoritative even if the agent has unpushed commits.
+// Read the original admission, not the latest continuation, so quota probes
+// and restart cannot turn a current Run's closure into historical evidence.
+// Unknown evidence deliberately retains the ordinary closed-PR decision.
+func (s *runSession) historicalClosedPR(pr *github.PR, headSHA, runID string) bool {
+	if pr == nil || pr.Merged || !strings.EqualFold(strings.TrimSpace(pr.State), "closed") ||
+		strings.TrimSpace(headSHA) == "" || strings.TrimSpace(pr.HeadRefOid) == "" ||
+		strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) ||
+		pr.UpdatedAt.IsZero() || runID == "" || s.deps.eventLog == nil {
+		return false
+	}
+	log, err := s.deps.eventLog.Read()
+	if err != nil {
+		return false
+	}
+	for _, event := range log {
+		if event.RunID != runID {
+			continue
+		}
+		switch event.Type {
+		case "run.started":
+			return !event.Timestamp.IsZero() && pr.UpdatedAt.Before(event.Timestamp)
+		case "run.continued":
+			// A continuation without the original fresh admission cannot
+			// establish that this PR predates the logical Run.
+			return false
+		}
+	}
+	return false
 }
 
 func cloneLifecycleExtras(extras map[string]any) map[string]any {
