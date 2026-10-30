@@ -1,13 +1,16 @@
 package batch
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
@@ -20,6 +23,9 @@ type opencodeExecResult struct {
 	stdout string
 	stderr string
 	err    error
+	// during runs after the output is written, while the attempt is still
+	// running.
+	during func()
 }
 
 type opencodeSequenceSandbox struct {
@@ -65,6 +71,9 @@ func (s *opencodeSequenceSandbox) Exec(ctx context.Context, command string, stdo
 	if result.stderr != "" {
 		_, _ = io.WriteString(stderr, result.stderr)
 	}
+	if result.during != nil {
+		result.during()
+	}
 	return result.err
 }
 
@@ -73,7 +82,7 @@ func TestPriorOpenCodeSession_CanonicalInvalidDoesNotUseLegacy(t *testing.T) {
 	layout := paths.NewLayout(&config.Config{}, root)
 	canonical := layout.RunSessionPath("batch-1", "run-1")
 	legacy := layout.LegacyRunSessionPath("run-1")
-	if err := writeOpenCodeSession(legacy, "legacy"); err != nil {
+	if err := writeAgentSession(legacy, opencodeSessionKind, "legacy"); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Dir(canonical), 0755); err != nil {
@@ -83,7 +92,7 @@ func TestPriorOpenCodeSession_CanonicalInvalidDoesNotUseLegacy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, found, err := priorOpenCodeSession(layout, "batch-1", "run-1")
+	_, found, err := priorAgentSession(layout, "batch-1", "run-1", opencodeSessionKind)
 	if err == nil || found {
 		t.Fatalf("invalid canonical metadata = found %t, err %v; want no identity and an error", found, err)
 	}
@@ -109,7 +118,7 @@ func TestAgentRun_ReusesMissingSessionWithOneTimeFallback(t *testing.T) {
 	run.runFolder = runFolder
 	run.env = map[string]string{"TEST_ENV": "test-value"}
 	layout := paths.NewLayout(&config.Config{}, root)
-	if err := writeOpenCodeSession(layout.RunSessionPath("prior-batch", "prior-run"), "old"); err != nil {
+	if err := writeAgentSession(layout.RunSessionPath("prior-batch", "prior-run"), opencodeSessionKind, "old"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -155,7 +164,7 @@ func TestAgentRun_DoesNotFallbackForUnrelatedOpenCodeFailure(t *testing.T) {
 	run.previousBatchID = "prior-batch"
 	run.previousRunID = "prior-run"
 	run.runFolder = filepath.Join(root, "current")
-	if err := writeOpenCodeSession(filepath.Join(root, ".sandman", "batches", "prior-batch", "runs", "prior-run", "session.json"), "old"); err != nil {
+	if err := writeAgentSession(filepath.Join(root, ".sandman", "batches", "prior-batch", "runs", "prior-run", "session.json"), opencodeSessionKind, "old"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -184,7 +193,7 @@ func TestAgentRun_PersistsSessionObservedBeforeFallbackFailure(t *testing.T) {
 	run.previousBatchID = "prior-batch"
 	run.previousRunID = "prior-run"
 	run.runFolder = runFolder
-	if err := writeOpenCodeSession(filepath.Join(root, ".sandman", "batches", "prior-batch", "runs", "prior-run", "session.json"), "old"); err != nil {
+	if err := writeAgentSession(filepath.Join(root, ".sandman", "batches", "prior-batch", "runs", "prior-run", "session.json"), opencodeSessionKind, "old"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -278,7 +287,7 @@ func TestRunExecutor_ContinuedRowSelectsOpenCodeSession(t *testing.T) {
 		WithErrorLog(io.Discard),
 	)
 	layout := paths.NewLayout(&config.Config{}, root)
-	if err := writeOpenCodeSession(layout.RunSessionPath("prior-batch", "prior-run"), "prior-session"); err != nil {
+	if err := writeAgentSession(layout.RunSessionPath("prior-batch", "prior-run"), opencodeSessionKind, "prior-session"); err != nil {
 		t.Fatal(err)
 	}
 	bc := BatchConfig{
@@ -481,6 +490,50 @@ func TestOpenCodeOutput_SuppressesStructuralEvents(t *testing.T) {
 	}
 }
 
+func TestOpenCodeOutput_CapturesRerunEvidenceOnlyFromCompletedHelperToolInvocation(t *testing.T) {
+	var out strings.Builder
+	var parsed outputParser = newOpenCodeOutput(&out, io.Discard, false)
+	reporter, ok := parsed.(ciRerunActionReporter)
+	if !ok {
+		t.Fatal("OpenCode output parser does not expose trusted helper invocation evidence")
+	}
+	evidence := ciRerunActionEvidence{
+		Protocol: "ci-rerun/v1", State: "waiting", Reason: "workflow-still-running",
+		Repository: "owner/repo", PullRequest: 17, SourceHeadSHA: "source-head",
+		TestedSHA: "tested-merge-sha", Diagnosis: "transient-provider-timeout",
+		RunID: "101", JobID: "987654321", JobName: "opencode-canary", ObservedAttempt: 2,
+	}
+	receipt, err := json.Marshal(evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := `sh "$HOME/.agents/skills/sandman/implement/ci-rerun-v1.sh" --repository owner/repo --pull-request 17 --head-sha source-head --tested-sha tested-merge-sha --run-id 101 --job-id 987654321 --diagnosis transient-provider-timeout`
+	writeEvent := func(event map[string]any) {
+		t.Helper()
+		data, err := json.Marshal(event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := parsed.Write(append(data, '\n')); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeEvent(map[string]any{"type": "text", "part": map[string]any{"text": string(receipt)}})
+	if got := reporter.CIRerunAction(); got != nil {
+		t.Fatalf("ordinary model text authorized a helper wait: %+v", got)
+	}
+	writeEvent(map[string]any{
+		"type": "tool_use",
+		"part": map[string]any{"tool": "bash", "state": map[string]any{
+			"status": "completed", "input": map[string]any{"command": command}, "output": string(receipt),
+		}},
+	})
+	got := reporter.CIRerunAction()
+	if got == nil || got.RunID != evidence.RunID || got.JobID != evidence.JobID || got.State != "waiting" {
+		t.Fatalf("completed helper invocation evidence = %+v, want %+v", got, evidence)
+	}
+}
+
 func TestOpenCodeOutput_FormatsUnhandledValidJSON(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -538,6 +591,11 @@ func TestOpenCodeOutput_RendersToolDetails(t *testing.T) {
 		{
 			name:  "grep with pattern and path",
 			input: `{"type":"tool_use","part":{"tool":"grep","state":{"status":"completed","input":{"pattern":"hello.*world","path":"/tmp/demo"}}}}` + "\n",
+			want:  "✱ Grep \"hello.*world\" in /tmp/demo\n",
+		},
+		{
+			name:  "grep preserves v1 output when include is also present",
+			input: `{"type":"tool_use","part":{"tool":"grep","state":{"status":"completed","input":{"pattern":"hello.*world","path":"/tmp/demo","include":"**/*.go"}}}}` + "\n",
 			want:  "✱ Grep \"hello.*world\" in /tmp/demo\n",
 		},
 		{
@@ -622,5 +680,72 @@ func TestOpenCodeOutput_RendersToolDetails(t *testing.T) {
 				t.Fatalf("output = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestAgentRun_OpenCodeIgnoresAnotherAgentsSessionIdentity(t *testing.T) {
+	root := t.TempDir()
+	sb := &opencodeSequenceSandbox{
+		fakeSandbox: fakeSandbox{workDir: root},
+		results:     []opencodeExecResult{{stdout: `{"type":"step_start","sessionID":"new"}` + "\n"}},
+	}
+	layout := paths.NewLayout(&config.Config{}, root)
+	run := NewAgentRunWithLayout(&github.Issue{Number: 42}, "42-fix", sb, layout)
+	run.preset = "opencode"
+	run.reuseSession = true
+	run.previousBatchID = "prior-batch"
+	run.previousRunID = "prior-run"
+	run.batchID = "current-batch"
+	run.runID = "current-run"
+	run.runFolder = filepath.Join(root, "current-run")
+	var warnings bytes.Buffer
+	run.sessionWarning = &warnings
+	// The preset changed under the same Run: the prior record is Claude's.
+	if err := writeAgentSession(layout.RunSessionPath("prior-batch", "prior-run"), claudeSessionKind, "6f1c2a4e-0b7d-4c1a-9a55-2f0e8d3b7c11"); err != nil {
+		t.Fatal(err)
+	}
+
+	result := run.Run(context.Background(), &spyRenderer{result: "prompt"}, config.BuiltInAgentPresets["opencode"].Command, prompt.RenderConfig{})
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success", result.Status)
+	}
+	if len(sb.commands) != 1 || strings.Contains(sb.commands[0], "--session") {
+		t.Fatalf("commands = %q, want one launch without another agent's session", sb.commands)
+	}
+	if !strings.Contains(warnings.String(), `unsupported session protocol "claude-session/v1"`) {
+		t.Fatalf("warnings = %q, want the rejected identity reported", warnings.String())
+	}
+}
+
+// sessionWhileRunning reports the agent session recorded in runDir while the
+// attempt is still running, waiting briefly for buffered output to reach the
+// parsers.
+func sessionWhileRunning(runDir string, got *string) func() {
+	return func() {
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if id, ok := ReadAgentSessionID(runDir); ok {
+				*got = id
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+func TestAgentRun_OpenCodeRecordsSessionWhileTheAttemptRuns(t *testing.T) {
+	root := t.TempDir()
+	runFolder := filepath.Join(root, "run")
+	var during string
+	sb := &opencodeSequenceSandbox{
+		fakeSandbox: fakeSandbox{workDir: root},
+		results:     []opencodeExecResult{{stdout: `{"type":"step_start","sessionID":"ses_live"}` + "\n", during: sessionWhileRunning(runFolder, &during)}},
+	}
+	run := NewAgentRunWithLayout(&github.Issue{Number: 42}, "42-fix", sb, paths.NewLayout(&config.Config{}, root))
+	run.preset = "opencode"
+	run.runFolder = runFolder
+	run.Run(context.Background(), &spyRenderer{result: "prompt"}, config.BuiltInAgentPresets["opencode"].Command, prompt.RenderConfig{})
+	if during != "ses_live" {
+		t.Fatalf("session while running = %q, want ses_live recorded before the agent exits", during)
 	}
 }

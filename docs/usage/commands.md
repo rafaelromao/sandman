@@ -32,6 +32,7 @@ sandman init [flags]
 | `--parallel-reviews` | `-1` | Persist `parallel_reviews` in scaffolded config (default `1`) |
 | `--run-idle-timeout` | `-1` | Persist `run_idle_timeout` (seconds) in scaffolded config. `-1` keeps the built-in default of `3600`; `0` disables the heartbeat watchdog |
 | `--review-timeout` | omitted | Persist `review_timeout` (seconds) in scaffolded config. Default `1800`; values below `240` are invalid |
+| `--ca-cert` | omitted | Trust a CA certificate in the sandbox image (repeatable): a PEM file path, `auto` to capture a TLS-inspection proxy's root from this host, or `none` to remove trusted certificates. Omitted keeps the certificates already in `.sandman/certs/`. See [Scaffolding > Trusted CA certificates](scaffolding.md#trusted-ca-certificates) |
 
 When `--tool-version` is omitted, `init` uses the preset resolver's interactive defaults: repo hints are offered when present, otherwise `latest`/`lts` choices are prompted.
 
@@ -46,9 +47,11 @@ directly in OpenCode or Claude Code, load `sandman-run`. That standalone
 entrypoint composes `sandman-implement`, `sandman-review-cycle`, and
 `sandman-pr-merge`, with review-cycle state held in memory for the session.
 
-Managed waiting is event-backed and restart-safe: `sandman run --continue`
-rehydrates the same RunID and validates the current pull-request head before
-resuming. A verified merge is terminal without another execution slot, while
+Managed waiting is event-backed and restart-safe: after a restart, the next
+`sandman run` (without `--override` or `--run-id`) picks up each recoverable
+waiting row under its original RunID and validates the current pull-request
+head before resuming. Manual `sandman run --continue` is different: it starts a
+new Batch ID and RunID and records the prior RunID as lineage. A verified merge is terminal without another execution slot, while
 dependent rows remain held until dependency closure is confirmed. Use
 `sandman clean --stale` only for dead ownership; an explicit abort is final and
 does not create a continuation.
@@ -83,8 +86,8 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--max-containers` | config default (0) | Max containers; `0` = no cap (unbounded pool growth) |
 | `--retries` | config `retries` (3) | Number of times to retry a failed run; omit to use `retries` from `.sandman/config.yaml` (default 3) |
 | `--override` | `false` | Replace worktree and branch for a new attempt while retaining prior AgentRun events (append-only), batch artifacts, and logs; force-checkout worktree to expected branch on mismatch or detached HEAD |
-| `--continue` | `false` | Continue the latest AgentRun for selected issues by reusing the preserved worktree (branch, base branch, task file, prior run id); the agent starts a fresh conversation by default |
-| `--reuse-session` | `false` | Only with `--continue`: explicitly reuse each continued row's prior conversation. OpenCode selects the exact prior session, falling back once to OpenCode `--continue` if it is unavailable; Claude Code resumes the worktree's most recent conversation with `--continue` |
+| `--continue` | `false` | Continue the latest AgentRun for selected issues by reusing the preserved worktree (branch, base branch, task file); the continued row gets a new Batch ID and RunID, with the prior RunID recorded as its predecessor; the agent starts a fresh conversation by default |
+| `--reuse-session` | `false` | Only with `--continue`: explicitly reuse each continued row's prior conversation. OpenCode selects the exact prior session, falling back once to OpenCode `--continue` if it is unavailable; Claude Code resumes the exact recorded session with `--resume`, starting fresh if it is unavailable |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for agent runs |
 | `--include-dependencies` | `false` | Auto-expand batch with transitive blockers |
 | `--label` | — | Select issues by label |
@@ -93,8 +96,8 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--template` | — | Path to prompt template file |
 | `--prompt-arg` | — | Custom template substitution (`KEY=VALUE`, repeatable) |
 | `--model` | `model` from config | Override the model passed to the agent for built-in presets |
-| `--variant` | `variant` from config | Override the implementation model variant; forwarded to the built-in command only when non-empty (`--variant` for OpenCode, `--effort` for Claude Code) |
-| `--agent` | `agent` from config (`opencode`) | Agent preset for this run (built-in `opencode` or `claude`, or a custom provider under `agents` in config); on `--continue` uses the current CLI/config value, not the prior run's stored agent |
+| `--variant` | `variant` from config | Override the implementation model variant using the same flag for every built-in agent; Sandman translates it to the native syntax ([mapping](agent-compatibility.md#model-variants)); `--variant ""` disables the configured variant |
+| `--agent` | `agent` from config (`opencode`) | Agent preset for this run (built-in `opencode`, `opencode-v2`, or `claude`, or a custom provider under `agents` in config); on `--continue` uses the current CLI/config value, not the prior run's stored agent |
 | `--run-id` | — | Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection |
 | `--run-idle-timeout` | config `run_idle_timeout` (`3600`) | Treat an AgentRun as stuck if it produces no output for N seconds; explicit `0` disables the timeout |
 | `--review-timeout` | config `review_timeout` (`1800`) | Override the absolute per-confirmed-request delegated review deadline in seconds; minimum `240` |
@@ -115,8 +118,8 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 - `--container-capacity` accepts `0` as unlimited mode (no per-container cap)
 - `--max-containers` caps the number of `ContainerSandbox` instances; `0` means no cap (unbounded pool growth)
 - `--model` only applies to built-in presets; if omitted, Sandman uses `model` from config when the agent shares the default `agent`'s preset, then the agent provider's configured model, then the preset's default model (`opencode/big-pickle`, `sonnet`)
-- `--variant` is trimmed and treated as opaque provider-specific text; when omitted, Sandman uses `variant` from config. On `--continue`, current CLI/config values replace the prior event value. Non-empty values are safely passed as one argument to the built-in command (`--variant` for OpenCode, `--effort` for Claude Code); custom commands are unchanged.
-- `--agent` selects the agent preset for this run (built-in `opencode` or `claude`, or a custom provider under `agents` in config); if omitted, Sandman uses `agent` from config. In container mode the Dockerfile's `installed-agents` header must list the agent's preset
+- `--variant` is trimmed and treated as opaque provider-specific text; when omitted, Sandman uses `variant` from config. On `--continue`, current CLI/config values replace the prior event value. Non-empty values are safely passed as one argument to the built-in command (`--variant` for OpenCode v1, `#variant` on the model for `opencode-v2`, `--effort` for Claude Code); custom commands are unchanged.
+- `--agent` selects the agent preset for this run (built-in `opencode`, `opencode-v2`, or `claude`, or a custom provider under `agents` in config); if omitted, Sandman uses `agent` from config. In container mode the Dockerfile's `installed-agents` header must list the agent's preset
 - `--continue` cannot be combined with `--override`
 - `--reuse-session` requires `--continue`; it applies independently to each continued row and never to promoted or fresh rows
 - Runtime-owned re-entry after an external pull-request wait reuses the prior conversation automatically (the exact OpenCode session, or Claude Code's `--continue`); ordinary retries and context-rollover retries remain fresh
@@ -152,7 +155,7 @@ Continue the last agent run for one or more issues. Reads the task file (`.sandm
 sandman run --continue <issue-number>...
 ```
 
-Reuses the prior run's worktree identity: the existing branch, the stored base branch (the worktree was cut from it), the prior run id, the `.sandman/task.md` contents, and the issue mode. Tunables (agent, model, parallel, retries, sandbox, container tunables, review command, review timeout) come from current CLI flags / config defaults, not from the stored payload. CLI overrides on the `--continue` invocation still win over both config defaults and stored values. The agent starts a fresh conversation unless `--reuse-session` is also supplied. When no task file exists, an empty task template is used as the resume prompt (with a warning on stderr).
+Reuses the prior run's worktree identity: the existing branch, the stored base branch (the worktree was cut from it), the `.sandman/task.md` contents, and the issue mode. The continued run gets a new Batch ID and RunID and records the prior RunID as its predecessor, so its active duration starts fresh. Only the automatic re-entry of a recoverable waiting row keeps the original RunID. Tunables (agent, model, parallel, retries, sandbox, container tunables, review command, review timeout) come from current CLI flags / config defaults, not from the stored payload. CLI overrides on the `--continue` invocation still win over both config defaults and stored values. The agent starts a fresh conversation unless `--reuse-session` is also supplied. When no task file exists, an empty task template is used as the resume prompt (with a warning on stderr).
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -183,11 +186,13 @@ The temp-dir and `sandman-smoke-*` image sweep runs in every mode — `--all`, `
 
 | Flag | Description |
 |------|-------------|
-| `--all` | Run the full cleanup sequence: recover stale runs, remove orphaned test batches, remove archived batches, reclaim completed active batches (daemon gone, all runs terminal or all rows archived), then sweep Sandman-owned temp dirs and `sandman-smoke-*` images. Live or in-flight active batches are preserved. |
+| `--all` | Run the full cleanup sequence: recover stale runs, remove orphaned test batches, remove archived batches, reclaim completed active batches (daemon gone, all runs terminal or all rows archived), remove terminal Runs' claim files, then sweep Sandman-owned temp dirs and `sandman-smoke-*` images. Live or in-flight active batches are preserved. |
 | `--archived` | Remove archived batches |
 | `--dry-run` | Print intended deletions without performing I/O |
-| `--stale` | Recover stale runs in dead batches by emitting `run.aborted` events |
+| `--stale` | Recover stale runs in dead batches by emitting `run.aborted` events, then remove the `.sandman/state/run-claims/<RunID>.lock` files of event-terminal Runs |
 | `--orphaned` | Remove orphaned test batch directories (no matching run.started event and no live daemon socket) |
+
+Claim-file cleanup keeps the claims of unfinished Runs, of Runs with no events, and of any claim still held by a live process; `--dry-run` never removes them.
 
 `--all` is mutually exclusive with `--archived`, `--stale`, and `--orphaned` (it is the umbrella flag, not a combiner). `--stale` is mutually exclusive with `--archived`, `--dry-run`, and `--orphaned`. `--orphaned` is mutually exclusive with `--archived`, `--stale`, and `--all`. `--archived` and `--dry-run` can be combined.
 
@@ -205,8 +210,8 @@ sandman archive stale
 | Subcommand | Description |
 |------------|-------------|
 | `run <runId>` | Move `runs/<runId>/` from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/runs/<runId>/`. The AgentRun's event projection must be terminal; sibling rows and the batch daemon stay untouched. Persists an `archivePath` recovery record for crash recovery. The HTTP `POST /api/runs/archive` endpoint shares this per-row contract. |
-| `batch <batchId>` | Move the whole batch directory from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/`. The batch daemon must be gone; sibling rows are not applicable. Flips the batch-level `status` to `archived`. CLI-only — not exposed via HTTP. |
-| `older-than <days>` | Walk every `run.json` across all batches and archive each terminal row older than the cutoff. Already-archived rows are skipped. Sibling rows and live batch daemons stay untouched. `<days>` must be a non-negative integer; `0` archives every dead batch. |
+| `batch <batchId>` | Move the whole batch directory from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/`. The batch daemon must be gone and every AgentRun in the batch must be event-terminal; otherwise the command refuses. Flips the batch-level `status` to `archived`. CLI-only — not exposed via HTTP. |
+| `older-than <days>` | Walk every `run.json` across all batches and archive each terminal row older than the cutoff. Already-archived rows are skipped. Sibling rows and live batch daemons stay untouched. Selection is per row, by the manifest creation time (or manifest mtime); the batch root never moves. `<days>` must be a non-negative integer; `0` archives every terminal row in batches whose daemon is gone. |
 | `stale` | Chain the same status-fix logic as `clean --stale` (emit `run.aborted` for unterminated runs in dead batches), then walk every `run.json` and archive each terminal row. Live batches are skipped entirely.
 
 See the [Archive section in `monitoring.md`](monitoring.md#archive) for detailed semantics including the per-row `Runs[]` record and the whole-batch archive invariant.

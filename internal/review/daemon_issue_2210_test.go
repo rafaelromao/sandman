@@ -228,6 +228,7 @@ func TestDaemon_LaunchFailureBackoff_RegressionFiveFailures(t *testing.T) {
 	}, &lockedBuffer{}, 1, true, nil)
 	d.PollInterval = 0
 	d.launchBackoff = func(int) time.Duration { return 0 } // zero-cost seam
+	d.Clock = func() time.Time { return now }
 
 	const expectedAttempts = 5
 

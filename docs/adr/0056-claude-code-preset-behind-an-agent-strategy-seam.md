@@ -57,7 +57,9 @@ and logs out of the per-batch snapshot. Authentication stays file or
 environment based: host login credentials in worktree mode, and
 `~/.claude/.credentials.json` or `CLAUDE_CODE_OAUTH_TOKEN` in containers.
 
-**Session reuse is a per-strategy choice.** The Claude strategy reuses a
+**Session reuse is a per-strategy choice.** (Superseded by ADR-0057: Claude
+reuse now resumes the exact recorded session, and transcripts are shared with
+the host.) The Claude strategy reuses a
 conversation through Claude Code's working-directory-scoped `--continue`, which
 includes print-mode sessions. Each row owns one worktree, so the worktree
 identifies the conversation: no session ID is parsed and no `session.json` is
@@ -130,7 +132,7 @@ strategy seam.
 ### Negative
 
 - Capabilities that are not wired for Claude are limitations rather than
-  features: exact-ID session identity, context rollover, the host/sandbox
+  features: exact-ID session identity (since added by ADR-0057), context rollover, the host/sandbox
   version-drift warning, and macOS Keychain
   credentials in containers. `docs/usage/agent-compatibility.md` lists each
   one with its workaround.

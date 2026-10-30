@@ -60,9 +60,16 @@ jobs:
         run: python3 scripts/publication_candidate.py
 
   quality:
+    # Reusable jobs cannot request permissions absent from their caller.
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
     needs: candidate
     if: needs.candidate.outputs.tag != ''
     uses: ./.github/workflows/go.yml
+    secrets:
+      OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
 
   regression:
     needs: candidate
@@ -70,7 +77,6 @@ jobs:
     uses: ./.github/workflows/full-regression-linux.yml
     secrets:
       OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
   native:
     needs: candidate

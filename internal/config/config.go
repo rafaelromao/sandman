@@ -114,7 +114,23 @@ type AgentPreset struct {
 	ConfigFiles           []string
 	SnapshotExcludes      []string
 	LiveMounts            []string
-	KeychainAuth          bool
+	// LiveMountDirs are host directories that are live-mounted like
+	// LiveMounts and created on the host first when missing, so the agent
+	// never falls back to writing them into the throwaway snapshot.
+	LiveMountDirs []string
+	// CredentialEnv names a host environment variable holding a long-lived
+	// agent credential. When it is set and the preset's own command runs,
+	// containers receive it by name and CredentialFiles stay out of the
+	// config snapshot.
+	CredentialEnv string
+	// CredentialFiles are agent credential files whose refresh tokens rotate
+	// on use, so a snapshot copy and the host copy must not refresh
+	// independently.
+	CredentialFiles []string
+	// SignInRemedy tells the operator how to restore the agent's credentials
+	// on the host when a run stops because the agent cannot authenticate.
+	SignInRemedy string
+	KeychainAuth bool
 	// PermissionModes are the modes an operator may set as permission_mode,
 	// rendered on the preset's built-in command line. Empty means the agent
 	// takes no permission mode from its command line.
@@ -178,12 +194,24 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 			"~/.local/share/opencode/opencode.db-wal",
 		},
 	},
+	"opencode-v2": {
+		DisplayName:    "OpenCode v2",
+		DefaultModel:   DefaultModel,
+		Command:        `opencode run --format json{{if .ContinueFlag}} --continue{{end}}{{if .SessionFlag}} --session {{.SessionFlag}}{{end}}{{if .DangerouslySkipPermissions}} --auto{{end}}{{if .SessionName}} --title '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}} "$(cat {{.PromptFile}})"`,
+		PermissionHint: "configure permissions in OpenCode v2 config instead",
+		ConfigDirs:     []string{"~/.config/opencode", "~/.claude", "~/.agents"},
+		// V2 credentials and sessions live in SQLite. Mount the entire data
+		// directory so sidecars created after launch and database replacements
+		// persist even when the host service is stopped or no database exists yet.
+		LiveMountDirs: []string{"~/.local/share/opencode"},
+	},
+
 	// The claude preset runs the unmodified Claude Code CLI in print mode.
 	// stream-json with --verbose is the only print-mode format that emits
 	// output while the agent works, which the idle-timeout heartbeat needs.
-	// --continue resumes the worktree's most recent conversation when
-	// Sandman selects session reuse, and --name puts the Run's session name
-	// on the command line for the lingering-process check.
+	// --resume selects the exact session recorded in the Run's session.json
+	// when Sandman selects session reuse, and --name puts the Run's session
+	// name on the command line for the lingering-process check.
 	"claude": {
 		DisplayName:  "Claude Code",
 		DefaultModel: "sonnet",
@@ -191,7 +219,7 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 		// often the most expensive model; parallel AFK runs spend subscription
 		// quota, so a minimal config still runs on the preset default.
 		DefaultModelWhenUnset: true,
-		Command:               `claude -p --output-format stream-json --verbose{{if .ContinueFlag}} --continue{{end}}{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .PermissionFlag}} {{.PermissionFlag}}{{end}}{{if .SessionName}} --name '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}}{{if .VariantFlag}} {{.VariantFlag}}{{end}} "$(cat {{.PromptFile}})"`,
+		Command:               `claude -p --output-format stream-json --verbose{{if .SessionFlag}} --resume {{.SessionFlag}}{{end}}{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .PermissionFlag}} {{.PermissionFlag}}{{end}}{{if .SessionName}} --name '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}}{{if .VariantFlag}} {{.VariantFlag}}{{end}} "$(cat {{.PromptFile}})"`,
 		Env: map[string]string{
 			"DISABLE_AUTOUPDATER":                      "1",
 			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
@@ -216,9 +244,7 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 		ReadOnlyPermissionModes: []string{"plan"},
 		// Transcripts, caches, and logs stay out of the per-batch snapshot.
 		// Credentials, settings, skills, agents, commands, plugins, and
-		// CLAUDE.md are copied on purpose. The container writes its own
-		// transcripts into the batch snapshot, which is what lets an await
-		// re-entry --continue the same conversation.
+		// CLAUDE.md are copied on purpose.
 		SnapshotExcludes: []string{
 			"~/.claude/projects",
 			"~/.claude/debug",
@@ -236,6 +262,18 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 			"~/.claude/ide",
 			"~/.claude/usage-data",
 		},
+		// Session transcripts are written straight into the host's
+		// ~/.claude/projects, so `claude --resume <session-id>` on the host
+		// finds a container Run's conversation by the ID in its Run details.
+		// Every container worktree shares the /workspace path, so reuse
+		// selects the exact recorded session, never the directory's latest.
+		LiveMountDirs: []string{"~/.claude/projects"},
+		// Subscription OAuth refresh tokens are single-use: whichever copy
+		// refreshes first invalidates every other copy. A token from
+		// `claude setup-token` needs no refresh at all.
+		CredentialEnv:   "CLAUDE_CODE_OAUTH_TOKEN",
+		CredentialFiles: []string{"~/.claude/.credentials.json"},
+		SignInRemedy:    "run `claude /login` on the host, or export CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`",
 	},
 }
 

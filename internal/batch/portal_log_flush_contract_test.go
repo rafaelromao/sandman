@@ -388,7 +388,8 @@ func (f *portalFlushFixture) start(t *testing.T, row RowSpec) <-chan portalFlush
 		f.coord.unregisterIssueCancel(row.IssueNumber)
 	})
 	go func() {
-		result, started := f.executor.Execute(ctx, row)
+		run, cursor := runSpecFromRow(row)
+		result, started := f.executor.ExecuteRun(ctx, run, cursor)
 		done <- portalFlushExecution{result, started}
 		close(settled)
 	}()

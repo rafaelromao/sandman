@@ -9,6 +9,11 @@ on:
       CLAUDE_CODE_OAUTH_TOKEN:
         required: false
   workflow_dispatch:
+    inputs:
+      run_claude:
+        description: Run manual Claude provider E2Es
+        type: boolean
+        default: false
   push:
     branches: [release-please--branches--main]
 
@@ -37,6 +42,13 @@ jobs:
       tier: live
     secrets:
       OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+
+  claude:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_claude
+    uses: ./.github/workflows/release-regression-tier.yml
+    with:
+      tier: claude
+    secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
   release-gate:

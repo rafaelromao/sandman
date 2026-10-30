@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/reviewpub"
 )
 
 // observeCurrentReviewEvidence reads the current pull-request response
@@ -21,7 +22,7 @@ func (s *runSession) observeCurrentReviewEvidence(ctx context.Context, request r
 	deadline := time.Unix(int64(request.DeadlineUnixSeconds), 0).UTC()
 	now := s.reviewNow()
 
-	nextTrigger := latestReviewObservationTrigger(comments, request, start, deadline)
+	nextTrigger := latestReviewObservationTrigger(comments, request, start)
 	windowEnd := time.Time{}
 	if nextTrigger != nil {
 		windowEnd = nextTrigger.CreatedAt
@@ -32,13 +33,34 @@ func (s *runSession) observeCurrentReviewEvidence(ctx context.Context, request r
 		}
 		return windowEnd.IsZero() || at.Before(windowEnd)
 	}
+	lateApprovalWindow := func(at time.Time) bool {
+		if at.IsZero() || !at.After(deadline) || at.After(now) {
+			return false
+		}
+		return windowEnd.IsZero() || at.Before(windowEnd)
+	}
 
+	triggerKey, triggerKnown := reviewRequestTriggerKey(comments, request)
 	topLevel := make([]map[string]any, 0)
 	for _, comment := range comments {
-		if strings.TrimSpace(comment.ID) == "" || !withinWindow(comment.CreatedAt) || strings.HasPrefix(comment.Body, request.TriggerPrefix) {
+		if strings.TrimSpace(comment.ID) == "" || strings.HasPrefix(comment.Body, request.TriggerPrefix) {
 			continue
 		}
-		topLevel = append(topLevel, reviewObservationSource(comment.ID, "top_level", "", comment.Body, comment.CreatedAt, "", request.HeadSHA))
+		if triggerKnown && reviewpub.Published(comment.Body) && !reviewpub.Answers(comment.Body, triggerKey, request.HeadSHA) {
+			// A daemon publication bound to another request revision or head is
+			// not response evidence for this request. Exclude it rather than
+			// invalidating the whole classification with a stale top-level source.
+			continue
+		}
+		lateApproval := !withinWindow(comment.CreatedAt) && lateApprovalWindow(comment.CreatedAt) && reviewDecisionApprovedBody(comment.Body)
+		if !withinWindow(comment.CreatedAt) && !lateApproval {
+			continue
+		}
+		source := reviewObservationSource(comment.ID, "top_level", "", comment.Body, comment.CreatedAt, "", request.HeadSHA)
+		if lateApproval {
+			source["late_request_evidence"] = true
+		}
+		topLevel = append(topLevel, source)
 	}
 
 	formalReviews := make([]map[string]any, 0)
@@ -50,10 +72,18 @@ func (s *runSession) observeCurrentReviewEvidence(ctx context.Context, request r
 			return nil, listErr
 		}
 		for _, review := range reviews {
-			if strings.TrimSpace(review.ID) == "" || !withinWindow(review.CreatedAt) {
+			if strings.TrimSpace(review.ID) == "" {
 				continue
 			}
-			formalReviews = append(formalReviews, reviewObservationSource(review.ID, "formal_review", strings.ToUpper(review.State), review.Body, review.CreatedAt, review.CommitID, request.HeadSHA))
+			lateReview := !withinWindow(review.CreatedAt) && lateApprovalWindow(review.CreatedAt) && lateReviewObservationEvidence(review, request.HeadSHA)
+			if !withinWindow(review.CreatedAt) && !lateReview {
+				continue
+			}
+			source := reviewObservationSource(review.ID, "formal_review", strings.ToUpper(review.State), review.Body, review.CreatedAt, review.CommitID, request.HeadSHA)
+			if lateReview {
+				source["late_request_evidence"] = true
+			}
+			formalReviews = append(formalReviews, source)
 		}
 	}
 
@@ -126,6 +156,7 @@ func (s *runSession) observeCurrentReviewEvidence(ctx context.Context, request r
 	raw := map[string]any{
 		"protocol":          "review-classification/v1",
 		"request":           requestData,
+		"trigger_key":       triggerKey,
 		"observed_head_sha": request.HeadSHA,
 		"request_state":     requestState,
 		"decision":          decision,
@@ -145,8 +176,9 @@ func (s *runSession) observeCurrentReviewEvidence(ctx context.Context, request r
 			"requested_changes":           requestedChanges,
 		},
 		"boundary_evidence": map[string]any{
-			"request": requestData,
-			"sources": sources,
+			"request":     requestData,
+			"sources":     sources,
+			"trigger_key": triggerKey,
 		},
 	}
 	classificationData, err := json.Marshal(raw)
@@ -165,13 +197,37 @@ func (s *runSession) observeCurrentReviewEvidence(ctx context.Context, request r
 	if err != nil {
 		return nil, err
 	}
+	responseCounts := reviewResponseCounts{TopLevel: len(topLevel), FormalReviews: len(formalReviews), Inline: len(inlineComments)}
+	state := reviewWaitState{State: "responded", Lifecycle: "started", Reason: "responded", ObservedAt: now.Format(time.RFC3339Nano), Evidence: evidence}
 	return &reviewTimeoutHandoff{
 		Request:        request,
-		State:          reviewWaitState{State: "responded", Lifecycle: "started", Reason: "responded", ObservedAt: now.Format(time.RFC3339Nano), Evidence: evidence},
-		ResponseCounts: reviewResponseCounts{TopLevel: len(topLevel), FormalReviews: len(formalReviews), Inline: len(inlineComments)},
+		State:          state,
+		ResponseCounts: responseCounts,
 		Classification: classification,
-		Outcome:        retainedReviewClassificationOutcome(classification, request),
+		Outcome:        retainedReviewObservationOutcome(classification, request, state),
 	}, nil
+}
+
+func lateReviewApproval(review github.PRReview, expectedHead string) bool {
+	switch strings.ToUpper(strings.TrimSpace(review.State)) {
+	case "APPROVED":
+		return strings.EqualFold(strings.TrimSpace(review.CommitID), expectedHead)
+	case "COMMENTED":
+		commitID := strings.TrimSpace(review.CommitID)
+		return (commitID == "" || strings.EqualFold(commitID, expectedHead)) && reviewDecisionApprovedBody(review.Body)
+	default:
+		return false
+	}
+}
+
+func lateReviewObservationEvidence(review github.PRReview, expectedHead string) bool {
+	if strings.EqualFold(strings.TrimSpace(review.State), "CHANGES_REQUESTED") {
+		// Formal requested changes remain blocking even when they arrive after
+		// the observation deadline. They are retained as response evidence, not
+		// treated as an approval.
+		return true
+	}
+	return lateReviewApproval(review, expectedHead)
 }
 
 func reviewObservationSource(id, source, state, body string, at time.Time, commitID, head string) map[string]any {
@@ -207,11 +263,11 @@ func sortReviewObservationSources(sources []map[string]any) {
 	})
 }
 
-func latestReviewObservationTrigger(comments []github.PRComment, request reviewRequestEnvelope, start, deadline time.Time) *github.PRComment {
+func latestReviewObservationTrigger(comments []github.PRComment, request reviewRequestEnvelope, start time.Time) *github.PRComment {
 	var latest *github.PRComment
 	for index := range comments {
 		comment := &comments[index]
-		if !strings.HasPrefix(comment.Body, request.TriggerPrefix) || !comment.CreatedAt.After(start) || comment.CreatedAt.After(deadline) || reviewTriggerIdentity(comment.ID) == reviewTriggerIdentity(request.TriggerID) {
+		if !strings.HasPrefix(comment.Body, request.TriggerPrefix) || !comment.CreatedAt.After(start) || reviewTriggerIdentity(comment.ID) == reviewTriggerIdentity(request.TriggerID) {
 			continue
 		}
 		if latest == nil || comment.CreatedAt.Before(latest.CreatedAt) {
@@ -250,4 +306,17 @@ func reviewClassificationRequest(request reviewRequestEnvelope) map[string]any {
 		"deadline_at":           request.DeadlineAt,
 		"deadline_unix_seconds": request.DeadlineUnixSeconds,
 	}
+}
+
+// reviewRequestTriggerKey recomputes the daemon's key for the request's
+// trigger from its live revision, so a re-review of an edited trigger still
+// matches its publication.
+func reviewRequestTriggerKey(comments []github.PRComment, request reviewRequestEnvelope) (string, bool) {
+	triggerID := strings.TrimSpace(request.TriggerID)
+	for _, comment := range comments {
+		if triggerID != "" && reviewTriggerIdentity(comment.ID) == reviewTriggerIdentity(triggerID) {
+			return reviewpub.TriggerKey(comment.ID, comment.UpdatedAt), true
+		}
+	}
+	return "", false
 }

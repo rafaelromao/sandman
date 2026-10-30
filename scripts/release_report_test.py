@@ -86,6 +86,28 @@ class ReleasePipelineTests(unittest.TestCase):
             self.assertEqual(report['versions'], 'observed CLI version')
             self.assertEqual(report['prerequisites'], 'auth failed')
             self.assertEqual(report['counts']['missing'], 1)
+            # The job log must name the failing scenario without opening the artifact.
+            self.assertIn("::error::required scenario missing: ('p', 'TestRequired')", result.stderr.decode())
+
+    def test_job_log_annotations_escape_test_output(self):
+        script = Path(__file__).with_name('release_report.py').resolve()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'scripts').mkdir()
+            manifest = {'providers': {}, 'scenarios': [dict(package='p', test='TestRequired', tier='live')]}
+            (root / 'scripts/release_scenarios.json').write_text(json.dumps(manifest))
+            events = [dict(Package='p', Test='TestRequired/sub', Action='output', Output='50% done\r\n::stop-commands::x\n'),
+                      dict(Package='p', Test='TestRequired/sub', Action='skip'),
+                      dict(Package='p', Test='TestRequired', Action='pass')]
+            (root / 'events.jsonl').write_text('\n'.join(json.dumps(event) for event in events))
+            env = dict(os.environ, GITHUB_SHA='sha')
+            env.pop('GITHUB_STEP_SUMMARY', None)
+            result = subprocess.run(['python3', str(script), 'live', 'events.jsonl', '0', 'report.json'],
+                                    cwd=root, env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            # Test output must not inject workflow commands into the job log.
+            self.assertEqual([line for line in result.stderr.splitlines() if line.startswith('::')],
+                             ["::error::required subscenario skipped: ('p', 'TestRequired/sub'): 50%25 done%0D%0A::stop-commands::x"])
 
     def test_tier_selectors_and_process_failures(self):
         scripts = Path(__file__).resolve().parent
@@ -98,7 +120,7 @@ class ReleasePipelineTests(unittest.TestCase):
             binary = root / 'go'
             binary.write_text('#!/usr/bin/env python3\nimport json,sys,os\nprint(json.dumps(sys.argv[1:]))\nsys.exit(int(os.environ["FAKE_RC"]))\n')
             binary.chmod(0o755)
-            for tier in ['unit', 'smoke', 'integration', 'live']:
+            for tier in ['unit', 'smoke', 'integration', 'live', 'claude']:
                 env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ['PATH'],
                            RELEASE_TIER=tier, FAKE_RC='7')
                 result = subprocess.run(['bash', str(scripts / 'release_tier.sh')], cwd=root,
@@ -106,9 +128,10 @@ class ReleasePipelineTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 7, result.stderr)
                 self.assertEqual((root / 'regression-artifacts/exit-code').read_text().strip(), '7')
                 args = json.loads((root / 'regression-artifacts/events.jsonl').read_text())
-                if tier in ('live', 'integration'):
-                    selector = args[args.index('-run' if tier == 'live' else '-skip') + 1]
-                    self.assertEqual(set(selector[2:-2].split('|')), live)
+                if tier in ('live', 'integration', 'claude'):
+                    selector = args[args.index('-skip' if tier == 'integration' else '-run') + 1]
+                    expected = {row['test'] for row in manifest['scenarios'] if row['tier'] in (('live', 'claude') if tier == 'integration' else (tier,))}
+                    self.assertEqual(set(selector[2:-2].split('|')), expected)
                 self.assertIn('-count=1', args)
 
 

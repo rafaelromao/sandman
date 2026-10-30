@@ -3,97 +3,22 @@ package batch
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"sync"
-
-	"github.com/rafaelromao/sandman/internal/atomicfs"
-	"github.com/rafaelromao/sandman/internal/paths"
 )
 
-const (
-	opencodeSessionProtocol = "opencode-session/v1"
-	opencodeProvider        = "opencode"
-)
-
-type opencodeSessionIdentity struct {
-	Protocol  string `json:"protocol"`
-	Provider  string `json:"provider"`
-	SessionID string `json:"session_id"`
-}
-
-func validOpenCodeSession(id opencodeSessionIdentity) error {
-	if id.Protocol != opencodeSessionProtocol {
-		return fmt.Errorf("unsupported session protocol %q", id.Protocol)
-	}
-	if id.Provider != opencodeProvider {
-		return fmt.Errorf("unsupported session provider %q", id.Provider)
-	}
-	if strings.TrimSpace(id.SessionID) == "" {
-		return errors.New("session id is empty")
-	}
-	return nil
-}
-
-func readOpenCodeSession(path string) (opencodeSessionIdentity, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return opencodeSessionIdentity{}, err
-	}
-	var identity opencodeSessionIdentity
-	if err := json.Unmarshal(data, &identity); err != nil {
-		return opencodeSessionIdentity{}, fmt.Errorf("parse session metadata: %w", err)
-	}
-	if err := validOpenCodeSession(identity); err != nil {
-		return opencodeSessionIdentity{}, err
-	}
-	return identity, nil
-}
-
-func writeOpenCodeSession(path, sessionID string) error {
-	identity := opencodeSessionIdentity{
-		Protocol:  opencodeSessionProtocol,
-		Provider:  opencodeProvider,
-		SessionID: strings.TrimSpace(sessionID),
-	}
-	if err := validOpenCodeSession(identity); err != nil {
-		return err
-	}
-	return atomicfs.WriteAtomicJSON(path, identity, 0644)
-}
-
-// priorOpenCodeSession selects canonical metadata first. Legacy lookup is
-// deliberately limited to a missing canonical file so a broken canonical
-// record cannot be silently replaced by stale evidence.
-func priorOpenCodeSession(layout paths.Layout, batchID, runID string) (opencodeSessionIdentity, bool, error) {
-	canonical := layout.RunSessionPath(batchID, runID)
-	identity, err := readOpenCodeSession(canonical)
-	if err == nil {
-		return identity, true, nil
-	}
-	if !os.IsNotExist(err) {
-		return opencodeSessionIdentity{}, false, err
-	}
-
-	legacy := layout.LegacyRunSessionPath(runID)
-	identity, err = readOpenCodeSession(legacy)
-	if err == nil {
-		return identity, true, nil
-	}
-	if os.IsNotExist(err) {
-		return opencodeSessionIdentity{}, false, nil
-	}
-	return opencodeSessionIdentity{}, false, err
-}
+// opencodeSessionKind is the OpenCode session identity recorded in a Run's
+// session.json.
+var opencodeSessionKind = agentSessionKind{protocol: "opencode-session/v1", provider: "opencode"}
 
 type opencodeOutput struct {
 	dst           io.Writer
 	warning       io.Writer
 	capture       *opencodeSessionCapture
 	stderr        bool
+	includeFilter bool
 	modelProgress func()
 	buf           bytes.Buffer
 }
@@ -102,6 +27,14 @@ type opencodeSessionCapture struct {
 	mu              sync.Mutex
 	sessionID       string
 	sessionNotFound bool
+	onSession       func()
+	ciRerunAction   *ciRerunActionEvidence
+}
+
+func (w *opencodeOutput) setSessionObserved(onSession func()) {
+	w.capture.mu.Lock()
+	defer w.capture.mu.Unlock()
+	w.capture.onSession = onSession
 }
 
 func newOpenCodeOutput(dst, warning io.Writer, stderr bool) *opencodeOutput {
@@ -109,7 +42,11 @@ func newOpenCodeOutput(dst, warning io.Writer, stderr bool) *opencodeOutput {
 }
 
 func newSharedOpenCodeOutput(dst, warning io.Writer, stderr bool, capture *opencodeSessionCapture) *opencodeOutput {
-	return &opencodeOutput{dst: dst, warning: warning, stderr: stderr, capture: capture}
+	return newSharedOpenCodeOutputWithIncludeFilter(dst, warning, stderr, capture, false)
+}
+
+func newSharedOpenCodeOutputWithIncludeFilter(dst, warning io.Writer, stderr bool, capture *opencodeSessionCapture, includeFilter bool) *opencodeOutput {
+	return &opencodeOutput{dst: dst, warning: warning, stderr: stderr, capture: capture, includeFilter: includeFilter}
 }
 
 func (w *opencodeOutput) Write(p []byte) (int, error) {
@@ -165,10 +102,15 @@ func (w *opencodeOutput) writeLine(line []byte, newline bool) error {
 		id = strings.TrimSpace(id)
 		w.capture.mu.Lock()
 		previous := w.capture.sessionID
+		var onSession func()
 		if previous == "" {
 			w.capture.sessionID = id
+			onSession = w.capture.onSession
 		}
 		w.capture.mu.Unlock()
+		if onSession != nil {
+			onSession()
+		}
 		if previous != "" && previous != id {
 			w.warn(fmt.Sprintf("conflicting OpenCode session IDs %q and %q", previous, id))
 		}
@@ -200,10 +142,70 @@ func (w *opencodeOutput) writeLine(line []byte, newline bool) error {
 		}
 	case "tool", "tool_use", "tool_result":
 		if tool := eventTool(event); tool != "" {
-			return w.writeText(formatToolEvent(event, tool))
+			w.captureCIRerunAction(eventType, event, tool)
+			return w.writeText(formatToolEvent(event, tool, w.includeFilter))
 		}
 	}
 	return w.writeText(formatUnhandledOpenCodeJSON(value))
+}
+
+func (w *opencodeOutput) CIRerunAction() *ciRerunActionEvidence {
+	w.capture.mu.Lock()
+	defer w.capture.mu.Unlock()
+	if w.capture.ciRerunAction == nil {
+		return nil
+	}
+	evidence := *w.capture.ciRerunAction
+	return &evidence
+}
+
+func (w *opencodeOutput) captureCIRerunAction(eventType string, event map[string]any, tool string) {
+	if !strings.EqualFold(tool, "bash") && !strings.EqualFold(tool, "shell") {
+		return
+	}
+	if eventType != "tool_use" && eventType != "tool" && eventType != "tool_result" {
+		return
+	}
+	state := toolState(event)
+	status, _ := state["status"].(string)
+	if !strings.EqualFold(status, "completed") || toolErrorMessage(state) != "" {
+		return
+	}
+	input := toolInput(event)
+	command, _ := input["command"].(string)
+	if command == "" {
+		command, _ = input["cmd"].(string)
+	}
+	if evidence := ciRerunHelperToolEvidence(command, structuredToolText(state)); evidence != nil {
+		w.capture.mu.Lock()
+		w.capture.ciRerunAction = evidence
+		w.capture.mu.Unlock()
+	}
+}
+
+func structuredToolText(value any) string {
+	switch value := value.(type) {
+	case string:
+		return value
+	case []any:
+		var parts []string
+		for _, item := range value {
+			if text := structuredToolText(item); text != "" {
+				parts = append(parts, text)
+			}
+		}
+		return strings.Join(parts, "\n")
+	case map[string]any:
+		var parts []string
+		for _, key := range []string{"stdout", "output", "result", "content", "text"} {
+			if text := structuredToolText(value[key]); text != "" {
+				parts = append(parts, text)
+			}
+		}
+		return strings.Join(parts, "\n")
+	default:
+		return ""
+	}
 }
 
 // formatUnhandledOpenCodeJSON keeps valid protocol additions readable while
@@ -216,15 +218,19 @@ func formatUnhandledOpenCodeJSON(value any) string {
 	return string(formatted)
 }
 
-func formatToolEvent(event map[string]any, tool string) string {
+func formatToolEvent(event map[string]any, tool string, includeFilter bool) string {
 	input := toolInput(event)
 	state := toolState(event)
 	status, _ := state["status"].(string)
 	var detail string
 	switch tool {
 	case "read":
-		if v, _ := input["filePath"].(string); v != "" {
-			detail = v
+		path, _ := input["filePath"].(string)
+		if path == "" {
+			path, _ = input["path"].(string)
+		}
+		if path != "" {
+			detail = path
 			pagination := make([]string, 0, 2)
 			if offset, ok := input["offset"]; ok && offset != nil {
 				pagination = append(pagination, "offset "+formatToolInputValue(offset))
@@ -239,11 +245,16 @@ func formatToolEvent(event map[string]any, tool string) string {
 	case "grep":
 		pattern, _ := input["pattern"].(string)
 		path, _ := input["path"].(string)
-		if path == "" {
-			path, _ = input["include"].(string)
+		include, _ := input["include"].(string)
+		explicitPath := path != ""
+		if !explicitPath {
+			path = include
 		}
 		if pattern != "" && path != "" {
 			detail = fmt.Sprintf("%q in %s", truncateString(pattern, 60), path)
+			if includeFilter && include != "" && explicitPath {
+				detail += " (include " + truncateString(include, 60) + ")"
+			}
 		} else if pattern != "" {
 			detail = fmt.Sprintf("%q", truncateString(pattern, 60))
 		} else if path != "" {
@@ -259,7 +270,7 @@ func formatToolEvent(event map[string]any, tool string) string {
 		} else if path != "" {
 			detail = path
 		}
-	case "bash":
+	case "bash", "shell":
 		if cmd, _ := input["command"].(string); cmd != "" {
 			detail = truncateString(strings.TrimSpace(cmd), 120)
 			if workdir, _ := input["workdir"].(string); workdir != "" && workdir != "." && workdir != "/tmp" {
@@ -273,8 +284,10 @@ func formatToolEvent(event map[string]any, tool string) string {
 			detail = name
 		} else if name, _ := input["skill"].(string); name != "" {
 			detail = name
+		} else if name, _ := input["id"].(string); name != "" {
+			detail = name
 		}
-	case "edit", "write", "apply_patch":
+	case "edit", "write", "apply_patch", "patch":
 		if fp, _ := input["filePath"].(string); fp != "" {
 			detail = fp
 		} else if fp, _ := input["path"].(string); fp != "" {
@@ -299,6 +312,14 @@ func formatToolEvent(event map[string]any, tool string) string {
 			detail = truncateString(q, 80)
 		} else if header, _ := input["header"].(string); header != "" {
 			detail = truncateString(header, 80)
+		} else if questions, ok := input["questions"].([]any); ok {
+			for _, value := range questions {
+				question, _ := value.(map[string]any)
+				if q, _ := question["question"].(string); q != "" {
+					detail = truncateString(q, 80)
+					break
+				}
+			}
 		}
 	case "pty_spawn":
 		detail = formatPTYSpawn(input, state)
@@ -306,6 +327,8 @@ func formatToolEvent(event map[string]any, tool string) string {
 		detail = formatPTYEvent(tool, input, state)
 	case "task":
 		detail, _ = input["description"].(string)
+	case "subagent":
+		detail = formatSubagentInput(input)
 	default:
 		if len(input) > 0 {
 			if b, err := json.Marshal(input); err == nil {
@@ -327,7 +350,7 @@ func formatToolEvent(event map[string]any, tool string) string {
 }
 
 func formatToolLabel(tool, detail string) string {
-	if tool == "bash" {
+	if tool == "bash" || tool == "shell" {
 		if detail == "" {
 			return "$"
 		}
@@ -356,6 +379,8 @@ func formatToolLabel(tool, detail string) string {
 		"edit":        "→ Edit",
 		"write":       "→ Write",
 		"apply_patch": "→ Edit",
+		"patch":       "→ Edit",
+		"subagent":    "→ Subagent",
 		"todowrite":   "→ Task",
 		"question":    "→ Task",
 		"task":        "→ Task",
@@ -368,6 +393,22 @@ func formatToolLabel(tool, detail string) string {
 		return label
 	}
 	return label + " " + detail
+}
+
+func formatSubagentInput(input map[string]any) string {
+	agent, _ := input["agent"].(string)
+	description, _ := input["description"].(string)
+	if description == "" {
+		description, _ = input["prompt"].(string)
+	}
+	description = truncateString(description, 80)
+	if agent != "" && description != "" {
+		return truncateString(agent, 40) + ": " + description
+	}
+	if description != "" {
+		return description
+	}
+	return truncateString(agent, 80)
 }
 
 func formatPTYSpawn(input, state map[string]any) string {
@@ -516,6 +557,9 @@ func toolState(event map[string]any) map[string]any {
 		if state, ok := part["state"].(map[string]any); ok {
 			return state
 		}
+	}
+	if state, ok := event["state"].(map[string]any); ok {
+		return state
 	}
 	return nil
 }

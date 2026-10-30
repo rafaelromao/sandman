@@ -452,7 +452,7 @@ func TestContextRolloverWorktreeSandbox(t *testing.T) {
 		Mode:              ModeFresh,
 		Branches:          map[int]string{0: branch},
 		BaseBranch:        "main",
-		BatchID:           batchIDForPromptOnly("", "", "context-rollover", ""),
+		BatchID:           batchIDForPromptOnly("", "", "context-rollover"),
 		RunID:             "context-rollover",
 		UserProvidedRunID: "context-rollover",
 	}

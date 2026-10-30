@@ -44,8 +44,12 @@ queued → running ⇄ waiting → success / failure / aborted
 | Current-request actionable feedback | Resume implementation when capacity permits |
 | Current-request approval with green CI | Resume merge work when capacity permits |
 | Next action ready, capacity occupied | Stay **waiting**, reason capacity |
-| CI failure or merge conflict | Resume bounded repair; never await self-owned work |
-| Missing PR or undelivered review request | Perform bounded owned-work remediation, then failure; never invent external waiting |
+| CI failure or merge conflict | Resume bounded repair; when the relaunch allowance leaves the head unchanged, stay **waiting** for external recovery (rc2 behaviour) |
+| Missing PR or undelivered review request | Perform bounded owned-work remediation (`run.retry` reason `lifecycle-owned-work`), then failure; never invent external waiting |
+| Review request delivered by an attempt that exited non-success | Register it and stay **waiting**; spend no ordinary retry |
+| Feedback relaunch leaves head, request and responses unchanged | Stay **waiting** (`RESUME_STALLED`); do not relaunch on the same evidence |
+| Relaunch allowance exhausted on review, CI (including an expired CI wait), request or merge work | Stay **waiting** (`RESUME_STALLED`); genuine requested changes (formal `CHANGES_REQUESTED` or the review daemon's `changes_requested` verdict) left unrepaired finish **failure** |
+| Review request expired with nothing else resolving, or (without a delegated review command) an idle gate after owned work | Stay **waiting** (continuity hold) on an open current-head PR |
 | Recognized provider usage limit | Wait and probe; do not spend ordinary retries immediately |
 | Quota recovers | Resume limited run and reopen sibling admission |
 | Quota recovers, then CI becomes pending | Restore ordinary CI observation without another agent launch |
@@ -55,6 +59,96 @@ queued → running ⇄ waiting → success / failure / aborted
 | Same RunID resumes in another batch | Preserve active duration; update current ownership |
 | New RunID for a manual continuation | Start a fresh clock |
 | Linked reviewer active | Portal may show **reviewing**; underlying lifecycle remains inspectable |
+
+## AFK continuity
+
+After v1.0.0-rc.2 a started Run may stop only for a permanent failure it
+cannot handle, or wait for external recovery, and only where rc2 would not
+have resolved it. If rc2 would have merged or kept waiting, the Run must not
+fail. Concretely, a started Run whose pull request is open at its current head
+never becomes terminal-failed when the only missing evidence is review, CI, or
+a review request the runtime did not observe: it waits or proceeds to merge.
+
+Permanent outcomes remain terminal: a closed or merged-elsewhere pull request,
+explicit abort, a merged pull request without verifiable completion, genuine
+requested changes (formal `CHANGES_REQUESTED` or the review daemon's
+`changes_requested` verdict) the implementor cannot address within its relaunch
+allowance, no review request delivered at all (`REVIEW_REQUEST_REQUIRED`),
+corrupt review state with nothing resolving, GitHub unavailable for a full
+24-hour recovery window (`GATE_LOOKUP_FAILED`), and agent authentication,
+usage-limit or operator stops. Every lifecycle failure
+reason is classified once as permanent or recoverable; the AFK-continuity
+contract suite fails on an unclassified reason and replays the real incidents
+that motivated the rule.
+
+One continuity decision applies these rules to every lifecycle decision;
+the attempt loop, entry continuation and runtime observation consume its
+action unchanged. A resume signature identifies what a relaunch acts on: gate, reason, live
+head, request trigger and the request's response identities, excluding CI
+rollup and merge state. Failed-CI repair is scoped to its identified check
+execution instead of review trigger/response identities: review delivery or
+approval alone does not make unchanged failed-CI work new. A wait entered
+because a relaunch stalled records its
+signatures in `run.await` (`stalled_resumes`). Observation reads them through
+the event fold, so a restart keeps waiting instead of relaunching on the same
+evidence; a changed CI execution is new evidence and may resume within the
+existing request/head relaunch allowance. Newly actionable merge
+conflicts must not be hidden behind unchanged failed CI: conflict remediation
+takes priority, allowing integration to produce a new head
+whose checks and review must be revalidated. A continuity hold
+(`continuity_hold`) waits without an operation deadline; it stays abortable,
+resumes when the gate changes, and its schedule checkpoint uses the stable
+`hold:<RunID>` recovery identity, so restart discovery re-enters it within the
+ordinary ownerless grace. The relaunch allowance belongs to one repair round
+(request and head): a new head or request starts a fresh allowance, and the
+entry launch counts as the round's first relaunch; a changed CI execution does
+not reset that allowance. An unreadable event log
+fails closed into a wait. Exhausted remediation of unusable CI wait state
+(`CI_WAIT_STATE_ERROR`) stays terminal.
+
+A failed pull-request lookup or refresh (`gh` exit status, API 5xx, timeout,
+network error) is an external outage, not evidence about the pull request. The
+Run waits with `await_reason: github-unavailable` (reason `GITHUB_UNAVAILABLE`),
+whether or not a review or CI operation was established; an established
+operation is retained with its deadline unchanged and judged only after
+GitHub answers again. Recovery is attempted hourly. Before each attempt the
+runtime reads GitHub's health from githubstatus.com: a major or critical
+incident, or a degraded API Requests, Git Operations, Pull Requests or Actions
+component, skips the attempt; a healthy or unreachable status page lets it
+run. Observation before the next attempt makes no GitHub call. Each check and
+attempt is recorded in the wait's `github_recovery` evidence (window start,
+next attempt, last status). Only after 24 hours of continuous failed recovery,
+measured from the first failure of the window and including skipped hours,
+does the Run finish `failure` with `GATE_LOOKUP_FAILED`. Restart rehydrates the
+window and its next attempt from the event fold; the scheduler treats the
+24-hour bound as the wait's operation deadline. `sandman run <n> --continue`
+is a new RunID: it attempts observation immediately and opens a fresh 24-hour
+window. Explicit abort ends the wait at once. A failed agent attempt with no
+established operation keeps its ordinary retry path.
+
+A closed, unmerged pull request ends a Run (`PULL_REQUEST_CLOSED`) only when it
+is proven to belong to the logical Run: its head equals the Run's head, or it
+closed (`closedAt`) at or after the Run's original fresh admission. The original
+admission is followed through `run.continued` `previous_run_id` links, so a
+`--continue` Run with no commits ignores a pull request closed before its first
+admission and continues to publish a new one. A closure the runtime cannot
+place continues owned publication work while the work item is open; on a
+closed work item or an already-resolved task it keeps the closed-PR decision.
+Sandman's own review daemon publishes a machine-readable verdict trailer
+(`<!-- sandman-verdict:approved|changes_requested -->`) directly before the
+publication identity, which binds the decision to one trigger revision and one
+reviewed head. The runtime trusts that verdict (or, for older publications,
+the closed-set `## Decision` token) and treats a publication bound to another
+trigger or head as stale. Only the verdict sections (Findings, Suggested next
+steps and Decision) may contradict a published APPROVED verdict: an opposing
+verdict, a labelled Blocking or Important finding, or a repair directive
+addressed to the author there makes the report unsure, and it waits. Summary,
+Standards, Spec, Quality check, Scope, Metrics, Tools used and review history
+describe the change and never veto it; an explicit `CHANGES_REQUESTED` or
+`NOT_APPROVED` state still contradicts it anywhere. Every captured real
+approving report (`internal/batch/testdata/approved-*.md`) is a corpus test. The verdict is additive: human, third-party and
+paraphrased approvals keep the prose rules, and an unknown daemon verdict is
+never repair evidence.
 
 ## Action and admission rules
 
@@ -95,8 +189,9 @@ approval or a nonempty aggregate `reviewDecision`. A `COMMENTED` review without
 commit identity is eligible as an informal response inside the confirmed
 current-head request window; an explicitly stale `COMMENTED` review is not.
 An approving response's scope paths, metrics, or resolved history are not
-actionable feedback, while separate concrete feedback and formal requested
-changes retain precedence. Explicitly disabled managed review retains its
+actionable feedback. Eligible approval is checked before informal feedback from
+the same request, matching the standalone review loop; formal requested changes,
+current-head CI failures and merge conflicts remain blocking. Explicitly disabled managed review retains its
 configuration contract.
 
 The complete managed sequence is request confirmation -> waiting -> current-head
@@ -110,6 +205,18 @@ PR without required closing intent is a structured failure. The already-resolved
 exception requires the existing live verification path; Task prose is not an
 alternate lifecycle authority.
 
+A closed-unmerged PR on a reused branch is historical, not this Run's terminal
+outcome, only when its known head differs from the successfully observed local
+head and its last update predates the Run's original fresh admission. The
+comparison uses second precision: a PR updated within the admission second is
+not proven historical. The
+append-only admission evidence is required; the latest continuation timestamp
+cannot establish this distinction. Missing timestamps, heads, host-path
+restoration, or readable admission evidence retain the closed-PR decision.
+Historical closures do not bypass the shared provider-quota wait or prevent its
+recovery probe from publishing a new PR. A PR closed during the current Run
+remains terminal even when local commits have not been pushed.
+
 ## Budgets and reset boundaries
 
 | Operation | Budget | Reset boundary |
@@ -118,7 +225,7 @@ alternate lifecycle authority.
 | Standalone CI | **60 minutes** and at most **three fixes** per current head within an invocation | New head or fresh invocation |
 | Delegated review | Configured `review_timeout`; default 1,800 seconds, minimum 240 seconds | New confirmed request |
 | Implementation provider quota | **Five hours of accumulated completed polling**, ten-minute intervals, then final boundary probe and configured ordinary retries | Verified recovery followed by a new quota episode; re-entry/restart preserves consumed polling |
-| Implementation lifecycle relaunch | Default **three in-session relaunches**, entry excluded | Fresh executor session |
+| Implementation lifecycle relaunch | Default **three in-session relaunches**, entry excluded; a feedback relaunch that changes nothing ends the allowance; exhaustion waits | Fresh executor session with a new resume signature |
 | Ordinary execution retry | Configured retry budget, including owned publication/review delivery recovery | Ordinary retry policy |
 | Ownerless recovery | **Five minutes**, capped by an existing operation deadline | Live owner renewal, never repeated discovery |
 
@@ -180,7 +287,12 @@ delay, and quota deferral. Cancellation consumes no retry budget and must preven
 subsequent retry bookkeeping or launches. Completed siblings retain their outcomes.
 
 Atomic run-owned schedule/lease evidence and an exclusive advisory RunID claim
-support recovery. A live owner renews the lease. Unclean exit releases the claim,
+support recovery. A live owner renews the lease every 30 seconds; a transient
+renewal I/O failure is retried while the next renewal still falls within the
+last successful renewal's uncapped recovery grace (the held claim, not the
+lease, protects the live row), and invalid ownership aborts immediately.
+`sandman clean` reclaims claim files of event-terminal Runs while holding the
+claim; claimants revalidate the locked inode. Unclean exit releases the claim,
 but valid intent remains recoverable for five minutes, capped by its existing
 operation deadline. Repeated discovery does not extend grace.
 Quota diagnostic estimates do not cap grace. Legacy quota schedules normalize

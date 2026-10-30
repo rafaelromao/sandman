@@ -109,7 +109,8 @@ func TestAgentStrategy_Contract(t *testing.T) {
 			want: contract{
 				modelFlag: "--model 'provider/model'", variantFlag: "--effort 'high'",
 				safeEnv: permissionEnv, dangerousEnv: permissionEnv,
-				reuseContinue: true, parsers: true, usageRule: true, awaitsUsageLimit: true,
+				// No recorded session: reuse starts fresh, never --continue.
+				parsers: true, usageRule: true, awaitsUsageLimit: true, retriesMissingSession: true,
 			},
 		},
 		{
@@ -126,10 +127,10 @@ func TestAgentStrategy_Contract(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := tt.strategy
-			if got := s.ModelFlag("provider/model"); got != tt.want.modelFlag {
+			if got := s.ModelFlag("provider/model", ""); got != tt.want.modelFlag {
 				t.Errorf("ModelFlag = %q, want %q", got, tt.want.modelFlag)
 			}
-			if got := s.ModelFlag(""); got != tt.want.emptyModelFlag {
+			if got := s.ModelFlag("", ""); got != tt.want.emptyModelFlag {
 				t.Errorf("ModelFlag(empty) = %q, want %q", got, tt.want.emptyModelFlag)
 			}
 			if got := s.VariantFlag("high"); got != tt.want.variantFlag {

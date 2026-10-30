@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/github"
 )
@@ -88,9 +89,7 @@ func reconcileWorktreeToPRHead(ctx context.Context, workDir, branch string, prNu
 	if _, err := runGitAt(ctx, workDir, "fetch", "--no-tags", "origin", refspec); err != nil {
 		return currentHead, false, fmt.Errorf("fetch pull-request branch: %w", err)
 	}
-	defer func() {
-		_, _ = runGitAt(context.Background(), workDir, "update-ref", "-d", temporaryRef)
-	}()
+	defer removeTemporaryRef(ctx, workDir, temporaryRef)
 
 	fetchedHead, err := runGitAt(ctx, workDir, "rev-parse", "--verify", temporaryRef+"^{commit}")
 	if err != nil {
@@ -110,6 +109,16 @@ func reconcileWorktreeToPRHead(ctx context.Context, workDir, branch string, prNu
 		return updatedHead, false, fmt.Errorf("worktree head %s does not match live pull-request head %s after fast-forward", updatedHead, prHead)
 	}
 	return updatedHead, true, nil
+}
+
+// temporaryRefCleanupTimeout bounds deleting the reconciliation ref, which
+// must still run after the caller is cancelled but must not hang on Git.
+const temporaryRefCleanupTimeout = 10 * time.Second
+
+func removeTemporaryRef(ctx context.Context, workDir, ref string) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), temporaryRefCleanupTimeout)
+	defer cancel()
+	_, _ = runGitAt(cleanupCtx, workDir, "update-ref", "-d", ref)
 }
 
 func isGitObjectID(value string) bool {

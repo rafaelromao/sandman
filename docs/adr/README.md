@@ -4,7 +4,7 @@ This directory contains Architectural Decision Records (ADRs) for Sandman.
 
 ## What is an ADR?
 
-An ADR is a document that captures an important architectural decision made along with its context and consequences. ADRs are immutable: once accepted or rejected, they are not modified (though they may be superseded by a new ADR).
+An ADR is a document that captures an important architectural decision made along with its context and consequences. ADRs are immutable: once accepted or rejected, they are not modified (though they may be superseded by a new ADR). When a later change alters part of an accepted decision without a new ADR, a dated `> **Later change (annotated <date>, #<issue>):**` blockquote may be appended after the affected passage. It names the change that superseded the passage and leaves the original text and Status untouched.
 
 ## When to Write an ADR
 
@@ -95,3 +95,4 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0054 | Retain GitHub closure gate for in-batch blockers | accepted |
 | 0055 | Opt into OpenCode session reuse | accepted |
 | 0056 | Re-add Claude Code as a second built-in agent preset behind an agent strategy seam | proposed |
+| 0057 | Exact Claude Code session identity and host-shared transcripts | proposed |

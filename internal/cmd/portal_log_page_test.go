@@ -7,7 +7,7 @@ import (
 
 func TestPortalLogFrontend_StructuredFramesRenderRecordsNotEnvelope(t *testing.T) {
 	const runID = "transport-frame-render"
-	runsJSON, err := json.Marshal([]map[string]any{{
+	runsJSON, err := marshalPortalRunsFixture([]map[string]any{{
 		"key": runID, "runId": runID, "kind": "active", "status": "running",
 		"issueNumber": 2806, "issueLabel": "#2806", "log": "11:14:58 Fixing the frozen-wait clock\n{\"agent\":\"json\"}",
 	}})
@@ -54,6 +54,7 @@ setTimeout(inspectLog, 20);
 
 func TestPortalLogFrontend_LateParentDetailCannotClearSelectedReviewLoadingState(t *testing.T) {
 	runsJSON := []byte(`[{"key":"parent","runId":"parent","kind":"active","status":"running","issueNumber":42,"issueLabel":"#42","log":"parent source"},{"key":"review","runId":"review","kind":"active","status":"reviewing","issueNumber":42,"issueLabel":"PR42","prNumber":42,"review":true,"log":"review source"}]`)
+	runsJSON = stampIssueGroupsJSON(t, runsJSON)
 	page := buildPortalReproPage(t, `{"expandedRunKey":"parent","tabs":{"parent":"log","review":"log"}}`, runsJSON, `
 window.fetch = async function (url) {
   if (String(url).indexOf('summary=1') >= 0) return { ok: true, json: async () => ({ runs: `+string(runsJSON)+` }) };
@@ -101,7 +102,7 @@ setTimeout(startSwitch, 20);
 func TestPortalLogFrontend_SourceModelWinsBothDetailFetchCompletionOrders(t *testing.T) {
 	const runID = "source-order"
 	runs := []map[string]any{{"key": runID, "runId": runID, "kind": "active", "status": "running", "issueNumber": 2772, "issueLabel": "#2772", "log": "stale summary text"}}
-	runsJSON, err := json.Marshal(runs)
+	runsJSON, err := marshalPortalRunsFixture(runs)
 	if err != nil {
 		t.Fatal(err)
 	}

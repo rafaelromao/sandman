@@ -424,14 +424,22 @@ Handle the transport state before classification:
   continue to Step 6 without adding response formats or author filters. The
   raw snapshot is audit evidence only; if classification is missing or
   malformed, fail closed as `unavailable`.
+- A continuation of the same persisted `timed_out` request performs one
+  approval-only re-observation. It keeps the original trigger, head, deadline,
+  and polling history; it does not restart the polling plan or post a trigger.
+  Only request-scoped approval can be returned this way. If no eligible
+  approval is found, the result remains `timed_out`; later retries replay that
+  result rather than repeatedly reopening the observer.
 - `pending`: no eligible response was observed and the request remains active;
   re-enter this same request, never post a duplicate trigger. A result whose
   classification has `request_state == "superseded"` is transported as
   `responded` even when its response counts are zero, so the later trigger can
   be handed off without extending the older request.
-- `timed_out`: record `REVIEW_TIMEOUT` with the request identity, configured
-  budget, deadline, `elapsed_seconds`, counters, and next executable action. Do
-  not approve or create a replacement request.
+- `timed_out`: after the same-request approval-only re-observation finds no
+  eligible approval, record `REVIEW_TIMEOUT` with the request identity,
+  configured budget, deadline, `elapsed_seconds`, counters, and next executable
+  action. Do not restart polling or create a replacement request solely because
+  the deadline elapsed.
 - `unavailable`: record the structured reason and fail closed. Do not approve,
   reset the deadline, or post another trigger to recover it.
 
@@ -566,7 +574,9 @@ If `mergeStateStatus == "DIRTY"`:
 - `classification.request_state == "active"`, AND
 - `classification.formal.decision == "approved"`, with a non-empty
   `classification.formal.approval_evidence` containing current-head formal
-  `APPROVED` records
+  `APPROVED` records. Approval found by the one-time continuation after timeout
+  is eligible only for the same confirmed request and unchanged current head,
+  when it arrived after the original deadline and no newer trigger supersedes it.
 → **Approve** — done, exit the loop and document the approval in the run log.
 
 The pull-request-wide `reviewDecision` aggregate and the unfiltered formal
@@ -586,13 +596,16 @@ approval, especially when an approval has a stale or unknown commit identity.
 - `classification.formal.decision == "none"` and
   `classification.formal.ambiguous_approval_evidence` is empty, AND
 - A request-scoped `COMMENTED` review OR top-level comment with approval keywords, AND
+- If found by the one-time continuation after timeout, it is eligible only for
+  the same confirmed request/head, after the original deadline, with no newer
+  trigger or contradictory blocking feedback, AND
 - For a request-scoped formal `COMMENTED` review, the source is not marked
   `head_status: "stale"`; `head_status: "unknown"` remains eligible when the
   review has no commit identity. Top-level sources remain current, and only
   current-head formal `APPROVED` records create mechanical approval evidence, AND
 - **The approval is for the current diff** — its `createdAt` is **after** the SHA recorded in `temporary cycle head record` (the SHA at which the most recent `{{REVIEW_COMMAND}}` was posted), AND
 - **No unanswered `{{REVIEW_COMMAND}}` trigger is sitting above the approval** — the most recent top-level comment by `createdAt` is not an implementor trigger that has not yet received a response, AND
-- **The minimum polling cycle has elapsed** — at least 240 s of cumulative sleep (one full `120 + 60 + 60` cycle from Step 5) has passed since the most recent trigger post. A single 120 s first poll cannot have observed a meaningful response window.
+- **The minimum polling cycle has elapsed** — at least 240 s of cumulative sleep (one full `120 + 60 + 60` cycle from Step 5) has passed since the most recent trigger post. A single 120 s first poll cannot have observed a meaningful response window. The late-approval-only continuation is exempt because the original bounded cycle already expired; it does not create a new polling budget.
 → **Approve — DONE. Stop the loop.** An informal approval is sufficient.
 
 Approval keywords: `lgtm`, `looks good`, `looks great`, `nice work`, `good work`, `approved`, `ship it`, `+1`, `thumbs up`, `all good`, `all set`, `good to go`, `no major issues`, `minor issues only`, etc.

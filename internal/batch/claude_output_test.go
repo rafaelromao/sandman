@@ -3,9 +3,11 @@ package batch
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -74,6 +76,58 @@ func TestClaudeOutput_RendersStreamJSONReadably(t *testing.T) {
 	}
 }
 
+func TestClaudeOutput_CapturesRerunEvidenceFromMatchedBashToolResult(t *testing.T) {
+	stdout, _ := newClaudeOutputs()
+	var parser outputParser = stdout
+	var output bytes.Buffer
+	parser.setDestination(&output)
+	reporter, ok := parser.(ciRerunActionReporter)
+	if !ok {
+		t.Fatal("Claude output parser does not expose trusted helper invocation evidence")
+	}
+	evidence := ciRerunActionEvidence{
+		Protocol: "ci-rerun/v1", State: "waiting", Reason: "workflow-still-running",
+		Repository: "owner/repo", PullRequest: 17, SourceHeadSHA: "source-head",
+		TestedSHA: "tested-merge-sha", Diagnosis: "transient-provider-timeout",
+		RunID: "101", JobID: "987654321", JobName: "opencode-canary", ObservedAttempt: 2,
+	}
+	receipt, err := json.Marshal(evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := `sh "$HOME/.agents/skills/sandman/implement/ci-rerun-v1.sh" --repository owner/repo --pull-request 17 --head-sha source-head --tested-sha tested-merge-sha --run-id 101 --job-id 987654321 --diagnosis transient-provider-timeout`
+	writeRecord := func(record map[string]any) {
+		t.Helper()
+		data, err := json.Marshal(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := parser.Write(append(data, '\n')); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeRecord(map[string]any{"type": "assistant", "message": map[string]any{"content": []any{map[string]any{"type": "text", "text": string(receipt)}}}})
+	if got := reporter.CIRerunAction(); got != nil {
+		t.Fatalf("ordinary assistant text authorized a helper wait: %+v", got)
+	}
+	writeRecord(map[string]any{"type": "assistant", "message": map[string]any{"content": []any{
+		map[string]any{"type": "tool_use", "id": "rerun-1", "name": "Bash", "input": map[string]any{"command": command}},
+	}}})
+	writeRecord(map[string]any{"type": "user", "message": map[string]any{"content": []any{
+		map[string]any{"type": "tool_result", "tool_use_id": "other-call", "content": string(receipt)},
+	}}})
+	if got := reporter.CIRerunAction(); got != nil {
+		t.Fatalf("unmatched tool result authorized a helper wait: %+v", got)
+	}
+	writeRecord(map[string]any{"type": "user", "message": map[string]any{"content": []any{
+		map[string]any{"type": "tool_result", "tool_use_id": "rerun-1", "content": string(receipt)},
+	}}})
+	got := reporter.CIRerunAction()
+	if got == nil || got.RunID != evidence.RunID || got.JobID != evidence.JobID || got.State != evidence.State {
+		t.Fatalf("matched helper invocation evidence = %+v, want %+v", got, evidence)
+	}
+}
+
 func TestClaudeOutput_RecognisesUsageLimitBeforeRendering(t *testing.T) {
 	got, parser := renderClaudeStream(t,
 		`{"type":"assistant","message":{"content":[{"type":"text","text":"You've hit your session limit"}]}}`+"\n"+
@@ -88,6 +142,51 @@ func TestClaudeOutput_RecognisesUsageLimitBeforeRendering(t *testing.T) {
 	_, echo := renderClaudeStream(t, `{"type":"assistant","message":{"content":[{"type":"text","text":"You've hit your session limit"}]}}`+"\n")
 	if echo.UsageLimitReached() {
 		t.Fatal("assistant echo of the limit message was treated as a usage limit")
+	}
+}
+
+// Reconstructs the stream-json shape behind the October 29 incident's
+// rendered tail. The original raw stream was not saved in run.log.
+func TestClaudeOutput_LongSessionLimitAfterWarnings(t *testing.T) {
+	for _, chunkSize := range []int{1, 17, 4096} {
+		t.Run(strconv.Itoa(chunkSize), func(t *testing.T) {
+			stdout, stderr := newClaudeOutputs()
+			var out bytes.Buffer
+			stdout.setDestination(&out)
+			stderr.setDestination(&out)
+			write := func(parser outputParser, text string) {
+				t.Helper()
+				for len(text) > 0 {
+					n := min(chunkSize, len(text))
+					if _, err := parser.Write([]byte(text[:n])); err != nil {
+						t.Fatal(err)
+					}
+					text = text[n:]
+				}
+			}
+			for range 209 {
+				write(stdout, `{"type":"assistant","message":{"content":[{"type":"text","text":"Working on the implementation."}]}}`+"\n")
+			}
+			for _, utilization := range []string{"0.92", "0.94", "0.95", "0.96", "0.97", "0.98", "0.99"} {
+				write(stdout, `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","rateLimitType":"five_hour","utilization":`+utilization+`}}`+"\n")
+			}
+			write(stderr, "A provider diagnostic on stderr\n")
+			write(stdout, `{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"five_hour"}}`+"\n")
+			write(stdout, `{"type":"assistant","message":{"content":[{"type":"text","text":"You've hit your session limit · resets 4am (UTC)"}]}}`+"\n")
+			if stdout.UsageLimitReached() {
+				t.Fatal("warning/rejection events or assistant text independently triggered quota recovery")
+			}
+			write(stdout, claudeLongSessionUsageLimitResult) // Exercise the trailing partial-line flush too.
+			if err := stdout.Flush(); err != nil {
+				t.Fatal(err)
+			}
+			if !stdout.UsageLimitReached() || !stderr.UsageLimitReached() {
+				t.Fatal("long-session terminal limit was lost from shared parser state")
+			}
+			if !strings.Contains(out.String(), "Result: error · 209 turns · 37m45s · $9.26\nError: You've hit your session limit · resets 4am (UTC)\n") {
+				t.Fatalf("terminal rendering missing from output tail: %s", out.String())
+			}
+		})
 	}
 }
 
@@ -203,4 +302,63 @@ func (s *claudeHeartbeatSandbox) Exec(_ context.Context, _ string, stdout, _ io.
 	}
 	_, _ = io.WriteString(stdout, `{"type":"result","subtype":"success","is_error":false,"num_turns":1}`+"\n")
 	return nil
+}
+
+// claudeExpiredOAuthResult is the real result framing with the message the
+// Claude Code launches of a long-waiting batch reported once the host had
+// rotated the subscription refresh token their snapshot still held.
+var claudeExpiredOAuthResult = strings.Replace(claudeRealAuthFailureResult,
+	`"result":"Not logged in · Please run /login"`,
+	`"result":"Failed to authenticate: OAuth session expired and could not be refreshed"`, 1)
+
+func authenticationFailed(t *testing.T, parser outputParser) bool {
+	t.Helper()
+	reporter, ok := parser.(authenticationFailureReporter)
+	if !ok {
+		t.Fatalf("%T does not report authentication failures", parser)
+	}
+	return reporter.AuthenticationFailed()
+}
+
+func TestClaudeOutput_RecognisesAuthenticationFailure(t *testing.T) {
+	for name, stream := range map[string]string{
+		"expired OAuth session": `{"type":"assistant","message":{"content":[{"type":"text","text":"Failed to authenticate: OAuth session expired and could not be refreshed"}]}}` + "\n" + claudeExpiredOAuthResult + "\n",
+		"not logged in":         claudeRealAuthFailureResult + "\n",
+		"plain stderr":          "Invalid API key · Please run /login\n",
+		"revoked token": strings.Replace(claudeRealAuthFailureResult, `"result":"Not logged in · Please run /login"`,
+			`"result":"Failed to authenticate. API Error: 401 OAuth token has been revoked"`, 1) + "\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, parser := renderClaudeStream(t, stream)
+			if !authenticationFailed(t, parser) {
+				t.Fatal("authentication failure was not recognised")
+			}
+			if parser.UsageLimitReached() {
+				t.Fatal("authentication failure was treated as a usage limit")
+			}
+		})
+	}
+}
+
+func TestClaudeOutput_AuthenticationEchoIsNotAFailure(t *testing.T) {
+	_, parser := renderClaudeStream(t,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"If it says Failed to authenticate, please run /login"}]}}`+"\n"+
+			`{"type":"result","subtype":"success","is_error":false,"num_turns":3,"result":"Failed to authenticate is handled now"}`+"\n")
+	if authenticationFailed(t, parser) {
+		t.Fatal("agent text about authentication was treated as a failure")
+	}
+}
+
+// TestClaudeOutput_UsageLimitOutranksAuthentication pins the precedence: a
+// result that reports a usage limit awaits its reset even when its text
+// also mentions authentication.
+func TestClaudeOutput_UsageLimitOutranksAuthentication(t *testing.T) {
+	result := strings.Replace(claudeUsageLimitResult, `resets 3pm (America/Sao_Paulo)`, `resets 3pm (America/Sao_Paulo); Please run /login to switch accounts`, 1)
+	_, parser := renderClaudeStream(t, result+"\n")
+	if !parser.UsageLimitReached() {
+		t.Fatal("usage limit was not recognised")
+	}
+	if authenticationFailed(t, parser) {
+		t.Fatal("usage-limit result was treated as an authentication failure")
+	}
 }

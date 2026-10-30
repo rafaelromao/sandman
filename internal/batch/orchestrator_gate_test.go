@@ -22,30 +22,6 @@ import (
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
-// These compatibility adapters keep characterization tests focused on the
-// production lifecycle adapter while their older names are migrated away.
-func (s *runSession) lifecycleDecisionForTest(ctx context.Context, workDir, branch, logPath, runID string) (string, map[string]any, bool) {
-	return s.handleLifecycleDecision(ctx, workDir, branch, logPath, runID, true)
-}
-
-func (s *runSession) lifecycleDecisionWithHostPathsForTest(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool) (string, map[string]any, bool) {
-	return s.handleLifecycleDecision(ctx, workDir, branch, logPath, runID, hostPathsReady)
-}
-
-func (s *runSession) lifecycleDecisionAtHeadForTest(ctx context.Context, workDir, branch, logPath, runID, currentHead string) (string, map[string]any, bool) {
-	if !reviewTimeoutArtifactsPresent(workDir) {
-		return "", nil, false
-	}
-	previous := s.opts.currentHead
-	s.opts.currentHead = func(string) (string, error) { return currentHead, nil }
-	defer func() { s.opts.currentHead = previous }()
-	return s.handleLifecycleDecision(ctx, workDir, branch, logPath, runID, true)
-}
-
-func (s *runSession) mergedLifecycleDecisionForTest(ctx context.Context, workDir, branch, logPath, runID string) (string, map[string]any, bool) {
-	return s.handleLifecycleDecision(ctx, workDir, branch, logPath, runID, true)
-}
-
 const gateTestBranch = "42-fix-bug"
 
 func writeTimedOutReviewRequest(t *testing.T, workDir string) {
@@ -577,8 +553,8 @@ func TestExternalGate_RequestScopedApprovalResumesAfterReview(t *testing.T) {
 	if !started {
 		t.Fatalf("expected run to start, status=%q", result.Status)
 	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure after the resumed agent leaves merge work incomplete", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want an rc2 wait after the resumed agent leaves merge work incomplete", result.Status)
 	}
 	if len(factory.created) != 2 {
 		t.Fatalf("agent launches = %d, want 2 (initial + in-session resume)", len(factory.created))
@@ -601,8 +577,8 @@ func TestExternalGate_RequestScopedApprovalResumesAfterReview(t *testing.T) {
 	if got := resumedEvt.Payload["reason"]; got != "approval" {
 		t.Fatalf("resumed reason = %v, want approval", got)
 	}
-	if got := countEventsByType(logs, "run.await"); got != 0 {
-		t.Fatalf("run.await events = %d, want 0 after review approval", got)
+	if got := countEventsByType(logs, "run.await"); got != 1 {
+		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
 	}
 
 	task, err := os.ReadFile(filepath.Join(worktreePath, ".sandman", "task.md"))
@@ -746,7 +722,8 @@ func TestExternalGate_MergedPRWithoutClosingReferenceStillFailsVerification(t *t
 		opts:        gateTestRunOptions(),
 	}
 
-	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	observedLifecycle749 := session.observeLifecycleForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := observedLifecycle749.status(), observedLifecycle749.Evidence, observedLifecycle749.handled()
 	if !handled || status != "failure" {
 		t.Fatalf("merged missing-closing result = (%q, %#v, %t), want handled failure", status, extras, handled)
 	}
@@ -895,7 +872,8 @@ func TestLifecycleObservationCancellationWhileCIWaitLockContendedAborts(t *testi
 		handled bool
 	}, 1)
 	go func() {
-		status, extras, handled := session.handleLifecycleDecision(ctx, workDir, gateTestBranch, "", "run-test", true)
+		observedLifecycle898 := session.observeLifecycleWithHostPathsForTest(ctx, workDir, gateTestBranch, "", "run-test", true)
+		status, extras, handled := observedLifecycle898.status(), observedLifecycle898.Evidence, observedLifecycle898.handled()
 		result <- struct {
 			status  string
 			extras  map[string]any
@@ -978,7 +956,8 @@ func TestLifecycleObservationCancellationAfterCIPersistenceAborts(t *testing.T) 
 		handled bool
 	}, 1)
 	go func() {
-		status, extras, handled := session.handleLifecycleDecision(ctx, workDir, gateTestBranch, "", "run-test", true)
+		observedLifecycle981 := session.observeLifecycleWithHostPathsForTest(ctx, workDir, gateTestBranch, "", "run-test", true)
+		status, extras, handled := observedLifecycle981.status(), observedLifecycle981.Evidence, observedLifecycle981.handled()
 		result <- struct {
 			status  string
 			extras  map[string]any
@@ -1029,7 +1008,8 @@ func TestExternalGate_RetainedRecordDiagnosticDoesNotChangeLiveGate(t *testing.T
 		opts: opts,
 	}
 
-	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	observedLifecycle1032 := session.observeLifecycleForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := observedLifecycle1032.status(), observedLifecycle1032.Evidence, observedLifecycle1032.handled()
 	if !handled || status != "await" {
 		t.Fatalf("diagnostic gate = (%q, %#v, %t), want await", status, extras, handled)
 	}
@@ -1068,7 +1048,8 @@ func TestExternalGate_ValidRetainedRequestIsEvidenceOnly(t *testing.T) {
 		opts: opts,
 	}
 
-	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	observedLifecycle1071 := session.observeLifecycleForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := observedLifecycle1071.status(), observedLifecycle1071.Evidence, observedLifecycle1071.handled()
 	if !handled || status != "resume" || extras["gate"] != gateReviewTimeout {
 		t.Fatalf("retained evidence gate = (%q, %#v, %t), want bounded recovery of the earlier review deadline", status, extras, handled)
 	}
@@ -1102,7 +1083,8 @@ func TestExternalGate_RetainedDiagnosticsUseSingleLiveObservation(t *testing.T) 
 		opts: opts,
 	}
 
-	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	observedLifecycle1105 := session.observeLifecycleForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := observedLifecycle1105.status(), observedLifecycle1105.Evidence, observedLifecycle1105.handled()
 	if !handled || status != "await" || extras["gate"] != string(lifecycleGatePending) {
 		t.Fatalf("live observation = (%q, %#v, %t), want active-CI await without extra observation", status, extras, handled)
 	}
@@ -1197,7 +1179,8 @@ func TestExternalGate_LocalReviewRecordStatesCannotOverrideLiveOpenPR(t *testing
 				opts: opts,
 			}
 
-			status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+			observedLifecycle1200 := session.observeLifecycleForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+			status, extras, handled := observedLifecycle1200.status(), observedLifecycle1200.Evidence, observedLifecycle1200.handled()
 			wantGate := string(lifecycleGatePending)
 			if !handled || status != "await" || extras["gate"] != wantGate {
 				t.Fatalf("local record %s gate: (%q, %#v, %t), want %s", tt.name, status, extras, handled, wantGate)
@@ -1350,7 +1333,8 @@ func TestExternalGate_RespondedFormalChangesRequestedIsActionable(t *testing.T) 
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	observedLifecycle1353 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := observedLifecycle1353.status(), observedLifecycle1353.Evidence, observedLifecycle1353.handled()
 	if !handled || status != "resume" || extras["gate"] != gateActionableFeedback {
 		t.Fatalf("responded formal requested changes = (%q, %#v, %t), want resume/actionable-feedback", status, extras, handled)
 	}
@@ -1384,7 +1368,8 @@ func TestExternalGate_CanonicalRegistrationPreservesMatchingFormalFeedback(t *te
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	observedLifecycle1387 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := observedLifecycle1387.status(), observedLifecycle1387.Evidence, observedLifecycle1387.handled()
 	if !handled || status != "resume" || extras["gate"] != gateActionableFeedback {
 		t.Fatalf("canonical matching formal feedback = (%q, %#v, %t), want resume/actionable-feedback", status, extras, handled)
 	}
@@ -1410,7 +1395,8 @@ func TestExternalGate_CanonicalRegistrationPreservesMatchingInformalFeedback(t *
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	observedLifecycle1413 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := observedLifecycle1413.status(), observedLifecycle1413.Evidence, observedLifecycle1413.handled()
 	if !handled || status != "resume" || extras["gate"] != gateActionableFeedback {
 		t.Fatalf("canonical matching informal feedback = (%q, %#v, %t), want resume/actionable-feedback", status, extras, handled)
 	}
@@ -1435,7 +1421,8 @@ func TestExternalGate_CanonicalRegistrationResumesCurrentHeadApproval(t *testing
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	observedLifecycle1438 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := observedLifecycle1438.status(), observedLifecycle1438.Evidence, observedLifecycle1438.handled()
 	if !handled || status != "resume" || extras["gate"] != gateReadyToMerge {
 		t.Fatalf("canonical current-head approval = (%q, %#v, %t), want resume/ready-to-merge", status, extras, handled)
 	}
@@ -1459,7 +1446,8 @@ func TestExternalGate_CanonicalTopLevelApprovalResumesCurrentHead(t *testing.T) 
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-top-level-approval", "current-sha")
+	observedLifecycle1462 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-top-level-approval", "current-sha")
+	status, extras, handled := observedLifecycle1462.status(), observedLifecycle1462.Evidence, observedLifecycle1462.handled()
 	if !handled || status != "resume" || extras["gate"] != gateReadyToMerge {
 		t.Fatalf("canonical top-level approval = (%q, %#v, %t), want resume/ready-to-merge", status, extras, handled)
 	}
@@ -1484,7 +1472,8 @@ func TestExternalGate_CanonicalApprovalForOlderHeadDoesNotResume(t *testing.T) {
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-stale-approval", "new-head")
+	observedLifecycle1487 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-stale-approval", "new-head")
+	status, extras, handled := observedLifecycle1487.status(), observedLifecycle1487.Evidence, observedLifecycle1487.handled()
 	if !handled || status != "resume" || extras["gate"] != gateOwnedWorkRequired {
 		t.Fatalf("older-head approval = (%q, %#v, %t), want owned-work recovery without merge approval", status, extras, handled)
 	}
@@ -1552,7 +1541,8 @@ func TestExternalGate_CanonicalRegistrationRejectsDifferentTriggerEvidence(t *te
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	observedLifecycle1555 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := observedLifecycle1555.status(), observedLifecycle1555.Evidence, observedLifecycle1555.handled()
 	// Issue #2743: rejected evidence authorizes nothing, and the failed
 	// gate has no other active resolver, so the run fails instead of
 	// waiting — while still carrying the valid diagnostic as evidence.
@@ -1589,7 +1579,8 @@ func TestExternalGate_CanonicalRegistrationRejectsEvidenceAfterTrustedDeadline(t
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	observedLifecycle1592 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := observedLifecycle1592.status(), observedLifecycle1592.Evidence, observedLifecycle1592.handled()
 	// Issue #2743: post-deadline feedback authorizes nothing, and the failed
 	// gate has no other active resolver, so the run fails instead of waiting.
 	if !handled || status != "resume" {
@@ -1626,7 +1617,8 @@ func TestExternalGate_CanonicalRegistrationTreatsMissingSidecarsAsPendingDiagnos
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	observedLifecycle1629 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := observedLifecycle1629.status(), observedLifecycle1629.Evidence, observedLifecycle1629.handled()
 	if !handled || status != "await" || extras["gate"] != "pending" {
 		t.Fatalf("missing compatibility sidecars = (%q, %#v, %t), want await/pending", status, extras, handled)
 	}
@@ -1660,7 +1652,8 @@ func TestExternalGate_CanonicalRegistrationTreatsMalformedSidecarAsDiagnostics(t
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	observedLifecycle1663 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := observedLifecycle1663.status(), observedLifecycle1663.Evidence, observedLifecycle1663.handled()
 	if !handled || status != "await" || extras["gate"] != "pending" {
 		t.Fatalf("malformed compatibility sidecar = (%q, %#v, %t), want await/pending", status, extras, handled)
 	}
@@ -1684,7 +1677,8 @@ func TestExternalGate_RespondedInformalFeedbackIsActionable(t *testing.T) {
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	observedLifecycle1687 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := observedLifecycle1687.status(), observedLifecycle1687.Evidence, observedLifecycle1687.handled()
 	if !handled || status != "resume" || extras["gate"] != gateActionableFeedback {
 		t.Fatalf("responded informal feedback = (%q, %#v, %t), want resume/actionable-feedback", status, extras, handled)
 	}
@@ -1722,7 +1716,8 @@ func TestExternalGate_PendingWithConcreteInformalFeedbackIsActionable(t *testing
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.lifecycleDecisionWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	observedLifecycle1725 := session.observeLifecycleWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	status, extras, handled := observedLifecycle1725.status(), observedLifecycle1725.Evidence, observedLifecycle1725.handled()
 	if !handled || status != "resume" {
 		t.Fatalf("pending gate with concrete informal feedback = (%q, %#v, %t), want resume", status, extras, handled)
 	}
@@ -1828,7 +1823,8 @@ func TestExternalGate_PendingWithBoilerplateInformalStaysPending(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	writeInformalRespondedClassification(t, workDir, "looks good to me, thanks!")
 	session := pendingInformalGateSession()
-	status, extras, handled := session.lifecycleDecisionWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	observedLifecycle1831 := session.observeLifecycleWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	status, extras, handled := observedLifecycle1831.status(), observedLifecycle1831.Evidence, observedLifecycle1831.handled()
 	assertPendingGateAwait(t, status, extras, handled)
 }
 
@@ -1855,7 +1851,8 @@ func TestExternalGate_PendingWithStaleInlineInformalStaysPending(t *testing.T) {
 	})
 	mutateReviewStateCounts(t, workDir, map[string]any{"top_level": 0.0, "formal_reviews": 0.0, "inline_comments": 1.0})
 	session := pendingInformalGateSession()
-	status, extras, handled := session.lifecycleDecisionWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	observedLifecycle1858 := session.observeLifecycleWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	status, extras, handled := observedLifecycle1858.status(), observedLifecycle1858.Evidence, observedLifecycle1858.handled()
 	assertPendingGateAwait(t, status, extras, handled)
 }
 
@@ -1873,7 +1870,8 @@ func TestExternalGate_SupersededInformalClassificationStaysPending(t *testing.T)
 		}
 	})
 	session := pendingInformalGateSession()
-	status, extras, handled := session.lifecycleDecisionWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	observedLifecycle1876 := session.observeLifecycleWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	status, extras, handled := observedLifecycle1876.status(), observedLifecycle1876.Evidence, observedLifecycle1876.handled()
 	assertPendingGateAwait(t, status, extras, handled)
 }
 
@@ -1881,7 +1879,8 @@ func TestExternalGate_TriggerPrefixedInformalBodyStaysPending(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	writeInformalRespondedClassification(t, workDir, "/sandman review please check this")
 	session := pendingInformalGateSession()
-	status, extras, handled := session.lifecycleDecisionWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	observedLifecycle1884 := session.observeLifecycleWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	status, extras, handled := observedLifecycle1884.status(), observedLifecycle1884.Evidence, observedLifecycle1884.handled()
 	assertPendingGateAwait(t, status, extras, handled)
 }
 
@@ -1899,7 +1898,8 @@ func TestExternalGate_CIFailureWithInformalFeedbackResumes(t *testing.T) {
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.lifecycleDecisionWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	observedLifecycle1902 := session.observeLifecycleWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	status, extras, handled := observedLifecycle1902.status(), observedLifecycle1902.Evidence, observedLifecycle1902.handled()
 	if !handled || status != "resume" {
 		t.Fatalf("CI failure with informal evidence = (%q, %#v, %t), want resume", status, extras, handled)
 	}
@@ -1925,7 +1925,8 @@ func TestExternalGate_DirtyWithInformalFeedbackResumes(t *testing.T) {
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.lifecycleDecisionWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	observedLifecycle1928 := session.observeLifecycleWithHostPathsForTest(context.Background(), workDir, gateTestBranch, "", "run-test", true)
+	status, extras, handled := observedLifecycle1928.status(), observedLifecycle1928.Evidence, observedLifecycle1928.handled()
 	if !handled || status != "resume" {
 		t.Fatalf("DIRTY with informal evidence = (%q, %#v, %t), want resume", status, extras, handled)
 	}
@@ -1962,7 +1963,8 @@ func TestExternalGate_RespondedCurrentHeadApprovalResumesReadyToMerge(t *testing
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	observedLifecycle1965 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := observedLifecycle1965.status(), observedLifecycle1965.Evidence, observedLifecycle1965.handled()
 	if !handled || status != "resume" || extras["gate"] != gateReadyToMerge || extras["reason"] != "REVIEW_APPROVED" {
 		t.Fatalf("responded current-head approval = (%q, %#v, %t), want resume ready-to-merge", status, extras, handled)
 	}
@@ -2069,7 +2071,7 @@ func TestExternalGate_ClassificationUsesConfiguredTriggerPrefix(t *testing.T) {
 		"top_level":       []any{source},
 		"formal_reviews":  []any{},
 		"inline_comments": []any{},
-	}, request, "")
+	}, request, "", "")
 	if err == nil {
 		t.Fatal("configured review trigger was accepted as response evidence")
 	}
@@ -2155,7 +2157,8 @@ func TestExternalGate_MalformedRetainedClassificationDoesNotMaskFailedCI(t *test
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	observedLifecycle2158 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := observedLifecycle2158.status(), observedLifecycle2158.Evidence, observedLifecycle2158.handled()
 	if !handled || status != "resume" || extras["gate"] != "ci-failure" {
 		t.Fatalf("malformed classification failed-CI result = (%q, %#v, %t), want CI resume", status, extras, handled)
 	}
@@ -2221,7 +2224,8 @@ func TestExternalGate_GreenCIWithPendingReviewKeepsReviewDeadline(t *testing.T) 
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	observedLifecycle2224 := session.observeLifecycleForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := observedLifecycle2224.status(), observedLifecycle2224.Evidence, observedLifecycle2224.handled()
 	if !handled || status != "await" || extras["gate"] != "pending" {
 		t.Fatalf("green-CI pending review result = (%q, %#v, %t), want pending await", status, extras, handled)
 	}
@@ -2291,7 +2295,8 @@ func TestExternalGate_LateFeedbackPreservesExistingFailedGatePrecedence(t *testi
 				},
 				opts: gateTestRunOptions(),
 			}
-			status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+			observedLifecycle2294 := session.observeLifecycleForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+			status, extras, handled := observedLifecycle2294.status(), observedLifecycle2294.Evidence, observedLifecycle2294.handled()
 			if !handled || status != tt.wantStatus {
 				t.Fatalf("late feedback precedence = (%q, %#v, %t), want %s", status, extras, handled, tt.wantStatus)
 			}
@@ -2321,7 +2326,7 @@ func TestExternalGate_LateFormalChangesRequestedRejectsStaleEvidence(t *testing.
 	}
 }
 
-func TestExternalGate_AgentFailureRetryPrecedesIdleReadyGateFailure(t *testing.T) {
+func TestExternalGate_AgentFailureRetryPrecedesReadyGateWait(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 	branch := gateTestBranch
@@ -2358,8 +2363,8 @@ func TestExternalGate_AgentFailureRetryPrecedesIdleReadyGateFailure(t *testing.T
 	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
 		IssueNumber: 42, Branches: map[int]string{42: branch}, BaseBranch: "main",
 	})
-	if !started || result.Status != "failure" {
-		t.Fatalf("idle ready gate after retry = (%t, %q), want started failure", started, result.Status)
+	if !started || result.Status != "await" {
+		t.Fatalf("idle ready gate after retry = (%t, %q), want an rc2 wait", started, result.Status)
 	}
 	if len(factory.created) != 3 {
 		t.Fatalf("agent launches = %d, want 3 (failure retry, implementation success, merge resume)", len(factory.created))
@@ -2374,12 +2379,12 @@ func TestExternalGate_AgentFailureRetryPrecedesIdleReadyGateFailure(t *testing.T
 	if findEvent(logs, "run.resumed") == nil {
 		t.Fatal("ready pull-request gate did not resume implementor-owned merge work")
 	}
-	if findEvent(logs, "run.await") != nil {
-		t.Fatal("idle gate unexpectedly emitted run.await")
+	if findEvent(logs, "run.await") == nil {
+		t.Fatal("exhausted relaunch allowance did not wait")
 	}
-	finished := findEvent(logs, "run.finished")
-	if finished == nil || finished.Payload["reason"] != "REMEDIATION_BUDGET_EXHAUSTED" {
-		t.Fatalf("finished event = %#v, want remediation-budget failure", finished)
+	waiting := lastEvent(logs, "run.await")
+	if waiting == nil || waiting.Payload["reason"] != resumeStalledReason || findEvent(logs, "run.finished") != nil {
+		t.Fatalf("await event = %#v, want the stalled rc2 wait instead of a remediation-budget failure", waiting)
 	}
 }
 
@@ -2500,15 +2505,15 @@ func TestExternalGate_ReviewTimeoutRetainsResponseCounters(t *testing.T) {
 	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
 		IssueNumber: 42, Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main",
 	})
-	if !started || result.Status != "failure" {
-		t.Fatalf("counter result = (%t, %q), want bounded timeout recovery failure", started, result.Status)
+	if !started || result.Status != "await" {
+		t.Fatalf("counter result = (%t, %q), want an rc2 wait after the expired request", started, result.Status)
 	}
 	logs, err := eventLog.Read()
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
-	awaitEvt := findEvent(logs, "run.finished")
-	if awaitEvt == nil {
+	awaitEvt := lastEvent(logs, "run.await")
+	if awaitEvt == nil || findEvent(logs, "run.finished") != nil {
 		t.Fatalf("run.await event not found: %v", logs)
 	}
 	request, ok := awaitEvt.Payload["review_request"].(map[string]any)
@@ -2648,7 +2653,8 @@ func TestExternalGate_MalformedRetainedClassificationBlocksStateErrorBeforeMerge
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	observedLifecycle2651 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := observedLifecycle2651.status(), observedLifecycle2651.Evidence, observedLifecycle2651.handled()
 	if !handled || status != "success" || extras != nil {
 		t.Fatalf("malformed merged retained classification = (%q, %#v, %t), want merged success", status, extras, handled)
 	}
@@ -2668,13 +2674,14 @@ func TestExternalGate_MergedRetainedRequestTakesPrecedenceOverFailedMetadata(t *
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	observedLifecycle2671 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := observedLifecycle2671.status(), observedLifecycle2671.Evidence, observedLifecycle2671.handled()
 	if !handled || status != "success" || extras != nil {
 		t.Fatalf("merged retained request = (%q, %#v, %t), want successful confirmation", status, extras, handled)
 	}
 }
 
-func TestExternalGate_HeadSidecarWithoutRequestCannotAuthorizeWaiting(t *testing.T) {
+func TestExternalGate_HeadSidecarWithoutRequestCannotAuthorizeRequestWait(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 	worktreePath := filepath.Join(workDir, "worktree")
@@ -2721,8 +2728,8 @@ func TestExternalGate_HeadSidecarWithoutRequestCannotAuthorizeWaiting(t *testing
 	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
 		IssueNumber: 42, Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main",
 	})
-	if !started || result.Status != "failure" {
-		t.Fatalf("head-only state result = (%t, %q), want started failure", started, result.Status)
+	if !started || result.Status != "await" {
+		t.Fatalf("head-only state result = (%t, %q), want an rc2 wait", started, result.Status)
 	}
 	if len(factory.created) != 2 {
 		t.Fatalf("agent launches = %d, want initial launch plus ready-gate merge work", len(factory.created))
@@ -2737,12 +2744,12 @@ func TestExternalGate_HeadSidecarWithoutRequestCannotAuthorizeWaiting(t *testing
 	if findEvent(logs, "run.resumed") == nil {
 		t.Fatal("ready gate did not resume implementor-owned merge work")
 	}
-	if findEvent(logs, "run.await") != nil {
-		t.Fatal("head sidecar without a confirmed request authorized waiting")
+	if findEvent(logs, "run.await") == nil {
+		t.Fatal("exhausted relaunch allowance did not wait")
 	}
-	finished := findEvent(logs, "run.finished")
-	if finished == nil || finished.Payload["reason"] != "REMEDIATION_BUDGET_EXHAUSTED" {
-		t.Fatalf("head-only terminal event = %#v, want merge-resume budget failure", finished)
+	waiting := lastEvent(logs, "run.await")
+	if waiting == nil || waiting.Payload["reason"] != resumeStalledReason || findEvent(logs, "run.finished") != nil {
+		t.Fatalf("head-only wait event = %#v, want the stalled rc2 wait instead of a merge-resume budget failure", waiting)
 	}
 }
 
@@ -2769,7 +2776,8 @@ func TestExternalGate_IncompleteLegacyProposalFallsThroughToLiveGate(t *testing.
 		opts: gateTestRunOptions(),
 	}
 
-	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	observedLifecycle2772 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := observedLifecycle2772.status(), observedLifecycle2772.Evidence, observedLifecycle2772.handled()
 	if !handled || status != "await" || extras["gate"] != string(lifecycleGatePending) {
 		t.Fatalf("incomplete legacy proposal = (%q, %#v, %t), want active-CI await", status, extras, handled)
 	}
@@ -2789,7 +2797,8 @@ func TestExternalGate_MissingPRFailsWithPublicationNextAction(t *testing.T) {
 		},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, "missing-pr-branch", "", "run-test", "current-sha")
+	observedLifecycle2792 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, "missing-pr-branch", "", "run-test", "current-sha")
+	status, extras, handled := observedLifecycle2792.status(), observedLifecycle2792.Evidence, observedLifecycle2792.handled()
 	if !handled || status != "resume" || extras["reason"] != missingPRReason {
 		t.Fatalf("missing PR result = (%q, %#v, %t), want bounded publication recovery", status, extras, handled)
 	}
@@ -2968,7 +2977,7 @@ func writeRetainedCurrentHeadApproval(t *testing.T, workDir string) {
 	}
 }
 
-func TestExternalGate_LateCurrentHeadApprovalResumesMergeWorkWithoutWaiting(t *testing.T) {
+func TestExternalGate_LateCurrentHeadApprovalResumesMergeWorkBeforeWaiting(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 	worktreePath := filepath.Join(workDir, "worktree")
@@ -3027,8 +3036,8 @@ func TestExternalGate_LateCurrentHeadApprovalResumesMergeWorkWithoutWaiting(t *t
 		PreviousRunIDs: map[int]string{42: "prior-run"},
 		BaseBranch:     "main",
 	})
-	if !started || result.Status != "failure" {
-		t.Fatalf("late approval result = (%t, %q), want bounded failure after fake merge work remains incomplete", started, result.Status)
+	if !started || result.Status != "await" {
+		t.Fatalf("late approval result = (%t, %q), want an rc2 wait after fake merge work remains incomplete", started, result.Status)
 	}
 	if len(factory.created) != 2 {
 		t.Fatalf("agent launches = %d, want 2 (entry resume + in-session resume)", len(factory.created))
@@ -3050,8 +3059,8 @@ func TestExternalGate_LateCurrentHeadApprovalResumesMergeWorkWithoutWaiting(t *t
 	if resumedEvt == nil || resumedEvt.Payload["gate"] != gateReadyToMerge {
 		t.Fatalf("resumed event = %#v, want %q gate", resumedEvt, gateReadyToMerge)
 	}
-	if got := countEventsByType(logs, "run.await"); got != 0 {
-		t.Fatalf("run.await events = %d, want 0 after request-scoped approval", got)
+	if got := countEventsByType(logs, "run.await"); got != 1 {
+		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
 	}
 	request, ok := resumedEvt.Payload["review_request"].(map[string]any)
 	if !ok {
@@ -3062,8 +3071,8 @@ func TestExternalGate_LateCurrentHeadApprovalResumesMergeWorkWithoutWaiting(t *t
 		t.Fatalf("resumed classification = %#v, want retained classification", request["classification"])
 	}
 	states := events.ProjectRunStates(logs)
-	if len(states) != 1 || states[0].IsAwaiting() {
-		t.Fatalf("projected state = %#v, want terminal/non-await after approval resumption", states)
+	if len(states) != 1 || !states[0].IsAwaiting() || states[0].IsTerminal() {
+		t.Fatalf("projected state = %#v, want the rc2 wait after merge work stays incomplete", states)
 	}
 }
 
@@ -3126,7 +3135,8 @@ func TestExternalGate_LateStaleApprovalFailsWithoutActiveRequest(t *testing.T) {
 				},
 				opts: gateTestRunOptions(),
 			}
-			status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+			observedLifecycle3129 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+			status, extras, handled := observedLifecycle3129.status(), observedLifecycle3129.Evidence, observedLifecycle3129.handled()
 			if !handled || status != "resume" {
 				t.Fatalf("late stale approval = (%q, %#v, %t), want recovery without merge approval", status, extras, handled)
 			}
@@ -3178,7 +3188,8 @@ func TestExternalGate_LateApprovalPreservesHardGatePrecedence(t *testing.T) {
 				deps:        runDeps{githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: tt.pr}}, errorLog: io.Discard},
 				opts:        gateTestRunOptions(),
 			}
-			status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+			observedLifecycle3181 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+			status, extras, handled := observedLifecycle3181.status(), observedLifecycle3181.Evidence, observedLifecycle3181.handled()
 			if !handled || status != tt.wantStatus {
 				t.Fatalf("hard-gate result = (%q, %#v, %t), want %s", status, extras, handled, tt.wantStatus)
 			}
@@ -3215,7 +3226,8 @@ func TestExternalGate_LateApprovalRejectsMissingClassification(t *testing.T) {
 		}}}, errorLog: io.Discard},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	observedLifecycle3218 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := observedLifecycle3218.status(), observedLifecycle3218.Evidence, observedLifecycle3218.handled()
 	if !handled || status != "resume" || extras["gate"] != gateReviewTimeout {
 		t.Fatalf("missing classification result = (%q, %#v, %t), want bounded timeout recovery without approval", status, extras, handled)
 	}
@@ -3243,7 +3255,8 @@ func TestExternalGate_LateApprovalRejectsConflictingFormalEvidence(t *testing.T)
 		}}}, errorLog: io.Discard},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	observedLifecycle3246 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := observedLifecycle3246.status(), observedLifecycle3246.Evidence, observedLifecycle3246.handled()
 	// Issue #2743: the conflicting evidence is rejected (it authorizes no
 	// resume), but the live approval on the ready gate is an actively
 	// resolving operation, so the run awaits the merge path with the
@@ -3278,7 +3291,8 @@ func TestExternalGate_LateApprovalIgnoresMissingObservedHead(t *testing.T) {
 		}}}, errorLog: io.Discard},
 		opts: gateTestRunOptions(),
 	}
-	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	observedLifecycle3281 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := observedLifecycle3281.status(), observedLifecycle3281.Evidence, observedLifecycle3281.handled()
 	// Issue #2743: the headless record is ignored, but the live approval on
 	// the ready gate keeps the merge path alive with the invalid-record
 	// diagnostic attached.
@@ -3304,18 +3318,15 @@ func TestExternalGate_LateApprovalLookupFailureCannotFallThroughToAggregateAppro
 		deps:        runDeps{githubClient: client, errorLog: io.Discard},
 		opts:        gateTestRunOptions(),
 	}
-	status, extras, handled := session.lifecycleDecisionAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
-	// Issue #2743: a failed gate lookup is not an external operation being
-	// resolved. The run fails instead of waiting, and the aggregate
-	// approval is never consulted as a fallback.
-	if !handled || status != "failure" {
-		t.Fatalf("lookup failure result = (%q, %#v, %t), want failure", status, extras, handled)
+	observedLifecycle3307 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	status, extras, handled := observedLifecycle3307.status(), observedLifecycle3307.Evidence, observedLifecycle3307.handled()
+	// Issue #2938: a failed gate lookup waits for GitHub to recover, and the
+	// aggregate approval is never consulted as a fallback.
+	if !handled || status != "await" {
+		t.Fatalf("lookup failure result = (%q, %#v, %t), want a GitHub recovery wait", status, extras, handled)
 	}
-	if extras["reason"] != lookupGateReason {
-		t.Fatalf("lookup failure reason = %v, want %q", extras["reason"], lookupGateReason)
-	}
-	if _, ok := extras["gate"]; ok {
-		t.Fatalf("lookup failure carries gate: %#v", extras)
+	if extras["gate"] != gateGitHubUnavailable || extras["reason"] != githubUnavailableReason {
+		t.Fatalf("lookup failure = %#v, want the github-unavailable wait", extras)
 	}
 }
 
@@ -3730,8 +3741,8 @@ func TestRunSingle_ApprovedCleanOpenPRIsReadyToMergeWithoutRetry(t *testing.T) {
 		MergeStateStatus:  "CLEAN",
 	})
 
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure after bounded merge work", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want an rc2 wait after bounded merge work", result.Status)
 	}
 	if result.RetriesTotal != 1 {
 		t.Fatalf("retries total = %d, want 1", result.RetriesTotal)
@@ -3739,8 +3750,8 @@ func TestRunSingle_ApprovedCleanOpenPRIsReadyToMergeWithoutRetry(t *testing.T) {
 	if launches != 2 {
 		t.Fatalf("agent launches = %d, want 2 (initial plus ready-gate resume)", launches)
 	}
-	if got := countEventsByType(logs, "run.await"); got != 0 {
-		t.Fatalf("run.await events = %d, want 0 after the gate is ready", got)
+	if got := countEventsByType(logs, "run.await"); got != 1 {
+		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
 	}
 	if findEvent(logs, "run.resumed") == nil {
 		t.Fatal("ready gate did not resume the implementor for merge work")
@@ -3756,14 +3767,14 @@ func TestRunSingle_ApprovedCleanOpenPRWithoutChecksIsReadyToMerge(t *testing.T) 
 		MergeStateStatus: "CLEAN",
 	})
 
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure after bounded merge work", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want an rc2 wait after bounded merge work", result.Status)
 	}
 	if launches != 2 {
 		t.Fatalf("agent launches = %d, want 2 (initial plus ready-gate resume)", launches)
 	}
-	if got := countEventsByType(logs, "run.await"); got != 0 {
-		t.Fatalf("run.await events = %d, want 0 after the gate is ready", got)
+	if got := countEventsByType(logs, "run.await"); got != 1 {
+		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
 	}
 	if findEvent(logs, "run.resumed") == nil {
 		t.Fatal("ready gate did not resume the implementor for merge work")
@@ -3837,8 +3848,8 @@ func TestRunSingle_RestoresHostPathsBeforeExternalGateHeadCheck(t *testing.T) {
 	if !started {
 		t.Fatalf("expected run to start, status=%q", result.Status)
 	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want bounded merge-work failure", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want an rc2 wait after bounded merge work", result.Status)
 	}
 	if !sb.restoreHostPathsCalled {
 		t.Fatal("expected RestoreHostPaths before external gate check")
@@ -3847,8 +3858,8 @@ func TestRunSingle_RestoresHostPathsBeforeExternalGateHeadCheck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
-	if got := countEventsByType(logs, "run.await"); got != 0 {
-		t.Fatalf("run.await events = %d, want 0 after ready-gate resume", got)
+	if got := countEventsByType(logs, "run.await"); got != 1 {
+		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
 	}
 }
 
@@ -3867,7 +3878,7 @@ func (c *perRunGateSequenceClient) FindPRByBranch(context.Context, string) (*git
 	return c.responses[index], nil
 }
 
-func TestRunSingle_ReadyGateResumesAndExhaustsBudgetWithoutAwait(t *testing.T) {
+func TestRunSingle_ReadyGateResumesAndExhaustsBudgetThenWaits(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 
@@ -3913,15 +3924,15 @@ func TestRunSingle_ReadyGateResumesAndExhaustsBudgetWithoutAwait(t *testing.T) {
 	if !started {
 		t.Fatalf("expected run to start, status=%q", result.Status)
 	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want bounded failure after the ready-gate resume leaves merge work incomplete", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want an rc2 wait after the ready-gate resume leaves merge work incomplete", result.Status)
 	}
 	logs, err := eventLog.Read()
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
-	if got := countEventsByType(logs, "run.await"); got != 0 {
-		t.Fatalf("run.await events = %d, want 0 after ready-gate resume budget exhaustion", got)
+	if got := countEventsByType(logs, "run.await"); got != 1 {
+		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
 	}
 	if findEvent(logs, "run.resumed") == nil {
 		t.Fatalf("ready poll transition did not resume the agent in-session")
@@ -4014,8 +4025,8 @@ func TestRunSingle_FailedExternalGateAwaitsWithoutRetry(t *testing.T) {
 				}
 				return
 			}
-			if result.Status != "failure" {
-				t.Fatalf("status = %q, want failure after bounded CI remediation", result.Status)
+			if result.Status != "await" {
+				t.Fatalf("status = %q, want an rc2 wait after bounded CI remediation", result.Status)
 			}
 			if result.RetriesTotal != 1 {
 				t.Fatalf("retries total = %d, want 1", result.RetriesTotal)
@@ -4029,12 +4040,12 @@ func TestRunSingle_FailedExternalGateAwaitsWithoutRetry(t *testing.T) {
 			if launches != wantLaunches {
 				t.Fatalf("agent launches = %d, want %d", launches, wantLaunches)
 			}
-			if got := countEventsByType(logs, "run.await"); got != 0 {
-				t.Fatalf("run.await events = %d, want 0 after remediation budget exhaustion", got)
+			if got := countEventsByType(logs, "run.await"); got != 1 {
+				t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
 			}
-			finished := findEvent(logs, "run.finished")
-			if finished == nil || finished.Payload["reason"] != "REMEDIATION_BUDGET_EXHAUSTED" {
-				t.Fatalf("finished event = %#v, want remediation-budget failure", finished)
+			waiting := lastEvent(logs, "run.await")
+			if waiting == nil || waiting.Payload["reason"] != resumeStalledReason || findEvent(logs, "run.finished") != nil {
+				t.Fatalf("await event = %#v, want the stalled rc2 wait instead of a remediation-budget failure", waiting)
 			}
 			if tt.name == "failed CI" {
 				resumed := findEvent(logs, "run.resumed")
@@ -4075,7 +4086,8 @@ func TestHandleExternalGateKeepsPersistentStaleApprovalPending(t *testing.T) {
 		},
 	}
 
-	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
+	observedLifecycle4078 := session.observeLifecycleForTest(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
+	status, extras, handled := observedLifecycle4078.status(), observedLifecycle4078.Evidence, observedLifecycle4078.handled()
 	// Issue #2743: a PR head the local checkout no longer matches, with no
 	// other active resolver, fails closed instead of waiting. The stale
 	// approval still cannot authorize a merge.
@@ -4106,7 +4118,8 @@ func TestHandleExternalGateHostPathRestoreFailureRemainsPending(t *testing.T) {
 		opts: gateTestRunOptions(),
 	}
 
-	status, extras, handled := session.lifecycleDecisionWithHostPathsForTest(context.Background(), t.TempDir(), gateTestBranch, "", "run-test", false)
+	observedLifecycle4109 := session.observeLifecycleWithHostPathsForTest(context.Background(), t.TempDir(), gateTestBranch, "", "run-test", false)
+	status, extras, handled := observedLifecycle4109.status(), observedLifecycle4109.Evidence, observedLifecycle4109.handled()
 	// Issue #2743: when host paths cannot be restored the head cannot be
 	// validated, so no wait may be admitted — fail closed instead.
 	if !handled || status != "failure" {
@@ -4161,7 +4174,8 @@ func TestHandleExternalGateRoutesUnvalidatedHeadsToReconciliationOrFailure(t *te
 				},
 			}
 
-			status, extras, handled := session.lifecycleDecisionForTest(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
+			observedLifecycle4164 := session.observeLifecycleForTest(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
+			status, extras, handled := observedLifecycle4164.status(), observedLifecycle4164.Evidence, observedLifecycle4164.handled()
 			if !handled || status != tt.wantStatus {
 				t.Fatalf("head validation gate = (%q, %#v, %t), want %s", status, extras, handled, tt.wantStatus)
 			}
@@ -4199,17 +4213,15 @@ func TestHandleExternalGateInitialLookupErrorRecoversToPending(t *testing.T) {
 		opts: gateTestRunOptions(),
 	}
 
-	// Issue #2743: the failed lookup fails instead of waiting. A retry
-	// observes the recovered live gate and awaits it, bounding the recovery
-	// through ordinary re-evaluation rather than an unsupported wait.
-	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
-	if !handled || status != "failure" {
-		t.Fatalf("recovered gate = (%q, %#v, %t), want failure on lookup error", status, extras, handled)
+	// Issue #2938: the failed lookup waits for GitHub to recover. The next
+	// observation sees the recovered live gate and awaits it.
+	observedLifecycle4205 := session.observeLifecycleForTest(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
+	status, extras, handled := observedLifecycle4205.status(), observedLifecycle4205.Evidence, observedLifecycle4205.handled()
+	if !handled || status != "await" || extras["gate"] != gateGitHubUnavailable {
+		t.Fatalf("lookup error = (%q, %#v, %t), want a GitHub recovery wait", status, extras, handled)
 	}
-	if extras["reason"] != lookupGateReason {
-		t.Fatalf("recovered gate reason = %v, want %q", extras["reason"], lookupGateReason)
-	}
-	status, extras, handled = session.lifecycleDecisionForTest(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
+	observedLifecycle4212 := session.observeLifecycleForTest(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
+	status, extras, handled = observedLifecycle4212.status(), observedLifecycle4212.Evidence, observedLifecycle4212.handled()
 	if !handled || status != "await" {
 		t.Fatalf("recovered gate = (%q, %#v, %t), want await on retry", status, extras, handled)
 	}
@@ -4353,7 +4365,8 @@ func TestHandleExternalGateHeadLookupFailureProducesReconciliationResume(t *test
 		},
 	}
 
-	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
+	observedLifecycle4356 := session.observeLifecycleForTest(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
+	status, extras, handled := observedLifecycle4356.status(), observedLifecycle4356.Evidence, observedLifecycle4356.handled()
 	if !handled || status != "resume" {
 		t.Fatalf("fallback gate = (%q, %#v, %t), want actionable resume", status, extras, handled)
 	}
@@ -4396,7 +4409,8 @@ func TestConfirmExternalGateRejectsMergedPRWithoutClosingReference(t *testing.T)
 		},
 	}
 
-	status, extras, handled := session.mergedLifecycleDecisionForTest(context.Background(), t.TempDir(), branch, "", "run-test")
+	observedLifecycle4399 := session.observeLifecycleForTest(context.Background(), t.TempDir(), branch, "", "run-test")
+	status, extras, handled := observedLifecycle4399.status(), observedLifecycle4399.Evidence, observedLifecycle4399.handled()
 	if !handled {
 		t.Fatal("expected merged gate to be handled")
 	}
@@ -4431,7 +4445,8 @@ func TestHandleExternalGateCancellationDoesNotPersistBlocker(t *testing.T) {
 		opts: gateTestRunOptions(),
 	}
 
-	status, extras, handled := session.lifecycleDecisionForTest(ctx, workDir, gateTestBranch, logPath, "run-test")
+	observedLifecycle4434 := session.observeLifecycleForTest(ctx, workDir, gateTestBranch, logPath, "run-test")
+	status, extras, handled := observedLifecycle4434.status(), observedLifecycle4434.Evidence, observedLifecycle4434.handled()
 	if !handled || status != "aborted" || extras != nil {
 		t.Fatalf("canceled gate = (%q, %#v, %t), want (aborted, nil, true)", status, extras, handled)
 	}

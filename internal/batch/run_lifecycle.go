@@ -44,7 +44,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		return s.lifecycleEarlyAbort(ctx, branch), false
 	}
 	if s.mode != ModeContinue && !s.opts.repairHost {
-		if err := syncBaseBranch(s.deps.runSessionOpts, s.deps.sandboxFactory, ".", s.baseBranch); err != nil {
+		if err := syncBaseBranch(s.deps.runSessionOpts, s.deps.sandboxFactory, s.repoRoot(), s.baseBranch); err != nil {
 			if ctx.Err() != nil {
 				return s.lifecycleEarlyAbort(ctx, branch), false
 			}
@@ -67,12 +67,24 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		}
 		defer lease.Release()
 		container = lease.container
+		s.credentials = lease.credentials
 	}
 	if ctx.Err() != nil {
 		return s.lifecycleEarlyAbort(ctx, branch), false
 	}
 
-	wt := s.sbFactory.NewSandbox(".", s.worktreeDir(), branch, s.baseBranch, container)
+	checkout := s.baseBranch
+	if s.reviewHeadSHA != "" {
+		fetchHead := s.opts.reviewHeadFetch
+		if fetchHead == nil {
+			fetchHead = sandbox.FetchReviewHead
+		}
+		if err := fetchHead(ctx, s.repoRoot(), s.prNumber, s.reviewHeadSHA); err != nil {
+			return s.lifecycleEarlyFailure("fetch review snapshot", branch, s.runID, err), false
+		}
+		checkout = s.reviewHeadSHA
+	}
+	wt := s.sbFactory.NewSandbox(s.repoRoot(), s.worktreeDir(), branch, checkout, container)
 	opts, errResult, ok := s.startOptsFor(branch)
 	if !ok {
 		if issueDriven {
@@ -133,7 +145,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	s.emitStarted(issue, branch, runID)
 
 	logPath := s.runLogPathFor(runID)
-	if issueDriven && !s.usageLimitProbe {
+	if issueDriven && !s.quotaAllowance.probing() {
 		if entryResult, entryStarted, handled := s.tryEntryResume(ctx, branch, wt, logPath, runID); handled {
 			retainEndpoint = entryStarted && entryResult.Status == "await"
 			return entryResult, entryStarted
@@ -165,15 +177,17 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		// Provider quota recovery is non-terminal and retains the per-run
 		// endpoint for the batch-owned polling continuation.
 		if !s.lifecycleTerminal && s.shouldAwaitUsageLimit(result) {
-			s.usageLimitDeadline = s.runtimeNow().Add(usageLimitRetryWindow - s.usageLimitWaited)
-			result.UsageLimitDeadline = s.usageLimitDeadline
-			result.Status = s.emitAwait(ctx, runID, result, map[string]any{
-				"await_reason":                      "usage-limit",
-				"usage_limit_poll_seconds":          int(usageLimitPollInterval / time.Second),
-				"usage_limit_waited_seconds":        int(s.usageLimitWaited / time.Second),
-				"usage_limit_retry_window_seconds":  int(usageLimitRetryWindow / time.Second),
-				"usage_limit_deadline_unix_seconds": s.usageLimitDeadline.Unix(),
-			})
+			s.quotaAllowance = s.quotaAllowance.startProbe(s.runtimeNow())
+			result.UsageLimitDeadline = s.quotaAllowance.deadlineEstimate()
+			extras := map[string]any{
+				"await_reason":                     "usage-limit",
+				"usage_limit_poll_seconds":         int(usageLimitPollInterval / time.Second),
+				"usage_limit_retry_window_seconds": int(usageLimitRetryWindow / time.Second),
+			}
+			for key, value := range s.quotaAllowance.persistedEvidence() {
+				extras[key] = value
+			}
+			result.Status = s.emitAwait(ctx, runID, result, extras)
 		}
 		if result.Status == "await" {
 			retainEndpoint = true
@@ -275,7 +289,7 @@ func (s *runSession) startExtras(ctx context.Context, branch string, sandboxStar
 
 func (s *runSession) initialRunManifest(branch string, wt sandbox.Sandbox) (string, batchindex.RunManifest) {
 	runID := s.runID
-	batchDir := s.deps.layout.BatchDir(s.batchID)
+	batchDir := s.batchLocation(s.batchID).Dir
 	manifestBatchID := s.batchID
 	kind := batchindex.KindIssue
 	if s.isIssueDriven() {
@@ -296,7 +310,7 @@ func (s *runSession) initialRunManifest(branch string, wt sandbox.Sandbox) (stri
 		if s.batchID == "" {
 			s.batchID = batchIDFromRunID(runID)
 		}
-		batchDir = s.deps.layout.BatchDir(s.batchID)
+		batchDir = s.batchLocation(s.batchID).Dir
 		manifestBatchID = s.batchID
 		kind = batchindex.KindPromptOnly
 		if s.review {

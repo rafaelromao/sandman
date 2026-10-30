@@ -20,10 +20,10 @@ import (
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
-// writeReviewDaemonRealAgentGHShim writes a gh shim that returns one open PR
+// writeReviewDaemonCannedGHShim writes a gh shim that returns one open PR
 // with a /sandman review trigger comment, records gh pr comment calls, and
 // handles the subcommands the daemon invokes.
-func writeReviewDaemonRealAgentGHShim(t *testing.T, dir, triggerCommentID, triggerBody string) {
+func writeReviewDaemonCannedGHShim(t *testing.T, dir, triggerCommentID, triggerBody string) {
 	t.Helper()
 
 	script := `#!/bin/sh
@@ -72,16 +72,17 @@ exit 1
 	}
 }
 
-// containerReviewRunner is a BatchRunner that runs opencode inside a podman
-// container to produce a review decision. It bypasses the real batch
-// orchestrator (sandbox creation, event logs, container lifecycle) so the
-// test focuses on the daemon's trigger-to-post pipeline.
-type containerReviewRunner struct {
+// cannedReviewRunner is a BatchRunner that writes a canned review decision
+// instead of launching a reviewer. It bypasses the real batch orchestrator
+// (sandbox creation, event logs, container lifecycle) so the test focuses on
+// the daemon's trigger-to-post pipeline. Genuine reviewer coverage lives in
+// the real-agent preset-matrix tests.
+type cannedReviewRunner struct {
 	repoDir string
 	model   string
 }
 
-func (r *containerReviewRunner) RunBatch(ctx context.Context, req batch.Request) (*batch.Result, error) {
+func (r *cannedReviewRunner) RunBatch(ctx context.Context, req batch.Request) (*batch.Result, error) {
 	branch := req.PromptConfig.Branch
 	worktreePath := filepath.Join(r.repoDir, ".sandman", "worktrees", branch)
 	decisionPath := filepath.Join(worktreePath, "decision.md")
@@ -111,13 +112,9 @@ func (r *containerReviewRunner) RunBatch(ctx context.Context, req batch.Request)
 	return &batch.Result{}, nil
 }
 
-func TestReviewDaemonE2E_RealAgentInContainer(t *testing.T) {
+func TestReviewDaemonE2E_CannedReviewerTriggerToPost(t *testing.T) {
 	if !testenv.E2EGateAllowed(testenv.E2EScenarioReviewDaemon) {
 		t.Skip("set SANDMAN_E2E_GATES=review_daemon (or all) to run review_daemon e2e tests")
-	}
-
-	if os.Getenv("SANDMAN_RUN_AGENT_E2E") != "1" {
-		t.Skip("skip review_daemon real-agent e2e: SANDMAN_RUN_AGENT_E2E=1 not set")
 	}
 
 	repoDir := t.TempDir()
@@ -128,10 +125,9 @@ func TestReviewDaemonE2E_RealAgentInContainer(t *testing.T) {
 		t.Fatalf("create .sandman dir: %v", err)
 	}
 
-	// The review runner is a fake (containerReviewRunner.RunBatch writes a
-	// canned decision file) so this test no longer needs a real opencode
-	// binary, a real podman image build, or any of the SANDMAN_RUN_AGENT_E2E
-	// prerequisites. The real-LLM review daemon coverage lives in the
+	// The review runner is a fake (cannedReviewRunner.RunBatch writes a
+	// canned decision file) so this test needs no real opencode binary, no
+	// podman image build and no real-agent opt-in. The real-LLM review daemon coverage lives in the
 	// preset-matrix RealAgentContinue/Override tests, which drive the
 	// orchestrator's review poll through the same daemon this test
 	// exercises; this test owns the daemon's trigger-to-post pipeline.
@@ -151,14 +147,14 @@ func TestReviewDaemonE2E_RealAgentInContainer(t *testing.T) {
 	}
 
 	shimDir := t.TempDir()
-	writeReviewDaemonRealAgentGHShim(t, shimDir, "100", "/sandman review check tests")
+	writeReviewDaemonCannedGHShim(t, shimDir, "100", "/sandman review check tests")
 
 	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("GH_TOKEN", "fake")
 	t.Setenv("GITHUB_TOKEN", "fake")
 
 	ghClient := &github.CLIClient{}
-	runner := &containerReviewRunner{
+	runner := &cannedReviewRunner{
 		repoDir: repoDir,
 		model:   model,
 	}

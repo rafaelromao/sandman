@@ -28,10 +28,12 @@ jobs:
       PAGER: cat
       GH_TOKEN: ${{ github.token }}
       GITHUB_TOKEN: ${{ github.token }}
+      MISE_GITHUB_TOKEN: ${{ github.token }}
       SANDMAN_TEST_MODEL_OPENCODE: opencode/big-pickle
       SANDMAN_TEST_MODEL_CLAUDE: claude-haiku-4-5-20251001
-      SANDMAN_TEST_PROVIDERS: all
+      SANDMAN_TEST_PROVIDERS: ${{ inputs.tier == 'claude' && 'claude' || inputs.tier == 'live' && 'opencode' || 'all' }}
       SANDMAN_E2E_GATES: all
+      SANDMAN_RUN_PORTAL_BINARY_E2E: "1"
 
     steps:
       - name: Checkout
@@ -93,9 +95,16 @@ jobs:
 
       - name: Install pinned agent CLIs
         id: agents
-        if: inputs.tier == 'live'
+        if: inputs.tier == 'live' || inputs.tier == 'claude'
         timeout-minutes: 5
-        run: npm install -g opencode-ai@1.15.0 @anthropic-ai/claude-code@2.1.283
+        env:
+          RELEASE_TIER: ${{ inputs.tier }}
+        run: |
+          if [ "$RELEASE_TIER" = claude ]; then
+            npm install -g @anthropic-ai/claude-code@2.1.283
+          else
+            npm install -g opencode-ai@1.19.3
+          fi
 
       - name: Validate prerequisites and record versions
         id: prerequisites
@@ -107,7 +116,8 @@ jobs:
           node --version
           "$SANDMAN_PORTAL_CHROMIUM" --version
           if [ "$RELEASE_TIER" = live ]; then
-            test "$(opencode --version)" = 1.15.0
+            test "$(opencode --version)" = 1.19.3
+          elif [ "$RELEASE_TIER" = claude ]; then
             claude --version | grep -F '2.1.283'
           fi
           {
@@ -117,19 +127,28 @@ jobs:
             podman --version
             if [ "$RELEASE_TIER" = live ]; then
               opencode --version
+            elif [ "$RELEASE_TIER" = claude ]; then
               claude --version
             fi
           } > regression-artifacts/versions.txt
 
       - name: Provision provider auth
         id: auth
-        if: inputs.tier == 'live'
+        if: inputs.tier == 'live' || inputs.tier == 'claude'
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.tier == 'claude' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          RELEASE_TIER: ${{ inputs.tier }}
         run: |
-          test -n "$OPENCODE_API_KEY"
-          test -n "$CLAUDE_CODE_OAUTH_TOKEN"
+          credential=OPENCODE_API_KEY
+          if [ "$RELEASE_TIER" = claude ]; then
+            credential=CLAUDE_CODE_OAUTH_TOKEN
+          fi
+          if [ -z "${!credential}" ]; then
+            echo "::error::Required repository secret $credential is missing. Configure it before rerunning provider validation."
+            exit 1
+          fi
+          if [ "$RELEASE_TIER" = live ]; then
           python3 - <<'PYAUTH'
           import json, os
           from pathlib import Path
@@ -138,6 +157,7 @@ jobs:
           path.write_text(json.dumps({'opencode': {'type': 'api', 'key': os.environ['OPENCODE_API_KEY']}}))
           path.chmod(0o600)
           PYAUTH
+          fi
 
       - name: Execute tier
         id: tests
@@ -145,7 +165,7 @@ jobs:
           RELEASE_TIER: ${{ inputs.tier }}
           SANDMAN_PORTAL_CHROMIUM: ${{ steps.chrome.outputs.chrome-path }}
           SANDMAN_REQUIRE_PORTAL_BROWSER: "1"
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.tier == 'live' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.tier == 'claude' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
         run: bash scripts/release_tier.sh
 
       - name: Evaluate complete scenario coverage

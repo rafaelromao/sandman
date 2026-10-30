@@ -18,8 +18,9 @@ const runOld = {
   archived: false,
   unavailable: false,
   sourceExists: true,
+  canArchive: true,
 };
-const runNew = Object.assign({}, runOld, { unavailable: true });
+const runNew = Object.assign({}, runOld, { unavailable: true, canArchive: false });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
@@ -52,8 +53,9 @@ const runOld = {
   archived: false,
   unavailable: false,
   sourceExists: true,
+  canArchive: true,
 };
-const runNew = Object.assign({}, runOld, { unavailable: true });
+const runNew = Object.assign({}, runOld, { unavailable: true, canArchive: false });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
@@ -84,8 +86,9 @@ const runOld = {
   archived: false,
   unavailable: true,
   sourceExists: false,
+  canArchive: false,
 };
-const runNew = Object.assign({}, runOld, { unavailable: false, sourceExists: true });
+const runNew = Object.assign({}, runOld, { unavailable: false, sourceExists: true, canArchive: true });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
