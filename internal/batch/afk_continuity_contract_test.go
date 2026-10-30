@@ -612,14 +612,17 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 	for _, name := range []string{
 		"approved-daemon-28-final.md", "approved-sandman-2818.md", "approved-with-ci-advice.md",
 		"approved-daemon-29-first.md", "approved-daemon-29-fifth.md", "approved-daemon-29-final.md", "approved-daemon-30.md",
+		"approved-sandman-tests-33.md",
 	} {
 		reports[name] = approvalReport(t, name)
 	}
 	var scenarios []continuityScenario
-	// #2817, #2823, #2892, #2914: a daemon approval of the current head with
-	// green CI merges. The real reports carry no verdict marker; the daemon
-	// would publish them with one today, and both forms must merge.
-	for _, name := range []string{"approved-sandman-2818.md", "approved-with-ci-advice.md", "approved-daemon-28-final.md", "approved-daemon-29-first.md", "approved-daemon-29-fifth.md", "approved-daemon-29-final.md"} {
+	// #2817, #2823, #2892, #2914, #2939: a daemon approval of the current head
+	// with green CI merges. Most real reports carry no verdict marker; the
+	// daemon would publish them with one today, and both forms must merge.
+	// approved-sandman-tests-33.md is the #19 / PR #33 report (comment
+	// 6514897469) whose descriptive Summary vetoed its own published verdict.
+	for _, name := range []string{"approved-sandman-2818.md", "approved-with-ci-advice.md", "approved-daemon-28-final.md", "approved-daemon-29-first.md", "approved-daemon-29-fifth.md", "approved-daemon-29-final.md", "approved-sandman-tests-33.md"} {
 		report := reports[name]
 		for _, form := range []struct {
 			name    string
