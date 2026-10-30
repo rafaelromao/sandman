@@ -70,6 +70,9 @@ func seedPriorReviewEntry(t *testing.T, baseDir, batchID string, prNumber int, c
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		t.Fatalf("create prior run dir: %v", err)
 	}
+	if err := writeReviewSnapshot(runDir, reviewSnapshot{Version: 1, PR: prNumber, Request: commentID, Head: "head"}); err != nil {
+		t.Fatal(err)
+	}
 	state := batchindex.ReviewState{
 		PR: prNumber,
 		SeenComments: []batchindex.SeenComment{

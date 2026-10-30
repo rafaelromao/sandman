@@ -30,12 +30,18 @@
 // MkdirShort is the filesystem helper. Use it in any test that binds a
 // Unix domain socket, in place of t.TempDir(); see its doc comment for
 // the macOS sun_path rationale.
+//
+// ProcessAlive is the process helper for tests that must prove a spawned
+// process stopped; it treats a zombie awaiting its reaper as gone.
 package testenv
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -209,4 +215,20 @@ func MkdirShort(t *testing.T, dirHint string) string {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(path) })
 	return path
+}
+
+// ProcessAlive reports whether pid names a running process. On Linux a zombie
+// awaiting its reaper counts as gone.
+func ProcessAlive(pid int) bool {
+	if runtime.GOOS == "linux" {
+		data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+		if err == nil {
+			fields := strings.Fields(string(data))
+			if len(fields) >= 3 && fields[2] == "Z" {
+				return false
+			}
+		}
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
 }

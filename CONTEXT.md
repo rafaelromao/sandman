@@ -21,7 +21,7 @@ An external AI coding tool (OpenCode or Claude Code) invoked by Sandman via `os/
 _Avoid_: AI model, LLM, copilot.
 
 **AgentPreset**:
-A built-in command, config source, auth profile, and default model for a known AI coding tool keyed by name (`opencode`, `claude`). Declared in `config.BuiltInAgentPresets` and resolved by `config.ResolveAgentProvider`. Presets hold data only; the agent-specific run-loop behaviour for a preset is its AgentStrategy.
+A built-in command, config source, auth profile, and default model for a known AI coding tool keyed by name (`opencode`, `opencode-v2`, `claude`). Declared in `config.BuiltInAgentPresets` and resolved by `config.ResolveAgentProvider`. Presets hold data only; the agent-specific run-loop behaviour for a preset is its AgentStrategy.
 _Avoid_: Provider template, agent type.
 
 **AgentStrategy**:
@@ -29,7 +29,7 @@ The per-preset behaviour bundle the run loop selects once per launch with `strat
 _Avoid_: agent type switch, preset check.
 
 **Agent Provider**:
-A configured agent preset or custom provider definition. Sandman supports the built-in presets (`opencode`, `claude`) and optional repo-local custom providers via the `agents` config map.
+A configured agent preset or custom provider definition. Sandman supports the built-in presets (`opencode`, `opencode-v2`, `claude`) and optional repo-local custom providers via the `agents` config map.
 _Avoid_: Agent type, runner.
 
 **AgentModel**:
@@ -37,7 +37,7 @@ A built-in agent model identifier overridden via `sandman run --model`. Each Age
 _Avoid_: agent model, default model.
 
 **AgentRun**:
-One logical execution against one work item, identified by RunID. Its lifecycle and terminality come exclusively from append-only events. Initial queued admission is unfinished; started work never returns to queued. Same RunID preserves accumulated active duration across waits and batches; new RunID starts fresh. Artifact availability and ownership cannot revise outcomes. See `docs/architecture/run-state-machine.md` for the full transition contract.
+One logical execution against one work item, identified by RunID. Its lifecycle and terminality come exclusively from append-only events. Initial queued admission is unfinished; started work never returns to queued. A continuation preserves the same AgentRun identity and accumulated active duration while its execution mode, session-reuse choice, and prior-run reference advance. A new RunID starts fresh. Artifact availability and ownership cannot revise outcomes. See `docs/architecture/run-state-machine.md` for the full transition contract.
 _Avoid_: Run, job, task.
 
 **Prompt-only run**:
@@ -68,8 +68,13 @@ Five hours of accumulated completed ten-minute polling for a recognized implemen
 _Avoid_: absolute quota deadline, fresh allowance on re-entry.
 
 **DependencyResolver**:
-The component that fetches issues, extracts their BlockedBy relationships, validates the dependency graph (detecting cycles and missing blockers), and produces a topologically sorted ResolvedBatch.
+The component that extracts BlockedBy relationships from the issues batch preparation fetched, validates the dependency graph (detecting cycles and missing blockers), and produces a topologically sorted ResolvedBatch.
 _Avoid_: scheduler, planner.
+
+**Batch preparation**:
+The pre-execution step (`batch.Preparer`) that owns the whole issue graph before any AgentRun starts: one shared issue fetch, Specification discovery through the SpecificationResolver, closed-child filtering, merging rehydrated ready rows, and dependency resolution through the DependencyResolver, including declared BlockedBy edges and Parent completion gates. It returns the ResolvedBatch; the cmd layer calls it once and does not call the resolvers directly.
+_Avoid_: planner, pre-flight.
+
 **Specification**:
 
 A GitHub issue whose body declares children — in any of the supported forms (body heading, body prose, issue comments, native GitHub sub-issues, mention-search fallback) — OR whose body carries the canonical Specification shape (`## Problem Statement` + `## Solution` + optional `## User Stories`). A Specification is a container for a set of vertical slices; Sandman recognizes it structurally and resolves it into its child issues before execution. Detection is body-based, not label-based. The no-other-gate contract drops the body-shape as the identification gate: child existence alone is sufficient. Body candidate harvesting walks the body's H2 sections in order and skips any section whose heading text matches a blocker-style name (`Blocked by`, `Depends on`, `Blocked-by`, mirroring `parseBlockedByHeading`); the residual non-blocker sections supply the prose and bullet references. Inline phrases like `Children: #10`, `Child Issues: #10`, `Blocked by #10`, and `Depends on #10` outside a heading are deprecated — prose mentions were sensitive noise.
@@ -80,7 +85,7 @@ A parent-side child relationship declared by a parseable entry under a recognize
 
 Explicit child declarations bypass parent-section verification; ordinary body prose, issue comments, search results, and open-issue-scan candidates still require a matching parent-style backlink. The parent-side declaration is authoritative when it conflicts with child metadata.
 
-The component that detects Specification issues, discovers their child issues (from `#N` shorthand or full issue URLs in the body's non-blocker sections, issue comments, native GitHub sub-issues, and a fallback mention search), and rewrites the input batch so each Specification is preceded by its accepted children and then itself retained as a regular AgentRun row. Child verification looks for any H2 section whose heading text declares a parent relationship (`## Parent`-style or `## Part of`-style — see Parent section below) and accepts the candidate when the originating spec's number is among that section's issue references (multi-ref parent sections are accepted when the spec is in the set). Runs in `sandman run` after issue selection and before `DependencyResolver.Resolve`. A Specification with no accepted children runs as a single-row batch (no synthetic blockers, no retained parent, no per-flatten log line); a child that is itself a Specification is expanded recursively (per-flatten log line) rather than rejected, with depth bounded by the unique-set seen+addUnique pair, and the nested Specification is also retained at the end of its own expansion slice. Candidates that are also in the user-typed input list bypass the parent-section verification (the user owns the choice); the recursive-flatten path pulls the ancestor user input back into the output via the per-flatten expansion. `Resolve` returns both the expanded issue list and an in-memory `ParentChildren` map (parent issue number → accepted children); the cmd layer threads that map into `DependencyResolver.Resolve` so each retained parent is held back from starting until its accepted children succeed in the batch. Closed children are filtered from the gate by the dep resolver (via the `known` set), not by the resolver — the resolver records the full accepted set and lets the dep resolver drop filtered-out numbers. The map never lands on GitHub — it is purely an in-batch edge. References ADR-0021 for the high-level flow, ADR-0042 for the harvest-time blocker carve-out and the generalised parent-section matcher, ADR-0045 for the broadened children-heading detection, ADR-0046 for the `## Part of` parent-section widening, and ADR-0047 for the parent-retained contract and the in-memory parent-gate edge.
+The component that detects Specification issues, discovers their child issues (from `#N` shorthand or full issue URLs in the body's non-blocker sections, issue comments, native GitHub sub-issues, and a fallback mention search), and rewrites the input batch so each Specification is preceded by its accepted children and then itself retained as a regular AgentRun row. Child verification looks for any H2 section whose heading text declares a parent relationship (`## Parent`-style or `## Part of`-style — see Parent section below) and accepts the candidate when the originating spec's number is among that section's issue references (multi-ref parent sections are accepted when the spec is in the set). Runs inside Batch preparation after issue selection and before dependency resolution. A Specification with no accepted children runs as a single-row batch (no synthetic blockers, no retained parent, no per-flatten log line); a child that is itself a Specification is expanded recursively (per-flatten log line) rather than rejected, with depth bounded by the unique-set seen+addUnique pair, and the nested Specification is also retained at the end of its own expansion slice. Candidates that are also in the user-typed input list bypass the parent-section verification (the user owns the choice); the recursive-flatten path pulls the ancestor user input back into the output via the per-flatten expansion. It returns both the expanded issue list and an in-memory `ParentChildren` map (parent issue number → accepted children); Batch preparation passes that map to dependency resolution so each retained parent is held back from starting until its accepted children succeed in the batch and are closed on GitHub (Parent completion gate). Closed children are filtered from the gate by the dep resolver (via the `known` set), not by the resolver — the resolver records the full accepted set and lets the dep resolver drop filtered-out numbers. The map never lands on GitHub — it is purely an in-batch edge. References ADR-0021 for the high-level flow, ADR-0042 for the harvest-time blocker carve-out and the generalised parent-section matcher, ADR-0045 for the broadened children-heading detection, ADR-0046 for the `## Part of` parent-section widening, and ADR-0047 for the parent-retained contract and the in-memory parent-gate edge.
 _Avoid_: Specification expander, Specification flattener, PRDResolver, spec resolver.
 
 **Parent section**:
@@ -92,7 +97,7 @@ A candidate child of Specification `#N` is accepted when its body carries at lea
 _Avoid_: parent reference, parent link, parent header.
 
 **Parent completion gate**:
-The in-memory blocker edge that holds a retained Specification (the parent) back from starting until every one of its accepted open children has reached terminal `success` in the same batch. The gate is synthesised by the Specification resolver and consumed by the Dependency resolver; it is recorded in `ResolvedBatch.Deps` only and never persisted to GitHub. Closed children are dropped from the gate set because they are already satisfied; an existing declared `BlockedBy` on the parent is unioned with the synthetic edges, deduplicated and sorted, so the topological sort places the parent immediately after its open children. The gate only gates the parent itself — sibling issues, the children, and external BlockedBy relationships are unaffected. The default AgentRun prompt and verification flow apply to the retained parent; the parent can write `## Status: already resolved` like any other issue. References ADR-0047.
+The in-memory blocker edge that holds a retained Specification (the parent) back from starting until every one of its accepted open children has reached terminal `success` in the same batch and GitHub reports that child closed at the parent's start decision (ADR-0054); a successful child that is still open blocks the parent like any other in-batch blocker. The gate is synthesised by the Specification resolver and consumed by the Dependency resolver; it is recorded in `ResolvedBatch.Deps` only and never persisted to GitHub. Closed children are dropped from the gate set because they are already satisfied; an existing declared `BlockedBy` on the parent is unioned with the synthetic edges, deduplicated and sorted, so the topological sort places the parent immediately after its open children. The gate only gates the parent itself — sibling issues, the children, and external BlockedBy relationships are unaffected. The default AgentRun prompt and verification flow apply to the retained parent; the parent can write `## Status: already resolved` like any other issue. References ADR-0047.
 _Avoid_: parent retention edge, in-batch parent lock, parent-children dependency, spec gate.
 
 **Open-issue scan**:
@@ -100,7 +105,7 @@ The last-resort Specification child harvest source. When every cheaper harvest p
 _Avoid_: full-repo scan, discovery scan.
 
 **Discovered children**:
-The subset of Specification children identified by the Open-issue scan and persisted on the spec as a `<!-- sandman-discovered-children -->` marker comment containing a `## Discovered children` H2 section with `- #N` bullets. Future runs pick the candidates up via the existing comment harvest so the expensive scan is short-circuited while the marker comment is intact. Operators may edit the marker comment to remove false positives, add missing candidates, or delete the marker to force a re-scan. References ADR-0044.
+The subset of Specification children identified by the Open-issue scan and persisted on the spec as a `<!-- sandman-discovered-children -->` marker comment containing a `## Discovered children` H2 section with `- #N` bullets. Future runs harvest the marker's bullets as ordinary comment candidates. The scan is gated on the cheaper candidate set, not on the marker: any nonempty set of cheaper candidates (marker bullets included, before verification) suppresses the scan, while the marker's presence only suppresses reposting. Operators may edit the marker comment to remove false positives or add missing candidates. A marker edited down to no bullets lets the scan rediscover children on each run without reposting; deleting the marker allows a repost, but a re-scan happens only when no other source yields candidates. References ADR-0044.
 _Avoid_: auto-discovered children, scan results.
 
 **Batch**:
@@ -112,11 +117,11 @@ The master list at `.sandman/batches.json` recording every batch ever created wi
 _Avoid_: index, master index.
 
 **Run**:
-One folder under `.sandman/batches/<batch-id>/runs/<run-id>/` containing `run.json`, `run.log`, `session.json` for supported OpenCode runs, `run.sock`, and (for review runs) `review-state.json`. Identified by the per-row RunID produced by `runid.NewRunID`. Each Run represents a single AgentRun within a Batch. The Run may be archived or unavailable independently of AgentRun lifecycle. `run.json` is an atomic artifact manifest whose legacy `status` is a best-effort execution snapshot for inspection/compatibility; it never overrides or substitutes for events. References ADR-0032.
+One folder under `.sandman/batches/<batch-id>/runs/<run-id>/` containing `run.json`, `run.log`, `session.json` (agent session identity) for supported OpenCode and Claude Code runs, `run.sock`, and (for review runs) `review-state.json`, the durable `decision.md` copy, and, until its post is acknowledged, `pending-publication.json`. Identified by the per-row RunID produced by `runid.NewRunID`. Each Run represents a single AgentRun within a Batch. The Run may be archived or unavailable independently of AgentRun lifecycle. `run.json` is an atomic artifact manifest whose legacy `status` is a best-effort execution snapshot for inspection/compatibility; it never overrides or substitutes for events. References ADR-0032.
 _Avoid_: run folder, run directory.
 
-**OpenCode session identity**:
-The validated runtime metadata in `<Run>/session.json` that records `{protocol: "opencode-session/v1", provider: "opencode", session_id: "..."}`. It is atomically replaced when a supported OpenCode invocation observes a session ID. Runtime-owned await re-entry and explicit `--continue --reuse-session` may select it; plain `--continue`, retries, and non-OpenCode agents do not. Missing exact sessions use one OpenCode `--continue` fallback only on the selected reuse path. The `claude` preset keeps no session identity: on the same reuse paths it renders Claude Code's working-directory-scoped `--continue`.
+**Agent session identity**:
+The validated runtime metadata in `<Run>/session.json` that records `{protocol, provider, session_id}`: `opencode-session/v1`/`opencode` for OpenCode v1, `opencode-session/v2`/`opencode-v2` for OpenCode v2, or `claude-session/v1`/`claude` for Claude Code (from its `system/init` record). It is atomically replaced as soon as a supported invocation observes a session, and again after the attempt. Runtime-owned await re-entry and explicit `--continue --reuse-session` may select it, each strategy accepting only its own protocol. Plain `--continue` and retries do not. Missing OpenCode sessions use one OpenCode `--continue` fallback on the selected reuse path. Claude reuse renders `--resume <uuid>`, never Claude Code's working-directory-scoped `--continue`. A missing, invalid, or vanished Claude session starts fresh. The Portal shows either identity as the Run detail `agentSessionId` (ADR-0055, ADR-0057).
 _Avoid_: transcript, mutable Run status.
 
 **Run retry**:
@@ -143,6 +148,43 @@ validation makes canonical evidence authoritative and keeps stale legacy
 evidence diagnostic-only.
 _Avoid_: review retry loop, approval shortcut, restart reset.
 
+**AFK continuity**:
+The rule that a started Run whose pull request is open at its current head never
+becomes terminal-failed when the only missing evidence is review, CI, or a review
+request the runtime did not observe: it waits for external recovery or proceeds
+to merge, wherever v1.0.0-rc.2 would have merged or kept waiting. Terminal
+failure is reserved for classified permanent reasons (closed pull request,
+explicit abort, unverifiable completion, formal requested changes left
+unrepaired, no review request delivered, GitHub unavailable for a whole
+**GitHub recovery window**). A stalled relaunch records a
+**resume signature** (gate, reason, live head, request trigger and response
+identities) in the wait so observation does not relaunch on unchanged evidence;
+a recoverable failure becomes a **continuity hold**.
+_Avoid_: remediation exhaustion as failure, idle failure.
+_See_: Managed review lifecycle, Publication verdict.
+
+**GitHub recovery window**:
+The bounded wait (`await_reason: github-unavailable`) a Run enters when a
+pull-request lookup or refresh fails. Recovery is attempted hourly, each attempt
+skipped while githubstatus.com reports a GitHub outage; an unreachable status
+page attempts anyway. The window starts at its first failure, survives restart
+in the `run.await` evidence (`github_recovery`), and ends the Run with
+`GATE_LOOKUP_FAILED` only after 24 hours. `sandman run --continue` starts a new
+RunID and therefore a fresh window; explicit abort ends it.
+_Avoid_: lookup failure as a permanent outcome.
+_See_: AFK continuity.
+
+**Publication verdict**:
+The closed-set decision (`approved` or `changes_requested`) the review daemon
+stamps as a trailer directly before the publication identity of its posted
+report. The identity binds the report to one trigger revision and one reviewed
+head; a report bound to another request or head is stale. The runtime trusts
+the verdict additively: reports without it keep the prose approval rules, and an
+unknown verdict is never repair evidence. Only the Findings, Suggested next steps
+and Decision sections may contradict a published approval; descriptive sections
+(Summary, Standards, Spec, Quality check) never veto it.
+_See_: Informal approval, AFK continuity.
+
 **Informal approval**:
 An unambiguous approving response to the confirmed review request for the current
 pull-request head, expressed in a conversation comment or an eligible COMMENTED
@@ -151,7 +193,9 @@ COMMENTED review without commit identity remains eligible within that request
 window; an explicitly stale review does not. Accepted approval waits for pending
 CI and advances merge work once checks are green. Scope paths, metrics, and
 resolved history in a no-findings approval do not turn it into requested repairs;
-separate concrete feedback and formal requested changes still take precedence.
+eligible approval is evaluated before informal feedback from that request.
+Formal requested changes, current-head CI failures and merge conflicts remain
+blocking.
 _See_: Managed review lifecycle, Informal feedback, Review decision.
 
 **Informal feedback**:
@@ -170,7 +214,7 @@ _Avoid_: review-only RunID, special review alias, `runs/review`.
 _See_: Run, RunID, Review daemon state.
 
 **Review daemon state**:
-Flat files under `.sandman/reviews/` for daemon-level state only: `review.sock` (daemon command socket), `review-prompt.md` (shared prompt template), `quality-rules.md` (materialised alongside the prompt), and `quota-pause.json` (atomic provider-wide quota recovery gate for review agents whose AgentStrategy awaits usage limits). `quota-pause.json` records whether review launches are paused plus the next probe timing; it is cleared only after a successful prompt-only recovery probe. The folder holds **no** per-PR subdirectories, **no** per-row RunID folders, and **no** body-hash tracker. Per-run review state (`review-state.json` with seen comments and claim locks) lives inside the batch run folder at `.sandman/batches/<batch-id>/runs/<runID>/review-state.json`, where `<runID>` is the canonical per-row RunID for the review run (see `Review run`). Dedup key is `(prNumber, commentID)`.
+Flat files under `.sandman/reviews/` for daemon-level state only: `review.sock` (daemon command socket), `review-prompt.md` (shared prompt template), `quality-rules.md` (materialised alongside the prompt), and `quota-pause.json` (atomic provider-wide quota recovery gate for review agents whose AgentStrategy awaits usage limits). `quota-pause.json` records whether review launches are paused plus the next probe timing; it is cleared only after a successful prompt-only recovery probe. The folder holds **no** per-PR subdirectories, **no** per-row RunID folders, and **no** body-hash tracker. The daemon-level health-repair evidence also lives there: `health-repair.json` (repair episode, attempts, outcome, and budget; its lock and launch claim are listed in `docs/architecture/disk-layout.md`). Each health repair itself is a separate modifying prompt-only Run on the host with its own Batch under `.sandman/batches/<repair-run-id>/`, unlike read-only reviewers. Per-run review state lives inside the batch run folder `.sandman/batches/<batch-id>/runs/<runID>/`, where `<runID>` is the canonical per-row RunID for the review run (see `Review run`): `review-state.json` (seen comments and claim locks), the durable `decision.md` copy, and, until the post is acknowledged, the publication outbox `pending-publication.json` (see `Review decision`). Dedup key is `(prNumber, commentID)`.
 
 Post-redaction the bot's review body cannot re-trigger the daemon because the daemon-side redaction layer strips every `/sandman` substring from the review worktree's `decision.md` (see `Review decision`) before posting via `gh pr comment`, and the structural sniff `LooksLikeBotReviewBody` drops bodies that structurally look like a previous bot review (carrying both the `## Previous review progress` heading AND the literal `/sandman review` substring) before `ParseTrigger` runs. The redactor is the primary defence; the structural sniff is the belt-and-braces backstop.
 _Avoid_: review state, PR state.
@@ -183,13 +227,14 @@ One scan cycle of the review daemon's polling loop. A tick acquires the `busy` s
 _Avoid_: scan cycle, polling loop.
 
 **Review decision**:
-The review pipeline is **daemon-as-poster**: the reviewer agent writes its body to the review worktree's `decision.md` (atomic temp-file + `os.Rename`) and the daemon reads it, redacts it, and posts the redacted body via `gh pr comment`. Three load-bearing properties:
+The review pipeline is **daemon-as-poster**: the reviewer agent writes its body to the review worktree's `decision.md` (atomic temp-file + `os.Rename`) as a handoff, and a run-owned exact outbox drives publication. Four load-bearing properties:
 
-- **Canonical body file**: `decision.md` lives in the per-row review worktree (the agent's CWD), not a shared daemon path and not the run folder. The agent's only daemon-visible side effect is the file; the daemon never sees the agent's stdout and never asks the LLM to call `gh pr comment` itself. The atomic-rename property is what makes the rehydrate-on-startup path safe.
+- **Handoff file**: the agent writes `decision.md` in the per-row review worktree (the agent's CWD), not a shared daemon path. The agent's only daemon-visible side effect is the file; the daemon never sees the agent's stdout and never asks the LLM to call `gh pr comment` itself. The daemon copies it atomically to `<runDir>/decision.md`; if that copy fails, the worktree is kept as the recovery source.
+- **Publication outbox**: before any post, the daemon writes the exact redacted body, carrying a publication identity marker, to the run-owned `<runDir>/pending-publication.json`, and does not post if that write fails. The outbox is removed only after the post is acknowledged. Deleting the worktree `decision.md` does not clear a committed outbox.
 - **Redactor**: the daemon applies `RedactBody` (S1, `internal/review/redactor.go:21`) — the regex `(?i)/sandman` → `sandman` — to the body before posting. The redactor is the load-bearing safety net for the no-self-loop invariant: it runs **out-of-band of the LLM**, so the bot can write whatever it likes into `decision.md` and the daemon transform still strips the trigger substring before the post lands. The invariant becomes a property of the daemon code, not the model.
-- **`pendingPost` rehydrate-on-startup**: the in-memory `pendingPost` map (`internal/review/daemon.go:138`) is rehydrated on `Daemon.New` from every review-kind batch's per-row worktree `decision.md`, so a daemon crash between agent exit and post is recovered on the next start without losing the body. The rehydrate is best-effort: a missing `run.json`, a non-review kind, an unreadable `decision.md`, or a partial write is logged and skipped, never fatal.
+- **`pendingPost` rehydrate-on-startup**: the in-memory `pendingPost` map is rehydrated on `Daemon.New` from each review-kind run folder's outbox first; an outbox body is re-posted exactly, after a remote check for an existing daemon-authored comment carrying the same publication identity marker (trailing whitespace and line endings ignored), so an ambiguous earlier post is not duplicated. The live tick and restart recovery share one publication implementation (stage, match, post, acknowledge, retire); an outbox whose trigger is already terminal, or whose review provenance was invalidated, is retired rather than posted. Without an outbox the durable run-folder `decision.md` (or, for legacy runs, the worktree copy) is the source. A daemon crash between agent exit and post is therefore recovered on the next start without losing the body. The rehydrate is best-effort for malformed rows: a missing `run.json`, a non-review kind, an unreadable decision, or a partial write is logged and skipped, never fatal.
 
-The trust boundary is the daemon transform, not the LLM prompt. The structural sniff `LooksLikeBotReviewBody` (see `Review daemon state`) is the surviving belt-and-braces self-defence gate. References ADR-0014 §Daemon-side redaction and §Rehydrate-on-startup.
+The trust boundary is the daemon transform, not the LLM prompt. The structural sniff `LooksLikeBotReviewBody` (see `Review daemon state`) is the surviving belt-and-braces self-defence gate. References ADR-0013 §Daemon-side redaction and §Rehydrate-on-startup (as annotated for the outbox).
 _Avoid_: bot log (the run log is the canonical per-run artefact, not a self-post source), `gh pr comment` invocation by the agent.
 _See_: Review daemon state, Review run log.
 
@@ -205,6 +250,10 @@ _Avoid_: Bot branch, auto branch.
 A scaffold-time recipe chosen during `sandman init` that seeds a pinned container image definition with shared baseline tools and built-in agent installation defaults.
 _Avoid_: language, stack, base image.
 
+**Trusted CA certificate**:
+A certificate authority `sandman init --ca-cert` stores in `.sandman/certs/` and bakes into the scaffolded image so builds and agents behind a TLS-inspection proxy can verify HTTPS.
+_Avoid_: corp cert, custom bundle.
+
 **ConfigDirs**:
 Directories resolved into a container sandbox via a temporary copy for agent configuration. Before mounting, Sandman creates a batch-scoped copy of each directory with symlinks resolved (following ADR-0008). Paths starting with `~` are expanded to the user's home directory. Missing directories are silently skipped.
 _Avoid_: mounted config directories.
@@ -218,7 +267,7 @@ Paths (typically subtrees of a `ConfigDir`) skipped during the copy-resolve snap
 _Avoid_: snapshot blocklist, copy excludes.
 
 **LiveMount**:
-A path bind-mounted directly from the host into a ContainerSandbox at its corresponding HOME=/ container path, instead of being copied into the snapshot. Used when host-side state must remain inspectable after the container run completes — e.g. OpenCode's `opencode.db` session database (ADR-0016). A LiveMount is implicitly a `SnapshotExclude` of the same path.
+A path bind-mounted directly from the host into a ContainerSandbox at its corresponding HOME=/ container path, instead of being copied into the snapshot. Used when host-side state must remain inspectable after the container run completes — e.g. OpenCode's `opencode.db` session database (ADR-0016) or Claude Code's `~/.claude/projects` transcripts (ADR-0057). A preset's `LiveMountDirs` are LiveMounts that Sandman creates on the host first when missing. A LiveMount is implicitly a `SnapshotExclude` of the same path.
 _Avoid_: bind mount (too generic), shared mount.
 
 **ContainerSandbox**:
@@ -303,7 +352,7 @@ A sandman-managed git worktree whose HEAD points to a different branch than its 
 _Avoid_: Orphaned worktree, lost worktree.
 _See_: Branch, Worktree.
 
-Sandman-managed processes and agents must not run repository-wide `git worktree prune`. Container sandboxes share Git administration data with host worktrees but cannot always resolve host paths, so a global prune can erase live sibling registrations. Recovery and cleanup remove only the registration or worktree path they own.
+Sandman-managed processes and agents must not run repository-wide `git worktree prune`. Container sandboxes share Git administration data with host worktrees but cannot always resolve host paths, so a global prune can erase live sibling registrations. Recovery and cleanup remove only the registration or worktree path they own. `git gc`, including the automatic gc that commits and fetches start, runs the same prune internally; the agent Git guard therefore runs every agent Git command with `gc.worktreePruneExpire=never`.
 
 **Archive**:
 The on-disk resting place at `.sandman/archive/<batch-id>/`. `sandman archive run <run-id>` relocates one event-terminal Run to `archive/<batch-id>/runs/<run-id>/` while siblings stay live. `archive older-than <days>` selects event-terminal Runs using manifest creation metadata (or manifest mtime); `archive stale` first appends recovery events for eligible non-terminal work. `archive batch <batch-id>` moves the whole Batch only after its daemon is gone and all known AgentRuns are event-terminal. Index archive/unavailable states describe artifacts, never AgentRun outcomes. The daemon is forbidden from writing to an archived Batch. References ADR-0032.
@@ -322,16 +371,16 @@ The persisted twin of the live attach stream, written to `.sandman/batches/<batc
 _Avoid_: Log file.
 
 **Review run log**:
-The same on-disk file as the **Saved Run Log** (`.sandman/batches/<batch-id>/runs/<run-id>/run.log`). The daemon does not parse the review run log for self-post attribution — the agent's body hand-off is the file `<runDir>/decision.md` (see `Review decision`), not the run log. The run log is the canonical per-run artefact referenced by the run manifest and the review-state, and is read by the portal and by `pendingReviewEntry.runLogPath` for audit / debugging.
+The same on-disk file as the **Saved Run Log** (`.sandman/batches/<batch-id>/runs/<run-id>/run.log`). The daemon does not parse the review run log for self-post attribution — the agent's body handoff is the worktree `decision.md`, and publication is driven by the run-owned outbox `pending-publication.json` (see `Review decision`), not the run log. The run log is the canonical per-run artefact referenced by the run manifest and the review-state, and is read by the portal for audit / debugging.
 _Avoid_: bot log, agent log, comment log.
 _See_: Saved Run Log.
 
 **Command Server**:
- A Unix domain socket at `<batch>/runs/<runID>/run.sock` that accepts one-shot JSON command requests from outside the daemon process. First supported command is `{"action":"abort","issue":<n>}`, dispatched to the orchestrator's per-issue cancel API. Created per-AgentRun when the orchestrator's per-row execution path starts, removed when the run completes. When the filesystem socket path exceeds the Unix `sun_path` limit, it falls back to an abstract socket named `@sandman-<hex-hash>` so long paths still work. Distinct from the **Control Socket**, which streams daemon output to **Attach** clients.
+ A Unix domain socket at `<batch>/runs/<runID>/run.sock` that accepts one-shot JSON command requests from outside the daemon process. First supported command is `{"action":"abort","issue":<n>}`, dispatched to the orchestrator's per-issue cancel API. Created per-AgentRun when the orchestrator's per-row execution path starts, removed when the run completes. When the filesystem socket path exceeds the Unix `sun_path` limit, it uses the deterministic short filesystem socket `/tmp/sandman-<sha256-prefix>.sock` (never an abstract socket) so long paths still work; see `docs/architecture/disk-layout.md` §Out-of-layout. Distinct from the **Control Socket**, which streams daemon output to **Attach** clients.
 _Avoid_: management socket, IPC socket.
 
 **Issue Commander**:
-The seam the command server uses to cancel a single in-flight AgentRun without affecting siblings. The Orchestrator implements this interface so an external caller can address one issue at a time even when the batch is still running.
+The seam the command server uses to cancel a single in-flight AgentRun without affecting siblings. Each batch's coordinator implements this interface so an external caller can address one issue at a time even when the batch is still running; `Orchestrator.AbortIssue` remains as a compatibility lookup across active batches.
 _Avoid_: per-issue abort handle (that's the operation, not the seam).
 
 **Attach**:
@@ -354,6 +403,10 @@ _Avoid_: blocked, queued, or terminal managed-wait status.
 A started implementation whose next action is ready but whose execution admission is delayed. It remains in the public Waiting lifecycle. `run.capacity_queued` is compatibility/readiness evidence, not a transition back to queued. Normal admission rehydrates valid ownerless intent within five-minute recovery grace and revalidates the live head/request before launch.
 _Avoid_: initial queue, terminal placeholder, manual `--continue` requirement.
 
+**Issue group**:
+The Portal's per-issue grouping of implementation and linked review rows. It is projected once server-side: the projection picks the visible row (the canonical parent, or for a review-only group its newest review), stamps the retained review metadata, and lists the group's `subjects` in order. The page and renderer only look rows up from those stamps; they never pick a parent or regroup by issue number. Status and kind stay as `events.RunState` projects them.
+_Avoid_: client-side parent pick, page grouping by issue number.
+
 **Review-only (orphan)**:
 A portal issue group that contains only review child rows and no canonical implementation row. The portal renders the visible row with the explicit label `PR <prNumber> (#<issueNumber>)` (e.g. `PR 1508 (#1472)`) — the PR the review targeted is surfaced first, the linked issue is shown as a parenthesised reference. The row uses the review run's own `run_id` as the row identity (`data-run-key`) and does not fabricate implementation-run metadata such as `batchKey` or `issueTitle`. The row is expandable; the subject selector lists the real review runs so the user can inspect each one's log/events/details tabs.
 _Avoid_: fake parent row, synthesized issue row, fake implementation-like row, "Review of" prefix on orphan rows.
@@ -363,7 +416,7 @@ A portal review row whose PR cannot be resolved to an issue — a live review wh
 _Avoid_: PR42, raw runID in cell, a0c19-...-PR<n>, "Review of" prefix on orphan rows.
 
 **Continue**:
-The `--continue` flag on `sandman run` re-runs the latest AgentRun for one or more issues while reusing each issue's prior branch, base branch, prior run id, and `.sandman/task.md` contents. Tunables (agent, model, parallel, retries, sandbox, container tunables, review command) come from current CLI flags / config defaults, not from the prior run's event payload; CLI overrides on the `--continue` invocation still win. Continuation reads the existing `.sandman/task.md` directly rather than rendering a fresh prompt, then moves one canonical `Continuation Freshness Guard` to the end so persisted blockers and next actions are revalidated against live state before use. Multi-issue `sandman run --continue <issue>...` submits a single Batch with per-issue `Branches`, `BaseBranch`, and `PreviousRunIDs` maps so the orchestrator parallelizes across issues. `--continue` keeps branch checkout unchanged; when `--base-branch` is omitted the stored base branch is used because the worktree was cut from it. When `.sandman/task.md` is present in the worktree, the resumed run consumes it instead of starting from a blank prompt.
+The `--continue` flag on `sandman run` re-runs the latest AgentRun for one or more issues under a fresh Batch ID and RunID while reusing each issue's prior branch, base branch, and `.sandman/task.md` contents; the prior RunID is recorded only as lineage (`PreviousRunIDs`), so active duration starts fresh. Runtime-owned re-entry of a Waiting AgentRun is different: a later `sandman run` rehydrates it under the same RunID. Tunables (agent, model, parallel, retries, sandbox, container tunables, review command) come from current CLI flags / config defaults, not from the prior run's event payload; CLI overrides on the `--continue` invocation still win. Continuation reads the existing `.sandman/task.md` directly rather than rendering a fresh prompt, then moves one canonical `Continuation Freshness Guard` to the end so persisted blockers and next actions are revalidated against live state before use. Multi-issue `sandman run --continue <issue>...` submits a single Batch with per-issue `Branches`, `BaseBranch`, and `PreviousRunIDs` maps so the orchestrator parallelizes across issues. `--continue` keeps branch checkout unchanged; when `--base-branch` is omitted the stored base branch is used because the worktree was cut from it. When `.sandman/task.md` is present in the worktree, the resumed run consumes it instead of starting from a blank prompt.
 _Avoid_: Retry.
 
 **Continuation**:
@@ -388,7 +441,7 @@ _Avoid_: Continuation context, continuation file.
 - An **Attach** client connects to the **Control Socket** and reads the daemon's output until EOF
 - A **Portal** is repo-scoped and can show multiple **Daemon Process** instances from the same repository at once
 - A **Portal** rescans the current repository's `.sandman/batches/` tree on each poll so newly started **Daemon Process** instances appear without restarting the portal
-- An **Archive** entry under `.sandman/archive/<batch-id>/` is the relocated home of a batch directory whose **Daemon Process** is no longer live; `sandman archive run <batch-id>` performs the move after the liveness check fails
+- An **Archive** entry under `.sandman/archive/<batch-id>/` is the relocated home of a batch directory whose **Daemon Process** is no longer live; `sandman archive batch <batch-id>` performs the move once the liveness check fails and every AgentRun in the batch is event-terminal
 - The batch directory (`.sandman/batches/<batch-id>/`) is the **Daemon Process**'s home; once it has been moved to `.sandman/archive/<batch-id>/` the directory is no longer owned by any **Daemon Process**
 - A **RunID** is generated by `NewRunID` for each **AgentRun** within a **Batch** and is persisted as the row key in the portal and in `events.jsonl`
 - A **Batches index** at `.sandman/batches.json` is the master list; the **Portal** reads it first and only probes the filesystem for live-socket state
@@ -396,9 +449,9 @@ _Avoid_: Continuation context, continuation file.
 - A **Batch** contains zero or more **AgentRuns**
 - An **AgentRun** targets exactly one **Issue** and produces exactly one **Branch**
 - An **Issue** may have **BlockedBy** relationships to other **Issues**
-- A **DependencyResolver** produces a **ResolvedBatch** from a set of **Issues**
+- **Batch preparation** produces a **ResolvedBatch** from a set of **Issues**, running the **SpecificationResolver** and then the **DependencyResolver**
 - An **Orchestrator** executes a **ResolvedBatch**, respecting **BlockedBy** ordering
-- A **SpecificationResolver** runs before a **DependencyResolver**, rewriting each **Specification** in the input into its child **Issues** followed by the retained **Specification** itself as an ordinary row; the retained parent participates in the batch under a **Parent completion gate** so it cannot start until its accepted open children succeed in the same batch.
+- A **SpecificationResolver** runs before a **DependencyResolver**, rewriting each **Specification** in the input into its child **Issues** followed by the retained **Specification** itself as an ordinary row; the retained parent participates in the batch under a **Parent completion gate** so it cannot start until its accepted open children succeed in the same batch and are closed on GitHub.
 - An **AgentRun** may be **blocked** if any of its in-batch **BlockedBy** issues either did not finish with status `success` or finished with `success` but is still open on GitHub when the run is about to start, or if any of its external **BlockedBy** issues is still open on GitHub when the run is about to start; a successful but open in-batch blocker produces terminal `run.blocked` with `blocked_by` naming the open blocker and no agent launch or wait state
 - A **Sandbox** provides isolation for one or more **AgentRuns**
 - In `sandbox: worktree`, each **AgentRun** gets its own **Sandbox** (a **WorktreeSandbox**)
@@ -449,7 +502,7 @@ The sandbox-image opencode (pinned in `.sandman/Dockerfile`) is too old; the in-
 
 Cause: the catalog head (`builtInAgentVersionCatalog["opencode"]` in `internal/scaffold/scaffolder.go:193`) shipped with a stale opencode version. Operators with newer opencode installed on the host see the warning every `sandman run` / `sandman review`.
 
-Resolution: run `sandman init` against the repo. The scaffolder probes the host's installed opencode (via the shared `opencode.VersionProbe` seam in `internal/opencode/probe.go`) and pins that version in the new Dockerfile when present; otherwise it falls back to the catalog head so CI agents and fresh containers still produce a valid install command. Once the sandbox pin matches the host, the warning goes silent. The catalog head bump is a separate concern for operators without `opencode` installed; see [ADR-0033](docs/adr/0033-opencode-host-sandbox-version-mismatch.md) for the warning + init contract.
+Resolution: run `sandman init` against the repo. The scaffolder probes the host's installed opencode (via the shared `opencode.VersionProbe` seam in `internal/opencode/probe.go`) and pins that version in the new Dockerfile when present; otherwise it falls back to the catalog head (a host `opencode --version` that does not answer within five seconds counts as absent) so CI agents and fresh containers still produce a valid install command. Once the sandbox pin matches the host, the warning goes silent. The catalog head bump is a separate concern for operators without `opencode` installed; see [ADR-0033](docs/adr/0033-opencode-host-sandbox-version-mismatch.md) for the warning + init contract.
 
 
 ### Separate CI validation and reports
@@ -481,7 +534,7 @@ retain full action commit pins with readable version comments. Release automatio
 retains write permissions; validation defaults to contents read and semantic title
 validation gets pull-request read. Existing protection contexts remain in place.
 
-The Go language minimum remains 1.25; `toolchain go1.26.9` selects a patched
+The Go language minimum remains 1.25; `toolchain go1.26.10` selects a patched
 standard library for normal builds; `.go-version` selects the same patched
 toolchain explicitly in setup-go and security scans. Keep automatic
 toolchain selection enabled. Staticcheck retains its isolated Go 1.25.0 runner
@@ -509,3 +562,46 @@ reasons, tool/model versions and timeout classification to the tested SHA.
 Independent unit/browser, smoke, credential-free integration and live-provider
 jobs retain evidence despite sibling failures; native boundary reports cover
 Linux/macOS amd64/arm64. Ordinary PR checks retain their existing budget.
+
+**Publication gate**: authorization from same-invocation reusable CI, complete
+release-regression manifest and four-platform native validation for the exact
+merged main SHA. Release-branch evidence cannot transfer to another SHA. Immutable
+tag creation follows authorization; draft assets become public only after complete
+checksum verification. Release PR maintenance runs independently. See
+`docs/development/releasing.md` for safe reruns and `docs/development/testing.md`
+for strict main-protection setup and live verification limits.
+
+Claude provider E2Es run only through the manual `run_claude` workflow input.
+The automatic live release tier validates OpenCode; Claude is not a publication gate.
+
+Regular CI runs one tool-free `opencode run` invocation for its OpenCode canary on
+Linux (60-second provider deadline, three-minute job, no containers, and no retry
+loop inside that job), using the release manifest's exact CLI/model. This process
+contract does not claim to count physical HTTP requests made internally by the CLI.
+After diagnosing a transient provider/network timeout on the identified current-head
+execution, the implementation agent may initiate one authorized, bounded GitHub
+rerun; this is a new job invocation, not an in-job retry. Rerunning the existing
+execution does not require `workflow_dispatch`. A provider deprecation failure
+instructs the implementor to update the scaffold fallback, release manifest and
+release workflow pin together.
+The canary is mandatory in the aggregate quality gate; full provider E2Es remain
+release-only, and Claude provider E2Es remain manual-only. The existing OPENCODE_API_KEY repository secret is required and is forwarded
+by the Release reusable-CI caller.
+
+The regular Linux build also selects the credential-free fake subagent permission
+container scenario. Its image must expose the fake gh on the image PATH for
+pre-agent auth setup. Keep this selection narrow; it makes no provider requests.
+
+Python toolchain image builds mount an optional `github_token` build secret for
+mise downloads and artifact-attestation verification. Image builders share the
+same argument helper; token values never become build arguments or image ENV.
+The release runner supplies `MISE_GITHUB_TOKEN` independently of fake GitHub CLI
+credentials. Local builds without a token still work subject to GitHub API limits.
+Regular Linux CI tests the generated install instruction with a fake installer,
+both with and without authentication, and checks that the secret is absent from
+subsequent layers, runtime environment, and image history.
+
+Maintainers can add the `release-validation` label to a same-repository PR to
+run the full Linux release regression tiers before merging a release repair.
+New commits rerun that opt-in validation. Fork PRs receive no provider secrets;
+Claude remains excluded and requires the existing manual workflow input.

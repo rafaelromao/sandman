@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"github.com/rafaelromao/sandman/internal/paths"
 	"path/filepath"
 	"testing"
 	"time"
@@ -27,7 +28,7 @@ func TestRecoverStaleRuns_PreservesAwaitingRunWithUnexpiredLease(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("write run manifest: %v", err)
 	}
-	if err := RenewRunWait(batchDir, RunWait{
+	if err := RenewRunWait(layoutForBaseDir(baseDir), paths.BatchLocation{ID: batchID, Dir: batchDir}, RunWait{
 		Protocol: "run-wait/v1", RunID: runID, BatchID: batchID, Issue: 42,
 		Branch: "42-fix", BaseBranch: "main", OperationID: "ci:17:head",
 		OperationDeadline: now.Add(30 * time.Minute),
@@ -135,7 +136,7 @@ func TestRecoverStaleRuns_AbortsAwaitingRunWithExpiredLease(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("write run manifest: %v", err)
 	}
-	if err := RenewRunWait(batchDir, RunWait{
+	if err := RenewRunWait(layoutForBaseDir(baseDir), paths.BatchLocation{ID: batchID, Dir: batchDir}, RunWait{
 		Protocol: "run-wait/v1", RunID: runID, BatchID: batchID, Issue: 42,
 		Branch: "42-fix", BaseBranch: "main", OperationID: "ci:17:head",
 		OperationDeadline: now.Add(-time.Minute),
@@ -359,7 +360,7 @@ func TestRecoverStaleRuns_PreservesReadyCapacityContinuation(t *testing.T) {
 	}
 
 	before := events.ProjectRunStates(existing)[0]
-	if err := RenewRunWait(batchDir, RunWait{Protocol: "run-wait/v1", RunID: runID, BatchID: batchID, Issue: 42, Branch: "42-fix", BaseBranch: "main", OperationID: "capacity", Ready: true}, time.Now().UTC()); err != nil {
+	if err := RenewRunWait(layoutForBaseDir(baseDir), paths.BatchLocation{ID: batchID, Dir: batchDir}, RunWait{Protocol: "run-wait/v1", RunID: runID, BatchID: batchID, Issue: 42, Branch: "42-fix", BaseBranch: "main", OperationID: "capacity", Ready: true}, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	if !before.IsActive() || before.IsAwaiting() || !before.IsCapacityQueued() || before.Status() != "waiting" {

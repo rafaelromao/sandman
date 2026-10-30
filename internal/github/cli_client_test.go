@@ -3,7 +3,6 @@ package github
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 type fakeRunner struct {
@@ -61,11 +62,17 @@ func (f *fakeRunner) Run(ctx context.Context, name string, arg ...string) *exec.
 // Used to prove that CLIClient honours the caller's ctx and the
 // configured per-call Timeout.
 type blockingFakeRunner struct {
-	startCount int
+	startCount        int
+	hasDeadline       bool
+	deadlineRemaining time.Duration
 }
 
 func (b *blockingFakeRunner) Run(ctx context.Context, name string, arg ...string) *exec.Cmd {
 	b.startCount++
+	if deadline, ok := ctx.Deadline(); ok {
+		b.hasDeadline = true
+		b.deadlineRemaining = time.Until(deadline)
+	}
 	cmd := exec.CommandContext(ctx, "sleep", "60")
 	configureCancelProcessGroup(cmd)
 	return cmd
@@ -286,9 +293,26 @@ func TestCLIClient_FindPRByBranch_Success(t *testing.T) {
 	if len(runner.calls) != 1 {
 		t.Fatalf("expected 1 command, got %d", len(runner.calls))
 	}
-	expectedArgs := []string{"pr", "list", "--head", "issue-386/smart-completion-detection-phase-aware-retry", "--state", "all", "--json", "number,state,body,mergedAt,headRefName,headRefOid,updatedAt,reviewDecision,mergeStateStatus,statusCheckRollup", "--limit", "1"}
+	expectedArgs := []string{"pr", "list", "--head", "issue-386/smart-completion-detection-phase-aware-retry", "--state", "all", "--json", "number,state,body,mergedAt,headRefName,headRefOid,updatedAt,closedAt,reviewDecision,mergeStateStatus,statusCheckRollup", "--limit", "1"}
 	if !reflect.DeepEqual(runner.calls[0].args, expectedArgs) {
 		t.Fatalf("unexpected args: %v", runner.calls[0].args)
+	}
+}
+
+// Issue #2940: closure time is independent of later updates to a closed PR.
+func TestCLIClient_FindPRByBranch_ParsesClosedAt(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `[{"number":29,"state":"CLOSED","headRefName":"2-old","headRefOid":"old","updatedAt":"2026-10-30T09:00:00Z","closedAt":"2026-10-24T12:00:00Z"}]`},
+	}}
+	pr, err := (&CLIClient{runner: runner}).FindPRByBranch(context.Background(), "2-old")
+	if err != nil || pr == nil {
+		t.Fatalf("FindPRByBranch = %v, %v", pr, err)
+	}
+	if want := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC); !pr.ClosedAt.Equal(want) {
+		t.Fatalf("ClosedAt = %v, want %v", pr.ClosedAt, want)
+	}
+	if want := time.Date(2026, 10, 30, 9, 0, 0, 0, time.UTC); !pr.UpdatedAt.Equal(want) {
+		t.Fatalf("UpdatedAt = %v, want %v", pr.UpdatedAt, want)
 	}
 }
 
@@ -416,6 +440,177 @@ func TestRollupStateFromJSON_MixedPendingAndFailureIsFailure(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			if got := rollupStateFromJSON([]byte(test.raw)); got != "failure" {
 				t.Fatalf("rollupStateFromJSON() = %q, want failure", got)
+			}
+		})
+	}
+}
+
+func TestCLIClient_FindPRByBranch_PreservesActiveSiblingsAlongsideFailure(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":18,"state":"open","headRefName":"failure-branch","headRefOid":"source-head","statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"FAILURE","name":"opencode-canary","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},{"__typename":"CheckRun","status":"IN_PROGRESS","name":"build-macos","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"},{"__typename":"CheckRun","status":"IN_PROGRESS","name":"portal-browser","detailsUrl":"https://github.com/o/r/actions/runs/202/job/21"}]}]`}}}
+	client := &CLIClient{runner: runner}
+	pr, err := client.FindPRByBranch(context.Background(), "failure-branch")
+	if err != nil || pr == nil {
+		t.Fatalf("FindPRByBranch() = (%+v, %v)", pr, err)
+	}
+	if pr.StatusCheckRollup != "failure" || !pr.CIHasActiveChecks {
+		t.Fatalf("mixed failed/pending rollup = (%q, active=%t), want failure plus active siblings", pr.StatusCheckRollup, pr.CIHasActiveChecks)
+	}
+	if pr.CIActiveFailedWorkflowRunID != "101" {
+		t.Fatalf("same-workflow rerun prerequisite = %q, want workflow run 101", pr.CIActiveFailedWorkflowRunID)
+	}
+	if len(pr.CIActiveFailedWorkflowRunFailedCheckNames) != 1 || pr.CIActiveFailedWorkflowRunFailedCheckNames[0] != "opencode-canary" {
+		t.Fatalf("failed check identities = %v, want the failed canary", pr.CIActiveFailedWorkflowRunFailedCheckNames)
+	}
+}
+
+func TestCIHasActiveChecksFromJSONRequiresRecognizedActiveEvidence(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{name: "in-progress check run", raw: `[{"status":"IN_PROGRESS"}]`, want: true},
+		{name: "stale check run", raw: `[{"status":"STALE"}]`},
+		{name: "expected status context", raw: `[{"state":"EXPECTED"}]`},
+		{name: "legacy pending context", raw: `[{"state":"PENDING"}]`, want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := ciHasActiveChecksFromJSON([]byte(test.raw)); got != test.want {
+				t.Fatalf("active checks = %t, want %t for %s", got, test.want, test.raw)
+			}
+		})
+	}
+}
+
+func TestCLIClient_FindPRByBranch_PreservesMultipleFailedChecksInRerunWorkflow(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":18,"state":"open","headRefName":"failure-branch","headRefOid":"source-head","statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"TIMED_OUT","name":"opencode-canary","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},{"__typename":"CheckRun","status":"COMPLETED","conclusion":"FAILURE","name":"source-tests","detailsUrl":"https://github.com/o/r/actions/runs/101/job/13"},{"__typename":"CheckRun","status":"IN_PROGRESS","name":"build-macos","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"}]}]`}}}
+	client := &CLIClient{runner: runner}
+	pr, err := client.FindPRByBranch(context.Background(), "failure-branch")
+	if err != nil || pr == nil {
+		t.Fatalf("FindPRByBranch() = (%+v, %v)", pr, err)
+	}
+	if pr.CIActiveFailedWorkflowRunID != "101" {
+		t.Fatalf("identified workflow = %q, want run 101", pr.CIActiveFailedWorkflowRunID)
+	}
+	want := []string{"opencode-canary", "source-tests"}
+	if !reflect.DeepEqual(pr.CIActiveFailedWorkflowRunFailedCheckNames, want) {
+		t.Fatalf("failed check identities = %v, want %v", pr.CIActiveFailedWorkflowRunFailedCheckNames, want)
+	}
+	wantWorkflowNames := []string{"build-macos", "opencode-canary", "source-tests"}
+	if !reflect.DeepEqual(pr.CIActiveFailedWorkflowRunCheckNames, wantWorkflowNames) {
+		t.Fatalf("all workflow check names = %v, want %v", pr.CIActiveFailedWorkflowRunCheckNames, wantWorkflowNames)
+	}
+}
+
+func TestCLIClient_FindPRByBranch_PreservesDuplicateFailedCheckNamesInRerunWorkflow(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":18,"state":"open","headRefName":"failure-branch","headRefOid":"source-head","statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"FAILURE","name":"opencode-canary","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},{"__typename":"CheckRun","status":"COMPLETED","conclusion":"TIMED_OUT","name":"opencode-canary","detailsUrl":"https://github.com/o/r/actions/runs/101/job/14"},{"__typename":"CheckRun","status":"IN_PROGRESS","name":"build-macos","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"}]}]`}}}
+	client := &CLIClient{runner: runner}
+	pr, err := client.FindPRByBranch(context.Background(), "failure-branch")
+	if err != nil || pr == nil {
+		t.Fatalf("FindPRByBranch() = (%+v, %v)", pr, err)
+	}
+	want := []string{"opencode-canary", "opencode-canary"}
+	if !reflect.DeepEqual(pr.CIActiveFailedWorkflowRunFailedCheckNames, want) {
+		t.Fatalf("failed check multiplicity = %v, want %v", pr.CIActiveFailedWorkflowRunFailedCheckNames, want)
+	}
+	wantWorkflowNames := []string{"build-macos", "opencode-canary", "opencode-canary"}
+	if !reflect.DeepEqual(pr.CIActiveFailedWorkflowRunCheckNames, wantWorkflowNames) {
+		t.Fatalf("all workflow check names = %v, want %v", pr.CIActiveFailedWorkflowRunCheckNames, wantWorkflowNames)
+	}
+	if len(pr.CIActiveFailedWorkflowRunFailedChecks) != 2 {
+		t.Fatalf("failed check execution identities = %v, want both checks", pr.CIActiveFailedWorkflowRunFailedChecks)
+	}
+	first, second := pr.CIActiveFailedWorkflowRunFailedChecks[0], pr.CIActiveFailedWorkflowRunFailedChecks[1]
+	if first.Name != second.Name || first.DetailsURL == second.DetailsURL ||
+		!strings.Contains(first.DetailsURL, "/job/11") || !strings.Contains(second.DetailsURL, "/job/14") {
+		t.Fatalf("duplicate-name failures lost their distinct browser execution links: %+v", pr.CIActiveFailedWorkflowRunFailedChecks)
+	}
+}
+
+func TestCLIClient_FindPRByBranch_DoesNotSelectRerunPrerequisiteOverSeparateFailure(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":18,"state":"open","headRefName":"failure-branch","headRefOid":"source-head","statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"FAILURE","name":"opencode-canary","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},{"__typename":"CheckRun","status":"IN_PROGRESS","name":"build-macos","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"},{"__typename":"CheckRun","status":"COMPLETED","conclusion":"FAILURE","name":"source-tests","detailsUrl":"https://github.com/o/r/actions/runs/202/job/21"}]}]`}}}
+	client := &CLIClient{runner: runner}
+	pr, err := client.FindPRByBranch(context.Background(), "failure-branch")
+	if err != nil || pr == nil {
+		t.Fatalf("FindPRByBranch() = (%+v, %v)", pr, err)
+	}
+	if pr.StatusCheckRollup != "failure" || !pr.CIHasActiveChecks {
+		t.Fatalf("mixed failed/pending rollup = (%q, active=%t), want failure plus active checks", pr.StatusCheckRollup, pr.CIHasActiveChecks)
+	}
+	if pr.CIActiveFailedWorkflowRunID != "" {
+		t.Fatalf("selected rerun prerequisite %q despite independent failed workflow 202", pr.CIActiveFailedWorkflowRunID)
+	}
+}
+
+func TestCIRerunBlockedWorkflowRunIDRequiresFailedAndActiveJobsInSameRun(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "same workflow with unrelated active workflow",
+			raw: `[{"status":"COMPLETED","conclusion":"FAILURE","name":"opencode-canary","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},` +
+				`{"status":"IN_PROGRESS","name":"build-macos","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"},` +
+				`{"status":"IN_PROGRESS","detailsUrl":"https://github.com/o/r/actions/runs/202/job/21"}]`,
+			want: "101",
+		},
+		{
+			name: "unnamed same-workflow execution is ambiguous",
+			raw: `[{"status":"COMPLETED","conclusion":"FAILURE","name":"opencode-canary","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},` +
+				`{"status":"IN_PROGRESS","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"}]`,
+		},
+		{
+			name: "separate completed failure remains actionable",
+			raw: `[ {"status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},` +
+				`{"status":"IN_PROGRESS","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"},` +
+				`{"status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://github.com/o/r/actions/runs/202/job/21"} ]`,
+		},
+		{
+			name: "unidentified failure remains actionable",
+			raw: `[ {"status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},` +
+				`{"status":"IN_PROGRESS","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"},` +
+				`{"__typename":"StatusContext","state":"FAILURE","context":"legacy-failing-check"} ]`,
+		},
+		{
+			name: "unidentified error remains actionable",
+			raw: `[ {"status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},` +
+				`{"status":"IN_PROGRESS","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"},` +
+				`{"__typename":"StatusContext","state":"ERROR","context":"legacy-error-check"} ]`,
+		},
+		{
+			name: "only unrelated active workflow",
+			raw: `[{"status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},` +
+				`{"status":"IN_PROGRESS","detailsUrl":"https://github.com/o/r/actions/runs/202/job/21"}]`,
+		},
+		{
+			name: "missing workflow identity",
+			raw: `[{"status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://example.test/check/11"},` +
+				`{"status":"IN_PROGRESS","detailsUrl":"https://example.test/check/12"}]`,
+		},
+		{
+			name: "lookalike host is not GitHub execution identity",
+			raw: `[{"status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://evil.example/github.com/o/r/actions/runs/101/job/11"},` +
+				`{"status":"IN_PROGRESS","detailsUrl":"https://evil.example/o/r/actions/runs/101/job/12"}]`,
+		},
+		{
+			name: "unknown check status is not active evidence",
+			raw: `[{"status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},` +
+				`{"status":"STALE","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"}]`,
+		},
+		{
+			name: "ambiguous multiple blocked workflows",
+			raw: `[{"status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},` +
+				`{"status":"IN_PROGRESS","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"},` +
+				`{"status":"COMPLETED","conclusion":"TIMED_OUT","detailsUrl":"https://github.com/o/r/actions/runs/202/job/21"},` +
+				`{"status":"QUEUED","detailsUrl":"https://github.com/o/r/actions/runs/202/job/22"}]`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := ciRerunBlockedWorkflowRunIDFromJSON([]byte(test.raw)); got != test.want {
+				t.Fatalf("blocked workflow run id = %q, want %q", got, test.want)
 			}
 		})
 	}
@@ -1430,7 +1625,7 @@ func TestParseChildrenFromBody(t *testing.T) {
 func TestCLIClient_FetchPR_Success(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
-		{output: `{"number":42,"state":"open","title":"Add review command","body":"Adds the sandman review one-shot.","mergedAt":null,"headRefName":"issue-381/sandman-review-config-default-prompt-and-one-shot-mode","headRefOid":"deadbeef"}`},
+		{output: `{"number":42,"state":"open","title":"Add review command","body":"Adds the sandman review one-shot.","mergedAt":null,"headRefName":"issue-381/sandman-review-config-default-prompt-and-one-shot-mode","headRefOid":"deadbeef","baseRefName":"release"}`},
 	}}
 	client := &CLIClient{runner: runner}
 
@@ -1462,6 +1657,9 @@ func TestCLIClient_FetchPR_Success(t *testing.T) {
 	if pr.HeadRefOid != "deadbeef" {
 		t.Errorf("expected head ref oid to round-trip, got %q", pr.HeadRefOid)
 	}
+	if pr.BaseRefName != "release" {
+		t.Errorf("expected PR comparison base to round-trip, got %q", pr.BaseRefName)
+	}
 	if len(runner.calls) != 2 {
 		t.Fatalf("expected 2 commands, got %d", len(runner.calls))
 	}
@@ -1471,7 +1669,7 @@ func TestCLIClient_FetchPR_Success(t *testing.T) {
 	if runner.calls[1].name != "gh" {
 		t.Errorf("expected command gh, got %q", runner.calls[1].name)
 	}
-	expectedArgs := []string{"pr", "view", "42", "--json", "number,title,body,state,mergedAt,headRefName,headRefOid,closingIssuesReferences"}
+	expectedArgs := []string{"pr", "view", "42", "--json", "number,title,body,state,mergedAt,headRefName,headRefOid,baseRefName,closingIssuesReferences"}
 	if !reflect.DeepEqual(runner.calls[1].args, expectedArgs) {
 		t.Errorf("unexpected fetch args: %v", runner.calls[1].args)
 	}
@@ -2352,9 +2550,7 @@ func TestCLIClient_ClientTimeoutBoundsCallWithoutCallerDeadline(t *testing.T) {
 	runner := &blockingFakeRunner{}
 	client := NewCLIClient(WithRunner(runner), WithTimeout(50*time.Millisecond))
 
-	start := time.Now()
 	_, err := client.SearchIssues(context.Background(), "is:open")
-	elapsed := time.Since(start)
 
 	if err == nil {
 		t.Fatal("expected error from client-side timeout, got nil")
@@ -2362,8 +2558,10 @@ func TestCLIClient_ClientTimeoutBoundsCallWithoutCallerDeadline(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "context deadline exceeded") {
 		t.Errorf("expected context-deadline-exceeded error, got %v", err)
 	}
-	if elapsed > 2*time.Second {
-		t.Errorf("expected 50 ms client timeout to bound the call, elapsed=%v", elapsed)
+	// Check the deadline reaching the command rather than runner scheduling
+	// latency: a saturated CI host can resume this goroutine seconds later.
+	if !runner.hasDeadline || runner.deadlineRemaining > 50*time.Millisecond {
+		t.Errorf("expected at most 50 ms deadline at command entry, got deadline=%t remaining=%v", runner.hasDeadline, runner.deadlineRemaining)
 	}
 }
 
@@ -2425,13 +2623,13 @@ func TestNewCLIClient_CancelsSpawnedGHProcess(t *testing.T) {
 		data, err := os.ReadFile(childPIDPath)
 		if err == nil {
 			childPID, err = strconv.Atoi(strings.TrimSpace(string(data)))
-			if err == nil && processExists(childPID) {
+			if err == nil && testenv.ProcessAlive(childPID) {
 				break
 			}
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if childPID == 0 || !processExists(childPID) {
+	if childPID == 0 || !testenv.ProcessAlive(childPID) {
 		t.Fatalf("fake gh did not publish a live child process")
 	}
 	t.Cleanup(func() {
@@ -2456,10 +2654,10 @@ func TestNewCLIClient_CancelsSpawnedGHProcess(t *testing.T) {
 	}
 
 	processGoneDeadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(processGoneDeadline) && processExists(childPID) {
+	for time.Now().Before(processGoneDeadline) && testenv.ProcessAlive(childPID) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if processExists(childPID) {
+	if testenv.ProcessAlive(childPID) {
 		t.Fatalf("fake gh child process %d survived cancellation", childPID)
 	}
 }
@@ -2498,18 +2696,4 @@ func TestCLIClient_ZeroValueRemainsUsable(t *testing.T) {
 	if got != "owner/repo" {
 		t.Fatalf("RepoName = %q, want owner/repo", got)
 	}
-}
-
-func processExists(pid int) bool {
-	if runtime.GOOS == "linux" {
-		data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-		if err == nil {
-			fields := strings.Fields(string(data))
-			if len(fields) >= 3 && fields[2] == "Z" {
-				return false
-			}
-		}
-	}
-	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
 }

@@ -1,6 +1,7 @@
 name: Native Compatibility
 
 on:
+  workflow_call:
   workflow_dispatch:
   push:
     branches: [release-please--branches--main]
@@ -9,8 +10,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: native-compatibility-${{ github.ref }}
-  cancel-in-progress: true
+  group: native-compatibility-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   darwin-amd64:

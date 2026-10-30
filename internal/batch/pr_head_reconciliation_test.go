@@ -32,6 +32,25 @@ func TestReconcileWorktreeToPRHead_FastForwardsToExactRemoteHead(t *testing.T) {
 	}
 }
 
+func TestReconcileWorktreeToPRHead_RemovesTemporaryRefAfterCancellation(t *testing.T) {
+	workDir, branch, _, remoteHead := worktreeWithAdvancedPRHead(t)
+	if _, _, err := reconcileWorktreeToPRHead(context.Background(), workDir, branch, 592, remoteHead); err != nil {
+		t.Fatal(err)
+	}
+	if got := runGit(t, workDir, "for-each-ref", "refs/sandman/"); got != "" {
+		t.Fatalf("temporary reconciliation refs left behind: %q", got)
+	}
+
+	ref := "refs/sandman/pr-head-reconcile/592/" + remoteHead
+	runGit(t, workDir, "update-ref", ref, remoteHead)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	removeTemporaryRef(ctx, workDir, ref)
+	if got := runGit(t, workDir, "for-each-ref", "refs/sandman/"); got != "" {
+		t.Fatalf("cancelled caller left the temporary ref behind: %q", got)
+	}
+}
+
 func TestReconcileWorktreeToPRHead_PreservesDirtyAndDivergedWorktrees(t *testing.T) {
 	t.Run("dirty", func(t *testing.T) {
 		workDir, branch, oldHead, remoteHead := worktreeWithAdvancedPRHead(t)
@@ -84,7 +103,8 @@ func TestLifecycleDecision_AdvancedPRHeadFastForwardsBeforeCurrentApprovalResume
 		},
 	}
 
-	status, extras, handled := session.handleLifecycleDecision(context.Background(), workDir, branch, "", "run-head-advance", true)
+	observedLifecycle106 := session.observeLifecycleWithHostPathsForTest(context.Background(), workDir, branch, "", "run-head-advance", true)
+	status, extras, handled := observedLifecycle106.status(), observedLifecycle106.Evidence, observedLifecycle106.handled()
 	if !handled || status != "resume" || extras["gate"] != gateReadyToMerge {
 		t.Fatalf("advanced PR head lifecycle = (%q, %#v, %t), want resume/ready-to-merge", status, extras, handled)
 	}
@@ -96,7 +116,7 @@ func TestLifecycleDecision_AdvancedPRHeadFastForwardsBeforeCurrentApprovalResume
 		t.Fatalf("resume evidence is not bound to the live head and approval: %#v", extras)
 	}
 
-	if _, resume := session.resumePromptFromGate(context.Background(), &fakeSandbox{workDir: workDir}, branch, "run-head-advance", extras); !resume {
+	if _, resume := session.resumePromptFromGate(context.Background(), &fakeSandbox{workDir: workDir}, branch, "run-head-advance", lifecycleVerdict{Action: lifecycleResume, Evidence: extras}); !resume {
 		t.Fatal("current-head approval did not produce a resumed agent prompt")
 	}
 	resumed := findEvent(eventLog.snapshot(), "run.resumed")
@@ -124,7 +144,8 @@ func TestLifecycleDecision_FailedAttemptReconcilesBeforeCurrentApprovalResume(t 
 					errorLog: io.Discard,
 				},
 			}
-			status, extras, handled := session.handleLifecycleDecisionForAttempt(context.Background(), workDir, branch, "", "run-failed-head-advance", true, attemptStatus)
+			observedLifecycle146 := session.observeLifecycleAttemptForTest(context.Background(), workDir, branch, "", "run-failed-head-advance", true, attemptStatus)
+			status, extras, handled := observedLifecycle146.status(), observedLifecycle146.Evidence, observedLifecycle146.handled()
 			if !handled || status != "resume" || extras["gate"] != gateReadyToMerge {
 				t.Fatalf("failed-attempt lifecycle = (%q, %#v, %t), want resume/ready-to-merge", status, extras, handled)
 			}
@@ -157,7 +178,8 @@ func TestLifecycleDecision_DirtyStaleWorktreeGetsActionableResumeWithoutOverwrit
 		},
 	}
 
-	status, extras, handled := session.handleLifecycleDecision(context.Background(), workDir, branch, "", "run-dirty-head", true)
+	observedLifecycle179 := session.observeLifecycleWithHostPathsForTest(context.Background(), workDir, branch, "", "run-dirty-head", true)
+	status, extras, handled := observedLifecycle179.status(), observedLifecycle179.Evidence, observedLifecycle179.handled()
 	if !handled || status != "resume" || extras["gate"] != gatePRHeadChanged || extras["reason"] != "PR_HEAD_RECONCILE_REQUIRED" {
 		t.Fatalf("dirty stale-head lifecycle = (%q, %#v, %t), want actionable head-reconciliation resume", status, extras, handled)
 	}
@@ -190,7 +212,8 @@ func TestLifecycleDecision_WorktreeHeadReadFailureIsActionable(t *testing.T) {
 		opts: runSessionOptions{currentHead: headResolver},
 	}
 
-	status, extras, handled := session.handleLifecycleDecision(context.Background(), t.TempDir(), branch, "", "run-head-unavailable", true)
+	observedLifecycle212 := session.observeLifecycleWithHostPathsForTest(context.Background(), t.TempDir(), branch, "", "run-head-unavailable", true)
+	status, extras, handled := observedLifecycle212.status(), observedLifecycle212.Evidence, observedLifecycle212.handled()
 	if !handled || status != "resume" || extras["gate"] != gatePRHeadChanged || extras["reason"] != "PR_HEAD_RECONCILE_REQUIRED" {
 		t.Fatalf("unreadable worktree head = (%q, %#v, %t), want actionable reconciliation resume", status, extras, handled)
 	}

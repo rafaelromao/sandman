@@ -164,6 +164,13 @@ The repair agent differs from the reviewer:
     with `allowManagedPermissionRulesOnly` ignore this rule, so there the repair
     can only diagnose and you apply its reported fix. Do not loosen managed
     policy to work around it.
+    - The repair scope replaces a configured `permission_mode`, including a
+      read-only mode such as `plan`: the repair always launches with
+      `dontAsk` and the `.sandman/` edit rule.
+    - A custom `command` is launched as written: Sandman adds no edit scope,
+      permission mode, or bypass. Any permission flags the command carries
+      itself, a bypass included, apply to repairs unchanged, so a custom
+      command must carry its own permission rules.
   - OpenCode: the repair follows your own OpenCode permission configuration. It
     is not narrowed to `.sandman/`, and Sandman cannot detect refused actions.
 
@@ -175,20 +182,27 @@ repair paused: ...` once and waits for you. A changed failure, a new review
 request, or a different review agent or model admits a repair again. The record
 resets once every failed operation succeeds.
 
+A repair whose agent cannot start on the host, for example because its binary is
+not on the daemon's `PATH` or it is not authenticated there, is recorded as
+`unresolved: prompt-only run failed`. The cause is in the repair Run's log under
+`.sandman/batches/<repair-run-id>/runs/<repair-run-id>/` (the daemon log names
+the repair Run ID), not in the daemon log itself. It counts toward the three
+repairs of the episode.
+
 Whatever the repair did, the daemon retries the original operation through its
 normal path. If review launches fail with `mise: not found`, see
 [Troubleshooting](../help/troubleshooting.md#container-image-build-fails-with-mise-not-found).
 
 ## Review output
 
-The review agent writes its response to the review worktree's `decision.md`. The daemon reads that file, removes self-triggering review-command text, and posts the final body as a pull-request comment.
+The review agent writes its response to the review worktree's `decision.md`; that file is only a handoff. The daemon copies it into the review's run folder, removes self-triggering review-command text, and saves the exact text it will post as the run's pending publication (`pending-publication.json`) before posting it as a pull-request comment. If posting fails or the daemon restarts, it posts that saved text later, first checking that it was not already posted, and removes the pending publication only once the post is confirmed. Deleting the worktree's `decision.md` does not cancel a saved publication.
 
 Review runs appear in:
 
 - `sandman status`
 - `sandman history`
 - `sandman portal`
-- `.sandman/batches/<batch-id>/runs/<run-id>/`
+- `.sandman/batches/<batch-id>/runs/<run-id>/` (including the copied `decision.md` and, until the post is confirmed, `pending-publication.json`)
 
 ## Review prompt
 
@@ -211,7 +225,7 @@ The file is preserved across re-runs of `sandman init`. When it is missing, the 
 
 ### Reviewer versus implementor roles
 
-The default prompt requires the `sandman-code-review` skill for daemon reviews and explicitly forbids `sandman-pr-review`, `sandman-review-cycle`, and `sandman-run`. `sandman-pr-review` is only a compatibility facade over the standalone cycle; the daemon reviewer is **read-only** and must not enter either standalone workflow. It reports mergeability or CI problems as findings but never fixes code, pushes, merges, posts GitHub comments, or requests another review. Keep that boundary when you edit the template — a review prompt that tells the reviewer to orchestrate the pull request will conflict with the daemon's own posting workflow.
+The default prompt requires the `sandman-code-review` skill for daemon reviews and explicitly forbids `sandman-pr-review`, `sandman-review-cycle`, and `sandman-run`. `sandman-pr-review` is only a compatibility facade over the standalone cycle; the daemon reviewer is **read-only** and must not enter either standalone workflow. It reports mergeability or CI problems as findings but never fixes code, pushes, merges, posts GitHub comments, or requests another review. Health repairs are different: they are separate modifying prompt-only runs on the host (see [Health repair](#health-repair)). Keep that boundary when you edit the template — a review prompt that tells the reviewer to orchestrate the pull request will conflict with the daemon's own posting workflow.
 
 The template must not contain stray `{{...}}` literals beyond the placeholders above: an unknown key fails the render and the review is not launched.
 

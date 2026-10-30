@@ -171,8 +171,8 @@ console.log('PASS');
 func TestPortalPerf_PrewarmLogPaneCache_SkipsEmptySubjectValue(t *testing.T) {
 	js := `const runs = [
   { key: 'a1', runId: 'a1', kind: 'active', status: 'running', issueLabel: '#1', log: 'normal' },
-  { key: 'q1', kind: 'active', status: 'queued', issueLabel: '#2', log: 'queued log' },
-  { key: 'b1', kind: 'active', status: 'blocked', issueLabel: '#3', log: 'blocked log' },
+  { key: 'q1', kind: 'active', status: 'queued', queuedLike: true, issueLabel: '#2', log: 'queued log' },
+  { key: 'b1', kind: 'active', status: 'blocked', queuedLike: true, issueLabel: '#3', log: 'blocked log' },
 ];
 const n = sandbox.SandmanPortalDiff.prewarmLogPaneCache(runs, helpers, { topN: 3 });
 if (n !== 1) throw new Error('expected 1 newly cached (only the expandable one), got ' + n);

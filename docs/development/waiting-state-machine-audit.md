@@ -178,7 +178,7 @@ shipped baseline, not a promise that every policy below is already correct.
 | C9 | Stale/mismatched/unknown approval | Cannot authorize current-head approval; stale generations are evidence only. | Keep rejection; reconcile head and perform owned work where possible. |
 | C10 | PR head changes | Safe exact-head fast-forward when possible; otherwise resume with reconciliation evidence. | Keep preservation of local changes; no indefinite stale-head wait. |
 | C11 | PR ready with no retained review request | Can resume as `PULL_REQUEST_READY`, including absent checks if merge state is clean. | Confirm whether aggregate readiness is enough, or current-head delegated approval must always exist. |
-| C12 | Gate lookup fails | Structured `GATE_LOOKUP_FAILED`, no unsupported wait. | Confirm bounded transient observation retry for a previously established operation, versus immediate failure. |
+| C12 | Gate lookup fails | `run.await` `github-unavailable` with hourly, githubstatus.com-gated recovery attempts; `GATE_LOOKUP_FAILED` only after 24 hours; `--continue` opens a fresh window (#2938). | Resolved: an established operation is retained unchanged and judged after recovery. |
 | C13 | Review state unreadable/corrupt | Alone cannot authorize await; independently active CI/review may still justify it. | Keep fail-closed identity handling; an error cannot create a new operation or deadline. |
 | C14 | CI deadline expires | Selects CI remediation; intended durable per-head deadline is 30 minutes. | Resume bounded diagnosis/repair; terminal failure when shared budget is exhausted. |
 | C15 | Review deadline expires | Depending on evidence/path, selects review timeout failure, generic idle failure, or deadline remediation. Foreground and batch observers differ. | One explicit policy: bounded request recovery or terminal `REVIEW_TIMEOUT`; no silent deadline renewal. |
@@ -519,3 +519,23 @@ arriving concurrently with quota/cancellation.
 The intended endpoint is a transition table that every writer, observer,
 scheduler adapter, and reader obeys. A passing test for one isolated gate is
 insufficient evidence that the composed state machine is correct.
+
+## Revision: AFK continuity (#2916)
+
+The later #2914 and #2915 incidents showed that several rows above turned states
+v1.0.0-rc.2 resolved (by merging or by waiting) into terminal failures. The
+governing rule is now AFK continuity, documented in
+`docs/architecture/run-state-machine.md`:
+
+- B6 and C3/C4: owned work and repair keep their bounded attempts. When those
+  leave an open, current-head pull request unchanged, the Run waits
+  (`continuity_hold` or `RESUME_STALLED`) instead of failing. Formal
+  CHANGES_REQUESTED left unrepaired stays terminal.
+- A review request delivered by an attempt that exited non-success is
+  registered and awaited. Owned-work retries record `lifecycle-owned-work`
+  rather than `agent-failed`.
+- A stalled relaunch persists its resume signature in `run.await`, so the
+  observer and restarts do not relaunch on unchanged evidence.
+- Every lifecycle failure reason is classified as permanent or recoverable in
+  one table. `TestAFKContinuityContract_*` replays the real incidents, and the
+  `contracts` target runs it.

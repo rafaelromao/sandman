@@ -60,6 +60,11 @@ COMMENTED approvals, request/head/window and real-feedback controls, pending-CI
 observations without premature relaunches, and same-RunID approval continuation
 through verified merge. Accepted informal approval is sufficient without a
 formal GitHub approval; its continuation prompt must preserve that contract.
+The captured reports in `internal/batch/testdata/approved-daemon-28-*.md` and
+`approved-sandman-{2818,2886}.md` cover quality tags, no-author-change wording,
+publication limitations and informational next steps. Classifier and lifecycle
+tests assert approval precedes informal feedback; executor tests cover ordinary
+`--continue` and capacity-ready re-entry through verified merge and issue closure.
 
 For OpenCode context rollover changes, the hermetic production-path coverage is:
 
@@ -90,8 +95,13 @@ strategy seam existed; regenerate its golden with
 `SANDMAN_AGENT_STRATEGY_UPDATE=1` only for an intended OpenCode behaviour change.
 `TestAgentSelection_NoAgentNameComparisonsOutsideStrategy` fails when a new
 `== "opencode"`-style agent-name comparison appears outside the strategy seam.
+Session identity is agent-neutral in storage: each strategy validates its own
+`session.json` protocol and provider, and the Portal reads any valid record, so
+neither needs an agent-name comparison. The Claude launch tests in
+`claude_strategy_test.go` pin fresh, exact-resume, invalid-identity, and
+missing-session commands, in place of a Claude golden.
 The hermetic `claude` preset path (a fake `claude` binary behind the real
-worktree sandbox, usage-limit await, and `--continue` re-entry) runs with the
+worktree sandbox, usage-limit await, and exact `--resume` re-entry) runs with the
 `batch` E2E gate:
 
 ```bash
@@ -118,19 +128,23 @@ Release Please branch updates add two release-validation workflows:
 - `Full Regression - Linux` is the exhaustive authority for Linux. It runs independent unit/browser, smoke container, credential-free integration, and live-provider jobs with the canonical 60- and 90-minute budgets.
 - `Native Compatibility` is a focused suite with four parallel arch-specific jobs — `Native Compatibility (linux/amd64)` on `ubuntu-latest`, `Native Compatibility (darwin/amd64)` on `macos-15-intel`, `Native Compatibility (darwin/arm64)` on `macos-14`, and `Native Compatibility (linux/arm64)` on `ubuntu-24.04-arm`. Each job builds Sandman natively for its arch, then exercises Darwin/Linux socket paths plus portal and attach streaming, and verifies the native portal and attach streaming boundary through two hermetic portal E2E cases. Linux-container preset portability remains covered by the Linux workflow rather than being rebuilt inside the macOS Podman VM.
 
-The contract test `TestPlatformCoverageMapMatchesWorkflowsAndGoReleaser` enforces that the CI platform jobs, the `Native Compatibility` workflow shape, the `Full Regression - Linux` exhaustive command, and the four `.goreleaser.yml` build IDs all stay aligned with the matrix above. A drift in any one of those four sources fails the contract.
+The contract test `TestPlatformCoverageMapMatchesWorkflowsAndGoReleaser` checks that required substrings are present in the workflow files, `scripts/release_tier.sh`, and `.goreleaser.yml`: the platform build jobs' runner labels and `runs-on`, the three native runner labels with their GOOS/GOARCH/`uname` assertions and two portal E2E test names, the exhaustive-regression environment (`SANDMAN_RUN_AGENT_E2E=1`, `SANDMAN_E2E_GATES: all`), and the four GoReleaser build IDs. It does not parse the matrix above, so edits to this table are not enforced; keep the table aligned with those files by review.
 
 ### Full regression (`SANDMAN_FULL_REGRESSION`)
 
 Tests that are tagged for a container runtime or a real provider typically skip
 themselves when the generic `CI` env var is set (`os.Getenv("CI") != ""`), so
 the ordinary PR-time `CI` workflow stays fast and never spends API quota on
-real-agent runs. The `Full Regression - Linux` workflow is different: its whole
-point is that nothing is skipped. It sets `SANDMAN_FULL_REGRESSION=1`, and every
-CI-only skip guard is written as
+real-agent runs. The `Full Regression - Linux` workflow is different: it runs
+every required scenario. It sets `SANDMAN_FULL_REGRESSION=1`, and CI-only skip
+guards are written as
 `if os.Getenv("CI") != "" && !testenv.FullRegression() { t.Skip(...) }` so the
 exhaustive job actually executes the real-agent, portal, preset-matrix, visual,
-and heartbeat-timeout tests that ordinary CI only compiles.
+and heartbeat-timeout tests that ordinary CI only compiles. Portal browser
+guards also accept `SANDMAN_REQUIRE_PORTAL_BROWSER=1`, which overrides the CI
+skip and turns a missing browser into a failure. Tests can still skip for
+missing prerequisites (no container runtime, host CLI, or file-backed auth);
+only the manifest-permitted skips below are acceptable for required scenarios.
 
 The checked-in `scripts/release_scenarios.json` manifest defines required tests,
 provider CLIs/models, native platform boundaries and narrowly permitted skips.
@@ -146,13 +160,17 @@ sibling failures when only one tier is rerun.
 Unit includes `visual` tests and Node production-module coverage. Smoke builds
 all preset containers without provider calls. Integration excludes the manifest's
 live selector and uses fake agents, local Git remotes and real containers.
-Live selects the explicit OpenCode and Claude scenarios; only this tier receives
-provider credentials. No live-provider validation is added to ordinary PR CI.
+The subagent permission fixture isolates HOME/config snapshots from runner state
+while retaining the runner's XDG data directory for Podman's container store.
+Live selects the explicit OpenCode scenarios and receives only OpenCode credentials.
+Claude provider E2Es run in a separate manual tier when `Full Regression - Linux`
+is dispatched with `run_claude` enabled; only that job receives Claude credentials. Ordinary PR CI runs only the single minimal OpenCode canary described below; the full provider suites remain release-only.
 
 Every Linux tier provisions Node 22, Chromium and validated rootless Podman
-with runc. Live additionally installs `opencode-ai@1.15.0` and
-`@anthropic-ai/claude-code@2.1.283`, checks their versions, and requires both
-`OPENCODE_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` secrets. OpenCode auth is
+with runc. Live additionally installs `opencode-ai@1.19.3` and requires
+`OPENCODE_API_KEY`. The optional manual Claude tier installs
+`@anthropic-ai/claude-code@2.1.283` and requires `CLAUDE_CODE_OAUTH_TOKEN`.
+Each provider tier checks its own CLI version. OpenCode auth is
 written as JSON with mode 0600. The selected model identifiers are
 `opencode/big-pickle` and `claude-haiku-4-5-20251001`. Missing credentials,
 tools, required tests, unexpected skips and duplicate executions fail validation.
@@ -193,14 +211,14 @@ remain active on pull requests.
 
 ## Smoke tests
 
-Smoke tests run a single agent session end-to-end and verify the core run loop. They are fast compared with full e2e tests and are disabled unless a provider allowlist is set.
+Smoke tests run a single agent session end-to-end and verify the core run loop. They are fast compared with full e2e tests. They need the `smoke` (or `e2e`) build tag, `SANDMAN_RUN_SMOKE_E2E=1`, and a non-empty provider allowlist; without the opt-in or the allowlist they skip themselves.
 
 ```bash
-SANDMAN_TEST_PROVIDERS=opencode \
+SANDMAN_RUN_SMOKE_E2E=1 SANDMAN_TEST_PROVIDERS=opencode \
   go test -tags smoke -timeout 30m ./internal/cmd -run Smoke
 ```
 
-`SANDMAN_TEST_PROVIDERS` accepts a comma-separated list of provider names, `all`, or `*`. When unset, smoke tests skip themselves.
+`SANDMAN_TEST_PROVIDERS` accepts a comma-separated list of provider names, `all`, or `*`. Even when enabled, individual cases skip when no container runtime, host CLI, or file-backed agent auth is available, or when image build, config mount, container start, or worktree setup is unavailable on the host.
 
 The `-timeout 30m` budget is required because each smoke sub-test pays a real
 `podman build` of the per-provider / per-buildTools image plus a real
@@ -299,37 +317,37 @@ the exhaustive E2E tier still uses its canonical 90-minute timeout.
 
 ## Gated scenarios
 
-Some expensive scenarios run without a build tag and are selected with `SANDMAN_E2E_GATES`. The value can be a single scenario, a comma-separated list, `all`, or `*`.
+Expensive scenarios are selected with `SANDMAN_E2E_GATES`. The value can be a single scenario, a comma-separated list, `all`, or `*`. Only the `batch` gate's `TestRunBatch_EndToEnd` and the `base_branch_feature` test run without a build tag; every other gated test, including the `batch`-gated claude preset and context-rollover tests, lives in `//go:build e2e` files and also needs `-tags e2e`.
 
 ### Scenario reference
 
 | Scenario | Package | Test selector |
 |----------|---------|---------------|
 | `batch` | `internal/batch` | `TestRunBatch_EndToEnd` |
-| `continue_multi` | `internal/cmd` | `TestContinueFlow_PodmanSandboxBinarySupportsMultipleIssues` |
+| `continue_multi` | `internal/cmd` | none: no gated test currently references this scenario |
 | `opencode_subagent` | `internal/cmd` | `TestOpencodeSubagentPermissionAllowAll` |
 | `badge` | `internal/cmd` | badge scenario tests |
 | `pathlen` | `internal/cmd` | path-length scenario tests |
 | `batch_id_rules` | `internal/cmd` | `TestBatchIDRules_*` |
-| `preset_matrix` | `internal/cmd` | preset-matrix scenario tests |
+| `preset_matrix` | `internal/cmd` | none gated by this constant; the e2e-tagged preset-matrix harness (`preset_matrix_harness_e2e_test.go`) runs through `scripts/run-preset-matrix.sh` |
 | `base_branch_feature` | `internal/batch` | `TestRunBatch_BaseBranchFeature_CutsWorktreeFromFeatureBranch` |
-| `review_daemon` | `internal/cmd` | `TestReviewDaemonE2E_RealAgentInContainer` |
+| `review_daemon` | `internal/cmd` | `TestReviewDaemonE2E_CannedReviewerTriggerToPost` |
 | `lifecycle_commands` | `internal/cmd` | `TestLifecycle_*` |
 | `review_wait` | `internal/cmd` | `TestReviewWaitStabilization_*` |
 
-The `review_wait` scenario is in the tagged E2E tier and requires
-`go test -tags e2e`.
+All scenarios except the untagged `batch` and `base_branch_feature` tests
+require `go test -tags e2e`.
 
 ```bash
 # Single scenario
 SANDMAN_E2E_GATES=batch go test -timeout 30m -run TestRunBatch_EndToEnd ./internal/batch
 
-# Multiple scenarios
-SANDMAN_E2E_GATES=batch,continue_multi,opencode_subagent \
-  go test -timeout 30m ./...
+# Multiple scenarios (tagged tier)
+SANDMAN_E2E_GATES=batch,opencode_subagent,review_wait \
+  go test -tags e2e -timeout 30m ./...
 
 # All scenarios
-SANDMAN_E2E_GATES=all go test -timeout 30m ./...
+SANDMAN_E2E_GATES=all go test -tags e2e -timeout 90m ./...
 ```
 
 ## Per-agent model override
@@ -338,7 +356,7 @@ By default, smoke and e2e tests use the model baked into each test case. To targ
 
 ```bash
 SANDMAN_TEST_MODEL_OPENCODE=opencode/gpt-5-nano \
-  SANDMAN_TEST_PROVIDERS=opencode \
+  SANDMAN_RUN_SMOKE_E2E=1 SANDMAN_TEST_PROVIDERS=opencode \
   go test -tags smoke -timeout 30m ./internal/cmd -run Smoke
 ```
 
@@ -477,8 +495,9 @@ all required Chromium-backed tests (continuity, subject switching, page renderin
 and visual layout). `test-browser` enables the `visual` build tag and requires a
 browser; `test-ci` excludes that same exact inventory. A Go AST contract checks
 the inventory against browser helper callers, preventing silently skipped scenarios.
-The built-binary Portal browser test retains its separate
-`SANDMAN_RUN_PORTAL_BINARY_E2E=1` opt-in; it was never part of default PR coverage. Node remains installed in both platform
+The built-binary Portal tests keep their separate
+`SANDMAN_RUN_PORTAL_BINARY_E2E=1` opt-in and stay out of default PR coverage;
+release regression sets it, so the unit tier runs them as required scenarios. Node remains installed in both platform
 jobs so production-module tests and JavaScript assertions remain in the race suite.
 
 Linux retains Podman with runc and its runtime probe. Default container tests are
@@ -516,7 +535,7 @@ retain full action commit pins with readable version comments. Release automatio
 retains write permissions; validation defaults to contents read and semantic title
 validation gets pull-request read. Existing protection contexts remain in place.
 
-The Go language minimum remains 1.25; `toolchain go1.26.9` selects a patched
+The Go language minimum remains 1.25; `toolchain go1.26.10` selects a patched
 standard library for normal builds; `.go-version` selects the same patched
 toolchain explicitly in setup-go and security scans. Keep automatic
 toolchain selection enabled. Staticcheck retains its isolated Go 1.25.0 runner
@@ -577,3 +596,60 @@ Coverage reporting runs after failed tests when a profile exists. Reports mark
 tested SHA qualify as baselines. Failed/unverified collections are diagnostic
 only. CI explicitly grants read access to Actions artifacts; signed download
 redirects discard the GitHub authorization header.
+
+### Publication authorization
+
+Release publication uses same-invocation reusable workflows from the exact main
+commit: CI (including security, coverage policy and four-platform snapshot), Full
+Regression (all manifest tiers), and Native Compatibility (all four platforms).
+`Release / publication-gate` rejects any missing, skipped, failed or cancelled
+result. No check name, external status, earlier workflow run or release-branch SHA
+can authorize publication. GitHub's reusable-workflow dependency graph establishes
+provenance; the gate also checks the caller repository, event, main ref, workflow
+source SHA and candidate SHA. Do not replace these dependencies with status-name
+lookups. A merged release commit always receives fresh validation, even if its
+release branch passed. Workflow dispatch is permitted on main for recovery.
+
+The checked-in main ruleset now sets
+`strict_required_status_checks_policy: true`: concurrent merges require the PR to
+be current with main before merging. Apply and read back protection using the
+procedure above; the file alone does not enforce it. On 2026-10-16 the rulesets
+API returned an empty list; legacy protection/admin access remains unverified.
+An authorized repository administrator must apply/verify strict required checks.
+A merge queue would also require `merge_group` CI and title-gate support first.
+
+Regular CI runs one tool-free `opencode run` invocation for its OpenCode canary on
+Linux (60-second provider deadline, three-minute job, no containers, and no retry
+loop inside that job), using the release manifest's exact CLI/model. This process
+contract does not claim to count physical HTTP requests made internally by the CLI.
+After diagnosing a transient provider/network timeout on the identified current-head
+execution, the implementation agent may initiate one authorized, bounded GitHub
+rerun; this is a new job invocation, not an in-job retry. Rerunning the existing
+execution does not require `workflow_dispatch`. A provider deprecation failure
+instructs the implementor to update the scaffold fallback, release manifest and
+release workflow pin together.
+The canary is mandatory in the aggregate quality gate; full provider E2Es remain
+release-only, and Claude provider E2Es remain manual-only. The existing OPENCODE_API_KEY repository secret is required and is forwarded
+by the Release reusable-CI caller.
+
+The regular Linux build also runs the credential-free fake subagent permission
+scenario (`TestOpencodeSubagentPermissionAllowAll`) with Podman. Its minimal image
+installs both shell fakes (`gh` and `opencode`) on the image PATH, so container
+auth setup succeeds before the agent adds the worktree's shim directory. This
+exercises the real container startup and permission forwarding without a provider
+request. Diagnostics are included as `container-permissions` in the existing
+Linux build reports; the broader provider suites remain release-only.
+
+Python toolchain image builds mount an optional `github_token` build secret for
+mise downloads and artifact-attestation verification. Image builders share the
+same argument helper; token values never become build arguments or image ENV.
+The release runner supplies `MISE_GITHUB_TOKEN` independently of fake GitHub CLI
+credentials. Local builds without a token still work subject to GitHub API limits.
+Regular Linux CI tests the generated install instruction with a fake installer,
+both with and without authentication, and checks that the secret is absent from
+subsequent layers, runtime environment, and image history.
+
+Maintainers can add the `release-validation` label to a same-repository PR to
+run the full Linux release regression tiers before merging a release repair.
+New commits rerun that opt-in validation. Fork PRs receive no provider secrets;
+Claude remains excluded and requires the existing manual workflow input.

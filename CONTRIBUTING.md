@@ -176,7 +176,7 @@ internal/
   scaffold/                  # sandman init scaffolding logic
   shellenv/                  # Validated, single-quoted `sh -c` env-prefix builder
   skill/                     # Sync function for embedded sandman skill
-  testenv/                   # MkdirShort and canonical env-var helpers
+  testenv/                   # MkdirShort, ProcessAlive and canonical env-var helpers
 ```
 
 ### Key interfaces
@@ -234,7 +234,7 @@ retain full action commit pins with readable version comments. Release automatio
 retains write permissions; validation defaults to contents read and semantic title
 validation gets pull-request read. Existing protection contexts remain in place.
 
-The Go language minimum remains 1.25; `toolchain go1.26.9` selects a patched
+The Go language minimum remains 1.25; `toolchain go1.26.10` selects a patched
 standard library for normal builds; `.go-version` selects the same patched
 toolchain explicitly in setup-go and security scans. Keep automatic
 toolchain selection enabled. Staticcheck retains its isolated Go 1.25.0 runner
@@ -260,3 +260,10 @@ and pinned CLI/model versions described in `docs/development/testing.md`.
 Review SHA-bound reports from all tiers and all four native platforms before
 merging a release. Run `python3 scripts/release_report_test.py` for the hermetic
 coverage evaluator; no provider credentials are needed for ordinary PR checks.
+
+Release publication requires fresh CI, regression and native validation of the
+exact merged release commit. Release PR refresh stays independent. Main protection
+must use strict up-to-date required checks; maintainers must apply and verify live
+settings, not rely on the checked-in ruleset. See
+[publication and recovery](docs/development/releasing.md#validated-source-publication-and-recovery)
+and [testing](docs/development/testing.md#publication-authorization).

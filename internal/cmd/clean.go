@@ -212,6 +212,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				}
 				_ = staleRemoved
 				fmt.Fprintf(cmd.OutOrStdout(), "Recovered %d stale runs as aborted across %d dead directories.\n", recovered, deadDirs)
+				pruneTerminalRunClaims(cmd, layout, deps.EventLog)
 				tempDirs, images, tempErr := runCleanTemps(cmd, deps, layout, false)
 				printCleanReport(cmd, nil, nil, tempDirs, images, false)
 				return tempErr
@@ -270,6 +271,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 					outcomes, cleanErr = executeCleanWithProbe(actions, gr, layout, remover, probe, deps.EventLog)
 					orphanRemoved, err = cleanupOrphanedBatches(layout, deps.EventLog, probe, remover)
 					cleanErr = errors.Join(cleanErr, err)
+					pruneTerminalRunClaims(cmd, layout, deps.EventLog)
 				} else {
 					outcomes, cleanErr = validateCleanActions(actions, layout)
 					if orphanErr := validateOrphanPaths(orphanPlan, layout); orphanErr != nil {
@@ -339,6 +341,24 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 	return cmd
 }
 
+// pruneTerminalRunClaims removes the RunID claim files of event-terminal Runs.
+// It reads lifecycle after stale recovery so recovered aborts count; when the
+// events cannot be read it keeps every claim.
+func pruneTerminalRunClaims(cmd *cobra.Command, layout paths.Layout, log events.EventLog) {
+	states, err := events.ReadRunStates(log)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: skip run claim cleanup: %v\n", err)
+		return
+	}
+	removed, err := daemon.PruneRunClaims(layout.SandmanDir, states)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: run claim cleanup: %v\n", err)
+	}
+	if removed > 0 {
+		fmt.Fprintf(cmd.OutOrStdout(), "Removed %d terminal run claim file(s).\n", removed)
+	}
+}
+
 func collectCleanActions(idx *batchindex.Index, targetStatus batchindex.Status, layout paths.Layout) []cleanAction {
 	var actions []cleanAction
 	for _, entry := range idx.Batches {
@@ -405,15 +425,15 @@ func collectEligibleActiveActions(idx *batchindex.Index, probe runActivityProbe,
 // all of its worktrees. A batch with an unknown or missing row manifest
 // is preserved.
 func buildEligibleActiveAction(idx *batchindex.Index, entry batchindex.Batch, probe runActivityProbe, layout paths.Layout, states map[string]events.RunState) (cleanAction, bool) {
-	batchPath := entry.Location(layout).Dir
+	location := entry.Location(layout)
+	batchPath := location.Dir
 	if probe != nil && probe(batchPath) {
 		return cleanAction{}, false
 	}
 	// Artifact loss must not hide in-flight members from completed cleanup.
 	// Use the same event batch membership as whole-batch archive.
-	batchDir := entry.Location(layout).Dir
 	for _, state := range states {
-		if (state.RunID == entry.ID || idx.MatchesBatchLocation(layout, state.BatchID(), batchDir)) && !state.IsTerminal() {
+		if (state.RunID == entry.ID || idx.MatchesBatchLocation(layout, state.BatchID(), batchPath)) && !state.IsTerminal() {
 			return cleanAction{}, false
 		}
 	}
@@ -423,8 +443,7 @@ func buildEligibleActiveAction(idx *batchindex.Index, entry batchindex.Batch, pr
 		Kind:      entry.Kind,
 		Status:    entry.Status,
 	}
-	runsDir := filepath.Join(batchPath, "runs")
-	entries, err := os.ReadDir(runsDir)
+	entries, err := os.ReadDir(location.RunsDir())
 	if err != nil && !os.IsNotExist(err) {
 		return cleanAction{}, false
 	}
@@ -435,8 +454,7 @@ func buildEligibleActiveAction(idx *batchindex.Index, entry batchindex.Batch, pr
 			continue
 		}
 		liveCount++
-		manifestPath := filepath.Join(runsDir, e.Name(), "run.json")
-		data, err := os.ReadFile(manifestPath)
+		data, err := os.ReadFile(location.Run(e.Name()).ManifestPath())
 		if err != nil {
 			return cleanAction{}, false
 		}
@@ -916,19 +934,19 @@ func cleanupOrphanedBatches(layout paths.Layout, log events.EventLog, probe func
 		}
 		removed = append(removed, path)
 	}
-	removedByID := make(map[string]string, len(removed))
+	removedDirs := make(map[string]bool, len(removed))
 	for _, path := range removed {
 		absolute, err := filepath.Abs(path)
 		if err != nil {
 			cleanupErrs = append(cleanupErrs, fmt.Errorf("resolve removed orphan path %q: %w", path, err))
 			continue
 		}
-		removedByID[filepath.Base(path)] = filepath.Clean(absolute)
+		removedDirs[absolute] = true
 	}
 	if err := batchindex.Update(layout.BatchesIndexPath, func(idx *batchindex.Index) error {
 		kept := idx.Batches[:0]
 		for _, entry := range idx.Batches {
-			if path, ok := removedByID[entry.ID]; ok && filepath.Clean(entry.Location(layout).Dir) == path {
+			if dir, err := filepath.Abs(entry.Location(layout).Dir); err == nil && removedDirs[dir] {
 				continue
 			}
 			kept = append(kept, entry)
@@ -948,39 +966,6 @@ func confirmRemoved(path string) error {
 		return err
 	}
 	return nil
-}
-
-// pruneBatchesIndexByOrphanPlan removes the index entries whose BatchID matches
-// the basename of any path in plan, then atomically saves the index. It is the
-// shared prune step used by both the standalone --orphaned mode and the --all
-// umbrella flag.
-func pruneBatchesIndexByOrphanPlan(indexPath string, plan []string) error {
-	indexPath, err := filepath.Abs(indexPath)
-	if err != nil {
-		return fmt.Errorf("resolve batches index path %q: %w", indexPath, err)
-	}
-	layout := paths.NewLayout(nil, filepath.Dir(filepath.Dir(indexPath)))
-	pruned := make(map[string]string, len(plan))
-	for _, p := range plan {
-		absolutePath, err := filepath.Abs(p)
-		if err != nil {
-			return fmt.Errorf("resolve orphan plan path %q: %w", p, err)
-		}
-		pruned[filepath.Base(p)] = absolutePath
-	}
-	return batchindex.Update(indexPath, func(idx *batchindex.Index) error {
-		var kept []batchindex.Batch
-		for _, entry := range idx.Batches {
-			if plannedPath, drop := pruned[entry.ID]; drop && filepath.Clean(entry.Location(layout).Dir) == filepath.Clean(plannedPath) {
-				if _, err := os.Stat(entry.Location(layout).Dir); os.IsNotExist(err) {
-					continue
-				}
-			}
-			kept = append(kept, entry)
-		}
-		idx.Batches = kept
-		return nil
-	})
 }
 
 func runCleanTemps(cmd *cobra.Command, deps Dependencies, layout paths.Layout, dryRun bool) (tempDirs []string, images []string, cleanupErr error) {

@@ -16,9 +16,10 @@ agent: opencode
 # configured, claude runs on sonnet and opencode on its own CLI default.
 model: opencode/big-pickle
 
-# Optional provider-specific implementation model variant. Empty disables
-# forwarding it to the built-in command (--variant for OpenCode, --effort for
-# Claude Code).
+# Optional implementation model variant. The Sandman CLI always uses --variant;
+# Sandman translates it to each built-in agent's native model/variant syntax.
+# Empty disables the configured variant. OpenCode v2 uses its preset model when
+# a variant is set without a resolved model.
 variant: ""
 
 # Default agent preset used for review runs when `--agent` is omitted in `sandman review`.
@@ -106,6 +107,8 @@ Sandman has two built-in presets: `opencode` (the default `agent`) and `claude`.
 When you use the `opencode` preset, install the `opencode-shell-strategy` plugin first. Sandman runs OpenCode without a TTY/PTY, so this plugin prevents interactive shell commands from hanging during runs. OpenCode subagents inherit the same instructions.
 
 The `claude` preset (experimental in v1) runs the unmodified Claude Code CLI in print mode and is how you use a Claude subscription with Sandman. See [Agent Compatibility](agent-compatibility.md#claude-code) for authentication, permissions, and its limitations.
+
+For container runs on a subscription, export `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` in the shell that runs Sandman rather than adding it to `env`: the preset passes it to containers by name only, so the value stays off command lines and out of `.sandman/`. See [Agent Compatibility > Authentication](agent-compatibility.md#authentication).
 
 Both built-in presets also see `~/.agents`, which is where Sandman installs the shared skill folder.
 

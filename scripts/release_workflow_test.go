@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/rafaelromao/sandman/internal/scaffold"
 )
 
 func TestReleaseConfigUsesAutomaticRCVersioningAfterRC1(t *testing.T) {
@@ -113,11 +115,11 @@ func TestReleasePolicyDocumentationDescribesAutomaticVersioningAfterRC1(t *testi
 func TestReleaseWorkflowPublishesConfiguredReleaseArtifacts(t *testing.T) {
 	release := readRepositoryFile(t, "../.github/workflows/release.yml")
 	for _, required := range []string{
-		"release_created == 'true'",
-		"uses: actions/setup-go@v5",
+		"skip-github-release: true",
+		"uses: actions/setup-go@",
 		"go-version-file: .go-version",
 		"version: v2.10.1",
-		"args: release --clean",
+		"args: release --clean --draft",
 		"GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}",
 	} {
 		if !strings.Contains(release, required) {
@@ -130,15 +132,16 @@ func TestReleaseWorkflowPublishesConfiguredReleaseArtifacts(t *testing.T) {
 		}
 	}
 
-	checkout := strings.Index(release, "uses: actions/checkout@v4")
-	setupGo := strings.Index(release, "uses: actions/setup-go@v5")
-	goreleaserStep := strings.Index(release, "uses: goreleaser/goreleaser-action@v6")
+	// Ordering contracts follow action identity; SHA pinning is checked separately.
+	checkout := strings.Index(release, "uses: actions/checkout@")
+	setupGo := strings.Index(release, "uses: actions/setup-go@")
+	goreleaserStep := strings.Index(release, "uses: goreleaser/goreleaser-action@")
 	if checkout == -1 || setupGo == -1 || goreleaserStep == -1 || checkout > setupGo || setupGo > goreleaserStep {
 		t.Fatal("release workflow must set up Go after checkout and before GoReleaser")
 	}
 
 	setupGoBlock := release[setupGo:goreleaserStep]
-	if !strings.Contains(setupGoBlock, "if: steps.release-please.outputs.release_created == 'true'") {
+	if !strings.Contains(setupGoBlock, "if: steps.prepare.outputs.complete != 'true'") {
 		t.Fatal("release workflow Go setup must be gated on release creation")
 	}
 
@@ -282,11 +285,11 @@ func TestReleaseWorkflowRefreshesUnchangedPendingBranch(t *testing.T) {
 	release := readRepositoryFile(t, "../.github/workflows/release.yml")
 	checkout := strings.Index(release, "name: Checkout release automation")
 	refresh := strings.Index(release, "name: Refresh pending release branch")
-	setupGo := strings.Index(release, "uses: actions/setup-go@v5")
+	setupGo := strings.Index(release, "uses: actions/setup-go@")
 	if checkout < 0 || refresh < checkout || setupGo < refresh {
 		t.Fatal("release branch refresh must run after checkout and before release publication")
 	}
-	block := release[checkout:setupGo]
+	block := release[checkout:strings.Index(release, "\n  candidate:")]
 	for _, required := range []string{"GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}", "run: sh scripts/refresh_release_pr.sh", "timeout-minutes: 5", "persist-credentials: false"} {
 		if !strings.Contains(block, required) {
 			t.Errorf("release refresh missing %q", required)
@@ -323,7 +326,7 @@ func TestReleaseValidationWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 	for _, required := range []string{
 		`SANDMAN_FULL_REGRESSION: "1"`,
 		"tier: unit", "tier: smoke", "tier: integration", "tier: live",
-		"name: Install pinned agent CLIs", "opencode-ai@1.15.0 @anthropic-ai/claude-code@2.1.283",
+		"name: Install pinned agent CLIs", "opencode-ai@1.19.3", "@anthropic-ai/claude-code@2.1.283",
 		"secrets.OPENCODE_API_KEY", "secrets.CLAUDE_CODE_OAUTH_TOKEN",
 		"name: Set up Node", "name: Set up Chromium",
 		"name: Validate prerequisites and record versions",
@@ -458,8 +461,20 @@ func TestCIWorkflowKeepsOptInSuitesDisabled(t *testing.T) {
 	if strings.Contains(workflow, "SANDMAN_FULL_REGRESSION") {
 		t.Fatal("regular CI must not set SANDMAN_FULL_REGRESSION; only the full-regression workflow disables CI skips")
 	}
+	// The one credential-free fixture uses the real container startup path.
+	// Keep its selection exact; broad smoke/provider E2Es must remain disabled.
+	fakePermissionsStep := `      - name: Fake subagent container permissions
+        env:
+          SANDMAN_E2E_GATES: opencode_subagent
+        run: bash scripts/ci_report.sh container-permissions go test -tags e2e -json -count=1 -timeout=12m ./internal/cmd -run '^Test(OpencodeSubagentPermissionAllowAll|PermissionFakeAgentHomeIsolatedFromHostState|PythonBuildSecretIsTransient)$'
+
+`
+	if strings.Count(workflow, fakePermissionsStep) != 1 {
+		t.Fatal("regular Linux CI must run exactly the credential-free subagent permission fixture")
+	}
+	workflow = strings.Replace(workflow, fakePermissionsStep, "", 1)
 	if strings.Contains(workflow, "-tags smoke") || strings.Contains(workflow, "-tags e2e") {
-		t.Fatal("regular CI must not compile or run smoke/e2e-tagged tests")
+		t.Fatal("regular CI must not select broader smoke/e2e suites")
 	}
 	for _, required := range []string{
 		`export CONTAINERS_CONF="$RUNNER_TEMP/containers.conf"`,
@@ -635,7 +650,7 @@ func readRepositoryFile(t *testing.T, path string) string {
 
 func TestQualityGateRejectsUnsuccessfulDependencies(t *testing.T) {
 	for _, event := range []string{"pull_request", "push"} {
-		base := map[string]string{"SECURITY_RESULT": "success", "WORKFLOW_RESULT": "success", "STATIC_RESULT": "success", "CONTRACT_RESULT": "success", "LINUX_BUILD_RESULT": "success", "MACOS_BUILD_RESULT": "success", "PORTAL_RESULT": "success", "PACKAGING_RESULT": "success", "TITLE_RESULT": "success"}
+		base := map[string]string{"OPENCODE_RESULT": "success", "SECURITY_RESULT": "success", "WORKFLOW_RESULT": "success", "STATIC_RESULT": "success", "CONTRACT_RESULT": "success", "LINUX_BUILD_RESULT": "success", "MACOS_BUILD_RESULT": "success", "PORTAL_RESULT": "success", "PACKAGING_RESULT": "success", "TITLE_RESULT": "success"}
 		if event == "push" {
 			base["TITLE_RESULT"] = "skipped"
 		}
@@ -678,7 +693,7 @@ func TestCIQualityGateWorkflowContract(t *testing.T) {
 		"types: [opened, synchronize, reopened, edited]",
 		"group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}",
 		"cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
-		"needs: [security, workflow-validation, static-analysis, contracts, build-linux, build-macos, portal-continuity-browser, goreleaser, semantic-pull-request]",
+		"needs: [opencode-canary, security, workflow-validation, static-analysis, contracts, build-linux, build-macos, portal-continuity-browser, goreleaser, semantic-pull-request]",
 		"if: ${{ always() }}", "run: bash scripts/quality_gate.sh",
 		"LINUX_BUILD_RESULT: ${{ needs.build-linux.result }}",
 		"MACOS_BUILD_RESULT: ${{ needs.build-macos.result }}",
@@ -706,7 +721,7 @@ func TestCIQualityGateWorkflowContract(t *testing.T) {
 		}
 	}
 	gate := extractCIJob(t, ci, "quality-gate")
-	if !strings.Contains(gate, "if: ${{ always() }}") || !strings.Contains(gate, "needs: [security, workflow-validation, static-analysis, contracts, build-linux, build-macos, portal-continuity-browser, goreleaser, semantic-pull-request]") {
+	if !strings.Contains(gate, "if: ${{ always() }}") || !strings.Contains(gate, "needs: [opencode-canary, security, workflow-validation, static-analysis, contracts, build-linux, build-macos, portal-continuity-browser, goreleaser, semantic-pull-request]") {
 		t.Fatal("aggregate must always evaluate all mandatory dependencies")
 	}
 	title := extractCIJob(t, ci, "semantic-pull-request")
@@ -729,7 +744,7 @@ func TestCIQualityGateWorkflowContract(t *testing.T) {
 		}
 	}
 	packaging := extractCIJob(t, ci, "goreleaser")
-	setup, release := strings.Index(packaging, "uses: actions/setup-go@v5"), strings.Index(packaging, "uses: goreleaser/goreleaser-action@v6")
+	setup, release := strings.Index(packaging, "uses: actions/setup-go@"), strings.Index(packaging, "uses: goreleaser/goreleaser-action@")
 	if setup < 0 || release < setup || !strings.Contains(packaging, "go-version-file: .go-version") || !strings.Contains(packaging, "version: v2.10.1") || !strings.Contains(packaging, "args: release --snapshot --clean") {
 		t.Fatal("mandatory snapshot must explicitly set up Go and use the release tool version")
 	}
@@ -765,7 +780,7 @@ func TestQualityGatePartialPlatformReruns(t *testing.T) {
 	} {
 		t.Run(results.name, func(t *testing.T) {
 			cmd := exec.Command("bash", "quality_gate.sh")
-			cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "EVENT_NAME=pull_request", "LINUX_BUILD_RESULT=" + results.linux, "MACOS_BUILD_RESULT=" + results.macos, "SECURITY_RESULT=success", "WORKFLOW_RESULT=success", "STATIC_RESULT=success", "CONTRACT_RESULT=success", "PORTAL_RESULT=success", "PACKAGING_RESULT=success", "TITLE_RESULT=success"}
+			cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "EVENT_NAME=pull_request", "LINUX_BUILD_RESULT=" + results.linux, "MACOS_BUILD_RESULT=" + results.macos, "OPENCODE_RESULT=success", "SECURITY_RESULT=success", "WORKFLOW_RESULT=success", "STATIC_RESULT=success", "CONTRACT_RESULT=success", "PORTAL_RESULT=success", "PACKAGING_RESULT=success", "TITLE_RESULT=success"}
 			output, err := cmd.CombinedOutput()
 			if (err == nil) != results.pass {
 				t.Fatalf("success=%t, want %t: %v\n%s", err == nil, results.pass, err, output)
@@ -792,7 +807,7 @@ func TestCIValidationOwnershipAndReports(t *testing.T) {
 	}
 	for job, command := range map[string]string{"static-analysis": "make fmt-check vet staticcheck", "contracts": "make contracts", "portal-continuity-browser": "make test-browser", "build-linux": "make build-check test-ci", "build-macos": "make build-check test-ci"} {
 		block := extractCIJob(t, ci, job)
-		for _, required := range []string{command, "bash scripts/ci_report.sh", "if: ${{ always() }}", "uses: actions/upload-artifact@v4", "path: reports/"} {
+		for _, required := range []string{command, "bash scripts/ci_report.sh", "if: ${{ always() }}", "uses: actions/upload-artifact@", "path: reports/"} {
 			if !strings.Contains(block, required) {
 				t.Errorf("%s missing %q", job, required)
 			}
@@ -991,7 +1006,7 @@ func TestReleaseManifestInventoriesTaggedScenarios(t *testing.T) {
 				t.Errorf("real-provider scenario must belong to live tier: %s:%s", pkg, fn.Name.Name)
 			}
 			found := false
-			for _, tier := range []string{"integration", "live"} {
+			for _, tier := range []string{"integration", "live", "claude"} {
 				if required[tier+":"+pkg+":"+fn.Name.Name] != "" {
 					found = true
 				}
@@ -1033,5 +1048,87 @@ func TestReleaseTierJobsRemainIndependent(t *testing.T) {
 	}
 	if strings.Contains(workflow, "matrix:") {
 		t.Fatal("separate jobs must preserve per-tier outcomes on partial reruns")
+	}
+}
+
+func TestPublicationUsesSameRunValidatedSource(t *testing.T) {
+	release := readRepositoryFile(t, "../.github/workflows/release.yml")
+	for _, job := range []string{"quality", "regression", "native"} {
+		block := extractCIJob(t, release, job)
+		if !strings.Contains(block, "needs: candidate") || !strings.Contains(block, "uses: ./.github/workflows/") {
+			t.Errorf("%s must validate the caller source through a local reusable workflow", job)
+		}
+	}
+	gate := extractCIJob(t, release, "publication-gate")
+	for _, required := range []string{"always()", "needs: [candidate, quality, regression, native]", "toJSON(needs)", "python3 scripts/publication_gate.py"} {
+		if !strings.Contains(gate, required) {
+			t.Errorf("publication gate missing %s", required)
+		}
+	}
+	config := readRepositoryFile(t, "../.goreleaser.yml")
+	for _, required := range []string{"use_existing_draft: true", "draft: true"} {
+		if !strings.Contains(config, required) {
+			t.Errorf("GoReleaser must reuse and retain the prepared draft: missing %s", required)
+		}
+	}
+	publish := extractCIJob(t, release, "publish")
+	for _, required := range []string{"needs: [candidate, publication-gate]", "ref: ${{ needs.candidate.outputs.sha }}", "release --clean --draft", "python3 scripts/publication_finalize.py"} {
+		if !strings.Contains(publish, required) {
+			t.Errorf("publisher missing %s", required)
+		}
+	}
+	maintenance := extractCIJob(t, release, "release-please")
+	if strings.Contains(maintenance, "needs:") || !strings.Contains(maintenance, "skip-github-release: true") {
+		t.Fatal("release PR maintenance must be independent and cannot publish")
+	}
+	if !strings.Contains(readRepositoryFile(t, "../.github/rulesets/main.json"), `"strict_required_status_checks_policy": true`) {
+		t.Fatal("main must require up-to-date validation")
+	}
+}
+
+func TestClaudeProviderE2EsRequireManualDispatch(t *testing.T) {
+	workflow := readRepositoryFile(t, "../.github/workflows/full-regression-linux.yml")
+	manual := extractCIJob(t, workflow, "claude")
+	for _, required := range []string{"github.event_name == 'workflow_dispatch' && inputs.run_claude", "tier: claude", "secrets.CLAUDE_CODE_OAUTH_TOKEN"} {
+		if !strings.Contains(manual, required) {
+			t.Errorf("manual Claude job missing %q", required)
+		}
+	}
+	dispatch := extractOnSubBlock(t, workflow, "workflow_dispatch")
+	if !strings.Contains(dispatch, "run_claude:") || !strings.Contains(dispatch, "default: false") {
+		t.Fatal("Claude E2Es must require explicit opt-in on manual dispatch")
+	}
+	for _, source := range []string{extractCIJob(t, workflow, "live"), extractCIJob(t, workflow, "release-gate"), readRepositoryFile(t, "../.github/workflows/release.yml")} {
+		if strings.Contains(source, "CLAUDE_CODE_OAUTH_TOKEN") || strings.Contains(source, "needs.claude") {
+			t.Error("automatic release validation must not require Claude credentials or results")
+		}
+	}
+	var manifest struct{ Scenarios []struct{ Test, Tier string } }
+	if err := json.Unmarshal([]byte(readRepositoryFile(t, "release_scenarios.json")), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	for _, scenario := range manifest.Scenarios {
+		if scenario.Test == "TestPresetMatrixHarness_RealClaudeAgentReuseSession" && scenario.Tier != "claude" {
+			t.Fatal("Claude provider scenario must belong only to the manual tier")
+		}
+	}
+}
+
+func TestReleaseOpenCodePinMatchesScaffoldFallback(t *testing.T) {
+	var manifest struct {
+		Providers map[string]struct {
+			CLI string `json:"cli"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal([]byte(readRepositoryFile(t, "release_scenarios.json")), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	pin := manifest.Providers["opencode"].CLI
+	if pin != scaffold.DefaultBuiltInAgentVersion("opencode") {
+		t.Fatalf("release OpenCode %q differs from scaffold fallback %q", pin, scaffold.DefaultBuiltInAgentVersion("opencode"))
+	}
+	workflow := readRepositoryFile(t, "../.github/workflows/release-regression-tier.yml")
+	if !strings.Contains(workflow, "npm install -g opencode-ai@"+pin) || !strings.Contains(workflow, "$(opencode --version)\" = "+pin) {
+		t.Fatal("release installation and prerequisite check must match the manifest pin")
 	}
 }

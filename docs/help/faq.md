@@ -36,6 +36,10 @@ Sandman runs OpenCode headlessly (no TTY/PTY). The plugin teaches OpenCode to av
 
 Yes, through the `claude` preset (experimental in v1). Anthropic does not allow Claude subscription login in third-party harnesses such as OpenCode, but Sandman's `claude` preset runs the unmodified Claude Code binary (`claude -p`) with your own login, which is the sanctioned way to use a Pro, Max, Team, or Enterprise seat unattended. Limits are per seat and shared with claude.ai, so parallel AFK batches use them up faster than interactive work. See [Agent Compatibility > Claude Code](../usage/agent-compatibility.md#claude-code).
 
+## Can I open a Sandman run's agent conversation myself?
+
+Yes. The Portal's Run **Details** show the Run's `agentSessionId`. Resume it from the Run's worktree with `claude --resume <id>` (add `--fork-session` while the Run is still live) or `opencode --session <id>`. See [Monitoring > Resuming an agent session from the host](../usage/monitoring.md#resuming-an-agent-session-from-the-host).
+
 ## Does Sandman commit on my behalf?
 
 Yes. Sandman resolves `user.name` and `user.email` from your git config (host global/XDG first, then repo-local) and uses that identity for every agent commit. There is no Sandman-side commit author; the commit attribution is yours, with a `Co-authored-by:` trailer where appropriate (for example, on badge sidecars).

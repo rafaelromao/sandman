@@ -8,11 +8,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/shellenv"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 type fakeWorktreeForContainer struct {
@@ -328,14 +332,16 @@ func TestContainerSandbox_Exec_RunsContainerExec(t *testing.T) {
 	if captured[7] != "-c" {
 		t.Errorf("expected flag -c, got %q", captured[7])
 	}
-	if !strings.Contains(captured[8], "/tmp/agent-pgid") {
-		t.Errorf("expected command to contain pidfile mechanism, got %q", captured[8])
-	}
-	if !strings.Contains(captured[8], "echo hello") {
-		t.Errorf("expected command to contain original command echo hello, got %q", captured[8])
+	if !strings.Contains(captured[8], "echo $$ > '/tmp/sandman-agent-pgid-") {
+		t.Errorf("expected script to record its process group, got %q", captured[8])
 	}
 	if !strings.Contains(captured[8], "SANDMAN_GIT_GUARD_DIR") || !strings.Contains(captured[8], "/workspace/.sandman/agent-bin") {
-		t.Errorf("expected command to install the shared-worktree Git guard, got %q", captured[8])
+		t.Errorf("expected script to install the shared-worktree Git guard, got %q", captured[8])
+	}
+	// The runtime runs the script directly, with the command as an argument,
+	// so the script's $$ is the session leader's process group.
+	if got := captured[9:]; len(got) != 2 || got[1] != "echo hello" {
+		t.Errorf("expected the command as the script argument, got %q", got)
 	}
 }
 
@@ -445,7 +451,10 @@ func TestContainerSandbox_ExecInteractive_RunsContainerExec(t *testing.T) {
 		t.Errorf("expected container id abc123, got %q", captured[5])
 	}
 	if !strings.Contains(captured[8], "SANDMAN_GIT_GUARD_DIR") || !strings.Contains(captured[8], "/workspace/.sandman/agent-bin") {
-		t.Errorf("expected interactive command to install the shared-worktree Git guard, got %q", captured[8])
+		t.Errorf("expected interactive script to install the shared-worktree Git guard, got %q", captured[8])
+	}
+	if got := captured[9:]; len(got) != 2 || got[1] != "echo hello" {
+		t.Errorf("expected the command as the script argument, got %q", got)
 	}
 }
 
@@ -520,7 +529,7 @@ func TestContainerSandbox_Exec_KillAgentFnCalledOnAbort(t *testing.T) {
 
 	readyPath := filepath.Join(t.TempDir(), "child.ready")
 	var killCalls []string
-	KillAgentFn = func(containerID, binary string) error {
+	KillAgentFn = func(containerID, binary, _ string) error {
 		killCalls = append(killCalls, containerID)
 		return nil
 	}
@@ -601,19 +610,35 @@ func TestContainerSandbox_Exec_CancelsViaContext(t *testing.T) {
 		KillAgentFn = prevKill
 	}()
 	readyPath := filepath.Join(t.TempDir(), "child.ready")
-	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
-		return exec.Command("sh", "-c", fmt.Sprintf("touch %s && sleep 60", shellenv.Quote(readyPath)))
-	}
-	KillAgentFn = func(string, string) error { return nil }
+	// Start the descendant before readiness, and keep the shell waiting for it.
+	// Its PID file also lets teardown kill only this fixture after a regression.
+	fixture := exec.Command("sh", "-c", `sleep 60 & child=$!; printf '%s %s' "$$" "$child" > "$1"; wait "$child"`, "sh", readyPath)
+	ExecCommandFn = func(name string, arg ...string) *exec.Cmd { return fixture }
+	KillAgentFn = func(string, string, string) error { return nil }
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	errCh := make(chan error, 1)
+	doneCh := make(chan struct{})
 	go func() {
+		defer close(doneCh)
 		errCh <- sb.Exec(ctx, "echo hello", io.Discard, io.Discard)
 	}()
 
-	waitForChildReadyTB(t, readyPath, 2*time.Second)
+	// Join before restoring factory/kill seams, including on readiness or timeout failure.
+	defer func() {
+		cancel()
+		// Interactive execution may return while a descendant still owns the
+		// terminal descriptors. Always clean recorded PIDs before joining.
+		killCancellationFixture(t, readyPath)
+		select {
+		case <-doneCh:
+		case <-time.After(5 * time.Second):
+			t.Error("fixture execution did not finish after forced cleanup")
+		}
+	}()
+
+	waitRuntimeMarker(t, readyPath)
 	cancel()
 
 	select {
@@ -642,20 +667,41 @@ func TestContainerSandbox_ExecInteractive_CancelsViaContext(t *testing.T) {
 	sb := NewContainerSandbox(wt, ctr, "docker", repoPath)
 
 	prev := ExecCommandFn
-	defer func() { ExecCommandFn = prev }()
+	prevKill := KillAgentFn
+	defer func() {
+		ExecCommandFn = prev
+		KillAgentFn = prevKill
+	}()
+	KillAgentFn = func(string, string, string) error { return nil }
 	readyPath := filepath.Join(t.TempDir(), "child.ready")
-	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
-		return exec.Command("sh", "-c", fmt.Sprintf("touch %s && sleep 60", shellenv.Quote(readyPath)))
-	}
+	// Start the descendant before readiness, and keep the shell waiting for it.
+	// Its PID file also lets teardown kill only this fixture after a regression.
+	fixture := exec.Command("sh", "-c", `sleep 60 & child=$!; printf '%s %s' "$$" "$child" > "$1"; wait "$child"`, "sh", readyPath)
+	ExecCommandFn = func(name string, arg ...string) *exec.Cmd { return fixture }
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	errCh := make(chan error, 1)
+	doneCh := make(chan struct{})
 	go func() {
+		defer close(doneCh)
 		errCh <- sb.ExecInteractive(ctx, "echo hello")
 	}()
 
-	waitForChildReadyTB(t, readyPath, 2*time.Second)
+	// Join before restoring factory/kill seams, including on readiness or timeout failure.
+	defer func() {
+		cancel()
+		// Interactive execution may return while a descendant still owns the
+		// terminal descriptors. Always clean recorded PIDs before joining.
+		killCancellationFixture(t, readyPath)
+		select {
+		case <-doneCh:
+		case <-time.After(5 * time.Second):
+			t.Error("fixture execution did not finish after forced cleanup")
+		}
+	}()
+
+	waitRuntimeMarker(t, readyPath)
 	cancel()
 
 	select {
@@ -669,6 +715,153 @@ func TestContainerSandbox_ExecInteractive_CancelsViaContext(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("ExecInteractive did not unblock after context cancel — missing Setpgid on container sandbox?")
 	}
+}
+
+// An abort must kill the agent's whole process group inside the container,
+// whichever shell the image provides, and only that agent: several runs share
+// one container. The fake runtime starts each exec script as a session leader,
+// as `exec -t` does. Its client stands in for the runtime CLI: the host-side
+// abort kills the client, which leaves container processes running, so only
+// the real container-side kill script can stop an agent.
+func TestContainerSandbox_Exec_AbortKillsOnlyItsAgentProcessGroup(t *testing.T) {
+	seen := map[string]bool{}
+	for _, shell := range [][]string{{"/bin/sh"}, {"/bin/dash"}, {"/bin/bash"}, {"busybox", "sh"}} {
+		path, err := exec.LookPath(shell[0])
+		if err != nil {
+			continue
+		}
+		if resolved, err := filepath.EvalSymlinks(path); err == nil {
+			path = resolved
+		}
+		key := strings.Join(append([]string{path}, shell[1:]...), " ")
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		t.Run(filepath.Base(path), func(t *testing.T) { testAbortKillsOnlyItsAgentProcessGroup(t, shell) })
+	}
+	if len(seen) == 0 {
+		t.Skip("no POSIX shell available")
+	}
+}
+
+func testAbortKillsOnlyItsAgentProcessGroup(t *testing.T, shell []string) {
+	repoPath := t.TempDir()
+	pgidDir := t.TempDir()
+	ctr := &fakeContainer{id: "shared123"}
+
+	prevExec, prevKill := ExecCommandFn, KillAgentFn
+	defer func() { ExecCommandFn, KillAgentFn = prevExec, prevKill }()
+	KillAgentFn = func(_, _, pgidFile string) error {
+		return exec.Command("sh", "-c", killAgentScript(pgidFile)).Run()
+	}
+	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
+		i := slices.Index(arg, "sh")
+		if i < 0 {
+			t.Errorf("container-side shell missing from exec arguments %q", arg)
+			return exec.Command("false")
+		}
+		script := arg[i+1:]
+		leader := exec.Command(shell[0], append(slices.Clone(shell[1:]), script...)...)
+		leader.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if err := leader.Start(); err != nil {
+			t.Errorf("start container-side shell: %v", err)
+			return exec.Command("false")
+		}
+		exited := make(chan struct{})
+		go func() {
+			_ = leader.Wait()
+			close(exited)
+		}()
+		t.Cleanup(func() {
+			select {
+			case <-exited:
+			default:
+				_ = syscall.Kill(-leader.Process.Pid, syscall.SIGKILL)
+				<-exited
+			}
+		})
+		return exec.Command("sh", "-c", `while kill -0 "$1" 2>/dev/null; do sleep 0.05; done`, "client", strconv.Itoa(leader.Process.Pid))
+	}
+
+	type agentExec struct {
+		cancel   context.CancelFunc
+		finished chan struct{}
+		err      error
+		childPID int
+	}
+	var started []*agentExec
+	// Join every Exec before the seams are restored.
+	defer func() {
+		for _, e := range started {
+			e.cancel()
+			select {
+			case <-e.finished:
+			case <-time.After(15 * time.Second):
+				t.Error("Exec did not return after cancel")
+			}
+		}
+	}()
+	start := func(name string) *agentExec {
+		t.Helper()
+		worktree := filepath.Join(repoPath, ".sandman", "worktrees", name)
+		sb := NewSharedContainerSandbox(&fakeWorktreeForContainer{workDir: worktree}, ctr, "podman", repoPath)
+		sb.pgidDir = pgidDir
+		childPIDFile := filepath.Join(pgidDir, name+".child")
+		ctx, cancel := context.WithCancel(context.Background())
+		e := &agentExec{cancel: cancel, finished: make(chan struct{})}
+		started = append(started, e)
+		go func() {
+			defer close(e.finished)
+			e.err = sb.Exec(ctx, "sleep 60 & echo $! > "+shellenv.Quote(childPIDFile)+"; wait", io.Discard, io.Discard)
+		}()
+		waitRuntimeMarker(t, childPIDFile)
+		data, err := os.ReadFile(childPIDFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e.childPID, err = strconv.Atoi(strings.TrimSpace(string(data))); err != nil {
+			t.Fatalf("parse agent child PID %q: %v", data, err)
+		}
+		// Kill only this fixture's agent if it survived a failed abort.
+		t.Cleanup(func() {
+			if testenv.ProcessAlive(e.childPID) {
+				_ = syscall.Kill(e.childPID, syscall.SIGKILL)
+			}
+		})
+		return e
+	}
+	abort := func(e *agentExec) {
+		t.Helper()
+		e.cancel()
+		select {
+		case <-e.finished:
+		case <-time.After(15 * time.Second):
+			t.Fatal("Exec did not return after cancel")
+		}
+		if !errors.Is(e.err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got: %v", e.err)
+		}
+		var cleanupErr *CleanupError
+		if errors.As(e.err, &cleanupErr) {
+			t.Errorf("container-side kill failed: %v", e.err)
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for testenv.ProcessAlive(e.childPID) {
+			if time.Now().After(deadline) {
+				t.Fatalf("agent child %d survived the abort: the recorded process group missed it", e.childPID)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	// b records its process group after a, so a shared record would name b.
+	a, b := start("a"), start("b")
+	abort(a)
+	if !testenv.ProcessAlive(b.childPID) {
+		t.Fatal("aborting one run killed another run's agent in the shared container")
+	}
+	abort(b)
 }
 
 func TestContainerSandbox_Exec_KillAgentFnUsesBinary(t *testing.T) {
@@ -693,7 +886,7 @@ func TestContainerSandbox_Exec_KillAgentFnUsesBinary(t *testing.T) {
 		containerID string
 		binary      string
 	}
-	KillAgentFn = func(containerID, binary string) error {
+	KillAgentFn = func(containerID, binary, _ string) error {
 		killCalls = append(killCalls, struct {
 			containerID string
 			binary      string
@@ -758,5 +951,23 @@ func waitForChildReadyTB(t *testing.T, path string, timeout time.Duration) {
 			t.Fatalf("timed out waiting for child readiness marker %s", path)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// Kill the recorded descendant as well as its group leader: this cleanup also
+// works when the behavior under test accidentally kills only the leader.
+func killCancellationFixture(t *testing.T, marker string) {
+	t.Helper()
+	data, err := os.ReadFile(marker)
+	if err != nil {
+		return // Readiness was never published; context cancellation owns startup.
+	}
+	for _, field := range strings.Fields(string(data)) {
+		pid, err := strconv.Atoi(field)
+		if err != nil || pid <= 1 {
+			t.Errorf("invalid fixture PID %q", field)
+			continue
+		}
+		_ = syscall.Kill(pid, syscall.SIGKILL)
 	}
 }

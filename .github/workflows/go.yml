@@ -1,6 +1,10 @@
 name: CI
 
 on:
+  workflow_call:
+    secrets:
+      OPENCODE_API_KEY:
+        required: false
   push:
     branches: [main]
   pull_request:
@@ -270,6 +274,11 @@ jobs:
           SANDMAN_E2E_GATES: ""
         run: bash scripts/ci_report.sh race-linux make build-check test-ci
 
+      - name: Fake subagent container permissions
+        env:
+          SANDMAN_E2E_GATES: opencode_subagent
+        run: bash scripts/ci_report.sh container-permissions go test -tags e2e -json -count=1 -timeout=12m ./internal/cmd -run '^Test(OpencodeSubagentPermissionAllowAll|PermissionFakeAgentHomeIsolatedFromHostState|PythonBuildSecretIsTransient)$'
+
       - name: Report Go coverage and evaluate policy
         if: ${{ always() && hashFiles('reports/coverage.out') != '' }}
         env:
@@ -378,15 +387,33 @@ jobs:
           path: reports/
           if-no-files-found: warn
 
+  opencode-canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Install release-pinned OpenCode
+        run: npm install -g "opencode-ai@$(python3 -c 'import json; print(json.load(open("scripts/release_scenarios.json"))["providers"]["opencode"]["cli"])')"
+      - name: One minimal provider request
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: python3 scripts/opencode_canary.py
+
   quality-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     if: ${{ always() }}
-    needs: [security, workflow-validation, static-analysis, contracts, build-linux, build-macos, portal-continuity-browser, goreleaser, semantic-pull-request]
+    needs: [opencode-canary, security, workflow-validation, static-analysis, contracts, build-linux, build-macos, portal-continuity-browser, goreleaser, semantic-pull-request]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Require mandatory checks
         env:
+          OPENCODE_RESULT: ${{ needs.opencode-canary.result }}
           SECURITY_RESULT: ${{ needs.security.result }}
           WORKFLOW_RESULT: ${{ needs.workflow-validation.result }}
           STATIC_RESULT: ${{ needs.static-analysis.result }}

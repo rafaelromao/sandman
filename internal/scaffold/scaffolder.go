@@ -88,17 +88,23 @@ func DefaultNodeLTSVersion() string {
 
 // Options configures the scaffolding behavior.
 type Options struct {
-	BuildTools       string // --build-tools override
-	ToolVersion      string // --tool-version override
-	Agent            string // --agent override
-	Model            string // --model override
-	Variant          string // --variant override
-	Parallel         int    // --parallel override (-1 = use config default)
-	ParallelReviews  int    // --parallel-reviews override (-1 = use config default)
-	ReviewCommand    string // --review-command override
-	Retries          *int   // --retries override; nil = use config.DefaultRetries
-	RunIdleTimeout   *int   // --run-idle-timeout override; nil = use config.DefaultRunIdleTimeout
-	ReviewTimeout    *int   // --review-timeout override; nil = use config.DefaultReviewTimeout
+	BuildTools      string // --build-tools override
+	ToolVersion     string // --tool-version override
+	Agent           string // --agent override
+	Model           string // --model override
+	Variant         string // --variant override
+	ReviewModel     string // --review-model override
+	ReviewVariant   string // --review-variant override
+	Parallel        int    // --parallel override (-1 = use config default)
+	ParallelReviews int    // --parallel-reviews override (-1 = use config default)
+	ReviewCommand   string // --review-command override
+	Retries         *int   // --retries override; nil = use config.DefaultRetries
+	RunIdleTimeout  *int   // --run-idle-timeout override; nil = use config.DefaultRunIdleTimeout
+	ReviewTimeout   *int   // --review-timeout override; nil = use config.DefaultReviewTimeout
+	// CACerts holds the --ca-cert values: PEM paths, CACertAuto, or
+	// CACertNone. Empty keeps the trusted certificates already in
+	// .sandman/certs/.
+	CACerts          []string
 	Writer           io.Writer
 	DiagnosticWriter io.Writer
 }
@@ -137,6 +143,8 @@ var sharedPackages = []string{
 	"ca-certificates",
 	"curl",
 	"file",
+	"fontconfig",
+	"fonts-liberation",
 	"gh",
 	"git",
 	"jq",
@@ -229,7 +237,8 @@ var KnownBuildToolsPresets = func() []string {
 }()
 
 var builtInAgentVersionCatalog = map[string][]string{
-	"opencode": {"1.15.0", "1.14.0", "1.13.0"},
+	"opencode-v2": {"2.1.2"},
+	"opencode":    {"1.19.3", "1.18.0", "1.15.0", "1.14.0", "1.13.0"},
 	// 2.1.277 is the floor: the first Claude Code release that reads
 	// AGENTS.md natively.
 	"claude": {"2.1.283"},
@@ -245,6 +254,7 @@ type agentInstaller struct {
 	// probeHostVersion returns the agent version installed on the host, or
 	// is nil when init always pins the catalog head.
 	probeHostVersion func() (string, error)
+	validateVersion  func(string) error
 }
 
 // InstallCommand renders the Dockerfile instruction that installs version.
@@ -274,9 +284,26 @@ func (i agentInstaller) ProbeHostVersion() (string, bool) {
 var agentInstallers = map[string]agentInstaller{
 	"opencode": {
 		packageName: "opencode-ai",
+		validateVersion: func(version string) error {
+			if !strings.HasPrefix(version, "1.") {
+				return fmt.Errorf("unsupported OpenCode version %q: the opencode preset requires OpenCode V1; use --agent opencode-v2 for a V2 host, or install opencode-ai@%s and retry init", version, DefaultBuiltInAgentVersion("opencode"))
+			}
+			return nil
+		},
 		// Late-bound so tests can replace probeOpencodeVersion.
 		probeHostVersion: func() (string, error) { return probeOpencodeVersion() },
 	},
+	"opencode-v2": {
+		packageName:      "@opencode/cli",
+		probeHostVersion: func() (string, error) { return probeOpencodeVersion() },
+		validateVersion: func(version string) error {
+			if !strings.HasPrefix(version, "2.") {
+				return fmt.Errorf("unsupported OpenCode version %q: the opencode-v2 preset requires OpenCode V2; use --agent opencode for a V1 host, or install @opencode/cli@2.1.2 and retry init", version)
+			}
+			return nil
+		},
+	},
+
 	"claude": {
 		packageName: "@anthropic-ai/claude-code",
 	},
@@ -483,6 +510,9 @@ type Scaffolder struct {
 	Gitignore GitignoreRuleWriter
 	GitOps    GitOps
 	HooksDir  string
+	// TLSTrust is the host trust seam for `--ca-cert auto`; the zero value
+	// probes the real download hosts with the host's trust store.
+	TLSTrust TLSTrust
 }
 
 // resolveGitignore returns the configured GitignoreRuleWriter, falling
@@ -550,13 +580,31 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return fmt.Errorf("stat .sandman: %w", err)
 	}
 
-	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
-		return fmt.Errorf("create .sandman: %w", err)
+	// Resolve trusted CA certificates before the first write so invalid
+	// input leaves an existing scaffold untouched.
+	caCerts, err := s.resolveCACerts(sandmanDir, opts.CACerts)
+	if err != nil {
+		return err
 	}
 
 	defaultAgent, err := s.resolveDefaultAgent(opts, preserved)
 	if err != nil {
 		return err
+	}
+	agentVersion := resolveAgentVersion(defaultAgent)
+	if validate := agentInstallers[defaultAgent].validateVersion; validate != nil {
+		if err := validate(agentVersion); err != nil {
+			return err
+		}
+	}
+
+	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+		return fmt.Errorf("create .sandman: %w", err)
+	}
+	if caCerts.replace {
+		if err := writeCACertDir(caCertsDir(sandmanDir), caCerts.certs); err != nil {
+			return err
+		}
 	}
 
 	preset, err := s.resolveBuildToolsPreset(repoRoot, opts, p)
@@ -631,6 +679,10 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	if model == "" {
 		model = config.DefaultModelForAgent(defaultAgent)
 	}
+	reviewModel := opts.ReviewModel
+	if reviewModel == "" {
+		reviewModel = config.DefaultModelForAgent(defaultAgent)
+	}
 
 	retries, err := resolveRetries(opts.Retries)
 	if err != nil {
@@ -651,7 +703,8 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		DefaultModel:          model,
 		Variant:               strings.TrimSpace(opts.Variant),
 		DefaultReviewAgent:    defaultAgent,
-		DefaultReviewModel:    config.DefaultModelForAgent(defaultAgent),
+		DefaultReviewModel:    reviewModel,
+		ReviewVariant:         strings.TrimSpace(opts.ReviewVariant),
 		BuildTools:            preset.Name,
 		ReviewCommand:         effectiveReviewCommand(opts.ReviewCommand),
 		DefaultParallel:       parallel,
@@ -681,8 +734,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		}
 	}
 
-	agentVersion := resolveAgentVersion(defaultAgent)
-	dockerfile := s.renderBuildToolsDockerfile(preset, defaultAgent, agentVersion, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion, rubyVersion, rustVersion, javaVersion)
+	dockerfile := s.renderBuildToolsDockerfile(preset, defaultAgent, agentVersion, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion, rubyVersion, rustVersion, javaVersion, caCertFingerprints(caCerts.certs))
 	dockerfilePath := layout.DockerfilePath()
 	if err := atomicfs.WriteAtomic(dockerfilePath, []byte(dockerfile), 0644); err != nil {
 		return fmt.Errorf("write Dockerfile: %w", err)
@@ -719,6 +771,9 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		".sandman/reviews/review-prompt.md",
 		".sandman/reviews/quality-rules.md",
 	}
+	if len(caCerts.certs) > 0 {
+		scaffoldedFiles = append(scaffoldedFiles, ".sandman/certs/")
+	}
 	summary := s.formatInitSummary(
 		preset.Name,
 		defaultAgent,
@@ -739,7 +794,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	if w == nil {
 		w = io.Discard
 	}
-	fmt.Fprint(w, configUpdate+summary)
+	fmt.Fprint(w, caCerts.report+configUpdate+summary)
 
 	return nil
 }
@@ -2070,7 +2125,7 @@ func resolveAgentVersion(agent string) string {
 	return DefaultBuiltInAgentVersion(agent)
 }
 
-func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, defaultAgent, agentVersion, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion, rubyVersion, rustVersion, javaVersion string) string {
+func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, defaultAgent, agentVersion, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion, rubyVersion, rustVersion, javaVersion string, caFingerprints []string) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "# sandman build-tools: %s\n", preset.Name)
 	fmt.Fprintf(&out, "# sandman default-agent: %s\n", defaultAgent)
@@ -2103,10 +2158,12 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	fmt.Fprintf(&out, "# sandman mise-version: %s\n", preset.MiseVersion)
 	fmt.Fprintf(&out, "# sandman rtk-version: %s\n", DefaultRTKVersion)
 	fmt.Fprintf(&out, "%s\n", renderAnalyzerMetadataLine(preset.Name, goVersion, nodeVersion, dotnetVersion, rustVersion))
+	out.WriteString(renderCACertMetadataLine(caFingerprints))
 	fmt.Fprintf(&out, "FROM %s\n", preset.BaseImage)
 	aptPackages := append([]string{}, preset.SharedPackages...)
 	aptPackages = append(aptPackages, preset.ExtraPackages...)
 	fmt.Fprintf(&out, "RUN apt-get update && apt-get install -y --no-install-recommends %s && rm -rf /var/lib/apt/lists/*\n", strings.Join(aptPackages, " "))
+	out.WriteString(renderCACertInstall(caFingerprints))
 	// Download to a file so a failed download fails this step: Debian's sh has
 	// no pipefail, and `curl | sh` caches an empty layer that only surfaces as
 	// `mise: not found` at the first step using mise.
@@ -2452,7 +2509,8 @@ func renderNodeInstallCommand(version string) string {
 
 func renderPythonInstallCommand(version string) string {
 	var out strings.Builder
-	out.WriteString(fmt.Sprintf("RUN mise use -g --pin python@%s\n", version))
+	out.WriteString(fmt.Sprintf(`RUN --mount=type=secret,id=github_token if [ -s /run/secrets/github_token ]; then export GITHUB_TOKEN="$(cat /run/secrets/github_token)"; export MISE_GITHUB_TOKEN="$GITHUB_TOKEN"; fi; mise use -g --pin python@%s
+`, version))
 	out.WriteString("RUN pip3 install uv\n")
 	out.WriteString("RUN ln -sf \"$(dirname \"$(mise which python3)\")/uv\" /usr/local/bin/uv\n")
 	return out.String()
@@ -2608,7 +2666,8 @@ func ValidateDockerfileMetadata(repoRoot, expectedBuildTools, expectedDefaultAge
 		expectedBuildTools = defaultBuildToolsPreset
 	}
 	expectedDefaultAgent = strings.TrimSpace(expectedDefaultAgent)
-	dockerfilePath := paths.NewLayout(&config.Config{}, repoRoot).DockerfilePath()
+	layout := paths.NewLayout(&config.Config{}, repoRoot)
+	dockerfilePath := layout.DockerfilePath()
 	meta, found, err := readDockerfileMetadata(dockerfilePath)
 	if err != nil {
 		return err
@@ -2632,7 +2691,7 @@ func ValidateDockerfileMetadata(repoRoot, expectedBuildTools, expectedDefaultAge
 		}
 		return fmt.Errorf("scaffold metadata drift: Dockerfile installed-agents %v does not include agent %q; install it in .sandman/Dockerfile and add it to the \"# sandman installed-agents:\" header", meta.InstalledAgents, agent)
 	}
-	return nil
+	return validateCACertMetadata(layout.SandmanDir, meta.CACerts)
 }
 
 type dockerfileMetadata struct {
@@ -2651,6 +2710,7 @@ type dockerfileMetadata struct {
 	MiseVersion      string
 	RtkVersion       string
 	Analyzers        string
+	CACerts          []string
 }
 
 func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
@@ -2729,6 +2789,13 @@ func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
 			meta.RtkVersion = strings.TrimSpace(value)
 		case "analyzers":
 			meta.Analyzers = strings.TrimSpace(value)
+		case "ca-certs":
+			meta.CACerts = nil
+			for _, part := range strings.Split(value, ",") {
+				if trimmed := strings.TrimSpace(part); trimmed != "" {
+					meta.CACerts = append(meta.CACerts, trimmed)
+				}
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {

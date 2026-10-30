@@ -17,6 +17,7 @@ Creates or updates:
 | `.sandman/prompt.md` | Project Prompt Template used to render each agent task |
 | `.sandman/reviews/review-prompt.md` | Review-agent prompt template used by `sandman review` |
 | `.sandman/reviews/quality-rules.md` | Review quality rules used by the review prompt |
+| `.sandman/certs/*.crt` | Trusted CA certificates baked into the image; written only with `--ca-cert` |
 
 The scaffolded `.sandman/Dockerfile` is a **minimal BuildToolsPreset** for the detected project type. It includes the shared baseline packages and the preset-specific toolchain, but it is intentionally lightweight. Before starting work with Sandman, **review and extend `.sandman/Dockerfile`** with the project-specific tools, runtimes, and system packages you need — then rebuild the container image so the sandbox has everything your work requires.
 
@@ -28,7 +29,27 @@ If `.sandman/` already exists, `sandman init` asks before overwriting in an inte
 
 A valid existing `.sandman/config.yaml` is preserved, with one exception: an explicit `--agent` switches it. `agent` becomes the new preset and `model` becomes `--model` or the preset's default model. A `review_agent` that followed the previous default agent moves too, with the new preset's default `review_model`; a separately chosen review agent is kept. `init` prints the keys it changed. Without `--agent`, re-running `init` keeps the configured built-in agent in the regenerated Dockerfile.
 
+Trusted CA certificates in `.sandman/certs/` survive re-initialization: `init` without `--ca-cert` keeps them and renders them into the regenerated Dockerfile.
+
 Review prompt files are write-if-missing: existing `.sandman/reviews/review-prompt.md` and `.sandman/reviews/quality-rules.md` files are preserved so local edits survive re-initialization.
+
+## Trusted CA certificates
+
+Behind a TLS-inspection proxy, HTTPS downloads inside the image build fail with `curl: (60) SSL certificate problem: unable to get local issuer certificate`, because the Debian base image does not trust the proxy's certificate authority. `sandman init --ca-cert` bakes that authority into the image:
+
+```bash
+sandman init --ca-cert auto
+sandman init --ca-cert ./corp-root.pem
+sandman init --ca-cert none
+```
+
+- **`<path>`** reads a PEM file holding one or more certificates. Each certificate is stored as `.sandman/certs/<fingerprint>.crt`.
+- **`auto`** probes the HTTPS hosts the image build downloads from (`mise.run`, `github.com`, `registry.npmjs.org`), honoring `HTTPS_PROXY`, and trusts any root that this host trusts but that is not a public root of the operating system. On macOS the public set is the system root keychain; on Linux it is the distro's Mozilla bundle. Without a public set, `auto` trusts a root only when every probed host shares it; that heuristic can pick a public root, so check the root it prints. It prints each captured root, or `no TLS interception detected` and leaves the trusted set unchanged. When this host cannot verify those hosts either, it fails and asks for `--ca-cert <path>`.
+- **`none`** removes every trusted certificate. It cannot be combined with other values.
+
+Paths and `auto` can be combined; together they replace the trusted set. The regenerated Dockerfile copies `.sandman/certs/` into the image, runs `update-ca-certificates` right after the `apt-get` step, and points `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, and `CURL_CA_BUNDLE` at the system bundle so curl, mise, npm, Python, and the agent CLIs all trust it. A `# sandman ca-certs:` header records the fingerprints; a run fails before building when `.sandman/certs/` no longer matches it, asking you to rerun `sandman init`.
+
+The image is built with the repository root as its context, so a `.dockerignore` or `.containerignore` that excludes `.sandman/` breaks the certificate copy.
 
 ## Build-tools presets
 
@@ -46,7 +67,7 @@ The `build_tools` config value controls the toolchain installed into the scaffol
 | `rust` | Rust/Cargo projects | Rust via mise |
 | `java` | Maven/Gradle projects | Java via mise |
 
-Every preset starts from `debian:bookworm-slim` and includes the shared baseline packages: bash, build tools, certificates, curl, file, `gh`, git, jq, Node/npm, OpenSSH client, Python/pip, ripgrep, unzip, xz-utils, and yq.
+Every preset starts from `debian:bookworm-slim` and includes the shared baseline packages: bash, build tools, certificates, curl, file, `fontconfig`, `fonts-liberation`, `gh`, git, jq, Node/npm, OpenSSH client, Python/pip, ripgrep, unzip, xz-utils, and yq.
 
 ## Auto-detection
 
@@ -104,7 +125,7 @@ Useful init flags:
 
 | Flag | Purpose |
 |------|---------|
-| `--agent` | Default built-in agent preset (`opencode` or `claude`); it is installed in the Dockerfile and written as `agent` and `review_agent`, with the preset's default model |
+| `--agent` | Default built-in agent preset (`opencode`, `opencode-v2`, or `claude`); it is installed in the Dockerfile and written as `agent` and `review_agent`, with the preset's default model |
 | `--model` | Default agent model |
 | `--variant` | Default provider-specific implementation model variant |
 | `--build-tools` | Build-tools preset |
@@ -115,6 +136,12 @@ Useful init flags:
 | `--retries` | Persist default retry count |
 | `--run-idle-timeout` | Persist idle timeout in seconds |
 | `--review-timeout` | Persist delegated review response timeout in seconds; minimum `240`, default `1800` |
+
+OpenCode generations are separate presets: `opencode` installs `opencode-ai@1.x`,
+while `opencode-v2` installs `@opencode/cli@2.x`. Each pins its detected host
+version or its own fallback when the CLI is absent. Select `--agent opencode-v2`
+on a v2 host; a mismatched major fails before writing the scaffold. The default
+remains `opencode` for existing projects. See [OpenCode generations](agent-compatibility.md#opencode-generations).
 
 ## Changing presets later
 
@@ -131,7 +158,7 @@ The config value controls future runs, and re-running `init` regenerates the sca
 
 The scaffolded Dockerfile starts with `# sandman ...` metadata comments. `# sandman installed-agents:` lists the built-in agent presets installed in the image; `init` installs only the default agent. Before a container run, Sandman requires `installed-agents` to contain the run agent's preset, so a missing agent fails early with a metadata error instead of `command not found` inside the container. `# sandman default-agent:` must match the config `agent` only when the run uses that default agent; a run that selects another agent with `--agent`, or a review run, depends only on its own agent.
 
-To use both presets from one image, add the second agent's install line and list both in the header:
+To use OpenCode and Claude Code from one image, add the second agent's install line and list both in the header:
 
 ```dockerfile
 # sandman installed-agents: opencode, claude

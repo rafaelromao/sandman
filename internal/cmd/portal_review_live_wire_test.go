@@ -70,7 +70,7 @@ func TestPortal_Compute_LiveReviewCarriesReviewLiveJSON(t *testing.T) {
 		t.Fatalf("expected impl row for #2109, got %#v", runs)
 	}
 	if !implRow.ReviewLive {
-		t.Fatalf("impl row ReviewLive=false, want true (in-flight sibling review must stamp ReviewLive via aggregateReviewChildren, issue #2109)")
+		t.Fatalf("impl row ReviewLive=false, want true (in-flight sibling review must stamp ReviewLive via projectIssueGroups, issue #2109)")
 	}
 	if implRow.Status != "success" {
 		t.Fatalf("impl row Status=%q, want %q (terminal parent Status must NOT be flipped to \"reviewing\" — existing badge-flip invariant preserved)", implRow.Status, "success")
