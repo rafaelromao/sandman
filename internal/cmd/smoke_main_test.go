@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/rafaelromao/sandman/internal/scaffold"
 )
 
@@ -118,7 +119,7 @@ func prewarmSmokeImage(provider, buildTools string) (string, error) {
 		return "", fmt.Errorf("resolve runtime: %w", err)
 	}
 	tag := fmt.Sprintf("sandman-smoke-%s-%s:prewarm", provider, buildTools)
-	cmd := exec.Command(runtime, "build", "-t", tag, "-f", filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)
+	cmd := exec.Command(runtime, sandbox.ImageBuildArgs(tag, filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("prewarm build: %w: %s", err, out)
 	}

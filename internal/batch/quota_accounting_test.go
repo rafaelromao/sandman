@@ -49,7 +49,7 @@ func TestQuotaAccountingRestoresPollingWithoutChargingDowntime(t *testing.T) {
 	opts.now = func() time.Time { return now }
 	o := NewOrchestrator(client, &noopRenderer{}, nil, log, WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(sbFactory), WithRunSessionOpts(opts))
 	result, _ := o.newRunExecutor(context.Background(), BatchConfig{Cfg: &config.Config{WorktreeDir: "worktrees"}, AgentCfg: config.BuiltInAgentPresets["opencode"].Agent("opencode"), IdentityResolver: noopIdentityResolver(), Retries: 1}, sbFactory, nil).Execute(context.Background(), RowSpec{
-		IssueNumber: 42, Mode: ModeContinue, RunID: "row", UsageLimitProbe: true, Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main",
+		IssueNumber: 42, Mode: ModeContinue, RunID: "row", quotaAllowance: usageLimitAllowance{probe: true}, Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main",
 	})
 	states := events.ProjectRunStates(log.snapshot())
 	if result.Status != "await" || launches != 1 || len(states) != 1 || states[0].AwaitEvent == nil {
@@ -96,7 +96,7 @@ func TestQuotaAccountingUnavailableStillPermitsOrdinaryRecovery(t *testing.T) {
 			})}}
 			sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: root}}
 			o := NewOrchestrator(client, &noopRenderer{}, nil, eventLog, WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(sbFactory), WithRunSessionOpts(gateTestRunOptions()))
-			result, _ := o.newRunExecutor(context.Background(), BatchConfig{Cfg: &config.Config{WorktreeDir: "worktrees"}, AgentCfg: config.BuiltInAgentPresets["opencode"].Agent("opencode"), IdentityResolver: noopIdentityResolver(), Retries: 1}, sbFactory, nil).Execute(context.Background(), RowSpec{IssueNumber: 42, Mode: ModeContinue, RunID: "row", UsageLimitProbe: true, Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main"})
+			result, _ := o.newRunExecutor(context.Background(), BatchConfig{Cfg: &config.Config{WorktreeDir: "worktrees"}, AgentCfg: config.BuiltInAgentPresets["opencode"].Agent("opencode"), IdentityResolver: noopIdentityResolver(), Retries: 1}, sbFactory, nil).Execute(context.Background(), RowSpec{IssueNumber: 42, Mode: ModeContinue, RunID: "row", quotaAllowance: usageLimitAllowance{probe: true}, Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main"})
 			wantAwaits := 0
 			if kind != "missing-operation" {
 				wantAwaits = 1 // Existing evidence only; no new wait may be invented.
@@ -165,7 +165,7 @@ func TestQuotaAccountingSurvivesSchedulerReconstruction(t *testing.T) {
 	}}
 	layout := paths.NewLayout(&config.Config{WorktreeDir: "worktrees"}, root)
 	recovery := daemon.RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "old", Issue: 42, Branch: gateTestBranch, BaseBranch: "main", OperationID: "quota:old", OperationDeadline: now.Add(10 * time.Minute), UsageLimitProbe: true, NextPollAt: now.Add(-time.Minute)}
-	if err := daemon.RenewRunWait(layout.BatchDir("old"), recovery, now); err != nil {
+	if err := daemon.RenewRunWait(layout, layout.LocateBatch("old", ""), recovery, now); err != nil {
 		t.Fatal(err)
 	}
 	worktree := filepath.Join(layout.WorktreeDir, gateTestBranch)
@@ -205,25 +205,25 @@ func TestQuotaOwnershipEstimateDoesNotChangeOperationOrGrace(t *testing.T) {
 	}
 	defer claim.Close()
 	pulse := make(chan time.Time)
-	owner, err := newWaitOwner(layout.BatchDir("batch"), daemon.RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "batch", Issue: 42, Branch: gateTestBranch, BaseBranch: "main", UsageLimitProbe: true, OperationID: "quota:old-estimate", OperationDeadline: now.Add(time.Hour)}, func() time.Time { return now }, log, pulse)
+	owner, err := newWaitOwner(layout, layout.LocateBatch("batch", ""), daemon.RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "batch", Issue: 42, Branch: gateTestBranch, BaseBranch: "main", UsageLimitProbe: true, OperationID: "quota:old-estimate", OperationDeadline: now.Add(time.Hour)}, func() time.Time { return now }, log, pulse)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer owner.close()
-	row := RowSpec{IssueNumber: 42, RunID: "row", Mode: ModeContinue, UsageLimitProbe: true, UsageLimitDeadline: now.Add(time.Hour), Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main"}
+	row := RowSpec{IssueNumber: 42, RunID: "row", Mode: ModeContinue, quotaAllowance: usageLimitAllowance{probe: true, deadline: now.Add(time.Hour)}, Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main"}
 	if err := owner.checkpoint(row, false, usageLimitPollInterval); err != nil {
 		t.Fatal(err)
 	}
-	first, err := daemon.ReadRunWait(layout.BatchDir("batch"), "row")
+	first, err := daemon.ReadRunWaitAt(layout, layout.LocateBatch("batch", ""), "row")
 	if err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(2 * time.Hour) // Capacity/downtime cannot consume polling.
-	row.UsageLimitDeadline = now.Add(usageLimitRetryWindow - 10*time.Minute)
+	row.quotaAllowance = row.quotaAllowance.continueProbe(now.Add(usageLimitRetryWindow - 10*time.Minute))
 	if err := owner.checkpoint(row, true, 0); err != nil {
 		t.Fatalf("recomputed quota estimate vetoed ownership: %v", err)
 	}
-	saved, err := daemon.ReadRunWait(layout.BatchDir("batch"), "row")
+	saved, err := daemon.ReadRunWaitAt(layout, layout.LocateBatch("batch", ""), "row")
 	if err != nil || saved.OperationID != first.OperationID || saved.OperationID != "quota:row" || !saved.OperationDeadline.IsZero() || !saved.LeaseExpiresAt.Equal(now.Add(daemon.RunRecoveryGrace)) {
 		t.Fatalf("quota estimate became a hard lifetime or a new operation: first=%+v saved=%+v error=%v", first, saved, err)
 	}

@@ -15,10 +15,120 @@ import (
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
-// RowSpec carries the per-row-varying inputs for one AgentRun — the inputs that
-// differ across issues/runs within a batch. It is the elevated seam's input:
-// runSingleRow / runPromptOnlyRow take a RowSpec instead of the historical
-// 28-/27-positional-argument packers (wayfinder map #2226, #2228).
+// RunSpec is the immutable identity and policy input for one admitted Run. The
+// pointer payload is an immutable snapshot of row-specific rendering and review
+// settings; lifecycle identity is explicit and never rewritten during a wait.
+type RunSpec struct {
+	RunID       string
+	IssueNumber int
+	BatchID     string
+	BatchDir    string
+	Branch      string
+	BaseBranch  string
+
+	RunTS             string
+	RunShortID        string
+	BatchTS           string
+	BatchShortID      string
+	UserProvidedRunID string
+	details           *runSpecDetails
+}
+
+// ContinuationCursor is the state that advances while the same Run is driven.
+// Its RunID and BatchID references identify the prior continuation source;
+// they do not replace the stable identity in RunSpec.
+type ContinuationCursor struct {
+	Mode               IssueMode
+	ReuseSession       bool
+	PreviousRunID      string
+	PreviousRunBatchID string
+	quotaAllowance     usageLimitAllowance
+}
+
+type runSpecDetails struct {
+	externalBlockers []int
+	renderCfg        prompt.RenderConfig
+	outputWriter     io.Writer
+	review           bool
+	reviewHeadSHA    string
+	prNumber         int
+	reviewFocus      string
+	portalHidden     bool
+	qualityRulesFile string
+}
+
+func runSpecFromRow(row RowSpec) (RunSpec, ContinuationCursor) {
+	branch := row.Branches[row.IssueNumber]
+	if branch == "" {
+		branch = row.Branches[0]
+	}
+	continuationKey := rowContinuationKey(row.IssueNumber, row.Review)
+	return RunSpec{
+			RunID: row.RunID, IssueNumber: row.IssueNumber, BatchID: row.BatchID,
+			BatchDir: row.BatchDir, Branch: branch, BaseBranch: row.BaseBranch,
+			RunTS: row.RunTS, RunShortID: row.RunShortID, BatchTS: row.BatchTS,
+			BatchShortID: row.BatchShortID, UserProvidedRunID: row.UserProvidedRunID,
+			details: &runSpecDetails{
+				externalBlockers: append([]int(nil), row.ExternalBlockers...),
+				renderCfg:        cloneRowRenderConfig(row.RenderCfg), outputWriter: row.OutputWriter, review: row.Review,
+				reviewHeadSHA: row.ReviewHeadSHA, prNumber: row.PRNumber, reviewFocus: row.ReviewFocus,
+				portalHidden: row.PortalHidden, qualityRulesFile: row.QualityRulesFile,
+			},
+		}, ContinuationCursor{
+			Mode: row.Mode, ReuseSession: row.ReuseSession,
+			PreviousRunID:      row.PreviousRunIDs[continuationKey],
+			PreviousRunBatchID: row.PreviousRunBatchIDs[continuationKey],
+			quotaAllowance:     row.quotaAllowance,
+		}
+}
+
+func rowContinuationKey(issueNumber int, review bool) int {
+	if issueNumber == 0 || review {
+		return 0
+	}
+	return issueNumber
+}
+
+func cloneRowRenderConfig(cfg prompt.RenderConfig) prompt.RenderConfig {
+	if cfg.PromptArgs != nil {
+		args := make(map[string]string, len(cfg.PromptArgs))
+		for key, value := range cfg.PromptArgs {
+			args[key] = value
+		}
+		cfg.PromptArgs = args
+	}
+	return cfg
+}
+
+func (run RunSpec) row(cursor ContinuationCursor) RowSpec {
+	branches := map[int]string{run.IssueNumber: run.Branch}
+	if run.IssueNumber == 0 || run.details != nil && run.details.review {
+		branches[0] = run.Branch
+	}
+	continuationKey := rowContinuationKey(run.IssueNumber, run.details != nil && run.details.review)
+	row := RowSpec{
+		IssueNumber: run.IssueNumber, Mode: cursor.Mode,
+		Branches:            branches,
+		PreviousRunIDs:      map[int]string{continuationKey: cursor.PreviousRunID},
+		PreviousRunBatchIDs: map[int]string{continuationKey: cursor.PreviousRunBatchID},
+		ReuseSession:        cursor.ReuseSession, quotaAllowance: cursor.quotaAllowance,
+		BaseBranch: run.BaseBranch, RunTS: run.RunTS, RunShortID: run.RunShortID,
+		BatchID: run.BatchID, BatchDir: run.BatchDir, BatchTS: run.BatchTS,
+		BatchShortID: run.BatchShortID, RunID: run.RunID, UserProvidedRunID: run.UserProvidedRunID,
+	}
+	if run.details != nil {
+		row.ExternalBlockers = append([]int(nil), run.details.externalBlockers...)
+		row.RenderCfg, row.OutputWriter = cloneRowRenderConfig(run.details.renderCfg), run.details.outputWriter
+		row.Review, row.ReviewHeadSHA = run.details.review, run.details.reviewHeadSHA
+		row.PRNumber, row.ReviewFocus = run.details.prNumber, run.details.reviewFocus
+		row.PortalHidden, row.QualityRulesFile = run.details.portalHidden, run.details.qualityRulesFile
+	}
+	return row
+}
+
+// RowSpec is the batch-assembly and compatibility value converted into an
+// immutable RunSpec plus ContinuationCursor before it crosses RunExecutor.
+// It groups the per-row-varying inputs that differ across a batch.
 //
 // Path discrimination is implicit, matching today's runSession: review rows
 // remain prompt-only even when IssueNumber carries a linked issue; ordinary
@@ -31,15 +141,13 @@ type RowSpec struct {
 	PreviousRunIDs      map[int]string
 	PreviousRunBatchIDs map[int]string
 	ReuseSession        bool
-	// UsageLimitProbe re-enters an agent session after a usage-limit poll.
-	// It bypasses PR lifecycle entry evaluation so the agent itself is probed.
-	UsageLimitProbe    bool
-	UsageLimitWaited   time.Duration
-	UsageLimitDeadline time.Time
-	BaseBranch         string
-	ExternalBlockers   []int
-	RenderCfg          prompt.RenderConfig
-	OutputWriter       io.Writer
+	// quotaAllowance carries the implementation quota recovery state across row
+	// execution, polling, and scheduler re-entry.
+	quotaAllowance   usageLimitAllowance
+	BaseBranch       string
+	ExternalBlockers []int
+	RenderCfg        prompt.RenderConfig
+	OutputWriter     io.Writer
 	// ID minting — issue-driven path.
 	RunTS      string
 	RunShortID string
@@ -49,12 +157,16 @@ type RowSpec struct {
 	RunID             string
 	UserProvidedRunID string
 	// Pre-derived at the call site (issue-driven: from buildRunID;
-	// prompt-only: from batchIDForPromptOnly).
+	// prompt-only: from promptOnlyBatchLocation).
 	BatchID string
+	// BatchDir is BatchID's frozen directory when known (issue-driven: the
+	// resolved RunDir). Empty means the canonical directory for BatchID.
+	BatchDir string
 	// Review / prompt-only fields.
-	Review      bool
-	PRNumber    int
-	ReviewFocus string
+	Review        bool
+	ReviewHeadSHA string
+	PRNumber      int
+	ReviewFocus   string
 	// PortalHidden preserves internal prompt-only visibility metadata through
 	// the per-run execution seam.
 	PortalHidden bool
@@ -68,7 +180,7 @@ type RowSpec struct {
 }
 
 // BatchConfig carries the batch-constant knobs — inputs that are the same for
-// every row in a batch. It is set once and passed alongside each RowSpec.
+// every row in a batch. It is set once and used to build each runSession.
 type BatchConfig struct {
 	Cfg                        *config.Config
 	AgentName                  string
@@ -108,14 +220,16 @@ type runDeps struct {
 	verifyPath               VerifyPathFunc
 	quotaProgress            func(int)
 	quotaLimit               func(int)
+	githubStatus             github.StatusChecker // gates GitHub recovery attempts; nil attempts
 }
 
 // runCoordination is the narrow interface the elevated executor uses for the
 // shared, mutable coordination state that RunBatch owns (the active-runs map,
 // the shutdown-supervisor fan-in, the per-batch phase writer, and the
-// first-sandbox-start once). *Orchestrator implements it; RunBatch stays the
-// owner. Keeping this an interface (rather than a raw struct handle) preserves
-// the executor's testability — the constructor is the seam.
+// first-sandbox-start once). The per-batch *batchCoordinator implements it;
+// RunBatch creates and owns one coordinator per batch. Keeping this an
+// interface (rather than a raw struct handle) preserves the executor's
+// testability — the constructor is the seam.
 type runCoordination interface {
 	registerActiveRun(key int, sb sandbox.Sandbox)
 	unregisterActiveRun(key int)
@@ -126,17 +240,17 @@ type runCoordination interface {
 	firstSandboxStart(sandboxStarted time.Time)
 }
 
-// RunExecutor is the elevated seam for one AgentRun's lifecycle behind a
-// single method (wayfinder #2233). Path is implicit — Review rows are
-// prompt-only even when they carry a linked IssueNumber; all other rows with
-// an issue number are issue-driven.
+// RunExecutor is the attempt seam behind one immutable Run identity and its
+// advancing continuation cursor. Path is implicit — Review rows are prompt-only
+// even when they carry a linked IssueNumber; all other rows with an issue
+// number are issue-driven.
 type RunExecutor interface {
-	Execute(ctx context.Context, row RowSpec) (AgentRunResult, bool)
+	ExecuteRun(ctx context.Context, run RunSpec, cursor ContinuationCursor) (AgentRunResult, bool)
 }
 
 // runExecutor is the RunExecutor implementation. It holds the batch-constant
 // state (deps + coordination + commander + BatchConfig + factories + the
-// RunBatch parent ctx) and builds a fresh runSession per Execute call. It has
+// RunBatch parent ctx) and builds a fresh runSession per ExecuteRun call. It has
 // no *Orchestrator field: every formerly-reached Orchestrator dependency is
 // an explicit constructor input (wide constructor, narrow Execute = deep
 // module).
@@ -151,8 +265,8 @@ type runExecutor struct {
 }
 
 // newRunExecutor is the constructor/test seam: it snapshots the
-// batch-constant dependencies off the orchestrator (which still owns the
-// coordination state and implements runCoordination / IssueCommander) and
+// batch-constant dependencies off the orchestrator, pairs them with a fresh
+// *batchCoordinator (which implements runCoordination / IssueCommander), and
 // freezes them on the returned executor.
 func (o *Orchestrator) newRunExecutor(parentCtx context.Context, bc BatchConfig, sbFactory SandboxFactory, containerAlloc containerAllocator) *runExecutor {
 	coord := newBatchCoordinator(nil)
@@ -173,6 +287,7 @@ func (o *Orchestrator) newRunExecutorWith(parentCtx context.Context, bc BatchCon
 			errorLog:                 o.errorLog,
 			runSessionOpts:           o.runSessionOpts,
 			verifyPath:               o.verifyPath,
+			githubStatus:             o.githubStatus,
 		},
 		coord:          coord,
 		commander:      commander,
@@ -187,25 +302,50 @@ func (o *Orchestrator) newRunExecutorWith(parentCtx context.Context, bc BatchCon
 // discriminated by the row's Review policy and IssueNumber. parentCtx (the RunBatch ctx)
 // is batch-constant and held on the executor; ctx is the per-row ctx
 // (per-issue for issue-driven, the RunBatch ctx for prompt-only).
+func (e *runExecutor) ExecuteRun(ctx context.Context, run RunSpec, cursor ContinuationCursor) (AgentRunResult, bool) {
+	return e.executeRow(ctx, run.row(cursor))
+}
+
+func (e *runExecutor) ObserveRun(ctx context.Context, run RunSpec, cursor ContinuationCursor) lifecycleVerdict {
+	return e.observeRowLifecycle(ctx, run.row(cursor))
+}
+
+func (e *runExecutor) ObserveAwaitingRun(ctx context.Context, run RunSpec, cursor ContinuationCursor) lifecycleVerdict {
+	return e.observeAwaitingRowLifecycle(ctx, run.row(cursor))
+}
+
+func (e *runExecutor) PersistAwait(ctx context.Context, run RunSpec, cursor ContinuationCursor, evidence map[string]any) error {
+	return e.persistObservedAwait(ctx, run.row(cursor), evidence)
+}
+
+func (e *runExecutor) FinishObserved(ctx context.Context, run RunSpec, cursor ContinuationCursor, verdict lifecycleVerdict) AgentRunResult {
+	return e.finishObserved(ctx, run.row(cursor), verdict)
+}
+
+// Execute is retained as a focused test/adapter helper while callers migrate
+// to the immutable RunExecutor seam.
 func (e *runExecutor) Execute(ctx context.Context, row RowSpec) (AgentRunResult, bool) {
+	return e.executeRow(ctx, row)
+}
+
+func (e *runExecutor) executeRow(ctx context.Context, row RowSpec) (AgentRunResult, bool) {
 	s := newRunSession(e, row)
-	if s.usageLimitRestoreErr != nil {
-		// Unavailable accounting cannot authorize another quota window, but
-		// it cannot remove the historical ordinary recovery attempts either.
-		s.usageLimitWaited = usageLimitRetryWindow
-		s.reuseSession = false
-		if s.deps.errorLog != nil {
-			fmt.Fprintf(s.deps.errorLog, "warning: quota recovery accounting unavailable; continuing without additional quota waits: %v\n", s.usageLimitRestoreErr)
+	if s.quotaAllowance.probing() {
+		if err := s.restoreQuotaAccounting(); err != nil {
+			if s.deps.errorLog != nil {
+				fmt.Fprintf(s.deps.errorLog, "warning: quota recovery accounting unavailable; continuing without additional quota waits: %v\n", err)
+			}
 		}
 	}
+	s.reuseSession = s.quotaAllowance.allowSessionReuse(s.reuseSession)
 	if s.isIssueDriven() {
-		if s.usageLimitProbe {
+		if s.quotaAllowance.probing() {
 			// A quota probe is not a terminal lifecycle authority. Verified
 			// completion still wins without another agent/container launch.
 			if ctx.Err() == nil {
-				if status, extras, handled := e.observeLifecycle(ctx, row); handled &&
-					(status == "success" || extras["reason"] == "PULL_REQUEST_CLOSED" || extras["completion"] != nil) {
-					result := e.finishObserved(ctx, row, status, extras)
+				verdict := e.observeRowLifecycle(ctx, row)
+				if verdict.supersedesQuotaProbe() {
+					result := e.finishObserved(ctx, row, verdict)
 					result.UsageLimitReached = true
 					return result, false
 				}
@@ -249,9 +389,7 @@ func newRunSession(e *runExecutor, row RowSpec) *runSession {
 		previousRunIDs:             row.PreviousRunIDs,
 		previousRunBatchIDs:        row.PreviousRunBatchIDs,
 		reuseSession:               row.ReuseSession,
-		usageLimitProbe:            row.UsageLimitProbe,
-		usageLimitWaited:           row.UsageLimitWaited,
-		usageLimitDeadline:         row.UsageLimitDeadline,
+		quotaAllowance:             row.quotaAllowance,
 		identityResolver:           bc.IdentityResolver,
 		branches:                   row.Branches,
 		renderCfg:                  renderCfg,
@@ -274,11 +412,13 @@ func newRunSession(e *runExecutor, row RowSpec) *runSession {
 		runTS:                      row.RunTS,
 		runShortID:                 row.RunShortID,
 		batchID:                    row.BatchID,
+		batchDir:                   row.BatchDir,
 		batchTS:                    row.BatchTS,
 		batchShortID:               row.BatchShortID,
 		runID:                      row.RunID,
 		userProvidedRunID:          row.UserProvidedRunID,
 		review:                     row.Review,
+		reviewHeadSHA:              row.ReviewHeadSHA,
 		prNumber:                   row.PRNumber,
 		reviewFocus:                row.ReviewFocus,
 		portalHidden:               row.PortalHidden,
@@ -297,9 +437,6 @@ func newRunSession(e *runExecutor, row RowSpec) *runSession {
 		opts:                    opts,
 		reviewRegistrationStore: opts.reviewRegistrationStore,
 		reviewRegistrationNow:   opts.reviewRegistrationNow,
-	}
-	if session.usageLimitProbe {
-		session.usageLimitRestoreErr = session.restoreQuotaAccounting()
 	}
 	return session
 }

@@ -176,17 +176,28 @@ func BatchDir(baseDir, dirID string) string {
 
 // ResolveBatchDir returns the frozen physical location for a public BatchID.
 // Unindexed legacy batches retain their canonical location. An unreadable
-// index is returned to the caller rather than silently selecting a canonical
-// path that may belong to a different physical batch.
+// index or an ambiguous alias is returned to the caller rather than silently
+// selecting a canonical path that may belong to a different physical batch.
 func ResolveBatchDir(layout paths.Layout, batchID string) (string, error) {
+	location, err := ResolveBatchLocation(layout, batchID)
+	return location.Dir, err
+}
+
+// ResolveBatchLocation pairs event batch identity with its frozen directory.
+// An empty identity keeps the legacy location directly beneath BatchesDir.
+func ResolveBatchLocation(layout paths.Layout, batchID string) (paths.BatchLocation, error) {
 	idx, err := batchindex.Load(layout.BatchesIndexPath)
 	if err != nil {
-		return "", err
+		return paths.BatchLocation{}, err
 	}
-	if batch := idx.ResolveBatchIdentity(batchID); batch != nil {
-		return batch.Location(layout).Dir, nil
+	if batchID == "" {
+		return paths.BatchLocation{Dir: layout.BatchDir(batchID)}, nil
 	}
-	return layout.BatchDir(batchID), nil
+	location, ok := idx.LocateBatchIdentity(layout, batchID)
+	if !ok {
+		return paths.BatchLocation{}, fmt.Errorf("batch identity %q is ambiguous", batchID)
+	}
+	return location, nil
 }
 
 // ManifestPath returns the on-disk path of the batch manifest file
@@ -651,7 +662,7 @@ func recoverOrphanActiveRuns(layout paths.Layout, idx *batchindex.Index, locatio
 func layoutForBaseDir(baseDir string) paths.Layout {
 	return paths.Layout{RepoRoot: filepath.Dir(baseDir), SandmanDir: baseDir,
 		BatchesDir: filepath.Join(baseDir, "batches"), ArchiveDir: filepath.Join(baseDir, "archive"),
-		BatchesIndexPath: filepath.Join(baseDir, "batches.json")}
+		StateDir: filepath.Join(baseDir, "state"), BatchesIndexPath: filepath.Join(baseDir, "batches.json")}
 }
 
 func batchIdentityMatches(idx *batchindex.Index, layout paths.Layout, id, dir string) bool {
@@ -663,15 +674,8 @@ func runWaitDir(idx *batchindex.Index, layout paths.Layout, run events.RunState,
 	if batchID == "" {
 		return fallback, true
 	}
-	if batch := idx.ResolveBatchIdentity(batchID); batch != nil {
-		return batch.Location(layout).Dir, true
-	}
-	for _, batch := range idx.Batches {
-		if batch.Path != "" && filepath.Base(batch.Path) == batchID {
-			return "", false
-		}
-	}
-	return layout.BatchDir(batchID), true
+	location, ok := idx.LocateBatchIdentity(layout, batchID)
+	return location.Dir, ok
 }
 
 // emitRecoveredAbort holds the same RunID claim as admission through the fresh
@@ -694,7 +698,7 @@ func emitRecoveredAbort(baseDir, batchDir string, run events.RunState, issueNumb
 			return false, nil
 		}
 	}
-	if protected, _ := waitRecoveryScheduleAt(batchDir, run, recoveredAt); protected {
+	if protected, _ := waitRecoveryScheduleAt(layoutForBaseDir(baseDir), paths.BatchLocation{ID: run.BatchID(), Dir: batchDir}, run, recoveredAt); protected {
 		return false, nil
 	}
 	var issueRef *int

@@ -46,6 +46,7 @@ func loadPortalReproAssets(t *testing.T) (string, string, string, string) {
 func buildPortalReproPage(t *testing.T, stateJSON string, runsJSON []byte, body string) string {
 	t.Helper()
 	html, stateJS, scrollJS, diffJS := loadPortalReproAssets(t)
+	runsJSON = stampIssueGroupsJSON(t, runsJSON)
 	page := html
 	page = strings.ReplaceAll(page, "{{.SupportedThemesJSON}}", `['sandman']`)
 	page = strings.ReplaceAll(page, "{{.PortalStateJS}}", stateJS)
@@ -217,7 +218,7 @@ func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *test
 		"review":      true,
 		"log":         childLog,
 	}
-	runsJSON, err := json.Marshal([]map[string]any{parent, child})
+	runsJSON, err := marshalPortalRunsFixture([]map[string]any{parent, child})
 	if err != nil {
 		t.Fatalf("marshal runs: %v", err)
 	}
@@ -304,7 +305,7 @@ func TestPortalReviewSubjectSwitch_PreservesPendingPerRunOutputAcrossRoundTrip(t
 		{"key": parentID, "runId": parentID, "kind": "active", "status": "reviewing", "issueLabel": "#1", "issueNumber": 1, "reviewCount": 1, "log": "parent saved record"},
 		{"key": reviewID, "runId": reviewID, "kind": "completed", "status": "success", "issueLabel": "PR42", "issueNumber": 1, "prNumber": 42, "review": true, "log": "review saved record"},
 	}
-	runsJSON, err := json.Marshal(runs)
+	runsJSON, err := marshalPortalRunsFixture(runs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,6 +337,10 @@ func TestPortalReviewSubjectSwitch_PreservesPendingPerRunOutputAcrossRoundTrip(t
       }, 'parent source snapshot');
       const parent = window.sandmanPortalLogs.get('`+parentID+`');
       const nativeRaf = window.requestAnimationFrame.bind(window);
+      // Snapshot acknowledgement precedes view work. Let the initial log
+      // projection and its render finish before intercepting later frames;
+      // otherwise the scheduler can still own a frame on the native queue.
+      await new Promise(resolve => nativeRaf(() => nativeRaf(resolve)));
       const pendingRafs = [];
       window.requestAnimationFrame = function (callback) { pendingRafs.push(callback); return pendingRafs.length; };
       const parentStream = window.__portalStreams.find(source => source.runId === '`+parentID+`' && source.readyState === 1);
@@ -429,7 +434,7 @@ func TestPortalReviewSubjectSwitch_GroupBeforeFilterKeepsParentIssueVisible(t *t
 		"review":      true,
 		"log":         "child log line 1",
 	}
-	runsJSON, err := json.Marshal([]map[string]any{parent, child})
+	runsJSON, err := marshalPortalRunsFixture([]map[string]any{parent, child})
 	if err != nil {
 		t.Fatalf("marshal runs: %v", err)
 	}
@@ -500,7 +505,7 @@ func TestPortalLogPane_SubjectSwitchReusesCachedPane(t *testing.T) {
 		"review":      true,
 		"log":         childLog,
 	}
-	runsJSON, err := json.Marshal([]map[string]any{parent, child})
+	runsJSON, err := marshalPortalRunsFixture([]map[string]any{parent, child})
 	if err != nil {
 		t.Fatalf("marshal runs: %v", err)
 	}
@@ -622,7 +627,7 @@ func TestPortalSummaryPoll_UsesIfNoneMatchAndKeepsRowsOn304(t *testing.T) {
           status: 200,
           headers: { get: function (name) { return name === 'ETag' ? '"etag-1"' : ''; } },
           json: async function () {
-             return { runs: [{ key: 'r1', runId: 'r1', kind: 'active', status: 'running', issueLabel: '#1', issueNumber: 1, startedAt: new Date(Date.now() - 61000).toISOString(), executionSince: new Date(Date.now() - 61000).toISOString(), activeDurationSeconds: 0, lastOutputAt: new Date().toISOString(), duration: '0s', archived: false, unavailable: false, sourceExists: true }] };
+             return { runs: [{ key: 'r1', runId: 'r1', kind: 'active', status: 'running', issueLabel: '#1', issueNumber: 1, groupVisible: true, startedAt: new Date(Date.now() - 61000).toISOString(), executionSince: new Date(Date.now() - 61000).toISOString(), activeDurationSeconds: 0, lastOutputAt: new Date().toISOString(), duration: '0s', archived: false, unavailable: false, sourceExists: true }] };
           },
           text: async function () { return ''; },
         };
@@ -693,7 +698,7 @@ func TestPortalBatchMetadata_RendersBatchAboveRun(t *testing.T) {
 		"batchKey":    batchID,
 		"startedAt":   "2025-06-26T12:00:00Z",
 	}
-	runsJSON, err := json.Marshal([]map[string]any{run})
+	runsJSON, err := marshalPortalRunsFixture([]map[string]any{run})
 	if err != nil {
 		t.Fatalf("marshal runs: %v", err)
 	}
@@ -775,11 +780,11 @@ func TestPortalRefresh_LocksRowIdentityAcrossMixedBatchPayloads(t *testing.T) {
 		"batchKey":    batchID,
 		"log":         "refreshed mixed log line 1\nrefreshed mixed log line 2",
 	}
-	runsJSON, err := json.Marshal([]map[string]any{initialRun})
+	runsJSON, err := marshalPortalRunsFixture([]map[string]any{initialRun})
 	if err != nil {
 		t.Fatalf("marshal runs: %v", err)
 	}
-	refreshedRunsJSON, err := json.Marshal([]map[string]any{refreshedRun})
+	refreshedRunsJSON, err := marshalPortalRunsFixture([]map[string]any{refreshedRun})
 	if err != nil {
 		t.Fatalf("marshal refreshed runs: %v", err)
 	}
@@ -908,11 +913,12 @@ func TestPortalRefresh_DiscardsQueuedExpandedStateBeforeDetailFetch(t *testing.T
 		"runId":       "queued-1",
 		"kind":        "active",
 		"status":      "queued",
+		"queuedLike":  true,
 		"issueLabel":  "#7",
 		"issueNumber": 7,
 		"batchKey":    "batch-7",
 	}
-	runsJSON, err := json.Marshal([]map[string]any{queued})
+	runsJSON, err := marshalPortalRunsFixture([]map[string]any{queued})
 	if err != nil {
 		t.Fatalf("marshal runs: %v", err)
 	}
@@ -967,7 +973,7 @@ func TestPortalRefresh_IgnoresEmptyExpandedStateBeforeDetailFetch(t *testing.T) 
 		"issueNumber": 1,
 		"batchKey":    "batch-1",
 	}
-	runsJSON, err := json.Marshal([]map[string]any{run})
+	runsJSON, err := marshalPortalRunsFixture([]map[string]any{run})
 	if err != nil {
 		t.Fatalf("marshal runs: %v", err)
 	}
@@ -1038,7 +1044,7 @@ func TestPortalRefresh_ActiveEventsTabHydratesDetail(t *testing.T) {
 			{"type": "run.retry", "timestamp": "2026-06-30T14:03:18Z", "payload": map[string]any{"attempt": 2, "reason": "agent-stalled"}},
 		},
 	}
-	runsJSON, err := json.Marshal([]map[string]any{summaryRun})
+	runsJSON, err := marshalPortalRunsFixture([]map[string]any{summaryRun})
 	if err != nil {
 		t.Fatalf("marshal runs: %v", err)
 	}
@@ -1130,7 +1136,7 @@ func TestPortalRefresh_ExpandedRunShowsLoadingCursorWhileDetailFetchPending(t *t
 		"batchKey":    "260618113825-abcd",
 		"log":         "live log line 1\nlive log line 2",
 	}
-	runsJSON, err := json.Marshal([]map[string]any{summaryRun})
+	runsJSON, err := marshalPortalRunsFixture([]map[string]any{summaryRun})
 	if err != nil {
 		t.Fatalf("marshal runs: %v", err)
 	}
@@ -1259,7 +1265,7 @@ func TestPortalRefresh_ExpandedDetailsTabShowsLoadingCursorWhileDetailFetchPendi
 		"batchKey":    "260618113825-abcd",
 		"log":         "live log line 1\nlive log line 2",
 	}
-	runsJSON, err := json.Marshal([]map[string]any{summaryRun})
+	runsJSON, err := marshalPortalRunsFixture([]map[string]any{summaryRun})
 	if err != nil {
 		t.Fatalf("marshal runs: %v", err)
 	}
@@ -1395,7 +1401,7 @@ func TestPortalRefresh_LogTabSwitchShowsLoadingCursorWhileDetailFetchPending(t *
 		"batchKey":    "260618113825-abcd",
 		"log":         "live log line 1\nlive log line 2\nlive log line 3",
 	}
-	runsJSON, err := json.Marshal([]map[string]any{summaryRun})
+	runsJSON, err := marshalPortalRunsFixture([]map[string]any{summaryRun})
 	if err != nil {
 		t.Fatalf("marshal runs: %v", err)
 	}
@@ -1537,7 +1543,7 @@ func TestPortalRefresh_LogTabSwitchShowsLoadingCursorForMismatchedRunIdentity(t 
 		"batchKey":    "260618113825-abcd",
 		"log":         "live log line 1\nlive log line 2\nlive log line 3",
 	}
-	runsJSON, err := json.Marshal([]map[string]any{summaryRun})
+	runsJSON, err := marshalPortalRunsFixture([]map[string]any{summaryRun})
 	if err != nil {
 		t.Fatalf("marshal runs: %v", err)
 	}
@@ -1664,11 +1670,12 @@ func TestPortalRowClick_IgnoresForcedToggleAttrsOnQueuedRun(t *testing.T) {
 		"runId":       "queued-2",
 		"kind":        "active",
 		"status":      "queued",
+		"queuedLike":  true,
 		"issueLabel":  "#8",
 		"issueNumber": 8,
 		"batchKey":    "batch-8",
 	}
-	runsJSON, err := json.Marshal([]map[string]any{queued})
+	runsJSON, err := marshalPortalRunsFixture([]map[string]any{queued})
 	if err != nil {
 		t.Fatalf("marshal runs: %v", err)
 	}
@@ -1743,7 +1750,7 @@ func TestPortalReviewSubjectSwitch_ReusesCachedParentPaneAcrossRoundTrip(t *test
 		"review":      true,
 		"log":         "review log line 1\nreview log line 2",
 	}
-	runsJSON, err := json.Marshal([]map[string]any{parent, child})
+	runsJSON, err := marshalPortalRunsFixture([]map[string]any{parent, child})
 	if err != nil {
 		t.Fatalf("marshal runs: %v", err)
 	}
@@ -1878,7 +1885,7 @@ func TestPortalSubjectSwitch_IgnoresEmptySelectionChange(t *testing.T) {
 		"review":      true,
 		"log":         "review log line 1\nreview log line 2",
 	}
-	runsJSON, err := json.Marshal([]map[string]any{parent, child})
+	runsJSON, err := marshalPortalRunsFixture([]map[string]any{parent, child})
 	if err != nil {
 		t.Fatalf("marshal runs: %v", err)
 	}
@@ -1961,7 +1968,7 @@ func TestPortalRefreshHydratesRestoredExpandedRunDetail(t *testing.T) {
 		"log":         "hydrated log line 1\nhydrated log line 2",
 		"events":      []map[string]any{{"type": "run.finished"}},
 	}
-	summaryRunsJSON, err := json.Marshal([]map[string]any{summaryRun})
+	summaryRunsJSON, err := marshalPortalRunsFixture([]map[string]any{summaryRun})
 	if err != nil {
 		t.Fatalf("marshal summary runs: %v", err)
 	}
@@ -2066,7 +2073,7 @@ func TestPortalReviewSubjectSwitch_HydratesSelectedSubjectDetail(t *testing.T) {
 		"log":         "parent hydrated log line 1\nparent hydrated log line 2",
 		"events":      []map[string]any{{"type": "run.started"}},
 	}
-	runsJSON, err := json.Marshal([]map[string]any{parent, childSummary})
+	runsJSON, err := marshalPortalRunsFixture([]map[string]any{parent, childSummary})
 	if err != nil {
 		t.Fatalf("marshal runs: %v", err)
 	}
@@ -2171,7 +2178,7 @@ func TestPortalSubjectSwitch_ContinuationRowExposesPreviousRun(t *testing.T) {
 		"log":         "previous run log line 1\nprevious run log line 2",
 		"events":      []map[string]any{{"type": "run.finished"}},
 	}
-	runsJSON, err := json.Marshal([]map[string]any{continuation, previous})
+	runsJSON, err := marshalPortalRunsFixture([]map[string]any{continuation, previous})
 	if err != nil {
 		t.Fatalf("marshal runs: %v", err)
 	}

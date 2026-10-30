@@ -359,11 +359,12 @@ func TestManagedLifecycleProof_FeedbackResumeMergesWithoutRetry(t *testing.T) {
 	runID := proofRunID(t, logs)
 
 	// Pass 2 restarts over the same log with actionable current-head
-	// feedback: entry resumes into the fix, the clean fix exit takes one
-	// in-session feedback resume, and the merged head observed afterwards
-	// terminalizes the same RunID as success without a generic retry.
+	// feedback: entry resumes into the fix, and the merged head observed
+	// afterwards terminalizes the same RunID as success without a generic
+	// retry. (A fix that left head, request and responses unchanged would
+	// stall into a wait instead of another relaunch.)
 	client.locked = nil
-	client.evolveAt = 3
+	client.evolveAt = 2
 	result, started = runProofPass(t, logPath, client, factory, ModeContinue, runID, func(workDir string) {
 		writeInformalRespondedClassification(t, workDir, "Please fix the race in internal/socketpath/socketpath.go.")
 	})
@@ -378,8 +379,8 @@ func TestManagedLifecycleProof_FeedbackResumeMergesWithoutRetry(t *testing.T) {
 		t.Logf("launches=%d", len(factory.created))
 		t.Fatalf("pass 2: status = %q, want success", result.Status)
 	}
-	if len(factory.created) != 3 {
-		t.Fatalf("pass 2: agent launches = %d, want 3 (entry resume plus one in-session resume)", len(factory.created))
+	if len(factory.created) != 2 {
+		t.Fatalf("pass 2: agent launches = %d, want 2 (pass 1 plus the entry feedback resume)", len(factory.created))
 	}
 	logs, err = eventLog.Read()
 	if err != nil {
@@ -388,12 +389,8 @@ func TestManagedLifecycleProof_FeedbackResumeMergesWithoutRetry(t *testing.T) {
 	if got := proofRunID(t, logs); got != runID {
 		t.Fatalf("pass 2: RunID = %q, want preserved %q", got, runID)
 	}
-	resumed := findEvent(logs, "run.resumed")
-	if resumed == nil {
-		t.Fatalf("pass 2: run.resumed event not found")
-	}
-	if reason, _ := resumed.Payload["reason"].(string); reason != "feedback" {
-		t.Fatalf("pass 2: resume reason = %q, want feedback", reason)
+	if countEventsByType(logs, "run.resumed") != 0 {
+		t.Fatalf("pass 2: the entry launch is the feedback resume; no in-session relaunch was needed")
 	}
 	if countEventsByType(logs, "run.retry") != 0 {
 		t.Fatalf("pass 2: run.retry events present, want none across feedback resume")
@@ -425,7 +422,7 @@ func TestManagedLifecycleProof_FeedbackResumeMergesWithoutRetry(t *testing.T) {
 	if result.Status != "success" {
 		t.Fatalf("pass 3: status = %q, want success", result.Status)
 	}
-	if len(factory.created) != 3 {
-		t.Fatalf("pass 3: agent launches = %d, want still 3 (no relaunch on terminal re-entry)", len(factory.created))
+	if len(factory.created) != 2 {
+		t.Fatalf("pass 3: agent launches = %d, want still 2 (no relaunch on terminal re-entry)", len(factory.created))
 	}
 }

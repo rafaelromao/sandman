@@ -58,6 +58,14 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
     confirmed. `{{REVIEW_TIMEOUT}}` is the current run's request context, not
     shared skill state.
 
+    ## Sandman Failed CI Remediation Context
+
+    A failed required check on the current pull request head remains implementation work you own. Pending sibling checks, review delivery, approval, a saved blocker, or historical runtime-wait directions do not transfer an untouched failure to Sandman. Diagnose the concrete current-head failure and either make and validate the narrow repair or initiate an authorized, bounded recovery action before yielding.
+
+    For deterministic source, test, configuration, or workflow failures, make the required repair and validate it. For a verified provider-pin deprecation, update the coordinated documented pins. For a diagnosed transient provider or network timeout, use the authorized helper in the shared Sandman skill to rerun the identified failed execution after verifying its repository, pull request, source head, workflow run, and job identity. The canary's one CLI invocation and no-retry-loop rule applies within one job invocation; it does not prohibit a bounded rerun of the existing execution, and workflow_dispatch is not a prerequisite. Do not blindly rerun deterministic failures, invent credentials or permissions, or manufacture green evidence.
+
+    The runtime owns asynchronous observation and admission, not CI repair. Verify the corrective action and current-head execution first. Only after no implementor-owned work remains and required checks are queued or running should you checkpoint and yield for runtime observation.
+
     ## Continuation Freshness Guard
 
     This section applies to every retry and `sandman run --continue` and overrides persisted blocker and next-action text from earlier attempts.
@@ -197,7 +205,7 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
     - `sandman-review-request` for one managed review trigger. It is stateless and
       must not write managed lifecycle state; the runtime owns observation and
       lifecycle decisions.
-    - `sandman-pr-merge` only if the PR is fully approved, required checks are green, and GitHub reports it mergeable.
+    - `sandman-pr-merge` only if the PR is fully approved, required checks are green, and GitHub reports it mergeable. An eligible current-head informal approval (a request-scoped top-level APPROVED report with no Blocking or Important findings and no author changes requested) is full approval. A formal GitHub review is never required, because the author and the reviewer may share one account. Never ask the reviewer or a maintainer for a formal approval, a `reviewDecision`, or a publication workaround when informal approval is eligible, and never re-request review because a zero-finding APPROVED report lacks a formal review.
 
     ## Required Order
 

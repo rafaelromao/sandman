@@ -11,6 +11,7 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 ├── Dockerfile                          # scaffold (init only)
 ├── config.yaml                         # scaffold (init only)
 ├── prompt.md                           # scaffold (init only)
+├── certs/<fingerprint>.crt             # scaffold (init --ca-cert): trusted CA certificates baked into the image
 ├── events.jsonl                        # runtime, multi-writer (O_APPEND)
 ├── events.jsonl.malformed              # runtime sidecar (quarantined torn lines)
 ├── events.jsonl.lock                   # runtime coordination lock (persistent)
@@ -27,19 +28,24 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 │       └── runs/<runID>/
 │           ├── run.json                # row manifest (atomic-rename)
 │           ├── run.log                 # O_APPEND prefixed stdout/stderr
-│           ├── session.json             # OpenCode session identity (atomic-rename)
+│           ├── session.json             # agent session identity, OpenCode or Claude Code (atomic-rename)
 │           ├── run.sock                # per-row control socket
 │           ├── review-state.json       # review dedup state (atomic-rename)
+│           ├── decision.md             # durable review decision copy (atomic-rename)
+│           ├── pending-publication.json # exact redacted review publication outbox
 │           └── config/                 # per-row container config snapshot
 ├── reviews/
 │   ├── review-prompt.md                # scaffold (init only)
 │   ├── quality-rules.md                # scaffold (init only)
 │   ├── quota-pause.json                # review quota recovery gate (atomic-rename)
+│   ├── health-repair.json              # health-repair episode evidence and budget (atomic-rename)
+│   ├── health-repair.json.lock         # serializes health-repair evidence updates
+│   ├── claims/                         # health-repair launch claim
 │   └── review.sock                     # review-daemon control socket
 ├── worktrees/<branch>/                 # per-run worktree (git)
 │   └── .sandman/task.md                # per-worktree rendered prompt
 └── state/                              # runtime sidecars
-    ├── run-claims/<RunID>.lock          # stable advisory RunID ownership claim
+    ├── run-claims/<RunID>.lock          # advisory RunID ownership claim; `clean --stale`/`--all` remove it once the Run is event-terminal
     ├── waiting/<RunID>.json             # initial-admission schedule/lease (no Task required)
     ├── .prompt-version                 # SHA-256 of materialized prompt template
     ├── .built_with_sandman             # empty control file (badge sidecar)
@@ -66,6 +72,8 @@ not artifact availability or a scheduling label, authorizes terminal operations.
 
 Started suspension schedules live in `<batch>/runs/<RunID>/wait.json`; initial
 admissions use `state/waiting/<RunID>.json` without creating execution folders.
+`<batch>` is the Batch's frozen indexed directory, and every record carries the
+Batch's public ID, never the directory basename.
 Atomic leases preserve ownerless intent for five minutes capped by a hard
 operation deadline, while stable advisory claims fence ownership. Worktree-local
 `<PR>.ci_wait.json` retains managed CI head and check-execution identity with a
@@ -117,6 +125,7 @@ event batch identity have terminal projections. See [Architecture Overview](over
 | `Dockerfile` | scaffold | `sandman init` | container runtime | repo (manual) | init only |
 | `config.yaml` | scaffold | `sandman init` | Sandman (config load) | repo (manual) | init only |
 | `prompt.md` | scaffold | `sandman init` | prompt renderer | repo (manual) | init only |
+| `certs/<fingerprint>.crt` | scaffold, atomic-rename | `sandman init --ca-cert` | container image build (`COPY`), Dockerfile drift check | `sandman init --ca-cert none` | init only |
 | `events.jsonl` | runtime, O_APPEND | orchestrator / run loop | `events.RunState` projection, portal, CLI status | never (append-only log) | continuous |
 | `events.jsonl.malformed` | runtime sidecar | event writer (on torn line) | human / log triage | `sandman clean` (optional) | per torn line |
 | `events.jsonl.lock` | runtime coordination | event logger | event logger | never (stable advisory-lock inode) | continuous |
@@ -134,14 +143,18 @@ event batch identity have terminal projections. See [Architecture Overview](over
 | `batches/<batchID>/runs/<runID>/` | runtime | orchestrator (per-row execution path) | orchestrator, portal | `sandman archive run` / `sandman clean` (retained after success) | per AgentRun |
 | `batches/<batchID>/runs/<runID>/run.json` | runtime, atomic-rename | orchestrator (run start, status change, finish) | orchestrator, portal, attach client | `sandman archive` / `sandman clean` | per AgentRun |
 | `batches/<batchID>/runs/<runID>/run.log` | runtime, O_APPEND | `AgentRun.Execute` (prefixed stdout/stderr) | `readPortalTextFile`, attach client | never (run log is canonical per-run artefact) | per AgentRun |
-| `batches/<batchID>/runs/<runID>/session.json` | runtime, atomic-rename | OpenCode execution boundary | runtime-owned re-entry and explicit session reuse | never (retained with Run) | per OpenCode AgentRun (the `claude` preset writes none; it resumes with Claude Code's `--continue`) |
+| `batches/<batchID>/runs/<runID>/session.json` | runtime, atomic-rename | agent execution boundary, as soon as the session is observed and again after the attempt | runtime-owned re-entry and explicit session reuse (own protocol only), Portal Run details (`agentSessionId`) | never (retained with Run) | per OpenCode or `claude` AgentRun (`opencode-session/v1` or `claude-session/v1`) |
 | `batches/runs/<runID>/session.json` | legacy compatibility evidence | prior runtime versions | explicit reuse lookup when the canonical batch path is absent | never | legacy Run only |
 | `batches/<batchID>/runs/<runID>/run.sock` | runtime | command server on per-row start | external caller (`{"action":"abort","issue":N}`) | command server on per-row completion | per AgentRun |
 | `batches/<batchID>/runs/<runID>/review-state.json` | runtime, atomic-rename | review state store (dedup, claim lock) | review state store | `sandman archive` / `sandman clean` | per review AgentRun |
+| `batches/<batchID>/runs/<runID>/decision.md` | runtime, atomic-rename | review daemon (copied from the review worktree's handoff `decision.md`) | review daemon (rehydrate fallback when no outbox exists), verdict reader | `sandman archive` / `sandman clean` (retained with Run) | per review AgentRun |
+| `batches/<batchID>/runs/<runID>/pending-publication.json` | runtime, atomic-rename | review daemon, before posting (exact redacted body plus publication identity) | review daemon (post, restart rehydrate with remote duplicate check) | review daemon, only after the post is acknowledged; deleting the worktree `decision.md` does not clear it | per unacknowledged review publication |
 | `batches/<batchID>/runs/<runID>/config/` | runtime, container snapshot | `PrepareContainerConfigMounts` | container runtime (bind-mount) | `sandman clean` (retained with Run) | per AgentRun |
 | `reviews/review-prompt.md` | scaffold | `sandman init` | review daemon (materialization + live template render) | repo (manual) | init only |
 | `reviews/quality-rules.md` | scaffold | `sandman init` | review daemon (prompt materialization) | repo (manual) | init only |
 | `reviews/quota-pause.json` | runtime, atomic-rename | review daemon (usage-limit review failure / probe, for OpenCode and Claude Code review agents) | review daemon (startup / tick) | review daemon (cleared after a successful probe) | provider-wide quota recovery |
+| `reviews/health-repair.json` (+ `.lock`) | runtime, atomic-rename under a permanent lock file | review daemon health recovery | review daemon (repair admission, budget, paused outcome) | review daemon (record resets once every failed operation succeeds) | per failure episode; each repair itself is a modifying prompt-only Run on the host under `batches/<repair-run-id>/`, unlike read-only reviewers |
+| `reviews/claims/` | runtime, launch claim | review daemon health recovery | review daemon (one health repair at a time) | released when repair supervision ends | per health repair |
 | `reviews/review.sock` | runtime | review daemon on start | review daemon CLI | review daemon on stop | continuous |
 | `worktrees/<branch>/` | runtime, git worktree | `git worktree add` (orchestrator) | agent, orchestrator | orchestrator (auto-cleaned on `success`; preserved on `failure`/`aborted`/`blocked` for `--continue` / inspection) + `sandman clean` (remaining cases) | per AgentRun |
 | `worktrees/<branch>/.sandman/task.md` | runtime, atomic-rename | prompt renderer (or `--continue` skips render and reads existing) | agent | orchestrator (removed with worktree on `success`) + `sandman clean` (preserved with worktree otherwise) | per AgentRun |

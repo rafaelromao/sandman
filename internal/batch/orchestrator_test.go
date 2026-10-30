@@ -1087,7 +1087,7 @@ func TestCheckPRMergedAtHead(t *testing.T) {
 	}
 }
 
-func TestRunSingle_RetryLifecycleTerminalizesAfterRetry(t *testing.T) {
+func TestRunSingle_RetryLifecycleWaitsAfterRetry(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -1131,8 +1131,8 @@ func TestRunSingle_RetryLifecycleTerminalizesAfterRetry(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure after lifecycle-owned gate handling", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want an rc2 wait after lifecycle-owned gate handling", result.Status)
 	}
 	if result.RetriesTotal != 2 {
 		t.Fatalf("RetriesTotal = %d, want 2", result.RetriesTotal)
@@ -1179,9 +1179,12 @@ func TestRunSingle_ClosedPRTerminalizesBeforeRetry(t *testing.T) {
 	oldHeadFn := currentBranchHeadFn
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
-	pr := &github.PR{Number: 17, State: "closed", Merged: false, HeadRefName: branch}
+	// The PR closes during this Run (after its admission); a closure the Run
+	// cannot place is not terminal evidence (issue #2940).
+	pr := &github.PR{Number: 17, State: "closed", Merged: false, HeadRefName: branch, ClosedAt: time.Now().Add(time.Hour)}
 	var resetCalls int
 	o := &Orchestrator{
+		eventLog:     &spyEventLog{},
 		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, prs: map[string]*github.PR{branch: pr}},
 		renderer:     renderer,
 		errorLog:     io.Discard,
@@ -2036,7 +2039,7 @@ func TestRunSingle_PreRetryGuardShortCircuitsOnMergedPR(t *testing.T) {
 	}
 }
 
-func TestRunSingle_RetryMissingClosingReferenceFailsVerification(t *testing.T) {
+func TestRunSingle_RetryWithoutVerifiedMergeWaits(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -2082,8 +2085,8 @@ func TestRunSingle_RetryMissingClosingReferenceFailsVerification(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure without verified closing reference", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want an rc2 wait without verified closing reference", result.Status)
 	}
 	if resetCalls != 0 {
 		t.Fatalf("reset calls = %d, want 0 after lifecycle terminalization", resetCalls)
@@ -2324,7 +2327,8 @@ func TestRunSingle_LogsRetryCounters(t *testing.T) {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
 
-	pr := &github.PR{Number: 42, State: "closed", Merged: false, HeadRefName: branch}
+	// The PR closes during this Run; an unplaced closure is not terminal.
+	pr := &github.PR{Number: 42, State: "closed", Merged: false, HeadRefName: branch, ClosedAt: time.Now().Add(time.Hour)}
 	// Flip Merged only on the post-attempt check after both attempts have
 	// run (fifth FindPRByBranch call). The closing-reference guard now
 	// performs an immediate observation, so the pre-retry guard does not
@@ -4354,7 +4358,7 @@ func TestRunBatch_LifecycleErrorsPrintedToStderr(t *testing.T) {
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
 		WithErrorLog(&buf),
 	)
-	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}, IssueTitles: map[int]string{42: "test issue"}})
 	if !strings.Contains(buf.String(), "github api error") {
 		t.Errorf("expected fetch error on stderr, got: %s", buf.String())
 	}
@@ -4387,7 +4391,7 @@ func TestRunBatch_EmitsTerminalEventOnFetchIssueFailure(t *testing.T) {
 		WithErrorLog(io.Discard),
 	)
 
-	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}, Parallel: 1})
+	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}, IssueTitles: map[int]string{42: "test issue"}, Parallel: 1})
 
 	finished := findEvent(spyLog.events, "run.finished")
 	if finished == nil {
@@ -6638,6 +6642,113 @@ func TestRunBatch_ReviewRunFolderMatchesLegacyBatchDirFormula(t *testing.T) {
 	}
 }
 
+// TestRunBatch_PromptOnlyBatchDirRunDir pins that a batch-directory RunDir
+// is the home of the run folder, run.json and the run.started batch_id.
+func TestRunBatch_PromptOnlyBatchDirRunDir(t *testing.T) {
+	tests := []struct {
+		name        string
+		ts, shortid string
+		userRunID   string
+		wantBatchID string
+		wantRunID   string
+	}{
+		{
+			name: "generated id",
+			ts:   orchTestRunTS, shortid: orchTestRunShortID,
+			wantBatchID: "260618113825-abcd-prompt",
+			wantRunID:   "260618113825-abcd-prompt",
+		},
+		{
+			name: "user run id",
+			ts:   orchTestRunTS, shortid: orchTestRunShortID,
+			userRunID:   "my-run",
+			wantBatchID: "260618113825-abcd-prompt-my-run",
+			wantRunID:   "260618113825-abcd-prompt-my-run",
+		},
+		{
+			name:        "continue by multi-dash run id without ts and shortid",
+			userRunID:   "a-b-c",
+			wantBatchID: "a-b-c",
+			wantRunID:   "a-b-c",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := testenv.MkdirShort(t, "sm-orch-po-")
+			t.Chdir(dir)
+			initGitRepo(t, dir)
+
+			spyLog := &spyEventLog{}
+			agentRunCh := make(chan *AgentRun, 1)
+			o := NewOrchestrator(&fakeGitHubClient{err: errors.New("fetch should not run")}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+				Agent:       "test-agent",
+				Sandbox:     "worktree",
+				WorktreeDir: ".sandman/worktrees",
+				Git:         config.GitConfig{BaseBranch: "main"},
+				AgentProviders: map[string]config.Agent{
+					"test-agent": {Command: "true"},
+				},
+			}}, spyLog,
+				WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "prompt-only")}}),
+				WithRunnableFactory(&capturingAgentRunFactory{agentRunCh: agentRunCh}),
+			)
+
+			batchRel := filepath.Join(".sandman", "batches", tc.wantBatchID)
+			_, err := o.RunBatch(context.Background(), Request{
+				PromptConfig: prompt.RenderConfig{PromptFlag: "Do the thing."},
+				RunID:        tc.userRunID,
+				BatchTS:      tc.ts,
+				BatchShortID: tc.shortid,
+				RunDir:       batchRel,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			select {
+			case ar := <-agentRunCh:
+				wantSuffix := filepath.ToSlash(filepath.Join(batchRel, "runs", tc.wantRunID))
+				if got := filepath.ToSlash(ar.runFolder); !strings.HasSuffix(got, wantSuffix) {
+					t.Errorf("agentRun.runFolder = %q, want suffix %q", got, wantSuffix)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("timed out waiting for AgentRun to be created")
+			}
+
+			entries, err := os.ReadDir(filepath.Join(dir, ".sandman", "batches"))
+			if err != nil {
+				t.Fatalf("read batches dir: %v", err)
+			}
+			var names []string
+			for _, e := range entries {
+				names = append(names, e.Name())
+			}
+			if len(names) != 1 || names[0] != tc.wantBatchID {
+				t.Errorf("batches dir entries = %v, want exactly [%s] (no sibling batch folder)", names, tc.wantBatchID)
+			}
+			manifest, err := batchindex.ReadManifest(filepath.Join(dir, batchRel, "runs", tc.wantRunID))
+			if err != nil {
+				t.Fatalf("run.json not written under the batch directory: %v", err)
+			}
+			if manifest.BatchID != tc.wantBatchID {
+				t.Errorf("run.json batchId = %q, want %q", manifest.BatchID, tc.wantBatchID)
+			}
+
+			var started []string
+			for _, e := range spyLog.snapshot() {
+				if e.Type != "run.started" {
+					continue
+				}
+				id, _ := e.Payload["batch_id"].(string)
+				started = append(started, id)
+			}
+			if len(started) != 1 || started[0] != tc.wantBatchID {
+				t.Errorf("run.started batch_id = %v, want [%s]", started, tc.wantBatchID)
+			}
+		})
+	}
+}
+
 func TestRunBatch_PromptOnlyReviewRunWithEmptyFocus(t *testing.T) {
 	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
@@ -7469,10 +7580,12 @@ type fakeContainerStarter struct {
 	buildImageTag   string
 	buildImageErr   error
 	buildImageCount int
+	buildImageRepo  string
 }
 
 func (f *fakeContainerStarter) BuildImage(ctx context.Context, repoPath string) (string, error) {
 	f.buildImageCount++
+	f.buildImageRepo = repoPath
 	if f.buildImageErr != nil {
 		return "", f.buildImageErr
 	}
@@ -9402,7 +9515,7 @@ func TestBuildStartOptions_IncludesSharedSkillsDir(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	agentCfg := config.BuiltInAgentPresets["opencode"].Agent("opencode")
-	opts, err := buildStartOptions(agentCfg)
+	opts, err := buildStartOptions(agentCfg, lookupEnvFrom(nil))
 	if err != nil {
 		t.Fatalf("build start options: %v", err)
 	}
@@ -9421,7 +9534,7 @@ func TestBuildStartOptions_PopulatesOpencodeSnapshotExcludesAndLiveMounts(t *tes
 	t.Setenv("HOME", home)
 
 	agentCfg := config.BuiltInAgentPresets["opencode"].Agent("opencode")
-	opts, err := buildStartOptions(agentCfg)
+	opts, err := buildStartOptions(agentCfg, lookupEnvFrom(nil))
 	if err != nil {
 		t.Fatalf("build start options: %v", err)
 	}
@@ -9482,7 +9595,7 @@ func TestPrepareContainerConfigMounts_OpencodePresetEndToEnd(t *testing.T) {
 	}
 
 	agentCfg := config.BuiltInAgentPresets["opencode"].Agent("opencode")
-	startOpts, err := buildStartOptions(agentCfg)
+	startOpts, err := buildStartOptions(agentCfg, lookupEnvFrom(nil))
 	if err != nil {
 		t.Fatalf("build start options: %v", err)
 	}
@@ -9868,7 +9981,7 @@ func TestClearIssueArtifacts_RemovesWorktree(t *testing.T) {
 		},
 	}
 
-	ClearIssueArtifacts(42, branch, worktreeDir, el, io.Discard, "main", nil, batchesIndexPath)
+	ClearIssueArtifacts(42, branch, worktreeDir, el, io.Discard, "main", nil, batchesIndexPath, ".")
 
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 		t.Errorf("expected worktree to be removed, got %v", err)
@@ -9923,7 +10036,7 @@ func TestClearIssueArtifacts_DoesNotPruneSiblingContainerWorktree(t *testing.T) 
 		t.Fatalf("rewrite sibling registration gitdir: %v", err)
 	}
 
-	ClearIssueArtifacts(42, targetBranch, worktreeDir, &spyEventLog{}, io.Discard, "main", nil, "")
+	ClearIssueArtifacts(42, targetBranch, worktreeDir, &spyEventLog{}, io.Discard, "main", nil, "", ".")
 
 	if _, err := os.Stat(registration); err != nil {
 		t.Fatalf("sibling worktree registration was removed while clearing another issue: %v", err)
@@ -9942,7 +10055,7 @@ func TestClearIssueArtifacts_Idempotent(t *testing.T) {
 	initGitRepo(t, dir)
 
 	el := &spyEventLog{}
-	ClearIssueArtifacts(42, "42-nonexistent", ".sandman/worktrees", el, io.Discard, "main", nil, "")
+	ClearIssueArtifacts(42, "42-nonexistent", ".sandman/worktrees", el, io.Discard, "main", nil, "", ".")
 }
 
 func TestClearIssueArtifacts_RemovesOrphanWorktreeDirectory(t *testing.T) {
@@ -10002,7 +10115,7 @@ func TestClearIssueArtifacts_RemovesOrphanWorktreeDirectory(t *testing.T) {
 			{Type: "run.started", RunID: runID, Issue: 42, IssueRef: issueRef(42)},
 		},
 	}
-	ClearIssueArtifacts(42, branch, worktreeDir, el, io.Discard, "main", nil, batchesIndexPath)
+	ClearIssueArtifacts(42, branch, worktreeDir, el, io.Discard, "main", nil, batchesIndexPath, ".")
 
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 		t.Errorf("expected orphan worktree dir to be removed, got err=%v", err)
@@ -10036,7 +10149,7 @@ func TestClearIssueArtifacts_OnlyRemovesTargetIssue(t *testing.T) {
 		},
 	}
 
-	ClearIssueArtifacts(42, "42-fix-bug", ".sandman/worktrees", el, io.Discard, "main", nil, "")
+	ClearIssueArtifacts(42, "42-fix-bug", ".sandman/worktrees", el, io.Discard, "main", nil, "", ".")
 
 	// Issue 99 branch should still exist
 	revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/99-fix-bug")
@@ -10109,7 +10222,7 @@ func TestClearIssueArtifacts_ReconcilesStrandedWorktreeInMainRepo(t *testing.T) 
 		logBuf := &bytes.Buffer{}
 
 		trueVal := true
-		ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "")
+		ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "", ".")
 
 		// The branch must be gone from the main repo.
 		revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+branch)
@@ -10157,7 +10270,7 @@ func TestClearIssueArtifacts_ReconcilesStrandedWorktreeInMainRepo(t *testing.T) 
 		logBuf := &bytes.Buffer{}
 
 		trueVal := true
-		ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "")
+		ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "", ".")
 
 		// The branch must be gone.
 		revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+branch)
@@ -10216,7 +10329,7 @@ func TestClearIssueArtifacts_PreservesMainRepoBranch(t *testing.T) {
 	parentCommitBefore := runGit(t, dir, "rev-parse", "HEAD")
 
 	trueVal := true
-	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "")
+	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "", ".")
 
 	parentCommitAfter, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").CombinedOutput()
 	if err != nil {
@@ -10297,7 +10410,7 @@ func TestClearIssueArtifacts_ForeignWorktreeHolderPreserved(t *testing.T) {
 	parentCommitBefore := runGit(t, dir, "rev-parse", "HEAD")
 
 	trueVal := true
-	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "")
+	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "", ".")
 
 	// Parent HEAD commit must be unchanged: parent was on main, the
 	// branch was held by a foreign worktree, the recovery must not
@@ -10369,7 +10482,7 @@ func TestClearIssueArtifacts_NoReconcileKeepsBeltAndSuspenders(t *testing.T) {
 	el := &spyEventLog{}
 	logBuf := &bytes.Buffer{}
 
-	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", nil, "")
+	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", nil, "", ".")
 
 	// The branch should still exist (no recovery ran).
 	revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+branch)
@@ -10398,7 +10511,7 @@ func TestClearIssueArtifacts_ExplicitFalseReconcileKeepsBeltAndSuspenders(t *tes
 	logBuf := &bytes.Buffer{}
 
 	falseVal := false
-	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &falseVal, "")
+	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &falseVal, "", ".")
 
 	// The branch should still exist (no recovery ran).
 	revCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+branch)
@@ -10442,7 +10555,7 @@ func TestClearIssueArtifacts_RemovesPrunableWorktree(t *testing.T) {
 	el := &spyEventLog{}
 	logBuf := &bytes.Buffer{}
 	trueVal := true
-	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "")
+	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "", ".")
 
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 		t.Errorf("expected prunable worktree dir to be removed, got err=%v", err)
@@ -10884,6 +10997,9 @@ func TestRunBatch_CascadesAbortFromBlockerToDependents(t *testing.T) {
 	}
 	if abortedBy, _ := abortedEvent.Payload["aborted_by"].([]int); !reflect.DeepEqual(abortedBy, []int{42}) {
 		t.Fatalf("expected aborted_by [42], got %#v", abortedEvent.Payload["aborted_by"])
+	}
+	if _, ok := abortedEvent.Payload["worktree_state"]; ok {
+		t.Fatalf("unstarted cascade abort payload = %v, want no worktree evidence", abortedEvent.Payload)
 	}
 
 	for i := range spyLog.events {
@@ -12554,6 +12670,39 @@ func TestLogAborted_EventLogWriteErrorIsSurfacedOnErrorLog(t *testing.T) {
 	}
 }
 
+// TestPromptOnlyBatchLocation_RunDirShapes pins the batch-directory and
+// per-run-folder RunDir shapes of unindexed canonical Batches, which keep
+// their directory name as identity; anything else yields the empty result.
+func TestPromptOnlyBatchLocation_RunDirShapes(t *testing.T) {
+	const promptBatch = "260504123456-ab12-prompt"
+	const namedBatch = "260504123456-ab12-prompt-my-run"
+	root := t.TempDir()
+	layout := paths.NewLayout(&config.Config{}, root)
+	tests := []struct {
+		name   string
+		runDir string
+		want   string
+	}{
+		{"relative batch dir", filepath.Join(".sandman", "batches", promptBatch), promptBatch},
+		{"absolute batch dir", filepath.Join(root, ".sandman", "batches", promptBatch), promptBatch},
+		{"batch dir with trailing separator", filepath.Join(".sandman", "batches", promptBatch) + string(filepath.Separator), promptBatch},
+		{"batch dir with user run id", filepath.Join(".sandman", "batches", namedBatch), namedBatch},
+		{"per-run folder", filepath.Join(".sandman", "batches", promptBatch, "runs", promptBatch), promptBatch},
+		{"per-run folder with user run id", filepath.Join(".sandman", "batches", namedBatch, "runs", namedBatch), namedBatch},
+		{"batches root itself", filepath.Join(".sandman", "batches"), ""},
+		{"bare batches name", "batches", ""},
+		{"arbitrary directory", filepath.Join(string(filepath.Separator), "tmp", "scratch"), ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			location, err := promptOnlyBatchLocation(layout, orchTestRunTS, orchTestRunShortID, "", tc.runDir)
+			if got := location.ID; err != nil || got != tc.want {
+				t.Fatalf("promptOnlyBatchLocation(runDir=%q) = %q, %v; want %q", tc.runDir, got, err, tc.want)
+			}
+		})
+	}
+}
+
 // TestBatchIDForPromptOnly_EmptyRunIDAndRunDir_EmitsTsSid pins the
 // segment order of the prompt-only BatchId fallback so the cleanup of
 // #1943 (issue #2042) cannot regress to the legacy shortid-first
@@ -12564,10 +12713,10 @@ func TestLogAborted_EventLogWriteErrorIsSurfacedOnErrorLog(t *testing.T) {
 func TestBatchIDForPromptOnly_EmptyRunIDAndRunDir_EmitsTsSid(t *testing.T) {
 	want := runid.NewBatchID(runid.KindPromptOnly, 1, "", orchTestRunTS, orchTestRunShortID)
 
-	got := batchIDForPromptOnly(orchTestRunTS, orchTestRunShortID, "", "")
+	got := batchIDForPromptOnly(orchTestRunTS, orchTestRunShortID, "")
 
 	if got != want {
-		t.Fatalf("batchIDForPromptOnly(%q, %q, \"\", \"\") = %q, want %q (must route through runid.NewBatchID for ts-sid shape)",
+		t.Fatalf("batchIDForPromptOnly(%q, %q, \"\") = %q, want %q (must route through runid.NewBatchID for ts-sid shape)",
 			orchTestRunTS, orchTestRunShortID, got, want)
 	}
 
@@ -12766,5 +12915,277 @@ func TestRunSession_CopyQualityRulesMissingSource(t *testing.T) {
 	target := filepath.Join(worktree, ".sandman", "reviews", "quality-rules.md")
 	if _, err := os.Stat(target); !os.IsNotExist(err) {
 		t.Errorf("expected missing-source to leave target absent; stat err = %v", err)
+	}
+}
+
+// TestPrepareContainerConfigMounts_ClaudePresetSharesTranscriptsWithTheHost
+// pins that container Claude Code writes its session transcripts straight into
+// the host's ~/.claude/projects, created when the host never ran Claude Code,
+// so `claude --resume <id>` on the host finds them.
+func TestPrepareContainerConfigMounts_ClaudePresetSharesTranscriptsWithTheHost(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	claudeDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startOpts, err := buildStartOptions(config.BuiltInAgentPresets["claude"].Agent("claude"), lookupEnvFrom(nil))
+	if err != nil {
+		t.Fatalf("build start options: %v", err)
+	}
+	cleanup, err := PrepareContainerConfigMounts(context.Background(), t.TempDir(), "", &startOpts, func(context.Context) (string, error) { return "", nil })
+	if err != nil {
+		t.Fatalf("prepare container config mounts: %v", err)
+	}
+	defer cleanup()
+
+	projects := filepath.Join(claudeDir, "projects")
+	if info, err := os.Stat(projects); err != nil || !info.IsDir() {
+		t.Fatalf("host transcript directory = %v, %v; want it created", info, err)
+	}
+	snapshotAt, transcriptsAt := -1, -1
+	var snapshotSource string
+	for i, mount := range startOpts.ConfigMounts {
+		switch mount.Target {
+		case "/.claude":
+			snapshotAt, snapshotSource = i, mount.Source
+		case "/.claude/projects":
+			transcriptsAt = i
+			if mount.Source != projects {
+				t.Errorf("transcript mount source = %q, want the host directory %q", mount.Source, projects)
+			}
+		}
+	}
+	if snapshotAt < 0 || transcriptsAt < 0 {
+		t.Fatalf("mounts = %v, want the ~/.claude snapshot and the live transcript mount", startOpts.ConfigMounts)
+	}
+	if transcriptsAt < snapshotAt {
+		t.Errorf("transcript mount at %d precedes the snapshot at %d; it must shadow the snapshot", transcriptsAt, snapshotAt)
+	}
+	if _, err := os.Stat(filepath.Join(snapshotSource, "settings.json")); err != nil {
+		t.Errorf("expected settings.json in the snapshot: %v", err)
+	}
+}
+
+// TestBuildStartOptions_ClaudePresetCreatesNothingOnTheHost pins that building
+// start options, which every sandbox mode does, leaves the host untouched; only
+// container mount preparation creates the live-mounted transcript directory.
+func TestBuildStartOptions_ClaudePresetCreatesNothingOnTheHost(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	opts, err := buildStartOptions(config.BuiltInAgentPresets["claude"].Agent("claude"), lookupEnvFrom(nil))
+	if err != nil {
+		t.Fatalf("build start options: %v", err)
+	}
+	projects := filepath.Join(home, ".claude", "projects")
+	if _, err := os.Stat(projects); !os.IsNotExist(err) {
+		t.Fatalf("stat %s = %v, want it not created by option building", projects, err)
+	}
+	if len(opts.LiveMountDirs) != 1 || opts.LiveMountDirs[0] != projects {
+		t.Fatalf("LiveMountDirs = %v, want [%s]", opts.LiveMountDirs, projects)
+	}
+}
+
+// claudeCredentialHome creates a HOME with Claude Code subscription
+// credentials and returns the credentials path.
+func claudeCredentialHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	claudeDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	credentials := filepath.Join(claudeDir, ".credentials.json")
+	if err := os.WriteFile(credentials, []byte(`{"claudeAiOauth":{"refreshToken":"host"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return credentials
+}
+
+func lookupEnvFrom(values map[string]string) func(string) (string, bool) {
+	return func(name string) (string, bool) {
+		value, ok := values[name]
+		return value, ok
+	}
+}
+
+func snapshotHasClaudeCredentials(t *testing.T, startOpts *sandbox.StartOptions) bool {
+	t.Helper()
+	cleanup, err := PrepareContainerConfigMounts(context.Background(), t.TempDir(), "", startOpts, func(context.Context) (string, error) { return "", nil })
+	if err != nil {
+		t.Fatalf("prepare container config mounts: %v", err)
+	}
+	t.Cleanup(cleanup)
+	for _, mount := range startOpts.ConfigMounts {
+		if mount.Target != "/.claude" {
+			continue
+		}
+		_, err := os.Stat(filepath.Join(mount.Source, ".credentials.json"))
+		return err == nil
+	}
+	t.Fatalf("mounts = %v, want a ~/.claude snapshot", startOpts.ConfigMounts)
+	return false
+}
+
+// TestBuildStartOptions_ClaudeOAuthTokenReplacesSnapshotCredentials pins that
+// a long-lived Claude Code token in the host environment reaches the container
+// by name and keeps the rotating subscription credentials out of the snapshot,
+// so no container ever spends the host's refresh token.
+func TestBuildStartOptions_ClaudeOAuthTokenReplacesSnapshotCredentials(t *testing.T) {
+	claudeCredentialHome(t)
+	startOpts, err := buildStartOptions(config.BuiltInAgentPresets["claude"].Agent("claude"), lookupEnvFrom(map[string]string{"CLAUDE_CODE_OAUTH_TOKEN": "sentinel"}))
+	if err != nil {
+		t.Fatalf("build start options: %v", err)
+	}
+	if want := []string{"CLAUDE_CODE_OAUTH_TOKEN"}; !reflect.DeepEqual(startOpts.PassEnv, want) {
+		t.Fatalf("PassEnv = %v, want %v", startOpts.PassEnv, want)
+	}
+	if snapshotHasClaudeCredentials(t, &startOpts) {
+		t.Fatal("snapshot contains .credentials.json; the token must replace it")
+	}
+}
+
+func TestBuildStartOptions_ClaudeWithoutOAuthTokenKeepsSnapshotCredentials(t *testing.T) {
+	claudeCredentialHome(t)
+	startOpts, err := buildStartOptions(config.BuiltInAgentPresets["claude"].Agent("claude"), lookupEnvFrom(nil))
+	if err != nil {
+		t.Fatalf("build start options: %v", err)
+	}
+	if len(startOpts.PassEnv) != 0 {
+		t.Fatalf("PassEnv = %v, want none", startOpts.PassEnv)
+	}
+	if !snapshotHasClaudeCredentials(t, &startOpts) {
+		t.Fatal("snapshot lacks .credentials.json without a token")
+	}
+}
+
+func TestBuildStartOptions_CustomClaudeCommandGetsNoTokenPassthrough(t *testing.T) {
+	claudeCredentialHome(t)
+	agentCfg := config.BuiltInAgentPresets["claude"].Agent("claude")
+	agentCfg.Command = "my-wrapper"
+	startOpts, err := buildStartOptions(agentCfg, lookupEnvFrom(map[string]string{"CLAUDE_CODE_OAUTH_TOKEN": "sentinel"}))
+	if err != nil {
+		t.Fatalf("build start options: %v", err)
+	}
+	if len(startOpts.PassEnv) != 0 {
+		t.Fatalf("PassEnv = %v, want none for a custom command", startOpts.PassEnv)
+	}
+	if !snapshotHasClaudeCredentials(t, &startOpts) {
+		t.Fatal("custom command lost .credentials.json")
+	}
+}
+
+// TestRunBatch_ClaudeOAuthTokenNeverLeaves pins the token passthrough end to
+// end: the container receives the variable by name, and its value appears in
+// no container start option, rendered agent command, or file under .sandman/.
+func TestRunBatch_ClaudeOAuthTokenNeverLeaves(t *testing.T) {
+	const sentinel = "sk-ant-oat01-sentinel-never-persist"
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write docker: %v", err)
+	}
+	t.Setenv("PATH", dir)
+	claudeCredentialHome(t)
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", sentinel)
+
+	starter := &fakeContainerStarter{container: &fakeContainerForOrchestrator{id: "shared123"}}
+	sb := &fakeSandbox{}
+	o := NewOrchestrator(&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}}, &noopRenderer{},
+		&fakeConfigStore{config: &config.Config{Agent: "claude", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"},
+			AgentProviders: map[string]config.Agent{"claude": config.BuiltInAgentPresets["claude"].Agent("claude")}}}, nil,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: sb}),
+		WithContainerRuntimeFactory(&fakeContainerRuntimeFactory{starter: starter}),
+	)
+
+	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}, Sandbox: "docker"})
+
+	if !starter.startCalled {
+		t.Fatal("expected container starter to be called")
+	}
+	if want := []string{"CLAUDE_CODE_OAUTH_TOKEN"}; !reflect.DeepEqual(starter.startOpts.PassEnv, want) {
+		t.Fatalf("PassEnv = %v, want %v", starter.startOpts.PassEnv, want)
+	}
+	if opts := fmt.Sprintf("%+v", starter.startOpts); strings.Contains(opts, sentinel) {
+		t.Fatalf("container start options carry the token value: %s", opts)
+	}
+	if !sb.execCalled {
+		t.Fatal("expected the agent command to run")
+	}
+	if strings.Contains(sb.execCommand, sentinel) {
+		t.Fatalf("rendered agent command carries the token value: %s", sb.execCommand)
+	}
+	scanned := 0
+	err := filepath.WalkDir(filepath.Join(dir, ".sandman"), func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		scanned++
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(data), sentinel) {
+			t.Errorf("%s contains the token value", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk .sandman: %v", err)
+	}
+	if scanned == 0 {
+		t.Fatal("expected run artifacts under .sandman/")
+	}
+}
+
+// TestRunBatch_ClaudeCredentialRotationReachesHost pins the wiring from the
+// batch snapshot to every launch: a token the container rotates during a
+// launch is written back to the host credentials, so the host is not logged
+// out by the refresh it can no longer use.
+func TestRunBatch_ClaudeCredentialRotationReachesHost(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write docker: %v", err)
+	}
+	t.Setenv("PATH", dir)
+	hostCredentials := claudeCredentialHome(t)
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
+
+	starter := &fakeContainerStarter{container: &fakeContainerForOrchestrator{id: "shared123"}}
+	sb := &fakeSandbox{}
+	sb.execFunc = func(context.Context, string, io.Writer, io.Writer) error {
+		for _, mount := range starter.startOpts.ConfigMounts {
+			if mount.Target == "/.claude" {
+				return os.WriteFile(filepath.Join(mount.Source, ".credentials.json"), []byte(`{"claudeAiOauth":{"refreshToken":"rotated"}}`), 0600)
+			}
+		}
+		return errors.New("no ~/.claude snapshot mounted")
+	}
+	o := NewOrchestrator(&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}}, &noopRenderer{},
+		&fakeConfigStore{config: &config.Config{Agent: "claude", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"},
+			AgentProviders: map[string]config.Agent{"claude": config.BuiltInAgentPresets["claude"].Agent("claude")}}}, nil,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: sb}),
+		WithContainerRuntimeFactory(&fakeContainerRuntimeFactory{starter: starter}),
+	)
+
+	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}, Sandbox: "docker"})
+
+	if !sb.execCalled {
+		t.Fatal("expected the agent command to run")
+	}
+	data, err := os.ReadFile(hostCredentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "rotated") {
+		t.Fatalf("host credentials = %s, want the container's rotated token", data)
 	}
 }

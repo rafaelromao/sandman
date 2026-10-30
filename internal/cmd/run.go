@@ -807,8 +807,13 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("rel run dir: %w", err)
 			}
+			absRepoRoot, err := filepath.Abs(repoRoot)
+			if err != nil {
+				return fmt.Errorf("resolve repo root: %w", err)
+			}
 			req.OutputWriter = rs.Broadcaster()
 			req.RunDir = relRunDir
+			req.RepoRoot = absRepoRoot
 
 			warnOpencodeVersionMismatch(cmd, agentName, sandboxMode, repoRoot, cfg)
 

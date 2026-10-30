@@ -43,10 +43,17 @@ type StartOptions struct {
 	AgentConfigFiles    []string
 	AgentConfigExcludes []string
 	LiveMounts          []string
-	ConfigMounts        []ConfigMount
-	UserID              string
-	SSH                 bool
-	RemoteScheme        string
+	// LiveMountDirs are the LiveMounts that are directories to create on the
+	// host before mounting when they are missing.
+	LiveMountDirs []string
+	ConfigMounts  []ConfigMount
+	UserID        string
+	// PassEnv names host environment variables the container receives by
+	// name only (`--env NAME`): the runtime CLI inherits Sandman's
+	// environment and resolves the value, so it never appears in argv.
+	PassEnv      []string
+	SSH          bool
+	RemoteScheme string
 }
 
 // ContainerRuntime starts and manages containers.
@@ -91,6 +98,9 @@ func (r *ContainerRuntime) Start(ctx context.Context, image, repoPath string, op
 			args = append(args, "--user", opts.UserID)
 		}
 		args = append(args, "--env", "HOME=/")
+	}
+	for _, name := range opts.PassEnv {
+		args = append(args, "--env", name)
 	}
 
 	if opts.GitConfigPath != "" {
@@ -196,13 +206,35 @@ func (r *ContainerRuntime) BuildImage(ctx context.Context, repoPath string) (str
 	h := sha256.Sum256(append([]byte(absPath), dockerfileData...))
 	tag := fmt.Sprintf("sandman-custom-%x:latest", h[:8])
 
-	args := []string{"build", "-t", tag, "-f", dockerfile, repoPath}
+	args := ImageBuildArgs(tag, dockerfile, repoPath)
 	out, err := runContainerCommand(ctx, r.execFn(r.binary, args...))
 	if err != nil {
-		return "", fmt.Errorf("build image from .sandman/Dockerfile: %w\n%s", err, out)
+		return "", fmt.Errorf("build image from .sandman/Dockerfile: %w\n%s%s", err, out, tlsVerificationHint(string(out)))
 	}
 
 	return tag, nil
+}
+
+// tlsVerificationSignatures are build-output fragments printed when a
+// download inside the image rejects a certificate, typically because a
+// TLS-inspection proxy re-signs HTTPS traffic with a CA the image lacks.
+var tlsVerificationSignatures = []string{
+	"curl: (60)",
+	"SSL certificate problem",
+	"unable to get local issuer certificate",
+	"SELF_SIGNED_CERT_IN_CHAIN",
+	"CERTIFICATE_VERIFY_FAILED",
+}
+
+// tlsVerificationHint returns the remediation appended to an image build
+// failure caused by certificate verification, or "" for other failures.
+func tlsVerificationHint(output string) string {
+	for _, signature := range tlsVerificationSignatures {
+		if strings.Contains(output, signature) {
+			return "\nhint: the image build failed TLS certificate verification, usually because a TLS-inspection proxy re-signs HTTPS traffic. Run `sandman init --ca-cert auto` (or `sandman init --ca-cert <path>` with your proxy's root certificate) to trust it in the sandbox image."
+		}
+	}
+	return ""
 }
 
 type runningContainer struct {
@@ -280,6 +312,12 @@ func toContainerPath(hostPath string) string {
 		return "/" + strings.TrimPrefix(rel, "/")
 	}
 	return hostPath
+}
+
+// ContainerPath returns where a host config path appears inside a container:
+// paths under the host home directory map to the container's HOME=/.
+func ContainerPath(hostPath string) string {
+	return toContainerPath(hostPath)
 }
 
 // NewLiveConfigMount returns a ConfigMount that bind-mounts the given host

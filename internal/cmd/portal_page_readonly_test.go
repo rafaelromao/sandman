@@ -36,11 +36,10 @@ func TestPortal_PageWiresReadOnlyStatus(t *testing.T) {
 	}
 	content := string(body)
 
-	// isRunArchivable must refuse archived AND unavailable rows so the
-	// archive-run button is hidden for both read-only states.
+	// Archive availability is projected with the row; the page must consume
+	// that field rather than rebuilding the rule from artifact state.
 	for _, want := range []string{
-		`if (run.archived) return false;`,
-		`if (run.unavailable) return false;`,
+		`return !!(run && run.canArchive);`,
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing isRunArchivable guard %q", want)

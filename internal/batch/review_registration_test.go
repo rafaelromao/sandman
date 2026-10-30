@@ -1120,7 +1120,8 @@ func TestReviewRegistration_StaleCanonicalHeadRefreshesLiveGate(t *testing.T) {
 		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
 	}
 
-	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	observedLifecycle1123 := session.observeLifecycleForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := observedLifecycle1123.status(), observedLifecycle1123.Evidence, observedLifecycle1123.handled()
 	if !handled || status != "await" || extras["gate"] != "pending" {
 		t.Fatalf("stale canonical gate = (%q, %#v, %t), want await/pending", status, extras, handled)
 	}
@@ -1377,7 +1378,8 @@ func TestReviewRegistration_ProductionGateRegistersBeforeLivePendingHandoff(t *t
 		reviewAttemptStartedAt: now.Add(-time.Minute),
 	}
 
-	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	observedLifecycle1380 := session.observeLifecycleForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := observedLifecycle1380.status(), observedLifecycle1380.Evidence, observedLifecycle1380.handled()
 	if !handled || status != "await" || extras["gate"] != "pending" {
 		t.Fatalf("live pending handoff = (%q, %#v, %t), want await/pending", status, extras, handled)
 	}
@@ -1397,7 +1399,8 @@ func TestReviewRegistration_ProductionGateRegistersBeforeLivePendingHandoff(t *t
 	if err != nil {
 		t.Fatalf("read first production registration bytes: %v", err)
 	}
-	status, extras, handled = session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	observedLifecycle1400 := session.observeLifecycleForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled = observedLifecycle1400.status(), observedLifecycle1400.Evidence, observedLifecycle1400.handled()
 	if !handled || status != "await" || extras["gate"] != "pending" {
 		t.Fatalf("repeat live pending handoff = (%q, %#v, %t), want await/pending", status, extras, handled)
 	}
@@ -1448,7 +1451,8 @@ func TestReviewRegistration_WriteFailureWaitsOnlyOnActiveCIGate(t *testing.T) {
 		opts:                    gateTestRunOptions(),
 	}
 
-	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	observedLifecycle1451 := session.observeLifecycleForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := observedLifecycle1451.status(), observedLifecycle1451.Evidence, observedLifecycle1451.handled()
 	if !handled || status != "await" || extras["gate"] != string(lifecycleGatePending) {
 		t.Fatalf("write failure gate = (%q, %#v, %t), want current-CI await", status, extras, handled)
 	}
@@ -1498,7 +1502,8 @@ func TestReviewRegistration_WriteFailureCannotWaitOnAggregateReadyGate(t *testin
 		opts:                    gateTestRunOptions(),
 	}
 
-	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	observedLifecycle1501 := session.observeLifecycleForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := observedLifecycle1501.status(), observedLifecycle1501.Evidence, observedLifecycle1501.handled()
 	if !handled || status != "failure" || extras["reason"] != stateErrorReason {
 		t.Fatalf("write failure ready gate = (%q, %#v, %t), want review-state failure", status, extras, handled)
 	}
@@ -1566,7 +1571,8 @@ func TestReviewRegistration_OrphanTempFileFallsThroughToLiveState(t *testing.T) 
 	}
 	session := &runSession{deps: runDeps{githubClient: client, errorLog: io.Discard}, opts: gateTestRunOptions()}
 
-	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	observedLifecycle1569 := session.observeLifecycleForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := observedLifecycle1569.status(), observedLifecycle1569.Evidence, observedLifecycle1569.handled()
 	if !handled || status != "await" || extras["gate"] != "pending" {
 		t.Fatalf("orphan temp gate = (%q, %#v, %t), want await/pending", status, extras, handled)
 	}
@@ -1593,7 +1599,8 @@ func TestReviewRegistration_CorruptCanonicalRecordCannotOverrideLivePendingState
 	}
 	session := &runSession{deps: runDeps{githubClient: client, errorLog: io.Discard}, opts: gateTestRunOptions()}
 
-	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	observedLifecycle1596 := session.observeLifecycleForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := observedLifecycle1596.status(), observedLifecycle1596.Evidence, observedLifecycle1596.handled()
 	if !handled || status != "await" || extras["gate"] != string(lifecycleGatePending) {
 		t.Fatalf("corrupt canonical gate = (%q, %#v, %t), want active-CI await", status, extras, handled)
 	}
@@ -1903,7 +1910,8 @@ func TestReviewRegistration_GateRefreshesAfterHeadRevalidationFailure(t *testing
 		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
 	}
 
-	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	observedLifecycle1906 := session.observeLifecycleForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := observedLifecycle1906.status(), observedLifecycle1906.Evidence, observedLifecycle1906.handled()
 	// The re-fetch succeeds but reveals a head that differs from the local
 	// checkout; without a confirmed request bound to the new head, the gate
 	// is idle and must fail rather than wait (issue #2743).
@@ -1959,7 +1967,8 @@ func TestReviewRegistration_HeadRefreshFailureDoesNotReuseReadySnapshot(t *testi
 		opts:                   gateTestRunOptions(),
 	}
 
-	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	observedLifecycle1962 := session.observeLifecycleForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := observedLifecycle1962.status(), observedLifecycle1962.Evidence, observedLifecycle1962.handled()
 	// Issue #2743: the local head no longer matches the pull request and no
 	// confirmed request binds either side, so nothing is resolving — fail
 	// closed instead of waiting. The ready snapshot is still never reused
@@ -2014,7 +2023,8 @@ func TestReviewRegistration_GateUsesLiveSnapshotAfterSuccessfulRegistration(t *t
 		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
 	}
 
-	status, extras, handled := session.lifecycleDecisionForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	observedLifecycle2017 := session.observeLifecycleForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+	status, extras, handled := observedLifecycle2017.status(), observedLifecycle2017.Evidence, observedLifecycle2017.handled()
 	if !handled || status != "await" || extras["gate"] != "pending" {
 		t.Fatalf("live gate after registration = (%q, %#v, %t), want await/pending", status, extras, handled)
 	}

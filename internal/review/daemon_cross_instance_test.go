@@ -22,7 +22,7 @@ func TestDaemonIgnoresAnsweredRequestAndProcessesFreshRequest(t *testing.T) {
 	}
 	response := github.PRComment{
 		ID:          "response-1",
-		Body:        "## Summary\nThe review is complete.\n\n## Decision\n**APPROVED**",
+		Body:        publicationBody("## Summary\nThe review is complete.\n\n## Decision\n**APPROVED**", reviewTriggerKey(request), "head"),
 		AuthorLogin: "sandman",
 		CreatedAt:   now.Add(time.Minute),
 	}
@@ -121,6 +121,7 @@ func TestDaemonDoesNotTreatUnrelatedLaterCommentAsReviewResponse(t *testing.T) {
 	}{
 		{name: "ordinary comment by daemon account", author: "sandman", body: "I will take a look."},
 		{name: "review-shaped comment by another account", author: "reviewer", body: "## Summary\nReviewed.\n\n## Decision\n**APPROVED**"},
+		{name: "unbound legacy review by daemon account", author: "sandman", body: "## Summary\nReviewed.\n\n## Decision\n**APPROVED**"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			const prNumber = 2738
@@ -187,5 +188,64 @@ func TestDaemonProcessesEditedTriggerWhenPriorResponsePredatesEdit(t *testing.T)
 	runner.mu.Unlock()
 	if focus != "focus on the edited request" {
 		t.Fatalf("edited trigger focus = %q, want %q", focus, "focus on the edited request")
+	}
+}
+
+func TestDaemonSelectsUnansweredRequestBeforeNewerAnsweredRequest(t *testing.T) {
+	for _, state := range []string{"fresh", "backoff", "terminal"} {
+		t.Run(state, func(t *testing.T) {
+			const prNumber = 2881
+			now := time.Now().UTC()
+			older := github.PRComment{ID: "older", Body: "/sandman review older focus", AuthorLogin: "sandman", CreatedAt: now}
+			newer := github.PRComment{ID: "newer", Body: "/sandman review newer focus", AuthorLogin: "sandman", CreatedAt: now.Add(time.Minute)}
+			response := github.PRComment{
+				ID: "response", AuthorLogin: "sandman", CreatedAt: now.Add(2 * time.Minute),
+				Body: publicationBody("## Summary\nReviewed.\n\n## Decision\n**APPROVED**", reviewTriggerKey(newer), "head"),
+			}
+			gh := &fakeGH{
+				prs:      []github.PR{{Number: prNumber, State: "open", UpdatedAt: response.CreatedAt}},
+				comments: map[int][]github.PRComment{prNumber: {older, newer, response}},
+				prFetch:  map[int]*github.PR{prNumber: {Number: prNumber, Title: "T", Body: "B", HeadRefOid: "head"}},
+			}
+			runner := newDecisionRunner()
+			d, logs, _ := newDaemonForTest(t, gh, runner, &config.Config{DefaultReviewAgent: "opencode", DefaultReviewModel: "opencode/foo"})
+			d.authenticatedLogin = "sandman"
+			d.Clock = func() time.Time { return now.Add(3 * time.Minute) }
+			switch state {
+			case "backoff":
+				d.SetNextAttemptAt(prNumber, reviewTriggerKey(older), now.Add(time.Hour))
+			case "terminal":
+				d.MarkTerminalSeen(prNumber, reviewTriggerKey(older))
+			}
+			tickAndWait(t, d, context.Background())
+			wantCalls := 0
+			if state == "fresh" {
+				wantCalls = 1
+			}
+			if got := runner.Calls(); got != wantCalls {
+				t.Fatalf("review launches = %d, want %d; logs: %s", got, wantCalls, logs.String())
+			}
+			if state == "backoff" {
+				if d.IsTerminalSeen(prNumber, reviewTriggerKey(older)) {
+					t.Fatal("backed-off request was marked terminal")
+				}
+				d.Clock = func() time.Time { return now.Add(2 * time.Hour) }
+				tickAndWait(t, d, context.Background())
+				if got := runner.Calls(); got != 1 {
+					t.Fatalf("review launches after backoff = %d, want 1", got)
+				}
+			}
+			if state != "terminal" {
+				runner.mu.Lock()
+				focus := runner.last.ReviewFocus
+				runner.mu.Unlock()
+				if focus != "older focus" {
+					t.Fatalf("review focus = %q, want older focus", focus)
+				}
+			}
+			if d.IsTerminalSeen(prNumber, reviewTriggerKey(newer)) {
+				t.Fatal("remotely answered request was launched or superseded locally")
+			}
+		})
 	}
 }

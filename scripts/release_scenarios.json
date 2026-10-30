@@ -8,7 +8,7 @@
   },
   "providers": {
     "opencode": {
-      "cli": "1.15.0",
+      "cli": "1.19.3",
       "model": "opencode/big-pickle"
     },
     "claude": {
@@ -325,6 +325,11 @@
     },
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestCIRemediationPoisonedTaskRealAgent",
+      "tier": "live"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestPresetMatrixHarness_GenericBuildsWithEditedDockerfile",
       "tier": "integration"
     },
@@ -371,7 +376,7 @@
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestPresetMatrixHarness_RealClaudeAgentReuseSession",
-      "tier": "live"
+      "tier": "claude"
     },
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
@@ -532,7 +537,7 @@
     },
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
-      "test": "TestReviewDaemonE2E_RealAgentInContainer",
+      "test": "TestReviewDaemonE2E_CannedReviewerTriggerToPost",
       "tier": "integration"
     },
     {
@@ -993,6 +998,26 @@
       "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestInit_GenericPresetBuildsForEveryBuiltInAgentProvider/claude",
       "tier": "smoke"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPermissionFakeAgentHomeIsolatedFromHostState",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPythonBuildSecretIsTransient",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalBuiltBinary_ServesEmbeddedLogOwnerAndTerminalSavedLog",
+      "tier": "unit"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPortalBuiltBinary_BrowserContinuityReloadsAndRecoversAfterRestart",
+      "tier": "unit"
     }
   ]
 }

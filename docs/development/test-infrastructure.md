@@ -9,11 +9,19 @@ This is the advanced reference for Sandman's test harness. For the common comman
 | Var | Purpose |
 |-----|---------|
 | `SANDMAN_TEST_PROVIDERS` | Provider allowlist for smoke and e2e tests |
-| `SANDMAN_E2E_GATES` | Stable e2e scenario identifiers |
+| `SANDMAN_RUN_SMOKE_E2E` | `1` opts in to smoke tests (with `-tags smoke` and a provider allowlist) |
+| `SANDMAN_SMOKE_PREFETCH` | `1` prebuilds smoke images up front instead of on first use |
+| `SANDMAN_E2E_GATES` | Stable e2e scenario identifiers; all but `batch`'s `TestRunBatch_EndToEnd` and `base_branch_feature` also need `-tags e2e` |
 | `SANDMAN_TEST_MODEL_<AGENT>` | Per-agent model override for smoke and e2e tests |
 | `SANDMAN_TEST_FAST` | Enables fast-mode behavior for blocking shims |
 | `SANDMAN_RUN_AGENT_E2E` | Opt-in for real-agent E2E sub-tests |
 | `SANDMAN_TEST_TIMEOUT` | Override `-timeout` for the preset-matrix runner script |
+| `SANDMAN_FULL_REGRESSION` | `1` disables CI-only skip guards for the exhaustive regression |
+| `SANDMAN_REQUIRE_PORTAL_BROWSER` | `1` makes portal browser tests fail instead of skip when no browser is found, and overrides their CI skip (`make test-browser`) |
+| `SANDMAN_PORTAL_CHROMIUM` | Path to the Chromium binary used by portal browser tests |
+| `SANDMAN_RUN_PORTAL_BINARY_E2E` | `1` opts in to the portal log tests that build and run a real `sandman` binary (the test builds it; there is no prebuilt-binary override) |
+
+Build tags select tiers: `smoke` (smoke tests), `e2e` (tagged e2e scenarios, which also compiles smoke files), and `visual` (portal visual tests). `make test-browser` runs the `visual`-tagged tests together with the untagged portal browser continuity tests listed in `scripts/portal_browser_tests.txt`.
 
 When gate vars are unset, expensive tests should skip themselves instead of doing real work.
 

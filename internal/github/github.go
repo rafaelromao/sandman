@@ -30,7 +30,12 @@ type PR struct {
 	Merged      bool
 	HeadRefName string
 	HeadRefOid  string
+	BaseRefName string
 	UpdatedAt   time.Time
+	// ClosedAt is when the pull request was closed; zero when it is open or
+	// the lookup did not report it. Later comments or branch deletion move
+	// UpdatedAt but never ClosedAt.
+	ClosedAt time.Time
 	// ReviewDecision, MergeStateStatus, and StatusCheckRollup are populated
 	// by FindPRByBranch when available; they are empty when the underlying
 	// `gh` invocation omits the columns (e.g. on PRs that never had a
@@ -40,11 +45,38 @@ type PR struct {
 	ReviewDecision    string
 	MergeStateStatus  string
 	StatusCheckRollup string
+	// CIHasActiveChecks remains true when a failed check coexists with queued or
+	// running siblings in the same current-head check rollup.
+	CIHasActiveChecks bool
+	// CIActiveFailedWorkflowRunID is populated only when check execution links
+	// identify exactly one workflow run containing both a failed job and an
+	// active sibling. It is empty for unrelated, missing, or ambiguous links.
+	CIActiveFailedWorkflowRunID string
+	// CIActiveFailedWorkflowRunFailedCheckNames preserves the failed check names
+	// from that identified run so a recovery receipt for one job cannot defer
+	// independent failures in the same workflow.
+	CIActiveFailedWorkflowRunFailedCheckNames []string
+	// CIActiveFailedWorkflowRunFailedChecks preserves each failed check's
+	// display name and provider execution link. Names are not unique, so callers
+	// must not use a display-name match alone to identify a failed job.
+	CIActiveFailedWorkflowRunFailedChecks []CIFailedCheck
+	// CIActiveFailedWorkflowRunCheckNames preserves every named check execution
+	// from the identified workflow run, including active siblings. A rerun wait
+	// must reject a selected job name that is ambiguous across that full set.
+	CIActiveFailedWorkflowRunCheckNames []string
 	// CIExecutionID identifies the observed check executions independently of
 	// their status. A rerun can change this identity without changing the head.
 	CIExecutionID      string
 	linkedIssueNumber  int
 	linkedIssueNumbers []int
+}
+
+// CIFailedCheck identifies one failed check execution in a workflow run.
+// DetailsURL is the provider's execution link (which may contain a browser job
+// number); it is not the GitHub API database ID used by rerun operations.
+type CIFailedCheck struct {
+	Name       string `json:"name"`
+	DetailsURL string `json:"details_url"`
 }
 
 var prClosingIssueRe = regexp.MustCompile(`\b(?i)(?:close(?:s|d)?|fix(?:es|ed)?|resolve(?:s|d)?)\s*:?\s*((?:#\d+)(?:(?:\s*,\s*(?:and\s+)?|\s+and\s+)#\d+)*)`)

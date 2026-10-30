@@ -4,6 +4,7 @@ import argparse
 import collections
 import json
 import os
+import sys
 from pathlib import Path
 
 
@@ -90,7 +91,8 @@ def main():
             pass  # Go's timeout panic also emits non-JSON stderr.
     result = evaluate(manifest, args.tier, events, args.returncode, os.environ.get('RELEASE_PLATFORM', 'linux/amd64'), 'panic: test timed out' in raw or 'timeout: sending signal' in raw)
     result.update(sha=os.environ['GITHUB_SHA'], tier=args.tier,
-                  providers=manifest['providers'], platform=os.environ.get('RELEASE_PLATFORM', 'linux/amd64'),
+                  providers={name: value for name, value in manifest['providers'].items()
+                             if args.tier not in ('live', 'claude') or name == ('opencode' if args.tier == 'live' else 'claude')}, platform=os.environ.get('RELEASE_PLATFORM', 'linux/amd64'),
                   versions=Path('regression-artifacts/versions.txt').read_text() if Path('regression-artifacts/versions.txt').exists() else 'unavailable',
                   prerequisites=os.environ.get('RELEASE_PREREQUISITES', 'not recorded'))
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
@@ -108,6 +110,10 @@ def main():
     if os.environ.get('GITHUB_STEP_SUMMARY'):
         with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as stream:
             stream.write(summary)
+    # Name each failure in the job log too; the step summary and artifact are easy to miss.
+    for error in result['errors'][:50]:
+        # Escape like the runner expects, so test output cannot inject workflow commands.
+        print('::error::' + error[:500].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'), file=sys.stderr)
     raise SystemExit(0 if result['success'] else 1)
 
 

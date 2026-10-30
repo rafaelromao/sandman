@@ -9,17 +9,27 @@ import (
 	"time"
 )
 
+// Successful shell stubs need a scheduling budget under race-enabled macOS
+// CI. Only tests of actual cancellation use deliberately short deadlines.
 type outageRunner struct {
 	calls       []fakeCall
 	failures    int
 	message     string
 	timeout     bool
+	expiredCall bool
 	successJSON string
 }
 
 func (r *outageRunner) Run(ctx context.Context, name string, args ...string) *exec.Cmd {
 	r.calls = append(r.calls, fakeCall{ctx: ctx, name: name, args: append([]string(nil), args...)})
 	if len(r.calls) <= r.failures {
+		if r.expiredCall {
+			// Inject a deadline failure without racing process startup against a
+			// tiny wall-clock budget. The caller context remains live for retry.
+			expired, cancel := context.WithDeadline(ctx, time.Time{})
+			defer cancel()
+			return exec.CommandContext(expired, "sh", "-c", "exit 0")
+		}
 		if r.timeout {
 			return blockingCmd(ctx)
 		}
@@ -38,9 +48,9 @@ func TestCLIClientReadRecoveryRevalidatesApprovedHead(t *testing.T) {
 		{"call timeout", "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			runner := &outageRunner{failures: 1, message: tc.message, timeout: tc.timeout,
+			runner := &outageRunner{failures: 1, message: tc.message, expiredCall: tc.timeout,
 				successJSON: `[{"number":17,"state":"OPEN","headRefOid":"approved-head","mergeStateStatus":"CLEAN","statusCheckRollup":"success"}]`}
-			client := NewCLIClient(WithRunner(runner), WithTimeout(50*time.Millisecond))
+			client := NewCLIClient(WithRunner(runner), WithTimeout(5*time.Second))
 			pr, err := client.FindPRByBranch(t.Context(), "42-fix")
 			if err != nil || pr == nil || pr.HeadRefOid != "approved-head" || pr.StatusCheckRollup != "success" {
 				t.Fatalf("approved continuation could not revalidate after one transient read failure: pr=%+v err=%v", pr, err)
@@ -64,7 +74,7 @@ func TestCLIClientReadRecoveryIsBoundedAndCancellationAware(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			runner := &outageRunner{failures: 10, message: tc.message}
-			client := NewCLIClient(WithRunner(runner), WithTimeout(50*time.Millisecond))
+			client := NewCLIClient(WithRunner(runner), WithTimeout(5*time.Second))
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			if tc.cancel {
@@ -83,7 +93,7 @@ func TestCLIClientReadRecoveryIsBoundedAndCancellationAware(t *testing.T) {
 
 func TestCLIClientReadRecoveryDoesNotRetryDecisionPublication(t *testing.T) {
 	runner := &outageRunner{failures: 1, message: "error connecting to api.github.com"}
-	client := NewCLIClient(WithRunner(runner), WithTimeout(50*time.Millisecond))
+	client := NewCLIClient(WithRunner(runner), WithTimeout(5*time.Second))
 	err := NewGHCommentPoster(client).PostComment(t.Context(), 17, "APPROVED")
 	if err == nil || len(runner.calls) != 1 {
 		t.Fatalf("ambiguous write was retried: err=%v calls=%d", err, len(runner.calls))
@@ -103,7 +113,7 @@ func TestCLIClientReadRecoveryPreservesCallerDeadline(t *testing.T) {
 
 func TestCLIClientReadRecoveryPreservesRateLimitOnTimeout(t *testing.T) {
 	runner := &outageRunner{failures: 10, message: "API rate limit exceeded; retry-after: 60"}
-	client := NewCLIClient(WithRunner(runner), WithTimeout(50*time.Millisecond))
+	client := NewCLIClient(WithRunner(runner), WithTimeout(5*time.Second))
 	_, err := client.FindPRByBranch(t.Context(), "42-fix")
 	if !IsRateLimited(err) || !errors.Is(err, context.DeadlineExceeded) || len(runner.calls) != 1 {
 		t.Fatalf("rate-limit wait became a transient read failure: err=%v calls=%d", err, len(runner.calls))

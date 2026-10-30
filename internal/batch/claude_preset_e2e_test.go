@@ -132,7 +132,7 @@ func TestRunBatch_ClaudePresetWorktreeEndToEnd(t *testing.T) {
 		t.Fatalf("prompt argument = %q, want the rendered Task", prompt)
 	}
 	secondPrompt := strings.TrimRight(readFakeClaudeFile(t, stateDir, "launch-2.task"), "\n")
-	wantSecond := []string{"-p", "--output-format", "stream-json", "--verbose", "--continue", "--name", "Sandman " + runID + ": ", "--model", "sonnet", secondPrompt}
+	wantSecond := []string{"-p", "--output-format", "stream-json", "--verbose", "--resume", "6f1c2a4e-0b7d-4c1a-9a55-2f0e8d3b7c11", "--name", "Sandman " + runID + ": ", "--model", "sonnet", secondPrompt}
 	if got := readFakeClaudeArgs(t, stateDir, 2); !reflect.DeepEqual(got, wantSecond) {
 		t.Fatalf("quota continuation argv:\n got %q\nwant %q", got, wantSecond)
 	}
@@ -161,8 +161,8 @@ func TestRunBatch_ClaudePresetWorktreeEndToEnd(t *testing.T) {
 	if strings.Contains(string(runLog), `"type":"result"`) {
 		t.Fatalf("run.log = %q, want rendered records instead of raw stream-json", runLog)
 	}
-	if _, err := os.Stat(filepath.Join(filepath.Dir(runLogs[0]), "session.json")); !os.IsNotExist(err) {
-		t.Fatalf("session.json stat = %v; claude runs keep no OpenCode session identity", err)
+	if id, ok := ReadAgentSessionID(filepath.Dir(runLogs[0])); !ok || id != "6f1c2a4e-0b7d-4c1a-9a55-2f0e8d3b7c11" {
+		t.Fatalf("agent session = %q, %v; want the Claude session in Run details", id, ok)
 	}
 	if committed := runGit(t, worktree, "show", "HEAD:claude-resumed.txt"); strings.TrimSpace(committed) != "claude resumed" {
 		t.Fatalf("retry work = %q, want the committed retry result", committed)
@@ -193,7 +193,7 @@ for arg in "$@"; do printf '%s\0' "$arg"; done > "$state_dir/launch-$n.args"
 printf 'IS_SANDBOX=%s\nDISABLE_AUTOUPDATER=%s\nCLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=%s\nPWD=%s\n' \
   "${IS_SANDBOX:-}" "${DISABLE_AUTOUPDATER:-}" "${CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-}" "$(pwd -P)" > "$state_dir/launch-$n.env"
 cp .sandman/task.md "$state_dir/launch-$n.task"
-printf '%s\n' '{"type":"system","subtype":"init","session_id":"conv-1"}'
+printf '%s\n' '{"type":"system","subtype":"init","session_id":"6f1c2a4e-0b7d-4c1a-9a55-2f0e8d3b7c11"}'
 if [ "$n" = 1 ]; then
   git rev-parse HEAD > "$state_dir/head"
   printf '%s\n' '{"type":"result","subtype":"success","is_error":true,"result":"You'"'"'ve hit your session limit · resets 3pm"}'

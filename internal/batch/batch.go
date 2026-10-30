@@ -97,7 +97,14 @@ type Request struct {
 	// RunDir is the per-batch directory (typically `.sandman/batches/<batch-id>/`)
 	// under which container config snapshots are stored for the lifetime of
 	// the batch. When empty, snapshots fall back to a temp directory.
+	// Prompt-only runs also accept the per-run folder
+	// (`.sandman/batches/<batch-id>/runs/<run-id>`).
 	RunDir string
+	// RepoRoot is the repository root the caller resolved. A relative RunDir
+	// and the Batch locations of this request (index, batch and run folders,
+	// wait records) resolve against it. When empty, the orchestrator's own
+	// root applies.
+	RepoRoot string
 	// WorktreeDir is the host-absolute path of the per-row review
 	// worktree base directory (issue #1953). The daemon/cmd sets
 	// this from paths.NewLayout(cfg, repoRoot).WorktreeDir (already
@@ -113,6 +120,8 @@ type Request struct {
 	// `run.started` and `run.finished` events so the event log and portal
 	// can distinguish review runs from implementation runs.
 	Review bool
+	// ReviewHeadSHA pins a delegated review's checkout independently of BaseBranch.
+	ReviewHeadSHA string
 	// PRNumber is the GitHub PR number being reviewed. Only meaningful
 	// when Review is true. Implementation runs leave it zero.
 	PRNumber int
@@ -193,6 +202,7 @@ type AgentRunResult struct {
 	// OperationalError preserves preparation diagnostics for prompt-only callers.
 	OperationalError   error     `json:"-"`
 	UsageLimitDeadline time.Time `json:"-"`
+	ciRerunAction      *ciRerunActionEvidence
 	IssueNumber        int
 	Issue              *int
 	Status             string

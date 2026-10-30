@@ -31,6 +31,7 @@ The `reason` field on `run.retry` payload is a closed string drawn from this ini
 | `kill-timeout` | The operator or a parent process issued SIGKILL/SIGTERM and the orchestrator promoted the cancellation to a retry. Distinct from `sandbox-timeout` because the kill came from outside the run, not from the sandbox adapter. |
 | `manual` | A retry that was triggered by an explicit operator action outside the orchestrator's normal supervisor path — e.g. a `sandman run --continue` against a run whose previous iteration ended in a terminal non-success state. |
 | `context-exhausted` | The built-in OpenCode output emitted two qualifying context-limit errors within 30 seconds; the active attempt was stopped and the preserved worktree was handed to a clean retry session. |
+| `lifecycle-owned-work` | The agent exited, but the runtime lifecycle decision selected work the implementor still owns (publish the pull request, deliver the review request, advance an idle gate). The retry spends the ordinary budget without recording an agent failure (issue #2915). |
 
 This is the slice-3 starting set. New values are added only by amending this ADR with a one-line entry in the table above; silent additions are forbidden.
 

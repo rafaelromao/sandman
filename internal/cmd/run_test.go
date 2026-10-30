@@ -1776,47 +1776,59 @@ func TestRun_UsesDefaultModelWhenModelFlagOmitted(t *testing.T) {
 }
 
 func TestRun_VariantFlagOverridesConfiguredVariant(t *testing.T) {
-	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(t, spy)
-	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", Variant: "configured", ReviewCommand: "/oc review"}}
+	for agent := range config.BuiltInAgentPresets {
+		t.Run(agent, func(t *testing.T) {
+			spy := &spyBatchRunner{result: &batch.Result{}}
+			deps := newRunDeps(t, spy)
+			deps.ConfigStore = &fakeStore{config: &config.Config{Agent: agent, DefaultAgent: agent, Variant: "configured", ReviewCommand: "/oc review"}}
 
-	cmd := NewRunCmd(deps)
-	cmd.SetArgs([]string{"--variant", "  cli/provider  ", "42"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if spy.req.Variant != "cli/provider" || !spy.req.VariantSet {
-		t.Fatalf("variant request = %q (set=%v), want trimmed CLI override", spy.req.Variant, spy.req.VariantSet)
+			cmd := NewRunCmd(deps)
+			cmd.SetArgs([]string{"--variant", "  cli/provider  ", "42"})
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if spy.req.Variant != "cli/provider" || !spy.req.VariantSet {
+				t.Fatalf("variant request = %q (set=%v), want trimmed CLI override", spy.req.Variant, spy.req.VariantSet)
+			}
+		})
 	}
 }
 
 func TestRun_UsesConfiguredVariantWhenFlagOmitted(t *testing.T) {
-	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(t, spy)
-	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", Variant: "configured/provider", ReviewCommand: "/oc review"}}
+	for agent := range config.BuiltInAgentPresets {
+		t.Run(agent, func(t *testing.T) {
+			spy := &spyBatchRunner{result: &batch.Result{}}
+			deps := newRunDeps(t, spy)
+			deps.ConfigStore = &fakeStore{config: &config.Config{Agent: agent, DefaultAgent: agent, Variant: "configured/provider", ReviewCommand: "/oc review"}}
 
-	cmd := NewRunCmd(deps)
-	cmd.SetArgs([]string{"42"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if spy.req.Variant != "configured/provider" || spy.req.VariantSet {
-		t.Fatalf("variant request = %q (set=%v), want config fallback", spy.req.Variant, spy.req.VariantSet)
+			cmd := NewRunCmd(deps)
+			cmd.SetArgs([]string{"42"})
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if spy.req.Variant != "configured/provider" || spy.req.VariantSet {
+				t.Fatalf("variant request = %q (set=%v), want config fallback", spy.req.Variant, spy.req.VariantSet)
+			}
+		})
 	}
 }
 
 func TestRun_ExplicitEmptyVariantSuppressesConfiguredVariant(t *testing.T) {
-	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(t, spy)
-	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", Variant: "configured/provider", ReviewCommand: "/oc review"}}
+	for agent := range config.BuiltInAgentPresets {
+		t.Run(agent, func(t *testing.T) {
+			spy := &spyBatchRunner{result: &batch.Result{}}
+			deps := newRunDeps(t, spy)
+			deps.ConfigStore = &fakeStore{config: &config.Config{Agent: agent, DefaultAgent: agent, Variant: "configured/provider", ReviewCommand: "/oc review"}}
 
-	cmd := NewRunCmd(deps)
-	cmd.SetArgs([]string{"--variant", "   ", "42"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if spy.req.Variant != "" || !spy.req.VariantSet {
-		t.Fatalf("variant request = %q (set=%v), want explicit empty override", spy.req.Variant, spy.req.VariantSet)
+			cmd := NewRunCmd(deps)
+			cmd.SetArgs([]string{"--variant", "   ", "42"})
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if spy.req.Variant != "" || !spy.req.VariantSet {
+				t.Fatalf("variant request = %q (set=%v), want explicit empty override", spy.req.Variant, spy.req.VariantSet)
+			}
+		})
 	}
 }
 
@@ -2045,118 +2057,122 @@ func TestRun_ContinueFlagAcceptedAndMutuallyExclusiveWithOverride(t *testing.T) 
 }
 
 func TestRun_ContinueFlag_UsesCurrentFlagsOverStoredValues(t *testing.T) {
-	dir := t.TempDir()
-	branch := "42-fix-bug"
+	for agent := range config.BuiltInAgentPresets {
+		t.Run(agent, func(t *testing.T) {
+			dir := t.TempDir()
+			branch := "42-fix-bug"
 
-	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(t, spy)
-	worktreePath := addRegisteredContinuationWorktree(t, deps.RepoRoot, dir, branch)
-	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
-		t.Fatalf("mkdir worktree: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("## Completed\nInitial pass.\n"), 0644); err != nil {
-		t.Fatalf("write task: %v", err)
-	}
-	deps.ConfigStore = &fakeStore{config: &config.Config{
-		Agent:         "opencode-current",
-		DefaultModel:  "openai/gpt-4.1",
-		Variant:       "configured/provider",
-		ReviewTimeout: 600,
-		WorktreeDir:   dir,
-		ReviewCommand: "/oc review",
-		Git:           config.GitConfig{BaseBranch: "trunk"},
-		AgentProviders: map[string]config.Agent{
-			"opencode-current": {Preset: "opencode", Command: "true"},
-		},
-	}}
-	deps.EventLog = &fakeEventLog{events: []events.Event{
-		{Type: "run.started", RunID: testRunID42First, Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode-stored", "model": "gpt-4.1", "review_command": "/custom review", "parallel": 1, "start_delay": 3, "retries": 2, "sandbox": "worktree", "container_capacity": 1, "container_capacity_set": true, "max_containers": 2, "max_containers_set": true, "run_idle_timeout": 99, "run_idle_timeout_set": true}},
-		{Type: "run.continued", RunID: testRunID42Second, Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode-stored", "model": "gpt-4.2", "review_command": "/custom review 2", "parallel": 7, "start_delay": 11, "retries": 4, "sandbox": "docker", "container_capacity": 3, "container_capacity_set": true, "max_containers": 5, "max_containers_set": true, "run_idle_timeout": 99, "run_idle_timeout_set": true}},
-	}}
-	deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}, prs: map[string]*github.PR{}}
+			spy := &spyBatchRunner{result: &batch.Result{}}
+			deps := newRunDeps(t, spy)
+			worktreePath := addRegisteredContinuationWorktree(t, deps.RepoRoot, dir, branch)
+			if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
+				t.Fatalf("mkdir worktree: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("## Completed\nInitial pass.\n"), 0644); err != nil {
+				t.Fatalf("write task: %v", err)
+			}
+			deps.ConfigStore = &fakeStore{config: &config.Config{
+				Agent:         "opencode-current",
+				DefaultModel:  "openai/gpt-4.1",
+				Variant:       "configured/provider",
+				ReviewTimeout: 600,
+				WorktreeDir:   dir,
+				ReviewCommand: "/oc review",
+				Git:           config.GitConfig{BaseBranch: "trunk"},
+				AgentProviders: map[string]config.Agent{
+					"opencode-current": {Preset: agent, Command: "true"},
+				},
+			}}
+			deps.EventLog = &fakeEventLog{events: []events.Event{
+				{Type: "run.started", RunID: testRunID42First, Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode-stored", "model": "gpt-4.1", "review_command": "/custom review", "parallel": 1, "start_delay": 3, "retries": 2, "sandbox": "worktree", "container_capacity": 1, "container_capacity_set": true, "max_containers": 2, "max_containers_set": true, "run_idle_timeout": 99, "run_idle_timeout_set": true}},
+				{Type: "run.continued", RunID: testRunID42Second, Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode-stored", "model": "gpt-4.2", "review_command": "/custom review 2", "parallel": 7, "start_delay": 11, "retries": 4, "sandbox": "docker", "container_capacity": 3, "container_capacity_set": true, "max_containers": 5, "max_containers_set": true, "run_idle_timeout": 99, "run_idle_timeout_set": true}},
+			}}
+			deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}, prs: map[string]*github.PR{}}
 
-	var buf bytes.Buffer
-	cmd := NewRunCmd(deps)
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--continue", "--reuse-session", "--variant", " cli/provider ", "--review-timeout", "240", "42"})
+			var buf bytes.Buffer
+			cmd := NewRunCmd(deps)
+			cmd.SetOut(&buf)
+			cmd.SetErr(&buf)
+			cmd.SetArgs([]string{"--continue", "--reuse-session", "--variant", " cli/provider ", "--review-timeout", "240", "42"})
 
-	err := cmd.Execute()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+			err := cmd.Execute()
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
-	if !spy.called {
-		t.Fatal("expected batch runner to be called")
-	}
-	if got := spy.req.IssueMode(42); got != batch.ModeContinue {
-		t.Fatalf("expected ModeContinue request, got %v", got)
-	}
-	if spy.req.PreviousRunIDs[42] != testRunID42Second {
-		t.Fatalf("expected PreviousRunIDs[42]=%s, got %q", testRunID42Second, spy.req.PreviousRunIDs[42])
-	}
-	if !spy.req.ReuseSession[42] {
-		t.Fatal("expected --reuse-session to propagate to the continued row")
-	}
-	if spy.req.Branches[42] != branch {
-		t.Fatalf("expected branch %q, got %q", branch, spy.req.Branches[42])
-	}
-	if spy.req.BaseBranches[42] != "main" {
-		t.Fatalf("expected BaseBranches[42]=main, got %q", spy.req.BaseBranches[42])
-	}
-	if !strings.Contains(spy.req.TaskPrompts[42], "## Completed") {
-		t.Fatalf("expected verbatim task prompt (contains ## Completed from fixture), got %q", spy.req.TaskPrompts[42])
-	}
-	if strings.Contains(spy.req.TaskPrompts[42], "## Prior Context") {
-		t.Fatalf("expected verbatim task prompt (not rewritten wrapper), got %q", spy.req.TaskPrompts[42])
-	}
-	if spy.req.Agent != "opencode-current" {
-		t.Fatalf("expected agent from current cfg, got %q", spy.req.Agent)
-	}
-	if spy.req.Model != "openai/gpt-4.1" {
-		t.Fatalf("expected model from cfg.DefaultModel, got %q", spy.req.Model)
-	}
-	if spy.req.Variant != "cli/provider" || !spy.req.VariantSet {
-		t.Fatalf("expected current CLI variant, got %q (set=%v)", spy.req.Variant, spy.req.VariantSet)
-	}
-	if spy.req.BaseBranch != "main" {
-		t.Fatalf("expected base branch pinned to stored value, got %q", spy.req.BaseBranch)
-	}
-	if spy.req.Parallel != 0 {
-		t.Fatalf("expected parallel from current cfg (default 0), got %d", spy.req.Parallel)
-	}
-	if spy.req.StartDelay != 0 || spy.req.StartDelaySet {
-		t.Fatalf("expected start delay unset, got %s set=%v", spy.req.StartDelay, spy.req.StartDelaySet)
-	}
-	if spy.req.RunIdleTimeout != 0 || spy.req.RunIdleTimeoutSet {
-		t.Fatalf("expected run idle timeout unset, got %d set=%v", spy.req.RunIdleTimeout, spy.req.RunIdleTimeoutSet)
-	}
-	if !spy.req.ReviewTimeoutSet || spy.req.ReviewTimeout != 240 {
-		t.Fatalf("expected current review timeout override 240, got %d set=%v", spy.req.ReviewTimeout, spy.req.ReviewTimeoutSet)
-	}
-	if !strings.Contains(spy.req.TaskPrompts[42], "Delegated review response timeout: `240` seconds") {
-		t.Fatalf("expected current review timeout in continuation task, got %q", spy.req.TaskPrompts[42])
-	}
-	if spy.req.Retries != -1 {
-		t.Fatalf("expected retries sentinel (-1) from current cfg, got %d", spy.req.Retries)
-	}
-	if spy.req.Sandbox != "" {
-		t.Fatalf("expected sandbox from current cfg (default empty), got %q", spy.req.Sandbox)
-	}
-	if spy.req.ContainerCapacity != 0 || spy.req.ContainerCapacitySet {
-		t.Fatalf("expected container capacity unset, got %d set=%v", spy.req.ContainerCapacity, spy.req.ContainerCapacitySet)
-	}
-	if spy.req.MaxContainers != 0 || spy.req.MaxContainersSet {
-		t.Fatalf("expected max containers unset, got %d set=%v", spy.req.MaxContainers, spy.req.MaxContainersSet)
-	}
-	if spy.req.PromptConfig.ReviewCommand != "/oc review" {
-		t.Fatalf("expected review command from cfg, got %q", spy.req.PromptConfig.ReviewCommand)
-	}
-	if spy.req.DangerouslySkipPermissions != nil {
-		t.Fatalf("expected dangerously skip permissions nil (no flag), got %v", *spy.req.DangerouslySkipPermissions)
-	}
-	if spy.req.StrandedReconcile != nil {
-		t.Fatalf("expected stranded reconcile nil (no flag), got %v", *spy.req.StrandedReconcile)
+			if !spy.called {
+				t.Fatal("expected batch runner to be called")
+			}
+			if got := spy.req.IssueMode(42); got != batch.ModeContinue {
+				t.Fatalf("expected ModeContinue request, got %v", got)
+			}
+			if spy.req.PreviousRunIDs[42] != testRunID42Second {
+				t.Fatalf("expected PreviousRunIDs[42]=%s, got %q", testRunID42Second, spy.req.PreviousRunIDs[42])
+			}
+			if !spy.req.ReuseSession[42] {
+				t.Fatal("expected --reuse-session to propagate to the continued row")
+			}
+			if spy.req.Branches[42] != branch {
+				t.Fatalf("expected branch %q, got %q", branch, spy.req.Branches[42])
+			}
+			if spy.req.BaseBranches[42] != "main" {
+				t.Fatalf("expected BaseBranches[42]=main, got %q", spy.req.BaseBranches[42])
+			}
+			if !strings.Contains(spy.req.TaskPrompts[42], "## Completed") {
+				t.Fatalf("expected verbatim task prompt (contains ## Completed from fixture), got %q", spy.req.TaskPrompts[42])
+			}
+			if strings.Contains(spy.req.TaskPrompts[42], "## Prior Context") {
+				t.Fatalf("expected verbatim task prompt (not rewritten wrapper), got %q", spy.req.TaskPrompts[42])
+			}
+			if spy.req.Agent != "opencode-current" {
+				t.Fatalf("expected agent from current cfg, got %q", spy.req.Agent)
+			}
+			if spy.req.Model != "openai/gpt-4.1" {
+				t.Fatalf("expected model from cfg.DefaultModel, got %q", spy.req.Model)
+			}
+			if spy.req.Variant != "cli/provider" || !spy.req.VariantSet {
+				t.Fatalf("expected current CLI variant, got %q (set=%v)", spy.req.Variant, spy.req.VariantSet)
+			}
+			if spy.req.BaseBranch != "main" {
+				t.Fatalf("expected base branch pinned to stored value, got %q", spy.req.BaseBranch)
+			}
+			if spy.req.Parallel != 0 {
+				t.Fatalf("expected parallel from current cfg (default 0), got %d", spy.req.Parallel)
+			}
+			if spy.req.StartDelay != 0 || spy.req.StartDelaySet {
+				t.Fatalf("expected start delay unset, got %s set=%v", spy.req.StartDelay, spy.req.StartDelaySet)
+			}
+			if spy.req.RunIdleTimeout != 0 || spy.req.RunIdleTimeoutSet {
+				t.Fatalf("expected run idle timeout unset, got %d set=%v", spy.req.RunIdleTimeout, spy.req.RunIdleTimeoutSet)
+			}
+			if !spy.req.ReviewTimeoutSet || spy.req.ReviewTimeout != 240 {
+				t.Fatalf("expected current review timeout override 240, got %d set=%v", spy.req.ReviewTimeout, spy.req.ReviewTimeoutSet)
+			}
+			if !strings.Contains(spy.req.TaskPrompts[42], "Delegated review response timeout: `240` seconds") {
+				t.Fatalf("expected current review timeout in continuation task, got %q", spy.req.TaskPrompts[42])
+			}
+			if spy.req.Retries != -1 {
+				t.Fatalf("expected retries sentinel (-1) from current cfg, got %d", spy.req.Retries)
+			}
+			if spy.req.Sandbox != "" {
+				t.Fatalf("expected sandbox from current cfg (default empty), got %q", spy.req.Sandbox)
+			}
+			if spy.req.ContainerCapacity != 0 || spy.req.ContainerCapacitySet {
+				t.Fatalf("expected container capacity unset, got %d set=%v", spy.req.ContainerCapacity, spy.req.ContainerCapacitySet)
+			}
+			if spy.req.MaxContainers != 0 || spy.req.MaxContainersSet {
+				t.Fatalf("expected max containers unset, got %d set=%v", spy.req.MaxContainers, spy.req.MaxContainersSet)
+			}
+			if spy.req.PromptConfig.ReviewCommand != "/oc review" {
+				t.Fatalf("expected review command from cfg, got %q", spy.req.PromptConfig.ReviewCommand)
+			}
+			if spy.req.DangerouslySkipPermissions != nil {
+				t.Fatalf("expected dangerously skip permissions nil (no flag), got %v", *spy.req.DangerouslySkipPermissions)
+			}
+			if spy.req.StrandedReconcile != nil {
+				t.Fatalf("expected stranded reconcile nil (no flag), got %v", *spy.req.StrandedReconcile)
+			}
+		})
 	}
 }
 
@@ -2731,6 +2747,14 @@ func TestRun_PromptOnlyWithRunIDRegistersOrchestratorRunIDInBatchesIndex(t *test
 	if entries[0].Name() != got.ID {
 		t.Errorf("batch folder basename = %q, want %q (== batches index entry id == public BatchId)", entries[0].Name(), got.ID)
 	}
+
+	// The orchestrator derives the run's batch identity from Request.RunDir.
+	if gotRunDir := filepath.Base(spy.req.RunDir); gotRunDir != got.ID {
+		t.Errorf("Request.RunDir basename = %q, want %q (== public BatchId)", gotRunDir, got.ID)
+	}
+	if gotParent := filepath.Base(filepath.Dir(spy.req.RunDir)); gotParent != "batches" {
+		t.Errorf("Request.RunDir parent = %q, want %q", gotParent, "batches")
+	}
 }
 
 // TestRun_PromptOnlyWithoutRunIDRegistersCanonicalBatchIdInBatchesIndex
@@ -2789,6 +2813,13 @@ func TestRun_PromptOnlyWithoutRunIDRegistersCanonicalBatchIdInBatchesIndex(t *te
 	}
 	if entries[0].Name() != got.ID {
 		t.Errorf("batch folder basename = %q, want %q (== batches index entry id == public BatchId)", entries[0].Name(), got.ID)
+	}
+
+	if gotRunDir := filepath.Base(spy.req.RunDir); gotRunDir != got.ID {
+		t.Errorf("Request.RunDir basename = %q, want %q (== public BatchId)", gotRunDir, got.ID)
+	}
+	if gotParent := filepath.Base(filepath.Dir(spy.req.RunDir)); gotParent != "batches" {
+		t.Errorf("Request.RunDir parent = %q, want %q", gotParent, "batches")
 	}
 }
 

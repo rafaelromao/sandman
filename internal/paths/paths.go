@@ -104,7 +104,7 @@ func (l Layout) RunLogPath(batchID, runID string) string {
 	return l.LocateBatch(batchID, "").Run(runID).LogPath()
 }
 
-// RunSessionPath returns the OpenCode session metadata file for a Run.
+// RunSessionPath returns the agent session metadata file for a Run.
 func (l Layout) RunSessionPath(batchID, runID string) string {
 	return filepath.Join(l.RunFolder(batchID, runID), "session.json")
 }

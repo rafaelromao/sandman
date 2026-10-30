@@ -7,13 +7,30 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/scaffold"
 	"github.com/rafaelromao/sandman/internal/skill"
+	"github.com/spf13/cobra"
 )
 
 func init() {
 	syncSandmanSkill = func(skill.SyncOptions) error { return nil }
+}
+
+func installInitHostVersion(t *testing.T, output string) {
+	t.Helper()
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "opencode"), []byte("#!/bin/sh\nprintf '%s\\n' '"+output+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func newInitCommandForTest(t *testing.T) *cobra.Command {
+	t.Helper()
+	installInitHostVersion(t, scaffold.DefaultBuiltInAgentVersion("opencode"))
+	return NewInitCmd()
 }
 
 // initMiseInstall is the fail-fast mise install `sandman init` scaffolds.
@@ -33,7 +50,7 @@ func TestInit_CreatesSandmanFiles(t *testing.T) {
 	t.Cleanup(func() { syncSandmanSkill = oldInstall })
 
 	var out bytes.Buffer
-	cmd := NewInitCmd()
+	cmd := newInitCommandForTest(t)
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
 	cmd.SetArgs([]string{"--build-tools", "generic"})
@@ -57,9 +74,48 @@ func TestInit_CreatesSandmanFiles(t *testing.T) {
 	}
 }
 
+func TestInit_OpenCodeGenerations(t *testing.T) {
+	for _, tc := range []struct {
+		version, pkg, preset string
+		supported            bool
+	}{
+		{"1.19.3", "opencode-ai", "opencode", true}, {"2.1.2", "@opencode/cli", "opencode-v2", true},
+		{"0.9.0", "", "opencode", false}, {"3.0.0", "", "opencode-v2", false}, {"2.1.2", "", "opencode", false}, {"1.19.3", "", "opencode-v2", false},
+	} {
+		t.Run(tc.preset+"/"+tc.version, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Chdir(dir)
+			installInitHostVersion(t, "opencode v"+tc.version)
+			cmd := NewInitCmd()
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetArgs([]string{"--build-tools", "generic", "--agent", tc.preset})
+			err := cmd.Execute()
+			if !tc.supported {
+				if err == nil || !strings.Contains(err.Error(), "retry init") {
+					t.Fatalf("unsupported generation must fail with guidance: %v", err)
+				}
+				if _, err := os.Stat(filepath.Join(dir, ".sandman")); !os.IsNotExist(err) {
+					t.Fatalf("unsupported host wrote scaffold files: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(data), "RUN npm install -g "+tc.pkg+"@"+tc.version) {
+				t.Fatalf("wrong installer: %s", data)
+			}
+		})
+	}
+}
+
 func TestInit_VerboseFlagSupportsLongAndShortForms(t *testing.T) {
 	for _, args := range [][]string{{"--verbose"}, {"-v"}} {
-		cmd := NewInitCmd()
+		cmd := newInitCommandForTest(t)
 		flag := cmd.Flags().Lookup("verbose")
 		if flag == nil {
 			t.Fatal("--verbose flag missing")
@@ -109,7 +165,7 @@ func TestInit_VerboseControlsScaffoldDiagnostics(t *testing.T) {
 			}
 
 			var out bytes.Buffer
-			cmd := NewInitCmd()
+			cmd := newInitCommandForTest(t)
 			cmd.SetOut(&out)
 			cmd.SetIn(strings.NewReader("y\n"))
 			args := []string{"--build-tools", "generic"}
@@ -159,7 +215,7 @@ func TestInit_ReviewCommandFlagStoredInConfig(t *testing.T) {
 	t.Cleanup(func() { syncSandmanSkill = oldInstall })
 
 	var out bytes.Buffer
-	cmd := NewInitCmd()
+	cmd := newInitCommandForTest(t)
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
 	cmd.SetArgs([]string{"--build-tools", "generic", "--review-command", "/custom review"})
@@ -182,7 +238,7 @@ func TestInit_GenericBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	t.Chdir(dir)
 
 	var out bytes.Buffer
-	cmd := NewInitCmd()
+	cmd := newInitCommandForTest(t)
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
 	cmd.SetArgs([]string{"--build-tools", "generic"})
@@ -252,7 +308,7 @@ func TestInit_RustBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	cmd := NewInitCmd()
+	cmd := newInitCommandForTest(t)
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
 	cmd.SetArgs(nil)
@@ -297,7 +353,7 @@ func TestInit_GenericBuildToolsStillWinsOnRustRepo(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	cmd := NewInitCmd()
+	cmd := newInitCommandForTest(t)
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
 	cmd.SetArgs([]string{"--build-tools", "generic"})
@@ -332,7 +388,7 @@ func TestInit_PythonBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	t.Chdir(dir)
 
 	var out bytes.Buffer
-	cmd := NewInitCmd()
+	cmd := newInitCommandForTest(t)
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
 	cmd.SetArgs([]string{"--build-tools", "python"})
@@ -361,7 +417,7 @@ func TestInit_PythonBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(dockerfile, "# sandman python-version:") {
 		t.Fatalf("Dockerfile missing python-version metadata, got:\n%s", dockerfile)
 	}
-	if !strings.Contains(dockerfile, "RUN mise use -g --pin python@") {
+	if !strings.Contains(dockerfile, "mise use -g --pin python@") {
 		t.Fatalf("Dockerfile missing pinned python install, got:\n%s", dockerfile)
 	}
 	if !strings.Contains(dockerfile, "RUN pip3 install uv") {
@@ -392,7 +448,7 @@ func TestInit_ElixirBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	t.Chdir(dir)
 
 	var out bytes.Buffer
-	cmd := NewInitCmd()
+	cmd := newInitCommandForTest(t)
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
 	cmd.SetArgs([]string{"--build-tools", "elixir"})
@@ -465,7 +521,7 @@ func TestInit_DefaultsToElixirPresetForElixirRepo(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	cmd := NewInitCmd()
+	cmd := newInitCommandForTest(t)
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
 	cmd.SetArgs([]string{})
@@ -511,7 +567,7 @@ func TestInit_ExplicitGenericOverridesElixirRepoHint(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	cmd := NewInitCmd()
+	cmd := newInitCommandForTest(t)
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
 	cmd.SetArgs([]string{"--build-tools", "generic"})
@@ -530,7 +586,7 @@ func TestInit_ExplicitGenericOverridesElixirRepoHint(t *testing.T) {
 }
 
 func TestInit_ElixirBuildToolsFlagHelpTextMentionsElixir(t *testing.T) {
-	cmd := NewInitCmd()
+	cmd := newInitCommandForTest(t)
 	flag := cmd.Flags().Lookup("build-tools")
 	if flag == nil {
 		t.Fatalf("--build-tools flag missing")
@@ -549,7 +605,7 @@ func TestInit_DefaultsToPythonPresetForPythonRepo(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	cmd := NewInitCmd()
+	cmd := newInitCommandForTest(t)
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
 	cmd.SetArgs([]string{})
@@ -578,7 +634,7 @@ func TestInit_DefaultsToPythonPresetForPythonRepo(t *testing.T) {
 	if !strings.Contains(dockerfile, "# sandman python-version:") {
 		t.Fatalf("Dockerfile missing python-version metadata, got:\n%s", dockerfile)
 	}
-	if !strings.Contains(dockerfile, "RUN mise use -g --pin python@") {
+	if !strings.Contains(dockerfile, "mise use -g --pin python@") {
 		t.Fatalf("Dockerfile missing pinned python install, got:\n%s", dockerfile)
 	}
 	if !strings.Contains(dockerfile, "RUN pip3 install uv") {
@@ -595,7 +651,7 @@ func TestInit_DefaultsToGoPresetForGoRepo(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	cmd := NewInitCmd()
+	cmd := newInitCommandForTest(t)
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
 	cmd.SetArgs([]string{})
@@ -642,7 +698,7 @@ func TestInit_DefaultsToNodePresetForNodeRepo(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	cmd := NewInitCmd()
+	cmd := newInitCommandForTest(t)
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
 	cmd.SetArgs([]string{})
@@ -681,7 +737,7 @@ func TestInit_DefaultsToDotnetPresetForDotnetRepo(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	cmd := NewInitCmd()
+	cmd := newInitCommandForTest(t)
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
 	cmd.SetArgs([]string{})
@@ -720,7 +776,7 @@ func TestInit_RubyBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	t.Chdir(dir)
 
 	var out bytes.Buffer
-	cmd := NewInitCmd()
+	cmd := newInitCommandForTest(t)
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
 	cmd.SetArgs([]string{"--build-tools", "ruby"})
@@ -784,7 +840,7 @@ func TestInit_DefaultsToRubyPresetForRubyRepo(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	cmd := NewInitCmd()
+	cmd := newInitCommandForTest(t)
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
 	cmd.SetArgs([]string{})
@@ -830,7 +886,7 @@ func TestInit_ExplicitGenericOverridesRubyRepoHint(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	cmd := NewInitCmd()
+	cmd := newInitCommandForTest(t)
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
 	cmd.SetArgs([]string{"--build-tools", "generic"})
@@ -849,7 +905,7 @@ func TestInit_ExplicitGenericOverridesRubyRepoHint(t *testing.T) {
 }
 
 func TestInit_RubyBuildToolsFlagHelpTextMentionsRuby(t *testing.T) {
-	cmd := NewInitCmd()
+	cmd := newInitCommandForTest(t)
 	flag := cmd.Flags().Lookup("build-tools")
 	if flag == nil {
 		t.Fatalf("--build-tools flag missing")
@@ -868,7 +924,7 @@ func TestInit_ExplicitGenericOverridesNodeRepoHint(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	cmd := NewInitCmd()
+	cmd := newInitCommandForTest(t)
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
 	cmd.SetArgs([]string{"--build-tools", "generic"})
@@ -891,7 +947,7 @@ func TestInit_DefaultAgentFlagSelectsConfigPreset(t *testing.T) {
 	t.Chdir(dir)
 
 	var out bytes.Buffer
-	cmd := NewInitCmd()
+	cmd := newInitCommandForTest(t)
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
 	cmd.SetArgs([]string{"--build-tools", "generic", "--agent", "opencode"})
@@ -926,7 +982,7 @@ func TestInit_InfersToolVersionRepoWhenUnset(t *testing.T) {
 	t.Chdir(dir)
 
 	var out bytes.Buffer
-	cmd := NewInitCmd()
+	cmd := newInitCommandForTest(t)
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
 	cmd.SetArgs([]string{"--build-tools", "generic"})
@@ -952,7 +1008,7 @@ func TestInit_ExistingDirectoryPrompts(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	cmd := NewInitCmd()
+	cmd := newInitCommandForTest(t)
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader("n\n"))
 	cmd.SetArgs([]string{"--build-tools", "generic"})
@@ -999,7 +1055,7 @@ func TestInit_ParallelReviewsFlagOverridesPersistedDefault(t *testing.T) {
 			t.Chdir(dir)
 
 			var out bytes.Buffer
-			cmd := NewInitCmd()
+			cmd := newInitCommandForTest(t)
 			cmd.SetOut(&out)
 			cmd.SetErr(&out)
 			cmd.SetIn(strings.NewReader(""))
@@ -1064,7 +1120,7 @@ func TestInit_ParallelFlagOverridesPersistedDefault(t *testing.T) {
 			t.Chdir(dir)
 
 			var out bytes.Buffer
-			cmd := NewInitCmd()
+			cmd := newInitCommandForTest(t)
 			cmd.SetOut(&out)
 			cmd.SetErr(&out)
 			cmd.SetIn(strings.NewReader(""))
@@ -1128,7 +1184,7 @@ func TestInit_RetriesFlagOverridesPersistedDefault(t *testing.T) {
 			t.Chdir(dir)
 
 			var out bytes.Buffer
-			cmd := NewInitCmd()
+			cmd := newInitCommandForTest(t)
 			cmd.SetOut(&out)
 			cmd.SetErr(&out)
 			cmd.SetIn(strings.NewReader(""))
@@ -1201,7 +1257,7 @@ func TestInit_RunIdleTimeoutFlagOverridesPersistedDefault(t *testing.T) {
 			t.Chdir(dir)
 
 			var out bytes.Buffer
-			cmd := NewInitCmd()
+			cmd := newInitCommandForTest(t)
 			cmd.SetOut(&out)
 			cmd.SetErr(&out)
 			cmd.SetIn(strings.NewReader(""))
@@ -1237,7 +1293,7 @@ func TestInit_ReviewTimeoutFlagPersistsExplicitValue(t *testing.T) {
 	t.Chdir(dir)
 
 	var out bytes.Buffer
-	cmd := NewInitCmd()
+	cmd := newInitCommandForTest(t)
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
 	cmd.SetIn(strings.NewReader(""))
@@ -1261,7 +1317,7 @@ func TestInit_ReviewTimeoutRejectsValuesBelowMinimum(t *testing.T) {
 		t.Run(value, func(t *testing.T) {
 			dir := t.TempDir()
 			t.Chdir(dir)
-			cmd := NewInitCmd()
+			cmd := newInitCommandForTest(t)
 			cmd.SetOut(&bytes.Buffer{})
 			cmd.SetErr(&bytes.Buffer{})
 			cmd.SetIn(strings.NewReader(""))
@@ -1275,5 +1331,91 @@ func TestInit_ReviewTimeoutRejectsValuesBelowMinimum(t *testing.T) {
 				t.Fatalf("expected review_timeout error, got %v", err)
 			}
 		})
+	}
+}
+
+func TestInit_ModelSettingsForEveryBuiltInAgent(t *testing.T) {
+	for agent := range config.BuiltInAgentPresets {
+		t.Run(agent, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Chdir(dir)
+			installInitHostVersion(t, scaffold.DefaultBuiltInAgentVersion(agent))
+			cmd := NewInitCmd()
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetIn(strings.NewReader(""))
+			cmd.SetArgs([]string{"--build-tools", "generic", "--agent", agent, "--model", "implementation-model", "--variant", "high", "--review-model", "review-model", "--review-variant", "  low  "})
+			if err := cmd.Execute(); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := config.Load(filepath.Join(dir, ".sandman", "config.yaml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.DefaultAgent != agent || cfg.Variant != "high" {
+				t.Fatalf("init lost shared variant: agent=%q variant=%q", cfg.DefaultAgent, cfg.Variant)
+			}
+			if cfg.DefaultModel != "implementation-model" || cfg.DefaultReviewModel != "review-model" || cfg.ReviewVariant != "low" {
+				t.Fatalf("init lost independent model settings: model=%q review_model=%q review_variant=%q", cfg.DefaultModel, cfg.DefaultReviewModel, cfg.ReviewVariant)
+			}
+		})
+	}
+}
+
+func TestInit_IndependentReviewSettings(t *testing.T) {
+	for agent := range config.BuiltInAgentPresets {
+		for _, setting := range []string{"defaults", "model", "variant"} {
+			t.Run(agent+"/"+setting, func(t *testing.T) {
+				t.Chdir(t.TempDir())
+				installInitHostVersion(t, scaffold.DefaultBuiltInAgentVersion(agent))
+				cmd := NewInitCmd()
+				cmd.SetOut(&bytes.Buffer{})
+				cmd.SetIn(strings.NewReader(""))
+				args := []string{"--build-tools", "generic", "--agent", agent}
+				wantModel, wantVariant := config.DefaultModelForAgent(agent), ""
+				if setting == "model" {
+					args = append(args, "--review-model", "custom-review")
+					wantModel = "custom-review"
+				}
+				if setting == "variant" {
+					args = append(args, "--review-variant", "  high  ")
+					wantVariant = "high"
+				}
+				cmd.SetArgs(args)
+				if err := cmd.Execute(); err != nil {
+					t.Fatal(err)
+				}
+				cfg, err := config.Load(filepath.Join(".sandman", "config.yaml"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if cfg.DefaultModel != config.DefaultModelForAgent(agent) || cfg.Variant != "" || cfg.DefaultReviewModel != wantModel || cfg.ReviewVariant != wantVariant {
+					t.Fatalf("unexpected model settings: implementation=%q/%q review=%q/%q", cfg.DefaultModel, cfg.Variant, cfg.DefaultReviewModel, cfg.ReviewVariant)
+				}
+			})
+		}
+	}
+}
+
+func TestInit_ReviewSettingsPreserveExistingConfig(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for i, input := range []string{"", "y\n"} {
+		cmd := newInitCommandForTest(t)
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetIn(strings.NewReader(input))
+		model, variant, reviewModel, reviewVariant := "original", "high", "original-review", "low"
+		if i == 1 {
+			model, variant, reviewModel, reviewVariant = "replacement", "low", "replacement-review", "high"
+		}
+		cmd.SetArgs([]string{"--build-tools", "generic", "--model", model, "--variant", variant, "--review-model", reviewModel, "--review-variant", reviewVariant})
+		if err := cmd.Execute(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg, err := config.Load(filepath.Join(".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DefaultModel != "original" || cfg.Variant != "high" || cfg.DefaultReviewModel != "original-review" || cfg.ReviewVariant != "low" {
+		t.Fatalf("preserved config changed: implementation=%q/%q review=%q/%q", cfg.DefaultModel, cfg.Variant, cfg.DefaultReviewModel, cfg.ReviewVariant)
 	}
 }

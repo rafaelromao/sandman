@@ -39,7 +39,7 @@ func TestAggregateReviewChildren_LiveReviewStampsReviewLive(t *testing.T) {
 		StartedAt: implStarted,
 	}
 
-	runs := (&portalRunsView{}).aggregateReviewChildren(layout, []portalRun{parent, liveReview})
+	runs := (&portalRunsView{}).projectIssueGroups(layout, []portalRun{parent, liveReview})
 
 	var stamped *portalRun
 	for i := range runs {
@@ -96,7 +96,7 @@ func TestAggregateReviewChildren_TerminalReviewDoesNotStampReviewLive(t *testing
 		StartedAt: reviewStarted.Add(-1 * time.Minute), FinishedAt: &reviewFinished,
 	}
 
-	runs := (&portalRunsView{}).aggregateReviewChildren(layout, []portalRun{parent, terminalReview})
+	runs := (&portalRunsView{}).projectIssueGroups(layout, []portalRun{parent, terminalReview})
 
 	var stamped *portalRun
 	for i := range runs {

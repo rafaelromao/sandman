@@ -13,30 +13,44 @@ import (
 // finishObserved applies an authoritative terminal observation without acquiring
 // execution capacity or starting an agent/container. Cleanup uses the resolved
 // sandbox policy; observation never re-arbitrates the selected lifecycle action.
-func (e *runExecutor) finishObserved(ctx context.Context, row RowSpec, status string, extras map[string]any) AgentRunResult {
+func (e *runExecutor) finishObserved(ctx context.Context, row RowSpec, verdict lifecycleVerdict) AgentRunResult {
+	return e.applyObserved(ctx, newRunSession(e, row), row, verdict)
+}
+
+// abortObserved applies an explicit abort decision through the same terminal
+// application. The decision, not the context's state, selects run.aborted, so
+// an abort requested by a phase that failed without cancellation is recorded
+// the same way as one requested by cancellation. Extras carry the abort's
+// attribution, such as a dependency cascade's aborted_by.
+func (e *runExecutor) abortObserved(ctx context.Context, row RowSpec, extras map[string]any) AgentRunResult {
 	session := newRunSession(e, row)
+	session.explicitAbort = true
+	return e.applyObserved(ctx, session, row, lifecycleVerdict{Action: lifecycleAborted, Evidence: extras})
+}
+
+func (e *runExecutor) applyObserved(ctx context.Context, session *runSession, row RowSpec, verdict lifecycleVerdict) AgentRunResult {
 	branch := row.Branches[row.IssueNumber]
 	factory := e.sbFactory
 	if factory == nil {
 		factory = defaultSandboxFactory{}
 	}
-	wt := factory.NewSandbox(".", session.worktreeDir(), branch, row.BaseBranch, nil)
-	result := AgentRunResult{IssueNumber: row.IssueNumber, Issue: issueRef(row.IssueNumber), Status: status, Branch: branch}
-	result.Status = session.finishDecidedTerminal(ctx, session.issueRunID(), result, extras, wt, branch)
+	wt := factory.NewSandbox(session.repoRoot(), session.worktreeDir(), branch, row.BaseBranch, nil)
+	result := AgentRunResult{IssueNumber: row.IssueNumber, Issue: issueRef(row.IssueNumber), Status: verdict.status(), Branch: branch}
+	result.Status = session.finishDecidedTerminal(ctx, session.issueRunID(), result, verdict.Evidence, wt, branch)
 	return result
 }
 
-// observeLifecycle rechecks an awaiting continuation without acquiring an
+// lifecycleObserverForRow prepares the observation module without acquiring an
 // execution slot or starting a sandbox. A resolved gate can therefore be
 // durably queued before the scheduler waits for capacity.
-func (e *runExecutor) observeLifecycle(ctx context.Context, row RowSpec) (string, map[string]any, bool) {
+func (e *runExecutor) lifecycleObserverForRow(ctx context.Context, row RowSpec) (lifecycleObservation, lifecycleObservationRequest, bool) {
 	if row.IssueNumber <= 0 || e.deps.githubClient == nil {
-		return "", nil, false
+		return nil, lifecycleObservationRequest{}, false
 	}
 	session := newRunSession(e, row)
 	branch := strings.TrimSpace(row.Branches[row.IssueNumber])
 	if branch == "" {
-		return "", nil, false
+		return nil, lifecycleObservationRequest{}, false
 	}
 	if issue, err := e.deps.githubClient.FetchIssue(ctx, row.IssueNumber); err == nil && issue != nil {
 		session.issueState = issue.State
@@ -46,7 +60,30 @@ func (e *runExecutor) observeLifecycle(ctx context.Context, row RowSpec) (string
 		runID = buildRunID(row.IssueNumber, row.RunTS, row.RunShortID)
 	}
 	workDir := filepath.Join(e.deps.layout.WorktreeDir, branch)
-	return session.handleLifecycleDecision(ctx, workDir, branch, session.runLogPathFor(runID), runID, true)
+	return newLifecycleObserver(session), lifecycleObservationRequest{
+		WorkDir: workDir, Branch: branch, RunID: runID,
+		HostPathsReady: true, AttemptStatus: "success",
+	}, true
+}
+
+func (e *runExecutor) observeRowLifecycle(ctx context.Context, row RowSpec) lifecycleVerdict {
+	observer, request, ready := e.lifecycleObserverForRow(ctx, row)
+	if !ready {
+		return lifecycleVerdict{}
+	}
+	return observer.Observe(ctx, request)
+}
+
+// observeAwaitingRowLifecycle re-observes an already-admitted external wait.
+// Re-observation is not an agent attempt: if CI has failed since the row
+// yielded, implementation ownership resumes unless a previously selected,
+// identity-valid workflow prerequisite still authorizes waiting.
+func (e *runExecutor) observeAwaitingRowLifecycle(ctx context.Context, row RowSpec) lifecycleVerdict {
+	observer, request, ready := e.lifecycleObserverForRow(ctx, row)
+	if !ready {
+		return lifecycleVerdict{}
+	}
+	return observer.Observe(ctx, request)
 }
 
 func (e *runExecutor) persistObservedAwait(ctx context.Context, row RowSpec, extras map[string]any) error {
@@ -88,6 +125,28 @@ func mergeRetainedAwaitEvidence(previous, observed map[string]any) map[string]an
 }
 
 func awaitOperationChanged(previous, observed map[string]any) bool {
+	// A GitHub recovery wait changes only at a status check or lookup
+	// attempt; a skipped observation returns the identical window.
+	previousRecovery, previousRecovering := githubRecoverySignature(previous)
+	observedRecovery, observedRecovering := githubRecoverySignature(observed)
+	if previousRecovering || observedRecovering {
+		return previousRecovering != observedRecovering || previousRecovery != observedRecovery
+	}
+	for _, key := range []string{ciRerunPrerequisiteKey, ciRerunActionKey} {
+		previousValue, previousOK := previous[key]
+		observedValue, observedOK := observed[key]
+		if previousOK != observedOK {
+			return true
+		}
+		if !previousOK {
+			continue
+		}
+		previousData, previousErr := json.Marshal(previousValue)
+		observedData, observedErr := json.Marshal(observedValue)
+		if previousErr != nil || observedErr != nil || string(previousData) != string(observedData) {
+			return true
+		}
+	}
 	identityBound := false
 	for _, operation := range []string{"ci_wait", "review_request"} {
 		previousSignature, previousOK := awaitIdentitySignature(previous, operation)

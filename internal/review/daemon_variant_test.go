@@ -51,3 +51,41 @@ func TestDaemon_ReviewVariantPrecedenceReachesBatchRequest(t *testing.T) {
 		})
 	}
 }
+
+func TestDaemon_QuotaProbePreservesResolvedReviewVariant(t *testing.T) {
+	for agent := range config.BuiltInAgentPresets {
+		for _, tc := range []struct {
+			name, configured, cli, want string
+			cliSet                      bool
+		}{
+			{name: "empty-review-variant"},
+			{name: "configured-review-variant", configured: "review-high", want: "review-high"},
+			{name: "cli-override", configured: "review-high", cli: " high ", cliSet: true, want: "high"},
+			{name: "explicit-empty", configured: "review-high", cli: "   ", cliSet: true},
+		} {
+			t.Run(agent+"/"+tc.name, func(t *testing.T) {
+				runner := &quotaProbeRunner{}
+				d := &Daemon{
+					Config: &config.Config{DefaultReviewAgent: agent, DefaultReviewModel: "provider/reviewer", Variant: "implementation-only", ReviewVariant: tc.configured},
+					Runner: runner, Variant: tc.cli, VariantSet: tc.cliSet,
+				}
+				if !d.quotaProbeRecovered(context.Background()) {
+					t.Fatal("successful probe did not recover")
+				}
+				if len(runner.requests) != 1 {
+					t.Fatalf("requests=%d", len(runner.requests))
+				}
+				req := runner.requests[0]
+				if req.Variant != tc.want || !req.VariantSet {
+					t.Fatalf("probe must preserve resolved review variant, including empty: %q set=%t, want %q set=true", req.Variant, req.VariantSet, tc.want)
+				}
+				if req.Agent != agent || req.Model != "provider/reviewer" {
+					t.Fatalf("probe changed reviewer selection: %+v", req)
+				}
+				if req.Review || req.PRNumber != 0 || !req.PortalHidden {
+					t.Fatalf("probe must stay ephemeral prompt-only work: %+v", req)
+				}
+			})
+		}
+	}
+}

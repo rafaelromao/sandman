@@ -402,8 +402,8 @@ const api = sandbox.SandmanPortalState;
 const rawRuns = [
   { key: 'abc1-42', runId: 'abc1-42', issueNumber: 42 },
   { key: 'abc2-PR42', runId: 'abc2-PR42', issueNumber: 42, review: true },
-  { key: 'abc3-queued-42', runId: 'abc3-queued-42', issueNumber: 42, status: 'queued' },
-  { key: 'abc4-blocked-42', runId: 'abc4-blocked-42', issueNumber: 42, status: 'blocked' },
+  { key: 'abc3-queued-42', runId: 'abc3-queued-42', issueNumber: 42, status: 'queued', queuedLike: true },
+  { key: 'abc4-blocked-42', runId: 'abc4-blocked-42', issueNumber: 42, status: 'blocked', queuedLike: true },
 ];
 
 storage.set(api.storageKey, JSON.stringify({ expandedRunKey: '260618113825-abcd-42', tabs: {} }));

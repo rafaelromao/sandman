@@ -3,6 +3,7 @@ package sandbox
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -183,5 +184,101 @@ func TestSharedContainerSandbox_Exec_Integration(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "hello from shared") {
 		t.Errorf("expected output to contain hello, got %q", out.String())
+	}
+}
+
+// Aborting one agent exec must stop its whole process group inside a real
+// container, under the image's own shell, and leave a sibling run's agent in
+// the same container running.
+func TestSharedContainerSandbox_Exec_AbortKillsOnlyItsAgent_Integration(t *testing.T) {
+	if !podmanAvailable(t) {
+		return
+	}
+	dir := t.TempDir()
+	rt := NewContainerRuntime("podman")
+	c, err := rt.Start(t.Context(), DefaultContainerImage, dir, StartOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer c.Stop()
+	waitForContainer(t, c.ID())
+
+	type agentExec struct {
+		cancel context.CancelFunc
+		done   chan error
+		agent  string
+	}
+	var started []*agentExec
+	defer func() {
+		for _, e := range started {
+			e.cancel()
+			select {
+			case <-e.done:
+			case <-time.After(30 * time.Second):
+				t.Error("Exec did not return after cancel")
+			}
+		}
+	}()
+	start := func(name, seconds string) *agentExec {
+		t.Helper()
+		workDir := filepath.Join(dir, name)
+		if err := os.MkdirAll(workDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		sb := NewSharedContainerSandbox(&fakeWorktreeForContainer{workDir: workDir}, c, "podman", dir)
+		ctx, cancel := context.WithCancel(context.Background())
+		e := &agentExec{cancel: cancel, done: make(chan error, 1), agent: "sleep " + seconds}
+		started = append(started, e)
+		go func() { e.done <- sb.Exec(ctx, e.agent+" & wait", io.Discard, io.Discard) }()
+		waitForContainerProcess(t, c.ID(), e.agent, true)
+		return e
+	}
+	abort := func(e *agentExec) {
+		t.Helper()
+		e.cancel()
+		select {
+		case err := <-e.done:
+			e.done <- err
+			var cleanupErr *CleanupError
+			if !errors.Is(err, context.Canceled) || errors.As(err, &cleanupErr) {
+				t.Fatalf("expected a clean cancellation, got: %v", err)
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatal("Exec did not return after cancel")
+		}
+		waitForContainerProcess(t, c.ID(), e.agent, false)
+	}
+
+	a, b := start("a", "301"), start("b", "302")
+	abort(a)
+	waitForContainerProcess(t, c.ID(), b.agent, true)
+	abort(b)
+}
+
+// waitForContainerProcess waits until a process whose command line is args
+// runs inside the container (want) or none does. The exec script carries the
+// agent command as an argument, so only an exact command line identifies the
+// agent itself.
+func waitForContainerProcess(t *testing.T, id, args string, want bool) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		out, err := exec.Command("podman", "exec", id, "ps").CombinedOutput()
+		if err != nil {
+			t.Fatalf("list container processes: %v\n%s", err, out)
+		}
+		found := false
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.HasSuffix(strings.TrimSpace(line), " "+args) {
+				found = true
+			}
+		}
+		if found == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("container process %q present=%t, want %t:\n%s", args, !want, want, out)
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
 }

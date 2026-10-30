@@ -52,7 +52,7 @@ See `internal/batch/row_spec.go:RunExecutor` / `runDeps` and `internal/cmd/root.
 
 Any new `Sandbox` implementation must set `Setpgid: true` on the spawned command.
 
-> Note: killing the host-side `docker exec` / `podman exec` wrapper does not yet propagate to the in-container AgentRun. This is a known limitation.
+Killing the host-side `docker exec` / `podman exec` client does not stop the in-container AgentRun, so `ContainerSandbox` also kills it inside the container. The runtime runs the agent's exec script directly under `exec -t`, which makes it a session leader. The script records its own process group in a file unique to that exec, and the abort SIGKILLs that group. Several runs share one container, so each exec must use its own file, or an abort would signal a sibling run.
 
 The production GitHub CLI adapter follows the same cancellation rule. Its
 `realRunner` starts `gh` as a process-group leader and cancels the negative PGID
@@ -63,14 +63,15 @@ replace that runner through the existing `WithRunner` seam.
 
 The review pipeline does not let the LLM post to PRs directly. Instead:
 
-1. The reviewer agent writes its body to the review worktree's `decision.md` (atomic temp-file + `os.Rename`).
-2. The daemon reads the file, applies `RedactBody` (`(?i)/sandman` → `sandman`), and posts the redacted body via `gh pr comment`.
+1. The reviewer agent writes its body to the review worktree's `decision.md` (atomic temp-file + `os.Rename`). That file is a handoff.
+2. The daemon copies it to the run folder, applies `RedactBody` (`(?i)/sandman` → `sandman`), and writes the exact redacted body to the run-owned outbox `<runDir>/pending-publication.json`.
+3. The daemon posts the outbox body via `gh pr comment` and removes the outbox only after the post is acknowledged. After a restart it re-posts the exact outbox body, first checking GitHub for an existing comment whose body exactly matches it (the body carries a publication identity marker). Deleting the worktree `decision.md` does not clear the outbox.
 
 The redactor is the load-bearing safety net for the no-self-loop invariant: it runs out-of-band of the LLM, so the bot's body can never contain the trigger substring regardless of what the prompt rule says. The structural sniff `LooksLikeBotReviewBody` is defence-in-depth — bodies that look like previous bot reviews are dropped before `ParseTrigger` runs.
 
-## No state migration across version upgrades
+## No general state migration across version upgrades
 
-Sandman does not migrate on-disk state across version upgrades. After upgrading, clear `.sandman/` and re-run `sandman init`. This avoids ambiguous identifiers and keeps the on-disk reader linear. See [Troubleshooting](../help/troubleshooting.md#portal-shows-unknown-rows-after-upgrading-sandman) for the symptom and fix.
+Sandman does not generally migrate on-disk state across version upgrades. Runs waiting on a pull-request review are carried forward when their saved review request, head, and state are complete and valid; incomplete or stale legacy review state is never promoted. Clearing `.sandman/` discards waiting runs and their history, so do it only when status or portal rows still look wrong after upgrading and no run needs to be preserved: clear `.sandman/` and re-run `sandman init`. See [Upgrades](disk-layout.md#upgrades) for the exact contract and [Troubleshooting](../help/troubleshooting.md#portal-shows-unknown-rows-after-upgrading-sandman) for the symptom and fix. Keeping migration to that one validated path avoids ambiguous identifiers and keeps the on-disk reader linear.
 
 ## Project structure
 
