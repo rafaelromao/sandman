@@ -73,7 +73,10 @@ func (o *lifecycleObserver) Observe(ctx context.Context, request lifecycleObserv
 		request.CIRerunAction,
 	)
 	if verdict.Kind == lifecycleVerdictGitHubUnavailable && ctx.Err() == nil {
-		return o.recordGitHubLookupFailure(request, verdict, recovery, recovering, recoveryUnknown)
+		// The recovery wait keeps the Run's stalled-resume ledger, so recovery
+		// on unchanged evidence cannot relaunch the implementor.
+		verdict = o.recordGitHubLookupFailure(request, verdict, recovery, recovering, recoveryUnknown)
+		return o.applyContinuity(request.Branch, request.RunID, verdict)
 	}
 	if !verdict.handled() || ctx.Err() != nil {
 		return verdict

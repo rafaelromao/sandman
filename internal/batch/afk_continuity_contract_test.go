@@ -961,6 +961,31 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 			},
 			want: "merged", maxLaunches: 2,
 		},
+		// A GitHub outage during a stalled wait keeps the stalled-resume
+		// ledger: after recovery on unchanged evidence the Run keeps waiting
+		// instead of relaunching the implementor.
+		continuityScenario{
+			name: "stall survives a GitHub outage", pr: greenCleanPR(), retries: 3, githubWait: true,
+			launches: []func(*continuityGitHub) string{requestReview},
+			polls: []func(*continuityGitHub){
+				func(g *continuityGitHub) { g.post("Please make the retry loop in `worker.go:12` keep the request.") },
+				nil,
+				nil,
+				func(g *continuityGitHub) {
+					g.mu.Lock()
+					g.lookupErr = errors.New("gh pr list: exit status 1")
+					g.mu.Unlock()
+				},
+				func(g *continuityGitHub) {
+					g.mu.Lock()
+					g.lookupErr = nil
+					g.runtimeOffset += githubRecoveryInterval
+					g.mu.Unlock()
+				},
+				nil,
+			},
+			want: "waiting", maxLaunches: 2,
+		},
 		// Negative control for #2940 (the rc2 bar's second side): a closure the
 		// runtime cannot place continues owned publication work, but an
 		// implementor that never publishes still ends the Run once its ordinary
@@ -1172,6 +1197,25 @@ func TestAFKContinuityContract_StalledWaitSurvivesRestart(t *testing.T) {
 	}
 	if final := events.ProjectRunStates(outcome.events); len(final) != 1 || !final[0].IsTerminal() || final[0].Status() != "aborted" {
 		t.Fatalf("aborted stalled wait projection = %+v, want aborted", final)
+	}
+	verdict := outcome.observeAfterRestart()
+	if verdict.Action != lifecycleAwait || verdict.Evidence[stalledResumesKey] == nil {
+		t.Fatalf("restarted observation = %v/%v, want the stalled wait kept", verdict.Action, verdict.Evidence)
+	}
+}
+
+// The stalled-resume ledger carried through a GitHub outage survives a
+// process restart: a fresh executor keeps waiting on the unchanged evidence.
+func TestAFKContinuityContract_StallSurvivesGitHubOutageAndRestart(t *testing.T) {
+	var outage continuityScenario
+	for _, sc := range continuityScenarios(t) {
+		if sc.name == "stall survives a GitHub outage" {
+			outage = sc
+		}
+	}
+	outcome := runContinuityScenario(t, outage)
+	if outcome.verdict() != "waiting" || outcome.launches > 2 {
+		t.Fatalf("outage stall = %s after %d launches, want waiting after at most 2", outcome.verdict(), outcome.launches)
 	}
 	verdict := outcome.observeAfterRestart()
 	if verdict.Action != lifecycleAwait || verdict.Evidence[stalledResumesKey] == nil {
