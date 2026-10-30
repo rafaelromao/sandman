@@ -158,10 +158,17 @@ func TestReviewPublicationVerdict_ProseConditionsGoverningApproval(t *testing.T)
 		"Merge only after the race in worker.go is fixed.",
 		"Only if the race is fixed should this be merged.",
 		"Approve only once the timeout test passes.",
+		"LGTM only if the timeout test passes.",
+		"Approval only after the race is fixed.",
 	} {
 		if reviewDecisionApprovedBody(report(summary)) {
 			t.Fatalf("conditional approval %q accepted", summary)
 		}
+	}
+	// A published approval whose next steps make it conditional is unsure.
+	published := reviewpub.Body("## Findings\nNone.\n\n## Suggested next steps\nLGTM only if the timeout test passes.\n\n## Decision\n**APPROVED**\n", "request", "current-sha")
+	if reviewDecisionApprovedBody(published) {
+		t.Fatal("published approval with a conditional LGTM accepted")
 	}
 }
 

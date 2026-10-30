@@ -17,7 +17,7 @@ var (
 	// A condition contradicts approval only when it governs the approval or
 	// merge ("merge only after ...", "only if X is fixed is this approved").
 	// "Keeps them only if they are http(s)" describes code behaviour (#2939).
-	reviewApprovalContradiction  = regexp.MustCompile(`(?i)\b(?:not\s+(?:yet\s+)?(?:approved|lgtm)|no\s+approval|changes\s+requested|subject\s+to|contingent\b|only\s+(?:if|after|once)\b[^\n.!?]*\b(?:approv(?:e|ed|al)|merg(?:e|ed|ing)|lgtm)\b|before\s+merging|(?:merge|approve)[^\n.!?]*(?:after|once|until|if|when)\b)`)
+	reviewApprovalContradiction  = regexp.MustCompile(`(?i)\b(?:not\s+(?:yet\s+)?(?:approved|lgtm)|no\s+approval|changes\s+requested|subject\s+to|contingent\b|only\s+(?:if|after|once)\b[^\n.!?]*\b(?:approv(?:e|ed|al)|merg(?:e|ed|ing)|lgtm)\b|before\s+merging|(?:merge|approv(?:e|al)|lgtm)[^\n.!?]*(?:after|once|until|if|when)\b)`)
 	reviewMetadataRepair         = regexp.MustCompile(`(?i)\b(?:fix(?:ing)?|address(?:ing)?|repair(?:ing)?|resolve|correct|replace|remove|add|change|use|ensure|update|must|please|needs?|should)\b`)
 	reviewMetricNoConcern        = regexp.MustCompile(`(?i)^(?:the\s+)?metrics?(?:\s+signals?)?\s+(?:do(?:es)?\s+not|did\s+not)\s+(?:demonstrate|show|indicate|establish)\s+(?:(?:a|an|any|new|separate|additional|construct-specific|readability|or|change-risk|correctness|maintainability)\s+)*(?:concerns?|issues?|findings?|risks?)(?:\s+(?:in|for)\s+(?:this|the)\s+(?:diff|change|pull request))?[.!]?$`)
 	reviewMetricScopeExplanation = regexp.MustCompile(`(?i)^(?:the\s+)?metric\s+increase\s+is\s+limited\s+to\s+(?:the\s+)?(?:adapter|changed|existing|new)\s+(?:branch|function|code|scope|path)(?:\s+in\s+this\s+diff)?[.!]?$`)
