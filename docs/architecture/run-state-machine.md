@@ -175,6 +175,8 @@ alternate lifecycle authority.
 A closed-unmerged PR on a reused branch is historical, not this Run's terminal
 outcome, only when its known head differs from the successfully observed local
 head and its last update predates the Run's original fresh admission. The
+comparison uses second precision: a PR updated within the admission second is
+not proven historical. The
 append-only admission evidence is required; the latest continuation timestamp
 cannot establish this distinction. Missing timestamps, heads, host-path
 restoration, or readable admission evidence retain the closed-PR decision.

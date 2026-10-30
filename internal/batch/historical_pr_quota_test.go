@@ -129,6 +129,7 @@ func TestHistoricalClosedPRObservation_AdmissionBoundaries(t *testing.T) {
 		{name: "closed before original admission", updated: admitted.Add(-time.Second), head: "new", prHead: "old", started: admitted, wantIgnored: true},
 		{name: "closed between admission and continuation", updated: admitted.Add(time.Second), head: "new", prHead: "old", started: admitted},
 		{name: "closed exactly at admission", updated: admitted, head: "new", prHead: "old", started: admitted},
+		{name: "closure within fractional admission second", updated: admitted, head: "new", prHead: "old", started: admitted.Add(500 * time.Millisecond)},
 		{name: "unknown PR timestamp", head: "new", prHead: "old", started: admitted},
 		{name: "unknown admission timestamp", updated: admitted.Add(-time.Second), head: "new", prHead: "old"},
 		{name: "continuation without original admission", updated: admitted.Add(-time.Second), head: "new", prHead: "old", noStarted: true},

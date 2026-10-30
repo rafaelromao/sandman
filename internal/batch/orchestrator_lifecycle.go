@@ -939,7 +939,9 @@ func (s *runSession) historicalClosedPR(pr *github.PR, headSHA, runID string) bo
 		}
 		switch event.Type {
 		case "run.started":
-			return !event.Timestamp.IsZero() && pr.UpdatedAt.Before(event.Timestamp)
+			// GitHub timestamps have second precision. A closure in the
+			// admission second cannot prove that it predates this Run.
+			return !event.Timestamp.IsZero() && pr.UpdatedAt.Before(event.Timestamp.Truncate(time.Second))
 		case "run.continued":
 			// A continuation without the original fresh admission cannot
 			// establish that this PR predates the logical Run.
