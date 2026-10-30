@@ -56,7 +56,7 @@ func newLifecycleObserver(session *runSession) *lifecycleObserver {
 }
 
 func (o *lifecycleObserver) Observe(ctx context.Context, request lifecycleObservationRequest) lifecycleVerdict {
-	recovery, recoveryBase, recovering := o.githubRecoveryWindow(request.RunID)
+	recovery, recoveryBase, recovering, recoveryUnknown := o.githubRecoveryWindow(request.RunID)
 	if recovering {
 		if verdict, handled := o.observeGitHubRecovery(ctx, request, &recovery, recoveryBase); handled {
 			return verdict
@@ -73,7 +73,7 @@ func (o *lifecycleObserver) Observe(ctx context.Context, request lifecycleObserv
 		request.CIRerunAction,
 	)
 	if verdict.Kind == lifecycleVerdictGitHubUnavailable && ctx.Err() == nil {
-		return o.recordGitHubLookupFailure(request, verdict, recovery, recovering)
+		return o.recordGitHubLookupFailure(request, verdict, recovery, recovering, recoveryUnknown)
 	}
 	if !verdict.handled() || ctx.Err() != nil {
 		return verdict

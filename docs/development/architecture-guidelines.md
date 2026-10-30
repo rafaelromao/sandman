@@ -14,7 +14,9 @@ started capacity-ready work remains waiting. Same RunID keeps its duration and
 current ownership across batches. Preserve managed CI/review hard deadlines and
 completed quota polling across executor re-entry. Quota exhaustion estimates are
 diagnostic, not schedule/ownership deadlines; downtime and capacity delay consume
-no polling allowance. Keep the historical three in-session relaunches (entry
+no polling allowance. A failed pull-request lookup waits (`github-unavailable`)
+with hourly, githubstatus.com-gated attempts and a 24-hour per-RunID bound before
+`GATE_LOOKUP_FAILED`; `--continue` opens a fresh window. Keep the historical three in-session relaunches (entry
 excluded), standalone CI's 60-minute/three-fix invocation-local bounds, and
 configured ordinary retries. Obsolete cumulative repair ledgers cannot deny
 execution. See the [AFK exit baseline](afk-exit-regression-baseline.md) when

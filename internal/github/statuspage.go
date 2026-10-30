@@ -68,6 +68,9 @@ type statusPageSummary struct {
 
 // GitHubStatus fetches and classifies the Statuspage summary.
 func (c *StatusPageClient) GitHubStatus(ctx context.Context) (StatusReport, error) {
+	if c == nil {
+		return StatusReport{}, fmt.Errorf("githubstatus.com: no status client")
+	}
 	url := c.URL
 	if url == "" {
 		url = GitHubStatusSummaryURL

@@ -143,24 +143,25 @@ func intValue(value any) int {
 
 // githubRecoveryWindow returns the Run's open recovery window: its latest
 // event is a github-unavailable wait. A later resume, continuation, capacity
-// admission or any other wait has superseded it.
-func (o *lifecycleObserver) githubRecoveryWindow(runID string) (githubRecovery, map[string]any, bool) {
+// admission or any other wait has superseded it. unknown reports an
+// unreadable event log: whether a window is open cannot be established.
+func (o *lifecycleObserver) githubRecoveryWindow(runID string) (recovery githubRecovery, base map[string]any, open, unknown bool) {
 	if runID == "" || o.deps.eventLog == nil {
-		return githubRecovery{}, nil, false
+		return githubRecovery{}, nil, false, false
 	}
 	states, err := events.ReadRunStates(o.deps.eventLog)
 	if err != nil {
-		return githubRecovery{}, nil, false
+		return githubRecovery{}, nil, false, true
 	}
 	state, ok := states[runID]
 	if !ok || !state.IsAwaiting() || state.IsCapacityQueued() || state.AwaitEvent == nil {
-		return githubRecovery{}, nil, false
+		return githubRecovery{}, nil, false, false
 	}
 	if _, ok := githubRecoveryNextAttempt(state.AwaitEvent.Payload); !ok {
-		return githubRecovery{}, nil, false
+		return githubRecovery{}, nil, false, false
 	}
-	recovery, _ := githubRecoveryFromEvidence(state.AwaitEvent.Payload)
-	return recovery, cloneLifecycleExtras(state.AwaitEvent.Payload), true
+	recovery, _ = githubRecoveryFromEvidence(state.AwaitEvent.Payload)
+	return recovery, cloneLifecycleExtras(state.AwaitEvent.Payload), true, false
 }
 
 // checkGitHubStatus records one status check and reports whether a lookup
@@ -247,7 +248,19 @@ func (o *lifecycleObserver) observeGitHubRecovery(ctx context.Context, request l
 
 // recordGitHubLookupFailure extends (or opens) the recovery window after a
 // failed lookup and selects the wait or, past the bound, the failure.
-func (o *lifecycleObserver) recordGitHubLookupFailure(request lifecycleObservationRequest, verdict lifecycleVerdict, recovery githubRecovery, open bool) lifecycleVerdict {
+func (o *lifecycleObserver) recordGitHubLookupFailure(request lifecycleObservationRequest, verdict lifecycleVerdict, recovery githubRecovery, open, unknown bool) lifecycleVerdict {
+	if unknown {
+		// The event log is unreadable, so the window cannot be found or
+		// extended. Fail closed into a wait without opening a new window,
+		// which would restart the 24-hour bound on every poll.
+		evidence := cloneLifecycleExtras(verdict.Evidence)
+		evidence["gate"] = gateGitHubUnavailable
+		evidence["await_reason"] = gateGitHubUnavailable
+		evidence["reason"] = githubUnavailableReason
+		evidence["branch"] = request.Branch
+		evidence["observation_error"] = "event log unreadable; GitHub recovery window unknown"
+		return lifecycleVerdict{Action: lifecycleAwait, Evidence: evidence, Kind: lifecycleVerdictGitHubUnavailable}
+	}
 	now := o.runtimeNow()
 	if !open {
 		recovery = githubRecovery{WindowStarted: now}

@@ -961,6 +961,16 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 			},
 			want: "merged", maxLaunches: 2,
 		},
+		// Negative control for #2940 (the rc2 bar's second side): a closure the
+		// runtime cannot place continues owned publication work, but an
+		// implementor that never publishes still ends the Run once its ordinary
+		// retries are spent. It never becomes an endless wait.
+		continuityScenario{
+			name: "negative/unplaced closed PR without publication", retries: 2, ownedWorkRetries: true,
+			pr:           github.PR{State: "closed", HeadRefOid: "old-head"},
+			worktreeHead: func(*continuityGitHub) string { return "base-head" },
+			want:         "failed:" + missingPRReason, maxLaunches: 3,
+		},
 		// Negative control: a closed pull request is permanent.
 		continuityScenario{
 			name: "negative/closed pull request", pr: greenCleanPR(), retries: 3,

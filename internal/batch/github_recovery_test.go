@@ -13,6 +13,33 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 )
 
+// An unreadable event log hides the window. The Run fails closed into a wait
+// and does not open a new window that would restart the 24-hour bound.
+func TestGitHubRecovery_UnreadableEventLogWaitsWithoutNewWindow(t *testing.T) {
+	session := &runSession{
+		issueNumber: 42, issueState: "open", runID: "row",
+		deps: runDeps{githubClient: &fakeGitHubClient{findPRErr: errors.New("gh pr list: exit status 1")}, eventLog: unreadableEventLog{}, errorLog: io.Discard},
+		opts: runSessionOptions{currentHead: func(string) (string, error) { return "current-sha", nil }},
+	}
+	verdict := newLifecycleObserver(session).Observe(t.Context(), lifecycleObservationRequest{
+		WorkDir: t.TempDir(), Branch: gateTestBranch, RunID: "row", HostPathsReady: true, AttemptStatus: "success",
+	})
+	if verdict.Action != lifecycleAwait || verdict.Evidence["gate"] != gateGitHubUnavailable {
+		t.Fatalf("verdict = %s/%v, want a GitHub recovery wait", verdict.status(), verdict.Evidence)
+	}
+	if _, ok := verdict.Evidence[githubRecoveryKey]; ok {
+		t.Fatalf("unreadable log opened a recovery window: %v", verdict.Evidence)
+	}
+}
+
+// A typed nil status client reports unknown health instead of panicking.
+func TestGitHubRecovery_NilStatusPageClientIsUnreachable(t *testing.T) {
+	var client *github.StatusPageClient
+	if _, err := client.GitHubStatus(t.Context()); err == nil {
+		t.Fatal("nil status client reported health")
+	}
+}
+
 // fakeGitHubStatus is the injected githubstatus.com health check.
 type fakeGitHubStatus struct {
 	report github.StatusReport

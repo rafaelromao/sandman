@@ -67,12 +67,14 @@ leaves head, request and responses unchanged stops relaunching; `run.await`
 `stalled_resumes` keeps observation from relaunching on that evidence after
 restart. A closed unmerged PR is terminal only when proven to be the Run's (same
 head, or `closedAt` at/after the original admission found through `run.continued`
-`previous_run_id`); an unplaced closure continues owned work while the issue is open. A trigger delivered by any attempt of a session (including a failed
+`previous_run_id`); an unplaced closure continues owned work while the issue is
+open. A trigger delivered by any attempt of a session (including a failed
 one) is registered; owned-work retries log `lifecycle-owned-work`. The review
 daemon stamps a verdict trailer before its publication identity; the runtime
 trusts it additively (prose approvals stay accepted) unless its Findings, Suggested
 next steps or Decision section contradicts it; descriptive sections (Summary, Spec,
-Quality check, ...) never veto it. Every `testdata/approved-*.md` report is a corpus test. Relaunch allowances are per repair round (request, head); holds
+Quality check, ...) never veto it. Every `testdata/approved-*.md` report is a
+corpus test. Relaunch allowances are per repair round (request, head); holds
 recover under the `hold:<RunID>` identity. Every lifecycle reason is
 classified in one place and `TestAFKContinuityContract_*` replays the incidents.
 
@@ -164,7 +166,7 @@ If a file has high blast radius, prefer the smallest safe change and inspect dep
 
 When writing or updating tests:
 
-- Mock or fake at the documented seams: `cmd.Dependencies` (top level); `runDeps` fields and `OrchestratorOpt` options (`WithRunnableFactory`, `WithSandboxFactory`, `WithContainerRuntimeFactory`, `WithErrorLog`, `WithRunSessionOpts`, `WithHeartbeatTickInterval`, `WithVerifyPath`) for orchestrator-level injection; `RunnableFactory`/`SandboxFactory` fakes that satisfy the factory interfaces.
+- Mock or fake at the documented seams: `cmd.Dependencies` (top level); `runDeps` fields and `OrchestratorOpt` options (`WithRunnableFactory`, `WithSandboxFactory`, `WithContainerRuntimeFactory`, `WithErrorLog`, `WithRunSessionOpts`, `WithHeartbeatTickInterval`, `WithVerifyPath`, `WithGitHubStatus`) for orchestrator-level injection; `RunnableFactory`/`SandboxFactory` fakes that satisfy the factory interfaces.
 - Do not mock deep concrete internals when an interface seam already exists.
 - Preserve event-sourced behavior in tests; verify projections/folds rather than inventing alternate mutable-state shortcuts.
 
