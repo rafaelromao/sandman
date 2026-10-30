@@ -88,6 +88,90 @@ func TestReviewPublicationVerdict_ProseApprovalsWithoutPublication(t *testing.T)
 	}
 }
 
+// Issue #2939: every real approving report is an approval in each form the
+// runtime can meet it — published with the daemon's approved verdict, as the
+// pre-verdict daemon published it, and as plain prose with no publication
+// identity. Fixes that patch prose phrasing one report at a time keep
+// regressing; this corpus is the regression net for all of them.
+func TestReviewPublicationVerdict_ApprovingReportCorpus(t *testing.T) {
+	reports := capturedApprovingReports(t)
+	if _, ok := reports["approved-sandman-tests-33.md"]; !ok {
+		t.Fatal("corpus lacks the #2939 report (sandman-tests PR #33, comment 6514897469)")
+	}
+	for name, report := range reports {
+		prose := reviewpub.StripMarkers(report)
+		for form, body := range map[string]string{
+			"published": reviewpub.Body(prose, "request", "current-sha"),
+			"legacy":    prose + "\n\n" + reviewpub.Identity("request", "current-sha"),
+			"prose":     prose,
+		} {
+			t.Run(name+"/"+form, func(t *testing.T) {
+				if !reviewDecisionApprovedBody(body) {
+					for _, section := range collectReviewApprovalSections(prose) {
+						if !section.permitsApproval() {
+							t.Errorf("rejected %s section: %s", section.kind, section.text)
+						}
+					}
+					t.Fatal("real approving report rejected")
+				}
+			})
+		}
+		if publishedApprovalContradicted(reviewpub.Body(prose, "request", "current-sha")) {
+			t.Errorf("%s: published approval reads as contradicted", name)
+		}
+	}
+}
+
+// Issue #2939: only the verdict sections (Findings, Suggested next steps and
+// Decision) may contradict a published daemon approval. Descriptive sections
+// describe the change under review and never veto it, whatever their prose.
+func TestReviewPublicationVerdict_DescriptiveSectionsNeverVetoPublishedApproval(t *testing.T) {
+	verdict := "\n\n## Findings\nNone.\n\n## Suggested next steps\nNo author changes requested.\n\n## Decision\n**APPROVED**\n"
+	for _, tc := range []struct{ name, section string }{
+		{"summary code behaviour", "## Summary\n`scheduled.ts` writes `shard:{i}` only if every fetch succeeds, then merges all shards."},
+		{"summary verified fix", "## Summary\nThe new commit keeps image URLs only if they are http(s)."},
+		{"summary unmet history", "## Summary\nThe timeout criterion was unmet in the previous head; this head meets it."},
+		{"spec severity count", "## Spec\n1 finding; worst: Important. The timeout criterion is unmet."},
+		{"standards conditional", "## Standards\nThe helper retries only after a transient failure."},
+		{"quality metrics", "## Quality check\n### Metrics\n- Cognitive complexity: ~8. Must stay under 15.\n\n### Tools used\nManual review."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			published := reviewpub.Body(tc.section+verdict, "request", "current-sha")
+			if publishedApprovalContradicted(published) || !reviewDecisionApprovedBody(published) {
+				t.Fatal("descriptive section vetoed the daemon's published approval")
+			}
+		})
+	}
+}
+
+// Issue #2939: the prose fallback for bodies without a verdict does not read a
+// condition describing code behaviour as a conditional approval. A condition
+// that governs the approval or the merge still contradicts it.
+func TestReviewPublicationVerdict_ProseConditionsGoverningApproval(t *testing.T) {
+	report := func(summary string) string {
+		return "## Summary\n" + summary + "\n\n## Findings\nNone.\n\n## Suggested next steps\nNone.\n\n## Decision\n**APPROVED**\n"
+	}
+	if !reviewDecisionApprovedBody(report("The worker writes the shard only if every fetch succeeds, then merges all shards.")) {
+		t.Fatal("a description of code behaviour read as a conditional approval")
+	}
+	for _, summary := range []string{
+		"Merge only after the race in worker.go is fixed.",
+		"Only if the race is fixed should this be merged.",
+		"Approve only once the timeout test passes.",
+		"LGTM only if the timeout test passes.",
+		"Approval only after the race is fixed.",
+	} {
+		if reviewDecisionApprovedBody(report(summary)) {
+			t.Fatalf("conditional approval %q accepted", summary)
+		}
+	}
+	// A published approval whose next steps make it conditional is unsure.
+	published := reviewpub.Body("## Findings\nNone.\n\n## Suggested next steps\nLGTM only if the timeout test passes.\n\n## Decision\n**APPROVED**\n", "request", "current-sha")
+	if reviewDecisionApprovedBody(published) {
+		t.Fatal("published approval with a conditional LGTM accepted")
+	}
+}
+
 // Wording variants of the no-change declaration and remarks addressed to the
 // runtime are approvals; genuine contradictions still are not.
 func TestReviewPublicationVerdict_ProseVariantsAndContradictions(t *testing.T) {
@@ -140,11 +224,13 @@ func TestReviewPublicationVerdict_ContradictedDaemonApprovalWaits(t *testing.T) 
 		{"runtime merge prohibition", "## Suggested next steps\nThe surrounding workflow must not merge until the race in worker.go:12 is fixed.\n\n## Decision\n**APPROVED**\n"},
 		{"direct imperative", "## Suggested next steps\nFix the race in `worker.go:12`.\n\n## Decision\n**APPROVED**\n"},
 		{"decision condition", "## Decision\n**APPROVED**\nOnly after the race is fixed.\n"},
-		{"unmet criterion", "## Summary\nThe timeout criterion is unmet.\n\n## Decision\n**APPROVED**\n"},
+		{"unmet criterion finding", "## Findings\nThe timeout criterion is unmet.\n\n## Decision\n**APPROVED**\n"},
 		{"author directive", "## Summary\nReviewed head abc.\n\n## Suggested next steps\nAuthor should fix worker.go before merging.\n\n## Decision\n**APPROVED**\n"},
-		{"not approved yet", "## Summary\nThis is not approved yet.\n\n## Suggested next steps\nNone.\n\n## Decision\n**APPROVED**\n"},
+		{"not approved yet in next steps", "## Summary\nReviewed head abc.\n\n## Suggested next steps\nThis is not approved yet.\n\n## Decision\n**APPROVED**\n"},
 		{"nested important finding", "## Summary\nReviewed head abc.\n\n## Findings\n### Spec\n- Important: the timeout criterion is unmet in worker.go.\n\n## Decision\n**APPROVED**\n"},
-		{"severity in spec", "## Spec\n1 finding; worst: Important. The timeout criterion is unmet.\n\n## Decision\n**APPROVED**\n"},
+		{"blocking finding", "## Findings\n- Blocking: `worker.go:12` drops the request on retry.\n\n## Decision\n**APPROVED**\n"},
+		{"changes requested finding", "## Findings\nChanges requested for the retry loop.\n\n## Decision\n**APPROVED**\n"},
+		{"opposing verdict state in summary", "## Summary\nVerdict: CHANGES_REQUESTED.\n\n## Decision\n**APPROVED**\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			published := reviewpub.Body(tc.decision, "request", "current-sha")

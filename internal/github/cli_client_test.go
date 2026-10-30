@@ -293,9 +293,26 @@ func TestCLIClient_FindPRByBranch_Success(t *testing.T) {
 	if len(runner.calls) != 1 {
 		t.Fatalf("expected 1 command, got %d", len(runner.calls))
 	}
-	expectedArgs := []string{"pr", "list", "--head", "issue-386/smart-completion-detection-phase-aware-retry", "--state", "all", "--json", "number,state,body,mergedAt,headRefName,headRefOid,updatedAt,reviewDecision,mergeStateStatus,statusCheckRollup", "--limit", "1"}
+	expectedArgs := []string{"pr", "list", "--head", "issue-386/smart-completion-detection-phase-aware-retry", "--state", "all", "--json", "number,state,body,mergedAt,headRefName,headRefOid,updatedAt,closedAt,reviewDecision,mergeStateStatus,statusCheckRollup", "--limit", "1"}
 	if !reflect.DeepEqual(runner.calls[0].args, expectedArgs) {
 		t.Fatalf("unexpected args: %v", runner.calls[0].args)
+	}
+}
+
+// Issue #2940: closure time is independent of later updates to a closed PR.
+func TestCLIClient_FindPRByBranch_ParsesClosedAt(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `[{"number":29,"state":"CLOSED","headRefName":"2-old","headRefOid":"old","updatedAt":"2026-10-30T09:00:00Z","closedAt":"2026-10-24T12:00:00Z"}]`},
+	}}
+	pr, err := (&CLIClient{runner: runner}).FindPRByBranch(context.Background(), "2-old")
+	if err != nil || pr == nil {
+		t.Fatalf("FindPRByBranch = %v, %v", pr, err)
+	}
+	if want := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC); !pr.ClosedAt.Equal(want) {
+		t.Fatalf("ClosedAt = %v, want %v", pr.ClosedAt, want)
+	}
+	if want := time.Date(2026, 10, 30, 9, 0, 0, 0, time.UTC); !pr.UpdatedAt.Equal(want) {
+		t.Fatalf("UpdatedAt = %v, want %v", pr.UpdatedAt, want)
 	}
 }
 

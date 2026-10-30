@@ -688,9 +688,9 @@ func TestWaitingContract_AdmissionToAwaitPreservesOperationAfterCrash(t *testing
 	if len(ready) != 1 || ready[0].Wait == nil || ready[0].Wait.Ready || !ready[0].Wait.OperationDeadline.Equal(now.Add(30*time.Minute).Truncate(time.Second)) {
 		t.Fatalf("new CI operation lost across admission/crash: %+v", ready)
 	}
-	verdict, handled := newLifecycleObserver(session).priorObservation("row", "42-fix", "head")
-	if !handled || verdict.Action != lifecycleAwait {
-		t.Fatalf("established CI operation could not survive transient observation: %v handled=%v", verdict.Action, handled)
+	retained, established := newLifecycleObserver(session).priorOperationEvidence("row", "42-fix", "head")
+	if _, ok := retained["ci_wait"]; !established || !ok {
+		t.Fatalf("established CI operation could not survive transient observation: %v established=%v", retained, established)
 	}
 }
 
@@ -945,12 +945,9 @@ func TestWaitingContract_ObservationErrorKeepsOnlyEstablishedDeadline(t *testing
 			}
 			verdict := s.observeLifecycleWithHostPathsForTest(context.Background(), root, gateTestBranch, "", "row", true)
 			status, extras := verdict.status(), verdict.Evidence
-			want := "failure"
-			if established {
-				want = "await"
-			}
-			if status != want {
-				t.Fatalf("established=%v observation=%q, want %s", established, status, want)
+			// Issue #2938: either way the Run waits for GitHub to recover.
+			if status != "await" || extras["gate"] != gateGitHubUnavailable {
+				t.Fatalf("established=%v observation=%q %v, want the GitHub recovery wait", established, status, extras)
 			}
 			if established {
 				deadline, _, ok := lifecycleDeadline(extras)

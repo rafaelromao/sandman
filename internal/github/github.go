@@ -32,6 +32,10 @@ type PR struct {
 	HeadRefOid  string
 	BaseRefName string
 	UpdatedAt   time.Time
+	// ClosedAt is when the pull request was closed; zero when it is open or
+	// the lookup did not report it. Later comments or branch deletion move
+	// UpdatedAt but never ClosedAt.
+	ClosedAt time.Time
 	// ReviewDecision, MergeStateStatus, and StatusCheckRollup are populated
 	// by FindPRByBranch when available; they are empty when the underlying
 	// `gh` invocation omits the columns (e.g. on PRs that never had a

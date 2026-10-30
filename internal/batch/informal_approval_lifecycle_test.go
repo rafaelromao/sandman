@@ -3,6 +3,7 @@ package batch
 import (
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -436,14 +437,19 @@ func answeringPublication(body, triggerID string, triggerUpdatedAt time.Time, he
 
 func capturedApprovingReports(t *testing.T) map[string]string {
 	t.Helper()
+	// Every captured real approving report is part of the corpus, so a new
+	// regression fixture joins every corpus test without editing a list.
+	paths, err := filepath.Glob("testdata/approved-*.md")
+	if err != nil || len(paths) == 0 {
+		t.Fatalf("approving report corpus: %v (%d files)", err, len(paths))
+	}
 	reports := make(map[string]string)
-	for _, name := range []string{"approved-daemon-28-first.md", "approved-daemon-28-second.md", "approved-daemon-28-final.md", "approved-sandman-2818.md", "approved-sandman-2886.md",
-		"approved-daemon-29-first.md", "approved-daemon-29-second.md", "approved-daemon-29-third.md", "approved-daemon-29-fourth.md", "approved-daemon-29-fifth.md", "approved-daemon-29-final.md", "approved-daemon-30.md"} {
-		body, err := os.ReadFile("testdata/" + name)
+	for _, path := range paths {
+		body, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		reports[name] = string(body)
+		reports[filepath.Base(path)] = string(body)
 	}
 	return reports
 }
@@ -531,6 +537,8 @@ func TestInformalApprovalClassifier_CapturedReportsAndContradictions(t *testing.
 				t.Fatalf("approving report produced feedback: %v", got)
 			}
 			changes := strings.Replace(body, "**APPROVED**", "**CHANGES_REQUESTED**", 1)
+			// A daemon publication carries the same decision in its verdict.
+			changes = strings.Replace(changes, reviewpub.Marker(reviewpub.Approved), reviewpub.Marker(reviewpub.ChangesRequested), 1)
 			if reviewDecisionApprovedBody(changes) || !informalReviewFeedbackConcrete(changes) {
 				t.Fatal("a CHANGES_REQUESTED decision did not remain actionable")
 			}

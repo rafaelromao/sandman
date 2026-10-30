@@ -124,23 +124,34 @@ func TestHistoricalClosedPRObservation_AdmissionBoundaries(t *testing.T) {
 		unreadable   bool
 		noEventLog   bool
 		merged       bool
+		closed       time.Time
+		issueClosed  bool
 		wantIgnored  bool
 	}{
 		{name: "closed before original admission", updated: admitted.Add(-time.Second), head: "new", prHead: "old", started: admitted, wantIgnored: true},
 		{name: "closed between admission and continuation", updated: admitted.Add(time.Second), head: "new", prHead: "old", started: admitted},
 		{name: "closed exactly at admission", updated: admitted, head: "new", prHead: "old", started: admitted},
 		{name: "closure within fractional admission second", updated: admitted, head: "new", prHead: "old", started: admitted.Add(500 * time.Millisecond)},
-		{name: "unknown PR timestamp", head: "new", prHead: "old", started: admitted},
-		{name: "unknown admission timestamp", updated: admitted.Add(-time.Second), head: "new", prHead: "old"},
-		{name: "continuation without original admission", updated: admitted.Add(-time.Second), head: "new", prHead: "old", noStarted: true},
-		{name: "another Run admission", updated: admitted.Add(-time.Second), head: "new", prHead: "old", started: admitted, foreignRun: true},
-		{name: "missing local HEAD", updated: admitted.Add(-time.Second), prHead: "old", started: admitted},
-		{name: "missing PR HEAD", updated: admitted.Add(-time.Second), head: "new", started: admitted},
-		{name: "HEAD lookup error", updated: admitted.Add(-time.Second), head: "new", prHead: "old", started: admitted, headErr: errors.New("HEAD unavailable")},
-		{name: "host paths not restored", updated: admitted.Add(-time.Second), head: "new", prHead: "old", started: admitted, hostNotReady: true},
-		{name: "unreadable admission evidence", updated: admitted.Add(-time.Second), head: "new", prHead: "old", started: admitted, unreadable: true},
-		{name: "missing event log", updated: admitted.Add(-time.Second), head: "new", prHead: "old", started: admitted, noEventLog: true},
+		// Issue #2940: a closure that predates the original admission is
+		// history whatever the Run's head; and unknown evidence never makes a
+		// closed pull request terminal while the work item is open. The Run
+		// continues to its owned publication work instead.
+		{name: "unknown PR timestamp", head: "new", prHead: "old", started: admitted, wantIgnored: true},
+		{name: "unknown admission timestamp", updated: admitted.Add(-time.Second), head: "new", prHead: "old", wantIgnored: true},
+		{name: "continuation without original admission", updated: admitted.Add(-time.Second), head: "new", prHead: "old", noStarted: true, wantIgnored: true},
+		{name: "another Run admission", updated: admitted.Add(-time.Second), head: "new", prHead: "old", started: admitted, foreignRun: true, wantIgnored: true},
+		{name: "missing local HEAD", updated: admitted.Add(-time.Second), prHead: "old", started: admitted, wantIgnored: true},
+		{name: "missing PR HEAD", updated: admitted.Add(-time.Second), head: "new", started: admitted, wantIgnored: true},
+		{name: "HEAD lookup error", updated: admitted.Add(-time.Second), head: "new", prHead: "old", started: admitted, headErr: errors.New("HEAD unavailable"), wantIgnored: true},
+		{name: "host paths not restored", updated: admitted.Add(-time.Second), head: "new", prHead: "old", started: admitted, hostNotReady: true, wantIgnored: true},
+		{name: "unreadable admission evidence", updated: admitted.Add(-time.Second), head: "new", prHead: "old", started: admitted, unreadable: true, wantIgnored: true},
+		{name: "missing event log", updated: admitted.Add(-time.Second), head: "new", prHead: "old", started: admitted, noEventLog: true, wantIgnored: true},
+		{name: "unknown evidence on a closed work item", head: "new", prHead: "old", started: admitted, issueClosed: true},
+		{name: "no commits: head equals base", updated: admitted.Add(-time.Second), head: "base", prHead: "old", started: admitted, wantIgnored: true},
+		{name: "closed before admission, updated after", closed: admitted.Add(-time.Hour), updated: admitted.Add(time.Hour), head: "new", prHead: "old", started: admitted, wantIgnored: true},
+		{name: "closed after admission, before last update", closed: admitted.Add(time.Second), updated: admitted.Add(time.Hour), head: "new", prHead: "old", started: admitted},
 		{name: "current closed PR", updated: admitted.Add(-time.Second), head: " SHA ", prHead: "sha", started: admitted},
+		{name: "current closed PR with unknown timestamp", head: "sha", prHead: "sha", started: admitted},
 		{name: "confirmed merge wins despite old head", updated: admitted.Add(-time.Second), head: "new", prHead: "old", started: admitted, merged: true},
 	}
 	for _, tt := range tests {
@@ -162,9 +173,13 @@ func TestHistoricalClosedPRObservation_AdmissionBoundaries(t *testing.T) {
 			if tt.noEventLog {
 				eventLog = nil
 			}
-			pr := &github.PR{Number: 7, State: "closed", Merged: tt.merged, HeadRefOid: tt.prHead, UpdatedAt: tt.updated, Body: "Closes #42"}
+			pr := &github.PR{Number: 7, State: "closed", Merged: tt.merged, HeadRefOid: tt.prHead, UpdatedAt: tt.updated, ClosedAt: tt.closed, Body: "Closes #42"}
+			issueState := "open"
+			if tt.issueClosed {
+				issueState = "closed"
+			}
 			session := &runSession{
-				issueNumber: 42, issueState: "open",
+				issueNumber: 42, issueState: issueState,
 				deps: runDeps{
 					githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: pr}},
 					eventLog:     eventLog, errorLog: io.Discard,
@@ -194,6 +209,70 @@ func TestHistoricalClosedPRObservation_AdmissionBoundaries(t *testing.T) {
 				if verdict.Action != wantAction || verdict.Kind != wantKind {
 					t.Fatalf("continued=%v: verdict=%+v, want action=%v kind=%v", continued, verdict, wantAction, wantKind)
 				}
+			}
+		})
+	}
+}
+
+// Issue #2940: `sandman run --continue` starts a new RunID whose first event
+// is run.continued naming its predecessor. The Run's original fresh admission
+// is found through that chain, so a pull request closed before it is history
+// even when the continued Run has no commits yet.
+func TestHistoricalClosedPRObservation_ContinuationChain(t *testing.T) {
+	admitted := time.Unix(5_000, 0).UTC()
+	continued := admitted.Add(24 * time.Hour)
+	for _, tt := range []struct {
+		name        string
+		closed      time.Time
+		chain       func(log *spyEventLog)
+		wantIgnored bool
+	}{
+		{name: "closed before the original admission", closed: admitted.Add(-time.Hour), wantIgnored: true},
+		{name: "closed between original admission and continuation", closed: admitted.Add(time.Hour)},
+		{name: "two continuations", closed: admitted.Add(-time.Hour), wantIgnored: true, chain: func(log *spyEventLog) {
+			_ = log.Log(events.Event{Type: "run.continued", RunID: "middle", Timestamp: admitted.Add(time.Hour), Payload: map[string]any{"previous_run_id": "original"}})
+		}},
+		{name: "closed after an intermediate continuation", closed: admitted.Add(2 * time.Hour), chain: func(log *spyEventLog) {
+			_ = log.Log(events.Event{Type: "run.continued", RunID: "middle", Timestamp: admitted.Add(time.Hour), Payload: map[string]any{"previous_run_id": "original"}})
+		}},
+		{name: "cyclic chain is unknown evidence", closed: admitted.Add(time.Hour), wantIgnored: true, chain: func(log *spyEventLog) {
+			_ = log.Log(events.Event{Type: "run.continued", RunID: "middle", Timestamp: admitted.Add(time.Hour), Payload: map[string]any{"previous_run_id": "current"}})
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			log := &spyEventLog{}
+			_ = log.Log(events.Event{Type: "run.started", RunID: "original", Timestamp: admitted})
+			previous := "original"
+			if tt.chain != nil {
+				tt.chain(log)
+				previous = "middle"
+			}
+			_ = log.Log(events.Event{Type: "run.continued", RunID: "current", Timestamp: continued, Payload: map[string]any{"previous_run_id": previous}})
+			pr := &github.PR{Number: 29, State: "closed", HeadRefOid: "old-head", ClosedAt: tt.closed, UpdatedAt: tt.closed, Body: "Closes #42"}
+			session := &runSession{
+				issueNumber: 42, issueState: "open",
+				deps: runDeps{
+					githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: pr}},
+					eventLog:     log, errorLog: io.Discard,
+				},
+				// No commits: the worktree head is the base branch head.
+				opts: runSessionOptions{currentHead: func(string) (string, error) { return "base-head", nil }},
+			}
+			verdict := newLifecycleObserver(session).Observe(t.Context(), lifecycleObservationRequest{
+				WorkDir: t.TempDir(), Branch: gateTestBranch, RunID: "current",
+				HostPathsReady: true, AttemptStatus: "success", AfterAgentAttempt: true,
+			})
+			if tt.wantIgnored {
+				if verdict.Kind == lifecycleVerdictClosedPR || verdict.Action == lifecycleFailure {
+					t.Fatalf("historical closed PR stayed authoritative: %+v", verdict)
+				}
+				if verdict.Action != lifecycleResume || verdict.Evidence["reason"] != missingPRReason {
+					t.Fatalf("verdict = %+v, want owned publication work", verdict)
+				}
+				return
+			}
+			if verdict.Action != lifecycleFailure || verdict.Kind != lifecycleVerdictClosedPR {
+				t.Fatalf("closure during the logical Run = %+v, want PULL_REQUEST_CLOSED", verdict)
 			}
 		})
 	}

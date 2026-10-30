@@ -296,7 +296,8 @@ var lifecycleFailureReasons = map[string]bool{
 	"merged-pr-missing-closing-reference": true,  // merged without verifiable completion
 	"CI_WAIT_STATE_ERROR":                 true,  // corrupt CI wait state
 	stateErrorReason:                      true,  // corrupt review state, nothing resolving
-	lookupGateReason:                      true,  // the pull request was not observed
+	lookupGateReason:                      true,  // GitHub stayed unavailable for 24 hours
+	githubUnavailableReason:               false, // waits for GitHub to recover
 	"IMPLEMENTOR_ACTION_REQUIRED":         true,  // legacy verification fallback
 	"REMEDIATION_BUDGET_EXHAUSTED":        true,  // formal CHANGES_REQUESTED left unrepaired
 	idleGateReason:                        false, // nothing resolving yet; waits like rc2

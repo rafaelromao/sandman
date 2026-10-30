@@ -74,8 +74,9 @@ explicit abort, a merged pull request without verifiable completion, genuine
 requested changes (formal `CHANGES_REQUESTED` or the review daemon's
 `changes_requested` verdict) the implementor cannot address within its relaunch
 allowance, no review request delivered at all (`REVIEW_REQUEST_REQUIRED`),
-corrupt review state with nothing resolving, an unobserved pull request, and
-agent authentication, usage-limit or operator stops. Every lifecycle failure
+corrupt review state with nothing resolving, GitHub unavailable for a full
+24-hour recovery window (`GATE_LOOKUP_FAILED`), and agent authentication,
+usage-limit or operator stops. Every lifecycle failure
 reason is classified once as permanent or recoverable; the AFK-continuity
 contract suite fails on an unclassified reason and replays the real incidents
 that motivated the rule.
@@ -105,15 +106,47 @@ not reset that allowance. An unreadable event log
 fails closed into a wait. Exhausted remediation of unusable CI wait state
 (`CI_WAIT_STATE_ERROR`) stays terminal.
 
+A failed pull-request lookup or refresh (`gh` exit status, API 5xx, timeout,
+network error) is an external outage, not evidence about the pull request. The
+Run waits with `await_reason: github-unavailable` (reason `GITHUB_UNAVAILABLE`),
+whether or not a review or CI operation was established; an established
+operation is retained with its deadline unchanged and judged only after
+GitHub answers again. Recovery is attempted hourly. Before each attempt the
+runtime reads GitHub's health from githubstatus.com: a major or critical
+incident, or a degraded API Requests, Git Operations, Pull Requests or Actions
+component, skips the attempt; a healthy or unreachable status page lets it
+run. Observation before the next attempt makes no GitHub call. Each check and
+attempt is recorded in the wait's `github_recovery` evidence (window start,
+next attempt, last status). Only after 24 hours of continuous failed recovery,
+measured from the first failure of the window and including skipped hours,
+does the Run finish `failure` with `GATE_LOOKUP_FAILED`. Restart rehydrates the
+window and its next attempt from the event fold; the scheduler treats the
+24-hour bound as the wait's operation deadline. `sandman run <n> --continue`
+is a new RunID: it attempts observation immediately and opens a fresh 24-hour
+window. Explicit abort ends the wait at once. A failed agent attempt with no
+established operation keeps its ordinary retry path.
+
+A closed, unmerged pull request ends a Run (`PULL_REQUEST_CLOSED`) only when it
+is proven to belong to the logical Run: its head equals the Run's head, or it
+closed (`closedAt`) at or after the Run's original fresh admission. The original
+admission is followed through `run.continued` `previous_run_id` links, so a
+`--continue` Run with no commits ignores a pull request closed before its first
+admission and continues to publish a new one. A closure the runtime cannot
+place continues owned publication work while the work item is open; on a
+closed work item or an already-resolved task it keeps the closed-PR decision.
 Sandman's own review daemon publishes a machine-readable verdict trailer
 (`<!-- sandman-verdict:approved|changes_requested -->`) directly before the
 publication identity, which binds the decision to one trigger revision and one
 reviewed head. The runtime trusts that verdict (or, for older publications,
 the closed-set `## Decision` token) and treats a publication bound to another
-trigger or head as stale. An APPROVED verdict beside author-facing
-contradictions (an opposing verdict, a labelled Blocking or Important finding,
-or a repair directive addressed to the author) is not an approval; such an
-unsure report waits. The verdict is additive: human, third-party and
+trigger or head as stale. Only the verdict sections (Findings, Suggested next
+steps and Decision) may contradict a published APPROVED verdict: an opposing
+verdict, a labelled Blocking or Important finding, or a repair directive
+addressed to the author there makes the report unsure, and it waits. Summary,
+Standards, Spec, Quality check, Scope, Metrics, Tools used and review history
+describe the change and never veto it; an explicit `CHANGES_REQUESTED` or
+`NOT_APPROVED` state still contradicts it anywhere. Every captured real
+approving report (`internal/batch/testdata/approved-*.md`) is a corpus test. The verdict is additive: human, third-party and
 paraphrased approvals keep the prose rules, and an unknown daemon verdict is
 never repair evidence.
 

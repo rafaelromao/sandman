@@ -147,7 +147,12 @@ func reconcileRecoveryWait(record daemon.RunWait, state events.RunState) (daemon
 		if state.AwaitEvent == nil {
 			return record, true, false
 		}
-		if continuityHoldPayload(state.AwaitEvent.Payload) {
+		if id, deadline, ok := githubRecoveryOperation(state.AwaitEvent.Payload); ok {
+			// A GitHub recovery wait keeps its 24-hour window and its next
+			// hourly attempt across restart.
+			record.OperationID, record.OperationDeadline = id, deadline
+			record.NextPollAt, _ = githubRecoveryNextAttempt(state.AwaitEvent.Payload)
+		} else if continuityHoldPayload(state.AwaitEvent.Payload) {
 			// A continuity hold has no operation deadline. It stays
 			// recoverable within the ordinary ownerless grace.
 			record.OperationID, record.OperationDeadline = continuityHoldOperation(state.RunID), time.Time{}

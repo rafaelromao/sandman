@@ -14,14 +14,17 @@ var (
 	reviewFindingDirective         = regexp.MustCompile(`(?im)(?:^|[,.!?;:—–-]\s+)\s*(?:(?:[-*+]|\d+[.)])\s*)?(?:fix|change|remove|replace|add|use)\b|\b(?:must|please|needs?|should)\b`)
 	reviewFindingClauses           = regexp.MustCompile(`[;\n]|\.\s+`)
 	reviewFindingMetadata          = regexp.MustCompile(`(?i)^(?:scope|metrics?|files?|cognitive complexity|cyclomatic complexity|coverage|tools used)\s*:`)
-	reviewApprovalContradiction    = regexp.MustCompile(`(?i)\b(?:not\s+(?:yet\s+)?(?:approved|lgtm)|no\s+approval|changes\s+requested|subject\s+to|contingent\b|only\s+(?:if|after|once)|before\s+merging|(?:merge|approve)[^\n.!?]*(?:after|once|until|if|when)\b)`)
-	reviewMetadataRepair           = regexp.MustCompile(`(?i)\b(?:fix(?:ing)?|address(?:ing)?|repair(?:ing)?|resolve|correct|replace|remove|add|change|use|ensure|update|must|please|needs?|should)\b`)
-	reviewMetricNoConcern          = regexp.MustCompile(`(?i)^(?:the\s+)?metrics?(?:\s+signals?)?\s+(?:do(?:es)?\s+not|did\s+not)\s+(?:demonstrate|show|indicate|establish)\s+(?:(?:a|an|any|new|separate|additional|construct-specific|readability|or|change-risk|correctness|maintainability)\s+)*(?:concerns?|issues?|findings?|risks?)(?:\s+(?:in|for)\s+(?:this|the)\s+(?:diff|change|pull request))?[.!]?$`)
-	reviewMetricScopeExplanation   = regexp.MustCompile(`(?i)^(?:the\s+)?metric\s+increase\s+is\s+limited\s+to\s+(?:the\s+)?(?:adapter|changed|existing|new)\s+(?:branch|function|code|scope|path)(?:\s+in\s+this\s+diff)?[.!]?$`)
-	reviewNoFollowup               = regexp.MustCompile(`(?i)^no\s+(?:(?:author\s+)?follow[- ]up|further\s+action)\s+(?:is\s+)?(?:required|needed|necessary)[.!]?$`)
-	reviewCIWaitAdvice             = regexp.MustCompile(`(?i)^(?:await|wait\s+for)\s+(?:the\s+)?(?:(?:pending|required|remaining|current-head)\s+)*(?:ci(?:\s+checks?)?|(?:required\s+)?checks?)(?:\s+to\s+(?:pass|finish|complete|turn\s+green))?(?:\s+before\s+merging)?[.!]?$`)
-	reviewQualityTag               = regexp.MustCompile("`\\[(?:control-flow|functional|OOP|public-api)\\]`")
-	reviewNoChangeStep             = regexp.MustCompile(`(?i)^(?:none(?:\s+required)?|no\s+(?:(?:author|code|implementation|further|additional)\s+)*changes\s+(?:are\s+)?(?:requested|required|needed))[.!]?$`)
+	// A condition contradicts approval only when it governs the approval or
+	// merge ("merge only after ...", "only if X is fixed is this approved").
+	// "Keeps them only if they are http(s)" describes code behaviour (#2939).
+	reviewApprovalContradiction  = regexp.MustCompile(`(?i)\b(?:not\s+(?:yet\s+)?(?:approved|lgtm)|no\s+approval|changes\s+requested|subject\s+to|contingent\b|only\s+(?:if|after|once)\b[^\n.!?]*\b(?:approv(?:e|ed|al)|merg(?:e|ed|ing)|lgtm)\b|before\s+merging|(?:merge|approv(?:e|al)|lgtm)[^\n.!?]*(?:after|once|until|if|when)\b)`)
+	reviewMetadataRepair         = regexp.MustCompile(`(?i)\b(?:fix(?:ing)?|address(?:ing)?|repair(?:ing)?|resolve|correct|replace|remove|add|change|use|ensure|update|must|please|needs?|should)\b`)
+	reviewMetricNoConcern        = regexp.MustCompile(`(?i)^(?:the\s+)?metrics?(?:\s+signals?)?\s+(?:do(?:es)?\s+not|did\s+not)\s+(?:demonstrate|show|indicate|establish)\s+(?:(?:a|an|any|new|separate|additional|construct-specific|readability|or|change-risk|correctness|maintainability)\s+)*(?:concerns?|issues?|findings?|risks?)(?:\s+(?:in|for)\s+(?:this|the)\s+(?:diff|change|pull request))?[.!]?$`)
+	reviewMetricScopeExplanation = regexp.MustCompile(`(?i)^(?:the\s+)?metric\s+increase\s+is\s+limited\s+to\s+(?:the\s+)?(?:adapter|changed|existing|new)\s+(?:branch|function|code|scope|path)(?:\s+in\s+this\s+diff)?[.!]?$`)
+	reviewNoFollowup             = regexp.MustCompile(`(?i)^no\s+(?:(?:author\s+)?follow[- ]up|further\s+action)\s+(?:is\s+)?(?:required|needed|necessary)[.!]?$`)
+	reviewCIWaitAdvice           = regexp.MustCompile(`(?i)^(?:await|wait\s+for)\s+(?:the\s+)?(?:(?:pending|required|remaining|current-head)\s+)*(?:ci(?:\s+checks?)?|(?:required\s+)?checks?)(?:\s+to\s+(?:pass|finish|complete|turn\s+green))?(?:\s+before\s+merging)?[.!]?$`)
+	reviewQualityTag             = regexp.MustCompile("`\\[(?:control-flow|functional|OOP|public-api)\\]`")
+	reviewNoChangeStep           = regexp.MustCompile(`(?i)^(?:none(?:\s+required)?|no\s+(?:(?:author|code|implementation|further|additional)\s+)*changes\s+(?:are\s+)?(?:requested|required|needed))[.!]?$`)
 	// "`[OOP]` rules do not apply" after construct tags are replaced, with an
 	// optional qualifier such as "Stateful".
 	reviewInapplicableRules = regexp.MustCompile(`(?i)^(?:[a-z-]+\s+)?rule\s+rules\s+do\s+not\s+apply\.?$`)
@@ -119,17 +122,21 @@ func reviewDecisionApprovedBody(body string) bool {
 	return structured || unambiguousReviewApproval(body)
 }
 
-// publishedApprovalContradicted reports author-facing prose that contradicts
-// a daemon APPROVED verdict: an opposing verdict ("not approved", "changes
-// requested", CHANGES_REQUESTED), a labelled Blocking or Important finding, or
-// an author-work repair directive or unresolved assessment. Remarks addressed to the runtime
-// or surrounding workflow, CI-wait advice, negated "no changes requested"
-// declarations and review history do not contradict it.
+// publishedApprovalContradicted reports author-facing verdict prose that
+// contradicts a daemon APPROVED verdict: an opposing verdict ("not approved",
+// "changes requested", CHANGES_REQUESTED), a labelled Blocking or Important
+// finding, or an author-work repair directive or unresolved assessment.
+//
+// Only the verdict sections (Findings, Suggested next steps and Decision) may
+// contradict it (issue #2939). Summary, Standards, Spec, Quality check, Scope,
+// Metrics, Tools used and review history describe the change under review;
+// a description of code behaviour ("writes the shard only if every fetch
+// succeeds") must never veto the daemon's own verdict. Remarks addressed to
+// the runtime or surrounding workflow, CI-wait advice and negated "no changes
+// requested" declarations do not contradict it either.
 func publishedApprovalContradicted(body string) bool {
 	for _, section := range collectReviewApprovalSections(reviewpub.StripMarkers(body)) {
 		switch section.kind {
-		case "history":
-			continue
 		case "decision":
 			if !section.permitsApproval() {
 				return true
@@ -139,6 +146,16 @@ func publishedApprovalContradicted(body string) bool {
 			if strings.TrimSpace(section.text) == "" || noReviewFindings(section.text) {
 				continue
 			}
+		case "next-steps":
+		case "history":
+			continue
+		default:
+			// An explicit opposing verdict state contradicts the verdict
+			// wherever it appears; descriptive prose never does.
+			if reviewOpposingVerdict.MatchString(reviewApprovalProse(section.text)) {
+				return true
+			}
+			continue
 		}
 		text := reviewNegatedChangeRequest.ReplaceAllString(reviewJoinSoftLines(section.text), "no repair declared")
 		for _, clause := range reviewFindingClauses.Split(text, -1) {

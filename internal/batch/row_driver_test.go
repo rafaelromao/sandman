@@ -302,6 +302,39 @@ func TestRowDriverAcceptsAwaitResumeThenQuotaReadyAdmission(t *testing.T) {
 	}
 }
 
+// Issue #2938: a GitHub recovery wait sleeps until its next hourly attempt
+// instead of re-observing every poll interval, and holds no execution slot.
+func TestRowDriverGitHubRecoveryWaitSleepsUntilNextAttempt(t *testing.T) {
+	now := &rowDriverClockFake{now: time.Date(2026, time.October, 30, 3, 0, 0, 0, time.UTC)}
+	recovery := githubRecovery{WindowStarted: now.now, NextAttempt: now.now.Add(githubRecoveryInterval)}
+	wait := githubRecoveryAwait(nil, "42-fix", recovery)
+	var waits []time.Duration
+	gates := &rowDriverGateFake{clock: now}
+	executor := &rowDriverExecutorFake{observations: []lifecycleVerdict{wait, {Action: lifecycleFailure}}}
+	run := RunSpec{RunID: "run-42", IssueNumber: 42, BatchID: "batch-a", Branch: "42-fix", BaseBranch: "main"}
+	recorder := &rowDriverWaitRecorder{rowDriverGateFake: gates, waits: &waits}
+	got := newRowDriver(executor, recorder, now).Drive(context.Background(), run, ContinuationCursor{}, rowDriverOptions{
+		Awaiting: true, ReleaseAwaitCapacity: true,
+		PollInterval: func(int) time.Duration { return time.Minute },
+	})
+	if got.Result.Status != "failure" || len(waits) != 1 || waits[0] != githubRecoveryInterval {
+		t.Fatalf("Drive = %+v waits = %v, want one sleep until the next hourly attempt", got.Result, waits)
+	}
+	if gates.acquires != 0 || executor.executeCalls != 0 {
+		t.Fatalf("recovery wait admitted execution: acquires=%d executions=%d", gates.acquires, executor.executeCalls)
+	}
+}
+
+type rowDriverWaitRecorder struct {
+	*rowDriverGateFake
+	waits *[]time.Duration
+}
+
+func (r *rowDriverWaitRecorder) Wait(ctx context.Context, interval time.Duration) error {
+	*r.waits = append(*r.waits, interval)
+	return r.rowDriverGateFake.Wait(ctx, interval)
+}
+
 func TestRowDriverAbortFenceStopsAfterWaitFailure(t *testing.T) {
 	var events []string
 	gates := &rowDriverGateFake{waitErr: errors.New("wait interrupted"), events: &events}

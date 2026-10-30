@@ -64,6 +64,10 @@ type continuityGitHub struct {
 	hideComments int
 	// heads counts the heads the implementor pushed.
 	heads int
+	// lookupErr fails pull-request lookups, like `gh pr list` exiting 1.
+	lookupErr error
+	// runtimeOffset advances the Run's runtime clock.
+	runtimeOffset time.Duration
 }
 
 func newContinuityGitHub(pr github.PR) *continuityGitHub {
@@ -213,6 +217,9 @@ func (g *continuityGitHub) head() string {
 func (g *continuityGitHub) FindPRByBranch(_ context.Context, branch string) (*github.PR, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.lookupErr != nil {
+		return nil, g.lookupErr
+	}
 	if branch != continuityBranch {
 		return nil, nil
 	}
@@ -296,6 +303,10 @@ type continuityScenario struct {
 	// priorFailure seeds the event log with an earlier Run of the issue that
 	// finished with this failure reason; the scenario continues it.
 	priorFailure string
+	// worktreeHead overrides the Run's local head; by default it is the PR's.
+	worktreeHead func(g *continuityGitHub) string
+	// githubWait asserts the Run waited for GitHub to recover.
+	githubWait bool
 }
 
 type continuityOutcome struct {
@@ -385,10 +396,16 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 		seedFailedRun(log, priorRunID, sc.priorFailure)
 	}
 	o := NewOrchestrator(g, &noopRenderer{}, &fakeConfigStore{config: cfg}, log, WithErrorLog(io.Discard), WithRunnableFactory(factory),
+		WithGitHubStatus(&fakeGitHubStatus{report: github.StatusReport{Indicator: "none"}}),
 		WithSandboxFactory(&retrySandboxFactory{sandbox: &retrySandbox{workDir: worktree}}),
 		WithRunSessionOpts(runSessionOptions{
 			releaseAwaitCapacity: true,
-			currentHead:          func(string) (string, error) { return g.head(), nil },
+			currentHead: func(string) (string, error) {
+				if sc.worktreeHead != nil {
+					return sc.worktreeHead(g), nil
+				}
+				return g.head(), nil
+			},
 			awaitWait: func(ctx context.Context, _ time.Duration) error {
 				mu.Lock()
 				index := polls
@@ -415,6 +432,11 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 				offset := reviewClockOffset
 				mu.Unlock()
 				return time.Now().UTC().Add(offset)
+			},
+			now: func() time.Time {
+				g.mu.Lock()
+				defer g.mu.Unlock()
+				return time.Now().UTC().Add(g.runtimeOffset)
 			},
 		}))
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -612,14 +634,17 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 	for _, name := range []string{
 		"approved-daemon-28-final.md", "approved-sandman-2818.md", "approved-with-ci-advice.md",
 		"approved-daemon-29-first.md", "approved-daemon-29-fifth.md", "approved-daemon-29-final.md", "approved-daemon-30.md",
+		"approved-sandman-tests-33.md",
 	} {
 		reports[name] = approvalReport(t, name)
 	}
 	var scenarios []continuityScenario
-	// #2817, #2823, #2892, #2914: a daemon approval of the current head with
-	// green CI merges. The real reports carry no verdict marker; the daemon
-	// would publish them with one today, and both forms must merge.
-	for _, name := range []string{"approved-sandman-2818.md", "approved-with-ci-advice.md", "approved-daemon-28-final.md", "approved-daemon-29-first.md", "approved-daemon-29-fifth.md", "approved-daemon-29-final.md"} {
+	// #2817, #2823, #2892, #2914, #2939: a daemon approval of the current head
+	// with green CI merges. Most real reports carry no verdict marker; the
+	// daemon would publish them with one today, and both forms must merge.
+	// approved-sandman-tests-33.md is the #19 / PR #33 report (comment
+	// 6514897469) whose descriptive Summary vetoed its own published verdict.
+	for _, name := range []string{"approved-sandman-2818.md", "approved-with-ci-advice.md", "approved-daemon-28-final.md", "approved-daemon-29-first.md", "approved-daemon-29-fifth.md", "approved-daemon-29-final.md", "approved-sandman-tests-33.md"} {
 		report := reports[name]
 		for _, form := range []struct {
 			name    string
@@ -881,6 +906,96 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 			name: "negative/no trigger at all", pr: greenCleanPR(), retries: 2, ownedWorkRetries: true,
 			want: "failed:REVIEW_REQUEST_REQUIRED", maxLaunches: 3,
 		},
+		// #2940 (#2 / PR #29): an old PR on the reused branch was closed
+		// unmerged days before the Run's fresh admission. The Run stopped on a
+		// usage limit with no commits, and `sandman run --continue` started a
+		// new RunID. The old closure is history: the implementation continues,
+		// publishes a new PR and merges once it is approved.
+		continuityScenario{
+			name: "#2940 continue with no commits past a historical closed PR", retries: 3, continueRun: true, forbidRetry: true,
+			priorFailure: "AGENT_USAGE_LIMIT",
+			pr: github.PR{
+				State: "closed", HeadRefOid: "old-head",
+				ClosedAt: time.Now().Add(-6 * 24 * time.Hour), UpdatedAt: time.Now().Add(-6 * 24 * time.Hour),
+			},
+			worktreeHead: func(g *continuityGitHub) string {
+				g.mu.Lock()
+				defer g.mu.Unlock()
+				if g.pr.State == "closed" {
+					return "base-head" // no commits ahead of the base branch
+				}
+				return g.pr.HeadRefOid
+			},
+			launches: []func(*continuityGitHub) string{func(g *continuityGitHub) string {
+				g.update(func(pr *github.PR) {
+					pr.State, pr.HeadRefOid, pr.ClosedAt = "open", "head-new", time.Time{}
+					pr.StatusCheckRollup, pr.MergeStateStatus = "success", "CLEAN"
+				})
+				g.trigger()
+				return "success"
+			}},
+			polls: []func(*continuityGitHub){func(g *continuityGitHub) { g.publish(reports["approved-daemon-30.md"]) }},
+			want:  "merged", maxLaunches: 2, requireAwait: true,
+		},
+		// #2938 (#19 / PR #33): the Run awaited its review request; then one
+		// `gh pr list` exited 1. The Run waits for GitHub to recover instead of
+		// failing GATE_LOOKUP_FAILED, attempts recovery an hour later, finds the
+		// daemon's approval of the green CLEAN PR, and merges.
+		continuityScenario{
+			name: "#2938 GitHub lookup failure waits and recovers", pr: greenCleanPR(), retries: 3,
+			forbidRetry: true, githubWait: true,
+			launches: []func(*continuityGitHub) string{requestReview},
+			polls: []func(*continuityGitHub){
+				func(g *continuityGitHub) {
+					g.mu.Lock()
+					g.lookupErr = errors.New("gh pr list: exit status 1")
+					g.mu.Unlock()
+				},
+				func(g *continuityGitHub) {
+					g.mu.Lock()
+					g.lookupErr = nil
+					g.runtimeOffset += githubRecoveryInterval
+					g.mu.Unlock()
+					g.publish(reports["approved-sandman-tests-33.md"])
+				},
+			},
+			want: "merged", maxLaunches: 2,
+		},
+		// A GitHub outage during a stalled wait keeps the stalled-resume
+		// ledger: after recovery on unchanged evidence the Run keeps waiting
+		// instead of relaunching the implementor.
+		continuityScenario{
+			name: "stall survives a GitHub outage", pr: greenCleanPR(), retries: 3, githubWait: true,
+			launches: []func(*continuityGitHub) string{requestReview},
+			polls: []func(*continuityGitHub){
+				func(g *continuityGitHub) { g.post("Please make the retry loop in `worker.go:12` keep the request.") },
+				nil,
+				nil,
+				func(g *continuityGitHub) {
+					g.mu.Lock()
+					g.lookupErr = errors.New("gh pr list: exit status 1")
+					g.mu.Unlock()
+				},
+				func(g *continuityGitHub) {
+					g.mu.Lock()
+					g.lookupErr = nil
+					g.runtimeOffset += githubRecoveryInterval
+					g.mu.Unlock()
+				},
+				nil,
+			},
+			want: "waiting", maxLaunches: 2,
+		},
+		// Negative control for #2940 (the rc2 bar's second side): a closure the
+		// runtime cannot place continues owned publication work, but an
+		// implementor that never publishes still ends the Run once its ordinary
+		// retries are spent. It never becomes an endless wait.
+		continuityScenario{
+			name: "negative/unplaced closed PR without publication", retries: 2, ownedWorkRetries: true,
+			pr:           github.PR{State: "closed", HeadRefOid: "old-head"},
+			worktreeHead: func(*continuityGitHub) string { return "base-head" },
+			want:         "failed:" + missingPRReason, maxLaunches: 3,
+		},
 		// Negative control: a closed pull request is permanent.
 		continuityScenario{
 			name: "negative/closed pull request", pr: greenCleanPR(), retries: 3,
@@ -920,6 +1035,15 @@ func TestAFKContinuityContract_RealIncidentsMergeOrWait(t *testing.T) {
 			}
 			if sc.requireAwait && outcome.count("run.await") == 0 {
 				t.Fatalf("the Run never waited\nevents: %s", continuityEventSummary(outcome.events))
+			}
+			if sc.githubWait {
+				waited := false
+				for _, event := range outcome.current() {
+					waited = waited || event.Type == "run.await" && event.Payload["await_reason"] == gateGitHubUnavailable
+				}
+				if !waited {
+					t.Fatalf("the Run never waited for GitHub to recover\nevents: %s", continuityEventSummary(outcome.events))
+				}
 			}
 			if sc.want == "waiting" {
 				// The operator's stop is the only way out of the wait.
@@ -1080,6 +1204,25 @@ func TestAFKContinuityContract_StalledWaitSurvivesRestart(t *testing.T) {
 	}
 }
 
+// The stalled-resume ledger carried through a GitHub outage survives a
+// process restart: a fresh executor keeps waiting on the unchanged evidence.
+func TestAFKContinuityContract_StallSurvivesGitHubOutageAndRestart(t *testing.T) {
+	var outage continuityScenario
+	for _, sc := range continuityScenarios(t) {
+		if sc.name == "stall survives a GitHub outage" {
+			outage = sc
+		}
+	}
+	outcome := runContinuityScenario(t, outage)
+	if outcome.verdict() != "waiting" || outcome.launches > 2 {
+		t.Fatalf("outage stall = %s after %d launches, want waiting after at most 2", outcome.verdict(), outcome.launches)
+	}
+	verdict := outcome.observeAfterRestart()
+	if verdict.Action != lifecycleAwait || verdict.Evidence[stalledResumesKey] == nil {
+		t.Fatalf("restarted observation = %v/%v, want the stalled wait kept", verdict.Action, verdict.Evidence)
+	}
+}
+
 // Every lifecycle failure reason the batch package can emit is classified as
 // permanent or recoverable for the AFK-continuity guard. A new terminal reason
 // must be classified before it can end a Run whose pull request is open.
@@ -1120,7 +1263,7 @@ func TestAFKContinuityContract_LifecycleFailureReasonsAreClassified(t *testing.T
 			t.Errorf("lifecycle reason %q is not classified for the AFK-continuity guard", reason)
 		}
 	}
-	for _, reason := range []string{idleGateReason, reviewTimeoutReason, "CI_WAIT_TIMEOUT"} {
+	for _, reason := range []string{idleGateReason, reviewTimeoutReason, "CI_WAIT_TIMEOUT", githubUnavailableReason} {
 		if !lifecycleFailureRecoverable(reason) {
 			t.Errorf("%s must wait for external recovery, as rc2 did", reason)
 		}

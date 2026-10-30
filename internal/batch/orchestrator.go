@@ -463,6 +463,8 @@ type Orchestrator struct {
 	heartbeatTickInterval    time.Duration
 	closingGuardTickInterval time.Duration
 	errorLog                 io.Writer
+	// githubStatus gates GitHub recovery attempts (WithGitHubStatus).
+	githubStatus github.StatusChecker
 
 	// lookupGHToken resolves the host GitHub auth token for hydrating the
 	// copied gh hosts.yml in container config snapshots. It runs once per
@@ -1481,6 +1483,14 @@ func WithClosingGuardTickInterval(d time.Duration) OrchestratorOpt {
 
 func WithVerifyPath(v VerifyPathFunc) OrchestratorOpt {
 	return func(o *Orchestrator) { o.verifyPath = v }
+}
+
+// WithGitHubStatus sets the GitHub health check that gates hourly recovery
+// attempts after a failed pull-request lookup. Production wiring passes the
+// githubstatus.com client; without it every attempt proceeds, so tests make
+// no network calls.
+func WithGitHubStatus(checker github.StatusChecker) OrchestratorOpt {
+	return func(o *Orchestrator) { o.githubStatus = checker }
 }
 
 // NewBadgeHooker returns a BadgeHooker that suggests a Built with Sandman
