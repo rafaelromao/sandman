@@ -116,7 +116,7 @@ func TestReleaseWorkflowPublishesConfiguredReleaseArtifacts(t *testing.T) {
 	release := readRepositoryFile(t, "../.github/workflows/release.yml")
 	for _, required := range []string{
 		"skip-github-release: true",
-		"uses: actions/setup-go@v5",
+		"uses: actions/setup-go@",
 		"go-version-file: .go-version",
 		"version: v2.10.1",
 		"args: release --clean --draft",
@@ -132,9 +132,10 @@ func TestReleaseWorkflowPublishesConfiguredReleaseArtifacts(t *testing.T) {
 		}
 	}
 
-	checkout := strings.Index(release, "uses: actions/checkout@v4")
-	setupGo := strings.Index(release, "uses: actions/setup-go@v5")
-	goreleaserStep := strings.Index(release, "uses: goreleaser/goreleaser-action@v6")
+	// Ordering contracts follow action identity; SHA pinning is checked separately.
+	checkout := strings.Index(release, "uses: actions/checkout@")
+	setupGo := strings.Index(release, "uses: actions/setup-go@")
+	goreleaserStep := strings.Index(release, "uses: goreleaser/goreleaser-action@")
 	if checkout == -1 || setupGo == -1 || goreleaserStep == -1 || checkout > setupGo || setupGo > goreleaserStep {
 		t.Fatal("release workflow must set up Go after checkout and before GoReleaser")
 	}
@@ -284,7 +285,7 @@ func TestReleaseWorkflowRefreshesUnchangedPendingBranch(t *testing.T) {
 	release := readRepositoryFile(t, "../.github/workflows/release.yml")
 	checkout := strings.Index(release, "name: Checkout release automation")
 	refresh := strings.Index(release, "name: Refresh pending release branch")
-	setupGo := strings.Index(release, "uses: actions/setup-go@v5")
+	setupGo := strings.Index(release, "uses: actions/setup-go@")
 	if checkout < 0 || refresh < checkout || setupGo < refresh {
 		t.Fatal("release branch refresh must run after checkout and before release publication")
 	}
@@ -743,7 +744,7 @@ func TestCIQualityGateWorkflowContract(t *testing.T) {
 		}
 	}
 	packaging := extractCIJob(t, ci, "goreleaser")
-	setup, release := strings.Index(packaging, "uses: actions/setup-go@v5"), strings.Index(packaging, "uses: goreleaser/goreleaser-action@v6")
+	setup, release := strings.Index(packaging, "uses: actions/setup-go@"), strings.Index(packaging, "uses: goreleaser/goreleaser-action@")
 	if setup < 0 || release < setup || !strings.Contains(packaging, "go-version-file: .go-version") || !strings.Contains(packaging, "version: v2.10.1") || !strings.Contains(packaging, "args: release --snapshot --clean") {
 		t.Fatal("mandatory snapshot must explicitly set up Go and use the release tool version")
 	}
@@ -806,7 +807,7 @@ func TestCIValidationOwnershipAndReports(t *testing.T) {
 	}
 	for job, command := range map[string]string{"static-analysis": "make fmt-check vet staticcheck", "contracts": "make contracts", "portal-continuity-browser": "make test-browser", "build-linux": "make build-check test-ci", "build-macos": "make build-check test-ci"} {
 		block := extractCIJob(t, ci, job)
-		for _, required := range []string{command, "bash scripts/ci_report.sh", "if: ${{ always() }}", "uses: actions/upload-artifact@v4", "path: reports/"} {
+		for _, required := range []string{command, "bash scripts/ci_report.sh", "if: ${{ always() }}", "uses: actions/upload-artifact@", "path: reports/"} {
 			if !strings.Contains(block, required) {
 				t.Errorf("%s missing %q", job, required)
 			}
