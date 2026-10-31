@@ -2930,17 +2930,22 @@ func TestRunBatch_ReturnsAbortedStatusOnCancel(t *testing.T) {
 	proc := makeFakeProcess()
 	sb := &fakeSandbox{process: proc}
 	factory := &fakeSandboxFactory{sandbox: sb}
-	blockRunnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond}
+	running := make(chan struct{})
+	blockRunnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond, running: running}
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
 		WithSandboxFactory(factory),
 		WithRunnableFactory(&blockingRunnableFactory{runnable: blockRunnable}),
 	)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	go func() {
-		time.Sleep(50 * time.Millisecond)
-		cancel()
+		select {
+		case <-running:
+			cancel()
+		case <-ctx.Done():
+		}
 	}()
 
 	result, err := o.RunBatch(ctx, Request{Issues: []int{42}})
@@ -2998,7 +3003,8 @@ func TestRunBatch_LogsAbortedEventOnPromptOnlyCancel(t *testing.T) {
 	proc := makeFakeProcess()
 	sb := &fakeSandbox{process: proc}
 	factory := &fakeSandboxFactory{sandbox: sb}
-	blockRunnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond}
+	running := make(chan struct{})
+	blockRunnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond, running: running}
 	spyLog := &spyEventLog{}
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
@@ -3006,10 +3012,14 @@ func TestRunBatch_LogsAbortedEventOnPromptOnlyCancel(t *testing.T) {
 		WithRunnableFactory(&blockingRunnableFactory{runnable: blockRunnable}),
 	)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	go func() {
-		time.Sleep(50 * time.Millisecond)
-		cancel()
+		select {
+		case <-running:
+			cancel()
+		case <-ctx.Done():
+		}
 	}()
 
 	_, _ = o.RunBatch(ctx, Request{PromptConfig: prompt.RenderConfig{PromptFlag: "return only ok"}})
@@ -3211,17 +3221,22 @@ func TestRunBatch_PreservesWorktreeOnInterrupt(t *testing.T) {
 	proc := makeFakeProcess()
 	sb := &fakeSandbox{process: proc}
 	factory := &fakeSandboxFactory{sandbox: sb}
-	blockRunnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond}
+	running := make(chan struct{})
+	blockRunnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond, running: running}
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
 		WithSandboxFactory(factory),
 		WithRunnableFactory(&blockingRunnableFactory{runnable: blockRunnable}),
 	)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	go func() {
-		time.Sleep(50 * time.Millisecond)
-		cancel()
+		select {
+		case <-running:
+			cancel()
+		case <-ctx.Done():
+		}
 	}()
 
 	_, _ = o.RunBatch(ctx, Request{Issues: []int{42}})
@@ -3553,7 +3568,8 @@ func TestRunBatch_SendsSIGKILLAfterTimeout(t *testing.T) {
 	proc := makeFakeProcess()
 	sb := &fakeSandbox{process: proc}
 	factory := &fakeSandboxFactory{sandbox: sb}
-	blockRunnable := &blockingRunnable{delayAfterCancel: 300 * time.Millisecond}
+	running := make(chan struct{})
+	blockRunnable := &blockingRunnable{delayAfterCancel: 300 * time.Millisecond, running: running}
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
 		WithSandboxFactory(factory),
@@ -3561,10 +3577,14 @@ func TestRunBatch_SendsSIGKILLAfterTimeout(t *testing.T) {
 		WithRunSessionOpts(runSessionOptions{killTimeout: 100 * time.Millisecond}),
 	)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	go func() {
-		time.Sleep(50 * time.Millisecond)
-		cancel()
+		select {
+		case <-running:
+			cancel()
+		case <-ctx.Done():
+		}
 	}()
 
 	_, _ = o.RunBatch(ctx, Request{Issues: []int{42}})
@@ -5655,7 +5675,8 @@ func TestRunBatch_StartDelay_WaitsAfterRunFinishesBeforeNextStart(t *testing.T) 
 		secondStarted = started1
 	case <-done:
 		t.Fatalf("batch returned early: err=%v logs=%s", <-errCh, errBuf.String())
-	case <-time.After(250 * time.Millisecond):
+	// Initial repository setup is not part of the start-delay contract.
+	case <-time.After(5 * time.Second):
 		t.Fatalf("expected first run to start; sandbox started=%v created=%v logs=%s", sb.startCalled, factory.created, errBuf.String())
 	}
 	assertNoSignal(t, secondStarted, "second run started before first completed")
