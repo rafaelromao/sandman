@@ -355,7 +355,7 @@ func TestNativeCompatibilityCoversAllFourArches(t *testing.T) {
 	for _, required := range []string{
 		"name: Native Compatibility",
 		"runs-on: macos-15-intel",
-		"runs-on: macos-14",
+		"runs-on: macos-15\n",
 		"runs-on: ubuntu-24.04-arm",
 		"timeout-minutes: 45",
 		"name: Build native Sandman (Intel)",
@@ -385,7 +385,7 @@ func TestNativeCompatibilityCoversAllFourArches(t *testing.T) {
 	}
 
 	darwinAmd64 := strings.Index(workflow, "runs-on: macos-15-intel")
-	darwinArm64 := strings.Index(workflow, "runs-on: macos-14")
+	darwinArm64 := strings.Index(workflow, "runs-on: macos-15\n")
 	linuxArm64 := strings.Index(workflow, "runs-on: ubuntu-24.04-arm")
 	if darwinAmd64 == -1 || darwinArm64 == -1 || linuxArm64 == -1 {
 		t.Fatal("native compatibility workflow must declare the darwin/amd64, darwin/arm64, and linux/arm64 jobs")
@@ -555,7 +555,7 @@ func TestPlatformCoverageMapMatchesWorkflowsAndGoReleaser(t *testing.T) {
 
 	for _, required := range []string{
 		"runs-on: macos-15-intel",
-		"runs-on: macos-14",
+		"runs-on: macos-15\n",
 		"runs-on: ubuntu-24.04-arm",
 		`test "$(go env GOOS)" = "darwin"`,
 		`test "$(go env GOOS)" = "linux"`,

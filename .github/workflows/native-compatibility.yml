@@ -23,7 +23,7 @@ jobs:
       SANDMAN_TEST_PROVIDERS: all
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Prepare native evidence
         run: |
@@ -81,7 +81,7 @@ jobs:
 
       - name: Upload native evidence
         if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-darwin-amd64-${{ github.sha }}
           path: regression-artifacts/
@@ -89,14 +89,14 @@ jobs:
 
   darwin-arm64:
     name: Native Compatibility (darwin/arm64)
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 45
     env:
       CI: "true"
       SANDMAN_TEST_PROVIDERS: all
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Prepare native evidence
         run: |
@@ -154,7 +154,7 @@ jobs:
 
       - name: Upload native evidence
         if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-darwin-arm64-${{ github.sha }}
           path: regression-artifacts/
@@ -169,7 +169,7 @@ jobs:
       SANDMAN_TEST_PROVIDERS: all
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Prepare native evidence
         run: |
@@ -227,7 +227,7 @@ jobs:
 
       - name: Upload native evidence
         if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-linux-arm64-${{ github.sha }}
           path: regression-artifacts/
@@ -242,7 +242,7 @@ jobs:
       SANDMAN_TEST_PROVIDERS: all
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Prepare native evidence
         run: |
@@ -300,7 +300,7 @@ jobs:
 
       - name: Upload native evidence
         if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-linux-amd64-${{ github.sha }}
           path: regression-artifacts/

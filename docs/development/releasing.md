@@ -27,7 +27,7 @@ binary installation ([#2392](https://github.com/rafaelromao/sandman/issues/2392)
    Compatibility` suite (four parallel arch-specific jobs: `Native
    Compatibility (linux/amd64)` on `ubuntu-latest`, `Native
    Compatibility (darwin/amd64)` on `macos-15-intel`, `Native Compatibility
-   (darwin/arm64)` on `macos-14`, and `Native Compatibility (linux/arm64)` on
+   (darwin/arm64)` on `macos-15`, and `Native Compatibility (linux/arm64)` on
    `ubuntu-24.04-arm`). Their results appear on the release change request.
    Reviewers must not merge a failed or incomplete suite. Check the SHA-bound
    scenario and prerequisite reports described in `testing.md`, including the
