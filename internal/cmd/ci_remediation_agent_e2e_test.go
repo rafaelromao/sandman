@@ -62,7 +62,11 @@ and ask somebody else to resolve the provider failure.
 The local recording GitHub CLI exposes the current PR and workflow state for
 inspection through gh api (repos/owner/repo/pulls/17,
 repos/owner/repo/actions/runs/12345, and that run's /jobs endpoint).
-It records local mutations only; it cannot write to GitHub. Report the outcome in recovery-report.txt.
+It records local mutations only; it cannot write to GitHub.
+Write recovery-report.txt with the current recovery outcome: whether the action
+was confirmed, the observed run attempt and check state, and any remaining
+current blocker. Do not repeat obsolete blocker codes or historical handoff
+instructions in this current-status checkpoint.
 Do not edit source files or create commits.
 `
 	promptText := prompt.ContinuationTaskPrompt(poisonedTask)
