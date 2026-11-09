@@ -325,6 +325,11 @@
     },
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestCIRemediationAgentLaunchUsesFixtureWorkspace",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestCIRemediationPoisonedTaskRealAgent",
       "tier": "live"
     },

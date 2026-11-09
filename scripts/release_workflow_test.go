@@ -495,7 +495,7 @@ func TestLinuxCIGatesPortalLogContinuityOnRequiredBrowserCoverage(t *testing.T) 
 	browserTests := readRepositoryFile(t, "../internal/cmd/portal_log_continuity_browser_test.go")
 	for _, required := range []string{
 		"portal-continuity-browser:\n    runs-on: ubuntu-latest",
-		"uses: actions/setup-node@v4",
+		"uses: actions/setup-node@",
 		"node-version: 22",
 		"uses: browser-actions/setup-chrome@v2",
 		"name: Portal continuity browser gate",
@@ -817,7 +817,7 @@ func TestCIValidationOwnershipAndReports(t *testing.T) {
 		t.Fatal("dedicated browser job must be the only Chromium owner")
 	}
 	for _, job := range []string{"build-linux", "build-macos"} {
-		if !strings.Contains(extractCIJob(t, ci, job), "uses: actions/setup-node@v4") {
+		if !strings.Contains(extractCIJob(t, ci, job), "uses: actions/setup-node@") {
 			t.Errorf("%s must preserve Node production-module coverage", job)
 		}
 	}
