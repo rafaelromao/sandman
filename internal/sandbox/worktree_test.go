@@ -534,7 +534,7 @@ func TestSyncBaseBranchLeavesMultipleCheckedOutBaseWorktreesAndWarns(t *testing.
 	}
 }
 
-func TestSyncBaseBranchResetsWhenDiverged(t *testing.T) {
+func TestSyncBaseBranchPreservesUnheldDivergedBaseAndWarns(t *testing.T) {
 	seedDir := t.TempDir()
 	remoteDir := initGitRepoWithRemote(t, seedDir)
 	commitGitFile(t, seedDir, "tracked.txt", "base\n", "base")
@@ -545,13 +545,15 @@ func TestSyncBaseBranchResetsWhenDiverged(t *testing.T) {
 	runGit(t, localDir, "config", "user.email", "test@test.com")
 	runGit(t, localDir, "config", "user.name", "Test")
 	commitGitFile(t, localDir, "local-only.txt", "local\n", "local divergence")
+	localMainBefore := strings.TrimSpace(runGit(t, localDir, "rev-parse", "main"))
 	runGit(t, localDir, "checkout", "-b", "feature")
 
 	commitGitFile(t, seedDir, "remote-only.txt", "remote\n", "remote divergence")
 	runGit(t, seedDir, "push", "origin", "main")
 
-	if err := SyncBaseBranch(localDir, "main"); err != nil {
-		t.Fatalf("expected sync to succeed by resetting to remote, got %v", err)
+	var warning bytes.Buffer
+	if err := SyncBaseBranchWithLog(localDir, "main", &warning); err != nil {
+		t.Fatalf("expected sync to preserve local divergence, got %v", err)
 	}
 
 	mainHead, err := gitRevParse(localDir, "refs/heads/main")
@@ -562,8 +564,29 @@ func TestSyncBaseBranchResetsWhenDiverged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get remote main: %v", err)
 	}
-	if mainHead != remoteMain {
-		t.Fatalf("expected local main to be reset to remote main (%s), got %s", remoteMain[:7], mainHead[:7])
+	if mainHead != localMainBefore {
+		t.Fatalf("expected local main to remain at %s, got %s", localMainBefore[:7], mainHead[:7])
+	}
+	if mainHead == remoteMain {
+		t.Fatalf("test precondition: diverged local main unexpectedly equals remote %s", remoteMain[:7])
+	}
+	if !strings.Contains(warning.String(), "diverged") || !strings.Contains(warning.String(), "origin/main") {
+		t.Fatalf("expected a divergence warning, got %q", warning.String())
+	}
+
+	s := NewWorktreeSandbox(localDir, filepath.Join(localDir, ".sandman", "worktrees"), "99-diverged-unheld", "main")
+	if err := s.Start(SandboxStart{StrandedReconcile: true}); err != nil {
+		t.Fatalf("start worktree: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := s.Stop(); err != nil {
+			t.Errorf("stop worktree: %v", err)
+		}
+		removeBranch(t, localDir, "99-diverged-unheld")
+	})
+	worktreeHead := strings.TrimSpace(runGit(t, s.WorkDir(), "rev-parse", "HEAD"))
+	if worktreeHead != remoteMain {
+		t.Errorf("new run worktree HEAD = %s, want origin/main %s", worktreeHead, remoteMain)
 	}
 }
 

@@ -444,8 +444,13 @@ func SyncBaseBranchWithLog(repoPath, sourceBranch string, warningLog io.Writer) 
 
 	localHash, err := gitRevParse(repoPath, "--verify", localRef)
 	if err != nil {
-		if out, updateErr := runGitCommand(repoPath, "update-ref", localRef, remoteHash); updateErr != nil {
-			return fmt.Errorf("sync base branch %q: create local branch: %w\n%s", sourceBranch, updateErr, out)
+		if out, branchErr := runGitCommand(repoPath, "branch", sourceBranch, remoteRef); branchErr != nil {
+			holders, listErr := worktreePathsForBranch(repoPath, localRef)
+			if listErr == nil && len(holders) > 0 {
+				warn("it became checked out during synchronization")
+				return nil
+			}
+			return fmt.Errorf("sync base branch %q: create local branch: %w\n%s", sourceBranch, branchErr, out)
 		}
 		return nil
 	}
@@ -495,6 +500,9 @@ func SyncBaseBranchWithLog(repoPath, sourceBranch string, warningLog io.Writer) 
 	if ok, err := gitMergeBaseIsAncestor(repoPath, remoteHash, localHash); err != nil {
 		return fmt.Errorf("sync base branch %q: check if remote is ancestor of local: %w", sourceBranch, err)
 	} else if ok {
+		if localHash != remoteHash {
+			warn("the local branch is ahead of origin")
+		}
 		return nil
 	}
 
@@ -502,15 +510,33 @@ func SyncBaseBranchWithLog(repoPath, sourceBranch string, warningLog io.Writer) 
 	if ok, err := gitMergeBaseIsAncestor(repoPath, localHash, remoteHash); err != nil {
 		return fmt.Errorf("sync base branch %q: check if local is ancestor of remote: %w", sourceBranch, err)
 	} else if ok {
-		if out, err := runGitCommand(repoPath, "update-ref", localRef, remoteHash, localHash); err != nil {
-			return fmt.Errorf("sync base branch %q: fast-forward: %w\n%s", sourceBranch, err, out)
+		updated, err := fastForwardUnheldBaseBranch(repoPath, sourceBranch, remoteRef)
+		if err != nil {
+			holders, listErr := worktreePathsForBranch(repoPath, localRef)
+			if listErr == nil && len(holders) > 0 {
+				warn("it became checked out during synchronization")
+				return nil
+			}
+			currentHash, revErr := gitRevParse(repoPath, "--verify", localRef)
+			if revErr == nil {
+				if remoteIsAncestor, ancestorErr := gitMergeBaseIsAncestor(repoPath, remoteHash, currentHash); ancestorErr == nil && remoteIsAncestor {
+					warn("the local branch advanced during synchronization")
+					return nil
+				}
+				if localIsAncestor, ancestorErr := gitMergeBaseIsAncestor(repoPath, currentHash, remoteHash); ancestorErr == nil && !localIsAncestor {
+					warn("the local branch diverged from origin during synchronization")
+					return nil
+				}
+			}
+			return fmt.Errorf("sync base branch %q: fast-forward: %w", sourceBranch, err)
+		}
+		if !updated {
+			warn("the local branch was not updated")
 		}
 		return nil
 	}
 
-	if out, err := runGitCommand(repoPath, "update-ref", localRef, remoteHash); err != nil {
-		return fmt.Errorf("sync base branch %q: diverged, reset to remote: %w\n%s", sourceBranch, err, out)
-	}
+	warn("the local branch has diverged from origin")
 	return nil
 }
 
@@ -520,6 +546,26 @@ func (s *WorktreeSandbox) worktreeStartPoint() string {
 		return remoteRef
 	}
 	return s.sourceBranch
+}
+
+func fastForwardUnheldBaseBranch(repoPath, sourceBranch, remoteRef string) (bool, error) {
+	tempDir, err := os.MkdirTemp("", "sandman-base-sync-")
+	if err != nil {
+		return false, fmt.Errorf("create temporary worktree path: %w", err)
+	}
+	if out, err := runGitCommand(repoPath, "worktree", "add", tempDir, sourceBranch); err != nil {
+		_ = os.Remove(tempDir)
+		return false, fmt.Errorf("check out base branch for fast-forward: %w\n%s", err, out)
+	}
+	mergeOut, mergeErr := runGitCommand(tempDir, "merge", "--ff-only", remoteRef)
+	removeOut, removeErr := runGitCommand(repoPath, "worktree", "remove", "--force", tempDir)
+	if removeErr != nil {
+		return false, fmt.Errorf("remove temporary base worktree: %w\n%s", removeErr, removeOut)
+	}
+	if mergeErr != nil {
+		return false, fmt.Errorf("merge origin into temporary base worktree: %w\n%s", mergeErr, mergeOut)
+	}
+	return true, nil
 }
 
 func worktreePathsForBranch(repoPath, branchRef string) ([]string, error) {
