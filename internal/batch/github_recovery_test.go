@@ -187,6 +187,49 @@ func TestSelectedOrdinaryRetryRequiresLatestUnconsumedCapacityHandoff(t *testing
 	}
 }
 
+func TestBatchRowDriverGates_RecordReadyPreservesOnlySelectedRetryHandoff(t *testing.T) {
+	const runID = "retry-ready-row"
+	want := ordinaryRetryState{PreviousStatus: "failure", AttemptsCompleted: 1, MaxAttempts: 2}
+	newer := ordinaryRetryState{PreviousStatus: "failure", AttemptsCompleted: 2, MaxAttempts: 2}
+	for _, tc := range []struct {
+		name          string
+		consumeBefore bool
+		explicit      *ordinaryRetryState
+		want          ordinaryRetryState
+		wantSelected  bool
+	}{
+		{name: "pending handoff", want: want, wantSelected: true},
+		{name: "await consumed handoff", consumeBefore: true},
+		{name: "explicit newer evidence", explicit: &newer, want: newer, wantSelected: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			log := &spyEventLog{events: []events.Event{{
+				Type: "run.capacity_queued", RunID: runID,
+				Payload: map[string]any{ordinaryRetryKey: want.payload()},
+			}}}
+			if tc.consumeBefore {
+				if err := log.Log(events.Event{Type: "run.await", RunID: runID}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			gates := &batchRowDriverGates{log: log, batchID: "batch"}
+			extras := map[string]any{"reason": "ready"}
+			if tc.explicit != nil {
+				extras[ordinaryRetryKey] = tc.explicit.payload()
+			}
+			err := gates.RecordReady(RunSpec{RunID: runID, IssueNumber: 42, Branch: "42-fix", BaseBranch: "main"}, ContinuationCursor{}, extras, time.Now())
+			if err != nil {
+				t.Fatalf("RecordReady: %v", err)
+			}
+			history := log.snapshot()
+			got, selected := ordinaryRetryFromEvidence(history[len(history)-1].Payload)
+			if selected != tc.wantSelected || selected && got != tc.want {
+				t.Fatalf("ready event retry = %+v, %t; want %+v, %t; payload=%v", got, selected, tc.want, tc.wantSelected, history[len(history)-1].Payload)
+			}
+		})
+	}
+}
+
 func TestGitHubRecovery_ForegroundNoopReturnsRetryableNonSuccess(t *testing.T) {
 	f := newGitHubRecoveryFixture(t)
 	f.client.prs[gateTestBranch] = &github.PR{
