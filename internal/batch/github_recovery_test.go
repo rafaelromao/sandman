@@ -150,6 +150,35 @@ func TestGitHubRecovery_UsageLimitKeepsQuotaRecoveryPath(t *testing.T) {
 	}
 }
 
+func TestGitHubRecovery_ForegroundNoopReturnsRetryableNonSuccess(t *testing.T) {
+	f := newGitHubRecoveryFixture(t)
+	f.client.prs[gateTestBranch] = &github.PR{
+		Number: 33, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha",
+		StatusCheckRollup: "success", ReviewDecision: "REVIEW_REQUIRED", MergeStateStatus: "BLOCKED",
+	}
+	session := f.session()
+	session.opts.lifecycleWait = func(context.Context, time.Duration) error {
+		f.client.findPRErr = nil
+		f.now = f.now.Add(githubRecoveryInterval)
+		return nil
+	}
+	observer := newLifecycleObserver(session)
+	request := lifecycleObservationRequest{
+		WorkDir: t.TempDir(), Branch: gateTestBranch, RunID: f.runID,
+		HostPathsReady: true, AttemptStatus: "agent-error",
+	}
+	initial := observer.Observe(t.Context(), request)
+	if initial.Action != lifecycleAwait || initial.Evidence["gate"] != gateGitHubUnavailable {
+		t.Fatalf("initial observation = %s/%v, want GitHub recovery wait", initial.status(), initial.Evidence)
+	}
+	session.emitAwait(t.Context(), f.runID, AgentRunResult{Branch: gateTestBranch}, initial.Evidence)
+
+	verdict := observer.waitForTransition(t.Context(), request, AgentRunResult{Branch: gateTestBranch}, initial)
+	if verdict.Action != lifecycleFailure || verdict.Kind != lifecycleVerdictOrdinaryRetry {
+		t.Fatalf("recovered observation = %s/%v, want ordinary retry for retryable non-success", verdict.status(), verdict)
+	}
+}
+
 // Before the next hourly attempt, observation neither looks up the pull
 // request nor checks GitHub's status, and the wait evidence is unchanged.
 func TestGitHubRecovery_NoAttemptBeforeNextHour(t *testing.T) {

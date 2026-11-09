@@ -4021,7 +4021,7 @@ loop:
 							HostPathsReady: hostPathsReady, AttemptStatus: result.Status, UsageLimitReached: result.UsageLimitReached,
 						}, result, verdict)
 					}
-					if verdict.Kind == lifecycleVerdictAgentFailureRetry {
+					if verdict.Kind == lifecycleVerdictOrdinaryRetry {
 						// Recovery found no lifecycle action to replace the failed
 						// attempt. Return to the configured ordinary retry loop rather
 						// than terminalizing as an idle-gate failure.

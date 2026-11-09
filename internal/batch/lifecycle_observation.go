@@ -39,9 +39,9 @@ const (
 	// lifecycleVerdictGitHubUnavailable is a wait for GitHub to recover from
 	// a failed pull-request lookup or refresh (issue #2938).
 	lifecycleVerdictGitHubUnavailable
-	// lifecycleVerdictAgentFailureRetry returns a no-op recovery observation
-	// to the ordinary retry loop for the failed attempt being observed.
-	lifecycleVerdictAgentFailureRetry
+	// lifecycleVerdictOrdinaryRetry returns a no-op recovery observation to the
+	// ordinary retry loop for the non-success attempt being observed.
+	lifecycleVerdictOrdinaryRetry
 )
 
 // lifecycleObservation is the single operation callers use to observe an
@@ -135,8 +135,8 @@ func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifec
 			if ctx.Err() != nil {
 				return lifecycleVerdict{Action: lifecycleAborted}
 			}
-			if strings.EqualFold(strings.TrimSpace(request.AttemptStatus), "failure") && !request.UsageLimitReached {
-				return lifecycleVerdict{Action: lifecycleFailure, Kind: lifecycleVerdictAgentFailureRetry}
+			if attemptNeedsRetry(request.AttemptStatus) && !request.UsageLimitReached {
+				return lifecycleVerdict{Action: lifecycleFailure, Kind: lifecycleVerdictOrdinaryRetry}
 			}
 			verdict = failureForUnhandledObservation(verdict)
 		}
