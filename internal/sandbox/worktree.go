@@ -324,7 +324,7 @@ overrideCleanup:
 		}
 		addCmd = exec.Command("git", "worktree", "add", "-f", s.workDir, s.branch)
 	} else {
-		addCmd = exec.Command("git", "worktree", "add", "-b", s.branch, s.workDir, s.sourceBranch)
+		addCmd = exec.Command("git", "worktree", "add", "-b", s.branch, s.workDir, s.worktreeStartPoint())
 	}
 	addCmd.Dir = s.repoPath
 	if out, err := addCmd.CombinedOutput(); err != nil {
@@ -418,6 +418,18 @@ func (s *WorktreeSandbox) configureGitIdentity() error {
 
 // SyncBaseBranch fast-forwards the local base branch from origin.
 func SyncBaseBranch(repoPath, sourceBranch string) error {
+	return SyncBaseBranchWithLog(repoPath, sourceBranch, os.Stderr)
+}
+
+// SyncBaseBranchWithLog syncs a base branch while directing safety warnings to
+// warningLog. A nil writer defaults to stderr.
+func SyncBaseBranchWithLog(repoPath, sourceBranch string, warningLog io.Writer) error {
+	if warningLog == nil {
+		warningLog = os.Stderr
+	}
+	warn := func(reason string) {
+		fmt.Fprintf(warningLog, "warning: leaving base branch %q unchanged (%s); runs will use origin/%s\n", sourceBranch, reason, sourceBranch)
+	}
 	if out, err := runGitCommand(repoPath, "fetch", "origin", sourceBranch); err != nil {
 		return fmt.Errorf("sync base branch %q: %w\n%s", sourceBranch, err, out)
 	}
@@ -444,6 +456,7 @@ func SyncBaseBranch(repoPath, sourceBranch string) error {
 	}
 	if len(holders) > 0 {
 		if len(holders) != 1 {
+			warn("it is checked out in multiple worktrees")
 			return nil
 		}
 		status, err := runGitCommand(holders[0], "status", "--porcelain", "--untracked-files=normal")
@@ -451,6 +464,7 @@ func SyncBaseBranch(repoPath, sourceBranch string) error {
 			return fmt.Errorf("sync base branch %q: inspect checked-out worktree: %w\n%s", sourceBranch, err, status)
 		}
 		if strings.TrimSpace(string(status)) != "" {
+			warn("the checked-out worktree is not clean")
 			return nil
 		}
 		remoteIsAncestor, err := gitMergeBaseIsAncestor(repoPath, remoteHash, localHash)
@@ -465,6 +479,7 @@ func SyncBaseBranch(repoPath, sourceBranch string) error {
 			return fmt.Errorf("sync base branch %q: check if local is ancestor of remote: %w", sourceBranch, err)
 		}
 		if !localIsAncestor {
+			warn("the local branch has diverged from origin")
 			return nil
 		}
 		if out, err := runGitCommand(holders[0], "merge", "--ff-only", remoteRef); err != nil {
@@ -494,6 +509,14 @@ func SyncBaseBranch(repoPath, sourceBranch string) error {
 		return fmt.Errorf("sync base branch %q: diverged, reset to remote: %w\n%s", sourceBranch, err, out)
 	}
 	return nil
+}
+
+func (s *WorktreeSandbox) worktreeStartPoint() string {
+	remoteRef := "refs/remotes/origin/" + s.sourceBranch
+	if _, err := gitRevParse(s.repoPath, "--verify", remoteRef); err == nil {
+		return remoteRef
+	}
+	return s.sourceBranch
 }
 
 func worktreePathsForBranch(repoPath, branchRef string) ([]string, error) {
