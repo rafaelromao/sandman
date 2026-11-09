@@ -3967,7 +3967,7 @@ loop:
 				s.finalOwnedWorkAttempt = attempt+1 >= attempts
 				verdict := newLifecycleObserver(s).Observe(ctx, lifecycleObservationRequest{
 					WorkDir: wt.WorkDir(), Branch: branch, RunID: runID,
-					HostPathsReady: hostPathsReady, AttemptStatus: result.Status, AfterAgentAttempt: true,
+					HostPathsReady: hostPathsReady, AttemptStatus: result.Status, UsageLimitReached: result.UsageLimitReached, AfterAgentAttempt: true,
 					CIRerunAction: result.ciRerunAction,
 				})
 				if verdict.handled() {
@@ -4018,8 +4018,16 @@ loop:
 						s.emitAwait(ctx, runID, result, verdict.Evidence)
 						verdict = newLifecycleObserver(s).waitForTransition(ctx, lifecycleObservationRequest{
 							WorkDir: wt.WorkDir(), Branch: branch, RunID: runID,
-							HostPathsReady: hostPathsReady, AttemptStatus: result.Status,
+							HostPathsReady: hostPathsReady, AttemptStatus: result.Status, UsageLimitReached: result.UsageLimitReached,
 						}, result, verdict)
+					}
+					if verdict.Kind == lifecycleVerdictAgentFailureRetry {
+						// Recovery found no lifecycle action to replace the failed
+						// attempt. Return to the configured ordinary retry loop rather
+						// than terminalizing as an idle-gate failure.
+						result.Status = "failure"
+						terminalExtras = nil
+						continue loop
 					}
 					if verdict.Action == lifecycleResume {
 						// The continuity decision already turned a stalled or

@@ -532,7 +532,7 @@ func lifecycleFailureExtras(d lifecycleDecision, issueNumber int) map[string]any
 	return cloneLifecycleExtras(d.failureExtras)
 }
 
-func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workDir, branch, runID string, hostPathsReady bool, attemptStatus string, afterAgentAttempt bool, ciRerunAction *ciRerunActionEvidence) lifecycleVerdict {
+func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workDir, branch, runID string, hostPathsReady bool, attemptStatus string, usageLimitReached, afterAgentAttempt bool, ciRerunAction *ciRerunActionEvidence) lifecycleVerdict {
 	s.decisionPRHead = ""
 	if s.deps.githubClient == nil {
 		return lifecycleVerdict{}
@@ -676,9 +676,9 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 			lookupError = "refresh-failed"
 		}
 		retained, established := s.priorOperationEvidence(runID, branch, worktreeHeadSHA)
-		if !established && attemptNeedsRetry(attemptStatus) {
-			// A failed agent attempt with nothing resolving keeps its
-			// ordinary retry path.
+		if !established && usageLimitReached && attemptNeedsRetry(attemptStatus) {
+			// Provider quota recovery owns recognized usage-limit failures;
+			// do not replace that gate with a GitHub outage wait.
 			return lifecycleVerdict{}
 		}
 		retained["lookup_error"] = lookupError

@@ -123,8 +123,12 @@ does the Run finish `failure` with `GATE_LOOKUP_FAILED`. Restart rehydrates the
 window and its next attempt from the event fold; the scheduler treats the
 24-hour bound as the wait's operation deadline. `sandman run <n> --continue`
 is a new RunID: it attempts observation immediately and opens a fresh 24-hour
-window. Explicit abort ends the wait at once. A failed agent attempt with no
-established operation keeps its ordinary retry path.
+window. Explicit abort ends the wait at once. A non-success agent attempt with
+no established operation also waits when the PR lookup or refresh fails; it
+consumes no ordinary retry while GitHub is unavailable. After recovery, an
+approved ready PR follows the normal merge path, and a no-op observation returns
+the failed attempt to its bounded retry path. Recognized usage-limit failures
+without an established operation remain owned by quota recovery instead.
 
 A closed, unmerged pull request ends a Run (`PULL_REQUEST_CLOSED`) only when it
 is proven to belong to the logical Run: its head equals the Run's head, or it
@@ -172,13 +176,17 @@ Admit waiting for current-head CI that is actually queued/running, a confirmed
 current-head delegated-review request within its deadline, or a supported
 recognized resettable provider limit. Successful review delivery establishes an
 external operation even before a reviewer starts. A generic pending/CLEAN label,
-absent checks, nonexistent publication, stale evidence, or a failed lookup alone
-does not establish one.
+absent checks, nonexistent publication, or stale evidence does not establish one.
+A failed lookup does not establish a CI/review operation; it authorizes only the
+separate GitHub recovery wait described above.
 
 Transient observation failures may retry an already-established identity-valid
 CI/review operation within its original deadline and bounded recovery budget.
-Without prior valid evidence, fail explicitly. No poll, lookup retry, admission delay,
-executor reconstruction, or restart renews an operation's authorized lifetime.
+A failed pull-request lookup or refresh is a separate GitHub recovery wait and
+does not require prior operation evidence; it uses the hourly, status-gated
+attempts and 24-hour bound specified above. No poll, lookup retry, admission
+delay, executor reconstruction, or restart renews an operation's authorized
+lifetime.
 
 When managed review is enabled, merge work requires confirmed delegated
 request-scoped approval for the current PR head and green CI. Missing delivery

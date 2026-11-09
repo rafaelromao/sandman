@@ -1211,7 +1211,7 @@ func TestRunSingle_ClosedPRTerminalizesBeforeRetry(t *testing.T) {
 	}
 }
 
-func TestRunSingle_RetryLookupErrorPreservesBranch(t *testing.T) {
+func TestRunSingle_RetryLookupErrorAwaitsAndPreservesBranch(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -1244,8 +1244,8 @@ func TestRunSingle_RetryLookupErrorPreservesBranch(t *testing.T) {
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
 	result, _ := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: "42-fix-bug"}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false, "", "")
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure on lookup error", result.Status)
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want await while GitHub lookup is unavailable", result.Status)
 	}
 	if resetCalls != 0 {
 		t.Fatalf("reset calls = %d, want 0 (branch should be preserved on lookup error)", resetCalls)

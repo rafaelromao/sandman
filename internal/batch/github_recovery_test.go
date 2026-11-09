@@ -136,6 +136,20 @@ func TestGitHubRecovery_LookupFailureWaits(t *testing.T) {
 	}
 }
 
+func TestGitHubRecovery_UsageLimitKeepsQuotaRecoveryPath(t *testing.T) {
+	f := newGitHubRecoveryFixture(t)
+	verdict := newLifecycleObserver(f.session()).Observe(t.Context(), lifecycleObservationRequest{
+		WorkDir: t.TempDir(), Branch: gateTestBranch, RunID: f.runID,
+		HostPathsReady: true, AttemptStatus: "failure", UsageLimitReached: true,
+	})
+	if verdict.handled() {
+		t.Fatalf("usage-limit lookup failure selected %s/%v, want quota handling", verdict.status(), verdict.Evidence)
+	}
+	if f.lookups != 1 || f.status.calls != 0 {
+		t.Fatalf("lookups=%d status checks=%d, want one failed lookup and no GitHub recovery wait", f.lookups, f.status.calls)
+	}
+}
+
 // Before the next hourly attempt, observation neither looks up the pull
 // request nor checks GitHub's status, and the wait evidence is unchanged.
 func TestGitHubRecovery_NoAttemptBeforeNextHour(t *testing.T) {

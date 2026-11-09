@@ -15,6 +15,7 @@ type lifecycleObservationRequest struct {
 	HostPathsReady    bool
 	AttemptStatus     string
 	AfterAgentAttempt bool
+	UsageLimitReached bool
 	CIRerunAction     *ciRerunActionEvidence
 }
 
@@ -38,6 +39,9 @@ const (
 	// lifecycleVerdictGitHubUnavailable is a wait for GitHub to recover from
 	// a failed pull-request lookup or refresh (issue #2938).
 	lifecycleVerdictGitHubUnavailable
+	// lifecycleVerdictAgentFailureRetry returns a no-op recovery observation
+	// to the ordinary retry loop for the failed attempt being observed.
+	lifecycleVerdictAgentFailureRetry
 )
 
 // lifecycleObservation is the single operation callers use to observe an
@@ -69,6 +73,7 @@ func (o *lifecycleObserver) Observe(ctx context.Context, request lifecycleObserv
 		request.RunID,
 		request.HostPathsReady,
 		request.AttemptStatus,
+		request.UsageLimitReached,
 		request.AfterAgentAttempt,
 		request.CIRerunAction,
 	)
@@ -129,6 +134,9 @@ func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifec
 		if !verdict.handled() {
 			if ctx.Err() != nil {
 				return lifecycleVerdict{Action: lifecycleAborted}
+			}
+			if strings.EqualFold(strings.TrimSpace(request.AttemptStatus), "failure") && !request.UsageLimitReached {
+				return lifecycleVerdict{Action: lifecycleFailure, Kind: lifecycleVerdictAgentFailureRetry}
 			}
 			verdict = failureForUnhandledObservation(verdict)
 		}

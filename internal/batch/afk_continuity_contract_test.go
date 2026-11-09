@@ -306,7 +306,8 @@ type continuityScenario struct {
 	// worktreeHead overrides the Run's local head; by default it is the PR's.
 	worktreeHead func(g *continuityGitHub) string
 	// githubWait asserts the Run waited for GitHub to recover.
-	githubWait bool
+	githubWait          bool
+	foregroundLifecycle bool
 }
 
 type continuityOutcome struct {
@@ -400,6 +401,8 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 		WithSandboxFactory(&retrySandboxFactory{sandbox: &retrySandbox{workDir: worktree}}),
 		WithRunSessionOpts(runSessionOptions{
 			releaseAwaitCapacity: true,
+			foregroundLifecycle:  sc.foregroundLifecycle,
+			lifecyclePollPlan:    []time.Duration{time.Second},
 			currentHead: func(string) (string, error) {
 				if sc.worktreeHead != nil {
 					return sc.worktreeHead(g), nil
@@ -413,6 +416,27 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 				mu.Unlock()
 				if index >= len(sc.polls) {
 					return errStop
+				}
+				if sc.polls[index] != nil {
+					sc.polls[index](g)
+				}
+				if sc.expireAfterFirstAwait && index == 0 {
+					mu.Lock()
+					reviewClockOffset += 2 * time.Hour
+					mu.Unlock()
+					g.mu.Lock()
+					g.clockOffset += 2 * time.Hour
+					g.mu.Unlock()
+				}
+				return ctx.Err()
+			},
+			lifecycleWait: func(ctx context.Context, _ time.Duration) error {
+				mu.Lock()
+				index := polls
+				polls++
+				mu.Unlock()
+				if index >= len(sc.polls) {
+					return errLifecycleObservationTestStop
 				}
 				if sc.polls[index] != nil {
 					sc.polls[index](g)
@@ -589,6 +613,15 @@ func (o continuityOutcome) verdict() string {
 
 func (o continuityOutcome) count(eventType string) int {
 	return countEventsByType(o.current(), eventType)
+}
+
+func (o continuityOutcome) waitedForGitHubRecovery() bool {
+	for _, event := range o.current() {
+		if event.Type == "run.await" && event.Payload["await_reason"] == gateGitHubUnavailable {
+			return true
+		}
+	}
+	return false
 }
 
 // current drops the seeded earlier Run, which is history the scenario
@@ -961,6 +994,29 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 			},
 			want: "merged", maxLaunches: 2,
 		},
+		// #2946: the agent fails while GitHub is unavailable and no CI/review
+		// wait has been established for this Run. The outage wait must preserve
+		// the ordinary retry budget until GitHub recovers; the current-head
+		// approval then takes the normal merge path.
+		continuityScenario{
+			name: "#2946 failed attempt waits for GitHub recovery before merge", pr: greenCleanPR(), retries: 3,
+			forbidRetry: true, githubWait: true,
+			launches: []func(*continuityGitHub) string{func(g *continuityGitHub) string {
+				g.trigger()
+				g.mu.Lock()
+				g.lookupErr = errors.New("gh pr list: exit status 1")
+				g.mu.Unlock()
+				return "failure"
+			}},
+			polls: []func(*continuityGitHub){func(g *continuityGitHub) {
+				g.mu.Lock()
+				g.lookupErr = nil
+				g.runtimeOffset += githubRecoveryInterval
+				g.mu.Unlock()
+				g.publish(reports["approved-daemon-30.md"])
+			}},
+			want: "merged", maxLaunches: 2,
+		},
 		// A GitHub outage during a stalled wait keeps the stalled-resume
 		// ledger: after recovery on unchanged evidence the Run keeps waiting
 		// instead of relaunching the implementor.
@@ -1097,6 +1153,106 @@ func TestAFKContinuityContract_RealIncidentsMergeOrWait(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestAFKContinuityContract_FailedAttemptOutageRecoveryRetriesBoundedly(t *testing.T) {
+	retriedAfterRecovery := false
+	outcome := runContinuityScenario(t, continuityScenario{
+		name: "failed attempt resumes ordinary retries after GitHub recovery",
+		pr: github.PR{
+			StatusCheckRollup: "success",
+			ReviewDecision:    "REVIEW_REQUIRED",
+			MergeStateStatus:  "BLOCKED",
+		},
+		retries: 1,
+		launches: []func(*continuityGitHub) string{
+			func(g *continuityGitHub) string {
+				g.mu.Lock()
+				g.lookupErr = errors.New("gh pr list: exit status 1")
+				g.mu.Unlock()
+				return "failure"
+			},
+			func(g *continuityGitHub) string {
+				g.mu.Lock()
+				retriedAfterRecovery = g.lookupErr == nil && g.runtimeOffset >= githubRecoveryInterval
+				g.mu.Unlock()
+				return "failure"
+			},
+		},
+		polls: []func(*continuityGitHub){func(g *continuityGitHub) {
+			g.mu.Lock()
+			g.lookupErr = nil
+			g.runtimeOffset += githubRecoveryInterval
+			g.mu.Unlock()
+		}},
+		githubWait:  true,
+		maxLaunches: 3,
+	})
+	if !strings.HasPrefix(outcome.verdict(), "failed:") {
+		t.Fatalf("recovery outcome = %s, want a bounded terminal outcome", outcome.verdict())
+	}
+	if !outcome.waitedForGitHubRecovery() {
+		t.Fatalf("failed attempt skipped its GitHub recovery wait\nevents: %s", continuityEventSummary(outcome.events))
+	}
+	if !retriedAfterRecovery {
+		t.Fatal("agent retry started before GitHub recovered or did not start")
+	}
+	if reasons := outcome.retryReasons(); len(reasons) != 1 || reasons[0] != "agent-failed" {
+		t.Fatalf("retry reasons = %v, want one bounded agent-failed retry", reasons)
+	}
+}
+
+func TestAFKContinuityContract_ForegroundOutageRecoveryReturnsToAgentFailure(t *testing.T) {
+	retriedAfterRecovery := false
+	outcome := runContinuityScenario(t, continuityScenario{
+		name: "foreground failed attempt retries after no-op recovery",
+		pr: github.PR{
+			StatusCheckRollup: "success",
+			ReviewDecision:    "REVIEW_REQUIRED",
+			MergeStateStatus:  "BLOCKED",
+		},
+		retries:             1,
+		foregroundLifecycle: true,
+		launches: []func(*continuityGitHub) string{
+			func(g *continuityGitHub) string {
+				g.mu.Lock()
+				g.lookupErr = errors.New("gh pr list: exit status 1")
+				g.mu.Unlock()
+				return "failure"
+			},
+			func(g *continuityGitHub) string {
+				g.mu.Lock()
+				retriedAfterRecovery = g.lookupErr == nil && g.runtimeOffset >= githubRecoveryInterval
+				g.mu.Unlock()
+				return "failure"
+			},
+		},
+		polls: []func(*continuityGitHub){func(g *continuityGitHub) {
+			g.mu.Lock()
+			g.lookupErr = nil
+			g.runtimeOffset += githubRecoveryInterval
+			g.mu.Unlock()
+		}},
+		githubWait:  true,
+		maxLaunches: 2,
+	})
+	if !strings.HasPrefix(outcome.verdict(), "failed:") {
+		t.Fatalf("foreground recovery outcome = %s, want bounded failure", outcome.verdict())
+	}
+	if !retriedAfterRecovery {
+		t.Fatalf("foreground retry started before recovery or did not start; verdict=%s launches=%d events=%s", outcome.verdict(), outcome.launches, continuityEventSummary(outcome.events))
+	}
+	if reasons := outcome.retryReasons(); len(reasons) != 1 || reasons[0] != "agent-failed" {
+		t.Fatalf("foreground retry reasons = %v, want one agent-failed retry", reasons)
+	}
+	if !outcome.waitedForGitHubRecovery() {
+		t.Fatalf("foreground failed attempt skipped its GitHub recovery wait\nevents: %s", continuityEventSummary(outcome.events))
+	}
+	for _, event := range outcome.current() {
+		if event.Type == "run.finished" && event.Payload["reason"] == idleGateReason {
+			t.Fatalf("foreground recovery terminalized as an idle-gate failure: %v", event.Payload)
+		}
 	}
 }
 
