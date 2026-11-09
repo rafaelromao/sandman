@@ -178,6 +178,16 @@ The following artefacts do **not** live under `<repo>/.sandman/` and are documen
 - **`~/.claude/skills/sandman` and `~/.claude/skills/sandman-<mode>`** — **symlinks into the shared skill tree** created by skill sync so Claude Code, which discovers skills only under `~/.claude/skills/<name>/`, finds the Sandman skills. Links are replaced atomically (temporary link + rename); a real file or directory at a link path is left untouched.
 - **`/tmp/sandman-<sha256 prefix>.sock`** — the **deterministic short Unix socket address** (issue #2441), used when the logical `.sandman/batches/<batchID>/batch.sock`, `.sandman/batches/<batchID>/runs/<runID>/run.sock`, or `.sandman/reviews/review.sock` path exceeds the host `sun_path` limit. The hash is a 12-byte SHA-256 prefix of the full logical path, so the same logical path always maps to the same short address and every consumer (bind, dial, `os.Stat`, liveness probes, attach, portal discovery) sees the same effective path on every host. Mode 0o600. Removed by the daemon on Stop.
 
+## Base branch synchronization
+
+Base branch refs are not Sandman artifacts. Before a run, Sandman fetches
+`origin/<base>` and creates new run worktrees from that remote-tracking ref. A
+checked-out base branch is fast-forwarded only through `git merge --ff-only`
+when its sole worktree is clean. Dirty or multiply checked-out branches and
+branches ahead of or diverged from origin are left unchanged and reported with a
+warning. Sandman never rewrites a checked-out base branch or resets a diverged
+local base branch to origin.
+
 ## Upgrades
 
 Sandman does not generally migrate on-disk state across version upgrades. The implementation-review registration path is the explicit exception: it validates complete legacy request/head/state evidence and atomically promotes it into the runtime-owned registration. Invalid or incomplete legacy evidence is never migrated. After upgrading, clear `.sandman/` and re-run `sandman init` when state is not covered by that compatibility path. See [Troubleshooting](../help/troubleshooting.md#portal-shows-unknown-rows-after-upgrading-sandman) for the symptom and fix.

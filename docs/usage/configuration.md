@@ -138,7 +138,15 @@ missing sessions use one `--continue` fallback only for these selected reuse
 launches. Claude Code resumes the worktree's most recent conversation with its
 own `--continue`.
 
+### Base branch
+
 Use `sandman run --base-branch` to override `git.base_branch` for a single invocation.
+Before each run, Sandman fetches `origin/<base>`, and new run worktrees start from
+that fetched remote-tracking branch. If the local base branch is checked out in
+one clean worktree, Sandman fast-forwards it with `git merge --ff-only`. A dirty
+or multiply checked-out base, or a base that is ahead of or diverged from origin,
+is left unchanged with a warning; Sandman never rewrites a checked-out base or
+resets a diverged local branch to origin.
 
 ### Prompt templates
 

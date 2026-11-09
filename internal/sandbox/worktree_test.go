@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -210,6 +211,22 @@ func TestWorktreeSandbox_StartCreatesWorktree(t *testing.T) {
 	}
 }
 
+func TestWorktreeSandboxDoesNotFallBackToLocalBaseWithoutOriginRef(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+	s := NewWorktreeSandbox(dir, worktreeBase, "99-no-origin", "main")
+	if err := s.Start(SandboxStart{StrandedReconcile: true}); err == nil {
+		if stopErr := s.Stop(); stopErr != nil {
+			t.Errorf("stop incorrectly created worktree: %v", stopErr)
+		}
+		removeBranch(t, dir, "99-no-origin")
+		t.Fatal("expected worktree creation to refuse the local base without origin/main")
+	} else if !strings.Contains(err.Error(), "origin/main") {
+		t.Fatalf("expected missing-origin error, got %v", err)
+	}
+}
+
 func TestSyncBaseBranchFastForwardsBaseBranchBeforeAddingWorktree(t *testing.T) {
 	seedDir := t.TempDir()
 	remoteDir := initGitRepoWithRemote(t, seedDir)
@@ -224,6 +241,10 @@ func TestSyncBaseBranchFastForwardsBaseBranchBeforeAddingWorktree(t *testing.T) 
 	commitGitFile(t, localDir, "feature-only.txt", "feature\n", "feature")
 	writeGitFile(t, localDir, "untracked.txt", "keep me out of the worktree\n")
 	removeBranch(t, localDir, "42-fix-bug")
+	worktrees := runGit(t, localDir, "worktree", "list", "--porcelain")
+	if strings.Contains(worktrees, "branch refs/heads/main") {
+		t.Fatalf("test precondition: main should not be checked out before sync:\n%s", worktrees)
+	}
 
 	commitGitFile(t, seedDir, "tracked.txt", "remote\n", "remote update")
 	runGit(t, seedDir, "push", "origin", "main")
@@ -261,7 +282,279 @@ func TestSyncBaseBranchFastForwardsBaseBranchBeforeAddingWorktree(t *testing.T) 
 	}
 }
 
-func TestSyncBaseBranchResetsWhenDiverged(t *testing.T) {
+func TestSyncBaseBranchFastForwardsCleanCheckedOutBaseAndStartsRunsFromOrigin(t *testing.T) {
+	seedDir := t.TempDir()
+	remoteDir := initGitRepoWithRemote(t, seedDir)
+	commitGitFile(t, seedDir, "tracked.txt", "before\n", "initial tracked file")
+	runGit(t, seedDir, "push", "origin", "main")
+
+	localDir := t.TempDir()
+	runGit(t, localDir, "clone", "-b", "main", remoteDir, ".")
+	runGit(t, localDir, "config", "user.email", "test@test.com")
+	runGit(t, localDir, "config", "user.name", "Test")
+
+	commitGitFile(t, seedDir, "tracked.txt", "after\n", "update tracked file")
+	commitGitFile(t, seedDir, "remote-only.txt", "from origin\n", "add remote file")
+	runGit(t, seedDir, "push", "origin", "main")
+
+	if err := SyncBaseBranch(localDir, "main"); err != nil {
+		t.Fatalf("sync error: %v", err)
+	}
+
+	localHead := strings.TrimSpace(runGit(t, localDir, "rev-parse", "HEAD"))
+	originHead := strings.TrimSpace(runGit(t, localDir, "rev-parse", "origin/main"))
+	if localHead != originHead {
+		t.Fatalf("checked-out HEAD = %s, want origin/main %s", localHead, originHead)
+	}
+	indexTree := strings.TrimSpace(runGit(t, localDir, "write-tree"))
+	originTree := strings.TrimSpace(runGit(t, localDir, "rev-parse", "origin/main^{tree}"))
+	if indexTree != originTree {
+		t.Fatalf("index tree = %s, want origin/main tree %s", indexTree, originTree)
+	}
+	if status := strings.TrimSpace(runGit(t, localDir, "status", "--porcelain")); status != "" {
+		t.Fatalf("checked-out worktree is not clean after sync:\n%s", status)
+	}
+
+	s := NewWorktreeSandbox(localDir, filepath.Join(localDir, ".sandman", "worktrees"), "99-origin-base", "main")
+	if err := s.Start(SandboxStart{StrandedReconcile: true}); err != nil {
+		t.Fatalf("start worktree: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := s.Stop(); err != nil {
+			t.Errorf("stop worktree: %v", err)
+		}
+		removeBranch(t, localDir, "99-origin-base")
+	})
+	worktreeHead := strings.TrimSpace(runGit(t, s.WorkDir(), "rev-parse", "HEAD"))
+	if worktreeHead != originHead {
+		t.Fatalf("new run worktree HEAD = %s, want origin/main %s", worktreeHead, originHead)
+	}
+}
+
+func TestSyncBaseBranchLeavesDirtyCheckedOutBaseAndWarns(t *testing.T) {
+	seedDir := t.TempDir()
+	remoteDir := initGitRepoWithRemote(t, seedDir)
+	commitGitFile(t, seedDir, "tracked.txt", "before\n", "initial tracked file")
+	runGit(t, seedDir, "push", "origin", "main")
+
+	localDir := t.TempDir()
+	runGit(t, localDir, "clone", "-b", "main", remoteDir, ".")
+	runGit(t, localDir, "config", "user.email", "test@test.com")
+	runGit(t, localDir, "config", "user.name", "Test")
+	writeGitFile(t, localDir, "tracked.txt", "user changes\n")
+
+	commitGitFile(t, seedDir, "tracked.txt", "origin update\n", "remote update")
+	runGit(t, seedDir, "push", "origin", "main")
+
+	localHeadBefore := strings.TrimSpace(runGit(t, localDir, "rev-parse", "HEAD"))
+	indexBefore := strings.TrimSpace(runGit(t, localDir, "write-tree"))
+	statusBefore := strings.TrimSpace(runGit(t, localDir, "status", "--porcelain"))
+	worktreeBefore, err := os.ReadFile(filepath.Join(localDir, "tracked.txt"))
+	if err != nil {
+		t.Fatalf("read dirty file before sync: %v", err)
+	}
+
+	var warning bytes.Buffer
+	if err := SyncBaseBranchWithLog(localDir, "main", &warning); err != nil {
+		t.Fatalf("sync error: %v", err)
+	}
+
+	if got := strings.TrimSpace(runGit(t, localDir, "rev-parse", "HEAD")); got != localHeadBefore {
+		t.Errorf("checked-out HEAD changed from %s to %s", localHeadBefore, got)
+	}
+	if got := strings.TrimSpace(runGit(t, localDir, "write-tree")); got != indexBefore {
+		t.Errorf("index tree changed from %s to %s", indexBefore, got)
+	}
+	if got := strings.TrimSpace(runGit(t, localDir, "status", "--porcelain")); got != statusBefore {
+		t.Errorf("worktree status changed from %q to %q", statusBefore, got)
+	}
+	worktreeAfter, err := os.ReadFile(filepath.Join(localDir, "tracked.txt"))
+	if err != nil {
+		t.Fatalf("read dirty file after sync: %v", err)
+	}
+	if !bytes.Equal(worktreeAfter, worktreeBefore) {
+		t.Errorf("dirty file changed from %q to %q", worktreeBefore, worktreeAfter)
+	}
+	if !strings.Contains(warning.String(), "main") || !strings.Contains(warning.String(), "origin/main") {
+		t.Errorf("expected warning to explain that origin/main will be used, got %q", warning.String())
+	}
+
+	s := NewWorktreeSandbox(localDir, filepath.Join(localDir, ".sandman", "worktrees"), "99-dirty-base", "main")
+	if err := s.Start(SandboxStart{StrandedReconcile: true}); err != nil {
+		t.Fatalf("start worktree: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := s.Stop(); err != nil {
+			t.Errorf("stop worktree: %v", err)
+		}
+		removeBranch(t, localDir, "99-dirty-base")
+	})
+	worktreeHead := strings.TrimSpace(runGit(t, s.WorkDir(), "rev-parse", "HEAD"))
+	originHead := strings.TrimSpace(runGit(t, localDir, "rev-parse", "origin/main"))
+	if worktreeHead != originHead {
+		t.Errorf("new run worktree HEAD = %s, want origin/main %s", worktreeHead, originHead)
+	}
+}
+
+func TestSyncBaseBranchLeavesAheadCheckedOutBaseAndWarns(t *testing.T) {
+	seedDir := t.TempDir()
+	remoteDir := initGitRepoWithRemote(t, seedDir)
+	commitGitFile(t, seedDir, "tracked.txt", "origin\n", "origin base")
+	runGit(t, seedDir, "push", "origin", "main")
+
+	localDir := t.TempDir()
+	runGit(t, localDir, "clone", "-b", "main", remoteDir, ".")
+	runGit(t, localDir, "config", "user.email", "test@test.com")
+	runGit(t, localDir, "config", "user.name", "Test")
+	commitGitFile(t, localDir, "local-only.txt", "keep this commit\n", "local ahead commit")
+
+	localHeadBefore := strings.TrimSpace(runGit(t, localDir, "rev-parse", "HEAD"))
+	indexBefore := strings.TrimSpace(runGit(t, localDir, "write-tree"))
+	statusBefore := strings.TrimSpace(runGit(t, localDir, "status", "--porcelain"))
+	var warning bytes.Buffer
+	if err := SyncBaseBranchWithLog(localDir, "main", &warning); err != nil {
+		t.Fatalf("sync error: %v", err)
+	}
+	if got := strings.TrimSpace(runGit(t, localDir, "rev-parse", "HEAD")); got != localHeadBefore {
+		t.Errorf("ahead checked-out HEAD changed from %s to %s", localHeadBefore, got)
+	}
+	if got := strings.TrimSpace(runGit(t, localDir, "write-tree")); got != indexBefore {
+		t.Errorf("index tree changed from %s to %s", indexBefore, got)
+	}
+	if got := strings.TrimSpace(runGit(t, localDir, "status", "--porcelain")); got != statusBefore {
+		t.Errorf("worktree status changed from %q to %q", statusBefore, got)
+	}
+	if !strings.Contains(warning.String(), "ahead") || !strings.Contains(warning.String(), "origin/main") {
+		t.Errorf("expected an ahead-of-origin warning, got %q", warning.String())
+	}
+
+	s := NewWorktreeSandbox(localDir, filepath.Join(localDir, ".sandman", "worktrees"), "99-ahead-base", "main")
+	if err := s.Start(SandboxStart{StrandedReconcile: true}); err != nil {
+		t.Fatalf("start worktree: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := s.Stop(); err != nil {
+			t.Errorf("stop worktree: %v", err)
+		}
+		removeBranch(t, localDir, "99-ahead-base")
+	})
+	worktreeHead := strings.TrimSpace(runGit(t, s.WorkDir(), "rev-parse", "HEAD"))
+	originHead := strings.TrimSpace(runGit(t, localDir, "rev-parse", "origin/main"))
+	if worktreeHead != originHead {
+		t.Errorf("new run worktree HEAD = %s, want origin/main %s", worktreeHead, originHead)
+	}
+}
+
+func TestSyncBaseBranchLeavesDivergedCheckedOutBaseAndWarns(t *testing.T) {
+	seedDir := t.TempDir()
+	remoteDir := initGitRepoWithRemote(t, seedDir)
+	commitGitFile(t, seedDir, "base.txt", "shared base\n", "shared base")
+	runGit(t, seedDir, "push", "origin", "main")
+
+	localDir := t.TempDir()
+	runGit(t, localDir, "clone", "-b", "main", remoteDir, ".")
+	runGit(t, localDir, "config", "user.email", "test@test.com")
+	runGit(t, localDir, "config", "user.name", "Test")
+	commitGitFile(t, localDir, "local-only.txt", "keep local commit\n", "local divergence")
+	commitGitFile(t, seedDir, "remote-only.txt", "origin commit\n", "remote divergence")
+	runGit(t, seedDir, "push", "origin", "main")
+
+	localHeadBefore := strings.TrimSpace(runGit(t, localDir, "rev-parse", "HEAD"))
+	indexBefore := strings.TrimSpace(runGit(t, localDir, "write-tree"))
+	statusBefore := strings.TrimSpace(runGit(t, localDir, "status", "--porcelain"))
+	var warning bytes.Buffer
+	if err := SyncBaseBranchWithLog(localDir, "main", &warning); err != nil {
+		t.Fatalf("sync error: %v", err)
+	}
+	if got := strings.TrimSpace(runGit(t, localDir, "rev-parse", "HEAD")); got != localHeadBefore {
+		t.Errorf("diverged checked-out HEAD changed from %s to %s", localHeadBefore, got)
+	}
+	if got := strings.TrimSpace(runGit(t, localDir, "write-tree")); got != indexBefore {
+		t.Errorf("index tree changed from %s to %s", indexBefore, got)
+	}
+	if got := strings.TrimSpace(runGit(t, localDir, "status", "--porcelain")); got != statusBefore {
+		t.Errorf("worktree status changed from %q to %q", statusBefore, got)
+	}
+	if _, err := os.Stat(filepath.Join(localDir, "local-only.txt")); err != nil {
+		t.Errorf("local-only commit was lost: %v", err)
+	}
+	if !strings.Contains(warning.String(), "diverged") || !strings.Contains(warning.String(), "origin/main") {
+		t.Errorf("expected a divergence warning, got %q", warning.String())
+	}
+
+	s := NewWorktreeSandbox(localDir, filepath.Join(localDir, ".sandman", "worktrees"), "99-diverged-base", "main")
+	if err := s.Start(SandboxStart{StrandedReconcile: true}); err != nil {
+		t.Fatalf("start worktree: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := s.Stop(); err != nil {
+			t.Errorf("stop worktree: %v", err)
+		}
+		removeBranch(t, localDir, "99-diverged-base")
+	})
+	worktreeHead := strings.TrimSpace(runGit(t, s.WorkDir(), "rev-parse", "HEAD"))
+	originHead := strings.TrimSpace(runGit(t, localDir, "rev-parse", "origin/main"))
+	if worktreeHead != originHead {
+		t.Errorf("new run worktree HEAD = %s, want origin/main %s", worktreeHead, originHead)
+	}
+}
+
+func TestSyncBaseBranchLeavesMultipleCheckedOutBaseWorktreesAndWarns(t *testing.T) {
+	seedDir := t.TempDir()
+	remoteDir := initGitRepoWithRemote(t, seedDir)
+	commitGitFile(t, seedDir, "tracked.txt", "before\n", "initial tracked file")
+	runGit(t, seedDir, "push", "origin", "main")
+
+	localDir := t.TempDir()
+	runGit(t, localDir, "clone", "-b", "main", remoteDir, ".")
+	runGit(t, localDir, "config", "user.email", "test@test.com")
+	runGit(t, localDir, "config", "user.name", "Test")
+	secondWorktree := filepath.Join(t.TempDir(), "second-main")
+	runGit(t, localDir, "worktree", "add", "--force", secondWorktree, "main")
+
+	commitGitFile(t, seedDir, "tracked.txt", "after\n", "remote update")
+	runGit(t, seedDir, "push", "origin", "main")
+
+	mainHeadBefore := strings.TrimSpace(runGit(t, localDir, "rev-parse", "main"))
+	mainTreeBefore := strings.TrimSpace(runGit(t, localDir, "-C", localDir, "write-tree"))
+	secondTreeBefore := strings.TrimSpace(runGit(t, secondWorktree, "write-tree"))
+	mainStatusBefore := strings.TrimSpace(runGit(t, localDir, "status", "--porcelain"))
+	secondStatusBefore := strings.TrimSpace(runGit(t, secondWorktree, "status", "--porcelain"))
+
+	tracePath := filepath.Join(t.TempDir(), "git-commands.log")
+	t.Setenv("GIT_TRACE", tracePath)
+	var warning bytes.Buffer
+	if err := SyncBaseBranchWithLog(localDir, "main", &warning); err != nil {
+		t.Fatalf("sync error: %v", err)
+	}
+	trace, err := os.ReadFile(tracePath)
+	if err == nil && strings.Contains(string(trace), "update-ref refs/heads/main") {
+		t.Errorf("sync called update-ref on checked-out main:\n%s", trace)
+	}
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read git command trace: %v", err)
+	}
+	if !strings.Contains(warning.String(), "multiple worktrees") {
+		t.Errorf("expected a multiple-worktree warning, got %q", warning.String())
+	}
+	if got := strings.TrimSpace(runGit(t, localDir, "rev-parse", "main")); got != mainHeadBefore {
+		t.Errorf("main ref changed from %s to %s", mainHeadBefore, got)
+	}
+	if got := strings.TrimSpace(runGit(t, localDir, "write-tree")); got != mainTreeBefore {
+		t.Errorf("main index tree changed from %s to %s", mainTreeBefore, got)
+	}
+	if got := strings.TrimSpace(runGit(t, secondWorktree, "write-tree")); got != secondTreeBefore {
+		t.Errorf("second worktree index tree changed from %s to %s", secondTreeBefore, got)
+	}
+	if got := strings.TrimSpace(runGit(t, localDir, "status", "--porcelain")); got != mainStatusBefore {
+		t.Errorf("main worktree status changed from %q to %q", mainStatusBefore, got)
+	}
+	if got := strings.TrimSpace(runGit(t, secondWorktree, "status", "--porcelain")); got != secondStatusBefore {
+		t.Errorf("second worktree status changed from %q to %q", secondStatusBefore, got)
+	}
+}
+
+func TestSyncBaseBranchPreservesUnheldDivergedBaseAndWarns(t *testing.T) {
 	seedDir := t.TempDir()
 	remoteDir := initGitRepoWithRemote(t, seedDir)
 	commitGitFile(t, seedDir, "tracked.txt", "base\n", "base")
@@ -272,13 +565,15 @@ func TestSyncBaseBranchResetsWhenDiverged(t *testing.T) {
 	runGit(t, localDir, "config", "user.email", "test@test.com")
 	runGit(t, localDir, "config", "user.name", "Test")
 	commitGitFile(t, localDir, "local-only.txt", "local\n", "local divergence")
+	localMainBefore := strings.TrimSpace(runGit(t, localDir, "rev-parse", "main"))
 	runGit(t, localDir, "checkout", "-b", "feature")
 
 	commitGitFile(t, seedDir, "remote-only.txt", "remote\n", "remote divergence")
 	runGit(t, seedDir, "push", "origin", "main")
 
-	if err := SyncBaseBranch(localDir, "main"); err != nil {
-		t.Fatalf("expected sync to succeed by resetting to remote, got %v", err)
+	var warning bytes.Buffer
+	if err := SyncBaseBranchWithLog(localDir, "main", &warning); err != nil {
+		t.Fatalf("expected sync to preserve local divergence, got %v", err)
 	}
 
 	mainHead, err := gitRevParse(localDir, "refs/heads/main")
@@ -289,8 +584,71 @@ func TestSyncBaseBranchResetsWhenDiverged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get remote main: %v", err)
 	}
-	if mainHead != remoteMain {
-		t.Fatalf("expected local main to be reset to remote main (%s), got %s", remoteMain[:7], mainHead[:7])
+	if mainHead != localMainBefore {
+		t.Fatalf("expected local main to remain at %s, got %s", localMainBefore[:7], mainHead[:7])
+	}
+	if mainHead == remoteMain {
+		t.Fatalf("test precondition: diverged local main unexpectedly equals remote %s", remoteMain[:7])
+	}
+	if !strings.Contains(warning.String(), "diverged") || !strings.Contains(warning.String(), "origin/main") {
+		t.Fatalf("expected a divergence warning, got %q", warning.String())
+	}
+
+	s := NewWorktreeSandbox(localDir, filepath.Join(localDir, ".sandman", "worktrees"), "99-diverged-unheld", "main")
+	if err := s.Start(SandboxStart{StrandedReconcile: true}); err != nil {
+		t.Fatalf("start worktree: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := s.Stop(); err != nil {
+			t.Errorf("stop worktree: %v", err)
+		}
+		removeBranch(t, localDir, "99-diverged-unheld")
+	})
+	worktreeHead := strings.TrimSpace(runGit(t, s.WorkDir(), "rev-parse", "HEAD"))
+	if worktreeHead != remoteMain {
+		t.Errorf("new run worktree HEAD = %s, want origin/main %s", worktreeHead, remoteMain)
+	}
+}
+
+func TestSyncBaseBranchLeavesUnheldAheadBaseAndWarns(t *testing.T) {
+	seedDir := t.TempDir()
+	remoteDir := initGitRepoWithRemote(t, seedDir)
+	commitGitFile(t, seedDir, "tracked.txt", "origin\n", "origin base")
+	runGit(t, seedDir, "push", "origin", "main")
+
+	localDir := t.TempDir()
+	runGit(t, localDir, "clone", "-b", "main", remoteDir, ".")
+	runGit(t, localDir, "config", "user.email", "test@test.com")
+	runGit(t, localDir, "config", "user.name", "Test")
+	commitGitFile(t, localDir, "local-only.txt", "keep this commit\n", "local ahead commit")
+	localMainBefore := strings.TrimSpace(runGit(t, localDir, "rev-parse", "main"))
+	runGit(t, localDir, "checkout", "-b", "feature")
+
+	var warning bytes.Buffer
+	if err := SyncBaseBranchWithLog(localDir, "main", &warning); err != nil {
+		t.Fatalf("sync error: %v", err)
+	}
+	if got := strings.TrimSpace(runGit(t, localDir, "rev-parse", "main")); got != localMainBefore {
+		t.Errorf("unheld ahead branch changed from %s to %s", localMainBefore, got)
+	}
+	if !strings.Contains(warning.String(), "ahead") || !strings.Contains(warning.String(), "origin/main") {
+		t.Errorf("expected an ahead-of-origin warning, got %q", warning.String())
+	}
+
+	s := NewWorktreeSandbox(localDir, filepath.Join(localDir, ".sandman", "worktrees"), "99-ahead-unheld", "main")
+	if err := s.Start(SandboxStart{StrandedReconcile: true}); err != nil {
+		t.Fatalf("start worktree: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := s.Stop(); err != nil {
+			t.Errorf("stop worktree: %v", err)
+		}
+		removeBranch(t, localDir, "99-ahead-unheld")
+	})
+	worktreeHead := strings.TrimSpace(runGit(t, s.WorkDir(), "rev-parse", "HEAD"))
+	originHead := strings.TrimSpace(runGit(t, localDir, "rev-parse", "origin/main"))
+	if worktreeHead != originHead {
+		t.Errorf("new run worktree HEAD = %s, want origin/main %s", worktreeHead, originHead)
 	}
 }
 

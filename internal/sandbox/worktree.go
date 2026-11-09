@@ -324,7 +324,11 @@ overrideCleanup:
 		}
 		addCmd = exec.Command("git", "worktree", "add", "-f", s.workDir, s.branch)
 	} else {
-		addCmd = exec.Command("git", "worktree", "add", "-b", s.branch, s.workDir, s.sourceBranch)
+		startPoint, err := s.worktreeStartPoint()
+		if err != nil {
+			return fmt.Errorf("resolve run worktree base: %w", err)
+		}
+		addCmd = exec.Command("git", "worktree", "add", "-b", s.branch, s.workDir, startPoint)
 	}
 	addCmd.Dir = s.repoPath
 	if out, err := addCmd.CombinedOutput(); err != nil {
@@ -418,6 +422,18 @@ func (s *WorktreeSandbox) configureGitIdentity() error {
 
 // SyncBaseBranch fast-forwards the local base branch from origin.
 func SyncBaseBranch(repoPath, sourceBranch string) error {
+	return SyncBaseBranchWithLog(repoPath, sourceBranch, os.Stderr)
+}
+
+// SyncBaseBranchWithLog syncs a base branch while directing safety warnings to
+// warningLog. A nil writer defaults to stderr.
+func SyncBaseBranchWithLog(repoPath, sourceBranch string, warningLog io.Writer) error {
+	if warningLog == nil {
+		warningLog = os.Stderr
+	}
+	warn := func(reason string) {
+		fmt.Fprintf(warningLog, "warning: leaving base branch %q unchanged (%s); runs will use origin/%s\n", sourceBranch, reason, sourceBranch)
+	}
 	if out, err := runGitCommand(repoPath, "fetch", "origin", sourceBranch); err != nil {
 		return fmt.Errorf("sync base branch %q: %w\n%s", sourceBranch, err, out)
 	}
@@ -432,8 +448,73 @@ func SyncBaseBranch(repoPath, sourceBranch string) error {
 
 	localHash, err := gitRevParse(repoPath, "--verify", localRef)
 	if err != nil {
-		if out, updateErr := runGitCommand(repoPath, "update-ref", localRef, remoteHash); updateErr != nil {
-			return fmt.Errorf("sync base branch %q: create local branch: %w\n%s", sourceBranch, updateErr, out)
+		if out, branchErr := runGitCommand(repoPath, "branch", sourceBranch, remoteRef); branchErr != nil {
+			holders, listErr := worktreePathsForBranch(repoPath, localRef)
+			if listErr == nil && len(holders) > 0 {
+				warn("it became checked out during synchronization")
+				return nil
+			}
+			return fmt.Errorf("sync base branch %q: create local branch: %w\n%s", sourceBranch, branchErr, out)
+		}
+		return nil
+	}
+
+	holders, err := worktreePathsForBranch(repoPath, localRef)
+	if err != nil {
+		return fmt.Errorf("sync base branch %q: list worktrees: %w", sourceBranch, err)
+	}
+	if len(holders) > 0 {
+		if len(holders) != 1 {
+			warn("it is checked out in multiple worktrees")
+			return nil
+		}
+		status, err := runGitCommand(holders[0], "status", "--porcelain", "--untracked-files=normal")
+		if err != nil {
+			return fmt.Errorf("sync base branch %q: inspect checked-out worktree: %w\n%s", sourceBranch, err, status)
+		}
+		if strings.TrimSpace(string(status)) != "" {
+			warn("the checked-out worktree is not clean")
+			return nil
+		}
+		remoteIsAncestor, err := gitMergeBaseIsAncestor(repoPath, remoteHash, localHash)
+		if err != nil {
+			return fmt.Errorf("sync base branch %q: check if remote is ancestor of local: %w", sourceBranch, err)
+		}
+		if remoteIsAncestor {
+			if localHash != remoteHash {
+				warn("the local branch is ahead of origin")
+			}
+			return nil
+		}
+		localIsAncestor, err := gitMergeBaseIsAncestor(repoPath, localHash, remoteHash)
+		if err != nil {
+			return fmt.Errorf("sync base branch %q: check if local is ancestor of remote: %w", sourceBranch, err)
+		}
+		if !localIsAncestor {
+			warn("the local branch has diverged from origin")
+			return nil
+		}
+		if out, err := runGitCommand(holders[0], "merge", "--ff-only", remoteRef); err != nil {
+			currentHash, revErr := gitRevParse(holders[0], "--verify", "HEAD")
+			if revErr == nil && currentHash == remoteHash {
+				return nil
+			}
+			status, statusErr := runGitCommand(holders[0], "status", "--porcelain", "--untracked-files=normal")
+			if statusErr == nil && strings.TrimSpace(string(status)) != "" {
+				warn("the checked-out worktree became dirty during synchronization")
+				return nil
+			}
+			if revErr == nil && currentHash != localHash {
+				if remoteIsAncestor, ancestorErr := gitMergeBaseIsAncestor(repoPath, remoteHash, currentHash); ancestorErr == nil && remoteIsAncestor {
+					warn("the local branch advanced during synchronization")
+					return nil
+				}
+				if localIsAncestor, ancestorErr := gitMergeBaseIsAncestor(repoPath, currentHash, remoteHash); ancestorErr == nil && !localIsAncestor {
+					warn("the local branch diverged from origin during synchronization")
+					return nil
+				}
+			}
+			return fmt.Errorf("sync base branch %q: fast-forward checked-out branch: %w\n%s", sourceBranch, err, out)
 		}
 		return nil
 	}
@@ -442,6 +523,9 @@ func SyncBaseBranch(repoPath, sourceBranch string) error {
 	if ok, err := gitMergeBaseIsAncestor(repoPath, remoteHash, localHash); err != nil {
 		return fmt.Errorf("sync base branch %q: check if remote is ancestor of local: %w", sourceBranch, err)
 	} else if ok {
+		if localHash != remoteHash {
+			warn("the local branch is ahead of origin")
+		}
 		return nil
 	}
 
@@ -449,16 +533,83 @@ func SyncBaseBranch(repoPath, sourceBranch string) error {
 	if ok, err := gitMergeBaseIsAncestor(repoPath, localHash, remoteHash); err != nil {
 		return fmt.Errorf("sync base branch %q: check if local is ancestor of remote: %w", sourceBranch, err)
 	} else if ok {
-		if out, err := runGitCommand(repoPath, "update-ref", localRef, remoteHash, localHash); err != nil {
-			return fmt.Errorf("sync base branch %q: fast-forward: %w\n%s", sourceBranch, err, out)
+		err := fastForwardUnheldBaseBranch(repoPath, sourceBranch, remoteRef)
+		if err != nil {
+			holders, listErr := worktreePathsForBranch(repoPath, localRef)
+			if listErr == nil && len(holders) > 0 {
+				warn("it became checked out during synchronization")
+				return nil
+			}
+			currentHash, revErr := gitRevParse(repoPath, "--verify", localRef)
+			if revErr == nil {
+				if remoteIsAncestor, ancestorErr := gitMergeBaseIsAncestor(repoPath, remoteHash, currentHash); ancestorErr == nil && remoteIsAncestor {
+					warn("the local branch advanced during synchronization")
+					return nil
+				}
+				if localIsAncestor, ancestorErr := gitMergeBaseIsAncestor(repoPath, currentHash, remoteHash); ancestorErr == nil && !localIsAncestor {
+					warn("the local branch diverged from origin during synchronization")
+					return nil
+				}
+			}
+			return fmt.Errorf("sync base branch %q: fast-forward: %w", sourceBranch, err)
 		}
 		return nil
 	}
 
-	if out, err := runGitCommand(repoPath, "update-ref", localRef, remoteHash); err != nil {
-		return fmt.Errorf("sync base branch %q: diverged, reset to remote: %w\n%s", sourceBranch, err, out)
+	warn("the local branch has diverged from origin")
+	return nil
+}
+
+func (s *WorktreeSandbox) worktreeStartPoint() (string, error) {
+	remoteRef := "refs/remotes/origin/" + s.sourceBranch
+	if _, err := gitRevParse(s.repoPath, "--verify", remoteRef); err == nil {
+		return remoteRef, nil
+	}
+	if BranchExists(s.repoPath, s.sourceBranch) {
+		return "", fmt.Errorf("origin/%s is unavailable; refusing to branch a run from the local base", s.sourceBranch)
+	}
+	// Non-branch source refs (for example a fetched review-head SHA) are
+	// explicit start points, not a fallback to a potentially stale local base.
+	return s.sourceBranch, nil
+}
+
+func fastForwardUnheldBaseBranch(repoPath, sourceBranch, remoteRef string) error {
+	tempDir, err := os.MkdirTemp("", "sandman-base-sync-")
+	if err != nil {
+		return fmt.Errorf("create temporary worktree path: %w", err)
+	}
+	if out, err := runGitCommand(repoPath, "worktree", "add", tempDir, sourceBranch); err != nil {
+		_ = os.Remove(tempDir)
+		return fmt.Errorf("check out base branch for fast-forward: %w\n%s", err, out)
+	}
+	mergeOut, mergeErr := runGitCommand(tempDir, "merge", "--ff-only", remoteRef)
+	removeOut, removeErr := runGitCommand(repoPath, "worktree", "remove", "--force", tempDir)
+	if removeErr != nil {
+		return fmt.Errorf("remove temporary base worktree: %w\n%s", removeErr, removeOut)
+	}
+	if mergeErr != nil {
+		return fmt.Errorf("merge origin into temporary base worktree: %w\n%s", mergeErr, mergeOut)
 	}
 	return nil
+}
+
+func worktreePathsForBranch(repoPath, branchRef string) ([]string, error) {
+	out, err := runGitCommand(repoPath, "worktree", "list", "--porcelain")
+	if err != nil {
+		return nil, fmt.Errorf("git worktree list --porcelain: %w\n%s", err, out)
+	}
+	var paths []string
+	var path string
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "worktree ") {
+			path = strings.TrimPrefix(line, "worktree ")
+			continue
+		}
+		if strings.HasPrefix(line, "branch ") && strings.TrimSpace(strings.TrimPrefix(line, "branch ")) == branchRef {
+			paths = append(paths, path)
+		}
+	}
+	return paths, nil
 }
 
 func gitMergeBaseIsAncestor(dir, a, b string) (bool, error) {

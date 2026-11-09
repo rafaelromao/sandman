@@ -17,7 +17,7 @@ import (
 
 func TestWorktreeSandboxExecBlocksGlobalWorktreePrune(t *testing.T) {
 	repo := t.TempDir()
-	initGitRepo(t, repo)
+	initGitRepoWithRemote(t, repo)
 	branch := "42-prune-guard"
 	s := NewWorktreeSandbox(repo, filepath.Join(repo, ".sandman", "worktrees"), branch, "main")
 	if err := s.Start(SandboxStart{}); err != nil {
@@ -67,7 +67,7 @@ func TestWorktreeSandboxGitGuardDelegatesWithPrependedPath(t *testing.T) {
 				t.Fatal(err)
 			}
 			repo = alias
-			initGitRepo(t, repo)
+			initGitRepoWithRemote(t, repo)
 			s := NewWorktreeSandbox(repo, filepath.Join(repo, ".sandman", "worktrees"), "42-path-guard", "main")
 			if err := s.Start(SandboxStart{}); err != nil {
 				t.Fatal(err)
@@ -171,7 +171,7 @@ func TestWorktreeSandboxGitGuardKeepsSiblingRegistrationsThroughGC(t *testing.T)
 	for _, command := range []string{"git gc --quiet", "git -C %s gc --quiet"} {
 		t.Run(command, func(t *testing.T) {
 			repo := t.TempDir()
-			initGitRepo(t, repo)
+			initGitRepoWithRemote(t, repo)
 			sibling := "43-sibling"
 			runGit(t, repo, "worktree", "add", "-b", sibling, filepath.Join(t.TempDir(), sibling))
 			registration := filepath.Join(repo, ".git", "worktrees", sibling)
@@ -222,7 +222,7 @@ func TestWorktreeSandboxGitGuardDelegatesInsideAnotherGuard(t *testing.T) {
 	t.Setenv("SANDMAN_GIT_GUARD_DIR", outer)
 	t.Setenv("PATH", outer+string(os.PathListSeparator)+os.Getenv("PATH"))
 	repo := t.TempDir()
-	initGitRepo(t, repo)
+	initGitRepoWithRemote(t, repo)
 	s := NewWorktreeSandbox(repo, filepath.Join(repo, ".sandman", "worktrees"), "42-nested-guard", "main")
 	if err := s.Start(SandboxStart{}); err != nil {
 		t.Fatal(err)
