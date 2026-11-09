@@ -4621,7 +4621,7 @@ func terminalRunEvent(ctx context.Context, status string) (string, string) {
 	return eventType, terminalStatus
 }
 
-func syncBaseBranch(opts runSessionOptions, sandboxFactory SandboxFactory, repoPath, baseBranch string) error {
+func syncBaseBranch(opts runSessionOptions, sandboxFactory SandboxFactory, repoPath, baseBranch string, warningLog ...io.Writer) error {
 	baseBranch = strings.TrimSpace(baseBranch)
 	if baseBranch == "" {
 		return nil
@@ -4637,7 +4637,11 @@ func syncBaseBranch(opts runSessionOptions, sandboxFactory SandboxFactory, repoP
 		if sandboxFactory != nil {
 			return nil
 		}
-		syncFn = sandbox.SyncBaseBranch
+		var log io.Writer
+		if len(warningLog) > 0 {
+			log = warningLog[0]
+		}
+		return sandbox.SyncBaseBranchWithLog(repoPath, baseBranch, log)
 	}
 	return syncFn(repoPath, baseBranch)
 }

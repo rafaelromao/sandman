@@ -44,7 +44,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		return s.lifecycleEarlyAbort(ctx, branch), false
 	}
 	if s.mode != ModeContinue && !s.opts.repairHost {
-		if err := syncBaseBranch(s.deps.runSessionOpts, s.deps.sandboxFactory, s.repoRoot(), s.baseBranch); err != nil {
+		if err := syncBaseBranch(s.deps.runSessionOpts, s.deps.sandboxFactory, s.repoRoot(), s.baseBranch, s.deps.errorLog); err != nil {
 			if ctx.Err() != nil {
 				return s.lifecycleEarlyAbort(ctx, branch), false
 			}

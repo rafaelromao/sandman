@@ -10802,6 +10802,22 @@ func TestOrchestrator_RunQueuedOnlyForWaitingIssues(t *testing.T) {
 	waitForSignal(t, done, "expected batch to complete")
 }
 
+func TestSyncBaseBranchRoutesWarningsToRunErrorLog(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "dirty.txt"), []byte("uncommitted change\n"), 0644); err != nil {
+		t.Fatalf("write dirty file: %v", err)
+	}
+	var warning bytes.Buffer
+	opts := runSessionOptions{baseBranchSyncMu: &sync.Mutex{}}
+	if err := syncBaseBranch(opts, nil, dir, "main", &warning); err != nil {
+		t.Fatalf("sync base branch: %v", err)
+	}
+	if !strings.Contains(warning.String(), "not clean") {
+		t.Fatalf("expected dirty-base warning in run error log, got %q", warning.String())
+	}
+}
+
 func TestSyncBaseBranchSerializesAcrossParallelCalls(t *testing.T) {
 	var inFlight atomic.Int32
 	var maxInFlight atomic.Int32
