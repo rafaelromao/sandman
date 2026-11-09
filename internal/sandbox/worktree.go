@@ -472,6 +472,9 @@ func SyncBaseBranchWithLog(repoPath, sourceBranch string, warningLog io.Writer) 
 			return fmt.Errorf("sync base branch %q: check if remote is ancestor of local: %w", sourceBranch, err)
 		}
 		if remoteIsAncestor {
+			if localHash != remoteHash {
+				warn("the local branch is ahead of origin")
+			}
 			return nil
 		}
 		localIsAncestor, err := gitMergeBaseIsAncestor(repoPath, localHash, remoteHash)
