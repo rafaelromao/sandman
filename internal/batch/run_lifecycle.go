@@ -145,7 +145,11 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	s.emitStarted(issue, branch, runID)
 
 	logPath := s.runLogPathFor(runID)
-	if issueDriven && !s.quotaAllowance.probing() {
+	selectedRetry, retrySelected := selectedOrdinaryRetry(s.deps.eventLog, runID)
+	if retrySelected {
+		s.pendingOrdinaryRetry = &selectedRetry
+	}
+	if issueDriven && !s.quotaAllowance.probing() && !retrySelected {
 		if entryResult, entryStarted, handled := s.tryEntryResume(ctx, branch, wt, logPath, runID); handled {
 			retainEndpoint = entryStarted && entryResult.Status == "await"
 			return entryResult, entryStarted

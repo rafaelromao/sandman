@@ -31,6 +31,7 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
@@ -306,7 +307,30 @@ type continuityScenario struct {
 	// worktreeHead overrides the Run's local head; by default it is the PR's.
 	worktreeHead func(g *continuityGitHub) string
 	// githubWait asserts the Run waited for GitHub to recover.
-	githubWait bool
+	githubWait          bool
+	foregroundLifecycle bool
+	// admissionOutage injects one lookup failure after an ordinary retry is
+	// selected in run.capacity_queued but before capacity admission completes.
+	admissionOutage bool
+}
+
+type continuityHookEventLog struct {
+	underlying *spyEventLog
+	afterLog   func(events.Event)
+}
+
+func (l *continuityHookEventLog) Log(event events.Event) error {
+	if err := l.underlying.Log(event); err != nil {
+		return err
+	}
+	if l.afterLog != nil {
+		l.afterLog(event)
+	}
+	return nil
+}
+
+func (l *continuityHookEventLog) Read() ([]events.Event, error) {
+	return l.underlying.Read()
 }
 
 type continuityOutcome struct {
@@ -391,15 +415,34 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 	}}
 	errStop := errors.New("operator stopped the scenario")
 	log := &spyEventLog{}
+	var eventLog events.EventLog = log
 	const priorRunID = continuityPriorRunID
 	if sc.priorFailure != "" {
 		seedFailedRun(log, priorRunID, sc.priorFailure)
 	}
-	o := NewOrchestrator(g, &noopRenderer{}, &fakeConfigStore{config: cfg}, log, WithErrorLog(io.Discard), WithRunnableFactory(factory),
+	if sc.admissionOutage {
+		var injected sync.Once
+		eventLog = &continuityHookEventLog{underlying: log, afterLog: func(event events.Event) {
+			if event.Type != "run.capacity_queued" || event.RunID == priorRunID {
+				return
+			}
+			if _, ok := ordinaryRetryFromEvidence(event.Payload); !ok {
+				return
+			}
+			injected.Do(func() {
+				g.mu.Lock()
+				g.lookupErr = errors.New("gh pr list: exit status 1 during pre-admission observation")
+				g.mu.Unlock()
+			})
+		}}
+	}
+	o := NewOrchestrator(g, &noopRenderer{}, &fakeConfigStore{config: cfg}, eventLog, WithErrorLog(io.Discard), WithRunnableFactory(factory),
 		WithGitHubStatus(&fakeGitHubStatus{report: github.StatusReport{Indicator: "none"}}),
 		WithSandboxFactory(&retrySandboxFactory{sandbox: &retrySandbox{workDir: worktree}}),
 		WithRunSessionOpts(runSessionOptions{
 			releaseAwaitCapacity: true,
+			foregroundLifecycle:  sc.foregroundLifecycle,
+			lifecyclePollPlan:    []time.Duration{time.Second},
 			currentHead: func(string) (string, error) {
 				if sc.worktreeHead != nil {
 					return sc.worktreeHead(g), nil
@@ -413,6 +456,27 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 				mu.Unlock()
 				if index >= len(sc.polls) {
 					return errStop
+				}
+				if sc.polls[index] != nil {
+					sc.polls[index](g)
+				}
+				if sc.expireAfterFirstAwait && index == 0 {
+					mu.Lock()
+					reviewClockOffset += 2 * time.Hour
+					mu.Unlock()
+					g.mu.Lock()
+					g.clockOffset += 2 * time.Hour
+					g.mu.Unlock()
+				}
+				return ctx.Err()
+			},
+			lifecycleWait: func(ctx context.Context, _ time.Duration) error {
+				mu.Lock()
+				index := polls
+				polls++
+				mu.Unlock()
+				if index >= len(sc.polls) {
+					return errLifecycleObservationTestStop
 				}
 				if sc.polls[index] != nil {
 					sc.polls[index](g)
@@ -472,7 +536,7 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 		}
 	}
 	restart := func() lifecycleVerdict {
-		fresh := NewOrchestrator(g, &noopRenderer{}, &fakeConfigStore{config: cfg}, log, WithErrorLog(io.Discard),
+		fresh := NewOrchestrator(g, &noopRenderer{}, &fakeConfigStore{config: cfg}, eventLog, WithErrorLog(io.Discard),
 			WithRunSessionOpts(runSessionOptions{currentHead: func(string) (string, error) { return g.head(), nil }}))
 		executor := fresh.newRunExecutorWith(context.Background(), BatchConfig{Cfg: cfg}, nil, nil, newBatchCoordinator(nil), nil, paths.NewLayout(cfg, root))
 		return executor.observeRowLifecycle(context.Background(), RowSpec{
@@ -589,6 +653,15 @@ func (o continuityOutcome) verdict() string {
 
 func (o continuityOutcome) count(eventType string) int {
 	return countEventsByType(o.current(), eventType)
+}
+
+func (o continuityOutcome) waitedForGitHubRecovery() bool {
+	for _, event := range o.current() {
+		if event.Type == "run.await" && event.Payload["await_reason"] == gateGitHubUnavailable {
+			return true
+		}
+	}
+	return false
 }
 
 // current drops the seeded earlier Run, which is history the scenario
@@ -961,6 +1034,29 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 			},
 			want: "merged", maxLaunches: 2,
 		},
+		// #2946: the agent fails while GitHub is unavailable and no CI/review
+		// wait has been established for this Run. The outage wait must preserve
+		// the ordinary retry budget until GitHub recovers; the current-head
+		// approval then takes the normal merge path.
+		continuityScenario{
+			name: "#2946 failed attempt waits for GitHub recovery before merge", pr: greenCleanPR(), retries: 3,
+			forbidRetry: true, githubWait: true,
+			launches: []func(*continuityGitHub) string{func(g *continuityGitHub) string {
+				g.trigger()
+				g.mu.Lock()
+				g.lookupErr = errors.New("gh pr list: exit status 1")
+				g.mu.Unlock()
+				return "failure"
+			}},
+			polls: []func(*continuityGitHub){func(g *continuityGitHub) {
+				g.mu.Lock()
+				g.lookupErr = nil
+				g.runtimeOffset += githubRecoveryInterval
+				g.mu.Unlock()
+				g.publish(reports["approved-daemon-30.md"])
+			}},
+			want: "merged", maxLaunches: 2,
+		},
 		// A GitHub outage during a stalled wait keeps the stalled-resume
 		// ledger: after recovery on unchanged evidence the Run keeps waiting
 		// instead of relaunching the implementor.
@@ -1097,6 +1193,553 @@ func TestAFKContinuityContract_RealIncidentsMergeOrWait(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestAFKContinuityContract_FailedAttemptOutageRecoveryRetriesBoundedly(t *testing.T) {
+	retriedAfterRecovery := false
+	outcome := runContinuityScenario(t, continuityScenario{
+		name: "failed attempt resumes ordinary retries after GitHub recovery",
+		pr: github.PR{
+			StatusCheckRollup: "success",
+			ReviewDecision:    "REVIEW_REQUIRED",
+			MergeStateStatus:  "BLOCKED",
+		},
+		retries: 1,
+		launches: []func(*continuityGitHub) string{
+			func(g *continuityGitHub) string {
+				g.mu.Lock()
+				g.lookupErr = errors.New("gh pr list: exit status 1")
+				g.mu.Unlock()
+				return "failure"
+			},
+			func(g *continuityGitHub) string {
+				g.mu.Lock()
+				retriedAfterRecovery = g.lookupErr == nil && g.runtimeOffset >= githubRecoveryInterval
+				g.mu.Unlock()
+				return "failure"
+			},
+		},
+		polls: []func(*continuityGitHub){func(g *continuityGitHub) {
+			g.mu.Lock()
+			g.lookupErr = nil
+			g.runtimeOffset += githubRecoveryInterval
+			g.mu.Unlock()
+		}},
+		githubWait:  true,
+		maxLaunches: 3,
+	})
+	if !strings.HasPrefix(outcome.verdict(), "failed:") {
+		t.Fatalf("recovery outcome = %s, want a bounded terminal outcome", outcome.verdict())
+	}
+	if !outcome.waitedForGitHubRecovery() {
+		t.Fatalf("failed attempt skipped its GitHub recovery wait\nevents: %s", continuityEventSummary(outcome.events))
+	}
+	if !retriedAfterRecovery {
+		t.Fatal("agent retry started before GitHub recovered or did not start")
+	}
+	if reasons := outcome.retryReasons(); len(reasons) != 1 || reasons[0] != "agent-failed" {
+		t.Fatalf("retry reasons = %v, want one bounded agent-failed retry", reasons)
+	}
+}
+
+func TestAFKContinuityContract_ForegroundOutageRecoveryReturnsToAgentFailure(t *testing.T) {
+	retriedAfterRecovery := false
+	outcome := runContinuityScenario(t, continuityScenario{
+		name: "foreground failed attempt retries after no-op recovery",
+		pr: github.PR{
+			StatusCheckRollup: "success",
+			ReviewDecision:    "REVIEW_REQUIRED",
+			MergeStateStatus:  "BLOCKED",
+		},
+		retries:             1,
+		foregroundLifecycle: true,
+		launches: []func(*continuityGitHub) string{
+			func(g *continuityGitHub) string {
+				g.mu.Lock()
+				g.lookupErr = errors.New("gh pr list: exit status 1")
+				g.mu.Unlock()
+				return "failure"
+			},
+			func(g *continuityGitHub) string {
+				g.mu.Lock()
+				retriedAfterRecovery = g.lookupErr == nil && g.runtimeOffset >= githubRecoveryInterval
+				g.mu.Unlock()
+				return "failure"
+			},
+		},
+		polls: []func(*continuityGitHub){func(g *continuityGitHub) {
+			g.mu.Lock()
+			g.lookupErr = nil
+			g.runtimeOffset += githubRecoveryInterval
+			g.mu.Unlock()
+		}},
+		githubWait:  true,
+		maxLaunches: 2,
+	})
+	if !strings.HasPrefix(outcome.verdict(), "failed:") {
+		t.Fatalf("foreground recovery outcome = %s, want bounded failure", outcome.verdict())
+	}
+	if !retriedAfterRecovery {
+		t.Fatalf("foreground retry started before recovery or did not start; verdict=%s launches=%d events=%s", outcome.verdict(), outcome.launches, continuityEventSummary(outcome.events))
+	}
+	if reasons := outcome.retryReasons(); len(reasons) != 1 || reasons[0] != "agent-failed" {
+		t.Fatalf("foreground retry reasons = %v, want one agent-failed retry", reasons)
+	}
+	if !outcome.waitedForGitHubRecovery() {
+		t.Fatalf("foreground failed attempt skipped its GitHub recovery wait\nevents: %s", continuityEventSummary(outcome.events))
+	}
+	for _, event := range outcome.current() {
+		if event.Type == "run.finished" && event.Payload["reason"] == idleGateReason {
+			t.Fatalf("foreground recovery terminalized as an idle-gate failure: %v", event.Payload)
+		}
+	}
+}
+
+func TestAFKContinuityContract_GitHubRecoveryPreservesOrdinaryRetryBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		retries int
+	}{
+		{name: "zero retries", retries: 0},
+		{name: "one retry across repeated no-op recoveries", retries: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			launches := make([]func(*continuityGitHub) string, tc.retries+1)
+			retryStartedAfterRecovery := false
+			for i := range launches {
+				attempt := i
+				launches[i] = func(g *continuityGitHub) string {
+					g.mu.Lock()
+					if attempt > 0 && g.runtimeOffset >= githubRecoveryInterval {
+						retryStartedAfterRecovery = true
+					}
+					g.lookupErr = errors.New("gh pr list: exit status 1")
+					g.mu.Unlock()
+					return "failure"
+				}
+			}
+			polls := make([]func(*continuityGitHub), tc.retries+1)
+			for i := range polls {
+				polls[i] = func(g *continuityGitHub) {
+					g.mu.Lock()
+					g.lookupErr = nil
+					g.runtimeOffset += githubRecoveryInterval
+					g.mu.Unlock()
+				}
+			}
+			outcome := runContinuityScenario(t, continuityScenario{
+				name: "failed attempts remain bounded after recovery",
+				pr: github.PR{
+					StatusCheckRollup: "success",
+					ReviewDecision:    "REVIEW_REQUIRED",
+					MergeStateStatus:  "BLOCKED",
+				},
+				retries: tc.retries, launches: launches, polls: polls,
+				githubWait: true, maxLaunches: tc.retries + 1,
+			})
+			if !strings.HasPrefix(outcome.verdict(), "failed:") {
+				t.Fatalf("outcome = %s, want a bounded terminal failure\nevents: %s", outcome.verdict(), continuityEventSummary(outcome.events))
+			}
+			if outcome.launches != tc.retries+1 {
+				t.Fatalf("agent launches = %d, want initial attempt plus %d configured retries\nevents: %s", outcome.launches, tc.retries, continuityEventSummary(outcome.events))
+			}
+			if tc.retries > 0 && !retryStartedAfterRecovery {
+				t.Fatalf("ordinary retry started before GitHub recovery\nevents: %s", continuityEventSummary(outcome.events))
+			}
+			if reasons := outcome.retryReasons(); len(reasons) != tc.retries {
+				t.Fatalf("retry reasons = %v, want exactly %d configured retries\nevents: %s", reasons, tc.retries, continuityEventSummary(outcome.events))
+			} else {
+				for _, reason := range reasons {
+					if reason != "agent-failed" {
+						t.Fatalf("retry reasons = %v, want only agent-failed", reasons)
+					}
+				}
+			}
+			waits := 0
+			for _, event := range outcome.current() {
+				if event.Type != "run.await" || event.Payload["await_reason"] != gateGitHubUnavailable {
+					continue
+				}
+				waits++
+				state, ok := ordinaryRetryFromEvidence(event.Payload)
+				if !ok || state.PreviousStatus != "failure" || state.AttemptsCompleted != waits || state.MaxAttempts != tc.retries+1 {
+					t.Fatalf("GitHub recovery wait retry state = %#v (valid=%t), want completed attempt %d of %d\nevents: %s", state, ok, waits, tc.retries+1, continuityEventSummary(outcome.events))
+				}
+			}
+			if waits != tc.retries+1 {
+				t.Fatalf("GitHub recovery waits = %d, want one per failed attempt (%d)\nevents: %s", waits, tc.retries+1, continuityEventSummary(outcome.events))
+			}
+		})
+	}
+}
+
+func TestAFKContinuityContract_AdmissionOutagePreservesSelectedRetryBudget(t *testing.T) {
+	outcome := runContinuityScenario(t, continuityScenario{
+		name: "admission outage retains selected ordinary retry",
+		pr: github.PR{
+			StatusCheckRollup: "success",
+			ReviewDecision:    "REVIEW_REQUIRED",
+			MergeStateStatus:  "BLOCKED",
+		},
+		retries: 1,
+		launches: []func(*continuityGitHub) string{
+			func(g *continuityGitHub) string {
+				g.mu.Lock()
+				g.lookupErr = errors.New("gh pr list: exit status 1")
+				g.mu.Unlock()
+				return "failure"
+			},
+			func(g *continuityGitHub) string {
+				g.mu.Lock()
+				g.lookupErr = errors.New("gh pr list: exit status 1 after the bounded retry")
+				g.mu.Unlock()
+				return "failure"
+			},
+		},
+		polls: []func(*continuityGitHub){
+			func(g *continuityGitHub) {
+				g.mu.Lock()
+				g.lookupErr = nil
+				g.runtimeOffset += githubRecoveryInterval
+				g.mu.Unlock()
+			},
+			func(g *continuityGitHub) {
+				g.mu.Lock()
+				g.lookupErr = nil
+				g.runtimeOffset += githubRecoveryInterval
+				g.mu.Unlock()
+			},
+			func(g *continuityGitHub) {
+				g.mu.Lock()
+				g.lookupErr = nil
+				g.runtimeOffset += githubRecoveryInterval
+				g.mu.Unlock()
+			},
+		},
+		githubWait:      true,
+		maxLaunches:     2,
+		admissionOutage: true,
+	})
+	if !strings.HasPrefix(outcome.verdict(), "failed:") {
+		t.Fatalf("admission outage outcome = %s, want bounded failure\nevents: %s", outcome.verdict(), continuityEventSummary(outcome.events))
+	}
+	if outcome.launches != 2 {
+		t.Fatalf("agent launches = %d, want initial attempt plus exactly one configured retry\nevents: %s", outcome.launches, continuityEventSummary(outcome.events))
+	}
+	if reasons := outcome.retryReasons(); len(reasons) != 1 || reasons[0] != "agent-failed" {
+		t.Fatalf("retry reasons = %v, want one agent-failed retry\nevents: %s", reasons, continuityEventSummary(outcome.events))
+	}
+
+	events := outcome.current()
+	retainedAdmissionHandoff := false
+	for index, event := range events {
+		if event.Type != "run.await" || event.Payload["await_reason"] != gateGitHubUnavailable {
+			continue
+		}
+		state, ok := ordinaryRetryFromEvidence(event.Payload)
+		if !ok {
+			t.Fatalf("GitHub recovery wait %d lost ordinary retry state: %v", index, event.Payload)
+		}
+		if state.PreviousStatus != "failure" || state.MaxAttempts != 2 || state.AttemptsCompleted < 1 || state.AttemptsCompleted > 2 {
+			t.Fatalf("GitHub recovery wait %d has incorrect retry state: %+v", index, state)
+		}
+		if state.AttemptsCompleted == 1 && index > 0 && events[index-1].Type == "run.capacity_queued" {
+			previous := events[index-1]
+			readyState, ready := ordinaryRetryFromEvidence(previous.Payload)
+			if previous.Type != "run.capacity_queued" || !ready || readyState != state {
+				t.Fatalf("admission recovery wait did not retain its selected capacity handoff: previous=%+v state=%+v ready=%t", previous, state, ready)
+			}
+			retainedAdmissionHandoff = true
+		}
+	}
+	if !retainedAdmissionHandoff {
+		t.Fatalf("no admission outage wait followed a selected retry handoff\nevents: %s", continuityEventSummary(outcome.events))
+	}
+}
+
+func TestAFKContinuityContract_RestartedAdmissionOutagePreservesRetryBudget(t *testing.T) {
+	root := testenv.MkdirShort(t, "sm-restart-admission-")
+	t.Chdir(root)
+	initGitRepo(t, root)
+	const (
+		issue   = 42
+		runID   = "261109120000-restart-42"
+		batchID = "261109120000-restart-42"
+	)
+	worktree := filepath.Join(root, "worktrees", continuityBranch)
+	taskPath := filepath.Join(worktree, ".sandman", "task.md")
+	if err := os.MkdirAll(filepath.Dir(taskPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(taskPath, []byte("# Task\n\nContinue the bounded retry.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		Agent: "test", Sandbox: "worktree", WorktreeDir: filepath.Join(root, "worktrees"),
+		Git:            config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{"test": {Command: "true"}},
+	}
+	layout := paths.NewLayout(cfg, root)
+	now := time.Now().UTC()
+	retry := ordinaryRetryState{PreviousStatus: "failure", AttemptsCompleted: 1, MaxAttempts: 2}
+	log := &spyEventLog{events: []events.Event{
+		{Type: "run.started", Timestamp: now.Add(-2 * time.Minute), RunID: runID, Issue: issue, Payload: map[string]any{
+			"branch": continuityBranch, "base_branch": "main", "batch_id": batchID,
+		}},
+		{Type: "run.capacity_queued", Timestamp: now.Add(-time.Minute), RunID: runID, Issue: issue, Payload: map[string]any{
+			"ready_continuation": true, "branch": continuityBranch, "base_branch": "main", "batch_id": batchID,
+			"previous_run_id": runID, "previous_run_batch_id": batchID, "issue_title": "Continuity",
+			ordinaryRetryKey: retry.payload(),
+		}},
+	}}
+	ready := FindReadyContinuations(log.snapshot(), layout)
+	if len(ready) != 1 || ready[0].RunID != runID || ready[0].Wait == nil || !ready[0].Wait.Ready {
+		t.Fatalf("seeded retry handoff did not rehydrate as ready: %#v", ready)
+	}
+	request := Request{Retries: 1, Parallel: 1, RunTS: "261109120000", RunShortID: "restart"}
+	if err := ApplyReadyContinuations(&request, ready, layout, 1800); err != nil {
+		t.Fatalf("ApplyReadyContinuations: %v", err)
+	}
+	g := newContinuityGitHub(github.PR{
+		StatusCheckRollup: "success",
+		ReviewDecision:    "REVIEW_REQUIRED",
+		MergeStateStatus:  "BLOCKED",
+	})
+	var injected sync.Once
+	eventLog := &continuityHookEventLog{underlying: log, afterLog: func(event events.Event) {
+		if event.Type == "run.capacity_queued" && event.RunID == runID {
+			injected.Do(func() {
+				g.mu.Lock()
+				g.lookupErr = errors.New("gh pr list: exit status 1 during restarted admission")
+				g.mu.Unlock()
+			})
+		}
+	}}
+	launches := 0
+	factory := &promptOnlyRunnableFactory{hook: func(*github.Issue, string) AgentRunResult {
+		launches++
+		return AgentRunResult{IssueNumber: issue, Status: "failure"}
+	}}
+	errStop := errors.New("stop after observing the restarted outage")
+	o := NewOrchestrator(g, &noopRenderer{}, &fakeConfigStore{config: cfg}, eventLog,
+		WithErrorLog(io.Discard), WithRunnableFactory(factory),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: &retrySandbox{workDir: worktree}}),
+		WithGitHubStatus(&fakeGitHubStatus{report: github.StatusReport{Indicator: "none"}}),
+		WithRunSessionOpts(runSessionOptions{
+			releaseAwaitCapacity: true,
+			lifecyclePollPlan:    []time.Duration{time.Second},
+			baseBranchSync:       func(string, string) error { return nil },
+			currentHead:          func(string) (string, error) { return g.head(), nil },
+			awaitWait:            func(context.Context, time.Duration) error { return errStop },
+		}),
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, runErr := o.RunBatch(ctx, request)
+	if runErr == nil || !strings.Contains(runErr.Error(), "batch aborted by context cancellation") {
+		t.Fatalf("RunBatch stop result = %v, want the test's deliberate stop after its observed await", runErr)
+	}
+	if result == nil || len(result.Runs) != 1 {
+		t.Fatalf("RunBatch result = %+v", result)
+	}
+	history := log.snapshot()
+	var requeued, outageAwait *events.Event
+	for index := range history {
+		event := &history[index]
+		if event.RunID != runID {
+			continue
+		}
+		if event.Type == "run.capacity_queued" && payloadBoolValue(event.Payload, "ready_continuation") {
+			requeued = event
+		}
+		if event.Type == "run.await" && event.Payload["await_reason"] == gateGitHubUnavailable {
+			outageAwait = event
+		}
+	}
+	if requeued == nil {
+		t.Fatalf("restarted RunBatch did not republish capacity readiness: %s", continuityEventSummary(history))
+	}
+	if got, ok := ordinaryRetryFromEvidence(requeued.Payload); !ok || got != retry {
+		t.Fatalf("restart readiness lost selected retry handoff: state=%+v selected=%t payload=%v", got, ok, requeued.Payload)
+	}
+	if outageAwait == nil {
+		t.Fatalf("restarted admission lookup failure did not wait for GitHub: %s", continuityEventSummary(history))
+	}
+	if got, ok := ordinaryRetryFromEvidence(outageAwait.Payload); !ok || got != retry {
+		t.Fatalf("replacement outage wait lost retry budget: state=%+v selected=%t payload=%v", got, ok, outageAwait.Payload)
+	}
+	if launches != 0 {
+		t.Fatalf("agent launches during restarted admission outage = %d, want none before GitHub recovery", launches)
+	}
+	if retries := countEventsByType(history, "run.retry"); retries != 0 {
+		t.Fatalf("ordinary retries during restarted admission outage = %d, want none", retries)
+	}
+}
+
+func TestAFKContinuityContract_QuotaPausedAdmissionOutagePreservesRetryBudget(t *testing.T) {
+	root := testenv.MkdirShort(t, "sm-quota-pause-admission-")
+	t.Chdir(root)
+	initGitRepo(t, root)
+	const (
+		runID      = "261109120000-restart-42"
+		quotaRunID = "261109120000-quota-43"
+		batchID    = "261109120000-restart-42"
+		issue      = 42
+	)
+	cfg := &config.Config{
+		Agent: "opencode", Sandbox: "worktree", WorktreeDir: filepath.Join(root, "worktrees"),
+		Git:            config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{"opencode": config.BuiltInAgentPresets["opencode"].Agent("opencode")},
+	}
+	layout := paths.NewLayout(cfg, root)
+	for _, branch := range []string{continuityBranch, "43-quota"} {
+		taskPath := filepath.Join(layout.WorktreeDir, branch, ".sandman", "task.md")
+		if err := os.MkdirAll(filepath.Dir(taskPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(taskPath, []byte("# Task\n\nContinue the bounded retry.\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now().UTC()
+	retry := ordinaryRetryState{PreviousStatus: "failure", AttemptsCompleted: 1, MaxAttempts: 2}
+	quotaAwaitedAt := now.Add(-time.Minute)
+	log := &spyEventLog{events: []events.Event{
+		{Type: "run.started", Timestamp: now.Add(-3 * time.Minute), RunID: runID, Issue: issue, Payload: map[string]any{
+			"branch": continuityBranch, "base_branch": "main", "batch_id": batchID,
+		}},
+		{Type: "run.capacity_queued", Timestamp: now.Add(-2 * time.Minute), RunID: runID, Issue: issue, Payload: map[string]any{
+			"ready_continuation": true, "branch": continuityBranch, "base_branch": "main", "batch_id": batchID,
+			"previous_run_id": runID, "previous_run_batch_id": batchID, "issue_title": "Continuity",
+			ordinaryRetryKey: retry.payload(),
+		}},
+		{Type: "run.started", Timestamp: now.Add(-2 * time.Minute), RunID: quotaRunID, Issue: 43, Payload: map[string]any{
+			"branch": "43-quota", "base_branch": "main", "batch_id": batchID,
+		}},
+		{Type: "run.await", Timestamp: quotaAwaitedAt, RunID: quotaRunID, Issue: 43, Payload: map[string]any{
+			"await": true, "await_reason": "usage-limit", "gate": "usage-limit", "usage_limit_poll_seconds": int(usageLimitPollInterval / time.Second),
+			"usage_limit_retry_window_seconds": int(usageLimitRetryWindow / time.Second), "usage_limit_waited_seconds": 0,
+		}},
+	}}
+	quotaWait := daemon.RunWait{
+		Protocol: "run-wait/v1", RunID: quotaRunID, BatchID: batchID, Issue: 43,
+		Branch: "43-quota", BaseBranch: "main", UsageLimitProbe: true,
+		OperationID: "quota:" + quotaRunID, LeaseExpiresAt: now.Add(daemon.RunRecoveryGrace),
+		NextPollAt: quotaAwaitedAt.Add(usageLimitPollInterval),
+	}
+	if err := daemon.RenewRunWait(layout, layout.LocateBatch(batchID, ""), quotaWait, now); err != nil {
+		t.Fatalf("seed quota sibling recovery wait: %v", err)
+	}
+	ready := FindReadyContinuations(log.snapshot(), layout)
+	if len(ready) != 2 {
+		t.Fatalf("ready continuations = %#v, want retry row and quota-paused sibling", ready)
+	}
+	request := Request{Retries: 1, Parallel: 1, RunTS: "261109123000", RunShortID: "quota-pause"}
+	if err := ApplyReadyContinuations(&request, ready, layout, 1800); err != nil {
+		t.Fatalf("ApplyReadyContinuations: %v", err)
+	}
+	g := newContinuityGitHub(github.PR{
+		StatusCheckRollup: "success", ReviewDecision: "REVIEW_REQUIRED", MergeStateStatus: "BLOCKED",
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	eventLog := &continuityHookEventLog{underlying: log, afterLog: func(event events.Event) {
+		if event.RunID == runID && event.Type == "run.capacity_queued" && event.Payload["reason"] == "usage-limit-paused" {
+			g.mu.Lock()
+			g.lookupErr = errors.New("gh pr list: exit status 1 during quota-paused admission")
+			g.mu.Unlock()
+		}
+		if event.RunID == runID && event.Type == "run.await" && event.Payload["await_reason"] == gateGitHubUnavailable {
+			cancel()
+		}
+	}}
+	var launchMu sync.Mutex
+	launches := map[int]int{}
+	factory := &promptOnlyRunnableFactory{hook: func(issueRef *github.Issue, branch string) AgentRunResult {
+		launchMu.Lock()
+		launches[issueRef.Number]++
+		launchMu.Unlock()
+		return AgentRunResult{IssueNumber: issueRef.Number, Status: "failure", Branch: branch}
+	}}
+	o := NewOrchestrator(g, &noopRenderer{}, &fakeConfigStore{config: cfg}, eventLog,
+		WithErrorLog(io.Discard), WithRunnableFactory(factory),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: &retrySandbox{workDir: filepath.Join(layout.WorktreeDir, continuityBranch)}}),
+		WithGitHubStatus(&fakeGitHubStatus{report: github.StatusReport{Indicator: "none"}}),
+		WithRunSessionOpts(runSessionOptions{
+			releaseAwaitCapacity: true,
+			lifecyclePollPlan:    []time.Duration{5 * time.Millisecond},
+			baseBranchSync:       func(string, string) error { return nil },
+			currentHead:          func(string) (string, error) { return g.head(), nil },
+			awaitWait: func(ctx context.Context, _ time.Duration) error {
+				<-ctx.Done()
+				return ctx.Err()
+			},
+		}),
+	)
+	done := make(chan error, 1)
+	go func() {
+		_, err := o.RunBatch(ctx, request)
+		done <- err
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		found := false
+		for _, event := range log.snapshot() {
+			if event.RunID == runID && event.Type == "run.await" && event.Payload["await_reason"] == gateGitHubUnavailable {
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			<-done
+			t.Fatalf("quota-paused admission did not persist its GitHub outage wait: %s", continuityEventSummary(log.snapshot()))
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatal("RunBatch did not stop after the observed quota-paused outage")
+	}
+
+	history := log.snapshot()
+	var paused, outage *events.Event
+	for index := range history {
+		event := &history[index]
+		if event.RunID != runID {
+			continue
+		}
+		if event.Type == "run.capacity_queued" && event.Payload["reason"] == "usage-limit-paused" {
+			paused = event
+		}
+		if event.Type == "run.await" && event.Payload["await_reason"] == gateGitHubUnavailable {
+			outage = event
+		}
+	}
+	if paused == nil || outage == nil {
+		t.Fatalf("quota-paused outage path missing readiness or await event: %s", continuityEventSummary(history))
+	}
+	if got, ok := ordinaryRetryFromEvidence(paused.Payload); !ok || got != retry {
+		t.Fatalf("quota-pause readiness lost selected retry handoff: state=%+v selected=%t payload=%v", got, ok, paused.Payload)
+	}
+	if got, ok := ordinaryRetryFromEvidence(outage.Payload); !ok || got != retry {
+		t.Fatalf("GitHub recovery wait lost retry budget after quota pause: state=%+v selected=%t payload=%v", got, ok, outage.Payload)
+	}
+	for _, event := range history {
+		if event.RunID == runID && event.Type == "run.retry" {
+			t.Fatalf("ordinary retry was consumed before GitHub recovered: %+v", event)
+		}
+	}
+	launchMu.Lock()
+	defer launchMu.Unlock()
+	if launches[issue] != 0 {
+		t.Fatalf("retry-row agent launches during quota pause = %d, want none before GitHub recovery", launches[issue])
 	}
 }
 

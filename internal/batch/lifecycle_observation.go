@@ -15,7 +15,9 @@ type lifecycleObservationRequest struct {
 	HostPathsReady    bool
 	AttemptStatus     string
 	AfterAgentAttempt bool
+	UsageLimitReached bool
 	CIRerunAction     *ciRerunActionEvidence
+	OrdinaryRetry     *ordinaryRetryState
 }
 
 // lifecycleVerdict is the selected lifecycle action and the evidence used to
@@ -38,6 +40,9 @@ const (
 	// lifecycleVerdictGitHubUnavailable is a wait for GitHub to recover from
 	// a failed pull-request lookup or refresh (issue #2938).
 	lifecycleVerdictGitHubUnavailable
+	// lifecycleVerdictOrdinaryRetry returns a no-op recovery observation to the
+	// ordinary retry loop for the non-success attempt being observed.
+	lifecycleVerdictOrdinaryRetry
 )
 
 // lifecycleObservation is the single operation callers use to observe an
@@ -56,8 +61,20 @@ func newLifecycleObserver(session *runSession) *lifecycleObserver {
 }
 
 func (o *lifecycleObserver) Observe(ctx context.Context, request lifecycleObservationRequest) lifecycleVerdict {
+	if request.OrdinaryRetry == nil {
+		// Capacity admission observes the still-unconsumed retry handoff before
+		// a new executor starts. Restore it here so an admission lookup outage
+		// can carry the same failed attempt and bound into its replacement wait.
+		if retry, selected := selectedOrdinaryRetry(o.deps.eventLog, request.RunID); selected {
+			request.OrdinaryRetry = &retry
+		}
+	}
 	recovery, recoveryBase, recovering, recoveryUnknown := o.githubRecoveryWindow(request.RunID)
 	if recovering {
+		if retry, ok := ordinaryRetryFromEvidence(recoveryBase); ok {
+			request.OrdinaryRetry = &retry
+			request.AttemptStatus = retry.PreviousStatus
+		}
 		if verdict, handled := o.observeGitHubRecovery(ctx, request, &recovery, recoveryBase); handled {
 			return verdict
 		}
@@ -69,9 +86,13 @@ func (o *lifecycleObserver) Observe(ctx context.Context, request lifecycleObserv
 		request.RunID,
 		request.HostPathsReady,
 		request.AttemptStatus,
+		request.UsageLimitReached,
 		request.AfterAgentAttempt,
 		request.CIRerunAction,
 	)
+	if recovering && request.OrdinaryRetry != nil && !request.UsageLimitReached && ordinaryRetryNoOp(verdict) {
+		return ordinaryRetryAfterGitHubRecovery(*request.OrdinaryRetry, request.Branch)
+	}
 	if verdict.Kind == lifecycleVerdictGitHubUnavailable && ctx.Err() == nil {
 		// The recovery wait keeps the Run's stalled-resume ledger, so recovery
 		// on unchanged evidence cannot relaunch the implementor.
@@ -83,6 +104,46 @@ func (o *lifecycleObserver) Observe(ctx context.Context, request lifecycleObserv
 	}
 	verdict.ImplementorWork = isImplementorOwnedGateFailure(verdict.Evidence)
 	return o.applyContinuity(request.Branch, request.RunID, verdict)
+}
+
+func ordinaryRetryNoOp(verdict lifecycleVerdict) bool {
+	if verdict.Kind == lifecycleVerdictGitHubUnavailable || verdict.Action == lifecycleSuccess || verdict.Action == lifecycleAborted {
+		return false
+	}
+	if _, ok := verdict.Evidence["ci_wait"]; ok {
+		return false
+	}
+	if request, ok := verdict.Evidence["review_request"].(map[string]any); ok {
+		resolved, _ := request["operation_resolved"].(bool)
+		if !resolved {
+			return false
+		}
+	}
+	reason := stringEvidence(verdict.Evidence, "reason")
+	if reason == "" {
+		reason = stringEvidence(verdict.Evidence, "stalled_reason")
+	}
+	if verdict.Action == lifecycleNone {
+		return true
+	}
+	return reason == idleGateReason || reason == "REVIEW_REQUEST_REQUIRED"
+}
+
+func ordinaryRetryAfterGitHubRecovery(state ordinaryRetryState, branch string) lifecycleVerdict {
+	evidence := map[string]any{
+		"branch":          branch,
+		"previous_status": state.PreviousStatus,
+		ordinaryRetryKey:  state.payload(),
+	}
+	if !state.hasRemainingRetry() {
+		evidence["reason"] = "AGENT_FAILED"
+		evidence["next_action"] = "GitHub recovered, but the configured ordinary retry budget is exhausted"
+		return lifecycleVerdict{Action: lifecycleFailure, Evidence: evidence, Kind: lifecycleVerdictOrdinaryRetry}
+	}
+	evidence["gate"] = "agent-failed-retry"
+	evidence["reason"] = "agent-failed"
+	evidence["next_action"] = "resume the configured ordinary retry after GitHub recovery"
+	return lifecycleVerdict{Action: lifecycleResume, Evidence: evidence, Kind: lifecycleVerdictOrdinaryRetry}
 }
 
 // waitForTransition keeps a recoverable verdict in the foreground. Deadline
@@ -129,6 +190,9 @@ func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifec
 		if !verdict.handled() {
 			if ctx.Err() != nil {
 				return lifecycleVerdict{Action: lifecycleAborted}
+			}
+			if attemptNeedsRetry(request.AttemptStatus) && !request.UsageLimitReached {
+				return lifecycleVerdict{Action: lifecycleFailure, Kind: lifecycleVerdictOrdinaryRetry}
 			}
 			verdict = failureForUnhandledObservation(verdict)
 		}

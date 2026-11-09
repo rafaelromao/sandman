@@ -136,6 +136,135 @@ func TestGitHubRecovery_LookupFailureWaits(t *testing.T) {
 	}
 }
 
+func TestGitHubRecovery_UsageLimitKeepsQuotaRecoveryPath(t *testing.T) {
+	f := newGitHubRecoveryFixture(t)
+	verdict := newLifecycleObserver(f.session()).Observe(t.Context(), lifecycleObservationRequest{
+		WorkDir: t.TempDir(), Branch: gateTestBranch, RunID: f.runID,
+		HostPathsReady: true, AttemptStatus: "failure", UsageLimitReached: true,
+	})
+	if verdict.handled() {
+		t.Fatalf("usage-limit lookup failure selected %s/%v, want quota handling", verdict.status(), verdict.Evidence)
+	}
+	if f.lookups != 1 || f.status.calls != 0 {
+		t.Fatalf("lookups=%d status checks=%d, want one failed lookup and no GitHub recovery wait", f.lookups, f.status.calls)
+	}
+}
+
+func TestSelectedOrdinaryRetryRequiresLatestUnconsumedCapacityHandoff(t *testing.T) {
+	const runID = "row"
+	want := ordinaryRetryState{PreviousStatus: "failure", AttemptsCompleted: 1, MaxAttempts: 2}
+	capacity := events.Event{Type: "run.capacity_queued", RunID: runID, Payload: map[string]any{
+		ordinaryRetryKey: want.payload(),
+	}}
+
+	for _, tc := range []struct {
+		name      string
+		following []string
+		selected  bool
+	}{
+		{name: "selected capacity handoff", selected: true},
+		{name: "continuation preserves handoff", following: []string{"run.continued"}, selected: true},
+		{name: "await consumes handoff", following: []string{"run.await"}},
+		{name: "retry consumes handoff", following: []string{"run.retry"}},
+		{name: "terminal event consumes handoff", following: []string{"run.finished"}},
+		{name: "abort consumes handoff", following: []string{"run.aborted"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			log := &spyEventLog{}
+			if err := log.Log(capacity); err != nil {
+				t.Fatal(err)
+			}
+			for _, eventType := range tc.following {
+				if err := log.Log(events.Event{Type: eventType, RunID: runID}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, selected := selectedOrdinaryRetry(log, runID)
+			if selected != tc.selected || selected && got != want {
+				t.Fatalf("selected retry = %+v, %t; want %+v, %t", got, selected, want, tc.selected)
+			}
+		})
+	}
+}
+
+func TestBatchRowDriverGates_RecordReadyPreservesOnlySelectedRetryHandoff(t *testing.T) {
+	const runID = "retry-ready-row"
+	want := ordinaryRetryState{PreviousStatus: "failure", AttemptsCompleted: 1, MaxAttempts: 2}
+	newer := ordinaryRetryState{PreviousStatus: "failure", AttemptsCompleted: 2, MaxAttempts: 2}
+	for _, tc := range []struct {
+		name          string
+		consumeBefore bool
+		explicit      *ordinaryRetryState
+		selectNew     bool
+		want          ordinaryRetryState
+		wantSelected  bool
+	}{
+		{name: "pending handoff", want: want, wantSelected: true},
+		{name: "await consumed handoff", consumeBefore: true},
+		{name: "stale explicit handoff after await", consumeBefore: true, explicit: &want},
+		{name: "explicit newer evidence", explicit: &newer, selectNew: true, want: newer, wantSelected: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			log := &spyEventLog{events: []events.Event{{
+				Type: "run.capacity_queued", RunID: runID,
+				Payload: map[string]any{ordinaryRetryKey: want.payload()},
+			}}}
+			if tc.consumeBefore {
+				if err := log.Log(events.Event{Type: "run.await", RunID: runID}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			gates := &batchRowDriverGates{log: log, batchID: "batch"}
+			extras := map[string]any{"reason": "ready"}
+			if tc.explicit != nil {
+				extras[ordinaryRetryKey] = tc.explicit.payload()
+			}
+			var selectedRetry *ordinaryRetryState
+			if tc.selectNew {
+				selectedRetry = tc.explicit
+			}
+			err := gates.RecordReady(RunSpec{RunID: runID, IssueNumber: 42, Branch: "42-fix", BaseBranch: "main"}, ContinuationCursor{}, extras, selectedRetry, time.Now())
+			if err != nil {
+				t.Fatalf("RecordReady: %v", err)
+			}
+			history := log.snapshot()
+			got, selected := ordinaryRetryFromEvidence(history[len(history)-1].Payload)
+			if selected != tc.wantSelected || selected && got != tc.want {
+				t.Fatalf("ready event retry = %+v, %t; want %+v, %t; payload=%v", got, selected, tc.want, tc.wantSelected, history[len(history)-1].Payload)
+			}
+		})
+	}
+}
+
+func TestGitHubRecovery_ForegroundNoopReturnsRetryableNonSuccess(t *testing.T) {
+	f := newGitHubRecoveryFixture(t)
+	f.client.prs[gateTestBranch] = &github.PR{
+		Number: 33, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha",
+		StatusCheckRollup: "success", ReviewDecision: "REVIEW_REQUIRED", MergeStateStatus: "BLOCKED",
+	}
+	session := f.session()
+	session.opts.lifecycleWait = func(context.Context, time.Duration) error {
+		f.client.findPRErr = nil
+		f.now = f.now.Add(githubRecoveryInterval)
+		return nil
+	}
+	observer := newLifecycleObserver(session)
+	request := lifecycleObservationRequest{
+		WorkDir: t.TempDir(), Branch: gateTestBranch, RunID: f.runID,
+		HostPathsReady: true, AttemptStatus: "agent-error",
+	}
+	initial := observer.Observe(t.Context(), request)
+	if initial.Action != lifecycleAwait || initial.Evidence["gate"] != gateGitHubUnavailable {
+		t.Fatalf("initial observation = %s/%v, want GitHub recovery wait", initial.status(), initial.Evidence)
+	}
+	session.emitAwait(t.Context(), f.runID, AgentRunResult{Branch: gateTestBranch}, initial.Evidence)
+
+	verdict := observer.waitForTransition(t.Context(), request, AgentRunResult{Branch: gateTestBranch}, initial)
+	if verdict.Action != lifecycleFailure || verdict.Kind != lifecycleVerdictOrdinaryRetry {
+		t.Fatalf("recovered observation = %s/%v, want ordinary retry for retryable non-success", verdict.status(), verdict)
+	}
+}
+
 // Before the next hourly attempt, observation neither looks up the pull
 // request nor checks GitHub's status, and the wait evidence is unchanged.
 func TestGitHubRecovery_NoAttemptBeforeNextHour(t *testing.T) {

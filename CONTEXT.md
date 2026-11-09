@@ -171,6 +171,10 @@ page attempts anyway. The window starts at its first failure, survives restart
 in the `run.await` evidence (`github_recovery`), and ends the Run with
 `GATE_LOOKUP_FAILED` only after 24 hours. `sandman run --continue` starts a new
 RunID and therefore a fresh window; explicit abort ends it.
+An ordinary failed agent attempt with no established CI/review wait also enters
+this wait and spends no retry while GitHub is unavailable. Once observation
+recovers, normal lifecycle and bounded retry handling resume; recognized
+provider usage limits remain on quota recovery.
 _Avoid_: lookup failure as a permanent outcome.
 _See_: AFK continuity.
 

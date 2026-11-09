@@ -23,9 +23,78 @@ const (
 	githubUnavailableReason = "GITHUB_UNAVAILABLE"
 	githubRecoveryKey       = "github_recovery"
 	githubRecoveryProtocol  = "github-recovery/v1"
+	ordinaryRetryKey        = "ordinary_retry"
+	ordinaryRetryProtocol   = "ordinary-retry/v1"
 	githubRecoveryInterval  = time.Hour
 	githubRecoveryBound     = 24 * time.Hour
 )
+
+// ordinaryRetryState preserves the failed attempt and its configured bound
+// across an external GitHub recovery wait. AttemptsCompleted is the 1-based
+// count of agent attempts that have already run; the next retry is logged and
+// launched only after GitHub recovers.
+type ordinaryRetryState struct {
+	PreviousStatus    string
+	AttemptsCompleted int
+	MaxAttempts       int
+}
+
+func (s ordinaryRetryState) payload() map[string]any {
+	return map[string]any{
+		"protocol":           ordinaryRetryProtocol,
+		"previous_status":    s.PreviousStatus,
+		"attempts_completed": s.AttemptsCompleted,
+		"max_attempts":       s.MaxAttempts,
+	}
+}
+
+func ordinaryRetryFromEvidence(evidence map[string]any) (ordinaryRetryState, bool) {
+	value, ok := evidence[ordinaryRetryKey].(map[string]any)
+	if !ok || value["protocol"] != ordinaryRetryProtocol {
+		return ordinaryRetryState{}, false
+	}
+	status, _ := value["previous_status"].(string)
+	state := ordinaryRetryState{
+		PreviousStatus:    strings.TrimSpace(strings.ToLower(status)),
+		AttemptsCompleted: intValue(value["attempts_completed"]),
+		MaxAttempts:       intValue(value["max_attempts"]),
+	}
+	if !attemptNeedsRetry(state.PreviousStatus) || state.AttemptsCompleted < 1 || state.MaxAttempts < state.AttemptsCompleted {
+		return ordinaryRetryState{}, false
+	}
+	return state, true
+}
+
+func (s ordinaryRetryState) hasRemainingRetry() bool {
+	return s.AttemptsCompleted < s.MaxAttempts
+}
+
+// selectedOrdinaryRetry rehydrates only a scheduler-selected retry handoff.
+// A later await or retry event consumes/replaces that handoff; the event log
+// remains authoritative across process restart.
+func selectedOrdinaryRetry(log events.EventLog, runID string) (ordinaryRetryState, bool) {
+	if log == nil || strings.TrimSpace(runID) == "" {
+		return ordinaryRetryState{}, false
+	}
+	history, err := log.Read()
+	if err != nil {
+		return ordinaryRetryState{}, false
+	}
+	var selected ordinaryRetryState
+	pending := false
+	for _, event := range history {
+		if event.RunID != runID {
+			continue
+		}
+		switch event.Type {
+		case "run.capacity_queued":
+			selected, pending = ordinaryRetryFromEvidence(event.Payload)
+		case "run.retry", "run.await", "run.started", "run.finished", "run.aborted", "run.cancelled":
+			pending = false
+		}
+	}
+	return selected, pending
+}
 
 // githubRecovery is one recovery window. It is comparable so an unchanged
 // window can be recognised without re-recording it.
@@ -249,6 +318,9 @@ func (o *lifecycleObserver) observeGitHubRecovery(ctx context.Context, request l
 // recordGitHubLookupFailure extends (or opens) the recovery window after a
 // failed lookup and selects the wait or, past the bound, the failure.
 func (o *lifecycleObserver) recordGitHubLookupFailure(request lifecycleObservationRequest, verdict lifecycleVerdict, recovery githubRecovery, open, unknown bool) lifecycleVerdict {
+	if request.OrdinaryRetry != nil && !request.UsageLimitReached && attemptNeedsRetry(request.OrdinaryRetry.PreviousStatus) {
+		verdict.Evidence[ordinaryRetryKey] = request.OrdinaryRetry.payload()
+	}
 	if unknown {
 		// The event log is unreadable, so the window cannot be found or
 		// extended. Fail closed into a wait without opening a new window,

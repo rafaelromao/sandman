@@ -67,6 +67,7 @@ func (g *batchRowDriverGates) RecordQuotaPaused(run RunSpec, cursor Continuation
 		"gate": "usage-limit", "reason": "usage-limit-paused",
 		"next_action": "resume after provider usage limit resets; Sandman did not start another run while suspended",
 	}
+	extras = g.retainSelectedOrdinaryRetry(run, extras, nil)
 	row := run.row(cursor)
 	err := logCapacityQueuedContinuationAt(g.log, at, run.RunID, run.IssueNumber, g.batchID, row, extras, g.title)
 	if err != nil && g.errorLog != nil {
@@ -75,12 +76,34 @@ func (g *batchRowDriverGates) RecordQuotaPaused(run RunSpec, cursor Continuation
 	return err
 }
 
-func (g *batchRowDriverGates) RecordReady(run RunSpec, cursor ContinuationCursor, extras map[string]any, at time.Time) error {
+func (g *batchRowDriverGates) RecordReady(run RunSpec, cursor ContinuationCursor, extras map[string]any, selectedRetry *ordinaryRetryState, at time.Time) error {
+	extras = g.retainSelectedOrdinaryRetry(run, extras, selectedRetry)
 	err := logCapacityQueuedContinuationAt(g.log, at, run.RunID, run.IssueNumber, g.batchID, run.row(cursor), extras, g.title)
 	if err != nil && g.errorLog != nil {
 		fmt.Fprintf(g.errorLog, "warning: persist ready continuation for issue %d: %v; keeping the run in its external wait\n", g.issue, err)
 	}
 	return err
+}
+
+// retainSelectedOrdinaryRetry carries an unconsumed retry budget across a
+// readiness rewrite. A fresh retry selection from the current lifecycle
+// verdict takes precedence; otherwise the event log remains authoritative and
+// a retry, await, start, or terminal event consumes the prior handoff.
+func (g *batchRowDriverGates) retainSelectedOrdinaryRetry(run RunSpec, extras map[string]any, selectedRetry *ordinaryRetryState) map[string]any {
+	if extras == nil {
+		extras = make(map[string]any)
+	} else {
+		extras = cloneLifecycleExtras(extras)
+	}
+	if selectedRetry != nil {
+		extras[ordinaryRetryKey] = selectedRetry.payload()
+		return extras
+	}
+	delete(extras, ordinaryRetryKey)
+	if retry, selected := selectedOrdinaryRetry(g.log, run.RunID); selected {
+		extras[ordinaryRetryKey] = retry.payload()
+	}
+	return extras
 }
 
 func (g *batchRowDriverGates) Checkpoint(run RunSpec, cursor ContinuationCursor, ready bool, interval time.Duration) error {

@@ -2014,6 +2014,13 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				queuedPayload["base_branch"] = req.BaseBranches[num]
 				queuedPayload["previous_run_id"] = req.PreviousRunIDs[num]
 				queuedPayload["previous_run_batch_id"] = req.PreviousRunBatchIDs[num]
+				// Restart admission republishes capacity readiness before the
+				// row driver can observe the Run. Carry forward a selected retry
+				// handoff so this ownership event does not erase its bound if the
+				// admission observation encounters another GitHub outage.
+				if retry, selected := selectedOrdinaryRetry(o.eventLog, runID); selected {
+					queuedPayload[ordinaryRetryKey] = retry.payload()
+				}
 			}
 			if err := o.eventLog.Log(events.Event{
 				Type:      queuedType,
@@ -2880,6 +2887,7 @@ type runSession struct {
 	parallel                   int
 	startDelay                 time.Duration
 	retries                    int
+	pendingOrdinaryRetry       *ordinaryRetryState
 	runIdleTimeout             int
 	sandboxMode                string
 	containerCapacity          int
@@ -3797,9 +3805,17 @@ func (s *runSession) runOnce(
 	}
 
 	attempts := s.retries + 1
+	firstAttempt := 0
 	var result AgentRunResult
 	var abortedByHeartbeat bool
 	s.lifecycleTerminal = false
+	if s.pendingOrdinaryRetry != nil {
+		state := *s.pendingOrdinaryRetry
+		attempts = min(attempts, state.MaxAttempts)
+		firstAttempt = state.AttemptsCompleted
+		result.Status = state.PreviousStatus
+		result.RetriesTotal = state.AttemptsCompleted
+	}
 
 	factory := s.deps.runnableFactory
 	if factory == nil {
@@ -3809,7 +3825,7 @@ func (s *runSession) runOnce(
 	var terminalExtras map[string]any
 	ownedWorkRetry := false
 loop:
-	for attempt := 0; attempt < attempts; attempt++ {
+	for attempt := firstAttempt; attempt < attempts; attempt++ {
 		if ctx.Err() != nil {
 			result.Status = "aborted"
 			result.ContextExhausted = false
@@ -3967,8 +3983,9 @@ loop:
 				s.finalOwnedWorkAttempt = attempt+1 >= attempts
 				verdict := newLifecycleObserver(s).Observe(ctx, lifecycleObservationRequest{
 					WorkDir: wt.WorkDir(), Branch: branch, RunID: runID,
-					HostPathsReady: hostPathsReady, AttemptStatus: result.Status, AfterAgentAttempt: true,
+					HostPathsReady: hostPathsReady, AttemptStatus: result.Status, UsageLimitReached: result.UsageLimitReached, AfterAgentAttempt: true,
 					CIRerunAction: result.ciRerunAction,
+					OrdinaryRetry: &ordinaryRetryState{PreviousStatus: result.Status, AttemptsCompleted: attempt + 1, MaxAttempts: attempts},
 				})
 				if verdict.handled() {
 					if stop := s.operatorStopFor(result); stop != nil && verdict.Action != lifecycleSuccess && verdict.Action != lifecycleAborted {
@@ -4018,8 +4035,16 @@ loop:
 						s.emitAwait(ctx, runID, result, verdict.Evidence)
 						verdict = newLifecycleObserver(s).waitForTransition(ctx, lifecycleObservationRequest{
 							WorkDir: wt.WorkDir(), Branch: branch, RunID: runID,
-							HostPathsReady: hostPathsReady, AttemptStatus: result.Status,
+							HostPathsReady: hostPathsReady, AttemptStatus: result.Status, UsageLimitReached: result.UsageLimitReached,
 						}, result, verdict)
+					}
+					if verdict.Kind == lifecycleVerdictOrdinaryRetry {
+						// Recovery found no lifecycle action to replace the failed
+						// attempt. Return to the configured ordinary retry loop rather
+						// than terminalizing as an idle-gate failure.
+						result.Status = "failure"
+						terminalExtras = nil
+						continue loop
 					}
 					if verdict.Action == lifecycleResume {
 						// The continuity decision already turned a stalled or
