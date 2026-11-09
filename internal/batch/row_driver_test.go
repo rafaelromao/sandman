@@ -82,6 +82,7 @@ type rowDriverGateFake struct {
 	clock          *rowDriverClockFake
 	events         *[]string
 	readyEvidence  []map[string]any
+	readyRetries   []*ordinaryRetryState
 }
 
 func (f *rowDriverGateFake) Acquire(_ context.Context, _ bool, opportunity awaitOpportunity, observe func() (rowObservationOutcome, error), _ time.Duration) (awaitOpportunity, rowObservationOutcome, error) {
@@ -143,12 +144,18 @@ func (f *rowDriverGateFake) RecordQuotaPaused(RunSpec, ContinuationCursor, bool,
 	return nil
 }
 
-func (f *rowDriverGateFake) RecordReady(_ RunSpec, _ ContinuationCursor, evidence map[string]any, _ time.Time) error {
+func (f *rowDriverGateFake) RecordReady(_ RunSpec, _ ContinuationCursor, evidence map[string]any, selectedRetry *ordinaryRetryState, _ time.Time) error {
 	copy := make(map[string]any, len(evidence))
 	for key, value := range evidence {
 		copy[key] = value
 	}
 	f.readyEvidence = append(f.readyEvidence, copy)
+	if selectedRetry == nil {
+		f.readyRetries = append(f.readyRetries, nil)
+	} else {
+		selected := *selectedRetry
+		f.readyRetries = append(f.readyRetries, &selected)
+	}
 	if evidence["reason"] == "quota-probe-ready" {
 		f.record("record-quota-ready")
 	} else {
@@ -248,6 +255,30 @@ func TestRowDriverAdvancesCursorWithoutChangingRunIdentity(t *testing.T) {
 	}
 	if executor.gotCursor.Mode != ModeContinue || executor.gotCursor.PreviousRunID != run.RunID || executor.gotCursor.PreviousRunBatchID != run.BatchID || !executor.gotCursor.ReuseSession {
 		t.Fatalf("continuation cursor = %+v, want mode/reuse/prior identity advanced", executor.gotCursor)
+	}
+}
+
+func TestRowDriverMarksFreshOrdinaryRetryAsSelectedReadinessEvidence(t *testing.T) {
+	want := ordinaryRetryState{PreviousStatus: "failure", AttemptsCompleted: 1, MaxAttempts: 2}
+	executor := &rowDriverExecutorFake{
+		started: true,
+		results: []AgentRunResult{{IssueNumber: 42, RunID: "run-42", Branch: "42-fix", Status: "success"}},
+		observations: []lifecycleVerdict{
+			{
+				Action: lifecycleResume, Kind: lifecycleVerdictOrdinaryRetry,
+				Evidence: map[string]any{ordinaryRetryKey: want.payload()},
+			},
+			{Action: lifecycleResume},
+		},
+	}
+	gates := &rowDriverGateFake{}
+	run := RunSpec{RunID: "run-42", IssueNumber: 42, BatchID: "batch-a", Branch: "42-fix", BaseBranch: "main"}
+	got := newRowDriver(executor, gates, &rowDriverClockFake{}).Drive(context.Background(), run, ContinuationCursor{}, rowDriverOptions{
+		Awaiting: true, ReleaseAwaitCapacity: true,
+		PollInterval: func(int) time.Duration { return time.Nanosecond },
+	})
+	if got.Result.Status != "success" || len(gates.readyRetries) != 1 || gates.readyRetries[0] == nil || *gates.readyRetries[0] != want {
+		t.Fatalf("Drive = %+v, selected readiness retry = %#v; want success with %+v", got, gates.readyRetries, want)
 	}
 }
 

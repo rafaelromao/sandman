@@ -28,7 +28,7 @@ type rowDriverGates interface {
 	Wait(context.Context, time.Duration) error
 	Release(bool)
 	RecordQuotaPaused(RunSpec, ContinuationCursor, bool, bool, time.Time) error
-	RecordReady(RunSpec, ContinuationCursor, map[string]any, time.Time) error
+	RecordReady(RunSpec, ContinuationCursor, map[string]any, *ordinaryRetryState, time.Time) error
 	Checkpoint(RunSpec, ContinuationCursor, bool, time.Duration) error
 	Report(AgentRunResult, bool)
 }
@@ -164,7 +164,13 @@ func (d *rowDriver) drive(ctx context.Context, run RunSpec, state *rowDriverStat
 				state.recovering, state.nextPollAt = true, next
 			}
 		case lifecycleResume:
-			if err := d.gates.RecordReady(run, state.cursor, verdict.Evidence, d.clock.Now()); err != nil {
+			var selectedRetry *ordinaryRetryState
+			if verdict.Kind == lifecycleVerdictOrdinaryRetry {
+				if retry, ok := ordinaryRetryFromEvidence(verdict.Evidence); ok {
+					selectedRetry = &retry
+				}
+			}
+			if err := d.gates.RecordReady(run, state.cursor, verdict.Evidence, selectedRetry, d.clock.Now()); err != nil {
 				state.awaiting, state.ready = true, false
 				return d.gates.Checkpoint(run, state.cursor, false, nextPoll())
 			}
@@ -189,7 +195,7 @@ func (d *rowDriver) drive(ctx context.Context, run RunSpec, state *rowDriverStat
 		for key, value := range state.cursor.quotaAllowance.quotaReadyEvidence() {
 			extras[key] = value
 		}
-		if err := d.gates.RecordReady(run, state.cursor, extras, d.clock.Now()); err != nil {
+		if err := d.gates.RecordReady(run, state.cursor, extras, nil, d.clock.Now()); err != nil {
 			state.cursor.quotaAllowance = state.cursor.quotaAllowance.withoutAccounting()
 			state.cursor.ReuseSession = state.cursor.quotaAllowance.allowSessionReuse(state.cursor.ReuseSession)
 		}

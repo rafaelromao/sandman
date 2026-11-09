@@ -195,12 +195,14 @@ func TestBatchRowDriverGates_RecordReadyPreservesOnlySelectedRetryHandoff(t *tes
 		name          string
 		consumeBefore bool
 		explicit      *ordinaryRetryState
+		selectNew     bool
 		want          ordinaryRetryState
 		wantSelected  bool
 	}{
 		{name: "pending handoff", want: want, wantSelected: true},
 		{name: "await consumed handoff", consumeBefore: true},
-		{name: "explicit newer evidence", explicit: &newer, want: newer, wantSelected: true},
+		{name: "stale explicit handoff after await", consumeBefore: true, explicit: &want},
+		{name: "explicit newer evidence", explicit: &newer, selectNew: true, want: newer, wantSelected: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			log := &spyEventLog{events: []events.Event{{
@@ -217,7 +219,11 @@ func TestBatchRowDriverGates_RecordReadyPreservesOnlySelectedRetryHandoff(t *tes
 			if tc.explicit != nil {
 				extras[ordinaryRetryKey] = tc.explicit.payload()
 			}
-			err := gates.RecordReady(RunSpec{RunID: runID, IssueNumber: 42, Branch: "42-fix", BaseBranch: "main"}, ContinuationCursor{}, extras, time.Now())
+			var selectedRetry *ordinaryRetryState
+			if tc.selectNew {
+				selectedRetry = tc.explicit
+			}
+			err := gates.RecordReady(RunSpec{RunID: runID, IssueNumber: 42, Branch: "42-fix", BaseBranch: "main"}, ContinuationCursor{}, extras, selectedRetry, time.Now())
 			if err != nil {
 				t.Fatalf("RecordReady: %v", err)
 			}
