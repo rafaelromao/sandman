@@ -211,6 +211,22 @@ func TestWorktreeSandbox_StartCreatesWorktree(t *testing.T) {
 	}
 }
 
+func TestWorktreeSandboxDoesNotFallBackToLocalBaseWithoutOriginRef(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+	s := NewWorktreeSandbox(dir, worktreeBase, "99-no-origin", "main")
+	if err := s.Start(SandboxStart{StrandedReconcile: true}); err == nil {
+		if stopErr := s.Stop(); stopErr != nil {
+			t.Errorf("stop incorrectly created worktree: %v", stopErr)
+		}
+		removeBranch(t, dir, "99-no-origin")
+		t.Fatal("expected worktree creation to refuse the local base without origin/main")
+	} else if !strings.Contains(err.Error(), "origin/main") {
+		t.Fatalf("expected missing-origin error, got %v", err)
+	}
+}
+
 func TestSyncBaseBranchFastForwardsBaseBranchBeforeAddingWorktree(t *testing.T) {
 	seedDir := t.TempDir()
 	remoteDir := initGitRepoWithRemote(t, seedDir)

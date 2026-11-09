@@ -324,7 +324,11 @@ overrideCleanup:
 		}
 		addCmd = exec.Command("git", "worktree", "add", "-f", s.workDir, s.branch)
 	} else {
-		addCmd = exec.Command("git", "worktree", "add", "-b", s.branch, s.workDir, s.worktreeStartPoint())
+		startPoint, err := s.worktreeStartPoint()
+		if err != nil {
+			return fmt.Errorf("resolve run worktree base: %w", err)
+		}
+		addCmd = exec.Command("git", "worktree", "add", "-b", s.branch, s.workDir, startPoint)
 	}
 	addCmd.Dir = s.repoPath
 	if out, err := addCmd.CombinedOutput(); err != nil {
@@ -556,12 +560,17 @@ func SyncBaseBranchWithLog(repoPath, sourceBranch string, warningLog io.Writer) 
 	return nil
 }
 
-func (s *WorktreeSandbox) worktreeStartPoint() string {
+func (s *WorktreeSandbox) worktreeStartPoint() (string, error) {
 	remoteRef := "refs/remotes/origin/" + s.sourceBranch
 	if _, err := gitRevParse(s.repoPath, "--verify", remoteRef); err == nil {
-		return remoteRef
+		return remoteRef, nil
 	}
-	return s.sourceBranch
+	if BranchExists(s.repoPath, s.sourceBranch) {
+		return "", fmt.Errorf("origin/%s is unavailable; refusing to branch a run from the local base", s.sourceBranch)
+	}
+	// Non-branch source refs (for example a fetched review-head SHA) are
+	// explicit start points, not a fallback to a potentially stale local base.
+	return s.sourceBranch, nil
 }
 
 func fastForwardUnheldBaseBranch(repoPath, sourceBranch, remoteRef string) error {
