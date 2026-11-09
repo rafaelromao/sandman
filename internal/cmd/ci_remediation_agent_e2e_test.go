@@ -174,6 +174,10 @@ directory=$3
 [ "$GH_REPO" = owner/repo ]
 [ -f github-fixture.json ]
 [ "$(command -v gh)" = "$directory/bin/gh" ]
+# A real agent may point the fixture variables elsewhere; the fake gh must not follow.
+SANDMAN_CI_RERUN_FIXTURE="$PWD/agent-chosen-fixture.json"
+SANDMAN_CI_RERUN_ACTIONS="$PWD/agent-chosen-actions.log"
+export SANDMAN_CI_RERUN_FIXTURE SANDMAN_CI_RERUN_ACTIONS
 exec sh "$SANDMAN_TEST_RECOVERY_HELPER" --repository owner/repo --pull-request 17 \
   --head-sha source-head-sha --tested-sha tested-merge-sha --run-id 12345 \
   --job-id 987654321 --diagnosis transient-provider-timeout
@@ -272,8 +276,11 @@ func prepareCIRemediationFixture(t *testing.T) (repo, fixturePath, actionPath, g
 
 const realAgentFakeGH = `#!/usr/bin/env python3
 import json, os, sys
-fixture = os.environ['SANDMAN_CI_RERUN_FIXTURE']
-actions_file = os.environ['SANDMAN_CI_RERUN_ACTIONS']
+# The fixture lives beside bin/. Resolve it from this script rather than from
+# environment variables: a real agent may override them when running the helper.
+root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+fixture = os.path.join(root, 'github-fixture.json')
+actions_file = os.path.join(root, 'recorded-actions.log')
 with open(fixture) as f: state = json.load(f)
 args = sys.argv[1:]
 if not args or args[0] != 'api':
