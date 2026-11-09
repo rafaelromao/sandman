@@ -27,7 +27,7 @@ LDFLAGS := -ldflags '-X main.version=$(VERSION)'
 # Keep Staticcheck on the repository's supported Go toolchain. Newer local
 # toolchains may emit export data that v0.7.0 cannot consume.
 STATICCHECK_VERSION := v0.7.0
-STATICCHECK_TOOLCHAIN := go1.25.0
+STATICCHECK_TOOLCHAIN := go1.26.0
 
 # Explicit browser inventory is shared by the exclusive CI selectors and tested
 # against Chromium-backed test functions in scripts/release_workflow_test.go.

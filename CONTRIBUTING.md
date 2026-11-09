@@ -75,7 +75,7 @@ The full rule lives in [`AGENTS.md`](AGENTS.md#feature-branches).
 
 ### Prerequisites
 
-- Go 1.25 or later
+- Go 1.26 or later
 - `gh` CLI installed and authenticated
 - Git
 
@@ -115,7 +115,7 @@ Before submitting a PR, always run `make check` locally.
 ### Coding Standards
 
 - Follow standard Go conventions (formatting is enforced by `gofmt`).
-- Run `go vet ./...` and `GOTOOLCHAIN=go1.25.0 go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...` via `make check`; resolve all warnings.
+- Run `go vet ./...` and `GOTOOLCHAIN=go1.26.0 go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...` via `make check`; resolve all warnings.
 - Write tests for new functionality.
 - Keep the domain vocabulary in `CONTEXT.md` in mind when naming things.
 
@@ -234,10 +234,10 @@ retain full action commit pins with readable version comments. Release automatio
 retains write permissions; validation defaults to contents read and semantic title
 validation gets pull-request read. Existing protection contexts remain in place.
 
-The Go language minimum remains 1.25; `toolchain go1.26.10` selects a patched
+The Go language minimum is 1.26; `toolchain go1.26.10` selects a patched
 standard library for normal builds; `.go-version` selects the same patched
 toolchain explicitly in setup-go and security scans. Keep automatic
-toolchain selection enabled. Staticcheck retains its isolated Go 1.25.0 runner
+toolchain selection enabled. Staticcheck retains its isolated Go 1.26.0 runner
 for export-data compatibility; it does not build release binaries. The checked-in
 ruleset also requires workflow-validation explicitly; apply/verify live protection
 using the existing documented procedure.
