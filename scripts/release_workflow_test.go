@@ -147,7 +147,7 @@ func TestReleaseWorkflowPublishesConfiguredReleaseArtifacts(t *testing.T) {
 
 	releasing := readRepositoryFile(t, "../docs/development/releasing.md")
 	for _, required := range []string{
-		"Go `1.25.0` from `go.mod`",
+		"Go `1.26.0` from `go.mod`",
 		"GoReleaser `v2.10.1`",
 		"production release job explicitly installs",
 		"`sandman_<version>_linux_arm64.tar.gz`",

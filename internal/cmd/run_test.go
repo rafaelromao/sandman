@@ -5387,10 +5387,10 @@ func TestRun_ContinueFlag_SpecExpansion_StatusCheckRollupArray(t *testing.T) {
 		t.Fatalf("expected [#65 #62] (open spec child + retained spec), got %v", spy.req.Issues)
 	}
 	if mode := spy.req.IssueMode(65); mode != batch.ModeContinue {
-		t.Fatalf("expected #65 mode=continue, got %q", mode)
+		t.Fatalf("expected #65 mode=continue, got %d", mode)
 	}
 	if mode := spy.req.IssueMode(62); mode != batch.ModeOverride {
-		t.Fatalf("expected #62 mode=override (retained spec with no prior run), got %q", mode)
+		t.Fatalf("expected #62 mode=override (retained spec with no prior run), got %d", mode)
 	}
 	if !strings.Contains(output.String(), "Issue #63 is closed, skipping") {
 		t.Errorf("expected skip warning for closed child #63, got: %q", output.String())

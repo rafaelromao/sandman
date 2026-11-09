@@ -40,7 +40,7 @@ binary installation ([#2392](https://github.com/rafaelromao/sandman/issues/2392)
 5. After the publication gate succeeds, the publisher creates an immutable tag
    and draft release, sets up the patched Go toolchain from `.go-version`, and
    runs GoReleaser `v2.10.1` with `release --clean --draft`. Finalization verifies
-   all four archives and checksums before exposing the release. Go `1.25.0` from `go.mod`
+   all four archives and checksums before exposing the release. Go `1.26.0` from `go.mod`
    remains the language minimum; `.go-version` selects the patched build toolchain.
 
 If Release fails at startup with no jobs, inspect its workflow annotations first.
