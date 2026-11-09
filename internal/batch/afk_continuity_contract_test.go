@@ -308,6 +308,28 @@ type continuityScenario struct {
 	// githubWait asserts the Run waited for GitHub to recover.
 	githubWait          bool
 	foregroundLifecycle bool
+	// admissionOutage injects one lookup failure after an ordinary retry is
+	// selected in run.capacity_queued but before capacity admission completes.
+	admissionOutage bool
+}
+
+type continuityHookEventLog struct {
+	underlying *spyEventLog
+	afterLog   func(events.Event)
+}
+
+func (l *continuityHookEventLog) Log(event events.Event) error {
+	if err := l.underlying.Log(event); err != nil {
+		return err
+	}
+	if l.afterLog != nil {
+		l.afterLog(event)
+	}
+	return nil
+}
+
+func (l *continuityHookEventLog) Read() ([]events.Event, error) {
+	return l.underlying.Read()
 }
 
 type continuityOutcome struct {
@@ -392,11 +414,28 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 	}}
 	errStop := errors.New("operator stopped the scenario")
 	log := &spyEventLog{}
+	var eventLog events.EventLog = log
 	const priorRunID = continuityPriorRunID
 	if sc.priorFailure != "" {
 		seedFailedRun(log, priorRunID, sc.priorFailure)
 	}
-	o := NewOrchestrator(g, &noopRenderer{}, &fakeConfigStore{config: cfg}, log, WithErrorLog(io.Discard), WithRunnableFactory(factory),
+	if sc.admissionOutage {
+		var injected sync.Once
+		eventLog = &continuityHookEventLog{underlying: log, afterLog: func(event events.Event) {
+			if event.Type != "run.capacity_queued" || event.RunID == priorRunID {
+				return
+			}
+			if _, ok := ordinaryRetryFromEvidence(event.Payload); !ok {
+				return
+			}
+			injected.Do(func() {
+				g.mu.Lock()
+				g.lookupErr = errors.New("gh pr list: exit status 1 during pre-admission observation")
+				g.mu.Unlock()
+			})
+		}}
+	}
+	o := NewOrchestrator(g, &noopRenderer{}, &fakeConfigStore{config: cfg}, eventLog, WithErrorLog(io.Discard), WithRunnableFactory(factory),
 		WithGitHubStatus(&fakeGitHubStatus{report: github.StatusReport{Indicator: "none"}}),
 		WithSandboxFactory(&retrySandboxFactory{sandbox: &retrySandbox{workDir: worktree}}),
 		WithRunSessionOpts(runSessionOptions{
@@ -496,7 +535,7 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 		}
 	}
 	restart := func() lifecycleVerdict {
-		fresh := NewOrchestrator(g, &noopRenderer{}, &fakeConfigStore{config: cfg}, log, WithErrorLog(io.Discard),
+		fresh := NewOrchestrator(g, &noopRenderer{}, &fakeConfigStore{config: cfg}, eventLog, WithErrorLog(io.Discard),
 			WithRunSessionOpts(runSessionOptions{currentHead: func(string) (string, error) { return g.head(), nil }}))
 		executor := fresh.newRunExecutorWith(context.Background(), BatchConfig{Cfg: cfg}, nil, nil, newBatchCoordinator(nil), nil, paths.NewLayout(cfg, root))
 		return executor.observeRowLifecycle(context.Background(), RowSpec{
@@ -1331,6 +1370,90 @@ func TestAFKContinuityContract_GitHubRecoveryPreservesOrdinaryRetryBudget(t *tes
 				t.Fatalf("GitHub recovery waits = %d, want one per failed attempt (%d)\nevents: %s", waits, tc.retries+1, continuityEventSummary(outcome.events))
 			}
 		})
+	}
+}
+
+func TestAFKContinuityContract_AdmissionOutagePreservesSelectedRetryBudget(t *testing.T) {
+	outcome := runContinuityScenario(t, continuityScenario{
+		name: "admission outage retains selected ordinary retry",
+		pr: github.PR{
+			StatusCheckRollup: "success",
+			ReviewDecision:    "REVIEW_REQUIRED",
+			MergeStateStatus:  "BLOCKED",
+		},
+		retries: 1,
+		launches: []func(*continuityGitHub) string{
+			func(g *continuityGitHub) string {
+				g.mu.Lock()
+				g.lookupErr = errors.New("gh pr list: exit status 1")
+				g.mu.Unlock()
+				return "failure"
+			},
+			func(g *continuityGitHub) string {
+				g.mu.Lock()
+				g.lookupErr = errors.New("gh pr list: exit status 1 after the bounded retry")
+				g.mu.Unlock()
+				return "failure"
+			},
+		},
+		polls: []func(*continuityGitHub){
+			func(g *continuityGitHub) {
+				g.mu.Lock()
+				g.lookupErr = nil
+				g.runtimeOffset += githubRecoveryInterval
+				g.mu.Unlock()
+			},
+			func(g *continuityGitHub) {
+				g.mu.Lock()
+				g.lookupErr = nil
+				g.runtimeOffset += githubRecoveryInterval
+				g.mu.Unlock()
+			},
+			func(g *continuityGitHub) {
+				g.mu.Lock()
+				g.lookupErr = nil
+				g.runtimeOffset += githubRecoveryInterval
+				g.mu.Unlock()
+			},
+		},
+		githubWait:      true,
+		maxLaunches:     2,
+		admissionOutage: true,
+	})
+	if !strings.HasPrefix(outcome.verdict(), "failed:") {
+		t.Fatalf("admission outage outcome = %s, want bounded failure\nevents: %s", outcome.verdict(), continuityEventSummary(outcome.events))
+	}
+	if outcome.launches != 2 {
+		t.Fatalf("agent launches = %d, want initial attempt plus exactly one configured retry\nevents: %s", outcome.launches, continuityEventSummary(outcome.events))
+	}
+	if reasons := outcome.retryReasons(); len(reasons) != 1 || reasons[0] != "agent-failed" {
+		t.Fatalf("retry reasons = %v, want one agent-failed retry\nevents: %s", reasons, continuityEventSummary(outcome.events))
+	}
+
+	events := outcome.current()
+	retainedAdmissionHandoff := false
+	for index, event := range events {
+		if event.Type != "run.await" || event.Payload["await_reason"] != gateGitHubUnavailable {
+			continue
+		}
+		state, ok := ordinaryRetryFromEvidence(event.Payload)
+		if !ok {
+			t.Fatalf("GitHub recovery wait %d lost ordinary retry state: %v", index, event.Payload)
+		}
+		if state.PreviousStatus != "failure" || state.MaxAttempts != 2 || state.AttemptsCompleted < 1 || state.AttemptsCompleted > 2 {
+			t.Fatalf("GitHub recovery wait %d has incorrect retry state: %+v", index, state)
+		}
+		if state.AttemptsCompleted == 1 && index > 0 && events[index-1].Type == "run.capacity_queued" {
+			previous := events[index-1]
+			readyState, ready := ordinaryRetryFromEvidence(previous.Payload)
+			if previous.Type != "run.capacity_queued" || !ready || readyState != state {
+				t.Fatalf("admission recovery wait did not retain its selected capacity handoff: previous=%+v state=%+v ready=%t", previous, state, ready)
+			}
+			retainedAdmissionHandoff = true
+		}
+	}
+	if !retainedAdmissionHandoff {
+		t.Fatalf("no admission outage wait followed a selected retry handoff\nevents: %s", continuityEventSummary(outcome.events))
 	}
 }
 

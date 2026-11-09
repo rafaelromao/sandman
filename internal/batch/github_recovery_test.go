@@ -150,6 +150,43 @@ func TestGitHubRecovery_UsageLimitKeepsQuotaRecoveryPath(t *testing.T) {
 	}
 }
 
+func TestSelectedOrdinaryRetryRequiresLatestUnconsumedCapacityHandoff(t *testing.T) {
+	const runID = "row"
+	want := ordinaryRetryState{PreviousStatus: "failure", AttemptsCompleted: 1, MaxAttempts: 2}
+	capacity := events.Event{Type: "run.capacity_queued", RunID: runID, Payload: map[string]any{
+		ordinaryRetryKey: want.payload(),
+	}}
+
+	for _, tc := range []struct {
+		name      string
+		following []string
+		selected  bool
+	}{
+		{name: "selected capacity handoff", selected: true},
+		{name: "continuation preserves handoff", following: []string{"run.continued"}, selected: true},
+		{name: "await consumes handoff", following: []string{"run.await"}},
+		{name: "retry consumes handoff", following: []string{"run.retry"}},
+		{name: "terminal event consumes handoff", following: []string{"run.finished"}},
+		{name: "abort consumes handoff", following: []string{"run.aborted"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			log := &spyEventLog{}
+			if err := log.Log(capacity); err != nil {
+				t.Fatal(err)
+			}
+			for _, eventType := range tc.following {
+				if err := log.Log(events.Event{Type: eventType, RunID: runID}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, selected := selectedOrdinaryRetry(log, runID)
+			if selected != tc.selected || selected && got != want {
+				t.Fatalf("selected retry = %+v, %t; want %+v, %t", got, selected, want, tc.selected)
+			}
+		})
+	}
+}
+
 func TestGitHubRecovery_ForegroundNoopReturnsRetryableNonSuccess(t *testing.T) {
 	f := newGitHubRecoveryFixture(t)
 	f.client.prs[gateTestBranch] = &github.PR{

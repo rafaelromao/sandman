@@ -61,6 +61,14 @@ func newLifecycleObserver(session *runSession) *lifecycleObserver {
 }
 
 func (o *lifecycleObserver) Observe(ctx context.Context, request lifecycleObservationRequest) lifecycleVerdict {
+	if request.OrdinaryRetry == nil {
+		// Capacity admission observes the still-unconsumed retry handoff before
+		// a new executor starts. Restore it here so an admission lookup outage
+		// can carry the same failed attempt and bound into its replacement wait.
+		if retry, selected := selectedOrdinaryRetry(o.deps.eventLog, request.RunID); selected {
+			request.OrdinaryRetry = &retry
+		}
+	}
 	recovery, recoveryBase, recovering, recoveryUnknown := o.githubRecoveryWindow(request.RunID)
 	if recovering {
 		if retry, ok := ordinaryRetryFromEvidence(recoveryBase); ok {
