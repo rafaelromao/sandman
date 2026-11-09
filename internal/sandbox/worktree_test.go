@@ -225,6 +225,10 @@ func TestSyncBaseBranchFastForwardsBaseBranchBeforeAddingWorktree(t *testing.T) 
 	commitGitFile(t, localDir, "feature-only.txt", "feature\n", "feature")
 	writeGitFile(t, localDir, "untracked.txt", "keep me out of the worktree\n")
 	removeBranch(t, localDir, "42-fix-bug")
+	worktrees := runGit(t, localDir, "worktree", "list", "--porcelain")
+	if strings.Contains(worktrees, "branch refs/heads/main") {
+		t.Fatalf("test precondition: main should not be checked out before sync:\n%s", worktrees)
+	}
 
 	commitGitFile(t, seedDir, "tracked.txt", "remote\n", "remote update")
 	runGit(t, seedDir, "push", "origin", "main")
