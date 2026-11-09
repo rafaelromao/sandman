@@ -17,7 +17,7 @@ That runs:
 ```bash
 gofmt -w .
 go vet ./...
-GOTOOLCHAIN=go1.25.0 go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
+GOTOOLCHAIN=go1.26.0 go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
 go test -race -v ./...
 ```
 
@@ -29,7 +29,7 @@ This keeps a concurrent host agent or plugin update from changing their inputs.
 
 The Staticcheck gate inherits the default checks and explicitly defers `U1000`
 (unused code) to the v1.1 cleanup work. The analyzer is pinned to `v0.7.0`
-and runs with Go `1.25.0` so newer local toolchains do not provide incompatible
+and runs with Go `1.26.0` so newer local toolchains do not provide incompatible
 export data.
 
 For a faster targeted loop while editing one package, run the smallest relevant `go test` command first, then finish with `make check` when the change is ready.
@@ -546,10 +546,10 @@ retain full action commit pins with readable version comments. Release automatio
 retains write permissions; validation defaults to contents read and semantic title
 validation gets pull-request read. Existing protection contexts remain in place.
 
-The Go language minimum remains 1.25; `toolchain go1.26.10` selects a patched
+The Go language minimum is 1.26; `toolchain go1.26.10` selects a patched
 standard library for normal builds; `.go-version` selects the same patched
 toolchain explicitly in setup-go and security scans. Keep automatic
-toolchain selection enabled. Staticcheck retains its isolated Go 1.25.0 runner
+toolchain selection enabled. Staticcheck retains its isolated Go 1.26.0 runner
 for export-data compatibility; it does not build release binaries. The checked-in
 ruleset also requires workflow-validation explicitly; apply/verify live protection
 using the existing documented procedure.

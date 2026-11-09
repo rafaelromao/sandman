@@ -6,7 +6,7 @@ This page is for contributors modifying Sandman itself. For using Sandman, see [
 
 Install these before working on Sandman locally:
 
-- Go 1.25 or later
+- Go 1.26 or later
 - Git
 - GitHub CLI (`gh`), authenticated for tests or workflows that call GitHub-backed commands
 - OpenCode, when running agent-backed smoke or e2e tests
@@ -30,7 +30,7 @@ make fmt      # Format Go files
 ```
 
 The default `make check` target runs `gofmt -w .`, `go vet ./...`, pinned
-Staticcheck (`v0.7.0` under Go `1.25.0`), and `go test -race -v ./...`.
+Staticcheck (`v0.7.0` under Go `1.26.0`), and `go test -race -v ./...`.
 
 ## Change-request titles
 
