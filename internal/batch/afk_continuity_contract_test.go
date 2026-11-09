@@ -1457,6 +1457,125 @@ func TestAFKContinuityContract_AdmissionOutagePreservesSelectedRetryBudget(t *te
 	}
 }
 
+func TestAFKContinuityContract_RestartedAdmissionOutagePreservesRetryBudget(t *testing.T) {
+	root := testenv.MkdirShort(t, "sm-restart-admission-")
+	t.Chdir(root)
+	initGitRepo(t, root)
+	const (
+		issue   = 42
+		runID   = "261109120000-restart-42"
+		batchID = "261109120000-restart-42"
+	)
+	worktree := filepath.Join(root, "worktrees", continuityBranch)
+	taskPath := filepath.Join(worktree, ".sandman", "task.md")
+	if err := os.MkdirAll(filepath.Dir(taskPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(taskPath, []byte("# Task\n\nContinue the bounded retry.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		Agent: "test", Sandbox: "worktree", WorktreeDir: filepath.Join(root, "worktrees"),
+		Git:            config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{"test": {Command: "true"}},
+	}
+	layout := paths.NewLayout(cfg, root)
+	now := time.Now().UTC()
+	retry := ordinaryRetryState{PreviousStatus: "failure", AttemptsCompleted: 1, MaxAttempts: 2}
+	log := &spyEventLog{events: []events.Event{
+		{Type: "run.started", Timestamp: now.Add(-2 * time.Minute), RunID: runID, Issue: issue, Payload: map[string]any{
+			"branch": continuityBranch, "base_branch": "main", "batch_id": batchID,
+		}},
+		{Type: "run.capacity_queued", Timestamp: now.Add(-time.Minute), RunID: runID, Issue: issue, Payload: map[string]any{
+			"ready_continuation": true, "branch": continuityBranch, "base_branch": "main", "batch_id": batchID,
+			"previous_run_id": runID, "previous_run_batch_id": batchID, "issue_title": "Continuity",
+			ordinaryRetryKey: retry.payload(),
+		}},
+	}}
+	ready := FindReadyContinuations(log.snapshot(), layout)
+	if len(ready) != 1 || ready[0].RunID != runID || ready[0].Wait == nil || !ready[0].Wait.Ready {
+		t.Fatalf("seeded retry handoff did not rehydrate as ready: %#v", ready)
+	}
+	request := Request{Retries: 1, Parallel: 1, RunTS: "261109120000", RunShortID: "restart"}
+	if err := ApplyReadyContinuations(&request, ready, layout, 1800); err != nil {
+		t.Fatalf("ApplyReadyContinuations: %v", err)
+	}
+	g := newContinuityGitHub(github.PR{
+		StatusCheckRollup: "success",
+		ReviewDecision:    "REVIEW_REQUIRED",
+		MergeStateStatus:  "BLOCKED",
+	})
+	var injected sync.Once
+	eventLog := &continuityHookEventLog{underlying: log, afterLog: func(event events.Event) {
+		if event.Type == "run.capacity_queued" && event.RunID == runID {
+			injected.Do(func() {
+				g.mu.Lock()
+				g.lookupErr = errors.New("gh pr list: exit status 1 during restarted admission")
+				g.mu.Unlock()
+			})
+		}
+	}}
+	launches := 0
+	factory := &promptOnlyRunnableFactory{hook: func(*github.Issue, string) AgentRunResult {
+		launches++
+		return AgentRunResult{IssueNumber: issue, Status: "failure"}
+	}}
+	errStop := errors.New("stop after observing the restarted outage")
+	o := NewOrchestrator(g, &noopRenderer{}, &fakeConfigStore{config: cfg}, eventLog,
+		WithErrorLog(io.Discard), WithRunnableFactory(factory),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: &retrySandbox{workDir: worktree}}),
+		WithGitHubStatus(&fakeGitHubStatus{report: github.StatusReport{Indicator: "none"}}),
+		WithRunSessionOpts(runSessionOptions{
+			releaseAwaitCapacity: true,
+			lifecyclePollPlan:    []time.Duration{time.Second},
+			baseBranchSync:       func(string, string) error { return nil },
+			currentHead:          func(string) (string, error) { return g.head(), nil },
+			awaitWait:            func(context.Context, time.Duration) error { return errStop },
+		}),
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, runErr := o.RunBatch(ctx, request)
+	if runErr == nil || !strings.Contains(runErr.Error(), "batch aborted by context cancellation") {
+		t.Fatalf("RunBatch stop result = %v, want the test's deliberate stop after its observed await", runErr)
+	}
+	if result == nil || len(result.Runs) != 1 {
+		t.Fatalf("RunBatch result = %+v", result)
+	}
+	history := log.snapshot()
+	var requeued, outageAwait *events.Event
+	for index := range history {
+		event := &history[index]
+		if event.RunID != runID {
+			continue
+		}
+		if event.Type == "run.capacity_queued" && payloadBoolValue(event.Payload, "ready_continuation") {
+			requeued = event
+		}
+		if event.Type == "run.await" && event.Payload["await_reason"] == gateGitHubUnavailable {
+			outageAwait = event
+		}
+	}
+	if requeued == nil {
+		t.Fatalf("restarted RunBatch did not republish capacity readiness: %s", continuityEventSummary(history))
+	}
+	if got, ok := ordinaryRetryFromEvidence(requeued.Payload); !ok || got != retry {
+		t.Fatalf("restart readiness lost selected retry handoff: state=%+v selected=%t payload=%v", got, ok, requeued.Payload)
+	}
+	if outageAwait == nil {
+		t.Fatalf("restarted admission lookup failure did not wait for GitHub: %s", continuityEventSummary(history))
+	}
+	if got, ok := ordinaryRetryFromEvidence(outageAwait.Payload); !ok || got != retry {
+		t.Fatalf("replacement outage wait lost retry budget: state=%+v selected=%t payload=%v", got, ok, outageAwait.Payload)
+	}
+	if launches != 0 {
+		t.Fatalf("agent launches during restarted admission outage = %d, want none before GitHub recovery", launches)
+	}
+	if retries := countEventsByType(history, "run.retry"); retries != 0 {
+		t.Fatalf("ordinary retries during restarted admission outage = %d, want none", retries)
+	}
+}
+
 // A failed security check can require external disposition. Once unchanged CI
 // repair stalls, a new merge conflict is still actionable even on the same head.
 func TestAFKContinuityContract_StalledCIRecoversForNewMergeConflict(t *testing.T) {

@@ -2014,6 +2014,13 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				queuedPayload["base_branch"] = req.BaseBranches[num]
 				queuedPayload["previous_run_id"] = req.PreviousRunIDs[num]
 				queuedPayload["previous_run_batch_id"] = req.PreviousRunBatchIDs[num]
+				// Restart admission republishes capacity readiness before the
+				// row driver can observe the Run. Carry forward a selected retry
+				// handoff so this ownership event does not erase its bound if the
+				// admission observation encounters another GitHub outage.
+				if retry, selected := selectedOrdinaryRetry(o.eventLog, runID); selected {
+					queuedPayload[ordinaryRetryKey] = retry.payload()
+				}
 			}
 			if err := o.eventLog.Log(events.Event{
 				Type:      queuedType,
