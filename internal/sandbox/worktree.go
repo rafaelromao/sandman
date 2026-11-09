@@ -438,6 +438,41 @@ func SyncBaseBranch(repoPath, sourceBranch string) error {
 		return nil
 	}
 
+	holders, err := worktreePathsForBranch(repoPath, localRef)
+	if err != nil {
+		return fmt.Errorf("sync base branch %q: list worktrees: %w", sourceBranch, err)
+	}
+	if len(holders) > 0 {
+		if len(holders) != 1 {
+			return nil
+		}
+		status, err := runGitCommand(holders[0], "status", "--porcelain", "--untracked-files=normal")
+		if err != nil {
+			return fmt.Errorf("sync base branch %q: inspect checked-out worktree: %w\n%s", sourceBranch, err, status)
+		}
+		if strings.TrimSpace(string(status)) != "" {
+			return nil
+		}
+		remoteIsAncestor, err := gitMergeBaseIsAncestor(repoPath, remoteHash, localHash)
+		if err != nil {
+			return fmt.Errorf("sync base branch %q: check if remote is ancestor of local: %w", sourceBranch, err)
+		}
+		if remoteIsAncestor {
+			return nil
+		}
+		localIsAncestor, err := gitMergeBaseIsAncestor(repoPath, localHash, remoteHash)
+		if err != nil {
+			return fmt.Errorf("sync base branch %q: check if local is ancestor of remote: %w", sourceBranch, err)
+		}
+		if !localIsAncestor {
+			return nil
+		}
+		if out, err := runGitCommand(holders[0], "merge", "--ff-only", remoteRef); err != nil {
+			return fmt.Errorf("sync base branch %q: fast-forward checked-out branch: %w\n%s", sourceBranch, err, out)
+		}
+		return nil
+	}
+
 	// Local is at or ahead of remote — nothing to do.
 	if ok, err := gitMergeBaseIsAncestor(repoPath, remoteHash, localHash); err != nil {
 		return fmt.Errorf("sync base branch %q: check if remote is ancestor of local: %w", sourceBranch, err)
@@ -459,6 +494,25 @@ func SyncBaseBranch(repoPath, sourceBranch string) error {
 		return fmt.Errorf("sync base branch %q: diverged, reset to remote: %w\n%s", sourceBranch, err, out)
 	}
 	return nil
+}
+
+func worktreePathsForBranch(repoPath, branchRef string) ([]string, error) {
+	out, err := runGitCommand(repoPath, "worktree", "list", "--porcelain")
+	if err != nil {
+		return nil, fmt.Errorf("git worktree list --porcelain: %w\n%s", err, out)
+	}
+	var paths []string
+	var path string
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "worktree ") {
+			path = strings.TrimPrefix(line, "worktree ")
+			continue
+		}
+		if strings.HasPrefix(line, "branch ") && strings.TrimSpace(strings.TrimPrefix(line, "branch ")) == branchRef {
+			paths = append(paths, path)
+		}
+	}
+	return paths, nil
 }
 
 func gitMergeBaseIsAncestor(dir, a, b string) (bool, error) {

@@ -261,6 +261,55 @@ func TestSyncBaseBranchFastForwardsBaseBranchBeforeAddingWorktree(t *testing.T) 
 	}
 }
 
+func TestSyncBaseBranchFastForwardsCleanCheckedOutBaseAndStartsRunsFromOrigin(t *testing.T) {
+	seedDir := t.TempDir()
+	remoteDir := initGitRepoWithRemote(t, seedDir)
+	commitGitFile(t, seedDir, "tracked.txt", "before\n", "initial tracked file")
+	runGit(t, seedDir, "push", "origin", "main")
+
+	localDir := t.TempDir()
+	runGit(t, localDir, "clone", "-b", "main", remoteDir, ".")
+	runGit(t, localDir, "config", "user.email", "test@test.com")
+	runGit(t, localDir, "config", "user.name", "Test")
+
+	commitGitFile(t, seedDir, "tracked.txt", "after\n", "update tracked file")
+	commitGitFile(t, seedDir, "remote-only.txt", "from origin\n", "add remote file")
+	runGit(t, seedDir, "push", "origin", "main")
+
+	if err := SyncBaseBranch(localDir, "main"); err != nil {
+		t.Fatalf("sync error: %v", err)
+	}
+
+	localHead := strings.TrimSpace(runGit(t, localDir, "rev-parse", "HEAD"))
+	originHead := strings.TrimSpace(runGit(t, localDir, "rev-parse", "origin/main"))
+	if localHead != originHead {
+		t.Fatalf("checked-out HEAD = %s, want origin/main %s", localHead, originHead)
+	}
+	indexTree := strings.TrimSpace(runGit(t, localDir, "write-tree"))
+	originTree := strings.TrimSpace(runGit(t, localDir, "rev-parse", "origin/main^{tree}"))
+	if indexTree != originTree {
+		t.Fatalf("index tree = %s, want origin/main tree %s", indexTree, originTree)
+	}
+	if status := strings.TrimSpace(runGit(t, localDir, "status", "--porcelain")); status != "" {
+		t.Fatalf("checked-out worktree is not clean after sync:\n%s", status)
+	}
+
+	s := NewWorktreeSandbox(localDir, filepath.Join(localDir, ".sandman", "worktrees"), "99-origin-base", "main")
+	if err := s.Start(SandboxStart{StrandedReconcile: true}); err != nil {
+		t.Fatalf("start worktree: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := s.Stop(); err != nil {
+			t.Errorf("stop worktree: %v", err)
+		}
+		removeBranch(t, localDir, "99-origin-base")
+	})
+	worktreeHead := strings.TrimSpace(runGit(t, s.WorkDir(), "rev-parse", "HEAD"))
+	if worktreeHead != originHead {
+		t.Fatalf("new run worktree HEAD = %s, want origin/main %s", worktreeHead, originHead)
+	}
+}
+
 func TestSyncBaseBranchResetsWhenDiverged(t *testing.T) {
 	seedDir := t.TempDir()
 	remoteDir := initGitRepoWithRemote(t, seedDir)
