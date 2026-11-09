@@ -590,6 +590,48 @@ func TestSyncBaseBranchPreservesUnheldDivergedBaseAndWarns(t *testing.T) {
 	}
 }
 
+func TestSyncBaseBranchLeavesUnheldAheadBaseAndWarns(t *testing.T) {
+	seedDir := t.TempDir()
+	remoteDir := initGitRepoWithRemote(t, seedDir)
+	commitGitFile(t, seedDir, "tracked.txt", "origin\n", "origin base")
+	runGit(t, seedDir, "push", "origin", "main")
+
+	localDir := t.TempDir()
+	runGit(t, localDir, "clone", "-b", "main", remoteDir, ".")
+	runGit(t, localDir, "config", "user.email", "test@test.com")
+	runGit(t, localDir, "config", "user.name", "Test")
+	commitGitFile(t, localDir, "local-only.txt", "keep this commit\n", "local ahead commit")
+	localMainBefore := strings.TrimSpace(runGit(t, localDir, "rev-parse", "main"))
+	runGit(t, localDir, "checkout", "-b", "feature")
+
+	var warning bytes.Buffer
+	if err := SyncBaseBranchWithLog(localDir, "main", &warning); err != nil {
+		t.Fatalf("sync error: %v", err)
+	}
+	if got := strings.TrimSpace(runGit(t, localDir, "rev-parse", "main")); got != localMainBefore {
+		t.Errorf("unheld ahead branch changed from %s to %s", localMainBefore, got)
+	}
+	if !strings.Contains(warning.String(), "ahead") || !strings.Contains(warning.String(), "origin/main") {
+		t.Errorf("expected an ahead-of-origin warning, got %q", warning.String())
+	}
+
+	s := NewWorktreeSandbox(localDir, filepath.Join(localDir, ".sandman", "worktrees"), "99-ahead-unheld", "main")
+	if err := s.Start(SandboxStart{StrandedReconcile: true}); err != nil {
+		t.Fatalf("start worktree: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := s.Stop(); err != nil {
+			t.Errorf("stop worktree: %v", err)
+		}
+		removeBranch(t, localDir, "99-ahead-unheld")
+	})
+	worktreeHead := strings.TrimSpace(runGit(t, s.WorkDir(), "rev-parse", "HEAD"))
+	originHead := strings.TrimSpace(runGit(t, localDir, "rev-parse", "origin/main"))
+	if worktreeHead != originHead {
+		t.Errorf("new run worktree HEAD = %s, want origin/main %s", worktreeHead, originHead)
+	}
+}
+
 func TestSyncBaseBranchAheadOfRemote(t *testing.T) {
 	seedDir := t.TempDir()
 	remoteDir := initGitRepoWithRemote(t, seedDir)
