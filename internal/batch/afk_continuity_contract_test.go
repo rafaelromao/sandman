@@ -1256,6 +1256,84 @@ func TestAFKContinuityContract_ForegroundOutageRecoveryReturnsToAgentFailure(t *
 	}
 }
 
+func TestAFKContinuityContract_GitHubRecoveryPreservesOrdinaryRetryBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		retries int
+	}{
+		{name: "zero retries", retries: 0},
+		{name: "one retry across repeated no-op recoveries", retries: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			launches := make([]func(*continuityGitHub) string, tc.retries+1)
+			retryStartedAfterRecovery := false
+			for i := range launches {
+				attempt := i
+				launches[i] = func(g *continuityGitHub) string {
+					g.mu.Lock()
+					if attempt > 0 && g.runtimeOffset >= githubRecoveryInterval {
+						retryStartedAfterRecovery = true
+					}
+					g.lookupErr = errors.New("gh pr list: exit status 1")
+					g.mu.Unlock()
+					return "failure"
+				}
+			}
+			polls := make([]func(*continuityGitHub), tc.retries+1)
+			for i := range polls {
+				polls[i] = func(g *continuityGitHub) {
+					g.mu.Lock()
+					g.lookupErr = nil
+					g.runtimeOffset += githubRecoveryInterval
+					g.mu.Unlock()
+				}
+			}
+			outcome := runContinuityScenario(t, continuityScenario{
+				name: "failed attempts remain bounded after recovery",
+				pr: github.PR{
+					StatusCheckRollup: "success",
+					ReviewDecision:    "REVIEW_REQUIRED",
+					MergeStateStatus:  "BLOCKED",
+				},
+				retries: tc.retries, launches: launches, polls: polls,
+				githubWait: true, maxLaunches: tc.retries + 1,
+			})
+			if !strings.HasPrefix(outcome.verdict(), "failed:") {
+				t.Fatalf("outcome = %s, want a bounded terminal failure\nevents: %s", outcome.verdict(), continuityEventSummary(outcome.events))
+			}
+			if outcome.launches != tc.retries+1 {
+				t.Fatalf("agent launches = %d, want initial attempt plus %d configured retries\nevents: %s", outcome.launches, tc.retries, continuityEventSummary(outcome.events))
+			}
+			if tc.retries > 0 && !retryStartedAfterRecovery {
+				t.Fatalf("ordinary retry started before GitHub recovery\nevents: %s", continuityEventSummary(outcome.events))
+			}
+			if reasons := outcome.retryReasons(); len(reasons) != tc.retries {
+				t.Fatalf("retry reasons = %v, want exactly %d configured retries\nevents: %s", reasons, tc.retries, continuityEventSummary(outcome.events))
+			} else {
+				for _, reason := range reasons {
+					if reason != "agent-failed" {
+						t.Fatalf("retry reasons = %v, want only agent-failed", reasons)
+					}
+				}
+			}
+			waits := 0
+			for _, event := range outcome.current() {
+				if event.Type != "run.await" || event.Payload["await_reason"] != gateGitHubUnavailable {
+					continue
+				}
+				waits++
+				state, ok := ordinaryRetryFromEvidence(event.Payload)
+				if !ok || state.PreviousStatus != "failure" || state.AttemptsCompleted != waits || state.MaxAttempts != tc.retries+1 {
+					t.Fatalf("GitHub recovery wait retry state = %#v (valid=%t), want completed attempt %d of %d\nevents: %s", state, ok, waits, tc.retries+1, continuityEventSummary(outcome.events))
+				}
+			}
+			if waits != tc.retries+1 {
+				t.Fatalf("GitHub recovery waits = %d, want one per failed attempt (%d)\nevents: %s", waits, tc.retries+1, continuityEventSummary(outcome.events))
+			}
+		})
+	}
+}
+
 // A failed security check can require external disposition. Once unchanged CI
 // repair stalls, a new merge conflict is still actionable even on the same head.
 func TestAFKContinuityContract_StalledCIRecoversForNewMergeConflict(t *testing.T) {

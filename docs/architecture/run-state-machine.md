@@ -125,7 +125,9 @@ window and its next attempt from the event fold; the scheduler treats the
 is a new RunID: it attempts observation immediately and opens a fresh 24-hour
 window. Explicit abort ends the wait at once. A non-success agent attempt with
 no established operation also waits when the PR lookup or refresh fails; it
-consumes no ordinary retry while GitHub is unavailable. After recovery, an
+consumes no ordinary retry while GitHub is unavailable. The failed attempt and
+its remaining configured retry allowance survive scheduler re-entry; a retry
+event is written only when that retry actually starts after recovery. An
 approved ready PR follows the normal merge path, and a no-op observation returns
 the failed attempt to its bounded retry path. Recognized usage-limit failures
 without an established operation remain owned by quota recovery instead.

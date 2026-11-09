@@ -2880,6 +2880,7 @@ type runSession struct {
 	parallel                   int
 	startDelay                 time.Duration
 	retries                    int
+	pendingOrdinaryRetry       *ordinaryRetryState
 	runIdleTimeout             int
 	sandboxMode                string
 	containerCapacity          int
@@ -3797,9 +3798,17 @@ func (s *runSession) runOnce(
 	}
 
 	attempts := s.retries + 1
+	firstAttempt := 0
 	var result AgentRunResult
 	var abortedByHeartbeat bool
 	s.lifecycleTerminal = false
+	if s.pendingOrdinaryRetry != nil {
+		state := *s.pendingOrdinaryRetry
+		attempts = min(attempts, state.MaxAttempts)
+		firstAttempt = state.AttemptsCompleted
+		result.Status = state.PreviousStatus
+		result.RetriesTotal = state.AttemptsCompleted
+	}
 
 	factory := s.deps.runnableFactory
 	if factory == nil {
@@ -3809,7 +3818,7 @@ func (s *runSession) runOnce(
 	var terminalExtras map[string]any
 	ownedWorkRetry := false
 loop:
-	for attempt := 0; attempt < attempts; attempt++ {
+	for attempt := firstAttempt; attempt < attempts; attempt++ {
 		if ctx.Err() != nil {
 			result.Status = "aborted"
 			result.ContextExhausted = false
@@ -3969,6 +3978,7 @@ loop:
 					WorkDir: wt.WorkDir(), Branch: branch, RunID: runID,
 					HostPathsReady: hostPathsReady, AttemptStatus: result.Status, UsageLimitReached: result.UsageLimitReached, AfterAgentAttempt: true,
 					CIRerunAction: result.ciRerunAction,
+					OrdinaryRetry: &ordinaryRetryState{PreviousStatus: result.Status, AttemptsCompleted: attempt + 1, MaxAttempts: attempts},
 				})
 				if verdict.handled() {
 					if stop := s.operatorStopFor(result); stop != nil && verdict.Action != lifecycleSuccess && verdict.Action != lifecycleAborted {
