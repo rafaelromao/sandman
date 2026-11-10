@@ -14,6 +14,7 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/skill"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 // TestCIRemediationPoisonedTaskRealAgent exercises the actual OpenCode agent
@@ -172,6 +173,8 @@ directory=$3
 [ "$GH_TOKEN" = fake ]
 [ "$GITHUB_TOKEN" = fake ]
 [ "$GH_REPO" = owner/repo ]
+case " $* " in *" --title "*) ;; *) echo "agent launched without an explicit title" >&2; exit 12 ;; esac
+case "${OPENCODE_CONFIG_CONTENT:-}" in *'"small_model":"opencode/big-pickle"'*) ;; *) echo "small model not pinned: ${OPENCODE_CONFIG_CONTENT:-<unset>}" >&2; exit 13 ;; esac
 [ -f github-fixture.json ]
 [ "$(command -v gh)" = "$directory/bin/gh" ]
 # A real agent may point the fixture variables elsewhere; the fake gh must not follow.
@@ -209,11 +212,14 @@ exec sh "$SANDMAN_TEST_RECOVERY_HELPER" --repository owner/repo --pull-request 1
 
 // Explicit --dir keeps OpenCode's shell tools in the fixture even when launched
 // from go test's package directory. Environ must follow Dir so PWD agrees too.
+// ciRemediationAgentModel is the only model the real remediation agent uses.
+const ciRemediationAgentModel = "opencode/big-pickle"
+
 func ciRemediationAgentCommand(ctx context.Context, repo, ghDir, fixturePath, actionPath, promptText string) *exec.Cmd {
-	command := exec.CommandContext(ctx, "opencode", "run", "--dir", repo, "--pure", "--dangerously-skip-permissions", "-m", "opencode/big-pickle", promptText)
+	command := exec.CommandContext(ctx, "opencode", "run", "--dir", repo, "--pure", "--dangerously-skip-permissions", "--title", openCodeTestTitle, "-m", ciRemediationAgentModel, promptText)
 	command.Dir = repo
 	for _, item := range command.Environ() {
-		if strings.HasPrefix(item, "PATH=") || strings.HasPrefix(item, "GH_TOKEN=") || strings.HasPrefix(item, "GITHUB_TOKEN=") || strings.HasPrefix(item, "GH_REPO=") || strings.HasPrefix(item, "SANDMAN_CI_RERUN_") {
+		if strings.HasPrefix(item, "PATH=") || strings.HasPrefix(item, "GH_TOKEN=") || strings.HasPrefix(item, "GITHUB_TOKEN=") || strings.HasPrefix(item, "GH_REPO=") || strings.HasPrefix(item, "SANDMAN_CI_RERUN_") || strings.HasPrefix(item, testenv.OpenCodeConfigEnv+"=") {
 			continue
 		}
 		command.Env = append(command.Env, item)
@@ -223,6 +229,8 @@ func ciRemediationAgentCommand(ctx context.Context, repo, ghDir, fixturePath, ac
 		"GH_TOKEN=fake", "GITHUB_TOKEN=fake", "GH_REPO=owner/repo",
 		"SANDMAN_CI_RERUN_FIXTURE="+fixturePath,
 		"SANDMAN_CI_RERUN_ACTIONS="+actionPath,
+		// Big Pickle is the only model this agent may request.
+		testenv.OpenCodeConfigEnv+"="+testenv.OpenCodeSingleModelConfig(ciRemediationAgentModel),
 	)
 	return command
 }

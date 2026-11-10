@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import tempfile
@@ -12,6 +13,55 @@ PIN_GUIDANCE = ('The provider rejected the OpenCode pin as obsolete. Update the 
                 'in internal/scaffold/scaffolder.go, scripts/release_scenarios.json, and '
                 '.github/workflows/release-regression-tier.yml (installation and version check), '
                 'then rerun CI. Keep the pins consistent; do not disable this check.')
+
+
+# OpenCode retries rate limits, overload and dropped connections itself and
+# prints nothing on stdout while it does, so a stalled request looks the same
+# whatever the cause. Its own log file still records each failed attempt.
+STREAM_ERROR = re.compile(r'message="stream error"(?:.*?modelID=(\S+))?.*?error\.error="((?:[^"\\]|\\.)*)"')
+LOG_TAIL_BYTES = 1 << 20
+
+
+def read_cli_logs(data_home):
+    text = []
+    for path in sorted(Path(data_home, 'opencode', 'log').glob('*.log')):
+        try:
+            with open(path, 'rb') as handle:
+                handle.seek(0, os.SEEK_END)
+                handle.seek(max(0, handle.tell() - LOG_TAIL_BYTES))
+                text.append(handle.read().decode('utf-8', 'replace'))
+        except OSError:
+            continue
+    return '\n'.join(text)
+
+
+def stall_detail(log_text, secret=''):
+    """Say why a request that never completed kept failing.
+
+    Only the provider's error text is reported, never raw log lines, and never
+    the authentication key.
+    """
+    messages = []
+    attempts = 0
+    for line in log_text.splitlines():
+        found = STREAM_ERROR.search(line)
+        if not found:
+            continue
+        attempts += 1
+        message = f'{found.group(1) or "model"}: {found.group(2)}'
+        if secret:
+            message = message.replace(secret, '[redacted]')
+        message = message[:240]
+        if message not in messages:
+            messages.append(message)
+    if not attempts:
+        return (' OpenCode logged no provider error, so the request produced no response '
+                '(connection or response stall).')
+    return f' OpenCode logged {attempts} failed attempt(s) while retrying: ' + '; '.join(messages[:3])
+
+
+def workflow_message(text):
+    return text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
 
 
 def evaluate(output, returncode):
@@ -61,6 +111,11 @@ def main():
         # trigger the provider's client-validation rejection. The prompt asks
         # for one literal response without calling tools.
         env.pop('OPENCODE_PERMISSION', None)
+        # Request only the release model. Left alone, OpenCode asks its default
+        # small model (a different, paid model) to title the session; --title
+        # below spares that request, and pinning the small model to the release
+        # model guarantees nothing else can be asked for.
+        env['OPENCODE_CONFIG_CONTENT'] = json.dumps({'small_model': manifest['model']})
         token = env.get('OPENCODE_API_KEY', '')
         if token:
             auth = Path(env['XDG_DATA_HOME']) / 'opencode/auth.json'
@@ -68,7 +123,7 @@ def main():
             auth.write_text(json.dumps({'opencode': {'type': 'api', 'key': token}}))
             auth.chmod(0o600)
         command = ['opencode', 'run', '--format', 'json', '-m', manifest['model'],
-                   'Reply with exactly OK. Do not use any tools.']
+                   '--title', 'sandman-canary', 'Reply with exactly OK. Do not use any tools.']
         process = subprocess.Popen(command, cwd=directory, env=env, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, text=True, start_new_session=True)
         try:
@@ -76,12 +131,14 @@ def main():
         except subprocess.TimeoutExpired:
             os.killpg(process.pid, signal.SIGKILL)
             process.communicate()
-            print('::error::OpenCode provider canary exceeded its 60-second deadline.')
+            detail = stall_detail(read_cli_logs(env['XDG_DATA_HOME']), token)
+            print('::error::' + workflow_message(
+                f'OpenCode provider canary exceeded its {TIMEOUT}-second deadline.' + detail))
             return 1
         error = evaluate(output, process.returncode)
         # Never print raw provider output, which could contain credential details.
         if error:
-            print('::error::' + error.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'))
+            print('::error::' + workflow_message(error))
             return 1
     print('OpenCode provider canary passed (one request).')
     return 0

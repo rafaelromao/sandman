@@ -688,8 +688,9 @@ func customizeSmokeConfig(repoDir, provider, model string) (*config.Config, erro
 		resolved.Command = strings.Join([]string{
 			fmt.Sprintf(`test "$(git config user.name)" = %q`, smokeGitName),
 			fmt.Sprintf(`test "$(git config user.email)" = %q`, smokeGitEmail),
-			fmt.Sprintf(`opencode run --pure --dangerously-skip-permissions -m %s "$(cat {{.PromptFile}})"`, model),
+			openCodeRunCommand(model),
 		}, " && ")
+		pinOpenCodeToModel(&resolved, model)
 		for _, dir := range []string{"~/.cache/opencode", "~/.cache/opencode/bin"} {
 			if !containsSmokePath(resolved.ConfigDirs, dir) {
 				resolved.ConfigDirs = append(resolved.ConfigDirs, dir)
@@ -708,6 +709,34 @@ func customizeSmokeConfig(repoDir, provider, model string) (*config.Config, erro
 	cfg.CleanupWorktrees = &cleanupWorktrees
 	cfg.ReviewCommand = "/oc review"
 	return cfg, nil
+}
+
+// openCodeTestTitle names every real-agent OpenCode session. Without a title
+// OpenCode makes one more provider request, to its default small model, to
+// write one.
+const openCodeTestTitle = "sandman-e2e"
+
+// openCodeRunCommand is the `opencode run` invocation the real-agent tests give
+// an agent for model. Together with pinOpenCodeToModel it keeps model the only
+// model such a test ever requests.
+func openCodeRunCommand(model string) string {
+	return fmt.Sprintf(`opencode run --pure --dangerously-skip-permissions --title %s -m %s "$(cat {{.PromptFile}})"`, openCodeTestTitle, model)
+}
+
+// pinOpenCodeToModel makes model the small model of agent's OpenCode runs too,
+// so no side task can reach a model the test did not choose. The Env map is
+// copied, never mutated in place, because it may be shared with a preset.
+func pinOpenCodeToModel(agent *config.Agent, model string) {
+	pinned := testenv.OpenCodeSingleModelConfig(model)
+	if pinned == "" {
+		return
+	}
+	env := make(map[string]string, len(agent.Env)+1)
+	for key, value := range agent.Env {
+		env[key] = value
+	}
+	env[testenv.OpenCodeConfigEnv] = pinned
+	agent.Env = env
 }
 
 func ensureSmokeHostCLI(t *testing.T, tc smokeProviderCase) {

@@ -631,7 +631,10 @@ A merge queue would also require `merge_group` CI and title-gate support first.
 
 Regular CI runs one tool-free `opencode run` invocation for its OpenCode canary on
 Linux (60-second provider deadline, three-minute job, no containers, and no retry
-loop inside that job), using the release manifest's exact CLI/model. This process
+loop inside that job), using the release manifest's exact CLI/model. The invocation
+names its session and pins OpenCode's small model to that model, so the release model
+is the only model requested, and the real-agent regression scenarios do the same. If
+the deadline expires the job reports the provider's own logged error. This process
 contract does not claim to count physical HTTP requests made internally by the CLI.
 After diagnosing a transient provider/network timeout on the identified current-head
 execution, the implementation agent may initiate one authorized, bounded GitHub

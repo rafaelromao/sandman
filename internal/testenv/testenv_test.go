@@ -1,6 +1,7 @@
 package testenv
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -437,4 +438,22 @@ func parseScenarioReferenceRows(doc string) []string {
 		rows = append(rows, token)
 	}
 	return rows
+}
+
+func TestOpenCodeSingleModelConfig_PinsTheSmallModel(t *testing.T) {
+	var got map[string]string
+	if err := json.Unmarshal([]byte(OpenCodeSingleModelConfig(" opencode/big-pickle ")), &got); err != nil {
+		t.Fatalf("config is not valid JSON: %v", err)
+	}
+	if want := map[string]string{"small_model": "opencode/big-pickle"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("config = %v, want %v", got, want)
+	}
+}
+
+func TestOpenCodeSingleModelConfig_BlankModelYieldsNoConfig(t *testing.T) {
+	for _, model := range []string{"", "   ", "\t"} {
+		if got := OpenCodeSingleModelConfig(model); got != "" {
+			t.Fatalf("OpenCodeSingleModelConfig(%q) = %q, want empty", model, got)
+		}
+	}
 }
