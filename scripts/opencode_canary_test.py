@@ -119,7 +119,7 @@ class CanaryProcessTests(unittest.TestCase):
             cli = root / 'opencode'
             cli.write_text("#!/usr/bin/env python3\nimport json,os,sys\n"
                            "if sys.argv[1] == '--version': print('1.18.0'); sys.exit(0)\n"
-                           "with open(os.environ['CALL_RECORD'], 'a') as f: f.write(json.dumps({'args':sys.argv[1:], 'home':os.environ['HOME'], 'cwd':os.getcwd(), 'permission':os.environ.get('OPENCODE_PERMISSION')})+'\\n')\n"
+                           "with open(os.environ['CALL_RECORD'], 'a') as f: f.write(json.dumps({'args':sys.argv[1:], 'home':os.environ['HOME'], 'cwd':os.getcwd(), 'permission':os.environ.get('OPENCODE_PERMISSION'), 'config':os.environ.get('OPENCODE_CONFIG_CONTENT')})+'\\n')\n"
                            "print(os.environ['PROVIDER_OUTPUT'])\n")
             cli.chmod(0o755)
             record = root / 'calls'
@@ -133,6 +133,11 @@ class CanaryProcessTests(unittest.TestCase):
             self.assertEqual(len(calls), 1)
             self.assertIsNone(calls[0]['permission'], 'canary must keep the official CLI tool schema')
             self.assertEqual(calls[0]['args'][:5], ['run', '--format', 'json', '-m', 'opencode/big-pickle'])
+            args = calls[0]['args']
+            self.assertEqual(args[args.index('--title') + 1], 'sandman-canary',
+                             'an explicit title spares OpenCode a request to its default small model')
+            self.assertEqual(json.loads(calls[0]['config']), {'small_model': 'opencode/big-pickle'},
+                             'the small model must be the release model, so no other model can be requested')
             self.assertEqual(calls[0]['home'], calls[0]['cwd'])
             self.assertNotEqual(calls[0]['cwd'], str(root))
             self.assertFalse(Path(calls[0]['home']).exists(), 'temporary provider state must be removed')

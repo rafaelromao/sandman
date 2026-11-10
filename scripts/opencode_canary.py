@@ -111,6 +111,11 @@ def main():
         # trigger the provider's client-validation rejection. The prompt asks
         # for one literal response without calling tools.
         env.pop('OPENCODE_PERMISSION', None)
+        # Request only the release model. Left alone, OpenCode asks its default
+        # small model (a different, paid model) to title the session; --title
+        # below spares that request, and pinning the small model to the release
+        # model guarantees nothing else can be asked for.
+        env['OPENCODE_CONFIG_CONTENT'] = json.dumps({'small_model': manifest['model']})
         token = env.get('OPENCODE_API_KEY', '')
         if token:
             auth = Path(env['XDG_DATA_HOME']) / 'opencode/auth.json'
@@ -118,7 +123,7 @@ def main():
             auth.write_text(json.dumps({'opencode': {'type': 'api', 'key': token}}))
             auth.chmod(0o600)
         command = ['opencode', 'run', '--format', 'json', '-m', manifest['model'],
-                   'Reply with exactly OK. Do not use any tools.']
+                   '--title', 'sandman-canary', 'Reply with exactly OK. Do not use any tools.']
         process = subprocess.Popen(command, cwd=directory, env=env, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, text=True, start_new_session=True)
         try:

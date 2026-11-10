@@ -663,7 +663,8 @@ func customizePRFlowAgent(t *testing.T, repoDir string, tc prFlowProviderCase, o
 	}
 	switch tc.name {
 	case "opencode":
-		agent.Command = prefix.String() + fmt.Sprintf(`opencode run --pure --dangerously-skip-permissions -m %s "$(cat {{.PromptFile}})"`, tc.model)
+		agent.Command = prefix.String() + openCodeRunCommand(tc.model)
+		pinOpenCodeToModel(&agent, tc.model)
 	default:
 		t.Fatalf("unsupported provider %q", tc.name)
 	}
@@ -955,7 +956,8 @@ func customizeOpenCodeAgentForContainer(t *testing.T, repoDir, model string) {
 	if err != nil {
 		t.Fatalf("resolve opencode agent: %v", err)
 	}
-	agent.Command = fmt.Sprintf(`PATH=/workspace/.sandman/bin:${PATH} opencode run --pure --dangerously-skip-permissions -m %s "$(cat {{.PromptFile}})"`, model)
+	agent.Command = `PATH=/workspace/.sandman/bin:${PATH} ` + openCodeRunCommand(model)
+	pinOpenCodeToModel(&agent, model)
 	if cfg.AgentProviders == nil {
 		cfg.AgentProviders = map[string]config.Agent{}
 	}
@@ -1819,7 +1821,8 @@ func writeParallelPRFlowPrompt(t *testing.T, repoDir string, tc prFlowProviderCa
 	if err != nil {
 		t.Fatalf("resolve opencode agent: %v", err)
 	}
-	agent.Command = fmt.Sprintf(`printf 'containerhostname=%%s\ncontainerworkdir=%%s\n' "$(hostname)" "$(pwd)" && PATH=/workspace/.sandman/bin:${PATH} opencode run --pure --dangerously-skip-permissions -m %s "$(cat {{.PromptFile}})"`, tc.model)
+	agent.Command = `printf 'containerhostname=%s\ncontainerworkdir=%s\n' "$(hostname)" "$(pwd)" && PATH=/workspace/.sandman/bin:${PATH} ` + openCodeRunCommand(tc.model)
+	pinOpenCodeToModel(&agent, tc.model)
 	if cfg.AgentProviders == nil {
 		cfg.AgentProviders = map[string]config.Agent{}
 	}

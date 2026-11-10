@@ -42,7 +42,6 @@ package cmd
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -431,7 +430,8 @@ func customizePresetMatrixOpencodeAgent(t *testing.T, repoDir string) {
 		t.Fatalf("resolve opencode agent: %v", err)
 	}
 	agent.Model = model
-	agent.Command = fmt.Sprintf(`PATH=/workspace/.sandman/bin:${PATH} opencode run --pure --dangerously-skip-permissions -m %s "$(cat {{.PromptFile}})"`, model)
+	agent.Command = `PATH=/workspace/.sandman/bin:${PATH} ` + openCodeRunCommand(model)
+	pinOpenCodeToModel(&agent, model)
 	if cfg.AgentProviders == nil {
 		cfg.AgentProviders = map[string]config.Agent{}
 	}

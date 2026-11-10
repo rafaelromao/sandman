@@ -36,6 +36,7 @@
 package testenv
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -88,6 +89,28 @@ func ResolveTestModel(agent, defaultModel string) string {
 		return defaultModel
 	}
 	return override
+}
+
+// OpenCodeConfigEnv is the environment variable OpenCode reads inline
+// configuration from.
+const OpenCodeConfigEnv = "OPENCODE_CONFIG_CONTENT"
+
+// OpenCodeSingleModelConfig returns inline OpenCode configuration (for
+// OpenCodeConfigEnv) that makes model the small model as well as the main one.
+// OpenCode otherwise asks a default small model, which is a different and
+// usually paid model, to do side tasks such as titling a session, so a
+// real-agent test would request a model it was never meant to use. It
+// returns "" for a blank model.
+func OpenCodeSingleModelConfig(model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return ""
+	}
+	data, err := json.Marshal(map[string]string{"small_model": model})
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 // allE2EScenarios is the canonical list of stable scenario identifiers
