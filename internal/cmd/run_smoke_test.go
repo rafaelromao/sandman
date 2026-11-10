@@ -12,11 +12,13 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
@@ -53,6 +55,23 @@ type smokeProviderCase struct {
 	// through its env config.
 	authEnv    string
 	wantBranch string
+}
+
+// smokeGitHub is the harness's fake GitHub. A merged PR is what lets a Run
+// complete, but it also makes a continuation finish without launching its
+// agent, so a continuation hides the PR until the continued agent has produced
+// its result.
+type smokeGitHub struct {
+	*fakeGitHubClient
+	pr     *github.PR
+	merged atomic.Bool
+}
+
+func (g *smokeGitHub) FindPRByBranch(context.Context, string) (*github.PR, error) {
+	if g.merged.Load() {
+		return g.pr, nil
+	}
+	return nil, nil
 }
 
 type smokePrompter struct{}
@@ -120,7 +139,13 @@ func applySmokeModelOverrides() {
 	}
 }
 
-func prepareSmokeProvider(t *testing.T, tc smokeProviderCase) (runtime string, repoDir string, deps Dependencies, issue github.Issue) {
+// prepareSmokeProvider builds the real-agent smoke harness. The CLI and the
+// orchestrator normally get unconnected fakes, which suits a fresh or
+// overridden Run. A continuation finds its predecessor through the event log
+// the orchestrator writes, as in production, so a continuing harness shares one
+// log between them; without it --continue silently promotes itself to
+// --override and drops the previous Run and its agent session.
+func prepareSmokeProvider(t *testing.T, tc smokeProviderCase, continuation bool) (runtime string, repoDir string, deps Dependencies, issue github.Issue, gh *smokeGitHub) {
 	t.Helper()
 	ensureSmokeHostCLI(t, tc)
 
@@ -206,20 +231,27 @@ func prepareSmokeProvider(t *testing.T, tc smokeProviderCase) (runtime string, r
 
 	issue = tc.issue
 	branch := tc.wantBranch
-	gh := &fakeGitHubClient{
-		issues: map[int]*github.Issue{issue.Number: &issue},
-		prs:    map[string]*github.PR{branch: mergedPR(branch, issue.Number)},
+	gh = &smokeGitHub{
+		fakeGitHubClient: &fakeGitHubClient{issues: map[int]*github.Issue{issue.Number: &issue}},
+		pr:               mergedPR(branch, issue.Number),
 	}
+	gh.merged.Store(true)
 	store := &fakeStore{config: depsCfg}
+	var cliLog events.EventLog = &recordingEventLog{}
+	var orchestratorLog events.EventLog
+	if continuation {
+		shared := &recordingEventLog{}
+		cliLog, orchestratorLog = shared, shared
+	}
 	deps = Dependencies{
-		BatchRunner:  batch.NewOrchestrator(gh, &prompt.Engine{}, store, nil),
+		BatchRunner:  batch.NewOrchestrator(gh, &prompt.Engine{}, store, orchestratorLog),
 		ConfigStore:  store,
-		EventLog:     &recordingEventLog{},
+		EventLog:     cliLog,
 		GitHubClient: gh,
 		Renderer:     &prompt.Engine{},
 		IsTTY:        func() bool { return false },
 	}
-	return runtime, repoDir, deps, issue
+	return runtime, repoDir, deps, issue, gh
 }
 
 func assertSmokeProviderRun(t *testing.T, out string, tc smokeProviderCase, repoDir string, issue github.Issue) {
@@ -247,7 +279,7 @@ func assertSmokeProviderRun(t *testing.T, out string, tc smokeProviderCase, repo
 
 func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 	t.Helper()
-	runtime, repoDir, deps, issue := prepareSmokeProvider(t, tc)
+	runtime, repoDir, deps, issue, _ := prepareSmokeProvider(t, tc, false)
 	out, err := executeSmokeRun(t, deps, runtime, issue.Number)
 	if err != nil {
 		worktreePath := filepath.Join(repoDir, ".sandman", "worktrees", tc.wantBranch)
@@ -275,7 +307,8 @@ func mergedPR(branch string, issueNumber int) *github.PR {
 
 func runSmokeProviderTwice(t *testing.T, tc smokeProviderCase, secondArgs ...string) {
 	t.Helper()
-	runtime, repoDir, deps, issue := prepareSmokeProvider(t, tc)
+	continuing := slices.Contains(secondArgs, "--continue")
+	runtime, repoDir, deps, issue, gh := prepareSmokeProvider(t, tc, continuing)
 	out, err := executeSmokeRun(t, deps, runtime, issue.Number)
 	if err != nil {
 		t.Fatalf("first smoke run failed: %v\noutput:\n%s", err, out)
@@ -283,6 +316,9 @@ func runSmokeProviderTwice(t *testing.T, tc smokeProviderCase, secondArgs ...str
 	assertSmokeProviderRun(t, out, tc, repoDir, issue)
 	first := recordedAgentSessions(t, repoDir)
 
+	if continuing {
+		withholdMergedPRUntilAgentAnswers(t, gh, repoDir, 2)
+	}
 	out, err = executeSmokeRun(t, deps, runtime, issue.Number, secondArgs...)
 	if err != nil {
 		t.Fatalf("second smoke run failed: %v\noutput:\n%s", err, out)
@@ -291,6 +327,37 @@ func runSmokeProviderTwice(t *testing.T, tc smokeProviderCase, secondArgs ...str
 	if slices.Contains(secondArgs, "--reuse-session") {
 		assertReusedAgentSession(t, first, recordedAgentSessions(t, repoDir))
 	}
+}
+
+// withholdMergedPRUntilAgentAnswers reports the PR as unmerged, so --continue
+// accepts the branch and launches its agent, then as merged once answers Run
+// logs carry the smoke answer, so the continued Run can complete.
+func withholdMergedPRUntilAgentAnswers(t *testing.T, gh *smokeGitHub, repoDir string, answers int) {
+	t.Helper()
+	gh.merged.Store(false)
+	done := make(chan struct{})
+	t.Cleanup(func() { close(done) })
+	go func() {
+		logs := filepath.Join(repoDir, ".sandman", "batches", "*", "runs", "*", "run.log")
+		for {
+			select {
+			case <-done:
+				return
+			case <-time.After(100 * time.Millisecond):
+			}
+			paths, _ := filepath.Glob(logs)
+			answered := 0
+			for _, path := range paths {
+				if data, err := os.ReadFile(path); err == nil && bytes.Contains(data, []byte("SMOKE_OK")) {
+					answered++
+				}
+			}
+			if answered >= answers {
+				gh.merged.Store(true)
+				return
+			}
+		}
+	}()
 }
 
 // assertReusedAgentSession checks that a reuse-session continuation kept the
