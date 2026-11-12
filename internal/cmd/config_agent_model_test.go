@@ -30,6 +30,12 @@ func TestConfigSet_RefusesClaudeAgentModelOnAnotherAgentAndKeepsTheFile(t *testi
 			want:     `model "claude-agent/sonnet" cannot run on agent "opencode-v2"`,
 		},
 		{
+			name:     "review_model on an opencode-v2 reviewer",
+			original: "agent: claude\nmodel: sonnet\nreview_agent: opencode-v2\nreview_model: openai/gpt-6.1-sol\n",
+			args:     []string{"review_model", "claude-agent/opus"},
+			want:     `review_model "claude-agent/opus" cannot run on agent "opencode-v2"`,
+		},
+		{
 			name:     "review_agent away from claude while the review model is claude-agent",
 			original: "agent: claude\nmodel: sonnet\nreview_agent: claude\nreview_model: claude-agent/opus\n",
 			args:     []string{"review_agent", "opencode-v2"},

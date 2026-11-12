@@ -130,7 +130,7 @@ If a task involves execution flow, runners, or sandbox lifecycle:
 If a bug or feature involves one agent's flags, environment, session reuse, output, usage limits, or context handling:
 
 - Start with the agent strategy in `internal/batch/agent_strategy.go` (`opencodeStrategy`) or `internal/batch/claude_strategy.go` (`claudeStrategy`), selected by `strategyFor`.
-- Per-agent data lives in `config.BuiltInAgentPresets` (command template, env, mounts, default model) and in the scaffold's `agentInstallers` (Dockerfile install).
+- Per-agent data lives in `config.BuiltInAgentPresets` (command template, env, mounts, default model, and `ExclusiveModelProviders`: model providers that run the preset's own CLI, so only that preset may use their models, as `claude` reserves OpenCode v2's `claude-agent`) and in the scaffold's `agentInstallers` (Dockerfile install). `config.ValidateAgentModel` refuses a reserved provider on any other agent wherever an agent and a model are paired: config load, `config set`, and the `run`, `review` and `init` flags.
 - Never add an `if preset == ...` branch at a call site; add or change a strategy method instead.
 
 ### Persistence and file safety

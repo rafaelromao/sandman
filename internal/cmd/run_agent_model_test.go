@@ -26,6 +26,13 @@ func TestRun_RefusesClaudeAgentModelOnAnotherAgentBeforeAnyWork(t *testing.T) {
 			},
 		},
 		{
+			// The check runs before --continue reads or normalizes any worktree.
+			name:   "--continue with --model on an OpenCode default agent",
+			config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"},
+			args:   []string{"--continue", "--model", "claude-agent/sonnet", "42"},
+			wants:  []string{`--model "claude-agent/sonnet" cannot run on agent "opencode"`},
+		},
+		{
 			name:   "--agent and --model away from a claude default",
 			config: &config.Config{DefaultAgent: "claude", DefaultModel: "claude-agent/sonnet", ReviewCommand: "/oc review"},
 			args:   []string{"--agent", "opencode-v2", "--model", "claude-agent/sonnet", "42"},

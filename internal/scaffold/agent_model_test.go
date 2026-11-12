@@ -60,6 +60,14 @@ func TestScaffold_RefusesClaudeAgentModelsForAnotherAgentBeforeWriting(t *testin
 	}
 }
 
+// The claude agent is the rule's boundary: init does not refuse it.
+func TestScaffold_DoesNotRefuseClaudeAgentModelsOnTheClaudeAgent(t *testing.T) {
+	opts := Options{BuildTools: "generic", Agent: "claude", Model: "claude-agent/sonnet", ReviewModel: "claude-agent/opus"}
+	if err := (&Scaffolder{}).Scaffold(t.TempDir(), opts, &fakePrompter{confirm: true}); err != nil {
+		t.Fatalf("init --agent claude with claude-agent models: %v", err)
+	}
+}
+
 func TestScaffold_ReInitRefusingClaudeAgentModelKeepsTheScaffold(t *testing.T) {
 	dir := t.TempDir()
 	s := &Scaffolder{}

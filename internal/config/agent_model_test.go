@@ -68,7 +68,10 @@ func TestLoad_RefusesClaudeAgentModelsOnEveryPairingAndOtherAgent(t *testing.T) 
 		{
 			name:    "model on the opencode preset",
 			content: "agent: opencode\nmodel: claude-agent/sonnet\n",
-			wants:   []string{`model "claude-agent/sonnet" cannot run on agent "opencode"`},
+			wants: []string{
+				`model "claude-agent/sonnet" cannot run on agent "opencode"`,
+				`set agent to claude and model to "sonnet"`,
+			},
 		},
 		{
 			name:    "an agent's own model under a built-in name",
@@ -89,7 +92,10 @@ func TestLoad_RefusesClaudeAgentModelsOnEveryPairingAndOtherAgent(t *testing.T) 
 		{
 			name:    "an agent without a preset",
 			content: "agents:\n  mine:\n    command: my-agent run\n    model: claude-agent/sonnet\n",
-			wants:   []string{`agents.mine.model "claude-agent/sonnet" cannot run on agent "mine"`},
+			wants: []string{
+				`agents.mine.model "claude-agent/sonnet" cannot run on agent "mine"`,
+				`set agents.mine.preset to claude and agents.mine.model to "sonnet"`,
+			},
 		},
 		{
 			name:    "agents are checked in name order",
