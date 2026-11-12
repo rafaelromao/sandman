@@ -1435,7 +1435,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 	if d.Config != nil {
 		effectiveAgent := d.effectiveAgent()
-		if _, err := d.Config.ResolveAgentProvider(effectiveAgent); err != nil {
+		agentCfg, err := d.Config.ResolveAgentProvider(effectiveAgent)
+		if err != nil {
 			d.logf("review agent validation failed: %v", err)
 			return err
 		}
@@ -1444,6 +1445,14 @@ func (d *Daemon) Run(ctx context.Context) error {
 				return fmt.Errorf("review model is not set for agent %q: the configured review_model belongs to review agent %q; pass --model or configure review_model for that agent", effectiveAgent, d.Config.EffectiveReviewAgent())
 			}
 			return fmt.Errorf("review model is not set; configure review_model or model in sandman config")
+		}
+		keys := config.AgentModelKeys{Agent: "review_agent", Model: "review_model"}
+		if strings.TrimSpace(d.Agent) != "" || strings.TrimSpace(d.Model) != "" {
+			keys = config.AgentModelKeys{Agent: "--agent", Model: "--model"}
+		}
+		if err := config.ValidateAgentModel(keys, effectiveAgent, agentCfg, d.effectiveModel()); err != nil {
+			d.logf("review agent validation failed: %v", err)
+			return err
 		}
 	}
 
