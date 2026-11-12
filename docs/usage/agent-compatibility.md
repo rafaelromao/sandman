@@ -453,6 +453,28 @@ If none are set, the `claude` preset still runs on its default model (`sonnet`),
 Claude Code accepts model aliases (`sonnet`, `opus`, `haiku`, `fable`, `opusplan`,
 `sonnet[1m]`) or full model names, never `provider/model` identifiers.
 
+### Claude models through OpenCode
+
+OpenCode v2's `claude-agent` provider does not call a model API: it starts the
+Claude Code CLI as a subprocess. Only the `claude` preset installs Claude Code in
+the image and keeps its credentials in step with the host, so an OpenCode run of
+a `claude-agent/<model>` model fails every launch with OpenCode's
+``Install Claude Code and run `claude auth login` first``, even when the host is
+signed in. Sandman therefore refuses a `claude-agent` model on any agent other
+than `claude`: `opencode`, `opencode-v2`, or an agent without a preset, in any
+sandbox. It checks every pairing before anything runs:
+
+- loading `.sandman/config.yaml`: `model` with `agent`, `review_model` with
+  `review_agent`, and each `agents.<name>.model` with its agent;
+- `sandman config set`, which leaves the file unchanged;
+- `sandman run --agent` / `--model`, before any GitHub lookup or worktree work;
+- `sandman review --agent` / `--model`, at startup;
+- `sandman init --agent` / `--model` / `--review-model`, before writing any file.
+
+The error names the keys or flags to change. To run Claude through Sandman, use
+the `claude` agent with the model's alias, for example `agent: claude` and
+`model: sonnet`, or keep the OpenCode agent with a model of another provider.
+
 ## Compatibility matrix
 
 | Preset | Worktree | Container | Keychain Auth | Host Config Paths |
