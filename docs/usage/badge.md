@@ -8,6 +8,17 @@ The badge is a self-hosted SVG pill that links to the [Sandman repo](https://git
 
 <img src="../assets/badge-built-with-sandman.svg" alt="Built with Sandman" width="154" />
 
+## Pull-request footer
+
+Sandman's publication guidance requires the linked Built with Sandman logo as
+the final content of every agent-created PR description, separated by a blank
+line. Implementation PRs retain their closing reference and existing description;
+badge-proposal PRs retain their leading marker. Agents verify the published body
+and keep exactly one footer across retries, continuations, and body edits.
+
+This attribution footer is separate from the optional README badge proposal.
+Closing that proposal opts out of the README change, not the PR footer.
+
 ## How it gets there
 
 After a batch completes with at least one merged Sandman-managed PR, Sandman's post-batch sidecar checks whether a badge has already been proposed. If not, it dispatches a child `sandman run --prompt` that opens a PR titled `chore: add Built with Sandman badge`.

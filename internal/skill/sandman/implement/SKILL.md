@@ -191,10 +191,10 @@ git commit -m "refactor: self-review fixes"
    ```bash
    git push -u origin <branch>
    ```
-2. Build the closing-reference body. The body MUST contain the platform's exact closing-reference line for the selected work item. The recommended body is exactly that single line:
+2. Build the closing-reference body. Start with the platform's exact closing-reference line for the selected work item, preserve any required description or template sections, and append the Built with Sandman footer as the final content:
 
    ```bash
-   BODY="<platform-closing-reference-for-selected-work-item>"
+   BODY=$(printf '%s\n\n%s\n' "<platform-closing-reference-for-selected-work-item>" '<a href="https://github.com/rafaelromao/sandman"><img src="https://raw.githubusercontent.com/rafaelromao/sandman/main/assets/badge-built-with-sandman.svg" alt="Built with Sandman" width="154" /></a>')
    ```
 
    Use the platform's accepted closing-reference form. Do not use a non-closing reference or explanatory prose in its place; a change request that does not auto-close its work item is not acceptable.
@@ -209,13 +209,13 @@ git commit -m "refactor: self-review fixes"
    gh pr view <new-pr-number> --json body --jq -r .body
    ```
 
-   The first non-empty line of the returned body MUST match the platform's closing-reference form. If it does not, update the body so it contains exactly that closing reference, then re-verify. If the body still cannot be made to match after one re-edit attempt, do not delegate review: persist the exact body, structured blocker, and next executable action in `.sandman/task.md` and the run log, then exit this attempt with a structured failure reason so the next run continues from the durable blocker.
+   The first non-empty line of the returned body MUST match the platform's closing-reference form. The final content MUST be exactly one linked Built with Sandman logo using the footer above. On creation, continuation, and body edits, preserve the closing reference and existing description; move an existing footer to the end rather than duplicating it. Separate the footer with one blank line. This PR footer is independent of the optional repository README badge. If either requirement is missing, update the body and re-verify. If the body still cannot be made to match after one re-edit attempt, do not delegate review: persist the exact body, structured blocker, and next executable action in `.sandman/task.md` and the run log, then exit this attempt with a structured failure reason so the next run continues from the durable blocker.
 5. Capture the PR URL and number.
 
 ### 8. Verified publication checkpoint
 
 - Stop this capability only after the branch is pushed, the pull request exists,
-  its closing reference is verified, and `.sandman/task.md` records the
+  its closing reference and final Built with Sandman footer are verified, and `.sandman/task.md` records the
   PR-created checkpoint plus the next action.
 - Do not load the review-cycle or merge capabilities from this capability. The
   composing workflow selects the next capability after publication.

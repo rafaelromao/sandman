@@ -102,7 +102,7 @@ git:
 
 ## Built-in presets
 
-Sandman has two built-in presets: `opencode` (the default `agent`) and `claude`. `sandman init --agent <preset>` installs the chosen preset into the scaffolded Dockerfile and writes it as both `agent` and `review_agent`, with the preset's default model as `model` and `review_model`.
+Sandman has three built-in presets: `opencode` (OpenCode v1), `opencode-v2`, and `claude`. New `sandman init` projects default to `opencode-v2`; reinitialization preserves an existing agent selection. The runtime fallback for configs without an agent remains `opencode` for compatibility. `sandman init --agent <preset>` installs the chosen preset into the scaffolded Dockerfile and writes it as both `agent` and `review_agent`, with the preset's default model as `model` and `review_model`.
 
 When you use the `opencode` preset, install the `opencode-shell-strategy` plugin first. Sandman runs OpenCode without a TTY/PTY, so this plugin prevents interactive shell commands from hanging during runs. OpenCode subagents inherit the same instructions.
 
@@ -112,7 +112,7 @@ For container runs on a subscription, export `CLAUDE_CODE_OAUTH_TOKEN` from `cla
 
 Both built-in presets also see `~/.agents`, which is where Sandman installs the shared skill folder.
 
-`sandman run --agent` selects the agent preset per invocation (built-in `opencode` or `claude`, or a custom provider under `agents`). `sandman config set agent` changes the project default. A container run whose agent is not listed in the Dockerfile's `# sandman installed-agents:` header fails before any container starts; a run on an agent other than the default does not depend on the default agent's metadata.
+`sandman run --agent` selects the agent preset per invocation (built-in `opencode`, `opencode-v2`, or `claude`, or a custom provider under `agents`). `sandman config set agent` changes the project default. A container run whose agent is not listed in the Dockerfile's `# sandman installed-agents:` header fails before any container starts; a run on an agent other than the default does not depend on the default agent's metadata.
 
 Custom providers are defined under the top-level `agents` map in `.sandman/config.yaml`:
 

@@ -204,13 +204,25 @@ func TestBinaryInstallationDocumentationMatchesReleaseContract(t *testing.T) {
 		"grep -F \"  ${TARGET_ARCHIVE}\" checksums.txt | shasum -a 256 -c -",
 		"VERSION=$(curl -fsSL https://api.github.com/repos/rafaelromao/sandman/releases",
 		"sandman --version",
-		"go install github.com/rafaelromao/sandman/cmd/sandman@v1.0.0-rc.1",
+		"go install github.com/rafaelromao/sandman/cmd/sandman@latest",
 		"curl -fsSL https://raw.githubusercontent.com/rafaelromao/sandman/main/scripts/install.sh | sh -s -- --include-prerelease",
 		"--install-dir DIRECTORY",
 		"Build from a checkout",
 	} {
 		if !strings.Contains(install, required) {
 			t.Errorf("installation guide missing %q", required)
+		}
+	}
+}
+
+func TestPublicGoInstallationExamplesSelectLatestRelease(t *testing.T) {
+	for _, path := range []string{"../README.md", "../docs/get-started/install.md", "../docs/get-started/quickstart.md"} {
+		content := readRepositoryFile(t, path)
+		if !strings.Contains(content, "go install github.com/rafaelromao/sandman/cmd/sandman@latest") {
+			t.Errorf("%s must install the latest release", path)
+		}
+		if strings.Contains(content, "go install github.com/rafaelromao/sandman/cmd/sandman@v") {
+			t.Errorf("%s still contains a fixed release install command", path)
 		}
 	}
 }

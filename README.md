@@ -7,7 +7,7 @@ AFK coding agents orchestration in isolated sandboxes.
 ## Install
 
 ```bash
-go install github.com/rafaelromao/sandman/cmd/sandman@v1.0.0-rc.1
+go install github.com/rafaelromao/sandman/cmd/sandman@latest
 ```
 
 If Go is not installed, download a prebuilt binary from the

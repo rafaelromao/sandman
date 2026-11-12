@@ -332,7 +332,7 @@ retain full action commit pins with readable version comments. Release automatio
 retains write permissions; validation defaults to contents read and semantic title
 validation gets pull-request read. Existing protection contexts remain in place.
 
-The Go language minimum is 1.26; `toolchain go1.26.10` selects a patched
+The Go language minimum is 1.26; `toolchain go1.26.11` selects a patched
 standard library for normal builds; `.go-version` selects the same patched
 toolchain explicitly in setup-go and security scans. Keep automatic
 toolchain selection enabled. Staticcheck retains its isolated Go 1.26.0 runner

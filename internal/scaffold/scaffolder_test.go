@@ -89,7 +89,7 @@ func TestScaffold_ReInitPreservesValidConfig(t *testing.T) {
 	s := &Scaffolder{}
 	initialPrompter := &fakePrompter{confirm: true}
 
-	if err := s.Scaffold(dir, Options{BuildTools: "generic"}, initialPrompter); err != nil {
+	if err := s.Scaffold(dir, Options{BuildTools: "generic", Agent: "opencode"}, initialPrompter); err != nil {
 		t.Fatalf("initial scaffold: %v", err)
 	}
 	configPath := filepath.Join(dir, ".sandman", "config.yaml")
@@ -525,7 +525,7 @@ func TestScaffold_GenericPresetWritesPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(content, "FROM debian:bookworm-slim") {
 		t.Fatalf("Dockerfile missing Debian base image, got:\n%s", content)
 	}
-	if !strings.Contains(content, "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {
+	if !strings.Contains(content, "RUN npm install -g @opencode/cli@"+DefaultBuiltInAgentVersion("opencode-v2")) {
 		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", content)
 	}
 	if !strings.Contains(content, pinnedMiseInstall) {
@@ -602,7 +602,7 @@ func TestScaffold_RustPresetWritesPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(content, "RUN mise use -g --pin rust@1.95.0") {
 		t.Fatalf("Dockerfile missing pinned rust install, got:\n%s", content)
 	}
-	if !strings.Contains(content, "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {
+	if !strings.Contains(content, "RUN npm install -g @opencode/cli@"+DefaultBuiltInAgentVersion("opencode-v2")) {
 		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", content)
 	}
 }
@@ -1943,7 +1943,7 @@ func TestScaffold_PythonPresetWritesPinnedDockerfile(t *testing.T) {
 	if strings.Contains(content, "RUN git clone https://github.com/rafaelromao/codeindex /tmp/codeindex && pip3 install -e /tmp/codeindex --break-system-packages") {
 		t.Fatalf("Dockerfile should not install codeindex, got:\n%s", content)
 	}
-	if !strings.Contains(content, "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {
+	if !strings.Contains(content, "RUN npm install -g @opencode/cli@"+DefaultBuiltInAgentVersion("opencode-v2")) {
 		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", content)
 	}
 	if !strings.Contains(content, pinnedMiseInstall) {
@@ -3153,7 +3153,7 @@ func TestScaffold_JavaPresetWritesPinnedDockerfile(t *testing.T) {
 		"FROM debian:bookworm-slim",
 		"RUN mise use -g --pin java@21.0.2",
 		pinnedMiseInstall,
-		"RUN npm install -g opencode-ai@" + DefaultBuiltInAgentVersion("opencode"),
+		"RUN npm install -g @opencode/cli@" + DefaultBuiltInAgentVersion("opencode-v2"),
 	} {
 		if !strings.Contains(content, want) {
 			t.Errorf("Dockerfile missing %q, got:\n%s", want, content)
@@ -3244,7 +3244,7 @@ func TestScaffold_ElixirPresetWritesPinnedDockerfile(t *testing.T) {
 		"RUN mix local.hex --force",
 		"RUN mix local.rebar --force",
 		pinnedMiseInstall,
-		"RUN npm install -g opencode-ai@" + DefaultBuiltInAgentVersion("opencode"),
+		"RUN npm install -g @opencode/cli@" + DefaultBuiltInAgentVersion("opencode-v2"),
 	} {
 		if !strings.Contains(content, want) {
 			t.Errorf("Dockerfile missing %q, got:\n%s", want, content)
@@ -3520,7 +3520,7 @@ func TestScaffold_RubyPresetWritesPinnedDockerfile(t *testing.T) {
 		"RUN MISE_RUBY_COMPILE=false mise use -g --pin ruby@" + wantRubyVersion,
 		"RUN gem install bundler",
 		pinnedMiseInstall,
-		"RUN npm install -g opencode-ai@" + DefaultBuiltInAgentVersion("opencode"),
+		"RUN npm install -g @opencode/cli@" + DefaultBuiltInAgentVersion("opencode-v2"),
 	} {
 		if !strings.Contains(content, want) {
 			t.Errorf("Dockerfile missing %q, got:\n%s", want, content)
@@ -3743,8 +3743,8 @@ func TestScaffold_InitMessageWritten(t *testing.T) {
 	if !strings.Contains(got, "generic") {
 		t.Errorf("expected message to contain preset name %q", "generic")
 	}
-	if !strings.Contains(got, "opencode-ai@") {
-		t.Errorf("expected message to contain agent pin %q", "opencode-ai@")
+	if !strings.Contains(got, "@opencode/cli@") {
+		t.Errorf("expected message to contain agent pin %q", "@opencode/cli@")
 	}
 	if !strings.Contains(got, "~/.agents/skills/sandman/") {
 		t.Errorf("expected message to contain skill folder path %q", "~/.agents/skills/sandman/")
@@ -3775,7 +3775,7 @@ func TestScaffold_InitMessage_GenericPreset_AllFieldsPresent(t *testing.T) {
 		"Scaffold complete",
 		"Preset:",
 		"generic",
-		"opencode-ai@",
+		"@opencode/cli@",
 		"~/.agents/skills/sandman/",
 		"minimal BuildToolsPreset",
 	} {

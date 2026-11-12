@@ -41,8 +41,11 @@ func TestOpencodeSubagentPermissionAllowAll(t *testing.T) {
 	ghShimDir := t.TempDir()
 	writeMergedFakeGHShim(t, ghShimDir)
 	prependPath(t, ghShimDir)
+	installInitHostVersion(t, "opencode v1.19.3")
 
-	out, err := runSandmanBinary(t, binPath, repoDir, "init")
+	// This fixture exercises V1's OPENCODE_PERMISSION protocol, not the
+	// default agent selected for newly initialized projects.
+	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--agent", "opencode")
 	if err != nil {
 		t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
 	}

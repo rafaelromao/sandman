@@ -68,8 +68,9 @@ Merged Sandman PRs in this repo:
   ```
   Suggested by Sandman — feel free to close this PR if you don't want the badge.
 
-  The badge links to https://github.com/rafaelromao/sandman.
-  ```
+   The badge links to https://github.com/rafaelromao/sandman.
+   ```
+- Append the linked Built with Sandman logo HTML shown above as the final PR description content, separated by one blank line. Preserve the leading `<!-- sandman-badge-pr -->` marker and description. Verify the published body contains exactly one footer; on retries or body edits, move an existing footer to the end instead of duplicating it.
 - Do not edit any file other than `README.md`.
 - Do not auto-merge the PR.
 - Do not add CI, workflow, or configuration changes.
