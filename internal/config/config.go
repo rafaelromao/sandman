@@ -141,6 +141,11 @@ type AgentPreset struct {
 	// PermissionHint tells an operator where an agent without
 	// PermissionModes takes its permissions from instead.
 	PermissionHint string
+	// ExclusiveModelProviders are model providers (the part of a model
+	// before its first "/") whose models only an agent on this preset may
+	// use: such a provider runs this preset's own CLI, which other presets
+	// neither install nor sign in. See ValidateAgentModel.
+	ExclusiveModelProviders []string
 }
 
 // OpencodePermissionExternalDirectoryAllow is the OPENCODE_PERMISSION value
@@ -274,6 +279,11 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 		CredentialEnv:   "CLAUDE_CODE_OAUTH_TOKEN",
 		CredentialFiles: []string{"~/.claude/.credentials.json"},
 		SignInRemedy:    "run `claude /login` on the host, or export CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`",
+		// OpenCode v2's claude-agent provider starts the Claude Code CLI as
+		// a subprocess. Only this preset installs Claude Code in the image
+		// and reconciles its credentials with the host, so an OpenCode run
+		// of a claude-agent model fails every launch.
+		ExclusiveModelProviders: []string{"claude-agent"},
 	},
 }
 
@@ -467,6 +477,9 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("validate config: %w", err)
 	}
 	if err := validatePermissionModes(cfg.Agents); err != nil {
+		return nil, fmt.Errorf("validate config: %w", err)
+	}
+	if err := cfg.ValidateAgentModels(); err != nil {
 		return nil, fmt.Errorf("validate config: %w", err)
 	}
 	return &cfg, nil
