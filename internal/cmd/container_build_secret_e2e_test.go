@@ -21,6 +21,9 @@ func TestPythonBuildSecretIsTransient(t *testing.T) {
 	if !podmanAvailable(t) {
 		return
 	}
+	// This fixture scaffolds the V2 default; pin the host probe to the V2
+	// catalog head so it does not depend on the developer's installed CLI.
+	installInitHostVersion(t, scaffold.DefaultBuiltInAgentVersion("opencode-v2"))
 	for _, authenticated := range []bool{false, true} {
 		t.Run(fmt.Sprintf("authenticated=%t", authenticated), func(t *testing.T) {
 			t.Setenv("GH_TOKEN", "")

@@ -79,13 +79,14 @@ func TestPresetMatrixHarness_SkipsWhenNoContainerRuntime(t *testing.T) {
 func TestPresetMatrixHarness_GenericScaffolds(t *testing.T) {
 	containerRuntimeAvailable(t)
 
+	legacyPresetMatrixHost(t)
 	binPath := buildSandmanBinary(t)
 
 	repoDir := t.TempDir()
 	t.Chdir(repoDir)
 	initRunIntegrationRepo(t, repoDir)
 
-	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--build-tools", "generic")
+	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--agent", "opencode", "--build-tools", "generic")
 	if err != nil {
 		t.Fatalf("sandman init --build-tools generic failed: %v\noutput:\n%s", err, out)
 	}
@@ -153,13 +154,14 @@ func TestPresetMatrixHarness_GenericBuildsWithEditedDockerfile(t *testing.T) {
 func TestPresetMatrixHarness_GoScaffolds(t *testing.T) {
 	containerRuntimeAvailable(t)
 
+	legacyPresetMatrixHost(t)
 	binPath := buildSandmanBinary(t)
 
 	repoDir := t.TempDir()
 	t.Chdir(repoDir)
 	initRunIntegrationRepo(t, repoDir)
 
-	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--build-tools", "go", "--tool-version", "latest")
+	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--agent", "opencode", "--build-tools", "go", "--tool-version", "latest")
 	if err != nil {
 		t.Fatalf("sandman init --build-tools go failed: %v\noutput:\n%s", err, out)
 	}
@@ -221,7 +223,7 @@ func runE2EScaffoldGo(t *testing.T, preset, dockerfileAppend string) (string, st
 	t.Chdir(repoDir)
 	initRunIntegrationRepoWithRemote(t, repoDir)
 
-	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "init", "--build-tools", preset, "--tool-version", "latest")
+	runPresetMatrixInit(t, repoDir, "init", "--agent", "opencode", "--build-tools", preset, "--tool-version", "latest")
 	forcePodmanSandbox(t, repoDir)
 	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "config", "set", "review_command", "/oc review")
 	if dockerfileAppend != "" {
@@ -238,13 +240,14 @@ func runE2EScaffoldGo(t *testing.T, preset, dockerfileAppend string) (string, st
 func TestPresetMatrixHarness_NodeScaffolds(t *testing.T) {
 	containerRuntimeAvailable(t)
 
+	legacyPresetMatrixHost(t)
 	binPath := buildSandmanBinary(t)
 
 	repoDir := t.TempDir()
 	t.Chdir(repoDir)
 	initRunIntegrationRepo(t, repoDir)
 
-	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--build-tools", "node", "--tool-version", "lts")
+	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--agent", "opencode", "--build-tools", "node", "--tool-version", "lts")
 	if err != nil {
 		t.Fatalf("sandman init --build-tools node --tool-version lts failed: %v\noutput:\n%s", err, out)
 	}
@@ -307,7 +310,7 @@ func runE2EScaffoldNode(t *testing.T, preset, dockerfileAppend string) (string, 
 	repoDir := t.TempDir()
 	t.Chdir(repoDir)
 	initRunIntegrationRepoWithRemote(t, repoDir)
-	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "init", "--build-tools", preset, "--tool-version", "lts")
+	runPresetMatrixInit(t, repoDir, "init", "--agent", "opencode", "--build-tools", preset, "--tool-version", "lts")
 	forcePodmanSandbox(t, repoDir)
 	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "config", "set", "review_command", "/oc review")
 	if dockerfileAppend != "" {
@@ -607,7 +610,26 @@ func summarizeEvents(all []events.Event, issue int) string {
 // the prompt engine still exercises the real seam.
 func prFlowDepsForPresetMatrix(t *testing.T, repoDir string) Dependencies {
 	t.Helper()
+	legacyPresetMatrixHost(t)
 	return prFlowDeps(repoDir)
+}
+
+// legacyPresetMatrixHost pins the host OpenCode CLI to the V1 release the
+// legacy preset matrix targets, matching the release regression runner, so the
+// harness stays independent of the developer's installed CLI.
+func legacyPresetMatrixHost(t *testing.T) {
+	t.Helper()
+	installInitHostVersion(t, "opencode v1.19.3")
+}
+
+// runPresetMatrixInit runs `sandman init` and reports its own error instead of
+// letting a later step trip over the missing config it would have written.
+func runPresetMatrixInit(t *testing.T, repoDir string, args ...string) {
+	t.Helper()
+	out, err := runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), args...)
+	if err != nil {
+		t.Fatalf("sandman init failed: %v\noutput:\n%s", err, out)
+	}
 }
 
 // runSandmanBinaryWithEnv is runSandmanBinary plus a per-call env
@@ -664,11 +686,12 @@ func runE2EScaffold(t *testing.T, preset, toolVersion, dockerfileAppend string) 
 	repoDir := t.TempDir()
 	t.Chdir(repoDir)
 	initRunIntegrationRepoWithRemote(t, repoDir)
-	initArgs := []string{"init", "--build-tools", preset}
+	// This harness customizes and launches the V1 provider explicitly.
+	initArgs := []string{"init", "--agent", "opencode", "--build-tools", preset}
 	if toolVersion != "" {
 		initArgs = append(initArgs, "--tool-version", toolVersion)
 	}
-	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), initArgs...)
+	runPresetMatrixInit(t, repoDir, initArgs...)
 	forcePodmanSandbox(t, repoDir)
 	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "config", "set", "review_command", "/oc review")
 	if dockerfileAppend != "" {
@@ -887,13 +910,14 @@ func assertPresetMatrixAgentWorked(t *testing.T, repoDir, baseline string) {
 func TestPresetMatrixHarness_DotnetScaffolds(t *testing.T) {
 	containerRuntimeAvailable(t)
 
+	legacyPresetMatrixHost(t)
 	binPath := buildSandmanBinary(t)
 
 	repoDir := t.TempDir()
 	t.Chdir(repoDir)
 	initRunIntegrationRepo(t, repoDir)
 
-	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--build-tools", "dotnet", "--tool-version", "lts")
+	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--agent", "opencode", "--build-tools", "dotnet", "--tool-version", "lts")
 	if err != nil {
 		t.Fatalf("sandman init --build-tools dotnet --tool-version lts failed: %v\noutput:\n%s", err, out)
 	}
@@ -968,7 +992,7 @@ end
 		t.Fatalf("write mix.exs: %v", err)
 	}
 
-	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "init", "--build-tools", preset, "--tool-version", "lts")
+	runPresetMatrixInit(t, repoDir, "init", "--agent", "opencode", "--build-tools", preset, "--tool-version", "lts")
 	forcePodmanSandbox(t, repoDir)
 	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "config", "set", "review_command", "/oc review")
 	if dockerfileAppend != "" {
@@ -985,6 +1009,7 @@ end
 func TestPresetMatrixHarness_ElixirScaffolds(t *testing.T) {
 	containerRuntimeAvailable(t)
 
+	legacyPresetMatrixHost(t)
 	binPath := buildSandmanBinary(t)
 
 	repoDir := t.TempDir()
@@ -1002,7 +1027,7 @@ end
 		t.Fatalf("write mix.exs: %v", err)
 	}
 
-	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--build-tools", "elixir", "--tool-version", "lts")
+	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--agent", "opencode", "--build-tools", "elixir", "--tool-version", "lts")
 	if err != nil {
 		t.Fatalf("sandman init --build-tools elixir --tool-version lts failed: %v\noutput:\n%s", err, out)
 	}
@@ -1062,6 +1087,7 @@ func TestPresetMatrixHarness_ElixirBuildsWithEditedDockerfile(t *testing.T) {
 func TestPresetMatrixHarness_RustScaffolds(t *testing.T) {
 	containerRuntimeAvailable(t)
 
+	legacyPresetMatrixHost(t)
 	binPath := buildSandmanBinary(t)
 
 	repoDir := t.TempDir()
@@ -1072,7 +1098,7 @@ func TestPresetMatrixHarness_RustScaffolds(t *testing.T) {
 		t.Fatalf("write Cargo.toml: %v", err)
 	}
 
-	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--build-tools", "rust", "--tool-version", "lts")
+	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--agent", "opencode", "--build-tools", "rust", "--tool-version", "lts")
 	if err != nil {
 		t.Fatalf("sandman init --build-tools rust --tool-version lts failed: %v\noutput:\n%s", err, out)
 	}
@@ -1138,7 +1164,7 @@ func runE2EScaffoldRust(t *testing.T, preset, dockerfileAppend string) (string, 
 	if err := os.WriteFile(filepath.Join(repoDir, "Cargo.toml"), []byte("[package]\nname = \"demo\"\nversion = \"0.1.0\"\n"), 0644); err != nil {
 		t.Fatalf("write Cargo.toml: %v", err)
 	}
-	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "init", "--build-tools", preset, "--tool-version", "lts")
+	runPresetMatrixInit(t, repoDir, "init", "--agent", "opencode", "--build-tools", preset, "--tool-version", "lts")
 	forcePodmanSandbox(t, repoDir)
 	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "config", "set", "review_command", "/oc review")
 	if dockerfileAppend != "" {
@@ -1155,6 +1181,7 @@ func runE2EScaffoldRust(t *testing.T, preset, dockerfileAppend string) (string, 
 func TestPresetMatrixHarness_JavaScaffolds(t *testing.T) {
 	containerRuntimeAvailable(t)
 
+	legacyPresetMatrixHost(t)
 	binPath := buildSandmanBinary(t)
 
 	repoDir := t.TempDir()
@@ -1165,7 +1192,7 @@ func TestPresetMatrixHarness_JavaScaffolds(t *testing.T) {
 		t.Fatalf("write pom.xml: %v", err)
 	}
 
-	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--build-tools", "java", "--tool-version", "lts")
+	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--agent", "opencode", "--build-tools", "java", "--tool-version", "lts")
 	if err != nil {
 		t.Fatalf("sandman init --build-tools java --tool-version lts failed: %v\noutput:\n%s", err, out)
 	}
@@ -1231,7 +1258,7 @@ func runE2EScaffoldJava(t *testing.T, preset, dockerfileAppend string) (string, 
 	if err := os.WriteFile(filepath.Join(repoDir, "pom.xml"), []byte("<project></project>\n"), 0644); err != nil {
 		t.Fatalf("write pom.xml: %v", err)
 	}
-	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "init", "--build-tools", preset, "--tool-version", "lts")
+	runPresetMatrixInit(t, repoDir, "init", "--agent", "opencode", "--build-tools", preset, "--tool-version", "lts")
 	forcePodmanSandbox(t, repoDir)
 	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "config", "set", "review_command", "/oc review")
 	if dockerfileAppend != "" {
@@ -1250,6 +1277,7 @@ func runE2EScaffoldJava(t *testing.T, preset, dockerfileAppend string) (string, 
 func TestPresetMatrixHarness_RubyScaffolds(t *testing.T) {
 	containerRuntimeAvailable(t)
 
+	legacyPresetMatrixHost(t)
 	binPath := buildSandmanBinary(t)
 
 	repoDir := t.TempDir()
@@ -1258,7 +1286,7 @@ func TestPresetMatrixHarness_RubyScaffolds(t *testing.T) {
 
 	os.WriteFile(filepath.Join(repoDir, "Gemfile"), []byte("source 'https://rubygems.org'\ngem 'rails'\n"), 0644)
 
-	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--build-tools", "ruby", "--tool-version", "lts")
+	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--agent", "opencode", "--build-tools", "ruby", "--tool-version", "lts")
 	if err != nil {
 		t.Fatalf("sandman init --build-tools ruby failed: %v\noutput:\n%s", err, out)
 	}
@@ -1324,7 +1352,7 @@ func runE2EScaffoldRuby(t *testing.T, preset, dockerfileAppend string) (string, 
 	if err := os.WriteFile(filepath.Join(repoDir, "Gemfile"), []byte("source 'https://rubygems.org'\ngem 'rails'\n"), 0644); err != nil {
 		t.Fatalf("write Gemfile: %v", err)
 	}
-	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "init", "--build-tools", preset, "--tool-version", "lts")
+	runPresetMatrixInit(t, repoDir, "init", "--agent", "opencode", "--build-tools", preset, "--tool-version", "lts")
 	forcePodmanSandbox(t, repoDir)
 	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "config", "set", "review_command", "/oc review")
 	if dockerfileAppend != "" {
@@ -1342,13 +1370,14 @@ func runE2EScaffoldRuby(t *testing.T, preset, dockerfileAppend string) (string, 
 func TestPresetMatrixHarness_PythonScaffolds(t *testing.T) {
 	containerRuntimeAvailable(t)
 
+	legacyPresetMatrixHost(t)
 	binPath := buildSandmanBinary(t)
 
 	repoDir := t.TempDir()
 	t.Chdir(repoDir)
 	initRunIntegrationRepo(t, repoDir)
 
-	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--build-tools", "python", "--tool-version", "lts")
+	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--agent", "opencode", "--build-tools", "python", "--tool-version", "lts")
 	if err != nil {
 		t.Fatalf("sandman init --build-tools python --tool-version lts failed: %v\noutput:\n%s", err, out)
 	}
