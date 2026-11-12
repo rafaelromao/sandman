@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- New `sandman init` projects default to OpenCode v2 for implementation and review. Existing agent selections and explicit `--agent` overrides are preserved.
+- Installation examples select the latest release, and the landing page explains OpenCode and experimental Claude Code support.
+- PR publication guidance appends and verifies a linked Built with Sandman logo at the end of implementation and badge-proposal descriptions, preserving closing references and existing body content.
+
 ## [1.0.0-rc.2](https://github.com/rafaelromao/sandman/compare/v1.0.0-rc.1...v1.0.0-rc.2) (2026-09-01)
 
 

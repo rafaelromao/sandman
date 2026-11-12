@@ -391,7 +391,7 @@
         <section id="flow">
           <div class="kicker">Sleep while your agents code</div>
           <h1>AFK coding agents orchestration in isolated sandboxes</h1>
-          <p class="lead">Sandman turns one clear GitHub issue into an autonomous delivery loop. It plans the implementation, runs the agent in an isolated environment, stores progress in <code>task.md</code>, drives review, and merges the PR when the gates pass.</p>
+          <p class="lead">Sandman turns one clear GitHub issue into an autonomous delivery loop with OpenCode or Claude Code (experimental in v1). It plans the implementation, runs the agent in an isolated environment, stores progress in <code>task.md</code>, drives review, and merges the PR when the gates pass.</p>
 
           <div class="workflow" aria-label="Simplified delivery workflow">
             <article class="stage">
@@ -520,19 +520,21 @@
         </section>
 
         <section id="opencode-integration">
-          <div class="kicker">OpenCode integration</div>
-          <h2>Sandman runs OpenCode without hiding it.</h2>
-          <p class="lead">Sandman uses OpenCode as implementation agent.</p>
+          <div class="kicker">Agent integrations</div>
+          <h2>OpenCode or Claude Code. One delivery loop.</h2>
+          <p class="lead">Choose your implementation agent without changing how you track work, inspect progress, or validate delivery. New projects default to OpenCode v2; Claude Code support is experimental in v1.</p>
           <div class="grid-2">
             <div class="note-card">
-              <h3>Host sessions stay inspectable.</h3>
-              <p>Sandman live-mounts the host OpenCode database, so runs created by Sandman remain visible as native OpenCode sessions.</p>
+              <h3>OpenCode</h3>
+              <p>Start with <code>sandman init</code>. Sandman live-mounts the host OpenCode database, so runs remain visible as native OpenCode sessions.</p>
             </div>
             <div class="note-card">
-              <h3>Debug in the right surface.</h3>
-              <p>Use Portal for delivery state: run status, logs, review gates, and merge readiness. Use OpenCode for the agent transcript when you need to inspect what the model saw or did.</p>
+              <h3>Claude Code</h3>
+              <p>Start with <code>sandman init --agent claude</code> to use your Claude subscription. Worktree runs use your host login; containers need file-based credentials or a token from <code>claude setup-token</code>.</p>
+              <p>Explicit session reuse resumes the exact recorded Claude conversation, not the latest session in a shared directory.</p>
             </div>
           </div>
+          <p class="lead handoff-line">Use Portal for run status, logs, review gates, and merge readiness. Use your agent's native transcript for deeper inspection. See <a class="text-link" href="documentation.html#/usage/agent-compatibility.md">agent compatibility and setup</a> for authentication and session details.</p>
         </section>
 
         <section id="sandman-review">

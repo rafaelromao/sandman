@@ -23,7 +23,7 @@ sandman init [flags]
 |------|---------|-------------|
 | `--build-tools` | `""` | Build tools preset (`generic`, `dotnet`, `go`, `node`, `python`, `rust`, `elixir`, `ruby`, `java`) |
 | `--tool-version` | `""` | Version selector (`latest`, `lts`, `repo`, or semver shorthand) |
-| `--agent` | `""` | Default built-in agent preset for `init` (`opencode` or `claude`); also becomes `review_agent`, and the preset's default model becomes `model` and `review_model` |
+| `--agent` | `""` | Default built-in agent preset for `init` (`opencode`, `opencode-v2`, or `claude`); new projects default to `opencode-v2`, existing selections are preserved; also becomes `review_agent`, and the preset's default model becomes `model` and `review_model` |
 | `--model` | `""` | Default model for the agent |
 | `--variant` | `""` | Default provider-specific implementation model variant |
 | `--parallel` | `-1` | Default parallel container count (`-1` = use config default 1) |

@@ -173,7 +173,7 @@ func TestRootHelpListsAllCommands(t *testing.T) {
 }
 
 func TestInitViaRoot_CreatesSandmanFiles(t *testing.T) {
-	installInitHostVersion(t, "1.19.3")
+	installInitHostVersion(t, "2.1.2")
 	deps := newTestDeps(t)
 	dir := t.TempDir()
 	t.Chdir(dir)

@@ -238,8 +238,8 @@ func TestScaffold_GatingOmitsAnalyzerBelowFloor(t *testing.T) {
 		keep        string
 	}{
 		{"go", "prefix:1.20", "gocognit", "gocyclo"},
-		{"node", "18", "eslint", "RUN npm install -g opencode-ai@" + DefaultBuiltInAgentVersion("opencode")},
-		{"dotnet", "7", "Crap4DotNet", "RUN npm install -g opencode-ai@" + DefaultBuiltInAgentVersion("opencode")},
+		{"node", "18", "eslint", "RUN npm install -g @opencode/cli@" + DefaultBuiltInAgentVersion("opencode-v2")},
+		{"dotnet", "7", "Crap4DotNet", "RUN npm install -g @opencode/cli@" + DefaultBuiltInAgentVersion("opencode-v2")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.preset, func(t *testing.T) {

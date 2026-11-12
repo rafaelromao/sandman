@@ -885,7 +885,7 @@ func resolveReviewTimeout(override *int) (int, error) {
 // resolveDefaultAgent returns the agent init installs and records as the
 // default: the --agent flag, else the preserved config's built-in default
 // agent (so a re-init keeps the Dockerfile in step with config.yaml), else
-// the built-in default.
+// OpenCode v2 for new projects. Runtime defaults remain backward-compatible.
 func (s *Scaffolder) resolveDefaultAgent(opts Options, preserved *config.Config) (string, error) {
 	if opts.Agent == "" {
 		if preserved != nil {
@@ -893,7 +893,7 @@ func (s *Scaffolder) resolveDefaultAgent(opts Options, preserved *config.Config)
 				return preserved.DefaultAgent, nil
 			}
 		}
-		return config.DefaultAgent, nil
+		return "opencode-v2", nil
 	}
 	if _, ok := config.BuiltInAgentPresets[opts.Agent]; !ok {
 		return "", fmt.Errorf("unknown default agent: %q (supported: %s)", opts.Agent, strings.Join(KnownAgents, ", "))

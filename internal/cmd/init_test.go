@@ -29,7 +29,7 @@ func installInitHostVersion(t *testing.T, output string) {
 
 func newInitCommandForTest(t *testing.T) *cobra.Command {
 	t.Helper()
-	installInitHostVersion(t, scaffold.DefaultBuiltInAgentVersion("opencode"))
+	installInitHostVersion(t, scaffold.DefaultBuiltInAgentVersion("opencode-v2"))
 	return NewInitCmd()
 }
 
@@ -71,6 +71,13 @@ func TestInit_CreatesSandmanFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".sandman", "prompt.md")); err != nil {
 		t.Errorf("prompt.md not created: %v", err)
+	}
+	cfg, err := config.Load(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DefaultAgent != "opencode-v2" || cfg.DefaultReviewAgent != "opencode-v2" {
+		t.Fatalf("new project agents = %q/%q, want opencode-v2", cfg.DefaultAgent, cfg.DefaultReviewAgent)
 	}
 }
 
@@ -285,7 +292,7 @@ func TestInit_GenericBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	if strings.Contains(dockerfile, "/root/.local/share/mise") {
 		t.Fatalf("Dockerfile should not depend on /root mise paths, got:\n%s", dockerfile)
 	}
-	if !strings.Contains(dockerfile, "RUN npm install -g opencode-ai@") {
+	if !strings.Contains(dockerfile, "RUN npm install -g @opencode/cli@") {
 		t.Fatalf("Dockerfile missing opencode install, got:\n%s", dockerfile)
 	}
 
@@ -339,7 +346,7 @@ func TestInit_RustBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(dockerfile, "RUN mise use -g --pin rust@1.77.0") {
 		t.Fatalf("Dockerfile missing pinned rust install, got:\n%s", dockerfile)
 	}
-	if !strings.Contains(dockerfile, "RUN npm install -g opencode-ai@") {
+	if !strings.Contains(dockerfile, "RUN npm install -g @opencode/cli@") {
 		t.Fatalf("Dockerfile missing opencode install, got:\n%s", dockerfile)
 	}
 }
@@ -951,6 +958,7 @@ func TestInit_DefaultAgentFlagSelectsConfigPreset(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader(""))
 	cmd.SetArgs([]string{"--build-tools", "generic", "--agent", "opencode"})
+	installInitHostVersion(t, scaffold.DefaultBuiltInAgentVersion("opencode"))
 
 	err := cmd.Execute()
 	if err != nil {

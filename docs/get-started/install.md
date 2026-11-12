@@ -14,7 +14,7 @@ Full setup guide: prerequisites, install methods, agent setup (OpenCode or Claud
 ### Install with Go
 
 ```bash
-go install github.com/rafaelromao/sandman/cmd/sandman@v1.0.0-rc.1
+go install github.com/rafaelromao/sandman/cmd/sandman@latest
 ```
 
 This installs Sandman into Go's configured binary directory. Verify the
@@ -146,6 +146,11 @@ Navigate to a git repository where you want to run AFK agents and run:
 ```bash
 sandman init
 ```
+
+New projects default to the `opencode-v2` agent preset. Use
+`sandman init --agent opencode` for OpenCode v1 or `sandman init --agent claude`
+for Claude Code. Reinitializing a project preserves its existing agent unless
+you explicitly select another with `--agent`.
 
 This scaffolds `.sandman/` with:
 

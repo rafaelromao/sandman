@@ -59,6 +59,8 @@ func TestInit_GitignoreAndUntrackRegression(t *testing.T) {
 
 	var out bytes.Buffer
 	cmd := newInitCommandForTest(t)
+	// The pre-existing config omits agent and retains the legacy v1 fallback.
+	installInitHostVersion(t, "1.19.3")
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader("y\n"))
 	cmd.SetArgs([]string{"--build-tools", "generic"})

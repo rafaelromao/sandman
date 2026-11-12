@@ -5,6 +5,19 @@ import (
 	"testing"
 )
 
+func TestDefaultBadgePromptRequiresFinalPRLogo(t *testing.T) {
+	text := DefaultBadgePrompt()
+	start := strings.Index(text, "## PR creation")
+	if start < 0 {
+		t.Fatal("missing PR creation instructions")
+	}
+	for _, want := range []string{"final PR description content", "Preserve the leading", "<!-- sandman-badge-pr -->", "exactly one footer", "move an existing footer to the end instead of duplicating it"} {
+		if !strings.Contains(text[start:], want) {
+			t.Errorf("PR footer instructions missing %q", want)
+		}
+	}
+}
+
 // TestDefaultBadgePrompt_DocumentsControlFileSidecarAuthoritatively pins
 // the new contract (issue #2195): the post-batch badge sidecar in
 // internal/batch/badge_hook.go is the sole authority on the control

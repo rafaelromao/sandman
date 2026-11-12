@@ -53,10 +53,10 @@ func TestScaffold_ClaudeAgentScaffoldsClaudeConfigAndDockerfile(t *testing.T) {
 	}
 }
 
-func TestScaffold_OpenCodeDefaultsAreUnchanged(t *testing.T) {
+func TestScaffold_ExplicitOpenCodeV1DefaultsAreUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	s := &Scaffolder{}
-	if err := s.Scaffold(dir, Options{BuildTools: "generic"}, &fakePrompter{confirm: true}); err != nil {
+	if err := s.Scaffold(dir, Options{BuildTools: "generic", Agent: "opencode"}, &fakePrompter{confirm: true}); err != nil {
 		t.Fatalf("scaffold: %v", err)
 	}
 	cfg, err := config.Load(filepath.Join(dir, ".sandman", "config.yaml"))
