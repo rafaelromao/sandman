@@ -301,6 +301,9 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := validateRunAgentModel(cfg, agentName, agentFlag, modelFlag, agentCfg); err != nil {
+				return err
+			}
 
 			var issues []int
 			if overridePrompt && !issueSelectionProvided {

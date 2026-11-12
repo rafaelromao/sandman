@@ -1625,6 +1625,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	if err := sandbox.ValidateAgentConfig(agentName, agentCfg); err != nil {
 		return nil, err
 	}
+	if err := config.ValidateAgentModel(config.AgentModelKeys{Agent: "agent", Model: "model"}, agentName, agentCfg, agentCfg.Model); err != nil {
+		return nil, err
+	}
 
 	baseBranch := strings.TrimSpace(req.BaseBranch)
 	if baseBranch == "" {
