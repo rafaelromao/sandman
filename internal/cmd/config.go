@@ -83,6 +83,11 @@ func NewConfigSetCmd(store config.Store) *cobra.Command {
 			if err := cfg.SetValue(args[0], args[1]); err != nil {
 				return err
 			}
+			// The change is checked whole, as Load checks the file, so a
+			// refused pairing is never saved.
+			if err := cfg.ValidateAgentModels(); err != nil {
+				return err
+			}
 
 			if args[0] == "review_command" {
 				syncOpts, err := sandmanSkillSyncOptions(cmd, cfg.EffectiveReviewCommand())
