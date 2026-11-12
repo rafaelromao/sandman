@@ -60,6 +60,34 @@ func TestScaffold_RefusesClaudeAgentModelsForAnotherAgentBeforeWriting(t *testin
 	}
 }
 
+// A preserved agents.<name>.preset override decides the agent's preset: an
+// agent named claude on the opencode-v2 preset is refused a claude-agent model.
+func TestScaffold_ReInitHonorsPreservedPresetOverride(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+	if err := s.Scaffold(dir, Options{BuildTools: "generic"}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatalf("first scaffold: %v", err)
+	}
+	configPath := filepath.Join(dir, ".sandman", "config.yaml")
+	override := "agent: opencode-v2\nmodel: openai/gpt-6-luna\nagents:\n  claude:\n    preset: opencode-v2\n"
+	if err := os.WriteFile(configPath, []byte(override), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dockerfileBefore, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = s.Scaffold(dir, Options{BuildTools: "generic", Agent: "claude", Model: "claude-agent/sonnet"}, &fakePrompter{confirm: true})
+	requireRefusal(t, err, `--model "claude-agent/sonnet" cannot run on agent "claude"`)
+	if data, _ := os.ReadFile(configPath); string(data) != override {
+		t.Errorf("a refused re-init changed config.yaml to %q", data)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile")); string(data) != string(dockerfileBefore) {
+		t.Error("a refused re-init changed the Dockerfile")
+	}
+}
+
 // The claude agent is the rule's boundary: init does not refuse it.
 func TestScaffold_DoesNotRefuseClaudeAgentModelsOnTheClaudeAgent(t *testing.T) {
 	opts := Options{BuildTools: "generic", Agent: "claude", Model: "claude-agent/sonnet", ReviewModel: "claude-agent/opus"}
