@@ -16,7 +16,7 @@ head, configured review command, and any request-scoped context.
    do not copy or reinterpret the guard in this capability.
    A refusal caused by an unanswered trigger, malformed evidence, ambiguous
    ordering, stale head, or failed lookup is a delivery refusal.
-3. Post exactly one `{{REVIEW_COMMAND}}` trigger. Never silently retry by
+3. Post exactly one `/sandman review` trigger. Never silently retry by
    posting a replacement trigger. Any text after the command asks for a code
    review of the current head only. It never asks the reviewer for a formal
    approval, a review decision, publication work, or a statement about

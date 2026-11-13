@@ -91,7 +91,7 @@ func TestReviewCyclePreservesFormerReviewGates(t *testing.T) {
 		"temporary cycle head record",
 		"temporary addressed-comment record",
 		"every prior approval timestamp is stale",
-		"an implementor `{{REVIEW_COMMAND}}` trigger that has not yet received a response",
+		"an implementor `/sandman review` trigger that has not yet received a response",
 		"at least 240 s of cumulative sleep",
 		"current-head formal `APPROVED` records",
 		"Do not filter it out because the author shares your GitHub login",

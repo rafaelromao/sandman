@@ -22,6 +22,8 @@ const embeddedSkillRoot = "sandman"
 
 const manifestFileName = ".sandman-sync-manifest.json"
 
+const defaultReviewCommand = "/sandman review"
+
 //go:embed sandman/**
 var embeddedSkills embed.FS
 
@@ -43,8 +45,9 @@ type SyncOptions struct {
 }
 
 // Sync writes the embedded Sandman skill into the shared agent skills directory,
-// substituting {{REVIEW_COMMAND}} with the given reviewCommand value, and
-// links it into Claude Code's skills directory (see syncClaudeCodeSkillLinks).
+// replacing its portable default review command with the given reviewCommand
+// value, and links it into Claude Code's skills directory (see
+// syncClaudeCodeSkillLinks).
 func Sync(opts SyncOptions) error {
 	homeDir := strings.TrimSpace(opts.HomeDir)
 	if homeDir == "" {
@@ -102,7 +105,12 @@ func Sync(opts SyncOptions) error {
 		if err != nil {
 			return fmt.Errorf("read embedded skill file %q: %w", path, err)
 		}
-		data = bytes.ReplaceAll(data, []byte("{{REVIEW_COMMAND}}"), []byte(opts.ReviewCommand))
+		if strings.TrimSpace(opts.ReviewCommand) != "" {
+			// Keep rendering legacy markers outside skill manifests while the
+			// published SKILL.md sources use a portable default command.
+			data = bytes.ReplaceAll(data, []byte("{{REVIEW_COMMAND}}"), []byte(opts.ReviewCommand))
+			data = bytes.ReplaceAll(data, []byte(defaultReviewCommand), []byte(opts.ReviewCommand))
+		}
 		if err := os.WriteFile(targetPath, data, 0o644); err != nil {
 			return fmt.Errorf("write skill file %q: %w", targetPath, err)
 		}

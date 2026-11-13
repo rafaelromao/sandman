@@ -2,6 +2,59 @@
 
 Sandman syncs the full shared `sandman` skill folder during `sandman init`. It lives at `~/.agents/skills/sandman/` and is regenerated when `review_command` changes.
 
+## Install independently with Vercel Skills
+
+Use the repository's `install-skills.sh` when Sandman's Go CLI is not installed
+or when you want to choose a review command. It prepares a temporary copy of the
+skill catalog, renders the selected command into the skill files, then invokes
+Vercel's `npx skills add` with copy mode. It does not install or run the Sandman
+executable. The root `skills.sh.json` configures Vercel's CLI to discover both
+the root skill and all nested workflow skills.
+
+The installer requires Bash and Node.js 22.20 or later (which provides `npx`).
+Clone the public source once:
+
+```bash
+git clone --depth 1 https://github.com/rafaelromao/sandman.git "$HOME/.local/share/sandman-skills"
+```
+
+From the project where you want the skills installed, run this to install all
+skills for all supported agents at project scope:
+
+```bash
+cd /path/to/your/project
+"$HOME/.local/share/sandman-skills/install-skills.sh" --agent '*' --skill '*'
+```
+
+The installer suggests these review commands and lets you select one, or enter
+a custom command:
+
+1. `/sandman review`
+2. `@codex review`
+3. `/oc review`
+4. `@coderabbitai review`
+5. A custom command
+
+To install the standalone run skill for OpenCode globally and set a custom
+review command without prompting:
+
+```bash
+"$HOME/.local/share/sandman-skills/install-skills.sh" \
+  --global --agent opencode --skill sandman-run \
+  --review-command '@codex review'
+```
+
+Use `--review-command 'YOUR COMMAND'` to specify any review trigger directly;
+non-interactive runs require this option. By default, the installer targets all
+agents and all skills in the current project. Use `--agent AGENT` and
+`--skill SKILL` to narrow the selection, and add `--global` to install for your
+user account instead. `--project-dir DIR` selects a project destination; without
+it, the current directory is used. The review command is rendered into a
+temporary source copy before installation, leaving the checkout untouched.
+The portable skill source defaults to `/sandman review`; `sandman init` also
+continues to replace that default with the project's configured
+`review_command`.
+
 ## What it contains
 
 The installed folder mirrors the local Sandman skill and includes routed subskills for:

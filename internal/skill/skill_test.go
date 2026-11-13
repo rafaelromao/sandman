@@ -51,6 +51,40 @@ func TestSyncWritesEmbeddedSkill(t *testing.T) {
 	}
 }
 
+func TestSkillSourcesAreReadyForIndependentInstall(t *testing.T) {
+	var checked int
+	err := fs.WalkDir(embeddedSkills, embeddedSkillRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || d.Name() != "SKILL.md" {
+			return nil
+		}
+		data, err := fs.ReadFile(embeddedSkills, path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(data), "{{") || strings.Contains(string(data), "}}") {
+			t.Errorf("skill source %s contains unresolved template markers", path)
+		}
+		checked++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk embedded skill sources: %v", err)
+	}
+	if checked == 0 {
+		t.Fatal("expected embedded skill manifests")
+	}
+
+	runSkill := readEmbeddedSkill(t, "run/SKILL.md")
+	for _, want := range []string{"Review command: `/sandman review`", "1800 seconds by default"} {
+		if !strings.Contains(runSkill, want) {
+			t.Errorf("standalone run skill missing portable default %q", want)
+		}
+	}
+}
+
 func TestSyncInstallsAndRunsVersionedReviewWait(t *testing.T) {
 	home := t.TempDir()
 	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/sandman review"}); err != nil {
@@ -512,8 +546,8 @@ func TestSyncOverwritesManagedTreeWithoutPrompt(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(home, ".agents", "skills", embeddedSkillRoot, manifestFileName)); err != nil {
 		t.Fatalf("expected manifest to be written: %v", err)
 	}
-	if bytes.Contains(data, []byte("{{REVIEW_COMMAND}}")) {
-		t.Fatalf("expected installed skill to be rendered, got:\n%s", text)
+	if strings.Contains(text, defaultReviewCommand) {
+		t.Fatalf("expected installed skill default review command to be replaced, got:\n%s", text)
 	}
 }
 
@@ -537,7 +571,7 @@ func TestSyncTreatsLegacyManagedTreeAsUpgradeable(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		data = bytes.ReplaceAll(data, []byte("{{REVIEW_COMMAND}}"), []byte("/legacy review"))
+		data = bytes.ReplaceAll(data, []byte(defaultReviewCommand), []byte("/legacy review"))
 		return os.WriteFile(target, data, 0o644)
 	})
 	if err != nil {
