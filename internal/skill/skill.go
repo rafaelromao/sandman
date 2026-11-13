@@ -2,7 +2,6 @@ package skill
 
 import (
 	"bufio"
-	"bytes"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
@@ -35,16 +34,17 @@ func DefaultSkill() string {
 }
 
 type SyncOptions struct {
-	HomeDir       string
-	ReviewCommand string
-	In            io.Reader
-	Out           io.Writer
-	Interactive   bool
+	HomeDir     string
+	In          io.Reader
+	Out         io.Writer
+	Interactive bool
 }
 
-// Sync writes the embedded Sandman skill into the shared agent skills directory,
-// substituting {{REVIEW_COMMAND}} with the given reviewCommand value, and
-// links it into Claude Code's skills directory (see syncClaudeCodeSkillLinks).
+// Sync writes the embedded Sandman skill into the shared agent skills directory
+// and links it into Claude Code's skills directory (see
+// syncClaudeCodeSkillLinks). The tree is one copy per user, shared by every
+// repository on the machine, so files are installed byte for byte: skills
+// resolve repository and run values at run time instead (ADR-0058).
 func Sync(opts SyncOptions) error {
 	homeDir := strings.TrimSpace(opts.HomeDir)
 	if homeDir == "" {
@@ -102,7 +102,6 @@ func Sync(opts SyncOptions) error {
 		if err != nil {
 			return fmt.Errorf("read embedded skill file %q: %w", path, err)
 		}
-		data = bytes.ReplaceAll(data, []byte("{{REVIEW_COMMAND}}"), []byte(opts.ReviewCommand))
 		if err := os.WriteFile(targetPath, data, 0o644); err != nil {
 			return fmt.Errorf("write skill file %q: %w", targetPath, err)
 		}

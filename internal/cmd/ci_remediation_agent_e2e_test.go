@@ -34,7 +34,7 @@ func TestCIRemediationPoisonedTaskRealAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve isolated agent home: %v", err)
 	}
-	if err := skill.Sync(skill.SyncOptions{HomeDir: home, ReviewCommand: "/sandman review"}); err != nil {
+	if err := skill.Sync(skill.SyncOptions{HomeDir: home}); err != nil {
 		t.Fatalf("install managed skills for the real agent: %v", err)
 	}
 

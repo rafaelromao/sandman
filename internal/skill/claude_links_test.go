@@ -11,7 +11,7 @@ import (
 
 func TestSyncLinksSharedSkillIntoClaudeCode(t *testing.T) {
 	home := t.TempDir()
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/sandman review"}); err != nil {
+	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
 		t.Fatalf("sync skill: %v", err)
 	}
 	shared := filepath.Join(home, ".agents", "skills", embeddedSkillRoot)
@@ -54,7 +54,7 @@ func TestSyncRepointsClaudeCodeSkillLinksIdempotently(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
-		if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/sandman review"}); err != nil {
+		if err := Sync(SyncOptions{HomeDir: home}); err != nil {
 			t.Fatalf("sync %d: %v", i, err)
 		}
 	}
@@ -86,7 +86,7 @@ func TestSyncLeavesRealClaudeCodeSkillDirectoryUntouched(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/sandman review", Out: &out}); err != nil {
+	if err := Sync(SyncOptions{HomeDir: home, Out: &out}); err != nil {
 		t.Fatalf("sync skill: %v", err)
 	}
 	info, err := os.Lstat(own)

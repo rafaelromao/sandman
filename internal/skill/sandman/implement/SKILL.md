@@ -66,13 +66,28 @@ Only after the failure is diagnosed and the corrective action has actually compl
 
 ### 1. Setup branch
 
+Resolve the base branch before anything else; this skill is shared by every
+repository on the machine, so it never assumes one. Use the first source that
+provides it:
+
+1. The caller. In a Sandman-managed run, the Task's `Base branch` is that value
+   and always wins.
+2. The base of the open pull request for the current branch.
+3. `git.base_branch` in the repository's `.sandman/config.yaml`.
+4. The repository's default branch.
+
 ```bash
 gh issue view <ID> --json title,number
+git branch --show-current                                         # current branch
+gh pr view --json baseRefName --jq .baseRefName                   # open pull request base, if any
+gh repo view --json defaultBranchRef --jq .defaultBranchRef.name  # repository default branch
+base_branch='<resolved base branch>'
+git fetch origin "$base_branch"
 ```
 
-- Checkout `main`/`master`, pull latest
-- Create and switch to branch: `issue-<ID>/<slugified-title>`
-- Record the issue title and branch name in `.sandman/task.md` or the run log, then continue automatically.
+- If the current branch is already a non-base branch (a Sandman-managed worktree's branch, or one the caller named), stay on it.
+- Otherwise create and switch to `issue-<ID>/<slugified-title>` from the latest base: `git switch -c "issue-<ID>/<slugified-title>" "origin/$base_branch"`.
+- Record the issue title, branch name, and base branch in `.sandman/task.md` or the run log, then continue automatically.
 
 ### 1.5. Pre-flight check
 
@@ -84,23 +99,23 @@ A merged change request will, by the tracker's merge rules, automatically close 
 2. Run branch freshness check:
 
    ```bash
-   git fetch origin main
-   git merge-base --is-ancestor HEAD origin/main
+   git fetch origin "$base_branch"
+   git merge-base --is-ancestor HEAD "origin/$base_branch"
    ```
 
-   If `merge-base --is-ancestor HEAD origin/main` returns false, **STOP**. Do NOT write `## Status: already resolved`. Load `sandman-back-merge` and merge the base branch into the current branch before re-evaluating. A branch that is behind `origin/main` is stale and cannot reliably be claimed as "already resolved" — the issue's AC may be partially met by local work that is not yet on `main`, or the AC check will race with the next main-line push.
+   If `merge-base --is-ancestor HEAD "origin/$base_branch"` returns false, **STOP**. Do NOT write `## Status: already resolved`. Load `sandman-back-merge` and merge the base branch into the current branch before re-evaluating. A branch that is behind `origin/<base-branch>` is stale and cannot reliably be claimed as "already resolved" — the issue's AC may be partially met by local work that is not yet on the base branch, or the AC check will race with the next push to the base branch.
 3. Run open-PR check:
 
    ```bash
    gh pr list --head <branch> --state open
    ```
 
-   If a PR is open for the current branch, the orchestrator will run an independent verification pass against `origin/main` before declaring the run successful. Write `## Status: already resolved` only if every AC has a corresponding test that exists on `origin/main`; otherwise the orchestrator cannot verify and the run will fail. Agents that prefer the explicit close path can pick one of:
+   If a PR is open for the current branch, the orchestrator will run an independent verification pass against `origin/<base-branch>` before declaring the run successful. Write `## Status: already resolved` only if every AC has a corresponding test that exists on `origin/<base-branch>`; otherwise the orchestrator cannot verify and the run will fail. Agents that prefer the explicit close path can pick one of:
    - **(a) Close the orphan PR** with the platform's "close change request" CLI, preserving the branch and commenting that the work is superseded by the new run, before writing the marker, OR
    - **(b) Stop without writing the marker** and let the existing PR drive the run — this is the safer default; the open PR is itself durable evidence of partial or pending work.
 4. Decision matrix (after branch freshness and open-PR checks pass):
-   - **Issue is closed** → verify the issue acceptance criteria against the current state of the base branch after fetching `origin/<base>`; only write `## Status: already resolved` and stop if the base branch actually satisfies every criterion. If the base branch does not satisfy every criterion, continue to step 2 (Plan) as normal.
-   - **Issue is open** → read the issue acceptance criteria and compare against the current state of the base branch after fetching `origin/<base>`. If all acceptance criteria are already met in the base branch, write `## Status: already resolved` to `.sandman/task.md` and stop without running plan or TDD. Otherwise, proceed to step 2 (Plan) as normal.
+   - **Issue is closed** → verify the issue acceptance criteria against the current state of the base branch after fetching `origin/<base-branch>`; only write `## Status: already resolved` and stop if the base branch actually satisfies every criterion. If the base branch does not satisfy every criterion, continue to step 2 (Plan) as normal.
+   - **Issue is open** → read the issue acceptance criteria and compare against the current state of the base branch after fetching `origin/<base-branch>`. If all acceptance criteria are already met in the base branch, write `## Status: already resolved` to `.sandman/task.md` and stop without running plan or TDD. Otherwise, proceed to step 2 (Plan) as normal.
 
 Writing `## Status: already resolved` while a PR is open without a verification path fails the run, so step 3 is not optional.
 
@@ -178,7 +193,7 @@ git commit -m "refactor: self-review fixes"
 ### 6. Merge base branch before PR
 
 - Load the `sandman-back-merge` skill
-- Use it to merge the base branch into the current branch before creating the PR
+- Use it to merge the base branch (`origin/$base_branch`) into the current branch before creating the PR
 - Resolve conflicts using the `sandman-back-merge` skill's 3-way workflow
 - Run relevant tests and formatting after the merge
 - Do NOT rebase
@@ -201,7 +216,7 @@ git commit -m "refactor: self-review fixes"
 3. Create the change request with that body. The PR title must use the same Conventional Commits shape as the commit subject from step 4 (same `<type>(<scope>)?:` header; same subject). The title is gated by the CI status check that scans for Conventional Commits, so do not bypass the format with the literal work-item title.
 
    ```bash
-   gh pr create --title "$COMMIT_HEADER" --body "$BODY"
+   gh pr create --base "$base_branch" --title "$COMMIT_HEADER" --body "$BODY"
    ```
 4. Verify the body that landed on the PR. Pull it back from the change-request service and confirm it matches the closing-reference shape — do not trust that the create call succeeded, because the API may accept variants silently.
 
@@ -224,7 +239,7 @@ git commit -m "refactor: self-review fixes"
 
 ## Checklist
 
-- [ ] Branch created from latest main
+- [ ] Base branch resolved; branch created from the latest base branch, or the existing implementation branch kept
 - [ ] Changes confined to the repository codebase (not meta-infrastructure)
 - [ ] Plan reviewed and recorded before TDD
 - [ ] Each vertical slice committed before moving to the next (Hard Rule 2)

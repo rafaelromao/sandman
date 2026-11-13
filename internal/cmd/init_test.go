@@ -212,11 +212,12 @@ func TestInit_ReviewCommandFlagStoredInConfig(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
+	// The flag only stores configuration; the shared skill tree it installs
+	// is the same for every repository.
+	synced := 0
 	oldInstall := syncSandmanSkill
-	syncSandmanSkill = func(opts skill.SyncOptions) error {
-		if opts.ReviewCommand != "/custom review" {
-			t.Fatalf("expected sync review command, got %q", opts.ReviewCommand)
-		}
+	syncSandmanSkill = func(skill.SyncOptions) error {
+		synced++
 		return nil
 	}
 	t.Cleanup(func() { syncSandmanSkill = oldInstall })
@@ -229,6 +230,9 @@ func TestInit_ReviewCommandFlagStoredInConfig(t *testing.T) {
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if synced != 1 {
+		t.Fatalf("init synchronized the shared skills %d times, want once", synced)
 	}
 
 	configData, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))

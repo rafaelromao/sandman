@@ -64,7 +64,7 @@ func TestSyncReviewPost_PersistsConfirmedPrimaryTrigger(t *testing.T) {
 
 func TestReviewRequestFirstDeliveryAllowsMissingFutureEnvelope(t *testing.T) {
 	home := t.TempDir()
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: reviewPrefix}); err != nil {
+	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
 		t.Fatalf("sync skill: %v", err)
 	}
 	root := filepath.Join(home, ".agents", "skills", embeddedSkillRoot)
@@ -224,7 +224,7 @@ func TestSyncReviewPost_UpdatesExistingEnvelopeForFollowUp(t *testing.T) {
 func installRenderedPRReviewSkill(t *testing.T) (string, string) {
 	t.Helper()
 	home := t.TempDir()
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: reviewPrefix}); err != nil {
+	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
 		t.Fatalf("sync skill: %v", err)
 	}
 	root := filepath.Join(home, ".agents", "skills", embeddedSkillRoot)
@@ -237,14 +237,14 @@ func installRenderedPRReviewSkill(t *testing.T) (string, string) {
 
 func reviewGuardBlock(t *testing.T, skillText, requestFile, headFile string) string {
 	t.Helper()
-	return renderReviewBashBlock(t, skillText, "skill_root=\"${SANDMAN_SKILL_ROOT:-${HOME}/.agents/skills/sandman}\"", requestFile, headFile)
+	return renderReviewBashBlock(t, skillText, "request_file=\"$cycle_request_file\"\n\ncheck_review_trigger_delivery()", requestFile, headFile)
 }
 
 func reviewPrimaryPostBlock(t *testing.T, skillText, requestFile, headFile string) string {
 	t.Helper()
 	return strings.Join([]string{
 		renderReviewBashBlock(t, skillText, "request_result=$(sh \"$skill_root/review-request/review-request-v1.sh\"", requestFile, headFile),
-		renderReviewBashBlock(t, skillText, "review_timeout=${REVIEW_TIMEOUT:-1800}", requestFile, headFile),
+		renderReviewBashBlock(t, skillText, "request_started_unix=$(date +%s) || record REVIEW_TIMEOUT_STATE_ERROR", requestFile, headFile),
 	}, "\n")
 }
 
@@ -270,28 +270,43 @@ func renderReviewBashBlock(t *testing.T, skillText, start, requestFile, headFile
 	block = strings.ReplaceAll(block, ".sandman/state/<N>.head_sha", headFile)
 	block = strings.ReplaceAll(block, "<owner/repo>", reviewRepository)
 	block = strings.ReplaceAll(block, "<N>", reviewPullRequest)
-	block = strings.ReplaceAll(block, "{{REVIEW_COMMAND}}", reviewPrefix)
 	return block
 }
 
+// reviewContextScript stands in for the agent-resolved values from the
+// skill's "Resolve the review context" step.
+func reviewContextScript(root, reviewCommand string) []string {
+	return []string{
+		"review_command=" + shellQuote(reviewCommand),
+		"review_timeout=1800",
+		"skill_root=" + shellQuote(root),
+	}
+}
+
 func reviewHarnessScript(root, firstBlock, secondBlock string) string {
-	return strings.Join([]string{
+	return reviewHarnessScriptFor(root, reviewPrefix, firstBlock, secondBlock)
+}
+
+func reviewHarnessScriptFor(root, reviewCommand, firstBlock, secondBlock string) string {
+	lines := []string{
 		"set -eu",
 		"export SANDMAN_SKILL_ROOT=" + shellQuote(root),
 		"cycle_request_file=\"$CYCLE_REQUEST_FILE\"",
 		"cycle_head_file=\"$CYCLE_HEAD_FILE\"",
 		"head_sha=" + reviewHeadSHA,
 		"record() { printf '%s\\n' \"$*\" >&2; return 1; }",
-		firstBlock,
-		secondBlock,
-		"printf '%s\\n' success",
-	}, "\n")
+	}
+	lines = append(lines, reviewContextScript(root, reviewCommand)...)
+	return strings.Join(append(lines, firstBlock, secondBlock, "printf '%s\\n' success"), "\n")
 }
 
 func reviewBlockedHarnessScript(root, guardBlock string) string {
 	return strings.Join([]string{
 		"set -eu",
 		"export SANDMAN_SKILL_ROOT=" + shellQuote(root),
+		"review_command=" + shellQuote(reviewPrefix),
+		"review_timeout=1800",
+		"skill_root=" + shellQuote(root),
 		"cycle_request_file=\"$CYCLE_REQUEST_FILE\"",
 		"cycle_head_file=\"$CYCLE_HEAD_FILE\"",
 		"head_sha=" + reviewHeadSHA,
