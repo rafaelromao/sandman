@@ -46,6 +46,14 @@ install-time values; skill sync copies the files byte for byte.
 - **Helper location.** Helpers find their sibling helpers relative to their own
   location. The review cycle looks for helpers in `SANDMAN_SKILL_ROOT`, then
   the repository's `.agents/skills/sandman`, then `~/.agents/skills/sandman`.
+- **Any `/sandman` review command.** `sandman run` requires the review daemon
+  for any review command containing `/sandman`, so the daemon answers any
+  comment that starts with the `/sandman` command, optionally after one
+  mention. A repository may therefore set a review command such as
+  `/sandman check`. The focus is the text after `/sandman review`, or after
+  `/sandman` for another command. The daemon still answers `/sandman review`
+  anywhere in a comment, and redaction already strips every `/sandman` from
+  its own posts.
 - **Per-repository base branch.** A repository records its base branch once.
   `sandman init` records `git.base_branch` from `--base-branch`, else
   `origin/HEAD`, else `main`. Runs open pull requests against the resolved

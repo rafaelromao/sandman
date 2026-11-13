@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Standalone skills resolve the review command, base branch, current branch and review timeout at run time, and pass any review command to their helpers verbatim.
 - Implementation runs open pull requests against the resolved base branch, and the "already resolved" check compares against that branch instead of `origin/main`.
 - Review helpers work when the skills are installed into a repository rather than the home directory.
+- The review daemon answers any comment that starts with `/sandman` (optionally after a mention), so a `review_command` such as `/sandman check` no longer leaves Runs waiting for a review that never starts.
+- `sandman-back-merge` resolves the base branch from the caller, the pull request, `git.base_branch`, then the repository default instead of assuming `main`.
 - Preset-matrix release scenarios pin the legacy OpenCode v1 agent explicitly, and other release fixtures pin the OpenCode generation they scaffold against, so their behavior no longer depends on the host CLI version after new projects began defaulting to v2.
 
 ### Changed

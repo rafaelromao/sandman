@@ -1,6 +1,6 @@
 ---
 name: sandman-back-merge
-description: Safely merges a base branch into the current branch and resolves merge conflicts with a disciplined 3-way workflow that avoids history rewrites. Use when user says sandman back-merge, when preparing a branch to catch up with its base branch, when the user asks to merge main/master/develop into the current branch, or when avoiding force-push is a hard rule.
+description: Safely merges a base branch into the current branch and resolves merge conflicts with a disciplined 3-way workflow that avoids history rewrites. Use when user says sandman back-merge, when preparing a branch to catch up with its base branch, when the user asks to merge the base branch (main, master, develop, or another) into the current branch, or when avoiding force-push is a hard rule.
 ---
 
 # Merge
@@ -17,6 +17,24 @@ git merge "origin/<base-branch>"
 ```
 
 If `git merge-base --is-ancestor` succeeds, the current branch already contains the base branch and no merge is needed.
+
+## Base branch
+
+`<base-branch>` is the branch this workflow merges into the current branch.
+This skill is shared by every repository on the machine, so it carries no
+repository value. Use the first source that provides it:
+
+1. The caller. In a Sandman-managed run, the Task's `Base branch` is that value and always wins.
+2. The base of the open pull request for the current branch.
+3. `git.base_branch` in the repository's `.sandman/config.yaml`.
+4. The repository's default branch.
+
+Never assume `main`.
+
+```bash
+gh pr view --json baseRefName --jq .baseRefName                   # open pull request base, if any
+gh repo view --json defaultBranchRef --jq .defaultBranchRef.name  # repository default branch
+```
 
 ## Guardrails
 

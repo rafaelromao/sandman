@@ -38,8 +38,9 @@ build_tools: generic
 
 # Review command rendered into each Run's Task, and read by the shared skills
 # when you use them directly. Defaults to /sandman review, which requires `sandman review` to be
-# running before `sandman run`/`continue` will start. Set
-# to /oc review (or any command that does not contain /sandman) to
+# running before `sandman run`/`continue` will start. The daemon answers
+# any comment that starts with /sandman, so /sandman <anything> works too.
+# Set to /oc review (or any command that does not contain /sandman) to
 # opt out of the review daemon guard.
 review_command: /sandman review
 

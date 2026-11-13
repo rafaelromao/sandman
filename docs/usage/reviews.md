@@ -28,6 +28,13 @@ The daemon polls open pull requests for the configured review command, which def
 /sandman review
 ```
 
+The daemon answers any comment that starts with the `/sandman` command,
+optionally after one `@mention`: `/sandman review`, `/sandman check the parser`,
+or `@bot /sandman`. So a `review_command` such as `/sandman check` works as
+well as the default. A comment that contains `/sandman review` anywhere is
+still a trigger too. The command token must be exactly `/sandman`:
+`/sandmanreview` and `/sandman-check` are not triggers.
+
 The implementor-side delegated review request uses the project `review_timeout`
 setting (default `1800` seconds, minimum `240`). The value is carried in the
 current AgentRun Task and is independent of the review daemon's reviewer
@@ -216,7 +223,7 @@ The template is PR-agnostic. PR context is injected per run through these placeh
 | `{{PR_TITLE}}` | Pull-request title |
 | `{{PR_BODY}}` | Pull-request body |
 | `{{ACCEPTANCE_CRITERIA}}` | Linked work item's acceptance criteria |
-| `{{REVIEW_FOCUS}}` | The review focus after `/sandman review` |
+| `{{REVIEW_FOCUS}}` | The review focus: the text after `/sandman review`, or after `/sandman` for any other `/sandman` command |
 | `{{RUN_DIR}}` | The review worktree directory (where `decision.md` is written) |
 | `{{PRIOR_REVIEW_EXISTS}}` | `YES`/`NO` — whether a prior review exists |
 | `{{PRIOR_REVIEW_CONTEXT}}` | Prior review entries supplied by the daemon |
