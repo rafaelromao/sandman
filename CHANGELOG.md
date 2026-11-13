@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- Independent Vercel Skills installer with selectable or custom review commands.
+
 ### Changed
 
 - New `sandman init` projects default to OpenCode v2 for implementation and review. Existing agent selections and explicit `--agent` overrides are preserved.
