@@ -40,8 +40,34 @@ func TestParseTrigger_MultipleSpaces(t *testing.T) {
 	}
 }
 
+// A repository may configure any /sandman command as its review command, so
+// the daemon answers every comment that starts with the /sandman command,
+// optionally after a mention. The focus is the text after "/sandman review",
+// or after "/sandman" for any other command.
+func TestParseTrigger_AnySandmanCommandAtStart(t *testing.T) {
+	cases := map[string]string{
+		"/sandman check":                     "check",
+		"/sandman please review the parser":  "please review the parser",
+		"@sandman-bot /sandman check config": "check config",
+		"  /Sandman":                         "",
+		"/sandman\nlook at the config":       "look at the config",
+		"/sandman reviews please":            "reviews please",
+		"/sandman review focus on tests":     "focus on tests",
+	}
+	for body, want := range cases {
+		focus, ok := ParseTrigger(body)
+		if !ok {
+			t.Errorf("expected %q to trigger a review", body)
+			continue
+		}
+		if focus != want {
+			t.Errorf("ParseTrigger(%q) focus = %q, want %q", body, focus, want)
+		}
+	}
+}
+
 func TestParseTrigger_NoMatch(t *testing.T) {
-	cases := []string{"", "thanks!", "/sandman reviews please", "/sandmanreview", "sandman review"}
+	cases := []string{"", "thanks!", "/sandmanreview", "/sandman-check", "sandman review", "please run /sandman check later"}
 	for _, body := range cases {
 		if _, ok := ParseTrigger(body); ok {
 			t.Errorf("expected %q to NOT match", body)

@@ -265,6 +265,29 @@ func TestImplementSkillUsesResolvedBaseBranch(t *testing.T) {
 	}
 }
 
+// Back-merge can be loaded on its own ("sandman back-merge"), so it resolves
+// the base branch itself instead of assuming main.
+func TestBackMergeSkillResolvesTheBaseBranch(t *testing.T) {
+	text := readSkillFile(t, "back-merge/SKILL.md")
+	resolve := strings.Index(text, "## Base branch")
+	workflow := strings.Index(text, "## Workflow")
+	if resolve < 0 || workflow < 0 || resolve > workflow {
+		t.Fatal("sandman-back-merge must resolve its base branch before the workflow")
+	}
+	section := strings.Join(strings.Fields(text[resolve:workflow]), " ")
+	for _, required := range []string{
+		"1. The caller. In a Sandman-managed run, the Task's `Base branch` is that value and always wins.",
+		"2. The base of the open pull request for the current branch.",
+		"3. `git.base_branch` in the repository's `.sandman/config.yaml`.",
+		"4. The repository's default branch.",
+		"Never assume `main`.",
+	} {
+		if !strings.Contains(section, required) {
+			t.Errorf("sandman-back-merge base-branch resolution missing %q", required)
+		}
+	}
+}
+
 func TestManagedImplementLoadsOnlyStatelessRequestDelivery(t *testing.T) {
 	flat := strings.Join(strings.Fields(readSkillFile(t, "implement/SKILL.md")), " ")
 	for _, required := range []string{

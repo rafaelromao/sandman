@@ -28,6 +28,11 @@ const reviewSubstring = "review"
 //	IsReviewRequest("LGTM, no blockers.")              -> false
 //	IsReviewRequest("## Previous review progress\n...") -> false
 func IsReviewRequest(body string) bool {
+	// Any /sandman command is a request to the review daemon, whether or
+	// not it spells "review" (for example a review_command "/sandman check").
+	if startsWithSandmanCommand(body) {
+		return true
+	}
 	trimmed := strings.TrimLeft(body, " \t\r\n")
 	if trimmed == "" {
 		return false
