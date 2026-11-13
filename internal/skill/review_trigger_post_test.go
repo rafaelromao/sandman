@@ -131,6 +131,97 @@ exit 2
 	assertPostCount(t, postMarker, 1)
 }
 
+// installProjectOnlySkill installs the skill tree the way a project-scoped
+// installation lays it out, under the repository's .agents/skills, and returns
+// the repository and an empty HOME that has no Sandman skills.
+func installProjectOnlySkill(t *testing.T) (repo, root, emptyHome string) {
+	t.Helper()
+	repo = t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	if err := Sync(SyncOptions{HomeDir: repo}); err != nil {
+		t.Fatalf("install project-scoped skill: %v", err)
+	}
+	return repo, filepath.Join(repo, ".agents", "skills", embeddedSkillRoot), t.TempDir()
+}
+
+func environWithout(keys ...string) []string {
+	var env []string
+	for _, item := range os.Environ() {
+		drop := false
+		for _, key := range keys {
+			if strings.HasPrefix(item, key+"=") {
+				drop = true
+			}
+		}
+		if !drop {
+			env = append(env, item)
+		}
+	}
+	return env
+}
+
+// A project-only installation has no copy under HOME, so a helper must find
+// its sibling helpers from its own location.
+func TestReviewRequestFindsSiblingGuardInProjectOnlyInstall(t *testing.T) {
+	_, root, emptyHome := installProjectOnlySkill(t)
+	guard := filepath.Join(root, "pr-review", "review-trigger-guard-v1.sh")
+	if err := os.WriteFile(guard, []byte("#!/bin/sh\nprintf '%s\\n' '{\"protocol\":\"review-trigger/v1\",\"decision\":\"allow\",\"reason\":\"no-prior-request\"}'\n"), 0o700); err != nil {
+		t.Fatalf("write guard shim: %v", err)
+	}
+	bin := t.TempDir()
+	writeReviewGH(t, bin, `#!/bin/sh
+case "$*" in
+  *"--json state,headRefOid"*) printf '%s\n' '{"state":"OPEN","headRefOid":"abc123"}' ;;
+  *"pr comment"*) printf '%s\n' 'https://github.com/owner/repo/pull/42#issuecomment-1001' ;;
+  *) printf '%s\n' '{"headRefOid":"abc123","comments":[{"url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","createdAt":"2026-08-11T18:00:01Z"}]}' ;;
+esac
+`)
+	cmd := exec.Command("sh", filepath.Join(root, "review-request", "review-request-v1.sh"),
+		"--repository", reviewRepository, "--pull-request", reviewPullRequest,
+		"--head-sha", reviewHeadSHA, "--trigger-prefix", reviewPrefix)
+	cmd.Env = append(environWithout("PATH", "HOME", "SANDMAN_SKILL_ROOT"), "PATH="+bin+":"+os.Getenv("PATH"), "HOME="+emptyHome)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("project-only review request refused: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), `"state":"confirmed"`) {
+		t.Fatalf("unexpected review request envelope: %s", output)
+	}
+}
+
+// The review cycle locates its helpers in the repository's project-scoped
+// installation before falling back to the user's shared copy.
+func TestReviewCycleResolvesProjectOnlyHelperRoot(t *testing.T) {
+	repo, root, emptyHome := installProjectOnlySkill(t)
+	data, err := os.ReadFile(filepath.Join(root, "review-cycle", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read review-cycle skill: %v", err)
+	}
+	block := renderReviewBashBlock(t, string(data), "review_command='<resolved review command>'", "", "")
+	block = strings.ReplaceAll(block, "<resolved review command>", reviewPrefix)
+	block = strings.ReplaceAll(block, "<resolved review timeout in seconds>", "1800")
+	cmd := exec.Command("sh", "-c", "set -eu\n"+block+"\nprintf '%s\\n' \"$skill_root\"")
+	cmd.Dir = repo
+	cmd.Env = append(environWithout("HOME", "SANDMAN_SKILL_ROOT"), "HOME="+emptyHome)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("resolve review context: %v\n%s", err, output)
+	}
+	want, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("resolve installed root: %v", err)
+	}
+	got, err := filepath.EvalSymlinks(strings.TrimSpace(string(output)))
+	if err != nil {
+		t.Fatalf("resolved helper root %q: %v", output, err)
+	}
+	if got != want {
+		t.Fatalf("helper root = %q, want the project installation %q", got, want)
+	}
+}
+
 func TestReviewRequestFirstDeliveryAllowsMissingFutureEnvelope(t *testing.T) {
 	home := t.TempDir()
 	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
