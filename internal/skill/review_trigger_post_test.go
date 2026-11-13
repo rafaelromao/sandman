@@ -191,13 +191,13 @@ func TestSyncReviewPost_StopsBeforePostingWithoutResolvedContext(t *testing.T) {
 func skillReviewContextBlock(t *testing.T, skillText, root string) string {
 	t.Helper()
 	block := renderReviewBashBlock(t, skillText, "review_command='<resolved review command>'", "", "")
-	return strings.NewReplacer(
+	return "SANDMAN_SKILL_ROOT=" + shellQuote(root) + "\n" + strings.NewReplacer(
 		"<pull request number>", reviewPullRequest,
 		"<resolved review command>", reviewPrefix,
 		"<resolved review timeout in seconds>", "1800",
 		"<resolved base branch>", "main",
 		"<resolved current branch>", "feature",
-	).Replace(block) + "\nskill_root=" + shellQuote(root)
+	).Replace(block)
 }
 
 // A guard refusal must stop the cycle: the skill's record helper ends the
@@ -231,7 +231,8 @@ func TestSyncReviewPost_GuardRefusalStopsBeforePosting(t *testing.T) {
 	}
 	cmd := exec.Command("sh", "-c", script)
 	cmd.Dir = workDir
-	cmd.Env = append(environWithout("PATH"),
+	cmd.Env = append(environWithout("PATH", "HOME", "SANDMAN_SKILL_ROOT"),
+		"HOME="+t.TempDir(),
 		"PATH="+bin+":"+os.Getenv("PATH"),
 		"CYCLE_REQUEST_FILE="+requestFile,
 		"CYCLE_HEAD_FILE="+headFile,
