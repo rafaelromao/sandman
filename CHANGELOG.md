@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Standalone skills resolve the review command, base branch, current branch and review timeout at run time, and pass any review command to their helpers verbatim.
 - Implementation runs open pull requests against the resolved base branch, and the "already resolved" check compares against that branch instead of `origin/main`.
 - Review helpers work when the skills are installed into a repository rather than the home directory.
+- Preset-matrix release scenarios pin the legacy OpenCode v1 agent explicitly, and other release fixtures pin the OpenCode generation they scaffold against, so their behavior no longer depends on the host CLI version after new projects began defaulting to v2.
 
 ### Changed
 
@@ -24,10 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Installation examples select the latest release, and the landing page explains OpenCode and experimental Claude Code support.
 - PR publication guidance appends and verifies a linked Built with Sandman logo at the end of implementation and badge-proposal descriptions, preserving closing references and existing body content.
 - Build and scan with Go 1.26.11 to address the standard-library vulnerability GO-2026-6859.
-
-### Fixed
-
-- Preset-matrix release scenarios pin the legacy OpenCode v1 agent explicitly, and other release fixtures pin the OpenCode generation they scaffold against, so their behavior no longer depends on the host CLI version after new projects began defaulting to v2.
 
 ## [1.0.0-rc.2](https://github.com/rafaelromao/sandman/compare/v1.0.0-rc.1...v1.0.0-rc.2) (2026-09-01)
 
