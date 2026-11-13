@@ -47,20 +47,14 @@ A failed required check on the current pull-request head remains implementation 
 
 For a diagnosed transient provider or network timeout, one authorized rerun of the identified failed workflow job is a bounded recovery action. The canary's single `opencode run` invocation and no-retry-loop rule applies to each job invocation; it does not prohibit a rerun of the existing failed execution. `workflow_dispatch` is not required. Keep the PR source head distinct from the workflow's tested SHA, and use the job database ID reported by GitHub rather than a job URL number.
 
-Before acting, verify the live PR source head, workflow run, tested SHA, current attempt, failed job, and repository linkage. Set `repo`, `pr_number`, `pr_source_sha`, `workflow_tested_sha`,
-`workflow_run_id`, and `failed_job_database_id` from that verified evidence.
-Use literal single-quoted assignments, escaping apostrophes as described in
-step 4; these are data values, not commands. Then invoke the installed helper once:
+Before acting, verify the live PR source head, workflow run, tested SHA, current attempt, failed job, and repository linkage. Replace every angle-bracket value below with the verified literal value,
+keeping its single quotes. Managed invocations must contain those literal
+arguments in the tool command itself, not shell variables or substitutions:
+the receipt is checked against the recorded command without shell expansion.
+Keep the invocation as one shell command on one line. Escape any literal apostrophe as `'\''`. Invoke the helper once:
 
 ```bash
-sh "$HOME/.agents/skills/sandman/implement/ci-rerun-v1.sh" \
-  --repository "$repo" \
-  --pull-request "$pr_number" \
-  --head-sha "$pr_source_sha" \
-  --tested-sha "$workflow_tested_sha" \
-  --run-id "$workflow_run_id" \
-  --job-id "$failed_job_database_id" \
-  --diagnosis transient-provider-timeout
+sh "$HOME/.agents/skills/sandman/implement/ci-rerun-v1.sh" --repository '<repository>' --pull-request '<pull-request-number>' --head-sha '<source-head-sha>' --tested-sha '<tested-sha>' --run-id '<workflow-run-id>' --job-id '<failed-job-database-id>' --diagnosis transient-provider-timeout
 ```
 
 Run the helper exactly as shown in a Sandman-managed run. In a standalone session whose skills are installed only in the repository, run the same helper from that installation instead (`.agents/skills/sandman/implement/ci-rerun-v1.sh`).

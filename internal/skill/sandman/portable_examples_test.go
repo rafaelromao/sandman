@@ -8,7 +8,7 @@ import (
 func TestPortableSkillExamplesUseResolvedInputsAndRepositoryPolicy(t *testing.T) {
 	checks := map[string][]string{
 		"plan/SKILL.md":           {`--body-file "$plan_file"`},
-		"implement/SKILL.md":      {"COMMIT_SUBJECT='<one-line imperative description of the change>'", "--jq .body", `--repository "$repo"`, `--job-id "$failed_job_database_id"`, "repository's documented commit and title conventions"},
+		"implement/SKILL.md":      {"COMMIT_SUBJECT='<one-line imperative description of the change>'", "--jq .body", `--repository '<repository>'`, `--job-id '<failed-job-database-id>'`, "repository's documented commit and title conventions"},
 		"review-request/SKILL.md": {`sh "$skill_root/review-request/review-request-v1.sh"`, `--trigger-prefix "$review_command"`},
 		"code-review/SKILL.md":    {"`git.base_branch`", "`origin/<resolved-base>` when available"},
 		"pr-merge/SKILL.md":       {"hosting service's allowed methods", "no intersection", "gh pr merge --merge"},
