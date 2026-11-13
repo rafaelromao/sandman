@@ -98,9 +98,13 @@ type Options struct {
 	Parallel        int    // --parallel override (-1 = use config default)
 	ParallelReviews int    // --parallel-reviews override (-1 = use config default)
 	ReviewCommand   string // --review-command override
-	Retries         *int   // --retries override; nil = use config.DefaultRetries
-	RunIdleTimeout  *int   // --run-idle-timeout override; nil = use config.DefaultRunIdleTimeout
-	ReviewTimeout   *int   // --review-timeout override; nil = use config.DefaultReviewTimeout
+	// BaseBranch is the --base-branch override. Empty uses the repository's
+	// default branch (origin/HEAD), then main, for a new config and keeps a
+	// preserved config's value.
+	BaseBranch     string
+	Retries        *int // --retries override; nil = use config.DefaultRetries
+	RunIdleTimeout *int // --run-idle-timeout override; nil = use config.DefaultRunIdleTimeout
+	ReviewTimeout  *int // --review-timeout override; nil = use config.DefaultReviewTimeout
 	// CACerts holds the --ca-cert values: PEM paths, CACertAuto, or
 	// CACertNone. Empty keeps the trusted certificates already in
 	// .sandman/certs/.
@@ -721,7 +725,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		WorktreeDir:           config.DefaultWorktreeDir,
 		Sandbox:               config.DefaultSandbox,
 		Git: config.GitConfig{
-			BaseBranch: "main",
+			BaseBranch: s.resolveBaseBranch(repoRoot, opts),
 		},
 	}
 
@@ -730,11 +734,18 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		if err := config.Save(configPath, cfg); err != nil {
 			return fmt.Errorf("save config: %w", err)
 		}
-	} else if opts.Agent != "" {
-		configUpdate, err = switchPreservedAgent(configPath, preserved, defaultAgent, opts.Model)
+	} else {
+		if opts.Agent != "" {
+			configUpdate, err = switchPreservedAgent(configPath, preserved, defaultAgent, opts.Model)
+			if err != nil {
+				return err
+			}
+		}
+		baseUpdate, err := setPreservedBaseBranch(configPath, preserved, opts.BaseBranch)
 		if err != nil {
 			return err
 		}
+		configUpdate += baseUpdate
 	}
 
 	dockerfile := s.renderBuildToolsDockerfile(preset, defaultAgent, agentVersion, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion, rubyVersion, rustVersion, javaVersion, caCertFingerprints(caCerts.certs))
@@ -922,6 +933,35 @@ func validateInitAgentModels(agent string, opts Options, preserved *config.Confi
 		}
 	}
 	return nil
+}
+
+// resolveBaseBranch picks the base branch a new config records: the
+// --base-branch value, then the repository's default branch, then main.
+func (s *Scaffolder) resolveBaseBranch(repoRoot string, opts Options) string {
+	if base := strings.TrimSpace(opts.BaseBranch); base != "" {
+		return base
+	}
+	if base := strings.TrimSpace(s.resolveGitOps().DefaultBranch(repoRoot)); base != "" {
+		return base
+	}
+	return "main"
+}
+
+// setPreservedBaseBranch applies an explicit `init --base-branch` to a
+// preserved config.yaml. Without the flag the preserved value is kept. It
+// returns a one-line description of the change, or "" when nothing changed.
+func setPreservedBaseBranch(configPath string, cfg *config.Config, base string) (string, error) {
+	base = strings.TrimSpace(base)
+	if base == "" || base == strings.TrimSpace(cfg.Git.BaseBranch) {
+		return "", nil
+	}
+	if err := cfg.SetValue("git.base_branch", base); err != nil {
+		return "", fmt.Errorf("update config git.base_branch: %w", err)
+	}
+	if err := config.Save(configPath, cfg); err != nil {
+		return "", fmt.Errorf("save config: %w", err)
+	}
+	return "Updated .sandman/config.yaml: git.base_branch=" + base + "\n", nil
 }
 
 // switchPreservedAgent applies an explicit `init --agent` to a preserved

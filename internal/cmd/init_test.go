@@ -244,6 +244,30 @@ func TestInit_ReviewCommandFlagStoredInConfig(t *testing.T) {
 	}
 }
 
+// A repository whose base branch is not main records it once, at init, so
+// later Runs need no --base-branch flag.
+func TestInit_BaseBranchFlagStoredInConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	var out bytes.Buffer
+	cmd := newInitCommandForTest(t)
+	cmd.SetOut(&out)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{"--build-tools", "generic", "--base-branch", "develop"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	cfg, err := config.Load(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.Git.BaseBranch != "develop" {
+		t.Fatalf("git.base_branch = %q, want develop", cfg.Git.BaseBranch)
+	}
+}
+
 func TestInit_GenericBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)

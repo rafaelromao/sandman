@@ -62,6 +62,7 @@ func NewInitCmd() *cobra.Command {
 			parallel, _ := cmd.Flags().GetInt("parallel")
 			parallelReviews, _ := cmd.Flags().GetInt("parallel-reviews")
 			reviewCommand, _ := cmd.Flags().GetString("review-command")
+			baseBranch, _ := cmd.Flags().GetString("base-branch")
 			caCerts, _ := cmd.Flags().GetStringArray("ca-cert")
 
 			retriesOverride, err := resolveInitInt(cmd, "retries")
@@ -104,6 +105,7 @@ func NewInitCmd() *cobra.Command {
 				Parallel:         parallel,
 				ParallelReviews:  parallelReviews,
 				ReviewCommand:    reviewCommand,
+				BaseBranch:       baseBranch,
 				Retries:          retriesOverride,
 				RunIdleTimeout:   runIdleTimeoutOverride,
 				ReviewTimeout:    reviewTimeoutOverride,
@@ -136,6 +138,7 @@ func NewInitCmd() *cobra.Command {
 	cmd.Flags().Int("parallel", -1, fmt.Sprintf("Default parallel container count (-1 = use config default %d)", config.DefaultParallel))
 	cmd.Flags().Int("parallel-reviews", -1, fmt.Sprintf("Default parallel reviews count (-1 = use built-in default of %d)", config.DefaultReviewParallel))
 	cmd.Flags().String("review-command", "", "Review command to store as review_command in project config")
+	cmd.Flags().String("base-branch", "", "Base branch to store as git.base_branch in project config (default: the repository's default branch, else main)")
 	cmd.Flags().Int("retries", -1, fmt.Sprintf("Persist `retries` in scaffolded config (-1 = use built-in default of %d)", config.DefaultRetries))
 	cmd.Flags().Int("run-idle-timeout", -1, fmt.Sprintf("Persist `run_idle_timeout` in scaffolded config (-1 = use built-in default of %d)", config.DefaultRunIdleTimeout))
 	cmd.Flags().StringArray("ca-cert", nil, "Trust a CA certificate in the sandbox image: a PEM file path, \"auto\" to capture a TLS-inspection proxy's root from this host, or \"none\" to remove trusted certificates (repeatable)")

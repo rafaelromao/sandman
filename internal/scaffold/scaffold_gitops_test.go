@@ -15,6 +15,7 @@ import (
 // default implementation.
 type fakeGitOps struct {
 	isRepo          bool
+	defaultBranch   string
 	untrackCalls    int
 	lastUntrackRoot string
 	lastUntrackPath string
@@ -22,6 +23,8 @@ type fakeGitOps struct {
 }
 
 func (f *fakeGitOps) IsRepo(repoRoot string) bool { return f.isRepo }
+
+func (f *fakeGitOps) DefaultBranch(repoRoot string) string { return f.defaultBranch }
 
 func (f *fakeGitOps) Untrack(repoRoot, path string) error {
 	f.untrackCalls++
