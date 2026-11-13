@@ -173,6 +173,87 @@ func TestStandaloneRunRestartTrustsNoManagedState(t *testing.T) {
 	}
 }
 
+func flatSkill(t *testing.T, path string) string {
+	t.Helper()
+	return strings.Join(strings.Fields(readSkillFile(t, path)), " ")
+}
+
+// The shared skills carry no repository values: entry points resolve them at
+// run time, caller first, then the repository's configuration, then live
+// state, then defaults.
+func TestStandaloneEntryPointsResolveRunContextInOrder(t *testing.T) {
+	run := flatSkill(t, "run/SKILL.md")
+	for _, required := range []string{
+		"| Review command | the caller → `review_command` in `.sandman/config.yaml` → `/sandman review` |",
+		"| Base branch | the caller → the base of the open pull request for this branch → `git.base_branch` in `.sandman/config.yaml` → the repository's default branch |",
+		"| Implementation branch | the caller → the checked-out branch when it is not the base branch → the branch `sandman-implement` creates |",
+		"(`REVIEW_TIMEOUT`) | the caller → `review_timeout` in `.sandman/config.yaml` → 1800 seconds |",
+		"pass them to every capability this workflow loads",
+		"Give it the resolved base branch and implementation branch",
+		"load `sandman-review-cycle` with the resolved review command and review timeout",
+	} {
+		if !strings.Contains(run, required) {
+			t.Errorf("sandman-run run context missing %q", required)
+		}
+	}
+
+	cycle := readSkillFile(t, "review-cycle/SKILL.md")
+	resolve := strings.Index(cycle, "### Resolve the review context")
+	loop := strings.Index(cycle, "### Iteration loop")
+	if resolve < 0 || loop < 0 || resolve > loop {
+		t.Fatal("sandman-review-cycle must resolve its review context before the iteration loop")
+	}
+	section := strings.Join(strings.Fields(cycle[resolve:loop]), " ")
+	for _, required := range []string{
+		"1. The value supplied by the caller",
+		"2. The repository's `.sandman/config.yaml`: `review_command`, and `review_timeout` in seconds.",
+		"3. The defaults: review command `/sandman review`, review timeout 1800 seconds.",
+		"always pass `\"$review_command\"` as one argument",
+	} {
+		if !strings.Contains(section, required) {
+			t.Errorf("sandman-review-cycle review context missing %q", required)
+		}
+	}
+	for _, line := range strings.Split(cycle, "\n") {
+		if strings.Contains(line, "trigger-prefix") && strings.Contains(line, "--") && !strings.Contains(line, `"$review_command"`) {
+			t.Errorf("sandman-review-cycle passes a trigger prefix other than \"$review_command\": %q", line)
+		}
+	}
+
+	if facade := flatSkill(t, "pr-review/SKILL.md"); !strings.Contains(facade, "That cycle resolves any value the caller did not supply, from the repository's `.sandman/config.yaml` and then the defaults") {
+		t.Error("sandman-pr-review must hand unresolved values to the review cycle's resolution")
+	}
+	if request := flatSkill(t, "review-request/SKILL.md"); !strings.Contains(request, "in a Sandman-managed run, the Task's `Review command` is that value and always wins") {
+		t.Error("sandman-review-request must post the Task's review command in managed runs")
+	}
+}
+
+func TestImplementSkillUsesResolvedBaseBranch(t *testing.T) {
+	text := readSkillFile(t, "implement/SKILL.md")
+	flat := strings.Join(strings.Fields(text), " ")
+	for _, required := range []string{
+		"In a Sandman-managed run, the Task's `Base branch` is that value and always wins.",
+		"2. The base of the open pull request for the current branch.",
+		"3. `git.base_branch` in the repository's `.sandman/config.yaml`.",
+		"4. The repository's default branch.",
+		`git fetch origin "$base_branch"`,
+		`git merge-base --is-ancestor HEAD "origin/$base_branch"`,
+		`gh pr create --base "$base_branch"`,
+		"If the current branch is already a non-base branch",
+		"stay on it",
+		`sh "$HOME/.agents/skills/sandman/implement/ci-rerun-v1.sh"`,
+	} {
+		if !strings.Contains(flat, required) {
+			t.Errorf("sandman-implement base-branch contract missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"git fetch origin main", "HEAD origin/main", "`origin/main`", "Checkout `main`", "Branch created from latest main"} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("sandman-implement still assumes the base branch is main: %q", forbidden)
+		}
+	}
+}
+
 func TestManagedImplementLoadsOnlyStatelessRequestDelivery(t *testing.T) {
 	flat := strings.Join(strings.Fields(readSkillFile(t, "implement/SKILL.md")), " ")
 	for _, required := range []string{
