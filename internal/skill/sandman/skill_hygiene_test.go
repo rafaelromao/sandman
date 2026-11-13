@@ -165,7 +165,7 @@ func allowlistedSkillCommunication(path, text string, loc []int) bool {
 		lineEnd += loc[1]
 	}
 	line := strings.ToLower(text[lineStart:lineEnd])
-	if strings.Contains(line, "user") || strings.Contains(line, "operator") || !strings.Contains(line, "/sandman review") {
+	if strings.Contains(line, "user") || strings.Contains(line, "operator") || !strings.Contains(line, "{{review_command}}") {
 		return false
 	}
 	for _, phrase := range []string{
@@ -190,19 +190,19 @@ func TestSkills_DirectiveAllowlistIsReviewerScoped(t *testing.T) {
 		{
 			name: "reviewer clarification",
 			path: "review-cycle/SKILL.md",
-			text: "ask the reviewer to clarify with /sandman review",
+			text: "ask the reviewer to clarify with {{REVIEW_COMMAND}}",
 			want: true,
 		},
 		{
 			name: "operator clarification",
 			path: "review-cycle/SKILL.md",
-			text: "ask the user for clarification with /sandman review",
+			text: "ask the user for clarification with {{REVIEW_COMMAND}}",
 			want: false,
 		},
 		{
 			name: "same wording in another skill",
 			path: "implement/SKILL.md",
-			text: "ask for clarification from the reviewer with /sandman review",
+			text: "ask for clarification from the reviewer with {{REVIEW_COMMAND}}",
 			want: false,
 		},
 	}
@@ -225,7 +225,7 @@ func TestSkills_ReviewerClarificationUsesReviewCommand(t *testing.T) {
 	}
 	for _, phrase := range []string{
 		"reviewer to clarify",
-		"/sandman review",
+		"{{REVIEW_COMMAND}}",
 		"reviewer-directed",
 	} {
 		if !strings.Contains(text, phrase) {

@@ -15,17 +15,17 @@ acceptance criteria, as the authoritative task specification.
 ## Runtime Context
 
 - You are running in the selected repository and worktree.
-- Current branch: read from the checked-out worktree.
-- Source branch: the source branch recorded in the work-item context.
-- Base branch: the configured base branch (usually `main`).
-- Review command: `/sandman review` by default; `sandman init` may configure another command.
-- Delegated review response timeout: 1800 seconds by default; use a work-item-specific timeout when one is supplied.
+- Current branch: {{BRANCH}}
+- Source branch: {{SOURCE_BRANCH}}
+- Base branch: `{{BASE_BRANCH}}`
+- Review command: `{{REVIEW_COMMAND}}`
+- Delegated review response timeout: `{{REVIEW_TIMEOUT}}` seconds; use a work-item-specific timeout when one is supplied.
 
-The worktree MUST remain checked out on the selected implementation branch when the run finishes. Do not switch to the base branch or another branch before exiting.
+The worktree MUST remain checked out on the selected implementation branch when the run finishes. Do not switch to `{{BASE_BRANCH}}` or any other branch before exiting.
 
 ## Commit and PR Title
 
-The change-request title (and the commit subject) must follow the Conventional Commits format. Pick the most accurate type for the change from `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`. Append `!` to the type for breaking changes. The full regex and allowed-types list are documented in `AGENTS.md`'s "Branching and versioning rules" section — read it before opening the change request. The `CI / semantic-pull-request` status check on the base branch enforces the title regex; title validation is separate from Release Please's SemVer parsing of merged commit history. Reuse the same Conventional Commits header for both the commit and the change request so the merge button sees one coherent signal.
+The change-request title (and the commit subject) must follow the Conventional Commits format. Pick the most accurate type for the change from `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`. Append `!` to the type for breaking changes. The full regex and allowed-types list are documented in `AGENTS.md`'s "Branching and versioning rules" section — read it before opening the change request. The `CI / semantic-pull-request` status check on `{{BASE_BRANCH}}` enforces the title regex; title validation is separate from Release Please's SemVer parsing of merged commit history. Reuse the same Conventional Commits header for both the commit and the change request so the merge button sees one coherent signal.
 
 ## Execution Checklist
 
@@ -101,25 +101,25 @@ Never stop or exit solely because an earlier attempt recorded a blocker.
 
 ## Already Resolved
 
-If the open work item is already implemented on the base branch, after fetching and checking the current `origin/<base-branch>` HEAD against its acceptance criteria, update `.sandman/task.md` so it contains the exact line `## Status: already resolved`.
+If the open work item is already implemented on `{{BASE_BRANCH}}`, after fetching and checking the current `origin/{{BASE_BRANCH}}` HEAD against its acceptance criteria, update `.sandman/task.md` so it contains the exact line `## Status: already resolved`.
 
-Write `## Status: already resolved` only if every AC has a corresponding test that exists on `origin/<base-branch>`; otherwise the orchestrator cannot verify and the run will fail.
+Write `## Status: already resolved` only if every AC has a corresponding test that exists on `origin/{{BASE_BRANCH}}`; otherwise the orchestrator cannot verify and the run will fail.
 
 Do not paraphrase this line. Do not use `already implemented`, `no action required`, or any other wording for this marker.
 
-If a PR is open for the current branch, the orchestrator will run an independent verification pass against `origin/<base-branch>` before declaring the run successful.
+If a PR is open for the current branch, the orchestrator will run an independent verification pass against `origin/{{BASE_BRANCH}}` before declaring the run successful.
 
 ## Success-Blocking Conditions
 
 The run is NOT considered successful (and `## Status: already resolved` MUST NOT be written) while any of the following are true:
 
-- **Open PR with no verification path** — An open PR exists for the branch AND the open work item's acceptance criteria do not map to tests on `origin/<base-branch>` (the orchestrator's verifier cannot decide the run).
+- **Open PR with no verification path** — An open PR exists for the branch AND the open work item's acceptance criteria do not map to tests on `origin/{{BASE_BRANCH}}` (the orchestrator's verifier cannot decide the run).
 - **`mergeable: CONFLICTING`** — the branch's open PR is in a conflict state with the base branch.
-- **Unpushed commits** — `git log @{u}..HEAD` (or `git log origin/<base-branch>..HEAD` for a new branch) is non-empty; the local branch has commits the remote does not.
+- **Unpushed commits** — `git log @{u}..HEAD` (or `git log origin/{{BASE_BRANCH}}..HEAD` for a new branch) is non-empty; the local branch has commits the remote does not.
 - **Unresolved AC blocker** — any acceptance criterion in the open work item is unmet, contested, or marked blocked by another open work item.
 - **PR not approved** — an open PR exists for the branch AND the standalone review cycle has no current-head approval. The orchestrator must not declare the run successful while review is unresolved.
-- **PR not approved for the current diff** — even when a pull-request-wide decision or top-level comment shows an old APPROVED, the approval is stale if it was posted against a prior head SHA. Approval must be current to the head recorded at the last `/sandman review` request.
-- **Unanswered `/sandman review` trigger** — an open PR exists for the branch AND the most recent top-level comment is an implementor `/sandman review` trigger that has not yet received a response (no formal review, no inline file comment, no other top-level body from a non-agent author). An older APPROVED comment sitting below an unanswered trigger is not sufficient; the trigger is a fresh request and must be answered before the run is considered approved.
+- **PR not approved for the current diff** — even when a pull-request-wide decision or top-level comment shows an old APPROVED, the approval is stale if it was posted against a prior head SHA. Approval must be current to the head recorded at the last `{{REVIEW_COMMAND}}` request.
+- **Unanswered `{{REVIEW_COMMAND}}` trigger** — an open PR exists for the branch AND the most recent top-level comment is an implementor `{{REVIEW_COMMAND}}` trigger that has not yet received a response (no formal review, no inline file comment, no other top-level body from a non-agent author). An older APPROVED comment sitting below an unanswered trigger is not sufficient; the trigger is a fresh request and must be answered before the run is considered approved.
 
 Re-check this block immediately before writing `## Status: already resolved`. If any condition is true, abort the marker and address the underlying problem (close orphan PR, back-merge, push commits, or resolve the blocker).
 
@@ -235,7 +235,7 @@ that order:
    mergeable, re-enter the standalone review cycle before `sandman-pr-merge`.
    If any merge gate is false or ambiguous, continue that path instead of
    reporting blockers to the caller.
-4. **PR-Review is `[x]` only when the standalone review cycle has Approval against the current diff.** `PR-Review` cannot be marked complete on the basis of exhausted review waits, timeouts, or zero reviewer responses. Approval must be current to the head SHA recorded at the last `/sandman review` request; an approval from a prior SHA is stale and does not authorize merging the current diff.
+4. **PR-Review is `[x]` only when the standalone review cycle has Approval against the current diff.** `PR-Review` cannot be marked complete on the basis of exhausted review waits, timeouts, or zero reviewer responses. Approval must be current to the head SHA recorded at the last `{{REVIEW_COMMAND}}` request; an approval from a prior SHA is stale and does not authorize merging the current diff.
 5. If `PR-Review` completes with full approval and all merge gates are true, load and run `sandman-pr-merge`.
 6. If the standalone review cycle times out or returns without approval, do not mark `PR-Review` complete and do not advance to `PR-Merge` on the next retry. Re-enter the standalone review cycle and keep review open until approval is observed or a stop condition is reached.
 7. **A new commit resets the review pass counter.** If the agent pushed a new commit to the PR branch (head SHA changed) after the last review post, the prior exhausted pass budget is stale — the reviewer is being asked to evaluate a new diff. Start a fresh review request for the new SHA; standalone callers receive a fresh 10-pass budget. This applies intra- and inter-session: any SHA change restarts the counter.

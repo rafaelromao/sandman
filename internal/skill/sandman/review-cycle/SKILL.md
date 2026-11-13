@@ -13,17 +13,17 @@ structured diagnostic without requesting operator input.
 1. **You must NOT review the PR yourself in this session.**
    Your only job is to delegate through `sandman-review-request`, then wait for the review agent's feedback and act on it. Under no circumstances should you read the diff and provide your own review comments.
 
-2. **You must NOT finish on ambiguous feedback.** If the reviewer's intent cannot be reduced to a concrete, actionable code change, do not guess, do not change code, and do not stop the loop. Post a new PR comment that includes `/sandman review` plus a freeform request asking the reviewer to clarify the intended actionable change, then continue polling. The loop only ends on approval (formal case A or informal case C), an explicit skill-defined irrecoverable stop condition, or max passes reached — never on ambiguity.
+2. **You must NOT finish on ambiguous feedback.** If the reviewer's intent cannot be reduced to a concrete, actionable code change, do not guess, do not change code, and do not stop the loop. Post a new PR comment that includes `{{REVIEW_COMMAND}}` plus a freeform request asking the reviewer to clarify the intended actionable change, then continue polling. The loop only ends on approval (formal case A or informal case C), an explicit skill-defined irrecoverable stop condition, or max passes reached — never on ambiguity.
 
 3. **You must NOT finish before the review timeout or max attempts when no feedback has been provided.** If `reviewDecision` is still `REVIEW_REQUIRED` (or absent), no reviews exist yet, no inline file comments exist, and only boilerplate setup comments are present, keep polling. Do not declare done or stop the loop. The only acceptable reasons to exit early are: approval (formal case A or informal case C), an explicit skill-defined irrecoverable stop condition, or 10 passes reached.
 
 4. **You must NOT exit the polling loop on a `0/0` count of (formal reviews, inline comments) when the top-level PR conversation has a new non-trigger comment.** A reviewer who only posts a top-level PR conversation comment (no formal review event, no inline file comments) is still a real reviewer response. Re-classify the state, run the self-check (Step 4), and continue polling — do not give up.
 
-5. **You must NOT request another review while a previous `/sandman review` is still waiting for a response AND the PR head SHA has not changed.** Only post `/sandman review` again after either: (a) the reviewer has responded to the previous request, OR (b) a new commit has landed on the PR branch (head SHA changed), and the read-only trigger guard permits delivery. If the SHA changed and a trusted prior request proves which trigger is stale, re-request regardless of feedback state. If SHA is unchanged but a response arrived, act on it before re-requesting.
+5. **You must NOT request another review while a previous `{{REVIEW_COMMAND}}` is still waiting for a response AND the PR head SHA has not changed.** Only post `{{REVIEW_COMMAND}}` again after either: (a) the reviewer has responded to the previous request, OR (b) a new commit has landed on the PR branch (head SHA changed), and the read-only trigger guard permits delivery. If the SHA changed and a trusted prior request proves which trigger is stale, re-request regardless of feedback state. If SHA is unchanged but a response arrived, act on it before re-requesting.
 
-6. **You must NOT request another review before the previous one has produced a response, UNLESS a new commit has landed.** Every iteration that would post a new `/sandman review` must first check whether the head SHA has changed since the last request and run the read-only trigger guard. If SHA changed, treat the matching trusted prior request as consumed and allow re-requesting. If SHA is unchanged, only re-request after a response has arrived.
+6. **You must NOT request another review before the previous one has produced a response, UNLESS a new commit has landed.** Every iteration that would post a new `{{REVIEW_COMMAND}}` must first check whether the head SHA has changed since the last request and run the read-only trigger guard. If SHA changed, treat the matching trusted prior request as consumed and allow re-requesting. If SHA is unchanged, only re-request after a response has arrived.
 
-7. **You must NOT request review until CI is green.** If CI is still pending, keep polling within the standalone budget. If CI is failing, keep working through Step 2's bounded remediation loop. Do not post `/sandman review` yet.
+7. **You must NOT request review until CI is green.** If CI is still pending, keep polling within the standalone budget. If CI is failing, keep working through Step 2's bounded remediation loop. Do not post `{{REVIEW_COMMAND}}` yet.
 
 8. **You must NOT give up on a `CHANGES_REQUESTED` review when the reviewer's request maps to the open work item's acceptance criteria.** When the reviewer flags a requirement that comes from the work-item context or its acceptance criteria (the same criteria the implementor agent was asked to satisfy), you have exactly two acceptable paths:
    - **Implement the requested change.** Read the work-item context and its acceptance criteria, confirm the reviewer's interpretation is consistent with them, then make the change, commit, push, and re-request review.
@@ -33,7 +33,7 @@ structured diagnostic without requesting operator input.
 
 9. **Any PR comment intended to be read by the reviewer MUST start with the review command.** A comment that does not begin with the review command is treated as boilerplate by the daemon and ignored — it does not reach the reviewer and does not advance the loop. Concretely:
     - When posting the trigger comment (Step 4), the body must be exactly the review command on its own (e.g. via the platform's "post change-request comment" CLI, passing the change-request identifier and the review-command body).
-    - When posting a clarification request, a follow-up after a stalled poll, or any other reviewer-facing message, the body must begin with the review command and may include additional freeform text afterwards (e.g. `/sandman review — please clarify which file you mean`). The leading review-command substring is what the daemon's trigger filter matches on; the trailing freeform text is read by the reviewer but ignored by the trigger filter.
+    - When posting a clarification request, a follow-up after a stalled poll, or any other reviewer-facing message, the body must begin with the review command and may include additional freeform text afterwards (e.g. `{{REVIEW_COMMAND}} — please clarify which file you mean`). The leading review-command substring is what the daemon's trigger filter matches on; the trailing freeform text is read by the reviewer but ignored by the trigger filter.
     - When posting the bot's own review-body, do NOT prefix it with the review command. The review-body is the substance the reviewer writes back to you — prefixing it would cause the daemon to mis-classify the body as a duplicate trigger on the next tick and drop the actual review content.
 
 10. **You must NOT dismiss a review-shaped response based on who posted it, and you must NOT investigate how the reviewer is hosted.** Any comment that arrives after your review request and contains review content — a summary, findings, an approval, change requests, or substantive feedback on the diff — is a valid reviewer response. Accept it, classify it per Step 6, and act on it. Do not filter it out because the author shares your GitHub login, because `viewerDidAuthor` is true, or because you cannot identify a separate reviewer account. Do not inspect `.github/workflows/`, branch protection rules, collaborator lists, or any repository configuration to determine who will respond to the review request — the reviewer may be a local process, a CI action, a bot, a separate user, or the same operator under the same credentials. The skill does not assume any of these, and neither should you.
@@ -235,12 +235,12 @@ unchanged, skip this step if no review response has arrived yet.
 The existing "always allow re-requesting" rule still applies when that trusted
 identity matches the newest trigger and proves the prior head is stale.
 
-Only post `/sandman review` after CI has reached a green terminal state in Step 2.
+Only post `{{REVIEW_COMMAND}}` after CI has reached a green terminal state in Step 2.
 
 Before every command-prefixed post, run the read-only trigger guard immediately
 before the post. This includes the Step 5 reviewer clarification/follow-up and
 the primary request in this step. The guard re-queries the current PR
-head, finds the newest `/sandman review` trigger by strictly normalized
+head, finds the newest `{{REVIEW_COMMAND}}` trigger by strictly normalized
 server timestamps, and checks the response surfaces after that trigger. It does
 not trust a local record as a substitute for the remote pull-request state.
 
@@ -270,14 +270,14 @@ check_review_trigger_delivery() {
       --repository "<owner/repo>" \
       --pull-request <N> \
       --head-sha "$head_sha" \
-      --trigger-prefix "/sandman review" \
+      --trigger-prefix "{{REVIEW_COMMAND}}" \
       --request-file "$request_file"
   else
     sh "$skill_root/pr-review/review-trigger-guard-v1.sh" \
       --repository "<owner/repo>" \
       --pull-request <N> \
       --head-sha "$head_sha" \
-      --trigger-prefix "/sandman review"
+      --trigger-prefix "{{REVIEW_COMMAND}}"
   fi
 }
 
@@ -311,12 +311,12 @@ Re-read the PR comments and capture the exact server
 ```bash
 request_result=$(sh "$skill_root/review-request/review-request-v1.sh" \
   --repository <owner/repo> --pull-request <N> --head-sha "$head_sha" \
-  --trigger-prefix "/sandman review" --request-file "$request_file") ||
+  --trigger-prefix "{{REVIEW_COMMAND}}" --request-file "$request_file") ||
   record REVIEW_TIMEOUT_STATE_ERROR and stop
 trigger_url=$(printf '%s' "$request_result" | jq -er '.comment_url') || record REVIEW_TIMEOUT_STATE_ERROR and stop
 trigger_id="$trigger_url"
 trigger_created_at=$(gh pr view <N> --repo <owner/repo> --json headRefOid,comments |
-  jq -er --arg head "$head_sha" --arg trigger_url "$trigger_url" --arg prefix "/sandman review" '
+  jq -er --arg head "$head_sha" --arg trigger_url "$trigger_url" --arg prefix "{{REVIEW_COMMAND}}" '
     def valid_timestamp:
       if type != "string" or (test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$") | not) then false
       else capture("^(?<base>[0-9]{4}-[0-9]{2}-[0-9]{2})(?<time>T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\\.(?<fraction>[0-9]{1,9}))?Z$") as $parts |
@@ -347,7 +347,7 @@ jq -n \
   --arg repository "<owner/repo>" \
   --arg head_sha "$head_sha" \
   --arg trigger_id "$trigger_id" \
-  --arg trigger_prefix "/sandman review" \
+  --arg trigger_prefix "{{REVIEW_COMMAND}}" \
   --arg trigger_created_at "$trigger_created_at" \
   --arg confirmed_at "$request_started_at" \
   --arg started_at "$request_started_at" \
@@ -460,7 +460,7 @@ top-level non-trigger comments, formal `COMMENTED`/`APPROVED`/
 `CHANGES_REQUESTED` reviews, and inline file comments. The current
 same-credential, stale-head, pending-trigger, requested-changes, informal
 approval, and concrete-feedback rules remain owned by Step 6. The bundled
-`review-observe-v1.sh` observer returns a response whose body does not begin with `/sandman review` regardless of author; it excludes a top-level response only when that body begins with the configured prefix. Do not filter by author. Preserve observed response counts, and use only the active request's window in the classification.
+`review-observe-v1.sh` observer returns a response whose body does not begin with `{{REVIEW_COMMAND}}` regardless of author; it excludes a top-level response only when that body begins with the configured prefix. Do not filter by author. Preserve observed response counts, and use only the active request's window in the classification.
 An envelope with `state:"unavailable"` is structured failure, never approval.
 
 The standalone coordinator keeps dependent work queued while it observes the
@@ -474,9 +474,9 @@ The cycle preserves formal requested-changes precedence, current-head matching,
 pending-trigger protection, approval recency, and the minimum poll window.
 
 Before Step 6, retain the existing self-check: when `top > 0`, `reviews == 0`,
-and `inline == 0`, and no previous `/sandman review` request is already
+and `inline == 0`, and no previous `{{REVIEW_COMMAND}}` request is already
 pending, run the same delivery check again immediately before you
-post a follow-up beginning with `/sandman review` asking the reviewer to clarify.
+post a follow-up beginning with `{{REVIEW_COMMAND}}` asking the reviewer to clarify.
 This is a reviewer-directed follow-up; the guard still runs before posting. Do
 not post when the newest trigger is unanswered or its ordering cannot be
 established. If a request is already pending, do not pile on another trigger.
@@ -500,7 +500,7 @@ require_review_trigger_delivery || record REVIEW_TRIGGER_GUARD_BLOCKED "$guard_r
 [ "$guard_reason" != "head-changed" ] || record REVIEW_TRIGGER_GUARD_BLOCKED "$guard_reason" and stop
 clarification_result=$(sh "$skill_root/review-request/review-request-v1.sh" \
   --repository <owner/repo> --pull-request <N> --head-sha "$head_sha" \
-  --trigger-prefix "/sandman review" \
+  --trigger-prefix "{{REVIEW_COMMAND}}" \
   --request-file "$request_file" \
   --context "please clarify which finding is actionable") ||
   record REVIEW_TRIGGER_GUARD_UNCERTAIN and stop
@@ -519,7 +519,7 @@ jq -n \
   --arg repository "<owner/repo>" \
   --arg head_sha "$head_sha" \
   --arg trigger_id "$clarification_url" \
-  --arg trigger_prefix "/sandman review" \
+  --arg trigger_prefix "{{REVIEW_COMMAND}}" \
   --arg trigger_created_at "$clarification_created_at" \
   --arg confirmed_at "$clarification_confirmed_at" \
   --arg started_at "$request_started_at" \
@@ -603,16 +603,16 @@ approval, especially when an approval has a stale or unknown commit identity.
   `head_status: "stale"`; `head_status: "unknown"` remains eligible when the
   review has no commit identity. Top-level sources remain current, and only
   current-head formal `APPROVED` records create mechanical approval evidence, AND
-- **The approval is for the current diff** — its `createdAt` is **after** the SHA recorded in `temporary cycle head record` (the SHA at which the most recent `/sandman review` was posted), AND
-- **No unanswered `/sandman review` trigger is sitting above the approval** — the most recent top-level comment by `createdAt` is not an implementor trigger that has not yet received a response, AND
+- **The approval is for the current diff** — its `createdAt` is **after** the SHA recorded in `temporary cycle head record` (the SHA at which the most recent `{{REVIEW_COMMAND}}` was posted), AND
+- **No unanswered `{{REVIEW_COMMAND}}` trigger is sitting above the approval** — the most recent top-level comment by `createdAt` is not an implementor trigger that has not yet received a response, AND
 - **The minimum polling cycle has elapsed** — at least 240 s of cumulative sleep (one full `120 + 60 + 60` cycle from Step 5) has passed since the most recent trigger post. A single 120 s first poll cannot have observed a meaningful response window. The late-approval-only continuation is exempt because the original bounded cycle already expired; it does not create a new polling budget.
 → **Approve — DONE. Stop the loop.** An informal approval is sufficient.
 
 Approval keywords: `lgtm`, `looks good`, `looks great`, `nice work`, `good work`, `approved`, `ship it`, `+1`, `thumbs up`, `all good`, `all set`, `good to go`, `no major issues`, `minor issues only`, etc.
 
-**Hard rule — stale approval after a SHA change.** When Step 3 detects that the head SHA has changed since the last `/sandman review` post, every prior approval timestamp is stale. The new diff requires a fresh approval against the new SHA, not a re-application of an approval that was issued against the prior diff. Treat any pre-SHA-change APPROVED comment as **not approved** until a new APPROVED comment arrives after the new SHA — even if `reviewDecision` would otherwise be empty and the comment list otherwise looks clean. The pass-counter reset on SHA change implies the approval window resets too; do not infer that a stale APPROVED carries forward across a SHA change.
+**Hard rule — stale approval after a SHA change.** When Step 3 detects that the head SHA has changed since the last `{{REVIEW_COMMAND}}` post, every prior approval timestamp is stale. The new diff requires a fresh approval against the new SHA, not a re-application of an approval that was issued against the prior diff. Treat any pre-SHA-change APPROVED comment as **not approved** until a new APPROVED comment arrives after the new SHA — even if `reviewDecision` would otherwise be empty and the comment list otherwise looks clean. The pass-counter reset on SHA change implies the approval window resets too; do not infer that a stale APPROVED carries forward across a SHA change.
 
-**Hard rule — pending trigger beats older approval.** When the most recent top-level comment on the PR is an implementor `/sandman review` trigger that has not yet received a response, do not classify an older APPROVED comment below it as Case C. The trigger is itself a fresh request; the loop must continue polling until either the trigger receives a response or the confirmed request's absolute `REVIEW_TIMEOUT` deadline is exhausted. This is the symmetric counterpart of Hard Rule 5 / Hard Rule 6 (which prevent *posting* a duplicate trigger before the previous one is answered) and closes the same race at the *exit* side of the loop.
+**Hard rule — pending trigger beats older approval.** When the most recent top-level comment on the PR is an implementor `{{REVIEW_COMMAND}}` trigger that has not yet received a response, do not classify an older APPROVED comment below it as Case C. The trigger is itself a fresh request; the loop must continue polling until either the trigger receives a response or the confirmed request's absolute `REVIEW_TIMEOUT` deadline is exhausted. This is the symmetric counterpart of Hard Rule 5 / Hard Rule 6 (which prevent *posting* a duplicate trigger before the previous one is answered) and closes the same race at the *exit* side of the loop.
 
 The structured equivalent is `classification.request_state == "superseded"`:
 an older request may retain its response evidence for audit, but its decision is
@@ -634,11 +634,11 @@ An entry in `classification.sources.inline_comments`,
 `classification.sources.top_level`, or `classification.sources.formal_reviews`
 contains concrete code feedback (specific file paths, function names, variable
 names, line numbers):
-→ **Has blockers or suggestions** — apply fixes, commit, push. Only re-request after fix+push if previous `/sandman review` already received a response. If no response yet, keep polling.
+→ **Has blockers or suggestions** — apply fixes, commit, push. Only re-request after fix+push if previous `{{REVIEW_COMMAND}}` already received a response. If no response yet, keep polling.
 
 **F. Ambiguous feedback with unclear actionable intent only?**
 - Request-scoped comments exist but none specify a concrete code change
-→ **Clarification** — post a reviewer-directed clarification with `/sandman review` if no request is pending; otherwise keep polling.
+→ **Clarification** — post a reviewer-directed clarification with `{{REVIEW_COMMAND}}` if no request is pending; otherwise keep polling.
 
 **G. Only nits or suggestions?**
 - Request-scoped comments are nits or optional improvements, with no
@@ -679,7 +679,7 @@ If an inline comment ID appears in 3+ consecutive passes without resolution, tre
 Stop only when:
 - Formal approval (A or C) — the **only** condition that completes the PR-Review phase. "Exhausted after 10 passes" or any other non-approval signal is **never** a reason to mark PR-Review complete; only Approval is.
 - An explicit skill-defined irrecoverable condition prevents further autonomous progress
-- Max 10 passes reached with unresolved blockers AND no new commit has landed on the PR branch since the last `/sandman review` post (i.e., the prior exhausted budget is still on the latest SHA). This ends the loop with a `REVIEW_TIMEOUT` documented in `.sandman/task.md` and the run log, not a completion — the run-level checklist item stays unchecked until Approval is observed.
+- Max 10 passes reached with unresolved blockers AND no new commit has landed on the PR branch since the last `{{REVIEW_COMMAND}}` post (i.e., the prior exhausted budget is still on the latest SHA). This ends the loop with a `REVIEW_TIMEOUT` documented in `.sandman/task.md` and the run log, not a completion — the run-level checklist item stays unchecked until Approval is observed.
 - **`REVIEW_CONFLICT_UNRESOLVED` — back-merge failed to resolve a DIRTY PR; not a `REVIEW_TIMEOUT`, never silent**
 
 Continue polling when:
@@ -700,7 +700,7 @@ Continue polling when:
 - Always include `top=<count> reviews=<count> inline=<count>` in the final report.
 - Never force-push or amend commits.
 - Keep commits focused: one commit per review round.
-- When feedback is ambiguous, post a reviewer-directed clarification with `/sandman review` in the same comment.
+- When feedback is ambiguous, post a reviewer-directed clarification with `{{REVIEW_COMMAND}}` in the same comment.
 - Review agents may post feedback as: top-level comments, inline diff comments, or formal `COMMENT` reviews. Always check all three sources.
 - When CI is broken and the failure may be base-branch drift, load `sandman-back-merge` first so any fix that landed on the base branch can be merged before retrying.
 - When CI is failing, fix it first — CI must be green before any review feedback can be meaningfully addressed.

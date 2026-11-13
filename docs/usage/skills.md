@@ -27,7 +27,8 @@ cd /path/to/your/project
 ```
 
 The installer suggests these review commands and lets you select one, or enter
-a custom command:
+a custom command. The review command has no silent default: choose one in the
+prompt, or supply `--review-command` for an unattended installation:
 
 1. `/sandman review`
 2. `@codex review`
@@ -51,9 +52,14 @@ agents and all skills in the current project. Use `--agent AGENT` and
 user account instead. `--project-dir DIR` selects a project destination; without
 it, the current directory is used. The review command is rendered into a
 temporary source copy before installation, leaving the checkout untouched.
-The portable skill source defaults to `/sandman review`; `sandman init` also
-continues to replace that default with the project's configured
-`review_command`.
+Use `--base-branch BRANCH` to set the base branch for the installed skill
+(default: `main`) and `--review-timeout SECONDS` to set the delegated review
+budget (default: 1800; minimum: 240). The current implementation branch and
+source branch are resolved at run time from the checked-out worktree and the
+current work-item context; they are not installation options. The portable
+skill source retains its `{{REVIEW_COMMAND}}` marker so `sandman init` can render
+the project's configured `review_command`; Sandman leaves the other runtime
+placeholders unchanged.
 
 ## What it contains
 

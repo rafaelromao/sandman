@@ -51,7 +51,7 @@ func TestSyncWritesEmbeddedSkill(t *testing.T) {
 	}
 }
 
-func TestSkillSourcesAreReadyForIndependentInstall(t *testing.T) {
+func TestSkillSourcesUseOnlySupportedRuntimePlaceholders(t *testing.T) {
 	var checked int
 	err := fs.WalkDir(embeddedSkills, embeddedSkillRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -64,7 +64,17 @@ func TestSkillSourcesAreReadyForIndependentInstall(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if strings.Contains(string(data), "{{") || strings.Contains(string(data), "}}") {
+		withoutSupportedPlaceholders := string(data)
+		for _, marker := range []string{
+			"{{BRANCH}}",
+			"{{SOURCE_BRANCH}}",
+			"{{BASE_BRANCH}}",
+			"{{REVIEW_COMMAND}}",
+			"{{REVIEW_TIMEOUT}}",
+		} {
+			withoutSupportedPlaceholders = strings.ReplaceAll(withoutSupportedPlaceholders, marker, "")
+		}
+		if strings.Contains(withoutSupportedPlaceholders, "{{") || strings.Contains(withoutSupportedPlaceholders, "}}") {
 			t.Errorf("skill source %s contains unresolved template markers", path)
 		}
 		checked++
@@ -78,10 +88,57 @@ func TestSkillSourcesAreReadyForIndependentInstall(t *testing.T) {
 	}
 
 	runSkill := readEmbeddedSkill(t, "run/SKILL.md")
-	for _, want := range []string{"Review command: `/sandman review`", "1800 seconds by default"} {
+	for _, want := range []string{
+		"Current branch: {{BRANCH}}",
+		"Source branch: {{SOURCE_BRANCH}}",
+		"Base branch: `{{BASE_BRANCH}}`",
+		"Review command: `{{REVIEW_COMMAND}}`",
+		"Delegated review response timeout: `{{REVIEW_TIMEOUT}}` seconds",
+	} {
 		if !strings.Contains(runSkill, want) {
-			t.Errorf("standalone run skill missing portable default %q", want)
+			t.Errorf("run skill source missing review-command template %q", want)
 		}
+	}
+}
+
+func TestSyncSubstitutesConfiguredReviewCommandAndPreservesRuntimePlaceholders(t *testing.T) {
+	home := t.TempDir()
+	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "@codex review"}); err != nil {
+		t.Fatalf("sync skill with configured review command: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, ".agents", "skills", embeddedSkillRoot, "run", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read synced run skill: %v", err)
+	}
+	for _, want := range []string{
+		"Current branch: {{BRANCH}}",
+		"Source branch: {{SOURCE_BRANCH}}",
+		"Base branch: `{{BASE_BRANCH}}`",
+		"Review command: `@codex review`",
+		"Delegated review response timeout: `{{REVIEW_TIMEOUT}}` seconds",
+	} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("synced run skill missing expected value %q", want)
+		}
+	}
+	if strings.Contains(string(data), "{{REVIEW_COMMAND}}") {
+		t.Fatalf("synced run skill still contains the configured review-command marker:\n%s", data)
+	}
+}
+
+func TestSyncPreservesPlaceholdersWhenReviewCommandIsUnset(t *testing.T) {
+	home := t.TempDir()
+	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
+		t.Fatalf("sync skill without a review command: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, ".agents", "skills", embeddedSkillRoot, "run", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read synced run skill: %v", err)
+	}
+	if !strings.Contains(string(data), "Review command: `{{REVIEW_COMMAND}}`") {
+		t.Fatal("sync without a review command should leave the review-command placeholder unchanged")
 	}
 }
 
@@ -546,8 +603,8 @@ func TestSyncOverwritesManagedTreeWithoutPrompt(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(home, ".agents", "skills", embeddedSkillRoot, manifestFileName)); err != nil {
 		t.Fatalf("expected manifest to be written: %v", err)
 	}
-	if strings.Contains(text, defaultReviewCommand) {
-		t.Fatalf("expected installed skill default review command to be replaced, got:\n%s", text)
+	if strings.Contains(text, "{{REVIEW_COMMAND}}") {
+		t.Fatalf("expected installed skill review-command template to be replaced, got:\n%s", text)
 	}
 }
 
@@ -571,7 +628,7 @@ func TestSyncTreatsLegacyManagedTreeAsUpgradeable(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		data = bytes.ReplaceAll(data, []byte(defaultReviewCommand), []byte("/legacy review"))
+		data = bytes.ReplaceAll(data, []byte("{{REVIEW_COMMAND}}"), []byte("/legacy review"))
 		return os.WriteFile(target, data, 0o644)
 	})
 	if err != nil {

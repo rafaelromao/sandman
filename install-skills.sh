@@ -9,6 +9,8 @@ Usage: install-skills.sh [options]
 
 Options:
   --review-command COMMAND  Use COMMAND instead of prompting for a choice
+  --base-branch BRANCH      Set {{BASE_BRANCH}} (default: main)
+  --review-timeout SECONDS  Set {{REVIEW_TIMEOUT}} (default: 1800)
   --agent AGENT             Target an agent (repeatable; default: all agents)
   --skill SKILL             Install a skill (repeatable; default: all skills)
   --global                  Install globally instead of in the project
@@ -26,6 +28,8 @@ fail() {
 }
 
 review_command=
+base_branch=main
+review_timeout=1800
 project_dir=.
 global_install=false
 agent_args=()
@@ -36,6 +40,16 @@ while (($#)); do
     --review-command)
       (($# >= 2)) || fail "--review-command requires a value"
       review_command=$2
+      shift 2
+      ;;
+    --base-branch)
+      (($# >= 2)) || fail "--base-branch requires a value"
+      base_branch=$2
+      shift 2
+      ;;
+    --review-timeout)
+      (($# >= 2)) || fail "--review-timeout requires a value"
+      review_timeout=$2
       shift 2
       ;;
     --agent)
@@ -93,6 +107,10 @@ if [[ -z "$review_command" ]]; then
 fi
 
 [[ -n "${review_command//[[:space:]]/}" ]] || fail "review command cannot be empty"
+[[ -n "${base_branch//[[:space:]]/}" ]] || fail "base branch cannot be empty"
+[[ "$review_timeout" =~ ^[0-9]+$ ]] || fail "review timeout must be a whole number of seconds"
+review_timeout=$((10#$review_timeout))
+((review_timeout >= 240)) || fail "review timeout must be at least 240 seconds"
 command -v node >/dev/null 2>&1 || fail "Node.js is required to prepare portable skill files"
 command -v npx >/dev/null 2>&1 || fail "npx is required to run Vercel's Skills CLI"
 [[ -d "$project_dir" ]] || fail "project directory does not exist: $project_dir"
@@ -105,13 +123,18 @@ mkdir -p "$staging_dir/internal/skill"
 cp -R "$script_dir/internal/skill/sandman" "$staging_dir/internal/skill/"
 cp "$script_dir/skills.sh.json" "$staging_dir/skills.sh.json"
 
-node - "$staging_dir/internal/skill/sandman" "$review_command" <<'NODE'
+node - "$staging_dir/internal/skill/sandman" "$review_command" "$base_branch" "$review_timeout" <<'NODE'
 const fs = require('node:fs');
 const path = require('node:path');
 
 const root = process.argv[2];
-const reviewCommand = process.argv[3];
-const defaultCommand = '/sandman review';
+const replacements = {
+  BRANCH: 'the checked-out worktree branch at run time',
+  SOURCE_BRANCH: "the current work item's source branch at run time",
+  BASE_BRANCH: process.argv[4],
+  REVIEW_COMMAND: process.argv[3],
+  REVIEW_TIMEOUT: process.argv[5],
+};
 
 function render(directory) {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -121,8 +144,11 @@ function render(directory) {
     } else if (entry.isFile() && entry.name.endsWith('_test.go')) {
       fs.unlinkSync(filePath);
     } else if (entry.isFile() && entry.name === 'SKILL.md') {
-      const original = fs.readFileSync(filePath, 'utf8');
-      fs.writeFileSync(filePath, original.replaceAll(defaultCommand, reviewCommand));
+      const content = fs.readFileSync(filePath, 'utf8').replace(
+        /\{\{(BRANCH|SOURCE_BRANCH|BASE_BRANCH|REVIEW_COMMAND|REVIEW_TIMEOUT)\}\}/g,
+        (_, name) => replacements[name],
+      );
+      fs.writeFileSync(filePath, content);
     }
   }
 }

@@ -270,6 +270,7 @@ func renderReviewBashBlock(t *testing.T, skillText, start, requestFile, headFile
 	block = strings.ReplaceAll(block, ".sandman/state/<N>.head_sha", headFile)
 	block = strings.ReplaceAll(block, "<owner/repo>", reviewRepository)
 	block = strings.ReplaceAll(block, "<N>", reviewPullRequest)
+	block = strings.ReplaceAll(block, "{{REVIEW_COMMAND}}", reviewPrefix)
 	return block
 }
 
