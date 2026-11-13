@@ -97,7 +97,7 @@ command -v node >/dev/null 2>&1 || fail "Node.js is required to prepare portable
 command -v npx >/dev/null 2>&1 || fail "npx is required to run Vercel's Skills CLI"
 [[ -d "$project_dir" ]] || fail "project directory does not exist: $project_dir"
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+script_dir=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 staging_dir=$(mktemp -d "${TMPDIR:-/tmp}/sandman-skills.XXXXXX")
 trap 'rm -rf "$staging_dir"' EXIT
 
@@ -142,7 +142,7 @@ if [[ "$global_install" == true ]]; then
   install_args+=(--global)
 fi
 
-project_dir=$(CDPATH= cd -- "$project_dir" && pwd)
+project_dir=$(CDPATH='' cd -- "$project_dir" && pwd)
 cd "$project_dir"
 printf 'Installing Sandman skills with review command: %s\n' "$review_command"
 npx "${install_args[@]}"
