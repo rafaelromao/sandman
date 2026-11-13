@@ -85,6 +85,9 @@ func (o *Orchestrator) RunRepair(ctx context.Context, req Request, cfg *config.C
 	if err := sandbox.ValidateAgentConfig(agentName, agentCfg); err != nil {
 		return nil, err
 	}
+	if err := config.ValidateAgentModel(config.AgentModelKeys{Agent: "agent", Model: "model"}, agentName, agentCfg, agentCfg.Model); err != nil {
+		return nil, err
+	}
 	reviewTimeout, err := resolveReviewTimeout(req, cfg)
 	if err != nil {
 		return nil, err

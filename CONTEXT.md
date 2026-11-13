@@ -21,7 +21,7 @@ An external AI coding tool (OpenCode or Claude Code) invoked by Sandman via `os/
 _Avoid_: AI model, LLM, copilot.
 
 **AgentPreset**:
-A built-in command, config source, auth profile, and default model for a known AI coding tool keyed by name (`opencode`, `opencode-v2`, `claude`). Declared in `config.BuiltInAgentPresets` and resolved by `config.ResolveAgentProvider`. Presets hold data only; the agent-specific run-loop behaviour for a preset is its AgentStrategy.
+A built-in command, config source, auth profile, and default model for a known AI coding tool keyed by name (`opencode`, `opencode-v2`, `claude`). Declared in `config.BuiltInAgentPresets` and resolved by `config.ResolveAgentProvider`. Presets hold data only; the agent-specific run-loop behaviour for a preset is its AgentStrategy. A preset may reserve model providers that run its own CLI (`ExclusiveModelProviders`: `claude` reserves OpenCode v2's `claude-agent`), so only agents on that preset may use their models.
 _Avoid_: Provider template, agent type.
 
 **AgentStrategy**:
@@ -33,7 +33,7 @@ A configured agent preset or custom provider definition. Sandman supports the bu
 _Avoid_: Agent type, runner.
 
 **AgentModel**:
-A built-in agent model identifier overridden via `sandman run --model`. Each AgentPreset declares a default model (`opencode/big-pickle`, `sonnet`); the global `model` key applies only to agents that share the default agent's preset.
+A built-in agent model identifier overridden via `sandman run --model`. Each AgentPreset declares a default model (`opencode/big-pickle`, `sonnet`); the global `model` key applies only to agents that share the default agent's preset. An AgentModel whose provider another preset reserves (a `claude-agent/<model>` on any agent but `claude`) is refused by `config.ValidateAgentModel` wherever an agent and a model are paired: config load, `config set`, and the `run`, `review` and `init` flags.
 _Avoid_: agent model, default model.
 
 **AgentRun**:

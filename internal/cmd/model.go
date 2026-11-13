@@ -42,6 +42,23 @@ func resolveModel(model string, cfg *config.Config, agent config.Agent) string {
 	return config.DefaultModelForAgent(agent.Preset)
 }
 
+// validateRunAgentModel refuses, before a run does any work, a model its agent
+// may not run (config.ValidateAgentModel). The model is the one the run would
+// launch: resolveModel's choice, else the agent's own configured model. When
+// either flag is given the error names the flags, since the fix is on the
+// command line; otherwise it names the config keys.
+func validateRunAgentModel(cfg *config.Config, agentName, agentFlag, modelFlag string, agent config.Agent) error {
+	model := resolveModel(modelFlag, cfg, agent)
+	if model == "" {
+		model = agent.Model
+	}
+	keys := config.AgentModelKeys{Agent: "agent", Model: "model"}
+	if strings.TrimSpace(agentFlag) != "" || strings.TrimSpace(modelFlag) != "" {
+		keys = config.AgentModelKeys{Agent: "--agent", Model: "--model"}
+	}
+	return config.ValidateAgentModel(keys, agentName, agent, model)
+}
+
 // defaultAgentPreset returns the built-in preset of the config default agent,
 // or "" when the default agent is a preset-less custom provider.
 func defaultAgentPreset(cfg *config.Config) string {

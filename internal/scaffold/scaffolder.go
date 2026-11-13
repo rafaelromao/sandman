@@ -591,6 +591,9 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	if err != nil {
 		return err
 	}
+	if err := validateInitAgentModels(defaultAgent, opts, preserved); err != nil {
+		return err
+	}
 	agentVersion := resolveAgentVersion(defaultAgent)
 	if validate := agentInstallers[defaultAgent].validateVersion; validate != nil {
 		if err := validate(agentVersion); err != nil {
@@ -899,6 +902,26 @@ func (s *Scaffolder) resolveDefaultAgent(opts Options, preserved *config.Config)
 		return "", fmt.Errorf("unknown default agent: %q (supported: %s)", opts.Agent, strings.Join(KnownAgents, ", "))
 	}
 	return opts.Agent, nil
+}
+
+// validateInitAgentModels refuses a --model or --review-model the agent init
+// resolves may not run (config.ValidateAgentModel), before init writes
+// anything. Init records that agent for reviews too. On a re-init the agent
+// resolves through the preserved config, so an agents.<name>.preset override
+// decides its preset.
+func validateInitAgentModels(agent string, opts Options, preserved *config.Config) error {
+	resolved := config.BuiltInAgentPresets[agent].Agent(agent)
+	if preserved != nil {
+		if fromConfig, err := preserved.ResolveAgentProvider(agent); err == nil {
+			resolved = fromConfig
+		}
+	}
+	for _, flag := range []struct{ name, model string }{{"--model", opts.Model}, {"--review-model", opts.ReviewModel}} {
+		if err := config.ValidateAgentModel(config.AgentModelKeys{Agent: "--agent", Model: flag.name}, agent, resolved, flag.model); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // switchPreservedAgent applies an explicit `init --agent` to a preserved
