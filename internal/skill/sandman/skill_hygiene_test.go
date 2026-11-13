@@ -443,7 +443,7 @@ func TestCodeReviewSkill_SupportsStandaloneSelfReview(t *testing.T) {
 		"without a parent delegator",
 		"the skill is the packet owner",
 		"explicitly supplied fixed point",
-		"`origin/main` when available",
+		"`origin/<resolved-base>` when available",
 		"`HEAD~1`",
 		"`git status --short`",
 		"task/specification path or content supplied by the invocation",

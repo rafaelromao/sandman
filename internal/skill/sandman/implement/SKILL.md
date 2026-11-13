@@ -47,16 +47,19 @@ A failed required check on the current pull-request head remains implementation 
 
 For a diagnosed transient provider or network timeout, one authorized rerun of the identified failed workflow job is a bounded recovery action. The canary's single `opencode run` invocation and no-retry-loop rule applies to each job invocation; it does not prohibit a rerun of the existing failed execution. `workflow_dispatch` is not required. Keep the PR source head distinct from the workflow's tested SHA, and use the job database ID reported by GitHub rather than a job URL number.
 
-Before acting, verify the live PR source head, workflow run, tested SHA, current attempt, failed job, and repository linkage. Then invoke the installed helper once:
+Before acting, verify the live PR source head, workflow run, tested SHA, current attempt, failed job, and repository linkage. Set `repo`, `pr_number`, `pr_source_sha`, `workflow_tested_sha`,
+`workflow_run_id`, and `failed_job_database_id` from that verified evidence.
+Use literal single-quoted assignments, escaping apostrophes as described in
+step 4; these are data values, not commands. Then invoke the installed helper once:
 
 ```bash
 sh "$HOME/.agents/skills/sandman/implement/ci-rerun-v1.sh" \
-  --repository OWNER/REPO \
-  --pull-request PR_NUMBER \
-  --head-sha PR_SOURCE_SHA \
-  --tested-sha WORKFLOW_TESTED_SHA \
-  --run-id WORKFLOW_RUN_ID \
-  --job-id FAILED_JOB_DATABASE_ID \
+  --repository "$repo" \
+  --pull-request "$pr_number" \
+  --head-sha "$pr_source_sha" \
+  --tested-sha "$workflow_tested_sha" \
+  --run-id "$workflow_run_id" \
+  --job-id "$failed_job_database_id" \
   --diagnosis transient-provider-timeout
 ```
 
@@ -140,15 +143,17 @@ Writing `## Status: already resolved` while a PR is open without a verification 
 
 ### 4. Commit implementation
 
-Once all tests pass and formatting is clean, derive a Conventional Commits subject that the PR title and the commit will share.
+Once all tests pass and formatting is clean, derive a subject that the PR title and the commit will share.
 
-Pick the most accurate type for the change. Allowed types: `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`. Append `!` to the type for breaking changes (for example, `feat!:`). Keep the subject to one imperative sentence with no trailing period.
+Follow the repository's documented commit and title conventions. When none are documented, use Conventional Commits. Pick the most accurate type for the change. Default types: `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`. Append `!` to the type for breaking changes (for example, `feat!:`). Keep the subject to one imperative sentence with no trailing period.
+
+For literal shell text, use single quotes and replace each apostrophe with `'\''`; alternatively write the commit message with a file-writing tool and use `git commit -F`. The example below uses the fallback format.
 
 ```bash
 COMMIT_TYPE="<type>"
 COMMIT_SCOPE="<scope-or-empty>"
 COMMIT_BREAKING="0"   # 1 if this is a breaking change, else 0
-COMMIT_SUBJECT="<one-line imperative description of the change>"
+COMMIT_SUBJECT='<one-line imperative description of the change>'
 
 # Conventional Commits headers place the breaking marker (`!`) AFTER the
 # optional scope, never between the type and the scope. So
@@ -217,7 +222,7 @@ git commit -m "refactor: self-review fixes"
    ```
 
    Use the platform's accepted closing-reference form. Do not use a non-closing reference or explanatory prose in its place; a change request that does not auto-close its work item is not acceptable.
-3. Create the change request with that body. The PR title must use the same Conventional Commits shape as the commit subject from step 4 (same `<type>(<scope>)?:` header; same subject). The title is gated by the CI status check that scans for Conventional Commits, so do not bypass the format with the literal work-item title.
+3. Create the change request with that body. The PR title follows the repository conventions selected in step 4; for the fallback, use the same Conventional Commits header and subject. Apply the repository's title requirements rather than assuming a particular CI check exists.
 
    ```bash
    : "${base_branch:?resolve the base branch in step 1 first}"
@@ -226,7 +231,7 @@ git commit -m "refactor: self-review fixes"
 4. Verify the body that landed on the PR. Pull it back from the change-request service and confirm it matches the closing-reference shape — do not trust that the create call succeeded, because the API may accept variants silently.
 
    ```bash
-   gh pr view <new-pr-number> --json body --jq -r .body
+   gh pr view <new-pr-number> --json body --jq .body
    ```
 
    The first non-empty line of the returned body MUST match the platform's closing-reference form. The final content MUST be exactly one linked Built with Sandman logo using the footer above. On creation, continuation, and body edits, preserve the closing reference and existing description; move an existing footer to the end rather than duplicating it. Separate the footer with one blank line. This PR footer is independent of the optional repository README badge. If either requirement is missing, update the body and re-verify. If the body still cannot be made to match after one re-edit attempt, do not delegate review: persist the exact body, structured blocker, and next executable action in `.sandman/task.md` and the run log, then exit this attempt with a structured failure reason so the next run continues from the durable blocker.

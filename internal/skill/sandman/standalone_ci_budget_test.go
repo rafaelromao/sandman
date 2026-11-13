@@ -21,21 +21,27 @@ func standaloneCISnippets(t *testing.T) (string, string) {
 		t.Fatal(err)
 	}
 	text := string(data)
+	// block returns the whole bash block that contains marker.
 	block := func(marker string) string {
-		start := strings.Index(text, "```bash\n"+marker)
-		if start < 0 {
+		at := strings.Index(text, marker)
+		if at < 0 {
 			t.Fatalf("standalone CI snippet %q missing", marker)
+		}
+		start := strings.LastIndex(text[:at], "```bash\n")
+		if start < 0 {
+			t.Fatalf("standalone CI snippet %q is not inside a bash block", marker)
 		}
 		return strings.SplitN(text[start+len("```bash\n"):], "\n```", 2)[0]
 	}
-	replace := strings.NewReplacer("<owner/repo>", "owner/repo", "<owner>/<repo>", "owner/repo", "<N>", "17")
-	return replace.Replace(block("ci_budget_")), replace.Replace(block("# Step 2 must wait for CI"))
+	return block("ci_budget_head=\"\""), block("while true; do\n  load_ci_budget")
 }
 
 func standaloneCIHarness(scenario string) string {
 	// Align the initial clock with historical snippets that used Python's wall
 	// clock; the shell clock then advances deterministically without sleeping.
 	return fmt.Sprintf(`
+pr_number=17
+repo=owner/repo
 now=%d
 started=$now
 current_head=%s
@@ -110,6 +116,32 @@ func TestStandaloneCIFreshInvocationIgnoresObsoleteReservations(t *testing.T) {
 				t.Fatalf("obsolete evidence was overwritten: error=%v data=%q", err, retained)
 			}
 		})
+	}
+}
+
+// A failed check must show the failed run's log so the fix is diagnosable:
+// the cycle finds the run from the failed check's link.
+func TestStandaloneCIShowsFailedRunLogs(t *testing.T) {
+	init, poll := standaloneCISnippets(t)
+	script := standaloneCIHarness("four-fixes") + `
+gh() {
+  if [ "$1" = "pr" ] && [ "$2" = "view" ]; then printf '%s\n' "$current_head"; return; fi
+  if [ "$1" = "pr" ] && [ "$2" = "checks" ]; then
+    case "$*" in
+      *bucket*) printf '%s\n' '[{"name":"build","bucket":"fail","link":"https://github.com/owner/repo/actions/runs/4343/job/99"}]' ;;
+      *) printf 'FAILURE\n' ;;
+    esac
+    return
+  fi
+  if [ "$1" = "run" ] && [ "$2" = "view" ]; then printf 'LOG-FOR-%s\n' "$3"; return; fi
+}
+` + init + "\n" + poll
+	out, err := runStandaloneCI(t, t.TempDir(), script)
+	if err == nil || !strings.Contains(out, "CI_FAILURE_UNRESOLVED") {
+		t.Fatalf("failing CI did not end with its bounded diagnostic: error=%v output=%s", err, out)
+	}
+	if !strings.Contains(out, "LOG-FOR-4343") {
+		t.Fatalf("failed run log was not shown: %s", out)
 	}
 }
 

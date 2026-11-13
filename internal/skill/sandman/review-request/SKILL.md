@@ -41,3 +41,29 @@ If validation, guarded delivery, or confirmation fails, return the concrete
 delivery refusal and do not post a replacement request. `REVIEW_TIMEOUT` is
 run context supplied by the caller; it is not shared skill state and this
 capability does not start its deadline or observation loop.
+
+## Delivery helper
+
+Use the bundled `review-request-v1.sh`: it performs the read-only guard,
+posts at most once, confirms the comment against the live head, and returns
+the envelope described above. Resolve `skill_root` from `SANDMAN_SKILL_ROOT`,
+then the repository's `.agents/skills/sandman`, then
+`~/.agents/skills/sandman`. Confirm that it contains the helper before running.
+The helper finds its matching guard relative to its own installation.
+
+Set `repo`, `pr_number`, `head_sha` and `review_command` from the caller's
+verified context. Use single-quoted literal assignments, escaping each
+apostrophe as `'\''`; these values are data, not executable shell text.
+
+```bash
+: "${skill_root:?locate the installed skills first}" "${repo:?caller repository required}"
+: "${pr_number:?caller pull request required}" "${head_sha:?caller head required}"
+: "${review_command:?caller review command required}"
+sh "$skill_root/review-request/review-request-v1.sh" \
+  --repository "$repo" --pull-request "$pr_number" \
+  --head-sha "$head_sha" --trigger-prefix "$review_command"
+```
+
+For a standalone cycle with a trusted prior request envelope, also pass
+`--request-file "$request_file"`. That file is caller-owned input; this
+capability never writes it.

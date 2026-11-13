@@ -39,7 +39,7 @@ head.
    defined above.
 2. Confirm required checks are green.
 3. Confirm the tracker reports the change request mergeable.
-4. Merge with squash: `gh pr merge --squash`. Do not pass `--delete-branch`; the local branch must remain in this worktree for downstream sandman tooling (next run, --continue, --override).
+4. Select the merge method from the repository's documented policy and the hosting service's allowed methods. Prefer squash only when no policy selects another method and squash is allowed; otherwise use an allowed merge or rebase method. If policy and allowed methods have no intersection, record the concrete blocker and stop. Invoke the selected method explicitly (`gh pr merge --squash`, `gh pr merge --merge`, or `gh pr merge --rebase`). Do not pass `--delete-branch`; the local branch must remain in this worktree for downstream sandman tooling (next run, --continue, --override).
 5. Verify the PR actually merged.
 6. After verifying, delete the remote branch from a different worktree — never from this worktree: `git push origin --delete <branch>`.
 7. If approval is not achieved after 10 review cycles, leave the PR open and record final blockers plus the next executable action in `.sandman/task.md` and the run log.

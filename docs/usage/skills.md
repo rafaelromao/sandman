@@ -58,6 +58,17 @@ Sandman mounts `~/.agents` into built-in agent containers so the shared skill is
 
 ## Repository and run values
 
+The shared workflows follow the repository's documented commit/title and merge
+policies. Without a policy, Conventional Commits and an allowed squash merge
+are defaults, not requirements imposed on every repository. Standalone
+self-review resolves its comparison base from the caller or Task, open PR,
+repository configuration, then repository default branch.
+
+Shell examples keep repository and PR identity in quoted variables. Plan text
+is posted with `--body-file`, and literal commit text is single-quoted or read
+from a file. The review cycle's `record` function exits on refusals; conflict
+repair loads the back-merge skill as an agent action, not as a shell binary.
+
 The shared skill tree is one copy per user, so it never holds a value that
 belongs to one repository or one Run. Skill sync installs the files exactly as
 they ship; changing `review_command`, `review_timeout`, or `git.base_branch`

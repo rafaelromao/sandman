@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Shared skill examples now stop on delivery refusals, locate failed CI logs from PR checks, pass literal plan and commit text safely, and follow each repository's commit, review-base and merge-method policy.
 - The shared skill tree no longer stores one repository's review command, so repositories with different reviewers no longer overwrite each other and managed Runs post the command their Task names. `sandman config set review_command` no longer re-syncs skills.
 - Standalone skills resolve the review command, base branch, current branch and review timeout at run time, and pass any review command to their helpers verbatim.
 - Implementation runs open pull requests against the resolved base branch, and the "already resolved" check compares against that branch instead of `origin/main`.

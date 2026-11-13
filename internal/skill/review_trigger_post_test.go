@@ -157,6 +157,8 @@ func TestSyncReviewPost_StopsBeforePostingWithoutResolvedContext(t *testing.T) {
 			"set -u",
 			"cycle_request_file=\"$CYCLE_REQUEST_FILE\"",
 			"cycle_head_file=\"$CYCLE_HEAD_FILE\"",
+			"repo=" + shellQuote(reviewRepository),
+			"pr_number=" + shellQuote(reviewPullRequest),
 			"head_sha=" + reviewHeadSHA,
 			"request_file=\"$CYCLE_REQUEST_FILE\"",
 			"record() { printf '%s\\n' \"$*\" >&2; return 1; }",
@@ -180,6 +182,70 @@ func TestSyncReviewPost_StopsBeforePostingWithoutResolvedContext(t *testing.T) {
 	}
 	if _, err := os.Stat(postMarker); !os.IsNotExist(err) {
 		t.Fatalf("a block posted without a resolved review context, stat error = %v", err)
+	}
+}
+
+// skillReviewContextBlock returns the skill's own "Resolve the review context"
+// block with the agent-filled values supplied, so a test runs the skill's real
+// definitions (including record) rather than harness stand-ins.
+func skillReviewContextBlock(t *testing.T, skillText, root string) string {
+	t.Helper()
+	block := renderReviewBashBlock(t, skillText, "review_command='<resolved review command>'", "", "")
+	return strings.NewReplacer(
+		"<pull request number>", reviewPullRequest,
+		"<resolved review command>", reviewPrefix,
+		"<resolved review timeout in seconds>", "1800",
+		"<resolved base branch>", "main",
+		"<resolved current branch>", "feature",
+	).Replace(block) + "\nskill_root=" + shellQuote(root)
+}
+
+// A guard refusal must stop the cycle: the skill's record helper ends the
+// block, so the request is never posted after a refused delivery.
+func TestSyncReviewPost_GuardRefusalStopsBeforePosting(t *testing.T) {
+	root, skillText := installRenderedPRReviewSkill(t)
+	workDir := t.TempDir()
+	stateDir := filepath.Join(workDir, "cycle-state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("create state directory: %v", err)
+	}
+	requestFile := filepath.Join(stateDir, "42.review_request.json")
+	headFile := filepath.Join(stateDir, "42.head_sha")
+	bin := t.TempDir()
+	postMarker := filepath.Join(t.TempDir(), "post-count")
+	writeBlockedReviewGH(t, bin)
+
+	script := strings.Join([]string{
+		"cycle_request_file=\"$CYCLE_REQUEST_FILE\"",
+		"cycle_head_file=\"$CYCLE_HEAD_FILE\"",
+		"repo=" + shellQuote(reviewRepository),
+		"pr_number=" + shellQuote(reviewPullRequest),
+		"head_sha=" + reviewHeadSHA,
+		skillReviewContextBlock(t, skillText, root),
+		reviewGuardBlock(t, skillText, requestFile, headFile),
+		reviewPrimaryPostBlock(t, skillText, requestFile, headFile),
+	}, "\n")
+	requester := filepath.Join(root, "review-request", "review-request-v1.sh")
+	if err := os.WriteFile(requester, []byte("#!/bin/sh\nprintf x >> \"$POST_MARKER\"\n"), 0o700); err != nil {
+		t.Fatalf("write review request shim: %v", err)
+	}
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Dir = workDir
+	cmd.Env = append(environWithout("PATH"),
+		"PATH="+bin+":"+os.Getenv("PATH"),
+		"CYCLE_REQUEST_FILE="+requestFile,
+		"CYCLE_HEAD_FILE="+headFile,
+		"POST_MARKER="+postMarker,
+	)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("cycle continued after the guard refused delivery:\n%s", output)
+	}
+	if !strings.Contains(string(output), "REVIEW_TRIGGER_GUARD_BLOCKED") {
+		t.Fatalf("guard refusal was not recorded:\n%s", output)
+	}
+	if _, err := os.Stat(postMarker); !os.IsNotExist(err) {
+		t.Fatalf("review was posted after the guard refused delivery, stat error = %v", err)
 	}
 }
 
@@ -493,6 +559,8 @@ func renderReviewBashBlock(t *testing.T, skillText, needle, requestFile, headFil
 // skill's "Resolve the review context" step.
 func reviewContextScript(root, reviewCommand string) []string {
 	return []string{
+		"repo=" + shellQuote(reviewRepository),
+		"pr_number=" + shellQuote(reviewPullRequest),
 		"review_command=" + shellQuote(reviewCommand),
 		"review_timeout=1800",
 		"skill_root=" + shellQuote(root),
@@ -509,6 +577,8 @@ func reviewHarnessScriptFor(root, reviewCommand, firstBlock, secondBlock string)
 		"export SANDMAN_SKILL_ROOT=" + shellQuote(root),
 		"cycle_request_file=\"$CYCLE_REQUEST_FILE\"",
 		"cycle_head_file=\"$CYCLE_HEAD_FILE\"",
+		"repo=" + shellQuote(reviewRepository),
+		"pr_number=" + shellQuote(reviewPullRequest),
 		"head_sha=" + reviewHeadSHA,
 		"record() { printf '%s\\n' \"$*\" >&2; return 1; }",
 	}
@@ -520,11 +590,15 @@ func reviewBlockedHarnessScript(root, guardBlock string) string {
 	return strings.Join([]string{
 		"set -eu",
 		"export SANDMAN_SKILL_ROOT=" + shellQuote(root),
+		"repo=" + shellQuote(reviewRepository),
+		"pr_number=" + shellQuote(reviewPullRequest),
 		"review_command=" + shellQuote(reviewPrefix),
 		"review_timeout=1800",
 		"skill_root=" + shellQuote(root),
 		"cycle_request_file=\"$CYCLE_REQUEST_FILE\"",
 		"cycle_head_file=\"$CYCLE_HEAD_FILE\"",
+		"repo=" + shellQuote(reviewRepository),
+		"pr_number=" + shellQuote(reviewPullRequest),
 		"head_sha=" + reviewHeadSHA,
 		"record() { printf '%s\\n' \"$*\" > \"$GUARD_RECORD_MARKER\"; exit 0; }",
 		guardBlock,
