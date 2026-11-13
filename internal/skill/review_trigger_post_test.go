@@ -62,6 +62,75 @@ func TestSyncReviewPost_PersistsConfirmedPrimaryTrigger(t *testing.T) {
 	assertPostCount(t, postMarker, 1)
 }
 
+// A repository may use any reviewer's trigger. The cycle passes the resolved
+// command as one quoted value, so shell metacharacters reach the request
+// helper and the confirmed envelope verbatim.
+func TestSyncReviewPost_DeliversAnyReviewCommandVerbatim(t *testing.T) {
+	const reviewCommand = `@bot "$HOME" it's review`
+	root, skillText := installRenderedPRReviewSkill(t)
+	workDir := t.TempDir()
+	stateDir := filepath.Join(workDir, "cycle-state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("create state directory: %v", err)
+	}
+	requestFile := filepath.Join(stateDir, "42.review_request.json")
+	headFile := filepath.Join(stateDir, "42.head_sha")
+	bin := t.TempDir()
+	postMarker := filepath.Join(t.TempDir(), "post-count")
+	posted, err := json.Marshal(map[string]any{
+		"headRefOid": reviewHeadSHA,
+		"comments": []map[string]string{{
+			"id":        "1001",
+			"url":       initialTriggerURL,
+			"body":      reviewCommand,
+			"createdAt": "2026-08-11T18:00:01Z",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("encode posted pull request view: %v", err)
+	}
+	writeReviewGH(t, bin, `#!/bin/sh
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  if [ -f "$POST_MARKER" ]; then
+    printf '%s\n' `+shellQuote(string(posted))+`
+  else
+    printf '%s\n' '{"headRefOid":"abc123"}'
+  fi
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */issues/*/comments|*/reviews|*/comments) printf '%s\n' '[]' ;;
+    *) exit 2 ;;
+  esac
+  exit 0
+fi
+exit 2
+`)
+
+	script := reviewHarnessScriptFor(
+		root,
+		reviewCommand,
+		reviewGuardBlock(t, skillText, requestFile, headFile),
+		reviewPrimaryPostBlock(t, skillText, requestFile, headFile),
+	)
+	runReviewHarness(t, script, workDir, bin, root, postMarker)
+
+	prefixes, err := os.ReadFile(postMarker + ".prefix")
+	if err != nil {
+		t.Fatalf("read prefix passed to the request helper: %v", err)
+	}
+	if string(prefixes) != reviewCommand+"\n" {
+		t.Fatalf("request helper received prefix %q, want %q", prefixes, reviewCommand)
+	}
+	var request map[string]any
+	readJSONFile(t, requestFile, &request)
+	if request["trigger_prefix"] != reviewCommand {
+		t.Fatalf("confirmed envelope trigger_prefix = %#v, want %q", request["trigger_prefix"], reviewCommand)
+	}
+	assertPostCount(t, postMarker, 1)
+}
+
 func TestReviewRequestFirstDeliveryAllowsMissingFutureEnvelope(t *testing.T) {
 	home := t.TempDir()
 	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
@@ -321,6 +390,12 @@ func runReviewHarness(t *testing.T, script, workDir, bin, root, postMarker strin
 	requester := filepath.Join(root, "review-request", "review-request-v1.sh")
 	requesterScript := `#!/bin/sh
 printf x >> "$POST_MARKER"
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--trigger-prefix" ]; then
+    printf '%s\n' "$2" >> "$POST_MARKER.prefix"
+  fi
+  shift
+done
 if [ -f "$CYCLE_REQUEST_FILE" ]; then
   printf '%s\n' '{"comment_url":"https://github.com/owner/repo/pull/42#issuecomment-1002","created_at":"2026-08-11T18:02:01Z","confirmed_at":"2026-08-11T18:02:02Z"}'
 else
