@@ -82,18 +82,18 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0041 | AFK skills use an autonomous response contract | accepted |
 | 0042 | Robust Specification detection and generalized parent-section matching | accepted |
 | 0043 | Query the dedicated `/dependencies/blocked_by` endpoint for native blockers | accepted |
-| 0044 | Open-issue scan as last-resort Specification child harvest | proposed |
+| 0044 | Open-issue scan as last-resort Specification child harvest | accepted |
 | 0045 | Widened children-heading matcher for Specification detection | accepted |
 | 0046 | Widened parent-section matcher accepts "Part of" headings | accepted |
 | 0047 | Retain Specification as an in-memory-blocked parent row | accepted |
 | 0048 | External-gate state for clean exits with open pull requests | rejected |
-| 0049 | Merged pull-request closing-reference enrichment | proposed |
-| 0050 | Configurable delegated review response timeout | proposed |
-| 0051 | Explicit child declarations authorize Specification edges | proposed |
-| 0052 | Request-scoped delegated review response classification | proposed |
+| 0049 | Merged pull-request closing-reference enrichment | accepted |
+| 0050 | Configurable delegated review response timeout | accepted |
+| 0051 | Explicit child declarations authorize Specification edges | accepted |
+| 0052 | Request-scoped delegated review response classification | accepted |
 | 0053 | Bound external waits and release execution capacity | accepted |
 | 0054 | Retain GitHub closure gate for in-batch blockers | accepted |
 | 0055 | Opt into OpenCode session reuse | accepted |
-| 0056 | Re-add Claude Code as a second built-in agent preset behind an agent strategy seam | proposed |
-| 0057 | Exact Claude Code session identity and host-shared transcripts | proposed |
-| 0058 | Repository-independent shared skills | proposed |
+| 0056 | Re-add Claude Code as a second built-in agent preset behind an agent strategy seam | accepted |
+| 0057 | Exact Claude Code session identity and host-shared transcripts | accepted |
+| 0058 | Repository-independent shared skills | accepted |
