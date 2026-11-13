@@ -65,9 +65,9 @@ prevents later probes or launches. Failed publication is recovered from the
 durable redacted decision body, and legacy evidence is accepted only at the
 validated request/head boundary.
 
-`{{REVIEW_COMMAND}}` is substituted from repository configuration when the
-shared skills are synchronized. `{{REVIEW_TIMEOUT}}` is supplied per managed
-run or standalone session and is never shared global skill state.
+The review command and the delegated review timeout are supplied per managed
+Run by its Task, or resolved from `.sandman/config.yaml` in a standalone
+session. They are never stored in the shared skill tree.
 
 When it sees a matching comment authored by the GitHub user authenticated to the daemon, it launches a review AgentRun and posts the result back to the pull request. Requests from other users are ignored. Use direct review for manual or CI-driven reviews that should not be tied to the daemon's authenticated user.
 
@@ -101,7 +101,7 @@ To opt out of the daemon guard, set a different review command that does not con
 sandman config set review_command "/oc review"
 ```
 
-Changing `review_command` also regenerates the installed shared Sandman skill tree. If that tree has local edits, Sandman prompts before overwriting in a TTY and fails in non-interactive mode.
+Changing `review_command` only updates the project configuration; the next Run's Task, and any standalone skill session, uses the new command. The installed shared skill tree does not change.
 
 ## Concurrency and sandboxing
 
@@ -262,4 +262,4 @@ Complexity analyzers are a **reviewer-only** capability. They are not invoked an
 - [Commands Reference](commands.md#sandman-review) — full `sandman review` flags
 - [Configuration](configuration.md) — `review_command`, `review_agent`, `review_model`, `review_variant`, and `parallel_reviews`
 - [Portal](portal.md) — watching review runs in the browser
-- [Sandman Skills](skills.md) — how the review command is injected into shared skills
+- [Sandman Skills](skills.md) — how skills resolve the review command

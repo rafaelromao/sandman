@@ -96,3 +96,4 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0055 | Opt into OpenCode session reuse | accepted |
 | 0056 | Re-add Claude Code as a second built-in agent preset behind an agent strategy seam | proposed |
 | 0057 | Exact Claude Code session identity and host-shared transcripts | proposed |
+| 0058 | Repository-independent shared skills | proposed |

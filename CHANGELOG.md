@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- `sandman init --base-branch <branch>` records the repository's base branch. Without it, new projects record the repository's default branch (`origin/HEAD`), else `main`, so later Runs need no `--base-branch`.
+
+### Fixed
+
+- The shared skill tree no longer stores one repository's review command, so repositories with different reviewers no longer overwrite each other and managed Runs post the command their Task names. `sandman config set review_command` no longer re-syncs skills.
+- Standalone skills resolve the review command, base branch, current branch and review timeout at run time, and pass any review command to their helpers verbatim.
+- Implementation runs open pull requests against the resolved base branch, and the "already resolved" check compares against that branch instead of `origin/main`.
+- Review helpers work when the skills are installed into a repository rather than the home directory.
+
 ### Changed
 
 - New `sandman init` projects default to OpenCode v2 for implementation and review. Existing agent selections and explicit `--agent` overrides are preserved.

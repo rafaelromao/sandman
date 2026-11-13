@@ -1,6 +1,6 @@
 # Sandman Skills
 
-Sandman syncs the full shared `sandman` skill folder during `sandman init`. It lives at `~/.agents/skills/sandman/` and is regenerated when `review_command` changes.
+Sandman syncs the full shared `sandman` skill folder during `sandman init`. It lives at `~/.agents/skills/sandman/` and is identical for every repository on the machine: it carries no repository or run values (see [Repository and run values](#repository-and-run-values)).
 
 ## What it contains
 
@@ -50,20 +50,48 @@ Claude Code discovers skills only as `~/.claude/skills/<name>/SKILL.md`, one lev
 - `~/.claude/skills/sandman` points to `~/.agents/skills/sandman`
 - `~/.claude/skills/sandman-<mode>` points to each mode's folder, for example `sandman-implement`
 
-Sync creates `~/.claude/skills` when it is missing, repoints existing symlinks, and leaves a real file or directory at a link path untouched with a warning. The links are refreshed on every `sandman init` and `review_command` change.
+Sync creates `~/.claude/skills` when it is missing, repoints existing symlinks, and leaves a real file or directory at a link path untouched with a warning. The links are refreshed on every `sandman init`.
 
 ## Container access
 
 Sandman mounts `~/.agents` into built-in agent containers so the shared skill is visible in container-backed runs. The `claude` preset also mounts `~/.claude`; the container config snapshot copies symlinks as plain files, so the `sandman-*` skills are present inside the container.
 
-## Review command
+## Repository and run values
 
-`{{REVIEW_COMMAND}}` is rendered from project config. `sandman init --review-command` seeds that value, and `sandman config set review_command ...` updates both config and the installed shared skill tree.
+The shared skill tree is one copy per user, so it never holds a value that
+belongs to one repository or one Run. Skill sync installs the files exactly as
+they ship; changing `review_command`, `review_timeout`, or `git.base_branch`
+never touches the installed skills.
 
-`{{REVIEW_TIMEOUT}}` is rendered into each current AgentRun Task as the
-effective delegated review response budget in seconds. It is deliberately not
-written into the globally shared skill tree, so repositories with different
-policies cannot overwrite one another's active run context.
+In a managed Run, the Run's Task supplies every value: the review command, the
+base branch, the current branch, and the delegated review response timeout.
+Task values always win.
+
+When you load the skills directly (for example `sandman-run`), each value
+comes from the first source that provides it:
+
+| Value | Sources, in order |
+|---|---|
+| Review command | the caller → `review_command` in `.sandman/config.yaml` → `/sandman review` |
+| Base branch | the caller → the open pull request's base → `git.base_branch` in `.sandman/config.yaml` → the repository's default branch |
+| Current branch | the caller → the checked-out branch |
+| Review timeout | the caller → `review_timeout` in `.sandman/config.yaml` → 1800 seconds |
+
+So a repository that uses another reviewer, or a base branch other than
+`main`, sets it once in its `.sandman/config.yaml`; a repository without
+Sandman can create that file with just those keys. The review command is
+passed to the helper scripts as one quoted argument, so commands such as
+`@coderabbitai review` work verbatim.
+
+The helper scripts find each other relative to their own location, so a
+skill tree installed into a repository (for example under
+`.agents/skills/sandman/`) works without a copy under your home directory. The
+review cycle looks for its helpers in `SANDMAN_SKILL_ROOT`, then the
+repository's `.agents/skills/sandman/`, then `~/.agents/skills/sandman/`.
+
+A tree installed by an earlier Sandman version may still contain the review
+command it was rendered with. Managed Runs are unaffected, because the Task
+supplies the command, and the next `sandman init` replaces the tree.
 
 Standalone use of `sandman-review-cycle` uses the versioned portable observer
 entry point for one confirmed request and retains the request envelope only in
