@@ -82,6 +82,22 @@ func TestScaffold_ExplicitBaseBranchUpdatesPreservedConfig(t *testing.T) {
 	}
 }
 
+func TestScaffold_ExplicitAgentAndBaseBranchBothUpdatePreservedConfig(t *testing.T) {
+	dir := t.TempDir()
+	writeExistingConfig(t, dir, &config.Config{DefaultAgent: "opencode", ReviewCommand: "/oc review", Git: config.GitConfig{BaseBranch: "main"}})
+	got := scaffoldBaseBranch(t, dir, Options{Agent: "claude", BaseBranch: "develop"}, &fakeGitOps{isRepo: true})
+	if got != "develop" {
+		t.Fatalf("git.base_branch = %q, want develop", got)
+	}
+	cfg, err := config.Load(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.DefaultAgent != "claude" || cfg.ReviewCommand != "/oc review" {
+		t.Fatalf("agent = %q, review_command = %q; want the switched claude agent and the preserved /oc review", cfg.DefaultAgent, cfg.ReviewCommand)
+	}
+}
+
 func gitIn(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)

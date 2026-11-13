@@ -50,26 +50,41 @@ structured diagnostic without requesting operator input.
 
 This skill is shared by every repository on the machine, so it carries no
 repository values. Resolve them once, before the first pass, and keep them for
-the whole cycle. For each value, use the first source that provides it:
+the whole cycle. For each value, use the first source that provides it, such
+as a value supplied by the caller (the composing `sandman-run` workflow):
 
-1. The value supplied by the caller, such as the composing `sandman-run`
-   workflow.
-2. The repository's `.sandman/config.yaml`: `review_command`, and
-   `review_timeout` in seconds.
-3. The defaults: review command `/sandman review`, review timeout 1800 seconds.
+| Value | Sources, in order |
+|---|---|
+| Review command | the caller → `review_command` in `.sandman/config.yaml` → `/sandman review` |
+| Review timeout | the caller → `review_timeout` in `.sandman/config.yaml`, in seconds → 1800 seconds |
+| Base branch | the caller → the pull request's base → `git.base_branch` in `.sandman/config.yaml` → the repository's default branch |
+| Current branch | the caller → the checked-out branch, which is the pull request's branch |
+
+```bash
+gh pr view <N> --repo <owner/repo> --json baseRefName --jq .baseRefName   # pull request base
+git branch --show-current                                                 # current branch
+```
 
 The review command is the trigger the repository's reviewer answers. Every
 reviewer-facing comment begins with it, verbatim; never abbreviate it or
 replace it with another command. Write it inside single quotes, replacing each
 `'` in it with `'\''`, and always pass `"$review_command"` as one argument.
+Commit and push every fix on the current branch; back-merge merges
+`origin/$base_branch` into it. Never switch to another branch.
 
 The helper scripts ship with this skill. Use `SANDMAN_SKILL_ROOT` when it is
 set; otherwise use the repository's `.agents/skills/sandman`, then
-`~/.agents/skills/sandman`, whichever contains the helpers:
+`~/.agents/skills/sandman`, whichever contains the helpers.
+
+Every later block that uses these values starts with a guard that stops when
+one is missing. If your shell does not keep variables between commands, run
+this block again, with the same values, before each of those blocks:
 
 ```bash
 review_command='<resolved review command>'
 review_timeout=<resolved review timeout in seconds>
+base_branch='<resolved base branch>'
+current_branch='<resolved current branch>'
 skill_root=${SANDMAN_SKILL_ROOT:-}
 if [ -z "$skill_root" ]; then
   for candidate in "$(git rev-parse --show-toplevel 2>/dev/null)/.agents/skills/sandman" "${HOME}/.agents/skills/sandman"; do
@@ -158,7 +173,7 @@ Before each CI poll, compare the current time with `ci_deadline`. On a failed ch
 # Step 1 already fetched mergeStateStatus — use it directly. If DIRTY, trigger back-merge first.
 if [ "$mergeStateStatus" = "DIRTY" ]; then
   echo "PR is in 'DIRTY' state (merge conflicts). CI cannot run. Running sandman-back-merge to resolve."
-  # Load and run back-merge: merges the base branch into the current branch, resolves conflicts, pushes.
+  # Load and run back-merge: merges origin/$base_branch into the current branch, resolves conflicts, pushes.
   # This can recover fixes that landed on main after the branch was created.
   # A failed back-merge is a structured conflict diagnostic, not a polling state.
   if sandman-back-merge; then
@@ -297,6 +312,7 @@ Define the shared guard call once and use it before every command-prefixed
 post:
 
 ```bash
+: "${review_command:?resolve the review context first}" "${skill_root:?resolve the review context first}"
 request_file="$cycle_request_file"
 
 check_review_trigger_delivery() {
@@ -344,6 +360,7 @@ Re-read the PR comments and capture the exact server
 `createdAt` for the returned comment ID:
 
 ```bash
+: "${review_command:?resolve the review context first}" "${skill_root:?resolve the review context first}"
 request_result=$(sh "$skill_root/review-request/review-request-v1.sh" \
   --repository <owner/repo> --pull-request <N> --head-sha "$head_sha" \
   --trigger-prefix "$review_command" --request-file "$request_file") ||
@@ -371,6 +388,7 @@ resolved effective timeout. It does not choose defaults, minimums, or a
 pull-request-wide budget:
 
 ```bash
+: "${review_command:?resolve the review context first}" "${review_timeout:?resolve the review context first}"
 request_started_unix=$(date +%s) || record REVIEW_TIMEOUT_STATE_ERROR and stop
 request_deadline_unix=$((request_started_unix + review_timeout))
 request_started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) || record REVIEW_TIMEOUT_STATE_ERROR and stop
@@ -435,6 +453,7 @@ worktree and in a container where the skill is visible at `/.agents`; it does
 not require a host `sandman` binary:
 
 ```bash
+: "${skill_root:?resolve the review context first}"
 wait_result=$(sh "$skill_root/pr-review/review-wait-v1.sh" \
   --request-file "$request_file" --json) || record REVIEW_TIMEOUT_STATE_ERROR and stop
 wait_state=$(printf '%s' "$wait_result" | jq -r '.state // "unavailable"')
@@ -529,6 +548,7 @@ stop without posting a repair trigger. The latest confirmed trigger details and
 its new deadline are the ones used by the next request-scoped wait.
 
 ```bash
+: "${review_command:?resolve the review context first}" "${review_timeout:?resolve the review context first}" "${skill_root:?resolve the review context first}"
 [ -f "$request_file" ] || record REVIEW_TRIGGER_GUARD_BLOCKED "request-envelope-missing" and stop
 require_review_trigger_delivery || record REVIEW_TRIGGER_GUARD_BLOCKED "$guard_reason" and stop
 [ "$guard_reason" != "head-changed" ] || record REVIEW_TRIGGER_GUARD_BLOCKED "$guard_reason" and stop
@@ -588,7 +608,7 @@ in the returned snapshot (do **not** make a separate change-request view call).
 If `mergeStateStatus == "DIRTY"`:
 
 1. Stop polling for review feedback. The PR is unmergeable until the conflict is resolved; reviewer comments posted on a DIRTY PR do not produce a usable review.
-2. Load `sandman-back-merge` (see the `sandman-back-merge` skill). Run it on the current branch. It performs the disciplined 3-way merge of the base branch into the working branch and resolves conflicts without history rewrites.
+2. Load `sandman-back-merge` (see the `sandman-back-merge` skill). Run it on the current branch with `$base_branch` as its base branch. It performs the disciplined 3-way merge of the base branch into the working branch and resolves conflicts without history rewrites.
 3. If back-merge succeeds, push the updated branch with `git push`. Preserve the
    confirmed request envelope and its matching `temporary cycle head record`;
    do not rewrite either record to the new head. Step 1 observes the live head

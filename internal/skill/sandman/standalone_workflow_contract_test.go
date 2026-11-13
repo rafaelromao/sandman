@@ -205,10 +205,13 @@ func TestStandaloneEntryPointsResolveRunContextInOrder(t *testing.T) {
 	}
 	section := strings.Join(strings.Fields(cycle[resolve:loop]), " ")
 	for _, required := range []string{
-		"1. The value supplied by the caller",
-		"2. The repository's `.sandman/config.yaml`: `review_command`, and `review_timeout` in seconds.",
-		"3. The defaults: review command `/sandman review`, review timeout 1800 seconds.",
+		"| Review command | the caller → `review_command` in `.sandman/config.yaml` → `/sandman review` |",
+		"| Review timeout | the caller → `review_timeout` in `.sandman/config.yaml`, in seconds → 1800 seconds |",
+		"| Base branch | the caller → the pull request's base → `git.base_branch` in `.sandman/config.yaml` → the repository's default branch |",
+		"| Current branch | the caller → the checked-out branch, which is the pull request's branch |",
 		"always pass `\"$review_command\"` as one argument",
+		"back-merge merges `origin/$base_branch` into it",
+		"If your shell does not keep variables between commands, run this block again",
 	} {
 		if !strings.Contains(section, required) {
 			t.Errorf("sandman-review-cycle review context missing %q", required)
@@ -220,8 +223,14 @@ func TestStandaloneEntryPointsResolveRunContextInOrder(t *testing.T) {
 		}
 	}
 
-	if facade := flatSkill(t, "pr-review/SKILL.md"); !strings.Contains(facade, "That cycle resolves any value the caller did not supply, from the repository's `.sandman/config.yaml` and then the defaults") {
-		t.Error("sandman-pr-review must hand unresolved values to the review cycle's resolution")
+	facade := flatSkill(t, "pr-review/SKILL.md")
+	for _, required := range []string{
+		"the review command, review timeout, base branch and current branch when the caller supplied them",
+		"That cycle resolves any value the caller did not supply, from the repository's `.sandman/config.yaml` and then the defaults",
+	} {
+		if !strings.Contains(facade, required) {
+			t.Errorf("sandman-pr-review hand-off missing %q", required)
+		}
 	}
 	if request := flatSkill(t, "review-request/SKILL.md"); !strings.Contains(request, "in a Sandman-managed run, the Task's `Review command` is that value and always wins") {
 		t.Error("sandman-review-request must post the Task's review command in managed runs")
@@ -239,6 +248,8 @@ func TestImplementSkillUsesResolvedBaseBranch(t *testing.T) {
 		`git fetch origin "$base_branch"`,
 		`git merge-base --is-ancestor HEAD "origin/$base_branch"`,
 		`gh pr create --base "$base_branch"`,
+		`: "${base_branch:?resolve the base branch in step 1 first}" git fetch origin "$base_branch"`,
+		`: "${base_branch:?resolve the base branch in step 1 first}" gh pr create --base "$base_branch"`,
 		"If the current branch is already a non-base branch",
 		"stay on it",
 		`sh "$HOME/.agents/skills/sandman/implement/ci-rerun-v1.sh"`,

@@ -741,7 +741,8 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 				return err
 			}
 		}
-		baseUpdate, err := setPreservedBaseBranch(configPath, preserved, opts.BaseBranch)
+		var baseUpdate string
+		baseUpdate, err = setPreservedBaseBranch(configPath, preserved, opts.BaseBranch)
 		if err != nil {
 			return err
 		}

@@ -131,6 +131,58 @@ exit 2
 	assertPostCount(t, postMarker, 1)
 }
 
+// An agent shell that does not keep variables between commands must not post
+// an empty trigger: every block that uses the resolved values stops first.
+func TestSyncReviewPost_StopsBeforePostingWithoutResolvedContext(t *testing.T) {
+	_, skillText := installRenderedPRReviewSkill(t)
+	workDir := t.TempDir()
+	stateDir := filepath.Join(workDir, "cycle-state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("create state directory: %v", err)
+	}
+	requestFile := filepath.Join(stateDir, "42.review_request.json")
+	headFile := filepath.Join(stateDir, "42.head_sha")
+	bin := t.TempDir()
+	postMarker := filepath.Join(t.TempDir(), "post-count")
+	writePrimaryReviewGH(t, bin)
+
+	for name, block := range map[string]string{
+		"guard":    reviewGuardBlock(t, skillText, requestFile, headFile),
+		"primary":  renderReviewBashBlock(t, skillText, "request_result=$(sh \"$skill_root/review-request/review-request-v1.sh\"", requestFile, headFile),
+		"envelope": renderReviewBashBlock(t, skillText, "request_started_unix=$(date +%s) || record REVIEW_TIMEOUT_STATE_ERROR", requestFile, headFile),
+		"wait":     renderReviewBashBlock(t, skillText, "wait_result=$(sh \"$skill_root/pr-review/review-wait-v1.sh\"", requestFile, headFile),
+		"followup": reviewFollowUpPostBlock(t, skillText, requestFile, headFile),
+	} {
+		script := strings.Join([]string{
+			"set -u",
+			"cycle_request_file=\"$CYCLE_REQUEST_FILE\"",
+			"cycle_head_file=\"$CYCLE_HEAD_FILE\"",
+			"head_sha=" + reviewHeadSHA,
+			"request_file=\"$CYCLE_REQUEST_FILE\"",
+			"record() { printf '%s\\n' \"$*\" >&2; return 1; }",
+			block,
+		}, "\n")
+		cmd := exec.Command("sh", "-c", script)
+		cmd.Dir = workDir
+		cmd.Env = append(environWithout("PATH", "SANDMAN_SKILL_ROOT"),
+			"PATH="+bin+":"+os.Getenv("PATH"),
+			"CYCLE_REQUEST_FILE="+requestFile,
+			"CYCLE_HEAD_FILE="+headFile,
+			"POST_MARKER="+postMarker,
+		)
+		output, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Errorf("%s block ran without a resolved review context:\n%s", name, output)
+		}
+		if !strings.Contains(string(output), "resolve the review context first") {
+			t.Errorf("%s block did not stop at its guard:\n%s", name, output)
+		}
+	}
+	if _, err := os.Stat(postMarker); !os.IsNotExist(err) {
+		t.Fatalf("a block posted without a resolved review context, stat error = %v", err)
+	}
+}
+
 // installProjectOnlySkill installs the skill tree the way a project-scoped
 // installation lays it out, under the repository's .agents/skills, and returns
 // the repository and an empty HOME that has no Sandman skills.
@@ -413,19 +465,23 @@ func reviewFollowUpPostBlock(t *testing.T, skillText, requestFile, headFile stri
 	return renderReviewBashBlock(t, skillText, "[ -f \"$request_file\" ] || record", requestFile, headFile)
 }
 
-func renderReviewBashBlock(t *testing.T, skillText, start, requestFile, headFile string) string {
+// renderReviewBashBlock returns the whole bash block that contains needle.
+func renderReviewBashBlock(t *testing.T, skillText, needle, requestFile, headFile string) string {
 	t.Helper()
-	needle := "```bash\n" + start
-	startAt := strings.Index(skillText, needle)
-	if startAt < 0 {
-		t.Fatalf("skill bash block %q not found", start)
+	at := strings.Index(skillText, needle)
+	if at < 0 {
+		t.Fatalf("skill bash block containing %q not found", needle)
 	}
-	blockStart := startAt + len("```bash\n")
-	endRel := strings.Index(skillText[blockStart:], "\n```")
+	fence := strings.LastIndex(skillText[:at], "```bash\n")
+	if fence < 0 || strings.Contains(skillText[fence:at], "\n```\n") {
+		t.Fatalf("%q is not inside a bash block", needle)
+	}
+	blockStart := fence + len("```bash\n")
+	endRel := strings.Index(skillText[at:], "\n```")
 	if endRel < 0 {
-		t.Fatalf("skill bash block %q has no closing fence", start)
+		t.Fatalf("skill bash block containing %q has no closing fence", needle)
 	}
-	block := skillText[blockStart : blockStart+endRel]
+	block := skillText[blockStart : at+endRel]
 	block = strings.ReplaceAll(block, ".sandman/state/<N>.review_request.json", requestFile)
 	block = strings.ReplaceAll(block, ".sandman/state/<N>.head_sha", headFile)
 	block = strings.ReplaceAll(block, "<owner/repo>", reviewRepository)

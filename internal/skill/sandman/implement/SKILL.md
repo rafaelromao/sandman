@@ -60,6 +60,8 @@ sh "$HOME/.agents/skills/sandman/implement/ci-rerun-v1.sh" \
   --diagnosis transient-provider-timeout
 ```
 
+Run the helper exactly as shown in a Sandman-managed run. In a standalone session whose skills are installed only in the repository, run the same helper from that installation instead (`.agents/skills/sandman/implement/ci-rerun-v1.sh`).
+
 Use `transient-network-timeout` only for a verified network timeout. The helper performs at most one mutation attempt and checks GitHub read-back. A `confirmed` result means a new attempt was observed; `waiting` means the workflow/recovery is already active and should be left to runtime observation in a managed run; `uncertain` or `refused` is not permission to submit again. Resolve ambiguous evidence by re-reading live GitHub state before any further action. Never invent credentials or permissions, rerun a source failure, dispatch a replacement workflow, or weaken a required check.
 
 Only after the failure is diagnosed and the corrective action has actually completed may you yield to runtime observation. A saved blocker or a promise to repair is not a corrective action.
@@ -88,6 +90,7 @@ git fetch origin "$base_branch"
 - If the current branch is already a non-base branch (a Sandman-managed worktree's branch, or one the caller named), stay on it.
 - Otherwise create and switch to `issue-<ID>/<slugified-title>` from the latest base: `git switch -c "issue-<ID>/<slugified-title>" "origin/$base_branch"`.
 - Record the issue title, branch name, and base branch in `.sandman/task.md` or the run log, then continue automatically.
+- Later commands that use the base branch start with a guard that stops when it is missing. If your shell does not keep variables between commands, set `base_branch` again, to the same value, before each of them.
 
 ### 1.5. Pre-flight check
 
@@ -99,6 +102,7 @@ A merged change request will, by the tracker's merge rules, automatically close 
 2. Run branch freshness check:
 
    ```bash
+   : "${base_branch:?resolve the base branch in step 1 first}"
    git fetch origin "$base_branch"
    git merge-base --is-ancestor HEAD "origin/$base_branch"
    ```
@@ -216,6 +220,7 @@ git commit -m "refactor: self-review fixes"
 3. Create the change request with that body. The PR title must use the same Conventional Commits shape as the commit subject from step 4 (same `<type>(<scope>)?:` header; same subject). The title is gated by the CI status check that scans for Conventional Commits, so do not bypass the format with the literal work-item title.
 
    ```bash
+   : "${base_branch:?resolve the base branch in step 1 first}"
    gh pr create --base "$base_branch" --title "$COMMIT_HEADER" --body "$BODY"
    ```
 4. Verify the body that landed on the PR. Pull it back from the change-request service and confirm it matches the closing-reference shape — do not trust that the create call succeeded, because the API may accept variants silently.

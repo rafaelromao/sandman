@@ -52,7 +52,7 @@ func TestSyncInstallsEmbeddedSkillTreeVerbatim(t *testing.T) {
 	}
 }
 
-var skillPlaceholderPattern = regexp.MustCompile(`\{\{[A-Z][A-Z0-9_]*\}\}`)
+var skillPlaceholderPattern = regexp.MustCompile(`\{\{[^{}]*\}\}`)
 
 // Nothing fills placeholders in an installed skill: managed runs carry their
 // values in the Task, and standalone runs resolve them at run time.
