@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `sandman init --base-branch <branch>` records the repository's base branch. Without it, new projects record the repository's default branch (`origin/HEAD`), else `main`, so later Runs need no `--base-branch`.
+- Sandman's skills install without the Go CLI through Vercel's skills CLI: `npx skills add rafaelromao/sandman --skill '*'` installs the whole catalog for the supported coding agents. See `docs/usage/skills.md`.
 
 ### Fixed
 
@@ -21,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The review daemon answers any comment that starts with `/sandman` (optionally after a mention), so a `review_command` such as `/sandman check` no longer leaves Runs waiting for a review that never starts.
 - `sandman-back-merge` resolves the base branch from the caller, the pull request, `git.base_branch`, then the repository default instead of assuming `main`.
 - Preset-matrix release scenarios pin the legacy OpenCode v1 agent explicitly, and other release fixtures pin the OpenCode generation they scaffold against, so their behavior no longer depends on the host CLI version after new projects began defaulting to v2.
+- The `sandman-review-cycle` skill description is quoted, so strict YAML parsers such as Vercel's skills CLI can read its manifest.
 
 ### Changed
 

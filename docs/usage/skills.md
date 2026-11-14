@@ -1,6 +1,32 @@
 # Sandman Skills
 
-Sandman syncs the full shared `sandman` skill folder during `sandman init`. It lives at `~/.agents/skills/sandman/` and is identical for every repository on the machine: it carries no repository or run values (see [Repository and run values](#repository-and-run-values)).
+Sandman syncs the full shared `sandman` skill folder during `sandman init`. It lives at `~/.agents/skills/sandman/` and is identical for every repository on the machine: it carries no repository or run values (see [Repository and run values](#repository-and-run-values)). The same skills also install without the Go CLI; see [Install independently with Vercel Skills](#install-independently-with-vercel-skills).
+
+## Install independently with Vercel Skills
+
+Vercel's [`skills` CLI](https://github.com/vercel-labs/skills) installs the skills without the Go CLI. It reads this repository directly, and the root `skills.sh.json` declares where the catalog lives: the root `sandman` skill and the workflow skills under it. Nothing here installs or runs the `sandman` executable.
+
+You need Node.js 22.20 or later, which provides `npx`. From the project where you want the skills, install the whole catalog:
+
+```bash
+cd /path/to/your/project
+npx skills add rafaelromao/sandman --skill '*'
+```
+
+The CLI asks which coding agents to install for and lists the ones it supports, including OpenCode and Claude Code. Name them with `--agent`, for example `--agent opencode claude-code` or `--agent '*'` for all of them, and add `--yes` to skip the prompts. `npx skills add rafaelromao/sandman --list` previews the catalog without installing anything.
+
+- **Project scope** is the default. Each skill goes to `.agents/skills/<name>/` in the current directory, which OpenCode reads directly. Claude Code gets links under `.claude/skills/`, and `skills-lock.json` records each skill's source and content hash.
+- **Global scope** (`--global`) installs for your user account instead: `~/.agents/skills/<name>/`, with a link under `~/.claude/skills/` for Claude Code.
+
+Install the whole catalog rather than single skills. `sandman-run` loads the other workflow skills, and the helper scripts live under the root `sandman` skill, so a partial install is missing parts the workflow expects.
+
+An installed skill is identical for every repository and holds no review command. When you load the skills directly, each one uses the review command you name, else `review_command` from the repository's `.sandman/config.yaml`, else `/sandman review`. To use another reviewer, set it once in that file:
+
+```yaml
+review_command: '@codex review'
+```
+
+`review_timeout` and `git.base_branch` are read from the same file. [Repository and run values](#repository-and-run-values) gives the order in which every value is resolved, and a repository without Sandman can create the file with just those keys.
 
 ## What it contains
 

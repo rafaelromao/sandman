@@ -1,6 +1,6 @@
 ---
 name: sandman-review-cycle
-description: Runs one standalone in-memory review cycle after a pull request is published: wait for CI, deliver a guarded review request, observe request-scoped feedback, apply fixes, and repeat until approval or a structured terminal diagnostic.
+description: "Runs one standalone in-memory review cycle after a pull request is published: wait for CI, deliver a guarded review request, observe request-scoped feedback, apply fixes, and repeat until approval or a structured terminal diagnostic."
 ---
 
 # Review Cycle
