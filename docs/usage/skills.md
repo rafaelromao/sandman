@@ -4,7 +4,7 @@ Sandman syncs the full shared `sandman` skill folder during `sandman init`. It l
 
 ## Install independently with Vercel Skills
 
-The skills also install without the Go CLI. Vercel's [`skills` CLI](https://github.com/vercel-labs/skills) reads this repository directly, and the root `skills.sh.json` tells it where the catalog lives: the root `sandman` skill and the workflow skills under it. Nothing here installs or runs the `sandman` executable.
+Vercel's [`skills` CLI](https://github.com/vercel-labs/skills) installs the skills without the Go CLI. It reads this repository directly, and the root `skills.sh.json` declares where the catalog lives: the root `sandman` skill and the workflow skills under it. Nothing here installs or runs the `sandman` executable.
 
 You need Node.js 22.20 or later, which provides `npx`. From the project where you want the skills, install the whole catalog:
 
