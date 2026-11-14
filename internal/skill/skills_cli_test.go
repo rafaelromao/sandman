@@ -162,23 +162,30 @@ func TestSkillsGuideDocumentsIndependentInstall(t *testing.T) {
 	}
 	guide := string(data)
 	for _, want := range []string{
-		"install-skills.sh",
-		"--review-command 'YOUR COMMAND'",
-		"@codex review",
-		"@coderabbitai review",
-		"/oc review",
-		"--base-branch",
-		"--review-timeout",
-		"resolved at run time",
-		"default: `main`",
-		"default: 1800",
-		"review command has no silent default",
+		"npx skills add rafaelromao/sandman --skill '*'",
+		"skills.sh.json",
 		"Node.js 22.20",
+		"--agent",
 		"--global",
-		"does not install or run the Sandman",
+		"whole catalog",
+		"installs or runs the `sandman` executable",
+		"`review_command` from the repository's `.sandman/config.yaml`",
+		"/sandman review",
 	} {
 		if !strings.Contains(guide, want) {
 			t.Errorf("skills guide is missing independent-install detail %q", want)
+		}
+	}
+
+	// Skill text is identical in every installation (ADR-0058): the guide must
+	// not bring back an installer that renders values into the skills.
+	for _, removed := range []string{
+		"install-skills.sh",
+		"--review-command",
+		"{{REVIEW_COMMAND}}",
+	} {
+		if strings.Contains(guide, removed) {
+			t.Errorf("skills guide still describes the removed install-time rendering %q", removed)
 		}
 	}
 }

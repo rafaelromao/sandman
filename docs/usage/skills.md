@@ -1,65 +1,32 @@
 # Sandman Skills
 
-Sandman syncs the full shared `sandman` skill folder during `sandman init`. It lives at `~/.agents/skills/sandman/` and is identical for every repository on the machine: it carries no repository or run values (see [Repository and run values](#repository-and-run-values)).
+Sandman syncs the full shared `sandman` skill folder during `sandman init`. It lives at `~/.agents/skills/sandman/` and is identical for every repository on the machine: it carries no repository or run values (see [Repository and run values](#repository-and-run-values)). The same skills also install without the Go CLI; see [Install independently with Vercel Skills](#install-independently-with-vercel-skills).
 
 ## Install independently with Vercel Skills
 
-Use the repository's `install-skills.sh` when Sandman's Go CLI is not installed
-or when you want to choose a review command. It prepares a temporary copy of the
-skill catalog, renders the selected command into the skill files, then invokes
-Vercel's `npx skills add` with copy mode. It does not install or run the Sandman
-executable. The root `skills.sh.json` configures Vercel's CLI to discover both
-the root skill and all nested workflow skills.
+The skills also install without the Go CLI. Vercel's [`skills` CLI](https://github.com/vercel-labs/skills) reads this repository directly, and the root `skills.sh.json` tells it where the catalog lives: the root `sandman` skill and the workflow skills under it. Nothing here installs or runs the `sandman` executable.
 
-The installer requires Bash and Node.js 22.20 or later (which provides `npx`).
-Clone the public source once:
-
-```bash
-git clone --depth 1 https://github.com/rafaelromao/sandman.git "$HOME/.local/share/sandman-skills"
-```
-
-From the project where you want the skills installed, run this to install all
-skills for all supported agents at project scope:
+You need Node.js 22.20 or later, which provides `npx`. From the project where you want the skills, install the whole catalog:
 
 ```bash
 cd /path/to/your/project
-"$HOME/.local/share/sandman-skills/install-skills.sh" --agent '*' --skill '*'
+npx skills add rafaelromao/sandman --skill '*'
 ```
 
-The installer suggests these review commands and lets you select one, or enter
-a custom command. The review command has no silent default: choose one in the
-prompt, or supply `--review-command` for an unattended installation:
+The CLI asks which coding agents to install for and lists the ones it supports, including OpenCode and Claude Code. Name them with `--agent`, for example `--agent opencode claude-code` or `--agent '*'` for all of them, and add `--yes` to skip the prompts. `npx skills add rafaelromao/sandman --list` previews the catalog without installing anything.
 
-1. `/sandman review`
-2. `@codex review`
-3. `/oc review`
-4. `@coderabbitai review`
-5. A custom command
+- **Project scope** is the default. Each skill goes to `.agents/skills/<name>/` in the current directory, which OpenCode reads directly. Claude Code gets links under `.claude/skills/`, and `skills-lock.json` records each skill's source and content hash.
+- **Global scope** (`--global`) installs for your user account instead: `~/.agents/skills/<name>/`, with a link under `~/.claude/skills/` for Claude Code.
 
-To install the standalone run skill for OpenCode globally and set a custom
-review command without prompting:
+Install the whole catalog rather than single skills. `sandman-run` loads the other workflow skills, and the helper scripts live under the root `sandman` skill, so a partial install is missing parts the workflow expects.
 
-```bash
-"$HOME/.local/share/sandman-skills/install-skills.sh" \
-  --global --agent opencode --skill sandman-run \
-  --review-command '@codex review'
+An installed skill is identical for every repository and holds no review command. When you load the skills directly, each one uses the review command you name, else `review_command` from the repository's `.sandman/config.yaml`, else `/sandman review`. To use another reviewer, set it once in that file:
+
+```yaml
+review_command: '@codex review'
 ```
 
-Use `--review-command 'YOUR COMMAND'` to specify any review trigger directly;
-non-interactive runs require this option. By default, the installer targets all
-agents and all skills in the current project. Use `--agent AGENT` and
-`--skill SKILL` to narrow the selection, and add `--global` to install for your
-user account instead. `--project-dir DIR` selects a project destination; without
-it, the current directory is used. The review command is rendered into a
-temporary source copy before installation, leaving the checkout untouched.
-Use `--base-branch BRANCH` to set the base branch for the installed skill
-(default: `main`) and `--review-timeout SECONDS` to set the delegated review
-budget (default: 1800; minimum: 240). The current implementation branch and
-source branch are resolved at run time from the checked-out worktree and the
-current work-item context; they are not installation options. The portable
-skill source retains its `{{REVIEW_COMMAND}}` marker so `sandman init` can render
-the project's configured `review_command`; Sandman leaves the other runtime
-placeholders unchanged.
+`review_timeout` and `git.base_branch` are read from the same file. [Repository and run values](#repository-and-run-values) gives the order in which every value is resolved, and a repository without Sandman can create the file with just those keys.
 
 ## What it contains
 
