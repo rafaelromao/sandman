@@ -62,9 +62,288 @@ func TestSyncReviewPost_PersistsConfirmedPrimaryTrigger(t *testing.T) {
 	assertPostCount(t, postMarker, 1)
 }
 
+// A repository may use any reviewer's trigger. The cycle passes the resolved
+// command as one quoted value, so shell metacharacters reach the request
+// helper and the confirmed envelope verbatim.
+func TestSyncReviewPost_DeliversAnyReviewCommandVerbatim(t *testing.T) {
+	const reviewCommand = `@bot "$HOME" it's review`
+	root, skillText := installRenderedPRReviewSkill(t)
+	workDir := t.TempDir()
+	stateDir := filepath.Join(workDir, "cycle-state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("create state directory: %v", err)
+	}
+	requestFile := filepath.Join(stateDir, "42.review_request.json")
+	headFile := filepath.Join(stateDir, "42.head_sha")
+	bin := t.TempDir()
+	postMarker := filepath.Join(t.TempDir(), "post-count")
+	posted, err := json.Marshal(map[string]any{
+		"headRefOid": reviewHeadSHA,
+		"comments": []map[string]string{{
+			"id":        "1001",
+			"url":       initialTriggerURL,
+			"body":      reviewCommand,
+			"createdAt": "2026-08-11T18:00:01Z",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("encode posted pull request view: %v", err)
+	}
+	writeReviewGH(t, bin, `#!/bin/sh
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  if [ -f "$POST_MARKER" ]; then
+    printf '%s\n' `+shellQuote(string(posted))+`
+  else
+    printf '%s\n' '{"headRefOid":"abc123"}'
+  fi
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */issues/*/comments|*/reviews|*/comments) printf '%s\n' '[]' ;;
+    *) exit 2 ;;
+  esac
+  exit 0
+fi
+exit 2
+`)
+
+	script := reviewHarnessScriptFor(
+		root,
+		reviewCommand,
+		reviewGuardBlock(t, skillText, requestFile, headFile),
+		reviewPrimaryPostBlock(t, skillText, requestFile, headFile),
+	)
+	runReviewHarness(t, script, workDir, bin, root, postMarker)
+
+	prefixes, err := os.ReadFile(postMarker + ".prefix")
+	if err != nil {
+		t.Fatalf("read prefix passed to the request helper: %v", err)
+	}
+	if string(prefixes) != reviewCommand+"\n" {
+		t.Fatalf("request helper received prefix %q, want %q", prefixes, reviewCommand)
+	}
+	var request map[string]any
+	readJSONFile(t, requestFile, &request)
+	if request["trigger_prefix"] != reviewCommand {
+		t.Fatalf("confirmed envelope trigger_prefix = %#v, want %q", request["trigger_prefix"], reviewCommand)
+	}
+	assertPostCount(t, postMarker, 1)
+}
+
+// An agent shell that does not keep variables between commands must not post
+// an empty trigger: every block that uses the resolved values stops first.
+func TestSyncReviewPost_StopsBeforePostingWithoutResolvedContext(t *testing.T) {
+	_, skillText := installRenderedPRReviewSkill(t)
+	workDir := t.TempDir()
+	stateDir := filepath.Join(workDir, "cycle-state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("create state directory: %v", err)
+	}
+	requestFile := filepath.Join(stateDir, "42.review_request.json")
+	headFile := filepath.Join(stateDir, "42.head_sha")
+	bin := t.TempDir()
+	postMarker := filepath.Join(t.TempDir(), "post-count")
+	writePrimaryReviewGH(t, bin)
+
+	for name, block := range map[string]string{
+		"guard":    reviewGuardBlock(t, skillText, requestFile, headFile),
+		"primary":  renderReviewBashBlock(t, skillText, "request_result=$(sh \"$skill_root/review-request/review-request-v1.sh\"", requestFile, headFile),
+		"envelope": renderReviewBashBlock(t, skillText, "request_started_unix=$(date +%s) || record REVIEW_TIMEOUT_STATE_ERROR", requestFile, headFile),
+		"wait":     renderReviewBashBlock(t, skillText, "wait_result=$(sh \"$skill_root/pr-review/review-wait-v1.sh\"", requestFile, headFile),
+		"followup": reviewFollowUpPostBlock(t, skillText, requestFile, headFile),
+	} {
+		script := strings.Join([]string{
+			"set -u",
+			"cycle_request_file=\"$CYCLE_REQUEST_FILE\"",
+			"cycle_head_file=\"$CYCLE_HEAD_FILE\"",
+			"repo=" + shellQuote(reviewRepository),
+			"pr_number=" + shellQuote(reviewPullRequest),
+			"head_sha=" + reviewHeadSHA,
+			"request_file=\"$CYCLE_REQUEST_FILE\"",
+			"record() { printf '%s\\n' \"$*\" >&2; return 1; }",
+			block,
+		}, "\n")
+		cmd := exec.Command("sh", "-c", script)
+		cmd.Dir = workDir
+		cmd.Env = append(environWithout("PATH", "SANDMAN_SKILL_ROOT"),
+			"PATH="+bin+":"+os.Getenv("PATH"),
+			"CYCLE_REQUEST_FILE="+requestFile,
+			"CYCLE_HEAD_FILE="+headFile,
+			"POST_MARKER="+postMarker,
+		)
+		output, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Errorf("%s block ran without a resolved review context:\n%s", name, output)
+		}
+		if !strings.Contains(string(output), "resolve the review context first") {
+			t.Errorf("%s block did not stop at its guard:\n%s", name, output)
+		}
+	}
+	if _, err := os.Stat(postMarker); !os.IsNotExist(err) {
+		t.Fatalf("a block posted without a resolved review context, stat error = %v", err)
+	}
+}
+
+// skillReviewContextBlock returns the skill's own "Resolve the review context"
+// block with the agent-filled values supplied, so a test runs the skill's real
+// definitions (including record) rather than harness stand-ins.
+func skillReviewContextBlock(t *testing.T, skillText, root string) string {
+	t.Helper()
+	block := renderReviewBashBlock(t, skillText, "review_command='<resolved review command>'", "", "")
+	return "SANDMAN_SKILL_ROOT=" + shellQuote(root) + "\n" + strings.NewReplacer(
+		"<pull request number>", reviewPullRequest,
+		"<resolved review command>", reviewPrefix,
+		"<resolved review timeout in seconds>", "1800",
+		"<resolved base branch>", "main",
+		"<resolved current branch>", "feature",
+	).Replace(block)
+}
+
+// A guard refusal must stop the cycle: the skill's record helper ends the
+// block, so the request is never posted after a refused delivery.
+func TestSyncReviewPost_GuardRefusalStopsBeforePosting(t *testing.T) {
+	root, skillText := installRenderedPRReviewSkill(t)
+	workDir := t.TempDir()
+	stateDir := filepath.Join(workDir, "cycle-state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("create state directory: %v", err)
+	}
+	requestFile := filepath.Join(stateDir, "42.review_request.json")
+	headFile := filepath.Join(stateDir, "42.head_sha")
+	bin := t.TempDir()
+	postMarker := filepath.Join(t.TempDir(), "post-count")
+	writeBlockedReviewGH(t, bin)
+
+	script := strings.Join([]string{
+		"cycle_request_file=\"$CYCLE_REQUEST_FILE\"",
+		"cycle_head_file=\"$CYCLE_HEAD_FILE\"",
+		"repo=" + shellQuote(reviewRepository),
+		"pr_number=" + shellQuote(reviewPullRequest),
+		"head_sha=" + reviewHeadSHA,
+		skillReviewContextBlock(t, skillText, root),
+		reviewGuardBlock(t, skillText, requestFile, headFile),
+		reviewPrimaryPostBlock(t, skillText, requestFile, headFile),
+	}, "\n")
+	requester := filepath.Join(root, "review-request", "review-request-v1.sh")
+	if err := os.WriteFile(requester, []byte("#!/bin/sh\nprintf x >> \"$POST_MARKER\"\n"), 0o700); err != nil {
+		t.Fatalf("write review request shim: %v", err)
+	}
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Dir = workDir
+	cmd.Env = append(environWithout("PATH", "HOME", "SANDMAN_SKILL_ROOT"),
+		"HOME="+t.TempDir(),
+		"PATH="+bin+":"+os.Getenv("PATH"),
+		"CYCLE_REQUEST_FILE="+requestFile,
+		"CYCLE_HEAD_FILE="+headFile,
+		"POST_MARKER="+postMarker,
+	)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("cycle continued after the guard refused delivery:\n%s", output)
+	}
+	if !strings.Contains(string(output), "REVIEW_TRIGGER_GUARD_BLOCKED") {
+		t.Fatalf("guard refusal was not recorded:\n%s", output)
+	}
+	if _, err := os.Stat(postMarker); !os.IsNotExist(err) {
+		t.Fatalf("review was posted after the guard refused delivery, stat error = %v", err)
+	}
+}
+
+// installProjectOnlySkill installs the skill tree the way a project-scoped
+// installation lays it out, under the repository's .agents/skills, and returns
+// the repository and an empty HOME that has no Sandman skills.
+func installProjectOnlySkill(t *testing.T) (repo, root, emptyHome string) {
+	t.Helper()
+	repo = t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	if err := Sync(SyncOptions{HomeDir: repo}); err != nil {
+		t.Fatalf("install project-scoped skill: %v", err)
+	}
+	return repo, filepath.Join(repo, ".agents", "skills", embeddedSkillRoot), t.TempDir()
+}
+
+func environWithout(keys ...string) []string {
+	var env []string
+	for _, item := range os.Environ() {
+		drop := false
+		for _, key := range keys {
+			if strings.HasPrefix(item, key+"=") {
+				drop = true
+			}
+		}
+		if !drop {
+			env = append(env, item)
+		}
+	}
+	return env
+}
+
+// A project-only installation has no copy under HOME, so a helper must find
+// its sibling helpers from its own location.
+func TestReviewRequestFindsSiblingGuardInProjectOnlyInstall(t *testing.T) {
+	_, root, emptyHome := installProjectOnlySkill(t)
+	guard := filepath.Join(root, "pr-review", "review-trigger-guard-v1.sh")
+	if err := os.WriteFile(guard, []byte("#!/bin/sh\nprintf '%s\\n' '{\"protocol\":\"review-trigger/v1\",\"decision\":\"allow\",\"reason\":\"no-prior-request\"}'\n"), 0o700); err != nil {
+		t.Fatalf("write guard shim: %v", err)
+	}
+	bin := t.TempDir()
+	writeReviewGH(t, bin, `#!/bin/sh
+case "$*" in
+  *"--json state,headRefOid"*) printf '%s\n' '{"state":"OPEN","headRefOid":"abc123"}' ;;
+  *"pr comment"*) printf '%s\n' 'https://github.com/owner/repo/pull/42#issuecomment-1001' ;;
+  *) printf '%s\n' '{"headRefOid":"abc123","comments":[{"url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","createdAt":"2026-08-11T18:00:01Z"}]}' ;;
+esac
+`)
+	cmd := exec.Command("sh", filepath.Join(root, "review-request", "review-request-v1.sh"),
+		"--repository", reviewRepository, "--pull-request", reviewPullRequest,
+		"--head-sha", reviewHeadSHA, "--trigger-prefix", reviewPrefix)
+	cmd.Env = append(environWithout("PATH", "HOME", "SANDMAN_SKILL_ROOT"), "PATH="+bin+":"+os.Getenv("PATH"), "HOME="+emptyHome)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("project-only review request refused: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), `"state":"confirmed"`) {
+		t.Fatalf("unexpected review request envelope: %s", output)
+	}
+}
+
+// The review cycle locates its helpers in the repository's project-scoped
+// installation before falling back to the user's shared copy.
+func TestReviewCycleResolvesProjectOnlyHelperRoot(t *testing.T) {
+	repo, root, emptyHome := installProjectOnlySkill(t)
+	data, err := os.ReadFile(filepath.Join(root, "review-cycle", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read review-cycle skill: %v", err)
+	}
+	block := renderReviewBashBlock(t, string(data), "review_command='<resolved review command>'", "", "")
+	block = strings.ReplaceAll(block, "<resolved review command>", reviewPrefix)
+	block = strings.ReplaceAll(block, "<resolved review timeout in seconds>", "1800")
+	cmd := exec.Command("sh", "-c", "set -eu\n"+block+"\nprintf '%s\\n' \"$skill_root\"")
+	cmd.Dir = repo
+	cmd.Env = append(environWithout("HOME", "SANDMAN_SKILL_ROOT"), "HOME="+emptyHome)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("resolve review context: %v\n%s", err, output)
+	}
+	want, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("resolve installed root: %v", err)
+	}
+	got, err := filepath.EvalSymlinks(strings.TrimSpace(string(output)))
+	if err != nil {
+		t.Fatalf("resolved helper root %q: %v", output, err)
+	}
+	if got != want {
+		t.Fatalf("helper root = %q, want the project installation %q", got, want)
+	}
+}
+
 func TestReviewRequestFirstDeliveryAllowsMissingFutureEnvelope(t *testing.T) {
 	home := t.TempDir()
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: reviewPrefix}); err != nil {
+	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
 		t.Fatalf("sync skill: %v", err)
 	}
 	root := filepath.Join(home, ".agents", "skills", embeddedSkillRoot)
@@ -224,7 +503,7 @@ func TestSyncReviewPost_UpdatesExistingEnvelopeForFollowUp(t *testing.T) {
 func installRenderedPRReviewSkill(t *testing.T) (string, string) {
 	t.Helper()
 	home := t.TempDir()
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: reviewPrefix}); err != nil {
+	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
 		t.Fatalf("sync skill: %v", err)
 	}
 	root := filepath.Join(home, ".agents", "skills", embeddedSkillRoot)
@@ -237,14 +516,14 @@ func installRenderedPRReviewSkill(t *testing.T) (string, string) {
 
 func reviewGuardBlock(t *testing.T, skillText, requestFile, headFile string) string {
 	t.Helper()
-	return renderReviewBashBlock(t, skillText, "skill_root=\"${SANDMAN_SKILL_ROOT:-${HOME}/.agents/skills/sandman}\"", requestFile, headFile)
+	return renderReviewBashBlock(t, skillText, "request_file=\"$cycle_request_file\"\n\ncheck_review_trigger_delivery()", requestFile, headFile)
 }
 
 func reviewPrimaryPostBlock(t *testing.T, skillText, requestFile, headFile string) string {
 	t.Helper()
 	return strings.Join([]string{
 		renderReviewBashBlock(t, skillText, "request_result=$(sh \"$skill_root/review-request/review-request-v1.sh\"", requestFile, headFile),
-		renderReviewBashBlock(t, skillText, "review_timeout=${REVIEW_TIMEOUT:-1800}", requestFile, headFile),
+		renderReviewBashBlock(t, skillText, "request_started_unix=$(date +%s) || record REVIEW_TIMEOUT_STATE_ERROR", requestFile, headFile),
 	}, "\n")
 }
 
@@ -253,47 +532,74 @@ func reviewFollowUpPostBlock(t *testing.T, skillText, requestFile, headFile stri
 	return renderReviewBashBlock(t, skillText, "[ -f \"$request_file\" ] || record", requestFile, headFile)
 }
 
-func renderReviewBashBlock(t *testing.T, skillText, start, requestFile, headFile string) string {
+// renderReviewBashBlock returns the whole bash block that contains needle.
+func renderReviewBashBlock(t *testing.T, skillText, needle, requestFile, headFile string) string {
 	t.Helper()
-	needle := "```bash\n" + start
-	startAt := strings.Index(skillText, needle)
-	if startAt < 0 {
-		t.Fatalf("skill bash block %q not found", start)
+	at := strings.Index(skillText, needle)
+	if at < 0 {
+		t.Fatalf("skill bash block containing %q not found", needle)
 	}
-	blockStart := startAt + len("```bash\n")
-	endRel := strings.Index(skillText[blockStart:], "\n```")
+	fence := strings.LastIndex(skillText[:at], "```bash\n")
+	if fence < 0 || strings.Contains(skillText[fence:at], "\n```\n") {
+		t.Fatalf("%q is not inside a bash block", needle)
+	}
+	blockStart := fence + len("```bash\n")
+	endRel := strings.Index(skillText[at:], "\n```")
 	if endRel < 0 {
-		t.Fatalf("skill bash block %q has no closing fence", start)
+		t.Fatalf("skill bash block containing %q has no closing fence", needle)
 	}
-	block := skillText[blockStart : blockStart+endRel]
+	block := skillText[blockStart : at+endRel]
 	block = strings.ReplaceAll(block, ".sandman/state/<N>.review_request.json", requestFile)
 	block = strings.ReplaceAll(block, ".sandman/state/<N>.head_sha", headFile)
 	block = strings.ReplaceAll(block, "<owner/repo>", reviewRepository)
 	block = strings.ReplaceAll(block, "<N>", reviewPullRequest)
-	block = strings.ReplaceAll(block, "{{REVIEW_COMMAND}}", reviewPrefix)
 	return block
 }
 
+// reviewContextScript stands in for the agent-resolved values from the
+// skill's "Resolve the review context" step.
+func reviewContextScript(root, reviewCommand string) []string {
+	return []string{
+		"repo=" + shellQuote(reviewRepository),
+		"pr_number=" + shellQuote(reviewPullRequest),
+		"review_command=" + shellQuote(reviewCommand),
+		"review_timeout=1800",
+		"skill_root=" + shellQuote(root),
+	}
+}
+
 func reviewHarnessScript(root, firstBlock, secondBlock string) string {
-	return strings.Join([]string{
+	return reviewHarnessScriptFor(root, reviewPrefix, firstBlock, secondBlock)
+}
+
+func reviewHarnessScriptFor(root, reviewCommand, firstBlock, secondBlock string) string {
+	lines := []string{
 		"set -eu",
 		"export SANDMAN_SKILL_ROOT=" + shellQuote(root),
 		"cycle_request_file=\"$CYCLE_REQUEST_FILE\"",
 		"cycle_head_file=\"$CYCLE_HEAD_FILE\"",
+		"repo=" + shellQuote(reviewRepository),
+		"pr_number=" + shellQuote(reviewPullRequest),
 		"head_sha=" + reviewHeadSHA,
 		"record() { printf '%s\\n' \"$*\" >&2; return 1; }",
-		firstBlock,
-		secondBlock,
-		"printf '%s\\n' success",
-	}, "\n")
+	}
+	lines = append(lines, reviewContextScript(root, reviewCommand)...)
+	return strings.Join(append(lines, firstBlock, secondBlock, "printf '%s\\n' success"), "\n")
 }
 
 func reviewBlockedHarnessScript(root, guardBlock string) string {
 	return strings.Join([]string{
 		"set -eu",
 		"export SANDMAN_SKILL_ROOT=" + shellQuote(root),
+		"repo=" + shellQuote(reviewRepository),
+		"pr_number=" + shellQuote(reviewPullRequest),
+		"review_command=" + shellQuote(reviewPrefix),
+		"review_timeout=1800",
+		"skill_root=" + shellQuote(root),
 		"cycle_request_file=\"$CYCLE_REQUEST_FILE\"",
 		"cycle_head_file=\"$CYCLE_HEAD_FILE\"",
+		"repo=" + shellQuote(reviewRepository),
+		"pr_number=" + shellQuote(reviewPullRequest),
 		"head_sha=" + reviewHeadSHA,
 		"record() { printf '%s\\n' \"$*\" > \"$GUARD_RECORD_MARKER\"; exit 0; }",
 		guardBlock,
@@ -306,6 +612,12 @@ func runReviewHarness(t *testing.T, script, workDir, bin, root, postMarker strin
 	requester := filepath.Join(root, "review-request", "review-request-v1.sh")
 	requesterScript := `#!/bin/sh
 printf x >> "$POST_MARKER"
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--trigger-prefix" ]; then
+    printf '%s\n' "$2" >> "$POST_MARKER.prefix"
+  fi
+  shift
+done
 if [ -f "$CYCLE_REQUEST_FILE" ]; then
   printf '%s\n' '{"comment_url":"https://github.com/owner/repo/pull/42#issuecomment-1002","created_at":"2026-08-11T18:02:01Z","confirmed_at":"2026-08-11T18:02:02Z"}'
 else

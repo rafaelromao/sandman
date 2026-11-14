@@ -28,6 +28,13 @@ The daemon polls open pull requests for the configured review command, which def
 /sandman review
 ```
 
+The daemon answers any comment that starts with the `/sandman` command,
+optionally after one `@mention`: `/sandman review`, `/sandman check the parser`,
+or `@bot /sandman`. So a `review_command` such as `/sandman check` works as
+well as the default. A comment that contains `/sandman review` anywhere is
+still a trigger too. The command token must be exactly `/sandman`:
+`/sandmanreview` and `/sandman-check` are not triggers.
+
 The implementor-side delegated review request uses the project `review_timeout`
 setting (default `1800` seconds, minimum `240`). The value is carried in the
 current AgentRun Task and is independent of the review daemon's reviewer
@@ -65,9 +72,9 @@ prevents later probes or launches. Failed publication is recovered from the
 durable redacted decision body, and legacy evidence is accepted only at the
 validated request/head boundary.
 
-`{{REVIEW_COMMAND}}` is substituted from repository configuration when the
-shared skills are synchronized. `{{REVIEW_TIMEOUT}}` is supplied per managed
-run or standalone session and is never shared global skill state.
+The review command and the delegated review timeout are supplied per managed
+Run by its Task, or resolved from `.sandman/config.yaml` in a standalone
+session. They are never stored in the shared skill tree.
 
 When it sees a matching comment authored by the GitHub user authenticated to the daemon, it launches a review AgentRun and posts the result back to the pull request. Requests from other users are ignored. Use direct review for manual or CI-driven reviews that should not be tied to the daemon's authenticated user.
 
@@ -101,7 +108,7 @@ To opt out of the daemon guard, set a different review command that does not con
 sandman config set review_command "/oc review"
 ```
 
-Changing `review_command` also regenerates the installed shared Sandman skill tree. If that tree has local edits, Sandman prompts before overwriting in a TTY and fails in non-interactive mode.
+Changing `review_command` only updates the project configuration; the next Run's Task, and any standalone skill session, uses the new command. The installed shared skill tree does not change.
 
 ## Concurrency and sandboxing
 
@@ -216,7 +223,7 @@ The template is PR-agnostic. PR context is injected per run through these placeh
 | `{{PR_TITLE}}` | Pull-request title |
 | `{{PR_BODY}}` | Pull-request body |
 | `{{ACCEPTANCE_CRITERIA}}` | Linked work item's acceptance criteria |
-| `{{REVIEW_FOCUS}}` | The review focus after `/sandman review` |
+| `{{REVIEW_FOCUS}}` | The review focus: the text after `/sandman review`, or after `/sandman` for any other `/sandman` command |
 | `{{RUN_DIR}}` | The review worktree directory (where `decision.md` is written) |
 | `{{PRIOR_REVIEW_EXISTS}}` | `YES`/`NO` — whether a prior review exists |
 | `{{PRIOR_REVIEW_CONTEXT}}` | Prior review entries supplied by the daemon |
@@ -262,4 +269,4 @@ Complexity analyzers are a **reviewer-only** capability. They are not invoked an
 - [Commands Reference](commands.md#sandman-review) — full `sandman review` flags
 - [Configuration](configuration.md) — `review_command`, `review_agent`, `review_model`, `review_variant`, and `parallel_reviews`
 - [Portal](portal.md) — watching review runs in the browser
-- [Sandman Skills](skills.md) — how the review command is injected into shared skills
+- [Sandman Skills](skills.md) — how skills resolve the review command

@@ -291,7 +291,7 @@ func TestManagedReviewLifecycle_ProductionPathRecoversAndReleasesDependency(t *t
 	}}
 	log := &events.JSONLLogger{Path: filepath.Join(root, ".sandman", "events.jsonl")}
 	installedHome := filepath.Join(root, "agent-home")
-	if err := skill.Sync(skill.SyncOptions{HomeDir: installedHome, ReviewCommand: "/sandman review"}); err != nil {
+	if err := skill.Sync(skill.SyncOptions{HomeDir: installedHome}); err != nil {
 		t.Fatalf("sync installed skills: %v", err)
 	}
 	factory := &managedLifecycleFactory{

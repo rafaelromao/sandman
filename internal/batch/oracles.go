@@ -20,9 +20,10 @@ type PreFilterOracle struct {
 	// The orchestrator wires this to the same worktree the run executes
 	// in.
 	RepoDir string
-	// BaseRef is the local ref for the base branch (typically
-	// origin/main). It must be resolvable in RepoDir; the orchestrator
-	// keeps it in sync via SyncBaseBranch.
+	// BaseRef is the local ref for the base branch. Empty means
+	// origin/<VerifyInput.BaseBranch> (origin/main when the Run has no base
+	// branch). It must be resolvable in RepoDir; the orchestrator keeps it
+	// in sync via SyncBaseBranch.
 	BaseRef string
 	// HeadRef is the local ref for the issue's branch (typically
 	// `HEAD` after WorktreeSandbox.Start).
@@ -83,6 +84,9 @@ func (p *PreFilterOracle) repoDir(in VerifyInput) string {
 func (p *PreFilterOracle) baseRef(in VerifyInput) string {
 	if p.BaseRef != "" {
 		return p.BaseRef
+	}
+	if base := strings.TrimSpace(in.BaseBranch); base != "" {
+		return "origin/" + base
 	}
 	return "origin/main"
 }

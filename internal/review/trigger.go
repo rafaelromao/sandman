@@ -5,12 +5,24 @@ import (
 	"strings"
 )
 
-// triggerPattern matches "/sandman review" in a comment body, case-insensitive,
-// allowing common whitespace and punctuation between "sandman" and "review".
-// The whole match is also used to extract the text after it as the review
-// focus: callers strip the match from the original body and trim leading
-// whitespace and bot mentions.
+// triggerPattern matches "/sandman review" anywhere in a comment body,
+// case-insensitive, allowing common whitespace between "sandman" and
+// "review". The whole match is also used to extract the text after it as the
+// review focus: callers strip the match from the original body and trim
+// leading whitespace and bot mentions.
 var triggerPattern = regexp.MustCompile(`(?i)/sandman\s+review\b`)
+
+// commandPattern matches a comment that starts with the /sandman command,
+// optionally after one leading mention: "/sandman", "/sandman check ...",
+// "@bot /sandman review ...". The command token must be exactly /sandman, so
+// "/sandmanreview" and "/sandman-check" do not match. A repository may set any
+// /sandman command as its review_command, and `sandman run` requires this
+// daemon for every such command, so the daemon answers all of them.
+var commandPattern = regexp.MustCompile(`(?i)^\s*(?:@\S+\s+)?/sandman(?:\s+|$)`)
+
+// leadingReviewWord strips the "review" subcommand from the text after a
+// /sandman command so "/sandman review x" and "/sandman x" share a focus.
+var leadingReviewWord = regexp.MustCompile(`(?i)^review\b`)
 
 // botReviewBodyMarker matches the `## Previous review progress` heading the
 // bot's review body always carries (issue #1821 self-defence). The daemon's
@@ -22,19 +34,29 @@ var triggerPattern = regexp.MustCompile(`(?i)/sandman\s+review\b`)
 // still trigger the gate.
 var botReviewBodyMarker = regexp.MustCompile(`(?im)^\s*##\s*previous\s+review\s+progress\s*$`)
 
-// ParseTrigger returns (focus, true) when body contains the /sandman review
-// trigger (case-insensitive). The focus is the text after the trigger, with
-// leading whitespace and a leading "@bot" mention stripped. Returns
-// ("", false) when no trigger is found.
+// ParseTrigger returns (focus, true) when body is a review trigger: it starts
+// with the /sandman command (optionally after a mention), or it contains
+// "/sandman review" anywhere (case-insensitive). The focus is the text after
+// "/sandman review", or after "/sandman" for any other command, with leading
+// whitespace and a leading "@bot" mention stripped. Returns ("", false) when
+// no trigger is found.
 //
 // Examples:
 //
 //	"/sandman review"            -> ("",     true)
 //	"/sandman review focus x"    -> ("focus x", true)
 //	"/sandman   Review"          -> ("",     true)
+//	"/sandman check the parser"  -> ("check the parser", true)
 //	"Thanks!"                    -> ("",     false)
 //	"@bot /sandman review x y"   -> ("x y",  true)
 func ParseTrigger(body string) (string, bool) {
+	if match := commandPattern.FindStringIndex(body); match != nil {
+		tail := body[match[1]:]
+		if review := leadingReviewWord.FindStringIndex(tail); review != nil {
+			tail = tail[review[1]:]
+		}
+		return stripLeadingBotMention(strings.TrimSpace(tail)), true
+	}
 	match := triggerPattern.FindStringIndex(body)
 	if match == nil {
 		return "", false
@@ -43,6 +65,12 @@ func ParseTrigger(body string) (string, bool) {
 	focus := strings.TrimSpace(tail)
 	focus = stripLeadingBotMention(focus)
 	return focus, true
+}
+
+// startsWithSandmanCommand reports whether body starts with the /sandman
+// command, optionally after one leading mention.
+func startsWithSandmanCommand(body string) bool {
+	return commandPattern.MatchString(body)
 }
 
 // LooksLikeBotReviewBody is the structural defence-in-depth sniff (issue

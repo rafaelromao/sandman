@@ -212,11 +212,12 @@ func TestInit_ReviewCommandFlagStoredInConfig(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
+	// The flag only stores configuration; the shared skill tree it installs
+	// is the same for every repository.
+	synced := 0
 	oldInstall := syncSandmanSkill
-	syncSandmanSkill = func(opts skill.SyncOptions) error {
-		if opts.ReviewCommand != "/custom review" {
-			t.Fatalf("expected sync review command, got %q", opts.ReviewCommand)
-		}
+	syncSandmanSkill = func(skill.SyncOptions) error {
+		synced++
 		return nil
 	}
 	t.Cleanup(func() { syncSandmanSkill = oldInstall })
@@ -230,6 +231,9 @@ func TestInit_ReviewCommandFlagStoredInConfig(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if synced != 1 {
+		t.Fatalf("init synchronized the shared skills %d times, want once", synced)
+	}
 
 	configData, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
 	if err != nil {
@@ -237,6 +241,30 @@ func TestInit_ReviewCommandFlagStoredInConfig(t *testing.T) {
 	}
 	if !strings.Contains(string(configData), "review_command: /custom review") {
 		t.Fatalf("config missing review command override, got:\n%s", configData)
+	}
+}
+
+// A repository whose base branch is not main records it once, at init, so
+// later Runs need no --base-branch flag.
+func TestInit_BaseBranchFlagStoredInConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	var out bytes.Buffer
+	cmd := newInitCommandForTest(t)
+	cmd.SetOut(&out)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{"--build-tools", "generic", "--base-branch", "develop"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	cfg, err := config.Load(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.Git.BaseBranch != "develop" {
+		t.Fatalf("git.base_branch = %q, want develop", cfg.Git.BaseBranch)
 	}
 }
 

@@ -66,7 +66,9 @@ If the review subagent fails or returns no decision, preserve the failure and ne
 - Do not post a draft, a rejected review, or any content outside the approved plan. On a retry, check the existing comments first and do not post a duplicate approved plan.
 
 ```bash
-gh issue comment <ID> --body "<approved plan>"
+# Write the approved plan with a file-writing tool (not shell interpolation).
+plan_file='<path to approved plan Markdown file>'
+gh issue comment <ID> --body-file "$plan_file"
 ```
 
 ## Plan output shape

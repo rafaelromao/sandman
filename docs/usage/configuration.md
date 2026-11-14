@@ -36,10 +36,11 @@ review_variant: ""
 # Build tools preset for the container image (generic, dotnet, go, node, python, elixir, ruby, rust, java).
 build_tools: generic
 
-# Review command injected into the prompt template and shared skill install.
-# Defaults to /sandman review, which requires `sandman review` to be
-# running before `sandman run`/`continue` will start. Set
-# to /oc review (or any command that does not contain /sandman) to
+# Review command rendered into each Run's Task, and read by the shared skills
+# when you use them directly. Defaults to /sandman review, which requires `sandman review` to be
+# running before `sandman run`/`continue` will start. The daemon answers
+# any comment that starts with /sandman, so /sandman <anything> works too.
+# Set to /oc review (or any command that does not contain /sandman) to
 # opt out of the review daemon guard.
 review_command: /sandman review
 
@@ -95,6 +96,9 @@ cleanup_worktrees: true
 
 # Git configuration for branch management.
 git:
+  # Branch new runs start from and pull requests target. `sandman init`
+  # records the repository's default branch (origin/HEAD), else main;
+  # `sandman init --base-branch <branch>` records another one.
   base_branch: main
 
 # Sandman installs the default built-in agent in scaffolded Dockerfiles and mounts the shared skills directory.
@@ -141,6 +145,12 @@ launches. Claude Code resumes the worktree's most recent conversation with its
 own `--continue`.
 
 ### Base branch
+
+`git.base_branch` is the repository's base branch: every Run starts from it and
+opens its pull request against it, and the "already resolved" check compares
+against it. Set it once per repository, with `sandman init --base-branch <branch>`
+or `sandman config set git.base_branch <branch>`; without either, `sandman init`
+records the branch `origin/HEAD` points to, else `main`.
 
 Use `sandman run --base-branch` to override `git.base_branch` for a single invocation.
 Before each run, Sandman fetches `origin/<base>`, and new run worktrees start from
@@ -277,7 +287,7 @@ sandman config set git.base_branch main
 
 Use `sandman config get` and `sandman config set` for top-level config keys.
 
-When you change `review_command` with `sandman config set`, Sandman also regenerates the shared `~/.agents/skills/sandman/` tree. If that installed tree has local edits, Sandman prompts before overwriting in a TTY and fails in non-interactive mode.
+Changing `review_command`, `review_timeout`, or `git.base_branch` with `sandman config set` only updates this file. The shared `~/.agents/skills/sandman/` tree is the same for every repository and carries none of these values; each Run's Task supplies them, and the skills read them from this file when you use them directly. See [Sandman Skills](skills.md#repository-and-run-values).
 
 Sandman does not store a separate commit identity in project config. Agent commits use your host Git identity resolved in this order:
 

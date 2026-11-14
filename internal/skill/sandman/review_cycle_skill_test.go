@@ -88,10 +88,10 @@ func TestReviewCyclePreservesFormerReviewGates(t *testing.T) {
 		"#### Step 3: Check if SHA changed",
 		"#### Step 5: Wait for this confirmed request",
 		"#### Step 6: Read and classify feedback",
-		"temporary cycle head record",
-		"temporary addressed-comment record",
+		"$cycle_head_file",
+		"$cycle_addressed_file",
 		"every prior approval timestamp is stale",
-		"an implementor `{{REVIEW_COMMAND}}` trigger that has not yet received a response",
+		"an implementor `$review_command` trigger that has not yet received a response",
 		"at least 240 s of cumulative sleep",
 		"current-head formal `APPROVED` records",
 		"Do not filter it out because the author shares your GitHub login",
@@ -141,10 +141,10 @@ func TestReviewCycleFailsClosedOnUntrustedRequestPair(t *testing.T) {
 func TestReviewCycleRefreshesDirtyStateAfterBackMerge(t *testing.T) {
 	text := string(readSkillFile(t, "review-cycle/SKILL.md"))
 	for _, required := range []string{
-		"git push || { echo REVIEW_CONFLICT_UNRESOLVED; exit 1; }",
-		"mergeStateStatus=$(printf '%s' \"$pr_data\" | jq -r '.mergeStateStatus')",
+		"After a successful back-merge, refresh the live PR state and restart Step 1",
+		"A skill load is an agent action, not a shell command",
 		"head_sha=\"$headRefOid\"",
-		"echo REVIEW_CONFLICT_UNRESOLVED",
+		"record `REVIEW_CONFLICT_UNRESOLVED` and stop the cycle",
 		"confirmed request envelope",
 		"do not rewrite either record to the new head",
 		"both records",
@@ -154,7 +154,7 @@ func TestReviewCycleRefreshesDirtyStateAfterBackMerge(t *testing.T) {
 			t.Errorf("DIRTY recovery contract missing %q", required)
 		}
 	}
-	if strings.Contains(text, "Update `temporary cycle head record` with the new head SHA") {
+	if strings.Contains(text, "Update `$cycle_head_file` with the new head SHA") {
 		t.Fatal("DIRTY recovery must not invalidate the confirmed request pair")
 	}
 	if strings.Contains(text, "Back-merge failed or unresolved conflicts — CI still blocked. Continuing to poll.") {

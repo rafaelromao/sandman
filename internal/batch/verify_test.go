@@ -31,6 +31,24 @@ func TestRunVerifyPath_AllAbstainReturnsNoSignal(t *testing.T) {
 	}
 }
 
+// A repository whose base branch is not main must be verified against its
+// own base: the default chain compares the branch with origin/<base>, so a
+// branch that diverged from origin/develop is rejected even though no
+// origin/main exists.
+func TestDefaultVerifyPath_ComparesAgainstTheRunBaseBranch(t *testing.T) {
+	t.Parallel()
+	repo, base, _ := t2Fixture(t)
+	runGitNoErr(t, repo, "update-ref", "refs/remotes/origin/develop", base)
+
+	out, checks := DefaultVerifyPath()(VerifyInput{WorkDir: repo, BaseBranch: "develop"})
+	if out != VerifyNoSignal {
+		t.Fatalf("VerifyOutcome = %v, want VerifyNoSignal from the pre-filter reject", out)
+	}
+	if len(checks) != 1 || checks[0].Name != "pre-filter" || checks[0].Details["l1"] != false || checks[0].Details["subset"] != false {
+		t.Fatalf("checks = %+v, want a pre-filter rejection against origin/develop", checks)
+	}
+}
+
 // TestRunVerifyPath_DecisionVerifiedTriggersAutoClose pins the only
 // path that auto-closes the orphan PR + issue: Decision returns
 // `Verified`. The PreFilter / CheapGate oracles' abstains are ignored.

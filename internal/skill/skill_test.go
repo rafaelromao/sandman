@@ -6,15 +6,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
 
-func TestSyncWritesEmbeddedSkill(t *testing.T) {
+// The shared skill tree is one copy per user, shared by every repository on
+// the machine. It must not carry repository- or run-specific values, so sync
+// installs the embedded files byte for byte.
+func TestSyncInstallsEmbeddedSkillTreeVerbatim(t *testing.T) {
 	home := t.TempDir()
-	reviewCommand := "/review-please"
-
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: reviewCommand}); err != nil {
+	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
 		t.Fatalf("sync skill: %v", err)
 	}
 
@@ -27,20 +29,19 @@ func TestSyncWritesEmbeddedSkill(t *testing.T) {
 		if d.IsDir() {
 			return nil
 		}
-
+		want, err := fs.ReadFile(embeddedSkills, path)
+		if err != nil {
+			return err
+		}
 		rel := strings.TrimPrefix(path, embeddedSkillRoot+"/")
 		got, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
 			return err
 		}
-
-		if bytes.Contains(got, []byte("{{REVIEW_COMMAND}}")) {
-			t.Fatalf("installed file %s still contains unreplaced {{REVIEW_COMMAND}}", rel)
+		if !bytes.Equal(got, want) {
+			t.Errorf("installed %s differs from its embedded source", rel)
 		}
-
-		if bytes.Contains(got, []byte(reviewCommand)) {
-			checked++
-		}
+		checked++
 		return nil
 	})
 	if err != nil {
@@ -51,9 +52,40 @@ func TestSyncWritesEmbeddedSkill(t *testing.T) {
 	}
 }
 
+var skillPlaceholderPattern = regexp.MustCompile(`\{\{[^{}]*\}\}`)
+
+// Nothing fills placeholders in an installed skill: managed runs carry their
+// values in the Task, and standalone runs resolve them at run time.
+func TestShippedSkillFilesHaveNoPlaceholders(t *testing.T) {
+	var checked int
+	err := fs.WalkDir(embeddedSkills, embeddedSkillRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		data, err := fs.ReadFile(embeddedSkills, path)
+		if err != nil {
+			return err
+		}
+		if found := skillPlaceholderPattern.FindAllString(string(data), -1); len(found) > 0 {
+			t.Errorf("shipped skill file %s contains placeholders %v", path, found)
+		}
+		checked++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk embedded skill tree: %v", err)
+	}
+	if checked == 0 {
+		t.Fatal("expected embedded skill files")
+	}
+}
+
 func TestSyncInstallsAndRunsVersionedReviewWait(t *testing.T) {
 	home := t.TempDir()
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/sandman review"}); err != nil {
+	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
 		t.Fatalf("sync skill: %v", err)
 	}
 
@@ -106,7 +138,7 @@ func TestSyncInstallsAndRunsVersionedReviewWait(t *testing.T) {
 
 func TestSyncInstallsStatelessManagedReviewRequest(t *testing.T) {
 	home := t.TempDir()
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/sandman review"}); err != nil {
+	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
 		t.Fatalf("sync skill: %v", err)
 	}
 
@@ -118,7 +150,7 @@ func TestSyncInstallsStatelessManagedReviewRequest(t *testing.T) {
 	content := string(data)
 	for _, required := range []string{
 		"name: sandman-review-request",
-		"Post exactly one `/sandman review`",
+		"Post exactly one trigger that begins with the caller-supplied review",
 		"Do not create, edit, or delete review state",
 	} {
 		if !strings.Contains(content, required) {
@@ -132,7 +164,7 @@ func TestSyncInstallsStatelessManagedReviewRequest(t *testing.T) {
 
 func TestSyncPreservesManagedAndStandaloneCompositionBoundaries(t *testing.T) {
 	home := t.TempDir()
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/sandman review"}); err != nil {
+	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
 		t.Fatalf("sync skill: %v", err)
 	}
 
@@ -149,7 +181,7 @@ func TestSyncPreservesManagedAndStandaloneCompositionBoundaries(t *testing.T) {
 	cycle := read("review-cycle/SKILL.md")
 	facade := read("pr-review/SKILL.md")
 	standalone := read("run/SKILL.md")
-	if !strings.Contains(managed, "Post exactly one `/sandman review`") || strings.Contains(managed, "sandman-review-cycle") || strings.Contains(managed, ".sandman/state/") {
+	if !strings.Contains(managed, "Post exactly one trigger that begins with the caller-supplied review") || strings.Contains(managed, "sandman-review-cycle") || strings.Contains(managed, ".sandman/state/") {
 		t.Fatal("synced managed request is not one-shot and stateless")
 	}
 	if !strings.Contains(cycle, "live in memory") || !strings.Contains(cycle, "fresh standalone invocation") || strings.Contains(cycle, ".sandman/state/") || strings.Contains(cycle, "sandman-pr-review") {
@@ -189,7 +221,7 @@ func TestStandaloneRestartReconstructsWithoutManagedState(t *testing.T) {
 	}
 
 	home := t.TempDir()
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/sandman review"}); err != nil {
+	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
 		t.Fatalf("sync skill: %v", err)
 	}
 	standalonePath := filepath.Join(home, ".agents", "skills", embeddedSkillRoot, "run", "SKILL.md")
@@ -225,9 +257,11 @@ func TestStandaloneRestartReconstructsWithoutManagedState(t *testing.T) {
 	}
 }
 
-func TestSyncInstallsConfiguredManagedReviewCommand(t *testing.T) {
+// A managed run's Task names the repository's review command. The shared
+// request capability must post that command, never one of its own.
+func TestSyncInstalledManagedReviewRequestPostsCallerSuppliedCommand(t *testing.T) {
 	home := t.TempDir()
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/oc review"}); err != nil {
+	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
 		t.Fatalf("sync skill: %v", err)
 	}
 
@@ -236,18 +270,26 @@ func TestSyncInstallsConfiguredManagedReviewCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read managed review request skill: %v", err)
 	}
-	content := string(data)
-	if !strings.Contains(content, "Post exactly one `/oc review`") {
-		t.Fatalf("managed review request skill does not render configured command: %s", content)
+	content := strings.Join(strings.Fields(string(data)), " ")
+	for _, required := range []string{
+		"Use the command the caller supplies",
+		"the Task's `Review command` is that value and always wins",
+		"Never substitute another command",
+	} {
+		if !strings.Contains(content, required) {
+			t.Errorf("managed review request skill missing caller-supplied command contract %q", required)
+		}
 	}
-	if strings.Contains(content, "{{REVIEW_COMMAND}}") || strings.Contains(content, "Post exactly `/sandman review`") {
-		t.Fatalf("managed review request skill retained an unreplaced or default command: %s", content)
+	for _, forbidden := range []string{"Post exactly one `/sandman review`", "Post exactly one `/oc review`"} {
+		if strings.Contains(content, forbidden) {
+			t.Errorf("managed review request skill names its own review command %q", forbidden)
+		}
 	}
 }
 
 func TestSyncInstallsVersionedReviewTriggerGuard(t *testing.T) {
 	home := t.TempDir()
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/sandman review"}); err != nil {
+	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
 		t.Fatalf("sync skill: %v", err)
 	}
 
@@ -300,7 +342,7 @@ exit 2
 
 func TestSyncInstallsCodeReviewSkillWithoutObsoleteSelfReviewSkill(t *testing.T) {
 	home := t.TempDir()
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/review-please"}); err != nil {
+	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
 		t.Fatalf("sync skill: %v", err)
 	}
 
@@ -322,7 +364,7 @@ func TestSyncInstallsCodeReviewSkillWithoutObsoleteSelfReviewSkill(t *testing.T)
 
 func TestCodeReviewSkillDelegatesDecisionContractToInvokingPrompt(t *testing.T) {
 	home := t.TempDir()
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/review"}); err != nil {
+	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
 		t.Fatalf("sync skill: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(home, ".agents", "skills", embeddedSkillRoot, "code-review", "SKILL.md"))
@@ -356,7 +398,7 @@ func TestCodeReviewSkillDelegatesDecisionContractToInvokingPrompt(t *testing.T) 
 
 func TestSyncUpgradesManagedSelfReviewTreeToCodeReview(t *testing.T) {
 	home := t.TempDir()
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/old-review"}); err != nil {
+	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
 		t.Fatalf("seed skill: %v", err)
 	}
 
@@ -368,7 +410,7 @@ func TestSyncUpgradesManagedSelfReviewTreeToCodeReview(t *testing.T) {
 		t.Fatalf("write simulated prior manifest: %v", err)
 	}
 
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/new-review"}); err != nil {
+	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
 		t.Fatalf("upgrade managed skill tree: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "code-review", "SKILL.md")); err != nil {
@@ -377,18 +419,11 @@ func TestSyncUpgradesManagedSelfReviewTreeToCodeReview(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "self-review", "SKILL.md")); !os.IsNotExist(err) {
 		t.Fatalf("obsolete self-review skill remains after upgrade, stat error = %v", err)
 	}
-	data, err := os.ReadFile(filepath.Join(root, "pr-review", "SKILL.md"))
-	if err != nil {
-		t.Fatalf("read upgraded pr-review skill: %v", err)
-	}
-	if !strings.Contains(string(data), "/new-review") {
-		t.Fatalf("upgraded skill tree did not render new review command:\n%s", data)
-	}
 }
 
 func TestSyncUpgradesUnmanifestedSelfReviewTreeToCodeReview(t *testing.T) {
 	home := t.TempDir()
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/old-review"}); err != nil {
+	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
 		t.Fatalf("seed skill: %v", err)
 	}
 
@@ -400,7 +435,7 @@ func TestSyncUpgradesUnmanifestedSelfReviewTreeToCodeReview(t *testing.T) {
 		t.Fatalf("remove manifest from legacy tree: %v", err)
 	}
 
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/new-review"}); err != nil {
+	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
 		t.Fatalf("upgrade unmanifested legacy skill tree: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "code-review", "SKILL.md")); err != nil {
@@ -414,7 +449,7 @@ func TestSyncUpgradesUnmanifestedSelfReviewTreeToCodeReview(t *testing.T) {
 func TestSyncInstallsIssueClosingGuardInImplementSkill(t *testing.T) {
 	home := t.TempDir()
 
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/review-please"}); err != nil {
+	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
 		t.Fatalf("sync skill: %v", err)
 	}
 
@@ -444,7 +479,7 @@ func TestSyncInstallsIssueClosingGuardInImplementSkill(t *testing.T) {
 func TestSyncInstallsPreFlightCheckInImplementSkill(t *testing.T) {
 	home := t.TempDir()
 
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/review-please"}); err != nil {
+	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
 		t.Fatalf("sync skill: %v", err)
 	}
 
@@ -488,32 +523,36 @@ func TestSyncInstallsPreFlightCheckInImplementSkill(t *testing.T) {
 	}
 }
 
+// Earlier Sandman versions rendered a review command into the shared tree and
+// recorded that content in the manifest. Upgrading replaces such a managed
+// tree with the repository-independent skill without prompting.
 func TestSyncOverwritesManagedTreeWithoutPrompt(t *testing.T) {
 	home := t.TempDir()
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/old-review"}); err != nil {
+	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
 		t.Fatalf("seed skill: %v", err)
 	}
+	root := filepath.Join(home, ".agents", "skills", embeddedSkillRoot)
+	rendered := filepath.Join(root, "pr-review", "SKILL.md")
+	if err := os.WriteFile(rendered, []byte("Post exactly one `/old-review` trigger.\n"), 0o644); err != nil {
+		t.Fatalf("simulate earlier rendered skill: %v", err)
+	}
+	if err := writeManifest(root); err != nil {
+		t.Fatalf("record earlier managed manifest: %v", err)
+	}
 
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/new-review"}); err != nil {
+	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
 		t.Fatalf("resync skill: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(home, ".agents", "skills", embeddedSkillRoot, "pr-review", "SKILL.md"))
+	got, err := os.ReadFile(rendered)
 	if err != nil {
 		t.Fatalf("read pr-review skill: %v", err)
 	}
-	text := string(data)
-	if strings.Contains(text, "/old-review") {
-		t.Fatalf("expected old review command to be replaced, got:\n%s", text)
+	if want := readEmbeddedSkill(t, "pr-review/SKILL.md"); string(got) != want {
+		t.Fatalf("managed tree was not replaced with the shared skill, got:\n%s", got)
 	}
-	if !strings.Contains(text, "/new-review") {
-		t.Fatalf("expected new review command in skill, got:\n%s", text)
-	}
-	if _, err := os.Stat(filepath.Join(home, ".agents", "skills", embeddedSkillRoot, manifestFileName)); err != nil {
+	if _, err := os.Stat(filepath.Join(root, manifestFileName)); err != nil {
 		t.Fatalf("expected manifest to be written: %v", err)
-	}
-	if bytes.Contains(data, []byte("{{REVIEW_COMMAND}}")) {
-		t.Fatalf("expected installed skill to be rendered, got:\n%s", text)
 	}
 }
 
@@ -537,7 +576,10 @@ func TestSyncTreatsLegacyManagedTreeAsUpgradeable(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		data = bytes.ReplaceAll(data, []byte("{{REVIEW_COMMAND}}"), []byte("/legacy review"))
+		if rel == "pr-review/SKILL.md" {
+			// A legacy install carries the review command it was rendered with.
+			data = append(data, []byte("\nConfigured review command: `/legacy review`.\n")...)
+		}
 		return os.WriteFile(target, data, 0o644)
 	})
 	if err != nil {
@@ -547,15 +589,15 @@ func TestSyncTreatsLegacyManagedTreeAsUpgradeable(t *testing.T) {
 		t.Fatalf("remove manifest: %v", err)
 	}
 
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/new review"}); err != nil {
+	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
 		t.Fatalf("expected legacy tree to upgrade cleanly, got %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "pr-review", "SKILL.md"))
 	if err != nil {
 		t.Fatalf("read updated pr-review skill: %v", err)
 	}
-	if !strings.Contains(string(data), "/new review") {
-		t.Fatalf("expected legacy tree to upgrade review command, got:\n%s", data)
+	if want := readEmbeddedSkill(t, "pr-review/SKILL.md"); string(data) != want {
+		t.Fatalf("expected legacy tree to upgrade to the shared skill, got:\n%s", data)
 	}
 }
 
@@ -569,7 +611,7 @@ func TestSyncRejectsLocalEditsWithoutTTY(t *testing.T) {
 		t.Fatalf("seed custom skill: %v", err)
 	}
 
-	err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/review-please"})
+	err := Sync(SyncOptions{HomeDir: home})
 	if err == nil {
 		t.Fatal("expected local edits error")
 	}
@@ -590,11 +632,10 @@ func TestSyncPromptsBeforeOverwritingLocalEdits(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := Sync(SyncOptions{
-		HomeDir:       home,
-		ReviewCommand: "/review-please",
-		Interactive:   true,
-		In:            strings.NewReader("y\n"),
-		Out:           &out,
+		HomeDir:     home,
+		Interactive: true,
+		In:          strings.NewReader("y\n"),
+		Out:         &out,
 	}); err != nil {
 		t.Fatalf("expected overwrite after confirmation, got %v", err)
 	}

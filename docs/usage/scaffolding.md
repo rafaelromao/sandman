@@ -27,7 +27,7 @@ It also installs the shared Sandman skill folder into `~/.agents/skills/sandman/
 
 If `.sandman/` already exists, `sandman init` asks before overwriting in an interactive terminal.
 
-A valid existing `.sandman/config.yaml` is preserved, with one exception: an explicit `--agent` switches it. `agent` becomes the new preset and `model` becomes `--model` or the preset's default model. A `review_agent` that followed the previous default agent moves too, with the new preset's default `review_model`; a separately chosen review agent is kept. `init` prints the keys it changed. Without `--agent`, re-running `init` keeps the configured built-in agent in the regenerated Dockerfile.
+A valid existing `.sandman/config.yaml` is preserved, with two exceptions: an explicit `--base-branch` replaces `git.base_branch`, and an explicit `--agent` switches the agent. `agent` becomes the new preset and `model` becomes `--model` or the preset's default model. A `review_agent` that followed the previous default agent moves too, with the new preset's default `review_model`; a separately chosen review agent is kept. `init` prints the keys it changed. Without `--agent`, re-running `init` keeps the configured built-in agent in the regenerated Dockerfile.
 
 Trusted CA certificates in `.sandman/certs/` survive re-initialization: `init` without `--ca-cert` keeps them and renders them into the regenerated Dockerfile.
 
@@ -132,7 +132,8 @@ Useful init flags:
 | `--tool-version` | Language/tool version selector |
 | `--parallel` | Default concurrent agent runs |
 | `--parallel-reviews` | Default concurrent review runs |
-| `--review-command` | Command injected into prompts and skills |
+| `--review-command` | Review command stored as `review_command`; each Run's Task carries it, and the shared skills read it when used directly |
+| `--base-branch` | Base branch stored as `git.base_branch`; omitted, `init` records the repository's default branch (`origin/HEAD`), else `main` |
 | `--retries` | Persist default retry count |
 | `--run-idle-timeout` | Persist idle timeout in seconds |
 | `--review-timeout` | Persist delegated review response timeout in seconds; minimum `240`, default `1800` |

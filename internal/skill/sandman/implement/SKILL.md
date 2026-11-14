@@ -47,18 +47,17 @@ A failed required check on the current pull-request head remains implementation 
 
 For a diagnosed transient provider or network timeout, one authorized rerun of the identified failed workflow job is a bounded recovery action. The canary's single `opencode run` invocation and no-retry-loop rule applies to each job invocation; it does not prohibit a rerun of the existing failed execution. `workflow_dispatch` is not required. Keep the PR source head distinct from the workflow's tested SHA, and use the job database ID reported by GitHub rather than a job URL number.
 
-Before acting, verify the live PR source head, workflow run, tested SHA, current attempt, failed job, and repository linkage. Then invoke the installed helper once:
+Before acting, verify the live PR source head, workflow run, tested SHA, current attempt, failed job, and repository linkage. Replace every angle-bracket value below with the verified literal value,
+keeping its single quotes. Managed invocations must contain those literal
+arguments in the tool command itself, not shell variables or substitutions:
+the receipt is checked against the recorded command without shell expansion.
+Keep the invocation as one shell command on one line. Escape any literal apostrophe as `'\''`. Invoke the helper once:
 
 ```bash
-sh "$HOME/.agents/skills/sandman/implement/ci-rerun-v1.sh" \
-  --repository OWNER/REPO \
-  --pull-request PR_NUMBER \
-  --head-sha PR_SOURCE_SHA \
-  --tested-sha WORKFLOW_TESTED_SHA \
-  --run-id WORKFLOW_RUN_ID \
-  --job-id FAILED_JOB_DATABASE_ID \
-  --diagnosis transient-provider-timeout
+sh "$HOME/.agents/skills/sandman/implement/ci-rerun-v1.sh" --repository '<repository>' --pull-request '<pull-request-number>' --head-sha '<source-head-sha>' --tested-sha '<tested-sha>' --run-id '<workflow-run-id>' --job-id '<failed-job-database-id>' --diagnosis transient-provider-timeout
 ```
+
+Run the helper exactly as shown in a Sandman-managed run. In a standalone session whose skills are installed only in the repository, run the same helper from that installation instead (`.agents/skills/sandman/implement/ci-rerun-v1.sh`).
 
 Use `transient-network-timeout` only for a verified network timeout. The helper performs at most one mutation attempt and checks GitHub read-back. A `confirmed` result means a new attempt was observed; `waiting` means the workflow/recovery is already active and should be left to runtime observation in a managed run; `uncertain` or `refused` is not permission to submit again. Resolve ambiguous evidence by re-reading live GitHub state before any further action. Never invent credentials or permissions, rerun a source failure, dispatch a replacement workflow, or weaken a required check.
 
@@ -66,13 +65,29 @@ Only after the failure is diagnosed and the corrective action has actually compl
 
 ### 1. Setup branch
 
+Resolve the base branch before anything else; this skill is shared by every
+repository on the machine, so it never assumes one. Use the first source that
+provides it:
+
+1. The caller. In a Sandman-managed run, the Task's `Base branch` is that value
+   and always wins.
+2. The base of the open pull request for the current branch.
+3. `git.base_branch` in the repository's `.sandman/config.yaml`.
+4. The repository's default branch.
+
 ```bash
 gh issue view <ID> --json title,number
+git branch --show-current                                         # current branch
+gh pr view --json baseRefName --jq .baseRefName                   # open pull request base, if any
+gh repo view --json defaultBranchRef --jq .defaultBranchRef.name  # repository default branch
+base_branch='<resolved base branch>'
+git fetch origin "$base_branch"
 ```
 
-- Checkout `main`/`master`, pull latest
-- Create and switch to branch: `issue-<ID>/<slugified-title>`
-- Record the issue title and branch name in `.sandman/task.md` or the run log, then continue automatically.
+- If the current branch is already a non-base branch (a Sandman-managed worktree's branch, or one the caller named), stay on it.
+- Otherwise create and switch to `issue-<ID>/<slugified-title>` from the latest base: `git switch -c "issue-<ID>/<slugified-title>" "origin/$base_branch"`.
+- Record the issue title, branch name, and base branch in `.sandman/task.md` or the run log, then continue automatically.
+- Later commands that use the base branch start with a guard that stops when it is missing. If your shell does not keep variables between commands, set `base_branch` again, to the same value, before each of them.
 
 ### 1.5. Pre-flight check
 
@@ -84,23 +99,24 @@ A merged change request will, by the tracker's merge rules, automatically close 
 2. Run branch freshness check:
 
    ```bash
-   git fetch origin main
-   git merge-base --is-ancestor HEAD origin/main
+   : "${base_branch:?resolve the base branch in step 1 first}"
+   git fetch origin "$base_branch"
+   git merge-base --is-ancestor HEAD "origin/$base_branch"
    ```
 
-   If `merge-base --is-ancestor HEAD origin/main` returns false, **STOP**. Do NOT write `## Status: already resolved`. Load `sandman-back-merge` and merge the base branch into the current branch before re-evaluating. A branch that is behind `origin/main` is stale and cannot reliably be claimed as "already resolved" — the issue's AC may be partially met by local work that is not yet on `main`, or the AC check will race with the next main-line push.
+   If `merge-base --is-ancestor HEAD "origin/$base_branch"` returns false, **STOP**. Do NOT write `## Status: already resolved`. Load `sandman-back-merge` and merge the base branch into the current branch before re-evaluating. A branch that is behind `origin/<base-branch>` is stale and cannot reliably be claimed as "already resolved" — the issue's AC may be partially met by local work that is not yet on the base branch, or the AC check will race with the next push to the base branch.
 3. Run open-PR check:
 
    ```bash
    gh pr list --head <branch> --state open
    ```
 
-   If a PR is open for the current branch, the orchestrator will run an independent verification pass against `origin/main` before declaring the run successful. Write `## Status: already resolved` only if every AC has a corresponding test that exists on `origin/main`; otherwise the orchestrator cannot verify and the run will fail. Agents that prefer the explicit close path can pick one of:
+   If a PR is open for the current branch, the orchestrator will run an independent verification pass against `origin/<base-branch>` before declaring the run successful. Write `## Status: already resolved` only if every AC has a corresponding test that exists on `origin/<base-branch>`; otherwise the orchestrator cannot verify and the run will fail. Agents that prefer the explicit close path can pick one of:
    - **(a) Close the orphan PR** with the platform's "close change request" CLI, preserving the branch and commenting that the work is superseded by the new run, before writing the marker, OR
    - **(b) Stop without writing the marker** and let the existing PR drive the run — this is the safer default; the open PR is itself durable evidence of partial or pending work.
 4. Decision matrix (after branch freshness and open-PR checks pass):
-   - **Issue is closed** → verify the issue acceptance criteria against the current state of the base branch after fetching `origin/<base>`; only write `## Status: already resolved` and stop if the base branch actually satisfies every criterion. If the base branch does not satisfy every criterion, continue to step 2 (Plan) as normal.
-   - **Issue is open** → read the issue acceptance criteria and compare against the current state of the base branch after fetching `origin/<base>`. If all acceptance criteria are already met in the base branch, write `## Status: already resolved` to `.sandman/task.md` and stop without running plan or TDD. Otherwise, proceed to step 2 (Plan) as normal.
+   - **Issue is closed** → verify the issue acceptance criteria against the current state of the base branch after fetching `origin/<base-branch>`; only write `## Status: already resolved` and stop if the base branch actually satisfies every criterion. If the base branch does not satisfy every criterion, continue to step 2 (Plan) as normal.
+   - **Issue is open** → read the issue acceptance criteria and compare against the current state of the base branch after fetching `origin/<base-branch>`. If all acceptance criteria are already met in the base branch, write `## Status: already resolved` to `.sandman/task.md` and stop without running plan or TDD. Otherwise, proceed to step 2 (Plan) as normal.
 
 Writing `## Status: already resolved` while a PR is open without a verification path fails the run, so step 3 is not optional.
 
@@ -121,15 +137,17 @@ Writing `## Status: already resolved` while a PR is open without a verification 
 
 ### 4. Commit implementation
 
-Once all tests pass and formatting is clean, derive a Conventional Commits subject that the PR title and the commit will share.
+Once all tests pass and formatting is clean, derive a subject that the PR title and the commit will share.
 
-Pick the most accurate type for the change. Allowed types: `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`. Append `!` to the type for breaking changes (for example, `feat!:`). Keep the subject to one imperative sentence with no trailing period.
+Follow the repository's documented commit and title conventions. When none are documented, use Conventional Commits. Pick the most accurate type for the change. Default types: `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`. Append `!` to the type for breaking changes (for example, `feat!:`). Keep the subject to one imperative sentence with no trailing period.
+
+For literal shell text, use single quotes and replace each apostrophe with `'\''`; alternatively write the commit message with a file-writing tool and use `git commit -F`. The example below uses the fallback format.
 
 ```bash
 COMMIT_TYPE="<type>"
 COMMIT_SCOPE="<scope-or-empty>"
 COMMIT_BREAKING="0"   # 1 if this is a breaking change, else 0
-COMMIT_SUBJECT="<one-line imperative description of the change>"
+COMMIT_SUBJECT='<one-line imperative description of the change>'
 
 # Conventional Commits headers place the breaking marker (`!`) AFTER the
 # optional scope, never between the type and the scope. So
@@ -178,7 +196,7 @@ git commit -m "refactor: self-review fixes"
 ### 6. Merge base branch before PR
 
 - Load the `sandman-back-merge` skill
-- Use it to merge the base branch into the current branch before creating the PR
+- Use it to merge the base branch (`origin/$base_branch`) into the current branch before creating the PR
 - Resolve conflicts using the `sandman-back-merge` skill's 3-way workflow
 - Run relevant tests and formatting after the merge
 - Do NOT rebase
@@ -198,15 +216,16 @@ git commit -m "refactor: self-review fixes"
    ```
 
    Use the platform's accepted closing-reference form. Do not use a non-closing reference or explanatory prose in its place; a change request that does not auto-close its work item is not acceptable.
-3. Create the change request with that body. The PR title must use the same Conventional Commits shape as the commit subject from step 4 (same `<type>(<scope>)?:` header; same subject). The title is gated by the CI status check that scans for Conventional Commits, so do not bypass the format with the literal work-item title.
+3. Create the change request with that body. The PR title follows the repository conventions selected in step 4; for the fallback, use the same Conventional Commits header and subject. Apply the repository's title requirements rather than assuming a particular CI check exists.
 
    ```bash
-   gh pr create --title "$COMMIT_HEADER" --body "$BODY"
+   : "${base_branch:?resolve the base branch in step 1 first}"
+   gh pr create --base "$base_branch" --title "$COMMIT_HEADER" --body "$BODY"
    ```
 4. Verify the body that landed on the PR. Pull it back from the change-request service and confirm it matches the closing-reference shape — do not trust that the create call succeeded, because the API may accept variants silently.
 
    ```bash
-   gh pr view <new-pr-number> --json body --jq -r .body
+   gh pr view <new-pr-number> --json body --jq .body
    ```
 
    The first non-empty line of the returned body MUST match the platform's closing-reference form. The final content MUST be exactly one linked Built with Sandman logo using the footer above. On creation, continuation, and body edits, preserve the closing reference and existing description; move an existing footer to the end rather than duplicating it. Separate the footer with one blank line. This PR footer is independent of the optional repository README badge. If either requirement is missing, update the body and re-verify. If the body still cannot be made to match after one re-edit attempt, do not delegate review: persist the exact body, structured blocker, and next executable action in `.sandman/task.md` and the run log, then exit this attempt with a structured failure reason so the next run continues from the durable blocker.
@@ -224,7 +243,7 @@ git commit -m "refactor: self-review fixes"
 
 ## Checklist
 
-- [ ] Branch created from latest main
+- [ ] Base branch resolved; branch created from the latest base branch, or the existing implementation branch kept
 - [ ] Changes confined to the repository codebase (not meta-infrastructure)
 - [ ] Plan reviewed and recorded before TDD
 - [ ] Each vertical slice committed before moving to the next (Hard Rule 2)
