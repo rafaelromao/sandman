@@ -9,7 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Independent Vercel Skills installer with selectable or custom review commands.
+- `sandman init --base-branch <branch>` records the repository's base branch. Without it, new projects record the repository's default branch (`origin/HEAD`), else `main`, so later Runs need no `--base-branch`.
+- Sandman's skills install without the Go CLI through Vercel's skills CLI: `npx skills add rafaelromao/sandman --skill '*'` installs the whole catalog for the supported coding agents. See `docs/usage/skills.md`.
+
+### Fixed
+
+- Shared skill examples now stop on delivery refusals, locate failed CI logs from PR checks, pass literal plan and commit text safely, and follow each repository's commit, review-base and merge-method policy.
+- The shared skill tree no longer stores one repository's review command, so repositories with different reviewers no longer overwrite each other and managed Runs post the command their Task names. `sandman config set review_command` no longer re-syncs skills.
+- Standalone skills resolve the review command, base branch, current branch and review timeout at run time, and pass any review command to their helpers verbatim.
+- Implementation runs open pull requests against the resolved base branch, and the "already resolved" check compares against that branch instead of `origin/main`.
+- Review helpers work when the skills are installed into a repository rather than the home directory.
+- The review daemon answers any comment that starts with `/sandman` (optionally after a mention), so a `review_command` such as `/sandman check` no longer leaves Runs waiting for a review that never starts.
+- `sandman-back-merge` resolves the base branch from the caller, the pull request, `git.base_branch`, then the repository default instead of assuming `main`.
+- Preset-matrix release scenarios pin the legacy OpenCode v1 agent explicitly, and other release fixtures pin the OpenCode generation they scaffold against, so their behavior no longer depends on the host CLI version after new projects began defaulting to v2.
+- The `sandman-review-cycle` skill description is quoted, so strict YAML parsers such as Vercel's skills CLI can read its manifest.
 
 ### Changed
 

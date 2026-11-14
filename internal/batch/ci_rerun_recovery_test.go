@@ -733,7 +733,7 @@ func newRecordingCIRerunGH(t *testing.T, root string) recordingCIRerunGH {
 func installCIRerunHelperForManagedTest(t *testing.T, root string) string {
 	t.Helper()
 	home := filepath.Join(root, "agent-home")
-	if err := skill.Sync(skill.SyncOptions{HomeDir: home, ReviewCommand: "/sandman review"}); err != nil {
+	if err := skill.Sync(skill.SyncOptions{HomeDir: home}); err != nil {
 		t.Fatalf("install shared CI recovery capability: %v", err)
 	}
 	return filepath.Join(home, ".agents", "skills", "sandman", "implement", "ci-rerun-v1.sh")

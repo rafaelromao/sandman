@@ -17,6 +17,9 @@ a competing state model, write managed lifecycle artifacts, or ask the caller
 to manually translate to the next capability.
 
 When this facade is loaded, immediately hand off the repository, pull-request
-number, current head, configured `{{REVIEW_COMMAND}}`, and the current
-standalone context to `sandman-review-cycle`. A restart begins from live
+number, current head, the review command, review timeout, base branch and
+current branch when the caller supplied them, and the current standalone
+context to `sandman-review-cycle`.
+That cycle resolves any value the caller did not supply, from the repository's
+`.sandman/config.yaml` and then the defaults. A restart begins from live
 pull-request state; it does not import or trust managed lifecycle state.

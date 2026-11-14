@@ -10,17 +10,16 @@ import (
 
 var syncSandmanSkill = skill.Sync
 
-func sandmanSkillSyncOptions(cmd *cobra.Command, reviewCommand string) (skill.SyncOptions, error) {
+func sandmanSkillSyncOptions(cmd *cobra.Command) (skill.SyncOptions, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return skill.SyncOptions{}, err
 	}
 	return skill.SyncOptions{
-		HomeDir:       homeDir,
-		ReviewCommand: reviewCommand,
-		In:            cmd.InOrStdin(),
-		Out:           cmd.OutOrStdout(),
-		Interactive:   isTerminalReader(cmd.InOrStdin()),
+		HomeDir:     homeDir,
+		In:          cmd.InOrStdin(),
+		Out:         cmd.OutOrStdout(),
+		Interactive: isTerminalReader(cmd.InOrStdin()),
 	}, nil
 }
 

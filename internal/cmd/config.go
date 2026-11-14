@@ -78,8 +78,6 @@ func NewConfigSetCmd(store config.Store) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			oldReviewCommand := cfg.EffectiveReviewCommand()
-
 			if err := cfg.SetValue(args[0], args[1]); err != nil {
 				return err
 			}
@@ -89,24 +87,9 @@ func NewConfigSetCmd(store config.Store) *cobra.Command {
 				return err
 			}
 
-			if args[0] == "review_command" {
-				syncOpts, err := sandmanSkillSyncOptions(cmd, cfg.EffectiveReviewCommand())
-				if err != nil {
-					return fmt.Errorf("resolve skill sync options: %w", err)
-				}
-				if err := syncSandmanSkill(syncOpts); err != nil {
-					return fmt.Errorf("sync sandman skill: %w", err)
-				}
-				if err := store.Save(cfg); err != nil {
-					revertOpts, revertErr := sandmanSkillSyncOptions(cmd, oldReviewCommand)
-					if revertErr == nil {
-						_ = syncSandmanSkill(revertOpts)
-					}
-					return err
-				}
-				return nil
-			}
-
+			// The shared skill tree is repository-independent: skills read
+			// review_command from the Task or this configuration at run
+			// time, so saving the value is all a change needs.
 			if err := store.Save(cfg); err != nil {
 				return err
 			}

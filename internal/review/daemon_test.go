@@ -626,6 +626,36 @@ func TestDaemon_OnlyNewestUnseenTriggerProcessed(t *testing.T) {
 	}
 }
 
+// A repository whose review_command is another /sandman command still gets a
+// review: the daemon answers any comment that starts with /sandman.
+func TestDaemon_TickLaunchesReviewForAnySandmanCommand(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 42, State: "open"}},
+		comments: map[int][]github.PRComment{
+			42: {{ID: "100", Body: "/sandman check the parser", CreatedAt: now}},
+		},
+		prFetch: map[int]*github.PR{42: {Number: 42, Title: "PR 42", Body: "Body of 42"}},
+	}
+	runner := &capturedRequest{}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+		Sandbox:            "podman",
+		ReviewCommand:      "/sandman check",
+	})
+	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
+
+	tickAndWait(t, d, context.Background())
+
+	if runner.calls != 1 {
+		t.Fatalf("expected 1 review launch for a /sandman command, got %d", runner.calls)
+	}
+	if runner.last.PRNumber != 42 || runner.last.ReviewFocus != "check the parser" {
+		t.Fatalf("review launch = PR %d focus %q, want PR 42 focus %q", runner.last.PRNumber, runner.last.ReviewFocus, "check the parser")
+	}
+}
+
 func TestDaemon_TickLaunchesReviewForTriggerComment(t *testing.T) {
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{

@@ -71,7 +71,7 @@ printf 'agent-complete\n'
 				verified := 0
 				o := NewOrchestrator(client, &prompt.Engine{}, nil, el, WithErrorLog(io.Discard), WithVerifyPath(func(in VerifyInput) (VerifyOutcome, []OracleCheck) {
 					verified++
-					if in.Issue == nil || in.Issue.Number != 42 || in.WorkDir == "" {
+					if in.Issue == nil || in.Issue.Number != 42 || in.WorkDir == "" || in.BaseBranch != "main" {
 						t.Fatalf("issue verification input: %+v", in)
 					}
 					return VerifyVerified, []OracleCheck{{Name: "lifecycle-demo", Details: map[string]any{"verified": true}}}

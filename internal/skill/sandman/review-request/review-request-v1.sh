@@ -38,7 +38,11 @@ live_head=$(printf '%s' "$pr_data" | jq -er '.headRefOid') || refuse "pull-reque
 [ "$pr_state" = "OPEN" ] || refuse "pull-request-not-open"
 [ "$live_head" = "$head_sha" ] || refuse "head-changed"
 
-skill_root=${SANDMAN_SKILL_ROOT:-${HOME}/.agents/skills/sandman}
+# The guard ships next to this helper in the same skill tree, wherever that
+# tree is installed (shared under HOME or scoped to a repository). Always use
+# that sibling so a helper never runs a guard from another version.
+skill_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd) ||
+  refuse "skill-root-unresolved"
 if [ -n "$request_file" ] && [ -f "$request_file" ]; then
   guard_result=$(sh "$skill_root/pr-review/review-trigger-guard-v1.sh" \
     --repository "$repository" --pull-request "$pull_request" \

@@ -4094,7 +4094,7 @@ loop:
 				}
 				if alreadyResolved {
 					pr := lookupPRForVerify(ctx, s.deps.githubClient, s.deps.errorLog, branch)
-					outcome, checks := runVerifyPath(s.deps.verifyPath, VerifyInput{Context: ctx, Issue: issue, Branch: branch, WorkDir: wt.WorkDir(), PR: pr})
+					outcome, checks := runVerifyPath(s.deps.verifyPath, VerifyInput{Context: ctx, Issue: issue, Branch: branch, BaseBranch: s.baseBranch, WorkDir: wt.WorkDir(), PR: pr})
 					if outcome != VerifyNoSignal {
 						terminalExtras = mergeVerificationExtras(terminalExtras, outcome, checks)
 						if outcome == VerifyFailed {
@@ -4157,7 +4157,7 @@ loop:
 					if prMerged || alreadyResolved {
 						if alreadyResolved {
 							pr := lookupPRForVerify(ctx, s.deps.githubClient, s.deps.errorLog, branch)
-							outcome, checks := runVerifyPath(s.deps.verifyPath, VerifyInput{Context: ctx, Issue: issue, Branch: branch, WorkDir: wt.WorkDir(), PR: pr})
+							outcome, checks := runVerifyPath(s.deps.verifyPath, VerifyInput{Context: ctx, Issue: issue, Branch: branch, BaseBranch: s.baseBranch, WorkDir: wt.WorkDir(), PR: pr})
 							if outcome != VerifyNoSignal {
 								terminalExtras = mergeVerificationExtras(terminalExtras, outcome, checks)
 								if outcome == VerifyFailed {

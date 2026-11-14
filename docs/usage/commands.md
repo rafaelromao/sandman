@@ -28,6 +28,7 @@ sandman init [flags]
 | `--variant` | `""` | Default provider-specific implementation model variant |
 | `--parallel` | `-1` | Default parallel container count (`-1` = use config default 1) |
 | `--review-command` | `""` | Review command stored as `review_command` in project config; defaults to `/sandman review` (requires `sandman review` to be running) |
+| `--base-branch` | `""` | Base branch stored as `git.base_branch` in project config. Omitted, a new config records the repository's default branch (`origin/HEAD`), else `main`, and an existing config keeps its value |
 | `--retries` | `-1` | Persist `retries` in scaffolded config. `-1` keeps the built-in default of `3`; `0` disables retries |
 | `--parallel-reviews` | `-1` | Persist `parallel_reviews` in scaffolded config (default `1`) |
 | `--run-idle-timeout` | `-1` | Persist `run_idle_timeout` (seconds) in scaffolded config. `-1` keeps the built-in default of `3600`; `0` disables the heartbeat watchdog |
@@ -303,7 +304,7 @@ sandman config set <key> <value>
 | `cleanup_worktrees` | bool | `true` |
 | `git.base_branch` | string | `main` |
 
-`sandman config set review_command ...` also re-syncs the shared `sandman` skill tree. If local edits are detected under `~/.agents/skills/sandman/`, Sandman prompts before overwriting in a TTY and fails in non-interactive mode.
+`sandman config set` only updates the project configuration. The shared `sandman` skill tree under `~/.agents/skills/sandman/` is the same for every repository and is not re-synced when `review_command`, `review_timeout`, or `git.base_branch` changes.
 
 Agent commits use your host Git identity, not Sandman config keys. Sandman resolves `user.name` and `user.email` from `~/.gitconfig`, then host global/XDG config, then repo-local `.git/config`.
 

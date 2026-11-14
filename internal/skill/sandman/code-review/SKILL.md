@@ -11,7 +11,7 @@ Use one of the explicit contexts below. Keep Standards and Spec findings separat
 
 Use this context when an implementor reviews its own changes.
 
-This context supports parent-delegated and standalone self-review. In a standalone self-review, without a parent delegator, the skill is the packet owner. It must use an explicitly supplied fixed point when one is provided; otherwise use `origin/main` when available, then the current branch's upstream, then `HEAD~1`. If no historical baseline exists, use `HEAD` as the committed baseline. Use `git status --short` to enumerate untracked paths without scanning the repository for additional context.
+This context supports parent-delegated and standalone self-review. In a standalone self-review, without a parent delegator, the skill is the packet owner. It must use an explicitly supplied fixed point when one is provided; otherwise resolve the base from the caller or Task, then the open pull request's base, then `git.base_branch` in `.sandman/config.yaml`, then the repository's default branch. Use `origin/<resolved-base>` when available, then the current branch's upstream, then `HEAD~1`. If no historical baseline exists, use `HEAD` as the committed baseline. Use `git status --short` to enumerate untracked paths without scanning the repository for additional context.
 
 Standalone self-review takes task/specification path or content supplied by the invocation or from `.sandman/task.md`. If no authoritative specification is available, the Spec output records `no spec available` while Standards continues. It derives the changed paths from the captured packet and uses explicitly selected standards sources relevant to those paths. It must not scan the repository, infer missing sources, or broaden the packet.
 

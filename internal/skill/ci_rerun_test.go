@@ -82,7 +82,7 @@ func TestCIRerunHelperRecordsOneDatabaseIDActionAndConfirmsNewAttempt(t *testing
 
 func TestSyncInstallsCIRecoveryHelperAndImplementationGuidance(t *testing.T) {
 	home := t.TempDir()
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/sandman review"}); err != nil {
+	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
 		t.Fatalf("sync shared skills: %v", err)
 	}
 	root := filepath.Join(home, ".agents", "skills", embeddedSkillRoot)

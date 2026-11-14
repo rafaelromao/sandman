@@ -73,6 +73,16 @@ func TestIsReviewRequest(t *testing.T) {
 			body: "@alice ping",
 			want: false,
 		},
+		{
+			name: "sandman command without review word",
+			body: "/sandman check the parser",
+			want: true,
+		},
+		{
+			name: "mentioned sandman command without review word",
+			body: "@bot /sandman check",
+			want: true,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

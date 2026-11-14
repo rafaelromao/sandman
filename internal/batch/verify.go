@@ -78,14 +78,17 @@ type Oracle interface {
 // than nil, since the RunVerifyPath chain slice hard-codes every
 // position.
 type VerifyInput struct {
-	Context   context.Context
-	Issue     *github.Issue
-	Branch    string
-	WorkDir   string
-	PR        *github.PR
-	PreFilter Oracle
-	CheapGate Oracle
-	Decision  Oracle
+	Context context.Context
+	Issue   *github.Issue
+	Branch  string
+	// BaseBranch is the Run's base branch. Oracles compare the branch with
+	// origin/<BaseBranch>; empty means main.
+	BaseBranch string
+	WorkDir    string
+	PR         *github.PR
+	PreFilter  Oracle
+	CheapGate  Oracle
+	Decision   Oracle
 }
 
 // VerifyPathFunc is the seam the orchestrator uses to invoke the
@@ -104,7 +107,7 @@ type VerifyPathFunc func(VerifyInput) (VerifyOutcome, []OracleCheck)
 func DefaultVerifyPath() VerifyPathFunc {
 	return func(in VerifyInput) (VerifyOutcome, []OracleCheck) {
 		if in.PreFilter == nil {
-			in.PreFilter = &PreFilterOracle{RepoDir: in.WorkDir, BaseRef: "origin/main", HeadRef: "HEAD"}
+			in.PreFilter = &PreFilterOracle{RepoDir: in.WorkDir, HeadRef: "HEAD"}
 		}
 		if in.CheapGate == nil {
 			in.CheapGate = &CheapGateOracle{}
