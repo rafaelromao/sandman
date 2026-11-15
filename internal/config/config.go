@@ -41,14 +41,17 @@ const (
 
 // Config holds the loaded Sandman configuration.
 type Config struct {
-	DefaultAgent          string           `yaml:"agent"`
-	DefaultModel          string           `yaml:"model"`
-	Variant               string           `yaml:"variant"`
-	DefaultReviewAgent    string           `yaml:"review_agent"`
-	DefaultReviewModel    string           `yaml:"review_model"`
-	ReviewVariant         string           `yaml:"review_variant"`
-	BuildTools            string           `yaml:"build_tools"`
-	ReviewCommand         string           `yaml:"review_command"`
+	DefaultAgent       string `yaml:"agent"`
+	DefaultModel       string `yaml:"model"`
+	Variant            string `yaml:"variant"`
+	DefaultReviewAgent string `yaml:"review_agent"`
+	DefaultReviewModel string `yaml:"review_model"`
+	ReviewVariant      string `yaml:"review_variant"`
+	BuildTools         string `yaml:"build_tools"`
+	ReviewCommand      string `yaml:"review_command"`
+	// ReviewCommandSet records that review_command was configured, even as
+	// an empty value. An empty configured command selects blind review.
+	ReviewCommandSet      bool             `yaml:"-"`
 	DefaultParallel       int              `yaml:"parallel"`
 	DefaultReviewParallel int              `yaml:"parallel_reviews"`
 	StartDelay            int              `yaml:"start_delay"`
@@ -340,7 +343,7 @@ func Load(path string) (*Config, error) {
 		DefaultReviewModel    string           `yaml:"review_model"`
 		ReviewVariant         string           `yaml:"review_variant"`
 		BuildTools            string           `yaml:"build_tools"`
-		ReviewCommand         string           `yaml:"review_command"`
+		ReviewCommand         yaml.Node        `yaml:"review_command"`
 		DefaultParallel       int              `yaml:"parallel"`
 		DefaultReviewParallel int              `yaml:"parallel_reviews"`
 		StartDelay            int              `yaml:"start_delay"`
@@ -373,7 +376,6 @@ func Load(path string) (*Config, error) {
 		DefaultReviewModel:    raw.DefaultReviewModel,
 		ReviewVariant:         strings.TrimSpace(raw.ReviewVariant),
 		BuildTools:            raw.BuildTools,
-		ReviewCommand:         raw.ReviewCommand,
 		ContextErrorPhrases:   raw.ContextErrorPhrases,
 		DefaultParallel:       raw.DefaultParallel,
 		DefaultReviewParallel: raw.DefaultReviewParallel,
@@ -428,8 +430,16 @@ func Load(path string) (*Config, error) {
 	if cfg.BuildTools == "" {
 		cfg.BuildTools = DefaultBuildToolsPreset
 	}
-	if strings.TrimSpace(cfg.ReviewCommand) == "" {
+	if raw.ReviewCommand.Kind == 0 {
 		cfg.ReviewCommand = DefaultReviewCommand
+	} else {
+		if raw.ReviewCommand.Tag != "!!null" {
+			if err := raw.ReviewCommand.Decode(&cfg.ReviewCommand); err != nil {
+				return nil, fmt.Errorf("validate config: review_command must be a string: %w", err)
+			}
+		}
+		cfg.ReviewCommand = strings.TrimSpace(cfg.ReviewCommand)
+		cfg.ReviewCommandSet = true
 	}
 	if raw.ContainerCapacity == nil {
 		cfg.ContainerCapacity = DefaultContainerCapacity
@@ -792,7 +802,8 @@ func (c *Config) SetValue(key, value string) error {
 	case "build_tools":
 		c.BuildTools = value
 	case "review_command":
-		c.ReviewCommand = value
+		c.ReviewCommand = strings.TrimSpace(value)
+		c.ReviewCommandSet = true
 	case "worktree_dir":
 		c.WorktreeDir = value
 	case "sandbox":
@@ -849,9 +860,17 @@ func (c *Config) EffectiveBuildTools() string {
 	return c.BuildTools
 }
 
-// EffectiveReviewCommand returns the configured review command, defaulting to /sandman review.
+// EffectiveReviewCommand returns the configured review command. A configured
+// empty command is returned as "" and selects blind review; an unconfigured
+// command falls back to DefaultReviewCommand.
 func (c *Config) EffectiveReviewCommand() string {
-	if c == nil || strings.TrimSpace(c.ReviewCommand) == "" {
+	if c == nil {
+		return DefaultReviewCommand
+	}
+	if c.ReviewCommandSet {
+		return strings.TrimSpace(c.ReviewCommand)
+	}
+	if strings.TrimSpace(c.ReviewCommand) == "" {
 		return DefaultReviewCommand
 	}
 	return c.ReviewCommand

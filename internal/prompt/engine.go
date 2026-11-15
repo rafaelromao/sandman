@@ -93,8 +93,9 @@ func issueMapping(data IssueData) map[string]string {
 
 // configMapping composes the operator-controlled substitution values for
 // the render-config keys. REVIEW_COMMAND resolution preserves the
-// historical precedence: cfg.ReviewCommand wins over
-// PromptArgs["REVIEW_COMMAND"] wins over config.DefaultReviewCommand.
+// historical precedence: cfg.ReviewCommand (including a configured empty
+// command, cfg.ReviewCommandSet) wins over PromptArgs["REVIEW_COMMAND"] wins
+// over config.DefaultReviewCommand.
 // The other keys come straight from cfg.
 func configMapping(cfg RenderConfig) map[string]string {
 	mapping := map[string]string{
@@ -110,7 +111,9 @@ func configMapping(cfg RenderConfig) map[string]string {
 	if v, ok := cfg.PromptArgs["REVIEW_COMMAND"]; ok {
 		mapping["REVIEW_COMMAND"] = v
 	}
-	if reviewCommand := strings.TrimSpace(cfg.ReviewCommand); reviewCommand != "" {
+	if reviewCommand := strings.TrimSpace(cfg.ReviewCommand); reviewCommand != "" || cfg.ReviewCommandSet {
+		// A configured command wins, even when empty: an empty configured
+		// command selects blind review and renders as an empty value.
 		mapping["REVIEW_COMMAND"] = reviewCommand
 	}
 	if cfg.ReviewTimeout > 0 {

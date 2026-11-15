@@ -388,6 +388,24 @@ func TestRender_ReviewCommandFieldWinsOverPromptArgs(t *testing.T) {
 	}
 }
 
+func TestRender_SetEmptyReviewCommandRendersEmpty(t *testing.T) {
+	engine := &Engine{}
+	cfg := RenderConfig{
+		PromptFlag:       "review=[{{REVIEW_COMMAND}}]",
+		ReviewCommand:    "",
+		ReviewCommandSet: true,
+		PromptArgs:       map[string]string{"REVIEW_COMMAND": "/from-prompt-arg"},
+	}
+
+	result, err := engine.Render(cfg, IssueData{Number: 1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "review=[]" {
+		t.Fatalf("a configured empty review command (blind review) must render empty, got:\n%s", result)
+	}
+}
+
 func TestRender_EmptyValues(t *testing.T) {
 	engine := &Engine{}
 	cfg := RenderConfig{
