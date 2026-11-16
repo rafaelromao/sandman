@@ -396,3 +396,43 @@ func TestBatchObservation_SameHeadRerunStartsNewCIWaitGeneration(t *testing.T) {
 		t.Fatalf("launches=%d resumed=%d, want a rerun wait without relaunch or spent allowance", scenario.launches, countEventsByType(events, "run.resumed"))
 	}
 }
+
+// A ready row's live evidence is revalidated immediately before execution
+// admission (the last Resume of each sequence is that revalidation). Whatever
+// the observation selects, the default cadence only sets the wait between
+// observations: a stale approval or changed head returns the row to waiting
+// without a launch, and terminal observations finish without ever starting
+// the agent.
+func TestRowDriverAdmissionRevalidationUnderDefaultCadence(t *testing.T) {
+	run := RunSpec{RunID: "run-42", IssueNumber: 42, BatchID: "batch-a", Branch: "42-fix", BaseBranch: "main"}
+	pending := lifecycleVerdict{Action: lifecycleAwait, Evidence: map[string]any{"gate": "pending", "reason": "REVIEW_STALE_APPROVAL"}}
+	cases := []struct {
+		name         string
+		observations []lifecycleVerdict
+		results      []AgentRunResult
+		wantStatus   string
+		wantLaunches int
+		wantWaits    []time.Duration
+	}{
+		{"stale approval or changed head waits again, then resumes", []lifecycleVerdict{pending, {Action: lifecycleResume}, {Action: lifecycleResume}}, []AgentRunResult{{Status: "success"}}, "success", 1, []time.Duration{30 * time.Second}},
+		{"stale evidence twice waits once per observation", []lifecycleVerdict{pending, pending, {Action: lifecycleResume}, {Action: lifecycleResume}}, []AgentRunResult{{Status: "success"}}, "success", 1, []time.Duration{30 * time.Second, 30 * time.Second}},
+		{"failed CI or conflict at admission is terminal without a launch", []lifecycleVerdict{{Action: lifecycleFailure}}, nil, "failure", 0, nil},
+		{"merged observation finishes without execution capacity", []lifecycleVerdict{{Action: lifecycleSuccess}}, nil, "success", 0, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var waits []time.Duration
+			gates := &rowDriverWaitRecorder{rowDriverGateFake: &rowDriverGateFake{}, waits: &waits}
+			executor := &rowDriverExecutorFake{started: true, observations: tc.observations, results: tc.results}
+			got := newRowDriver(executor, gates, &rowDriverClockFake{}).Drive(context.Background(), run, ContinuationCursor{Mode: ModeContinue}, rowDriverOptions{
+				Awaiting: true, Ready: true, ReleaseAwaitCapacity: true,
+			})
+			if got.Result.Status != tc.wantStatus || executor.executeCalls != tc.wantLaunches {
+				t.Fatalf("Drive = %+v launches=%d, want status %q with %d launches", got.Result, executor.executeCalls, tc.wantStatus, tc.wantLaunches)
+			}
+			if !reflect.DeepEqual(waits, tc.wantWaits) {
+				t.Fatalf("waits = %v, want %v", waits, tc.wantWaits)
+			}
+		})
+	}
+}
