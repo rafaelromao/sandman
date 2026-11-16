@@ -54,6 +54,29 @@ func TestSyncInstallsEmbeddedSkillTreeVerbatim(t *testing.T) {
 
 var skillPlaceholderPattern = regexp.MustCompile(`\{\{[^{}]*\}\}`)
 
+func TestSyncInstallsExecutableReviewHelpers(t *testing.T) {
+	home := t.TempDir()
+	for pass := 0; pass < 2; pass++ {
+		if err := Sync(SyncOptions{HomeDir: home}); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"review-prompt-v1.sh", "publish-v1.sh"} {
+			path := filepath.Join(home, ".agents", "skills", "sandman", "blind-review", name)
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Mode().Perm()&0111 != 0111 {
+				t.Fatalf("%s is not executable after sync pass %d", name, pass)
+			}
+			// An older installation may have copied scripts as plain assets.
+			if err := os.Chmod(path, 0644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
 // Nothing fills placeholders in an installed skill: managed runs carry their
 // values in the Task, and standalone runs resolve them at run time.
 func TestShippedSkillFilesHaveNoPlaceholders(t *testing.T) {
@@ -63,6 +86,11 @@ func TestShippedSkillFilesHaveNoPlaceholders(t *testing.T) {
 			return err
 		}
 		if d.IsDir() || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		// This one renderer input deliberately carries placeholders. Its bytes
+		// are pinned to the daemon template by TestBlindPromptTemplateMatchesDaemon.
+		if path == "sandman/blind-review/review-prompt.md" {
 			return nil
 		}
 		data, err := fs.ReadFile(embeddedSkills, path)

@@ -1,16 +1,12 @@
 package review
 
-import "regexp"
-
-// redactPattern matches the literal substring "/sandman" under
-// case-insensitive search. The redactor is a transformer, not a validator:
-// it always returns a body, never refuses to redact.
-var redactPattern = regexp.MustCompile(`(?i)/sandman`)
+import "github.com/rafaelromao/sandman/internal/reviewpub"
 
 // RedactBody replaces every "/sandman" substring (case-insensitive) in body
 // with the lowercase "sandman" and otherwise preserves the body byte-for-byte.
 // The function is a pure transformer used to ensure no bot-posted review
-// comment ever carries a "/sandman" trigger substring on the wire.
+// comment ever carries a "/sandman" trigger substring on the wire. The
+// transform is shared with blind-review publication through reviewpub.
 //
 // Examples:
 //
@@ -19,5 +15,5 @@ var redactPattern = regexp.MustCompile(`(?i)/sandman`)
 //	RedactBody("/sandmannery")          -> "sandmannery"
 //	RedactBody("review-1234")          -> "review-1234" (no leading slash, unchanged)
 func RedactBody(body string) string {
-	return redactPattern.ReplaceAllString(body, "sandman")
+	return reviewpub.Redact(body)
 }

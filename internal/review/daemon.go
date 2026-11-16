@@ -2236,7 +2236,7 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	// .sandman layout).
 	agentRunDir := sandbox.ContainerVisiblePath(d.reviewWorktreePath(prNumber, triggerKey), d.repoRoot(), sandboxMode)
 
-	acceptanceCriteria := ""
+	var linkedWorkItem *github.Issue
 	if linkedIssue := pr.LinkedIssueNumber(); linkedIssue > 0 {
 		if fetcher, ok := d.GitHub.(interface {
 			FetchIssue(context.Context, int) (*github.Issue, error)
@@ -2245,7 +2245,7 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 			if fetchErr != nil {
 				return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("fetch linked work item #%d for review prompt: %w", linkedIssue, fetchErr))
 			} else if issue != nil {
-				acceptanceCriteria = issue.Body
+				linkedWorkItem = issue
 			} else {
 				return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("fetch linked work item #%d for review prompt: empty response", linkedIssue))
 			}
@@ -2270,16 +2270,7 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 
 	rendered, err := d.Prompts.RenderReview(prompt.RenderConfig{
 		ReviewPromptFile: d.PromptTemplatePath(),
-	}, prompt.PRData{
-		Number:             pr.Number,
-		Title:              pr.Title,
-		Body:               pr.Body,
-		AcceptanceCriteria: acceptanceCriteria,
-		ReviewFocus:        focus,
-		RunDir:             agentRunDir,
-		PriorReviewExists:  priorReviewExists,
-		PriorReviewContext: priorReviewContext,
-	})
+	}, ReviewPromptData(pr, linkedWorkItem, focus, agentRunDir, priorReviewExists, priorReviewContext))
 	// A malformed persisted template (e.g. a stray {{UNKNOWN_KEY}}
 	// introduced by a user edit) fails the render and is recorded as a
 	// launch failure so the trigger gets the bounded-retry budget instead
@@ -2310,7 +2301,7 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	if err := writeReviewSnapshot(reviewRunFolder, reviewSnapshot{Version: 1, PR: prNumber, Request: triggerKey, Head: pr.HeadRefOid}); err != nil {
 		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("persist review snapshot: %w", err))
 	}
-	rendered = fmt.Sprintf("## Review snapshot\n\nCheckout commit: `%s`\nComparison base: `origin/%s`\n\n", pr.HeadRefOid, pr.BaseRefName) + rendered
+	rendered = ReviewSnapshotHeader(pr.HeadRefOid, pr.BaseRefName) + rendered
 	req := batch.Request{
 		Agent:                agentName,
 		BaseBranch:           pr.BaseRefName,
