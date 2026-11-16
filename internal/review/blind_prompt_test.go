@@ -31,16 +31,20 @@ func TestBlindPromptHelperMatchesDaemon(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
-		name         string
-		prior        bool
-		noIssue      bool
-		override     bool
-		historyError bool
+		name          string
+		prior         bool
+		noIssue       bool
+		override      string
+		emptyOverride bool
+		historyError  bool
 	}{
 		{name: "first"},
 		{name: "prior", prior: true},
 		{name: "unlinked", noIssue: true},
-		{name: "override", override: true},
+		{name: "override", override: "Custom: {{PR_TITLE}}\n{{ACCEPTANCE_CRITERIA}}\n{{PRIOR_REVIEW_CONTEXT}}\n"},
+		{name: "empty-override", emptyOverride: true},
+		{name: "whitespace-override", override: " \t\r\n"},
+		{name: "unicode-whitespace-override", override: "\u0085\u00a0\u1680\u2000\u2028\u2029\u202f\u205f\u3000"},
 		{name: "history-error", historyError: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -73,12 +77,12 @@ esac
 				t.Fatal(err)
 			}
 			cfg := prompt.RenderConfig{}
-			if tc.override {
+			if tc.override != "" || tc.emptyOverride {
 				cfg.ReviewPromptFile = filepath.Join(dir, ".sandman", "reviews", "review-prompt.md")
 				if err := os.MkdirAll(filepath.Dir(cfg.ReviewPromptFile), 0755); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(cfg.ReviewPromptFile, []byte("Custom: {{PR_TITLE}}\n{{ACCEPTANCE_CRITERIA}}\n{{PRIOR_REVIEW_CONTEXT}}\n"), 0600); err != nil {
+				if err := os.WriteFile(cfg.ReviewPromptFile, []byte(tc.override), 0600); err != nil {
 					t.Fatal(err)
 				}
 			}

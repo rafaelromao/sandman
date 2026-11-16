@@ -190,6 +190,8 @@ class TransportTest(unittest.TestCase):
             template = (HELPERS / "review-prompt.md").read_bytes()
             run_dir_key = bytes([123, 123]) + b"RUN_DIR" + bytes([125, 125])
             expected = template.replace(run_dir_key, str(root).encode()) + b"\n\n"
+            if case == "custom-template":
+                expected = f"Review this checkout. Write {root}/decision.md.\n".encode()
             prompt.write_bytes(expected)
             (root / "fixture.json").write_text(json.dumps({
                 "version": version, "case": case, "cwd": str(worktree),
@@ -198,7 +200,7 @@ class TransportTest(unittest.TestCase):
             env = {**os.environ, "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
                    "TRANSPORT_FIXTURE": str(root), "TMPDIR": str(root)}
             helper = HELPERS / f"spawn-opencode-v{version}.sh"
-            command = ["sh", str(helper), "--prompt-file", str(prompt)]
+            command = ["sh", str(helper), "--prompt-file", str(prompt), "--run-dir", str(root)]
             if case == "cancel":
                 process = subprocess.Popen(command, cwd=worktree, env=env,
                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -224,7 +226,7 @@ class TransportTest(unittest.TestCase):
             else:
                 result = subprocess.run(command, cwd=worktree, env=env,
                                         capture_output=True, timeout=25)
-            if case == "success":
+            if case in ("success", "custom-template"):
                 self.assertEqual(result.returncode, 0, result.stderr.decode())
                 self.assertEqual((root / "received").read_bytes(), expected)
                 self.assertEqual(json.loads(result.stdout)["parent_session_id"], "sesParent")
@@ -258,6 +260,11 @@ class TransportTest(unittest.TestCase):
         (wildcard("a.b";"axb") | not)'''
         subprocess.run(["jq", "-ne", "-L", str(HELPERS), expression], check=True,
                        stdout=subprocess.DEVNULL)
+
+    def test_custom_template_without_default_run_dir_line(self):
+        for version in (1, 2):
+            with self.subTest(version=version):
+                self.scenario(version, "custom-template")
 
     def test_complete_task_argument_object(self):
         # Encoding is still correct; only mechanical delivery removes the

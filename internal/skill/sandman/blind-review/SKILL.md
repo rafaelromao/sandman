@@ -16,6 +16,11 @@ An empty review command selects this capability; a configured command selects
 - The checkout is on the implementation branch, clean and at that exact head.
 - The harness can spawn a fresh subagent without inheriting conversation context.
 
+For OpenCode, the bundled file-backed transport below satisfies the spawning
+precondition even when no native subagent tool is exposed. Attempt that helper
+before reporting the capability unavailable; an absent tool alone is not a
+refusal reason.
+
 If the harness cannot do that, return `REVIEW_SUBAGENT_UNAVAILABLE` with the next
 action `configure review_command`. Fail closed; never substitute self-review
 or silently post a delegated-review trigger.
@@ -51,6 +56,8 @@ or silently post a delegated-review trigger.
    this round's unique temporary prompt file. Put the helper filename and
    literal path directly in that command; do not hide them behind variables,
    another script or a background launch.
+   Also pass `--run-dir` with the external report directory supplied to the
+   renderer. The helper never infers that destination from template prose.
 
    The helper identifies exactly one live owning call in an exact-worktree
    root session, creates a fresh native child linked to that parent, inherits

@@ -19,7 +19,8 @@ done
 helper_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 template=$helper_dir/review-prompt.md
 root=$(git rev-parse --show-toplevel) || fail REVIEW_PROMPT_WORKTREE_MISSING
-if [ -s "$root/.sandman/reviews/review-prompt.md" ]; then
+if [ -s "$root/.sandman/reviews/review-prompt.md" ] &&
+  jq -Rse 'test("[^\\s]")' "$root/.sandman/reviews/review-prompt.md" >/dev/null; then
   template=$root/.sandman/reviews/review-prompt.md
 fi
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/sandman-blind-prompt.XXXXXX")

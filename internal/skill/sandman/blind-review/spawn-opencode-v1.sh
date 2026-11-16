@@ -5,10 +5,11 @@
 set -eu
 umask 077
 fail() { printf '%s\n' "REVIEW_SUBAGENT_UNAVAILABLE: $1" >&2; exit 1; }
-prompt_file=''
+prompt_file='' run_dir=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --prompt-file) [ "$#" -ge 2 ] || fail invalid-argument; prompt_file=$2; shift 2 ;;
+    --run-dir) [ "$#" -ge 2 ] || fail invalid-argument; run_dir=$2; shift 2 ;;
     *) fail invalid-argument ;;
   esac
 done
@@ -17,6 +18,9 @@ if [ ! -f "$prompt_file" ] || [ -L "$prompt_file" ]; then
   fail invalid-prompt-file
 fi
 directory=$(pwd -P)
+case "$run_dir" in /*) ;; *) fail absolute-report-directory-required ;; esac
+run_dir=$(CDPATH='' cd -- "$run_dir" && pwd -P) || fail invalid-report-directory
+case "$run_dir" in "$directory"|"$directory"/*) fail external-report-directory-required ;; esac
 case "$prompt_file" in "$directory"/*) fail external-prompt-required ;; esac
 helper_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
 temp_root=$(CDPATH='' cd -- "${TMPDIR:-/tmp}" && pwd -P)
@@ -186,9 +190,6 @@ jq -e --rawfile prompt "$tmp/prompt" '
   .[0].parts[0].type == "text" and .[0].parts[0].text == $prompt
 ' "$tmp/messages" >/dev/null || fail prompt-byte-mismatch
 cmp -s "$prompt_file" "$tmp/prompt" || fail prompt-file-changed
-run_dir=$(jq -Rrn '[inputs | select(startswith("- RunDir: ")) |
-  ltrimstr("- RunDir: ")] | if length == 1 then .[0] else error("invalid RunDir") end' "$tmp/prompt") ||
-  fail missing-report-destination
 [ -s "$run_dir/decision.md" ] || fail missing-decision
 jq -cn --arg parent "$parent" --arg child "$child" \
   '{protocol:"blind-review-transport/v1",parent_session_id:$parent,child_session_id:$child}'
