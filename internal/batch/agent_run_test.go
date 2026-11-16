@@ -343,6 +343,72 @@ func TestAgentRun_Prepare_AddsManagedCIOwnershipToCustomTemplate(t *testing.T) {
 	}
 }
 
+func TestAgentRun_Prepare_AddsManagedHandoffContextOnce(t *testing.T) {
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{}
+	spy := &spyRenderer{result: "# Custom task\n\nKeep this custom checkpoint.\n"}
+	run := NewAgentRun(issue, "42-fix-bug", sb)
+
+	if err := run.Prepare(spy, prompt.RenderConfig{}); err != nil {
+		t.Fatalf("prepare custom managed task: %v", err)
+	}
+	got := sb.writePromptContent
+	if strings.Count(got, "## Sandman Managed Handoff Context") != 1 || !strings.Contains(got, "You own local verification and publication; the Sandman runtime owns observation of external CI and review.") {
+		t.Fatalf("fresh managed task omitted the handoff boundary:\n%s", got)
+	}
+	if again := prompt.EnsureManagedTaskContext(got); again != got {
+		t.Fatalf("handoff composition is not idempotent over the written task:\n%s", again)
+	}
+}
+
+func TestAgentRun_Run_TaskPromptCarriesManagedHandoffContext(t *testing.T) {
+	dir := t.TempDir()
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{workDir: dir}
+	run := NewAgentRun(issue, "42-fix-bug", sb)
+
+	res := run.Run(context.Background(), &spyRenderer{}, "true", prompt.RenderConfig{TaskPrompt: "continuation body\n\n## Checkpoint\n\nCI was running at 10:56.\n"})
+	if res.Status != "success" {
+		t.Fatalf("expected success, got %s", res.Status)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".sandman", "task.md"))
+	if err != nil {
+		t.Fatalf("read task: %v", err)
+	}
+	text := string(data)
+	if strings.Count(text, "## Sandman Managed Handoff Context") != 1 || !strings.Contains(text, "CI was running at 10:56.") {
+		t.Fatalf("task prompt path lost the handoff boundary or the saved checkpoint:\n%s", text)
+	}
+}
+
+func TestAgentRun_ReviewerTasksDoNotCarryManagedHandoffContext(t *testing.T) {
+	issue := &github.Issue{Number: 42, Title: "Review change"}
+	sb := &fakeSandbox{}
+	run := NewAgentRun(issue, "42-review", sb)
+	run.review = true
+	if err := run.Prepare(&spyRenderer{result: "# Reviewer task\n"}, prompt.RenderConfig{}); err != nil {
+		t.Fatalf("prepare reviewer task: %v", err)
+	}
+	if strings.Contains(sb.writePromptContent, "Sandman Managed Handoff Context") {
+		t.Fatalf("implementation handoff guidance leaked into the reviewer prompt:\n%s", sb.writePromptContent)
+	}
+
+	dir := t.TempDir()
+	reviewSandbox := &fakeSandbox{workDir: dir}
+	reviewRun := NewAgentRun(issue, "42-review", reviewSandbox)
+	reviewRun.review = true
+	if res := reviewRun.Run(context.Background(), &spyRenderer{}, "true", prompt.RenderConfig{TaskPrompt: "review task body"}); res.Status != "success" {
+		t.Fatalf("expected success, got %s", res.Status)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".sandman", "task.md"))
+	if err != nil {
+		t.Fatalf("read review task: %v", err)
+	}
+	if string(data) != "review task body" {
+		t.Fatalf("review task was changed by managed implementation guidance: %q", data)
+	}
+}
+
 func TestAgentRun_PrepareDoesNotAddImplementationCIOwnershipToReviewer(t *testing.T) {
 	issue := &github.Issue{Number: 42, Title: "Review change"}
 	sb := &fakeSandbox{}

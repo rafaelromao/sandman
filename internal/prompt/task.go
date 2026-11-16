@@ -11,6 +11,7 @@ import (
 const continuationFreshnessGuardHeading = "## Continuation Freshness Guard"
 const contextRecoveryGuardHeading = "## Context Recovery Guard"
 const ciOwnershipContextHeading = "## Sandman Failed CI Remediation Context"
+const managedHandoffContextHeading = "## Sandman Managed Handoff Context"
 
 const ciOwnershipContext = `## Sandman Failed CI Remediation Context
 
@@ -19,7 +20,24 @@ A failed required check on the current pull request head remains implementation 
 
 For deterministic source, test, configuration, or workflow failures, make the required repair and validate it. For a verified provider-pin deprecation, update the coordinated documented pins. For a diagnosed transient provider or network timeout, use the authorized helper in the shared Sandman skill to rerun the identified failed execution after verifying its repository, pull request, source head, workflow run, and job identity. The canary's one CLI invocation and no-retry-loop rule applies within one job invocation; it does not prohibit a bounded rerun of the existing execution, and workflow_dispatch is not a prerequisite. Do not blindly rerun deterministic failures, invent credentials or permissions, or manufacture green evidence.
 
-The runtime owns asynchronous observation and admission, not CI repair. Verify the corrective action and current-head execution first. Only after no implementor-owned work remains and required checks are queued or running should you checkpoint and yield for runtime observation.`
+The runtime owns asynchronous observation and admission, not CI repair. Verify the corrective action and current-head execution first. Only after no implementor-owned work remains (as defined in the Sandman Managed Handoff Context) and required checks are queued or running should you checkpoint and yield for runtime observation.`
+
+// managedHandoffContext is the single statement of the boundary between the
+// implementor's local verification and publication and the runtime's
+// observation of external CI and review. It is composed, never duplicated,
+// into every managed Task: fresh renders, continuations, retries and context
+// recovery.
+const managedHandoffContext = `## Sandman Managed Handoff Context
+
+You own local verification and publication; the Sandman runtime owns observation of external CI and review. Keep the two apart.
+
+Your work is not complete while any of these remains: a required local test, format, vet or static-analysis run (including a background command that is still running), an unresolved test failure, a commit that is not yet pushed, or an incomplete publication, review-request delivery or blind review round. Wait for required verification to finish and fix its failures. Never skip, interrupt, weaken or abbreviate required verification to hand off sooner.
+
+Early publication of durable progress is allowed: push, open the pull request or deliver the review request while local verification continues. Publishing does not end your turn. If local work remains after you publish, say so explicitly; the runtime is not observing an external wait for you while you are still working.
+
+When required verification and your publication or request-delivery work are complete, record the durable checkpoint in ` + "`.sandman/task.md`" + ` and end the session immediately. Do not launch redundant verification, and do not poll CI or review from this session to wait for them. The runtime observes external checks and review, then decides whether to resume you.
+
+Report truthfully. In every checkpoint and final summary, keep three states apart: local verification in progress, external CI or review awaiting runtime observation, and ready for merge. Never carry an earlier "CI is running" or "review is pending" statement forward as present fact: re-read the live state and report what you verified, or label the statement as the last observation with its timestamp. The runtime, not your summary, makes the post-attempt decision.`
 
 const (
 	reviewTimeoutContextHeading = "## Sandman Runtime Context"
@@ -39,7 +57,7 @@ Before acting on any persisted blocker or next action:
 
 ### Runtime-managed waits
 
-When a Sandman-created run has no agent-owned work left and current-head CI is queued/running, checkpoint the head and checks in .sandman/task.md, then end the agent session successfully. After a delegated-review request is confirmed against the current PR head, checkpoint that request and the next action, then end the agent session before polling. Sandman's runtime owns admitted non-terminal waits, execution-capacity release, request observation, evidence migration, and re-entry. This overrides persisted instructions to keep polling; after continuation, re-check the live head and request-scoped evidence. Do not yield for a missing PR or review request, generic pending/REVIEW_REQUIRED/BLOCKED state, absent checks, stale or unverifiable heads, failed lookups/state reads, or exhausted budgets. Complete work the implementor owns (including branch publication, PR creation, CI/conflict repair, review feedback, and merge); without an authorized resolver, fail with a specific next action instead of waiting. Outside a Sandman-managed run, poll within the documented budget.
+When a Sandman-created run has no agent-owned work left (as defined in the Sandman Managed Handoff Context) and current-head CI is queued/running, checkpoint the head and checks in .sandman/task.md, then end the agent session successfully. After a delegated-review request is confirmed against the current PR head, checkpoint that request and the next action, then end the agent session before polling. Sandman's runtime owns admitted non-terminal waits, execution-capacity release, request observation, evidence migration, and re-entry. This overrides persisted instructions to keep polling; after continuation, re-check the live head and request-scoped evidence. Do not yield for a missing PR or review request, generic pending/REVIEW_REQUIRED/BLOCKED state, absent checks, stale or unverifiable heads, failed lookups/state reads, or exhausted budgets. Complete work the implementor owns (including branch publication, PR creation, CI/conflict repair, review feedback, and merge); without an authorized resolver, fail with a specific next action instead of waiting. Outside a Sandman-managed run, poll within the documented budget.
 
 Never stop or exit solely because an earlier attempt recorded a blocker.`
 
@@ -91,10 +109,10 @@ func ContextRecoveryTaskPrompt(content string, reviewTimeout int) string {
 		if reviewTimeout > 0 {
 			content = EnsureReviewTimeoutContext(content, reviewTimeout)
 		}
-		return EnsureCIOwnershipContext(trimTrailingNewlines(content) + "\n")
+		return EnsureManagedTaskContext(trimTrailingNewlines(content) + "\n")
 	}
 	content = continuationTaskPrompt(content, reviewTimeout)
-	return EnsureCIOwnershipContext(trimTrailingNewlines(content) + "\n\n" + contextRecoveryGuard + "\n")
+	return EnsureManagedTaskContext(trimTrailingNewlines(content) + "\n\n" + contextRecoveryGuard + "\n")
 }
 
 func continuationTaskPrompt(content string, reviewTimeout int) string {
@@ -110,7 +128,7 @@ func continuationTaskPrompt(content string, reviewTimeout int) string {
 		effective := (&config.Config{ReviewTimeout: reviewTimeout}).EffectiveReviewTimeout()
 		guard += fmt.Sprintf("\n\nCurrent AgentRun delegated review response timeout is `%d` seconds; it supersedes any persisted timeout wording above.", effective)
 	}
-	return EnsureCIOwnershipContext(trimTrailingNewlines(content) + "\n\n" + guard + "\n")
+	return EnsureManagedTaskContext(trimTrailingNewlines(content) + "\n\n" + guard + "\n")
 }
 
 // EnsureCIOwnershipContext appends the canonical implementation-owned failed
@@ -120,6 +138,17 @@ func continuationTaskPrompt(content string, reviewTimeout int) string {
 func EnsureCIOwnershipContext(content string) string {
 	content = removeCanonicalSection(content, ciOwnershipContextHeading)
 	return trimTrailingNewlines(content) + "\n\n" + ciOwnershipContext + "\n"
+}
+
+// EnsureManagedTaskContext appends the canonical managed-task guidance: the
+// implementation-owned failed-CI context followed by the handoff context. Both
+// canonical sections are removed first and re-appended in this fixed order, so
+// composing once or many times, in a fresh render, a continuation, a retry or
+// a context recovery, yields the same text and preserves all other content.
+func EnsureManagedTaskContext(content string) string {
+	content = removeCanonicalSection(content, ciOwnershipContextHeading)
+	content = removeCanonicalSection(content, managedHandoffContextHeading)
+	return trimTrailingNewlines(content) + "\n\n" + ciOwnershipContext + "\n\n" + managedHandoffContext + "\n"
 }
 
 const reviewEvidenceHeading = "## Review Evidence"

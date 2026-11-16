@@ -103,7 +103,7 @@ func (r *AgentRun) Prepare(renderer prompt.IssueRenderer, cfg prompt.RenderConfi
 	}
 	if !r.review {
 		rendered = prompt.EnsureReviewTimeoutContext(rendered, cfg.ReviewTimeout)
-		rendered = prompt.EnsureCIOwnershipContext(rendered)
+		rendered = prompt.EnsureManagedTaskContext(rendered)
 	}
 
 	if err := r.sandbox.WritePrompt(rendered); err != nil {
@@ -219,7 +219,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		taskPrompt := renderCfg.TaskPrompt
 		if !r.review {
 			taskPrompt = prompt.EnsureReviewTimeoutContext(taskPrompt, renderCfg.ReviewTimeout)
-			taskPrompt = prompt.EnsureCIOwnershipContext(taskPrompt)
+			taskPrompt = prompt.EnsureManagedTaskContext(taskPrompt)
 		}
 		if err := r.writeTaskPrompt(renderedPromptFile, taskPrompt); err != nil {
 			// A clean recovery session must not start without its checkpoint-first
