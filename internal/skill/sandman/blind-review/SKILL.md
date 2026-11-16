@@ -35,7 +35,9 @@ or silently post a delegated-review trigger.
    require POSIX `sh`, `jq`, `gh`, and `sha256sum` or `shasum`.
 2. Record the checkout's HEAD and `git status --porcelain=v1 --untracked-files=all`.
    Require a clean checkout and HEAD equal to the supplied head. Create a
-   temporary directory outside the worktree for this round's prompt and report.
+   fresh temporary directory outside the worktree with `mktemp -d` for this
+   round's prompt and report. Never use the shared temporary root itself as
+   the report directory.
 3. Run `review-prompt-v1.sh` with `--repository`, `--pull-request`, `--head-sha`
    and `--run-dir` (the temporary directory). Save its exact stdout as the prompt.
    A failed lookup or render ends this round without publication.
@@ -48,10 +50,19 @@ or silently post a delegated-review trigger.
    without passing its contents through an assistant-generated response.
    Use only facilities and argument names exposed by the current harness.
 
-   For OpenCode's string-only native spawning, use the file-backed transport
-   matching the caller's selected protocol: `spawn-opencode-v1.sh` for
-   `opencode`, `spawn-opencode-v2.sh` for `opencode-v2`. V1 additionally requires
-   `curl`. Invoke it through one foreground native shell tool call in this
+   For OpenCode's string-only native spawning, use the file-backed transport.
+   There are two protocol-specific helpers: `spawn-opencode-v1.sh` for the
+   classic OpenCode API and `spawn-opencode-v2.sh` for the V2 API. When the
+   caller states which one it runs, use that helper. Otherwise run the V1
+   helper first. Only when it refuses while identifying the owning session
+   (reason `session-list-failed`, `invalid-session-list`, `no-candidate-roots`,
+   `session-export-failed`, `exported-identity-mismatch`,
+   `invalid-session-export` or `ambiguous-or-missing-live-owner`) may you make
+   one attempt with the V2 helper, because no child exists yet. Any other
+   refusal ends the round with that diagnostic; never start a second review
+   after a child may exist. V1 additionally requires `curl`.
+
+   Invoke the helper through one foreground native shell tool call in this
    worktree, with `--prompt-file` followed by the **literal absolute path** to
    this round's unique temporary prompt file. Put the helper filename and
    literal path directly in that command; do not hide them behind variables,
