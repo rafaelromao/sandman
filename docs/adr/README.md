@@ -98,3 +98,4 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0057 | Exact Claude Code session identity and host-shared transcripts | accepted |
 | 0058 | Repository-independent shared skills | accepted |
 | 0059 | Blind review is the default pull-request review | accepted |
+| 0060 | Managed handoff boundary and 30-second observation | accepted |

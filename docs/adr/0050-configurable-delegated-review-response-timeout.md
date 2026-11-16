@@ -37,6 +37,12 @@ runs. Preserve the existing 120, 60, 60, then 30-second polling cadence and
 shorten the final operation to the remaining wall-clock budget, including a
 sleep that lands exactly on the configured deadline.
 
+> **Later change (annotated 2026-11-16, #2957):** The 120, 60, 60, then 30-second
+> cadence above describes the shared skill coordinator and remains its standalone
+> cadence. Ordinary managed observation by the runtime now defaults to 30 seconds
+> from the first poll for default and new waits; retained explicit plans stay
+> valid. See [ADR-0060](0060-managed-handoff-boundary-and-thirty-second-observation.md).
+
 ## Consequences
 
 ### Positive

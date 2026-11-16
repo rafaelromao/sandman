@@ -58,6 +58,14 @@ loop. Scope tables, quality tags, no-change next steps and informational review
 prose must not turn an approving report into a repair relaunch. Formal requested
 changes, current-head CI failures and merge conflicts remain blocking.
 
+Ordinary managed observation (CI and delegated review, batch and foreground)
+polls every 30 seconds from the first poll for default and new waits; a retained
+explicit plan stays valid, and quota (ten-minute), GitHub-recovery (hourly) and
+standalone schedules are unchanged. The implementor owns local verification and
+publication, the runtime owns external observation: a ready CI/review result
+never preempts an executing attempt, and the agent returns at once when owned
+work is done (ADR-0060).
+
 AFK continuity (rule since v1.0.0-rc.2): a started Run may stop only for a
 permanent failure it cannot handle or wait for external recovery, and only
 where rc2 would not have resolved it. An open current-head PR whose only
