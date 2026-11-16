@@ -102,8 +102,19 @@ func Sync(opts SyncOptions) error {
 		if err != nil {
 			return fmt.Errorf("read embedded skill file %q: %w", path, err)
 		}
-		if err := os.WriteFile(targetPath, data, 0o644); err != nil {
+		mode := fs.FileMode(0o644)
+		if strings.HasSuffix(path, ".sh") {
+			mode = 0o755
+		}
+		if err := os.WriteFile(targetPath, data, mode); err != nil {
 			return fmt.Errorf("write skill file %q: %w", targetPath, err)
+		}
+		// WriteFile preserves an existing file's mode. Upgrade helpers copied
+		// by older installations too; embedded assets do not retain exec bits.
+		if mode&0o111 != 0 {
+			if err := os.Chmod(targetPath, mode); err != nil {
+				return fmt.Errorf("make skill helper executable %q: %w", targetPath, err)
+			}
 		}
 		return nil
 	}); err != nil {

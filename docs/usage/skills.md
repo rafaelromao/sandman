@@ -20,11 +20,15 @@ The CLI asks which coding agents to install for and lists the ones it supports, 
 
 Install the whole catalog rather than single skills. `sandman-run` loads the other workflow skills, and the helper scripts live under the root `sandman` skill, so a partial install is missing parts the workflow expects.
 
-An installed skill is identical for every repository and holds no review command. When you load the skills directly, each one uses the review command you name, else `review_command` from the repository's `.sandman/config.yaml`, else `/sandman review`. To use another reviewer, set it once in that file:
+An installed skill is identical for every repository and holds no review command. When you load the skills directly, each one uses the review command you name, else `review_command` from the repository's `.sandman/config.yaml`, else blind review. Blind review is the default: the implementor loads `sandman-blind-review` and runs one fresh, context-free subagent round instead of posting a trigger. Set a command to delegate to an external reviewer:
 
 ```yaml
 review_command: '@codex review'
 ```
+
+An explicit `/sandman review` delegates to the review daemon. An absent, empty,
+or whitespace-only value selects blind review; it is a real selection, not a
+missing value.
 
 `review_timeout` and `git.base_branch` are read from the same file. [Repository and run values](#repository-and-run-values) gives the order in which every value is resolved, and a repository without Sandman can create the file with just those keys.
 
@@ -38,6 +42,7 @@ The installed folder mirrors the local Sandman skill and includes routed subskil
 - run (standalone implementation, review-cycle, and merge composition)
 - review-request (stateless trigger delivery)
 - review-cycle (standalone in-memory review observation)
+- blind-review (one fresh, context-free round when no review command is configured)
 - pr-review
 - back-merge
 - pr-merge
@@ -53,14 +58,18 @@ standalone workflow without a host `sandman` binary. It composes
 `sandman-implement`, `sandman-review-cycle`, and `sandman-pr-merge` in that
 order. The focused `sandman-review-request` capability delivers one guarded
 request; `sandman-review-cycle` owns standalone CI, observation, feedback, and
-re-request behavior. `sandman-pr-review` remains a compatibility facade over
+re-request behavior, and switches to its blind branch when the resolved review
+command is empty. `sandman-pr-review` remains a compatibility facade over
 the cycle. The shared skills form an AFK workflow and do not wait for operator
 input.
 
-Managed implementation uses `sandman-review-request` only for delivery. After
-confirmation, the runtime owns observation, evidence, waiting, resume, and
-terminal decisions. The durable request state remains runtime-owned, including
-matching current-request evidence. Standalone `sandman-run` keeps review-cycle state in memory
+Managed implementation uses `sandman-review-request` only for delivery when a
+review command is configured. After confirmation, the runtime owns observation,
+evidence, waiting, resume, and terminal decisions. The durable request state
+remains runtime-owned, including matching current-request evidence. With an empty
+review command, managed implementation loads `sandman-blind-review` instead: the
+implementor runs and publishes one round, and the runtime decides on the
+current-head publication. Standalone `sandman-run` keeps review-cycle state in memory
 for its session; a restart reconstructs from live pull-request state and does
 not import or trust managed lifecycle artifacts.
 
@@ -102,17 +111,24 @@ never touches the installed skills.
 
 In a managed Run, the Run's Task supplies every value: the review command, the
 base branch, the current branch, and the delegated review response timeout.
-Task values always win.
+Task values always win. An empty review command in the Task selects blind
+review; it is not replaced by a default.
 
 When you load the skills directly (for example `sandman-run`), each value
 comes from the first source that provides it:
 
 | Value | Sources, in order |
 |---|---|
-| Review command | the caller → `review_command` in `.sandman/config.yaml` → `/sandman review` |
+| Review command | the caller → `review_command` in `.sandman/config.yaml` → blind review |
 | Base branch | the caller → the open pull request's base → `git.base_branch` in `.sandman/config.yaml` → the repository's default branch |
 | Current branch | the caller → the checked-out branch |
-| Review timeout | the caller → `review_timeout` in `.sandman/config.yaml` → 1800 seconds |
+| Review timeout | the caller → `review_timeout` in `.sandman/config.yaml` → 1800 seconds (delegated review only) |
+
+An empty review command is a value, not a missing one. When the resolved command
+is empty or whitespace-only, the standalone cycle follows its blind branch and
+loads `sandman-blind-review` for each round; `sandman-review-request` returns
+`REVIEW_COMMAND_EMPTY` rather than posting a trigger. A blind round uses the
+harness's default model and has no timeout or polling window.
 
 So a repository that uses another reviewer, or a base branch other than
 `main`, sets it once in its `.sandman/config.yaml`; a repository without
@@ -131,9 +147,11 @@ command it was rendered with. Managed Runs are unaffected, because the Task
 supplies the command, and the next `sandman init` replaces the tree.
 
 Standalone use of `sandman-review-cycle` uses the versioned portable observer
-entry point for one confirmed request and retains the request envelope only in
-the active session. Managed implementation runs use the runtime's canonical
-request record and do not invoke the standalone cycle. The request envelope
+entry point for one confirmed delegated request and retains the request envelope
+only in the active session. With an empty review command it instead follows the
+blind branch and holds no request envelope. Managed implementation runs use the
+runtime's canonical request record or blind publication evidence and do not
+invoke the standalone cycle. The request envelope
 identifies the pull request, current head, confirmed trigger, effective timeout,
 and absolute deadline. The command returns one structured
 JSON result (`pending`, `responded`, `timed_out`, or `unavailable`). A responded

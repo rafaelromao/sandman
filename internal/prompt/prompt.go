@@ -10,7 +10,7 @@ type RenderConfig struct {
 	TaskPrompt         string            // raw task prompt text
 	ContextRecovery    bool              // true when TaskPrompt is a rollover fallback
 	ReviewCommand      string            // REVIEW_COMMAND substitution value
-	ReviewCommandSet   bool              // true when review_command should be recorded in events
+	ReviewCommandSet   bool              // true when review_command is configured (even empty: blind review); recorded in events
 	ReviewTimeout      int               // REVIEW_TIMEOUT substitution value in seconds
 	PromptArgs         map[string]string // arbitrary keys from config
 	// ReviewPromptFile is the path to the project's live review-prompt

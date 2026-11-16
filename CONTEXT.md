@@ -155,10 +155,12 @@ request the runtime did not observe: it waits for external recovery or proceeds
 to merge, wherever v1.0.0-rc.2 would have merged or kept waiting. Terminal
 failure is reserved for classified permanent reasons (closed pull request,
 explicit abort, unverifiable completion, formal requested changes left
-unrepaired, no review request delivered, GitHub unavailable for a whole
+unrepaired, no review request delivered when a review command is configured,
+GitHub unavailable for a whole
 **GitHub recovery window**). A stalled relaunch records a
 **resume signature** (gate, reason, live head, request trigger and response
-identities) in the wait so observation does not relaunch on unchanged evidence;
+identities, or blind publication identity) in the wait so observation does not
+relaunch on unchanged evidence;
 a recoverable failure becomes a **continuity hold**.
 _Avoid_: remediation exhaustion as failure, idle failure.
 _See_: Managed review lifecycle, Publication verdict.
@@ -179,9 +181,11 @@ _Avoid_: lookup failure as a permanent outcome.
 _See_: AFK continuity.
 
 **Publication verdict**:
-The closed-set decision (`approved` or `changes_requested`) the review daemon
+The closed-set decision (`approved` or `changes_requested`) a review publication
 stamps as a trailer directly before the publication identity of its posted
-report. The identity binds the report to one trigger revision and one reviewed
+report. The review daemon and a blind review round use the same trailer shape;
+a blind publication uses the fixed `blind-review` key and the reviewed head. The
+identity binds the report to one trigger revision and one reviewed
 head; a report bound to another request or head is stale. The runtime trusts
 the verdict additively: reports without it keep the prose approval rules, and an
 unknown verdict is never repair evidence. Only the Findings, Suggested next steps
@@ -206,6 +210,48 @@ _See_: Managed review lifecycle, Informal feedback, Review decision.
 A retained top-level or inline review response with concrete code feedback that is classified mechanically (code anchor: backtick span, file path, file+line, line reference, or diff hunk line, after boilerplate-only phrasing is excluded) as request-scoped lifecycle evidence. Informal feedback is request-scoped: only current-head responses inside the active request window, without the trigger prefix, produce it; stale, unknown, superseded, trigger, and formal-precedence-bearing responses do not. It is handed to a resumed run as `informal_feedback` inside the retained `review_request` and can only turn a recoverable pending lifecycle into the shared `actionable-feedback` await (bounded by the per-session resume cap) — it never authorizes a merge, approves a request, overrides formal review decisions, or consumes retry budget. References ADR-0052.
 _Avoid_: informal approval, comment classification.
 _See_: Implementation pull-request lifecycle, Review decision.
+
+**Review command**:
+The optional repository value that selects the pull-request review path. A
+non-empty command is posted as a delegated-review trigger and read by the review
+daemon. An absent, empty, or whitespace-only value is a real selection, not a
+missing default: it selects blind review.
+_Avoid_: default reviewer, daemon flag.
+_See_: Delegated review, Blind review.
+
+**Delegated review**:
+A pull-request review requested from an external reviewer by posting a comment
+that begins with the configured review command; the reviewer (normally the
+review daemon) answers on the pull request. Used only when a review command is
+configured.
+_Avoid_: daemon review (the reviewer need not be the daemon).
+_See_: Blind review, Review run.
+
+**Blind review**:
+The default pull-request review when no review command is configured: the
+implementor spawns a fresh subagent with no conversation context and gives it
+exactly the prompt the review daemon would give its reviewer for the same pull
+request and head. The subagent runs read-only in the same worktree on the
+harness's default model, not the configured review agent or model. Each round is
+published on the pull request in the same form as a daemon review. An implementor
+that cannot spawn a subagent fails closed; it never reviews its own change in its
+own context.
+_Avoid_: subagent review, self-review (self-review is the implementor's own pre-publication check).
+_See_: Delegated review, Publication verdict, Blind review evidence.
+
+**Blind review evidence**:
+The newest current-head publication from a blind review round, bound by its
+publication identity and verdict trailer. An `approved` verdict is current-head
+approval that authorizes merge only with green CI and a mergeable head;
+`changes_requested` is actionable feedback that resumes the same RunID. Blind
+publications are ignored when a review command is configured. The author is not
+filtered, and the identity binds the reviewed head but is not authentication;
+the implementor publishes with the operator's account. A green current-head pull
+request with no blind approval resumes the same RunID with
+`BLIND_REVIEW_REQUIRED`, which is recoverable implementor-owned work; unchanged
+evidence stalls and an exhausted allowance holds.
+_Avoid_: blind approval as a standing approval, self-approval.
+_See_: Blind review, Publication verdict, Current-head approval.
 
 **Review run**:
 A review run is an ordinary AgentRun that the review daemon launches in response to a `/sandman` comment on an open PR. It is **not** a special kind of run: it carries an ordinary per-row **RunID** minted per [ADR-0030](docs/adr/0030-standardize-run-id-and-run-dir.md) §Per-row RunID templates and lives at `.sandman/batches/<batch-id>/runs/<runID>/` like every other run kind. The two canonical review per-row RunID templates are:

@@ -184,7 +184,7 @@ func flatSkill(t *testing.T, path string) string {
 func TestStandaloneEntryPointsResolveRunContextInOrder(t *testing.T) {
 	run := flatSkill(t, "run/SKILL.md")
 	for _, required := range []string{
-		"| Review command | the caller → `review_command` in `.sandman/config.yaml` → `/sandman review` |",
+		"| Review command | the caller → `review_command` in `.sandman/config.yaml` → empty (blind review) |",
 		"| Base branch | the caller → the base of the open pull request for this branch → `git.base_branch` in `.sandman/config.yaml` → the repository's default branch |",
 		"| Implementation branch | the caller → the checked-out branch when it is not the base branch → the branch `sandman-implement` creates |",
 		"(`REVIEW_TIMEOUT`) | the caller → `review_timeout` in `.sandman/config.yaml` → 1800 seconds |",
@@ -205,7 +205,7 @@ func TestStandaloneEntryPointsResolveRunContextInOrder(t *testing.T) {
 	}
 	section := strings.Join(strings.Fields(cycle[resolve:loop]), " ")
 	for _, required := range []string{
-		"| Review command | the caller → `review_command` in `.sandman/config.yaml` → `/sandman review` |",
+		"| Review command | the caller → `review_command` in `.sandman/config.yaml` → empty (blind review) |",
 		"| Review timeout | the caller → `review_timeout` in `.sandman/config.yaml`, in seconds → 1800 seconds |",
 		"| Base branch | the caller → the pull request's base → `git.base_branch` in `.sandman/config.yaml` → the repository's default branch |",
 		"| Current branch | the caller → the checked-out branch, which is the pull request's branch |",

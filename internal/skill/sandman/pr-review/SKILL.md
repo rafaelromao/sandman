@@ -23,3 +23,6 @@ context to `sandman-review-cycle`.
 That cycle resolves any value the caller did not supply, from the repository's
 `.sandman/config.yaml` and then the defaults. A restart begins from live
 pull-request state; it does not import or trust managed lifecycle state.
+
+The review-command default is empty (blind review). Preserve an explicit empty
+value; the cycle selects `sandman-blind-review` rather than posting a trigger.

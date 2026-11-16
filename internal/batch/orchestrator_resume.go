@@ -15,6 +15,11 @@ import (
 const defaultAwaitResumeMax = 3
 
 const gateReviewRequestRequired = "review-request-required"
+
+// gateBlindReviewRequired selects implementor-owned blind review work: with
+// no delegated review command configured, the implementor runs one blind
+// review round for the current head and acts on its published verdict.
+const gateBlindReviewRequired = "blind-review-required"
 const gateOwnedWorkRequired = "implementor-work-required"
 
 // ownedWorkRetryReason is the run.retry reason for an attempt that exited

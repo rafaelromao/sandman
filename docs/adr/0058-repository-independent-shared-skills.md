@@ -67,6 +67,13 @@ install-time values; skill sync copies the files byte for byte.
 | Current branch | caller → checked-out branch |
 | Review timeout | caller → `review_timeout` → 1800 seconds |
 
+> **Later change (annotated 2026-11-15, #2968):** the review-command row's
+> final fallback is now blind review, not `/sandman review`. An absent, empty,
+> or whitespace-only `review_command` selects the blind round described in
+> [ADR-0059](0059-blind-review-as-the-default-pull-request-review.md); a
+> configured command keeps the delegated resolution above. The review timeout
+> remains delegated-only.
+
 ## Consequences
 
 ### Positive

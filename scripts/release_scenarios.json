@@ -335,6 +335,21 @@
     },
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBlindReviewManagedRun_DefaultUsesRealChildSession",
+      "tier": "live"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBlindReviewManagedRun_ConfiguredCommandPostsTriggerWithoutChild",
+      "tier": "live"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestBlindReviewFixtureModelAndVariantArePinned",
+      "tier": "integration"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestPresetMatrixHarness_GenericBuildsWithEditedDockerfile",
       "tier": "integration"
     },

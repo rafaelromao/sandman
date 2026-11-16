@@ -38,6 +38,11 @@ func readSkillMarkdown(t *testing.T) map[string]string {
 		if err != nil {
 			return err
 		}
+		// A renderer input, not skill prose. Its exact daemon-authored text
+		// is pinned by TestBlindPromptTemplateMatchesDaemon.
+		if filepath.ToSlash(rel) == "blind-review/review-prompt.md" {
+			return nil
+		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return err

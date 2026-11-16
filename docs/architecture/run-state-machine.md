@@ -43,13 +43,17 @@ queued → running ⇄ waiting → success / failure / aborted
 | Pending review request, but aggregate PR looks clean | Stay **waiting**; no approval-based resume |
 | Current-request actionable feedback | Resume implementation when capacity permits |
 | Current-request approval with green CI | Resume merge work when capacity permits |
+| Current-head blind approval with green CI and a mergeable head | Resume merge work when capacity permits |
+| Green current-head PR, no current-head blind approval, no configured review command | Resume one implementor-owned blind round (`BLIND_REVIEW_REQUIRED`) when capacity permits |
+| Blind round leaves head and evidence unchanged, or its relaunch allowance is exhausted | Stay **waiting** (`RESUME_STALLED` / continuity hold); never treat the missing publication as an expired delegated request |
+| Blind reviewer cannot be spawned | Fail closed with `REVIEW_SUBAGENT_UNAVAILABLE`; never self-approve or post a delegated trigger |
 | Next action ready, capacity occupied | Stay **waiting**, reason capacity |
 | CI failure or merge conflict | Resume bounded repair; when the relaunch allowance leaves the head unchanged, stay **waiting** for external recovery (rc2 behaviour) |
-| Missing PR or undelivered review request | Perform bounded owned-work remediation (`run.retry` reason `lifecycle-owned-work`), then failure; never invent external waiting |
+| Missing PR, or an undelivered review request when a review command is configured | Perform bounded owned-work remediation (`run.retry` reason `lifecycle-owned-work`), then failure; never invent external waiting |
 | Review request delivered by an attempt that exited non-success | Register it and stay **waiting**; spend no ordinary retry |
 | Feedback relaunch leaves head, request and responses unchanged | Stay **waiting** (`RESUME_STALLED`); do not relaunch on the same evidence |
 | Relaunch allowance exhausted on review, CI (including an expired CI wait), request or merge work | Stay **waiting** (`RESUME_STALLED`); genuine requested changes (formal `CHANGES_REQUESTED` or the review daemon's `changes_requested` verdict) left unrepaired finish **failure** |
-| Review request expired with nothing else resolving, or (without a delegated review command) an idle gate after owned work | Stay **waiting** (continuity hold) on an open current-head PR |
+| Review request expired with nothing else resolving, or an idle gate after owned work | Stay **waiting** (continuity hold) on an open current-head PR |
 | Recognized provider usage limit | Wait and probe; do not spend ordinary retries immediately |
 | Quota recovers | Resume limited run and reopen sibling admission |
 | Quota recovers, then CI becomes pending | Restore ordinary CI observation without another agent launch |
@@ -73,10 +77,13 @@ Permanent outcomes remain terminal: a closed or merged-elsewhere pull request,
 explicit abort, a merged pull request without verifiable completion, genuine
 requested changes (formal `CHANGES_REQUESTED` or the review daemon's
 `changes_requested` verdict) the implementor cannot address within its relaunch
-allowance, no review request delivered at all (`REVIEW_REQUEST_REQUIRED`),
-corrupt review state with nothing resolving, GitHub unavailable for a full
+allowance, no review request delivered at all when a review command is
+configured (`REVIEW_REQUEST_REQUIRED`), corrupt review state with nothing
+resolving, GitHub unavailable for a full
 24-hour recovery window (`GATE_LOOKUP_FAILED`), and agent authentication,
-usage-limit or operator stops. Every lifecycle failure
+usage-limit or operator stops. With no configured review command, a missing
+blind publication is owned work selected as `BLIND_REVIEW_REQUIRED`, not a
+terminal or external-review failure. Every lifecycle failure
 reason is classified once as permanent or recoverable; the AFK-continuity
 contract suite fails on an unclassified reason and replays the real incidents
 that motivated the rule.
@@ -156,6 +163,36 @@ approving report (`internal/batch/testdata/approved-*.md`) is a corpus test. The
 paraphrased approvals keep the prose rules, and an unknown daemon verdict is
 never repair evidence.
 
+## Blind review
+
+With no configured review command (absent, empty, or whitespace-only), review is
+implementor-owned work. The implementor spawns a fresh, context-free subagent
+with the exact daemon review prompt in the same worktree, read-only, and
+publishes the report on the pull request. The publication carries the shared
+verdict trailer and a fixed `blind-review` identity bound to the reviewed head;
+the newest current-head publication is the evidence. A configured review command
+ignores blind publications entirely.
+
+An `approved` blind verdict is current-head approval that selects `ready-to-merge`
+only when CI is green and the head is mergeable; `changes_requested` is
+actionable feedback that resumes the same RunID. With no current-head blind
+approval and no pending CI, a green open PR resumes with
+`BLIND_REVIEW_REQUIRED` (`blind-review-required`). That reason is recoverable and
+classified once as implementor-owned, never `REVIEW_REQUEST_REQUIRED`, an expired
+delegated request, or the old idle hold. A relaunch that leaves the head and
+blind evidence unchanged records its signature in `run.await`
+(`stalled_resumes`), and an exhausted relaunch allowance holds under
+`hold:<RunID>`; restart rehydrates both, and explicit abort revokes the resume.
+A harness that cannot spawn a fresh subagent fails closed with
+`REVIEW_SUBAGENT_UNAVAILABLE`; it must never review in the implementor's own
+context or post a delegated trigger instead.
+
+The publication author is deliberately not filtered, consistent with informal
+approval. The identity binds the verdict to the reviewed head but is not
+authentication: any account able to comment can publish a report with a valid
+trailer. That tradeoff is accepted in [ADR-0059](../adr/0059-blind-review-as-the-default-pull-request-review.md);
+green checks and a mergeable head still gate merge.
+
 ## Action and admission rules
 
 The runtime selects one action: await, resume, success, failure, or abort. Every
@@ -180,7 +217,9 @@ recognized resettable provider limit. Successful review delivery establishes an
 external operation even before a reviewer starts. A generic pending/CLEAN label,
 absent checks, nonexistent publication, or stale evidence does not establish one.
 A failed lookup does not establish a CI/review operation; it authorizes only the
-separate GitHub recovery wait described above.
+separate GitHub recovery wait described above. A blind review round is not an
+external wait: it is implementor-owned work that requires execution admission and
+is never satisfied by a pending delegated request or a daemon slot.
 
 Transient observation failures may retry an already-established identity-valid
 CI/review operation within its original deadline and bounded recovery budget.
@@ -190,7 +229,8 @@ attempts and 24-hour bound specified above. No poll, lookup retry, admission
 delay, executor reconstruction, or restart renews an operation's authorized
 lifetime.
 
-When managed review is enabled, merge work requires confirmed delegated
+When managed review is enabled with a configured review command, merge work
+requires confirmed delegated
 request-scoped approval for the current PR head and green CI. Missing delivery
 resumes review-request work. Reviewer process exit alone is not approval; stale,
 unknown formal `APPROVED`, mismatched, or superseded approval cannot authorize a
@@ -201,8 +241,15 @@ current-head request window; an explicitly stale `COMMENTED` review is not.
 An approving response's scope paths, metrics, or resolved history are not
 actionable feedback. Eligible approval is checked before informal feedback from
 the same request, matching the standalone review loop; formal requested changes,
-current-head CI failures and merge conflicts remain blocking. Explicitly disabled managed review retains its
-configuration contract.
+current-head CI failures and merge conflicts remain blocking. Explicitly disabled
+managed review retains its configuration contract.
+
+With no configured review command, the current-head blind publication is the
+review evidence. Its approval selects merge work only when CI is green and the
+head is mergeable; a publication bound to another head, an unknown verdict, or a
+configured-command repository cannot authorize merge. Blind requested changes
+resume the same RunID for repair. The author is not filtered; the identity binds
+the head but is not authentication (ADR-0059).
 
 The complete managed sequence is request confirmation -> waiting -> current-head
 feedback resume -> renewed request -> approval resume -> verified merge ->
@@ -233,7 +280,8 @@ remains terminal even when local commits have not been pushed.
 | --- | --- | --- |
 | Managed CI | **30 minutes** per identified current-head check execution, durable hard deadline | New head or verified same-head CI rerun |
 | Standalone CI | **60 minutes** and at most **three fixes** per current head within an invocation | New head or fresh invocation |
-| Delegated review | Configured `review_timeout`; default 1,800 seconds, minimum 240 seconds | New confirmed request |
+| Delegated review | Configured `review_timeout`; default 1,800 seconds, minimum 240 seconds; applies only when a review command is configured | New confirmed request |
+| Blind review round | Synchronous implementor round; no `review_timeout`, trigger envelope, or polling window | New head or fresh cycle/relaunch round |
 | Implementation provider quota | **Five hours of accumulated completed polling**, ten-minute intervals, then final boundary probe and configured ordinary retries | Verified recovery followed by a new quota episode; re-entry/restart preserves consumed polling |
 | Implementation lifecycle relaunch | Default **three in-session relaunches**, entry excluded; a feedback relaunch that changes nothing ends the allowance; exhaustion waits | Fresh executor session with a new resume signature |
 | Ordinary execution retry | Configured retry budget, including owned publication/review delivery recovery | Ordinary retry policy |

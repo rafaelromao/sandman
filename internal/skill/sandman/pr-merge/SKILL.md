@@ -25,6 +25,12 @@ of these is full approval on its own:
 - an eligible informal approval: a top-level response to the latest review
   request on the current head whose decision is APPROVED, with no Blocking or
   Important findings and no author changes requested.
+- when no review command is configured, a confirmed blind-review publication
+  for the current head whose verdict is approved, with no Blocking or Important
+  findings or outstanding formal requested changes. The newest current-head
+  blind report supersedes earlier rounds; a trigger or daemon author is not
+  required. With a configured command, blind publications do not satisfy its
+  delegated-review gate.
 
 A formal review is never required. The author and the reviewer may share one
 account, and the tracker does not let an author formally approve their own

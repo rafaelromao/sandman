@@ -72,6 +72,9 @@ func TestPortalRowDisplayStatus_StartedSuspensionGatesStayWaiting(t *testing.T) 
 		{name: "review", payload: map[string]any{"await_reason": "pending", "gate": "review"}},
 		{name: "ci", payload: map[string]any{"await_reason": "pending", "ci_wait": map[string]any{"deadline_unix_seconds": startedAt.Add(time.Hour).Unix()}}},
 		{name: "confirmed review request", payload: map[string]any{"await_reason": "pending"}},
+		{name: "blind review continuity hold", payload: map[string]any{
+			"gate": "blind-review-required", "reason": "BLIND_REVIEW_REQUIRED", "continuity_hold": true,
+		}},
 		{name: "quota", payload: map[string]any{"await_reason": "usage-limit"}},
 		{name: "ready to merge", payload: map[string]any{"await": true, "gate": "pending"}},
 	}

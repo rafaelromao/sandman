@@ -11,6 +11,58 @@ import (
 	"testing"
 )
 
+func TestLoad_ExplicitEmptyReviewCommandSelectsBlindReview(t *testing.T) {
+	for name, content := range map[string]string{
+		"empty":           "review_command: \"\"\n",
+		"whitespace-only": "review_command: \"  \"\n",
+		"null":            "review_command:\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			cfg, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if got := cfg.EffectiveReviewCommand(); got != "" {
+				t.Fatalf("EffectiveReviewCommand = %q, want empty (blind review)", got)
+			}
+			if got, err := cfg.GetValue("review_command"); err != nil || got != "" {
+				t.Fatalf("GetValue(review_command) = %q, %v; want empty", got, err)
+			}
+		})
+	}
+}
+
+func TestSetValue_EmptyReviewCommandIsAcceptedAndPersists(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("review_command: /custom review\n"), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := cfg.SetValue("review_command", ""); err != nil {
+		t.Fatalf("SetValue: %v", err)
+	}
+	if got := cfg.EffectiveReviewCommand(); got != "" {
+		t.Fatalf("after set, EffectiveReviewCommand = %q, want empty", got)
+	}
+	if err := Save(path, cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	reloaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := reloaded.EffectiveReviewCommand(); got != "" {
+		t.Fatalf("after save+load, EffectiveReviewCommand = %q, want empty", got)
+	}
+}
+
 func TestLoad_ValidConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
@@ -484,8 +536,8 @@ func TestLoad_MissingOptionalFields_AppliesDefaults(t *testing.T) {
 	if cfg.Git.BaseBranch != "main" {
 		t.Errorf("git.base_branch: got %q, want %q", cfg.Git.BaseBranch, "main")
 	}
-	if cfg.ReviewCommand != "/sandman review" {
-		t.Errorf("review_command: got %q, want %q", cfg.ReviewCommand, "/sandman review")
+	if cfg.ReviewCommand != "" {
+		t.Errorf("review_command: got %q, want empty (blind review)", cfg.ReviewCommand)
 	}
 	if cfg.Retries != DefaultRetries {
 		t.Errorf("retries: got %d, want %d", cfg.Retries, DefaultRetries)

@@ -126,7 +126,7 @@ func ordinaryRetryNoOp(verdict lifecycleVerdict) bool {
 	if verdict.Action == lifecycleNone {
 		return true
 	}
-	return reason == idleGateReason || reason == "REVIEW_REQUEST_REQUIRED"
+	return reason == idleGateReason || reason == "REVIEW_REQUEST_REQUIRED" || reason == blindReviewRequiredReason
 }
 
 func ordinaryRetryAfterGitHubRecovery(state ordinaryRetryState, branch string) lifecycleVerdict {
@@ -206,6 +206,8 @@ func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifec
 
 func isImplementorOwnedGateFailure(evidence map[string]any) bool {
 	reason, _ := evidence["reason"].(string)
+	// Blind rounds use lifecycle relaunch allowances, not the ordinary
+	// publication/request-delivery retry path represented by this predicate.
 	return reason == idleGateReason || reason == missingPRReason || reason == "REVIEW_REQUEST_REQUIRED"
 }
 

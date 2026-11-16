@@ -62,6 +62,10 @@ func resumeSignature(extras map[string]any, liveHead string) string {
 			signature["responses"] = list
 		}
 	}
+	if blind, ok := extras[blindReviewKey].(map[string]any); ok {
+		signature["blind_response"] = blind["comment_id"]
+		signature["blind_verdict"] = blind["verdict"]
+	}
 	data, _ := json.Marshal(signature)
 	return string(data)
 }
@@ -96,7 +100,7 @@ func stallsOnRepeat(extras map[string]any) bool {
 	gate, _ := extras["gate"].(string)
 	// Genuine requested changes keep their full relaunch allowance before
 	// their terminal outcome.
-	return gate == gateActionableFeedback && !formalChangesRequested(extras)
+	return gate == gateBlindReviewRequired || (gate == gateActionableFeedback && !formalChangesRequested(extras))
 }
 
 // formalChangesRequested reports genuine repair evidence: a formal
@@ -293,6 +297,7 @@ var lifecycleFailureReasons = map[string]bool{
 	"PULL_REQUEST_CLOSED":                 true,  // closed without merge
 	"PULL_REQUEST_MISSING":                true,  // the implementor never published
 	"REVIEW_REQUEST_REQUIRED":             true,  // no review request was delivered
+	blindReviewRequiredReason:             false, // owned blind review; exhaustion holds
 	"merged-pr-missing-closing-reference": true,  // merged without verifiable completion
 	"CI_WAIT_STATE_ERROR":                 true,  // corrupt CI wait state
 	stateErrorReason:                      true,  // corrupt review state, nothing resolving

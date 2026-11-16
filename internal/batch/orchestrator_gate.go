@@ -97,6 +97,9 @@ func checkPRExternalGateForPR(pr *github.PR, headSHA string, requireHead bool) s
 }
 
 func (s *runSession) retainedReviewDiagnostics(ctx context.Context, workDir, branch string, pr *github.PR, currentHead string) map[string]any {
+	if s.blindReviewMode() {
+		return nil
+	}
 	injectedStore := s.reviewRegistrationStore != nil || s.opts.reviewRegistrationStore != nil
 	if ctx.Err() != nil || pr == nil || (!reviewTimeoutArtifactsPresent(workDir) && !injectedStore) {
 		return nil
@@ -145,6 +148,11 @@ func (s *runSession) retainedReviewDiagnostics(ctx context.Context, workDir, bra
 // deciding what the live pull request means. Retained records enrich a
 // lifecycle decision; they never outrank the live merged or closed state.
 func (s *runSession) retainedLifecycleEvidence(ctx context.Context, workDir string, pr *github.PR, currentHead string) retainedReviewEvidence {
+	if s.blindReviewMode() {
+		// Blind evidence is fetched once by the lifecycle adapter so lookup
+		// errors enter GitHub recovery rather than masquerading as no review.
+		return retainedReviewEvidence{}
+	}
 	if pr == nil || s.deps.githubClient == nil {
 		return retainedReviewEvidence{}
 	}
@@ -236,6 +244,9 @@ func (s *runSession) retainedLifecycleEvidence(ctx context.Context, workDir stri
 // review run starts (issue #2743). Stale, mismatched, expired, corrupt, or
 // otherwise unusable records never authorize waiting.
 func (s *runSession) confirmedReviewRequestActive(ctx context.Context, workDir string, pr *github.PR, currentHead string) bool {
+	if s.blindReviewMode() {
+		return false
+	}
 	if pr == nil || pr.Number <= 0 || s.deps.githubClient == nil {
 		return false
 	}

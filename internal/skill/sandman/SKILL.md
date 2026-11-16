@@ -37,9 +37,12 @@ The focused review skills are capabilities, not separate lifecycle modes:
 
 - `sandman-review-request` delivers one managed review trigger without owning lifecycle state.
 - `sandman-review-cycle` observes and repairs one standalone review cycle in memory.
+- `sandman-blind-review` runs one fresh, context-free review round when the
+  review command is empty; the implementor publishes its decision.
 
 The `sandman-run` composition loads the standalone cycle automatically. Managed
-runs load the request capability while the runtime owns waiting and decisions.
+runs load the blind capability for an empty command or the request capability
+for a configured command, while the runtime owns waiting and decisions.
 
 ## Use
 
@@ -47,7 +50,8 @@ Load the matching subskill for the requested mode and follow it end to end.
 
 `run` is the standalone composition entrypoint for direct agent use. A managed
 CLI run keeps runtime-owned registration, waiting, evidence, resume, and
-terminal decisions; it uses `review-request` for delivery and does not route
+terminal decisions; it uses `blind-review` for an empty command or
+`review-request` for configured trigger delivery and does not route
 through `sandman-run` or `sandman-review-cycle`.
 
 Use `sandman code-review` in self-review context when reviewing the current implementation diff. The review daemon uses the same skill in daemon-review context with its supplied pull-request context and review worktree.

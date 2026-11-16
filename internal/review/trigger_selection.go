@@ -71,29 +71,7 @@ func selectReviewTriggers(ctx context.Context, input triggerSelectionInput) (tri
 	sort.Slice(comments, func(i, j int) bool {
 		return comments[i].CreatedAt.Before(comments[j].CreatedAt)
 	})
-	var priorReviewEntries []string
-	for _, comment := range comments {
-		if IsReviewRequest(comment.Body) {
-			continue
-		}
-		selection.PriorReviewExists = true
-		priorReviewEntries = append(priorReviewEntries, comment.Body)
-	}
-	for _, review := range input.FormalReviews {
-		selection.PriorReviewExists = true
-		priorReviewEntries = append(priorReviewEntries, fmt.Sprintf("### Formal review (%s)\n\n%s", review.State, review.Body))
-	}
-	for _, comment := range input.InlineReviewComments {
-		selection.PriorReviewExists = true
-		location := comment.Path
-		if comment.Line > 0 {
-			location = fmt.Sprintf("%s:%d", location, comment.Line)
-		}
-		priorReviewEntries = append(priorReviewEntries, fmt.Sprintf("### Inline review (%s)\n\n%s", location, comment.Body))
-	}
-	if len(priorReviewEntries) > 0 {
-		selection.PriorReviewContext = "## Authoritative prior review entries\n\n" + strings.Join(priorReviewEntries, "\n\n---\n\n")
-	}
+	selection.PriorReviewExists, selection.PriorReviewContext = PriorReviewContext(comments, input.FormalReviews, input.InlineReviewComments)
 
 	var candidates []reviewTrigger
 	for _, comment := range comments {

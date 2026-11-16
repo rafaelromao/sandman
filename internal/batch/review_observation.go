@@ -46,6 +46,11 @@ func (s *runSession) observeCurrentReviewEvidence(ctx context.Context, request r
 		if strings.TrimSpace(comment.ID) == "" || strings.HasPrefix(comment.Body, request.TriggerPrefix) {
 			continue
 		}
+		if reviewpub.AnswersBlind(comment.Body, request.HeadSHA) {
+			// Blind publications never answer delegated requests, including
+			// when the original trigger is absent from the returned comments.
+			continue
+		}
 		if triggerKnown && reviewpub.Published(comment.Body) && !reviewpub.Answers(comment.Body, triggerKey, request.HeadSHA) {
 			// A daemon publication bound to another request revision or head is
 			// not response evidence for this request. Exclude it rather than

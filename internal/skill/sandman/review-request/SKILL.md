@@ -5,6 +5,10 @@ description: Deliver one stateless delegated review request for a change request
 
 # Review Request
 
+An explicitly empty or whitespace-only review command selects
+`sandman-blind-review`, not a trigger. Return `REVIEW_COMMAND_EMPTY` without
+posting; the caller loads that capability instead.
+
 Use this capability when a caller needs one review trigger delivered and
 confirmed. The caller supplies the repository, pull-request number, current
 head, configured review command, and any request-scoped context.
