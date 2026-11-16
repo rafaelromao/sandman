@@ -162,8 +162,8 @@ func TestIncidentReplay_ReadyReviewAndCIDoNotPreemptActiveVerification(t *testin
 	select {
 	case <-factory.started:
 	case early := <-done:
-		raw, _ := log.Read()
-		t.Fatalf("Execute returned before the attempt started: %+v started=%t events=%+v", early.result, early.started, raw)
+		raw, readErr := log.Read()
+		t.Fatalf("Execute returned before the attempt started: %+v started=%t events=%+v (read error: %v)", early.result, early.started, raw, readErr)
 	case <-time.After(10 * time.Second):
 		t.Fatal("implementation attempt never started")
 	}

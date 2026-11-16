@@ -433,6 +433,11 @@ func TestRowDriverAdmissionRevalidationUnderDefaultCadence(t *testing.T) {
 			if !reflect.DeepEqual(waits, tc.wantWaits) {
 				t.Fatalf("waits = %v, want %v", waits, tc.wantWaits)
 			}
+			// An execution slot is released only after a launch, so a terminal
+			// observation never holds or returns one.
+			if gates.releases != tc.wantLaunches {
+				t.Fatalf("slot releases = %d, want %d (one per launch)", gates.releases, tc.wantLaunches)
+			}
 		})
 	}
 }
