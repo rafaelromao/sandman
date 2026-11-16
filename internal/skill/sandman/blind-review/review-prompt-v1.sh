@@ -3,7 +3,7 @@
 # closingIssuesReferences; issue view --json body; api --paginate for issue
 # comments, pull reviews and pull inline comments. Every lookup fails closed.
 set -eu
-repository= pull_request= head= run_dir=
+repository='' pull_request='' head='' run_dir=''
 fail() { printf '%s\n' "$1" >&2; exit 1; }
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -16,7 +16,7 @@ while [ "$#" -gt 0 ]; do
 done
 [ -n "$repository" ] && [ -n "$pull_request" ] && [ -n "$head" ] &&
   [ -n "$run_dir" ] || fail REVIEW_PROMPT_INVALID_INPUT
-helper_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+helper_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 template=$helper_dir/review-prompt.md
 root=$(git rev-parse --show-toplevel) || fail REVIEW_PROMPT_WORKTREE_MISSING
 if [ -s "$root/.sandman/reviews/review-prompt.md" ]; then

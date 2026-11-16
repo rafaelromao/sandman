@@ -156,3 +156,23 @@ func TestBlindPublicationOnlyTrustsFinalHeadBinding(t *testing.T) {
 		t.Fatal("a canonical current-head blind publication must be recognized")
 	}
 }
+
+func TestBlindPublicationChecksumFailureRefuses(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq unavailable")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "sha256sum"), []byte("#!/bin/sh\nexit 7\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	decision := filepath.Join(dir, "decision.md")
+	if err := os.WriteFile(decision, []byte("## Decision\nAPPROVED"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", "../skill/sandman/blind-review/publish-v1.sh",
+		"--decision-file", decision, "--head-sha", "abc", "--print-body")
+	cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if output, err := cmd.CombinedOutput(); err == nil {
+		t.Fatalf("checksum failure produced an apparently valid publication: %s", output)
+	}
+}

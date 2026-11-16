@@ -2,7 +2,7 @@
 # GitHub calls: pr view --json state,headRefOid; pr comment --body-file;
 # pr view --json state,headRefOid,comments. A failed mutation is never retried.
 set -eu
-repository= pull_request= head= decision= print_body=false
+repository='' pull_request='' head='' decision='' print_body=false
 refuse() {
   jq -cn --arg reason "$1" '{protocol:"blind-review/v1",state:"refused",reason:$reason}' >&2
   exit 1
@@ -20,11 +20,16 @@ done
 [ -n "$head" ] && [ -f "$decision" ] || refuse invalid-input
 head=$(printf '%s' "$head" | jq -Rr 'gsub("^\\s+|\\s+$"; "") | ascii_downcase')
 if command -v sha256sum >/dev/null 2>&1; then
-  identity=$(printf 'blind-review\000%s' "$head" | sha256sum | awk '{print $1}')
+  digest=$(printf 'blind-review\000%s' "$head" | sha256sum) || refuse checksum-failed
+elif command -v shasum >/dev/null 2>&1; then
+  digest=$(printf 'blind-review\000%s' "$head" | shasum -a 256) || refuse checksum-failed
 else
-  identity=$(printf 'blind-review\000%s' "$head" | shasum -a 256 | awk '{print $1}')
+  refuse checksum-unavailable
 fi
-helper_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+identity=${digest%% *}
+[ "${#identity}" -eq 64 ] || refuse checksum-invalid
+case "$identity" in *[!0-9a-f]*) refuse checksum-invalid ;; esac
+helper_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 if [ "$print_body" = true ]; then
   exec jq -Rrjs --arg identity "$identity" -f "$helper_dir/publication-v1.jq" "$decision"
 fi
