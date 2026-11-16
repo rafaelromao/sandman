@@ -3,6 +3,7 @@ package batch
 import (
 	"context"
 	"io"
+	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -257,5 +258,141 @@ func TestBatchObservation_DefaultCadenceWaitsThirtySecondsOnceBeforeResolution(t
 	defer mu.Unlock()
 	if len(waits) != 1 || waits[0] != 30*time.Second {
 		t.Fatalf("external waits = %v, want exactly one 30s wait before the first re-observation", waits)
+	}
+}
+
+// cadenceCIScenario drives one row through the production cadence while its
+// current-head checks stay pending. The injected clock advances by exactly the
+// interval the runtime asked to wait, so deadlines are judged against the real
+// 30-second cadence rather than a zero-duration override.
+type cadenceCIScenario struct {
+	launches      int
+	waits         []time.Duration
+	deadlines     []int64
+	executions    []string
+	log           *spyEventLog
+	result        *Result
+	err           error
+	finalDeadline int64
+}
+
+func runCadenceCIScenario(t *testing.T, polls int, mutate func(poll int, client *reviewWaitSchedulerGitHubClient)) *cadenceCIScenario {
+	t.Helper()
+	root := testenv.MkdirShort(t, "sm-cadence-ci-")
+	t.Chdir(root)
+	initGitRepo(t, root)
+	worktree := filepath.Join(root, "worktrees", "42-work")
+	statePath := filepath.Join(worktree, ".sandman", "state", "17.ci_wait.json")
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktree, ".sandman", "task.md"), []byte("# Task\nCI is running.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 12, 11, 0, 0, 0, time.UTC)
+	client := &reviewWaitSchedulerGitHubClient{fakeGitHubClient: fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, State: "closed"}},
+		prs:    map[string]*github.PR{"42-work": {Number: 17, State: "open", HeadRefName: "42-work", HeadRefOid: "head", Body: "Closes #42", StatusCheckRollup: "pending", CIExecutionID: "checks-1"}},
+	}}
+	scenario := &cadenceCIScenario{log: &spyEventLog{}}
+	factory := &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
+		scenario.launches++
+		return AgentRunResult{IssueNumber: issue.Number, Status: "success", Branch: branch}
+	}}
+	cfg := &config.Config{Agent: "test", Sandbox: "worktree", WorktreeDir: filepath.Join(root, "worktrees"), Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test": {Command: "true"}}}
+	poll := 0
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, scenario.log, WithErrorLog(io.Discard), WithRunnableFactory(factory),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: &retrySandbox{workDir: worktree}}),
+		WithRunSessionOpts(runSessionOptions{
+			releaseAwaitCapacity: true,
+			now:                  func() time.Time { return now },
+			currentHead:          func(string) (string, error) { return "head", nil },
+			awaitWait: func(ctx context.Context, interval time.Duration) error {
+				poll++
+				scenario.waits = append(scenario.waits, interval)
+				now = now.Add(interval)
+				if registration, err := readCIWaitRegistration(statePath); err == nil {
+					scenario.deadlines = append(scenario.deadlines, registration.DeadlineUnixSeconds)
+					scenario.executions = append(scenario.executions, registration.ExecutionID)
+				}
+				if mutate != nil {
+					mutate(poll, client)
+				}
+				if poll >= polls {
+					client.setPR("42-work", func(pr *github.PR) { pr.StatusCheckRollup, pr.State, pr.Merged = "success", "merged", true })
+				}
+				return ctx.Err()
+			},
+		}))
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	scenario.result, scenario.err = o.RunBatch(ctx, Request{Issues: []int{42}, Branches: map[int]string{42: "42-work"}, RunTS: "261112110000", RunShortID: "cadence-ci", Retries: 3, Parallel: 1})
+	if registration, err := readCIWaitRegistration(statePath); err == nil {
+		scenario.finalDeadline = registration.DeadlineUnixSeconds
+	}
+	return scenario
+}
+
+// Many 30-second polls of one identified execution never renew its 30-minute
+// bound, never add await records, and never spend relaunch or retry accounting.
+func TestBatchObservation_ThirtySecondPollsDoNotRenewCIWaitOrSpendAccounting(t *testing.T) {
+	scenario := runCadenceCIScenario(t, 20, nil)
+	if scenario.err != nil || scenario.result == nil || scenario.result.Runs[0].Status != "success" {
+		t.Fatalf("scenario did not complete: result=%+v err=%v", scenario.result, scenario.err)
+	}
+	if len(scenario.waits) != 20 {
+		t.Fatalf("waits = %d, want one 30s wait per observation (20)", len(scenario.waits))
+	}
+	for i, interval := range scenario.waits {
+		if interval != 30*time.Second {
+			t.Fatalf("wait %d = %v, want 30s", i, interval)
+		}
+	}
+	want := time.Date(2026, 11, 12, 11, 0, 0, 0, time.UTC).Add(ciWaitTimeout).Unix()
+	for i, deadline := range scenario.deadlines {
+		if deadline != want {
+			t.Fatalf("observation %d deadline = %d, want the original %d (faster polling must not renew it)", i, deadline, want)
+		}
+	}
+	events := scenario.log.snapshot()
+	if got := countEventsByType(events, "run.await"); got != 1 {
+		t.Fatalf("run.await events = %d, want one persisted wait for an unchanged operation identity", got)
+	}
+	if scenario.launches != 1 || countEventsByType(events, "run.resumed") != 0 || countEventsByType(events, "run.retry") != 0 {
+		t.Fatalf("launches=%d resumed=%d retries=%d, want no relaunch or retry spent by polling", scenario.launches, countEventsByType(events, "run.resumed"), countEventsByType(events, "run.retry"))
+	}
+}
+
+// A verified same-head rerun is a new external operation: it starts its own
+// bound, while earlier observations of the original execution kept theirs.
+func TestBatchObservation_SameHeadRerunStartsNewCIWaitGeneration(t *testing.T) {
+	scenario := runCadenceCIScenario(t, 12, func(poll int, client *reviewWaitSchedulerGitHubClient) {
+		if poll == 5 {
+			client.setPR("42-work", func(pr *github.PR) { pr.CIExecutionID = "checks-2" })
+		}
+	})
+	if scenario.err != nil || scenario.result == nil || scenario.result.Runs[0].Status != "success" {
+		t.Fatalf("scenario did not complete: result=%+v err=%v", scenario.result, scenario.err)
+	}
+	start := time.Date(2026, 11, 12, 11, 0, 0, 0, time.UTC)
+	first := start.Add(ciWaitTimeout).Unix()
+	// Observation i (0-based) follows wait i+1; the rerun is visible from the
+	// observation after the 5th wait, at start + 5*30s.
+	second := start.Add(5 * 30 * time.Second).Add(ciWaitTimeout).Unix()
+	for i, deadline := range scenario.deadlines {
+		want, execution := first, "checks-1"
+		if i >= 5 {
+			want, execution = second, "checks-2"
+		}
+		if deadline != want || scenario.executions[i] != execution {
+			t.Fatalf("observation %d = (%s, %d), want (%s, %d)", i, scenario.executions[i], deadline, execution, want)
+		}
+	}
+	events := scenario.log.snapshot()
+	if got := countEventsByType(events, "run.await"); got != 2 {
+		t.Fatalf("run.await events = %d, want one per CI wait generation", got)
+	}
+	if scenario.launches != 1 || countEventsByType(events, "run.resumed") != 0 {
+		t.Fatalf("launches=%d resumed=%d, want a rerun wait without relaunch or spent allowance", scenario.launches, countEventsByType(events, "run.resumed"))
 	}
 }
