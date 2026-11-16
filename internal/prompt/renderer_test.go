@@ -162,8 +162,8 @@ func TestRenderer_ConfigMappingReviewCommandFieldFallsThroughToDefault(t *testin
 
 	empty := RenderConfig{}
 	mapping = configMapping(empty)
-	if got := mapping["REVIEW_COMMAND"]; got == "" {
-		t.Errorf("expected default REVIEW_COMMAND, got empty")
+	if got := mapping["REVIEW_COMMAND"]; got != "" {
+		t.Errorf("expected empty default REVIEW_COMMAND (blind review), got %q", got)
 	}
 }
 

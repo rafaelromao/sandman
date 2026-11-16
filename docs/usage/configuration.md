@@ -22,27 +22,30 @@ model: opencode/big-pickle
 # a variant is set without a resolved model.
 variant: ""
 
-# Default agent preset used for review runs when `--agent` is omitted in `sandman review`.
+# Default agent preset used for delegated review runs when `--agent` is omitted
+# in `sandman review`. Blind review uses the harness's default model instead.
 review_agent: opencode
 
-# Default model passed to the review agent when `--model` is omitted in `sandman review`.
-# Defaults to the review agent's preset default model when unset.
+# Default model passed to the delegated review agent when `--model` is omitted
+# in `sandman review`. Defaults to the review agent's preset default model when
+# unset. Blind review does not use it.
 review_model: opencode/big-pickle
 
-# Optional provider-specific review model variant. Empty disables forwarding
-# it to the built-in review command.
+# Optional provider-specific delegated review model variant. Empty disables
+# forwarding it to the built-in review command. Blind review does not use it.
 review_variant: ""
 
 # Build tools preset for the container image (generic, dotnet, go, node, python, elixir, ruby, rust, java).
 build_tools: generic
 
 # Review command rendered into each Run's Task, and read by the shared skills
-# when you use them directly. Defaults to /sandman review, which requires `sandman review` to be
-# running before `sandman run`/`continue` will start. The daemon answers
+# when you use them directly. Empty (or absent/whitespace-only) selects blind
+# review: the implementor spawns a fresh, context-free subagent and publishes
+# its decision. Set a command, such as /sandman review, to delegate to an
+# external reviewer. A command containing /sandman requires `sandman review` to
+# be running before `sandman run`/`continue` will start. The daemon answers
 # any comment that starts with /sandman, so /sandman <anything> works too.
-# Set to /oc review (or any command that does not contain /sandman) to
-# opt out of the review daemon guard.
-review_command: /sandman review
+review_command: ""
 
 # Maximum number of concurrent agent runs.
 parallel: 1
@@ -179,8 +182,8 @@ The following built-in substitution keys are available in prompt templates:
 | `{{SOURCE_BRANCH}}` | Branch the agent starts from |
 | `{{BASE_BRANCH}}` | Branch the agent will rebase/PR against |
 | `{{BRANCH}}` | Alias for `{{SOURCE_BRANCH}}` |
-| `{{REVIEW_COMMAND}}` | Review command from project config |
-| `{{REVIEW_TIMEOUT}}` | Effective delegated review response budget in seconds |
+| `{{REVIEW_COMMAND}}` | Review command from project config; empty selects blind review |
+| `{{REVIEW_TIMEOUT}}` | Effective delegated review response budget in seconds; not used by blind review |
 
 Custom keys can be passed at runtime using the `--prompt-arg KEY=VALUE` flag on `sandman run` and referenced as `{{KEY}}` in the template.
 
@@ -239,13 +242,34 @@ This setting only controls successful implementation runs. Review worktrees and 
 
 Use this list when an OpenCode provider introduces new context-exhaustion wording. Entries are global additions for the built-in `opencode` AgentPreset, are trimmed and lowercased during configuration load, and match case-insensitively alongside built-in phrases. Empty entries and duplicates after normalization are rejected. These phrases never apply to other AgentPresets and do not override rate-limit, throttling, or service-unavailable exclusions.
 
+## Review command
+
+`review_command` selects the pull-request review path for every Run and for
+direct standalone skill use:
+
+| Value | Selected path |
+|-------|---------------|
+| absent, empty, or whitespace-only | **Blind review** — the implementor spawns a fresh, context-free subagent and publishes its decision |
+| non-empty command | **Delegated review** — the implementor posts that command as a trigger and the external reviewer answers |
+
+An absent key and an explicitly empty value both select blind review;
+`review_command: ""` is a real selection, not a missing value. That state
+round-trips through configuration, `config get`, the scaffold, the Run's Task,
+and `run.started` / `run.continued` events. Setting it to an empty string
+(`sandman config set review_command ""`) selects blind review explicitly.
+
+Blind review uses the harness's default model, not `review_agent`,
+`review_model`, or `review_variant`. Those values configure the review daemon
+and delegated review runs. `review_timeout` and its polling plan also apply only
+to delegated review. See [Reviews](reviews.md#blind-review-default).
+
 ## Delegated review timeout
 
 | Key | Default | Description |
 |-----|---------|-------------|
 | `review_timeout` | `1800` | Absolute wall-clock seconds allowed for one confirmed delegated PR review request. Values below `240` are rejected |
 
-`review_timeout` governs only the implementor-side delegated review response budget. The deadline starts after a trigger is posted and confirmed; every later command, API call, sleep, and scheduling delay consumes that one absolute budget. A later confirmed trigger receives a fresh full budget, while retries and continuations of the same trigger reuse its original deadline. It does not change the review daemon's reviewer AgentRun lifetime, lifecycle re-evaluation, idle timeout, or review-pass limit. `--review-timeout` overrides the project value for one run or continuation. The effective value is rendered into the current Task and recorded in `run.started` / `run.continued` payloads.
+`review_timeout` governs only the implementor-side delegated review response budget. The deadline starts after a trigger is posted and confirmed; every later command, API call, sleep, and scheduling delay consumes that one absolute budget. A later confirmed trigger receives a fresh full budget, while retries and continuations of the same trigger reuse its original deadline. It does not change the review daemon's reviewer AgentRun lifetime, lifecycle re-evaluation, idle timeout, or review-pass limit. `--review-timeout` overrides the project value for one run or continuation. The effective value is rendered into the current Task and recorded in `run.started` / `run.continued` payloads. Blind review has no timeout or polling window; a blind round is synchronous implementor-owned work.
 
 Delegated review and current-head CI waits retain logical row ownership but
 release the execution slot between observations. Review uses its confirmed
@@ -280,6 +304,7 @@ sandman config set container_capacity 2
 sandman config set start_delay 5
 sandman config set run_idle_timeout 3600
 sandman config set review_timeout 3600
+sandman config set review_command ""
 sandman config set model opencode/BigPickle
 sandman config set review_variant "provider/foo bar"
 sandman config set git.base_branch main
@@ -287,7 +312,7 @@ sandman config set git.base_branch main
 
 Use `sandman config get` and `sandman config set` for top-level config keys.
 
-Changing `review_command`, `review_timeout`, or `git.base_branch` with `sandman config set` only updates this file. The shared `~/.agents/skills/sandman/` tree is the same for every repository and carries none of these values; each Run's Task supplies them, and the skills read them from this file when you use them directly. See [Sandman Skills](skills.md#repository-and-run-values).
+Changing `review_command`, `review_timeout`, or `git.base_branch` with `sandman config set` only updates this file. The shared `~/.agents/skills/sandman/` tree is the same for every repository and carries none of these values; each Run's Task supplies them, and the skills read them from this file when you use them directly. See [Sandman Skills](skills.md#repository-and-run-values). A `review_command` set to an empty string selects blind review; it is not treated as unset.
 
 Sandman does not store a separate commit identity in project config. Agent commits use your host Git identity resolved in this order:
 

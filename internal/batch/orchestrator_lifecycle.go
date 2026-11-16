@@ -87,6 +87,7 @@ type implementationPRFacts struct {
 	attemptStatus     string
 	afterAgentAttempt bool
 	requireReview     bool
+	blindReview       bool
 }
 
 // lifecycleDecision is the outcome of decideImplementationPRLifecycle. The
@@ -138,6 +139,12 @@ func decideImplementationPRLifecycle(in implementationPRFacts) lifecycleDecision
 		return unhandled(lifecycleGateNone)
 	}
 	gate := lifecycleGate(checkPRExternalGateForPR(in.pr, in.headSHA, true))
+	if in.blindReview && gate == lifecycleGateReady &&
+		(!strings.EqualFold(strings.TrimSpace(in.pr.StatusCheckRollup), "success") || ciActive(in.pr, in.headSHA)) {
+		// Blind rounds and merge work require explicitly green checks. The
+		// legacy gate also accepts an absent rollup for historical callers.
+		gate = lifecycleGatePending
+	}
 	switch gate {
 	case lifecycleGateResolved:
 		if in.mergeFacts == nil {
@@ -174,6 +181,26 @@ func decideImplementationPRLifecycle(in implementationPRFacts) lifecycleDecision
 		}
 	case lifecycleGateFailed, lifecycleGatePending, lifecycleGateReady:
 		decision := decideRecoverableLifecycle(gate, in.pr, in.headSHA, in.repository, in.retainedEvidence, in.reviewRequested, in.attemptStatus, in.afterAgentAttempt)
+		if in.blindReview && !in.retainedEvidence.stateError &&
+			strings.EqualFold(in.pr.HeadRefOid, in.headSHA) && in.headSHA != "" &&
+			strings.EqualFold(strings.TrimSpace(in.pr.StatusCheckRollup), "success") &&
+			!ciActive(in.pr, in.headSHA) &&
+			!strings.EqualFold(strings.TrimSpace(in.pr.ReviewDecision), "CHANGES_REQUESTED") &&
+			!strings.EqualFold(strings.TrimSpace(in.pr.MergeStateStatus), "DIRTY") &&
+			!strings.EqualFold(strings.TrimSpace(in.pr.MergeStateStatus), "CONFLICTING") {
+			if in.retainedEvidence.outcome == retainedReviewApproval {
+				// A current-head blind publication is informal approval; the
+				// aggregate reviewDecision need not contain a formal approval,
+				// but approval cannot make a blocked/unknown head mergeable.
+				if strings.EqualFold(strings.TrimSpace(in.pr.MergeStateStatus), "CLEAN") {
+					return decideRecoverableLifecycle(lifecycleGateReady, in.pr, in.headSHA, in.repository, in.retainedEvidence, false, in.attemptStatus, in.afterAgentAttempt)
+				}
+				return decision
+			}
+			if !in.retainedEvidence.actionable {
+				return blindReviewRequiredDecision(in.pr, in.retainedEvidence.payload)
+			}
+		}
 		if in.requireReview && decision.action == lifecycleResume && decision.gate == lifecycleGateReady && in.retainedEvidence.outcome != retainedReviewApproval {
 			return lifecycleRemediationDecision(gateReviewRequestRequired, "REVIEW_REQUEST_REQUIRED", "deliver a confirmed current-head delegated-review request and obtain request-scoped approval before merge work", in.pr, in.retainedEvidence.payload)
 		}
@@ -555,6 +582,7 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 	gate := lifecycleGateNone
 	refreshUnavailable := false
 	reviewRegistrationFailure := false
+	var blindEvidence retainedReviewEvidence
 	if err != nil {
 		if s.deps.errorLog != nil {
 			fmt.Fprintf(s.deps.errorLog, "warning: external gate lookup for branch %q: %v\n", branch, err)
@@ -576,17 +604,29 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 		gate = lifecycleGate(checkPRExternalGateForPR(pr, headSHA, true))
 	}
 	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.State), "open") {
+		if s.blindReviewMode() && err == nil {
+			var lookupErr error
+			blindEvidence, lookupErr = s.blindReviewEvidence(ctx, pr, headSHA)
+			if lookupErr != nil {
+				// Use the existing bounded GitHub recovery window, including
+				// failed attempts; missing evidence is not an approval.
+				err = lookupErr
+			}
+		}
 		// Register a delivered review request before any admission filtering:
 		// a trigger posted during an attempt that then exited non-success is
 		// still a confirmed external operation of this Run (issue #2915).
 		registrationErr := s.ensureReviewRegistrationForPR(ctx, workDir, pr, headSHA, runID)
-		if attemptNeedsRetry(attemptStatus) {
+		if attemptNeedsRetry(attemptStatus) && err == nil {
 			// Avoid side effects for an attempt that has no lifecycle evidence
 			// worth evaluating. This is admission filtering only: it does not
 			// select an action; the full decision below remains authoritative
 			// whenever an active operation or retained evidence is present.
 			reviewRequested := s.confirmedReviewRequestActive(ctx, workDir, pr, headSHA)
 			evidence := s.retainedLifecycleEvidence(ctx, workDir, pr, headSHA)
+			if s.blindReviewMode() {
+				evidence = blindEvidence
+			}
 			if !reviewRequested && !ciActive(pr, headSHA) &&
 				!strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "failure") &&
 				!strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "DIRTY") &&
@@ -735,6 +775,9 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 	// wait from it and verified completion never pays for the lookup.
 	reviewRequested := s.confirmedReviewRequestActive(ctx, workDir, pr, headSHA)
 	evidence := s.retainedLifecycleEvidence(ctx, workDir, pr, headSHA)
+	if s.blindReviewMode() {
+		evidence = blindEvidence
+	}
 	if afterAgentAttempt && repository != "" && ciRerunAction != nil && pr != nil &&
 		ciRerunAction.matchesPullRequest(pr.Number, repository, headSHA) {
 		evidence.payload = mergeLifecycleDiagnostics(evidence.payload, map[string]any{ciRerunActionKey: ciRerunAction.payload()})
@@ -797,6 +840,7 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 		attemptStatus:     attemptStatus,
 		afterAgentAttempt: afterAgentAttempt,
 		requireReview:     strings.TrimSpace(s.renderCfg.ReviewCommand) != "",
+		blindReview:       s.blindReviewMode(),
 	})
 	if strings.EqualFold(pr.State, "open") && !evidence.stateError {
 		deadlines := cloneLifecycleExtras(evidence.payload)
@@ -825,6 +869,9 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 		decision = lifecycleRemediationDecision(gateOwnedWorkRequired, idleGateReason, idleGateNextAction, pr, evidence.payload)
 		if strings.TrimSpace(s.renderCfg.ReviewCommand) != "" {
 			decision = lifecycleRemediationDecision(gateReviewRequestRequired, "REVIEW_REQUEST_REQUIRED", "deliver a confirmed current-head delegated-review request before yielding or attempting merge work", pr, evidence.payload)
+		} else if s.blindReviewMode() && evidence.outcome != retainedReviewApproval &&
+			strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "success") && !ciActive(pr, headSHA) {
+			decision = blindReviewRequiredDecision(pr, evidence.payload)
 		}
 		decision.extras["external_gate"] = string(previousGate)
 		decision.extras["expected_head_sha"] = headSHA

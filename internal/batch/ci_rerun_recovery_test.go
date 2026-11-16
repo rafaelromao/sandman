@@ -272,7 +272,7 @@ func TestCIRerunPendingWaitFailureWithUnrelatedActivityRequiresRecordedRepairAnd
 	)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	result, err := o.RunBatch(ctx, Request{Issues: []int{42}, Branches: map[int]string{42: "42-work"}, RunTS: "261028221500", RunShortID: "ci-action-recovery", Retries: 3, Parallel: 1, PromptConfig: prompt.RenderConfig{ReviewCommandSet: true}})
+	result, err := o.RunBatch(ctx, Request{Issues: []int{42}, Branches: map[int]string{42: "42-work"}, RunTS: "261028221500", RunShortID: "ci-action-recovery", Retries: 3, Parallel: 1, PromptConfig: prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewCommandSet: true}})
 	if err != nil || result == nil || result.Runs[0].Status != "success" {
 		t.Fatalf("managed CI recovery did not complete: result=%+v error=%v launches=%d polls=%d events=%+v", result, err, launches, polls, log.snapshot())
 	}

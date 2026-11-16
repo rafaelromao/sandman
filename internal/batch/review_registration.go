@@ -293,6 +293,9 @@ func reviewRegistrationDiagnostic(registration *reviewRequestRegistration) map[s
 }
 
 func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, pr *github.PR, currentHead string) error {
+	if s.blindReviewMode() {
+		return nil
+	}
 	if pr == nil || pr.Number <= 0 || strings.TrimSpace(currentHead) == "" {
 		return fmt.Errorf("current pull-request identity is unavailable")
 	}
@@ -302,13 +305,15 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 	if s.deps.githubClient == nil {
 		return fmt.Errorf("GitHub client is unavailable")
 	}
+	prefix := strings.TrimSpace(s.renderCfg.ReviewCommand)
+	if prefix == "" {
+		// An empty prefix is never a trigger. Blind rounds have no delegated
+		// registration and must not accidentally match every PR comment.
+		return nil
+	}
 	comments, err := s.deps.githubClient.ListPRComments(ctx, pr.Number)
 	if err != nil {
 		return fmt.Errorf("list review triggers: %w", err)
-	}
-	prefix := strings.TrimSpace(s.renderCfg.ReviewCommand)
-	if prefix == "" {
-		prefix = config.DefaultReviewCommand
 	}
 	trigger, ok := latestReviewTrigger(comments, prefix, s.reviewAttemptStartedAt)
 	if !ok {
@@ -773,6 +778,9 @@ func isDecimal(value string) bool {
 
 func (s *runSession) ensureReviewRegistrationForPR(ctx context.Context, workDir string, pr *github.PR, currentHead, runID string) error {
 	s.reviewRegistrationObserved = false
+	if s.blindReviewMode() {
+		return nil
+	}
 	if s.deps.githubClient == nil {
 		return nil
 	}

@@ -1,6 +1,77 @@
 # Reviews
 
-Sandman runs review agents through a daemon that watches open pull requests for the configured review command.
+Sandman has two pull-request review paths. With no review command configured, it
+uses **blind review**: the implementor runs one fresh, context-free review round
+and publishes the decision itself. With a non-empty `review_command`, it uses
+**delegated review**: the implementor posts a trigger and an external reviewer,
+normally the review daemon, answers on the pull request.
+
+## Blind review (default)
+
+An absent, empty, or whitespace-only `review_command` selects blind review. An
+explicitly empty value is a selection, not a missing default. To return to
+delegated review, set a non-empty command.
+
+Each blind round works as follows:
+
+- **Fresh reviewer, no context.** The implementor spawns one fresh
+  general-purpose subagent in the implementation worktree. Its entire user
+  message is the review prompt; it receives no implementation summary, plan,
+  conversation history, or extra instructions. It uses the harness's default
+  model, not `review_agent`, `review_model`, or `review_variant`.
+- **Exact daemon prompt.** One derivation shared with the review daemon renders
+  the prompt for the same pull request and head: linked work item acceptance
+  criteria, prior-review existence and context, formal reviews, inline comments,
+  and the review snapshot header. The subagent reads
+  `.sandman/reviews/quality-rules.md` exactly as a daemon reviewer does and
+  reports it unavailable when missing. There is no review focus because no
+  trigger was posted, so `{{REVIEW_FOCUS}}` is empty.
+- **Read-only and same worktree.** The round runs in the current worktree. The
+  reviewer may read the pull request and worktree and writes its report to a
+  temporary `RUN_DIR` outside the worktree. After the round, the implementor
+  requires HEAD, the full worktree status, and the live pull-request head to
+  match the pre-review snapshot. A changed worktree or head is a
+  `REVIEW_READ_ONLY_VIOLATION`: preserve the report for diagnosis, never publish
+  or accept it.
+- **Every round is published.** The implementor posts the decision as a
+  top-level pull-request comment in the same form as a daemon review:
+  `/sandman` redaction, the closed-set verdict trailer, and the publication
+  identity last. The identity uses the fixed `blind-review` trigger key and the
+  reviewed head, so a report binds to exactly one head. The next round reads
+  prior publications from the pull request like any other prior review.
+- **No timeout or polling.** A blind round is synchronous. `review_timeout`, the
+  trigger prefix, the request envelope, the poll plan, and the 240-second
+  minimum belong to delegated review only. The standalone cycle keeps its
+  ten-passes-per-head budget and its CI allowance.
+- **Fail closed.** A harness that cannot spawn a fresh, context-free subagent
+  returns `REVIEW_SUBAGENT_UNAVAILABLE` with the next action to configure
+  `review_command`. The implementor never reviews its own change in its own
+  context and never silently posts a delegated-review trigger instead.
+
+### Blind evidence and the runtime
+
+The newest current-head blind publication decides the review outcome. An
+`approved` verdict is current-head approval and gives `ready-to-merge` only when
+CI is green and the head is mergeable. A `changes_requested` verdict is
+actionable feedback and resumes the same RunID. A publication for another head,
+an unknown verdict, or no publication yields no evidence. When a review command
+is configured, blind publications are ignored.
+
+With no review command configured, green CI and no current-head blind approval
+resume the same RunID with reason `BLIND_REVIEW_REQUIRED` (gate
+`blind-review-required`). It is recoverable, implementor-owned work, not
+`REVIEW_REQUEST_REQUIRED`, an expired request, or the old idle hold. Pending CI
+still yields. A relaunch that leaves the head and blind evidence unchanged
+records its signature in `stalled_resumes` and waits; an exhausted relaunch
+allowance holds under `hold:<RunID>`. Explicit abort revokes the resume, and
+restart rehydrates the evidence from events.
+
+The publication author is deliberately not filtered, consistent with informal
+approval. The identity binds the report to one reviewed head, but it is not
+authentication: any account able to comment can post a report carrying a valid
+trailer. The accepted tradeoff is the repository's GitHub permissions plus the
+operator's own-account workflow, with required checks and a mergeable head still
+gating merge. See [ADR-0059](../adr/0059-blind-review-as-the-default-pull-request-review.md).
 
 ## Review daemon
 
@@ -22,7 +93,11 @@ The CLI value wins when supplied. Both configured and CLI values are trimmed
 but otherwise treated as opaque provider-specific text. Empty values do not
 add a variant flag to the OpenCode command.
 
-The daemon polls open pull requests for the configured review command, which defaults to:
+The daemon is unchanged by the blind-review default. It watches open pull
+requests for comments that begin with the `/sandman` command, whether or not a
+`review_command` is configured. Blind review posts no trigger, so the daemon is
+part of the automatic loop only when you configure a review command and the
+implementor requests it. A typical delegated command is:
 
 ```text
 /sandman review
@@ -97,15 +172,26 @@ Errors remain visible on stderr. Locally repairable failures are also kept in
 By default, `sandman init` writes this config:
 
 ```yaml
-review_command: /sandman review
+review_command: ""
 ```
 
-Runs that use `/sandman review` expect the review daemon to be available. Start `sandman review` before launching implementation runs when you want the full implement-review loop.
+An empty command selects blind review and does not require the review daemon.
 
-To opt out of the daemon guard, set a different review command that does not contain `/sandman`:
+Setting a command that contains `/sandman`, such as `/sandman review`, selects
+delegated review through the daemon. `sandman run` then requires the daemon to
+be available: start `sandman review` before launching implementation runs for
+the full delegated loop.
+
+To delegate to another reviewer whose command does not contain `/sandman`:
 
 ```bash
 sandman config set review_command "/oc review"
+```
+
+To return to blind review, set it back to an empty value:
+
+```bash
+sandman config set review_command ""
 ```
 
 Changing `review_command` only updates the project configuration; the next Run's Task, and any standalone skill session, uses the new command. The installed shared skill tree does not change.
@@ -202,7 +288,11 @@ normal path. If review launches fail with `mise: not found`, see
 
 ## Review output
 
-The review agent writes its response to the review worktree's `decision.md`; that file is only a handoff. The daemon copies it into the review's run folder, removes self-triggering review-command text, and saves the exact text it will post as the run's pending publication (`pending-publication.json`) before posting it as a pull-request comment. If posting fails or the daemon restarts, it posts that saved text later, first checking that it was not already posted, and removes the pending publication only once the post is confirmed. Deleting the worktree's `decision.md` does not cancel a saved publication.
+This handoff and its run artifacts belong to delegated review runs. A blind
+round publishes directly from its temporary `RUN_DIR` and writes no managed
+review run, `pending-publication.json`, or review registration state.
+
+The delegated review agent writes its response to the review worktree's `decision.md`; that file is only a handoff. The daemon copies it into the review's run folder, removes self-triggering review-command text, and saves the exact text it will post as the run's pending publication (`pending-publication.json`) before posting it as a pull-request comment. If posting fails or the daemon restarts, it posts that saved text later, first checking that it was not already posted, and removes the pending publication only once the post is confirmed. Deleting the worktree's `decision.md` does not cancel a saved publication.
 
 Review runs appear in:
 
@@ -213,7 +303,7 @@ Review runs appear in:
 
 ## Review prompt
 
-`.sandman/reviews/review-prompt.md` is the **live daemon template** for pull-request reviews. `sandman init` writes it into `.sandman/reviews/` alongside `.sandman/reviews/quality-rules.md`; the review daemon reads it back for every review run and renders each launched reviewer request from it. Edit the file in the repository to make repository-specific prompt instructions govern reviewer behavior — later reviews pick up the change without a daemon restart.
+`.sandman/reviews/review-prompt.md` is the **live review template** for pull-request reviews, used by the daemon and by blind review alike. `sandman init` writes it into `.sandman/reviews/` alongside `.sandman/reviews/quality-rules.md`; the review daemon reads it back for every review run and renders each launched reviewer request from it. Blind review renders the same template for each fresh subagent. Edit the file in the repository to make repository-specific prompt instructions govern reviewer behavior — later reviews pick up the change without a daemon restart.
 
 The template is PR-agnostic. PR context is injected per run through these placeholders:
 
@@ -223,16 +313,20 @@ The template is PR-agnostic. PR context is injected per run through these placeh
 | `{{PR_TITLE}}` | Pull-request title |
 | `{{PR_BODY}}` | Pull-request body |
 | `{{ACCEPTANCE_CRITERIA}}` | Linked work item's acceptance criteria |
-| `{{REVIEW_FOCUS}}` | The review focus: the text after `/sandman review`, or after `/sandman` for any other `/sandman` command |
-| `{{RUN_DIR}}` | The review worktree directory (where `decision.md` is written) |
+| `{{REVIEW_FOCUS}}` | The review focus: the text after `/sandman review`, or after `/sandman` for any other `/sandman` command; empty for a blind round |
+| `{{RUN_DIR}}` | The review worktree directory (where `decision.md` is written); a temporary directory outside the worktree for a blind round |
 | `{{PRIOR_REVIEW_EXISTS}}` | `YES`/`NO` — whether a prior review exists |
 | `{{PRIOR_REVIEW_CONTEXT}}` | Prior review entries supplied by the daemon |
+
+A blind round renders the same placeholders from the same pull-request data. It
+has no trigger, so `{{REVIEW_FOCUS}}` is empty, and its `{{RUN_DIR}}` is the
+round's temporary directory outside the worktree.
 
 The file is preserved across re-runs of `sandman init`. When it is missing, the daemon atomically re-materializes it from the built-in default before rendering the next review, so the shared template always exists on disk. An empty or whitespace-only template is treated as if it were missing and renders the built-in default.
 
 ### Reviewer versus implementor roles
 
-The default prompt requires the `sandman-code-review` skill for daemon reviews and explicitly forbids `sandman-pr-review`, `sandman-review-cycle`, and `sandman-run`. `sandman-pr-review` is only a compatibility facade over the standalone cycle; the daemon reviewer is **read-only** and must not enter either standalone workflow. It reports mergeability or CI problems as findings but never fixes code, pushes, merges, posts GitHub comments, or requests another review. Health repairs are different: they are separate modifying prompt-only runs on the host (see [Health repair](#health-repair)). Keep that boundary when you edit the template — a review prompt that tells the reviewer to orchestrate the pull request will conflict with the daemon's own posting workflow.
+The default prompt requires the `sandman-code-review` skill for daemon and blind reviews and explicitly forbids `sandman-pr-review`, `sandman-review-cycle`, and `sandman-run`. `sandman-pr-review` is only a compatibility facade over the standalone cycle; both the daemon reviewer and the blind subagent are **read-only** and must not enter either standalone workflow. They report mergeability or CI problems as findings but never fix code, push, merge, post GitHub comments, or request another review. A blind subagent writes only its report; the implementor publishes it. Health repairs are different: they are separate modifying prompt-only runs on the host (see [Health repair](#health-repair)). Keep that boundary when you edit the template — a review prompt that tells the reviewer to orchestrate the pull request will conflict with the caller's own posting workflow.
 
 The template must not contain stray `{{...}}` literals beyond the placeholders above: an unknown key fails the render and the review is not launched.
 
@@ -269,4 +363,5 @@ Complexity analyzers are a **reviewer-only** capability. They are not invoked an
 - [Commands Reference](commands.md#sandman-review) — full `sandman review` flags
 - [Configuration](configuration.md) — `review_command`, `review_agent`, `review_model`, `review_variant`, and `parallel_reviews`
 - [Portal](portal.md) — watching review runs in the browser
-- [Sandman Skills](skills.md) — how skills resolve the review command
+- [Sandman Skills](skills.md) — how skills resolve the review command and run a blind round
+- [ADR-0059](../adr/0059-blind-review-as-the-default-pull-request-review.md) — blind review as the default pull-request review

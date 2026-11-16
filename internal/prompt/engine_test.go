@@ -33,7 +33,7 @@ func TestRender_BuiltInDefaultRendersIssueData(t *testing.T) {
 	want = strings.ReplaceAll(want, "{{SOURCE_BRANCH}}", data.SourceBranch)
 	want = strings.ReplaceAll(want, "{{BASE_BRANCH}}", data.BaseBranch)
 	want = strings.ReplaceAll(want, "{{BRANCH}}", data.SourceBranch)
-	want = strings.ReplaceAll(want, "{{REVIEW_COMMAND}}", "/sandman review")
+	want = strings.ReplaceAll(want, "{{REVIEW_COMMAND}}", "")
 	want = strings.ReplaceAll(want, "{{REVIEW_TIMEOUT}}", "1800")
 
 	if result != want {

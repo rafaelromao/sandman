@@ -8,6 +8,20 @@ description: "Runs one standalone in-memory review cycle after a pull request is
 Remain AFK throughout the cycle: apply owned fixes and continue or record a
 structured diagnostic without requesting operator input.
 
+## Select the review path
+
+Resolve the review command from the caller, then the repository configuration,
+then the default in the context table below. An explicitly supplied empty or
+whitespace-only value is a real selection, not a missing value.
+
+**Empty command:** follow [Blind cycle](blind-cycle.md) in full instead of the
+delegated workflow below. Load `sandman-blind-review` for each round. Its fresh
+subagent is the reviewer; never review the change in this implementor session.
+
+**Configured command:** follow the delegated workflow below unchanged. Its
+trigger, deadline, observation and clarification rules apply only to that path.
+For example, `/sandman review` explicitly selects the review daemon.
+
 ## Hard rules
 
 1. **You must NOT review the PR yourself in this session.**
@@ -55,7 +69,7 @@ as a value supplied by the caller (the composing `sandman-run` workflow):
 
 | Value | Sources, in order |
 |---|---|
-| Review command | the caller → `review_command` in `.sandman/config.yaml` → `/sandman review` |
+| Review command | the caller → `review_command` in `.sandman/config.yaml` → empty (blind review) |
 | Review timeout | the caller → `review_timeout` in `.sandman/config.yaml`, in seconds → 1800 seconds |
 | Base branch | the caller → the pull request's base → `git.base_branch` in `.sandman/config.yaml` → the repository's default branch |
 | Current branch | the caller → the checked-out branch, which is the pull request's branch |

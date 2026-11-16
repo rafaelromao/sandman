@@ -22,7 +22,13 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
     - Source branch: `{{SOURCE_BRANCH}}`
     - Base branch: `{{BASE_BRANCH}}`
     - Review command: `{{REVIEW_COMMAND}}`
-    - Delegated review response timeout: `{{REVIEW_TIMEOUT}}` seconds
+- Delegated review response timeout: `{{REVIEW_TIMEOUT}}` seconds (not used for blind review)
+
+An empty Review command selects `sandman-blind-review`: spawn a fresh,
+context-free subagent with the exact daemon review prompt and publish its
+decision. A non-empty command selects `sandman-review-request` as before.
+Every reference below to a trigger or confirmed request applies only to the
+configured-command path; blind review has no trigger or delegated-review wait.
 
     The worktree MUST be checked out on `{{BRANCH}}` when the run finishes. Do not switch to `{{BASE_BRANCH}}` or any other branch before exiting.
 
@@ -35,7 +41,7 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
     - [ ] Create branch
     - [ ] Plan (Load `sandman-plan`)
     - [ ] Implement (Load `sandman-implement`)
-    - [ ] PR-Review (Load `sandman-review-request` for one stateless trigger)
+- [ ] PR-Review (Load `sandman-blind-review` when the command is empty; otherwise `sandman-review-request` for one stateless trigger)
     - [ ] PR-Merge (Load `sandman-pr-merge`)
 
     Each checklist step is a skill-load directive. The agent MUST emit a `Skill "sandman-<name>"` invocation in its transcript before doing any work for that step; the step is not considered started until the skill is loaded. Steps completed without their skill loaded are invalid — for example, a `gh pr create` body composed without first loading `sandman-implement` does not satisfy the closing-reference body requirement (one of `Closes #<issue_number>`, `Fixes #<issue_number>`, `Resolves #<issue_number>`) and is not acceptable.
@@ -48,9 +54,17 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
 
     The registered next step is the first unchecked item in the Execution Checklist.
 
-    ## Managed Review Boundary
+## Managed Review Boundary
 
-    Managed implementation runs use `sandman-review-request` only for one guarded,
+When Review command is empty, once CI is green load `sandman-blind-review` for
+one round. The implementor publishes the report and acts on its verdict.
+Requested changes remain owned work: fix, test and push, then yield only while
+CI is running. Current-head blind approval permits merge when all merge gates
+pass. The runtime can resume this work with `BLIND_REVIEW_REQUIRED`; exhausted
+or unchanged relaunches retain the same RunID in a continuity hold.
+
+The following trigger-delivery boundary applies only to a configured command.
+Managed implementation runs use `sandman-review-request` only for one guarded,
     confirmed review trigger. The runtime owns request registration, CI and review
     observation, evidence validation, waiting, resume, retries, and terminal
     decisions. Do not load `sandman-review-cycle` or `sandman-run` from a managed
@@ -168,9 +182,11 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
     |------|-------------------|-------|
     | Plan approval (TDD) | Subagent review + consensus | Only step that explicitly requires subagent review |
     | Self-review | `sandman-code-review` skill in self-review context |
-    | Managed PR review | `sandman-review-request` skill | Stateless delivery; **must NOT use subagent**
+| Managed PR review | Empty command: `sandman-blind-review`; configured command: `sandman-review-request` | Fresh blind subagent or stateless external trigger |
 
-    **PR review is the only step where subagent review is banned.** Use the managed request skill for this Sandman-created worktree. Subagent review is recommended for plan approval.
+With a configured command, use the external reviewer rather than a subagent.
+With an empty command, use the fresh blind subagent through
+`sandman-blind-review`. Neither path permits implementor self-approval.
 
     ### Examples of Banned Questions
 
@@ -210,7 +226,7 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
     ## Required Order
 
     1. Complete checklist items in order: Create branch, Plan, Implement, PR-Review, PR-Merge.
-    2. For plan-approval, use subagent review. For self-review, use `sandman-code-review` skill in self-review context. Managed PR delivery uses `sandman-review-request`. Subagent review is banned for PR review. Proceed after consensus/completion. Do not ask the user.
+2. For plan-approval, use subagent review. For self-review, use `sandman-code-review` skill in self-review context. Managed PR review uses `sandman-blind-review` when the command is empty and `sandman-review-request` otherwise. Proceed after consensus/completion. Do not ask the user.
     3. **PR creation is not PR review.** A PR existing does not mean it has been reviewed or is ready to merge. Before loading `sandman-pr-merge`, the agent MUST confirm that the managed request produced a reviewed/approved state. If the last completed step is "PR Created" and the PR is not approved or not mergeable, re-enter the managed request path before `sandman-pr-merge` — do not skip the review step. If any merge gate is false or ambiguous, continue that path instead of reporting blockers to the user.
     4. **PR-Review is `[x]` only when the managed request has Approval against the current diff.** `PR-Review` cannot be marked complete on the basis of exhausted review waits, timeouts, or zero reviewer responses. Approval must be current to the head SHA recorded at the last `{{REVIEW_COMMAND}}` request (issue #2309); an approval from a prior SHA is stale and does not authorize merging the current diff.
     5. If `PR-Review` completes with full approval and all merge gates are true, load and run `sandman-pr-merge`.

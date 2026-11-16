@@ -406,6 +406,23 @@ is present (see [Full regression](#full-regression-sandman_full_regression)).
 The `Full Regression - Linux` workflow sets both, so its real-agent coverage
 genuinely exercises the free `opencode/big-pickle` model.
 
+### Blind and delegated review acceptance
+
+`TestBlindReviewManagedRun_DefaultUsesRealChildSession` and
+`TestBlindReviewManagedRun_ConfiguredCommandPostsTriggerWithoutChild` run the
+real OpenCode implementor through a managed command and worktree sandbox,
+against a recording local GitHub fixture. They use an isolated credential-only
+HOME and session database. The blind case checks an actual child session and
+compares its first user message byte-for-byte with the daemon prompt; the
+configured-command case checks a single trigger and no child review.
+
+The committed model remains `opencode/big-pickle`. For local validation, these
+cases honor the existing `SANDMAN_TEST_MODEL_OPENCODE` override and the optional
+`SANDMAN_TEST_VARIANT_OPENCODE` (empty by default). The small model is pinned to
+the selected model too. Local overrides do not change the release provider pin
+or substitute for required release evidence. Each scenario retains the existing
+15-minute live-agent deadline; run the tagged suite with its 90-minute timeout.
+
 ## Cleanup after interrupted tests
 
 Smoke and e2e tests can create worktrees, containers, batch directories, temp directories, and shim state. If a run is interrupted before cleanup executes, remove residue with `sandman clean --all` (or pick a specific mode flag from the recipes below — bare `sandman clean` is a hard error).

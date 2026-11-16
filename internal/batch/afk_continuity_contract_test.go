@@ -296,6 +296,9 @@ type continuityScenario struct {
 	expireAfterFirstAwait bool
 	// noReviewCommand runs without a delegated review command.
 	noReviewCommand bool
+	// blindReview selects the explicitly empty-command capability, rather than
+	// the historical unset-command continuity fixture.
+	blindReview bool
 	// requireAwait asserts that the Run recorded a wait before its outcome.
 	requireAwait bool
 	// expectOneTrigger asserts the recovery path did not replace the
@@ -515,6 +518,10 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 	if sc.noReviewCommand {
 		req.PromptConfig.ReviewCommand = ""
 	}
+	if sc.blindReview {
+		req.PromptConfig.ReviewCommand = ""
+		req.PromptConfig.ReviewCommandSet = true
+	}
 	if sc.continueRun {
 		req.Mode = map[int]IssueMode{42: ModeContinue}
 	}
@@ -541,7 +548,7 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 		executor := fresh.newRunExecutorWith(context.Background(), BatchConfig{Cfg: cfg}, nil, nil, newBatchCoordinator(nil), nil, paths.NewLayout(cfg, root))
 		return executor.observeRowLifecycle(context.Background(), RowSpec{
 			IssueNumber: 42, RunID: runID, BaseBranch: "main", Branches: map[int]string{42: continuityBranch},
-			RenderCfg: prompt.RenderConfig{ReviewCommand: continuityTrigger, ReviewTimeout: 1800},
+			RenderCfg: req.PromptConfig,
 		})
 	}
 	return continuityOutcome{events: history, launches: launches, status: result.Runs[0].Status, triggers: g.triggerCount(), observeAfterRestart: restart}
@@ -1906,7 +1913,7 @@ func TestAFKContinuityContract_LifecycleFailureReasonsAreClassified(t *testing.T
 			t.Errorf("lifecycle reason %q is not classified for the AFK-continuity guard", reason)
 		}
 	}
-	for _, reason := range []string{idleGateReason, reviewTimeoutReason, "CI_WAIT_TIMEOUT", githubUnavailableReason} {
+	for _, reason := range []string{idleGateReason, reviewTimeoutReason, "CI_WAIT_TIMEOUT", githubUnavailableReason, blindReviewRequiredReason} {
 		if !lifecycleFailureRecoverable(reason) {
 			t.Errorf("%s must wait for external recovery, as rc2 did", reason)
 		}

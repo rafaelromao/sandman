@@ -121,6 +121,11 @@ sandman init \
   --review-timeout 1800
 ```
 
+Omitting `--review-command` records an empty `review_command`, which selects
+blind review. Pass a non-empty command, such as `/sandman review`, to delegate
+to the review daemon, or another command to use a different external reviewer.
+`--review-timeout` applies only to delegated review.
+
 Useful init flags:
 
 | Flag | Purpose |
@@ -132,11 +137,11 @@ Useful init flags:
 | `--tool-version` | Language/tool version selector |
 | `--parallel` | Default concurrent agent runs |
 | `--parallel-reviews` | Default concurrent review runs |
-| `--review-command` | Review command stored as `review_command`; each Run's Task carries it, and the shared skills read it when used directly |
+| `--review-command` | Review command stored as `review_command`; empty selects blind review, a non-empty command selects delegated review; each Run's Task carries it, and the shared skills read it when used directly |
 | `--base-branch` | Base branch stored as `git.base_branch`; omitted, `init` records the repository's default branch (`origin/HEAD`), else `main` |
 | `--retries` | Persist default retry count |
 | `--run-idle-timeout` | Persist idle timeout in seconds |
-| `--review-timeout` | Persist delegated review response timeout in seconds; minimum `240`, default `1800` |
+| `--review-timeout` | Persist delegated review response timeout in seconds; minimum `240`, default `1800`; blind review has no timeout |
 
 OpenCode generations are separate presets: `opencode` installs `opencode-ai@1.x`,
 while `opencode-v2` installs `@opencode/cli@2.x`. Each pins its detected host

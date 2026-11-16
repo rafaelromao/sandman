@@ -24,7 +24,7 @@ const (
 	DefaultReviewAgent       = "opencode"
 	DefaultReviewModel       = "opencode/big-pickle"
 	DefaultBuildToolsPreset  = "generic"
-	DefaultReviewCommand     = "/sandman review"
+	DefaultReviewCommand     = ""
 	DefaultParallel          = 1
 	DefaultReviewParallel    = 1
 	DefaultStartDelay        = 0

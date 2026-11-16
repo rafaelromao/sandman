@@ -22,10 +22,13 @@ them to every capability this workflow loads:
 
 | Value | Sources, in order |
 |---|---|
-| Review command | the caller → `review_command` in `.sandman/config.yaml` → `/sandman review` |
+| Review command | the caller → `review_command` in `.sandman/config.yaml` → empty (blind review) |
 | Base branch | the caller → the base of the open pull request for this branch → `git.base_branch` in `.sandman/config.yaml` → the repository's default branch |
 | Implementation branch | the caller → the checked-out branch when it is not the base branch → the branch `sandman-implement` creates |
 | Delegated review response timeout (`REVIEW_TIMEOUT`) | the caller → `review_timeout` in `.sandman/config.yaml` → 1800 seconds |
+
+An explicitly empty or whitespace-only command is a value: preserve it as the
+blind-review selection instead of falling through to another source.
 
 ```bash
 git branch --show-current                                         # checked-out branch
@@ -202,9 +205,11 @@ The Required Skill Chain defines specific tools for each review type:
 |------|-------------------|-------|
 | Plan approval (TDD) | Subagent review + consensus | Only step that explicitly requires subagent review |
 | Self-review | `sandman-code-review` skill in self-review context |
-| Standalone PR review | `sandman-review-cycle` skill | In-memory observation; **must NOT use subagent** |
+| Standalone PR review | `sandman-review-cycle` skill | Empty command: fresh blind subagent; configured command: delegated review |
 
-**PR review is the only step where subagent review is banned.** Use the standalone review cycle for this workflow. Subagent review is recommended for plan approval.
+With a configured review command, PR review uses the external reviewer, not a
+subagent. With an explicitly empty command, the standalone review cycle uses
+`sandman-blind-review`. Self-review never substitutes for either path.
 
 ### Examples of Banned Questions
 
@@ -244,7 +249,7 @@ that order:
 1. Complete checklist items in order: Create branch, Plan, Implement, PR-Review, PR-Merge.
 2. For plan-approval, use subagent review. For self-review, use
    `sandman-code-review` in self-review context. Standalone PR review uses
-   `sandman-review-cycle`; subagent review is banned for PR review. Proceed
+   `sandman-review-cycle`; an empty command selects its blind subagent path. Proceed
    after consensus/completion. Do not ask the caller.
 3. **PR creation is not PR review.** A PR existing does not mean it has been
    reviewed or is ready to merge. Before loading `sandman-pr-merge`, the agent

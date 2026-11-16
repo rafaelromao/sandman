@@ -10,6 +10,12 @@ may compose this capability with `sandman-review-cycle` and `sandman-pr-merge`.
 `sandman-review-request` is a separate stateless capability; this capability
 does not own the iterative review loop.
 
+After publication, the composing workflow selects the review path. An empty
+review command selects `sandman-blind-review`; a configured command selects
+`sandman-review-request`. Standalone composition uses `sandman-review-cycle`
+for either path. Managed tasks retain runtime-owned waiting and decisions,
+and never load the standalone cycle to perform a blind round.
+
 ## Scope
 
 This skill implements an open work item by modifying the current repository's source code, tests, and configuration files. It also updates user-facing shared guidance when the work item explicitly requires it; it does not otherwise change capability definitions or repository meta-infrastructure.

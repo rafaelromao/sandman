@@ -51,6 +51,17 @@ Review runs are ordinary AgentRuns. Each row in the runs table — including rev
 
 The row folder under `.sandman/batches/<batch-id>/runs/<runID>/` is named after that per-row RunID, so logs, sockets, and `review-state.json` live under a folder whose name matches the row identity surfaced in the UI. `.sandman/reviews/` is reserved for the review daemon's own files (`review.sock`, `review-prompt.md`) and never holds per-row run folders.
 
+### Blind review in the portal
+
+A blind review round is implementor-owned work, not a review run. It adds no
+separate row, `reviewCount`, or `reviewVerdict`; the implementation row shows
+**running** while the round executes and **waiting** for a capacity delay, a
+stalled relaunch, a continuity hold, or
+`BLIND_REVIEW_REQUIRED` when green CI has no current-head blind approval. The
+same RunID resumes the round or merge work after a current-head blind approval
+with green CI and a mergeable head. A blind wait has no saved delegated review
+request; restart rehydrates its gate and evidence from events.
+
 ### Public BatchId vs per-row RunID
 
 The portal works with three distinct things: two identifiers and one location (per-row RunID shapes are pinned by ADR-0030). `<ts>` is a `YYMMDDhhmmss` timestamp and `<sid>` is four hex characters.
@@ -69,7 +80,7 @@ Use the picker to switch between the continuation and the previous run without c
 
 ### Upgrades
 
-Sandman does not generally migrate on-disk state across version upgrades. Runs waiting on a pull-request review are carried forward when their saved review request, head, and state are complete and valid; incomplete or stale legacy review state is never promoted. Clearing `.sandman/` discards waiting runs and their history, so do it only when status or portal rows still look wrong after upgrading and no run needs to be preserved: clear `.sandman/` and re-run `sandman init`. See [Upgrades](../architecture/disk-layout.md#upgrades) for the exact contract and [Troubleshooting](../help/troubleshooting.md#portal-shows-unknown-rows-after-upgrading-sandman) for the symptom and fix.
+Sandman does not generally migrate on-disk state across version upgrades. Runs waiting on a delegated pull-request review are carried forward when their saved review request, head, and state are complete and valid; incomplete or stale legacy review state is never promoted. A blind-review wait has no saved delegated request and is rehydrated from events instead. Clearing `.sandman/` discards waiting runs and their history, so do it only when status or portal rows still look wrong after upgrading and no run needs to be preserved: clear `.sandman/` and re-run `sandman init`. See [Upgrades](../architecture/disk-layout.md#upgrades) for the exact contract and [Troubleshooting](../help/troubleshooting.md#portal-shows-unknown-rows-after-upgrading-sandman) for the symptom and fix.
 
 ## Abort
 
@@ -185,7 +196,7 @@ The single-row keyed lookup returns `run` (singular) instead of `runs`:
 
 Not all fields appear in every row. `lastOutputAt`, `socketPath`, and `logUrl` are omitted for terminal rows. `review`, `reviewCount`, and `reviewVerdict` are only present for rows that own child review runs.
 
-Started suspension is shown as **waiting**, including when external work has resolved and the next action is delayed by capacity. Readiness evidence does not return a started run to queued. Duration remains frozen through suspension and then adds to the same RunID's total, even after different-batch rehydration; a new RunID starts fresh. Initial admission remains unfinished queued. A linked active review may display **reviewing** independently of the implementation's running/waiting phase; terminal parents retain their outcome. Explicit abort ends all unfinished owned rows. See the canonical [state machine](../architecture/run-state-machine.md).
+Started suspension is shown as **waiting**, including when external work has resolved and the next action is delayed by capacity. Readiness evidence does not return a started run to queued. Duration remains frozen through suspension and then adds to the same RunID's total, even after different-batch rehydration; a new RunID starts fresh. Initial admission remains unfinished queued. A linked active review may display **reviewing** independently of the implementation's running/waiting phase; terminal parents retain their outcome. A blind review round is implementor-owned and never promotes the row to **reviewing**. Explicit abort ends all unfinished owned rows. See the canonical [state machine](../architecture/run-state-machine.md) and [Blind review in the portal](#blind-review-in-the-portal).
 
 ### `GET /api/runs/stream`
 

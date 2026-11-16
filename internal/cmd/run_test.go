@@ -4602,7 +4602,7 @@ func TestRun_PromptConfigDefaultsEmpty(t *testing.T) {
 	if len(spy.req.PromptConfig.PromptArgs) != 0 {
 		t.Errorf("expected empty PromptArgs, got %v", spy.req.PromptConfig.PromptArgs)
 	}
-	if spy.req.PromptConfig.ReviewCommand != "/sandman review" {
+	if spy.req.PromptConfig.ReviewCommand != "" {
 		t.Errorf("expected default ReviewCommand, got %q", spy.req.PromptConfig.ReviewCommand)
 	}
 }
