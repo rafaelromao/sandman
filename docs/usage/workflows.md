@@ -86,7 +86,13 @@ Reuses the existing branch for issue #42 and the stored `.sandman/task.md` from 
 
 ## Managed review lifecycle
 
-With the default review command, `sandman run` delivers one guarded review
+With the default (empty) review command, the implementor runs one blind review
+round per head and publishes its report on the pull request; the runtime waits
+only for current-head CI and trusts the newest current-head blind publication.
+See [Blind review](reviews.md#blind-review-default) for the round, evidence and
+runtime behavior. The rest of this section describes delegated review.
+
+With a configured review command, `sandman run` delivers one guarded review
 request and then owns the rest of the lifecycle. A parent run waits after the
 request is confirmed, releasing execution capacity while the request is
 observed. Current-head feedback resumes the same RunID for implementation;
