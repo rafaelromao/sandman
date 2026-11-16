@@ -1126,10 +1126,11 @@ func TestClaudeProviderE2EsRequireManualDispatch(t *testing.T) {
 	}
 }
 
-func TestReleaseOpenCodePinMatchesScaffoldFallback(t *testing.T) {
+func TestReleaseOpenCodePinsMatchScaffoldAndLiveTier(t *testing.T) {
 	var manifest struct {
 		Providers map[string]struct {
-			CLI string `json:"cli"`
+			CLI   string `json:"cli"`
+			Model string `json:"model"`
 		} `json:"providers"`
 	}
 	if err := json.Unmarshal([]byte(readRepositoryFile(t, "release_scenarios.json")), &manifest); err != nil {
@@ -1142,5 +1143,9 @@ func TestReleaseOpenCodePinMatchesScaffoldFallback(t *testing.T) {
 	workflow := readRepositoryFile(t, "../.github/workflows/release-regression-tier.yml")
 	if !strings.Contains(workflow, "npm install -g opencode-ai@"+pin) || !strings.Contains(workflow, "$(opencode --version)\" = "+pin) {
 		t.Fatal("release installation and prerequisite check must match the manifest pin")
+	}
+	if model := manifest.Providers["opencode"].Model; model == "" ||
+		!strings.Contains(workflow, "SANDMAN_TEST_MODEL_OPENCODE: "+model) {
+		t.Fatalf("release OpenCode model %q must match the live-tier model pin", model)
 	}
 }

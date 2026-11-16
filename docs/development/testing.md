@@ -178,12 +178,14 @@ Claude provider E2Es run in a separate manual tier when `Full Regression - Linux
 is dispatched with `run_claude` enabled; only that job receives Claude credentials. Ordinary PR CI runs only the single minimal OpenCode canary described below; the full provider suites remain release-only.
 
 Every Linux tier provisions Node 22, Chromium and validated rootless Podman
-with runc. Live additionally installs `opencode-ai@1.19.3` and requires
-`OPENCODE_API_KEY`. The optional manual Claude tier installs
-`@anthropic-ai/claude-code@2.1.283` and requires `CLAUDE_CODE_OAUTH_TOKEN`.
+with runc. Live additionally installs `opencode-ai@1.19.3` and requires an
+`OPENCODE_API_KEY` Console key with available credits. The optional manual
+Claude tier installs `@anthropic-ai/claude-code@2.1.283` and requires
+`CLAUDE_CODE_OAUTH_TOKEN`.
 Each provider tier checks its own CLI version. OpenCode auth is
-written as JSON with mode 0600. The selected model identifiers are
-`opencode/big-pickle` and `claude-haiku-4-5-20251001`. Missing credentials,
+written as JSON with mode 0600. Release live and canary use the paid, low-cost
+Console model `opencode/deepseek-v4.1-flash`; the optional Claude tier uses
+`claude-haiku-4-5-20251001`. Missing credentials,
 tools, required tests, unexpected skips and duplicate executions fail validation.
 Quota/provider failures remain failures; they cannot produce successful coverage.
 
@@ -403,8 +405,9 @@ the suite runs as normal.
 In addition to the `SANDMAN_RUN_AGENT_E2E` opt-in, the real-agent tests also
 self-skip when the generic `CI` env var is set — unless `SANDMAN_FULL_REGRESSION=1`
 is present (see [Full regression](#full-regression-sandman_full_regression)).
-The `Full Regression - Linux` workflow sets both, so its real-agent coverage
-genuinely exercises the free `opencode/big-pickle` model.
+The `Full Regression - Linux` workflow sets both and overrides the local
+default with the release model from `scripts/release_scenarios.json`, so its
+real-agent coverage exercises the same paid Console model as the canary.
 
 ### Blind and delegated review acceptance
 
@@ -648,7 +651,10 @@ A merge queue would also require `merge_group` CI and title-gate support first.
 
 Regular CI runs one tool-free `opencode run` invocation for its OpenCode canary on
 Linux (60-second provider deadline, three-minute job, no containers, and no retry
-loop inside that job), using the release manifest's exact CLI/model. The invocation
+loop inside that job), using the release manifest's exact CLI/model:
+`opencode/deepseek-v4.1-flash`, a paid low-cost Console model. The repository
+`OPENCODE_API_KEY` must be a Console key with available credits; free-model quota
+is not used for release validation. The invocation
 names its session and pins OpenCode's small model to that model, so the release model
 is the only model requested, and the real-agent regression scenarios do the same. If
 the deadline expires the job reports the provider's own logged error. This process

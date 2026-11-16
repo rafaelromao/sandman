@@ -10,6 +10,8 @@ from unittest.mock import patch
 import opencode_canary
 from opencode_canary import evaluate, stall_detail, PIN_GUIDANCE
 
+OPENCODE_MODEL = 'opencode/deepseek-v4.1-flash'
+
 
 class CanaryTests(unittest.TestCase):
     def test_real_response_required(self):
@@ -45,12 +47,12 @@ def stream_error(model, message):
 class StallDiagnosticTests(unittest.TestCase):
     def test_reports_the_providers_error_for_a_stalled_request(self):
         log = '\n'.join(['INFO service=default starting',
-                         stream_error('big-pickle', 'AI_APICallError: Rate limit exceeded'),
-                         stream_error('big-pickle', 'AI_APICallError: Rate limit exceeded'),
+                         stream_error('deepseek-v4.1-flash', 'AI_APICallError: Rate limit exceeded'),
+                         stream_error('deepseek-v4.1-flash', 'AI_APICallError: Rate limit exceeded'),
                          stream_error('gpt-5.4-nano', 'AI_RetryError: Failed after 3 attempts')])
         detail = stall_detail(log)
         self.assertIn('3 failed attempt(s)', detail)
-        self.assertIn('big-pickle: AI_APICallError: Rate limit exceeded', detail)
+        self.assertIn('deepseek-v4.1-flash: AI_APICallError: Rate limit exceeded', detail)
         self.assertEqual(detail.count('Rate limit exceeded'), 1, 'repeated messages are listed once')
         self.assertIn('gpt-5.4-nano: AI_RetryError', detail)
 
@@ -60,7 +62,7 @@ class StallDiagnosticTests(unittest.TestCase):
 
     def test_never_echoes_raw_log_lines_or_the_authentication_key(self):
         secret = 'private-test-key'
-        log = '\n'.join([stream_error('big-pickle', f'AI_APICallError: bad {secret} ' + 'x' * 500),
+        log = '\n'.join([stream_error('deepseek-v4.1-flash', f'AI_APICallError: bad {secret} ' + 'x' * 500),
                          'level=INFO message="headers" authorization="Bearer ' + secret + '"'])
         detail = stall_detail(log, secret)
         self.assertNotIn(secret, detail)
@@ -81,7 +83,7 @@ class CanaryTimeoutTests(unittest.TestCase):
             root = Path(directory)
             (root / 'scripts').mkdir()
             (root / 'scripts/release_scenarios.json').write_text(json.dumps({
-                'providers': {'opencode': {'cli': '1.18.0', 'model': 'opencode/big-pickle'}}}))
+                'providers': {'opencode': {'cli': '1.18.0', 'model': OPENCODE_MODEL}}}))
             cli = root / 'opencode'
             cli.write_text("#!/usr/bin/env python3\nimport os,sys,time\n"
                            "if sys.argv[1] == '--version': print('1.18.0'); sys.exit(0)\n"
@@ -91,7 +93,7 @@ class CanaryTimeoutTests(unittest.TestCase):
                            "time.sleep(60)\n")
             cli.chmod(0o755)
             env = {'PATH': str(root) + os.pathsep + os.environ['PATH'], 'OPENCODE_API_KEY': 'fixture-token',
-                   'STREAM_ERROR': stream_error('big-pickle', 'AI_APICallError: Rate limit exceeded fixture-token')}
+                    'STREAM_ERROR': stream_error('deepseek-v4.1-flash', 'AI_APICallError: Rate limit exceeded fixture-token')}
             output = io.StringIO()
             previous = Path.cwd()
             os.chdir(root)
@@ -104,7 +106,7 @@ class CanaryTimeoutTests(unittest.TestCase):
         self.assertEqual(result, 1)
         message = output.getvalue()
         self.assertIn('exceeded its 1-second deadline', message)
-        self.assertIn('big-pickle: AI_APICallError: Rate limit exceeded [redacted]', message)
+        self.assertIn('deepseek-v4.1-flash: AI_APICallError: Rate limit exceeded [redacted]', message)
         self.assertNotIn('fixture-token', message)
 
 
@@ -115,7 +117,7 @@ class CanaryProcessTests(unittest.TestCase):
             root = Path(directory)
             (root / 'scripts').mkdir()
             (root / 'scripts/release_scenarios.json').write_text(json.dumps({
-                'providers': {'opencode': {'cli': '1.18.0', 'model': 'opencode/big-pickle'}}}))
+                'providers': {'opencode': {'cli': '1.18.0', 'model': OPENCODE_MODEL}}}))
             cli = root / 'opencode'
             cli.write_text("#!/usr/bin/env python3\nimport json,os,sys\n"
                            "if sys.argv[1] == '--version': print('1.18.0'); sys.exit(0)\n"
@@ -132,11 +134,11 @@ class CanaryProcessTests(unittest.TestCase):
             calls = [json.loads(line) for line in record.read_text().splitlines()]
             self.assertEqual(len(calls), 1)
             self.assertIsNone(calls[0]['permission'], 'canary must keep the official CLI tool schema')
-            self.assertEqual(calls[0]['args'][:5], ['run', '--format', 'json', '-m', 'opencode/big-pickle'])
+            self.assertEqual(calls[0]['args'][:5], ['run', '--format', 'json', '-m', OPENCODE_MODEL])
             args = calls[0]['args']
             self.assertEqual(args[args.index('--title') + 1], 'sandman-canary',
                              'an explicit title spares OpenCode a request to its default small model')
-            self.assertEqual(json.loads(calls[0]['config']), {'small_model': 'opencode/big-pickle'},
+            self.assertEqual(json.loads(calls[0]['config']), {'small_model': OPENCODE_MODEL},
                              'the small model must be the release model, so no other model can be requested')
             self.assertEqual(calls[0]['home'], calls[0]['cwd'])
             self.assertNotEqual(calls[0]['cwd'], str(root))
