@@ -177,7 +177,9 @@ class TransportTest(unittest.TestCase):
         if temp_root is None and Path("/tmp/opencode").is_dir():
             temp_root = "/tmp/opencode"
         with tempfile.TemporaryDirectory(prefix="blind-contract-", dir=temp_root) as temp:
-            root = Path(temp)
+            # Helpers compare physical paths (pwd -P), exactly as OpenCode records
+            # its working directory. Resolve symlinked temp roots (macOS /var).
+            root = Path(temp).resolve()
             worktree = root / "worktree"
             worktree.mkdir()
             bin_dir = root / "bin"
