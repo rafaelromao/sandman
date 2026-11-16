@@ -37,7 +37,7 @@ func TestLifecyclePollIntervals_PersistedIntPlan(t *testing.T) {
 
 func TestLifecyclePollIntervals_MalformedFallbackUsesDefault(t *testing.T) {
 	s := &runSession{opts: runSessionOptions{}}
-	want := []time.Duration{120 * time.Second, 60 * time.Second, 60 * time.Second, 30 * time.Second}
+	want := []time.Duration{30 * time.Second}
 	cases := []map[string]any{
 		// non-integer float
 		{"review_request": map[string]any{"poll_plan": []any{float64(30.5), float64(60)}}},
@@ -64,7 +64,7 @@ func TestLifecyclePollIntervals_NegativeIntFallback(t *testing.T) {
 		"review_request": map[string]any{"poll_plan": []int{120, -1}},
 	}
 	got := s.lifecyclePollIntervals(extras)
-	want := []time.Duration{120 * time.Second, 60 * time.Second, 60 * time.Second, 30 * time.Second}
+	want := []time.Duration{30 * time.Second}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected fallback to default plan %v on negative int, got %v", want, got)
 	}

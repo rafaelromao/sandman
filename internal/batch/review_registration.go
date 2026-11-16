@@ -24,7 +24,11 @@ const reviewRegistrationProtocol = "review-registration/v1"
 
 var errReviewRegistrationHeadChanged = errors.New("review registration head changed")
 
-var implementationReviewPollPlan = []int{120, 60, 60, 30}
+// managedObservationPollPlan is the plan recorded for new managed
+// review-request registrations: one interval, in seconds, that applies from the
+// first poll and repeats. A registration retained from an earlier version keeps
+// its own valid plan, which the foreground observer still honours.
+var managedObservationPollPlan = []int{int(managedObservationInterval / time.Second)}
 
 type reviewRequestRegistration struct {
 	Protocol       string                `json:"protocol"`
@@ -410,7 +414,7 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 		StartedUnixSeconds:  startedUnix,
 		DeadlineUnixSeconds: deadlineUnix,
 		EffectiveTimeout:    timeout,
-		PollPlan:            append([]int(nil), implementationReviewPollPlan...),
+		PollPlan:            append([]int(nil), managedObservationPollPlan...),
 	}
 	elapsed := 0
 	registration := reviewRequestRegistration{

@@ -217,8 +217,8 @@ func TestReviewRegistration_RegistersOnePendingCurrentHeadRecord(t *testing.T) {
 	if record.State.State != "pending" || record.State.ObservedHeadSHA != "current-sha" {
 		t.Fatalf("registration initial state = %#v, want pending current-head", record.State)
 	}
-	if got := record.Request.PollPlan; len(got) != 4 || got[0] != 120 || got[1] != 60 || got[2] != 60 || got[3] != 30 {
-		t.Fatalf("registration poll plan = %#v", got)
+	if got := record.Request.PollPlan; len(got) != 1 || got[0] != 30 {
+		t.Fatalf("registration poll plan = %#v, want the 30-second default", got)
 	}
 	read, err := readReviewRegistration(
 		session.deps.layout.PRReviewRegistrationPath(pr.Number),
