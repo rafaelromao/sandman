@@ -43,22 +43,24 @@ or silently post a delegated-review trigger.
    without passing its contents through an assistant-generated response.
    Use only facilities and argument names exposed by the current harness.
 
-   For OpenCode's native `task` tool with a string-only `prompt`, generate the
-   **complete argument object**, rather than encoding a prompt and embedding
-   it inside a second string:
+   For OpenCode's string-only native spawning, use the file-backed transport
+   matching the caller's selected protocol: `spawn-opencode-v1.sh` for
+   `opencode`, `spawn-opencode-v2.sh` for `opencode-v2`. V1 additionally requires
+   `curl`. Invoke it through one foreground native shell tool call in this
+   worktree, with `--prompt-file` followed by the **literal absolute path** to
+   this round's unique temporary prompt file. Put the helper filename and
+   literal path directly in that command; do not hide them behind variables,
+   another script or a background launch.
 
-   ```sh
-   jq -cn --rawfile prompt "$prompt_file" \
-     '{description:"Blind pull-request review",subagent_type:"general",prompt:$prompt}'
-   ```
-
-   The output is the tool's argument object, not a string containing that
-   object. Deliver it unchanged, without adding `task_id` or a model override.
-   JSON parsing decodes `\n` once into real newlines; the child must receive
-   neither enclosing quote characters nor literal backslash-n text.
-   A line-numbered file preview is not the input. Shell command substitution
-   of the raw prompt also loses trailing newlines. Preserve the saved file,
-   blank lines and indentation; never reconstruct it from a preview.
+   The helper identifies exactly one live owning call in an exact-worktree
+   root session, creates a fresh native child linked to that parent, inherits
+   its model and variant, sends file bytes mechanically and verifies readback.
+   V1 owns and stops only its temporary loopback server; V2 uses the CLI's
+   authenticated service context and never stops that service. Permission
+   requests, ambiguous ownership, unsupported agent settings or API errors
+   fail closed. Preserve the helper diagnostic directory on failure.
+   Never substitute manual prompt copying, a file attachment, a fork or a
+   separate unlinked agent run.
    Pass no implementation summary, hints, conversation history,
    plan, or extra instructions. The prompt contains the review scope and the
    search restriction. Wait for its report in the temporary `decision.md`.
