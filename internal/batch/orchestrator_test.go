@@ -4809,7 +4809,10 @@ cleanup_worktrees: false
 	engine := &prompt.Engine{}
 	o := NewOrchestrator(client, engine, store, nil)
 
-	result, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	result, err := o.RunBatch(context.Background(), Request{
+		Issues:       []int{42},
+		PromptConfig: prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewCommandSet: true},
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
