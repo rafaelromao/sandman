@@ -109,7 +109,7 @@ func (d *rowDriver) Drive(ctx context.Context, run RunSpec, cursor ContinuationC
 		opts = options[0]
 	}
 	if opts.PollInterval == nil {
-		opts.PollInterval = func(int) time.Duration { return time.Minute }
+		opts.PollInterval = func(int) time.Duration { return managedObservationInterval }
 	}
 	state := rowDriverState{
 		cursor: cursor, awaiting: opts.Awaiting, ready: opts.Ready,
