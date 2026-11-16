@@ -280,12 +280,30 @@ remains terminal even when local commits have not been pushed.
 | --- | --- | --- |
 | Managed CI | **30 minutes** per identified current-head check execution, durable hard deadline | New head or verified same-head CI rerun |
 | Standalone CI | **60 minutes** and at most **three fixes** per current head within an invocation | New head or fresh invocation |
+| Managed observation cadence | **30 seconds from the first poll** between observations of an ordinary external wait, in the batch and foreground paths; excludes API-call duration and execution-capacity admission delay; never renews a deadline or resets retry/relaunch accounting | Not a budget: polling never renews a deadline or resets retry/relaunch accounting |
 | Delegated review | Configured `review_timeout`; default 1,800 seconds, minimum 240 seconds; applies only when a review command is configured | New confirmed request |
 | Blind review round | Synchronous implementor round; no `review_timeout`, trigger envelope, or polling window | New head or fresh cycle/relaunch round |
 | Implementation provider quota | **Five hours of accumulated completed polling**, ten-minute intervals, then final boundary probe and configured ordinary retries | Verified recovery followed by a new quota episode; re-entry/restart preserves consumed polling |
 | Implementation lifecycle relaunch | Default **three in-session relaunches**, entry excluded; a feedback relaunch that changes nothing ends the allowance; exhaustion waits | Fresh executor session with a new resume signature |
 | Ordinary execution retry | Configured retry budget, including owned publication/review delivery recovery | Ordinary retry policy |
 | Ownerless recovery | **Five minutes**, capped by an existing operation deadline | Live owner renewal, never repeated discovery |
+
+Quota polling (ten minutes), hourly GitHub recovery attempts with the outage
+gate, and the standalone review cycle's own plan keep their schedules; the
+30-second cadence changes only the interval between ordinary managed
+observations. It applies to default and new waits: a retained valid explicit
+plan (a persisted review-request plan or a test override) keeps its meaning. The row driver's observation never preempts an executing attempt:
+review or CI that becomes ready while the agent is still running required local
+verification is observed only after the attempt returns, by the same single
+lifecycle decision, which selects merge work without an initial wait.
+
+The implementor owns local verification and publication; the runtime owns
+external observation. A still-running required command, an unresolved failure,
+unpushed work, or an incomplete publication, request delivery or blind review
+round is implementor-owned. Once that work is complete the agent checkpoints and
+returns immediately, without redundant verification or agent-side polling, and
+reports live or timestamped observations rather than stale CI/review statements.
+See [ADR-0060](../adr/0060-managed-handoff-boundary-and-thirty-second-observation.md).
 
 CI and review retain independent hard deadlines. The earlier expired operation
 selects bounded remediation even if another operation remains active. The

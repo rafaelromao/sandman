@@ -242,7 +242,7 @@ phase is not the reviewer run's execution status.
 | Runtime CI wait | 30 minutes per PR head, persisted in `ci_wait.json`; a changed head creates a new window. |
 | Standalone skill CI wait | 60 minutes per head and up to three fix attempts in its stated contract. |
 | Review request | Configured `review_timeout`, default 1,800 seconds, minimum 240 seconds; confirmed request retains its deadline. |
-| Managed CI/review observation | 120, 60, 60, then repeating 30-second intervals. |
+| Managed CI/review observation | 120, 60, 60, then repeating 30-second intervals (baseline). Superseded for default and new waits by 30 seconds from the first poll ([ADR-0060](../adr/0060-managed-handoff-boundary-and-thirty-second-observation.md)); a retained explicit plan stays valid. |
 | Implementation quota | Ten-minute polls; five hours of accumulated interval values; counter is not durable across restart. |
 | Reviewer daemon quota | Ten-minute probes; persisted pause, with no five-hour overall deadline in this gate. |
 | In-session lifecycle resume | Default three relaunches, reset with each new `runSession`. |

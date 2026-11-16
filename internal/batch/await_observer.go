@@ -205,14 +205,22 @@ func (s *runSession) issueRunID() string {
 	return s.runID
 }
 
+// managedObservationInterval is the default interval between observations of
+// an ordinary managed external wait (current-head CI or a delegated-review
+// request), from the very first poll. It applies to default and new waits; an
+// explicit override and a valid retained plan keep their own meaning. It does
+// not govern provider-quota polling, GitHub recovery attempts or the
+// standalone review cycle.
+const managedObservationInterval = 30 * time.Second
+
+// awaitPollInterval is the batch wait interval before the poll-th
+// re-observation. Only an explicit override changes the default; persisted
+// review-request plans are consulted by the foreground path alone.
 func awaitPollInterval(opts runSessionOptions, poll int) time.Duration {
 	if len(opts.lifecyclePollPlan) > 0 {
 		return opts.lifecyclePollPlan[min(poll, len(opts.lifecyclePollPlan)-1)]
 	}
-	if poll < len(implementationReviewPollPlan) {
-		return time.Duration(implementationReviewPollPlan[poll]) * time.Second
-	}
-	return time.Duration(implementationReviewPollPlan[len(implementationReviewPollPlan)-1]) * time.Second
+	return managedObservationInterval
 }
 
 func logCapacityQueuedContinuation(log events.EventLog, runID string, issue int, batchID string, row RowSpec, extras map[string]any, issueTitle string) error {

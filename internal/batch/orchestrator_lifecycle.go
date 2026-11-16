@@ -1103,11 +1103,7 @@ func (s *runSession) lifecyclePollIntervals(extras map[string]any) []time.Durati
 			}
 		}
 	}
-	plan := make([]time.Duration, 0, len(implementationReviewPollPlan))
-	for _, seconds := range implementationReviewPollPlan {
-		plan = append(plan, time.Duration(seconds)*time.Second)
-	}
-	return plan
+	return []time.Duration{managedObservationInterval}
 }
 
 func (s *runSession) waitForLifecyclePoll(ctx context.Context, interval time.Duration) error {
