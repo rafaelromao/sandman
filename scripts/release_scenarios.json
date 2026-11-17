@@ -9,7 +9,7 @@
   "providers": {
     "opencode": {
       "cli": "1.19.3",
-      "model": "opencode/deepseek-v4.1-flash"
+      "model": "opencode/big-pickle"
     },
     "claude": {
       "cli": "2.1.283",

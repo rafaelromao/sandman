@@ -10,7 +10,7 @@ from unittest.mock import patch
 import opencode_canary
 from opencode_canary import evaluate, stall_detail, PIN_GUIDANCE
 
-OPENCODE_MODEL = 'opencode/deepseek-v4.1-flash'
+OPENCODE_MODEL = 'opencode/big-pickle'
 
 
 class CanaryTests(unittest.TestCase):
@@ -47,12 +47,12 @@ def stream_error(model, message):
 class StallDiagnosticTests(unittest.TestCase):
     def test_reports_the_providers_error_for_a_stalled_request(self):
         log = '\n'.join(['INFO service=default starting',
-                         stream_error('deepseek-v4.1-flash', 'AI_APICallError: Rate limit exceeded'),
-                         stream_error('deepseek-v4.1-flash', 'AI_APICallError: Rate limit exceeded'),
+                         stream_error('big-pickle', 'AI_APICallError: Rate limit exceeded'),
+                         stream_error('big-pickle', 'AI_APICallError: Rate limit exceeded'),
                          stream_error('gpt-5.4-nano', 'AI_RetryError: Failed after 3 attempts')])
         detail = stall_detail(log)
         self.assertIn('3 failed attempt(s)', detail)
-        self.assertIn('deepseek-v4.1-flash: AI_APICallError: Rate limit exceeded', detail)
+        self.assertIn('big-pickle: AI_APICallError: Rate limit exceeded', detail)
         self.assertEqual(detail.count('Rate limit exceeded'), 1, 'repeated messages are listed once')
         self.assertIn('gpt-5.4-nano: AI_RetryError', detail)
 
@@ -62,7 +62,7 @@ class StallDiagnosticTests(unittest.TestCase):
 
     def test_never_echoes_raw_log_lines_or_the_authentication_key(self):
         secret = 'private-test-key'
-        log = '\n'.join([stream_error('deepseek-v4.1-flash', f'AI_APICallError: bad {secret} ' + 'x' * 500),
+        log = '\n'.join([stream_error('big-pickle', f'AI_APICallError: bad {secret} ' + 'x' * 500),
                          'level=INFO message="headers" authorization="Bearer ' + secret + '"'])
         detail = stall_detail(log, secret)
         self.assertNotIn(secret, detail)
@@ -93,7 +93,7 @@ class CanaryTimeoutTests(unittest.TestCase):
                            "time.sleep(60)\n")
             cli.chmod(0o755)
             env = {'PATH': str(root) + os.pathsep + os.environ['PATH'], 'OPENCODE_API_KEY': 'fixture-token',
-                    'STREAM_ERROR': stream_error('deepseek-v4.1-flash', 'AI_APICallError: Rate limit exceeded fixture-token')}
+                   'STREAM_ERROR': stream_error('big-pickle', 'AI_APICallError: Rate limit exceeded fixture-token')}
             output = io.StringIO()
             previous = Path.cwd()
             os.chdir(root)
@@ -106,7 +106,7 @@ class CanaryTimeoutTests(unittest.TestCase):
         self.assertEqual(result, 1)
         message = output.getvalue()
         self.assertIn('exceeded its 1-second deadline', message)
-        self.assertIn('deepseek-v4.1-flash: AI_APICallError: Rate limit exceeded [redacted]', message)
+        self.assertIn('big-pickle: AI_APICallError: Rate limit exceeded [redacted]', message)
         self.assertNotIn('fixture-token', message)
 
 

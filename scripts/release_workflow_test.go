@@ -1126,7 +1126,7 @@ func TestClaudeProviderE2EsRequireManualDispatch(t *testing.T) {
 	}
 }
 
-func TestReleaseOpenCodePinsMatchScaffoldAndLiveTier(t *testing.T) {
+func TestReleaseOpenCodePinsMatchCanaryAndLiveTier(t *testing.T) {
 	var manifest struct {
 		Providers map[string]struct {
 			CLI   string `json:"cli"`
@@ -1144,8 +1144,12 @@ func TestReleaseOpenCodePinsMatchScaffoldAndLiveTier(t *testing.T) {
 	if !strings.Contains(workflow, "npm install -g opencode-ai@"+pin) || !strings.Contains(workflow, "$(opencode --version)\" = "+pin) {
 		t.Fatal("release installation and prerequisite check must match the manifest pin")
 	}
-	if model := manifest.Providers["opencode"].Model; model == "" ||
+	if model := manifest.Providers["opencode"].Model; model != "opencode/big-pickle" ||
 		!strings.Contains(workflow, "SANDMAN_TEST_MODEL_OPENCODE: "+model) {
 		t.Fatalf("release OpenCode model %q must match the live-tier model pin", model)
+	}
+	canary := readRepositoryFile(t, "opencode_canary.py")
+	if !strings.Contains(canary, "release_scenarios.json") || !strings.Contains(canary, "manifest['model']") {
+		t.Fatal("OpenCode canary must use the model from the release manifest")
 	}
 }
