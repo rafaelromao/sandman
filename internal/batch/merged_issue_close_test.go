@@ -207,7 +207,7 @@ func TestFinishTerminal_CloseIssueAfterMergeGuards(t *testing.T) {
 			} else if len(calls) != 1 || calls[0].number != 42 || calls[0].comment != tc.wantComment {
 				t.Fatalf("CloseIssue calls = %+v, want one for 42 with %q", calls, tc.wantComment)
 			}
-			if tc.wantLog == "" && errLog.Len() != 0 && strings.Contains(errLog.String(), "after merge") {
+			if tc.wantLog == "" && strings.Contains(errLog.String(), "after merge") {
 				t.Fatalf("unexpected error log: %q", errLog.String())
 			}
 			if tc.wantLog != "" && !strings.Contains(errLog.String(), tc.wantLog) {

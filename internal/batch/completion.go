@@ -120,8 +120,8 @@ func mergedIssueCloseComment(prNumber int, base string) string {
 // that closure (ADR-0054). When this Run's pull request merged into its
 // configured base with a closing reference and the issue is still open, close
 // it once. pr is the merged pull request whose observation decided success;
-// the fallback performs no pull-request lookup of its own. A failure is logged only: it never changes the Run's outcome,
-// starts a wait or retries.
+// the fallback performs no pull-request lookup of its own. A failure is
+// logged only: it never changes the Run's outcome, starts a wait or retries.
 func closeIssueAfterMerge(ctx context.Context, client github.Client, pr *github.PR, issueNumber int, configuredBase string, errorLog io.Writer) {
 	if client == nil || pr == nil || issueNumber <= 0 || ctx.Err() != nil {
 		return
@@ -131,7 +131,7 @@ func closeIssueAfterMerge(ctx context.Context, client github.Client, pr *github.
 	}
 	state, err := fetchIssueState(ctx, client, issueNumber)
 	if err != nil {
-		logf(errorLog, "skip closing issue %d after merge: read issue state: %v\n", issueNumber, err)
+		logCloseAfterMerge(errorLog, "skip closing issue %d after merge: read issue state: %v\n", issueNumber, err)
 		return
 	}
 	if !strings.EqualFold(strings.TrimSpace(state), "open") {
@@ -141,21 +141,21 @@ func closeIssueAfterMerge(ctx context.Context, client github.Client, pr *github.
 	configured := strings.TrimSpace(configuredBase)
 	switch {
 	case base == "":
-		logf(errorLog, "skip closing issue %d after merge: pull request #%d base is unknown\n", issueNumber, pr.Number)
+		logCloseAfterMerge(errorLog, "skip closing issue %d after merge: pull request #%d base is unknown\n", issueNumber, pr.Number)
 		return
 	case configured != "" && base != configured:
-		logf(errorLog, "skip closing issue %d after merge: pull request #%d base %q does not match configured base %q\n", issueNumber, pr.Number, base, configured)
+		logCloseAfterMerge(errorLog, "skip closing issue %d after merge: pull request #%d base %q does not match configured base %q\n", issueNumber, pr.Number, base, configured)
 		return
 	}
 	if ctx.Err() != nil {
 		return
 	}
 	if err := client.CloseIssue(ctx, issueNumber, mergedIssueCloseComment(pr.Number, base)); err != nil {
-		logf(errorLog, "error: close issue %d after merge: %v\n", issueNumber, err)
+		logCloseAfterMerge(errorLog, "error: close issue %d after merge: %v\n", issueNumber, err)
 	}
 }
 
-func logf(w io.Writer, format string, args ...any) {
+func logCloseAfterMerge(w io.Writer, format string, args ...any) {
 	if w != nil {
 		fmt.Fprintf(w, format, args...)
 	}

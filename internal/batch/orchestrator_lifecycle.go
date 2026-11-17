@@ -766,6 +766,8 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 	if decision.action == lifecycleSuccess || (decision.action == lifecycleFailure && decision.completionFailure) {
 		verdict := lifecycleVerdict{Action: decision.action, Evidence: lifecycleFailureExtras(decision, s.issueNumber), Kind: lifecycleVerdictCompletion}
 		if decision.action == lifecycleSuccess && mergeFacts != nil && mergeFacts.mergedWithClosingIntent {
+			// The in-session terminal reads the session; an observation
+			// finished by a fresh session carries it on the verdict.
 			verdict.mergedPR = pr
 			s.verifiedMergedPR = pr
 		}

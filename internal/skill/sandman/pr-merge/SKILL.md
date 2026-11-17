@@ -70,7 +70,9 @@ never another work item the change request references.
    is known and differs from the merged change request's base,
    do not close the work item; record the mismatch as a blocker in
    `.sandman/task.md` and the run log. When none is configured, the change
-   request's base is the configured base branch.
+   request's base is the configured base branch. The open change request's
+   base and the repository's default branch are deliberately not used here:
+   the merged change request's own base is the value being checked.
 3. Read the work item's state and close it only while it is still open. A work
    item the tracker already closed needs nothing more:
 
