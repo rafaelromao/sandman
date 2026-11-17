@@ -40,8 +40,11 @@ A blind review round works as follows.
 - **One round.** The implementor resolves the pull request and current head,
   requires a clean checkout at that head, and spawns one fresh general-purpose
   subagent in the same worktree. The subagent receives no implementation
-  summary, hints, conversation history, plan, or extra instructions; its entire
-  user message is the rendered review prompt. It uses the harness's default
+   summary, hints, conversation history, plan, or desired verdict. Native harness
+   delegation delivers the rendered prompt directly or a minimal file-pointer
+   handoff that tells the reviewer to read and follow that prompt in full.
+   Prompt parity applies to the authoritative review input, not the transport
+   wrapper or the first user message. It uses the harness's default
   model, not `review_agent`, `review_model`, or `review_variant`.
 - **Exact prompt parity.** One pure derivation, shared with the review daemon,
   produces the prompt inputs: acceptance criteria from the linked work item,
@@ -72,7 +75,11 @@ A blind review round works as follows.
 - **Fail closed.** A harness that cannot spawn a fresh, context-free subagent
   returns `REVIEW_SUBAGENT_UNAVAILABLE` and the next action to configure
   `review_command`. The implementor never reviews its own change in its own
-  context and never silently posts a delegated-review trigger instead.
+   context and never silently posts a delegated-review trigger instead.
+   Native delegation is selected by exposed capabilities, independent of the
+   agent product or CLI version. It does not depend on launching another agent
+   server or discovering/exporting parent sessions. Missing native isolation or
+   access to the authoritative input remains a refusal, not self-review.
 - **Limits.** `review_timeout`, the trigger prefix, the request envelope, and the
   polling plan apply only to delegated review. A blind round is synchronous and
   has no timeout minimum or polling window. The standalone cycle keeps its

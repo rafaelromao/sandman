@@ -231,7 +231,10 @@ _See_: Blind review, Review run.
 The default pull-request review when no review command is configured: the
 implementor spawns a fresh subagent with no conversation context and gives it
 exactly the prompt the review daemon would give its reviewer for the same pull
-request and head. The subagent runs read-only in the same worktree on the
+request and head. The native harness delivers that input directly or through a
+minimal file-pointer handoff; parity concerns the review input, not its wrapper.
+Delegation does not require another agent CLI/server or parent-session discovery.
+The subagent runs read-only in the same worktree on the
 harness's default model, not the configured review agent or model. Each round is
 published on the pull request in the same form as a daemon review. An implementor
 that cannot spawn a subagent fails closed; it never reviews its own change in its

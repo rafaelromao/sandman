@@ -416,8 +416,13 @@ real-agent coverage exercises the same free Big Pickle model as the canary.
 real OpenCode implementor through a managed command and worktree sandbox,
 against a recording local GitHub fixture. They use an isolated credential-only
 HOME and session database. The blind case checks an actual child session and
-compares its first user message byte-for-byte with the daemon prompt; the
-configured-command case checks a single trigger and no child review.
+compares its authoritative review input byte-for-byte with the daemon prompt.
+Native delegation may deliver that input directly or through a minimal
+file-pointer handoff; the latter must read the rendered prompt before reviewing.
+The configured-command case checks a single trigger and no child review.
+Credential-free skill contracts cover both delivery forms, native delegation
+without an agent CLI/service, and refusal when fresh isolated delegation is
+unavailable. Legacy transport fixtures alone do not establish harness portability.
 
 The committed model remains `opencode/big-pickle`. For local validation, these
 cases honor the existing `SANDMAN_TEST_MODEL_OPENCODE` override and the optional
