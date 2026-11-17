@@ -10,6 +10,8 @@ from unittest.mock import patch
 import opencode_canary
 from opencode_canary import evaluate, stall_detail, PIN_GUIDANCE
 
+OPENCODE_MODEL = 'opencode/big-pickle'
+
 
 class CanaryTests(unittest.TestCase):
     def test_real_response_required(self):
@@ -81,7 +83,7 @@ class CanaryTimeoutTests(unittest.TestCase):
             root = Path(directory)
             (root / 'scripts').mkdir()
             (root / 'scripts/release_scenarios.json').write_text(json.dumps({
-                'providers': {'opencode': {'cli': '1.18.0', 'model': 'opencode/big-pickle'}}}))
+                'providers': {'opencode': {'cli': '1.18.0', 'model': OPENCODE_MODEL}}}))
             cli = root / 'opencode'
             cli.write_text("#!/usr/bin/env python3\nimport os,sys,time\n"
                            "if sys.argv[1] == '--version': print('1.18.0'); sys.exit(0)\n"
@@ -115,7 +117,7 @@ class CanaryProcessTests(unittest.TestCase):
             root = Path(directory)
             (root / 'scripts').mkdir()
             (root / 'scripts/release_scenarios.json').write_text(json.dumps({
-                'providers': {'opencode': {'cli': '1.18.0', 'model': 'opencode/big-pickle'}}}))
+                'providers': {'opencode': {'cli': '1.18.0', 'model': OPENCODE_MODEL}}}))
             cli = root / 'opencode'
             cli.write_text("#!/usr/bin/env python3\nimport json,os,sys\n"
                            "if sys.argv[1] == '--version': print('1.18.0'); sys.exit(0)\n"
@@ -132,11 +134,11 @@ class CanaryProcessTests(unittest.TestCase):
             calls = [json.loads(line) for line in record.read_text().splitlines()]
             self.assertEqual(len(calls), 1)
             self.assertIsNone(calls[0]['permission'], 'canary must keep the official CLI tool schema')
-            self.assertEqual(calls[0]['args'][:5], ['run', '--format', 'json', '-m', 'opencode/big-pickle'])
+            self.assertEqual(calls[0]['args'][:5], ['run', '--format', 'json', '-m', OPENCODE_MODEL])
             args = calls[0]['args']
             self.assertEqual(args[args.index('--title') + 1], 'sandman-canary',
                              'an explicit title spares OpenCode a request to its default small model')
-            self.assertEqual(json.loads(calls[0]['config']), {'small_model': 'opencode/big-pickle'},
+            self.assertEqual(json.loads(calls[0]['config']), {'small_model': OPENCODE_MODEL},
                              'the small model must be the release model, so no other model can be requested')
             self.assertEqual(calls[0]['home'], calls[0]['cwd'])
             self.assertNotEqual(calls[0]['cwd'], str(root))
