@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"strings"
+
+	"github.com/rafaelromao/sandman/internal/github"
 )
 
 // lifecycleObservationRequest describes one runtime observation of an
@@ -29,6 +31,9 @@ type lifecycleVerdict struct {
 	ImplementorWork  bool
 	ciRepairRequired bool
 	ciExecutionID    string
+	// mergedPR is the merged pull request behind a verified-completion
+	// success; it is in-memory only and never persisted as evidence.
+	mergedPR *github.PR
 }
 
 type lifecycleVerdictKind uint8

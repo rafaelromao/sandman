@@ -764,7 +764,7 @@ func (c *CLIClient) FetchIssueDependencies(ctx context.Context, number int) ([]i
 
 // FindPRByBranch finds the most recent pull request for a branch via gh CLI.
 func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, error) {
-	out, err := c.readCommand(ctx, "gh pr list", "pr", "list", "--head", branch, "--state", "all", "--json", "number,state,body,mergedAt,headRefName,headRefOid,updatedAt,closedAt,reviewDecision,mergeStateStatus,statusCheckRollup", "--limit", "1")
+	out, err := c.readCommand(ctx, "gh pr list", "pr", "list", "--head", branch, "--state", "all", "--json", "number,state,body,mergedAt,headRefName,headRefOid,baseRefName,updatedAt,closedAt,reviewDecision,mergeStateStatus,statusCheckRollup", "--limit", "1")
 	if err != nil {
 		return nil, fmt.Errorf("gh pr list: %w", err)
 	}
@@ -804,6 +804,7 @@ func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, err
 		Merged:                      strings.TrimSpace(payload.MergedAt) != "",
 		HeadRefName:                 payload.HeadRefName,
 		HeadRefOid:                  payload.HeadRefOid,
+		BaseRefName:                 payload.BaseRefName,
 		linkedIssueNumber:           firstLinkedIssueNumber(linkedIssueNumbers),
 		linkedIssueNumbers:          linkedIssueNumbers,
 		UpdatedAt:                   parseGitHubTime(payload.UpdatedAt),
