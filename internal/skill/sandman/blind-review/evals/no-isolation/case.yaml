@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: no-isolation
+expected_outcome: |
+  Refuse with REVIEW_SUBAGENT_UNAVAILABLE and configure review_command as the
+  next action. Neither inherited-context review nor self-review is accepted.

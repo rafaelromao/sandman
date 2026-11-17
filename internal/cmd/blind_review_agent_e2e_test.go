@@ -154,6 +154,7 @@ If empty, load sandman-blind-review and run exactly one full round, including pu
 If configured, load sandman-review-request and deliver exactly one confirmed trigger verbatim.
 Do not implement or self-review, do not commit, do not merge, and do not poll.
 Return successfully after confirmed publication/delivery; the managed runtime owns observation.
+Retain the round's prompt and report files for the caller's test verification.
 `
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	if deadline, ok := t.Deadline(); ok && time.Until(deadline.Add(-30*time.Second)) < 15*time.Minute {
@@ -197,7 +198,10 @@ Return successfully after confirmed publication/delivery; the managed runtime ow
 		t.Fatalf("blind path: triggers=%d reports=%d child reviews=%d\n%s", triggers, publications, len(children), output.String())
 	}
 	for _, child := range children {
-		childPrompt := child.Prompt
+		childPrompt, err := blindReviewAuthoritativePrompt(child.Prompt, child.Reads)
+		if err != nil {
+			t.Fatalf("child review input: %v", err)
+		}
 		runDir := ""
 		for _, line := range strings.Split(childPrompt, "\n") {
 			if strings.HasPrefix(line, "- RunDir: ") {
@@ -233,7 +237,7 @@ Return successfully after confirmed publication/delivery; the managed runtime ow
 				index++
 			}
 			gotEnd, wantEnd := min(index+80, len(childPrompt)), min(index+80, len(want))
-			t.Fatalf("child first user message is not the exact daemon prompt (got %d bytes, want %d); first difference at byte %d: got %q, want %q",
+			t.Fatalf("child authoritative input is not the exact daemon prompt (got %d bytes, want %d); first difference at byte %d: got %q, want %q",
 				len(childPrompt), len(want), index, childPrompt[index:gotEnd], want[index:wantEnd])
 		}
 	}
@@ -297,6 +301,7 @@ func (g *blindReviewManagedGitHub) ListPRComments(context.Context, int) ([]githu
 
 type blindReviewChildInput struct {
 	Prompt    string
+	Reads     []string
 	CreatedAt time.Time
 }
 
@@ -347,8 +352,16 @@ print(json.dumps([row[0] for row in db.execute("select id from session where par
 					Role string `json:"role"`
 				} `json:"info"`
 				Parts []struct {
-					Type string `json:"type"`
-					Text string `json:"text"`
+					Type  string `json:"type"`
+					Text  string `json:"text"`
+					Tool  string `json:"tool"`
+					State struct {
+						Status string `json:"status"`
+						Input  struct {
+							FilePath string `json:"filePath"`
+							Path     string `json:"path"`
+						} `json:"input"`
+					} `json:"state"`
 				} `json:"parts"`
 			} `json:"messages"`
 		}
@@ -361,6 +374,19 @@ print(json.dumps([row[0] for row in db.execute("select id from session where par
 		if session.Info.Time.Created <= 0 {
 			t.Fatalf("child %s lacks a creation timestamp for its history snapshot", id)
 		}
+		var reads []string
+		for _, message := range session.Messages {
+			for _, part := range message.Parts {
+				if part.Type == "tool" && part.Tool == "read" && part.State.Status == "completed" {
+					if path := part.State.Input.FilePath; path != "" {
+						reads = append(reads, path)
+					}
+					if path := part.State.Input.Path; path != "" {
+						reads = append(reads, path)
+					}
+				}
+			}
+		}
 		for _, message := range session.Messages {
 			if message.Info.Role != "user" {
 				continue
@@ -372,7 +398,7 @@ print(json.dumps([row[0] for row in db.execute("select id from session where par
 				}
 			}
 			prompts = append(prompts, blindReviewChildInput{
-				Prompt: text.String(), CreatedAt: time.UnixMilli(session.Info.Time.Created),
+				Prompt: text.String(), Reads: reads, CreatedAt: time.UnixMilli(session.Info.Time.Created),
 			})
 			break
 		}
