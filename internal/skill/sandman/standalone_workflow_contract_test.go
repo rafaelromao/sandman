@@ -18,6 +18,7 @@ func readSkillFile(t *testing.T, path string) string {
 
 func TestStandaloneRunComposesCapabilitiesAndOwnsItsTaskContract(t *testing.T) {
 	text := readSkillFile(t, "run/SKILL.md")
+	flat := strings.Join(strings.Fields(text), " ")
 	for _, required := range []string{
 		"name: sandman-run",
 		"## Execution Checklist",
@@ -27,10 +28,13 @@ func TestStandaloneRunComposesCapabilitiesAndOwnsItsTaskContract(t *testing.T) {
 		"sandman-implement",
 		"sandman-review-cycle",
 		"sandman-pr-merge",
+		"meaningful Summary and actual Verification evidence",
+		"target repository's pull-request template",
+		"same publication checkpoint",
 		"PR-created checkpoint",
 		"REVIEW_TIMEOUT",
 	} {
-		if !strings.Contains(text, required) {
+		if !strings.Contains(flat, required) {
 			t.Errorf("sandman-run contract missing %q", required)
 		}
 	}

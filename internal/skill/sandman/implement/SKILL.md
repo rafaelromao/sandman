@@ -41,6 +41,10 @@ You need to follow all steps in this workflow. Make sure you have gone through a
 
 **Closing-reference body is mandatory.** The PR body MUST contain the platform's exact closing-reference line for the selected work item so the work item closes when the change request merges. A reference buried in prose or using a non-closing keyword is not acceptable and must not be created.
 
+**A closing reference and footer are not a description.** Before publication, the body MUST contain a meaningful Summary and actual Verification evidence: explain what changed and why, and report what was actually checked. A body containing only the closing reference and footer, headings with no content, or unfilled placeholders is not publishable. Honor the target repository's pull-request template and conventions: retain and complete every required section, use its equivalent headings where available, and include applicable risks or merge-danger guidance. Do not impose Sandman's example headings on another repository.
+
+Verification MUST distinguish completed local checks (name the commands and observed outcomes), known failures or skips (name them and explain them), and externally observed CI (report its status for the current pull-request head and when it was observed). Never invent a green result, treat an unrun check as passing, or present stale CI as current. If CI has not been observed for the current head, say so rather than implying it passed.
+
 4. **Never stage Sandman runtime state.** The `.sandman/` directory holds runtime files (config, prompt, Dockerfile, reviews, the per-run task document). It is intentionally gitignored and is untracked by `sandman init`'s pre-commit guard. Do not run `git add` (with or without `-f`) on any path under `.sandman/`, and do not commit changes that include such paths. The pre-commit hook installed by `sandman init` will reject any commit that attempts to put a `.sandman/` path back into the index, but treat that as a last line of defense: do not stage it in the first place. Other Sandman-managed worktrees may not yet have the hook installed, and a force-pushed history rewrite can resurrect ignored paths.
 
 5. **Never yield for work this workflow owns.** Finish back-merge, commit/push, pull-request creation, and post-create body verification autonomously. Do not ask whether those actions are authorized; the user's request to implement the work item already authorizes them. A checklist transition such as `PR-Review` is not permission to stop before the PR exists. A missing PR or unpushed branch is not an external wait. If an owned action cannot be completed after bounded recovery, record the exact failure and next action and fail the run; do not report success or ask the operator to resume it manually.
@@ -225,13 +229,28 @@ git commit -m "refactor: self-review fixes"
    ```bash
    git push -u origin <branch>
    ```
-2. Build the closing-reference body. Start with the platform's exact closing-reference line for the selected work item, preserve any required description or template sections, and append the Built with Sandman footer as the final content:
+2. Inspect the target repository's pull-request template and publication conventions before composing the body. Preserve all required template headings, checkboxes, and content; put the meaningful Summary and Verification in the appropriate sections or use their equivalent headings. Semantics matter, not labels: a target template might call these sections "What changed" and "Checks run"; use those existing headings rather than adding or renaming sections. When no template applies, use clear Summary and Verification sections. The example headings below are illustrative, not a requirement for every repository. Start with the platform's exact closing-reference line for the selected work item, include substantive change and verification details, and append the Built with Sandman footer as the final content:
 
    ```bash
-   BODY=$(printf '%s\n\n%s\n' "<platform-closing-reference-for-selected-work-item>" '<a href="https://github.com/rafaelromao/sandman"><img src="https://raw.githubusercontent.com/rafaelromao/sandman/main/assets/badge-built-with-sandman.svg" alt="Built with Sandman" width="154" /></a>')
+   BODY=$(cat <<'PR_BODY'
+   <platform-closing-reference-for-selected-work-item>
+
+   ## Summary
+   - Preserve saved search filters when the date range changes.
+   - Explain the new empty-results behavior when no matching records remain.
+
+   ## Verification
+   - Local checks: `<command actually run>` — `<observed outcome>`.
+   - Failures/skips: `<list actual failures or skips; say none only after checking>`.
+   - CI: `<status for the current pull-request head SHA and observation time, or "not yet observed">`.
+   - Risks/merge danger: `<applicable risk and mitigation, or none identified after review>`.
+
+   <a href="https://github.com/rafaelromao/sandman"><img src="https://raw.githubusercontent.com/rafaelromao/sandman/main/assets/badge-built-with-sandman.svg" alt="Built with Sandman" width="154" /></a>
+   PR_BODY
+   )
    ```
 
-   Use the platform's accepted closing-reference form. Do not use a non-closing reference or explanatory prose in its place; a change request that does not auto-close its work item is not acceptable.
+   Replace every illustrative example and placeholder with facts from this change; the sample is not evidence and must never be copied as a claim. The Summary must say what this change actually does and why, not merely restate its title. Verification must report the actual checks and results, plus known failures/skips and the current-head CI observation (or state that CI is not yet observed). A "not run" entry is an honest status, not a passing check. Include applicable risks or merge-danger guidance and complete any template-required checklist items truthfully. Use the platform's accepted closing-reference form. Do not use a non-closing reference or explanatory prose in its place; a change request that does not auto-close its work item is not acceptable.
 3. Create the change request with that body. The PR title follows the repository conventions selected in step 4; for the fallback, use the same Conventional Commits header and subject. Apply the repository's title requirements rather than assuming a particular CI check exists.
 
    ```bash
@@ -244,7 +263,9 @@ git commit -m "refactor: self-review fixes"
    gh pr view <new-pr-number> --json body --jq .body
    ```
 
-   The first non-empty line of the returned body MUST match the platform's closing-reference form. The final content MUST be exactly one linked Built with Sandman logo using the footer above. On creation, continuation, and body edits, preserve the closing reference and existing description; move an existing footer to the end rather than duplicating it. Separate the footer with one blank line. This PR footer is independent of the optional repository README badge. If either requirement is missing, update the body and re-verify. If the body still cannot be made to match after one re-edit attempt, do not delegate review: persist the exact body, structured blocker, and next executable action in `.sandman/task.md` and the run log, then exit this attempt with a structured failure reason so the next run continues from the durable blocker.
+   The first non-empty line of the returned body MUST match the platform's closing-reference form. The final content MUST be exactly one linked Built with Sandman logo using the footer above, separated from the preceding content by one blank line. On creation, continuation, and body edits, preserve the selected work-item reference, existing substantive description, and every required template section; move an existing footer to the end rather than duplicating it. This PR footer is independent of the optional repository README badge.
+
+   The publication checkpoint is semantic as well as structural: confirm the body has meaningful Summary content explaining what changed and why, and actual Verification content—not just headings, placeholders, the closing reference, and footer. Confirm local commands and outcomes, known failures/skips, and externally observed CI are clearly distinguished; CI claims must match the current head and a fresh observation. Include applicable risks or merge-danger guidance and verify repository-required sections/checklists remain present and truthful. A reference-and-footer-only body cannot pass this checkpoint. If the check cannot be satisfied, update the body and re-verify. If the body still cannot be made to match after one re-edit attempt, do not delegate review: persist the exact body, structured blocker, and next executable action in `.sandman/task.md` and the run log, then exit this attempt with a structured failure reason so the next run continues from the durable blocker.
 5. Capture the PR URL and number.
 
 ### 8. Verified publication checkpoint
