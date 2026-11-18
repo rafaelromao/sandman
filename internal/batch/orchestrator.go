@@ -4641,10 +4641,23 @@ func (s *runSession) preparePromptAttempt(ctx context.Context, branch string, wt
 	}
 	if s.mode == ModeContinue || attempt > 0 {
 		taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
-		taskContent, taskExists, err := ReadTaskContent(taskPath)
-		if err != nil {
-			fmt.Fprintf(s.deps.errorLog, "error: read prompt-only task for continuation: %v\n", err)
-		} else if taskExists || taskContent != "" {
+		var taskContent string
+		var taskExists bool
+		var err error
+		if s.mode == ModeContinue {
+			taskContent, err = ReadContinuationTaskContent(taskPath)
+			if err != nil {
+				result := s.lifecycleEarlyFailure("read continuation Task", branch, s.runID, err)
+				return prompt.RenderConfig{}, &result
+			}
+			taskExists = true
+		} else {
+			taskContent, taskExists, err = ReadTaskContent(taskPath)
+			if err != nil {
+				fmt.Fprintf(s.deps.errorLog, "error: read prompt-only task for continuation: %v\n", err)
+			}
+		}
+		if err == nil && (taskExists || taskContent != "") {
 			if taskContent == "" {
 				taskContent = EmptyTaskTemplate
 			}
