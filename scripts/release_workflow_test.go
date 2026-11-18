@@ -259,7 +259,7 @@ func TestReleaseWorkflowUsesCredentialThatTriggersReleasePRChecks(t *testing.T) 
 	}
 
 	for _, required := range []string{
-		`"context": "CI / build (ubuntu-latest)"`,
+		`"context": "CI / build (ubuntu-latest)", "integration_id": 15368`,
 		`"context": "CI / build (macos-latest)"`,
 		`"context": "CI / portal-continuity-browser"`,
 		`"context": "CI / semantic-pull-request"`,

@@ -690,6 +690,9 @@ fixture token and CA; all other GitHub calls are faked. No provider, live GitHub
 or user credential is used. The focused image stops after the generated shared
 package layer, omitting unrelated language, agent, and mise downloads. Reports
 are written under `blind-review-container` without adding a protection context.
+The existing `CI / build (ubuntu-latest)` ruleset entry remains the required
+context and is bound to the GitHub Actions integration; no new context is
+introduced.
 
 Python toolchain image builds mount an optional `github_token` build secret for
 mise downloads and artifact-attestation verification. Image builders share the
