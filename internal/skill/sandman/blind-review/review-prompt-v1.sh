@@ -1,7 +1,8 @@
 #!/bin/sh
-# GitHub calls: pr view --json number,title,body,state,headRefOid,baseRefName,
-# closingIssuesReferences; issue view --json body; api --paginate for issue
-# comments, pull reviews and pull inline comments. Every lookup fails closed.
+# GitHub calls: pr view --json number,title,body,state,headRefOid,baseRefName;
+# api graphql --paginate for native closing references; issue view --json body;
+# api --paginate for issue comments, pull reviews and pull inline comments.
+# Every lookup fails closed.
 set -eu
 repository='' pull_request='' head='' run_dir=''
 fail() { printf '%s\n' "$1" >&2; exit 1; }
@@ -16,6 +17,12 @@ while [ "$#" -gt 0 ]; do
 done
 [ -n "$repository" ] && [ -n "$pull_request" ] && [ -n "$head" ] &&
   [ -n "$run_dir" ] || fail REVIEW_PROMPT_INVALID_INPUT
+owner=${repository%%/*}
+repository_name=${repository#*/}
+[ -n "$owner" ] && [ -n "$repository_name" ] &&
+  [ "$repository_name" != "$repository" ] &&
+  [ "${repository_name#*/}" = "$repository_name" ] ||
+  fail REVIEW_PROMPT_INVALID_INPUT
 helper_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 template=$helper_dir/review-prompt.md
 root=$(git rev-parse --show-toplevel) || fail REVIEW_PROMPT_WORKTREE_MISSING
@@ -24,19 +31,49 @@ if [ -s "$root/.sandman/reviews/review-prompt.md" ] &&
   template=$root/.sandman/reviews/review-prompt.md
 fi
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/sandman-blind-prompt.XXXXXX")
-trap 'rm -f "$tmp/pr" "$tmp/issue" "$tmp/comments" "$tmp/reviews" "$tmp/inline"; rmdir "$tmp"' EXIT HUP INT TERM
+trap 'rm -f "$tmp/pr" "$tmp/links" "$tmp/issue" "$tmp/comments" "$tmp/reviews" "$tmp/inline"; rmdir "$tmp"' EXIT HUP INT TERM
 gh pr view "$pull_request" --repo "$repository" \
-  --json number,title,body,state,headRefOid,baseRefName,closingIssuesReferences >"$tmp/pr" ||
+  --json number,title,body,state,headRefOid,baseRefName >"$tmp/pr" ||
   fail REVIEW_PROMPT_LOOKUP_FAILED
 jq -e --arg head "$head" '
   .state == "OPEN" and .headRefOid == $head and (.baseRefName | type == "string")
 ' "$tmp/pr" >/dev/null || fail REVIEW_PROMPT_STALE_HEAD
-linked=$(jq -r '
-  ([.closingIssuesReferences[]?.number | select(. > 0)][0] //
-   (try (.body | capture("\\bimplements\\s+#(?<n>[0-9]+)"; "i").n | tonumber) catch null) //
-   (try (.body | capture("\\b(?:close(?:s|d)?|fix(?:es|ed)?|resolve(?:s|d)?)\\s*:?\\s*#(?<n>[0-9]+)"; "i").n | tonumber) catch null) //
-   0)
-' "$tmp/pr") || fail REVIEW_PROMPT_INVALID_PR
+gh api graphql --paginate --slurp \
+  -F "owner=$owner" -F "repo=$repository_name" -F "number=$pull_request" \
+  -f query='query($owner:String!,$repo:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$number){closingIssuesReferences(first:100,after:$endCursor){nodes{number} pageInfo{hasNextPage endCursor}}}}}' \
+  >"$tmp/links" || fail REVIEW_PROMPT_LINKAGE_LOOKUP_FAILED
+linked=$(jq -er '
+  def refs: .data.repository.pullRequest.closingIssuesReferences;
+  def valid_page:
+    type == "object" and
+    ((.errors // []) | type == "array" and length == 0) and
+    (refs as $r |
+      ($r | type == "object") and
+      ($r.nodes | type == "array") and
+      all($r.nodes[]; (.number | type == "number" and . > 0)) and
+      ($r.pageInfo | type == "object") and
+      ($r.pageInfo.hasNextPage | type == "boolean") and
+      (if $r.pageInfo.hasNextPage then
+         ($r.pageInfo.endCursor | type == "string" and length > 0)
+       else
+         ($r.pageInfo.endCursor == null or ($r.pageInfo.endCursor | type == "string"))
+       end));
+  if type != "array" or length == 0 then error("missing GraphQL pages")
+  elif any(.[]; valid_page | not) then error("invalid GraphQL page")
+  elif any(.[0:-1][]; .data.repository.pullRequest.closingIssuesReferences.pageInfo.hasNextPage != true)
+    then error("incomplete GraphQL pagination")
+  elif (last | .data.repository.pullRequest.closingIssuesReferences.pageInfo.hasNextPage) != false
+    then error("incomplete GraphQL pagination")
+  else [.[].data.repository.pullRequest.closingIssuesReferences.nodes[].number][0] // 0
+  end
+' "$tmp/links") || fail REVIEW_PROMPT_LINKAGE_INVALID
+if [ "$linked" -eq 0 ]; then
+  linked=$(jq -r '
+    ((try (.body | capture("\\bimplements\\s+#(?<n>[0-9]+)"; "i").n | tonumber) catch null) //
+     (try (.body | capture("\\b(?:close(?:s|d)?|fix(?:es|ed)?|resolve(?:s|d)?)\\s*:?\\s*#(?<n>[0-9]+)"; "i").n | tonumber) catch null) //
+     0)
+  ' "$tmp/pr") || fail REVIEW_PROMPT_INVALID_PR
+fi
 printf '{"body":""}\n' >"$tmp/issue"
 if [ "$linked" -gt 0 ]; then
   gh issue view "$linked" --repo "$repository" --json body >"$tmp/issue" ||
@@ -59,11 +96,13 @@ jq -jrns --rawfile template "$template" --arg run_dir "$run_dir" \
     sub("^[ \\t\\r\\n]+"; "") |
     test("^(?:@\\S+\\s+)?/sandman(?:\\s+|$)"; "i") or
     (test("^[/@]") and test("review"; "i"));
-  ($comments | add | sort_by(.created_at | timestamp_key) |
-    map(select(.body | request | not) | .body)) +
-  ($reviews | add | map("### Formal review (" + .state + ")\n\n" + .body)) +
-  ($inline | add | map("### Inline review (" + .path +
-    (if (.line // 0) > 0 then ":" + (.line | tostring) else "" end) + ")\n\n" + .body)) as $entries |
+  (
+    ($comments | add | sort_by(.created_at | timestamp_key) |
+      map(select(.body | request | not) | .body)) +
+    ($reviews | add | map("### Formal review (" + .state + ")\n\n" + .body)) +
+    ($inline | add | map("### Inline review (" + .path +
+      (if (.line // 0) > 0 then ":" + (.line | tostring) else "" end) + ")\n\n" + .body))
+  ) as $entries |
   (if ($entries | length) > 0 then
     "## Authoritative prior review entries\n\n" + ($entries | join("\n\n---\n\n"))
    else "" end) as $history |
