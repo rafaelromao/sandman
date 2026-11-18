@@ -395,6 +395,8 @@ duration freezes at the terminal event.
 An in-batch prerequisite admits its dependent only after verified success **and**
 closed work item. Success with an open item, failure, or blocked produces a
 blocked dependent. Abort propagates aborted. Unknown/non-terminal prerequisite
-state cannot authorize admission. External prerequisites are rechecked before
-launch. Artifact cleanup, archive location, and socket liveness do not revise
-these lifecycle outcomes.
+state cannot authorize admission. A merge into a non-default configured base is
+not closed by GitHub, so the merge skill closes the item and the runtime closes
+a still-open item before recording the prerequisite's success (ADR-0061).
+External prerequisites are rechecked before launch. Artifact cleanup, archive
+location, and socket liveness do not revise these lifecycle outcomes.
