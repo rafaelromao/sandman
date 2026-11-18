@@ -86,6 +86,7 @@ func TestReconcileWorktreeToPRHead_PreservesDirtyAndDivergedWorktrees(t *testing
 func TestLifecycleDecision_AdvancedPRHeadFastForwardsBeforeCurrentApprovalResume(t *testing.T) {
 	workDir, branch, oldHead, remoteHead := worktreeWithAdvancedPRHead(t)
 	ignoreSandmanState(t, workDir)
+	seedContinuationTask(t, workDir)
 	writeCurrentHeadApprovalClassification(t, workDir)
 	replaceReviewArtifactHead(t, workDir, "current-sha", remoteHead)
 	writeCanonicalRegistrationForTest(t, workDir)
@@ -116,7 +117,7 @@ func TestLifecycleDecision_AdvancedPRHeadFastForwardsBeforeCurrentApprovalResume
 		t.Fatalf("resume evidence is not bound to the live head and approval: %#v", extras)
 	}
 
-	if _, resume := session.resumePromptFromGate(context.Background(), &fakeSandbox{workDir: workDir}, branch, "run-head-advance", lifecycleVerdict{Action: lifecycleResume, Evidence: extras}); !resume {
+	if _, resume, err := session.resumePromptFromGate(context.Background(), &fakeSandbox{workDir: workDir}, branch, "run-head-advance", lifecycleVerdict{Action: lifecycleResume, Evidence: extras}); err != nil || !resume {
 		t.Fatal("current-head approval did not produce a resumed agent prompt")
 	}
 	resumed := findEvent(eventLog.snapshot(), "run.resumed")

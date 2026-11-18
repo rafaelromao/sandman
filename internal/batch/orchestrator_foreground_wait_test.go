@@ -405,6 +405,7 @@ func TestRunExecutor_ResumeCapFallsBackToForegroundObservation(t *testing.T) {
 
 	branch := "42-fix-bug"
 	sb := &retrySandbox{workDir: filepath.Join(workDir, "worktree")}
+	seedContinuationTask(t, sb.workDir)
 	sbFactory := &retrySandboxFactory{sandbox: sb}
 	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
 	factory := &fakeRunnableFactory{results: []AgentRunResult{
@@ -537,6 +538,7 @@ func TestRunExecutor_ContinuationForegroundWaitCoversPullRequestPublication(t *t
 
 	branch := "42-fix-bug"
 	sb := &retrySandbox{workDir: filepath.Join(workDir, "worktree")}
+	seedContinuationTask(t, sb.workDir)
 	sbFactory := &retrySandboxFactory{sandbox: sb}
 	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
 	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success", Branch: branch}}}

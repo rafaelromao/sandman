@@ -30,6 +30,7 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 	if err != nil {
 		return batch.Request{}, err
 	}
+	reviewCommand := effectiveReviewCommand(cfg)
 
 	lastRuns := lastRunPerIssue(eventsList, issues)
 	previousRunIDs := make(map[int]string, len(issues))
@@ -100,7 +101,7 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 			reuseSessions[num] = continuationReuseSession(cmd)
 			branches[num] = strings.TrimSpace(branch)
 			baseBranches[num] = strings.TrimSpace(baseBranch)
-			taskPrompts[num] = prompt.ContinuationTaskPromptWithReviewTimeout(content, reviewTimeout)
+			taskPrompts[num] = prompt.ContinuationTaskPromptWithReviewSettings(content, reviewCommand, true, reviewTimeout)
 			modes[num] = batch.ModeContinue
 		}
 	} else {
@@ -128,7 +129,7 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 		if err != nil {
 			return batch.Request{}, fmt.Errorf("read task %q: %w", taskPath, err)
 		}
-		taskPromptContent = prompt.ContinuationTaskPromptWithReviewTimeout(content, reviewTimeout)
+		taskPromptContent = prompt.ContinuationTaskPromptWithReviewSettings(content, reviewCommand, true, reviewTimeout)
 		modes[0] = batch.ModeContinue
 	}
 
@@ -141,8 +142,6 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 	// prompt, previous run id, issue mode) is still pinned to the
 	// preserved worktree via the per-issue maps above and the
 	// BaseBranch layering in run.go.
-
-	reviewCommand := effectiveReviewCommand(cfg)
 
 	agentName := strings.TrimSpace(cmdFlag(cmd, "agent"))
 	if agentName == "" {

@@ -3420,6 +3420,7 @@ func runCleanGateCaseForIssue(t *testing.T, issueState string, pr *github.PR) (A
 	t.Cleanup(func() { _ = os.Chdir(oldWD) })
 
 	sb := &retrySandbox{workDir: filepath.Join(workDir, "worktree")}
+	seedContinuationTask(t, sb.workDir)
 	oldHeadFn := currentBranchHeadFn
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
@@ -3787,6 +3788,7 @@ func TestRunSingle_RestoresHostPathsBeforeExternalGateHeadCheck(t *testing.T) {
 
 	branch := gateTestBranch
 	sb := &retrySandbox{workDir: filepath.Join(workDir, "worktree")}
+	seedContinuationTask(t, sb.workDir)
 	sbFactory := &retrySandboxFactory{sandbox: sb}
 	factory := &fakeRunnableFactory{results: []AgentRunResult{{
 		IssueNumber: 42,
@@ -3884,6 +3886,7 @@ func TestRunSingle_ReadyGateResumesAndExhaustsBudgetThenWaits(t *testing.T) {
 
 	branch := gateTestBranch
 	sb := &retrySandbox{workDir: filepath.Join(workDir, "worktree")}
+	seedContinuationTask(t, sb.workDir)
 	sbFactory := &retrySandboxFactory{sandbox: sb}
 	factory := &fakeRunnableFactory{results: []AgentRunResult{
 		{IssueNumber: 42, Status: "success", Branch: branch},

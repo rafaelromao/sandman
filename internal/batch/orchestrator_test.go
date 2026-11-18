@@ -1836,6 +1836,7 @@ func TestRunSingle_ModeContinueRequestedChangesIsActionableWithoutRetry(t *testi
 
 	branch := "42-fix-bug"
 	worktreePath := filepath.Join(workDir, "worktree")
+	seedContinuationTask(t, worktreePath)
 	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
 	resultFactory := &taskWritingRunnableFactory{
 		taskPath:    filepath.Join(worktreePath, ".sandman", "task.md"),

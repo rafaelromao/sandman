@@ -144,7 +144,8 @@ jq -n --slurpfile parent "$tmp/parent" --slurpfile live "$tmp/parent-live" \
   ($general[0].permission) as $rules |
   (
     (($live[0].permission // []) |
-      map(select(.permission == "external_directory" or .action == "deny"))) +
+      map(select(.permission == "external_directory" or .action == "deny")))
+    +
     (["todowrite","task"] | map(. as $name |
       select(any($rules[]; .permission == $name) | not) |
       {permission:$name,pattern:"*",action:"deny"}))

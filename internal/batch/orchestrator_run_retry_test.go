@@ -861,6 +861,111 @@ func TestRunPromptOnly_RefreshesTaskPromptOnRetry(t *testing.T) {
 	}
 }
 
+func TestRunPromptOnly_ModeContinueFailsBeforeLaunchWhenTaskCannotBeRead(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		createTask func(string) error
+		wantError  string
+	}{
+		{
+			name: "missing",
+			createTask: func(string) error {
+				return nil
+			},
+			wantError: "is missing",
+		},
+		{
+			name: "unreadable",
+			createTask: func(taskPath string) error {
+				return os.Mkdir(taskPath, 0755)
+			},
+			wantError: "read continuation Task",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workDir := t.TempDir()
+			oldWD, err := os.Getwd()
+			if err != nil {
+				t.Fatalf("get wd: %v", err)
+			}
+			if err := os.Chdir(workDir); err != nil {
+				t.Fatalf("chdir: %v", err)
+			}
+			t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+			branch := "prompt-only-continue"
+			worktreePath := filepath.Join(workDir, "worktree")
+			taskPath := filepath.Join(worktreePath, ".sandman", "task.md")
+			if err := os.MkdirAll(filepath.Dir(taskPath), 0755); err != nil {
+				t.Fatalf("mkdir worktree task dir: %v", err)
+			}
+			if err := tc.createTask(taskPath); err != nil {
+				t.Fatalf("prepare Task: %v", err)
+			}
+
+			launches := 0
+			rtSandbox := &retrySandbox{workDir: worktreePath}
+			eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
+			o := NewOrchestrator(
+				nil,
+				&retryRenderer{result: "rendered prompt"},
+				nil,
+				eventLog,
+				WithErrorLog(io.Discard),
+				WithSandboxFactory(&retrySandboxFactory{sandbox: rtSandbox}),
+				WithRunnableFactory(&recordingPromptOnlyFactory{hook: func(prompt.RenderConfig) AgentRunResult {
+					launches++
+					return AgentRunResult{Status: "success", Branch: branch}
+				}}),
+			)
+
+			bc := BatchConfig{
+				Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
+				AgentName:        "opencode",
+				AgentCfg:         config.Agent{Command: "echo hi"},
+				IdentityResolver: noopIdentityResolver(),
+			}
+			row := RowSpec{
+				Mode:              ModeContinue,
+				Branches:          map[int]string{0: branch},
+				BaseBranch:        "main",
+				RenderCfg:         prompt.RenderConfig{TaskPrompt: "stale batch-start prompt"},
+				BatchID:           "prompt-only-continue-batch",
+				RunID:             "prompt-only-continue-run",
+				UserProvidedRunID: "prompt-only-continue-run",
+			}
+
+			result, started := o.newRunExecutor(context.Background(), bc, &retrySandboxFactory{sandbox: rtSandbox}, nil).Execute(context.Background(), row)
+			if started {
+				t.Fatal("started = true, want continuation Task read failure before launch")
+			}
+			if result.Status != "failure" {
+				t.Fatalf("status = %q, want failure", result.Status)
+			}
+			if result.OperationalError == nil || !strings.Contains(result.OperationalError.Error(), tc.wantError) {
+				t.Fatalf("OperationalError = %v, want error containing %q", result.OperationalError, tc.wantError)
+			}
+			if launches != 0 {
+				t.Fatalf("launches = %d, want no agent launch", launches)
+			}
+			states, err := events.ReadRunStates(eventLog)
+			if err != nil {
+				t.Fatalf("read projected run states: %v", err)
+			}
+			state, ok := states[row.RunID]
+			if !ok {
+				t.Fatalf("missing projected Run %q", row.RunID)
+			}
+			if state.Started.Type != "run.continued" {
+				t.Fatalf("started event = %q, want run.continued", state.Started.Type)
+			}
+			if !state.IsTerminal() || state.Status() != "failure" {
+				t.Fatalf("projected Run terminal=%t status=%q, want terminal failure", state.IsTerminal(), state.Status())
+			}
+		})
+	}
+}
+
 type recordingPromptOnlyFactory struct {
 	hook func(prompt.RenderConfig) AgentRunResult
 }

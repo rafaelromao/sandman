@@ -315,7 +315,9 @@ func ApplyReadyContinuations(req *Request, ready []ReadyContinuation, layout pat
 		req.ReuseSession[issue] = true
 		req.Branches[issue] = continuation.Branch
 		req.BaseBranches[issue] = continuation.BaseBranch
-		req.TaskPrompts[issue] = prompt.ContinuationTaskPromptWithReviewTimeout(taskContent, reviewTimeout)
+		req.TaskPrompts[issue] = prompt.ContinuationTaskPromptWithReviewSettings(
+			taskContent, req.PromptConfig.ReviewCommand, req.PromptConfig.ReviewCommandSet, reviewTimeout,
+		)
 		if continuation.IssueTitle != "" {
 			req.IssueTitles[issue] = continuation.IssueTitle
 		}

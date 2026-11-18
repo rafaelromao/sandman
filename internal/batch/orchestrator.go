@@ -2865,23 +2865,24 @@ type runSession struct {
 	commander     daemon.IssueCommander
 
 	// Inputs captured from the runSingle / runPromptOnlySingle call site.
-	issueNumber         int
-	issueState          string
-	cfg                 *config.Config
-	agentName           string
-	agentCfg            config.Agent
-	variant             string
-	mode                IssueMode
-	previousRunIDs      map[int]string
-	previousRunBatchIDs map[int]string
-	reuseSession        bool
-	quotaAllowance      usageLimitAllowance
-	identityResolver    *gitIdentityResolver
-	branches            map[int]string
-	renderCfg           prompt.RenderConfig
-	outputWriter        io.Writer
-	sbFactory           SandboxFactory
-	containerAlloc      containerAllocator
+	issueNumber               int
+	issueState                string
+	cfg                       *config.Config
+	agentName                 string
+	agentCfg                  config.Agent
+	variant                   string
+	mode                      IssueMode
+	previousRunIDs            map[int]string
+	previousRunBatchIDs       map[int]string
+	reuseSession              bool
+	quotaAllowance            usageLimitAllowance
+	identityResolver          *gitIdentityResolver
+	branches                  map[int]string
+	renderCfg                 prompt.RenderConfig
+	entryResumePromptPrepared bool
+	outputWriter              io.Writer
+	sbFactory                 SandboxFactory
+	containerAlloc            containerAllocator
 	// credentials is the leased container's credential reconcile, set when
 	// the row acquires its container; nil outside container mode.
 	credentials                *credentialSync
@@ -4062,7 +4063,15 @@ loop:
 						// The continuity decision already turned a stalled or
 						// exhausted relaunch into a wait or a terminal
 						// failure; a resume here is a relaunch to perform.
-						if resumePrompt, resume := s.resumePromptFromGate(ctx, wt, branch, runID, verdict); resume {
+						resumePrompt, resume, taskErr := s.resumePromptFromGate(ctx, wt, branch, runID, verdict)
+						if taskErr != nil {
+							fmt.Fprintf(s.deps.errorLog, "error: read continuation Task for issue %d: %v\n", s.issueNumber, taskErr)
+							s.lifecycleTerminal = true
+							result.Status = "failure"
+							terminalExtras = map[string]any{"task_error": taskErr.Error()}
+							break loop
+						}
+						if resume {
 							s.lastResumeSignature = s.pendingResumeSignature
 							s.lastResumeRound = s.pendingResumeRound
 							s.reuseSession = true
@@ -4314,6 +4323,21 @@ func (o *Orchestrator) runSingleRow(ctx context.Context, parentCtx context.Conte
 // and retry reset policy; execution and terminal persistence belong to execute.
 func (s *runSession) prepareIssueAttempt(ctx context.Context, branch string, wt sandbox.Sandbox, logPath string, attempt int, previous AgentRunResult) (prompt.RenderConfig, *AgentRunResult) {
 	attemptRenderCfg := s.renderCfg
+	if attempt == 0 && s.mode == ModeContinue && !s.entryResumePromptPrepared {
+		// A runtime-owned re-entry starts this executor at attempt zero, but
+		// the worktree Task remains agent-owned durable progress. Refresh it
+		// instead of replaying the immutable batch-start rendering configuration.
+		taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
+		taskContent, err := ReadContinuationTaskContent(taskPath)
+		if err != nil {
+			result := s.lifecycleEarlyFailure("read continuation Task", branch, s.issueRunID(), err)
+			return attemptRenderCfg, &result
+		}
+		attemptRenderCfg.TaskPrompt = prompt.ContinuationTaskPromptWithReviewSettings(
+			taskContent, s.renderCfg.ReviewCommand, s.renderCfg.ReviewCommandSet, s.renderCfg.ReviewTimeout,
+		)
+		attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")
+	}
 	if attempt > 0 {
 		// Pre-retry guard: if the PR was merged between attempts (e.g. the
 		// agent merged it on attempt 0 but exited non-zero due to a
@@ -4342,14 +4366,26 @@ func (s *runSession) prepareIssueAttempt(ctx context.Context, branch string, wt 
 		// receives the same task content regardless of open-PR state.
 		taskContent, taskExists, err := ReadTaskContent(taskPath)
 		if err != nil {
+			if s.mode == ModeContinue {
+				result := s.lifecycleEarlyFailure("read continuation Task", branch, s.issueRunID(), err)
+				return attemptRenderCfg, &result
+			}
 			fmt.Fprintf(s.deps.errorLog, "error: read task for issue %d: %v\n", s.issueNumber, err)
 			return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
 		}
+		if s.mode == ModeContinue && !taskExists {
+			result := s.lifecycleEarlyFailure("read continuation Task", branch, s.issueRunID(), fmt.Errorf("continuation Task %q is missing", taskPath))
+			return attemptRenderCfg, &result
+		}
 		if previous.ContextExhausted {
-			attemptRenderCfg.TaskPrompt = prompt.ContextRecoveryTaskPrompt(taskContent, s.renderCfg.ReviewTimeout)
+			attemptRenderCfg.TaskPrompt = prompt.ContextRecoveryTaskPromptWithReviewSettings(
+				taskContent, s.renderCfg.ReviewCommand, s.renderCfg.ReviewCommandSet, s.renderCfg.ReviewTimeout,
+			)
 			attemptRenderCfg.ContextRecovery = true
 		} else {
-			attemptRenderCfg.TaskPrompt = prompt.ContinuationTaskPromptWithReviewTimeout(taskContent, s.renderCfg.ReviewTimeout)
+			attemptRenderCfg.TaskPrompt = prompt.ContinuationTaskPromptWithReviewSettings(
+				taskContent, s.renderCfg.ReviewCommand, s.renderCfg.ReviewCommandSet, s.renderCfg.ReviewTimeout,
+			)
 		}
 		attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")
 		if !taskExists && openPR == nil && !previous.ContextExhausted {
@@ -4605,18 +4641,35 @@ func (s *runSession) preparePromptAttempt(ctx context.Context, branch string, wt
 	}
 	if s.mode == ModeContinue || attempt > 0 {
 		taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
-		taskContent, taskExists, err := ReadTaskContent(taskPath)
-		if err != nil {
-			fmt.Fprintf(s.deps.errorLog, "error: read prompt-only task for continuation: %v\n", err)
-		} else if taskExists || taskContent != "" {
+		var taskContent string
+		var taskExists bool
+		var err error
+		if s.mode == ModeContinue {
+			taskContent, err = ReadContinuationTaskContent(taskPath)
+			if err != nil {
+				result := s.lifecycleEarlyFailure("read continuation Task", branch, s.runID, err)
+				return prompt.RenderConfig{}, &result
+			}
+			taskExists = true
+		} else {
+			taskContent, taskExists, err = ReadTaskContent(taskPath)
+			if err != nil {
+				fmt.Fprintf(s.deps.errorLog, "error: read prompt-only task for continuation: %v\n", err)
+			}
+		}
+		if err == nil && (taskExists || taskContent != "") {
 			if taskContent == "" {
 				taskContent = EmptyTaskTemplate
 			}
 			if previous.ContextExhausted {
-				attemptCfg.TaskPrompt = prompt.ContextRecoveryTaskPrompt(taskContent, s.renderCfg.ReviewTimeout)
+				attemptCfg.TaskPrompt = prompt.ContextRecoveryTaskPromptWithReviewSettings(
+					taskContent, s.renderCfg.ReviewCommand, s.renderCfg.ReviewCommandSet, s.renderCfg.ReviewTimeout,
+				)
 				attemptCfg.ContextRecovery = true
 			} else {
-				attemptCfg.TaskPrompt = prompt.ContinuationTaskPromptWithReviewTimeout(taskContent, s.renderCfg.ReviewTimeout)
+				attemptCfg.TaskPrompt = prompt.ContinuationTaskPromptWithReviewSettings(
+					taskContent, s.renderCfg.ReviewCommand, s.renderCfg.ReviewCommandSet, s.renderCfg.ReviewTimeout,
+				)
 			}
 			attemptCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")
 		}

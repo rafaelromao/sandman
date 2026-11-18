@@ -64,6 +64,27 @@ queued → running ⇄ waiting → success / failure / aborted
 | New RunID for a manual continuation | Start a fresh clock |
 | Linked reviewer active | Portal may show **reviewing**; underlying lifecycle remains inspectable |
 
+## Continuation Task ownership
+
+The Task in the preserved worktree is the agent-owned progress checkpoint.
+Manual continuation, quota probes, CI/review resumes, and other runtime-owned
+re-entry read that latest file immediately before preparing the next launch;
+the immutable batch-start Task is never a recovery source. A missing or
+unreadable Task stops continuation before agent launch with a non-success
+outcome rather than falling back to stale prompt text or the default scaffold.
+Ordinary retries and fresh context-recovery sessions continue to build from
+the latest readable Task.
+
+Review command, selected review mode, and effective delegated-review timeout
+are runtime-owned settings. Continuation composition refreshes those values in
+the Task's Runtime Context from current configuration, using the resolved
+configured/empty selection rather than stale Task prose, while preserving the
+agent-owned plan, checklist, and next action. A changed Review command therefore
+cannot leave the next session following obsolete blind/delegated-review
+instructions; in blind mode the timeout is marked as informational and unused.
+This prompt reconciliation does not change RunID, session reuse, active
+duration, abort fencing, or event-sourced lifecycle decisions.
+
 ## AFK continuity
 
 After v1.0.0-rc.2 a started Run may stop only for a permanent failure it

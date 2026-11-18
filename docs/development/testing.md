@@ -83,6 +83,19 @@ For OpenCode context rollover changes, the hermetic production-path coverage is:
 go test -run 'ContextRollover|ContextRecoveryTask' ./internal/batch ./internal/prompt ./internal/events ./internal/cmd
 ```
 
+For continuation checkpoint and current review-setting changes, run:
+
+```bash
+go test -race ./internal/batch ./internal/prompt ./internal/cmd -run 'QuotaReentry|CIEntryResume|InformalFeedbackResumes|TaskIsUnavailable|OrdinaryRetriesUseLatestWorktreeTask|ReviewSettingsRefreshesBothReviewModes|HonorsConfiguredEmptyBit|ContextRecoveryTask|ContinueFlag_UsesCurrentFlagsOverStoredValues' -count=1
+```
+
+This exercises repeated quota probes, CI and review re-entry against the Task
+actually delivered to the runnable, missing/unreadable Task failure before
+launch, ordinary retries, manual continuation, and both empty↔configured
+Review command transitions (including an explicitly configured empty command).
+Runtime re-entry must preserve agent-owned checkpoints while refreshing only
+runtime-owned review settings.
+
 For OpenCode session reuse, the focused production-path coverage is:
 
 ```bash
