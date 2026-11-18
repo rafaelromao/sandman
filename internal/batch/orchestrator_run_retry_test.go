@@ -948,6 +948,20 @@ func TestRunPromptOnly_ModeContinueFailsBeforeLaunchWhenTaskCannotBeRead(t *test
 			if launches != 0 {
 				t.Fatalf("launches = %d, want no agent launch", launches)
 			}
+			states, err := events.ReadRunStates(eventLog)
+			if err != nil {
+				t.Fatalf("read projected run states: %v", err)
+			}
+			state, ok := states[row.RunID]
+			if !ok {
+				t.Fatalf("missing projected Run %q", row.RunID)
+			}
+			if state.Started.Type != "run.continued" {
+				t.Fatalf("started event = %q, want run.continued", state.Started.Type)
+			}
+			if !state.IsTerminal() || state.Status() != "failure" {
+				t.Fatalf("projected Run terminal=%t status=%q, want terminal failure", state.IsTerminal(), state.Status())
+			}
 		})
 	}
 }
