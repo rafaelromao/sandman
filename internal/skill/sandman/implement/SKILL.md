@@ -109,7 +109,7 @@ git fetch origin "$base_branch"
 
 After setting up the branch, determine whether the issue's work is already complete before running `sandman-plan` or `sandman-tdd`.
 
-A merged change request closes its work item — automatically by the tracker's merge rules when it targets the default branch, otherwise through `sandman-pr-merge` — so there is no need to search for a closing change request separately.
+A merged change request will, by the tracker's merge rules, automatically close its work item — so there is no need to search for a closing change request separately.
 
 1. Run the platform's "view work item" CLI to read the current state of the open work item.
 2. Run branch freshness check:

@@ -3,7 +3,6 @@ package batch
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -67,37 +66,23 @@ func checkPRMerged(ctx context.Context, client github.Client, branch string) boo
 	return err == nil && merged
 }
 
-// mergedPRForIssue returns the branch's merged pull request when it carries
-// the issue's closing reference, or nil. An open pull request gets its
-// closing reference repaired so a later merge can complete the issue.
-func mergedPRForIssue(ctx context.Context, client github.Client, branch string, issueNumber int) *github.PR {
+func checkPRMergedForIssue(ctx context.Context, client github.Client, branch string, issueNumber int) bool {
 	if client == nil || strings.TrimSpace(branch) == "" || issueNumber <= 0 {
-		return nil
+		return false
 	}
 	pr, err := client.FindPRByBranch(ctx, branch)
 	if err != nil || pr == nil {
-		return nil
+		return false
 	}
 	if pr.Merged || strings.EqualFold(pr.State, "merged") {
-		if pr.ClosesIssue(issueNumber) {
-			return pr
-		}
-		return nil
+		return pr.ClosesIssue(issueNumber)
 	}
 	if body, changed := github.EnsureClosingReference(pr.Body, issueNumber); changed {
-		_ = client.EditPRBody(ctx, pr.Number, body)
+		if err := client.EditPRBody(ctx, pr.Number, body); err != nil {
+			return false
+		}
 	}
-	return nil
-}
-
-// checkPRMergedForIssue reports a verified merge of this session's issue and
-// records the merged pull request for the terminal close fallback.
-func (s *runSession) checkPRMergedForIssue(ctx context.Context, branch string) bool {
-	pr := mergedPRForIssue(ctx, s.deps.githubClient, branch, s.issueNumber)
-	if pr != nil {
-		s.verifiedMergedPR = pr
-	}
-	return pr != nil
+	return false
 }
 
 func mergedPRMissingClosingReference(ctx context.Context, client github.Client, branch string, issueNumber int) bool {
@@ -106,59 +91,6 @@ func mergedPRMissingClosingReference(ctx context.Context, client github.Client, 
 	}
 	pr, err := client.FindPRByBranch(ctx, branch)
 	return err == nil && pr != nil && (pr.Merged || strings.EqualFold(pr.State, "merged")) && !pr.ClosesIssue(issueNumber)
-}
-
-// mergedIssueCloseComment is the comment shared by the pr-merge skill and its
-// managed fallback, so a reader sees one wording whichever closed the issue.
-func mergedIssueCloseComment(prNumber int, base string) string {
-	return fmt.Sprintf("Closed by sandman — merged in #%d into %s.", prNumber, base)
-}
-
-// closeIssueAfterMerge is the managed fallback for the pr-merge skill's close
-// step (ADR-0061). The tracker closes a work item from its closing reference
-// only when the pull request targets the default branch; dependents wait for
-// that closure (ADR-0054). When this Run's pull request merged into its
-// configured base with a closing reference and the issue is still open, close
-// it once. pr is the merged pull request whose observation decided success;
-// the fallback performs no pull-request lookup of its own. A failure is
-// logged only: it never changes the Run's outcome, starts a wait or retries.
-func closeIssueAfterMerge(ctx context.Context, client github.Client, pr *github.PR, issueNumber int, configuredBase string, errorLog io.Writer) {
-	if client == nil || pr == nil || issueNumber <= 0 || ctx.Err() != nil {
-		return
-	}
-	if !(pr.Merged || strings.EqualFold(pr.State, "merged")) || !pr.ClosesIssue(issueNumber) {
-		return
-	}
-	state, err := fetchIssueState(ctx, client, issueNumber)
-	if err != nil {
-		logCloseAfterMerge(errorLog, "skip closing issue %d after merge: read issue state: %v\n", issueNumber, err)
-		return
-	}
-	if !strings.EqualFold(strings.TrimSpace(state), "open") {
-		return
-	}
-	base := strings.TrimSpace(pr.BaseRefName)
-	configured := strings.TrimSpace(configuredBase)
-	switch {
-	case base == "":
-		logCloseAfterMerge(errorLog, "skip closing issue %d after merge: pull request #%d base is unknown\n", issueNumber, pr.Number)
-		return
-	case configured != "" && base != configured:
-		logCloseAfterMerge(errorLog, "skip closing issue %d after merge: pull request #%d base %q does not match configured base %q\n", issueNumber, pr.Number, base, configured)
-		return
-	}
-	if ctx.Err() != nil {
-		return
-	}
-	if err := client.CloseIssue(ctx, issueNumber, mergedIssueCloseComment(pr.Number, base)); err != nil {
-		logCloseAfterMerge(errorLog, "error: close issue %d after merge: %v\n", issueNumber, err)
-	}
-}
-
-func logCloseAfterMerge(w io.Writer, format string, args ...any) {
-	if w != nil {
-		fmt.Fprintf(w, format, args...)
-	}
 }
 
 func CheckPRMergedAtHead(ctx context.Context, client github.Client, branch, headSHA string) (bool, error) {

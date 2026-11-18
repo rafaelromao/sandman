@@ -3008,10 +3008,6 @@ type runSession struct {
 	lifecyclePRSnapshot      *github.PR
 	lifecycleAlreadyResolved bool
 	lifecycleTerminal        bool
-	// verifiedMergedPR is the merged pull request, carrying this issue's
-	// closing reference, whose observation decided the Run's success. The
-	// terminal close fallback reuses it instead of a second lookup.
-	verifiedMergedPR *github.PR
 }
 
 func (s *runSession) worktreeDir() string {
@@ -3530,11 +3526,6 @@ func (s *runSession) finishTerminal(ctx context.Context, runID string, result Ag
 
 func (s *runSession) finishDecidedTerminal(ctx context.Context, runID string, result AgentRunResult, extras map[string]any, wt sandbox.Sandbox, branch string) string {
 	_, terminalStatus := terminalRunEvent(ctx, result.Status)
-	if terminalStatus == "success" && s.isIssueDriven() && !s.explicitAbort {
-		// Close before the terminal event: in-batch dependents read the
-		// issue state once this Run returns.
-		closeIssueAfterMerge(ctx, s.deps.githubClient, s.verifiedMergedPR, s.issueNumber, s.baseBranch, s.deps.errorLog)
-	}
 	worktreeState := "preserved"
 	if terminalStatus == "success" && !s.review && !s.opts.repairHost && (s.cfg == nil || s.cfg.EffectiveCleanupWorktrees()) {
 		restoreErr := wt.RestoreHostPaths()
@@ -4087,7 +4078,7 @@ loop:
 			break loop
 		}
 		if mergeRequired {
-			prMerged := s.checkPRMergedForIssue(ctx, branch)
+			prMerged := checkPRMergedForIssue(ctx, s.deps.githubClient, branch, s.issueNumber)
 			if events.RunStatusFromPayload(result.Status).IsAborted() {
 				continue
 			}
@@ -4156,7 +4147,7 @@ loop:
 			}
 			if events.RunStatusFromPayload(result.Status).IsSuccess() || alreadyResolved {
 				if issue != nil && s.deps.githubClient != nil {
-					prMerged := s.checkPRMergedForIssue(ctx, branch)
+					prMerged := checkPRMergedForIssue(ctx, s.deps.githubClient, branch, s.issueNumber)
 					if events.RunStatusFromPayload(result.Status).IsSuccess() && mergedPRMissingClosingReference(ctx, s.deps.githubClient, branch, s.issueNumber) {
 						terminalExtras = mergeCompletionFailureExtras(terminalExtras, s.issueNumber)
 						s.lifecycleTerminal = true
@@ -4322,7 +4313,7 @@ func (s *runSession) prepareIssueAttempt(ctx context.Context, branch string, wt 
 		// prompt. The merged PR is the sole success signal for
 		// issue-driven runs (see #860). Prompt-only runs use a separate
 		// retry preparation helper without this guard.
-		if s.checkPRMergedForIssue(ctx, branch) {
+		if checkPRMergedForIssue(ctx, s.deps.githubClient, branch, s.issueNumber) {
 			// Preserve the historical empty-task artifact when a managed PR
 			// resolves the retry before the replacement session launches.
 			taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")

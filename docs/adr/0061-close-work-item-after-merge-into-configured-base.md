@@ -2,7 +2,10 @@
 
 ## Status
 
-accepted
+rejected
+
+Reverted because work item closure belongs to the team's delivery flow; the
+replacement decision follows in this Specification.
 
 ## Context
 

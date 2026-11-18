@@ -36,9 +36,6 @@ func (e *runExecutor) applyObserved(ctx context.Context, session *runSession, ro
 	}
 	wt := factory.NewSandbox(session.repoRoot(), session.worktreeDir(), branch, row.BaseBranch, nil)
 	result := AgentRunResult{IssueNumber: row.IssueNumber, Issue: issueRef(row.IssueNumber), Status: verdict.status(), Branch: branch}
-	if verdict.mergedPR != nil {
-		session.verifiedMergedPR = verdict.mergedPR
-	}
 	result.Status = session.finishDecidedTerminal(ctx, session.issueRunID(), result, verdict.Evidence, wt, branch)
 	return result
 }
