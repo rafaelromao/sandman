@@ -294,6 +294,29 @@ func TestEnsureReviewTimeoutContextPreservesIssueBodyText(t *testing.T) {
 	}
 }
 
+func TestEnsureReviewTimeoutContextPreservesBlindReviewAnnotation(t *testing.T) {
+	content := "# Task\n\n## Runtime Context\n\n- Review command: ``\n- Review mode: blind review\n- Delegated review response timeout: `900` seconds (not used for blind review)\n"
+	got := EnsureReviewTimeoutContext(content, 600)
+	if !strings.Contains(got, "- Delegated review response timeout: `600` seconds (not used for blind review)") {
+		t.Fatalf("blind-review timeout was not retained as informational context:\n%s", got)
+	}
+	if strings.Contains(got, "`900` seconds") || strings.Contains(got, "`600` seconds\n") {
+		t.Fatalf("stale or active delegated timeout remains in blind-review context:\n%s", got)
+	}
+}
+
+func TestEnsureReviewTimeoutContextPreservesUnspecifiedReviewAnnotation(t *testing.T) {
+	content := "# Task\n\n## Runtime Context\n\n- Review command: (not configured)\n- Review mode: unspecified\n- Delegated review response timeout: `900` seconds (review mode unspecified)\n"
+	got := EnsureReviewTimeoutContext(content, 600)
+
+	if !strings.Contains(got, "- Delegated review response timeout: `600` seconds (review mode unspecified)") {
+		t.Fatalf("unspecified review mode annotation was lost:\n%s", got)
+	}
+	if strings.Contains(got, "`900` seconds") {
+		t.Fatalf("stale timeout remains:\n%s", got)
+	}
+}
+
 func TestContinuationTaskPromptWithReviewTimeoutRefreshesCurrentContext(t *testing.T) {
 	prior := "# Task\n\n## Runtime Context\n\n- Delegated review response timeout: `900` seconds\n\n## Notes\n\nKeep this.\n"
 	got := ContinuationTaskPromptWithReviewTimeout(prior, 600)
@@ -309,6 +332,109 @@ func TestContinuationTaskPromptWithReviewTimeoutRefreshesCurrentContext(t *testi
 	}
 	if !strings.Contains(got, "## Notes\n\nKeep this.") {
 		t.Fatalf("arbitrary task content was not preserved:\n%s", got)
+	}
+}
+
+func TestContinuationTaskPromptWithReviewSettingsRefreshesBothReviewModes(t *testing.T) {
+	tests := []struct {
+		name           string
+		priorCommand   string
+		currentCommand string
+		wantCommand    string
+		wantMode       string
+		wantTimeout    string
+		dontWant       []string
+	}{
+		{
+			name:           "empty to configured",
+			priorCommand:   "",
+			currentCommand: "/sandman review",
+			wantCommand:    "- Review command: `/sandman review`",
+			wantMode:       "- Review mode: delegated review",
+			wantTimeout:    "- Delegated review response timeout: `600` seconds",
+			dontWant:       []string{"Review mode: blind review", "900` seconds", "not used for blind review"},
+		},
+		{
+			name:           "configured to empty",
+			priorCommand:   "/sandman review",
+			currentCommand: "",
+			wantCommand:    "- Review command: ``",
+			wantMode:       "- Review mode: blind review",
+			wantTimeout:    "- Delegated review response timeout: `600` seconds (not used for blind review)",
+			dontWant:       []string{"Review mode: delegated review", "`900` seconds"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prior := "# Task\n\n## Runtime Context\n\n- Review command: `" + tt.priorCommand + "`\n- Review mode: stale mode\n- Delegated review response timeout: `900` seconds\n\n## Plan\n\n- preserve this checkpoint\n\n## Next Step\n\nContinue the checkpoint.\n"
+			got := ContinuationTaskPromptWithReviewSettings(prior, tt.currentCommand, true, 600)
+			if !strings.Contains(got, tt.wantCommand) {
+				t.Errorf("current review command missing %q:\n%s", tt.wantCommand, got)
+			}
+			if !strings.Contains(got, tt.wantMode) {
+				t.Errorf("current review mode missing %q:\n%s", tt.wantMode, got)
+			}
+			if !strings.Contains(got, tt.wantTimeout) {
+				t.Errorf("current timeout missing %q:\n%s", tt.wantTimeout, got)
+			}
+			for _, unwanted := range tt.dontWant {
+				if strings.Contains(got, unwanted) {
+					t.Errorf("stale or contradictory setting %q remains:\n%s", unwanted, got)
+				}
+			}
+			for _, preserved := range []string{"- preserve this checkpoint", "Continue the checkpoint."} {
+				if !strings.Contains(got, preserved) {
+					t.Errorf("user Task content %q was lost:\n%s", preserved, got)
+				}
+			}
+			again := ContinuationTaskPromptWithReviewSettings(got, tt.currentCommand, true, 600)
+			if again != got {
+				t.Errorf("review settings refresh is not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
+			}
+		})
+	}
+}
+
+func TestContinuationTaskPromptWithReviewSettingsUsesDefaultForBlankTask(t *testing.T) {
+	got := ContinuationTaskPromptWithReviewSettings(" \n", "", true, 600)
+	for _, want := range []string{
+		"# Task",
+		"## Execution Checklist",
+		"- Review command: ``",
+		"- Review mode: blind review",
+		"Delegated review response timeout: `600` seconds (not used for blind review)",
+		"## Continuation Freshness Guard",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("blank continuation Task missing default/current content %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestContinuationTaskPromptWithReviewSettingsHonorsConfiguredEmptyBit(t *testing.T) {
+	task := "# Task\n\n## Runtime Context\n\n- Review command: `/stale review`\n- Review mode: delegated review\n- Delegated review response timeout: `900` seconds\n\n## Plan\n\n- preserve this checkpoint\n"
+	got := ContinuationTaskPromptWithReviewSettings(task, "", false, 600)
+
+	for _, want := range []string{
+		"- Review command: (not configured)",
+		"- Review mode: unspecified",
+		"- Delegated review response timeout: `600` seconds (review mode unspecified)",
+		"- preserve this checkpoint",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Task missing %q:\n%s", want, got)
+		}
+	}
+	for _, stale := range []string{"/stale review", "Review mode: delegated review", "900` seconds"} {
+		if strings.Contains(got, stale) {
+			t.Errorf("stale review setting %q remains:\n%s", stale, got)
+		}
+	}
+	if strings.Contains(got, "Review mode: blind review") {
+		t.Fatalf("an unset Review command must not claim that blind review is selected:\n%s", got)
+	}
+	if again := ContinuationTaskPromptWithReviewSettings(got, "", false, 600); again != got {
+		t.Fatalf("unset review policy refresh is not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
 	}
 }
 

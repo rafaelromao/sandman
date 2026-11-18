@@ -65,6 +65,10 @@ func TestContextRolloverRecovery(t *testing.T) {
 		BaseBranch:  "main",
 		RunTS:       "260814071754",
 		RunShortID:  "5d21",
+		RenderCfg: prompt.RenderConfig{
+			ReviewCommand: "/sandman review",
+			ReviewTimeout: 600,
+		},
 	}
 
 	result, started := o.newRunExecutor(context.Background(), bc, &contextRolloverSandboxFactory{sandbox: sb}, nil).Execute(context.Background(), row)
@@ -85,6 +89,15 @@ func TestContextRolloverRecovery(t *testing.T) {
 	}
 	if !strings.Contains(sb.secondTask, "Initial task.") {
 		t.Fatalf("clean retry task lost the original Task:\n%s", sb.secondTask)
+	}
+	for _, want := range []string{
+		"Review command: `/sandman review`",
+		"Review mode: delegated review",
+		"Delegated review response timeout: `600` seconds",
+	} {
+		if !strings.Contains(sb.secondTask, want) {
+			t.Errorf("clean retry Task missing current review setting %q:\n%s", want, sb.secondTask)
+		}
 	}
 	if strings.Contains(sb.secondCommand, "--continue") {
 		t.Fatalf("clean retry reused OpenCode continuation: %q", sb.secondCommand)

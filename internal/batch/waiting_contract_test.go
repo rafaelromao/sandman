@@ -263,6 +263,7 @@ func TestWaitingContract_FreshRepairAllowanceAcrossExecutorReentry(t *testing.T)
 	if err := os.MkdirAll(filepath.Dir(budgetPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	seedContinuationTask(t, worktree)
 	if err := os.WriteFile(budgetPath, []byte("obsolete corrupt repair budget"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +339,10 @@ func TestWaitingContract_CancelledRemediationDoesNotResume(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	s := &runSession{deps: runDeps{githubClient: &fakeGitHubClient{}}}
-	_, resume := s.resumePromptFromGate(ctx, &fakeSandbox{workDir: root}, "branch", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: map[string]any{"gate": gateReadyToMerge, "pull_request": 17, "head_sha": "head"}})
+	_, resume, err := s.resumePromptFromGate(ctx, &fakeSandbox{workDir: root}, "branch", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: map[string]any{"gate": gateReadyToMerge, "pull_request": 17, "head_sha": "head"}})
+	if err != nil {
+		t.Fatalf("resumePromptFromGate: %v", err)
+	}
 	if resume || s.resumeCount != 0 {
 		t.Fatal("cancelled repair resumed or consumed the session allowance")
 	}
@@ -606,6 +610,7 @@ func TestWaitingContract_ReviewerLaunchHistoryCannotPreemptApproval(t *testing.T
 			t.Chdir(root)
 			worktree := filepath.Join(root, "worktree")
 			writeCurrentHeadApprovalClassification(t, worktree)
+			seedContinuationTask(t, worktree)
 			data, err := os.ReadFile(filepath.Join(worktree, ".sandman", "state", "17.review_request.json"))
 			if err != nil {
 				t.Fatal(err)
@@ -993,6 +998,7 @@ func TestWaitingContract_QuotaRecoveryReadmitsSibling(t *testing.T) {
 	root := testenv.MkdirShort(t, "sm-wait-")
 	t.Chdir(root)
 	initGitRepo(t, root)
+	seedContinuationTask(t, root)
 	client := &reviewWaitSchedulerGitHubClient{fakeGitHubClient: fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, State: "closed"}, 43: {Number: 43, State: "closed"}},
 		prs:    map[string]*github.PR{"43-sibling": {Number: 43, State: "merged", Merged: true, Body: "Closes #43"}},
@@ -1183,6 +1189,7 @@ func TestWaitingContract_ModelProgressReadmitsSiblingBeforeRecoveryReturns(t *te
 	root := testenv.MkdirShort(t, "sm-mid-quota-")
 	t.Chdir(root)
 	initGitRepo(t, root)
+	seedContinuationTask(t, root)
 	client := &reviewWaitSchedulerGitHubClient{fakeGitHubClient: fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, State: "closed"}, 43: {Number: 43, State: "closed"}, 44: {Number: 44, State: "closed"}},
 		prs: map[string]*github.PR{
@@ -1358,6 +1365,7 @@ func TestWaitingContract_QuotaRecoveryRestoresCIObservation(t *testing.T) {
 	root := testenv.MkdirShort(t, "sm-wait-")
 	t.Chdir(root)
 	initGitRepo(t, root)
+	seedContinuationTask(t, root)
 	client := &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}, prs: map[string]*github.PR{}}
 	launches := 0
 	factory := &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
@@ -1392,6 +1400,7 @@ func TestWaitingContract_QuotaRecoveryRestoresCIObservation(t *testing.T) {
 func TestWaitingContract_ConsumedQuotaPollingStillPermitsOrdinaryRetries(t *testing.T) {
 	root := testenv.MkdirShort(t, "sm-wait-")
 	t.Chdir(root)
+	seedContinuationTask(t, root)
 	now := time.Now().UTC()
 	log := &spyEventLog{events: []events.Event{
 		{Type: "run.started", RunID: "row", Issue: 42},

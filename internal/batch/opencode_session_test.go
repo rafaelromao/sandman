@@ -275,6 +275,7 @@ func TestRunExecutor_ContinuedRowSelectsOpenCodeSession(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(worktree, ".sandman"), 0755); err != nil {
 		t.Fatal(err)
 	}
+	seedContinuationTask(t, worktree)
 	sb := &fakeSandbox{
 		workDir:    worktree,
 		execStdout: `{"type":"text","sessionID":"new-session","part":{"text":"continued"}}` + "\n",
@@ -329,6 +330,7 @@ func TestRunExecutor_LifecycleRemediationRelaunchReusesCurrentSession(t *testing
 	if err := os.MkdirAll(filepath.Join(worktree, ".sandman"), 0755); err != nil {
 		t.Fatal(err)
 	}
+	seedContinuationTask(t, worktree)
 	sb := &opencodeSequenceSandbox{
 		fakeSandbox: fakeSandbox{workDir: worktree},
 		results: []opencodeExecResult{
@@ -355,6 +357,7 @@ func TestRunExecutor_LifecycleRemediationRelaunchReusesCurrentSession(t *testing
 	runOpts := gateTestRunOptions()
 	runOpts.awaitResumeMax = 1
 	sandboxFactory := sandboxFactoryFunc(func(string, string, string, string, sandbox.Container) sandbox.Sandbox { return sb })
+	log := &spyEventLog{}
 	o := NewOrchestrator(client, &retryRenderer{result: "rendered prompt"}, &fakeConfigStore{config: &config.Config{
 		Agent:          "opencode",
 		DefaultAgent:   "opencode",
@@ -362,7 +365,7 @@ func TestRunExecutor_LifecycleRemediationRelaunchReusesCurrentSession(t *testing
 		Sandbox:        "worktree",
 		Git:            config.GitConfig{BaseBranch: "main"},
 		AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: config.BuiltInAgentPresets["opencode"].Command}},
-	}}, nil,
+	}}, log,
 		WithSandboxFactory(sandboxFactory),
 		WithRunnableFactory(factory),
 		WithRunSessionOpts(runOpts),
@@ -388,7 +391,12 @@ func TestRunExecutor_LifecycleRemediationRelaunchReusesCurrentSession(t *testing
 		t.Fatalf("lifecycle executor result = %+v, started=%v", result, started)
 	}
 	first := <-factory.agentRunCh
-	second := <-factory.agentRunCh
+	var second *AgentRun
+	select {
+	case second = <-factory.agentRunCh:
+	default:
+		t.Fatalf("lifecycle remediation did not relaunch: result=%+v events=%+v commands=%v", result, log.snapshot(), sb.commands)
+	}
 	if first.reuseSession {
 		t.Fatal("initial lifecycle launch unexpectedly reused a session")
 	}

@@ -596,7 +596,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					if reviewTimeoutSet {
 						continuationTimeout = reviewTimeout
 					}
-					taskPrompts[num] = prompt.ContinuationTaskPromptWithReviewTimeout(content, continuationTimeout)
+					taskPrompts[num] = prompt.ContinuationTaskPromptWithReviewSettings(content, reviewCommand, true, continuationTimeout)
 				}
 			}
 			var continuationReq batch.Request
