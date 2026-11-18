@@ -38,11 +38,11 @@ gh pr view "$pull_request" --repo "$repository" \
 jq -e --arg head "$head" '
   .state == "OPEN" and .headRefOid == $head and (.baseRefName | type == "string")
 ' "$tmp/pr" >/dev/null || fail REVIEW_PROMPT_STALE_HEAD
-gh api graphql --paginate --slurp \
+gh api graphql --paginate \
   -F "owner=$owner" -F "repo=$repository_name" -F "number=$pull_request" \
   -f query='query($owner:String!,$repo:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$number){closingIssuesReferences(first:100,after:$endCursor){nodes{number} pageInfo{hasNextPage endCursor}}}}}' \
   >"$tmp/links" || fail REVIEW_PROMPT_LINKAGE_LOOKUP_FAILED
-linked=$(jq -er '
+linked=$(jq -ser '
   def refs: .data.repository.pullRequest.closingIssuesReferences;
   def valid_page:
     type == "object" and

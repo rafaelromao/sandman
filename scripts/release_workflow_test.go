@@ -485,6 +485,18 @@ func TestCIWorkflowKeepsOptInSuitesDisabled(t *testing.T) {
 		t.Fatal("regular Linux CI must run exactly the credential-free subagent permission fixture")
 	}
 	workflow = strings.Replace(workflow, fakePermissionsStep, "", 1)
+	blindReviewContainerStep := `      - name: Blind-review default container compatibility
+        env:
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ""
+          OPENCODE_API_KEY: ""
+        run: bash scripts/ci_report.sh blind-review-container go test -tags e2e -json -count=1 -timeout=12m ./internal/skill/sandman/blind-review -run '^TestBlindReviewDefaultContainerCompatibility$'
+
+`
+	if strings.Count(workflow, blindReviewContainerStep) != 1 {
+		t.Fatal("regular Linux CI must run exactly the credential-free blind-review container compatibility fixture")
+	}
+	workflow = strings.Replace(workflow, blindReviewContainerStep, "", 1)
 	if strings.Contains(workflow, "-tags smoke") || strings.Contains(workflow, "-tags e2e") {
 		t.Fatal("regular CI must not select broader smoke/e2e suites")
 	}

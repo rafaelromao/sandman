@@ -344,6 +344,11 @@
       "tier": "live"
     },
     {
+      "package": "github.com/rafaelromao/sandman/internal/skill/sandman/blind-review",
+      "test": "TestBlindReviewDefaultContainerCompatibility",
+      "tier": "integration"
+    },
+    {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestBlindReviewFixtureModelAndVariantArePinned",
       "tier": "integration"

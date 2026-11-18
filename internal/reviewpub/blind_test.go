@@ -83,6 +83,14 @@ func TestBlindPublicationHelperMatchesGo(t *testing.T) {
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("jq unavailable")
 	}
+	for _, path := range []string{
+		"../skill/sandman/blind-review/publish-v1.sh",
+		"../skill/sandman/blind-review/publication-v1.jq",
+	} {
+		if _, err := os.ReadFile(path); err != nil {
+			t.Fatal(err)
+		}
+	}
 	reports := []string{
 		"## Decision\n**APPROVED**",
 		"## Decision: CHANGES_REQUESTED\n",

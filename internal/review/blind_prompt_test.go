@@ -31,6 +31,9 @@ func TestBlindPromptHelperMatchesDaemon(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := os.ReadFile(helper); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		name           string
 		prior          bool
@@ -101,15 +104,15 @@ esac
 			if tc.noIssue {
 				body = "No linked work item."
 			}
-			graphqlResponse := `[{ "data":{"repository":{"pullRequest":{"closingIssuesReferences":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}]`
+			graphqlResponse := `{"data":{"repository":{"pullRequest":{"closingIssuesReferences":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}`
 			if tc.nativeIssue > 0 && tc.nativePage2 {
-				graphqlResponse = fmt.Sprintf(`[{ "data":{"repository":{"pullRequest":{"closingIssuesReferences":{"nodes":[],"pageInfo":{"hasNextPage":true,"endCursor":"cursor-1"}}}}}},{"data":{"repository":{"pullRequest":{"closingIssuesReferences":{"nodes":[{"number":%d}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}]`, tc.nativeIssue)
+				graphqlResponse = fmt.Sprintf("{\"data\":{\"repository\":{\"pullRequest\":{\"closingIssuesReferences\":{\"nodes\":[],\"pageInfo\":{\"hasNextPage\":true,\"endCursor\":\"cursor-1\"}}}}}}\n{\"data\":{\"repository\":{\"pullRequest\":{\"closingIssuesReferences\":{\"nodes\":[{\"number\":%d}],\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null}}}}}}", tc.nativeIssue)
 			} else if tc.nativeIssue > 0 {
-				graphqlResponse = fmt.Sprintf(`[{ "data":{"repository":{"pullRequest":{"closingIssuesReferences":{"nodes":[{"number":%d}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}]`, tc.nativeIssue)
+				graphqlResponse = fmt.Sprintf(`{"data":{"repository":{"pullRequest":{"closingIssuesReferences":{"nodes":[{"number":%d}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}`, tc.nativeIssue)
 			} else if tc.linkageBad {
-				graphqlResponse = `[{ "errors":[{"message":"partial data"}],"data":{"repository":null}}]`
+				graphqlResponse = `{"errors":[{"message":"partial data"}],"data":{"repository":null}}`
 			} else if tc.linkagePartial {
-				graphqlResponse = `[{ "data":{"repository":{"pullRequest":{"closingIssuesReferences":{"nodes":[],"pageInfo":{"hasNextPage":true,"endCursor":"cursor-1"}}}}}}]`
+				graphqlResponse = `{"data":{"repository":{"pullRequest":{"closingIssuesReferences":{"nodes":[],"pageInfo":{"hasNextPage":true,"endCursor":"cursor-1"}}}}}}`
 			}
 			cfg := prompt.RenderConfig{}
 			if tc.override != "" || tc.emptyOverride {
