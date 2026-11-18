@@ -4,8 +4,9 @@
 
 rejected
 
-Reverted because work item closure belongs to the team's delivery flow; the
-replacement decision follows in this Specification.
+Reverted because work item closure belongs to the team's delivery flow, not to
+Sandman. The replacement decision is tracked in Specification #2977:
+dependents are released when their blockers are implemented, not closed.
 
 ## Context
 
