@@ -144,10 +144,10 @@ func TestBlindReviewDefaultContainerCompatibility(t *testing.T) {
 	}
 	fakeGH := `#!/bin/sh
 set -eu
-if [ "$1" = api ] && [ "$2" = graphql ]; then
+if [ "${1-}" = api ] && [ "${2-}" = graphql ]; then
   exec /usr/bin/gh "$@"
 fi
-case "$1 $2" in
+case "${1-} ${2-}" in
   "pr view") cat /fixture/pr.json ;;
   "issue view")
     [ "$3" = 42 ] || { printf '%s\n' '{"body":"Fallback criterion 99 must not win"}'; exit 0; }
