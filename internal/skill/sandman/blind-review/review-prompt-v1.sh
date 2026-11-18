@@ -59,11 +59,11 @@ jq -jrns --rawfile template "$template" --arg run_dir "$run_dir" \
     sub("^[ \\t\\r\\n]+"; "") |
     test("^(?:@\\S+\\s+)?/sandman(?:\\s+|$)"; "i") or
     (test("^[/@]") and test("review"; "i"));
-  ($comments | add | sort_by(.created_at | timestamp_key) |
+  (($comments | add | sort_by(.created_at | timestamp_key) |
     map(select(.body | request | not) | .body)) +
   ($reviews | add | map("### Formal review (" + .state + ")\n\n" + .body)) +
   ($inline | add | map("### Inline review (" + .path +
-    (if (.line // 0) > 0 then ":" + (.line | tostring) else "" end) + ")\n\n" + .body)) as $entries |
+    (if (.line // 0) > 0 then ":" + (.line | tostring) else "" end) + ")\n\n" + .body))) as $entries |
   (if ($entries | length) > 0 then
     "## Authoritative prior review entries\n\n" + ($entries | join("\n\n---\n\n"))
    else "" end) as $history |
