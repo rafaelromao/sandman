@@ -30,6 +30,9 @@ func runIdleGateCase(t *testing.T, mode IssueMode, prevRunID string, pr *github.
 	t.Cleanup(func() { _ = os.Chdir(oldWD) })
 
 	sb := &retrySandbox{workDir: filepath.Join(workDir, "worktree")}
+	if mode == ModeContinue {
+		seedContinuationTask(t, sb.workDir)
+	}
 	oldHeadFn := currentBranchHeadFn
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })

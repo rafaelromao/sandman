@@ -3,9 +3,11 @@ package batch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -17,6 +19,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
@@ -61,6 +64,99 @@ func TestQuotaAccountingRestoresPollingWithoutChargingDowntime(t *testing.T) {
 	}
 }
 
+func TestQuotaReentryDeliversLatestWorktreeTaskOnRepeatedProbes(t *testing.T) {
+	root := testenv.MkdirShort(t, "sm-quota-task-")
+	t.Chdir(root)
+	now := time.Now().UTC()
+	worktree := filepath.Join(root, "worktree")
+	taskPath := filepath.Join(worktree, ".sandman", "task.md")
+	if err := os.MkdirAll(filepath.Dir(taskPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(taskPath, []byte("# Task\n\n## Runtime Context\n\n- Review command: `/old review`\n- Review mode: delegated review\n- Delegated review response timeout: `900` seconds\n\n## Plan\n\n- checkpoint before quota probe 1\n\n## Next Step\n\nContinue step 1.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	log := &spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "row", Issue: 42, Timestamp: now.Add(-time.Hour), Payload: map[string]any{"branch": gateTestBranch, "batch_id": "old"}},
+		{Type: "run.await", RunID: "row", Issue: 42, Timestamp: now.Add(-time.Minute), Payload: map[string]any{
+			"await_reason": "usage-limit", "branch": gateTestBranch, "batch_id": "old", "usage_limit_waited_seconds": 17400,
+			"usage_limit_deadline_unix_seconds": now.Add(-time.Hour).Unix(),
+		}},
+	}}
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+		prs:    map[string]*github.PR{gateTestBranch: {Number: 17, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha"}},
+	}
+	var delivered []string
+	probe := 0
+	factory := &taskPromptRunnableFactory{run: func(_ context.Context, cfg prompt.RenderConfig) AgentRunResult {
+		delivered = append(delivered, cfg.TaskPrompt)
+		probe++
+		nextTask := fmt.Sprintf("# Task\n\n## Plan\n\n- checkpoint before quota probe %d\n\n## Next Step\n\nContinue step %d.\n", probe+1, probe+1)
+		if err := os.WriteFile(taskPath, []byte(nextTask), 0o600); err != nil {
+			t.Errorf("agent checkpoint before probe %d: %v", probe+1, err)
+		}
+		return AgentRunResult{IssueNumber: 42, Branch: gateTestBranch, Status: "failure", UsageLimitReached: true}
+	}}
+	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktree}}
+	opts := gateTestRunOptions()
+	opts.now = func() time.Time { return now }
+	o := NewOrchestrator(client, &noopRenderer{}, nil, log, WithErrorLog(io.Discard), WithRunnableFactory(factory), WithSandboxFactory(sbFactory), WithRunSessionOpts(opts))
+	executor := o.newRunExecutor(context.Background(), BatchConfig{
+		Cfg:              &config.Config{WorktreeDir: "worktrees"},
+		AgentCfg:         config.BuiltInAgentPresets["opencode"].Agent("opencode"),
+		IdentityResolver: noopIdentityResolver(),
+	}, sbFactory, nil)
+	row := RowSpec{
+		IssueNumber:    42,
+		RunID:          "row",
+		Mode:           ModeContinue,
+		quotaAllowance: usageLimitAllowance{probe: true},
+		Branches:       map[int]string{42: gateTestBranch},
+		BaseBranch:     "main",
+		RenderCfg: prompt.RenderConfig{
+			TaskPrompt:       "# Task\n\nbatch-start snapshot",
+			ReviewCommandSet: true,
+			ReviewTimeout:    600,
+		},
+	}
+	for i := 0; i < 3; i++ {
+		result, started := executor.Execute(context.Background(), row)
+		if !started || result.Status != "await" {
+			t.Fatalf("quota probe %d result = %+v started=%v; want an admitted usage-limit wait", i+1, result, started)
+		}
+	}
+	for i, checkpoint := range []string{
+		"checkpoint before quota probe 1",
+		"checkpoint before quota probe 2",
+		"checkpoint before quota probe 3",
+	} {
+		if i >= len(delivered) || !strings.Contains(delivered[i], checkpoint) {
+			t.Errorf("quota re-entry %d did not receive latest worktree checkpoint %q; delivered=%q", i+1, checkpoint, delivered)
+		}
+		if i < len(delivered) && strings.Contains(delivered[i], "batch-start snapshot") {
+			t.Errorf("quota re-entry %d replayed the stale batch-start Task: %s", i+1, delivered[i])
+		}
+		if i < len(delivered) {
+			for _, current := range []string{
+				"Review command: ``",
+				"Review mode: blind review",
+				"Delegated review response timeout: `600` seconds (not used for blind review)",
+			} {
+				if !strings.Contains(delivered[i], current) {
+					t.Errorf("quota re-entry %d did not refresh review settings with %q: %s", i+1, current, delivered[i])
+				}
+			}
+			if strings.Contains(delivered[i], "/old review") || strings.Contains(delivered[i], "`900` seconds") {
+				t.Errorf("quota re-entry %d retained stale review settings: %s", i+1, delivered[i])
+			}
+		}
+	}
+	if len(delivered) != 3 {
+		t.Fatalf("runnable launches = %d, want one per quota probe; delivered=%q", len(delivered), delivered)
+	}
+}
+
 type unreadableQuotaAccountingLog struct{ *spyEventLog }
 
 func (unreadableQuotaAccountingLog) Read() ([]events.Event, error) {
@@ -72,6 +168,7 @@ func TestQuotaAccountingUnavailableStillPermitsOrdinaryRecovery(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			root := testenv.MkdirShort(t, "sm-quota-fallback-")
 			t.Chdir(root)
+			seedContinuationTask(t, root)
 			log := &spyEventLog{}
 			if kind != "missing-operation" {
 				payload := map[string]any{"await_reason": "usage-limit", "branch": gateTestBranch, "usage_limit_deadline_unix_seconds": time.Now().Add(time.Hour).Unix()}
@@ -106,6 +203,22 @@ func TestQuotaAccountingUnavailableStillPermitsOrdinaryRecovery(t *testing.T) {
 			}
 		})
 	}
+}
+
+type taskPromptRunnableFactory struct {
+	run func(context.Context, prompt.RenderConfig) AgentRunResult
+}
+
+func (f *taskPromptRunnableFactory) NewRunnable(*github.Issue, string, sandbox.Sandbox) Runnable {
+	return taskPromptRunnable{run: f.run}
+}
+
+type taskPromptRunnable struct {
+	run func(context.Context, prompt.RenderConfig) AgentRunResult
+}
+
+func (r taskPromptRunnable) Run(ctx context.Context, _ prompt.IssueRenderer, _ string, cfg prompt.RenderConfig) AgentRunResult {
+	return r.run(ctx, cfg)
 }
 
 func TestQuotaFailureDoesNotAssignSiblingOutcome(t *testing.T) {

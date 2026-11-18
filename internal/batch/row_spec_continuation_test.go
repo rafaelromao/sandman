@@ -3,6 +3,7 @@ package batch
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -35,6 +36,13 @@ func TestLinkedReviewContinuationPreservesPriorRunIDAcrossExecutor(t *testing.T)
 	dir := testenv.MkdirShort(t, "sm-review-cursor-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
+	taskPath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "review-linked", ".sandman", "task.md")
+	if err := os.MkdirAll(filepath.Dir(taskPath), 0755); err != nil {
+		t.Fatalf("create review worktree Task directory: %v", err)
+	}
+	if err := os.WriteFile(taskPath, []byte("# Task\n\nContinue reviewing the linked pull request.\n"), 0644); err != nil {
+		t.Fatalf("write review worktree Task: %v", err)
+	}
 
 	const priorRunID = "previous-review-run"
 	log := &spyEventLog{}

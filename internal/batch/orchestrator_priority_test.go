@@ -80,7 +80,12 @@ type reviewWaitSchedulerSandboxFactory struct{}
 
 func (reviewWaitSchedulerSandboxFactory) NewSandbox(_, worktreeBase, branch, _ string, _ sandbox.Container) sandbox.Sandbox {
 	workDir := filepath.Join(worktreeBase, branch)
-	_ = os.MkdirAll(filepath.Join(workDir, ".sandman"), 0o755)
+	taskDir := filepath.Join(workDir, ".sandman")
+	_ = os.MkdirAll(taskDir, 0o755)
+	taskPath := filepath.Join(taskDir, "task.md")
+	if _, err := os.Stat(taskPath); os.IsNotExist(err) {
+		_ = os.WriteFile(taskPath, []byte("# Task\n\n## Next Step\n\nContinue implementation work.\n"), 0o600)
+	}
 	return &fakeSandbox{workDir: workDir}
 }
 

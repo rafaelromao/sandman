@@ -142,11 +142,14 @@ jq -se --slurpfile previous "$tmp/parent" 'length == 1 and .[0] == $previous[0]'
 jq -n --slurpfile parent "$tmp/parent" --slurpfile live "$tmp/parent-live" \
   --slurpfile general "$tmp/general" --slurpfile config "$tmp/config" '
   ($general[0].permission) as $rules |
-  (($live[0].permission // []) |
-    map(select(.permission == "external_directory" or .action == "deny"))) +
-  (["todowrite","task"] | map(. as $name |
-    select(any($rules[]; .permission == $name) | not) |
-    {permission:$name,pattern:"*",action:"deny"})) as $permission |
+  (
+    (($live[0].permission // []) |
+      map(select(.permission == "external_directory" or .action == "deny")))
+    +
+    (["todowrite","task"] | map(. as $name |
+      select(any($rules[]; .permission == $name) | not) |
+      {permission:$name,pattern:"*",action:"deny"}))
+  ) as $permission |
   {parentID:$parent[0].id,title:"Blind pull-request review",agent:"general",
    permission:($permission +
     [($config[0].experimental.primary_tools // [])[] |
