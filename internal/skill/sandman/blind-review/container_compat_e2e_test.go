@@ -186,7 +186,7 @@ grep -Fq 'Native acceptance criterion from issue 42' /fixture/prompt.md
 ! grep -Fq 'Fallback criterion 99 must not win' /fixture/prompt.md
 python3 /helpers/test_transport.py
 sh /helpers/publish-v1.sh --decision-file /fixture/decision.md --head-sha abc --print-body > /fixture/publication.md
-jq -e -R 'contains("<!-- sandman-verdict:approved -->") and contains("<!-- sandman-publication:")' /fixture/publication.md >/dev/null
+jq -e -Rs 'contains("<!-- sandman-verdict:approved -->") and contains("<!-- sandman-publication:")' /fixture/publication.md >/dev/null
 `
 	runnerPath := filepath.Join(fixture, "run.sh")
 	if err := os.WriteFile(runnerPath, []byte(runner), 0700); err != nil {
