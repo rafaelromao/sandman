@@ -196,6 +196,7 @@ func TestReviewPublicationVerdict_MergeConditionsInSuggestedNextSteps(t *testing
 		{"current PR", "No author changes requested. Merge the current PR after the race in worker.go is fixed."},
 		{"semicolon", "None. Merge only; after fixing the race in worker.go."},
 		{"semicolon without no-change opener", "Merge only; after fixing the race in worker.go."},
+		{"semicolon after merge command", "None. Merge; after the race in worker.go is fixed."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			prose := "## Suggested next steps\n" + tc.steps + "\n\n## Decision\n**APPROVED**\n"
@@ -229,7 +230,7 @@ func TestReviewPublicationVerdict_StandaloneAndNestedHeadings(t *testing.T) {
 			t.Fatal("standalone prose decision rejected")
 		}
 	})
-	for _, heading := range []string{"Quality check", "Quality check: local metrics", "Quality check ##"} {
+	for _, heading := range []string{"Quality check", "Quality check: local metrics", "Quality check ##", "Test results"} {
 		t.Run(heading, func(t *testing.T) {
 			report := "## " + heading + "\n### Metrics\n#### Findings\nImportant: complexity above the advisory threshold.\n\n" +
 				"### Suggested next steps\nFix the race in a separate effort.\n\n## Decision\n**APPROVED**\n"
@@ -241,10 +242,11 @@ func TestReviewPublicationVerdict_StandaloneAndNestedHeadings(t *testing.T) {
 	}
 }
 
-func TestReviewPublicationVerdict_DescriptiveSemicolonInSuggestedNextSteps(t *testing.T) {
+func TestReviewPublicationVerdict_DescribedMergeInSuggestedNextSteps(t *testing.T) {
 	for _, description := range []string{
 		"The existing workflow merges the current PR; when it does, GitHub closes the linked issue.",
 		"The earlier PR was already merged; when GitHub sees the closing keyword, it closes the issue.",
+		"The existing workflow merges the current PR when the simulator emits its completion event.",
 	} {
 		prose := "## Suggested next steps\nNone. " + description + "\n\n## Decision\n**APPROVED**\n"
 		published := reviewpub.Body(prose, "request", "current-sha")
