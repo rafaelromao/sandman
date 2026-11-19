@@ -280,8 +280,13 @@ CI → review → approval → occupied slot → merge; quota → recovery → C
 deferred admission → explicit abort; and ownerless wait → different-batch
 rehydration inside fixed grace. Assert emitted events and their CLI/Portal folds,
 managed CI/review hard deadlines, session-local relaunch and invocation-local
-standalone CI bounds, completed quota polling, cumulative RunID duration, exclusive claims,
-held dependencies, terminal preservation, and launch-boundary quota revalidation.
+standalone CI bounds, reset-aware and fallback quota schedules, variable
+completed-wait accounting, restart reconstruction, cancellation, cumulative
+RunID duration, exclusive claims, held dependencies, terminal preservation, and
+launch-boundary quota revalidation. Strategy tests cover authoritative reset
+sources, timezone/date interpretation, malformed and conflicting evidence, and
+the seven-day bound. Verify that reviewer quota recovery retains its separate
+daemon-wide fixed ten-minute cadence.
 
 E2E tests exercise multi-session behavior such as continuing a previous run, batch orchestration, and subagent permission boundaries. They require the `e2e` build tag and are slower than smoke tests.
 

@@ -16,13 +16,20 @@ remains historical evidence.
 | Reviewer recovery | 10/20/40/60-second capped launch backoff, request/head advisory artifact claims, durable single decision publication; parent's configured request deadline | Cumulative three-launch gate, including unknown-head preparation failures; no new reviewer request-age cutoff |
 | Managed CI | Durable 30-minute hard deadline per current-head check execution; new head or verified rerun starts a new CI generation; same-execution observation/restart preserves its deadline | Cumulative remediation count as a launch prerequisite; expired prior execution forcing repeated repair of an actively resolving rerun |
 | Standalone CI | 60 minutes and three fixes per current head within an invocation; same-head polling preserves both; new head or fresh invocation resets | 30-minute tightening and persisted standalone reservation ledgers |
-| Implementation quota | Five hours of accumulated completed ten-minute polling, final boundary probe, configured fresh-session ordinary retries | Absolute wall-clock expiry consuming downtime/capacity delay or preempting ordinary retries; sibling failure inherited solely from another quota owner |
+| Implementation quota | Five hours of accumulated completed scheduled waits (validated provider reset or ten-minute fallback), final boundary probe, configured fresh-session ordinary retries | Absolute wall-clock expiry consuming downtime/capacity delay or preempting ordinary retries; sibling failure inherited solely from another quota owner |
 
-Quota consumption is restored into both executor and scheduler. Its recomputed
-exhaustion estimate is diagnostic; the stable run-scoped quota schedule has no
-hard operation deadline. Missing/malformed/unreadable accounting disables new
-quota waits but permits configured bounded execution. Legacy estimate
-normalization preserves existing ownerless grace; discovery does not renew it.
+Quota consumption is restored into both executor and scheduler. A validated
+provider reset schedules implementation recovery; absent or untrusted evidence
+uses ten-minute fallback. The scheduled duration is charged only after a
+successful complete wait, capped by the remaining five-hour allowance; an
+interrupted wait, capacity delay, or downtime consumes none. The durable due
+checkpoint is retained across restart or reconstructed from current event
+evidence if absent. The recomputed exhaustion estimate is diagnostic; the stable
+run-scoped quota schedule has no hard operation deadline. Missing/malformed/
+unreadable accounting disables new quota waits but permits configured bounded
+execution. The reviewer daemon remains on its separate fixed ten-minute schedule.
+Legacy estimate normalization preserves existing ownerless grace; discovery does
+not renew it.
 
 Other historical exits remain: ten review passes under the existing head/session
 reset rules, authentication/authorization failures, unresolved conflicts,

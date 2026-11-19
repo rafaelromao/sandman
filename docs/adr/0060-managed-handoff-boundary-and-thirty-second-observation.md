@@ -59,6 +59,12 @@ GitHub recovery attempts and the outage gate, the standalone review cycle's own
 plan and budgets, and the rollups that count as passing, failing or pending are
 unchanged.
 
+> **Later change (annotated 2026-11-19, #2989):** The ten-minute provider-quota
+> cadence remains the implementation fallback and the reviewer daemon's fixed
+> schedule. Implementation waits use a validated provider reset time when
+> available, capped by the remaining five-hour completed-wait allowance; see
+> [ADR-0062](0062-provider-reset-aware-quota-recovery.md).
+
 **No new controller.** One runtime-owned lifecycle decision-maker remains. Events
 stay the authority for lifecycle and terminality; no event schema, mutable
 status or merge-on-green shortcut is introduced. A ready CI or review result
