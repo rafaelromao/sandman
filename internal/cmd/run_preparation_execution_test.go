@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -85,6 +86,23 @@ type preparedExecutionRunner struct {
 	before func(batch.Request)
 }
 
+type synchronizedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *synchronizedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *synchronizedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 func (r *preparedExecutionRunner) RunBatch(ctx context.Context, req batch.Request) (*batch.Result, error) {
 	r.req = req
 	if r.before != nil {
@@ -93,7 +111,7 @@ func (r *preparedExecutionRunner) RunBatch(ctx context.Context, req batch.Reques
 	return r.runner.RunBatch(ctx, req)
 }
 
-func startPreparedExecution(t *testing.T, gh github.Client, factory *planningRunnableFactory, before func(batch.Request), args ...string) (context.Context, <-chan error, *recordingEventLog, *preparedExecutionRunner) {
+func startPreparedExecution(t *testing.T, gh github.Client, factory *planningRunnableFactory, before func(batch.Request), args ...string) (context.Context, <-chan error, *recordingEventLog, *preparedExecutionRunner, *synchronizedBuffer) {
 	t.Helper()
 	dir := testenv.MkdirShort(t, "sm-plan-")
 	t.Chdir(dir)
@@ -103,8 +121,9 @@ func startPreparedExecution(t *testing.T, gh github.Client, factory *planningRun
 		AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}},
 	}}
 	log := &recordingEventLog{}
+	errorLog := &synchronizedBuffer{}
 	orchestrator := batch.NewOrchestrator(gh, &prompt.Engine{}, store, log,
-		batch.WithRunnableFactory(factory), batch.WithErrorLog(io.Discard))
+		batch.WithRunnableFactory(factory), batch.WithErrorLog(errorLog))
 	runner := &preparedExecutionRunner{runner: orchestrator, before: before}
 	cmd := NewRunCmd(Dependencies{BatchRunner: runner, ConfigStore: store, GitHubClient: gh, EventLog: log, RepoRoot: dir})
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
@@ -117,7 +136,7 @@ func startPreparedExecution(t *testing.T, gh github.Client, factory *planningRun
 	go func() { defer close(exited); done <- cmd.Execute() }()
 	// A failed assertion cancels and joins the command before Chdir cleanup.
 	t.Cleanup(func() { cancel(); <-exited })
-	return ctx, done, log, runner
+	return ctx, done, log, runner, errorLog
 }
 
 func newPlanningRunnables(gh *specDiscoveryGitHubClient) *planningRunnableFactory {
@@ -128,13 +147,14 @@ func newPlanningRunnables(gh *specDiscoveryGitHubClient) *planningRunnableFactor
 	return f
 }
 
-func nextPlanningStart(t *testing.T, ctx context.Context, done <-chan error, f *planningRunnableFactory) int {
+func nextPlanningStart(t *testing.T, ctx context.Context, done <-chan error, f *planningRunnableFactory, log *recordingEventLog, errorLog *synchronizedBuffer) int {
 	t.Helper()
 	select {
 	case n := <-f.started:
 		return n
 	case err := <-done:
-		t.Fatalf("command finished before expected AgentRun: %v", err)
+		rows, readErr := log.Read()
+		t.Fatalf("command finished before expected AgentRun: %v; event snapshot: %+v; event read error: %v; orchestrator log: %q", err, rows, readErr, errorLog.String())
 		return 0
 	case <-ctx.Done():
 		t.Fatal("prepared AgentRun did not start before deadline")
@@ -156,8 +176,8 @@ func testPreparedConcurrentExecution(t *testing.T, stateAPI bool) {
 		client = fresh
 	}
 	f := newPlanningRunnables(gh)
-	ctx, done, log, runner := startPreparedExecution(t, client, f, nil, "1", "3", "7", "8")
-	a, b := nextPlanningStart(t, ctx, done, f), nextPlanningStart(t, ctx, done, f)
+	ctx, done, log, runner, errorLog := startPreparedExecution(t, client, f, nil, "1", "3", "7", "8")
+	a, b := nextPlanningStart(t, ctx, done, f, log, errorLog), nextPlanningStart(t, ctx, done, f, log, errorLog)
 	for _, n := range []int{a, b} {
 		if !slices.Contains([]int{5, 7, 8}, n) {
 			t.Fatalf("ineligible initial AgentRun #%d", n)
@@ -174,7 +194,7 @@ func testPreparedConcurrentExecution(t *testing.T, stateAPI bool) {
 	close(f.release[a])
 	close(f.release[b])
 	for range 5 {
-		n := nextPlanningStart(t, ctx, done, f)
+		n := nextPlanningStart(t, ctx, done, f, log, errorLog)
 		close(f.release[n])
 	}
 	if err := <-done; err != nil {
@@ -261,9 +281,9 @@ func TestRun_PreparedGraphBlocksParentsAfterChildFailureOrLiveOpenSuccess(t *tes
 				} else {
 					f.keepOpen = 4
 				}
-				ctx, done, log, _ := startPreparedExecution(t, client, f, nil, "1", "3", "7")
+				ctx, done, log, _, errorLog := startPreparedExecution(t, client, f, nil, "1", "3", "7")
 				for range 2 {
-					n := nextPlanningStart(t, ctx, done, f)
+					n := nextPlanningStart(t, ctx, done, f, log, errorLog)
 					if n != 4 && n != 7 {
 						t.Fatalf("parent #%d started before its child completed", n)
 					}
@@ -307,7 +327,7 @@ func TestRun_PreparedExternalBlockersAreFreshlyRechecked(t *testing.T) {
 					client = fresh
 				}
 				f := newPlanningRunnables(gh)
-				ctx, done, log, _ := startPreparedExecution(t, client, f, func(req batch.Request) {
+				ctx, done, log, _, errorLog := startPreparedExecution(t, client, f, func(req batch.Request) {
 					if !slices.Equal(req.Blocked[10], []int{9}) {
 						t.Errorf("external blocker lost during preparation: %v", req.Blocked)
 					}
@@ -320,7 +340,7 @@ func TestRun_PreparedExternalBlockersAreFreshlyRechecked(t *testing.T) {
 					launches, dependentStatus = 2, "success"
 				}
 				for range launches {
-					n := nextPlanningStart(t, ctx, done, f)
+					n := nextPlanningStart(t, ctx, done, f, log, errorLog)
 					close(f.release[n])
 				}
 				if err := <-done; err != nil {
