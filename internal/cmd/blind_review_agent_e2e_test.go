@@ -27,12 +27,18 @@ import (
 
 func TestBlindReviewManagedRun_DefaultUsesRealChildSession(t *testing.T) {
 	requireScriptedOpenCodeE2E(t)
+	if !runInLoopbackNamespace(t) {
+		return
+	}
 	home := prepareBlindReviewAgentHarness(t)
 	runBlindReviewManagedScenario(t, home, "")
 }
 
 func TestBlindReviewManagedRun_ConfiguredCommandPostsTriggerWithoutChild(t *testing.T) {
 	requireScriptedOpenCodeE2E(t)
+	if !runInLoopbackNamespace(t) {
+		return
+	}
 	home := prepareBlindReviewAgentHarness(t)
 	runBlindReviewManagedScenario(t, home, "/sandman review")
 }

@@ -26,7 +26,11 @@ class FixtureTest(unittest.TestCase):
             stream = send(fixture.url, request)
             self.assertIn('"finish_reason":"tool_calls"', stream)
             self.assertIn(r'{\"command\":\"make\"}', stream)
-            request["messages"].append({"role": "tool", "content": "BUILD_OK"})
+            request["messages"].extend([
+                {"role": "assistant", "tool_calls": [
+                    {"id": "call_1", "function": {"name": "bash"}}]},
+                {"role": "tool", "tool_call_id": "call_1", "content": "BUILD_OK"},
+            ])
             self.assertIn('"content":"Done"', send(fixture.url, request))
             fixture.verify()
 
@@ -66,6 +70,24 @@ class FixtureTest(unittest.TestCase):
                                    "tools": [{"function": {"name": "read"}}]})
             error.exception.close()
             with self.assertRaisesRegex(AssertionError, "expected offered tool 'bash'"):
+                fixture.verify()
+
+    def test_tool_result_must_belong_to_the_scripted_call(self):
+        with serve([Turn("user", "Run build", Tool("bash", {})),
+                    Turn("tool", "BUILD_OK", "Done")]) as fixture:
+            request = {"model": "scripted", "stream": True,
+                       "messages": [{"role": "user", "content": "Run build"}],
+                       "tools": [{"function": {"name": "bash"}}]}
+            send(fixture.url, request)
+            request["messages"].extend([
+                {"role": "assistant", "tool_calls": [
+                    {"id": "call_1", "function": {"name": "bash"}}]},
+                {"role": "tool", "tool_call_id": "unrelated", "content": "BUILD_OK"},
+            ])
+            with self.assertRaises(HTTPError) as error:
+                send(fixture.url, request)
+            error.exception.close()
+            with self.assertRaisesRegex(AssertionError, "expected result for 'bash' call 'call_1'"):
                 fixture.verify()
 
     @unittest.skipUnless(os.environ.get("SANDMAN_OPENCODE_FIXTURE_TRACER") == "1",

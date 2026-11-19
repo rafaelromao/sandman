@@ -22,7 +22,7 @@ class Tool:
 @dataclass(frozen=True)
 class Turn:
     role: str
-    contains: str
+    contains: str | list[str]
     reply: str | Tool
 
 
@@ -31,6 +31,7 @@ class Script:
         self.turns = tuple(turns)
         self.position = 0
         self.errors = []
+        self.pending_tools = []
         self.lock = Lock()
 
     def config(self, permissions):
@@ -57,10 +58,11 @@ class Script:
 
     def verify(self):
         with self.lock:
-            if self.errors or self.position != len(self.turns):
-                raise AssertionError(
-                    f"model fixture: {self.position} of {len(self.turns)} exchanges; "
-                    + "; ".join(self.errors))
+            if self.errors or self.position != len(self.turns) or self.pending_tools:
+                details = "; ".join(self.errors)
+                if self.pending_tools:
+                    details += f"; {len(self.pending_tools)} tool result(s) outstanding"
+                raise AssertionError(f"model fixture: {self.position} of {len(self.turns)} exchanges; {details}")
 
     def exchange(self, request):
         with self.lock:
@@ -70,14 +72,30 @@ class Script:
                 if self.position >= len(self.turns):
                     raise ValueError("unexpected request after script completed")
                 turn = self.turns[self.position]
-                last = request["messages"][-1]
+                messages = request["messages"]
+                last = messages[-1]
                 content = last.get("content")
                 if isinstance(content, list):
                     content = "".join(part.get("text", "") for part in content)
-                if last.get("role") != turn.role or not isinstance(content, str) or turn.contains not in content:
+                if last.get("role") != turn.role or not isinstance(content, str):
                     raise ValueError(
-                        f"turn {self.position + 1}: expected {turn.role} message "
-                        f"containing {turn.contains[:100]!r}")
+                        f"turn {self.position + 1}: expected {turn.role} message")
+                expected = [turn.contains] if isinstance(turn.contains, str) else turn.contains
+                cursor = 0
+                for phrase in expected:
+                    found = content.find(phrase, cursor)
+                    if found < 0:
+                        raise ValueError(
+                            f"turn {self.position + 1}: expected {turn.role} message "
+                            f"containing {phrase[:100]!r} in order")
+                    cursor = found + len(phrase)
+                if turn.role == "tool":
+                    call_id, tool = self.pending_tools[-1]
+                    preceding = messages[-2]
+                    if (last.get("tool_call_id") != call_id or preceding.get("role") != "assistant"
+                            or not any(call.get("id") == call_id and call.get("function", {}).get("name") == tool
+                                       for call in preceding.get("tool_calls", []))):
+                        raise ValueError(f"turn {self.position + 1}: expected result for {tool!r} call {call_id!r}")
                 if isinstance(turn.reply, Tool) and not any(
                     item.get("function", {}).get("name") == turn.reply.name
                     for item in request.get("tools", [])
@@ -87,6 +105,10 @@ class Script:
                 self.errors.append(str(error))
                 raise ValueError(str(error)) from error
             self.position += 1
+            if turn.role == "tool":
+                self.pending_tools.pop()
+            if isinstance(turn.reply, Tool):
+                self.pending_tools.append((f"call_{self.position}", turn.reply.name))
             return self.position, turn.reply
 
 

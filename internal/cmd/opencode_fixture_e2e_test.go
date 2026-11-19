@@ -8,9 +8,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -60,7 +62,7 @@ func requireScriptedOpenCodeE2E(t *testing.T) {
 
 type scriptedOpenCodeTurn struct {
 	Role     string `json:"role"`
-	Contains string `json:"contains"`
+	Contains any    `json:"contains"` // a string or ordered list of required substrings
 	Reply    any    `json:"reply"`
 }
 
@@ -79,6 +81,65 @@ func openCodeFixtureSource() string {
 	return filepath.Join(filepath.Dir(source), "../../scripts/opencode_fixture.py")
 }
 
+func scriptedOpenCodePin(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(openCodeFixtureSource()), "release_scenarios.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Providers map[string]struct {
+			CLI string `json:"cli"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	pin := manifest.Providers["opencode"].CLI
+	if pin == "" {
+		t.Fatal("missing OpenCode CLI pin")
+	}
+	return pin
+}
+
+// Keep the CLI and its test-owned HTTP server in the same network namespace.
+// The CI host tier already has only loopback. Direct tagged Linux tests re-run
+// only their own test in a fresh user/network namespace if needed.
+func runInLoopbackNamespace(t *testing.T) bool {
+	t.Helper()
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		t.Fatal(err)
+	}
+	isolated := len(interfaces) == 1 && interfaces[0].Flags&(net.FlagLoopback|net.FlagUp) == net.FlagLoopback|net.FlagUp
+	if isolated {
+		version, err := exec.CommandContext(t.Context(), "opencode", "--version").Output()
+		if pin := scriptedOpenCodePin(t); err != nil || strings.TrimSpace(string(version)) != pin {
+			t.Fatalf("need OpenCode CLI %s for scripted host coverage: got %q (%v)", pin, version, err)
+		}
+		return true
+	}
+	if runtime.GOOS != "linux" {
+		t.Skip("scripted host OpenCode E2Es require an isolated Linux network namespace")
+	}
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.Getenv("SANDMAN_FIXTURE_NETWORK_CHILD") == "1" {
+		t.Fatal("scripted host namespace has network interfaces beyond loopback")
+	}
+	t.Setenv("SANDMAN_FIXTURE_NETWORK_CHILD", "1")
+	cmd := exec.CommandContext(t.Context(), "unshare", "-Urn", "sh", "-ec",
+		`ip link set lo up; exec "$@"`, "sh", binary, "-test.run=^"+regexp.QuoteMeta(t.Name())+"$", "-test.v")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("scripted host E2E in loopback namespace: %v\n%s", err, output)
+	}
+	t.Logf("scripted host E2E in loopback namespace:\n%s", output)
+	return false
+}
+
 const containerModelCommand = "python3 /sandman-model/fixture.py /sandman-model/turns.json "
 
 // Scope networking and the read-only fixture mount to the runtime launch, never
@@ -94,20 +155,8 @@ func prepareContainerModel(t *testing.T, turns []scriptedOpenCodeTurn) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifestData, err := os.ReadFile(filepath.Join(filepath.Dir(openCodeFixtureSource()), "release_scenarios.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var manifest struct {
-		Providers map[string]struct {
-			CLI string `json:"cli"`
-		} `json:"providers"`
-	}
-	if err := json.Unmarshal(manifestData, &manifest); err != nil {
-		t.Fatal(err)
-	}
 	spec, err := json.Marshal(map[string]any{
-		"turns": turns, "permissions": map[string]string{"bash": "allow"}, "cli": manifest.Providers["opencode"].CLI,
+		"turns": turns, "permissions": map[string]string{"bash": "allow"}, "cli": scriptedOpenCodePin(t),
 	})
 	if err != nil {
 		t.Fatal(err)

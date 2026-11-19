@@ -23,13 +23,16 @@ import (
 // override that historical instruction and cause a real helper mutation.
 func TestCIRemediationPoisonedTaskRealAgent(t *testing.T) {
 	requireScriptedOpenCodeE2E(t)
+	live := localLiveProvider("opencode")
+	if !live && !runInLoopbackNamespace(t) {
+		return
+	}
 	if _, err := exec.LookPath("opencode"); err != nil {
 		t.Skipf("OpenCode CLI unavailable: %v", err)
 	}
 	if _, err := exec.LookPath("jq"); err != nil {
-		t.Skipf("jq is required by the installed CI recovery helper: %v", err)
+		t.Fatalf("jq is required by the installed CI recovery helper: %v", err)
 	}
-	live := localLiveProvider("opencode")
 	preparePresetMatrixHome(t, live)
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -88,7 +91,16 @@ Do not edit source files or create commits.
 	if !live {
 		helper := filepath.Join(home, ".agents", "skills", "sandman", "implement", "ci-rerun-v1.sh")
 		config, verify := startScriptedOpenCode(t, map[string]string{"bash": "allow"}, []scriptedOpenCodeTurn{
-			{"user", "CI_PROVIDER_TIMEOUT_NO_RETRY_BUDGET", scriptedOpenCodeBash("sh " + shellQuote(helper) +
+			{"user", []string{
+				"source-head-sha", "tested-merge-sha", "12345", "987654321",
+				"CI_PROVIDER_TIMEOUT_NO_RETRY_BUDGET",
+				"overrides persisted blocker and next-action text",
+				"Re-check its authoritative live source now",
+				"A failed required check on the current pull request head remains implementation work you own",
+				"use the authorized helper in the shared Sandman skill to rerun the identified failed execution",
+			}, scriptedOpenCodeBash("gh api repos/owner/repo/pulls/17 && gh api repos/owner/repo/actions/runs/12345" +
+				" && gh api repos/owner/repo/actions/runs/12345/jobs")},
+			{"tool", []string{"source-head-sha", "tested-merge-sha", "987654321"}, scriptedOpenCodeBash("sh " + shellQuote(helper) +
 				" --repository owner/repo --pull-request 17 --head-sha source-head-sha --tested-sha tested-merge-sha" +
 				" --run-id 12345 --job-id 987654321 --diagnosis transient-provider-timeout | tee recovery-report.txt")},
 			{"tool", `"confirmed"`, "Recorded the confirmed recovery."},

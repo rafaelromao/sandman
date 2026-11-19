@@ -390,9 +390,9 @@ SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all \
 ```
 
 Install the OpenCode CLI pin from `scripts/release_scenarios.json` and use rootless
-Podman for the matrix. The separate release host job enforces loopback-only
-networking; to reproduce it locally, warm the Go module cache, then run the
-host tier inside a loopback-only network namespace.
+Podman for the matrix. The host-agent scenarios verify the CLI version and run
+on Linux in a loopback-only network namespace. Direct runs use `unshare` and
+`ip` to isolate these tests when they are not already running on loopback only.
 
 ### Local live-provider diagnostics
 
