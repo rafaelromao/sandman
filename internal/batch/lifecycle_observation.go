@@ -313,7 +313,9 @@ func (o *lifecycleObserver) applyContinuity(branch, runID string, verdict lifecy
 		return verdict
 	}
 	cause := causeExhausted
-	if repeated {
+	reason := stringEvidence(verdict.Evidence, "reason")
+	permanentEvidence := formalChangesRequested(verdict.Evidence) || reason == "CI_WAIT_STATE_ERROR"
+	if repeated && used < o.resumeCapFor() && !permanentEvidence {
 		cause = causeStall
 	}
 	row := continuityRow{

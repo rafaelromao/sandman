@@ -457,3 +457,46 @@ func TestAFKContinuityContract_OutcomeTableShape(t *testing.T) {
 		t.Errorf("a row missing from the table -> %s, want terminal", got)
 	}
 }
+
+func TestContinuityRepeatedSignaturePreservesTerminalPrecedence(t *testing.T) {
+	t.Run("formal requested changes remain terminal", func(t *testing.T) {
+		evidence := map[string]any{
+			"gate": gateBlindReviewRequired, "reason": actionableFeedbackReason,
+			"pull_request": continuityPR, "head_sha": continuityProbeHead,
+		}
+		signature := resumeSignature(evidence, continuityProbeHead)
+		session := &runSession{decisionPRHead: continuityProbeHead, lastResumeSignature: signature}
+		if got := repeatedRelaunchOutcome(t, session, continuityOutcomes, evidence); got != outcomeTerminal {
+			t.Fatalf("repeated formal requested changes = %s, want terminal", got)
+		}
+	})
+
+	t.Run("exhaustion wins over an otherwise stalling repeat", func(t *testing.T) {
+		evidence := map[string]any{
+			"gate": gateActionableFeedback, "reason": informalFeedbackReason,
+			"pull_request": continuityPR, "head_sha": continuityProbeHead,
+		}
+		signature := resumeSignature(evidence, continuityProbeHead)
+		session := &runSession{
+			decisionPRHead: continuityProbeHead, lastResumeSignature: signature,
+			feedbackAllowance: &reviewFeedbackAllowance{
+				usedByHead: map[string]int{continuityProbeHead: (&runSession{}).resumeCapFor()},
+			},
+		}
+		table := cloneContinuityTable(continuityOutcomes)
+		row := continuityRow{gate: gateActionableFeedback, reason: informalFeedbackReason, cause: causeExhausted}
+		table[row] = outcomeTerminal
+		if got := repeatedRelaunchOutcome(t, session, table, evidence); got != outcomeTerminal {
+			t.Fatalf("repeated exhausted allowance = %s, want exhausted row's terminal outcome", got)
+		}
+	})
+}
+
+func repeatedRelaunchOutcome(t *testing.T, session *runSession, table continuityTable, evidence map[string]any) continuityOutcomeKind {
+	t.Helper()
+	observer := &lifecycleObserver{runSession: session, outcomes: table}
+	verdict := observer.applyContinuity(continuityBranch, "run-probe", lifecycleVerdict{
+		Action: lifecycleResume, Evidence: cloneLifecycleExtras(evidence),
+	})
+	return probedOutcome(t, verdict)
+}
