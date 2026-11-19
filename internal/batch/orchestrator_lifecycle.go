@@ -102,6 +102,7 @@ type implementationPRFacts struct {
 type lifecycleDecision struct {
 	action            lifecycleAction
 	gate              lifecycleGate
+	cause             continuityCause
 	handled           bool
 	completionFailure bool
 	needMergeFacts    bool
@@ -441,6 +442,7 @@ func decideRecoverableLifecycle(gate lifecycleGate, pr *github.PR, headSHA, repo
 		return lifecycleDecision{
 			action:        lifecycleFailure,
 			gate:          lifecycleGate(gateReviewTimeout),
+			cause:         causeExpired,
 			handled:       true,
 			failureExtras: lifecycleGateFailureEvidence(reviewTimeoutReason, reviewTimeoutNextAction, gate, pr, headSHA),
 		}
@@ -886,14 +888,10 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 			if diagnostics := s.retainedReviewDiagnostics(ctx, workDir, branch, pr, headSHA); len(diagnostics) > 0 {
 				failureExtras = mergeLifecycleDiagnostics(failureExtras, diagnostics)
 			}
-			// AFK continuity: an open, current-head pull request whose only
-			// missing evidence is a recoverable gate waits for external
-			// recovery, as rc2 did, instead of ending the Run.
-			reason, _ := failureExtras["reason"].(string)
-			if !decision.completionFailure && lifecycleFailureRecoverable(reason) &&
-				strings.EqualFold(strings.TrimSpace(pr.State), "open") && strings.TrimSpace(headSHA) != "" &&
-				strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) {
-				return lifecycleVerdict{Action: lifecycleAwait, Evidence: continuityHold(failureExtras, string(decision.gate))}
+			// AFK continuity: the shared outcome table decides whether an
+			// open current-head pull-request failure becomes a continuity hold.
+			if verdict, held := failureContinuity(s.continuityTable(), decision, failureExtras, pr, headSHA); held {
+				return verdict
 			}
 		}
 		verdict := lifecycleVerdict{Action: decision.action, Evidence: failureExtras}

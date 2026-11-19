@@ -54,6 +54,7 @@ type lifecycleObservation interface {
 
 type lifecycleObserver struct {
 	*runSession
+	outcomes continuityTable
 }
 
 func newLifecycleObserver(session *runSession) *lifecycleObserver {
@@ -215,6 +216,7 @@ func (o *lifecycleObserver) applyContinuity(branch, runID string, verdict lifecy
 	if verdict.Action != lifecycleResume && verdict.Action != lifecycleAwait {
 		return verdict
 	}
+	outcomes := o.continuityTable()
 	stalled, readErr := latestStalledResumes(o.deps.eventLog, runID)
 	if verdict.Action == lifecycleAwait {
 		if len(stalled) == 0 {
@@ -245,26 +247,57 @@ func (o *lifecycleObserver) applyContinuity(branch, runID string, verdict lifecy
 	o.pendingResumeRound = allowanceRound
 	if readErr != nil {
 		prior := stalledResumes(verdict.Evidence)
+		row := continuityRow{cause: causeUnreadable}
 		if verdict.ImplementorWork {
+			row.gate = gateOwnedWorkRequired
+		}
+		if outcomes.outcome(row) == outcomeHold && verdict.ImplementorWork {
 			verdict.Action = lifecycleAwait
 			verdict.Evidence = o.ownedWorkHold(verdict.Evidence, signature, prior)
-		} else {
+		} else if outcomes.outcome(row) == outcomeHold {
 			verdict.Action = lifecycleAwait
 			verdict.Evidence = stalledAwaitExtras(verdict.Evidence, signature, prior)
 		}
 		return verdict
 	}
 	if verdict.ImplementorWork {
-		if containsSignature(stalled, signature) ||
-			(o.finalOwnedWorkAttempt && strings.TrimSpace(o.renderCfg.ReviewCommand) == "" && idleGateAwaitsReview(verdict.Evidence)) {
-			verdict.Action = lifecycleAwait
-			verdict.Evidence = o.ownedWorkHold(verdict.Evidence, signature, stalled)
+		gate := gateOwnedWorkRequired
+		if containsSignature(stalled, signature) {
+			row := continuityRow{
+				gate: gate, reason: continuityOutcomeReason(verdict.Evidence, causeStall), cause: causeStall,
+			}
+			if outcomes.outcome(row) == outcomeHold {
+				verdict.Action = lifecycleAwait
+				verdict.Evidence = o.ownedWorkHold(verdict.Evidence, signature, stalled)
+			}
+			return verdict
+		}
+		if o.finalOwnedWorkAttempt {
+			reason := continuityOutcomeReason(verdict.Evidence, causeExhausted)
+			outcome := outcomes.outcome(continuityRow{gate: gate, reason: reason, cause: causeExhausted})
+			if outcome == outcomeHold &&
+				(reason != idleGateReason || (strings.TrimSpace(o.renderCfg.ReviewCommand) == "" && idleGateAwaitsReview(verdict.Evidence))) {
+				verdict.Action = lifecycleAwait
+				verdict.Evidence = o.ownedWorkHold(verdict.Evidence, signature, stalled)
+			}
 		}
 		return verdict
 	}
 	if containsSignature(stalled, signature) {
-		verdict.Action = lifecycleAwait
-		verdict.Evidence = stalledAwaitExtras(verdict.Evidence, signature, stalled)
+		row := continuityRow{
+			gate:   stringEvidence(verdict.Evidence, "gate"),
+			reason: continuityOutcomeReason(verdict.Evidence, causeStall),
+			cause:  causeStall,
+		}
+		switch outcomes.outcome(row) {
+		case outcomeHold:
+			verdict.Action = lifecycleAwait
+			verdict.Evidence = stalledAwaitExtras(verdict.Evidence, signature, stalled)
+		case outcomeTerminal:
+			verdict.Action = lifecycleFailure
+			verdict.Evidence = remediationBudgetFailureEvidence(row.gate, verdict.Evidence,
+				"inspect the current pull-request remediation evidence and continue in a fresh session")
+		}
 		return verdict
 	}
 	gate := stringEvidence(verdict.Evidence, "gate")
@@ -279,16 +312,44 @@ func (o *lifecycleObserver) applyContinuity(branch, runID string, verdict lifecy
 	if !repeated && used < o.resumeCapFor() {
 		return verdict
 	}
-	if formalChangesRequested(verdict.Evidence) || exhaustionTerminal(verdict.Evidence) {
+	cause := causeExhausted
+	if repeated {
+		cause = causeStall
+	}
+	row := continuityRow{
+		gate:   gate,
+		reason: continuityOutcomeReason(verdict.Evidence, cause),
+		cause:  cause,
+	}
+	switch outcomes.outcome(row) {
+	case outcomeTerminal:
 		verdict.Action = lifecycleFailure
 		verdict.Evidence = remediationBudgetFailureEvidence(gate, verdict.Evidence,
 			"inspect the current pull-request remediation evidence and continue in a fresh session")
 		verdict.ImplementorWork = false
-		return verdict
+	case outcomeHold:
+		verdict.Action = lifecycleAwait
+		verdict.Evidence = stalledAwaitExtras(verdict.Evidence, signature, stalled)
 	}
-	verdict.Action = lifecycleAwait
-	verdict.Evidence = stalledAwaitExtras(verdict.Evidence, signature, stalled)
 	return verdict
+}
+
+func continuityOutcomeReason(evidence map[string]any, cause continuityCause) string {
+	gate := stringEvidence(evidence, "gate")
+	reason := stringEvidence(evidence, "reason")
+	ownedFormalChanges := gate == gateOwnedWorkRequired && reason == idleGateReason &&
+		strings.EqualFold(strings.TrimSpace(stringEvidence(evidence, "review_decision")), "CHANGES_REQUESTED")
+	if cause == causeExhausted && (formalChangesRequested(evidence) || ownedFormalChanges) {
+		return actionableFeedbackReason
+	}
+	return reason
+}
+
+func (o *lifecycleObserver) continuityTable() continuityTable {
+	if o != nil && o.outcomes != nil {
+		return o.outcomes
+	}
+	return continuityOutcomes
 }
 
 func stringEvidence(evidence map[string]any, key string) string {

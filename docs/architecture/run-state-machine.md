@@ -107,7 +107,10 @@ blind publication is owned work selected as `BLIND_REVIEW_REQUIRED`, not a
 terminal or external-review failure. Every lifecycle failure
 reason is classified once as permanent or recoverable; the AFK-continuity
 contract suite fails on an unclassified reason and replays the real incidents
-that motivated the rule.
+that motivated the rule. One gate/reason/cause outcome table centralizes
+failure, stall, exhausted-allowance, expired-operation, and unreadable-ledger
+decisions; the contract enumerates its current rows. ADR-0063 records the
+staged policy and the sibling-owned rows that will change.
 
 One continuity decision applies these rules to every lifecycle decision;
 the attempt loop, entry continuation and runtime observation consume its
