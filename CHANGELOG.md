@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sandman-back-merge` resolves the base branch from the caller, the pull request, `git.base_branch`, then the repository default instead of assuming `main`.
 - Preset-matrix release scenarios pin the legacy OpenCode v1 agent explicitly, and other release fixtures pin the OpenCode generation they scaffold against, so their behavior no longer depends on the host CLI version after new projects began defaulting to v2.
 - The `sandman-review-cycle` skill description is quoted, so strict YAML parsers such as Vercel's skills CLI can read its manifest.
+- A daemon approval whose Suggested next steps only describe already-merged work (for example, dependents that stay `blocked` until a merged issue is closed by hand) is no longer read as a conditional approval. A genuine merge or approval condition ("merge only after ...", "approved if ...") still contradicts it.
 
 ### Changed
 
