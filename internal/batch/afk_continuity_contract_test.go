@@ -9,10 +9,9 @@ package batch
 // conditions (closed pull request, explicit abort, formal CHANGES_REQUESTED
 // the implementor cannot fix, no review request delivered at all).
 //
-// The scenarios replay the real incidents behind #2817, #2823, #2892, #2914
-// and #2915 through RunBatch with fakes injected only at documented seams
-// (WithRunnableFactory, WithSandboxFactory, WithRunSessionOpts and the GitHub
-// client). They are table-driven so refactors of the observation verdict or
+// The scenarios replay real incidents through RunBatch with fakes injected
+// only at documented seams (WithRunnableFactory, WithSandboxFactory,
+// WithRunSessionOpts and the GitHub client). Refactors of the observation verdict or
 // the row driver can run them unchanged. The `contracts` make target selects
 // them through the Contract name filter.
 
@@ -283,6 +282,8 @@ type continuityScenario struct {
 	want string
 	// maxLaunches bounds the agent launches the outcome may take.
 	maxLaunches int
+	// wantLaunches asserts an exact count, including entry, when nonzero.
+	wantLaunches int
 	// continueRun replays `sandman run --continue` on the scenario's state.
 	continueRun bool
 	// forbidRetry asserts that no ordinary retry was spent.
@@ -709,6 +710,25 @@ func greenCleanPR() github.PR {
 
 func requestReview(g *continuityGitHub) string { g.trigger(); return "success" }
 
+func requestReviewOnHead(head string) func(*continuityGitHub) string {
+	return func(g *continuityGitHub) string {
+		g.update(func(pr *github.PR) { pr.HeadRefOid = head })
+		return requestReview(g)
+	}
+}
+
+func publishContinuityChangesRequested(g *continuityGitHub) {
+	g.publish("## Findings\n- Blocking: `worker.go:12` drops the request on retry.\n\n## Decision\n**CHANGES_REQUESTED**\n")
+}
+
+func publishContinuityFormalChanges(g *continuityGitHub) {
+	g.formalReview("CHANGES_REQUESTED")
+}
+
+func postContinuityInformalFeedback(g *continuityGitHub) {
+	g.post("Please make the retry loop in `worker.go:12` keep the request.")
+}
+
 func continuityScenarios(t *testing.T) []continuityScenario {
 	reports := map[string]string{}
 	for _, name := range []string{
@@ -822,7 +842,7 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 			name: "stall/informal feedback without progress", pr: greenCleanPR(), retries: 3,
 			launches: []func(*continuityGitHub) string{requestReview},
 			polls: []func(*continuityGitHub){
-				func(g *continuityGitHub) { g.post("Please make the retry loop in `worker.go:12` keep the request.") },
+				postContinuityInformalFeedback,
 				nil,
 				nil,
 				func(g *continuityGitHub) { g.post("LGTM, approved.") },
@@ -834,7 +854,7 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 			name: "stall/informal feedback waits", pr: greenCleanPR(), retries: 3,
 			launches: []func(*continuityGitHub) string{requestReview},
 			polls: []func(*continuityGitHub){
-				func(g *continuityGitHub) { g.post("Please make the retry loop in `worker.go:12` keep the request.") },
+				postContinuityInformalFeedback,
 				nil,
 				nil,
 			},
@@ -950,19 +970,70 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 		continuityScenario{
 			name: "negative/daemon changes requested unrepaired", pr: greenCleanPR(), retries: 3,
 			launches: []func(*continuityGitHub) string{requestReview},
+			polls:    []func(*continuityGitHub){publishContinuityChangesRequested, nil, nil, nil},
+			want:     "failed:REMEDIATION_BUDGET_EXHAUSTED",
+		},
+		// #2997: the implementor posts fresh triggers without pushing, and
+		// the daemon returns the same finding for every request.
+		continuityScenario{
+			name: "#2997 same-head rerequests exhaust feedback allowance", pr: greenCleanPR(), retries: 3,
+			forbidRetry: true,
+			launches:    []func(*continuityGitHub) string{requestReview, requestReview, requestReview, requestReview, requestReview},
 			polls: []func(*continuityGitHub){
-				func(g *continuityGitHub) {
-					g.publish("## Findings\n- Blocking: `worker.go:12` drops the request on retry.\n\n## Decision\n**CHANGES_REQUESTED**\n")
-				},
-				nil, nil, nil,
+				publishContinuityChangesRequested, publishContinuityChangesRequested,
+				publishContinuityChangesRequested, publishContinuityChangesRequested,
 			},
-			want: "failed:REMEDIATION_BUDGET_EXHAUSTED",
+			want: "failed:REMEDIATION_BUDGET_EXHAUSTED", wantLaunches: 4,
+		},
+		// Moving to a new head admits feedback work there, but restoring the
+		// earlier head cannot reopen its already exhausted allowance.
+		continuityScenario{
+			name: "#2997 returning to an exhausted head preserves its feedback allowance", pr: greenCleanPR(), retries: 3,
+			forbidRetry: true,
+			launches: []func(*continuityGitHub) string{
+				requestReview, requestReview, requestReview, requestReviewOnHead("head-2"), requestReviewOnHead("head-1"),
+			},
+			polls: []func(*continuityGitHub){
+				publishContinuityChangesRequested, publishContinuityChangesRequested, publishContinuityChangesRequested,
+				publishContinuityChangesRequested, publishContinuityChangesRequested,
+			},
+			want: "failed:REMEDIATION_BUDGET_EXHAUSTED", wantLaunches: 5,
+		},
+		continuityScenario{
+			name: "#2997 same-head rerequests with formal changes exhaust feedback allowance", pr: greenCleanPR(), retries: 3,
+			forbidRetry: true,
+			launches:    []func(*continuityGitHub) string{requestReview, requestReview, requestReview, requestReview, requestReview},
+			polls: []func(*continuityGitHub){
+				publishContinuityFormalChanges, publishContinuityFormalChanges,
+				publishContinuityFormalChanges, publishContinuityFormalChanges,
+			},
+			want: "failed:REMEDIATION_BUDGET_EXHAUSTED", wantLaunches: 4,
+		},
+		continuityScenario{
+			name: "#2997 same-head approval after three feedback relaunches still merges", pr: greenCleanPR(), retries: 3,
+			forbidRetry: true,
+			launches:    []func(*continuityGitHub) string{requestReview, requestReview, requestReview, requestReview},
+			polls: []func(*continuityGitHub){
+				publishContinuityChangesRequested, publishContinuityChangesRequested, publishContinuityChangesRequested,
+				func(g *continuityGitHub) { g.publish(reports["approved-daemon-30.md"]) },
+			},
+			want: "merged", wantLaunches: 5,
+		},
+		continuityScenario{
+			name: "#2997 same-head informal feedback holds after three relaunches", pr: greenCleanPR(), retries: 3,
+			forbidRetry: true,
+			launches:    []func(*continuityGitHub) string{requestReview, requestReview, requestReview, requestReview, requestReview},
+			polls: []func(*continuityGitHub){
+				postContinuityInformalFeedback, postContinuityInformalFeedback,
+				postContinuityInformalFeedback, postContinuityInformalFeedback,
+			},
+			want: "waiting", wantLaunches: 4,
 		},
 		// Productive multi-round review (rc2 kept going): four rounds of formal
 		// CHANGES_REQUESTED, each addressed with a new head and a new request.
 		// GitHub keeps the aggregate CHANGES_REQUESTED until the reviewer
 		// re-reviews, so between rounds the Run waits for the re-review. The
-		// relaunch allowance is per repair round, not per Run.
+		// feedback relaunch allowance is per head, not per Run.
 		continuityScenario{
 			name: "formal changes requested over several rounds", pr: greenCleanPR(), retries: 3,
 			launches: []func(*continuityGitHub) string{requestReview, fixAndRerequest, fixAndRerequest, fixAndRerequest, fixAndRerequest, fixAndRerequest, fixAndRerequest},
@@ -1161,6 +1232,9 @@ func TestAFKContinuityContract_RealIncidentsMergeOrWait(t *testing.T) {
 			}
 			if sc.maxLaunches > 0 && outcome.launches > sc.maxLaunches {
 				t.Fatalf("launches = %d, want at most %d\nevents: %s", outcome.launches, sc.maxLaunches, continuityEventSummary(outcome.events))
+			}
+			if sc.wantLaunches > 0 && outcome.launches != sc.wantLaunches {
+				t.Fatalf("launches = %d, want exactly %d\nevents: %s", outcome.launches, sc.wantLaunches, continuityEventSummary(outcome.events))
 			}
 			if sc.ownedWorkRetries {
 				reasons := outcome.retryReasons()
