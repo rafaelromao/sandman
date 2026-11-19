@@ -194,6 +194,9 @@ func TestReviewPublicationVerdict_ProseConditionsGoverningApproval(t *testing.T)
 func TestReviewPublicationVerdict_MergeConditionsInSuggestedNextSteps(t *testing.T) {
 	for _, tc := range []struct{ name, steps string }{
 		{"current PR", "No author changes requested. Merge the current PR after the race in worker.go is fixed."},
+		{"numbered PR", "None. Merge PR #3002 once the race in worker.go is fixed."},
+		{"numbered pull request", "None. Merge this pull request #3002 once the race in worker.go is fixed."},
+		{"bare PR number", "None. Merge #3002 once the race in worker.go is fixed."},
 		{"semicolon", "None. Merge only; after fixing the race in worker.go."},
 		{"semicolon without no-change opener", "Merge only; after fixing the race in worker.go."},
 		{"semicolon after merge command", "None. Merge; after the race in worker.go is fixed."},
@@ -218,18 +221,19 @@ func TestReviewPublicationVerdict_MergeConditionsInSuggestedNextSteps(t *testing
 }
 
 func TestReviewPublicationVerdict_StandaloneAndNestedHeadings(t *testing.T) {
-	t.Run("standalone next steps", func(t *testing.T) {
-		report := "### Suggested next steps\nFix the race in worker.go before merging.\n\n## Decision\n**APPROVED**\n"
-		published := reviewpub.Body(report, "request", "current-sha")
-		if !publishedApprovalContradicted(published) || reviewDecisionApprovedBody(published) {
-			t.Fatal("standalone next steps did not veto the published approval")
-		}
-	})
-	t.Run("standalone prose decision", func(t *testing.T) {
-		if !reviewDecisionApprovedBody("# Review\n\n### Decision\n**LGTM**\n") {
-			t.Fatal("standalone prose decision rejected")
-		}
-	})
+	for _, wrapper := range []string{"", "# Review\n\n", "## Review\n\n", "## Code review: PR #3002 ##\n\n"} {
+		t.Run("governing under "+wrapper, func(t *testing.T) {
+			report := wrapper + "### Suggested next steps\nFix the race in worker.go before merging.\n\n## Decision\n**APPROVED**\n"
+			published := reviewpub.Body(report, "request", "current-sha")
+			legacy := report + "\n" + reviewpub.Identity("request", "current-sha")
+			if !publishedApprovalContradicted(published) || reviewDecisionApprovedBody(published) || reviewDecisionApprovedBody(legacy) {
+				t.Error("governing next steps did not veto the approving report")
+			}
+			if !reviewDecisionApprovedBody(wrapper + "### Decision\n**LGTM**\n") {
+				t.Error("governing prose decision rejected")
+			}
+		})
+	}
 	for _, heading := range []string{"Quality check", "Quality check: local metrics", "Quality check ##", "Test results"} {
 		t.Run(heading, func(t *testing.T) {
 			report := "## " + heading + "\n### Metrics\n#### Findings\nImportant: complexity above the advisory threshold.\n\n" +

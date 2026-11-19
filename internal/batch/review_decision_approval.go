@@ -10,7 +10,8 @@ import (
 // Allow only bounded adverbs and direct objects between a merge/approval word
 // and its condition, not an unrelated intervening clause (#2995).
 const (
-	reviewConditionModifiers   = `\b(?:\s+(?:it|this|that|safely|now|only|(?:this|the(?:\s+current)?)\s+(?:pr|pull\s+request|change)))*`
+	reviewConditionObject      = `(?:(?:this|the(?:\s+current)?)\s+)?(?:pr|pull\s+request)\s+#[0-9]+|#[0-9]+|(?:this|the(?:\s+current)?)\s+(?:pr|pull\s+request|change)`
+	reviewConditionModifiers   = `\b(?:\s+(?:it|this|that|safely|now|only|` + reviewConditionObject + `))*`
 	reviewConditionSubject     = `\b(?:merg(?:e|ed|ing)|approv(?:e|ed|al)|lgtm)` + reviewConditionModifiers
 	reviewConditionConjunction = `(?:after|once|until|if|when)\b`
 )
@@ -55,6 +56,7 @@ var (
 	reviewMergeReadyAdvice        = regexp.MustCompile(`(?i)^merge\s+when\s+ready[.!]?$`)
 	reviewFindingSeverity         = regexp.MustCompile(`(?im)(?:^|[.;:!?][ \t]+)[ \t]*(?:(?:#{1,6}|[-*+]|\d+[.)])[ \t]*)?(?:Blocking|Important)\b`)
 	reviewFindingHeading          = regexp.MustCompile(`(?m)^[ \t]*#{1,6}(?:[ \t]|$)`)
+	reviewReportTitle             = regexp.MustCompile(`(?i)^(?:(?:code|pull\s+request|pr)\s+)?review(?:\s+report)?(?:\s*[:—–-]\s*.*|\s+(?:of|for|on)\s+.+)?$`)
 	reviewOpposingVerdict         = regexp.MustCompile(`(?i)(?:^|\W)_*(?:CHANGES_REQUESTED|NOT_APPROVED)_*(?:\W|$)`)
 	reviewQuotedCompound          = regexp.MustCompile("`[ \\t`]*[A-Za-z]+[ \\t`]*`(-[A-Za-z][A-Za-z0-9-]*)")
 	reviewUnmetCriterion          = regexp.MustCompile(`(?i)\b(?:criteri(?:on|a)|requirements?)\s+(?:(?:is|are|remains?|still|currently|has|have)\s+)*(?:not\s+(?:(?:yet|currently|fully|completely)\s+)?(?:met|satisfied|fulfilled|implemented|covered)|unmet|unsatisfied|unfulfilled|unimplemented|failing|fails?|failed)\b|\b(?:unmet|unsatisfied|unfulfilled|failed)\s+(?:acceptance\s+)?(?:criteri(?:on|a)|requirements?)\b`)
@@ -236,7 +238,8 @@ func collectReviewApprovalSections(body string) []reviewApprovalTextSection {
 				kind, inline = reviewApprovalSection(heading)
 				// A document title may wrap the whole review; ordinary
 				// report sections can have descriptive subheadings.
-				if kind == "" && nextLevel > 1 {
+				title := strings.TrimSpace(strings.TrimRight(heading, "#"))
+				if kind == "" && nextLevel > 1 && !reviewReportTitle.MatchString(title) {
 					descriptiveLevel = nextLevel
 				}
 			}
