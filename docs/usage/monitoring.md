@@ -307,7 +307,7 @@ Set `run_idle_timeout: 0` in `.sandman/config.yaml` or pass `--run-idle-timeout 
 
 ### Blocked runs
 
-- A dependency-blocked run has one or more `BlockedBy` issues that are not satisfied at the start decision: for in-batch blockers this is the two-part gate — the blocker must both have reached terminal batch status `success` and be `closed` on GitHub (a successful but still `open` in-batch blocker produces terminal `run.blocked` with the open blocker named and no agent launch or wait state); for external blockers the gate is `closed` on GitHub alone. GitHub closes an issue from its closing reference only when the pull request targets the default branch; after a verified merge into another configured base branch, Sandman closes the issue itself (ADR-0061). A blocker that finished with `failure` or `blocked` also produces `run.blocked` including the upstream blockers.
+- A dependency-blocked run has one or more `BlockedBy` issues that are not satisfied at the start decision: for in-batch blockers this is the two-part gate — the blocker must both have reached terminal batch status `success` and be `closed` on GitHub (a successful but still `open` in-batch blocker produces terminal `run.blocked` with the open blocker named and no agent launch or wait state); for external blockers the gate is `closed` on GitHub alone. A blocker that finished with `failure` or `blocked` also produces `run.blocked` including the upstream blockers.
 
 Only dependency-blocked runs appear in the blocked bucket of the batch summary:
 
