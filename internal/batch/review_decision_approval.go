@@ -7,11 +7,13 @@ import (
 	"github.com/rafaelromao/sandman/internal/reviewpub"
 )
 
-// Allow only bounded adverbs and direct objects between a merge/approval word
-// and its condition, not an unrelated intervening clause (#2995).
+// Allow only bounded adverbs, direct objects, merge targets and ", but"
+// between a merge/approval word and its condition, not an unrelated
+// intervening clause (#2995).
 const (
-	reviewConditionObject      = `(?:(?:this|the(?:\s+current)?)\s+)?(?:pr|pull\s+request)\s+#[0-9]+|#[0-9]+|(?:this|the(?:\s+current)?)\s+(?:pr|pull\s+request|change)`
-	reviewConditionModifiers   = `\b(?:\s+(?:it|this|that|safely|now|only|` + reviewConditionObject + `))*`
+	reviewConditionObject      = `(?:(?:this|the(?:\s+current)?)\s+)?(?:pr|pull\s+request)\s+#[0-9]+|#[0-9]+|(?:this|the(?:\s+current)?)\s+(?:pr|pull\s+request|change|branch)`
+	reviewConditionTarget      = `(?:in|into|to|onto)\s+(?:the\s+)?(?:main|master|trunk|base|(?:(?:default|base|target)\s+)?branch)`
+	reviewConditionModifiers   = `\b(?:\s+(?:it|this|that|safely|now|only|` + reviewConditionObject + `|` + reviewConditionTarget + `)|\s*,\s*but\b)*`
 	reviewConditionSubject     = `\b(?:merg(?:e|ed|ing)|approv(?:e|ed|al)|lgtm)` + reviewConditionModifiers
 	reviewConditionConjunction = `(?:after|once|until|if|when)\b`
 )
@@ -56,7 +58,6 @@ var (
 	reviewMergeReadyAdvice        = regexp.MustCompile(`(?i)^merge\s+when\s+ready[.!]?$`)
 	reviewFindingSeverity         = regexp.MustCompile(`(?im)(?:^|[.;:!?][ \t]+)[ \t]*(?:(?:#{1,6}|[-*+]|\d+[.)])[ \t]*)?(?:Blocking|Important)\b`)
 	reviewFindingHeading          = regexp.MustCompile(`(?m)^[ \t]*#{1,6}(?:[ \t]|$)`)
-	reviewReportTitle             = regexp.MustCompile(`(?i)^(?:(?:code|pull\s+request|pr)\s+)?review(?:\s+report)?(?:\s*[:—–-]\s*.*|\s+(?:of|for|on)\s+.+)?$`)
 	reviewOpposingVerdict         = regexp.MustCompile(`(?i)(?:^|\W)_*(?:CHANGES_REQUESTED|NOT_APPROVED)_*(?:\W|$)`)
 	reviewQuotedCompound          = regexp.MustCompile("`[ \\t`]*[A-Za-z]+[ \\t`]*`(-[A-Za-z][A-Za-z0-9-]*)")
 	reviewUnmetCriterion          = regexp.MustCompile(`(?i)\b(?:criteri(?:on|a)|requirements?)\s+(?:(?:is|are|remains?|still|currently|has|have)\s+)*(?:not\s+(?:(?:yet|currently|fully|completely)\s+)?(?:met|satisfied|fulfilled|implemented|covered)|unmet|unsatisfied|unfulfilled|unimplemented|failing|fails?|failed)\b|\b(?:unmet|unsatisfied|unfulfilled|failed)\s+(?:acceptance\s+)?(?:criteri(?:on|a)|requirements?)\b`)
@@ -236,10 +237,10 @@ func collectReviewApprovalSections(body string) []reviewApprovalTextSection {
 			if descriptiveLevel == 0 || nextLevel <= descriptiveLevel {
 				descriptiveLevel = 0
 				kind, inline = reviewApprovalSection(heading)
-				// A document title may wrap the whole review; ordinary
-				// report sections can have descriptive subheadings.
-				title := strings.TrimSpace(strings.TrimRight(heading, "#"))
-				if kind == "" && nextLevel > 1 && !reviewReportTitle.MatchString(title) {
+				// Only a documented descriptive section below the document
+				// title hides its subheadings; any other title, such as
+				// "Automated code review", may wrap governing sections.
+				if kind == "" && nextLevel > 1 && reviewDescriptiveSection(heading) {
 					descriptiveLevel = nextLevel
 				}
 			}
@@ -261,15 +262,35 @@ func reviewApprovalSection(heading string) (string, string) {
 		{"Decision", "decision"}, {"Findings", "findings"},
 		{"Suggested next steps", "next-steps"}, {"Previous review progress", "history"},
 	} {
-		if len(heading) < len(named.heading) || !strings.EqualFold(heading[:len(named.heading)], named.heading) {
-			continue
-		}
-		inline := heading[len(named.heading):]
-		if inline == "" || strings.ContainsAny(inline[:1], " :\t-") {
-			return named.section, strings.TrimSpace(strings.TrimLeft(inline, ": \t-"))
+		if inline, ok := reviewHeadingNamed(heading, named.heading); ok {
+			return named.section, inline
 		}
 	}
 	return "", ""
+}
+
+// reviewDescriptiveSection reports the descriptive sections that never veto a
+// published approval (CONTEXT.md, Publication verdict).
+func reviewDescriptiveSection(heading string) bool {
+	for _, name := range []string{"Summary", "Standards", "Spec", "Quality check"} {
+		if _, ok := reviewHeadingNamed(heading, name); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// reviewHeadingNamed matches a case-insensitive section name followed by the
+// end of the heading or a separator, and returns any inline remainder.
+func reviewHeadingNamed(heading, name string) (string, bool) {
+	if len(heading) < len(name) || !strings.EqualFold(heading[:len(name)], name) {
+		return "", false
+	}
+	inline := heading[len(name):]
+	if inline != "" && !strings.ContainsAny(inline[:1], " :\t-") {
+		return "", false
+	}
+	return strings.TrimSpace(strings.TrimLeft(inline, ": \t-")), true
 }
 
 func unambiguousReviewApproval(text string) bool {

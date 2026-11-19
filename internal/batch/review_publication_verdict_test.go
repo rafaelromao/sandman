@@ -200,6 +200,10 @@ func TestReviewPublicationVerdict_MergeConditionsInSuggestedNextSteps(t *testing
 		{"semicolon", "None. Merge only; after fixing the race in worker.go."},
 		{"semicolon without no-change opener", "Merge only; after fixing the race in worker.go."},
 		{"semicolon after merge command", "None. Merge; after the race in worker.go is fixed."},
+		{"merge target", "None. Can be merged into main once the race in worker.go is fixed."},
+		{"merge to target", "None. Merge to main after the race in worker.go is fixed."},
+		{"generic object", "None. Merge the branch after the race in worker.go is fixed."},
+		{"but only", "None. Merge, but only after the race in worker.go is fixed."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			prose := "## Suggested next steps\n" + tc.steps + "\n\n## Decision\n**APPROVED**\n"
@@ -221,7 +225,12 @@ func TestReviewPublicationVerdict_MergeConditionsInSuggestedNextSteps(t *testing
 }
 
 func TestReviewPublicationVerdict_StandaloneAndNestedHeadings(t *testing.T) {
-	for _, wrapper := range []string{"", "# Review\n\n", "## Review\n\n", "## Code review: PR #3002 ##\n\n"} {
+	// Only the documented descriptive sections hide nested headings; any other
+	// title, including one that does not start with "Review", keeps them governing.
+	for _, wrapper := range []string{
+		"", "# Review\n\n", "## Review\n\n", "## Code review: PR #3002 ##\n\n",
+		"## Automated code review\n\n", "## Sandman review\n\n", "## PR #3002 review\n\n", "## Review summary\n\n", "## Test results\n\n",
+	} {
 		t.Run("governing under "+wrapper, func(t *testing.T) {
 			report := wrapper + "### Suggested next steps\nFix the race in worker.go before merging.\n\n## Decision\n**APPROVED**\n"
 			published := reviewpub.Body(report, "request", "current-sha")
@@ -234,7 +243,7 @@ func TestReviewPublicationVerdict_StandaloneAndNestedHeadings(t *testing.T) {
 			}
 		})
 	}
-	for _, heading := range []string{"Quality check", "Quality check: local metrics", "Quality check ##", "Test results"} {
+	for _, heading := range []string{"Quality check", "Quality check: local metrics", "Quality check ##", "Summary", "Standards", "Spec"} {
 		t.Run(heading, func(t *testing.T) {
 			report := "## " + heading + "\n### Metrics\n#### Findings\nImportant: complexity above the advisory threshold.\n\n" +
 				"### Suggested next steps\nFix the race in a separate effort.\n\n## Decision\n**APPROVED**\n"
@@ -251,6 +260,7 @@ func TestReviewPublicationVerdict_DescribedMergeInSuggestedNextSteps(t *testing.
 		"The existing workflow merges the current PR; when it does, GitHub closes the linked issue.",
 		"The earlier PR was already merged; when GitHub sees the closing keyword, it closes the issue.",
 		"The existing workflow merges the current PR when the simulator emits its completion event.",
+		"Issues merged into main are closed when GitHub sees the closing keyword.",
 	} {
 		prose := "## Suggested next steps\nNone. " + description + "\n\n## Decision\n**APPROVED**\n"
 		published := reviewpub.Body(prose, "request", "current-sha")
