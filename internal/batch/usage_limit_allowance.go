@@ -6,8 +6,9 @@ import (
 )
 
 const (
-	usageLimitPollInterval = 10 * time.Minute
-	usageLimitRetryWindow  = 5 * time.Hour
+	usageLimitPollInterval         = 10 * time.Minute
+	usageLimitRetryWindow          = 5 * time.Hour
+	usageLimitProviderResetHorizon = 7 * 24 * time.Hour
 )
 
 // usageLimitAllowance owns the state and policy for implementation quota
@@ -122,7 +123,7 @@ func (a usageLimitAllowance) nextWait(now time.Time) time.Duration {
 		return 0
 	}
 	wait := usageLimitPollInterval
-	if a.providerReset.After(now) {
+	if a.providerReset.After(now) && a.providerReset.Sub(now) <= usageLimitProviderResetHorizon {
 		wait = a.providerReset.Sub(now)
 	}
 	return min(wait, remaining)

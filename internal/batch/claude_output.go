@@ -397,7 +397,7 @@ func validProviderReset(reset, now time.Time) bool {
 		return false
 	}
 	delta := reset.Sub(now)
-	return delta > 0 && delta <= 7*24*time.Hour
+	return delta > 0 && delta <= usageLimitProviderResetHorizon
 }
 
 func claudeTextResetCandidates(text string, now time.Time) ([]time.Time, bool) {

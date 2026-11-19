@@ -60,6 +60,7 @@ func TestUsageLimitAllowanceSchedulesResetAndFallbackWaits(t *testing.T) {
 		{name: "provider reset", reset: now.Add(37 * time.Minute), want: 37 * time.Minute},
 		{name: "absent reset uses fallback", want: usageLimitPollInterval},
 		{name: "past reset uses fallback", reset: now.Add(-time.Second), want: usageLimitPollInterval},
+		{name: "out-of-bound reset uses fallback", reset: now.Add(8 * 24 * time.Hour), want: usageLimitPollInterval},
 		{name: "reset capped by remaining allowance", waited: 4 * time.Hour, reset: now.Add(2 * time.Hour), want: time.Hour},
 		{name: "fallback capped by remaining allowance", waited: usageLimitRetryWindow - 3*time.Minute, want: 3 * time.Minute},
 	}

@@ -44,7 +44,7 @@ func quotaWaitDueAt(evidence map[string]any, startedAt time.Time) time.Time {
 	wait := usageLimitPollInterval
 	if !allowance.providerReset.IsZero() {
 		delta := allowance.providerReset.Sub(startedAt)
-		if delta >= -7*24*time.Hour && delta <= 7*24*time.Hour {
+		if delta >= -usageLimitProviderResetHorizon && delta <= usageLimitProviderResetHorizon {
 			wait = max(0, delta)
 		}
 	}
