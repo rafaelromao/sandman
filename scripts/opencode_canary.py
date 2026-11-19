@@ -16,6 +16,7 @@ REPLY = "SANDMAN_CANARY_OK"
 
 def evaluate(output, returncode):
     text = []
+    diagnostics = []
     for line in output.splitlines():
         try:
             event = json.loads(line)
@@ -24,10 +25,35 @@ def evaluate(output, returncode):
         if not isinstance(event, dict):
             continue
         if event.get("type") == "error":
-            return False
+            error = event.get("error") or {}
+            if not isinstance(error, dict):
+                error = {}
+            data = error.get("data") or {}
+            message = data.get("message", "") if isinstance(data, dict) else ""
+            diagnostics.append(f"{str(error.get('name', 'error'))[:40]!r}: {str(message)[:200]!r}")
         if event.get("type") == "text":
-            text.append(event.get("part", {}).get("text", ""))
-    return returncode == 0 and "".join(text).strip() == REPLY
+            part = event.get("part") or {}
+            if isinstance(part, dict):
+                text.append(str(part.get("text", "")))
+    if returncode == 0 and not diagnostics and "".join(text).strip() == REPLY:
+        return None
+    return (f"CLI exit {returncode}; expected text received: {''.join(text).strip() == REPLY}; "
+            f"error events: {'; '.join(diagnostics[:2]) or 'none'}")
+
+
+def check_exchange(fixture, output, returncode, timed_out=False):
+    diagnostics = []
+    if timed_out:
+        diagnostics.append(f"CLI exceeded its {TIMEOUT}s deadline")
+    try:
+        fixture.verify()
+    except AssertionError as error:
+        diagnostics.append(str(error))
+    cli_error = evaluate(output, returncode)
+    if cli_error:
+        diagnostics.append(cli_error)
+    if diagnostics:
+        raise ValueError(". ".join(diagnostics))
 
 
 def main():
@@ -45,18 +71,17 @@ def main():
                        "--title", "sandman-canary", PROMPT]
             with subprocess.Popen(command, cwd=root, env=env, stdout=subprocess.PIPE,
                                   stderr=subprocess.STDOUT, text=True, start_new_session=True) as cli:
+                timed_out = False
                 try:
                     output, _ = cli.communicate(timeout=TIMEOUT)
                 except subprocess.TimeoutExpired:
+                    timed_out = True
                     try:
                         os.killpg(cli.pid, signal.SIGKILL)
                     except ProcessLookupError:
                         pass
-                    cli.communicate()
-                    raise
-                fixture.verify()
-                if not evaluate(output, cli.returncode):
-                    raise ValueError(f"unexpected CLI output or exit status ({cli.returncode})")
+                    output, _ = cli.communicate()
+                check_exchange(fixture, output, cli.returncode, timed_out)
     except (AssertionError, OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"OpenCode scripted canary failed: {error}")
         return 1

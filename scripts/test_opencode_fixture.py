@@ -48,10 +48,21 @@ class FixtureTest(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, "0 of 1"):
                 fixture.verify()
 
+    def test_unexpected_method_cannot_be_ignored(self):
+        with serve([Turn("user", "Expected input", "OK")]) as fixture:
+            with self.assertRaises(HTTPError) as error:
+                urlopen(fixture.url + "/models", timeout=5)
+            error.exception.close()
+            send(fixture.url, {"model": "scripted", "stream": True,
+                               "messages": [{"role": "user", "content": "Expected input"}]})
+            with self.assertRaisesRegex(AssertionError, "unsupported model request method 'GET'"):
+                fixture.verify()
+
     @unittest.skipUnless(os.environ.get("SANDMAN_OPENCODE_FIXTURE_TRACER") == "1",
                          "enable inside the pinned OpenCode image with --network none")
     def test_pinned_cli_executes_a_real_build_tool(self):
-        pin = os.environ["SANDMAN_OPENCODE_FIXTURE_PIN"]
+        manifest = json.loads(Path(__file__).with_name("release_scenarios.json").read_text())
+        pin = manifest["providers"]["opencode"]["cli"]
         self.assertEqual(subprocess.check_output(["opencode", "--version"], text=True).strip(), pin)
         with tempfile.TemporaryDirectory() as root, serve([
             Turn("user", "Run the local tracer build", Tool("bash", {

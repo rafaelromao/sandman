@@ -117,6 +117,12 @@ def serve(turns):
         def log_message(self, *_):
             pass
 
+        def send_error(self, code, message=None, explain=None):
+            if code == 501:
+                with script.lock:
+                    script.errors.append(f"unsupported model request method {self.command!r}")
+            super().send_error(code, message, explain)
+
         def do_POST(self):
             try:
                 if self.path != "/v1/chat/completions":
