@@ -5,6 +5,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 from threading import Lock, Thread
 
 MODEL = "scripted"
@@ -157,3 +159,45 @@ def serve(turns):
         finally:
             server.shutdown()
             worker.join()
+
+
+def decode_turns(spec):
+    return [
+        Turn(turn["role"], turn["contains"],
+             Tool(**turn["reply"]) if isinstance(turn["reply"], dict) else turn["reply"])
+        for turn in spec["turns"]
+    ]
+
+
+def main():
+    if len(sys.argv) > 2:
+        spec = json.loads(Path(sys.argv[1]).read_text())
+        with serve(decode_turns(spec)) as fixture:
+            # Use only test-owned XDG state, persisted across fixture runs.
+            # The test's Podman launch denies all external networking.
+            env = dict(os.environ, OPENCODE_CONFIG_CONTENT=fixture.config(spec["permissions"]),
+                       XDG_DATA_HOME="/sandman-model-state",
+                       OPENCODE_DISABLE_AUTOUPDATE="true", OPENCODE_DISABLE_MODELS_FETCH="true")
+            for key in ("OPENCODE_API_KEY", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "OPENCODE_DB"):
+                env.pop(key, None)
+            version = subprocess.check_output([sys.argv[2], "--version"], env=env, text=True, timeout=10).strip()
+            if version != spec["cli"]:
+                raise ValueError(f"expected OpenCode CLI {spec['cli']}, got {version}")
+            result = subprocess.run(sys.argv[2:], env=env, timeout=90)
+            fixture.verify()
+            if result.returncode == 0:
+                marker = "SANDMAN_SCRIPTED_EXCHANGES_VERIFIED"
+                if "--format" in sys.argv[3:] and sys.argv[sys.argv.index("--format") + 1] == "json":
+                    marker = json.dumps({"type": "sandman_test_fixture", "status": marker})
+                print(marker, flush=True)
+            return result.returncode
+    spec = json.loads(sys.stdin.readline())
+    with serve(decode_turns(spec)) as fixture:
+        print(fixture.config(spec["permissions"]), flush=True)
+        if sys.stdin.readline().strip() != "verify":
+            raise ValueError("fixture abandoned before verification")
+        fixture.verify()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

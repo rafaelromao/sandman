@@ -58,6 +58,16 @@ class FixtureTest(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, "unsupported model request method 'GET'"):
                 fixture.verify()
 
+    def test_tool_has_to_be_offered_by_the_cli(self):
+        with serve([Turn("user", "Run build", Tool("bash", {"command": "make"}))]) as fixture:
+            with self.assertRaises(HTTPError) as error:
+                send(fixture.url, {"model": "scripted", "stream": True,
+                                   "messages": [{"role": "user", "content": "Run build"}],
+                                   "tools": [{"function": {"name": "read"}}]})
+            error.exception.close()
+            with self.assertRaisesRegex(AssertionError, "expected offered tool 'bash'"):
+                fixture.verify()
+
     @unittest.skipUnless(os.environ.get("SANDMAN_OPENCODE_FIXTURE_TRACER") == "1",
                          "enable inside the pinned OpenCode image with --network none")
     def test_pinned_cli_executes_a_real_build_tool(self):
