@@ -12,7 +12,11 @@ The badge is a self-hosted SVG pill that links to the [Sandman repo](https://git
 
 Sandman's publication guidance requires the linked Built with Sandman logo as
 the final content of every agent-created PR description, separated by a blank
-line. Implementation PRs retain their closing reference and existing description;
+line. Implementation PRs need a meaningful Summary and actual Verification,
+honor the target repository's pull-request template, and report local checks,
+known failures or skips, and CI observed for the current pull-request head.
+Example headings are not universal; use the repository's own equivalent
+sections. Preserve the closing reference and existing substantive description;
 badge-proposal PRs retain their leading marker. Agents verify the published body
 and keep exactly one footer across retries, continuations, and body edits.
 

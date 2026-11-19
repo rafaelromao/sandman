@@ -72,7 +72,10 @@ one:
 
 1. Load `sandman-implement` for branch setup, pre-flight checks, planning, TDD,
    self-review, base-branch merge, commit, push, and pull-request creation. Give
-   it the resolved base branch and implementation branch. The
+   it the resolved base branch and implementation branch. It owns the same
+   publication checkpoint: require meaningful Summary and actual Verification
+   evidence, honor the target repository's pull-request template, preserve
+   existing substantive content, and keep one final linked Sandman footer. The
    implementation capability ends at the verified PR-created checkpoint.
 2. Once an open pull request exists, load `sandman-review-cycle` with the
    resolved review command and review timeout. It delivers
