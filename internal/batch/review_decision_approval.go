@@ -10,8 +10,8 @@ import (
 // Allow only bounded adverbs and direct objects between a merge/approval word
 // and its condition, not an unrelated intervening clause (#2995).
 const (
-	reviewConditionSubject = `\b(?:merg(?:e|ed|es|ing)|approv(?:e|ed|al)|lgtm)\b(?:\s+(?:it|this|that|safely|now|only|(?:this|the(?:\s+current)?)\s+(?:pr|pull\s+request|change)))*`
-	reviewConditionTail    = `\s+(?:after|once|until|if|when)\b`
+	reviewConditionSubject     = `\b(?:merg(?:e|ed|es|ing)|approv(?:e|ed|al)|lgtm)\b(?:\s+(?:it|this|that|safely|now|only|(?:this|the(?:\s+current)?)\s+(?:pr|pull\s+request|change)))*`
+	reviewConditionConjunction = `(?:after|once|until|if|when)\b`
 )
 
 var (
@@ -24,8 +24,10 @@ var (
 	// A condition contradicts approval only when it governs the approval or
 	// merge ("merge only after ...", "only if X is fixed is this approved").
 	// "Keeps them only if they are http(s)" describes code behaviour (#2939).
-	reviewApprovalContradiction  = regexp.MustCompile(`(?i)\b(?:not\s+(?:yet\s+)?(?:approved|lgtm)|no\s+approval|changes\s+requested|subject\s+to|contingent\b|only\s+(?:if|after|once)\b[^\n.!?]*\b(?:approv(?:e|ed|al)|merg(?:e|ed|ing)|lgtm)\b|before\s+merging|` + reviewConditionSubject + `\s*[,;:]?` + reviewConditionTail + `)`)
-	reviewSemicolonCondition     = regexp.MustCompile(`(?i)` + reviewConditionSubject + `\s*;` + reviewConditionTail)
+	reviewApprovalContradiction = regexp.MustCompile(`(?i)\b(?:not\s+(?:yet\s+)?(?:approved|lgtm)|no\s+approval|changes\s+requested|subject\s+to|contingent\b|only\s+(?:if|after|once)\b[^\n.!?]*\b(?:approv(?:e|ed|al)|merg(?:e|ed|ing)|lgtm)\b|before\s+merging|` + reviewConditionSubject + `\s*[,:]?\s+` + reviewConditionConjunction + `)`)
+	// A semicolon normally separates statements. Cross it only when "only"
+	// explicitly ties the condition to the merge: "Merge only; after ...".
+	reviewSemicolonCondition     = regexp.MustCompile(`(?i)` + reviewConditionSubject + `[ \t]+only[ \t]*;[ \t]+` + reviewConditionConjunction)
 	reviewMetadataRepair         = regexp.MustCompile(`(?i)\b(?:fix(?:ing)?|address(?:ing)?|repair(?:ing)?|resolve|correct|replace|remove|add|change|use|ensure|update|must|please|needs?|should)\b`)
 	reviewMetricNoConcern        = regexp.MustCompile(`(?i)^(?:the\s+)?metrics?(?:\s+signals?)?\s+(?:do(?:es)?\s+not|did\s+not)\s+(?:demonstrate|show|indicate|establish)\s+(?:(?:a|an|any|new|separate|additional|construct-specific|readability|or|change-risk|correctness|maintainability)\s+)*(?:concerns?|issues?|findings?|risks?)(?:\s+(?:in|for)\s+(?:this|the)\s+(?:diff|change|pull request))?[.!]?$`)
 	reviewMetricScopeExplanation = regexp.MustCompile(`(?i)^(?:the\s+)?metric\s+increase\s+is\s+limited\s+to\s+(?:the\s+)?(?:adapter|changed|existing|new)\s+(?:branch|function|code|scope|path)(?:\s+in\s+this\s+diff)?[.!]?$`)
@@ -231,7 +233,8 @@ func collectReviewApprovalSections(body string) []reviewApprovalTextSection {
 			if descriptiveLevel == 0 || nextLevel <= descriptiveLevel {
 				descriptiveLevel = 0
 				kind, inline = reviewApprovalSection(heading)
-				switch strings.ToLower(heading) {
+				label, _, _ := strings.Cut(strings.TrimRight(heading, "#"), ":")
+				switch strings.ToLower(strings.TrimSpace(label)) {
 				case "summary", "standards", "spec", "quality check", "scope", "metrics", "tools used":
 					descriptiveLevel = nextLevel
 				}
@@ -343,6 +346,7 @@ func reviewProsePermitsApproval(text string) bool {
 	visible := reviewDirectiveProse(reviewJoinSoftLines(text))
 	return !reviewFindingDirective.MatchString(visible) &&
 		!reviewApprovalContradiction.MatchString(visible) &&
+		!reviewSemicolonCondition.MatchString(visible) &&
 		!reviewFindingSeverity.MatchString(visible) &&
 		!reviewHasUnresolvedAssessment(text) &&
 		!reviewOpposingVerdict.MatchString(prose)

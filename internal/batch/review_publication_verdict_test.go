@@ -229,14 +229,38 @@ func TestReviewPublicationVerdict_StandaloneAndNestedHeadings(t *testing.T) {
 			t.Fatal("standalone prose decision rejected")
 		}
 	})
-	t.Run("nested descriptive headings", func(t *testing.T) {
-		report := "## Quality check\n### Metrics\n#### Findings\nImportant: complexity above the advisory threshold.\n\n" +
-			"### Suggested next steps\nFix the race in a separate effort.\n\n## Decision\n**APPROVED**\n"
-		published := report + "\n" + reviewpub.Marker(reviewpub.Approved) + "\n" + reviewpub.Identity("request", "current-sha")
-		if publishedApprovalContradicted(published) || !reviewDecisionApprovedBody(published) {
-			t.Fatal("nested quality notes vetoed the published approval")
+	for _, heading := range []string{"Quality check", "Quality check: local metrics", "Quality check ##"} {
+		t.Run(heading, func(t *testing.T) {
+			report := "## " + heading + "\n### Metrics\n#### Findings\nImportant: complexity above the advisory threshold.\n\n" +
+				"### Suggested next steps\nFix the race in a separate effort.\n\n## Decision\n**APPROVED**\n"
+			published := report + "\n" + reviewpub.Marker(reviewpub.Approved) + "\n" + reviewpub.Identity("request", "current-sha")
+			if publishedApprovalContradicted(published) || !reviewDecisionApprovedBody(published) {
+				t.Fatal("nested quality notes vetoed the published approval")
+			}
+		})
+	}
+}
+
+func TestReviewPublicationVerdict_DescriptiveSemicolonInSuggestedNextSteps(t *testing.T) {
+	for _, description := range []string{
+		"The existing workflow merges the current PR; when it does, GitHub closes the linked issue.",
+		"The earlier PR was already merged; when GitHub sees the closing keyword, it closes the issue.",
+	} {
+		prose := "## Suggested next steps\nNone. " + description + "\n\n## Decision\n**APPROVED**\n"
+		published := reviewpub.Body(prose, "request", "current-sha")
+		if publishedApprovalContradicted(published) {
+			t.Errorf("description %q contradicted the published verdict", description)
 		}
-	})
+		for form, body := range map[string]string{
+			"published": published,
+			"legacy":    prose + "\n" + reviewpub.Identity("request", "current-sha"),
+			"prose":     prose,
+		} {
+			if !reviewDecisionApprovedBody(body) {
+				t.Errorf("%s: description %q rejected", form, description)
+			}
+		}
+	}
 }
 
 // Wording variants of the no-change declaration and remarks addressed to the
