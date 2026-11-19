@@ -1,11 +1,9 @@
 package blindreview_test
 
 import (
-	"bytes"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,10 +14,16 @@ import (
 	"testing"
 )
 
-func TestGHGraphQLPaginationAgainstLocalAPI(t *testing.T) {
+func TestPromptHelperPreservesLiteralGraphQLIdentifiers(t *testing.T) {
 	gh, err := exec.LookPath("gh")
 	if err != nil {
 		t.Skipf("gh unavailable: %v", err)
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skipf("jq unavailable: %v", err)
+	}
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skipf("POSIX shell unavailable: %v", err)
 	}
 
 	type request struct {
@@ -30,8 +34,13 @@ func TestGHGraphQLPaginationAgainstLocalAPI(t *testing.T) {
 			EndCursor *string `json:"endCursor"`
 		} `json:"variables"`
 	}
+	type graphQLCall struct {
+		owner  string
+		repo   string
+		cursor string
+	}
 	var mu sync.Mutex
-	var cursors []string
+	var calls []graphQLCall
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/graphql") {
 			http.NotFound(w, r)
@@ -46,7 +55,10 @@ func TestGHGraphQLPaginationAgainstLocalAPI(t *testing.T) {
 			http.Error(w, "invalid GraphQL request", http.StatusBadRequest)
 			return
 		}
-		if body.Variables.Owner != "owner" || body.Variables.Repo != "repo" || body.Variables.Number != 17 {
+		validRepository := (body.Variables.Owner == "owner" && body.Variables.Repo == "repo") ||
+			(body.Variables.Owner == "123" && body.Variables.Repo == "true") ||
+			(body.Variables.Owner == "true" && body.Variables.Repo == "123")
+		if !validRepository || body.Variables.Number != 17 {
 			http.Error(w, "unexpected GraphQL variables", http.StatusBadRequest)
 			return
 		}
@@ -55,7 +67,9 @@ func TestGHGraphQLPaginationAgainstLocalAPI(t *testing.T) {
 			cursor = *body.Variables.EndCursor
 		}
 		mu.Lock()
-		cursors = append(cursors, cursor)
+		calls = append(calls, graphQLCall{
+			owner: body.Variables.Owner, repo: body.Variables.Repo, cursor: cursor,
+		})
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		if cursor == "" {
@@ -73,12 +87,49 @@ func TestGHGraphQLPaginationAgainstLocalAPI(t *testing.T) {
 	if err := os.WriteFile(certPath, cert, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	helperDir, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := t.TempDir()
+	worktree := filepath.Join(fixture, "worktree")
+	if out, err := exec.Command("git", "init", worktree).CombinedOutput(); err != nil {
+		t.Fatalf("initialize prompt fixture worktree: %v\n%s", err, out)
+	}
+	binDir := filepath.Join(fixture, "bin")
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(worktree, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pr := `{"number":17,"title":"Container compatibility","body":"Closes #99","state":"OPEN","headRefOid":"abc","baseRefName":"main"}`
+	if err := os.WriteFile(filepath.Join(fixture, "pr.json"), []byte(pr), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fakeGH := `#!/bin/sh
+set -eu
+if [ "${1-}" = api ] && [ "${2-}" = graphql ]; then
+  exec "$REAL_GH" "$@"
+fi
+case "${1-} ${2-}" in
+  "pr view") cat "$FIXTURE_DIR/pr.json" ;;
+  "issue view") printf '%s\n' '{"body":"Native acceptance criterion from issue 42"}' ;;
+  "api --paginate") printf '[]\n' ;;
+  *) exec "$REAL_GH" "$@" ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "gh"), []byte(fakeGH), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
 	parsedURL := strings.TrimPrefix(server.URL, "https://")
-	query := `query($owner:String!,$repo:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$number){closingIssuesReferences(first:100,after:$endCursor){nodes{number} pageInfo{hasNextPage endCursor}}}}}`
 	home := t.TempDir()
-	cmd := exec.CommandContext(t.Context(), gh, "api", "graphql", "--paginate",
-		"-F", "owner=owner", "-F", "repo=repo", "-F", "number=17", "-f", "query="+query)
-	cmd.Env = append(os.Environ(),
+	configDir := filepath.Join(home, ".config", "gh")
+	env := append(os.Environ(),
+		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"REAL_GH="+gh,
+		"FIXTURE_DIR="+fixture,
 		"GH_HOST="+parsedURL,
 		"GH_ENTERPRISE_TOKEN=fixture-token",
 		"GH_TOKEN=",
@@ -88,45 +139,38 @@ func TestGHGraphQLPaginationAgainstLocalAPI(t *testing.T) {
 		"SSL_CERT_FILE="+certPath,
 		"HOME="+home,
 		"XDG_CONFIG_HOME="+filepath.Join(home, ".config"),
-		"GH_CONFIG_DIR="+filepath.Join(home, ".config", "gh"),
+		"GH_CONFIG_DIR="+configDir,
 	)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("gh api GraphQL pagination: %v\n%s", err, output)
-	}
-	type page struct {
-		Data struct {
-			Repository struct {
-				PullRequest struct {
-					ClosingIssuesReferences struct {
-						Nodes []struct {
-							Number int `json:"number"`
-						} `json:"nodes"`
-					} `json:"closingIssuesReferences"`
-				} `json:"pullRequest"`
-			} `json:"repository"`
-		} `json:"data"`
-	}
-	var pages []page
-	decoder := json.NewDecoder(bytes.NewReader(output))
-	for {
-		var decoded page
-		err := decoder.Decode(&decoded)
-		if err == io.EOF {
-			break
-		}
+	repositories := []string{"owner/repo", "123/true", "true/123"}
+	for _, repository := range repositories {
+		cmd := exec.CommandContext(t.Context(), "sh",
+			filepath.Join(helperDir, "review-prompt-v1.sh"),
+			"--repository", repository, "--pull-request", "17",
+			"--head-sha", "abc", "--run-dir", filepath.Join(fixture, "report"))
+		cmd.Dir = worktree
+		cmd.Env = env
+		output, err := cmd.CombinedOutput()
 		if err != nil {
-			t.Fatalf("decode paginated GraphQL output: %v\n%s", err, output)
+			t.Fatalf("render prompt for repository %q: %v\n%s", repository, err, output)
 		}
-		pages = append(pages, decoded)
+		prompt := string(output)
+		if !strings.Contains(prompt, "Native acceptance criterion from issue 42") ||
+			strings.Contains(prompt, "Fallback criterion 99 must not win") {
+			t.Fatalf("prompt for repository %q did not preserve native linkage:\n%s", repository, prompt)
+		}
 	}
-	if len(pages) != 2 || len(pages[1].Data.Repository.PullRequest.ClosingIssuesReferences.Nodes) != 1 ||
-		pages[1].Data.Repository.PullRequest.ClosingIssuesReferences.Nodes[0].Number != 42 {
-		t.Fatalf("unexpected paginated GraphQL output: %s", output)
-	}
+
 	mu.Lock()
 	defer mu.Unlock()
-	if len(cursors) != 2 || cursors[0] != "" || cursors[1] != "cursor-1" {
-		t.Fatalf("gh did not follow the cursor chain: %#v", cursors)
+	if len(calls) != len(repositories)*2 {
+		t.Fatalf("gh did not paginate each repository identity: %#v", calls)
+	}
+	for i, repository := range repositories {
+		owner, repo, _ := strings.Cut(repository, "/")
+		first, second := calls[i*2], calls[i*2+1]
+		if first.owner != owner || first.repo != repo || first.cursor != "" ||
+			second.owner != owner || second.repo != repo || second.cursor != "cursor-1" {
+			t.Fatalf("gh sent invalid variables or cursor sequence for %q: %#v, %#v", repository, first, second)
+		}
 	}
 }

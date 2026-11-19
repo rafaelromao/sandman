@@ -44,8 +44,13 @@ func TestBlindReviewDefaultContainerCompatibility(t *testing.T) {
 			EndCursor *string `json:"endCursor"`
 		} `json:"variables"`
 	}
+	type graphQLCall struct {
+		owner  string
+		repo   string
+		cursor string
+	}
 	var mu sync.Mutex
-	var cursors []string
+	var calls []graphQLCall
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/graphql" {
 			http.Error(w, "unexpected GitHub API path", http.StatusNotFound)
@@ -61,7 +66,10 @@ func TestBlindReviewDefaultContainerCompatibility(t *testing.T) {
 			return
 		}
 		variables := request.Variables
-		if variables.Owner != "owner" || variables.Repo != "repo" || variables.Number != 17 {
+		validRepository := (variables.Owner == "owner" && variables.Repo == "repo") ||
+			(variables.Owner == "123" && variables.Repo == "true") ||
+			(variables.Owner == "true" && variables.Repo == "123")
+		if !validRepository || variables.Number != 17 {
 			http.Error(w, "unexpected GraphQL variables", http.StatusBadRequest)
 			return
 		}
@@ -70,7 +78,9 @@ func TestBlindReviewDefaultContainerCompatibility(t *testing.T) {
 			cursor = *variables.EndCursor
 		}
 		mu.Lock()
-		cursors = append(cursors, cursor)
+		calls = append(calls, graphQLCall{
+			owner: variables.Owner, repo: variables.Repo, cursor: cursor,
+		})
 		mu.Unlock()
 
 		w.Header().Set("Content-Type", "application/json")
@@ -181,9 +191,13 @@ mkdir -p "$HOME" "$GH_CONFIG_DIR"
 gh --version | grep -q '^gh version 2\.23\.0 '
 test "$(jq --version)" = jq-1.6
 cd /fixture/worktree
-sh /helpers/review-prompt-v1.sh --repository owner/repo --pull-request 17 --head-sha abc --run-dir /fixture/report > /fixture/prompt.md
-grep -Fq 'Native acceptance criterion from issue 42' /fixture/prompt.md
-! grep -Fq 'Fallback criterion 99 must not win' /fixture/prompt.md
+sh /helpers/review-prompt-v1.sh --repository owner/repo --pull-request 17 --head-sha abc --run-dir /fixture/report > /fixture/prompt-owner.md
+sh /helpers/review-prompt-v1.sh --repository 123/true --pull-request 17 --head-sha abc --run-dir /fixture/report > /fixture/prompt-numeric-boolean.md
+sh /helpers/review-prompt-v1.sh --repository true/123 --pull-request 17 --head-sha abc --run-dir /fixture/report > /fixture/prompt-boolean-numeric.md
+for prompt in /fixture/prompt-owner.md /fixture/prompt-numeric-boolean.md /fixture/prompt-boolean-numeric.md; do
+  grep -Fq 'Native acceptance criterion from issue 42' "$prompt"
+  ! grep -Fq 'Fallback criterion 99 must not win' "$prompt"
+done
 python3 /helpers/test_transport.py
 sh /helpers/publish-v1.sh --decision-file /fixture/decision.md --head-sha abc --print-body > /fixture/publication.md
 jq -e -Rs 'contains("<!-- sandman-verdict:approved -->") and contains("<!-- sandman-publication:")' /fixture/publication.md >/dev/null
@@ -207,7 +221,16 @@ jq -e -Rs 'contains("<!-- sandman-verdict:approved -->") and contains("<!-- sand
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(cursors) != 2 || cursors[0] != "" || cursors[1] != "cursor-1" {
-		t.Fatalf("packaged gh did not paginate the mock GraphQL response: %#v", cursors)
+	repositories := [][2]string{{"owner", "repo"}, {"123", "true"}, {"true", "123"}}
+	if len(calls) != len(repositories)*2 {
+		t.Fatalf("packaged gh did not paginate each repository identity: %#v", calls)
+	}
+	for i, repository := range repositories {
+		first, second := calls[i*2], calls[i*2+1]
+		if first.owner != repository[0] || first.repo != repository[1] || first.cursor != "" ||
+			second.owner != repository[0] || second.repo != repository[1] || second.cursor != "cursor-1" {
+			t.Fatalf("packaged gh sent invalid variables or cursor sequence for %q/%q: %#v, %#v",
+				repository[0], repository[1], first, second)
+		}
 	}
 }
