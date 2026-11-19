@@ -73,8 +73,6 @@ jobs:
     needs: candidate
     if: needs.candidate.outputs.tag != ''
     uses: ./.github/workflows/full-regression-linux.yml
-    secrets:
-      OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
 
   native:
     needs: candidate

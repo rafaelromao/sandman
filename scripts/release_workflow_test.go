@@ -337,13 +337,12 @@ func TestReleaseValidationWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 	linux := readRepositoryFile(t, "../.github/workflows/full-regression-linux.yml") + readRepositoryFile(t, "../.github/workflows/release-regression-tier.yml")
 	for _, required := range []string{
 		`SANDMAN_FULL_REGRESSION: "1"`,
-		"tier: unit", "tier: smoke", "tier: integration", "tier: live",
-		"name: Install pinned agent CLIs", "opencode-ai@1.19.3", "@anthropic-ai/claude-code@2.1.283",
-		"secrets.OPENCODE_API_KEY", "secrets.CLAUDE_CODE_OAUTH_TOKEN",
+		"tier: unit", "tier: smoke", "tier: integration", "tier: scripted", "tier: scripted-host",
+		"name: Install pinned OpenCode CLI", "opencode-ai@$(", "unshare --net",
 		"name: Set up Node", "name: Set up Chromium",
 		"name: Validate prerequisites and record versions",
 		"python3 scripts/release_report.py", "if: ${{ always() }}",
-		"needs: [unit, smoke, integration, live]", `test "$LIVE_RESULT" = success`,
+		"needs: [unit, smoke, integration, scripted, scripted-host]", `test "$SCRIPTED_RESULT" = success`, `test "$SCRIPTED_HOST_RESULT" = success`,
 		`export CONTAINERS_CONF="$RUNNER_TEMP/containers.conf"`,
 		`echo "CONTAINERS_CONF=$CONTAINERS_CONF" >> "$GITHUB_ENV"`,
 		"name: Configure Podman runtime", `runtime = "runc"`,
@@ -1014,23 +1013,25 @@ func TestReleaseManifestInventoriesTaggedScenarios(t *testing.T) {
 			if !ok || !strings.HasPrefix(fn.Name.Name, "Test") {
 				continue
 			}
-			invokesLive := false
+			invokesScripted := false
 			ast.Inspect(fn.Body, func(node ast.Node) bool {
 				call, ok := node.(*ast.CallExpr)
 				if !ok {
 					return true
 				}
 				name, ok := call.Fun.(*ast.Ident)
-				if ok && (name.Name == "requireSandmanAgentE2E" || name.Name == "requirePresetMatrixE2E" || name.Name == "runE2ERun") {
-					invokesLive = true
+				if ok && (name.Name == "requireSandmanAgentE2E" || name.Name == "requirePresetMatrixE2E" ||
+					name.Name == "requireScriptedOpenCodeE2E" || name.Name == "runE2ERun") {
+					invokesScripted = true
 				}
 				return true
 			})
-			if invokesLive && required["live:"+pkg+":"+fn.Name.Name] == "" {
-				t.Errorf("real-provider scenario must belong to live tier: %s:%s", pkg, fn.Name.Name)
+			if invokesScripted && required["scripted:"+pkg+":"+fn.Name.Name] == "" &&
+				required["scripted-host:"+pkg+":"+fn.Name.Name] == "" {
+				t.Errorf("OpenCode scenario must belong to a scripted tier: %s:%s", pkg, fn.Name.Name)
 			}
 			found := false
-			for _, tier := range []string{"integration", "live", "claude"} {
+			for _, tier := range []string{"integration", "scripted", "scripted-host", "local-live"} {
 				if required[tier+":"+pkg+":"+fn.Name.Name] != "" {
 					found = true
 				}
@@ -1057,12 +1058,12 @@ func TestReleaseManifestInventoriesTaggedScenarios(t *testing.T) {
 
 func TestReleaseTierJobsRemainIndependent(t *testing.T) {
 	workflow := readRepositoryFile(t, "../.github/workflows/full-regression-linux.yml")
-	for _, tier := range []string{"unit", "smoke", "integration", "live"} {
+	for _, tier := range []string{"unit", "smoke", "integration", "scripted", "scripted-host"} {
 		block := extractCIJob(t, workflow, tier)
 		if !strings.Contains(block, "uses: ./.github/workflows/release-regression-tier.yml") || strings.Contains(block, "needs:") {
 			t.Errorf("release tier %s must run independently", tier)
 		}
-		if tier != "live" && strings.Contains(block, "secrets:") {
+		if strings.Contains(block, "secrets:") {
 			t.Errorf("%s must receive no provider secrets", tier)
 		}
 		gate := extractCIJob(t, workflow, "release-gate")
@@ -1110,21 +1111,13 @@ func TestPublicationUsesSameRunValidatedSource(t *testing.T) {
 	}
 }
 
-func TestClaudeProviderE2EsRequireManualDispatch(t *testing.T) {
-	workflow := readRepositoryFile(t, "../.github/workflows/full-regression-linux.yml")
-	manual := extractCIJob(t, workflow, "claude")
-	for _, required := range []string{"github.event_name == 'workflow_dispatch' && inputs.run_claude", "tier: claude", "secrets.CLAUDE_CODE_OAUTH_TOKEN"} {
-		if !strings.Contains(manual, required) {
-			t.Errorf("manual Claude job missing %q", required)
-		}
-	}
-	dispatch := extractOnSubBlock(t, workflow, "workflow_dispatch")
-	if !strings.Contains(dispatch, "run_claude:") || !strings.Contains(dispatch, "default: false") {
-		t.Fatal("Claude E2Es must require explicit opt-in on manual dispatch")
-	}
-	for _, source := range []string{extractCIJob(t, workflow, "live"), extractCIJob(t, workflow, "release-gate"), readRepositoryFile(t, "../.github/workflows/release.yml")} {
-		if strings.Contains(source, "CLAUDE_CODE_OAUTH_TOKEN") || strings.Contains(source, "needs.claude") {
-			t.Error("automatic release validation must not require Claude credentials or results")
+func TestHostedProviderValidationIsLocalOnly(t *testing.T) {
+	for _, path := range []string{"go.yml", "full-regression-linux.yml", "release-regression-tier.yml", "release.yml", "pr-release-validation.yml"} {
+		source := readRepositoryFile(t, "../.github/workflows/"+path)
+		for _, forbidden := range []string{"secrets.OPENCODE_API_KEY", "secrets.CLAUDE_CODE_OAUTH_TOKEN", "run_claude:", "tier: local-live", "tier: live", "tier: claude"} {
+			if strings.Contains(source, forbidden) {
+				t.Errorf("%s must not select or authenticate a live provider: %s", path, forbidden)
+			}
 		}
 	}
 	var manifest struct{ Scenarios []struct{ Test, Tier string } }
@@ -1132,17 +1125,17 @@ func TestClaudeProviderE2EsRequireManualDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, scenario := range manifest.Scenarios {
-		if scenario.Test == "TestPresetMatrixHarness_RealClaudeAgentReuseSession" && scenario.Tier != "claude" {
-			t.Fatal("Claude provider scenario must belong only to the manual tier")
+		if scenario.Test == "TestPresetMatrixHarness_RealClaudeAgentReuseSession" && scenario.Tier != "local-live" {
+			t.Fatal("Claude provider scenario must belong only to local validation")
 		}
 	}
 }
 
-func TestReleaseOpenCodePinsMatchCanaryAndLiveTier(t *testing.T) {
+func TestReleaseOpenCodePinsMatchCanaryAndScriptedTiers(t *testing.T) {
 	var manifest struct {
 		Providers map[string]struct {
 			CLI   string `json:"cli"`
-			Model string `json:"model"`
+			Model string `json:"scripted_model"`
 		} `json:"providers"`
 	}
 	if err := json.Unmarshal([]byte(readRepositoryFile(t, "release_scenarios.json")), &manifest); err != nil {
@@ -1153,12 +1146,12 @@ func TestReleaseOpenCodePinsMatchCanaryAndLiveTier(t *testing.T) {
 		t.Fatalf("release OpenCode %q differs from scaffold fallback %q", pin, scaffold.DefaultBuiltInAgentVersion("opencode"))
 	}
 	workflow := readRepositoryFile(t, "../.github/workflows/release-regression-tier.yml")
-	if !strings.Contains(workflow, "npm install -g opencode-ai@"+pin) || !strings.Contains(workflow, "$(opencode --version)\" = "+pin) {
+	if !strings.Contains(workflow, "npm install -g \"opencode-ai@$") || !strings.Contains(workflow, `test "$(opencode --version)"`) ||
+		!strings.Contains(workflow, `["providers"]["opencode"]["cli"]`) {
 		t.Fatal("release installation and prerequisite check must match the manifest pin")
 	}
-	if model := manifest.Providers["opencode"].Model; model != "opencode/big-pickle" ||
-		!strings.Contains(workflow, "SANDMAN_TEST_MODEL_OPENCODE: "+model) {
-		t.Fatalf("release OpenCode model %q must match the live-tier model pin", model)
+	if model := manifest.Providers["opencode"].Model; model != "fixture/scripted" {
+		t.Fatalf("release OpenCode model %q must match the scripted model", model)
 	}
 	canary := readRepositoryFile(t, "opencode_canary.py")
 	if !strings.Contains(canary, "release_scenarios.json") || !strings.Contains(canary, "MODEL_REF") ||

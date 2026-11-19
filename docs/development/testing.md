@@ -149,7 +149,7 @@ The required `CI / portal-continuity-browser` job provisions Node and Chromium o
 
 Release Please branch updates add two release-validation workflows:
 
-- `Full Regression - Linux` is the exhaustive authority for Linux. It runs independent unit/browser, smoke container, credential-free integration, and live-provider jobs with the canonical 60- and 90-minute budgets.
+- `Full Regression - Linux` is the exhaustive authority for Linux. It runs independent unit/browser, smoke container, integration, and scripted OpenCode host and container jobs with the canonical 60- and 90-minute budgets. None need model-provider credentials.
 - `Native Compatibility` is a focused suite with four parallel arch-specific jobs — `Native Compatibility (linux/amd64)` on `ubuntu-latest`, `Native Compatibility (darwin/amd64)` on `macos-15-intel`, `Native Compatibility (darwin/arm64)` on `macos-15`, and `Native Compatibility (linux/arm64)` on `ubuntu-24.04-arm`. Each job builds Sandman natively for its arch, then exercises Darwin/Linux socket paths plus portal and attach streaming, and verifies the native portal and attach streaming boundary through two hermetic portal E2E cases. Linux-container preset portability remains covered by the Linux workflow rather than being rebuilt inside the macOS Podman VM.
 
 The contract test `TestPlatformCoverageMapMatchesWorkflowsAndGoReleaser` checks that required substrings are present in the workflow files, `scripts/release_tier.sh`, and `.goreleaser.yml`: the platform build jobs' runner labels and `runs-on`, the three native runner labels with their GOOS/GOARCH/`uname` assertions and two portal E2E test names, the exhaustive-regression environment (`SANDMAN_RUN_AGENT_E2E=1`, `SANDMAN_E2E_GATES: all`), and the four GoReleaser build IDs. It does not parse the matrix above, so edits to this table are not enforced; keep the table aligned with those files by review.
@@ -178,30 +178,26 @@ required. Skip reasons must match the manifest. Unrelated optional default tests
 are reported but do not substitute for required scenario coverage. New tagged
 E2E tests must enter the manifest; contracts reject missing entries.
 
-The four independent jobs call `release-regression-tier.yml` and have no
+The five independent jobs call `release-regression-tier.yml` and have no
 dependency on each other. The final gate checks each job explicitly, preserving
 sibling failures when only one tier is rerun.
 Unit includes `visual` tests and Node production-module coverage. Smoke builds
-all preset containers without provider calls. Integration excludes the manifest's
-live selector and uses fake agents, local Git remotes and real containers.
+all preset containers and includes a real OpenCode smoke run with a scripted
+loopback model. Integration excludes separately selected scenarios and uses
+fake agents, local Git remotes and real containers.
 The subagent permission fixture isolates HOME/config snapshots from runner state
 while retaining the runner's XDG data directory for Podman's container store.
-Live selects the explicit OpenCode scenarios and receives only OpenCode credentials.
-Claude provider E2Es run in a separate manual tier when `Full Regression - Linux`
-is dispatched with `run_claude` enabled; only that job receives Claude credentials.
-Ordinary PR CI's OpenCode canary uses a local scripted endpoint.
+The scripted container tier runs the preset matrix and continuation scenarios
+using real OpenCode in rootless Podman with `--network none`. The scripted host
+tier runs remediation and managed review using real OpenCode in a loopback-only
+network namespace. The provider fixture must see every expected exchange; it
+never executes tools or creates the artifacts asserted by tests. Ordinary PR
+CI's OpenCode canary uses the same local scripted endpoint.
 
 Every Linux tier provisions Node 22, Chromium and validated rootless Podman
-with runc. Live additionally installs `opencode-ai@1.19.3` and requires
-`OPENCODE_API_KEY`. The optional manual Claude tier installs
-`@anthropic-ai/claude-code@2.1.283` and requires
-`CLAUDE_CODE_OAUTH_TOKEN`.
-Each provider tier checks its own CLI version. OpenCode auth is
-written as JSON with mode 0600. Release live uses the free Big Pickle
-model `opencode/big-pickle`; the optional Claude tier uses
-`claude-haiku-4-5-20251001`. Missing credentials,
-tools, required tests, unexpected skips and duplicate executions fail validation.
-Quota/provider failures remain failures; they cannot produce successful coverage.
+with runc. Smoke and the scripted tiers use the OpenCode CLI pin from the release
+manifest. Missing tools, required tests, unexpected skips and duplicate
+executions fail validation. No GitHub Actions entry point runs live providers.
 
 `release-regression-<tier>-<sha>` artifacts contain the raw Go JSON stream,
 process exit code, source SHA, observed tool versions and `report.json`.
@@ -383,59 +379,43 @@ SANDMAN_E2E_GATES=batch,opencode_subagent,review_wait \
 SANDMAN_E2E_GATES=all go test -tags e2e -timeout 90m ./...
 ```
 
-## Per-agent model override
+## Scripted OpenCode E2Es (`SANDMAN_RUN_AGENT_E2E`)
 
-By default, smoke and e2e tests use the model baked into each test case. To target a different model for a specific agent, set `SANDMAN_TEST_MODEL_<AGENT>` using the uppercased agent name.
-
-```bash
-SANDMAN_TEST_MODEL_OPENCODE=opencode/gpt-5-nano \
-  SANDMAN_RUN_SMOKE_E2E=1 SANDMAN_TEST_PROVIDERS=opencode \
-  go test -tags smoke -timeout 30m ./internal/cmd -run Smoke
-```
-
-## Real-agent opt-in (`SANDMAN_RUN_AGENT_E2E`)
-
-Real-agent E2E sub-tests, including PR-flow and preset-matrix scenarios, run
-the **real** opencode or claude agent inside a real container against a real LLM
-provider. Those sub-tests are gated behind a runtime opt-in so the `-tags e2e`
-suite stays runnable on developer machines and CI without live agent
-credentials:
+The preset matrix, remediation and managed review scenarios run the real pinned
+OpenCode CLI against the scripted provider, without a subscription or login:
 
 ```bash
-# Real-agent sub-tests execute as part of the E2E suite.
 SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all \
   go test -tags e2e -timeout 90m ./...
 ```
 
-`SANDMAN_RUN_AGENT_E2E=1` requires the host's opencode auth snapshot
-(`~/.local/share/opencode/auth.json`) and a working `podman` or `docker`
-runtime. The Claude Code case (`TestPresetMatrixHarness_RealClaudeAgentReuseSession`)
-runs only when `SANDMAN_TEST_PROVIDERS` names `claude` (or `all`), the `claude`
-CLI is on `PATH`, and either `~/.claude/.credentials.json` exists or
-`CLAUDE_CODE_OAUTH_TOKEN` is exported (the macOS path, from `claude setup-token`).
-It uses the `haiku` alias unless `SANDMAN_TEST_MODEL_CLAUDE` is set, runs the
-built-in preset command in a container, and continues the row with
-`--reuse-session`. The first real run is also the place to capture one
-usage-limit `result` line on a limited account and pin it as the golden for the
-Claude usage-limit rule. With the opt-in set, the preset-matrix sub-tests are real-workflow
-and need the wider `-timeout 90m` budget. Without it, the same tests skip with
-a message naming the skipped provider and the missing opt-in, and the rest of
-the suite runs as normal.
+Install the OpenCode CLI pin from `scripts/release_scenarios.json` and use rootless
+Podman for the matrix. The separate release host job enforces loopback-only
+networking; to reproduce it locally, warm the Go module cache, then run the
+host tier inside a loopback-only network namespace.
 
-In addition to the `SANDMAN_RUN_AGENT_E2E` opt-in, the real-agent tests also
-self-skip when the generic `CI` env var is set — unless `SANDMAN_FULL_REGRESSION=1`
-is present (see [Full regression](#full-regression-sandman_full_regression)).
-The `Full Regression - Linux` workflow sets both and overrides the local
-default with the release model from `scripts/release_scenarios.json`, so its
-real-agent coverage exercises the free Big Pickle model.
+### Local live-provider diagnostics
+
+Only run these explicitly, outside CI, with local credentials and Podman:
+
+```bash
+bash scripts/local_live_provider.sh opencode
+bash scripts/local_live_provider.sh claude
+```
+
+OpenCode uses `~/.local/share/opencode/auth.json`; Claude uses
+`~/.claude/.credentials.json` or `CLAUDE_CODE_OAUTH_TOKEN`. Live diagnostics
+can consume quota and can use `SANDMAN_TEST_MODEL_OPENCODE` or
+`SANDMAN_TEST_MODEL_CLAUDE`. Neither command contributes release evidence.
+Provider selection `all` and full regression do not opt into live traffic.
 
 ### Blind and delegated review acceptance
 
 `TestBlindReviewManagedRun_DefaultUsesRealChildSession` and
 `TestBlindReviewManagedRun_ConfiguredCommandPostsTriggerWithoutChild` run the
 real OpenCode implementor through a managed command and worktree sandbox,
-against a recording local GitHub fixture. They use an isolated credential-only
-HOME and session database. The blind case checks an actual child session and
+against a recording local GitHub fixture and scripted model. They use an isolated
+credential-free HOME and session database. The blind case checks an actual child session and
 compares its authoritative review input byte-for-byte with the daemon prompt.
 Native delegation may deliver that input directly or through a minimal
 file-pointer handoff; the latter must read the rendered prompt before reviewing.
@@ -444,12 +424,6 @@ Credential-free skill contracts cover both delivery forms, native delegation
 without an agent CLI/service, and refusal when fresh isolated delegation is
 unavailable. Legacy transport fixtures alone do not establish harness portability.
 
-The committed model remains `opencode/big-pickle`. For local validation, these
-cases honor the existing `SANDMAN_TEST_MODEL_OPENCODE` override and the optional
-`SANDMAN_TEST_VARIANT_OPENCODE` (empty by default). The small model is pinned to
-the selected model too. Local overrides do not change the release provider pin
-or substitute for required release evidence. Each scenario retains the existing
-15-minute live-agent deadline; run the tagged suite with its 90-minute timeout.
 
 ## Cleanup after interrupted tests
 

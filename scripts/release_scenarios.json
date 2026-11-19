@@ -9,11 +9,12 @@
   "providers": {
     "opencode": {
       "cli": "1.19.3",
-      "model": "opencode/big-pickle"
+      "scripted_model": "fixture/scripted",
+      "local_live_model": "opencode/big-pickle"
     },
     "claude": {
       "cli": "2.1.283",
-      "model": "claude-haiku-4-5-20251001"
+      "local_live_model": "claude-haiku-4-5-20251001"
     }
   },
   "scenarios": [
@@ -321,7 +322,7 @@
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestPresetMatrixHarness_GenericRunExecutesRealTask",
-      "tier": "live"
+      "tier": "scripted"
     },
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
@@ -331,17 +332,17 @@
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestCIRemediationPoisonedTaskRealAgent",
-      "tier": "live"
+      "tier": "scripted-host"
     },
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestBlindReviewManagedRun_DefaultUsesRealChildSession",
-      "tier": "live"
+      "tier": "scripted-host"
     },
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestBlindReviewManagedRun_ConfiguredCommandPostsTriggerWithoutChild",
-      "tier": "live"
+      "tier": "scripted-host"
     },
     {
       "package": "github.com/rafaelromao/sandman/internal/skill/sandman/blind-review",
@@ -366,7 +367,7 @@
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestPresetMatrixHarness_GoRunExecutesRealTask",
-      "tier": "live"
+      "tier": "scripted"
     },
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
@@ -381,7 +382,7 @@
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestPresetMatrixHarness_NodeRunExecutesRealTask",
-      "tier": "live"
+      "tier": "scripted"
     },
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
@@ -391,17 +392,27 @@
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestPresetMatrixHarness_RealAgentOverride",
-      "tier": "live"
+      "tier": "scripted"
     },
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestPresetMatrixHarness_RealAgentContinue",
-      "tier": "live"
+      "tier": "scripted"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixHarness_ScriptedOpenCodeReuseSession",
+      "tier": "scripted"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestSmoke_ScriptedOpenCode",
+      "tier": "smoke"
     },
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestPresetMatrixHarness_RealClaudeAgentReuseSession",
-      "tier": "claude"
+      "tier": "local-live"
     },
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
@@ -416,7 +427,7 @@
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestPresetMatrixHarness_DotnetRunExecutesRealTask",
-      "tier": "live"
+      "tier": "scripted"
     },
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
@@ -431,7 +442,7 @@
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestPresetMatrixHarness_ElixirRunExecutesRealTask",
-      "tier": "live"
+      "tier": "scripted"
     },
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
@@ -446,7 +457,7 @@
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestPresetMatrixHarness_RustRunExecutesRealTask",
-      "tier": "live"
+      "tier": "scripted"
     },
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
@@ -461,7 +472,7 @@
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestPresetMatrixHarness_JavaRunExecutesRealTask",
-      "tier": "live"
+      "tier": "scripted"
     },
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
@@ -476,7 +487,7 @@
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestPresetMatrixHarness_RubyRunExecutesRealTask",
-      "tier": "live"
+      "tier": "scripted"
     },
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
@@ -491,7 +502,7 @@
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestPresetMatrixHarness_PythonRunExecutesRealTask",
-      "tier": "live"
+      "tier": "scripted"
     },
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",

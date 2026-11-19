@@ -617,7 +617,7 @@ Missing prerequisites, absent scenarios, duplicate results and unexpected skips
 mean incomplete release validation. Only named negative-control or retired-test
 skips with matching reasons are permitted. Release evidence binds counts,
 reasons, tool/model versions and timeout classification to the tested SHA.
-Independent unit/browser, smoke, credential-free integration and live-provider
+Independent unit/browser, smoke, credential-free integration and scripted OpenCode host/container
 jobs retain evidence despite sibling failures; native boundary reports cover
 Linux/macOS amd64/arm64. Ordinary PR checks retain their existing budget.
 
@@ -629,8 +629,8 @@ checksum verification. Release PR maintenance runs independently. See
 `docs/development/releasing.md` for safe reruns and `docs/development/testing.md`
 for strict main-protection setup and live verification limits.
 
-Claude provider E2Es run only through the manual `run_claude` workflow input.
-The automatic live release tier validates OpenCode; Claude is not a publication gate.
+Hosted OpenCode and Claude tests are explicit local diagnostics. They do not
+run in Actions, are not release evidence, and do not gate publication.
 
 The required OpenCode canary is a credential-free CLI compatibility check.
 It runs the pinned CLI once against a scripted loopback model rather than
@@ -651,5 +651,4 @@ subsequent layers, runtime environment, and image history.
 
 Maintainers can add the `release-validation` label to a same-repository PR to
 run the full Linux release regression tiers before merging a release repair.
-New commits rerun that opt-in validation. Fork PRs receive no provider secrets;
-Claude remains excluded and requires the existing manual workflow input.
+New commits rerun that opt-in validation. No test tier receives provider secrets.
