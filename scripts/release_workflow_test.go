@@ -1161,7 +1161,8 @@ func TestReleaseOpenCodePinsMatchCanaryAndLiveTier(t *testing.T) {
 		t.Fatalf("release OpenCode model %q must match the live-tier model pin", model)
 	}
 	canary := readRepositoryFile(t, "opencode_canary.py")
-	if !strings.Contains(canary, "release_scenarios.json") || !strings.Contains(canary, "manifest['model']") {
-		t.Fatal("OpenCode canary must use the model from the release manifest")
+	if !strings.Contains(canary, "release_scenarios.json") || !strings.Contains(canary, "MODEL_REF") ||
+		strings.Contains(canary, "OPENCODE_API_KEY") {
+		t.Fatal("OpenCode canary must use the pinned CLI and scripted model without credentials")
 	}
 }

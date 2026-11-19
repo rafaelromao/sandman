@@ -188,7 +188,8 @@ The subagent permission fixture isolates HOME/config snapshots from runner state
 while retaining the runner's XDG data directory for Podman's container store.
 Live selects the explicit OpenCode scenarios and receives only OpenCode credentials.
 Claude provider E2Es run in a separate manual tier when `Full Regression - Linux`
-is dispatched with `run_claude` enabled; only that job receives Claude credentials. Ordinary PR CI runs only the single minimal OpenCode canary described below; the full provider suites remain release-only.
+is dispatched with `run_claude` enabled; only that job receives Claude credentials.
+Ordinary PR CI's OpenCode canary uses a local scripted endpoint.
 
 Every Linux tier provisions Node 22, Chromium and validated rootless Podman
 with runc. Live additionally installs `opencode-ai@1.19.3` and requires
@@ -196,7 +197,7 @@ with runc. Live additionally installs `opencode-ai@1.19.3` and requires
 `@anthropic-ai/claude-code@2.1.283` and requires
 `CLAUDE_CODE_OAUTH_TOKEN`.
 Each provider tier checks its own CLI version. OpenCode auth is
-written as JSON with mode 0600. Release live and canary use the free Big Pickle
+written as JSON with mode 0600. Release live uses the free Big Pickle
 model `opencode/big-pickle`; the optional Claude tier uses
 `claude-haiku-4-5-20251001`. Missing credentials,
 tools, required tests, unexpected skips and duplicate executions fail validation.
@@ -426,7 +427,7 @@ self-skip when the generic `CI` env var is set — unless `SANDMAN_FULL_REGRESSI
 is present (see [Full regression](#full-regression-sandman_full_regression)).
 The `Full Regression - Linux` workflow sets both and overrides the local
 default with the release model from `scripts/release_scenarios.json`, so its
-real-agent coverage exercises the same free Big Pickle model as the canary.
+real-agent coverage exercises the free Big Pickle model.
 
 ### Blind and delegated review acceptance
 
@@ -673,23 +674,15 @@ API returned an empty list; legacy protection/admin access remains unverified.
 An authorized repository administrator must apply/verify strict required checks.
 A merge queue would also require `merge_group` CI and title-gate support first.
 
-Regular CI runs one tool-free `opencode run` invocation for its OpenCode canary on
-Linux (60-second provider deadline, three-minute job, no containers, and no retry
-loop inside that job), using the release manifest's exact CLI/model:
-`opencode/big-pickle`, the free Big Pickle model. The invocation names its
-session and pins OpenCode's small model to that model, so the release model is
-the only model requested, and the real-agent regression scenarios do the same. If
-the deadline expires the job reports the provider's own logged error. This process
-contract does not claim to count physical HTTP requests made internally by the CLI.
-After diagnosing a transient provider/network timeout on the identified current-head
-execution, the implementation agent may initiate one authorized, bounded GitHub
-rerun; this is a new job invocation, not an in-job retry. Rerunning the existing
-execution does not require `workflow_dispatch`. A provider deprecation failure
-instructs the implementor to update the scaffold fallback, release manifest and
-release workflow pin together.
-The canary is mandatory in the aggregate quality gate; full provider E2Es remain
-release-only, and Claude provider E2Es remain manual-only. The existing OPENCODE_API_KEY repository secret is required and is forwarded
-by the Release reusable-CI caller.
+Regular CI runs one tool-free `opencode run` invocation for `CI / opencode-canary`
+on Linux (60-second CLI deadline, three-minute job, no in-job retry). It uses the
+release manifest's pinned CLI, a fresh home and a loopback-only network namespace
+with the same scripted model for primary and auxiliary calls. The fixture must see the expected request, and
+the real CLI must produce the expected JSON text without an error. The canary
+remains mandatory but does not require a provider secret or test hosted-provider
+availability or version acceptance. Diagnose a canary failure as a fixture,
+installation, or CLI compatibility failure; it is not evidence of a hosted
+provider outage.
 
 The regular Linux build also runs the credential-free fake subagent permission
 scenario (`TestOpencodeSubagentPermissionAllowAll`) with Podman. Its minimal image
