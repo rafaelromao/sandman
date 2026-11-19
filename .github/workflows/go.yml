@@ -279,6 +279,13 @@ jobs:
           SANDMAN_E2E_GATES: opencode_subagent
         run: bash scripts/ci_report.sh container-permissions go test -tags e2e -json -count=1 -timeout=12m ./internal/cmd -run '^Test(OpencodeSubagentPermissionAllowAll|PermissionFakeAgentHomeIsolatedFromHostState|PythonBuildSecretIsTransient)$'
 
+      - name: Blind-review default container compatibility
+        env:
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ""
+          OPENCODE_API_KEY: ""
+        run: bash scripts/ci_report.sh blind-review-container go test -tags e2e -json -count=1 -timeout=12m ./internal/skill/sandman/blind-review -run '^TestBlindReviewDefaultContainerCompatibility$'
+
       - name: Report Go coverage and evaluate policy
         if: ${{ always() && hashFiles('reports/coverage.out') != '' }}
         env:

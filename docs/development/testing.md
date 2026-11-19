@@ -693,6 +693,20 @@ exercises the real container startup and permission forwarding without a provide
 request. Diagnostics are included as `container-permissions` in the existing
 Linux build reports; the broader provider suites remain release-only.
 
+The same required Linux build runs `TestBlindReviewDefaultContainerCompatibility`
+as a separate, credential-free Podman scenario. It builds the generated default
+Debian bookworm image's shared-tools layer and verifies its supported `gh 2.23.0`
+and `jq 1.6` against blind-review prompt rendering, V1/V2 native-delegation
+handoff fixtures, and the publication transform. The packaged GitHub CLI follows
+a two-page GraphQL cursor chain against a loopback HTTPS mock using a disposable
+fixture token and CA; all other GitHub calls are faked. No provider, live GitHub,
+or user credential is used. The focused image stops after the generated shared
+package layer, omitting unrelated language, agent, and mise downloads. Reports
+are written under `blind-review-container` without adding a protection context.
+The existing `CI / build (ubuntu-latest)` ruleset entry remains the required
+context and is bound to the GitHub Actions integration; no new context is
+introduced.
+
 Python toolchain image builds mount an optional `github_token` build secret for
 mise downloads and artifact-attestation verification. Image builders share the
 same argument helper; token values never become build arguments or image ENV.
