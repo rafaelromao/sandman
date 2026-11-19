@@ -104,7 +104,7 @@ func TestFindReadyContinuationsReconstructsQuotaWaitWithoutCheckpoint(t *testing
 	}}}).Save(layout.BatchesIndexPath); err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now().UTC().Truncate(time.Second)
+	now := time.Date(2026, time.November, 19, 12, 0, 0, 0, time.UTC)
 	startedAt := now.Add(-2 * time.Minute)
 	awaitedAt := now.Add(-time.Minute)
 	resetAt := now.Add(37 * time.Minute)
@@ -121,7 +121,7 @@ func TestFindReadyContinuationsReconstructsQuotaWaitWithoutCheckpoint(t *testing
 			}},
 	}
 
-	ready := FindReadyContinuations(eventLog, layout)
+	ready := FindReadyContinuationsAt(eventLog, layout, now)
 	if len(ready) != 1 || ready[0].Wait == nil {
 		t.Fatalf("missing-checkpoint quota recovery = %#v, want one recovered continuation", ready)
 	}
@@ -134,6 +134,9 @@ func TestFindReadyContinuationsReconstructsQuotaWaitWithoutCheckpoint(t *testing
 	}
 	if !wait.LeaseExpiresAt.Equal(awaitedAt.Add(daemon.RunRecoveryGrace)) {
 		t.Fatalf("recovered lease = %v, want event-based recovery grace", wait.LeaseExpiresAt)
+	}
+	if expired := FindReadyContinuationsAt(eventLog, layout, now.Add(5*time.Minute)); len(expired) != 0 {
+		t.Fatalf("recovery after injected grace expiry = %#v, want none", expired)
 	}
 }
 

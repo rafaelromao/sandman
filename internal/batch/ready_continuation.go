@@ -63,6 +63,13 @@ func quotaSchedulesMatch(checkpoint, eventSchedule time.Time) bool {
 // that are durably capacity-queued and whose original batch no longer has a
 // live owner. A later lifecycle event or a live batch always takes precedence.
 func FindReadyContinuations(eventLog []events.Event, layout paths.Layout) []ReadyContinuation {
+	return FindReadyContinuationsAt(eventLog, layout, time.Now().UTC())
+}
+
+// FindReadyContinuationsAt is FindReadyContinuations evaluated at now. It
+// keeps recovery eligibility deterministic for callers with an injected clock.
+func FindReadyContinuationsAt(eventLog []events.Event, layout paths.Layout, now time.Time) []ReadyContinuation {
+	now = now.UTC()
 	states := events.ProjectRunStates(eventLog)
 	latestRunByIssue := make(map[int]string)
 	for _, event := range eventLog {
@@ -112,7 +119,7 @@ func FindReadyContinuations(eventLog []events.Event, layout paths.Layout) []Read
 			if !valid {
 				continue
 			}
-			if wait.Issue != issue || !wait.RecoverableAt(time.Now().UTC()) {
+			if wait.Issue != issue || !wait.RecoverableAt(now) {
 				continue
 			}
 			batchID = wait.BatchID
@@ -125,7 +132,7 @@ func FindReadyContinuations(eventLog []events.Event, layout paths.Layout) []Read
 		}
 		if evidence := quotaPollingEvidence(state); evidence != nil && state.AwaitEvent != nil && !state.IsCapacityQueued() {
 			quotaWait, valid := quotaAwaitRecoveryWait(state, evidence)
-			if valid && quotaWait.RecoverableAt(time.Now().UTC()) {
+			if valid && quotaWait.RecoverableAt(now) {
 				ready = append(ready, ReadyContinuation{
 					IssueNumber:        issue,
 					RunID:              state.RunID,
@@ -143,7 +150,7 @@ func FindReadyContinuations(eventLog []events.Event, layout paths.Layout) []Read
 			continue
 		}
 		legacyWait, valid := legacyRecoveryWait(state)
-		if !valid || !legacyWait.RecoverableAt(time.Now().UTC()) {
+		if !valid || !legacyWait.RecoverableAt(now) {
 			continue
 		}
 		previousRunID := strings.TrimSpace(payloadStringValue(event.Payload, "previous_run_id"))
