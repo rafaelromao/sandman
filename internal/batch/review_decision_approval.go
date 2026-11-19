@@ -17,14 +17,22 @@ var (
 	// A condition contradicts approval only when it governs the approval or
 	// merge ("merge only after ...", "only if X is fixed is this approved").
 	// "Keeps them only if they are http(s)" describes code behaviour (#2939).
-	reviewApprovalContradiction  = regexp.MustCompile(`(?i)\b(?:not\s+(?:yet\s+)?(?:approved|lgtm)|no\s+approval|changes\s+requested|subject\s+to|contingent\b|only\s+(?:if|after|once)\b[^\n.!?]*\b(?:approv(?:e|ed|al)|merg(?:e|ed|ing)|lgtm)\b|before\s+merging|(?:merge|approv(?:e|al)|lgtm)[^\n.!?]*(?:after|once|until|if|when)\b)`)
+	// The final alternative requires the condition word to directly govern
+	// the merge/approval word (allowing only a short, fixed set of adverbs
+	// and object pronouns between them), so "issues merged into main are
+	// closed when ..." or "... finish blocked again until closed by hand"
+	// (describing already-merged work, #2995) does not match merely because
+	// "merged" and "until" both appear somewhere in the same clause.
+	reviewApprovalContradiction  = regexp.MustCompile(`(?i)\b(?:not\s+(?:yet\s+)?(?:approved|lgtm)|no\s+approval|changes\s+requested|subject\s+to|contingent\b|only\s+(?:if|after|once)\b[^\n.!?]*\b(?:approv(?:e|ed|al)|merg(?:e|ed|ing)|lgtm)\b|before\s+merging|\b(?:merg(?:e|ed|es|ing)|approv(?:e|ed|al)|lgtm)\b(?:\s+(?:it|this|that|safely|now|only|(?:this|the)\s+(?:pr|pull\s+request|change)))*\s*[,;:]?\s+(?:after|once|until|if|when)\b)`)
 	reviewMetadataRepair         = regexp.MustCompile(`(?i)\b(?:fix(?:ing)?|address(?:ing)?|repair(?:ing)?|resolve|correct|replace|remove|add|change|use|ensure|update|must|please|needs?|should)\b`)
 	reviewMetricNoConcern        = regexp.MustCompile(`(?i)^(?:the\s+)?metrics?(?:\s+signals?)?\s+(?:do(?:es)?\s+not|did\s+not)\s+(?:demonstrate|show|indicate|establish)\s+(?:(?:a|an|any|new|separate|additional|construct-specific|readability|or|change-risk|correctness|maintainability)\s+)*(?:concerns?|issues?|findings?|risks?)(?:\s+(?:in|for)\s+(?:this|the)\s+(?:diff|change|pull request))?[.!]?$`)
 	reviewMetricScopeExplanation = regexp.MustCompile(`(?i)^(?:the\s+)?metric\s+increase\s+is\s+limited\s+to\s+(?:the\s+)?(?:adapter|changed|existing|new)\s+(?:branch|function|code|scope|path)(?:\s+in\s+this\s+diff)?[.!]?$`)
 	reviewNoFollowup             = regexp.MustCompile(`(?i)^no\s+(?:(?:author\s+)?follow[- ]up|further\s+action)\s+(?:is\s+)?(?:required|needed|necessary)[.!]?$`)
 	reviewCIWaitAdvice           = regexp.MustCompile(`(?i)^(?:await|wait\s+for)\s+(?:the\s+)?(?:(?:pending|required|remaining|current-head)\s+)*(?:ci(?:\s+checks?)?|(?:required\s+)?checks?)(?:\s+to\s+(?:pass|finish|complete|turn\s+green))?(?:\s+before\s+merging)?[.!]?$`)
 	reviewQualityTag             = regexp.MustCompile("`\\[(?:control-flow|functional|OOP|public-api)\\]`")
-	reviewNoChangeStep           = regexp.MustCompile(`(?i)^(?:none(?:\s+required)?|no\s+(?:(?:author|code|implementation|further|additional)\s+)*changes\s+(?:are\s+)?(?:requested|required|needed))[.!]?$`)
+	// "None needed for this PR" is a real daemon paraphrase (#2985) of the
+	// canonical "None required"/"No ... changes requested" no-change openers.
+	reviewNoChangeStep = regexp.MustCompile(`(?i)^(?:none(?:\s+(?:required|needed(?:\s+for\s+this\s+(?:pr|pull\s+request|change))?))?|no\s+(?:(?:author|code|implementation|further|additional)\s+)*changes\s+(?:are\s+)?(?:requested|required|needed))[.!]?$`)
 	// "`[OOP]` rules do not apply" after construct tags are replaced, with an
 	// optional qualifier such as "Stateful".
 	reviewInapplicableRules = regexp.MustCompile(`(?i)^(?:[a-z-]+\s+)?rule\s+rules\s+do\s+not\s+apply\.?$`)
@@ -211,7 +219,16 @@ func collectReviewApprovalSections(body string) []reviewApprovalTextSection {
 			flush()
 			heading := strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
 			var inline string
-			kind, inline = reviewApprovalSection(heading)
+			kind = ""
+			// The daemon's canonical governing sections (Decision, Findings,
+			// Suggested next steps, Previous review progress) always render at
+			// heading depth 2. A same-named heading nested deeper belongs to an
+			// enclosing descriptive section instead, such as the `### Findings`
+			// quality sub-report nested under `## Quality check` (#2995): it is
+			// that section's own internal report, not the review's verdict.
+			if nextLevel <= 2 {
+				kind, inline = reviewApprovalSection(heading)
+			}
 			if kind == "" {
 				kind, inline = "other", heading
 			}
@@ -290,8 +307,9 @@ func noReviewFindings(text string) bool {
 	}
 	// Examine the entire section: a leading "None" cannot hide another finding.
 	// Descriptive metric commentary may follow a no-findings statement, but
-	// code-anchored feedback, nested finding headings, and repair directives may not.
-	if strings.Contains(text, "#") || reviewFindingDirective.MatchString(reviewDirectiveProse(text)) {
+	// code-anchored feedback, nested finding headings, and repair directives may
+	// not. An inline issue/PR reference such as "#2976" is not a heading (#2995).
+	if reviewFindingHeading.MatchString(text) || reviewFindingDirective.MatchString(reviewDirectiveProse(text)) {
 		return false
 	}
 	for _, clause := range reviewFindingClauses.Split(text, -1) {

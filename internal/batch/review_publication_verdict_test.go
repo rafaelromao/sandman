@@ -154,12 +154,31 @@ func TestReviewPublicationVerdict_ProseConditionsGoverningApproval(t *testing.T)
 	if !reviewDecisionApprovedBody(report("The worker writes the shard only if every fetch succeeds, then merges all shards.")) {
 		t.Fatal("a description of code behaviour read as a conditional approval")
 	}
+	// Issue #2995: a condition only contradicts approval when it directly
+	// governs the merge/approval word. Describing already-merged work does not.
+	for _, summary := range []string{
+		"Issues merged into main are closed when GitHub sees the closing keyword.",
+		"The approval flow now waits until CI is green.",
+	} {
+		if !reviewDecisionApprovedBody(report(summary)) {
+			t.Fatalf("description of already-merged work %q read as a conditional approval", summary)
+		}
+	}
 	for _, summary := range []string{
 		"Merge only after the race in worker.go is fixed.",
 		"Only if the race is fixed should this be merged.",
 		"Approve only once the timeout test passes.",
 		"LGTM only if the timeout test passes.",
 		"Approval only after the race is fixed.",
+		"Can be merged once the race in worker.go is fixed.",
+		"Merge when the race in worker.go is fixed.",
+		"Merge this PR after the race in worker.go is fixed.",
+		"Approve once the timeout criterion is met.",
+		"Approved if the flaky test is quarantined.",
+		"LGTM, merge after the migration lands.",
+		"Merge only after the race is fixed.",
+		"Safe to merge if CI is green and the race is fixed.",
+		"Merge only; after fixing the race in worker.go.",
 	} {
 		if reviewDecisionApprovedBody(report(summary)) {
 			t.Fatalf("conditional approval %q accepted", summary)
@@ -187,6 +206,9 @@ func TestReviewPublicationVerdict_ProseVariantsAndContradictions(t *testing.T) {
 		{"workflow formal review remark", report("Reviewed head abc.", "No author changes requested. The surrounding workflow should publish a formal APPROVED review and verify remote CI before merging.")},
 		{"negated summary", report("Approval is retained; no code changes requested.", "None.")},
 		{"negated implementation summary", report("No implementation changes requested.", "None.")},
+		// Issue #2995 (PR #2985, comment 7005406716): Suggested next steps that
+		// only describe already-merged work do not contradict the approval.
+		{"described merge until closed by hand", report("Reviewed head abc.", "None needed for this PR. As the PR body says, dependents of issues merged into a non-default base finish `blocked` again until those issues are closed by hand.")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if !reviewDecisionApprovedBody(tc.body) {
