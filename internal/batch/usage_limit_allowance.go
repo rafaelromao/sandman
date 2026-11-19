@@ -132,9 +132,9 @@ func (a usageLimitAllowance) clear() usageLimitAllowance {
 	return usageLimitAllowance{}
 }
 
-// completedPoll accrues the scheduled wait only after it returns successfully.
+// completedWait accrues the scheduled wait only after it returns successfully.
 // The elapsed time between scheduling and re-entry is not charged.
-func (a usageLimitAllowance) completedPoll(interval time.Duration) usageLimitAllowance {
+func (a usageLimitAllowance) completedWait(interval time.Duration) usageLimitAllowance {
 	if interval <= 0 || a.waited >= usageLimitRetryWindow {
 		return a
 	}

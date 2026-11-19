@@ -227,7 +227,7 @@ func (d *rowDriver) drive(ctx context.Context, run RunSpec, state *rowDriverStat
 					abortRequested = true
 					break
 				}
-				state.cursor.quotaAllowance = state.cursor.quotaAllowance.completedPoll(interval)
+				state.cursor.quotaAllowance = state.cursor.quotaAllowance.completedWait(interval)
 				state.recovering = false
 				if err := acceptQuotaReady(); err != nil {
 					abortRequested = true
@@ -420,7 +420,7 @@ func (d *rowDriver) drive(ctx context.Context, run RunSpec, state *rowDriverStat
 				abortRequested = true
 				break
 			}
-			state.cursor.quotaAllowance = state.cursor.quotaAllowance.completedPoll(interval)
+			state.cursor.quotaAllowance = state.cursor.quotaAllowance.completedWait(interval)
 			if err := acceptQuotaReady(); err != nil {
 				abortRequested = true
 				break

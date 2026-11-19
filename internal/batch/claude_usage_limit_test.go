@@ -146,6 +146,7 @@ func testClaudeUsageLimitRecovery(t *testing.T, historicalClosedPR bool, resetTi
 		t.Fatalf("run.retry events = %d, want 0", got)
 	}
 	var originalRunID string
+	quotaReadySeen := false
 	for _, event := range log.snapshot() {
 		if event.Type == "run.started" {
 			originalRunID = event.RunID
@@ -176,6 +177,18 @@ func testClaudeUsageLimitRecovery(t *testing.T, historicalClosedPR bool, resetTi
 				t.Fatalf("usage-limit exhaustion estimate aliases provider reset: %d", deadline)
 			}
 		}
+		if event.Type == "run.capacity_queued" && len(resetTimes) == 2 && event.Payload["usage_limit_probe"] == true {
+			quotaReadySeen = true
+			if got := event.Payload["usage_limit_provider_reset_unix_seconds"]; got != resetTimes[1].Unix() {
+				t.Fatalf("quota-ready provider reset = %#v, want %d", got, resetTimes[1].Unix())
+			}
+			if got := event.Payload["usage_limit_waited_seconds"]; got != int(waitFor/time.Second) {
+				t.Fatalf("quota-ready completed wait = %#v, want %d seconds", got, int(waitFor/time.Second))
+			}
+		}
+	}
+	if len(resetTimes) == 2 && !quotaReadySeen {
+		t.Fatal("quota recovery did not persist ready evidence")
 	}
 }
 
@@ -218,7 +231,7 @@ func (s *claudeUsageLimitSandbox) Exec(_ context.Context, command string, stdout
 	if attempt <= s.failures {
 		stream := s.limitStream
 		if stream == "" {
-			stream = claudeUsageLimitResult + "\n"
+			stream = strings.Replace(claudeUsageLimitResult, " · resets 3pm (America/Sao_Paulo)", "", 1) + "\n"
 		}
 		_, _ = io.WriteString(stdout, stream)
 		return errors.New("exit status 1")

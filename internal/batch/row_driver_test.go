@@ -333,6 +333,30 @@ func TestRowDriverAcceptsAwaitResumeThenQuotaReadyAdmission(t *testing.T) {
 	}
 }
 
+func TestRowDriverDoesNotChargeInterruptedProviderResetWait(t *testing.T) {
+	now := &rowDriverClockFake{now: time.Date(2026, time.October, 28, 12, 0, 0, 0, time.UTC)}
+	gates := &rowDriverGateFake{clock: now, waitErr: errors.New("wait interrupted")}
+	executor := &rowDriverExecutorFake{
+		started: true,
+		results: []AgentRunResult{{
+			IssueNumber: 42, RunID: "run-42", Branch: "42-fix", Status: "await",
+			UsageLimitReached: true, UsageLimitDeadline: now.now.Add(usageLimitRetryWindow),
+			UsageLimitResetAt: now.now.Add(37 * time.Minute),
+		}},
+	}
+	abort := &rowDriverAbortFake{}
+	run := RunSpec{RunID: "run-42", IssueNumber: 42, BatchID: "batch-a", Branch: "42-fix", BaseBranch: "main"}
+	got := newRowDriver(executor, gates, now, abort).Drive(context.Background(), run, ContinuationCursor{}, rowDriverOptions{
+		ReleaseAwaitCapacity: true,
+	})
+	if got.Result.Status != "aborted" || abort.calls != 1 {
+		t.Fatalf("Drive = %+v aborts = %d, want immediate abort after interrupted wait", got, abort.calls)
+	}
+	if waited := got.Cursor.quotaAllowance.waited; waited != 0 {
+		t.Fatalf("interrupted provider wait charged %v, want zero", waited)
+	}
+}
+
 // Issue #2938: a GitHub recovery wait sleeps until its next hourly attempt
 // instead of re-observing every poll interval, and holds no execution slot.
 func TestRowDriverGitHubRecoveryWaitSleepsUntilNextAttempt(t *testing.T) {
