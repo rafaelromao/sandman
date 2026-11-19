@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -23,11 +24,16 @@ func TestUsageLimitAwait_ClaudeResumesTheExactRecordedSession(t *testing.T) {
 	testClaudeUsageLimitRecovery(t, false)
 }
 
+func TestUsageLimitAwait_ClaudeSchedulesAtProviderReset(t *testing.T) {
+	now := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC)
+	testClaudeUsageLimitRecovery(t, false, now, now.Add(37*time.Minute))
+}
+
 func TestAFKContinuityContract_ClaudeLimitWithHistoricalClosedPR(t *testing.T) {
 	testClaudeUsageLimitRecovery(t, true)
 }
 
-func testClaudeUsageLimitRecovery(t *testing.T, historicalClosedPR bool) {
+func testClaudeUsageLimitRecovery(t *testing.T, historicalClosedPR bool, resetTimes ...time.Time) {
 	t.Helper()
 	root := t.TempDir()
 	t.Chdir(root)
@@ -37,6 +43,17 @@ func testClaudeUsageLimitRecovery(t *testing.T, historicalClosedPR bool) {
 	sb := &claudeUsageLimitSandbox{workDir: filepath.Join(root, "worktree"), failures: 1}
 	log := &spyEventLog{}
 	var waits []time.Duration
+	waitFor := usageLimitPollInterval
+	var now time.Time
+	if len(resetTimes) == 2 {
+		now = resetTimes[0]
+		resetAt := resetTimes[1]
+		waitFor = resetAt.Sub(now)
+		sb.limitStream = `{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":` +
+			strconv.FormatInt(resetAt.Unix(), 10) +
+			`}}` + "\n" +
+			`{"type":"result","subtype":"error","is_error":true,"result":"You've hit your session limit"}` + "\n"
+	}
 	client := &reviewWaitSchedulerGitHubClient{fakeGitHubClient: fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, Title: "Claude usage limit", State: "closed"}},
 		prs:    map[string]*github.PR{branch: {Number: 7, State: "open", Body: "Closes #42", HeadRefName: branch}},
@@ -73,6 +90,12 @@ func testClaudeUsageLimitRecovery(t *testing.T, historicalClosedPR bool) {
 		WithRunSessionOpts(runSessionOptions{
 			currentHead:          func(string) (string, error) { return "current-head", nil },
 			releaseAwaitCapacity: true,
+			now: func() time.Time {
+				if !now.IsZero() {
+					return now
+				}
+				return time.Now()
+			},
 			awaitWait: func(_ context.Context, delay time.Duration) error {
 				waits = append(waits, delay)
 				return nil
@@ -98,8 +121,8 @@ func testClaudeUsageLimitRecovery(t *testing.T, historicalClosedPR bool) {
 	if result.Runs[0].Status != "success" {
 		t.Fatalf("status = %q, want success after the limit resets", result.Runs[0].Status)
 	}
-	if len(waits) != 1 || waits[0] != usageLimitPollInterval {
-		t.Fatalf("await waits = %v, want one usage-limit poll interval", waits)
+	if len(waits) != 1 || waits[0] != waitFor {
+		t.Fatalf("await waits = %v, want one usage-limit wait of %v", waits, waitFor)
 	}
 	commands := sb.commandsSnapshot()
 	if len(commands) != 2 {
@@ -135,6 +158,23 @@ func testClaudeUsageLimitRecovery(t *testing.T, historicalClosedPR bool) {
 		}
 		if event.Type == "run.await" && event.Payload["await_reason"] != "usage-limit" {
 			t.Fatalf("run.await payload = %#v, want await_reason usage-limit", event.Payload)
+		}
+		if event.Type == "run.await" && len(resetTimes) == 2 {
+			if got := event.Payload["usage_limit_provider_reset_unix_seconds"]; got != resetTimes[1].Unix() {
+				t.Fatalf("run.await provider reset = %#v, want %d", got, resetTimes[1].Unix())
+			}
+			deadline, ok := event.Payload["usage_limit_deadline_unix_seconds"].(int64)
+			if !ok {
+				if integer, isInt := event.Payload["usage_limit_deadline_unix_seconds"].(int); isInt {
+					deadline, ok = int64(integer), true
+				}
+			}
+			if !ok || deadline != resetTimes[0].Add(usageLimitRetryWindow).Unix() {
+				t.Fatalf("usage-limit exhaustion estimate = %#v, want %d", event.Payload["usage_limit_deadline_unix_seconds"], resetTimes[0].Add(usageLimitRetryWindow).Unix())
+			}
+			if deadline == resetTimes[1].Unix() {
+				t.Fatalf("usage-limit exhaustion estimate aliases provider reset: %d", deadline)
+			}
 		}
 	}
 }

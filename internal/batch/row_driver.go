@@ -142,7 +142,7 @@ func (d *rowDriver) drive(ctx context.Context, run RunSpec, state *rowDriverStat
 	}
 	nextPoll := func() time.Duration {
 		if state.cursor.quotaAllowance.probing() {
-			return usageLimitPollInterval
+			return state.cursor.quotaAllowance.nextWait(d.clock.Now())
 		}
 		if state.recovering && state.nextPollAt.After(d.clock.Now()) {
 			return state.nextPollAt.Sub(d.clock.Now())
@@ -387,8 +387,8 @@ func (d *rowDriver) drive(ctx context.Context, run RunSpec, state *rowDriverStat
 		if result.Status == "await" && !state.releaseAwaitCapacity {
 			interval := opts.PollInterval(state.awaitPoll)
 			if result.UsageLimitReached {
-				state.cursor.quotaAllowance = state.cursor.quotaAllowance.continueProbe(result.UsageLimitDeadline)
-				interval = usageLimitPollInterval
+				state.cursor.quotaAllowance = state.cursor.quotaAllowance.continueProbe(result.UsageLimitDeadline).withProviderReset(result.UsageLimitResetAt)
+				interval = state.cursor.quotaAllowance.nextWait(d.clock.Now())
 			}
 			if err := d.gates.Checkpoint(run, state.cursor, false, interval); err != nil {
 				abortRequested = true
@@ -410,16 +410,17 @@ func (d *rowDriver) drive(ctx context.Context, run RunSpec, state *rowDriverStat
 		state.cursor.ReuseSession = true
 		state.awaiting, state.ready = true, false
 		if result.UsageLimitReached {
-			state.cursor.quotaAllowance = state.cursor.quotaAllowance.continueProbe(result.UsageLimitDeadline)
+			state.cursor.quotaAllowance = state.cursor.quotaAllowance.continueProbe(result.UsageLimitDeadline).withProviderReset(result.UsageLimitResetAt)
 			if err := accept(lifecycleVerdict{Action: lifecycleAwait}); err != nil {
 				abortRequested = true
 				break
 			}
-			if err := wait(usageLimitPollInterval); err != nil {
+			interval := state.cursor.quotaAllowance.nextWait(d.clock.Now())
+			if err := wait(interval); err != nil {
 				abortRequested = true
 				break
 			}
-			state.cursor.quotaAllowance = state.cursor.quotaAllowance.completedPoll(usageLimitPollInterval)
+			state.cursor.quotaAllowance = state.cursor.quotaAllowance.completedPoll(interval)
 			if err := acceptQuotaReady(); err != nil {
 				abortRequested = true
 				break

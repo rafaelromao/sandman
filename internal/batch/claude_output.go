@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +43,11 @@ type claudeOutputState struct {
 	usageLimitReached bool
 	authFailed        bool
 	permissionDenials []string
+	lastRecordType    string
+	finalResultError  bool
+	finalResultText   string
+	resetCandidates   []string
+	resetMalformed    bool
 	readOnlyMode      *PermissionModeError
 	// readOnlyModes are the permission modes that stop a session at its init
 	// record. Plan mode is where Claude Code starts a session whose settings
@@ -183,6 +189,38 @@ func (w *claudeOutput) UsageLimitReached() bool {
 	return w.state.usageLimitReached
 }
 
+// UsageLimitResetAt returns a validated provider reset only when the final
+// stdout record is Claude's failed usage-limit result. The strategy calls this
+// method; ordinary output and stderr are never reset evidence.
+func (w *claudeOutput) UsageLimitResetAt(now time.Time) time.Time {
+	if !w.stdout {
+		return time.Time{}
+	}
+	w.state.mu.Lock()
+	defer w.state.mu.Unlock()
+	if w.state.lastRecordType != "result" || !w.state.finalResultError ||
+		!claudeUsageLimitResultText(w.state.finalResultText) || w.state.resetMalformed ||
+		len(w.state.resetCandidates) == 0 {
+		return time.Time{}
+	}
+	var reset time.Time
+	for _, raw := range w.state.resetCandidates {
+		seconds, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || seconds <= 0 {
+			return time.Time{}
+		}
+		candidate := time.Unix(seconds, 0).UTC()
+		if !validProviderReset(candidate, now) {
+			return time.Time{}
+		}
+		if !reset.IsZero() && !reset.Equal(candidate) {
+			return time.Time{}
+		}
+		reset = candidate
+	}
+	return reset
+}
+
 // PermissionDenials returns the tools Claude Code refused during the session,
 // in first-seen order: the best-effort `permission_denied` system records and
 // the authoritative `permission_denials` list on the final result record.
@@ -216,6 +254,9 @@ func (w *claudeOutput) writeLine(line []byte, newline bool) error {
 		return w.writeRaw(line, newline)
 	}
 	recordType, _ := record["type"].(string)
+	if w.stdout {
+		w.captureResetEvidence(text, recordType, record)
+	}
 	// Only the init record names the session that actually started: a failed
 	// --resume reports the requested ID on its result record as well.
 	if id, _ := record["session_id"].(string); id != "" && recordType == "system" && record["subtype"] == "init" {
@@ -294,6 +335,47 @@ func (w *claudeOutput) writeLine(line []byte, newline bool) error {
 		}
 	}
 	return nil
+}
+
+func (w *claudeOutput) captureResetEvidence(line, recordType string, record map[string]any) {
+	w.state.mu.Lock()
+	defer w.state.mu.Unlock()
+	w.state.lastRecordType = recordType
+	if recordType == "rate_limit_event" {
+		var event struct {
+			Type          string `json:"type"`
+			RateLimitInfo struct {
+				Status   string          `json:"status"`
+				ResetsAt json.RawMessage `json:"resetsAt"`
+			} `json:"rate_limit_info"`
+		}
+		if err := json.Unmarshal([]byte(line), &event); err != nil ||
+			event.Type != "rate_limit_event" || event.RateLimitInfo.Status != "rejected" {
+			return
+		}
+		if len(event.RateLimitInfo.ResetsAt) == 0 {
+			w.state.resetMalformed = true
+			return
+		}
+		raw := strings.TrimSpace(string(event.RateLimitInfo.ResetsAt))
+		if raw == "" {
+			w.state.resetMalformed = true
+			return
+		}
+		w.state.resetCandidates = append(w.state.resetCandidates, raw)
+	}
+	if recordType == "result" {
+		w.state.finalResultError, _ = record["is_error"].(bool)
+		w.state.finalResultText, _ = record["result"].(string)
+	}
+}
+
+func validProviderReset(reset, now time.Time) bool {
+	if reset.IsZero() || now.IsZero() {
+		return false
+	}
+	delta := reset.Sub(now)
+	return delta > 0 && delta <= 7*24*time.Hour
 }
 
 func (w *claudeOutput) captureCIRerunToolUses(record map[string]any) {

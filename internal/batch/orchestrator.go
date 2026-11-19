@@ -3935,6 +3935,7 @@ loop:
 				agentRun.env = s.agentCfg.Env
 				agentRun.credentials = s.credentials
 				agentRun.preset = s.agentCfg.Preset
+				agentRun.now = s.runtimeNow
 				agentRun.contextRolloverLiterals = append([]string(nil), s.opts.contextRolloverLiterals...)
 				if s.opts.taskWriter != nil {
 					agentRun.taskWriter = s.opts.taskWriter
