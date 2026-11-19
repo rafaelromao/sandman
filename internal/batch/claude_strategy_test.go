@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -29,6 +31,220 @@ const claudeRealAuthFailureResult = `{"duration_api_ms":0,"stop_reason":"stop_se
 // be triggered on demand; replace this fixture with a real capture when one is
 // available.
 const claudeUsageLimitResult = `{"duration_api_ms":0,"stop_reason":"stop_sequence","session_id":"00000000-0000-4000-8000-000000000001","total_cost_usd":0,"usage":{"output_tokens_details":{"thinking_tokens":0},"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard","cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":0},"inference_geo":"","iterations":[],"speed":"standard"},"modelUsage":{},"permission_denials":[],"terminal_reason":"api_error","fast_mode_state":"off","is_error":true,"num_turns":1,"subtype":"success","api_error_status":429,"result":"You've hit your session limit · resets 3pm (America/Sao_Paulo)","type":"result","duration_ms":203,"uuid":"00000000-0000-4000-8000-000000000002","queued_turn_count":0,"result_index":0}`
+
+func TestClaudeStrategy_ExtractsResetFromTerminalResult(t *testing.T) {
+	now := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC)
+	strategy := claudeStrategy{builtInCommand: true}
+	stdout, stderr := strategy.NewOutputParsers(io.Discard)
+	stdout.setDestination(io.Discard)
+	result := strings.Replace(claudeUsageLimitResult, "resets 3pm (America/Sao_Paulo)", "resets 9:37am (America/Sao_Paulo)", 1)
+	if _, err := io.WriteString(stdout, result+"\n"); err != nil {
+		t.Fatalf("write result: %v", err)
+	}
+	if err := stdout.Flush(); err != nil {
+		t.Fatalf("flush result: %v", err)
+	}
+	got := strategy.UsageLimitResetAt(stdout, stderr, now)
+	want := now.Add(37 * time.Minute)
+	if !got.Equal(want) {
+		t.Fatalf("reset = %v, want %v", got, want)
+	}
+}
+
+func TestClaudeStrategy_RejectsUntrustworthyResetEvidence(t *testing.T) {
+	now := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC)
+	reset := now.Add(37 * time.Minute)
+	quotaResult := `{"type":"result","is_error":true,"result":"You've hit your session limit"}`
+	tests := []struct {
+		name        string
+		now         time.Time
+		lines       []string
+		stderrLines []string
+		want        time.Time
+	}{
+		{
+			name: "rejected structured provider reset",
+			lines: []string{
+				`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":` + strconv.FormatInt(reset.Unix(), 10) + `}}`,
+				quotaResult,
+			},
+			want: reset,
+		},
+		{
+			name: "warning event is not authoritative",
+			lines: []string{
+				`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":` + strconv.FormatInt(reset.Unix(), 10) + `}}`,
+				quotaResult,
+			},
+		},
+		{
+			name: "fractional epoch",
+			lines: []string{
+				`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":` + strconv.FormatInt(reset.Unix(), 10) + `.5}}`,
+				quotaResult,
+			},
+		},
+		{
+			name: "zero epoch",
+			lines: []string{
+				`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":0}}`,
+				quotaResult,
+			},
+		},
+		{
+			name: "negative epoch",
+			lines: []string{
+				`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":-1}}`,
+				quotaResult,
+			},
+		},
+		{
+			name: "rejected event missing epoch",
+			lines: []string{
+				`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected"}}`,
+				quotaResult,
+			},
+		},
+		{
+			name: "past epoch",
+			lines: []string{
+				`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":` + strconv.FormatInt(now.Add(-time.Minute).Unix(), 10) + `}}`,
+				quotaResult,
+			},
+		},
+		{
+			name: "epoch beyond seven day bound",
+			lines: []string{
+				`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":` + strconv.FormatInt(now.Add(7*24*time.Hour+time.Second).Unix(), 10) + `}}`,
+				quotaResult,
+			},
+		},
+		{
+			name:  "terminal result clock and explicit zone",
+			lines: []string{strings.Replace(quotaResult, "session limit", "session limit · resets 9:37am (America/Sao_Paulo)", 1)},
+			want:  reset,
+		},
+		{
+			name:  "clock without minutes",
+			lines: []string{strings.Replace(quotaResult, "session limit", "session limit · resets 3pm (UTC)", 1)},
+			want:  now.Add(3 * time.Hour),
+		},
+		{
+			name:  "text reset missing zone",
+			lines: []string{strings.Replace(quotaResult, "session limit", "session limit · resets 9:37am", 1)},
+		},
+		{
+			name:  "past local clock is not rolled to tomorrow",
+			lines: []string{strings.Replace(quotaResult, "session limit", "session limit · resets 8am (America/Sao_Paulo)", 1)},
+		},
+		{
+			name:  "unknown IANA zone",
+			lines: []string{strings.Replace(quotaResult, "session limit", "session limit · resets 9:37am (Mars/Olympus)", 1)},
+		},
+		{
+			name: "assistant prose is not reset evidence",
+			lines: []string{
+				`{"type":"assistant","message":{"content":[{"type":"text","text":"You've hit your session limit · resets 9:37am (America/Sao_Paulo)"}]}}`,
+				quotaResult,
+			},
+		},
+		{
+			name:  "stderr is not reset evidence",
+			lines: []string{quotaResult},
+			stderrLines: []string{
+				`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":` + strconv.FormatInt(reset.Unix(), 10) + `}}`,
+			},
+		},
+		{
+			name:  "errors array is not the terminal result string",
+			lines: []string{`{"type":"result","is_error":true,"errors":["You've hit your session limit · resets 9:37am (America/Sao_Paulo)"]}`},
+		},
+		{
+			name: "result must be the final top-level JSON object",
+			lines: []string{
+				`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":` + strconv.FormatInt(reset.Unix(), 10) + `}}`,
+				quotaResult,
+				`{"type":"system","subtype":"init"}`,
+			},
+		},
+		{
+			name: "multiple structured provider records disagree",
+			lines: []string{
+				`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":` + strconv.FormatInt(reset.Unix(), 10) + `}}`,
+				`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":` + strconv.FormatInt(reset.Add(time.Minute).Unix(), 10) + `}}`,
+				quotaResult,
+			},
+		},
+		{
+			name: "conflicting provider records",
+			lines: []string{
+				`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":` + strconv.FormatInt(reset.Unix(), 10) + `}}`,
+				strings.Replace(quotaResult, "session limit", "session limit · resets 10:37am (America/Sao_Paulo)", 1),
+			},
+		},
+		{
+			name: "ambiguous daylight-saving clock",
+			now:  time.Date(2026, time.November, 1, 4, 0, 0, 0, time.UTC),
+			lines: []string{
+				`{"type":"result","is_error":true,"result":"You've hit your session limit · resets 1:30am (America/New_York)"}`,
+			},
+		},
+		{
+			name: "nonexistent daylight-saving clock",
+			now:  time.Date(2026, time.March, 8, 5, 0, 0, 0, time.UTC),
+			lines: []string{
+				`{"type":"result","is_error":true,"result":"You've hit your session limit · resets 2:30am (America/New_York)"}`,
+			},
+		},
+	}
+	strategy := claudeStrategy{builtInCommand: true}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testNow := tt.now
+			if testNow.IsZero() {
+				testNow = now
+			}
+			stdout, stderr := strategy.NewOutputParsers(io.Discard)
+			stdout.setDestination(io.Discard)
+			stderr.setDestination(io.Discard)
+			stream := strings.Join(tt.lines, "\n") + "\n"
+			if _, err := io.WriteString(stdout, stream); err != nil {
+				t.Fatalf("write stream: %v", err)
+			}
+			if len(tt.stderrLines) > 0 {
+				if _, err := io.WriteString(stderr, strings.Join(tt.stderrLines, "\n")+"\n"); err != nil {
+					t.Fatalf("write stderr: %v", err)
+				}
+			}
+			if err := stdout.Flush(); err != nil {
+				t.Fatalf("flush stream: %v", err)
+			}
+			got := strategy.UsageLimitResetAt(stdout, stderr, testNow)
+			if !got.Equal(tt.want) {
+				t.Fatalf("reset = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStrategiesWithoutResetSupportUseFallback(t *testing.T) {
+	now := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name     string
+		strategy agentStrategy
+	}{
+		{name: "custom Claude command", strategy: strategyFor("claude", "claude -p {{.PromptFile}}")},
+		{name: "OpenCode", strategy: strategyForPreset("opencode")},
+		{name: "OpenCode v2", strategy: strategyForPreset("opencode-v2")},
+		{name: "passthrough", strategy: strategyFor("custom", "custom-agent")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.strategy.UsageLimitResetAt(nil, nil, now); !got.IsZero() {
+				t.Fatalf("unsupported strategy reset = %v, want no reset evidence", got)
+			}
+		})
+	}
+}
 
 func TestClaudeUsageLimitLine(t *testing.T) {
 	tests := []struct {

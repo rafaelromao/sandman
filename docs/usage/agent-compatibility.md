@@ -376,14 +376,20 @@ waiting for the reset. Sandman recognises the limit on the final stream-json
 `result` record (a top-level `"type":"result"` with `"is_error":true`) when it
 contains one of these messages: `hit your session limit`, `hit your weekly
 limit`, `hit your Opus limit`, `hit your Sonnet limit`, or `Fable limit reached`.
-The run then emits `run.await` with `await_reason: usage-limit`, probes every
-ten minutes for five hours of accumulated completed polling, and resumes the
-same conversation with `--continue`. Re-entry/restart preserves consumed polling;
-capacity delay and downtime consume none. After the final boundary probe,
-configured ordinary fresh-session retries remain available. The expected
-exhaustion timestamp is diagnostic, not a hard deadline. Spend and budget limits (`monthly spend limit`,
-`shared budget`, ...) are not awaited. The review daemon applies the same rule
-to `review_agent: claude` and enters its daemon-wide quota pause.
+The run then emits `run.await` with `await_reason: usage-limit`. If Claude's
+authoritative provider output contains a validated reset time, implementation
+recovery schedules at that reset; otherwise Sandman uses ten-minute fallback
+polling. The five-hour allowance counts only the scheduled duration after each
+wait returns successfully, capped at the remaining allowance. Cancellation or
+interruption, capacity delay, and process downtime consume none. Re-entry and
+restart preserve completed waits and the due schedule, and resume the same
+conversation with `--resume`. After the final boundary probe, configured
+ordinary fresh-session retries remain available. The expected exhaustion
+timestamp is diagnostic and distinct from the provider reset, not a hard
+deadline. Spend and budget limits (`monthly spend limit`, `shared budget`, ...)
+are not awaited. The review daemon applies the same limit classification to
+`review_agent: claude` but retains its separate daemon-wide fixed ten-minute
+quota schedule.
 
 ### Readable logs
 
@@ -424,7 +430,7 @@ A custom `command` under the `claude` preset keeps its own output unchanged.
 | Idle-timeout heartbeat | Supported (streams with `stream-json --verbose`) |
 | `--model`, per-preset default model, `variant` as `--effort` | Supported |
 | Session reuse on await re-entry and `--continue --reuse-session` | Supported through `--resume <session-id>` with the exact recorded session |
-| Implementation usage limits | Supported through usage-limit waiting (10-minute polls, 5-hour window, same-session resume); the review daemon separately recovers reviewer quota |
+| Implementation usage limits | Supported through usage-limit waiting (validated Claude reset time when available, otherwise ten-minute fallback; five hours of completed scheduled waits; same-session resume); the review daemon separately recovers reviewer quota on its fixed ten-minute schedule |
 | Scaffolded Dockerfile install and `installed-agents` pre-flight | Supported |
 | Skill discovery | Supported through `~/.claude/skills` links; see [Skills](skills.md) |
 | Exact-ID session identity (`session.json`), shown in Portal Run details | Supported |

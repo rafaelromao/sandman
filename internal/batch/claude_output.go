@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +44,11 @@ type claudeOutputState struct {
 	usageLimitReached bool
 	authFailed        bool
 	permissionDenials []string
+	lastRecordType    string
+	finalResultError  bool
+	finalResultText   string
+	resetCandidates   []string
+	resetMalformed    bool
 	readOnlyMode      *PermissionModeError
 	// readOnlyModes are the permission modes that stop a session at its init
 	// record. Plan mode is where Claude Code starts a session whose settings
@@ -50,6 +57,11 @@ type claudeOutputState struct {
 	// disable --dangerously-skip-permissions.
 	readOnlyModes []string
 }
+
+var (
+	claudeResetMarkerPattern = regexp.MustCompile(`(?i)\bresets\b`)
+	claudeResetClockPattern  = regexp.MustCompile(`(?i)\bresets\s+([0-9]{1,2})(?::([0-9]{2}))?\s*(am|pm)\s+\((UTC|[A-Za-z0-9_+.-]+(?:/[A-Za-z0-9_+.-]+)+)\)`)
+)
 
 func claudeReadOnlyModeDiagnostic(mode string) string {
 	return "permission mode " + mode + ": Claude Code cannot make changes; set the agent's permission_mode to a mode your administrator allows " +
@@ -183,6 +195,54 @@ func (w *claudeOutput) UsageLimitReached() bool {
 	return w.state.usageLimitReached
 }
 
+// UsageLimitResetAt returns a validated provider reset only when the final
+// stdout record is Claude's failed usage-limit result. The strategy calls this
+// method; ordinary output and stderr are never reset evidence.
+func (w *claudeOutput) UsageLimitResetAt(now time.Time) time.Time {
+	if !w.stdout {
+		return time.Time{}
+	}
+	w.state.mu.Lock()
+	if w.state.lastRecordType != "result" || !w.state.finalResultError ||
+		!claudeUsageLimitResultText(w.state.finalResultText) || w.state.resetMalformed {
+		w.state.mu.Unlock()
+		return time.Time{}
+	}
+	structured := append([]string(nil), w.state.resetCandidates...)
+	resultText := w.state.finalResultText
+	w.state.mu.Unlock()
+
+	textResets, malformed := claudeTextResetCandidates(resultText, now)
+	if malformed {
+		return time.Time{}
+	}
+	if len(structured) == 0 && len(textResets) == 0 {
+		return time.Time{}
+	}
+	var reset time.Time
+	for _, raw := range structured {
+		seconds, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || seconds <= 0 {
+			return time.Time{}
+		}
+		candidate := time.Unix(seconds, 0).UTC()
+		if !validProviderReset(candidate, now) {
+			return time.Time{}
+		}
+		if !reset.IsZero() && !reset.Equal(candidate) {
+			return time.Time{}
+		}
+		reset = candidate
+	}
+	for _, candidate := range textResets {
+		if !validProviderReset(candidate, now) || !reset.IsZero() && !reset.Equal(candidate) {
+			return time.Time{}
+		}
+		reset = candidate
+	}
+	return reset
+}
+
 // PermissionDenials returns the tools Claude Code refused during the session,
 // in first-seen order: the best-effort `permission_denied` system records and
 // the authoritative `permission_denials` list on the final result record.
@@ -216,6 +276,9 @@ func (w *claudeOutput) writeLine(line []byte, newline bool) error {
 		return w.writeRaw(line, newline)
 	}
 	recordType, _ := record["type"].(string)
+	if w.stdout {
+		w.captureResetEvidence(text, recordType, record)
+	}
 	// Only the init record names the session that actually started: a failed
 	// --resume reports the requested ID on its result record as well.
 	if id, _ := record["session_id"].(string); id != "" && recordType == "system" && record["subtype"] == "init" {
@@ -294,6 +357,113 @@ func (w *claudeOutput) writeLine(line []byte, newline bool) error {
 		}
 	}
 	return nil
+}
+
+func (w *claudeOutput) captureResetEvidence(line, recordType string, record map[string]any) {
+	w.state.mu.Lock()
+	defer w.state.mu.Unlock()
+	w.state.lastRecordType = recordType
+	if recordType == "rate_limit_event" {
+		var event struct {
+			Type          string `json:"type"`
+			RateLimitInfo struct {
+				Status   string          `json:"status"`
+				ResetsAt json.RawMessage `json:"resetsAt"`
+			} `json:"rate_limit_info"`
+		}
+		if err := json.Unmarshal([]byte(line), &event); err != nil ||
+			event.Type != "rate_limit_event" || event.RateLimitInfo.Status != "rejected" {
+			return
+		}
+		if len(event.RateLimitInfo.ResetsAt) == 0 {
+			w.state.resetMalformed = true
+			return
+		}
+		raw := strings.TrimSpace(string(event.RateLimitInfo.ResetsAt))
+		if raw == "" {
+			w.state.resetMalformed = true
+			return
+		}
+		w.state.resetCandidates = append(w.state.resetCandidates, raw)
+	}
+	if recordType == "result" {
+		w.state.finalResultError, _ = record["is_error"].(bool)
+		w.state.finalResultText, _ = record["result"].(string)
+	}
+}
+
+func validProviderReset(reset, now time.Time) bool {
+	if reset.IsZero() || now.IsZero() {
+		return false
+	}
+	delta := reset.Sub(now)
+	return delta > 0 && delta <= usageLimitProviderResetHorizon
+}
+
+func claudeTextResetCandidates(text string, now time.Time) ([]time.Time, bool) {
+	markers := claudeResetMarkerPattern.FindAllStringIndex(text, -1)
+	if len(markers) == 0 {
+		return nil, false
+	}
+	matches := claudeResetClockPattern.FindAllStringSubmatch(text, -1)
+	if len(matches) != len(markers) {
+		return nil, true
+	}
+	resets := make([]time.Time, 0, len(matches))
+	for _, match := range matches {
+		reset, ok := claudeLocalReset(match, now)
+		if !ok {
+			return nil, true
+		}
+		resets = append(resets, reset)
+	}
+	return resets, false
+}
+
+func claudeLocalReset(match []string, now time.Time) (time.Time, bool) {
+	hour, err := strconv.Atoi(match[1])
+	if err != nil || hour < 1 || hour > 12 {
+		return time.Time{}, false
+	}
+	minute := 0
+	if match[2] != "" {
+		minute, err = strconv.Atoi(match[2])
+		if err != nil || minute > 59 {
+			return time.Time{}, false
+		}
+	}
+	meridiem := strings.ToLower(match[3])
+	hour %= 12
+	if meridiem == "pm" {
+		hour += 12
+	}
+	zone := match[4]
+	location := time.UTC
+	if !strings.EqualFold(zone, "UTC") {
+		location, err = time.LoadLocation(zone)
+		if err != nil {
+			return time.Time{}, false
+		}
+	}
+	localNow := now.In(location)
+	wall := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), hour, minute, 0, 0, time.UTC)
+	matches := make(map[int64]time.Time, 2)
+	for probe := wall.Add(-36 * time.Hour); !probe.After(wall.Add(36 * time.Hour)); probe = probe.Add(15 * time.Minute) {
+		_, offset := probe.In(location).Zone()
+		candidate := wall.Add(-time.Duration(offset) * time.Second)
+		local := candidate.In(location)
+		if local.Year() == localNow.Year() && local.Month() == localNow.Month() && local.Day() == localNow.Day() &&
+			local.Hour() == hour && local.Minute() == minute && local.Second() == 0 {
+			matches[candidate.Unix()] = candidate.UTC()
+		}
+	}
+	if len(matches) != 1 {
+		return time.Time{}, false
+	}
+	for _, candidate := range matches {
+		return candidate, true
+	}
+	return time.Time{}, false
 }
 
 func (w *claudeOutput) captureCIRerunToolUses(record map[string]any) {

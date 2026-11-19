@@ -188,7 +188,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		// Provider quota recovery is non-terminal and retains the per-run
 		// endpoint for the batch-owned polling continuation.
 		if !s.lifecycleTerminal && s.shouldAwaitUsageLimit(result) {
-			s.quotaAllowance = s.quotaAllowance.startProbe(s.runtimeNow())
+			s.quotaAllowance = s.quotaAllowance.startProbe(s.runtimeNow()).withProviderReset(result.UsageLimitResetAt)
 			result.UsageLimitDeadline = s.quotaAllowance.deadlineEstimate()
 			extras := map[string]any{
 				"await_reason":                     "usage-limit",

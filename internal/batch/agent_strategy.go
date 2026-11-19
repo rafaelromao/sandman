@@ -67,6 +67,9 @@ type agentStrategy interface {
 	// AwaitsUsageLimit reports whether a recognised usage limit enters
 	// run.await with usage-limit polling instead of the ordinary retry path.
 	AwaitsUsageLimit() bool
+	// UsageLimitResetAt extracts authoritative reset evidence from this
+	// strategy's output parser. Unsupported strategies return the zero time.
+	UsageLimitResetAt(stdout, stderr outputParser, now time.Time) time.Time
 }
 
 // outputParser is a structured-output parser placed between the sandbox and
@@ -205,6 +208,9 @@ func (passthroughStrategy) ContextRolloverDetector([]string, func()) *contextRol
 
 func (passthroughStrategy) UsageLimitRule() func(string) bool { return nil }
 func (passthroughStrategy) AwaitsUsageLimit() bool            { return false }
+func (passthroughStrategy) UsageLimitResetAt(outputParser, outputParser, time.Time) time.Time {
+	return time.Time{}
+}
 
 // opencodeStrategy runs the OpenCode CLI (`opencode run --format json`). It
 // owns exact session reuse through session.json with one narrow --continue
@@ -304,6 +310,10 @@ func (opencodeStrategy) ContextRolloverDetector(literals []string, onTrigger fun
 func (opencodeStrategy) UsageLimitRule() func(string) bool { return opencodeUsageLimitLine }
 
 func (s opencodeStrategy) AwaitsUsageLimit() bool { return s.builtInCommand }
+
+func (opencodeStrategy) UsageLimitResetAt(outputParser, outputParser, time.Time) time.Time {
+	return time.Time{}
+}
 
 // opencodeV2Strategy shares OpenCode's JSON stream and failure detectors, but
 // owns the v2 model selector and session identity. Selecting a preset determines

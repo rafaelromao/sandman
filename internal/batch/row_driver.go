@@ -141,11 +141,15 @@ func (d *rowDriver) drive(ctx context.Context, run RunSpec, state *rowDriverStat
 		return d.gates.Wait(ctx, interval)
 	}
 	nextPoll := func() time.Duration {
-		if state.cursor.quotaAllowance.probing() {
-			return usageLimitPollInterval
+		now := d.clock.Now()
+		if state.recovering && state.cursor.quotaAllowance.probing() {
+			return max(time.Duration(0), state.nextPollAt.Sub(now))
 		}
-		if state.recovering && state.nextPollAt.After(d.clock.Now()) {
-			return state.nextPollAt.Sub(d.clock.Now())
+		if state.cursor.quotaAllowance.probing() {
+			return state.cursor.quotaAllowance.nextWait(now)
+		}
+		if state.recovering && state.nextPollAt.After(now) {
+			return state.nextPollAt.Sub(now)
 		}
 		return opts.PollInterval(state.awaitPoll)
 	}
@@ -221,17 +225,23 @@ func (d *rowDriver) drive(ctx context.Context, run RunSpec, state *rowDriverStat
 				d.gates.Report(result, true)
 				break
 			}
-			if state.recovering && state.nextPollAt.After(d.clock.Now()) {
-				interval := state.nextPollAt.Sub(d.clock.Now())
-				if err := wait(interval); err != nil {
-					abortRequested = true
-					break
+			if state.recovering {
+				interval := nextPoll()
+				if interval > 0 {
+					if err := wait(interval); err != nil {
+						abortRequested = true
+						break
+					}
+					state.cursor.quotaAllowance = state.cursor.quotaAllowance.completedWait(interval)
 				}
-				state.cursor.quotaAllowance = state.cursor.quotaAllowance.completedPoll(interval)
+				// The recovered schedule has now been reached (possibly during
+				// downtime). Any next quota wait follows the result of this probe.
 				state.recovering = false
-				if err := acceptQuotaReady(); err != nil {
-					abortRequested = true
-					break
+				if interval > 0 {
+					if err := acceptQuotaReady(); err != nil {
+						abortRequested = true
+						break
+					}
 				}
 			}
 		}
@@ -387,8 +397,8 @@ func (d *rowDriver) drive(ctx context.Context, run RunSpec, state *rowDriverStat
 		if result.Status == "await" && !state.releaseAwaitCapacity {
 			interval := opts.PollInterval(state.awaitPoll)
 			if result.UsageLimitReached {
-				state.cursor.quotaAllowance = state.cursor.quotaAllowance.continueProbe(result.UsageLimitDeadline)
-				interval = usageLimitPollInterval
+				state.cursor.quotaAllowance = state.cursor.quotaAllowance.continueProbe(result.UsageLimitDeadline).withProviderReset(result.UsageLimitResetAt)
+				interval = state.cursor.quotaAllowance.nextWait(d.clock.Now())
 			}
 			if err := d.gates.Checkpoint(run, state.cursor, false, interval); err != nil {
 				abortRequested = true
@@ -410,16 +420,17 @@ func (d *rowDriver) drive(ctx context.Context, run RunSpec, state *rowDriverStat
 		state.cursor.ReuseSession = true
 		state.awaiting, state.ready = true, false
 		if result.UsageLimitReached {
-			state.cursor.quotaAllowance = state.cursor.quotaAllowance.continueProbe(result.UsageLimitDeadline)
+			state.cursor.quotaAllowance = state.cursor.quotaAllowance.continueProbe(result.UsageLimitDeadline).withProviderReset(result.UsageLimitResetAt)
 			if err := accept(lifecycleVerdict{Action: lifecycleAwait}); err != nil {
 				abortRequested = true
 				break
 			}
-			if err := wait(usageLimitPollInterval); err != nil {
+			interval := state.cursor.quotaAllowance.nextWait(d.clock.Now())
+			if err := wait(interval); err != nil {
 				abortRequested = true
 				break
 			}
-			state.cursor.quotaAllowance = state.cursor.quotaAllowance.completedPoll(usageLimitPollInterval)
+			state.cursor.quotaAllowance = state.cursor.quotaAllowance.completedWait(interval)
 			if err := acceptQuotaReady(); err != nil {
 				abortRequested = true
 				break

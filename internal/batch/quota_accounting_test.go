@@ -269,17 +269,22 @@ func TestQuotaAccountingSurvivesSchedulerReconstruction(t *testing.T) {
 	t.Chdir(root)
 	initGitRepo(t, root)
 	now := time.Now().UTC()
+	awaitedAt := now.Add(-time.Minute)
+	resetAt := awaitedAt.Add(30 * time.Second)
 	log := &spyEventLog{events: []events.Event{
 		{Type: "run.started", RunID: "row", Issue: 42, Timestamp: now.Add(-time.Hour), Payload: map[string]any{"branch": gateTestBranch, "batch_id": "old"}},
-		{Type: "run.await", RunID: "row", Issue: 42, Timestamp: now.Add(-11 * time.Minute), Payload: map[string]any{
+		{Type: "run.await", RunID: "row", Issue: 42, Timestamp: awaitedAt, Payload: map[string]any{
 			"await_reason": "usage-limit", "branch": gateTestBranch, "base_branch": "main", "batch_id": "old", "usage_limit_waited_seconds": 17400,
-			"usage_limit_deadline_unix_seconds": now.Add(10 * time.Minute).Unix(),
+			"usage_limit_deadline_unix_seconds":       now.Add(10 * time.Minute).Unix(),
+			"usage_limit_provider_reset_unix_seconds": resetAt.Unix(),
 		}},
 	}}
 	layout := paths.NewLayout(&config.Config{WorktreeDir: "worktrees"}, root)
-	recovery := daemon.RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: "old", Issue: 42, Branch: gateTestBranch, BaseBranch: "main", OperationID: "quota:old", OperationDeadline: now.Add(10 * time.Minute), UsageLimitProbe: true, NextPollAt: now.Add(-time.Minute)}
-	if err := daemon.RenewRunWait(layout, layout.LocateBatch("old", ""), recovery, now); err != nil {
-		t.Fatal(err)
+	state := events.ProjectRunStates(log.snapshot())[0]
+	recovery, valid := recoveryWaitFromEvent(state)
+	wantPollAt := time.Unix(resetAt.Unix(), 0).UTC()
+	if !valid || !recovery.NextPollAt.Equal(wantPollAt) {
+		t.Fatalf("reconstruct quota checkpoint = %+v valid=%v, want provider reset %v", recovery, valid, wantPollAt)
 	}
 	worktree := filepath.Join(layout.WorktreeDir, gateTestBranch)
 	if err := os.MkdirAll(filepath.Join(worktree, ".sandman"), 0o755); err != nil {
@@ -301,6 +306,16 @@ func TestQuotaAccountingSurvivesSchedulerReconstruction(t *testing.T) {
 	result, err := o.RunBatch(ctx, Request{Issues: []int{42}, Branches: map[int]string{42: gateTestBranch}, Mode: map[int]IssueMode{42: ModeContinue}, RunIDs: map[int]string{42: "row"}, PreviousRunIDs: map[int]string{42: "row"}, PreviousRunBatchIDs: map[int]string{42: "old"}, RecoveryWaits: map[int]daemon.RunWait{42: recovery}, ReuseSession: map[int]bool{42: true}, RunTS: "261008120000", RunShortID: "recovery", Retries: 1, Parallel: 1, PromptConfig: prompt.RenderConfig{ReviewCommandSet: true}})
 	if err != nil || result == nil || result.Runs[0].Status != "success" || sb.attemptCount() != 3 || waits != 1 || countEventsByType(log.snapshot(), "run.retry") != 1 {
 		t.Fatalf("scheduler renewed consumed polling: result=%+v error=%v launches=%d waits=%d retries=%d events=%+v", result, err, sb.attemptCount(), waits, countEventsByType(log.snapshot(), "run.retry"), log.snapshot())
+	}
+	var recoveredAwait *events.Event
+	for _, event := range log.snapshot() {
+		if event.Type == "run.await" && payloadBoolValue(event.Payload, "usage_limit_ownership_recovery") {
+			recoveredAwait = &event
+			break
+		}
+	}
+	if recoveredAwait == nil || recoveredAwait.Payload["usage_limit_wait_started_at"] != awaitedAt.Format(time.RFC3339Nano) {
+		t.Fatalf("recovered quota await did not preserve schedule origin: %+v", recoveredAwait)
 	}
 }
 

@@ -88,14 +88,19 @@ allowance per current head within one invocation. Reviewer request/head advisory
 artifact claims and durable decision-publication evidence remain authoritative
 for exclusivity and publication recovery.
 
-Ready quota probes persist completed polling in `run.capacity_queued` metadata:
-`usage_limit_probe`, `usage_limit_waited_seconds`, and
-`usage_limit_deadline_unix_seconds`. The last field is a recomputed expected
-exhaustion estimate, not a hard deadline. Quota `wait.json` schedules use stable
-`quota:<RunID>` operation identity and zero `OperationDeadline`. Legacy quota
-estimates normalize during reads and live-owner writes without extending existing
-ownerless grace. Missing/invalid accounting disables additional quota waits but
-allows configured bounded ordinary execution.
+Quota await and ready events persist `usage_limit_waited_seconds`,
+`usage_limit_provider_reset_unix_seconds` when the selected agent strategy has
+validated one, and `usage_limit_deadline_unix_seconds`. The provider reset is
+authoritative scheduling evidence; the last field is a recomputed expected
+exhaustion estimate, not a hard deadline. A quota `wait.json` stores the next
+scheduled due instant in `NextPollAt`, uses stable `quota:<RunID>` operation
+identity, and has zero `OperationDeadline`. A valid checkpoint is preferred on
+restart; when it is missing, recovery reconstructs the due time from the current
+await event. Waited seconds increase only after a full scheduled wait succeeds,
+capped at the remaining five-hour allowance. Legacy quota estimates normalize
+during reads and live-owner writes without extending existing ownerless grace.
+Missing/invalid accounting disables additional quota waits but allows configured
+bounded ordinary execution.
 These files record ownership/readiness/timing only, never mutable lifecycle status.
 
 `batches.json` Batch/Run statuses (`active`, `archived`, `unavailable`) describe

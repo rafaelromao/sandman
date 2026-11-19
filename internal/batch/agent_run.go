@@ -49,6 +49,7 @@ type AgentRun struct {
 	status                  string
 	contextExhausted        bool
 	usageLimitReached       bool
+	usageLimitResetAt       time.Time
 	ciRerunAction           *ciRerunActionEvidence
 	permissionDenials       []string
 	modelProgress           func()
@@ -62,6 +63,7 @@ type AgentRun struct {
 	runFolder               string
 	taskWriter              func(string, []byte, os.FileMode) error
 	sessionWarning          io.Writer
+	now                     func() time.Time
 	// credentials reconciles rotating agent credentials between the host and
 	// the batch config snapshot around every launch; nil for none.
 	credentials *credentialSync
@@ -206,6 +208,7 @@ func (r *AgentRun) execute(ctx context.Context, command string, stdout, stderr i
 // worktree has its own `.sandman/` directory that the layout does not own.
 func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
 	r.ciRerunAction = nil
+	r.usageLimitResetAt = time.Time{}
 	renderedPromptFile := renderCfg.RenderedPromptFile
 	if renderedPromptFile == "" {
 		renderedPromptFile = filepath.Join(".", ".sandman", "task.md")
@@ -408,9 +411,11 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	if execErr != nil {
 		r.usageLimitReached = ctx.Err() == nil &&
 			((usageDetector != nil && usageDetector.Triggered()) || parsersReachedUsageLimit(parsedStdout, parsedStderr))
+		r.usageLimitResetAt = strategy.UsageLimitResetAt(parsedStdout, parsedStderr, r.runtimeNow())
 		r.status = "failure"
 		return r.Result()
 	}
+	r.usageLimitResetAt = strategy.UsageLimitResetAt(parsedStdout, parsedStderr, r.runtimeNow())
 	return r.Result()
 }
 
@@ -509,11 +514,19 @@ func (r *AgentRun) Result() AgentRunResult {
 		WorktreePath:      r.sandbox.WorkDir(),
 		ContextExhausted:  r.contextExhausted,
 		UsageLimitReached: r.usageLimitReached,
+		UsageLimitResetAt: r.usageLimitResetAt,
 		PermissionDenials: r.permissionDenials,
 		CleanupError:      r.cleanupError,
 		OperationalError:  r.operationalError,
 		ciRerunAction:     r.ciRerunAction,
 	}
+}
+
+func (r *AgentRun) runtimeNow() time.Time {
+	if r.now != nil {
+		return r.now()
+	}
+	return time.Now().UTC()
 }
 
 func (r *AgentRun) issueData() github.Issue {

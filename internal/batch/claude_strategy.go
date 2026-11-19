@@ -6,6 +6,7 @@ import (
 	"io"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/shellenv"
 )
@@ -140,6 +141,17 @@ func (claudeStrategy) UsageLimitRule() func(string) bool { return claudeUsageLim
 
 func (s claudeStrategy) AwaitsUsageLimit() bool { return s.builtInCommand }
 
+func (s claudeStrategy) UsageLimitResetAt(stdout, _ outputParser, now time.Time) time.Time {
+	if !s.builtInCommand {
+		return time.Time{}
+	}
+	parser, ok := stdout.(interface{ UsageLimitResetAt(time.Time) time.Time })
+	if !ok {
+		return time.Time{}
+	}
+	return parser.UsageLimitResetAt(now)
+}
+
 // claudeUsageLimitLiterals are the documented Claude Code messages for limits
 // that reset within Sandman's usage-limit waiting window. Spend and budget
 // limits ("monthly spend limit", "shared budget", ...) are deliberately
@@ -177,6 +189,11 @@ func claudeUsageLimitLine(line string) bool {
 		return false
 	}
 	lower := strings.ToLower(line)
+	return claudeUsageLimitResultText(lower)
+}
+
+func claudeUsageLimitResultText(text string) bool {
+	lower := strings.ToLower(text)
 	for _, literal := range claudeUsageLimitLiterals {
 		if strings.Contains(lower, literal) {
 			return true

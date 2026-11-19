@@ -1910,8 +1910,8 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 		current, err := daemon.ReadRunWaitAt(layout, currentBatch, recovery.RunID)
 		if os.IsNotExist(err) && !recovery.RecoveryEventAt.IsZero() {
-			if legacy, valid := legacyRecoveryWait(claimedStates[recovery.RunID]); valid && legacy.RecoveryEventAt.Equal(recovery.RecoveryEventAt) && legacy.RecoverableAt(recoveryNow()) {
-				current = legacy
+			if eventWait, valid := recoveryWaitFromEvent(claimedStates[recovery.RunID]); valid && eventWait.RecoveryEventAt.Equal(recovery.RecoveryEventAt) && eventWait.RecoverableAt(recoveryNow()) {
+				current = eventWait
 				currentBatch, err = daemon.ResolveBatchLocation(layout, current.BatchID)
 				if err == nil {
 					current.BatchID = currentBatch.ID
@@ -2293,6 +2293,10 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				if !recovery.Ready && claimedStates[runID].AwaitEvent != nil && o.eventLog != nil {
 					payload := cloneLifecycleExtras(claimedStates[runID].AwaitEvent.Payload)
 					payload["batch_id"], payload["recovered"] = issueBatchID, true
+					if quotaPollingEvidence(claimedStates[runID]) != nil {
+						payload["usage_limit_ownership_recovery"] = true
+						payload["usage_limit_wait_started_at"] = quotaWaitScheduleStartedAt(claimedStates[runID].AwaitEvent).Format(time.RFC3339Nano)
+					}
 					if err := o.eventLog.Log(events.Event{Type: "run.await", Timestamp: time.Now().UTC(), RunID: runID, Issue: issueNum, IssueRef: issueRef(issueNum), Payload: payload}); err != nil {
 						fmt.Fprintf(o.errorLog, "persist recovered wait ownership for run %s: %v\n", runID, err)
 						abortAdmission(nil)
@@ -3935,6 +3939,7 @@ loop:
 				agentRun.env = s.agentCfg.Env
 				agentRun.credentials = s.credentials
 				agentRun.preset = s.agentCfg.Preset
+				agentRun.now = s.runtimeNow
 				agentRun.contextRolloverLiterals = append([]string(nil), s.opts.contextRolloverLiterals...)
 				if s.opts.taskWriter != nil {
 					agentRun.taskWriter = s.opts.taskWriter
