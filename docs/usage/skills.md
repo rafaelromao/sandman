@@ -73,6 +73,15 @@ current-head publication. Standalone `sandman-run` keeps review-cycle state in m
 for its session; a restart reconstructs from live pull-request state and does
 not import or trust managed lifecycle artifacts.
 
+Both compositions use the same implementation publication checkpoint. A pull
+request needs a meaningful Summary and actual Verification evidence, and must
+honor the target repository's pull-request template and retain its required
+sections without imposing Sandman's example headings elsewhere. Report actual
+local-check outcomes, failures or skips, and CI only as observed for the current
+pull-request head. Preserve the selected closing reference and existing
+substantive description, and keep exactly one linked Sandman footer as the final
+content.
+
 The compatibility `sandman-pr-review` entrypoint delegates to the same
 standalone review-cycle contract. This keeps standalone composition
 implementation-first, review-cycle-second, and merge-last, while managed runs
