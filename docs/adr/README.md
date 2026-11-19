@@ -99,5 +99,5 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0058 | Repository-independent shared skills | accepted |
 | 0059 | Blind review is the default pull-request review | accepted |
 | 0060 | Managed handoff boundary and 30-second observation | accepted |
-| 0061 | Close the work item after a merge into its configured base | accepted |
+| 0061 | Close the work item after a merge into its configured base | rejected |
 | 0062 | Schedule implementation quota recovery from provider reset evidence | accepted |

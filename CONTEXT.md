@@ -5,7 +5,7 @@ Domain vocabulary for Sandman, a CLI tool that orchestrates AFK coding agents in
 ## Language
 
 **BlockedBy**:
-The set of issue numbers that must both complete successfully and be closed on GitHub before a dependent AgentRun can start. Derived from the union of body references and GitHub native dependency fields. Every blocker — in-batch or external — is gated on GitHub closure at the dependent start decision; an in-batch blocker additionally requires terminal batch status `success` at that instant. After a merge into a non-default Base branch, Sandman itself closes the blocker issue (ADR-0061).
+The set of issue numbers that must both complete successfully and be closed on GitHub before a dependent AgentRun can start. Derived from the union of body references and GitHub native dependency fields. Every blocker — in-batch or external — is gated on GitHub closure at the dependent start decision; an in-batch blocker additionally requires terminal batch status `success` at that instant.
 _Avoid_: dependencies, prerequisites.
 
 **In-batch blocker**:
@@ -294,10 +294,6 @@ _See_: Review daemon state, Review run log.
 **Branch**:
 A git branch named `<issue-number>-<slugified-title>` for issue-driven AgentRuns (the legacy `sandman/<issue-number>-<slugified-title>` shape is gone after ADR-0040), or `<slug>-<timestamp>` for prompt-only runs.
 _Avoid_: Feature branch, PR branch.
-
-**Base branch**:
-The branch an AgentRun's pull request targets and merges into. Resolved from the caller (`--base-branch`, the Task's `Base branch`), then the open pull request's base, then `git.base_branch` in `.sandman/config.yaml`, then the repository's default branch; `--continue` reuses the stored value. It may differ from the default branch (for example a `feat/<name>` initiative branch). GitHub closes a work item from its closing reference only on the default branch, so after a verified merge into any base the `sandman-pr-merge` skill, with a managed runtime fallback, closes the implementor's own still-open issue (ADR-0061).
-_Avoid_: target branch, default branch (when the configured base differs).
 
 **SidecarBranch**:
 A git branch initiated by Sandman's own post-batch side effects rather than by a user-supplied issue or prompt. The badge branch `built-with-sandman` is the first such SidecarBranch. Unlike issue-driven branches (which carry a GitHub issue) or prompt-only branches (which carry a timestamp suffix for uniqueness), a SidecarBranch carries no issue and no timestamp — its shape is determined by the sidecar that created it. The sidecar's idempotency contract (what triggers it, what gates it, what it persists) lives in `docs/usage/badge.md` and the ADR alongside it.
