@@ -299,8 +299,9 @@ delegated-review request (which counts as active from delivery, before the
 reviewer starts), or a recognised provider usage limit with quota-reset polling.
 The suite also pins failure for absent PRs, idle/generic
 gates, stale heads, lookup/state errors, and the historical exhausted in-session
-relaunch allowance; verified
-request-scoped review outcomes resume implementor-owned repair or merge work.
+relaunch allowance. The AFK continuity contract replays same-head review
+re-requests through scheduler waits: three feedback relaunches exhaust the
+allowance, but a current-head approval still resumes merge work.
 Scheduler coverage must show that legitimate awaits release execution
 capacity, keep dependents queued, and resume automatically when external work
 resolves and a slot is available. Portal aggregation remains `Reviewing` while

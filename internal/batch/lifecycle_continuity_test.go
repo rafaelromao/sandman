@@ -55,23 +55,46 @@ func TestContinuityDecision_CIWaitStateErrorStaysTerminal(t *testing.T) {
 	}
 }
 
-// The relaunch allowance belongs to one repair round. A new head (or request)
-// is progress and starts a fresh allowance; an unchanged round keeps it.
+func TestRepairRound_SameHeadRerequest(t *testing.T) {
+	for _, tc := range []struct {
+		gate      string
+		sameRound bool
+	}{
+		{gate: gateActionableFeedback, sameRound: true},
+		{gate: "ci-failure"},
+		{gate: gateReadyToMerge},
+		{gate: gateBlindReviewRequired},
+	} {
+		t.Run(tc.gate, func(t *testing.T) {
+			round := func(trigger string) string {
+				return repairRound(map[string]any{
+					"gate":           tc.gate,
+					"review_request": map[string]any{"trigger_id": trigger},
+				}, "head-1")
+			}
+			first, second := round("trigger-1"), round("trigger-2")
+			if (first == second) != tc.sameRound {
+				t.Fatalf("repair rounds after re-requesting on the same head = %q, %q; want same round: %v", first, second, tc.sameRound)
+			}
+		})
+	}
+}
+
+// A new head starts a fresh review-feedback allowance; an unchanged head
+// keeps it.
 func TestContinuityDecision_AllowanceIsPerRepairRound(t *testing.T) {
 	extras := map[string]any{"gate": gateActionableFeedback, "reason": actionableFeedbackReason}
 	s := &runSession{decisionPRHead: "head-1"}
 	s.lastResumeSignature = resumeSignature(extras, "head-1")
-	s.lastResumeRound = repairRound(extras, "head-1")
-	s.resumeCount = s.resumeCapFor()
+	s.feedbackAllowance = &reviewFeedbackAllowance{round: repairRound(extras, "head-1"), used: s.resumeCapFor()}
 	verdict := applyContinuityForTest(s, "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: extras})
 	if verdict.Action != lifecycleFailure {
 		t.Fatalf("exhausted formal changes on the same head = %v, want the terminal budget failure", verdict.Action)
 	}
 	s.decisionPRHead = "head-2"
-	s.resumeCount = s.resumeCapFor()
 	verdict = applyContinuityForTest(s, "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: extras})
-	if verdict.Action != lifecycleResume || s.resumeCount != 0 {
-		t.Fatalf("formal changes on a new head = %v (count %d), want a fresh repair round", verdict.Action, s.resumeCount)
+	if verdict.Action != lifecycleResume {
+		t.Fatalf("formal changes on a new head = %v, want a fresh repair round", verdict.Action)
 	}
 }
 

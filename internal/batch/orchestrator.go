@@ -2982,9 +2982,9 @@ type runSession struct {
 	// lifecycle relaunch (or entry resume). A decision that repeats it after
 	// the relaunch is a stall.
 	lastResumeSignature string
-	// lastResumeRound is the request/head identity for the in-session relaunch
-	// allowance. It is separate from the stall signature because CI stalls
-	// intentionally ignore review-request response changes.
+	// lastResumeRound is the last non-feedback request/head repair round.
+	// It is separate from the stall signature because CI stalls intentionally
+	// ignore review-request response changes.
 	lastResumeRound string
 	// pendingResumeSignature is the signature of the latest resume decision;
 	// it becomes lastResumeSignature when the session relaunches on it.
@@ -2998,11 +2998,10 @@ type runSession struct {
 	// ordinary attempt, so owned work nothing can advance may wait.
 	finalOwnedWorkAttempt bool
 
-	// resumeCount counts in-session agent relaunches triggered by a
-	// resume-worthy PR gate within this session (bounded by
-	// runSessionOptions.awaitResumeMax). It is the per-session cap state;
-	// re-invocation starts a fresh session and a fresh counter.
+	// resumeCount counts non-feedback relaunches within this executor entry.
 	resumeCount int
+	// feedbackAllowance survives scheduler re-entry in the same active row.
+	feedbackAllowance *reviewFeedbackAllowance
 
 	modelProgress func()
 	usageLimit    func()
@@ -3979,6 +3978,9 @@ loop:
 				s.reviewAttemptStartedAt = s.reviewNow()
 			}
 			s.lifecyclePRSnapshot = nil
+			if s.feedbackAllowance != nil {
+				s.feedbackAllowance.hasLaunched = true
+			}
 			result, abortedByHeartbeat = s.withHeartbeat(ctx, runID, attempt, logPath, wt, func() AgentRunResult {
 				return s.withClosingReferenceGuard(ctx, branch, func() AgentRunResult {
 					return runnable.Run(ctx, s.deps.renderer, s.agentCfg.Command, attemptRenderCfg)
@@ -4077,8 +4079,6 @@ loop:
 							break loop
 						}
 						if resume {
-							s.lastResumeSignature = s.pendingResumeSignature
-							s.lastResumeRound = s.pendingResumeRound
 							s.reuseSession = true
 							s.previousRunIDs = map[int]string{s.issueNumber: runID}
 							s.previousRunBatchIDs = map[int]string{s.issueNumber: s.batchID}
