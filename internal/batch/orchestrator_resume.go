@@ -206,13 +206,6 @@ func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbo
 	if s.deps.githubClient == nil || ctx.Err() != nil || verdict.Action != lifecycleResume {
 		return "", false, nil
 	}
-	used := s.resumeCount
-	if stringEvidence(verdict.Evidence, "gate") == gateActionableFeedback {
-		used = s.feedbackAllowance.usedFor(s.pendingResumeRound)
-	}
-	if used >= s.resumeCapFor() {
-		return "", false, nil
-	}
 	evidence := s.resumeEvidenceFor(ctx, branch, verdict.Evidence)
 	if ctx.Err() != nil {
 		return "", false, nil

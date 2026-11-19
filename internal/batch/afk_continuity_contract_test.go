@@ -714,6 +714,10 @@ func publishContinuityChangesRequested(g *continuityGitHub) {
 	g.publish("## Findings\n- Blocking: `worker.go:12` drops the request on retry.\n\n## Decision\n**CHANGES_REQUESTED**\n")
 }
 
+func publishContinuityFormalChanges(g *continuityGitHub) {
+	g.formalReview("CHANGES_REQUESTED")
+}
+
 func postContinuityInformalFeedback(g *continuityGitHub) {
 	g.post("Please make the retry loop in `worker.go:12` keep the request.")
 }
@@ -971,6 +975,16 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 			polls: []func(*continuityGitHub){
 				publishContinuityChangesRequested, publishContinuityChangesRequested,
 				publishContinuityChangesRequested, publishContinuityChangesRequested,
+			},
+			want: "failed:REMEDIATION_BUDGET_EXHAUSTED", wantLaunches: 4,
+		},
+		continuityScenario{
+			name: "#2997 same-head rerequests with formal changes exhaust feedback allowance", pr: greenCleanPR(), retries: 3,
+			forbidRetry: true,
+			launches:    []func(*continuityGitHub) string{requestReview, requestReview, requestReview, requestReview, requestReview},
+			polls: []func(*continuityGitHub){
+				publishContinuityFormalChanges, publishContinuityFormalChanges,
+				publishContinuityFormalChanges, publishContinuityFormalChanges,
 			},
 			want: "failed:REMEDIATION_BUDGET_EXHAUSTED", wantLaunches: 4,
 		},
