@@ -1910,8 +1910,8 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 		current, err := daemon.ReadRunWaitAt(layout, currentBatch, recovery.RunID)
 		if os.IsNotExist(err) && !recovery.RecoveryEventAt.IsZero() {
-			if legacy, valid := legacyRecoveryWait(claimedStates[recovery.RunID]); valid && legacy.RecoveryEventAt.Equal(recovery.RecoveryEventAt) && legacy.RecoverableAt(recoveryNow()) {
-				current = legacy
+			if eventWait, valid := recoveryWaitFromEvent(claimedStates[recovery.RunID]); valid && eventWait.RecoveryEventAt.Equal(recovery.RecoveryEventAt) && eventWait.RecoverableAt(recoveryNow()) {
+				current = eventWait
 				currentBatch, err = daemon.ResolveBatchLocation(layout, current.BatchID)
 				if err == nil {
 					current.BatchID = currentBatch.ID

@@ -252,6 +252,13 @@ func quotaAwaitRecoveryWait(state events.RunState, evidence map[string]any) (dae
 	}, true
 }
 
+func recoveryWaitFromEvent(state events.RunState) (daemon.RunWait, bool) {
+	if evidence := quotaPollingEvidence(state); evidence != nil && state.AwaitEvent != nil && !state.IsCapacityQueued() {
+		return quotaAwaitRecoveryWait(state, evidence)
+	}
+	return legacyRecoveryWait(state)
+}
+
 func legacyRecoveryWait(state events.RunState) (daemon.RunWait, bool) {
 	event := state.CapacityQueuedEvent
 	if !state.IsCapacityQueued() || event == nil || event.Timestamp.IsZero() || !payloadBoolValue(event.Payload, "ready_continuation") {
