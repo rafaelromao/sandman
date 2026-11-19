@@ -41,6 +41,8 @@ Report truthfully. In every checkpoint and final summary, keep three states apar
 
 const (
 	reviewTimeoutContextHeading = "## Sandman Runtime Context"
+	reviewCommandContextPrefix  = "- Review command:"
+	reviewModeContextPrefix     = "- Review mode:"
 	reviewTimeoutContextPrefix  = "- Delegated review response timeout:"
 )
 
@@ -100,6 +102,23 @@ func ContinuationTaskPromptWithReviewTimeout(content string, reviewTimeout int) 
 	return continuationTaskPrompt(content, reviewTimeout)
 }
 
+// ContinuationTaskPromptWithReviewSettings refreshes runtime-owned review
+// settings before adding the continuation guard. The Task body remains
+// agent-owned; only the current Review command, selected mode and timeout
+// metadata in Runtime Context are replaced.
+func ContinuationTaskPromptWithReviewSettings(content, reviewCommand string, reviewCommandSet bool, reviewTimeout int) string {
+	if strings.TrimSpace(content) == "" {
+		content = DefaultPrompt()
+	}
+	content = EnsureReviewSettingsContext(content, reviewCommand, reviewCommandSet, reviewTimeout)
+	if strings.TrimSpace(reviewCommand) == "" {
+		// The timeout remains visible as runtime context for diagnosis, but it
+		// is not an active deadline without a selected delegated-review path.
+		reviewTimeout = 0
+	}
+	return continuationTaskPrompt(content, reviewTimeout)
+}
+
 // ContextRecoveryTaskPrompt composes the preserved Task with a canonical,
 // checkpoint-first recovery instruction for a fresh OpenCode session. An
 // existing recovery section is preserved so a checkpoint written inside it is
@@ -112,6 +131,25 @@ func ContextRecoveryTaskPrompt(content string, reviewTimeout int) string {
 		return EnsureManagedTaskContext(trimTrailingNewlines(content) + "\n")
 	}
 	content = continuationTaskPrompt(content, reviewTimeout)
+	return EnsureManagedTaskContext(trimTrailingNewlines(content) + "\n\n" + contextRecoveryGuard + "\n")
+}
+
+// ContextRecoveryTaskPromptWithReviewSettings composes a fresh-session
+// recovery prompt after reconciling the current runtime-owned review settings.
+func ContextRecoveryTaskPromptWithReviewSettings(content, reviewCommand string, reviewCommandSet bool, reviewTimeout int) string {
+	if strings.TrimSpace(content) == "" {
+		content = DefaultPrompt()
+	}
+	content = EnsureReviewSettingsContext(content, reviewCommand, reviewCommandSet, reviewTimeout)
+	timeoutForGuard := reviewTimeout
+	if strings.TrimSpace(reviewCommand) == "" {
+		timeoutForGuard = 0
+	}
+	if strings.Contains(content, contextRecoveryGuardHeading) {
+		content = continuationTaskPrompt(content, timeoutForGuard)
+		return EnsureManagedTaskContext(trimTrailingNewlines(content) + "\n")
+	}
+	content = continuationTaskPrompt(content, timeoutForGuard)
 	return EnsureManagedTaskContext(trimTrailingNewlines(content) + "\n\n" + contextRecoveryGuard + "\n")
 }
 
@@ -129,6 +167,96 @@ func continuationTaskPrompt(content string, reviewTimeout int) string {
 		guard += fmt.Sprintf("\n\nCurrent AgentRun delegated review response timeout is `%d` seconds; it supersedes any persisted timeout wording above.", effective)
 	}
 	return EnsureManagedTaskContext(trimTrailingNewlines(content) + "\n\n" + guard + "\n")
+}
+
+// EnsureReviewSettingsContext reconciles the current effective settings in the
+// last Runtime Context section, leaving all other Task content untouched.
+// reviewTimeout is rendered as informational only for blind review.
+func EnsureReviewSettingsContext(content, reviewCommand string, reviewCommandSet bool, reviewTimeout int) string {
+	command := strings.TrimSpace(reviewCommand)
+	mode := "delegated review"
+	timeoutNote := ""
+	commandText := fmt.Sprintf("`%s`", command)
+	switch {
+	case command != "":
+		// A non-empty effective command selects delegated review.
+	case reviewCommandSet:
+		mode = "blind review"
+		timeoutNote = " (not used for blind review)"
+	default:
+		commandText = "(not configured)"
+		mode = "unspecified"
+		timeoutNote = " (review mode unspecified)"
+	}
+	effectiveTimeout := (&config.Config{ReviewTimeout: reviewTimeout}).EffectiveReviewTimeout()
+	lines := []string{
+		fmt.Sprintf("%s %s", reviewCommandContextPrefix, commandText),
+		fmt.Sprintf("%s %s", reviewModeContextPrefix, mode),
+		fmt.Sprintf("%s `%d` seconds%s", reviewTimeoutContextPrefix, effectiveTimeout, timeoutNote),
+	}
+	return upsertRuntimeContextLines(content, lines)
+}
+
+func upsertRuntimeContextLines(content string, managedLines []string) string {
+	lines := strings.Split(content, "\n")
+	start, end := runtimeContextSection(lines)
+	if start < 0 {
+		content = trimTrailingNewlines(content) + "\n\n" + reviewTimeoutContextHeading + "\n"
+		lines = strings.Split(content, "\n")
+		start = len(lines) - 2
+		end = len(lines)
+	}
+
+	prefixes := make(map[string]string, len(managedLines))
+	for _, line := range managedLines {
+		colon := strings.IndexByte(line, ':')
+		if colon < 0 {
+			continue
+		}
+		prefixes[line[:colon+1]] = line
+	}
+
+	seen := make(map[string]bool, len(prefixes))
+	section := make([]string, 0, end-start+len(managedLines))
+	section = append(section, lines[start])
+	for _, line := range lines[start+1 : end] {
+		trimmed := strings.TrimSpace(line)
+		matched := ""
+		for prefix := range prefixes {
+			if strings.HasPrefix(trimmed, prefix) {
+				matched = prefix
+				break
+			}
+		}
+		if matched == "" {
+			section = append(section, line)
+			continue
+		}
+		if seen[matched] {
+			continue
+		}
+		seen[matched] = true
+		section = append(section, prefixes[matched])
+	}
+	for _, line := range managedLines {
+		colon := strings.IndexByte(line, ':')
+		if colon < 0 || seen[line[:colon+1]] {
+			continue
+		}
+		insertAt := len(section)
+		for insertAt > 1 && strings.TrimSpace(section[insertAt-1]) == "" {
+			insertAt--
+		}
+		section = append(section, "")
+		copy(section[insertAt+1:], section[insertAt:])
+		section[insertAt] = line
+		seen[line[:colon+1]] = true
+	}
+	result := make([]string, 0, len(lines)+len(section)-(end-start))
+	result = append(result, lines[:start]...)
+	result = append(result, section...)
+	result = append(result, lines[end:]...)
+	return strings.Join(result, "\n")
 }
 
 // EnsureCIOwnershipContext appends the canonical implementation-owned failed
@@ -228,10 +356,36 @@ func removeReviewEvidenceSection(content string) string {
 // the current task even when a custom template omits REVIEW_TIMEOUT.
 func EnsureReviewTimeoutContext(content string, reviewTimeout int) string {
 	effective := (&config.Config{ReviewTimeout: reviewTimeout}).EffectiveReviewTimeout()
-	line := fmt.Sprintf("%s `%d` seconds", reviewTimeoutContextPrefix, effective)
 	lines := strings.Split(content, "\n")
 	sectionStart, sectionEnd := runtimeContextSection(lines)
+	blindReview := false
+	reviewModeUnspecified := false
 	if sectionStart >= 0 {
+		for i := sectionStart + 1; i < sectionEnd; i++ {
+			trimmed := strings.TrimSpace(lines[i])
+			if strings.TrimSpace(strings.TrimPrefix(trimmed, reviewModeContextPrefix)) == "blind review" &&
+				strings.HasPrefix(trimmed, reviewModeContextPrefix) {
+				blindReview = true
+			}
+			if strings.TrimSpace(strings.TrimPrefix(trimmed, reviewModeContextPrefix)) == "unspecified" &&
+				strings.HasPrefix(trimmed, reviewModeContextPrefix) {
+				reviewModeUnspecified = true
+			}
+			if strings.HasPrefix(trimmed, reviewTimeoutContextPrefix) &&
+				strings.Contains(trimmed, "(not used for blind review)") {
+				blindReview = true
+			}
+			if strings.HasPrefix(trimmed, reviewTimeoutContextPrefix) &&
+				strings.Contains(trimmed, "(review mode unspecified)") {
+				reviewModeUnspecified = true
+			}
+		}
+		line := fmt.Sprintf("%s `%d` seconds", reviewTimeoutContextPrefix, effective)
+		if blindReview {
+			line += " (not used for blind review)"
+		} else if reviewModeUnspecified {
+			line += " (review mode unspecified)"
+		}
 		for i := sectionStart + 1; i < sectionEnd; i++ {
 			if strings.HasPrefix(strings.TrimSpace(lines[i]), reviewTimeoutContextPrefix) {
 				lines[i] = line
@@ -242,6 +396,7 @@ func EnsureReviewTimeoutContext(content string, reviewTimeout int) string {
 		return strings.Join(lines, "\n")
 	}
 
+	line := fmt.Sprintf("%s `%d` seconds", reviewTimeoutContextPrefix, effective)
 	return trimTrailingNewlines(content) + "\n\n" + reviewTimeoutContextHeading + "\n\n" + line + "\n"
 }
 

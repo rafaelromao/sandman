@@ -333,6 +333,88 @@ func TestRowDriverAcceptsAwaitResumeThenQuotaReadyAdmission(t *testing.T) {
 	}
 }
 
+func TestRowDriverDoesNotChargeInterruptedProviderResetWait(t *testing.T) {
+	now := &rowDriverClockFake{now: time.Date(2026, time.October, 28, 12, 0, 0, 0, time.UTC)}
+	gates := &rowDriverGateFake{clock: now, waitErr: errors.New("wait interrupted")}
+	executor := &rowDriverExecutorFake{
+		started: true,
+		results: []AgentRunResult{{
+			IssueNumber: 42, RunID: "run-42", Branch: "42-fix", Status: "await",
+			UsageLimitReached: true, UsageLimitDeadline: now.now.Add(usageLimitRetryWindow),
+			UsageLimitResetAt: now.now.Add(37 * time.Minute),
+		}},
+	}
+	abort := &rowDriverAbortFake{}
+	run := RunSpec{RunID: "run-42", IssueNumber: 42, BatchID: "batch-a", Branch: "42-fix", BaseBranch: "main"}
+	got := newRowDriver(executor, gates, now, abort).Drive(context.Background(), run, ContinuationCursor{}, rowDriverOptions{
+		ReleaseAwaitCapacity: true,
+	})
+	if got.Result.Status != "aborted" || abort.calls != 1 {
+		t.Fatalf("Drive = %+v aborts = %d, want immediate abort after interrupted wait", got, abort.calls)
+	}
+	if waited := got.Cursor.quotaAllowance.waited; waited != 0 {
+		t.Fatalf("interrupted provider wait charged %v, want zero", waited)
+	}
+}
+
+func TestRowDriverPastQuotaRecoveryCheckpointProbesImmediately(t *testing.T) {
+	now := &rowDriverClockFake{now: time.Date(2026, time.October, 28, 12, 0, 0, 0, time.UTC)}
+	resetAt := now.now.Add(30 * time.Minute)
+	waitForNextReset := resetAt.Sub(now.now)
+	var events []string
+	var waits []time.Duration
+	gates := &rowDriverWaitRecorder{
+		rowDriverGateFake: &rowDriverGateFake{clock: now, events: &events},
+		waits:             &waits,
+	}
+	executor := &rowDriverExecutorFake{
+		started: true,
+		events:  &events,
+		results: []AgentRunResult{
+			{
+				IssueNumber: 42, RunID: "run-42", Branch: "42-fix", Status: "await",
+				UsageLimitReached: true, UsageLimitDeadline: now.now.Add(time.Hour),
+				UsageLimitResetAt: resetAt,
+			},
+			{IssueNumber: 42, RunID: "run-42", Branch: "42-fix", Status: "success"},
+		},
+		observations: []lifecycleVerdict{{Action: lifecycleResume}, {Action: lifecycleResume}},
+	}
+	run := RunSpec{RunID: "run-42", IssueNumber: 42, BatchID: "batch-a", Branch: "42-fix", BaseBranch: "main"}
+	cursor := ContinuationCursor{
+		Mode: ModeContinue, ReuseSession: true,
+		quotaAllowance: usageLimitAllowance{
+			probe: true, waited: 4 * time.Hour, providerReset: resetAt,
+		},
+	}
+
+	got := newRowDriver(executor, gates, now).Drive(context.Background(), run, cursor, rowDriverOptions{
+		Awaiting: true, Recovering: true, NextPollAt: now.now.Add(-time.Minute),
+		ReleaseAwaitCapacity: true,
+	})
+	if got.Result.Status != "success" || executor.executeCalls != 2 {
+		t.Fatalf("Drive = %+v executions=%d; want immediate quota probe then success", got, executor.executeCalls)
+	}
+	executeAt, waitAt := -1, -1
+	for index, event := range events {
+		if event == "execute" && executeAt == -1 {
+			executeAt = index
+		}
+		if event == "wait" && waitAt == -1 {
+			waitAt = index
+		}
+	}
+	if executeAt == -1 || waitAt == -1 || executeAt >= waitAt {
+		t.Fatalf("event order = %v; expired recovery checkpoint must probe before scheduling another wait", events)
+	}
+	if len(waits) != 1 || waits[0] != waitForNextReset {
+		t.Fatalf("scheduled waits = %v; want one fresh wait until provider reset after probe", waits)
+	}
+	if len(gates.readyEvidence) != 1 || gates.readyEvidence[0]["usage_limit_waited_seconds"] != int((4*time.Hour+30*time.Minute)/time.Second) {
+		t.Fatalf("quota-ready evidence = %#v; want completed post-probe wait accounting", gates.readyEvidence)
+	}
+}
+
 // Issue #2938: a GitHub recovery wait sleeps until its next hourly attempt
 // instead of re-observing every poll interval, and holds no execution slot.
 func TestRowDriverGitHubRecoveryWaitSleepsUntilNextAttempt(t *testing.T) {

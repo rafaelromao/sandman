@@ -33,7 +33,9 @@ or silently post a delegated-review trigger.
 ## Workflow
 
 1. Resolve the installed helper directory alongside this skill. The helpers
-   require POSIX `sh`, `jq`, `gh`, and `sha256sum` or `shasum`.
+   require POSIX `sh`, `jq`, `gh`, and `sha256sum` or `shasum`. The generated
+   Debian bookworm container supports GitHub CLI `2.23.0` and jq `1.6`; these
+   helpers do not require newer versions.
 2. Record the checkout's HEAD and `git status --porcelain=v1 --untracked-files=all`.
    Require a clean checkout and HEAD equal to the supplied head. Create a
    fresh temporary directory outside the worktree with `mktemp -d` for this

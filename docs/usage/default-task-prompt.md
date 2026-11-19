@@ -36,6 +36,10 @@ configured-command path; blind review has no trigger or delegated-review wait.
 
     The change-request title (and the commit subject) must follow the Conventional Commits format. Pick the most accurate type for the change from `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`. Append `!` to the type for breaking changes. The full regex and allowed-types list are documented in `AGENTS.md`'s "Branching and versioning rules" section — read it before opening the change request. The `CI / semantic-pull-request` status check on `{{BASE_BRANCH}}` enforces the title regex; title validation is separate from Release Please's SemVer parsing of merged commit history. Reuse the same Conventional Commits header for both the commit and the change request so the merge button sees one coherent signal.
 
+    ## Pull-request Description
+
+    The implementation publication checkpoint requires meaningful Summary and actual Verification evidence. Inspect the target repository's pull-request template and conventions; preserve every required template section and use its headings rather than imposing Sandman's example headings. Explain what changed and why. Verification distinguishes local checks, known failures or skips, and current-head CI: report actual local commands and outcomes, and the externally observed CI status and time. Never invent a green result or present stale CI as current; say when CI has not yet been observed. Include applicable risks or merge-danger guidance. A reference-and-footer-only body cannot pass. On creation, continuation, and body edits, preserve the selected work-item reference, existing substantive description, and all required template content, with exactly one final linked Sandman footer.
+
     ## Execution Checklist
 
     - [ ] Create branch

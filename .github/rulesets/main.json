@@ -12,7 +12,7 @@
       "type": "required_status_checks",
       "parameters": {
         "required_status_checks": [
-          { "context": "CI / build (ubuntu-latest)" },
+          { "context": "CI / build (ubuntu-latest)", "integration_id": 15368 },
           { "context": "CI / build (macos-latest)" },
           { "context": "CI / portal-continuity-browser" },
           { "context": "CI / semantic-pull-request" },

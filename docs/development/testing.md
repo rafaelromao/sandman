@@ -83,6 +83,19 @@ For OpenCode context rollover changes, the hermetic production-path coverage is:
 go test -run 'ContextRollover|ContextRecoveryTask' ./internal/batch ./internal/prompt ./internal/events ./internal/cmd
 ```
 
+For continuation checkpoint and current review-setting changes, run:
+
+```bash
+go test -race ./internal/batch ./internal/prompt ./internal/cmd -run 'QuotaReentry|CIEntryResume|InformalFeedbackResumes|TaskIsUnavailable|OrdinaryRetriesUseLatestWorktreeTask|ReviewSettingsRefreshesBothReviewModes|HonorsConfiguredEmptyBit|ContextRecoveryTask|ContinueFlag_UsesCurrentFlagsOverStoredValues' -count=1
+```
+
+This exercises repeated quota probes, CI and review re-entry against the Task
+actually delivered to the runnable, missing/unreadable Task failure before
+launch, ordinary retries, manual continuation, and both empty↔configured
+Review command transitions (including an explicitly configured empty command).
+Runtime re-entry must preserve agent-owned checkpoints while refreshing only
+runtime-owned review settings.
+
 For OpenCode session reuse, the focused production-path coverage is:
 
 ```bash
@@ -267,8 +280,13 @@ CI → review → approval → occupied slot → merge; quota → recovery → C
 deferred admission → explicit abort; and ownerless wait → different-batch
 rehydration inside fixed grace. Assert emitted events and their CLI/Portal folds,
 managed CI/review hard deadlines, session-local relaunch and invocation-local
-standalone CI bounds, completed quota polling, cumulative RunID duration, exclusive claims,
-held dependencies, terminal preservation, and launch-boundary quota revalidation.
+standalone CI bounds, reset-aware and fallback quota schedules, variable
+completed-wait accounting, restart reconstruction, cancellation, cumulative
+RunID duration, exclusive claims, held dependencies, terminal preservation, and
+launch-boundary quota revalidation. Strategy tests cover authoritative reset
+sources, timezone/date interpretation, malformed and conflicting evidence, and
+the seven-day bound. Verify that reviewer quota recovery retains its separate
+daemon-wide fixed ten-minute cadence.
 
 E2E tests exercise multi-session behavior such as continuing a previous run, batch orchestration, and subagent permission boundaries. They require the `e2e` build tag and are slower than smoke tests.
 
@@ -679,6 +697,20 @@ auth setup succeeds before the agent adds the worktree's shim directory. This
 exercises the real container startup and permission forwarding without a provider
 request. Diagnostics are included as `container-permissions` in the existing
 Linux build reports; the broader provider suites remain release-only.
+
+The same required Linux build runs `TestBlindReviewDefaultContainerCompatibility`
+as a separate, credential-free Podman scenario. It builds the generated default
+Debian bookworm image's shared-tools layer and verifies its supported `gh 2.23.0`
+and `jq 1.6` against blind-review prompt rendering, V1/V2 native-delegation
+handoff fixtures, and the publication transform. The packaged GitHub CLI follows
+a two-page GraphQL cursor chain against a loopback HTTPS mock using a disposable
+fixture token and CA; all other GitHub calls are faked. No provider, live GitHub,
+or user credential is used. The focused image stops after the generated shared
+package layer, omitting unrelated language, agent, and mise downloads. Reports
+are written under `blind-review-container` without adding a protection context.
+The existing `CI / build (ubuntu-latest)` ruleset entry remains the required
+context and is bound to the GitHub Actions integration; no new context is
+introduced.
 
 Python toolchain image builds mount an optional `github_token` build secret for
 mise downloads and artifact-attestation verification. Image builders share the

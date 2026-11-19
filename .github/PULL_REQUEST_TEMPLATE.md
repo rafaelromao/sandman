@@ -12,12 +12,16 @@ If this change request is part of a multi-issue initiative that ships under a `f
 
 ## Description
 
-<!-- Describe the change and the problem it solves -->
+<!-- Summarize what changed and why it solves the problem. -->
 
 ## Related Issue
 
 <!-- Link to the issue this PR addresses, if any -->
 Fixes #(issue number)
+
+## Verification
+
+<!-- List actual local commands and outcomes, plus known failures or skips. Report external CI only for the current pull-request head and include when it was observed; if not observed, say so. -->
 
 ## Checklist
 

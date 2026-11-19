@@ -18,6 +18,17 @@ import (
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
+func seedContinuationTask(t testing.TB, workDir string) {
+	t.Helper()
+	taskDir := filepath.Join(workDir, ".sandman")
+	if err := os.MkdirAll(taskDir, 0o755); err != nil {
+		t.Fatalf("create continuation Task directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(taskDir, "task.md"), []byte("# Task\n\n## Next Step\n\nContinue the existing work.\n"), 0o600); err != nil {
+		t.Fatalf("seed continuation Task: %v", err)
+	}
+}
+
 // Historical head-local counts cannot consume a new session's repair launches.
 // Entry plus the legacy three in-session relaunches remain executable.
 func TestRunSingle_ModeContinueCIFailureIgnoresHistoricalRepairBudget(t *testing.T) {
@@ -84,7 +95,7 @@ func TestRunSingle_ModeContinueCIFailureIgnoresHistoricalRepairBudget(t *testing
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, true, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false, "", "")
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, true, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{TaskPrompt: "# Task\n\nbatch-start snapshot"}, nil, sbFactory, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false, "", "")
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -111,6 +122,161 @@ func TestRunSingle_ModeContinueCIFailureIgnoresHistoricalRepairBudget(t *testing
 	retained, err := readCIWaitRegistration(filepath.Join(worktreePath, ".sandman", "state", "17.ci_wait.json"))
 	if err != nil || retained.DeadlineUnixSeconds != registration.DeadlineUnixSeconds {
 		t.Fatalf("repair renewed the CI observation deadline: registration=%+v err=%v", retained, err)
+	}
+}
+
+func TestRunExecutorCIEntryResumeReceivesLatestWorktreeTask(t *testing.T) {
+	root := testenv.MkdirShort(t, "sm-ci-task-")
+	t.Chdir(root)
+	worktree := filepath.Join(root, "worktree")
+	taskPath := filepath.Join(worktree, ".sandman", "task.md")
+	if err := os.MkdirAll(filepath.Dir(taskPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(taskPath, []byte("# Task\n\n## Runtime Context\n\n- Review command: ``\n- Review mode: blind review\n- Delegated review response timeout: `900` seconds (not used for blind review)\n\n## Plan\n\n- preserve the agent checkpoint\n\n## Execution Checklist\n\n- [x] inspect CI failure\n\n## Next Step\n\nRepair the current check.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const runID = "ci-task-reentry"
+	const branch = "42-ci-task"
+	log := &spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: runID, Issue: 42, Payload: map[string]any{"branch": branch, "batch_id": "old"}},
+		{Type: "run.await", RunID: runID, Issue: 42, Payload: map[string]any{
+			"await_reason": "ci-failure", "gate": "ci-failure", "branch": branch, "batch_id": "old",
+			"pull_request": 17, "head_sha": "current-sha",
+		}},
+	}}
+	client := &reviewWaitSchedulerGitHubClient{fakeGitHubClient: fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix CI", State: "open"}},
+		prs: map[string]*github.PR{branch: {
+			Number: 17, State: "open", HeadRefName: branch, HeadRefOid: "current-sha",
+			StatusCheckRollup: "failure", MergeStateStatus: "BLOCKED", Body: "Closes #42",
+		}},
+	}}
+	var delivered []string
+	factory := &taskPromptRunnableFactory{run: func(_ context.Context, cfg prompt.RenderConfig) AgentRunResult {
+		delivered = append(delivered, cfg.TaskPrompt)
+		client.setPR(branch, func(pr *github.PR) { pr.State, pr.Merged = "merged", true })
+		return AgentRunResult{IssueNumber: 42, Branch: branch, Status: "success"}
+	}}
+	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktree}}
+	opts := gateTestRunOptions()
+	o := NewOrchestrator(client, &noopRenderer{}, nil, log,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(sbFactory),
+		WithRunnableFactory(factory),
+		WithRunSessionOpts(opts),
+	)
+	bc := BatchConfig{
+		Cfg:              &config.Config{WorktreeDir: "worktrees"},
+		AgentCfg:         config.BuiltInAgentPresets["opencode"].Agent("opencode"),
+		IdentityResolver: noopIdentityResolver(),
+	}
+	row := RowSpec{
+		IssueNumber:         42,
+		RunID:               runID,
+		Mode:                ModeContinue,
+		PreviousRunIDs:      map[int]string{42: runID},
+		PreviousRunBatchIDs: map[int]string{42: "old"},
+		Branches:            map[int]string{42: branch},
+		BaseBranch:          "main",
+		RenderCfg: prompt.RenderConfig{
+			TaskPrompt:       "# Task\n\nbatch-start snapshot",
+			ReviewCommand:    "/sandman review",
+			ReviewCommandSet: true,
+			ReviewTimeout:    600,
+		},
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), row)
+	if !started || result.Status != "success" {
+		t.Fatalf("result = %+v started=%v, want verified success", result, started)
+	}
+	if len(delivered) != 1 {
+		t.Fatalf("runnable launches = %d, want one current-head CI resume", len(delivered))
+	}
+	for _, want := range []string{
+		"preserve the agent checkpoint",
+		"[x] inspect CI failure",
+		"Repair the current check.",
+		"CI_FAILURE",
+		"Review command: `/sandman review`",
+		"Review mode: delegated review",
+		"Delegated review response timeout: `600` seconds",
+	} {
+		if !strings.Contains(delivered[0], want) {
+			t.Errorf("CI resume Task missing %q:\n%s", want, delivered[0])
+		}
+	}
+	if strings.Contains(delivered[0], "batch-start snapshot") || strings.Contains(delivered[0], "Review mode: blind review") || strings.Contains(delivered[0], "`900` seconds") {
+		t.Fatalf("CI resume replayed the stale batch-start Task:\n%s", delivered[0])
+	}
+}
+
+func TestQuotaReentryFailsBeforeLaunchWhenTaskIsUnavailable(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		makeTask func(*testing.T, string)
+	}{
+		{
+			name:     "missing",
+			makeTask: func(*testing.T, string) {},
+		},
+		{
+			name: "unreadable",
+			makeTask: func(t *testing.T, taskPath string) {
+				if err := os.Mkdir(taskPath, 0o755); err != nil {
+					t.Fatalf("create unreadable Task path: %v", err)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := testenv.MkdirShort(t, "sm-task-error-")
+			t.Chdir(root)
+			worktree := filepath.Join(root, "worktree")
+			taskPath := filepath.Join(worktree, ".sandman", "task.md")
+			if err := os.MkdirAll(filepath.Dir(taskPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			tc.makeTask(t, taskPath)
+			log := &spyEventLog{}
+			sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktree}}
+			launches := 0
+			factory := &taskPromptRunnableFactory{run: func(context.Context, prompt.RenderConfig) AgentRunResult {
+				launches++
+				return AgentRunResult{IssueNumber: 42, Branch: gateTestBranch, Status: "success"}
+			}}
+			o := NewOrchestrator(
+				&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}},
+				&noopRenderer{}, nil, log,
+				WithErrorLog(io.Discard),
+				WithSandboxFactory(sbFactory),
+				WithRunnableFactory(factory),
+			)
+			bc := BatchConfig{
+				Cfg:              &config.Config{WorktreeDir: "worktrees"},
+				AgentCfg:         config.BuiltInAgentPresets["opencode"].Agent("opencode"),
+				IdentityResolver: noopIdentityResolver(),
+			}
+			row := RowSpec{
+				IssueNumber:    42,
+				RunID:          "missing-task",
+				Mode:           ModeContinue,
+				quotaAllowance: usageLimitAllowance{probe: true},
+				Branches:       map[int]string{42: gateTestBranch},
+				BaseBranch:     "main",
+				RenderCfg:      prompt.RenderConfig{TaskPrompt: "# Task\n\nstale batch snapshot"},
+			}
+			result, _ := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), row)
+			if result.Status != "failure" {
+				t.Fatalf("status = %q, want explicit failure for unavailable continuation Task", result.Status)
+			}
+			if launches != 0 {
+				t.Fatalf("agent launches = %d, want no launch without a readable Task", launches)
+			}
+			if findEvent(log.snapshot(), "run.finished") == nil {
+				t.Fatalf("missing terminal failure event after unavailable Task: %+v", log.snapshot())
+			}
+		})
 	}
 }
 
@@ -305,6 +471,7 @@ func TestEntryReevaluation_ModeContinueTopLevelApprovalResumesAgentWithEvidence(
 
 	branch := "42-fix-bug"
 	worktreePath := filepath.Join(workDir, "worktree")
+	seedContinuationTask(t, worktreePath)
 	writeInformalRespondedClassification(t, worktreePath, "## Summary\nNo findings.\n\n## Decision\n\n**APPROVED**")
 	writeCanonicalRegistrationForTest(t, worktreePath)
 
@@ -396,6 +563,7 @@ func TestRunSingle_ReadyToMergeResumesWithinSameAttempt(t *testing.T) {
 
 	branch := "42-fix-bug"
 	worktreePath := filepath.Join(workDir, "worktree")
+	seedContinuationTask(t, worktreePath)
 
 	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
 	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
@@ -818,7 +986,8 @@ func TestEntryReevaluation_ModeContinueInformalFeedbackResumesAgentWithEvidence(
 	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0o755); err != nil {
 		t.Fatalf("create worktree task directory: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("# Task\n"), 0o644); err != nil {
+	task := "# Task\n\n## Runtime Context\n\n- Review command: ``\n- Review mode: blind review\n- Delegated review response timeout: `900` seconds (not used for blind review)\n\n## Plan\n\n- preserve review feedback work\n\n## Execution Checklist\n\n- [x] reproduce feedback\n\n## Next Step\n\nRepair socketpath.go.\n"
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte(task), 0o644); err != nil {
 		t.Fatalf("seed task: %v", err)
 	}
 	writeInformalRespondedClassification(t, worktreePath, "Please fix the race in internal/socketpath/socketpath.go.")
@@ -858,7 +1027,12 @@ func TestEntryReevaluation_ModeContinueInformalFeedbackResumesAgentWithEvidence(
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, true, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false, "", "")
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, true, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{
+		TaskPrompt:       "# Task\n\nbatch-start snapshot",
+		ReviewCommand:    "/sandman review",
+		ReviewCommandSet: true,
+		ReviewTimeout:    600,
+	}, nil, sbFactory, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false, "", "")
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -873,6 +1047,19 @@ func TestEntryReevaluation_ModeContinueInformalFeedbackResumesAgentWithEvidence(
 	}
 	if !strings.Contains(resultFactory.configs[0].TaskPrompt, "REVIEW_INFORMAL_FEEDBACK") || !strings.Contains(resultFactory.configs[0].TaskPrompt, "socketpath.go") {
 		t.Fatalf("entry prompt missing informal-feedback evidence:\n%s", resultFactory.configs[0].TaskPrompt)
+	}
+	for _, want := range []string{"preserve review feedback work", "[x] reproduce feedback", "Repair socketpath.go."} {
+		if !strings.Contains(resultFactory.configs[0].TaskPrompt, want) {
+			t.Errorf("review resume Task missing latest checkpoint %q:\n%s", want, resultFactory.configs[0].TaskPrompt)
+		}
+	}
+	for _, want := range []string{"Review command: `/sandman review`", "Review mode: delegated review", "Delegated review response timeout: `600` seconds"} {
+		if !strings.Contains(resultFactory.configs[0].TaskPrompt, want) {
+			t.Errorf("review resume Task missing current setting %q:\n%s", want, resultFactory.configs[0].TaskPrompt)
+		}
+	}
+	if strings.Contains(resultFactory.configs[0].TaskPrompt, "batch-start snapshot") {
+		t.Fatalf("review resume replayed the stale batch-start Task:\n%s", resultFactory.configs[0].TaskPrompt)
 	}
 	logs, err := spyLog.Read()
 	if err != nil {
@@ -1410,13 +1597,13 @@ func TestResumePromptFromGate_CIFailureAndConflictRelaunchWithoutRetry(t *testin
 			}, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			promptText, resume := s.resumePromptFromGate(context.Background(), &fakeSandbox{workDir: workDir}, "42-fix", "run-1", lifecycleVerdict{
+			promptText, resume, err := s.resumePromptFromGate(context.Background(), &fakeSandbox{workDir: workDir}, "42-fix", "run-1", lifecycleVerdict{
 				Action: lifecycleResume, Evidence: map[string]any{
 					"gate": tc.gate, "reason": tc.reason, "pull_request": 17, "head_sha": tc.gate,
 				},
 			})
-			if !resume || !strings.Contains(promptText, tc.reason) {
-				t.Fatalf("resume = (%q, %t), want prompt with %s", promptText, resume, tc.reason)
+			if err != nil || !resume || !strings.Contains(promptText, tc.reason) {
+				t.Fatalf("resume = (%q, %t, %v), want prompt with %s", promptText, resume, err, tc.reason)
 			}
 			if s.resumeCount != 1 || countEventsByType(log.snapshot(), "run.resumed") != 1 {
 				t.Fatalf("resume was not recorded: count=%d events=%v", s.resumeCount, log.snapshot())
@@ -1425,15 +1612,23 @@ func TestResumePromptFromGate_CIFailureAndConflictRelaunchWithoutRetry(t *testin
 	}
 }
 
-// The no-evidence resume prompt is byte-identical to the plain continuation
-// prompt, keeping the continuation baseline (continue flow) unchanged.
-func TestResumePromptFor_NoEvidenceIsByteIdenticalContinuation(t *testing.T) {
-	s := &runSession{}
+// No-evidence resumes still refresh runtime-owned review settings to the
+// current blind-review mode while preserving the agent-owned Task body.
+func TestResumePromptFor_NoEvidenceUsesCurrentReviewSettings(t *testing.T) {
+	s := &runSession{renderCfg: prompt.RenderConfig{ReviewCommandSet: true}}
 	task := "# Task\n\nDo the work.\n"
 	got := s.resumePromptFor(task, nil, 0, false)
-	want := prompt.ContinuationTaskPromptWithReviewTimeout(task, 0)
-	if got != want {
-		t.Fatalf("no-evidence resume prompt diverges from continuation prompt:\ngot:  %s\nwant: %s", got, want)
+	for _, want := range []string{
+		"# Task",
+		"Do the work.",
+		"- Review command: ``",
+		"- Review mode: blind review",
+		"Delegated review response timeout: `1800` seconds (not used for blind review)",
+		"## Continuation Freshness Guard",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("no-evidence resume Task missing %q:\n%s", want, got)
+		}
 	}
 }
 

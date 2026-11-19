@@ -64,6 +64,27 @@ queued → running ⇄ waiting → success / failure / aborted
 | New RunID for a manual continuation | Start a fresh clock |
 | Linked reviewer active | Portal may show **reviewing**; underlying lifecycle remains inspectable |
 
+## Continuation Task ownership
+
+The Task in the preserved worktree is the agent-owned progress checkpoint.
+Manual continuation, quota probes, CI/review resumes, and other runtime-owned
+re-entry read that latest file immediately before preparing the next launch;
+the immutable batch-start Task is never a recovery source. A missing or
+unreadable Task stops continuation before agent launch with a non-success
+outcome rather than falling back to stale prompt text or the default scaffold.
+Ordinary retries and fresh context-recovery sessions continue to build from
+the latest readable Task.
+
+Review command, selected review mode, and effective delegated-review timeout
+are runtime-owned settings. Continuation composition refreshes those values in
+the Task's Runtime Context from current configuration, using the resolved
+configured/empty selection rather than stale Task prose, while preserving the
+agent-owned plan, checklist, and next action. A changed Review command therefore
+cannot leave the next session following obsolete blind/delegated-review
+instructions; in blind mode the timeout is marked as informational and unused.
+This prompt reconciliation does not change RunID, session reuse, active
+duration, abort fencing, or event-sourced lifecycle decisions.
+
 ## AFK continuity
 
 After v1.0.0-rc.2 a started Run may stop only for a permanent failure it
@@ -283,16 +304,19 @@ remains terminal even when local commits have not been pushed.
 | Managed observation cadence | **30 seconds from the first poll** between observations of an ordinary external wait, in the batch and foreground paths; excludes API-call duration and execution-capacity admission delay; never renews a deadline or resets retry/relaunch accounting | Not a budget: polling never renews a deadline or resets retry/relaunch accounting |
 | Delegated review | Configured `review_timeout`; default 1,800 seconds, minimum 240 seconds; applies only when a review command is configured | New confirmed request |
 | Blind review round | Synchronous implementor round; no `review_timeout`, trigger envelope, or polling window | New head or fresh cycle/relaunch round |
-| Implementation provider quota | **Five hours of accumulated completed polling**, ten-minute intervals, then final boundary probe and configured ordinary retries | Verified recovery followed by a new quota episode; re-entry/restart preserves consumed polling |
+| Implementation provider quota | **Five hours of accumulated completed scheduled waits**, at a trustworthy provider reset when available or ten-minute fallback intervals, then final boundary probe and configured ordinary retries | Verified recovery followed by a new quota episode; re-entry/restart preserves consumed polling |
 | Implementation lifecycle relaunch | Default **three in-session relaunches**, entry excluded; a feedback relaunch that changes nothing ends the allowance; exhaustion waits | Fresh executor session with a new resume signature |
 | Ordinary execution retry | Configured retry budget, including owned publication/review delivery recovery | Ordinary retry policy |
 | Ownerless recovery | **Five minutes**, capped by an existing operation deadline | Live owner renewal, never repeated discovery |
 
-Quota polling (ten minutes), hourly GitHub recovery attempts with the outage
-gate, and the standalone review cycle's own plan keep their schedules; the
-30-second cadence changes only the interval between ordinary managed
-observations. It applies to default and new waits: a retained valid explicit
-plan (a persisted review-request plan or a test override) keeps its meaning. The row driver's observation never preempts an executing attempt:
+Implementation quota waits use a validated provider reset time when the selected
+agent strategy supplies one; otherwise they retain ten-minute fallback polling.
+The review daemon keeps its separate fixed ten-minute quota schedule. Hourly
+GitHub recovery attempts with the outage gate and the standalone review cycle's
+own plan also keep their schedules; the 30-second cadence changes only the
+interval between ordinary managed observations. It applies to default and new
+waits: a retained valid explicit plan (a persisted review-request plan or a test
+override) keeps its meaning. The row driver's observation never preempts an executing attempt:
 review or CI that becomes ready while the agent is still running required local
 verification is observed only after the attempt returns, by the same single
 lifecycle decision, which selects merge work without an initial wait.
@@ -314,10 +338,16 @@ files cannot veto executable work. Standalone same-head polling preserves its
 invocation-local window/count; a changed head resets both.
 
 Quota accounting restores consumed polling into both the executor session and
-batch scheduler. Only completed polling intervals count; cancellation, capacity
-delay, and process downtime do not. Re-entry cannot create another five-hour
-allowance. The recomputed expected exhaustion timestamp is diagnostic: it is
-neither an admission nor ownership cutoff. Quota schedules use stable
+batch scheduler. A wait is scheduled at a validated provider reset when
+available, otherwise for ten minutes, and is capped by the remaining five-hour
+allowance. Its scheduled duration counts only after the wait returns
+successfully; cancellation or interruption charges zero. Capacity delay and
+process downtime do not count. On restart, the persisted `NextPollAt` checkpoint
+is honored; if it is missing, the due time is reconstructed from current event
+evidence, and only a successfully completed live remainder accrues. Re-entry
+cannot create another five-hour allowance. The provider reset is distinct from
+the recomputed expected exhaustion timestamp, which is diagnostic only: neither
+is an admission or ownership cutoff. Quota schedules use stable
 `quota:<RunID>` operation identity with no hard operation deadline.
 
 After the allowance is consumed, the final boundary probe and configured
@@ -345,6 +375,8 @@ owners still pause admission; siblings establish their own outcomes rather than
 inheriting failure from an exhausted probe. Yielding execution retains unfinished
 queued/await intent until admission is permitted.
 
+Reviewer quota recovery retains its daemon-wide fixed ten-minute schedule;
+implementation provider reset evidence does not affect reviewer scheduling.
 Reviewer launch failures retain the existing 10/20/40/60-second capped backoff,
 request/head advisory artifact claims, and durable single-publication recovery,
 without a cumulative three-launch gate or a new reviewer request-age cutoff.

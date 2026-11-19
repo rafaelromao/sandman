@@ -230,6 +230,36 @@ func TestUsageLimitAwaitPollsWhileQuotaRemainsExhausted(t *testing.T) {
 	}
 }
 
+func TestUsageLimitOrdinaryRetriesUseLatestWorktreeTask(t *testing.T) {
+	result, sb, _, _ := runUsageLimitBatchCaseWithTaskHook(t, 2, 0, 1, true, 0, func(sb *usageLimitRetrySandbox) {
+		sb.onUsageLimit = func(attempt int) {
+			checkpoint := fmt.Sprintf("# Task\n\n## Plan\n\n- checkpoint after quota probe %d\n\n## Next Step\n\nContinue step %d.\n", attempt, attempt+1)
+			taskPath := filepath.Join(sb.WorkDir(), ".sandman", "task.md")
+			if err := os.WriteFile(taskPath, []byte(checkpoint), 0o644); err != nil {
+				t.Errorf("write agent Task checkpoint after quota probe %d: %v", attempt, err)
+			}
+		}
+	})
+	if result.Runs[0].Status != "success" {
+		t.Fatalf("status = %q, want success", result.Runs[0].Status)
+	}
+	prompts := sb.promptsSnapshot()
+	if len(prompts) != 3 {
+		t.Fatalf("Task deliveries = %d, want initial launch and two ordinary retries", len(prompts))
+	}
+	for i, checkpoint := range []string{
+		"checkpoint after quota probe 1",
+		"checkpoint after quota probe 2",
+	} {
+		if !strings.Contains(prompts[i+1], checkpoint) {
+			t.Errorf("ordinary retry %d did not receive latest worktree Task checkpoint %q:\n%s", i+1, checkpoint, prompts[i+1])
+		}
+	}
+	if !strings.Contains(prompts[2], "Continue step 3.") {
+		t.Fatalf("last ordinary retry lost the latest next action:\n%s", prompts[2])
+	}
+}
+
 func TestUsageLimitAwaitExcludesCustomOpenCodePreset(t *testing.T) {
 	session := runSession{
 		issueNumber: 42,
@@ -254,7 +284,18 @@ func runUsageLimitBatchCase(t *testing.T, failures, idleTimeout, retries int, fi
 	return runUsageLimitBatchCaseWithEventLog(t, failures, idleTimeout, retries, finishOnSuccess, cancelOnAttempt, log, log, gate...)
 }
 
+func runUsageLimitBatchCaseWithTaskHook(t *testing.T, failures, idleTimeout, retries int, finishOnSuccess bool, cancelOnAttempt int, taskHook func(*usageLimitRetrySandbox), gate ...string) (*Result, *usageLimitRetrySandbox, *spyEventLog, []time.Duration) {
+	t.Helper()
+	log := &spyEventLog{}
+	return runUsageLimitBatchCaseConfigured(t, failures, idleTimeout, retries, finishOnSuccess, cancelOnAttempt, taskHook, log, log, gate...)
+}
+
 func runUsageLimitBatchCaseWithEventLog(t *testing.T, failures, idleTimeout, retries int, finishOnSuccess bool, cancelOnAttempt int, log *spyEventLog, eventLog events.EventLog, gate ...string) (*Result, *usageLimitRetrySandbox, *spyEventLog, []time.Duration) {
+	t.Helper()
+	return runUsageLimitBatchCaseConfigured(t, failures, idleTimeout, retries, finishOnSuccess, cancelOnAttempt, nil, log, eventLog, gate...)
+}
+
+func runUsageLimitBatchCaseConfigured(t *testing.T, failures, idleTimeout, retries int, finishOnSuccess bool, cancelOnAttempt int, taskHook func(*usageLimitRetrySandbox), log *spyEventLog, eventLog events.EventLog, gate ...string) (*Result, *usageLimitRetrySandbox, *spyEventLog, []time.Duration) {
 	t.Helper()
 	root := t.TempDir()
 	t.Chdir(root)
@@ -264,6 +305,9 @@ func runUsageLimitBatchCaseWithEventLog(t *testing.T, failures, idleTimeout, ret
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	sb := &usageLimitRetrySandbox{workDir: filepath.Join(root, "worktree"), failures: failures}
+	if taskHook != nil {
+		taskHook(sb)
+	}
 	if cancelOnAttempt > 0 {
 		sb.onAttempt = func(attempt int) {
 			if attempt == cancelOnAttempt {
@@ -340,14 +384,16 @@ func runUsageLimitBatchCaseWithEventLog(t *testing.T, failures, idleTimeout, ret
 }
 
 type usageLimitRetrySandbox struct {
-	workDir   string
-	failures  int
-	onSuccess func()
-	onAttempt func(int)
+	workDir      string
+	failures     int
+	onSuccess    func()
+	onAttempt    func(int)
+	onUsageLimit func(int)
 
 	mu       sync.Mutex
 	attempts int
 	commands []string
+	prompts  []string
 }
 
 func (s *usageLimitRetrySandbox) Start(sandbox.SandboxStart) error {
@@ -360,12 +406,22 @@ func (s *usageLimitRetrySandbox) Exec(_ context.Context, command string, stdout,
 	attempt := s.attempts
 	s.commands = append(s.commands, command)
 	s.mu.Unlock()
+	task, err := os.ReadFile(filepath.Join(s.workDir, ".sandman", "task.md"))
+	if err != nil {
+		return fmt.Errorf("read delivered Task before attempt %d: %w", attempt, err)
+	}
+	s.mu.Lock()
+	s.prompts = append(s.prompts, string(task))
+	s.mu.Unlock()
 	if s.onAttempt != nil {
 		s.onAttempt(attempt)
 	}
 	_, _ = io.WriteString(stdout, `{"type":"text","sessionID":"usage-limit-session","part":{"text":"working"}}`+"\n")
 	if attempt <= s.failures {
 		_, _ = io.WriteString(stderr, "Error: The usage limit has been reached\n")
+		if s.onUsageLimit != nil {
+			s.onUsageLimit(attempt)
+		}
 		return errors.New("OpenCode usage limit")
 	}
 	if s.onSuccess != nil {
@@ -394,6 +450,12 @@ func (s *usageLimitRetrySandbox) commandsSnapshot() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.commands...)
+}
+
+func (s *usageLimitRetrySandbox) promptsSnapshot() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.prompts...)
 }
 
 type usageLimitRetrySandboxFactory struct {

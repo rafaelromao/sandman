@@ -34,6 +34,15 @@ backoff, request/head artifact claims, and durable decision publication without
 a cumulative three-launch exhaustion gate. These boundaries restore the
 [pre-week exit baseline](../development/afk-exit-regression-baseline.md).
 
+> **Later change (annotated 2026-11-19, #2989):** Implementation quota waits now
+> use a validated provider reset time when the selected agent strategy supplies
+> one, capped by remaining five-hour allowance; otherwise they use ten-minute
+> fallback intervals. Only a successfully completed scheduled duration counts.
+> Cancellation/interruption, capacity delay, and downtime remain uncharged. The
+> final boundary probe, ordinary retries, ownerless grace, and separate reviewer
+> quota policy are unchanged; reviewer recovery retains its fixed ten-minute
+> schedule.
+
 When an external poll interval elapses, the awaiting row joins a FIFO priority
 queue when its opportunity is eligible. A row that received an execution chance
 less than 10 minutes ago yields to ordinary queued rows unless no ordinary row

@@ -157,6 +157,20 @@ func ReadTaskContent(path string) (content string, exists bool, err error) {
 	return string(raw), true, nil
 }
 
+// ReadContinuationTaskContent requires the agent-owned Task to exist. Runtime
+// re-entry cannot safely substitute a default Task because that could discard
+// the agent's latest checkpoint.
+func ReadContinuationTaskContent(path string) (string, error) {
+	content, exists, err := ReadTaskContent(path)
+	if err != nil {
+		return "", fmt.Errorf("read continuation Task %q: %w", path, err)
+	}
+	if !exists {
+		return "", fmt.Errorf("continuation Task %q is missing", path)
+	}
+	return content, nil
+}
+
 func LogRetryMarker(logPath string, attempt, maxRetries int) {
 	_ = logRetryMarker(logPath, attempt, maxRetries)
 }

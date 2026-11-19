@@ -2068,7 +2068,7 @@ func TestRun_ContinueFlag_UsesCurrentFlagsOverStoredValues(t *testing.T) {
 			if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
 				t.Fatalf("mkdir worktree: %v", err)
 			}
-			if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("## Completed\nInitial pass.\n"), 0644); err != nil {
+			if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("## Runtime Context\n\n- Review command: `/old review`\n- Review mode: blind review\n- Delegated review response timeout: `900` seconds (not used for blind review)\n\n## Completed\nInitial pass.\n"), 0644); err != nil {
 				t.Fatalf("write task: %v", err)
 			}
 			deps.ConfigStore = &fakeStore{config: &config.Config{
@@ -2150,6 +2150,16 @@ func TestRun_ContinueFlag_UsesCurrentFlagsOverStoredValues(t *testing.T) {
 			}
 			if !strings.Contains(spy.req.TaskPrompts[42], "Delegated review response timeout: `240` seconds") {
 				t.Fatalf("expected current review timeout in continuation task, got %q", spy.req.TaskPrompts[42])
+			}
+			for _, want := range []string{"- Review command: `/oc review`", "- Review mode: delegated review"} {
+				if !strings.Contains(spy.req.TaskPrompts[42], want) {
+					t.Errorf("expected current review setting %q in continuation task, got %q", want, spy.req.TaskPrompts[42])
+				}
+			}
+			for _, stale := range []string{"/old review", "Review mode: blind review", "`900` seconds"} {
+				if strings.Contains(spy.req.TaskPrompts[42], stale) {
+					t.Errorf("stale review setting %q remained in continuation task: %q", stale, spy.req.TaskPrompts[42])
+				}
 			}
 			if spy.req.Retries != -1 {
 				t.Fatalf("expected retries sentinel (-1) from current cfg, got %d", spy.req.Retries)

@@ -98,7 +98,10 @@ func (s *runSession) resumePromptFor(taskContent string, evidence map[string]any
 	if ciRepairRequired {
 		directive = prompt.TaskDirectiveCIRemediation
 	}
-	return prompt.ContinuationTaskPromptWithReviewTimeout(prompt.TaskWithReviewEvidenceAndDirective(taskContent, evidence, directive), reviewTimeout)
+	return prompt.ContinuationTaskPromptWithReviewSettings(
+		prompt.TaskWithReviewEvidenceAndDirective(taskContent, evidence, directive),
+		s.renderCfg.ReviewCommand, s.renderCfg.ReviewCommandSet, reviewTimeout,
+	)
 }
 
 // tryEntryResume re-evaluates the external gate at session entry for resume
@@ -177,8 +180,13 @@ func (s *runSession) prepareEntryResume(ctx context.Context, wt sandbox.Sandbox,
 	// The entry launch acts on this evidence: a repeat after it is a stall.
 	s.lastResumeSignature = s.pendingResumeSignature
 	s.lastResumeRound = s.pendingResumeRound
-	taskContent, _, _ := ReadTaskContent(filepath.Join(wt.WorkDir(), ".sandman", "task.md"))
+	taskContent, err := ReadContinuationTaskContent(filepath.Join(wt.WorkDir(), ".sandman", "task.md"))
+	if err != nil {
+		result := s.lifecycleEarlyFailure("read continuation Task", branch, runID, err)
+		return result, true, true
+	}
 	s.renderCfg.TaskPrompt = s.resumePromptFor(taskContent, evidence, s.renderCfg.ReviewTimeout, verdict.ciRepairRequired)
+	s.entryResumePromptPrepared = true
 	return AgentRunResult{}, false, false
 }
 
@@ -199,19 +207,22 @@ func (s *runSession) resumeCapFor() int {
 // gate-handling (await / terminal) untouched when it is false — in
 // particular, when the per-session resume cap is exhausted the gate
 // terminalizes as failure instead of entering another wait.
-func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbox, branch, runID string, verdict lifecycleVerdict) (string, bool) {
+func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbox, branch, runID string, verdict lifecycleVerdict) (string, bool, error) {
 	if s.deps.githubClient == nil || ctx.Err() != nil || verdict.Action != lifecycleResume || s.resumeCount >= s.resumeCapFor() {
-		return "", false
+		return "", false, nil
 	}
 	evidence := s.resumeEvidenceFor(ctx, branch, verdict.Evidence)
 	if ctx.Err() != nil {
-		return "", false
+		return "", false, nil
 	}
 	gate, _ := evidence["gate"].(string)
-	taskContent, _, _ := ReadTaskContent(filepath.Join(wt.WorkDir(), ".sandman", "task.md"))
+	taskContent, err := ReadContinuationTaskContent(filepath.Join(wt.WorkDir(), ".sandman", "task.md"))
+	if err != nil {
+		return "", false, err
+	}
 	s.resumeCount++
 	s.emitResume(ctx, runID, branch, gate, evidence)
-	return s.resumePromptFor(taskContent, evidence, s.renderCfg.ReviewTimeout, verdict.ciRepairRequired), true
+	return s.resumePromptFor(taskContent, evidence, s.renderCfg.ReviewTimeout, verdict.ciRepairRequired), true, nil
 }
 
 // emitResume writes the run.resumed event (issue #2595). It records the

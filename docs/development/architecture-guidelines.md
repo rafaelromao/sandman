@@ -12,9 +12,15 @@ The canonical [AgentRun state machine](../architecture/run-state-machine.md)
 defines every lifecycle/admission transition. Initial queues are unfinished;
 started capacity-ready work remains waiting. Same RunID keeps its duration and
 current ownership across batches. Preserve managed CI/review hard deadlines and
-completed quota polling across executor re-entry. Quota exhaustion estimates are
-diagnostic, not schedule/ownership deadlines; downtime and capacity delay consume
-no polling allowance. A failed pull-request lookup waits (`github-unavailable`)
+completed quota-wait accounting across executor re-entry. Implementation quota
+waits use validated strategy-owned provider reset evidence when available and
+ten-minute fallback otherwise; variable scheduled duration is counted only
+after a successful wait, capped by the remaining five-hour allowance. Quota
+exhaustion estimates are diagnostic, not schedule/ownership deadlines;
+cancellation/interruption, downtime, and capacity delay consume no allowance.
+Persist `NextPollAt` and reconstruct it from current event evidence only when the
+checkpoint is missing. Reviewer quota recovery remains daemon-wide and fixed at
+ten minutes. A failed pull-request lookup waits (`github-unavailable`)
 with hourly, githubstatus.com-gated attempts and a 24-hour per-RunID bound before
 `GATE_LOOKUP_FAILED`; `--continue` opens a fresh window. Failed agent attempts
 without an established CI/review wait do not consume ordinary retries while
@@ -30,7 +36,9 @@ uncapped recovery grace outlasts the next renewal; invalid ownership fails
 closed at once. Claim files may be unlinked only while held and only for
 event-terminal Runs; claimants revalidate the locked inode against the path.
 Tests must cover composed quota → recovery → CI/review and wait → restart/abort
-paths, including concurrent launch-boundary admission revalidation.
+paths, including reset/fallback schedules, completed and interrupted waits,
+missing/stale checkpoints, reviewer cadence/scope, and concurrent launch-boundary
+admission revalidation.
 
 When changing lifecycle behavior:
 

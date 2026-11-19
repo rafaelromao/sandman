@@ -31,6 +31,29 @@ func TestDefaultPromptDocMatchesCanonicalPrompt(t *testing.T) {
 	}
 }
 
+func TestDefaultPromptRequiresMeaningfulImplementationPRDescription(t *testing.T) {
+	data, err := os.ReadFile("default-task-prompt.md")
+	if err != nil {
+		t.Fatalf("read default task prompt: %v", err)
+	}
+	text := string(data)
+	for _, required := range []string{
+		"meaningful Summary and actual Verification evidence",
+		"target repository's pull-request template",
+		"preserve every required template section",
+		"local checks, known failures or skips, and current-head CI",
+		"Never invent a green result or present stale CI as current",
+		"reference-and-footer-only body cannot pass",
+		"creation, continuation, and body edits",
+		"existing substantive description",
+		"exactly one final linked Sandman footer",
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("default task prompt is missing publication contract %q", required)
+		}
+	}
+}
+
 func extractPromptBlock(doc string) (string, error) {
 	lines := strings.Split(doc, "\n")
 	start := -1

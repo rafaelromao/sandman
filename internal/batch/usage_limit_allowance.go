@@ -6,8 +6,9 @@ import (
 )
 
 const (
-	usageLimitPollInterval = 10 * time.Minute
-	usageLimitRetryWindow  = 5 * time.Hour
+	usageLimitPollInterval         = 10 * time.Minute
+	usageLimitRetryWindow          = 5 * time.Hour
+	usageLimitProviderResetHorizon = 7 * 24 * time.Hour
 )
 
 // usageLimitAllowance owns the state and policy for implementation quota
@@ -16,6 +17,7 @@ type usageLimitAllowance struct {
 	probe                 bool
 	waited                time.Duration
 	deadline              time.Time
+	providerReset         time.Time
 	accountingUnavailable bool
 }
 
@@ -37,6 +39,9 @@ func (a usageLimitAllowance) restore(evidence map[string]any) (usageLimitAllowan
 	a.waited = max(a.waited, waited)
 	if seconds, ok := lifecycleDeadlineSeconds(evidence["usage_limit_deadline_unix_seconds"]); ok {
 		a.deadline = time.Unix(seconds, 0)
+	}
+	if seconds, ok := lifecycleDeadlineSeconds(evidence["usage_limit_provider_reset_unix_seconds"]); ok {
+		a.providerReset = time.Unix(seconds, 0).UTC()
 	}
 	return a, nil
 }
@@ -107,24 +112,40 @@ func (a usageLimitAllowance) continueProbe(deadline time.Time) usageLimitAllowan
 	return a
 }
 
+func (a usageLimitAllowance) withProviderReset(reset time.Time) usageLimitAllowance {
+	a.providerReset = reset.UTC()
+	return a
+}
+
+func (a usageLimitAllowance) nextWait(now time.Time) time.Duration {
+	remaining := max(0, usageLimitRetryWindow-a.waited)
+	if remaining == 0 {
+		return 0
+	}
+	wait := usageLimitPollInterval
+	if a.providerReset.After(now) && a.providerReset.Sub(now) <= usageLimitProviderResetHorizon {
+		wait = a.providerReset.Sub(now)
+	}
+	return min(wait, remaining)
+}
+
 func (a usageLimitAllowance) clear() usageLimitAllowance {
 	return usageLimitAllowance{}
 }
 
-// completedPoll accrues only a full configured quota interval. A recovered
-// schedule may wait only its remaining delay after downtime; that partial wait
-// is not a completed ten-minute poll.
-func (a usageLimitAllowance) completedPoll(interval time.Duration) usageLimitAllowance {
-	if interval != usageLimitPollInterval || a.waited >= usageLimitRetryWindow {
+// completedWait accrues the scheduled wait only after it returns successfully.
+// The elapsed time between scheduling and re-entry is not charged.
+func (a usageLimitAllowance) completedWait(interval time.Duration) usageLimitAllowance {
+	if interval <= 0 || a.waited >= usageLimitRetryWindow {
 		return a
 	}
 	if a.waited < 0 {
 		a.waited = 0
 	}
-	if usageLimitPollInterval >= usageLimitRetryWindow-a.waited {
+	if interval >= usageLimitRetryWindow-a.waited {
 		a.waited = usageLimitRetryWindow
 	} else {
-		a.waited += usageLimitPollInterval
+		a.waited += interval
 	}
 	return a
 }
@@ -135,6 +156,9 @@ func (a usageLimitAllowance) persistedEvidence() map[string]any {
 	}
 	if !a.deadline.IsZero() {
 		evidence["usage_limit_deadline_unix_seconds"] = a.deadline.Unix()
+	}
+	if !a.providerReset.IsZero() {
+		evidence["usage_limit_provider_reset_unix_seconds"] = a.providerReset.Unix()
 	}
 	return evidence
 }

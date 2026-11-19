@@ -168,6 +168,13 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		result.RunID = s.runID
 	}
 	if !started {
+		if !issueDriven && s.mode == ModeContinue && result.OperationalError != nil {
+			// Prompt-only early failures normally precede run.started and have
+			// no terminal event. A continuation Task read happens after
+			// run.continued, so persist its failure or the event projection
+			// leaves the Run active after execution has ended.
+			result.Status = s.finishDecidedTerminal(ctx, runID, result, nil, wt, branch)
+		}
 		return result, false
 	}
 	if issueDriven {
@@ -181,7 +188,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		// Provider quota recovery is non-terminal and retains the per-run
 		// endpoint for the batch-owned polling continuation.
 		if !s.lifecycleTerminal && s.shouldAwaitUsageLimit(result) {
-			s.quotaAllowance = s.quotaAllowance.startProbe(s.runtimeNow())
+			s.quotaAllowance = s.quotaAllowance.startProbe(s.runtimeNow()).withProviderReset(result.UsageLimitResetAt)
 			result.UsageLimitDeadline = s.quotaAllowance.deadlineEstimate()
 			extras := map[string]any{
 				"await_reason":                     "usage-limit",
