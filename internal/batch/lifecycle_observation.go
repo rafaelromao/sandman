@@ -269,6 +269,11 @@ func (o *lifecycleObserver) applyContinuity(branch, runID string, verdict lifecy
 			if outcomes.outcome(row) == outcomeHold {
 				verdict.Action = lifecycleAwait
 				verdict.Evidence = o.ownedWorkHold(verdict.Evidence, signature, stalled)
+			} else if outcomes.outcome(row) == outcomeTerminal {
+				verdict.Action = lifecycleFailure
+				verdict.Evidence = remediationBudgetFailureEvidence(gate, verdict.Evidence,
+					"inspect the current pull-request remediation evidence and continue in a fresh session")
+				verdict.ImplementorWork = false
 			}
 			return verdict
 		}
@@ -352,6 +357,26 @@ func (o *lifecycleObserver) continuityTable() continuityTable {
 		return o.outcomes
 	}
 	return continuityOutcomes
+}
+
+func (o *lifecycleObserver) applyContinuityDisposition(row continuityRow, wait, terminal lifecycleVerdict) lifecycleVerdict {
+	switch o.continuityTable().outcome(row) {
+	case outcomeWait:
+		return wait
+	case outcomeHold:
+		wait.Action = lifecycleAwait
+		wait.Evidence = continuityHold(wait.Evidence, row.gate)
+		return wait
+	default:
+		if terminal.Action == lifecycleFailure {
+			return terminal
+		}
+		return lifecycleVerdict{
+			Action: lifecycleFailure,
+			Evidence: remediationBudgetFailureEvidence(row.gate, wait.Evidence,
+				"inspect the current pull-request evidence; the external operation is no longer authorized to keep this Run waiting"),
+		}
+	}
 }
 
 func stringEvidence(evidence map[string]any, key string) string {

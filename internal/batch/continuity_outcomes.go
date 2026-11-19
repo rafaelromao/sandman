@@ -85,9 +85,9 @@ func (t continuityTable) outcome(row continuityRow) continuityOutcomeKind {
 // continuityOutcomes is the outcome table.
 var continuityOutcomes = continuityTable{
 	// External operations that are still resolving keep waiting. Their owners
-	// decide them: the active-wait rule (current-head CI, a confirmed
-	// in-deadline review request), the GitHub recovery window, quota
-	// admission and the batch scheduler. These rows pin them as waits.
+	// retain scheduling and evidence, while each decision site consumes this
+	// disposition: current-head CI, a confirmed in-deadline review request,
+	// the GitHub recovery window, quota admission and the batch scheduler.
 	{gate: continuityGateCurrentHeadCI, cause: causeResolving}:                            outcomeWait,
 	{gate: continuityGateReviewRequest, cause: causeResolving}:                            outcomeWait,
 	{gate: gateGitHubUnavailable, reason: githubUnavailableReason, cause: causeResolving}: outcomeWait,

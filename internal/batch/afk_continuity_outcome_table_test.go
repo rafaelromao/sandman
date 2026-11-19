@@ -26,8 +26,8 @@ type continuityContractRow struct {
 }
 
 // continuityProbe observes one row's outcome through the code that decides
-// it. Rows of operations whose owners decide them outside the table also name
-// the scenario that pins them end to end.
+// it. Scheduler-owned quota and capacity waits name the existing end-to-end
+// scenarios that pin those dispositions at their owners.
 type continuityProbe struct {
 	observe func(t *testing.T, table continuityTable) continuityOutcomeKind
 	// consultsTable reports that the decision site looks the row up, so
@@ -136,18 +136,31 @@ func continuityProbePR() *github.PR {
 // or a confirmed in-deadline review request keeps the Run waiting, also when
 // a retained request has expired.
 func activeOperationProbe(ciRunning, reviewRequested bool) continuityProbe {
-	return continuityProbe{observe: func(t *testing.T, _ continuityTable) continuityOutcomeKind {
+	return continuityProbe{consultsTable: true, observe: func(t *testing.T, table continuityTable) continuityOutcomeKind {
 		pr := continuityProbePR()
 		if ciRunning {
 			pr.StatusCheckRollup = "PENDING"
 		}
 		for _, evidence := range []retainedReviewEvidence{{}, {present: true, outcome: retainedReviewTimeout}} {
-			decision := decideRecoverableLifecycle(lifecycleGatePending, pr, continuityProbeHead, "", evidence, reviewRequested, "success", true)
-			if decision.action != lifecycleAwait {
-				t.Fatalf("resolving operation with retained %q = %v, want await", evidence.outcome, decision.action)
+			decision := decideImplementationPRLifecycle(implementationPRFacts{
+				pr: pr, headSHA: continuityProbeHead, retainedEvidence: evidence,
+				reviewRequested: reviewRequested, attemptStatus: "success", afterAgentAttempt: true,
+				outcomes: table,
+			})
+			got := decisionContinuityOutcome(t, decision)
+			want := table.outcome(continuityRow{gate: continuityGateReviewRequest, cause: causeResolving})
+			if ciRunning {
+				want = table.outcome(continuityRow{gate: continuityGateCurrentHeadCI, cause: causeResolving})
+			}
+			if got != want {
+				t.Fatalf("resolving operation with retained %q = %s, want %s", evidence.outcome, got, want)
 			}
 		}
-		return outcomeWait
+		row := continuityRow{gate: continuityGateReviewRequest, cause: causeResolving}
+		if ciRunning {
+			row.gate = continuityGateCurrentHeadCI
+		}
+		return table.outcome(row)
 	}}
 }
 
@@ -155,19 +168,21 @@ func activeOperationProbe(ciRunning, reviewRequested bool) continuityProbe {
 // lookup: it waits while open and ends with GATE_LOOKUP_FAILED once 24 hours
 // have passed since its first failure.
 func githubWindowProbe(expired bool) continuityProbe {
-	return continuityProbe{observe: func(t *testing.T, _ continuityTable) continuityOutcomeKind {
+	return continuityProbe{consultsTable: true, observe: func(t *testing.T, table continuityTable) continuityOutcomeKind {
 		now := time.Date(2026, time.November, 19, 12, 0, 0, 0, time.UTC)
 		session := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+		observer := &lifecycleObserver{runSession: session, outcomes: table}
 		recovery := githubRecovery{}
 		if expired {
 			recovery.WindowStarted = now.Add(-githubRecoveryBound - time.Minute)
 		}
-		verdict := newLifecycleObserver(session).recordGitHubLookupFailure(
+		verdict := observer.recordGitHubLookupFailure(
 			lifecycleObservationRequest{Branch: continuityBranch, RunID: "run-probe"},
 			lifecycleVerdict{Evidence: map[string]any{"lookup_error": "gh pr list: exit status 1"}},
 			recovery, expired, false,
 		)
-		if expired && verdict.Evidence["reason"] != lookupGateReason {
+		if expired && table.outcome(continuityRow{gate: gateGitHubUnavailable, reason: githubUnavailableReason, cause: causeExpired}) == outcomeTerminal &&
+			verdict.Evidence["reason"] != lookupGateReason {
 			t.Fatalf("expired GitHub recovery window = %v, want %s", verdict.Evidence, lookupGateReason)
 		}
 		return probedOutcome(t, verdict)
@@ -289,11 +304,55 @@ func relaunchOutcome(t *testing.T, session *runSession, table continuityTable, e
 	verdict := observer.applyContinuity(continuityBranch, "run-probe", lifecycleVerdict{
 		Action: lifecycleResume, Evidence: cloneLifecycleExtras(evidence), ImplementorWork: owned,
 	})
-	if verdict.Action == lifecycleResume && verdict.ImplementorWork {
+	if verdict.Action == lifecycleResume && session.finalOwnedWorkAttempt {
 		// The final owned-work attempt returns to the ordinary retry path,
 		// which ends the Run with the owned work's own reason when retries
 		// are exhausted.
 		return outcomeTerminal
+	}
+	return probedOutcome(t, verdict)
+}
+
+func TestContinuityTerminalOwnedStallDoesNotRelaunch(t *testing.T) {
+	evidence := map[string]any{
+		"gate": gateReviewRequestRequired, "reason": "REVIEW_REQUEST_REQUIRED",
+		"pull_request": continuityPR, "head_sha": continuityProbeHead,
+	}
+	signatureEvidence := cloneLifecycleExtras(evidence)
+	signatureEvidence["gate"] = gateOwnedWorkRequired
+	signature := resumeSignature(signatureEvidence, continuityProbeHead)
+	session := &runSession{
+		decisionPRHead: continuityProbeHead,
+		// No final-attempt marker: ordinary retry allowance remains, so a
+		// non-terminal resume here would launch the implementor again.
+		deps: runDeps{eventLog: &spyEventLog{events: []events.Event{
+			{Type: "run.started", RunID: "run-probe", Payload: map[string]any{"branch": continuityBranch}},
+			{Type: "run.await", RunID: "run-probe", Payload: map[string]any{
+				"await": true, "resume_stalled": true, stalledResumesKey: []any{signature},
+			}},
+		}}},
+	}
+	table := cloneContinuityTable(continuityOutcomes)
+	row := continuityRow{gate: gateOwnedWorkRequired, reason: "REVIEW_REQUEST_REQUIRED", cause: causeStall}
+	table[row] = outcomeTerminal
+	verdict := (&lifecycleObserver{runSession: session, outcomes: table}).applyContinuity(
+		continuityBranch, "run-probe", lifecycleVerdict{
+			Action: lifecycleResume, Evidence: evidence, ImplementorWork: true,
+		},
+	)
+	if verdict.Action != lifecycleFailure {
+		t.Fatalf("persisted request-delivery stall with retries left = %s, want terminal failure", verdict.status())
+	}
+	if verdict.Evidence["await"] != nil || verdict.Evidence["gate"] != nil {
+		t.Fatalf("terminal stalled request-delivery verdict carries wait markers: %v", verdict.Evidence)
+	}
+}
+
+func decisionContinuityOutcome(t *testing.T, decision lifecycleDecision) continuityOutcomeKind {
+	t.Helper()
+	verdict := lifecycleVerdict{Action: decision.action, Evidence: decision.extras}
+	if decision.action == lifecycleFailure {
+		verdict.Evidence = decision.failureExtras
 	}
 	return probedOutcome(t, verdict)
 }
@@ -345,9 +404,9 @@ func TestAFKContinuityContract_OutcomeTableRows(t *testing.T) {
 }
 
 // Every row is exercised at its decision site, or pinned to the existing
-// end-to-end scenario owned outside the table. Rows whose site consults the
-// table are also flipped in an isolated copy to prove the site consumes the
-// selected outcome rather than repeating its own policy.
+// end-to-end scenario owned by the quota/capacity scheduler. Rows whose site
+// consults the table are also flipped in an isolated copy to prove the site
+// consumes the selected outcome rather than repeating its own policy.
 func TestAFKContinuityContract_OutcomeTableDecidesExits(t *testing.T) {
 	for _, contract := range continuityContractRows() {
 		contract := contract
