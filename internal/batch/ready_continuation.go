@@ -59,6 +59,20 @@ func quotaSchedulesMatch(checkpoint, eventSchedule time.Time) bool {
 	return delta >= -time.Second && delta <= time.Second
 }
 
+func quotaWaitScheduleStartedAt(event *events.Event) time.Time {
+	if event == nil {
+		return time.Time{}
+	}
+	if payloadBoolValue(event.Payload, "usage_limit_ownership_recovery") {
+		if startedAt := payloadStringValue(event.Payload, "usage_limit_wait_started_at"); startedAt != "" {
+			if parsed, err := time.Parse(time.RFC3339Nano, startedAt); err == nil && !parsed.IsZero() {
+				return parsed.UTC()
+			}
+		}
+	}
+	return event.Timestamp
+}
+
 // FindReadyContinuations returns only the latest per-issue lifecycle states
 // that are durably capacity-queued and whose original batch no longer has a
 // live owner. A later lifecycle event or a live batch always takes precedence.
@@ -198,7 +212,13 @@ func reconcileRecoveryWait(record daemon.RunWait, state events.RunState) (daemon
 		if record.Ready {
 			record.NextPollAt = state.CapacityQueuedEvent.Timestamp
 		} else {
-			record.NextPollAt = quotaWaitDueAt(evidence, state.AwaitEvent.Timestamp)
+			eventSchedule := quotaWaitDueAt(evidence, quotaWaitScheduleStartedAt(state.AwaitEvent))
+			if payloadBoolValue(state.AwaitEvent.Payload, "usage_limit_ownership_recovery") &&
+				!previous.NextPollAt.IsZero() && quotaSchedulesMatch(previous.NextPollAt, eventSchedule) {
+				record.NextPollAt = previous.NextPollAt
+			} else {
+				record.NextPollAt = eventSchedule
+			}
 		}
 		quotaScheduleChanged = !quotaSchedulesMatch(previous.NextPollAt, record.NextPollAt)
 	} else if !record.Ready {
@@ -254,7 +274,7 @@ func quotaAwaitRecoveryWait(state events.RunState, evidence map[string]any) (dae
 		UsageLimitProbe: true,
 		OperationID:     "quota:" + state.RunID,
 		LeaseExpiresAt:  event.Timestamp.Add(daemon.RunRecoveryGrace),
-		NextPollAt:      quotaWaitDueAt(evidence, event.Timestamp),
+		NextPollAt:      quotaWaitDueAt(evidence, quotaWaitScheduleStartedAt(event)),
 		RecoveryEventAt: event.Timestamp,
 	}, true
 }

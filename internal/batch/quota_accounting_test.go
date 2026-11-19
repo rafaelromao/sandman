@@ -307,6 +307,16 @@ func TestQuotaAccountingSurvivesSchedulerReconstruction(t *testing.T) {
 	if err != nil || result == nil || result.Runs[0].Status != "success" || sb.attemptCount() != 3 || waits != 1 || countEventsByType(log.snapshot(), "run.retry") != 1 {
 		t.Fatalf("scheduler renewed consumed polling: result=%+v error=%v launches=%d waits=%d retries=%d events=%+v", result, err, sb.attemptCount(), waits, countEventsByType(log.snapshot(), "run.retry"), log.snapshot())
 	}
+	var recoveredAwait *events.Event
+	for _, event := range log.snapshot() {
+		if event.Type == "run.await" && payloadBoolValue(event.Payload, "usage_limit_ownership_recovery") {
+			recoveredAwait = &event
+			break
+		}
+	}
+	if recoveredAwait == nil || recoveredAwait.Payload["usage_limit_wait_started_at"] != awaitedAt.Format(time.RFC3339Nano) {
+		t.Fatalf("recovered quota await did not preserve schedule origin: %+v", recoveredAwait)
+	}
 }
 
 func TestQuotaOwnershipEstimateDoesNotChangeOperationOrGrace(t *testing.T) {

@@ -2293,6 +2293,10 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				if !recovery.Ready && claimedStates[runID].AwaitEvent != nil && o.eventLog != nil {
 					payload := cloneLifecycleExtras(claimedStates[runID].AwaitEvent.Payload)
 					payload["batch_id"], payload["recovered"] = issueBatchID, true
+					if quotaPollingEvidence(claimedStates[runID]) != nil {
+						payload["usage_limit_ownership_recovery"] = true
+						payload["usage_limit_wait_started_at"] = quotaWaitScheduleStartedAt(claimedStates[runID].AwaitEvent).Format(time.RFC3339Nano)
+					}
 					if err := o.eventLog.Log(events.Event{Type: "run.await", Timestamp: time.Now().UTC(), RunID: runID, Issue: issueNum, IssueRef: issueRef(issueNum), Payload: payload}); err != nil {
 						fmt.Fprintf(o.errorLog, "persist recovered wait ownership for run %s: %v\n", runID, err)
 						abortAdmission(nil)

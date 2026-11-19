@@ -505,6 +505,77 @@ func TestRecoveryReconcilesQuotaScheduleFromLatestAwaitEvent(t *testing.T) {
 	}
 }
 
+func TestQuotaWaitScheduleSurvivesRepeatedOwnershipRecovery(t *testing.T) {
+	startedAt := time.Date(2026, time.January, 2, 12, 0, 0, 250, time.UTC)
+	for _, tc := range []struct {
+		name     string
+		evidence map[string]any
+	}{
+		{
+			name:     "fallback polling",
+			evidence: map[string]any{"usage_limit_waited_seconds": 600},
+		},
+		{
+			name: "provider reset capped by remaining allowance",
+			evidence: map[string]any{
+				"usage_limit_waited_seconds":              int(4 * time.Hour / time.Second),
+				"usage_limit_provider_reset_unix_seconds": startedAt.Add(2 * time.Hour).Unix(),
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			awaitPayload := map[string]any{
+				"await": true, "await_reason": "usage-limit", "batch_id": "batch",
+				"branch": "42-fix", "base_branch": "main",
+			}
+			for key, value := range tc.evidence {
+				awaitPayload[key] = value
+			}
+			startedEvent := events.Event{Type: "run.started", RunID: "row", Issue: 42, Timestamp: startedAt.Add(-time.Minute),
+				Payload: map[string]any{"batch_id": "batch", "branch": "42-fix", "base_branch": "main"}}
+			awaitEvent := events.Event{Type: "run.await", RunID: "row", Issue: 42, Timestamp: startedAt, Payload: awaitPayload}
+			due := quotaWaitDueAt(tc.evidence, startedAt)
+			record := daemon.RunWait{
+				Protocol: "run-wait/v1", RunID: "row", BatchID: "batch", Issue: 42,
+				Branch: "42-fix", BaseBranch: "main", UsageLimitProbe: true,
+				OperationID: "quota:row", NextPollAt: due,
+				LeaseExpiresAt: startedAt.Add(daemon.RunRecoveryGrace),
+			}
+
+			// Each restart recovers ownership and emits an await event for the
+			// same quota wait. The scheduled probe time must not move with it.
+			for restart := 1; restart <= 2; restart++ {
+				recoveredAt := startedAt.Add(time.Duration(restart) * 2 * time.Minute)
+				payload := cloneLifecycleExtras(awaitEvent.Payload)
+				payload["batch_id"] = "batch"
+				payload["recovered"] = true
+				payload["usage_limit_ownership_recovery"] = true
+				payload["usage_limit_wait_started_at"] = startedAt.Format(time.RFC3339Nano)
+				awaitEvent = events.Event{Type: "run.await", RunID: "row", Issue: 42, Timestamp: recoveredAt, Payload: payload}
+				state := events.ProjectRunStates([]events.Event{startedEvent, awaitEvent})[0]
+
+				reconciled, _, valid := reconcileRecoveryWait(record, state)
+				if !valid {
+					t.Fatalf("restart %d rejected quota recovery", restart)
+				}
+				if !reconciled.NextPollAt.Equal(due) {
+					t.Fatalf("restart %d shifted due time to %v, want %v", restart, reconciled.NextPollAt, due)
+				}
+				record = reconciled
+
+				if restart == 2 {
+					// If the wait sidecar is absent after a restart, event
+					// evidence must still reconstruct the original schedule.
+					restored, ok := quotaAwaitRecoveryWait(state, quotaPollingEvidence(state))
+					if !ok || !restored.NextPollAt.Equal(due) {
+						t.Fatalf("missing-checkpoint reconstruction = %+v, valid=%v; want due %v", restored, ok, due)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestReturnedWaitingIntentRenewsUntilBatchReleasesClaims(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
