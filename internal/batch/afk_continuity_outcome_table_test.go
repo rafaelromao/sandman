@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 )
@@ -59,13 +60,14 @@ func continuityContractRows() []continuityContractRow {
 		{continuityRow{gate: continuityGateCurrentHeadCI, cause: causeResolving}, outcomeWait, activeOperationProbe(true, false)},
 		{continuityRow{gate: continuityGateReviewRequest, cause: causeResolving}, outcomeWait, activeOperationProbe(false, true)},
 		{continuityRow{gate: gateGitHubUnavailable, reason: githubUnavailableReason, cause: causeResolving}, outcomeWait, githubWindowProbe(false)},
-		{continuityRow{gate: continuityGateQuota, reason: "AGENT_USAGE_LIMIT", cause: causeResolving}, outcomeWait, foldedWaitProbe("usage-limit", TestUsageLimitDuringPRRemediationRetainsQuotaRecovery)},
-		{continuityRow{gate: continuityGateCapacity, cause: causeResolving}, outcomeWait, foldedWaitProbe("capacity", TestFindReadyContinuationsUsesLatestDurableCapacityPhase)},
+		{continuityRow{gate: continuityGateQuota, reason: "AGENT_USAGE_LIMIT", cause: causeResolving}, outcomeWait, quotaWaitProbe(TestUsageLimitDuringPRRemediationRetainsQuotaRecovery)},
+		{continuityRow{gate: continuityGateCapacity, cause: causeResolving}, outcomeWait, capacityWaitProbe(TestFindReadyContinuationsUsesLatestDurableCapacityPhase)},
 
 		// Lifecycle failure reasons on an open current-head pull request.
 		{continuityRow{reason: "PULL_REQUEST_CLOSED", cause: causeFailure}, outcomeTerminal, failureReasonProbe("PULL_REQUEST_CLOSED")},
 		{continuityRow{reason: missingPRReason, cause: causeFailure}, outcomeTerminal, failureReasonProbe(missingPRReason)},
 		{continuityRow{reason: "REVIEW_REQUEST_REQUIRED", cause: causeFailure}, outcomeTerminal, failureReasonProbe("REVIEW_REQUEST_REQUIRED")},
+		{continuityRow{reason: actionableFeedbackReason, cause: causeFailure}, outcomeTerminal, relaunchProbe(causeFailure, relaunch(gateBlindReviewRequired, actionableFeedbackReason), false)},
 		{continuityRow{reason: blindReviewRequiredReason, cause: causeFailure}, outcomeHold, failureReasonProbe(blindReviewRequiredReason)},
 		{continuityRow{reason: "merged-pr-missing-closing-reference", cause: causeFailure}, outcomeTerminal, failureReasonProbe("merged-pr-missing-closing-reference")},
 		{continuityRow{reason: "CI_WAIT_STATE_ERROR", cause: causeFailure}, outcomeTerminal, failureReasonProbe("CI_WAIT_STATE_ERROR")},
@@ -77,6 +79,7 @@ func continuityContractRows() []continuityContractRow {
 		{continuityRow{reason: idleGateReason, cause: causeFailure}, outcomeHold, failureReasonProbe(idleGateReason)},
 		{continuityRow{reason: reviewTimeoutReason, cause: causeFailure}, outcomeHold, failureReasonProbe(reviewTimeoutReason)},
 		{continuityRow{reason: "CI_WAIT_TIMEOUT", cause: causeFailure}, outcomeHold, failureReasonProbe("CI_WAIT_TIMEOUT")},
+		{continuityRow{reason: "CAPACITY_WAIT", cause: causeFailure}, outcomeTerminal, failureReasonProbe("CAPACITY_WAIT")},
 		{continuityRow{cause: causeFailure}, outcomeTerminal, failureReasonProbe("SOMETHING_NEW")},
 
 		// Bounded operations that expired with nothing else resolving them.
@@ -112,6 +115,7 @@ func continuityContractRows() []continuityContractRow {
 		{continuityRow{gate: gateReviewTimeout, reason: reviewTimeoutReason, cause: causeExhausted}, outcomeHold, relaunchProbe(causeExhausted, relaunch(gateReviewTimeout, reviewTimeoutReason), false)},
 		{continuityRow{gate: gatePRHeadChanged, reason: "PR_HEAD_RECONCILE_REQUIRED", cause: causeExhausted}, outcomeHold, relaunchProbe(causeExhausted, relaunch(gatePRHeadChanged, "PR_HEAD_RECONCILE_REQUIRED"), false)},
 		{continuityRow{gate: owned, reason: idleGateReason, cause: causeExhausted}, outcomeHold, relaunchProbe(causeExhausted, ownedWork(owned, idleGateReason, ""), true)},
+		{continuityRow{gate: owned, reason: implementorActionRequiredReason, cause: causeExhausted}, outcomeTerminal, relaunchProbe(causeExhausted, ownedWork(owned, implementorActionRequiredReason, ""), true)},
 		{continuityRow{gate: owned, reason: "REVIEW_REQUEST_REQUIRED", cause: causeExhausted}, outcomeTerminal, relaunchProbe(causeExhausted, ownedWork(gateReviewRequestRequired, "REVIEW_REQUEST_REQUIRED", ""), true)},
 		{continuityRow{gate: owned, reason: missingPRReason, cause: causeExhausted}, outcomeTerminal, relaunchProbe(causeExhausted, ownedWork(owned, missingPRReason, ""), true)},
 		// An idle gate whose missing evidence is not only an unrequested
@@ -205,31 +209,44 @@ func githubWindowProbe(expired bool) continuityProbe {
 	}}
 }
 
-// foldedWaitProbe observes, through the event fold, that a started Run in a
-// quota or capacity wait stays waiting. pinnedBy replays the wait end to end.
-func foldedWaitProbe(wait string, pinnedBy func(*testing.T)) continuityProbe {
-	return continuityProbe{pinnedBy: pinnedBy, observe: func(t *testing.T, _ continuityTable) continuityOutcomeKind {
-		history := []events.Event{
-			{Type: "run.started", RunID: "run-probe", Issue: 42, Payload: map[string]any{"branch": continuityBranch}},
+func quotaWaitProbe(pinnedBy func(*testing.T)) continuityProbe {
+	return continuityProbe{consultsTable: true, pinnedBy: pinnedBy, observe: func(t *testing.T, table continuityTable) continuityOutcomeKind {
+		session := &runSession{
+			issueNumber: 42,
+			agentCfg: config.Agent{
+				Preset:  opencodeSessionKind.provider,
+				Command: config.BuiltInAgentPresets[opencodeSessionKind.provider].Command,
+			},
+			outcomeTable: table,
 		}
-		switch wait {
-		case "usage-limit":
-			history = append(history, events.Event{Type: "run.await", RunID: "run-probe", Issue: 42, Payload: map[string]any{"await": true, "await_reason": "usage-limit"}})
-		case "capacity":
-			history = append(history,
-				events.Event{Type: "run.await", RunID: "run-probe", Issue: 42, Payload: map[string]any{"await": true, "gate": string(lifecycleGatePending)}},
-				events.Event{Type: "run.capacity_queued", RunID: "run-probe", Issue: 42, Payload: map[string]any{"branch": continuityBranch}},
-			)
+		verdict := session.usageLimitLifecycleDecision(AgentRunResult{
+			Status: "failure", UsageLimitReached: true,
+		})
+		return probedOutcome(t, verdict)
+	}}
+}
+
+func capacityWaitProbe(pinnedBy func(*testing.T)) continuityProbe {
+	return continuityProbe{consultsTable: true, pinnedBy: pinnedBy, observe: func(t *testing.T, table continuityTable) continuityOutcomeKind {
+		gate := &batchStartGate{parallel: 1, active: 1, wake: make(chan struct{})}
+		released := false
+		gate.onWaiterQueued = func(bool) {
+			if table.outcome(continuityRow{gate: continuityGateCapacity, cause: causeResolving}) == outcomeWait && !released {
+				released = true
+				gate.ReleaseWithoutDelay()
+			}
 		}
-		states, err := events.ReadRunStates(&spyEventLog{events: history})
+		driverGates := &batchRowDriverGates{startGate: gate, outcomes: table}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_, outcome, err := driverGates.Acquire(ctx, false, awaitOpportunity{}, nil, time.Minute)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("capacity admission = error %v", err)
 		}
-		state := states["run-probe"]
-		if state.IsTerminal() || state.Status() != "waiting" {
-			t.Fatalf("%s wait projects as %q (terminal %v), want waiting", wait, state.Status(), state.IsTerminal())
+		if outcome.Kind == rowObservationNone {
+			return outcomeWait
 		}
-		return outcomeWait
+		return probedOutcome(t, outcome.Verdict)
 	}}
 }
 
@@ -302,6 +319,8 @@ func relaunchProbe(cause continuityCause, evidence map[string]any, owned bool) c
 			default:
 				session.resumeCount = session.resumeCapFor()
 			}
+		case causeFailure:
+			session.lastResumeSignature = signature
 		}
 		outcome := relaunchOutcome(t, session, table, evidence, owned)
 		if cause == causeStall && !owned && stallsOnRepeat(evidence) {
@@ -320,12 +339,6 @@ func relaunchOutcome(t *testing.T, session *runSession, table continuityTable, e
 	verdict := observer.applyContinuity(continuityBranch, "run-probe", lifecycleVerdict{
 		Action: lifecycleResume, Evidence: cloneLifecycleExtras(evidence), ImplementorWork: owned,
 	})
-	if verdict.Action == lifecycleResume && session.finalOwnedWorkAttempt {
-		// The final owned-work attempt returns to the ordinary retry path,
-		// which ends the Run with the owned work's own reason when retries
-		// are exhausted.
-		return outcomeTerminal
-	}
 	return probedOutcome(t, verdict)
 }
 

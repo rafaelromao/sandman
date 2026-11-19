@@ -101,18 +101,20 @@ var continuityOutcomes = continuityTable{
 	{reason: "PULL_REQUEST_CLOSED", cause: causeFailure}:                 outcomeTerminal, // closed without merge
 	{reason: missingPRReason, cause: causeFailure}:                       outcomeTerminal, // the implementor never published
 	{reason: "REVIEW_REQUEST_REQUIRED", cause: causeFailure}:             outcomeTerminal, // no review request was delivered
+	{reason: actionableFeedbackReason, cause: causeFailure}:              outcomeTerminal, // formal requested changes remain blocking
 	{reason: blindReviewRequiredReason, cause: causeFailure}:             outcomeHold,     // owned blind review; exhaustion holds
 	{reason: "merged-pr-missing-closing-reference", cause: causeFailure}: outcomeTerminal, // merged without verifiable completion
 	{reason: "CI_WAIT_STATE_ERROR", cause: causeFailure}:                 outcomeTerminal, // corrupt CI wait state
 	{reason: stateErrorReason, cause: causeFailure}:                      outcomeTerminal, // corrupt review state, nothing resolving
 	{reason: lookupGateReason, cause: causeFailure}:                      outcomeTerminal, // GitHub stayed unavailable for 24 hours
 	{reason: githubUnavailableReason, cause: causeFailure}:               outcomeHold,     // waits for GitHub to recover
-	{reason: "IMPLEMENTOR_ACTION_REQUIRED", cause: causeFailure}:         outcomeTerminal, // legacy verification fallback
+	{reason: implementorActionRequiredReason, cause: causeFailure}:       outcomeTerminal, // legacy verification fallback
 	{reason: "REMEDIATION_BUDGET_EXHAUSTED", cause: causeFailure}:        outcomeTerminal, // genuine requested changes left unrepaired
 	{reason: idleGateReason, cause: causeFailure}:                        outcomeHold,     // nothing resolving yet; waits like rc2
 	{reason: reviewTimeoutReason, cause: causeFailure}:                   outcomeHold,     // expired request; agrees with the expired row
 	{reason: "CI_WAIT_TIMEOUT", cause: causeFailure}:                     outcomeHold,     // bounded CI wait expired; waits like rc2
-	{cause: causeFailure}: outcomeTerminal, // unknown reasons are permanent
+	{reason: "CAPACITY_WAIT", cause: causeFailure}:                       outcomeTerminal, // fail closed if capacity admission is ever terminalized
+	{cause: causeFailure}:                                                outcomeTerminal, // unknown reasons are permanent
 
 	// Bounded operations that expired with nothing else resolving them.
 	{gate: gateReviewTimeout, reason: reviewTimeoutReason, cause: causeExpired}:         outcomeHold,     // expired delegated-review request
@@ -139,26 +141,56 @@ var continuityOutcomes = continuityTable{
 	// and unusable CI wait state end the Run on any gate. Owned work ends
 	// through its final ordinary attempt, except the idle gate whose only
 	// missing evidence is a review nobody requested.
-	{reason: actionableFeedbackReason, cause: causeExhausted}:                                 outcomeTerminal,
-	{reason: "CI_WAIT_STATE_ERROR", cause: causeExhausted}:                                    outcomeTerminal,
-	{gate: gateOwnedWorkRequired, reason: actionableFeedbackReason, cause: causeExhausted}:    outcomeTerminal,
-	{gate: gateActionableFeedback, reason: informalFeedbackReason, cause: causeExhausted}:     outcomeHold,
-	{gate: gateReadyToMerge, cause: causeExhausted}:                                           outcomeHold,
-	{gate: "ci-failure", reason: "CI_FAILURE", cause: causeExhausted}:                         outcomeHold,
-	{gate: "merge-conflict", reason: "MERGE_CONFLICT", cause: causeExhausted}:                 outcomeHold,
-	{gate: gateBlindReviewRequired, reason: blindReviewRequiredReason, cause: causeExhausted}: outcomeHold,
-	{gate: gateCIWaitTimeout, reason: "CI_WAIT_TIMEOUT", cause: causeExhausted}:               outcomeHold,
-	{gate: gateReviewTimeout, reason: reviewTimeoutReason, cause: causeExhausted}:             outcomeHold,
-	{gate: gatePRHeadChanged, reason: "PR_HEAD_RECONCILE_REQUIRED", cause: causeExhausted}:    outcomeHold,
-	{gate: gateOwnedWorkRequired, reason: idleGateReason, cause: causeExhausted}:              outcomeHold,
-	{gate: gateOwnedWorkRequired, reason: "REVIEW_REQUEST_REQUIRED", cause: causeExhausted}:   outcomeTerminal,
-	{gate: gateOwnedWorkRequired, reason: missingPRReason, cause: causeExhausted}:             outcomeTerminal,
-	{gate: gateOwnedWorkRequired, cause: causeExhausted}:                                      outcomeTerminal,
+	{reason: actionableFeedbackReason, cause: causeExhausted}:                                     outcomeTerminal,
+	{reason: "CI_WAIT_STATE_ERROR", cause: causeExhausted}:                                        outcomeTerminal,
+	{gate: gateOwnedWorkRequired, reason: actionableFeedbackReason, cause: causeExhausted}:        outcomeTerminal,
+	{gate: gateActionableFeedback, reason: informalFeedbackReason, cause: causeExhausted}:         outcomeHold,
+	{gate: gateReadyToMerge, cause: causeExhausted}:                                               outcomeHold,
+	{gate: "ci-failure", reason: "CI_FAILURE", cause: causeExhausted}:                             outcomeHold,
+	{gate: "merge-conflict", reason: "MERGE_CONFLICT", cause: causeExhausted}:                     outcomeHold,
+	{gate: gateBlindReviewRequired, reason: blindReviewRequiredReason, cause: causeExhausted}:     outcomeHold,
+	{gate: gateCIWaitTimeout, reason: "CI_WAIT_TIMEOUT", cause: causeExhausted}:                   outcomeHold,
+	{gate: gateReviewTimeout, reason: reviewTimeoutReason, cause: causeExhausted}:                 outcomeHold,
+	{gate: gatePRHeadChanged, reason: "PR_HEAD_RECONCILE_REQUIRED", cause: causeExhausted}:        outcomeHold,
+	{gate: gateOwnedWorkRequired, reason: idleGateReason, cause: causeExhausted}:                  outcomeHold,
+	{gate: gateOwnedWorkRequired, reason: implementorActionRequiredReason, cause: causeExhausted}: outcomeTerminal,
+	{gate: gateOwnedWorkRequired, reason: "REVIEW_REQUEST_REQUIRED", cause: causeExhausted}:       outcomeTerminal,
+	{gate: gateOwnedWorkRequired, reason: missingPRReason, cause: causeExhausted}:                 outcomeTerminal,
+	{gate: gateOwnedWorkRequired, cause: causeExhausted}:                                          outcomeTerminal,
 	{cause: causeExhausted}: outcomeHold,
 
 	// Without the Run's stalled signatures a relaunch could repeat stalled
 	// evidence: fail closed into a hold.
 	{cause: causeUnreadable}: outcomeHold,
+}
+
+func quotaLifecycleDecision(table continuityTable) lifecycleVerdict {
+	if table == nil {
+		table = continuityOutcomes
+	}
+	row := continuityRow{
+		gate:   continuityGateQuota,
+		reason: "AGENT_USAGE_LIMIT",
+		cause:  causeResolving,
+	}
+	wait := lifecycleVerdict{
+		Action: lifecycleAwait,
+		Evidence: map[string]any{
+			"gate":        row.gate,
+			"reason":      row.reason,
+			"await":       true,
+			"next_action": "resume after provider usage limit resets",
+		},
+	}
+	terminal := lifecycleVerdict{
+		Action: lifecycleFailure,
+		Evidence: map[string]any{
+			"reason":        row.reason,
+			"external_gate": row.gate,
+			"next_action":   "retry with an agent provider that has available capacity or resume after its usage limit resets",
+		},
+	}
+	return (&lifecycleObserver{outcomes: table}).applyContinuityDisposition(row, wait, terminal)
 }
 
 // failureReasons is the failure-reason classification view of the table:

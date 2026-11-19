@@ -13,6 +13,7 @@ import (
 type batchRowDriverGates struct {
 	startGate *batchStartGate
 	quotaGate *batchQuotaGate
+	outcomes  continuityTable
 	owner     *waitOwner
 	log       events.EventLog
 	title     string
@@ -23,18 +24,49 @@ type batchRowDriverGates struct {
 }
 
 func (g *batchRowDriverGates) Acquire(ctx context.Context, awaiting bool, opportunity awaitOpportunity, observe func() (rowObservationOutcome, error), interval time.Duration) (awaitOpportunity, rowObservationOutcome, error) {
-	if observe != nil {
-		return g.startGate.acquireObserved(ctx, &batchStartWaiter{
-			awaiting: true, lastChance: opportunity.lastChance,
-			ordinaryStartsAtChance: opportunity.ordinaryStarts,
-		}, observe, interval)
-	}
+	waiter := &batchStartWaiter{ordinary: !awaiting}
 	if awaiting {
-		opportunity, err := g.startGate.AcquireAwaiting(ctx, opportunity)
-		return opportunity, rowObservationOutcome{}, err
+		waiter.awaiting = true
+		waiter.lastChance = opportunity.lastChance
+		waiter.ordinaryStartsAtChance = opportunity.ordinaryStarts
 	}
-	opportunity, err := g.startGate.AcquireWithOpportunity(ctx, false)
-	return opportunity, rowObservationOutcome{}, err
+	return g.startGate.acquireObservedWithBlocked(ctx, waiter, observe, interval, g.capacityDisposition)
+}
+
+func (g *batchRowDriverGates) capacityDisposition() (rowObservationOutcome, error) {
+	row := continuityRow{gate: continuityGateCapacity, cause: causeResolving}
+	if g.continuityTable().outcome(row) == outcomeWait {
+		return rowObservationOutcome{}, nil
+	}
+	wait := lifecycleVerdict{
+		Action: lifecycleAwait,
+		Evidence: map[string]any{
+			"gate":        row.gate,
+			"reason":      "capacity-wait",
+			"await":       true,
+			"next_action": "resume when batch execution capacity is available",
+		},
+	}
+	terminal := lifecycleVerdict{
+		Action: lifecycleFailure,
+		Evidence: map[string]any{
+			"reason":        "CAPACITY_WAIT",
+			"external_gate": row.gate,
+			"next_action":   "resume the run when batch execution capacity is available",
+		},
+	}
+	verdict := (&lifecycleObserver{outcomes: g.continuityTable()}).applyContinuityDisposition(row, wait, terminal)
+	if verdict.Action == lifecycleAwait {
+		return rowObservationOutcome{Kind: rowObservationAdmissionChanged, Verdict: verdict}, nil
+	}
+	return rowObservationOutcome{Kind: rowObservationTerminal, Verdict: verdict}, nil
+}
+
+func (g *batchRowDriverGates) continuityTable() continuityTable {
+	if g != nil && g.outcomes != nil {
+		return g.outcomes
+	}
+	return continuityOutcomes
 }
 
 func (g *batchRowDriverGates) QuotaPaused() bool { return g.quotaGate.paused() }

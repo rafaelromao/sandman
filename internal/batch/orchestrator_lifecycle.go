@@ -230,14 +230,15 @@ func decideImplementationPRLifecycle(in implementationPRFacts) lifecycleDecision
 // resolved, and must never wait for work it should perform itself
 // (issue #2743): failures carry the evidence and next action instead.
 const (
-	idleGateReason       = "EXTERNAL_GATE_IDLE"
-	idleGateNextAction   = "confirm an external operation is resolving the gate (running CI or a confirmed review request) or advance the pull-request head; the run cannot wait without active resolution"
-	missingPRReason      = "PULL_REQUEST_MISSING"
-	missingPRNextAction  = "push the implementation branch and create the pull request before yielding to review or CI"
-	stateErrorReason     = "REVIEW_STATE_ERROR"
-	stateErrorNextAction = "inspect the retained review state for the pull request, repair or clear the corrupt artifacts, and continue with a confirmed review request"
-	lookupGateReason     = "GATE_LOOKUP_FAILED"
-	lookupGateNextAction = "GitHub stayed unavailable for 24 hours; once it recovers, run `sandman run <issue> --continue`, which starts a fresh 24-hour recovery window"
+	idleGateReason                  = "EXTERNAL_GATE_IDLE"
+	idleGateNextAction              = "confirm an external operation is resolving the gate (running CI or a confirmed review request) or advance the pull-request head; the run cannot wait without active resolution"
+	implementorActionRequiredReason = "IMPLEMENTOR_ACTION_REQUIRED"
+	missingPRReason                 = "PULL_REQUEST_MISSING"
+	missingPRNextAction             = "push the implementation branch and create the pull request before yielding to review or CI"
+	stateErrorReason                = "REVIEW_STATE_ERROR"
+	stateErrorNextAction            = "inspect the retained review state for the pull request, repair or clear the corrupt artifacts, and continue with a confirmed review request"
+	lookupGateReason                = "GATE_LOOKUP_FAILED"
+	lookupGateNextAction            = "GitHub stayed unavailable for 24 hours; once it recovers, run `sandman run <issue> --continue`, which starts a fresh 24-hour recovery window"
 )
 
 // lifecycleGateFailureEvidence identifies the unusable gate snapshot and
@@ -264,8 +265,12 @@ func lifecycleGateFailureEvidence(reason, nextAction string, gate lifecycleGate,
 // request-scoped evidence when no in-session implementation resume budget
 // remains. It writes terminal diagnostics only, never an await payload.
 func remediationBudgetFailureEvidence(gate string, evidence map[string]any, nextAction string) map[string]any {
+	return classifiedLifecycleFailureEvidence(gate, evidence, "REMEDIATION_BUDGET_EXHAUSTED", nextAction)
+}
+
+func classifiedLifecycleFailureEvidence(gate string, evidence map[string]any, reason, nextAction string) map[string]any {
 	extras := map[string]any{
-		"reason":        "REMEDIATION_BUDGET_EXHAUSTED",
+		"reason":        reason,
 		"next_action":   nextAction,
 		"external_gate": gate,
 	}
@@ -931,7 +936,11 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 			deadlines["pull_request"] = pr.Number
 			deadlines["head_sha"] = headSHA
 			deadlines = mergeLifecycleDiagnostics(deadlines, s.retainedReviewDiagnostics(ctx, workDir, branch, pr, headSHA))
-			return lifecycleVerdict{Action: lifecycleResume, Evidence: deadlines}
+			deadlineVerdict := lifecycleVerdict{Action: lifecycleResume, Evidence: deadlines}
+			if gate == gateReviewTimeout {
+				return s.applyExpiredReviewOutcome(branch, runID, deadlineVerdict)
+			}
+			return deadlineVerdict
 		}
 	}
 	if decision.action == lifecycleFailure && isImplementorOwnedGateFailure(decision.failureExtras) && !evidence.stateError && strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) {

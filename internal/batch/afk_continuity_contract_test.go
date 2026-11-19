@@ -1954,11 +1954,16 @@ func TestAFKContinuityContract_LifecycleFailureReasonsAreClassified(t *testing.T
 	// Reasons that never end a Run: they select a wait, a relaunch or merge
 	// work, or describe the non-lifecycle retry and quota paths.
 	nonTerminal := map[string]bool{
-		"PULL_REQUEST_READY": true, "REVIEW_APPROVED": true, actionableFeedbackReason: true,
+		"PULL_REQUEST_READY": true, "REVIEW_APPROVED": true,
 		informalFeedbackReason: true, resumeStalledReason: true, "CI_FAILURE": true, "MERGE_CONFLICT": true,
 		"PR_HEAD_RECONCILE_REQUIRED": true, "AGENT_USAGE_LIMIT": true,
+		ownedWorkRetryReason: true, contextExhaustedRetryReason: true,
 	}
-	reasonLiteral := regexp.MustCompile(`(?:"reason":\s*|Reason\s*=\s*|lifecycleGateFailureEvidence\(|lifecycleRemediationDecision\([^,]+,\s*)"([A-Z][A-Z_]+)"`)
+	reasonLiteral := regexp.MustCompile(`(?:"reason":\s*|Reason\s*=\s*|lifecycleGateFailureEvidence\(|lifecycleRemediationDecision\([^,]+,\s*|classifiedLifecycleFailureEvidence\([^,]+,\s*[^,]+,\s*)"([A-Z][A-Z_]+)"`)
+	reasonConstants := []*regexp.Regexp{
+		regexp.MustCompile(`\b[A-Za-z_][A-Za-z0-9_]*Reason\s*=\s*"([^"]*)"`),
+		regexp.MustCompile(`\b[A-Za-z_][A-Za-z0-9_]*Reason\s+[A-Za-z_][A-Za-z0-9_]*\s*=\s*"([^"]*)"`),
+	}
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
@@ -1974,6 +1979,13 @@ func TestAFKContinuityContract_LifecycleFailureReasonsAreClassified(t *testing.T
 		}
 		for _, match := range reasonLiteral.FindAllStringSubmatch(string(data), -1) {
 			seen[match[1]] = true
+		}
+		for _, pattern := range reasonConstants {
+			for _, match := range pattern.FindAllStringSubmatch(string(data), -1) {
+				if match[1] != "" {
+					seen[match[1]] = true
+				}
+			}
 		}
 	}
 	if !seen[idleGateReason] || !seen["PULL_REQUEST_CLOSED"] || !seen["REMEDIATION_BUDGET_EXHAUSTED"] {

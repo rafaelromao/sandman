@@ -162,7 +162,11 @@ func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifec
 			evidence["next_action"] = lifecycleDeadlineNextAction(gate)
 			deadlineVerdict := lifecycleVerdict{Action: lifecycleResume, Evidence: evidence}
 			deadlineVerdict.ImplementorWork = isImplementorOwnedGateFailure(evidence)
-			deadlineVerdict = o.applyContinuity(request.Branch, request.RunID, deadlineVerdict)
+			if gate == gateReviewTimeout {
+				deadlineVerdict = o.applyExpiredReviewOutcome(request.Branch, request.RunID, deadlineVerdict)
+			} else {
+				deadlineVerdict = o.applyContinuity(request.Branch, request.RunID, deadlineVerdict)
+			}
 			if deadlineVerdict.Action != lifecycleAwait {
 				return deadlineVerdict
 			}
@@ -278,12 +282,19 @@ func (o *lifecycleObserver) applyContinuity(branch, runID string, verdict lifecy
 			return verdict
 		}
 		if o.finalOwnedWorkAttempt {
-			reason := continuityOutcomeReason(verdict.Evidence, causeExhausted)
-			outcome := outcomes.outcome(continuityRow{gate: gate, reason: reason, cause: causeExhausted})
-			if outcome == outcomeHold &&
-				(reason != idleGateReason || (strings.TrimSpace(o.renderCfg.ReviewCommand) == "" && idleGateAwaitsReview(verdict.Evidence))) {
+			row := finalOwnedWorkContinuityRow(verdict.Evidence, o.renderCfg.ReviewCommand)
+			outcome := outcomes.outcome(row)
+			if outcome == outcomeHold {
 				verdict.Action = lifecycleAwait
 				verdict.Evidence = o.ownedWorkHold(verdict.Evidence, signature, stalled)
+			} else if outcome == outcomeTerminal {
+				verdict.Action = lifecycleFailure
+				terminalEvidence := cloneLifecycleExtras(verdict.Evidence)
+				delete(terminalEvidence, "gate")
+				delete(terminalEvidence, "await")
+				delete(terminalEvidence, "continuity_hold")
+				verdict.Evidence = terminalEvidence
+				verdict.ImplementorWork = false
 			}
 		}
 		return verdict
@@ -320,8 +331,14 @@ func (o *lifecycleObserver) applyContinuity(branch, runID string, verdict lifecy
 	cause := causeExhausted
 	reason := stringEvidence(verdict.Evidence, "reason")
 	permanentEvidence := formalChangesRequested(verdict.Evidence) || reason == "CI_WAIT_STATE_ERROR"
-	if repeated && used < o.resumeCapFor() && !permanentEvidence {
-		cause = causeStall
+	if repeated && used < o.resumeCapFor() {
+		if permanentEvidence {
+			// The blocker itself is terminal; the relaunch allowance has not
+			// been used up.
+			cause = causeFailure
+		} else {
+			cause = causeStall
+		}
 	}
 	row := continuityRow{
 		gate:   gate,
@@ -331,8 +348,16 @@ func (o *lifecycleObserver) applyContinuity(branch, runID string, verdict lifecy
 	switch outcomes.outcome(row) {
 	case outcomeTerminal:
 		verdict.Action = lifecycleFailure
-		verdict.Evidence = remediationBudgetFailureEvidence(gate, verdict.Evidence,
-			"inspect the current pull-request remediation evidence and continue in a fresh session")
+		if row.cause == causeFailure {
+			nextAction := stringEvidence(verdict.Evidence, "next_action")
+			if nextAction == "" {
+				nextAction = "inspect the current pull-request evidence and continue in a fresh session"
+			}
+			verdict.Evidence = classifiedLifecycleFailureEvidence(gate, verdict.Evidence, row.reason, nextAction)
+		} else {
+			verdict.Evidence = remediationBudgetFailureEvidence(gate, verdict.Evidence,
+				"inspect the current pull-request remediation evidence and continue in a fresh session")
+		}
 		verdict.ImplementorWork = false
 	case outcomeHold:
 		verdict.Action = lifecycleAwait
@@ -341,12 +366,21 @@ func (o *lifecycleObserver) applyContinuity(branch, runID string, verdict lifecy
 	return verdict
 }
 
+func finalOwnedWorkContinuityRow(evidence map[string]any, reviewCommand string) continuityRow {
+	reason := continuityOutcomeReason(evidence, causeExhausted)
+	if reason == idleGateReason &&
+		(strings.TrimSpace(reviewCommand) != "" || !idleGateAwaitsReview(evidence)) {
+		reason = implementorActionRequiredReason
+	}
+	return continuityRow{gate: gateOwnedWorkRequired, reason: reason, cause: causeExhausted}
+}
+
 func continuityOutcomeReason(evidence map[string]any, cause continuityCause) string {
 	gate := stringEvidence(evidence, "gate")
 	reason := stringEvidence(evidence, "reason")
 	ownedFormalChanges := gate == gateOwnedWorkRequired && reason == idleGateReason &&
 		strings.EqualFold(strings.TrimSpace(stringEvidence(evidence, "review_decision")), "CHANGES_REQUESTED")
-	if cause == causeExhausted && (formalChangesRequested(evidence) || ownedFormalChanges) {
+	if (cause == causeExhausted || cause == causeFailure) && (formalChangesRequested(evidence) || ownedFormalChanges) {
 		return actionableFeedbackReason
 	}
 	return reason
@@ -377,6 +411,38 @@ func (o *lifecycleObserver) applyContinuityDisposition(row continuityRow, wait, 
 				"inspect the current pull-request evidence; the external operation is no longer authorized to keep this Run waiting"),
 		}
 	}
+}
+
+// applyExpiredReviewOutcome uses the expiry row to decide whether the
+// previously authorized, bounded recovery attempt remains available. A hold
+// retains the existing timeout recovery path; a terminal row ends it before
+// another implementation attempt can launch.
+func (o *lifecycleObserver) applyExpiredReviewOutcome(branch, runID string, verdict lifecycleVerdict) lifecycleVerdict {
+	originalGate := stringEvidence(verdict.Evidence, "gate")
+	row := continuityRow{
+		gate:   gateReviewTimeout,
+		reason: stringEvidence(verdict.Evidence, "reason"),
+		cause:  causeExpired,
+	}
+	if row.reason == "" {
+		row.reason = reviewTimeoutReason
+	}
+	if o.continuityTable().outcome(row) == outcomeHold {
+		return o.applyContinuity(branch, runID, verdict)
+	}
+	evidence := cloneLifecycleExtras(verdict.Evidence)
+	if evidence == nil {
+		evidence = map[string]any{}
+	}
+	delete(evidence, "gate")
+	delete(evidence, "await")
+	delete(evidence, "continuity_hold")
+	evidence["reason"] = row.reason
+	if originalGate == "" {
+		originalGate = row.gate
+	}
+	evidence["external_gate"] = originalGate
+	return lifecycleVerdict{Action: lifecycleFailure, Evidence: evidence}
 }
 
 func stringEvidence(evidence map[string]any, key string) string {
