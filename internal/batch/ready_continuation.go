@@ -35,7 +35,7 @@ func quotaWaitDueAt(evidence map[string]any, startedAt time.Time) time.Time {
 	}
 	allowance, err := restoreUsageLimitAllowance(evidence)
 	if err != nil {
-		return startedAt.Add(usageLimitPollInterval)
+		return startedAt
 	}
 	remaining := max(0, usageLimitRetryWindow-allowance.waited)
 	if remaining == 0 {

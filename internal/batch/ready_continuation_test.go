@@ -445,6 +445,11 @@ func TestQuotaWaitDueAtReconstructsPersistedSchedule(t *testing.T) {
 			want:     startedAt.Add(usageLimitPollInterval),
 		},
 		{
+			name:     "invalid accounting bypasses further quota wait",
+			evidence: map[string]any{"usage_limit_waited_seconds": "invalid"},
+			want:     startedAt,
+		},
+		{
 			name: "out of bound reset reconstructs fallback",
 			evidence: map[string]any{
 				"usage_limit_waited_seconds":              600,
