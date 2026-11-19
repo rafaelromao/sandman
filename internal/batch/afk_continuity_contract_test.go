@@ -710,6 +710,13 @@ func greenCleanPR() github.PR {
 
 func requestReview(g *continuityGitHub) string { g.trigger(); return "success" }
 
+func requestReviewOnHead(head string) func(*continuityGitHub) string {
+	return func(g *continuityGitHub) string {
+		g.update(func(pr *github.PR) { pr.HeadRefOid = head })
+		return requestReview(g)
+	}
+}
+
 func publishContinuityChangesRequested(g *continuityGitHub) {
 	g.publish("## Findings\n- Blocking: `worker.go:12` drops the request on retry.\n\n## Decision\n**CHANGES_REQUESTED**\n")
 }
@@ -977,6 +984,20 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 				publishContinuityChangesRequested, publishContinuityChangesRequested,
 			},
 			want: "failed:REMEDIATION_BUDGET_EXHAUSTED", wantLaunches: 4,
+		},
+		// Moving to a new head admits feedback work there, but restoring the
+		// earlier head cannot reopen its already exhausted allowance.
+		continuityScenario{
+			name: "#2997 returning to an exhausted head preserves its feedback allowance", pr: greenCleanPR(), retries: 3,
+			forbidRetry: true,
+			launches: []func(*continuityGitHub) string{
+				requestReview, requestReview, requestReview, requestReviewOnHead("head-2"), requestReviewOnHead("head-1"),
+			},
+			polls: []func(*continuityGitHub){
+				publishContinuityChangesRequested, publishContinuityChangesRequested, publishContinuityChangesRequested,
+				publishContinuityChangesRequested, publishContinuityChangesRequested,
+			},
+			want: "failed:REMEDIATION_BUDGET_EXHAUSTED", wantLaunches: 5,
 		},
 		continuityScenario{
 			name: "#2997 same-head rerequests with formal changes exhaust feedback allowance", pr: greenCleanPR(), retries: 3,

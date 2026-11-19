@@ -229,21 +229,22 @@ func repairRound(evidence map[string]any, liveHead string) string {
 // reviewFeedbackAllowance is shared by the active row's sequential executor
 // entries and observations. It is not restored from persisted evidence.
 type reviewFeedbackAllowance struct {
-	round       string
-	used        int
+	usedByHead  map[string]int
 	hasLaunched bool
 }
 
-func (a *reviewFeedbackAllowance) usedFor(round string) int {
-	if a != nil && a.round == round {
-		return a.used
+func (a *reviewFeedbackAllowance) usedFor(head string) int {
+	if a == nil {
+		return 0
 	}
-	return 0
+	return a.usedByHead[head]
 }
 
-func (a *reviewFeedbackAllowance) charge(round string) {
-	a.used = a.usedFor(round) + 1
-	a.round = round
+func (a *reviewFeedbackAllowance) charge(head string) {
+	if a.usedByHead == nil {
+		a.usedByHead = make(map[string]int)
+	}
+	a.usedByHead[head]++
 }
 
 // exhaustionTerminal reports resume reasons whose exhausted remediation is a

@@ -86,7 +86,7 @@ func TestContinuityDecision_AllowanceIsPerRepairRound(t *testing.T) {
 	extras := map[string]any{"gate": gateActionableFeedback, "reason": actionableFeedbackReason}
 	s := &runSession{decisionPRHead: "head-1"}
 	s.lastResumeSignature = resumeSignature(extras, "head-1")
-	s.feedbackAllowance = &reviewFeedbackAllowance{round: repairRound(extras, "head-1"), used: s.resumeCapFor()}
+	s.feedbackAllowance = &reviewFeedbackAllowance{usedByHead: map[string]int{"head-1": s.resumeCapFor()}}
 	verdict := applyContinuityForTest(s, "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: extras})
 	if verdict.Action != lifecycleFailure {
 		t.Fatalf("exhausted formal changes on the same head = %v, want the terminal budget failure", verdict.Action)

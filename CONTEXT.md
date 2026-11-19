@@ -46,10 +46,10 @@ _Avoid_: synthetic issue run.
 
 **Lifecycle relaunch allowance**:
 The bound on implementation recovery: three relaunches in addition to entry.
-For review feedback, only a new pull-request head starts a fresh repair round;
-a new request on the same head shares the allowance across waits in the active
-Run. Other gates retain their request-and-head rounds within one executor
-session. Restart recovery and manual continuation start with fresh allowances.
+For review feedback, only a previously unseen pull-request head starts a fresh
+repair round. An earlier head keeps its allowance across waits and requests
+in the active Run. Other gates retain their request-and-head rounds within one
+executor session. Restart recovery and manual continuation start with fresh allowances.
 Ordinary agent retries and the ten-pass review loop retain their separate bounds.
 _Avoid_: durable repair budget, cumulative remediation exhaustion.
 

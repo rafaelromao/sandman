@@ -128,12 +128,12 @@ whose checks and review must be revalidated. A continuity hold
 resumes when the gate changes, and its schedule checkpoint uses the stable
 `hold:<RunID>` recovery identity, so restart discovery re-enters it within the
 ordinary ownerless grace. Review feedback has three relaunches per head in
-addition to entry. This allowance carries across waits in the active Run; a
-new review request on the same head does not reset it. Genuine requested
-changes end the Run when the allowance is spent; informal feedback still
-holds. Approval can resume merge work under its own round. Other gates retain
-the in-session request-and-head rule; a changed CI execution does not reset
-that allowance. An unreadable event log
+addition to entry. This allowance carries across waits in the active Run.
+Neither re-requesting review nor returning to an earlier head resets it.
+Genuine requested changes end the Run when the allowance is spent; informal
+feedback still holds. Approval can resume merge work under its own round.
+Other gates retain the in-session request-and-head rule; a changed CI
+execution does not reset that allowance. An unreadable event log
 fails closed into a wait. Exhausted remediation of unusable CI wait state
 (`CI_WAIT_STATE_ERROR`) stays terminal.
 
