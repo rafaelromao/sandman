@@ -29,6 +29,36 @@ type ReadyContinuation struct {
 	Wait               *daemon.RunWait
 }
 
+func quotaWaitDueAt(evidence map[string]any, startedAt time.Time) time.Time {
+	if startedAt.IsZero() {
+		return time.Time{}
+	}
+	allowance, err := restoreUsageLimitAllowance(evidence)
+	if err != nil {
+		return startedAt.Add(usageLimitPollInterval)
+	}
+	remaining := max(0, usageLimitRetryWindow-allowance.waited)
+	if remaining == 0 {
+		return startedAt
+	}
+	wait := usageLimitPollInterval
+	if !allowance.providerReset.IsZero() {
+		delta := allowance.providerReset.Sub(startedAt)
+		if delta >= -7*24*time.Hour && delta <= 7*24*time.Hour {
+			wait = max(0, delta)
+		}
+	}
+	return startedAt.Add(min(wait, remaining))
+}
+
+func quotaSchedulesMatch(checkpoint, eventSchedule time.Time) bool {
+	if checkpoint.IsZero() || eventSchedule.IsZero() {
+		return checkpoint.IsZero() && eventSchedule.IsZero()
+	}
+	delta := checkpoint.Sub(eventSchedule)
+	return delta >= -time.Second && delta <= time.Second
+}
+
 // FindReadyContinuations returns only the latest per-issue lifecycle states
 // that are durably capacity-queued and whose original batch no longer has a
 // live owner. A later lifecycle event or a live batch always takes precedence.
@@ -90,7 +120,26 @@ func FindReadyContinuations(eventLog []events.Event, layout paths.Layout) []Read
 				BatchID: batchID, Branch: wait.Branch, BaseBranch: wait.BaseBranch, Wait: &wait})
 			continue
 		}
-		if !os.IsNotExist(waitErr) || !state.IsCapacityQueued() || event == nil || !payloadBoolValue(event.Payload, "ready_continuation") {
+		if !os.IsNotExist(waitErr) {
+			continue
+		}
+		if evidence := quotaPollingEvidence(state); evidence != nil && state.AwaitEvent != nil && !state.IsCapacityQueued() {
+			quotaWait, valid := quotaAwaitRecoveryWait(state, evidence)
+			if valid && quotaWait.RecoverableAt(time.Now().UTC()) {
+				ready = append(ready, ReadyContinuation{
+					IssueNumber:        issue,
+					RunID:              state.RunID,
+					PreviousRunID:      state.RunID,
+					PreviousRunBatchID: quotaWait.BatchID,
+					BatchID:            quotaWait.BatchID,
+					Branch:             quotaWait.Branch,
+					BaseBranch:         quotaWait.BaseBranch,
+					Wait:               &quotaWait,
+				})
+			}
+			continue
+		}
+		if !state.IsCapacityQueued() || event == nil || !payloadBoolValue(event.Payload, "ready_continuation") {
 			continue
 		}
 		legacyWait, valid := legacyRecoveryWait(state)
@@ -132,6 +181,7 @@ func reconcileRecoveryWait(record daemon.RunWait, state events.RunState) (daemon
 	record.PreviousRunID, record.PreviousBatchID = state.RunID, record.BatchID
 	record.Ready, record.UsageLimitProbe = state.IsCapacityQueued(), false
 	record.OperationID, record.OperationDeadline = "capacity", time.Time{}
+	quotaScheduleChanged := false
 	if record.Ready && state.CapacityQueuedEvent != nil && (previous.InitialAdmission || !previous.Ready) {
 		record.LeaseExpiresAt = state.CapacityQueuedEvent.Timestamp.Add(daemon.RunRecoveryGrace)
 	}
@@ -141,8 +191,9 @@ func reconcileRecoveryWait(record daemon.RunWait, state events.RunState) (daemon
 		if record.Ready {
 			record.NextPollAt = state.CapacityQueuedEvent.Timestamp
 		} else {
-			record.NextPollAt = state.AwaitEvent.Timestamp.Add(usageLimitPollInterval)
+			record.NextPollAt = quotaWaitDueAt(evidence, state.AwaitEvent.Timestamp)
 		}
+		quotaScheduleChanged = !quotaSchedulesMatch(previous.NextPollAt, record.NextPollAt)
 	} else if !record.Ready {
 		if state.AwaitEvent == nil {
 			return record, true, false
@@ -166,11 +217,39 @@ func reconcileRecoveryWait(record daemon.RunWait, state events.RunState) (daemon
 	if !record.OperationDeadline.IsZero() && record.OperationDeadline.Before(record.LeaseExpiresAt) {
 		record.LeaseExpiresAt = record.OperationDeadline
 	}
-	changed := previous.InitialAdmission || previous.Ready != record.Ready || previous.UsageLimitProbe != record.UsageLimitProbe || previous.OperationID != record.OperationID || !previous.OperationDeadline.Equal(record.OperationDeadline)
+	changed := previous.InitialAdmission || previous.Ready != record.Ready || previous.UsageLimitProbe != record.UsageLimitProbe || previous.OperationID != record.OperationID || !previous.OperationDeadline.Equal(record.OperationDeadline) || quotaScheduleChanged
 	if !changed {
 		record.NextPollAt = previous.NextPollAt
 	}
 	return record, changed, record.Branch != ""
+}
+
+func quotaAwaitRecoveryWait(state events.RunState, evidence map[string]any) (daemon.RunWait, bool) {
+	event := state.AwaitEvent
+	if event == nil || event.Timestamp.IsZero() || state.RunID == "" || state.IssueNumber() <= 0 {
+		return daemon.RunWait{}, false
+	}
+	batchID := state.BatchID()
+	branch := state.Branch()
+	baseBranch := strings.TrimSpace(payloadStringValue(event.Payload, "base_branch"))
+	if batchID == "" || branch == "" || baseBranch == "" {
+		return daemon.RunWait{}, false
+	}
+	return daemon.RunWait{
+		Protocol:        "run-wait/v1",
+		RunID:           state.RunID,
+		BatchID:         batchID,
+		Issue:           state.IssueNumber(),
+		Branch:          branch,
+		BaseBranch:      baseBranch,
+		AdmissionMode:   int(ModeContinue),
+		ReuseSession:    true,
+		UsageLimitProbe: true,
+		OperationID:     "quota:" + state.RunID,
+		LeaseExpiresAt:  event.Timestamp.Add(daemon.RunRecoveryGrace),
+		NextPollAt:      quotaWaitDueAt(evidence, event.Timestamp),
+		RecoveryEventAt: event.Timestamp,
+	}, true
 }
 
 func legacyRecoveryWait(state events.RunState) (daemon.RunWait, bool) {

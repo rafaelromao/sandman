@@ -96,6 +96,47 @@ func TestFindReadyContinuationsReadsIndexedRelocatedLease(t *testing.T) {
 	}
 }
 
+func TestFindReadyContinuationsReconstructsQuotaWaitWithoutCheckpoint(t *testing.T) {
+	layout := paths.NewLayout(nil, t.TempDir())
+	batchDir := filepath.Join(layout.SandmanDir, "batches", "batch-quota-recovery")
+	if err := (&batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{{
+		ID: "batch-quota-recovery", Path: batchDir, Status: batchindex.StatusActive, Kind: batchindex.KindIssue,
+	}}}).Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	startedAt := now.Add(-2 * time.Minute)
+	awaitedAt := now.Add(-time.Minute)
+	resetAt := now.Add(37 * time.Minute)
+	eventLog := []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-quota-recovery", Issue: 42,
+			Payload: map[string]any{"branch": "42-quota", "base_branch": "main", "batch_id": "batch-quota-recovery"}},
+		{Type: "run.await", Timestamp: awaitedAt, RunID: "run-quota-recovery", Issue: 42,
+			Payload: map[string]any{
+				"await": true, "await_reason": "usage-limit", "branch": "42-quota",
+				"base_branch": "main", "batch_id": "batch-quota-recovery",
+				"usage_limit_waited_seconds":              600,
+				"usage_limit_deadline_unix_seconds":       awaitedAt.Add(5 * time.Hour).Unix(),
+				"usage_limit_provider_reset_unix_seconds": resetAt.Unix(),
+			}},
+	}
+
+	ready := FindReadyContinuations(eventLog, layout)
+	if len(ready) != 1 || ready[0].Wait == nil {
+		t.Fatalf("missing-checkpoint quota recovery = %#v, want one recovered continuation", ready)
+	}
+	wait := ready[0].Wait
+	if wait.Ready || !wait.UsageLimitProbe || wait.OperationID != "quota:run-quota-recovery" {
+		t.Fatalf("recovered quota wait = %+v, want an awaiting quota probe", wait)
+	}
+	if !wait.NextPollAt.Equal(resetAt) || wait.OperationDeadline.IsZero() == false {
+		t.Fatalf("recovered schedule = %+v, want provider reset %v and no hard operation deadline", wait, resetAt)
+	}
+	if !wait.LeaseExpiresAt.Equal(awaitedAt.Add(daemon.RunRecoveryGrace)) {
+		t.Fatalf("recovered lease = %v, want event-based recovery grace", wait.LeaseExpiresAt)
+	}
+}
+
 func TestFindReadyContinuationsReadsIndexedRelocatedCapacityLease(t *testing.T) {
 	layout := paths.NewLayout(nil, t.TempDir())
 	physicalDir := filepath.Join(layout.SandmanDir, "relocated", "physical-name")
@@ -352,17 +393,107 @@ func TestRecoveryReconcilesChangedExternalOperation(t *testing.T) {
 		payload  map[string]any
 		probe    bool
 		deadline time.Time
+		nextPoll time.Time
 	}{
-		{"quota", map[string]any{"await_reason": "usage-limit", "usage_limit_waited_seconds": 0, "usage_limit_deadline_unix_seconds": now.Add(5 * time.Hour).Unix()}, true, time.Time{}},
-		{"review", map[string]any{"review_request": map[string]any{"deadline_unix_seconds": now.Add(30 * time.Minute).Unix()}}, false, now.Add(30 * time.Minute).Truncate(time.Second)},
+		{"quota", map[string]any{"await_reason": "usage-limit", "usage_limit_waited_seconds": 0, "usage_limit_deadline_unix_seconds": now.Add(5 * time.Hour).Unix(), "usage_limit_provider_reset_unix_seconds": now.Add(37 * time.Minute).Unix()}, true, time.Time{}, time.Unix(now.Add(37*time.Minute).Unix(), 0)},
+		{"review", map[string]any{"review_request": map[string]any{"deadline_unix_seconds": now.Add(30 * time.Minute).Unix()}}, false, now.Add(30 * time.Minute).Truncate(time.Second), time.Time{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			log := []events.Event{{Type: "run.started", RunID: "row", Issue: 42, Timestamp: now.Add(-time.Minute), Payload: map[string]any{"batch_id": "batch", "branch": "42-fix"}}, {Type: "run.await", RunID: "row", Issue: 42, Timestamp: now, Payload: tc.payload}}
 			ready := FindReadyContinuations(log, layout)
-			if len(ready) != 1 || ready[0].Wait == nil || ready[0].Wait.UsageLimitProbe != tc.probe || !ready[0].Wait.OperationDeadline.Equal(tc.deadline) || ready[0].Wait.OperationID == record.OperationID || ready[0].Wait.LeaseExpiresAt.After(record.OperationDeadline) {
+			if len(ready) != 1 || ready[0].Wait == nil || ready[0].Wait.UsageLimitProbe != tc.probe || !ready[0].Wait.OperationDeadline.Equal(tc.deadline) || !ready[0].Wait.NextPollAt.Equal(tc.nextPoll) || ready[0].Wait.OperationID == record.OperationID || ready[0].Wait.LeaseExpiresAt.After(record.OperationDeadline) {
 				t.Fatalf("event-before-checkpoint retained obsolete operation: %+v", ready)
 			}
 		})
+	}
+}
+
+func TestQuotaWaitDueAtReconstructsPersistedSchedule(t *testing.T) {
+	startedAt := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name     string
+		evidence map[string]any
+		want     time.Time
+	}{
+		{
+			name: "provider reset schedule",
+			evidence: map[string]any{
+				"usage_limit_waited_seconds":              600,
+				"usage_limit_provider_reset_unix_seconds": startedAt.Add(37 * time.Minute).Unix(),
+			},
+			want: startedAt.Add(37 * time.Minute),
+		},
+		{
+			name: "reset is capped by remaining allowance",
+			evidence: map[string]any{
+				"usage_limit_waited_seconds":              int(4 * time.Hour / time.Second),
+				"usage_limit_provider_reset_unix_seconds": startedAt.Add(2 * time.Hour).Unix(),
+			},
+			want: startedAt.Add(time.Hour),
+		},
+		{
+			name: "passed reset is immediately due after downtime",
+			evidence: map[string]any{
+				"usage_limit_waited_seconds":              600,
+				"usage_limit_provider_reset_unix_seconds": startedAt.Add(-time.Minute).Unix(),
+			},
+			want: startedAt,
+		},
+		{
+			name:     "absent reset reconstructs fallback",
+			evidence: map[string]any{"usage_limit_waited_seconds": 600},
+			want:     startedAt.Add(usageLimitPollInterval),
+		},
+		{
+			name: "out of bound reset reconstructs fallback",
+			evidence: map[string]any{
+				"usage_limit_waited_seconds":              600,
+				"usage_limit_provider_reset_unix_seconds": startedAt.Add(8 * 24 * time.Hour).Unix(),
+			},
+			want: startedAt.Add(usageLimitPollInterval),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := quotaWaitDueAt(tt.evidence, startedAt); !got.Equal(tt.want) {
+				t.Fatalf("reconstructed due time = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRecoveryReconcilesQuotaScheduleFromLatestAwaitEvent(t *testing.T) {
+	now := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC)
+	reset := now.Add(47 * time.Minute)
+	eventLog := []events.Event{
+		{Type: "run.started", RunID: "row", Issue: 42, Timestamp: now.Add(-time.Minute),
+			Payload: map[string]any{"batch_id": "batch", "branch": "42-fix", "base_branch": "main"}},
+		{Type: "run.await", RunID: "row", Issue: 42, Timestamp: now,
+			Payload: map[string]any{
+				"await": true, "await_reason": "usage-limit", "batch_id": "batch",
+				"branch": "42-fix", "base_branch": "main", "usage_limit_waited_seconds": 600,
+				"usage_limit_provider_reset_unix_seconds": reset.Unix(),
+			}},
+	}
+	state := events.ProjectRunStates(eventLog)[0]
+	record := daemon.RunWait{
+		Protocol: "run-wait/v1", RunID: "row", BatchID: "batch", Issue: 42,
+		Branch: "42-fix", BaseBranch: "main", UsageLimitProbe: true,
+		OperationID: "quota:row", NextPollAt: now.Add(37 * time.Minute),
+		LeaseExpiresAt: now.Add(daemon.RunRecoveryGrace),
+	}
+
+	reconciled, changed, valid := reconcileRecoveryWait(record, state)
+	if !valid || !changed {
+		t.Fatalf("same-Run quota schedule reconciliation = %+v changed=%v valid=%v, want changed schedule", reconciled, changed, valid)
+	}
+	if !reconciled.NextPollAt.Equal(reset) {
+		t.Fatalf("reconciled due time = %v, want latest provider reset %v", reconciled.NextPollAt, reset)
+	}
+	record.NextPollAt = reset.Add(500 * time.Millisecond)
+	reconciled, changed, valid = reconcileRecoveryWait(record, state)
+	if !valid || changed || !reconciled.NextPollAt.Equal(record.NextPollAt) {
+		t.Fatalf("valid checkpoint = %+v changed=%v valid=%v, want retained checkpoint %v", reconciled, changed, valid, record.NextPollAt)
 	}
 }
 

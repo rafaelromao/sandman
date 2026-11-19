@@ -53,7 +53,9 @@ func TestReviewQuotaPauseSetsTenMinuteGate(t *testing.T) {
 		prFetch: map[int]*github.PR{42: {Number: 42, Title: "T", Body: "B"}},
 	}
 	runner := &quotaProbeRunner{
-		reviewResult: &batch.Result{Runs: []batch.AgentRunResult{{UsageLimitReached: true, Status: "failure"}}},
+		reviewResult: &batch.Result{Runs: []batch.AgentRunResult{{
+			UsageLimitReached: true, UsageLimitResetAt: now.Add(37 * time.Minute), Status: "failure",
+		}}},
 	}
 	cfg := &config.Config{DefaultReviewAgent: "opencode", DefaultReviewModel: "m"}
 	d, _, _ := newDaemonForTest(t, gh, runner, cfg)

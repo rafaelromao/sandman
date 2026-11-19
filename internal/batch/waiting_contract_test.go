@@ -408,11 +408,12 @@ func TestWaitingOwnerNilLogPreservesQuotaSchedule(t *testing.T) {
 	}
 	defer owner.close()
 	deadline := now.Add(5 * time.Hour)
-	if err := owner.checkpoint(RowSpec{RunID: "row", IssueNumber: 42, Branches: map[int]string{42: "42-work"}, quotaAllowance: usageLimitAllowance{probe: true, deadline: deadline}}, false, usageLimitPollInterval); err != nil {
+	nextPollAt := now.Add(37 * time.Minute)
+	if err := owner.checkpoint(RowSpec{RunID: "row", IssueNumber: 42, Branches: map[int]string{42: "42-work"}, quotaAllowance: usageLimitAllowance{probe: true, deadline: deadline, providerReset: nextPollAt}}, false, nextPollAt.Sub(now)); err != nil {
 		t.Fatal(err)
 	}
 	record, err := daemon.ReadRunWaitAt(layout, batch, "row")
-	if err != nil || record.InitialAdmission || !record.UsageLimitProbe || !record.OperationDeadline.IsZero() || record.OperationID != "quota:row" || !record.LeaseExpiresAt.Equal(now.Add(daemon.RunRecoveryGrace)) {
+	if err != nil || record.InitialAdmission || !record.UsageLimitProbe || !record.OperationDeadline.IsZero() || record.OperationID != "quota:row" || !record.NextPollAt.Equal(nextPollAt) || !record.LeaseExpiresAt.Equal(now.Add(daemon.RunRecoveryGrace)) {
 		t.Fatalf("nil logger lost runtime-derived quota schedule: %+v err=%v", record, err)
 	}
 }
