@@ -267,12 +267,16 @@ func (o *lifecycleObserver) applyContinuity(branch, runID string, verdict lifecy
 		verdict.Evidence = stalledAwaitExtras(verdict.Evidence, signature, stalled)
 		return verdict
 	}
-	if o.lastResumeRound != "" && allowanceRound != o.lastResumeRound {
+	gate := stringEvidence(verdict.Evidence, "gate")
+	used := o.resumeCount
+	if gate == gateActionableFeedback {
+		used = o.feedbackAllowance.usedFor(allowanceRound)
+	} else if o.lastResumeRound != "" && allowanceRound != o.lastResumeRound {
 		o.resumeCount = 0
+		used = 0
 	}
-	gate, _ := verdict.Evidence["gate"].(string)
 	repeated := signature == o.lastResumeSignature && stallsOnRepeat(verdict.Evidence)
-	if !repeated && o.resumeCount < o.resumeCapFor() {
+	if !repeated && used < o.resumeCapFor() {
 		return verdict
 	}
 	if formalChangesRequested(verdict.Evidence) || exhaustionTerminal(verdict.Evidence) {

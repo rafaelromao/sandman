@@ -203,13 +203,16 @@ func latestStalledResumes(log events.EventLog, runID string) ([]string, error) {
 	return stalledResumes(state.AwaitEvent.Payload), nil
 }
 
-// repairRound identifies the request and head whose relaunch allowance is in
-// use. It is deliberately independent from resumeSignature: a CI stall ignores
-// review response changes, but that must not create a new request/head budget.
+// repairRound identifies the relaunch allowance in use, independently of
+// resumeSignature. A new request can change the feedback evidence, but only
+// a new head starts a fresh feedback allowance. Other gates use request and head.
 func repairRound(evidence map[string]any, liveHead string) string {
 	head := strings.ToLower(strings.TrimSpace(liveHead))
 	if head == "" {
 		head = strings.ToLower(strings.TrimSpace(stringEvidence(evidence, "head_sha")))
+	}
+	if stringEvidence(evidence, "gate") == gateActionableFeedback {
+		return head
 	}
 	var trigger any
 	if request, ok := evidence["review_request"]; ok {
@@ -221,6 +224,27 @@ func repairRound(evidence map[string]any, liveHead string) string {
 		}
 	}
 	return fmt.Sprintf("%s|%v", head, trigger)
+}
+
+// reviewFeedbackAllowance is shared by the active row's sequential executor
+// entries and observations. It is not restored from persisted evidence.
+type reviewFeedbackAllowance struct {
+	usedByHead  map[string]int
+	hasLaunched bool
+}
+
+func (a *reviewFeedbackAllowance) usedFor(head string) int {
+	if a == nil {
+		return 0
+	}
+	return a.usedByHead[head]
+}
+
+func (a *reviewFeedbackAllowance) charge(head string) {
+	if a.usedByHead == nil {
+		a.usedByHead = make(map[string]int)
+	}
+	a.usedByHead[head]++
 }
 
 // exhaustionTerminal reports resume reasons whose exhausted remediation is a

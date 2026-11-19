@@ -43,6 +43,7 @@ type ContinuationCursor struct {
 	PreviousRunID      string
 	PreviousRunBatchID string
 	quotaAllowance     usageLimitAllowance
+	feedbackAllowance  *reviewFeedbackAllowance
 }
 
 type runSpecDetails struct {
@@ -79,6 +80,7 @@ func runSpecFromRow(row RowSpec) (RunSpec, ContinuationCursor) {
 			PreviousRunID:      row.PreviousRunIDs[continuationKey],
 			PreviousRunBatchID: row.PreviousRunBatchIDs[continuationKey],
 			quotaAllowance:     row.quotaAllowance,
+			feedbackAllowance:  new(reviewFeedbackAllowance),
 		}
 }
 
@@ -111,8 +113,10 @@ func (run RunSpec) row(cursor ContinuationCursor) RowSpec {
 		Branches:            branches,
 		PreviousRunIDs:      map[int]string{continuationKey: cursor.PreviousRunID},
 		PreviousRunBatchIDs: map[int]string{continuationKey: cursor.PreviousRunBatchID},
-		ReuseSession:        cursor.ReuseSession, quotaAllowance: cursor.quotaAllowance,
-		BaseBranch: run.BaseBranch, RunTS: run.RunTS, RunShortID: run.RunShortID,
+		ReuseSession:        cursor.ReuseSession,
+		quotaAllowance:      cursor.quotaAllowance,
+		feedbackAllowance:   cursor.feedbackAllowance,
+		BaseBranch:          run.BaseBranch, RunTS: run.RunTS, RunShortID: run.RunShortID,
 		BatchID: run.BatchID, BatchDir: run.BatchDir, BatchTS: run.BatchTS,
 		BatchShortID: run.BatchShortID, RunID: run.RunID, UserProvidedRunID: run.UserProvidedRunID,
 	}
@@ -143,11 +147,12 @@ type RowSpec struct {
 	ReuseSession        bool
 	// quotaAllowance carries the implementation quota recovery state across row
 	// execution, polling, and scheduler re-entry.
-	quotaAllowance   usageLimitAllowance
-	BaseBranch       string
-	ExternalBlockers []int
-	RenderCfg        prompt.RenderConfig
-	OutputWriter     io.Writer
+	quotaAllowance    usageLimitAllowance
+	feedbackAllowance *reviewFeedbackAllowance
+	BaseBranch        string
+	ExternalBlockers  []int
+	RenderCfg         prompt.RenderConfig
+	OutputWriter      io.Writer
 	// ID minting — issue-driven path.
 	RunTS      string
 	RunShortID string
@@ -390,6 +395,7 @@ func newRunSession(e *runExecutor, row RowSpec) *runSession {
 		previousRunBatchIDs:        row.PreviousRunBatchIDs,
 		reuseSession:               row.ReuseSession,
 		quotaAllowance:             row.quotaAllowance,
+		feedbackAllowance:          row.feedbackAllowance,
 		identityResolver:           bc.IdentityResolver,
 		branches:                   row.Branches,
 		renderCfg:                  renderCfg,

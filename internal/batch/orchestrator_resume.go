@@ -174,17 +174,15 @@ func (s *runSession) prepareEntryResume(ctx context.Context, wt sandbox.Sandbox,
 		result.Status = s.finishDecidedTerminal(ctx, runID, result, nil, wt, branch)
 		return result, true, true
 	}
-	// Entry is not an in-session relaunch. Historical head/request counters
-	// cannot consume this session's existing resume allowance.
 	evidence := s.resumeEvidenceFor(ctx, branch, verdict.Evidence)
-	// The entry launch acts on this evidence: a repeat after it is a stall.
-	s.lastResumeSignature = s.pendingResumeSignature
-	s.lastResumeRound = s.pendingResumeRound
 	taskContent, err := ReadContinuationTaskContent(filepath.Join(wt.WorkDir(), ".sandman", "task.md"))
 	if err != nil {
 		result := s.lifecycleEarlyFailure("read continuation Task", branch, runID, err)
 		return result, true, true
 	}
+	// First entry does not consume an allowance. Later feedback entries in
+	// the same active row count as relaunches even after releasing capacity.
+	s.recordResume(verdict.Evidence, true)
 	s.renderCfg.TaskPrompt = s.resumePromptFor(taskContent, evidence, s.renderCfg.ReviewTimeout, verdict.ciRepairRequired)
 	s.entryResumePromptPrepared = true
 	return AgentRunResult{}, false, false
@@ -203,12 +201,9 @@ func (s *runSession) resumeCapFor() int {
 // the agent completes cleanly and the external gate turns resume-worthy
 // (ready-to-merge or actionable-feedback), it emits run.resumed and returns
 // the continuation prompt carrying the request-scoped review evidence. The
-// returned bool reports whether a relaunch should happen; callers leave the
-// gate-handling (await / terminal) untouched when it is false — in
-// particular, when the per-session resume cap is exhausted the gate
-// terminalizes as failure instead of entering another wait.
+// returned bool reports whether the selected resume can be performed.
 func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbox, branch, runID string, verdict lifecycleVerdict) (string, bool, error) {
-	if s.deps.githubClient == nil || ctx.Err() != nil || verdict.Action != lifecycleResume || s.resumeCount >= s.resumeCapFor() {
+	if s.deps.githubClient == nil || ctx.Err() != nil || verdict.Action != lifecycleResume {
 		return "", false, nil
 	}
 	evidence := s.resumeEvidenceFor(ctx, branch, verdict.Evidence)
@@ -220,9 +215,27 @@ func (s *runSession) resumePromptFromGate(ctx context.Context, wt sandbox.Sandbo
 	if err != nil {
 		return "", false, err
 	}
-	s.resumeCount++
+	s.recordResume(verdict.Evidence, false)
 	s.emitResume(ctx, runID, branch, gate, evidence)
 	return s.resumePromptFor(taskContent, evidence, s.renderCfg.ReviewTimeout, verdict.ciRepairRequired), true, nil
+}
+
+func (s *runSession) recordResume(evidence map[string]any, entry bool) {
+	// The launch acts on this evidence: a repeat after it can be a stall.
+	s.lastResumeSignature = s.pendingResumeSignature
+	if stringEvidence(evidence, "gate") == gateActionableFeedback {
+		if s.feedbackAllowance == nil {
+			s.feedbackAllowance = new(reviewFeedbackAllowance)
+		}
+		if !entry || s.feedbackAllowance.hasLaunched {
+			s.feedbackAllowance.charge(s.pendingResumeRound)
+		}
+		return
+	}
+	s.lastResumeRound = s.pendingResumeRound
+	if !entry {
+		s.resumeCount++
+	}
 }
 
 // emitResume writes the run.resumed event (issue #2595). It records the
