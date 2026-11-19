@@ -9,7 +9,9 @@ package batch
 // this list on purpose; any other change fails here.
 
 import (
+	"context"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -124,6 +126,20 @@ func continuityContractRows() []continuityContractRow {
 }
 
 const continuityProbeHead = "head-1"
+
+type continuityStallRowDriverExecutor struct {
+	*rowDriverExecutorFake
+	observer *lifecycleObserver
+	branch   string
+	runID    string
+	verdict  lifecycleVerdict
+	observed lifecycleVerdict
+}
+
+func (e *continuityStallRowDriverExecutor) ObserveAwaitingRun(context.Context, RunSpec, ContinuationCursor) lifecycleVerdict {
+	e.observed = e.observer.applyContinuity(e.branch, e.runID, e.verdict)
+	return e.observed
+}
 
 func continuityProbePR() *github.PR {
 	return &github.PR{
@@ -335,16 +351,31 @@ func TestContinuityTerminalOwnedStallDoesNotRelaunch(t *testing.T) {
 	table := cloneContinuityTable(continuityOutcomes)
 	row := continuityRow{gate: gateOwnedWorkRequired, reason: "REVIEW_REQUEST_REQUIRED", cause: causeStall}
 	table[row] = outcomeTerminal
-	verdict := (&lifecycleObserver{runSession: session, outcomes: table}).applyContinuity(
-		continuityBranch, "run-probe", lifecycleVerdict{
+	eventsSeen := []string{}
+	executor := &continuityStallRowDriverExecutor{
+		rowDriverExecutorFake: &rowDriverExecutorFake{events: &eventsSeen},
+		observer:              &lifecycleObserver{runSession: session, outcomes: table},
+		branch:                continuityBranch,
+		runID:                 "run-probe",
+		verdict: lifecycleVerdict{
 			Action: lifecycleResume, Evidence: evidence, ImplementorWork: true,
 		},
+	}
+	outcome := newRowDriver(executor, &rowDriverGateFake{}, nil).Drive(
+		context.Background(),
+		RunSpec{RunID: "run-probe", IssueNumber: 42, Branch: continuityBranch},
+		ContinuationCursor{},
+		rowDriverOptions{Awaiting: true},
 	)
+	verdict := executor.observed
 	if verdict.Action != lifecycleFailure {
 		t.Fatalf("persisted request-delivery stall with retries left = %s, want terminal failure", verdict.status())
 	}
 	if verdict.Evidence["await"] != nil || verdict.Evidence["gate"] != nil {
 		t.Fatalf("terminal stalled request-delivery verdict carries wait markers: %v", verdict.Evidence)
+	}
+	if executor.executeCalls != 0 || outcome.Result.Status != "failure" || !reflect.DeepEqual(eventsSeen, []string{"finish"}) {
+		t.Fatalf("persisted request-delivery stall relaunched: execute calls=%d result=%+v events=%v", executor.executeCalls, outcome.Result, eventsSeen)
 	}
 }
 
