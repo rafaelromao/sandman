@@ -191,6 +191,54 @@ func TestReviewPublicationVerdict_ProseConditionsGoverningApproval(t *testing.T)
 	}
 }
 
+func TestReviewPublicationVerdict_MergeConditionsInSuggestedNextSteps(t *testing.T) {
+	for _, tc := range []struct{ name, steps string }{
+		{"current PR", "No author changes requested. Merge the current PR after the race in worker.go is fixed."},
+		{"semicolon", "None. Merge only; after fixing the race in worker.go."},
+		{"semicolon without no-change opener", "Merge only; after fixing the race in worker.go."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prose := "## Suggested next steps\n" + tc.steps + "\n\n## Decision\n**APPROVED**\n"
+			published := reviewpub.Body(prose, "request", "current-sha")
+			if !publishedApprovalContradicted(published) {
+				t.Error("condition did not contradict the published verdict")
+			}
+			for form, body := range map[string]string{
+				"published": published,
+				"legacy":    prose + "\n" + reviewpub.Identity("request", "current-sha"),
+				"prose":     prose,
+			} {
+				if reviewDecisionApprovedBody(body) {
+					t.Errorf("%s: conditional report accepted as approval", form)
+				}
+			}
+		})
+	}
+}
+
+func TestReviewPublicationVerdict_StandaloneAndNestedHeadings(t *testing.T) {
+	t.Run("standalone next steps", func(t *testing.T) {
+		report := "### Suggested next steps\nFix the race in worker.go before merging.\n\n## Decision\n**APPROVED**\n"
+		published := reviewpub.Body(report, "request", "current-sha")
+		if !publishedApprovalContradicted(published) || reviewDecisionApprovedBody(published) {
+			t.Fatal("standalone next steps did not veto the published approval")
+		}
+	})
+	t.Run("standalone prose decision", func(t *testing.T) {
+		if !reviewDecisionApprovedBody("# Review\n\n### Decision\n**LGTM**\n") {
+			t.Fatal("standalone prose decision rejected")
+		}
+	})
+	t.Run("nested descriptive headings", func(t *testing.T) {
+		report := "## Quality check\n### Metrics\n#### Findings\nImportant: complexity above the advisory threshold.\n\n" +
+			"### Suggested next steps\nFix the race in a separate effort.\n\n## Decision\n**APPROVED**\n"
+		published := report + "\n" + reviewpub.Marker(reviewpub.Approved) + "\n" + reviewpub.Identity("request", "current-sha")
+		if publishedApprovalContradicted(published) || !reviewDecisionApprovedBody(published) {
+			t.Fatal("nested quality notes vetoed the published approval")
+		}
+	})
+}
+
 // Wording variants of the no-change declaration and remarks addressed to the
 // runtime are approvals; genuine contradictions still are not.
 func TestReviewPublicationVerdict_ProseVariantsAndContradictions(t *testing.T) {
