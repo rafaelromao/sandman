@@ -185,20 +185,35 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 			}
 			terminalExtras["cleanup_error"] = result.CleanupError.Error()
 		}
-		// Provider quota recovery is non-terminal and retains the per-run
-		// endpoint for the batch-owned polling continuation.
-		if !s.lifecycleTerminal && s.shouldAwaitUsageLimit(result) {
-			s.quotaAllowance = s.quotaAllowance.startProbe(s.runtimeNow()).withProviderReset(result.UsageLimitResetAt)
-			result.UsageLimitDeadline = s.quotaAllowance.deadlineEstimate()
-			extras := map[string]any{
-				"await_reason":                     "usage-limit",
-				"usage_limit_poll_seconds":         int(usageLimitPollInterval / time.Second),
-				"usage_limit_retry_window_seconds": int(usageLimitRetryWindow / time.Second),
+		// The continuity table selects the provider quota disposition. Its
+		// ordinary wait retains the per-run endpoint for batch-owned polling.
+		if !s.lifecycleTerminal {
+			switch disposition := s.usageLimitLifecycleDecision(result); disposition.Action {
+			case lifecycleAwait:
+				if continuityHoldPayload(disposition.Evidence) {
+					// A table-selected hold is recovered under the continuity
+					// identity, not the provider quota schedule.
+					result.UsageLimitReached = false
+					result.Status = s.emitAwait(ctx, runID, result, disposition.Evidence)
+				} else {
+					s.quotaAllowance = s.quotaAllowance.startProbe(s.runtimeNow()).withProviderReset(result.UsageLimitResetAt)
+					result.UsageLimitDeadline = s.quotaAllowance.deadlineEstimate()
+					extras := map[string]any{
+						"await_reason":                     "usage-limit",
+						"usage_limit_poll_seconds":         int(usageLimitPollInterval / time.Second),
+						"usage_limit_retry_window_seconds": int(usageLimitRetryWindow / time.Second),
+					}
+					for key, value := range s.quotaAllowance.persistedEvidence() {
+						extras[key] = value
+					}
+					result.Status = s.emitAwait(ctx, runID, result, extras)
+				}
+			case lifecycleFailure:
+				s.lifecycleTerminal = true
+				result.UsageLimitReached = false
+				result.Status = "failure"
+				terminalExtras = mergeLifecycleDiagnostics(terminalExtras, disposition.Evidence)
 			}
-			for key, value := range s.quotaAllowance.persistedEvidence() {
-				extras[key] = value
-			}
-			result.Status = s.emitAwait(ctx, runID, result, extras)
 		}
 		if result.Status == "await" {
 			retainEndpoint = true

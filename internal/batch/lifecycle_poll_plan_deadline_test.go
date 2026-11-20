@@ -2,9 +2,16 @@ package batch
 
 import (
 	"context"
+	"io"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/rafaelromao/sandman/internal/atomicfs"
+	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/paths"
+	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
 func TestLifecyclePollIntervals_PersistedFloatPlanDecoding(t *testing.T) {
@@ -189,5 +196,312 @@ func TestObserveLifecycleUsesInjectedClockForDeadline(t *testing.T) {
 	}
 	if waits != 0 {
 		t.Fatalf("lifecycle waits = %d, want no wait after injected deadline", waits)
+	}
+}
+
+func TestWaitForTransition_ExpiredCanonicalReviewUsesContinuityOutcome(t *testing.T) {
+	now := time.Date(2026, time.November, 19, 21, 0, 0, 0, time.UTC)
+	deadline := now.Add(-time.Minute)
+	table := cloneContinuityTable(continuityOutcomes)
+	row := continuityRow{gate: gateReviewTimeout, reason: reviewTimeoutReason, cause: causeExpired}
+	table[continuityRow{cause: causeExpired}] = outcomeHold
+	table[row] = outcomeTerminal
+	session := &runSession{opts: runSessionOptions{
+		now:               func() time.Time { return now },
+		lifecyclePollPlan: []time.Duration{time.Minute},
+		lifecycleWait: func(context.Context, time.Duration) error {
+			return errLifecycleObservationTestStop
+		},
+	}}
+	observer := &lifecycleObserver{runSession: session, outcomes: table}
+	request := reviewRequestEnvelope{
+		Protocol:            "review-wait/v1",
+		Repository:          "owner/repo",
+		PullRequest:         continuityPR,
+		HeadSHA:             continuityProbeHead,
+		TriggerID:           "1001",
+		TriggerPrefix:       "/sandman review",
+		TriggerCreatedAt:    deadline.Add(-time.Minute).Format(time.RFC3339Nano),
+		ConfirmedAt:         deadline.Add(-time.Minute).Format(time.RFC3339Nano),
+		StartedAt:           deadline.Add(-10 * time.Minute).Format(time.RFC3339Nano),
+		DeadlineAt:          deadline.Format(time.RFC3339Nano),
+		StartedUnixSeconds:  int(deadline.Add(-10 * time.Minute).Unix()),
+		DeadlineUnixSeconds: int(deadline.Unix()),
+		EffectiveTimeout:    600,
+	}
+	evidence := (&reviewTimeoutHandoff{
+		Request: request,
+		State:   reviewWaitState{Protocol: "review-wait/v1", State: "pending"},
+	}).payloadFor(gateReviewRequestRequired, reviewTimeoutReason, reviewTimeoutNextAction)
+	evidence["gate"] = gateReviewRequestRequired
+	evidence["await"] = true
+
+	recovery := newLifecycleObserver(session).waitForTransition(
+		context.Background(),
+		lifecycleObservationRequest{RunID: "run-expired-review", Branch: continuityBranch},
+		AgentRunResult{},
+		lifecycleVerdict{Action: lifecycleAwait, Evidence: cloneLifecycleExtras(evidence)},
+	)
+	if recovery.Action != lifecycleResume {
+		t.Fatalf("expired review request with recovery allowance = %s, want bounded resume", recovery.status())
+	}
+	session.resumeCount = session.resumeCapFor()
+	exhausted := newLifecycleObserver(session).waitForTransition(
+		context.Background(),
+		lifecycleObservationRequest{RunID: "run-expired-review", Branch: continuityBranch},
+		AgentRunResult{},
+		lifecycleVerdict{Action: lifecycleAwait, Evidence: cloneLifecycleExtras(evidence)},
+	)
+	if exhausted.Action != lifecycleAwait || !continuityHoldPayload(exhausted.Evidence) {
+		t.Fatalf("expired review request after recovery allowance = %s/%v, want continuity hold", exhausted.status(), exhausted.Evidence)
+	}
+
+	verdict := observer.waitForTransition(context.Background(),
+		lifecycleObservationRequest{RunID: "run-expired-review", Branch: continuityBranch},
+		AgentRunResult{},
+		lifecycleVerdict{Action: lifecycleAwait, Evidence: evidence},
+	)
+
+	if verdict.Action != lifecycleFailure {
+		t.Fatalf("expired canonical request = %s, want table-selected terminal failure", verdict.status())
+	}
+	if verdict.Evidence["reason"] != reviewTimeoutReason || verdict.Evidence["gate"] != nil || verdict.Evidence["await"] != nil {
+		t.Fatalf("terminal expiry evidence = %v, want REVIEW_TIMEOUT without wait markers", verdict.Evidence)
+	}
+}
+
+func TestApplyExpiredReviewOutcomeUsesOperationGateAndPreservesInputGate(t *testing.T) {
+	table := cloneContinuityTable(continuityOutcomes)
+	table[continuityRow{cause: causeExpired}] = outcomeHold
+	table[continuityRow{gate: gateReviewTimeout, reason: reviewTimeoutReason, cause: causeExpired}] = outcomeTerminal
+	observer := &lifecycleObserver{
+		runSession: &runSession{},
+		outcomes:   table,
+	}
+	verdict := observer.applyExpiredReviewOutcome(continuityBranch, "run-expired-review", lifecycleVerdict{
+		Action: lifecycleResume,
+		Evidence: map[string]any{
+			"gate": gateReviewRequestRequired, "reason": reviewTimeoutReason,
+			"await": true, "review_request": map[string]any{"operation_resolved": true},
+		},
+	})
+	if verdict.Action != lifecycleFailure {
+		t.Fatalf("expiry with review-request gate = %s, want terminal operation-gate outcome", verdict.status())
+	}
+	if verdict.Evidence["reason"] != reviewTimeoutReason ||
+		verdict.Evidence["external_gate"] != gateReviewRequestRequired ||
+		verdict.Evidence["gate"] != nil || verdict.Evidence["await"] != nil {
+		t.Fatalf("terminal expiry evidence = %v, want operation reason and original external gate without wait markers", verdict.Evidence)
+	}
+}
+
+func TestDecideLifecycleForAttempt_ExpiredCanonicalReviewUsesContinuityOutcome(t *testing.T) {
+	now := time.Date(2026, time.November, 19, 21, 0, 0, 0, time.UTC)
+	triggeredAt := now.Add(-20 * time.Minute)
+	registeredAt := triggeredAt.Add(time.Minute)
+	pr := continuityProbePR()
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{
+			prs: map[string]*github.PR{continuityBranch: pr},
+		},
+		comments: []github.PRComment{{
+			ID: "trigger-1001", Body: "/sandman review", CreatedAt: triggeredAt,
+		}},
+	}
+	workDir := t.TempDir()
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: client,
+			layout:       paths.NewLayout(nil, workDir),
+		},
+		renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 600},
+		opts: runSessionOptions{
+			now:         func() time.Time { return now },
+			currentHead: func(string) (string, error) { return continuityProbeHead, nil },
+		},
+		reviewRegistrationNow:  func() time.Time { return registeredAt },
+		reviewAttemptStartedAt: triggeredAt.Add(-time.Minute),
+	}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
+		t.Fatalf("register canonical request: %v", err)
+	}
+	registrationPath := session.deps.layout.PRReviewRegistrationPath(pr.Number)
+	registration, err := readFileReviewRegistration(registrationPath)
+	if err != nil {
+		t.Fatalf("read canonical request: %v", err)
+	}
+	session.reviewRegistrationNow = func() time.Time { return now }
+	handoff, err := session.observeCurrentReviewEvidence(context.Background(), registration.Request, pr, client.comments)
+	if err != nil || handoff == nil || handoff.Outcome != retainedReviewTimeout {
+		t.Fatalf("observe expired canonical request = (%+v, %v), want retained timeout", handoff, err)
+	}
+	canonical, err := canonicalReviewRegistration(registration, handoff, pr.HeadRefOid)
+	if err != nil {
+		t.Fatalf("build canonical timeout evidence: %v", err)
+	}
+	canonical.LegacyImported = false
+	if err := (fileReviewRegistrationStore{}).Write(registrationPath, *canonical); err != nil {
+		t.Fatalf("persist canonical timeout evidence: %v", err)
+	}
+	table := cloneContinuityTable(continuityOutcomes)
+	table[continuityRow{cause: causeExpired}] = outcomeHold
+	table[continuityRow{gate: gateReviewTimeout, reason: reviewTimeoutReason, cause: causeExpired}] = outcomeTerminal
+	observer := &lifecycleObserver{runSession: session, outcomes: table}
+
+	verdict := observer.decideLifecycleForAttempt(
+		context.Background(), workDir, continuityBranch, "run-expired-review",
+		true, "success", false, true, nil,
+	)
+
+	if verdict.Action != lifecycleFailure {
+		t.Fatalf("expired canonical registration with terminal table row = %+v, want failure", verdict)
+	}
+	if verdict.Evidence["reason"] != reviewTimeoutReason || verdict.Evidence["gate"] != nil || verdict.Evidence["await"] != nil {
+		t.Fatalf("terminal canonical expiry evidence = %v, want REVIEW_TIMEOUT without wait markers", verdict.Evidence)
+	}
+	if got := canonical.Request.DeadlineUnixSeconds; int64(got) >= now.Unix() {
+		t.Fatalf("test request deadline = %d, want it before now %d", got, now.Unix())
+	}
+
+	// A foreground wait must revalidate the active resolver at the expired
+	// review boundary: a current-head CI operation keeps resolving the gate.
+	pr.StatusCheckRollup = "pending"
+	pr.CIHasActiveChecks = true
+	ciWait, err := session.ciWaitEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
+	if err != nil {
+		t.Fatalf("record active current-head CI wait: %v", err)
+	}
+	ciWaitState, ok := ciWait["ci_wait"].(map[string]any)
+	if !ok {
+		t.Fatalf("CI wait evidence = %v, want a bounded current-head operation", ciWait)
+	}
+	ciDeadlineSeconds, ok := lifecycleDeadlineSeconds(ciWaitState["deadline_unix_seconds"])
+	if !ok || !now.After(time.Unix(int64(canonical.Request.DeadlineUnixSeconds), 0)) ||
+		!now.Before(time.Unix(ciDeadlineSeconds, 0)) ||
+		!time.Unix(int64(canonical.Request.DeadlineUnixSeconds), 0).Before(time.Unix(ciDeadlineSeconds, 0)) {
+		t.Fatalf("test must place the expired review deadline before a still-active CI deadline: review=%d ci=%d now=%d",
+			canonical.Request.DeadlineUnixSeconds, ciDeadlineSeconds, now.Unix())
+	}
+	activeEvidence := (&reviewTimeoutHandoff{
+		Request: canonical.Request,
+		State:   reviewWaitState{Protocol: "review-wait/v1", State: "pending"},
+	}).payloadFor(gateReviewRequestRequired, reviewTimeoutReason, reviewTimeoutNextAction)
+	activeEvidence["gate"] = gateReviewRequestRequired
+	activeEvidence["await"] = true
+	activeEvidence["ci_wait"] = ciWait
+	session.opts.lifecycleWait = func(context.Context, time.Duration) error {
+		return errLifecycleObservationTestStop
+	}
+	activeWait := observer.waitForTransition(
+		context.Background(),
+		lifecycleObservationRequest{
+			WorkDir: workDir, Branch: continuityBranch, RunID: "run-expired-review",
+			HostPathsReady: true,
+		},
+		AgentRunResult{},
+		lifecycleVerdict{Action: lifecycleAwait, Evidence: activeEvidence},
+	)
+	if activeWait.Action != lifecycleAwait {
+		t.Fatalf("expired review with active current-head CI = %s, want CI wait", activeWait.status())
+	}
+	if _, ok := activeWait.Evidence["ci_wait"].(map[string]any); !ok {
+		t.Fatalf("expired review discarded active CI evidence: %v", activeWait.Evidence)
+	}
+}
+
+func TestExpiredCIWaitPrecedesInDeadlineReview(t *testing.T) {
+	now := time.Unix(2000, 0)
+	currentNow := now
+	ciDeadline := now.Add(time.Second)
+	waitCalls := 0
+	workDir := t.TempDir()
+	writeTimedOutReviewRequest(t, workDir)
+	writeCanonicalRegistrationForTest(t, workDir)
+	setCanonicalRegistrationDeadlineForTest(t, workDir, int(now.Add(10*time.Minute).Unix()))
+
+	pr := continuityProbePR()
+	pr.HeadRefOid = "current-sha"
+	pr.StatusCheckRollup = "pending"
+	client := &fakeGitHubClient{prs: map[string]*github.PR{continuityBranch: pr}}
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: client,
+			layout:       paths.NewLayout(nil, workDir),
+			errorLog:     io.Discard,
+		},
+		renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 600},
+		opts: runSessionOptions{
+			now:         func() time.Time { return currentNow },
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+			lifecycleWait: func(context.Context, time.Duration) error {
+				waitCalls++
+				if waitCalls == 1 {
+					currentNow = ciDeadline.Add(time.Second)
+					return nil
+				}
+				return errLifecycleObservationTestStop
+			},
+		},
+	}
+	ciPath := filepath.Join(paths.NewLayout(nil, workDir).StateDir, "17.ci_wait.json")
+	ciRegistration := ciWaitRegistration{
+		Protocol:             ciWaitProtocol,
+		PullRequest:          17,
+		HeadSHA:              pr.HeadRefOid,
+		StartedUnixSeconds:   now.Unix() - int64(ciWaitTimeout/time.Second) + 1,
+		DeadlineUnixSeconds:  ciDeadline.Unix(),
+		EffectiveTimeoutSecs: int64(ciWaitTimeout / time.Second),
+	}
+	if err := atomicfs.WriteAtomicJSON(ciPath, ciRegistration, 0o600); err != nil {
+		t.Fatalf("write expired CI operation: %v", err)
+	}
+
+	observer := newLifecycleObserver(session)
+	request := lifecycleObservationRequest{
+		WorkDir: workDir, Branch: continuityBranch, RunID: "run-expired-ci",
+		HostPathsReady: true,
+	}
+	currentNow = ciDeadline.Add(time.Second)
+	expired := newLifecycleObserver(session).Observe(context.Background(), request)
+	if expired.Action != lifecycleResume ||
+		stringEvidence(expired.Evidence, "gate") != gateCIWaitTimeout ||
+		stringEvidence(expired.Evidence, "reason") != "CI_WAIT_TIMEOUT" {
+		t.Fatalf("batch observation of expired CI with an in-deadline review = %s/%v, want resume/CI_WAIT_TIMEOUT",
+			expired.status(), expired.Evidence)
+	}
+
+	currentNow = now
+	initial := observer.Observe(context.Background(), request)
+	if initial.Action != lifecycleAwait {
+		t.Fatalf("CI with an in-deadline review = %s, evidence=%v, want review wait before CI expiry", initial.status(), initial.Evidence)
+	}
+	ciEvidence, hasCIWait := initial.Evidence["ci_wait"].(map[string]any)
+	if !hasCIWait {
+		t.Fatalf("initial CI evidence = %v, want the operation before its deadline", initial.Evidence)
+	}
+	initialCIDeadline, ok := lifecycleDeadlineSeconds(ciEvidence["deadline_unix_seconds"])
+	if !ok || !currentNow.Before(time.Unix(initialCIDeadline, 0)) {
+		t.Fatalf("initial CI deadline = %d, want it still in the future at %v", initialCIDeadline, currentNow)
+	}
+	reviewRequest, ok := initial.Evidence["review_request"].(map[string]any)
+	reviewSeconds, hasReviewDeadline := lifecycleDeadlineSeconds(reviewRequest["deadline_unix_seconds"])
+	reviewDeadline := time.Unix(reviewSeconds, 0)
+	if !ok || !hasReviewDeadline || !currentNow.Before(reviewDeadline) ||
+		!time.Unix(initialCIDeadline, 0).Before(reviewDeadline) {
+		t.Fatalf("review deadline = %v, present=%t; want it still in the future", reviewDeadline, hasReviewDeadline)
+	}
+	if deadline, gate, ok := lifecycleDeadline(initial.Evidence); !ok || gate != gateCIWaitTimeout ||
+		!deadline.Equal(time.Unix(initialCIDeadline, 0)) {
+		t.Fatalf("combined deadline = (%v, %q, %t), want the earlier CI deadline", deadline, gate, ok)
+	}
+
+	waited := observer.waitForTransition(context.Background(), request, AgentRunResult{}, initial)
+	if waited.Action != lifecycleResume ||
+		stringEvidence(waited.Evidence, "gate") != gateCIWaitTimeout ||
+		stringEvidence(waited.Evidence, "reason") != "CI_WAIT_TIMEOUT" {
+		t.Fatalf("foreground expiry of CI with an in-deadline review = %s/%v, want resume/CI_WAIT_TIMEOUT",
+			waited.status(), waited.Evidence)
 	}
 }

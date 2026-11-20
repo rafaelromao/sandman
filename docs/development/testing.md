@@ -77,6 +77,17 @@ bounded retries when recovery resolves nothing (including foreground waits),
 and preserves hourly status gating, the 24-hour recovery window, `--continue`,
 abort, retained operation evidence, and quota ownership.
 
+For the AFK continuity outcome table and its per-row behavior contract, run:
+
+```bash
+go test ./internal/batch -run 'AFKContinuityContract|ContinuityDecision' -count=1
+```
+
+The contract pins every gate/reason/cause outcome and exercises each decision
+site; operation-owned waits are additionally pinned to their existing lifecycle
+and event-fold scenarios. See [ADR-0063](../adr/0063-centralize-afk-continuity-outcomes.md)
+for the staged policy and sibling-owned rows.
+
 For OpenCode context rollover changes, the hermetic production-path coverage is:
 
 ```bash
