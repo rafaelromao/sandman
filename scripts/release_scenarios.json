@@ -326,6 +326,11 @@
     },
     {
       "package": "github.com/rafaelromao/sandman/internal/cmd",
+      "test": "TestPresetMatrixRejectsContradictoryTask",
+      "tier": "scripted"
+    },
+    {
+      "package": "github.com/rafaelromao/sandman/internal/cmd",
       "test": "TestCIRemediationAgentLaunchUsesFixtureWorkspace",
       "tier": "integration"
     },

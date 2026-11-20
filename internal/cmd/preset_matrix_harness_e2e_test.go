@@ -471,7 +471,7 @@ Complete the work using your tools before sending your final response:
 
 1. Record the current commit with the shell tool: git rev-parse HEAD.
 2. Edit the source file and create answer.txt as described above.
-3. Use the shell tool to execute: git add -A && git commit -m "Set answer to 42".
+3. Stage the changes and use the shell tool to create one commit with the message Set answer to 42.
 4. Use the shell tool to verify that git rev-parse HEAD differs from the starting commit, git status --porcelain is empty, and git show HEAD:answer.txt contains exactly the two bytes 42. If a check fails, finish the work and repeat the checks.
 
 The task is complete only after exactly one new commit exists on the current branch and these checks pass. Writing a git command in your final response does not execute it. Your final response should report the verified commit hash.
@@ -486,6 +486,44 @@ Do not push, do not run gh, and do not open a pull request.
 		t.Fatalf("resolve task template path: %v", err)
 	}
 	return abs
+}
+
+func presetMatrixFirstExchange(sourcePath string) scriptedOpenCodeTurn {
+	// Validate the task the CLI actually saw, not just the filename. Keep these
+	// expectations independent of the template so changing the task cannot
+	// silently preserve passing evidence from fixed tool replies.
+	return scriptedOpenCodeTurn{"user", []string{
+		"source file that currently contains the wrong value (0). Change it so it uses 42 instead.",
+		"create a file named answer.txt at the root of the repository whose entire contents are exactly 42 (just those two digits, no newline, no other text).",
+		"Stage the changes and use the shell tool to create one commit with the message Set answer to 42.",
+		"exactly one new commit exists on the current branch",
+		"Do not push, do not run gh, and do not open a pull request.",
+	}, scriptedOpenCodeBash(`git rev-parse HEAD && grep 0 -- ` + shellQuote(sourcePath) + ` && printf '\nVERIFIED_SEED\n'`)}
+}
+
+func TestPresetMatrixRejectsContradictoryTask(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".sandman"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	original := writePresetMatrixTaskTemplate(t, dir)
+	data, err := os.ReadFile(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ name, from, to, reason string }{
+		{"source", "Change it so it uses 42 instead.", "Leave the source unchanged.", "source file that currently contains"},
+		{"answer", "whose entire contents are exactly 42", "whose entire contents are exactly 99", "create a file named answer.txt"},
+		{"commit", "Stage the changes and use the shell tool to create one commit with the message Set answer to 42.", "Do not commit.", "Stage the changes and use the shell tool"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			contradictory := strings.Replace(string(data), tc.from, tc.to, 1)
+			if contradictory == string(data) || !strings.Contains(contradictory, "answer.txt") {
+				t.Fatal("negative control must change the task while retaining answer.txt")
+			}
+			assertScriptedOpenCodeRejectsPrompt(t, presetMatrixFirstExchange("answer.sh"), contradictory, tc.reason)
+		})
+	}
 }
 
 // seedPresetMatrixProject writes a single source file in the preset's language
@@ -719,7 +757,7 @@ func runE2ERun(t *testing.T, binPath, repoDir, preset string) string {
 		path, _ := presetMatrixSeed(t, preset)
 		quoted := shellQuote(path)
 		prepareContainerModel(t, []scriptedOpenCodeTurn{
-			{"user", "answer.txt", scriptedOpenCodeBash(`git rev-parse HEAD && grep 0 -- ` + quoted + ` && printf '\nVERIFIED_SEED\n'`)},
+			presetMatrixFirstExchange(path),
 			{"tool", "VERIFIED_SEED", scriptedOpenCodeBash("sed -i 's/0/42/g' " + quoted +
 				` && printf 42 > answer.txt && git add -- ` + quoted + ` answer.txt && git commit -m "Set answer to 42"` +
 				` && test -z "$(git status --porcelain)" && test "$(git show HEAD:answer.txt)" = 42 && git rev-parse HEAD && printf '\nVERIFIED_COMMIT\n'`)},

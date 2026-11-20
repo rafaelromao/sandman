@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -74,6 +75,41 @@ func scriptedOpenCodeBash(command string) any {
 	return scriptedOpenCodeTool("bash", map[string]any{
 		"command": command, "description": "Execute the fixture workflow", "timeout": 10000,
 	})
+}
+
+func assertScriptedOpenCodeRejectsPrompt(t *testing.T, turn scriptedOpenCodeTurn, incoming, reason string) {
+	t.Helper()
+	config, verify := startScriptedOpenCode(t, map[string]string{}, []scriptedOpenCodeTurn{turn})
+	var provider struct {
+		Provider map[string]struct {
+			Options struct{ BaseURL string }
+		}
+	}
+	if err := json.Unmarshal([]byte(config), &provider); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"model": "scripted", "stream": true, "messages": []map[string]string{
+			{"role": "user", "content": incoming},
+		},
+		"tools": []map[string]any{{"type": "function", "function": map[string]string{"name": "bash"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{}}
+	defer client.CloseIdleConnections()
+	res, err := client.Post(provider.Provider["fixture"].Options.BaseURL+"/chat/completions", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusBadRequest {
+		t.Errorf("unexpected prompt accepted: HTTP %d", res.StatusCode)
+	}
+	if err := verify(); err == nil || !strings.Contains(err.Error(), reason) {
+		t.Fatalf("want rejection for %q, got %v", reason, err)
+	}
 }
 
 func openCodeFixtureSource() string {

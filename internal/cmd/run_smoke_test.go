@@ -162,7 +162,7 @@ func prepareSmokeProvider(t *testing.T, tc smokeProviderCase, continuation, reus
 		tc.model = scriptedOpenCodeModel
 		tc.requiredAuth, tc.authPaths = nil, nil
 		prepareContainerModel(t, []scriptedOpenCodeTurn{
-			{Role: "user", Contains: "SMOKE_OK", Reply: "SMOKE_OK"},
+			{Role: "user", Contains: "Return exactly SMOKE_OK and do not modify files.", Reply: "SMOKE_OK"},
 		})
 	} else {
 		ensureSmokeHostCLI(t, tc)

@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -525,38 +524,9 @@ func expectedManagedReviewCommand(command string) string {
 
 func assertModelRejectsWrongReviewCommand(t *testing.T, expected, incoming string) {
 	t.Helper()
-	config, verify := startScriptedOpenCode(t, map[string]string{}, []scriptedOpenCodeTurn{
-		{"user", expectedManagedReviewCommand(expected), "Matched"},
-	})
-	var provider struct {
-		Provider map[string]struct {
-			Options struct{ BaseURL string }
-		}
-	}
-	if err := json.Unmarshal([]byte(config), &provider); err != nil {
-		t.Fatal(err)
-	}
-	body, err := json.Marshal(map[string]any{
-		"model": "scripted", "stream": true, "messages": []map[string]string{
-			{"role": "user", "content": incoming + "If empty, load sandman-blind-review.\nIf configured, load sandman-review-request.\n"},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{}}
-	defer client.CloseIdleConnections()
-	res, err := client.Post(provider.Provider["fixture"].Options.BaseURL+"/chat/completions", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = res.Body.Close()
-	if res.StatusCode != http.StatusBadRequest {
-		t.Errorf("wrong or missing Review command accepted: HTTP %d", res.StatusCode)
-	}
-	if err := verify(); err == nil || !strings.Contains(err.Error(), "The selected Review command") {
-		t.Fatalf("want a rendered Review command mismatch, got %v", err)
-	}
+	assertScriptedOpenCodeRejectsPrompt(t, scriptedOpenCodeTurn{"user", expectedManagedReviewCommand(expected), "Matched"},
+		incoming+"If empty, load sandman-blind-review.\nIf configured, load sandman-review-request.\n",
+		"The selected Review command")
 }
 
 func TestBlindReviewFixtureModelAndVariantArePinned(t *testing.T) {
