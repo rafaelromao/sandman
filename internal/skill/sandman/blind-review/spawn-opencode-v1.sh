@@ -96,6 +96,9 @@ jq -nr --arg user "${OPENCODE_SERVER_USERNAME:-opencode}" \
   --arg password "${OPENCODE_SERVER_PASSWORD:-}" '
   if $password == "" then "" else "user = " + (($user + ":" + $password) | tojson) end
 ' >"$tmp/curl.conf"
+# Create the log before scheduling the background process; the first jq read
+# must not race the child shell's output redirection under set -e.
+: >"$tmp/server-log"
 opencode serve --pure --port 0 --hostname 127.0.0.1 >"$tmp/server-log" 2>&1 &
 server_pid=$!
 i=0
