@@ -18,6 +18,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
+	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
@@ -826,6 +827,103 @@ func TestRunSingle_OpenPRPersistsCIWaitForActiveCurrentHeadRollups(t *testing.T)
 				t.Fatalf("production retained review diagnostic = %#v, want invalid-record evidence", awaitEvt.Payload["review_diagnostic"])
 			}
 		})
+	}
+}
+
+func TestRunSingle_StaleReviewDiagnosticIsPreservedInAwaitEvent(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(workDir)
+	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0o755); err != nil {
+		t.Fatalf("create worktree task directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("# Task\n"), 0o644); err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+	writeTimedOutReviewRequest(t, worktreePath)
+	writeCanonicalRegistrationForTest(t, worktreePath)
+	layout := paths.NewLayout(nil, worktreePath)
+	registrationPath := layout.PRReviewRegistrationPath(17)
+	registration, err := readFileReviewRegistration(registrationPath)
+	if err != nil {
+		t.Fatalf("read canonical review registration: %v", err)
+	}
+	registration.Request.HeadSHA = "stale-sha"
+	registration.State.HeadSHA = "stale-sha"
+	registration.State.ObservedHeadSHA = "stale-sha"
+	if err := atomicfs.WriteAtomicJSON(registrationPath, registration, 0o600); err != nil {
+		t.Fatalf("persist stale canonical head: %v", err)
+	}
+
+	var warningLog strings.Builder
+	branch := gateTestBranch
+	sb := &retrySandbox{workDir: worktreePath}
+	sbFactory := &retrySandboxFactory{sandbox: sb}
+	factory := &fakeRunnableFactory{results: []AgentRunResult{{
+		IssueNumber: 42,
+		Status:      "success",
+		Branch:      branch,
+	}}}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}},
+		prs: map[string]*github.PR{branch: {
+			Number:            17,
+			State:             "open",
+			HeadRefName:       branch,
+			HeadRefOid:        "current-sha",
+			StatusCheckRollup: "pending",
+			ReviewDecision:    "REVIEW_REQUIRED",
+			MergeStateStatus:  "BLOCKED",
+		}},
+	}
+	o := NewOrchestrator(
+		client,
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(&warningLog),
+		WithSandboxFactory(sbFactory),
+		WithRunnableFactory(factory),
+		WithRunSessionOpts(gateTestRunOptions()),
+	)
+
+	bc := BatchConfig{
+		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          3,
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+		RenderCfg:   prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 600},
+	})
+	if !started || result.Status != "await" {
+		t.Fatalf("run result = (%t, %q), want started/await", started, result.Status)
+	}
+	logs, err := eventLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	awaitEvt := findEvent(logs, "run.await")
+	if awaitEvt == nil {
+		t.Fatalf("run.await event not found: %v", logs)
+	}
+	if awaitEvt.Payload["gate"] != string(lifecycleGatePending) || awaitEvt.Payload["await_reason"] != string(lifecycleGatePending) {
+		t.Fatalf("await payload selected a non-CI gate: %#v", awaitEvt.Payload)
+	}
+	diagnostic, ok := awaitEvt.Payload["review_diagnostic"].(map[string]any)
+	if !ok || len(diagnostic) != 3 ||
+		diagnostic["status"] != "invalid" ||
+		diagnostic["reason"] != gateReviewTimeoutError ||
+		diagnostic["error"] != "review registration head does not match the current pull request" {
+		t.Fatalf("run.await stale review diagnostic = %#v", awaitEvt.Payload["review_diagnostic"])
+	}
+	if log := warningLog.String(); strings.Contains(log, "implementation review registration") || strings.Contains(log, "retained review artifacts ignored") {
+		t.Fatalf("stale review registration emitted warning lines: %q", log)
 	}
 }
 
