@@ -139,6 +139,16 @@ func applySmokeModelOverrides() {
 	}
 }
 
+// Smoke covers both OpenCode generations in one process. The installed host
+// CLI cannot serve as the version probe for both generated images.
+func pinBuildOnlySmokeOpenCodeProbe(t *testing.T, agent string) {
+	t.Helper()
+	switch agent {
+	case "opencode", "opencode-v2":
+		installInitHostVersion(t, scaffold.DefaultBuiltInAgentVersion(agent))
+	}
+}
+
 // prepareSmokeProvider builds the real-agent smoke harness. The CLI and the
 // orchestrator normally get unconnected fakes, which suits a fresh or
 // overridden Run. A continuation finds its predecessor through the event log
@@ -214,6 +224,9 @@ func prepareSmokeProvider(t *testing.T, tc smokeProviderCase, continuation, reus
 
 	warmSmokeRuntime(t, runtime)
 
+	if scripted {
+		pinBuildOnlySmokeOpenCodeProbe(t, tc.name)
+	}
 	s := &scaffold.Scaffolder{}
 	if err := s.Scaffold(repoDir, scaffold.Options{BuildTools: tc.buildTools, Agent: tc.name}, smokePrompter{}); err != nil {
 		t.Fatalf("scaffold repo: %v", err)
