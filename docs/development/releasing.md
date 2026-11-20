@@ -31,7 +31,7 @@ binary installation ([#2392](https://github.com/rafaelromao/sandman/issues/2392)
    `ubuntu-24.04-arm`). Their results appear on the release change request.
    Reviewers must not merge a failed or incomplete suite. Check the SHA-bound
    scenario and prerequisite reports described in `testing.md`, including the
-   independent unit/browser, smoke, integration and live-provider results.
+   independent unit/browser, smoke, integration and scripted host/container results.
    Release Please now calculates later RC versions from merged release-bearing
    Conventional Commits.
 4. Merging the release change request triggers fresh CI, regression and native
@@ -55,11 +55,10 @@ To diagnose a release, inspect the Release run's publication gate, the SHA-bound
 validation reports, then the draft and GoReleaser output. A failed or incomplete
 gate prevents tag and release creation. See recovery instructions below.
 
-Automatic live validation uses OpenCode and requires only `OPENCODE_API_KEY`.
-Claude provider E2Es are manual: dispatch `Full Regression - Linux` with
-`run_claude` enabled. Only that optional job receives
-`CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`); token-only authentication
-works on a clean runner. Claude results do not gate automatic release publication.
+Release validation uses real OpenCode with a scripted local model endpoint.
+Neither OpenCode nor Claude hosted providers run in CI or gate publication.
+Use the explicit local diagnostics in [testing.md](testing.md#local-live-provider-diagnostics)
+when hosted behavior needs investigation.
 
 The configured release targets are:
 

@@ -28,10 +28,9 @@ var prewarmImageFunc = prewarmSmokeImage
 
 // smokePrewarmVariants enumerates the (provider, buildTools) pairs whose
 // images the pre-warm builds: the opencode provider across the buildTools
-// variants (generic, go, python, elixir, node, dotnet, rust, java, ruby),
-// and the claude provider on the generic preset used by its smoke case.
+// variants (generic, go, python, elixir, node, dotnet, rust, java, ruby).
+// Claude prewarming is opt-in with local live validation.
 var smokePrewarmVariants = []smokePrewarmVariant{
-	{provider: "claude", buildTools: "generic"},
 	{provider: "opencode", buildTools: "generic"},
 	{provider: "opencode", buildTools: "go"},
 	{provider: "opencode", buildTools: "python"},
@@ -75,9 +74,13 @@ func TestMain(m *testing.M) {
 // Concurrency is capped at the number of variants via a semaphore
 // so a slow container runtime does not have to back off.
 func prewarmSmokeImages() {
+	variants := smokePrewarmVariants
+	if localLiveProvider("claude") {
+		variants = append(append([]smokePrewarmVariant(nil), variants...), smokePrewarmVariant{provider: "claude", buildTools: "generic"})
+	}
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, len(smokePrewarmVariants))
-	for _, v := range smokePrewarmVariants {
+	sem := make(chan struct{}, len(variants))
+	for _, v := range variants {
 		v := v
 		wg.Add(1)
 		go func() {

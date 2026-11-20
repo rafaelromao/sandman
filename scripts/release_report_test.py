@@ -112,7 +112,6 @@ class ReleasePipelineTests(unittest.TestCase):
     def test_tier_selectors_and_process_failures(self):
         scripts = Path(__file__).resolve().parent
         manifest = json.loads((scripts / 'release_scenarios.json').read_text())
-        live = {row['test'] for row in manifest['scenarios'] if row['tier'] == 'live'}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / 'scripts').symlink_to(scripts, target_is_directory=True)
@@ -120,7 +119,7 @@ class ReleasePipelineTests(unittest.TestCase):
             binary = root / 'go'
             binary.write_text('#!/usr/bin/env python3\nimport json,sys,os\nprint(json.dumps(sys.argv[1:]))\nsys.exit(int(os.environ["FAKE_RC"]))\n')
             binary.chmod(0o755)
-            for tier in ['unit', 'smoke', 'integration', 'live', 'claude']:
+            for tier in ['unit', 'smoke', 'integration', 'scripted', 'scripted-host']:
                 env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ['PATH'],
                            RELEASE_TIER=tier, FAKE_RC='7')
                 result = subprocess.run(['bash', str(scripts / 'release_tier.sh')], cwd=root,
@@ -128,9 +127,10 @@ class ReleasePipelineTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 7, result.stderr)
                 self.assertEqual((root / 'regression-artifacts/exit-code').read_text().strip(), '7')
                 args = json.loads((root / 'regression-artifacts/events.jsonl').read_text())
-                if tier in ('live', 'integration', 'claude'):
+                if tier != 'unit':
                     selector = args[args.index('-skip' if tier == 'integration' else '-run') + 1]
-                    expected = {row['test'] for row in manifest['scenarios'] if row['tier'] in (('live', 'claude') if tier == 'integration' else (tier,))}
+                    separate = ('scripted', 'scripted-host', 'local-live', 'smoke')
+                    expected = {row['test'].split('/')[0] for row in manifest['scenarios'] if row['tier'] in (separate if tier == 'integration' else (tier,))}
                     self.assertEqual(set(selector[2:-2].split('|')), expected)
                 self.assertIn('-count=1', args)
 

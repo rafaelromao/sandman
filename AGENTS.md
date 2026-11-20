@@ -206,12 +206,12 @@ SANDMAN_FULL_REGRESSION=1 go test -race -v ./...
 SANDMAN_FULL_REGRESSION=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_RUN_SMOKE_E2E=1 \
   go test -tags smoke -timeout 60m ./internal/cmd -run Smoke
 
-# 3. E2E — every scenario gate, including real-agent coverage
+# 3. E2E — every scenario gate, including scripted OpenCode coverage
 SANDMAN_FULL_REGRESSION=1 SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all \
   go test -tags e2e -timeout 90m ./...
 ```
 
-`SANDMAN_FULL_REGRESSION=1` disables the CI-only skip guards so the exhaustive run actually executes every test (see `docs/development/testing.md`). Local real-agent tests can skip when prerequisites are absent; release validation treats those skips as incomplete and fails. The release scenario manifest and `scripts/release_report.py` are authoritative for required coverage. Aggregate the per-tier PASS/FAIL/SKIP counts and surface a final summary, never silently swallow a failure. Timeouts are tuned per tier — do not lower them; lowering reintroduces the `batch aborted by operator` false-positive from under-budgeted test processes.
+`SANDMAN_FULL_REGRESSION=1` disables the CI-only skip guards for required scenarios (see `docs/development/testing.md`). Missing prerequisites can cause local skips; release validation treats unexpected skips as incomplete and fails. Live providers remain local opt-in only, even with `all` selected. The release scenario manifest and `scripts/release_report.py` are authoritative for required coverage. Aggregate the per-tier PASS/FAIL/SKIP counts and surface a final summary, never silently swallow a failure. Timeouts are tuned per tier — do not lower them; lowering reintroduces the `batch aborted by operator` false-positive from under-budgeted test processes.
 
 ## Implementation constraints
 
@@ -370,8 +370,8 @@ See `docs/development/testing.md` for base selection, artifacts, calibration and
 reviewed exemptions in `.github/coverage-policy.json`.
 
 Release regression runs independent unit/browser, smoke, credential-free
-integration and live-provider tiers with bounded cleanup. Preserve the required
-scenario manifest, narrow negative-control skip reasons, pinned CLI/model
+integration and scripted OpenCode host/container tiers with bounded cleanup.
+Preserve the required scenario manifest, narrow negative-control skip reasons, pinned CLI/model
 identifiers and SHA-bound reports. Native boundary evidence is required on Linux
 and macOS amd64/arm64. See `docs/development/testing.md`; do not move full live/API
 quota suites into ordinary PR CI or change runtime check-rollup selection.
@@ -382,25 +382,14 @@ PR maintenance independent, tags immutable, uploads draft until checksum-verifie
 and reruns fail closed on partial assets. Strict up-to-date main checks require
 live administrator verification. See `docs/development/releasing.md` for recovery.
 
-Claude provider E2Es are manual-only (`Full Regression - Linux`, `run_claude`).
-Automatic live release validation uses OpenCode and never requires Claude credentials.
+Hosted OpenCode and Claude validation runs only as explicit local diagnostics
+(`bash scripts/local_live_provider.sh opencode|claude`), never in Actions.
 
-Regular CI runs one tool-free `opencode run` invocation for its OpenCode canary on
-Linux (60-second provider deadline, three-minute job, no containers, and no retry
-loop inside that job), using the release manifest's exact CLI/model. The invocation
-names its session and pins OpenCode's small model to that model, so the release model
-is the only model requested, and the real-agent regression scenarios do the same. If
-the deadline expires the job reports the provider's own logged error. This process
-contract does not claim to count physical HTTP requests made internally by the CLI.
-After diagnosing a transient provider/network timeout on the identified current-head
-execution, the implementation agent may initiate one authorized, bounded GitHub
-rerun; this is a new job invocation, not an in-job retry. Rerunning the existing
-execution does not require `workflow_dispatch`. A provider deprecation failure
-instructs the implementor to update the scaffold fallback, release manifest and
-release workflow pin together.
-The canary is mandatory in the aggregate quality gate; full provider E2Es remain
-release-only, and Claude provider E2Es remain manual-only. The existing OPENCODE_API_KEY repository secret is required and is forwarded
-by the Release reusable-CI caller.
+Regular CI's required `opencode-canary` runs the release manifest's pinned
+`opencode run` against a scripted loopback model with no external network,
+provider credentials, tools, or in-job retry. It verifies CLI compatibility and
+does not diagnose hosted-provider availability. Full scripted OpenCode E2Es
+remain in release regression.
 
 The regular Linux build also selects the credential-free fake subagent permission
 container scenario. Its image must expose the fake gh on the image PATH for
@@ -417,5 +406,4 @@ subsequent layers, runtime environment, and image history.
 
 Maintainers can add the `release-validation` label to a same-repository PR to
 run the full Linux release regression tiers before merging a release repair.
-New commits rerun that opt-in validation. Fork PRs receive no provider secrets;
-Claude remains excluded and requires the existing manual workflow input.
+New commits rerun that opt-in validation; no test tier receives provider secrets.

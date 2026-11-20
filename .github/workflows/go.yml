@@ -2,9 +2,6 @@ name: CI
 
 on:
   workflow_call:
-    secrets:
-      OPENCODE_API_KEY:
-        required: false
   push:
     branches: [main]
   pull_request:
@@ -406,10 +403,12 @@ jobs:
           node-version: 22
       - name: Install release-pinned OpenCode
         run: npm install -g "opencode-ai@$(python3 -c 'import json; print(json.load(open("scripts/release_scenarios.json"))["providers"]["opencode"]["cli"])')"
-      - name: One minimal provider request
-        env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-        run: python3 scripts/opencode_canary.py
+      - name: One scripted model round trip
+        run: |
+          sudo unshare --net sh -ec '
+            ip link set lo up
+            exec runuser -u "$1" -- env "PATH=$2" python3 scripts/opencode_canary.py
+          ' sh "$(id -un)" "$PATH"
 
   quality-gate:
     runs-on: ubuntu-latest

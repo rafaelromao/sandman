@@ -25,34 +25,40 @@ import (
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
-// These live scenarios are deliberately opt-in: both execute a real managed
-// Run and may make provider requests. Keep the provider/model pin explicit so
-// the local override can be changed without changing release coverage.
 func TestBlindReviewManagedRun_DefaultUsesRealChildSession(t *testing.T) {
-	requireSandmanAgentE2E(t)
-	model := testenv.ResolveTestModel("opencode", ciRemediationAgentModel)
-	home := prepareBlindReviewAgentHarness(t, model)
-	runBlindReviewManagedScenario(t, home, model, "")
+	requireScriptedOpenCodeE2E(t)
+	if !runInLoopbackNamespace(t) {
+		return
+	}
+	home := prepareBlindReviewAgentHarness(t)
+	runBlindReviewManagedScenario(t, home, "")
 }
 
 func TestBlindReviewManagedRun_ConfiguredCommandPostsTriggerWithoutChild(t *testing.T) {
-	requireSandmanAgentE2E(t)
-	model := testenv.ResolveTestModel("opencode", ciRemediationAgentModel)
-	home := prepareBlindReviewAgentHarness(t, model)
-	runBlindReviewManagedScenario(t, home, model, "/sandman review")
+	requireScriptedOpenCodeE2E(t)
+	if !runInLoopbackNamespace(t) {
+		return
+	}
+	home := prepareBlindReviewAgentHarness(t)
+	runBlindReviewManagedScenario(t, home, "/sandman review")
 }
 
-func prepareBlindReviewAgentHarness(t *testing.T, model string) string {
+func prepareBlindReviewAgentHarness(t *testing.T) string {
 	t.Helper()
 	for _, dependency := range []string{"opencode", "jq", "python3", "curl"} {
 		if _, err := exec.LookPath(dependency); err != nil {
 			t.Fatalf("real review fixture needs %s: %v", dependency, err)
 		}
 	}
-	preparePresetMatrixAgentHome(t)
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatal(err)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
+	t.Setenv("OPENCODE_DISABLE_AUTOUPDATE", "true")
+	t.Setenv("OPENCODE_DISABLE_MODELS_FETCH", "true")
+	for _, key := range []string{"OPENCODE_API_KEY", "OPENCODE_PERMISSION", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "OPENCODE_DB"} {
+		t.Setenv(key, "")
 	}
 	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 	if err := os.MkdirAll(filepath.Join(home, ".local", "share"), 0o700); err != nil {
@@ -65,10 +71,42 @@ func prepareBlindReviewAgentHarness(t *testing.T, model string) string {
 	return home
 }
 
-func runBlindReviewManagedScenario(t *testing.T, home, model, reviewCommand string) {
+func runBlindReviewManagedScenario(t *testing.T, home, reviewCommand string) {
 	t.Helper()
-	t.Logf("real review agent: model=%s variant=%s", model, os.Getenv("SANDMAN_TEST_VARIANT_OPENCODE"))
+	roundDir := t.TempDir()
 	repo := testenv.MkdirShort(t, "sm-blind-")
+	skillRoot := os.Getenv("SANDMAN_SKILL_ROOT")
+	args := " --repository owner/repo --pull-request 17"
+	headArg := ` "$(git rev-parse HEAD)"`
+	var turns []scriptedOpenCodeTurn
+	expectCommand := expectedManagedReviewCommand(reviewCommand)
+	if reviewCommand == "" {
+		promptPath := filepath.Join(roundDir, "prompt.md")
+		decisionPath := filepath.Join(roundDir, "decision.md")
+		pointer := blindReviewFileHandoff(filepath.Join(repo, ".sandman", "worktrees", "42-review-fixture"), promptPath)
+		turns = []scriptedOpenCodeTurn{
+			{"user", expectCommand, scriptedOpenCodeBash("sh " + shellQuote(filepath.Join(skillRoot, "blind-review", "review-prompt-v1.sh")) +
+				args + " --head-sha" + headArg + " --run-dir " + shellQuote(roundDir) + " >" + shellQuote(promptPath) + " && printf 'PROMPT_RENDERED\\n'")},
+			{"tool", "PROMPT_RENDERED", scriptedOpenCodeTool("task", map[string]any{
+				"description": "Review the fixture", "prompt": pointer, "subagent_type": "general",
+			})},
+			{"user", promptPath, scriptedOpenCodeTool("read", map[string]any{"filePath": promptPath})},
+			{"tool", blindReviewFixtureCriteria, scriptedOpenCodeBash("printf '## Decision\\nAPPROVED\\n' >" + shellQuote(decisionPath+".tmp") +
+				" && mv " + shellQuote(decisionPath+".tmp") + " " + shellQuote(decisionPath) + " && printf 'DECISION_WRITTEN\\n'")},
+			{"tool", "DECISION_WRITTEN", "Child completed review."},
+			{"tool", "Child completed review.", scriptedOpenCodeBash("sh " + shellQuote(filepath.Join(skillRoot, "blind-review", "publish-v1.sh")) +
+				args + " --head-sha" + headArg + " --decision-file " + shellQuote(decisionPath))},
+			{"tool", `"verdict":"approved"`, "Publication confirmed."},
+		}
+	} else {
+		turns = []scriptedOpenCodeTurn{
+			{"user", expectCommand, scriptedOpenCodeBash("sh " + shellQuote(filepath.Join(skillRoot, "review-request", "review-request-v1.sh")) +
+				args + " --head-sha" + headArg + " --trigger-prefix " + shellQuote(reviewCommand))},
+			{"tool", `"state":"confirmed"`, "Request confirmed."},
+		}
+	}
+	providerConfig, verifyModel := startScriptedOpenCode(t, map[string]string{"bash": "allow", "task": "allow", "read": "allow", "external_directory": "allow"}, turns)
+	model := scriptedOpenCodeModel
 	initRunIntegrationRepoWithRemote(t, repo)
 	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".sandman/\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -118,13 +156,12 @@ func runBlindReviewManagedScenario(t *testing.T, home, model, reviewCommand stri
 
 	agent := config.Agent{
 		Name: "opencode", Model: model,
-		Command: blindReviewOpenCodeCommand(model, os.Getenv("SANDMAN_TEST_VARIANT_OPENCODE")),
+		Command: blindReviewOpenCodeCommand(model, ""),
 		Env: map[string]string{
-			testenv.OpenCodeConfigEnv: testenv.OpenCodeSingleModelConfig(model),
+			testenv.OpenCodeConfigEnv: providerConfig,
 			"OPENCODE_PERMISSION":     `{"external_directory":"allow"}`,
 		},
 	}
-	pinOpenCodeToModel(&agent, model)
 	cleanup := false
 	cfg := &config.Config{
 		DefaultAgent: "opencode", Agent: "opencode", DefaultModel: model,
@@ -169,6 +206,9 @@ Retain the round's prompt and report files for the caller's test verification.
 	cmd.SetArgs([]string{"--sandbox", "worktree", "--agent", "opencode", "--prompt", task, "42"})
 	if err := cmd.ExecuteContext(ctx); err != nil {
 		t.Fatalf("real managed review: %v\n%s", err, output.String())
+	}
+	if err := verifyModel(); err != nil {
+		t.Fatal(err)
 	}
 	comments, err := client.ListPRComments(ctx, 17)
 	if err != nil {
@@ -454,7 +494,10 @@ elif args[:2] == ["repo", "view"]:
     emit(dict(nameWithOwner="owner/repo", defaultBranchRef=dict(name="main")))
 elif args and args[0] == "api":
     endpoint = next((x for x in args[1:] if x.startswith("repos/")), "")
-    if endpoint.endswith("issues/17/comments"):
+    if args[:2] == ["api", "graphql"]:
+        emit(dict(data=dict(repository=dict(pullRequest=dict(closingIssuesReferences=dict(
+            nodes=[dict(number=42)], pageInfo=dict(hasNextPage=False, endCursor=None)))))))
+    elif endpoint.endswith("issues/17/comments"):
         emit([dict(id=c["id"], html_url=c["url"], body=c["body"], created_at=c["createdAt"],
                    updated_at=c["createdAt"], user=dict(login="sandman")) for c in comments])
     elif endpoint.endswith("pulls/17/reviews") or endpoint.endswith("pulls/17/comments"):
@@ -473,7 +516,30 @@ func blindReviewOpenCodeCommand(model, variant string) string {
 	return strings.Replace(command, "opencode run ", "opencode run --variant "+shellQuote(variant)+" ", 1)
 }
 
+// Match the full rendered command line, not the instructions for either
+// branch: both sets of instructions are always present in the Task.
+func expectedManagedReviewCommand(command string) string {
+	return "\nThe selected Review command is `" + command + "`.\n"
+}
+
+func assertModelRejectsWrongReviewCommand(t *testing.T, expected, incoming string) {
+	t.Helper()
+	assertScriptedOpenCodeRejectsPrompt(t, scriptedOpenCodeTurn{"user", expectedManagedReviewCommand(expected), "Matched"},
+		incoming+"If empty, load sandman-blind-review.\nIf configured, load sandman-review-request.\n",
+		"The selected Review command")
+}
+
 func TestBlindReviewFixtureModelAndVariantArePinned(t *testing.T) {
+	for _, tc := range []struct{ name, expected, incoming string }{
+		{"blind/wrong", "", "\nThe selected Review command is `/wrong`.\n"},
+		{"blind/missing", "", "\n"},
+		{"delegated/wrong", "/sandman review", "\nThe selected Review command is ``.\n"},
+		{"delegated/missing", "/sandman review", "\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertModelRejectsWrongReviewCommand(t, tc.expected, tc.incoming)
+		})
+	}
 	for _, tc := range []struct {
 		variant string
 		want    string
