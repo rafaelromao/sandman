@@ -358,7 +358,7 @@ func retainedEvidenceIsStale(err error) bool {
 }
 
 func (s *runSession) invalidRetainedReviewDiagnostic(branch string, err error) map[string]any {
-	if s.deps.errorLog != nil {
+	if s.deps.errorLog != nil && !retainedEvidenceIsStale(err) {
 		fmt.Fprintf(s.deps.errorLog, "warning: retained review artifacts ignored for live gate on branch %q: %v\n", branch, err)
 	}
 	return map[string]any{

@@ -1050,7 +1050,7 @@ func TestReviewRegistration_RejectsSameTriggerFromStaleCanonicalHead(t *testing.
 	}
 }
 
-func TestReviewRegistration_StaleCanonicalHeadRefreshesLiveGate(t *testing.T) {
+func TestReviewRegistration_RepeatedStaleCanonicalObservationDoesNotRefreshOrWarn(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-review-registration-")
 	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
 	trigger := github.PRComment{
@@ -1085,30 +1085,21 @@ func TestReviewRegistration_StaleCanonicalHeadRefreshesLiveGate(t *testing.T) {
 		t.Fatalf("seed stale generation: %v", err)
 	}
 
+	var warningLog strings.Builder
 	client := &registrationGateSnapshotClient{
 		comments: []github.PRComment{trigger},
-		responses: []*github.PR{
-			{
-				Number:            40,
-				State:             "open",
-				HeadRefName:       gateTestBranch,
-				HeadRefOid:        "current-sha",
-				StatusCheckRollup: "success",
-				ReviewDecision:    "APPROVED",
-				MergeStateStatus:  "CLEAN",
-			},
-			{
-				Number:            40,
-				State:             "open",
-				HeadRefName:       gateTestBranch,
-				HeadRefOid:        "current-sha",
-				StatusCheckRollup: "pending",
-				MergeStateStatus:  "BLOCKED",
-			},
-		},
+		responses: []*github.PR{{
+			Number:            40,
+			State:             "open",
+			HeadRefName:       gateTestBranch,
+			HeadRefOid:        "current-sha",
+			StatusCheckRollup: "pending",
+			ReviewDecision:    "REVIEW_REQUIRED",
+			MergeStateStatus:  "BLOCKED",
+		}},
 	}
 	session := &runSession{
-		deps: runDeps{githubClient: client, errorLog: io.Discard},
+		deps: runDeps{githubClient: client, errorLog: &warningLog},
 		renderCfg: prompt.RenderConfig{
 			ReviewCommand: "/sandman review",
 			ReviewTimeout: 600,
@@ -1120,13 +1111,29 @@ func TestReviewRegistration_StaleCanonicalHeadRefreshesLiveGate(t *testing.T) {
 		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
 	}
 
-	observedLifecycle1123 := session.observeLifecycleForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
-	status, extras, handled := observedLifecycle1123.status(), observedLifecycle1123.Evidence, observedLifecycle1123.handled()
-	if !handled || status != "await" || extras["gate"] != "pending" {
-		t.Fatalf("stale canonical gate = (%q, %#v, %t), want await/pending", status, extras, handled)
+	observer := newLifecycleObserver(session)
+	request := lifecycleObservationRequest{
+		WorkDir: workDir, Branch: gateTestBranch, RunID: "run-test",
+		HostPathsReady: true, AttemptStatus: "success",
 	}
-	if client.calls < 2 {
-		t.Fatalf("PR lookups = %d, want initial and refreshed live snapshots", client.calls)
+	for range 2 {
+		verdict := observer.Observe(context.Background(), request)
+		if verdict.Action != lifecycleAwait || verdict.Evidence["gate"] != string(lifecycleGatePending) {
+			t.Fatalf("stale canonical observation = (%v, %#v), want CI-authorized await/pending", verdict.Action, verdict.Evidence)
+		}
+		diagnostic, ok := verdict.Evidence["review_diagnostic"].(map[string]any)
+		if !ok || len(diagnostic) != 3 ||
+			diagnostic["status"] != "invalid" ||
+			diagnostic["reason"] != gateReviewTimeoutError ||
+			diagnostic["error"] != "review registration head does not match the current pull request" {
+			t.Fatalf("stale review diagnostic = %#v, want unchanged invalid-head diagnostic", verdict.Evidence["review_diagnostic"])
+		}
+	}
+	if client.calls != 2 {
+		t.Fatalf("PR lookups = %d, want one ordinary lookup for each of two observations", client.calls)
+	}
+	if log := warningLog.String(); strings.Contains(log, "implementation review registration") || strings.Contains(log, "retained review artifacts ignored") {
+		t.Fatalf("stale registration emitted repeated warning lines: %q", log)
 	}
 }
 

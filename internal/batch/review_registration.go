@@ -343,7 +343,12 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 			strings.EqualFold(strings.TrimSpace(existing.Request.HeadSHA), strings.TrimSpace(pr.HeadRefOid))
 		if reviewTriggerMatchesRequest(existing.Request, trigger) {
 			if !currentGeneration {
-				return fmt.Errorf("%w: existing review registration is bound to a different pull-request head", errReviewRegistrationHeadChanged)
+				// This trigger is already bound to its original head. It is
+				// stale evidence, not a head change that happened while this
+				// registration was in progress, so it must not trigger a live
+				// PR refresh or authorize a current-head wait.
+				s.reviewRegistrationObserved = false
+				return nil
 			}
 			return s.importLegacyReviewEvidence(ctx, workDir, repository, pr, currentHead, registrationPath, &existing)
 		}
@@ -358,6 +363,7 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 		if legacyReviewTriggerHasDifferentHead(workDir, pr.Number, trigger.ID, currentHead) {
 			// A conversation trigger has no head identity. A legacy request
 			// binds that trigger to its original head, so never rebind it.
+			s.reviewRegistrationObserved = false
 			return nil
 		}
 		legacy, present, valid, migrationErr := inspectLegacyReviewRegistration(workDir, repository, pr, currentHead)
