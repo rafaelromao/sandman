@@ -2016,6 +2016,15 @@ func TestAFKContinuityContract_LifecycleFailureReasonsAreClassified(t *testing.T
 	}
 }
 
+func TestAFKContinuityContract_DeadlineReasonProducersAreClassified(t *testing.T) {
+	for _, gate := range []string{gateReviewTimeout, gateCIWaitTimeout} {
+		reason := lifecycleDeadlineReason(gate)
+		if _, ok := lifecycleFailureReasons[reason]; !ok {
+			t.Errorf("deadline reason producer for gate %q returned unclassified reason %q", gate, reason)
+		}
+	}
+}
+
 type lifecycleFailureReferences struct {
 	literals map[string]bool
 	dynamic  map[string]bool

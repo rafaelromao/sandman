@@ -189,6 +189,7 @@ func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifec
 					delete(verdict.Evidence, "review_request")
 					delete(verdict.Evidence, "ci_wait")
 				}
+				o.emitAwait(ctx, request.RunID, result, verdict.Evidence)
 			} else {
 				evidence := cloneLifecycleExtras(verdict.Evidence)
 				evidence["gate"] = gate
