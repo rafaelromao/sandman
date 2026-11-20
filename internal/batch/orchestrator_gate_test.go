@@ -1056,6 +1056,24 @@ func TestExternalGate_ExpiredReviewWaitsForActiveCI(t *testing.T) {
 	if _, ok := extras["ci_wait"].(map[string]any); !ok {
 		t.Fatalf("active CI evidence = %#v, want retained current-head CI wait", extras["ci_wait"])
 	}
+	if _, ok := extras["review_request"]; ok {
+		t.Fatalf("expired review request remained active operation evidence: %#v", extras["review_request"])
+	}
+	expired, ok := extras["expired_operation_diagnostic"].(map[string]any)
+	if !ok || expired["gate"] != gateReviewTimeout {
+		t.Fatalf("expired operation diagnostic = %#v, want review-timeout evidence kept separately", extras["expired_operation_diagnostic"])
+	}
+	if _, ok := expired["evidence"].(map[string]any); !ok {
+		t.Fatalf("expired review diagnostic omitted the retained request: %#v", expired)
+	}
+	deadline, gate, ok := lifecycleDeadline(extras)
+	if !ok || gate != gateCIWaitTimeout {
+		t.Fatalf("selected operation deadline = (%v, %q, %t), want the active CI deadline", deadline, gate, ok)
+	}
+	ciDeadline, ok := lifecycleCIWaitDeadline(extras)
+	if !ok || !deadline.Equal(ciDeadline) {
+		t.Fatalf("selected lease deadline = %v, want original current-head CI deadline %v", deadline, ciDeadline)
+	}
 	diagnostic, ok := extras["review_diagnostic"].(map[string]any)
 	if !ok || diagnostic["status"] != "valid" || diagnostic["outcome"] != string(retainedReviewTimeout) {
 		t.Fatalf("retained evidence diagnostic = %#v, want valid timeout evidence", extras["review_diagnostic"])
@@ -2516,9 +2534,13 @@ func TestExternalGate_ReviewTimeoutRetainsResponseCounters(t *testing.T) {
 	if awaitEvt == nil || findEvent(logs, "run.finished") != nil {
 		t.Fatalf("run.await event not found: %v", logs)
 	}
-	request, ok := awaitEvt.Payload["review_request"].(map[string]any)
+	expiredOperation, ok := awaitEvt.Payload["expired_operation_diagnostic"].(map[string]any)
 	if !ok {
-		t.Fatalf("review request payload = %#v", awaitEvt.Payload["review_request"])
+		t.Fatalf("expired operation diagnostic = %#v", awaitEvt.Payload["expired_operation_diagnostic"])
+	}
+	request, ok := expiredOperation["evidence"].(map[string]any)
+	if !ok || expiredOperation["gate"] != gateReviewTimeout {
+		t.Fatalf("expired review evidence = %#v, want diagnostic-only review request", expiredOperation)
 	}
 	counts, ok := request["response_counts"].(map[string]any)
 	if !ok || counts["top_level"] != float64(2) || counts["formal_reviews"] != float64(1) || counts["inline_comments"] != float64(3) {

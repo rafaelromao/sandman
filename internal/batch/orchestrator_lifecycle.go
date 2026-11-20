@@ -917,6 +917,8 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 		blindReview:       s.blindReviewMode(),
 		outcomes:          s.continuityTable(),
 	})
+	deferredDeadlineGate := ""
+	deferredDeadlineEvidence := map[string]any(nil)
 	if strings.EqualFold(pr.State, "open") && !evidence.stateError {
 		deadlines := cloneLifecycleExtras(evidence.payload)
 		// A completed CI operation cannot time out unrelated review/merge work.
@@ -959,10 +961,13 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 				}
 				switch expiredGate {
 				case gateReviewTimeout:
+					deferredDeadlineEvidence, _ = deadlines["review_request"].(map[string]any)
 					delete(extras, "review_request")
 				case gateCIWaitTimeout:
+					deferredDeadlineEvidence, _ = deadlines["ci_wait"].(map[string]any)
 					delete(extras, "ci_wait")
 				}
+				deferredDeadlineGate = expiredGate
 				if stringEvidence(extras, "gate") == "" {
 					extras["gate"] = string(decision.gate)
 				}
@@ -1026,6 +1031,20 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 	}
 	if extras == nil {
 		extras = map[string]any{"gate": string(decision.gate), "await": true}
+	}
+	if deferredDeadlineGate != "" {
+		key := "review_request"
+		if deferredDeadlineGate == gateCIWaitTimeout {
+			key = "ci_wait"
+		}
+		diagnostic := map[string]any{"gate": deferredDeadlineGate}
+		if refreshed, ok := extras[key]; ok {
+			diagnostic["evidence"] = refreshed
+			delete(extras, key)
+		} else if deferredDeadlineEvidence != nil {
+			diagnostic["evidence"] = cloneLifecycleExtras(deferredDeadlineEvidence)
+		}
+		extras["expired_operation_diagnostic"] = diagnostic
 	}
 	if decision.action == lifecycleResume {
 		// Live typed remediation outranks retained review labels.

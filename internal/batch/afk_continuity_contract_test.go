@@ -16,13 +16,19 @@ package batch
 // them through the Contract name filter.
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/format"
+	"go/parser"
+	"go/token"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -2016,11 +2022,13 @@ type lifecycleFailureReferences struct {
 }
 
 var lifecycleReasonAssignmentSources = map[string]bool{
-	"reason":                        true, // lifecycleRemediationDecision callers supply classified reason literals.
-	"row.reason":                    true, // Continuity table values are enumerated by the AFK outcome contract.
-	"lifecycleDeadlineReason(gate)": true, // The closed deadline-gate switch returns classified timeout reasons.
-	"resumeStalledReason":           true,
-	"githubUnavailableReason":       true,
+	"lifecycleRemediationDecision:reason":                     true, // Call sites supply classified reason literals/constants.
+	"applyExpiredReviewOutcome:row.reason":                    true, // This preserves the selected, classified expiry reason.
+	"waitForTransition:lifecycleDeadlineReason(gate)":         true, // The closed deadline-gate switch returns classified reasons.
+	"decideLifecycleForAttempt:lifecycleDeadlineReason(gate)": true,
+	"stalledAwaitExtras:resumeStalledReason":                  true,
+	"githubRecoveryAwait:githubUnavailableReason":             true,
+	"recordGitHubLookupFailure:githubUnavailableReason":       true,
 }
 
 func lifecycleReasonAssignmentClassified(expression string) bool {
@@ -2030,7 +2038,6 @@ func lifecycleReasonAssignmentClassified(expression string) bool {
 func lifecycleFailureReasonReferences(source string) lifecycleFailureReferences {
 	reasonLiteral := regexp.MustCompile(`(?:"reason":\s*|Reason\s*=\s*|lifecycleGateFailureEvidence\(|lifecycleRemediationDecision\([^,]+,\s*|classifiedLifecycleFailureEvidence\([^,]+,\s*[^,]+,\s*)"([A-Z][A-Z_]+)"`)
 	reasonAssignment := regexp.MustCompile(`\b[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*\s*\[\s*"reason"\s*\]\s*=\s*"([^"]+)"`)
-	reasonDynamicAssignment := regexp.MustCompile(`\b[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*\s*\[\s*"reason"\s*\]\s*=\s*([A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*(\([^()\n]*\))?)`)
 	reasonConstants := []*regexp.Regexp{
 		regexp.MustCompile(`\b[A-Za-z_][A-Za-z0-9_]*Reason\s*=\s*"([^"]*)"`),
 		regexp.MustCompile(`\b[A-Za-z_][A-Za-z0-9_]*Reason\s+[A-Za-z_][A-Za-z0-9_]*\s*=\s*"([^"]*)"`),
@@ -2042,8 +2049,8 @@ func lifecycleFailureReasonReferences(source string) lifecycleFailureReferences 
 	for _, match := range reasonAssignment.FindAllStringSubmatch(source, -1) {
 		seen.literals[match[2]] = true
 	}
-	for _, match := range reasonDynamicAssignment.FindAllStringSubmatch(source, -1) {
-		seen.dynamic[match[2]] = true
+	for reference := range lifecycleDynamicReasonAssignments(source) {
+		seen.dynamic[reference] = true
 	}
 	for _, pattern := range reasonConstants {
 		for _, match := range pattern.FindAllStringSubmatch(source, -1) {
@@ -2055,6 +2062,94 @@ func lifecycleFailureReasonReferences(source string) lifecycleFailureReferences 
 	return seen
 }
 
+func lifecycleDynamicReasonAssignments(source string) map[string]bool {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "lifecycle.go", source, 0)
+	if err != nil {
+		return map[string]bool{"<unparseable-source>": true}
+	}
+	seen := map[string]bool{}
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || function.Body == nil {
+			continue
+		}
+		ast.Inspect(function.Body, func(node ast.Node) bool {
+			assignment, ok := node.(*ast.AssignStmt)
+			if !ok {
+				return true
+			}
+			for index, left := range assignment.Lhs {
+				target, ok := left.(*ast.IndexExpr)
+				if !ok || index >= len(assignment.Rhs) {
+					continue
+				}
+				key, ok := target.Index.(*ast.BasicLit)
+				if !ok || key.Kind != token.STRING {
+					continue
+				}
+				name, err := strconv.Unquote(key.Value)
+				if err != nil || name != "reason" {
+					continue
+				}
+				right := assignment.Rhs[index]
+				if literal, ok := right.(*ast.BasicLit); ok && literal.Kind == token.STRING {
+					continue
+				}
+				var expression bytes.Buffer
+				if err := format.Node(&expression, fset, right); err != nil {
+					seen["<unprintable-expression>"] = true
+					continue
+				}
+				value := strings.TrimSpace(expression.String())
+				reference := function.Name.Name + ":" + value
+				if function.Name.Name == "lifecycleRemediationDecision" &&
+					value == "reason" && !lifecycleReasonParameterIsStable(function) {
+					reference = function.Name.Name + ":unverified-reason"
+				}
+				seen[reference] = true
+			}
+			return true
+		})
+	}
+	return seen
+}
+
+func lifecycleReasonParameterIsStable(function *ast.FuncDecl) bool {
+	hasParameter := false
+	if function.Type.Params != nil {
+		for _, field := range function.Type.Params.List {
+			for _, name := range field.Names {
+				if name.Name == "reason" {
+					hasParameter = true
+				}
+			}
+		}
+	}
+	if !hasParameter {
+		return false
+	}
+	stable := true
+	ast.Inspect(function.Body, func(node ast.Node) bool {
+		switch statement := node.(type) {
+		case *ast.AssignStmt:
+			for _, left := range statement.Lhs {
+				if name, ok := left.(*ast.Ident); ok && name.Name == "reason" {
+					stable = false
+				}
+			}
+		case *ast.ValueSpec:
+			for _, name := range statement.Names {
+				if name.Name == "reason" {
+					stable = false
+				}
+			}
+		}
+		return true
+	})
+	return stable
+}
+
 func TestAFKContinuityContract_DirectFailureReasonAssignmentsAreScanned(t *testing.T) {
 	const probe = "UNCLASSIFIED_LIFECYCLE_PROBE"
 	seen := lifecycleFailureReasonReferences(`evidence["reason"] = "` + probe + `"`)
@@ -2064,13 +2159,41 @@ func TestAFKContinuityContract_DirectFailureReasonAssignmentsAreScanned(t *testi
 	if _, classified := lifecycleFailureReasons[probe]; classified {
 		t.Fatalf("test probe %q unexpectedly appears in the outcome table", probe)
 	}
-	dynamic := lifecycleFailureReasonReferences(`evidence["reason"] = row.reason`)
-	if !dynamic.dynamic["row.reason"] || !lifecycleReasonAssignmentClassified("row.reason") {
+	dynamic := lifecycleFailureReasonReferences(`package batch
+func applyExpiredReviewOutcome(evidence map[string]any, row struct{ reason string }) {
+	evidence["reason"] = row.reason
+}`)
+	if !dynamic.dynamic["applyExpiredReviewOutcome:row.reason"] ||
+		!lifecycleReasonAssignmentClassified("applyExpiredReviewOutcome:row.reason") {
 		t.Fatalf("table-backed dynamic failure-reason assignment was not scanned and classified: %v", dynamic.dynamic)
 	}
-	unclassifiedDynamic := lifecycleFailureReasonReferences(`evidence["reason"] = candidate.reason`)
-	if !unclassifiedDynamic.dynamic["candidate.reason"] || lifecycleReasonAssignmentClassified("candidate.reason") {
+	unclassifiedDynamic := lifecycleFailureReasonReferences(`package batch
+func applyExpiredReviewOutcome(evidence map[string]any, candidate struct{ reason string }) {
+	evidence["reason"] = candidate.reason
+}`)
+	if !unclassifiedDynamic.dynamic["applyExpiredReviewOutcome:candidate.reason"] ||
+		lifecycleReasonAssignmentClassified("applyExpiredReviewOutcome:candidate.reason") {
 		t.Fatalf("unclassified dynamic reason assignment was not rejected: %v", unclassifiedDynamic.dynamic)
+	}
+	localAlias := lifecycleFailureReasonReferences(`package batch
+func applyExpiredReviewOutcome(evidence map[string]any) {
+	reason := "REVIEW_REQUEST_EXPIRED"
+	evidence["reason"] = reason
+}`)
+	if !localAlias.dynamic["applyExpiredReviewOutcome:reason"] ||
+		lifecycleReasonAssignmentClassified("applyExpiredReviewOutcome:reason") {
+		t.Fatalf("local reason alias escaped classification: %v", localAlias.dynamic)
+	}
+	shadowedParameter := lifecycleFailureReasonReferences(`package batch
+func lifecycleRemediationDecision(reason string, evidence map[string]any) {
+	if true {
+		reason := "UNCLASSIFIED_LIFECYCLE_PROBE"
+		evidence["reason"] = reason
+	}
+}`)
+	if !shadowedParameter.dynamic["lifecycleRemediationDecision:unverified-reason"] ||
+		lifecycleReasonAssignmentClassified("lifecycleRemediationDecision:unverified-reason") {
+		t.Fatalf("shadowed producer parameter escaped classification: %v", shadowedParameter.dynamic)
 	}
 }
 
