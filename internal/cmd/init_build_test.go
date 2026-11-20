@@ -45,6 +45,7 @@ func TestInit_ElixirPresetBuildsForEveryBuiltInAgentProvider(t *testing.T) {
 				t.Fatalf("write mix.exs: %v", err)
 			}
 
+			pinBuildOnlySmokeOpenCodeProbe(t, agent)
 			s := &scaffold.Scaffolder{}
 			if err := s.Scaffold(dir, scaffold.Options{Agent: agent}, buildPrompter{}); err != nil {
 				t.Fatalf("scaffold: %v", err)
@@ -68,6 +69,7 @@ func TestInit_PythonPresetBuildsForEveryBuiltInAgentProvider(t *testing.T) {
 				t.Fatalf("write pyproject.toml: %v", err)
 			}
 
+			pinBuildOnlySmokeOpenCodeProbe(t, agent)
 			s := &scaffold.Scaffolder{}
 			if err := s.Scaffold(dir, scaffold.Options{Agent: agent}, buildPrompter{}); err != nil {
 				t.Fatalf("scaffold: %v", err)
@@ -91,6 +93,7 @@ func TestInit_DotnetPresetBuildsForEveryBuiltInAgentProvider(t *testing.T) {
 				t.Fatalf("write global.json: %v", err)
 			}
 
+			pinBuildOnlySmokeOpenCodeProbe(t, agent)
 			s := &scaffold.Scaffolder{}
 			if err := s.Scaffold(dir, scaffold.Options{Agent: agent}, buildPrompter{}); err != nil {
 				t.Fatalf("scaffold: %v", err)
@@ -114,6 +117,7 @@ func TestInit_GoPresetBuildsForEveryBuiltInAgentProvider(t *testing.T) {
 				t.Fatalf("write go.mod: %v", err)
 			}
 
+			pinBuildOnlySmokeOpenCodeProbe(t, agent)
 			s := &scaffold.Scaffolder{}
 			if err := s.Scaffold(dir, scaffold.Options{Agent: agent}, buildPrompter{}); err != nil {
 				t.Fatalf("scaffold: %v", err)
@@ -137,6 +141,7 @@ func TestInit_NodePresetBuildsForEveryBuiltInAgentProvider(t *testing.T) {
 				t.Fatalf("write package.json: %v", err)
 			}
 
+			pinBuildOnlySmokeOpenCodeProbe(t, agent)
 			s := &scaffold.Scaffolder{}
 			if err := s.Scaffold(dir, scaffold.Options{Agent: agent}, buildPrompter{}); err != nil {
 				t.Fatalf("scaffold: %v", err)
@@ -160,6 +165,7 @@ func TestInit_RubyPresetBuildsForEveryBuiltInAgentProvider(t *testing.T) {
 				t.Fatalf("write Gemfile: %v", err)
 			}
 
+			pinBuildOnlySmokeOpenCodeProbe(t, agent)
 			s := &scaffold.Scaffolder{}
 			if err := s.Scaffold(dir, scaffold.Options{Agent: agent}, buildPrompter{}); err != nil {
 				t.Fatalf("scaffold: %v", err)
@@ -183,6 +189,7 @@ func TestInit_JavaPresetBuildsForEveryBuiltInAgentProvider(t *testing.T) {
 				t.Fatalf("write pom.xml: %v", err)
 			}
 
+			pinBuildOnlySmokeOpenCodeProbe(t, agent)
 			s := &scaffold.Scaffolder{}
 			if err := s.Scaffold(dir, scaffold.Options{Agent: agent}, buildPrompter{}); err != nil {
 				t.Fatalf("scaffold: %v", err)
@@ -206,6 +213,7 @@ func TestInit_RustPresetBuildsForEveryBuiltInAgentProvider(t *testing.T) {
 				t.Fatalf("write Cargo.toml: %v", err)
 			}
 
+			pinBuildOnlySmokeOpenCodeProbe(t, agent)
 			s := &scaffold.Scaffolder{}
 			if err := s.Scaffold(dir, scaffold.Options{Agent: agent}, buildPrompter{}); err != nil {
 				t.Fatalf("scaffold: %v", err)
@@ -226,6 +234,7 @@ func TestInit_GenericPresetBuildsForEveryBuiltInAgentProvider(t *testing.T) {
 		t.Run(agent, func(t *testing.T) {
 			dir := t.TempDir()
 
+			pinBuildOnlySmokeOpenCodeProbe(t, agent)
 			s := &scaffold.Scaffolder{}
 			if err := s.Scaffold(dir, scaffold.Options{BuildTools: "generic", Agent: agent}, buildPrompter{}); err != nil {
 				t.Fatalf("scaffold: %v", err)

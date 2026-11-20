@@ -338,6 +338,9 @@ func requirePresetMatrixE2E(t *testing.T) {
 		t.Skip("skip preset-matrix e2e in CI")
 	}
 	containerRuntimeAvailable(t)
+	if !localLiveProvider("opencode") {
+		return
+	}
 	if _, err := exec.LookPath("opencode"); err != nil {
 		t.Skipf("skip preset-matrix e2e: opencode unavailable on PATH: %v", err)
 	}
@@ -351,11 +354,8 @@ func requirePresetMatrixE2E(t *testing.T) {
 	}
 }
 
-// requireSandmanAgentE2E supersets requirePresetMatrixE2E with the
-// SANDMAN_RUN_AGENT_E2E=1 env gate. It is used by real-agent smoke tests so
-// that `go test -tags e2e` never runs them (they require `-tags e2e,agent`
-// to compile) and even with the agent tag the env gate provides a second
-// opt-in for developer machines only.
+// requireSandmanAgentE2E selects the container execution cases independently
+// of scaffold-only coverage. The default model endpoint is local.
 func requireSandmanAgentE2E(t *testing.T) {
 	t.Helper()
 	requirePresetMatrixE2E(t)
@@ -374,25 +374,20 @@ func TestPresetMatrixHarness_RealAgentContinue(t *testing.T) {
 	runSmokeProviderTwice(t, smokeProviderCases[0], "--continue")
 }
 
-// requireClaudeAgentE2E gates the real Claude Code run with the same CI and
-// SANDMAN_RUN_AGENT_E2E opt-in rules as the OpenCode cases, plus the provider
-// allowlist (SANDMAN_TEST_PROVIDERS must name claude or all). The claude CLI
-// and its auth (file-backed credentials or CLAUDE_CODE_OAUTH_TOKEN) are
-// checked by the shared smoke preparation, which skips when they are absent.
+func TestPresetMatrixHarness_ScriptedOpenCodeReuseSession(t *testing.T) {
+	requireSandmanAgentE2E(t)
+	if localLiveProvider("opencode") {
+		t.Skip("scripted-only session test")
+	}
+	runSmokeProviderTwice(t, smokeProviderCases[0], "--continue", "--reuse-session")
+}
+
+// requireClaudeAgentE2E admits only explicit local live validation. The
+// shared smoke preparation checks the CLI and operator authentication.
 func requireClaudeAgentE2E(t *testing.T) smokeProviderCase {
 	t.Helper()
-	if os.Getenv("CI") != "" && !testenv.FullRegression() {
-		t.Skip("skip claude real-agent e2e in CI")
-	}
-	if os.Getenv("SANDMAN_RUN_AGENT_E2E") != "1" {
-		t.Skip("skip claude real-agent e2e: SANDMAN_RUN_AGENT_E2E=1 not set")
-	}
-	allowed, err := parseSmokeProviders(smokeProviderCases)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !allowed["claude"] {
-		t.Skip("skip claude real-agent e2e: set SANDMAN_TEST_PROVIDERS=claude (or all)")
+	if !localLiveProvider("claude") {
+		t.Skip("set SANDMAN_LOCAL_LIVE_PROVIDER=claude locally to run live validation")
 	}
 	containerRuntimeAvailable(t)
 	for _, tc := range smokeProviderCases {
@@ -418,11 +413,13 @@ func TestPresetMatrixHarness_RealClaudeAgentReuseSession(t *testing.T) {
 // customizeOpenCodeAgentForContainer: --pure (no host sessions/config leak
 // into the run), --dangerously-skip-permissions (the container is already the
 // sandbox), the in-container gh shim first on PATH, and the resolved test
-// model. The model comes from SANDMAN_TEST_MODEL_OPENCODE when set, else the
-// sandman default (opencode/big-pickle).
+// model. Scripted executions ignore operator model overrides.
 func customizePresetMatrixOpencodeAgent(t *testing.T, repoDir string) {
 	t.Helper()
 	model := testenv.ResolveTestModel("opencode", config.DefaultModel)
+	if !localLiveProvider("opencode") {
+		model = scriptedOpenCodeModel
+	}
 	cfgPath := filepath.Join(repoDir, ".sandman", "config.yaml")
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
@@ -474,7 +471,7 @@ Complete the work using your tools before sending your final response:
 
 1. Record the current commit with the shell tool: git rev-parse HEAD.
 2. Edit the source file and create answer.txt as described above.
-3. Use the shell tool to execute: git add -A && git commit -m "Set answer to 42".
+3. Stage the changes and use the shell tool to create one commit with the message Set answer to 42.
 4. Use the shell tool to verify that git rev-parse HEAD differs from the starting commit, git status --porcelain is empty, and git show HEAD:answer.txt contains exactly the two bytes 42. If a check fails, finish the work and repeat the checks.
 
 The task is complete only after exactly one new commit exists on the current branch and these checks pass. Writing a git command in your final response does not execute it. Your final response should report the verified commit hash.
@@ -491,6 +488,44 @@ Do not push, do not run gh, and do not open a pull request.
 	return abs
 }
 
+func presetMatrixFirstExchange(sourcePath string) scriptedOpenCodeTurn {
+	// Validate the task the CLI actually saw, not just the filename. Keep these
+	// expectations independent of the template so changing the task cannot
+	// silently preserve passing evidence from fixed tool replies.
+	return scriptedOpenCodeTurn{"user", []string{
+		"source file that currently contains the wrong value (0). Change it so it uses 42 instead.",
+		"create a file named answer.txt at the root of the repository whose entire contents are exactly 42 (just those two digits, no newline, no other text).",
+		"Stage the changes and use the shell tool to create one commit with the message Set answer to 42.",
+		"exactly one new commit exists on the current branch",
+		"Do not push, do not run gh, and do not open a pull request.",
+	}, scriptedOpenCodeBash(`git rev-parse HEAD && grep 0 -- ` + shellQuote(sourcePath) + ` && printf '\nVERIFIED_SEED\n'`)}
+}
+
+func TestPresetMatrixRejectsContradictoryTask(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".sandman"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	original := writePresetMatrixTaskTemplate(t, dir)
+	data, err := os.ReadFile(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ name, from, to, reason string }{
+		{"source", "Change it so it uses 42 instead.", "Leave the source unchanged.", "source file that currently contains"},
+		{"answer", "whose entire contents are exactly 42", "whose entire contents are exactly 99", "create a file named answer.txt"},
+		{"commit", "Stage the changes and use the shell tool to create one commit with the message Set answer to 42.", "Do not commit.", "Stage the changes and use the shell tool"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			contradictory := strings.Replace(string(data), tc.from, tc.to, 1)
+			if contradictory == string(data) || !strings.Contains(contradictory, "answer.txt") {
+				t.Fatal("negative control must change the task while retaining answer.txt")
+			}
+			assertScriptedOpenCodeRejectsPrompt(t, presetMatrixFirstExchange("answer.sh"), contradictory, tc.reason)
+		})
+	}
+}
+
 // seedPresetMatrixProject writes a single source file in the preset's language
 // that prints 0, giving the real opencode agent a concrete, language-specific
 // starting point for the canonical task. The seed is never compiled by the
@@ -499,6 +534,14 @@ Do not push, do not run gh, and do not open a pull request.
 // fine — opencode edits it as part of the task, which is what proves the
 // preset's container + toolchain + opencode path works end to end.
 func seedPresetMatrixProject(t *testing.T, repoDir, preset string) {
+	t.Helper()
+	path, body := presetMatrixSeed(t, preset)
+	if err := os.WriteFile(filepath.Join(repoDir, path), []byte(body), 0644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func presetMatrixSeed(t *testing.T, preset string) (string, string) {
 	t.Helper()
 	var path, body string
 	switch preset {
@@ -523,9 +566,7 @@ func seedPresetMatrixProject(t *testing.T, repoDir, preset string) {
 	default:
 		t.Fatalf("unknown preset %q for seedPresetMatrixProject", preset)
 	}
-	if err := os.WriteFile(filepath.Join(repoDir, path), []byte(body), 0644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
+	return path, body
 }
 
 // appendDockerfileRun appends a single RUN line to the scaffolded
@@ -700,11 +741,9 @@ func runE2EScaffold(t *testing.T, preset, toolVersion, dockerfileAppend string) 
 	return binPath, repoDir
 }
 
-// runE2ERun drives a REAL opencode agent against issue #1 in a container,
-// mirroring the prflow real-opencode harness. Only `gh` is faked (host +
-// in-container shims); the agent itself is the real opencode binary installed
-// by the scaffolded image, using the host's opencode auth snapshotted into
-// the container. The canonical task lives in .sandman/prompt.md so it is
+// runE2ERun drives the image's real OpenCode binary against issue #1.
+// GitHub and the model endpoint are fixtures unless an operator explicitly
+// selects the local live provider. The canonical task is rendered so it is
 // identical for every preset. The image is built explicitly first so a broken
 // Dockerfile fails fast before the orchestrator is invoked. The returned
 // baseline is the repo HEAD before the run; callers assert the agent advanced
@@ -712,8 +751,19 @@ func runE2EScaffold(t *testing.T, preset, toolVersion, dockerfileAppend string) 
 func runE2ERun(t *testing.T, binPath, repoDir, preset string) string {
 	t.Helper()
 	requirePresetMatrixE2E(t)
-	realHome := preparePresetMatrixAgentHome(t)
+	realHome := preparePresetMatrixHome(t, localLiveProvider("opencode"))
 	seedPresetMatrixProject(t, repoDir, preset)
+	if !localLiveProvider("opencode") {
+		path, _ := presetMatrixSeed(t, preset)
+		quoted := shellQuote(path)
+		prepareContainerModel(t, []scriptedOpenCodeTurn{
+			presetMatrixFirstExchange(path),
+			{"tool", "VERIFIED_SEED", scriptedOpenCodeBash("sed -i 's/0/42/g' " + quoted +
+				` && printf 42 > answer.txt && git add -- ` + quoted + ` answer.txt && git commit -m "Set answer to 42"` +
+				` && test -z "$(git status --porcelain)" && test "$(git show HEAD:answer.txt)" = 42 && git rev-parse HEAD && printf '\nVERIFIED_COMMIT\n'`)},
+			{"tool", "VERIFIED_COMMIT", "Verified the answer commit."},
+		})
+	}
 	seedCommit := exec.Command("git", "-C", repoDir, "add", ".")
 	if out, err := seedCommit.CombinedOutput(); err != nil {
 		t.Fatalf("stage preset seed: %v\n%s", err, out)
@@ -722,6 +772,8 @@ func runE2ERun(t *testing.T, binPath, repoDir, preset string) string {
 	if out, err := seedCommit.CombinedOutput(); err != nil {
 		t.Fatalf("commit preset seed: %v\n%s", err, out)
 	}
+	// Managed runs cut their worktree from origin/main, not local main.
+	runGit(t, repoDir, "push", "origin", "main")
 	customizePresetMatrixOpencodeAgent(t, repoDir)
 	taskTemplate := writePresetMatrixTaskTemplate(t, repoDir)
 
@@ -786,6 +838,9 @@ func runE2ERun(t *testing.T, binPath, repoDir, preset string) string {
 	if err != nil {
 		t.Fatalf("sandman run failed: %v\noutput:\n%s", err, out)
 	}
+	if !localLiveProvider("opencode") && !strings.Contains(out, "SANDMAN_SCRIPTED_EXCHANGES_VERIFIED") {
+		t.Fatalf("scripted OpenCode exchange not verified:\n%s", out)
+	}
 	return baseline
 }
 
@@ -793,13 +848,17 @@ func runE2ERun(t *testing.T, binPath, repoDir, preset string) string {
 // dependency installations, or session databases. Keep Podman's real storage
 // location while giving the agent an authentication-only, test-owned HOME.
 func preparePresetMatrixAgentHome(t *testing.T) string {
+	return preparePresetMatrixHome(t, true)
+}
+
+func preparePresetMatrixHome(t *testing.T, live bool) string {
 	t.Helper()
 	realHome, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatal(err)
 	}
 	home := t.TempDir()
-	if !copySmokeAuthLayout(t, realHome, home, smokeProviderCases[0].authPaths) {
+	if live && !copySmokeAuthLayout(t, realHome, home, smokeProviderCases[0].authPaths) {
 		t.Fatal("authenticated preset run has no authentication snapshot")
 	}
 	dataHome := os.Getenv("XDG_DATA_HOME")
@@ -893,12 +952,16 @@ func assertPresetMatrixAgentWorked(t *testing.T, repoDir, baseline string) {
 	if branchHash == "" || branchHash == baseline {
 		t.Fatalf("expected agent branch %s to advance beyond baseline %s; got %q (the agent did not commit)", presetMatrixBranch, baseline, branchHash)
 	}
+	parent, err := exec.Command("git", "-C", repoDir, "rev-parse", presetMatrixBranch+"^").Output()
+	if err != nil || strings.TrimSpace(string(parent)) != baseline {
+		t.Fatalf("want exactly one new commit over %s; parent=%q, error=%v", baseline, parent, err)
+	}
 	artifact, err := exec.Command("git", "-C", repoDir, "show", presetMatrixBranch+":answer.txt").Output()
 	if err != nil {
 		t.Fatalf("read answer.txt from branch %s: %v (did the agent create and commit it?)", presetMatrixBranch, err)
 	}
-	if !strings.Contains(string(artifact), "42") {
-		t.Fatalf("agent branch %s answer.txt = %q, want it to contain %q", presetMatrixBranch, string(artifact), "42")
+	if string(artifact) != "42" {
+		t.Fatalf("agent branch %s answer.txt = %q, want exactly %q", presetMatrixBranch, artifact, "42")
 	}
 }
 

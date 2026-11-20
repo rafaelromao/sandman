@@ -6,11 +6,6 @@ on:
       tier:
         required: true
         type: string
-    secrets:
-      OPENCODE_API_KEY:
-        required: false
-      CLAUDE_CODE_OAUTH_TOKEN:
-        required: false
 
 permissions:
   contents: read
@@ -29,9 +24,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GITHUB_TOKEN: ${{ github.token }}
       MISE_GITHUB_TOKEN: ${{ github.token }}
-      SANDMAN_TEST_MODEL_OPENCODE: opencode/big-pickle
-      SANDMAN_TEST_MODEL_CLAUDE: claude-haiku-4-5-20251001
-      SANDMAN_TEST_PROVIDERS: ${{ inputs.tier == 'claude' && 'claude' || inputs.tier == 'live' && 'opencode' || 'all' }}
+      SANDMAN_TEST_PROVIDERS: all
       SANDMAN_E2E_GATES: all
       SANDMAN_RUN_PORTAL_BINARY_E2E: "1"
 
@@ -93,18 +86,11 @@ jobs:
           test "$(podman info --format '{{.Host.OCIRuntime.Name}}')" = "runc"
           podman run --rm alpine true
 
-      - name: Install pinned agent CLIs
+      - name: Install pinned OpenCode CLI
         id: agents
-        if: inputs.tier == 'live' || inputs.tier == 'claude'
+        if: inputs.tier == 'smoke' || inputs.tier == 'scripted' || inputs.tier == 'scripted-host'
         timeout-minutes: 5
-        env:
-          RELEASE_TIER: ${{ inputs.tier }}
-        run: |
-          if [ "$RELEASE_TIER" = claude ]; then
-            npm install -g @anthropic-ai/claude-code@2.1.283
-          else
-            npm install -g opencode-ai@1.19.3
-          fi
+        run: npm install -g "opencode-ai@$(python3 -c 'import json; print(json.load(open("scripts/release_scenarios.json"))["providers"]["opencode"]["cli"])')"
 
       - name: Validate prerequisites and record versions
         id: prerequisites
@@ -115,58 +101,39 @@ jobs:
           test "$(go env GOOS)/$(go env GOARCH)" = linux/amd64
           node --version
           "$SANDMAN_PORTAL_CHROMIUM" --version
-          if [ "$RELEASE_TIER" = live ]; then
-            test "$(opencode --version)" = 1.19.3
-          elif [ "$RELEASE_TIER" = claude ]; then
-            claude --version | grep -F '2.1.283'
+          if [ "$RELEASE_TIER" = scripted-host ] || [ "$RELEASE_TIER" = scripted ] || [ "$RELEASE_TIER" = smoke ]; then
+            test "$(opencode --version)" = "$(python3 -c 'import json; print(json.load(open("scripts/release_scenarios.json"))["providers"]["opencode"]["cli"])')"
           fi
           {
             go version
             node --version
             "$SANDMAN_PORTAL_CHROMIUM" --version
             podman --version
-            if [ "$RELEASE_TIER" = live ]; then
+            if [ "$RELEASE_TIER" = scripted-host ] || [ "$RELEASE_TIER" = scripted ] || [ "$RELEASE_TIER" = smoke ]; then
               opencode --version
-            elif [ "$RELEASE_TIER" = claude ]; then
-              claude --version
             fi
           } > regression-artifacts/versions.txt
 
-      - name: Provision provider auth
-        id: auth
-        if: inputs.tier == 'live' || inputs.tier == 'claude'
-        env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.tier == 'claude' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
-          RELEASE_TIER: ${{ inputs.tier }}
-        run: |
-          credential=OPENCODE_API_KEY
-          if [ "$RELEASE_TIER" = claude ]; then
-            credential=CLAUDE_CODE_OAUTH_TOKEN
-          fi
-          if [ -z "${!credential}" ]; then
-            echo "::error::Required repository secret $credential is missing. Configure it before rerunning provider validation."
-            exit 1
-          fi
-          if [ "$RELEASE_TIER" = live ]; then
-          python3 - <<'PYAUTH'
-          import json, os
-          from pathlib import Path
-          path = Path.home() / '.local/share/opencode/auth.json'
-          path.parent.mkdir(parents=True, exist_ok=True)
-          path.write_text(json.dumps({'opencode': {'type': 'api', 'key': os.environ['OPENCODE_API_KEY']}}))
-          path.chmod(0o600)
-          PYAUTH
-          fi
-
       - name: Execute tier
         id: tests
+        if: inputs.tier != 'scripted-host'
         env:
           RELEASE_TIER: ${{ inputs.tier }}
           SANDMAN_PORTAL_CHROMIUM: ${{ steps.chrome.outputs.chrome-path }}
           SANDMAN_REQUIRE_PORTAL_BROWSER: "1"
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.tier == 'claude' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
         run: bash scripts/release_tier.sh
+
+      - name: Execute host-agent tier on loopback only
+        id: host_tests
+        if: inputs.tier == 'scripted-host'
+        env:
+          RELEASE_TIER: scripted-host
+        run: |
+          go mod download
+          sudo --preserve-env=CI,SANDMAN_FULL_REGRESSION,RELEASE_TIER unshare --net sh -ec '
+            ip link set lo up
+            exec runuser -u "$1" -- env "PATH=$2" GOPROXY=off GOTOOLCHAIN=local bash scripts/release_tier.sh
+          ' sh "$(id -un)" "$PATH"
 
       - name: Evaluate complete scenario coverage
         if: ${{ always() }}
@@ -175,8 +142,9 @@ jobs:
             {"go":"${{ steps.go.outcome }}","node":"${{ steps.node.outcome }}",
             "chromium":"${{ steps.chrome.outcome }}","podman":"${{ steps.podman.outcome }}",
             "runtime":"${{ steps.runtime.outcome }}","container":"${{ steps.container.outcome }}",
-            "agents":"${{ steps.agents.outcome }}","auth":"${{ steps.auth.outcome }}",
-            "versions":"${{ steps.prerequisites.outcome }}","tests":"${{ steps.tests.outcome }}"}
+             "agents":"${{ steps.agents.outcome }}",
+             "versions":"${{ steps.prerequisites.outcome }}","tests":"${{ steps.tests.outcome }}",
+             "host_tests":"${{ steps.host_tests.outcome }}"}
           RELEASE_TIER: ${{ inputs.tier }}
         run: |
           rc=1

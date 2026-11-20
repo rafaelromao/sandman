@@ -139,15 +139,34 @@ func applySmokeModelOverrides() {
 	}
 }
 
+// Smoke covers both OpenCode generations in one process. The installed host
+// CLI cannot serve as the version probe for both generated images.
+func pinBuildOnlySmokeOpenCodeProbe(t *testing.T, agent string) {
+	t.Helper()
+	switch agent {
+	case "opencode", "opencode-v2":
+		installInitHostVersion(t, scaffold.DefaultBuiltInAgentVersion(agent))
+	}
+}
+
 // prepareSmokeProvider builds the real-agent smoke harness. The CLI and the
 // orchestrator normally get unconnected fakes, which suits a fresh or
 // overridden Run. A continuation finds its predecessor through the event log
 // the orchestrator writes, as in production, so a continuing harness shares one
 // log between them; without it --continue silently promotes itself to
 // --override and drops the previous Run and its agent session.
-func prepareSmokeProvider(t *testing.T, tc smokeProviderCase, continuation bool) (runtime string, repoDir string, deps Dependencies, issue github.Issue, gh *smokeGitHub) {
+func prepareSmokeProvider(t *testing.T, tc smokeProviderCase, continuation, reuseSession bool) (runtime string, repoDir string, deps Dependencies, issue github.Issue, gh *smokeGitHub) {
 	t.Helper()
-	ensureSmokeHostCLI(t, tc)
+	scripted := tc.name == "opencode" && !localLiveProvider("opencode")
+	if scripted {
+		tc.model = scriptedOpenCodeModel
+		tc.requiredAuth, tc.authPaths = nil, nil
+		prepareContainerModel(t, []scriptedOpenCodeTurn{
+			{Role: "user", Contains: "Return exactly SMOKE_OK and do not modify files.", Reply: "SMOKE_OK"},
+		})
+	} else {
+		ensureSmokeHostCLI(t, tc)
+	}
 
 	runtime, err := sandbox.ResolveRuntime("podman")
 	if err != nil {
@@ -171,14 +190,14 @@ func prepareSmokeProvider(t *testing.T, tc smokeProviderCase, continuation bool)
 	if tc.authEnv != "" {
 		authToken = os.Getenv(tc.authEnv)
 	}
-	if authToken == "" && !hasSmokeAuth(realHome, tc.requiredAuth, tc.authPaths) {
+	if !scripted && authToken == "" && !hasSmokeAuth(realHome, tc.requiredAuth, tc.authPaths) {
 		probePaths := tc.requiredAuth
 		if len(probePaths) == 0 {
 			probePaths = tc.authPaths
 		}
 		t.Skipf("missing file-backed auth for %s; expected one of %s under %s", tc.name, strings.Join(probePaths, ", "), realHome)
 	}
-	if !copySmokeAuthLayout(t, realHome, homeDir, tc.authPaths) && authToken == "" {
+	if !scripted && !copySmokeAuthLayout(t, realHome, homeDir, tc.authPaths) && authToken == "" {
 		t.Skipf("missing file-backed auth for %s; expected one of %s under %s", tc.name, strings.Join(tc.authPaths, ", "), realHome)
 	}
 	ensureSmokeWritableDirs(t, homeDir, tc.name)
@@ -205,6 +224,9 @@ func prepareSmokeProvider(t *testing.T, tc smokeProviderCase, continuation bool)
 
 	warmSmokeRuntime(t, runtime)
 
+	if scripted {
+		pinBuildOnlySmokeOpenCodeProbe(t, tc.name)
+	}
 	s := &scaffold.Scaffolder{}
 	if err := s.Scaffold(repoDir, scaffold.Options{BuildTools: tc.buildTools, Agent: tc.name}, smokePrompter{}); err != nil {
 		t.Fatalf("scaffold repo: %v", err)
@@ -215,6 +237,11 @@ func prepareSmokeProvider(t *testing.T, tc smokeProviderCase, continuation bool)
 	depsCfg, err := customizeSmokeConfig(repoDir, tc.name, tc.model)
 	if err != nil {
 		t.Fatalf("update config: %v", err)
+	}
+	if scripted && reuseSession {
+		agent := depsCfg.Agents[tc.name]
+		agent.Command = config.BuiltInAgentPresets["opencode"].Command
+		depsCfg.Agents[tc.name], depsCfg.AgentProviders[tc.name] = agent, agent
 	}
 	if authToken != "" {
 		agent := depsCfg.Agents[tc.name]
@@ -270,6 +297,10 @@ func assertSmokeProviderRun(t *testing.T, out string, tc smokeProviderCase, repo
 	if !strings.Contains(string(logData), "SMOKE_OK") {
 		t.Fatalf("expected log to include SMOKE_OK, got:\n%s", logData)
 	}
+	if tc.name == "opencode" && !localLiveProvider("opencode") &&
+		!bytes.Contains(logData, []byte("SANDMAN_SCRIPTED_EXCHANGES_VERIFIED")) {
+		t.Fatalf("scripted OpenCode exchange not verified:\n%s", logData)
+	}
 
 	worktreePath := filepath.Join(repoDir, ".sandman", "worktrees", tc.wantBranch)
 	if _, err := os.Stat(worktreePath); err != nil {
@@ -279,7 +310,7 @@ func assertSmokeProviderRun(t *testing.T, out string, tc smokeProviderCase, repo
 
 func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 	t.Helper()
-	runtime, repoDir, deps, issue, _ := prepareSmokeProvider(t, tc, false)
+	runtime, repoDir, deps, issue, _ := prepareSmokeProvider(t, tc, false, false)
 	out, err := executeSmokeRun(t, deps, runtime, issue.Number)
 	if err != nil {
 		worktreePath := filepath.Join(repoDir, ".sandman", "worktrees", tc.wantBranch)
@@ -308,7 +339,7 @@ func mergedPR(branch string, issueNumber int) *github.PR {
 func runSmokeProviderTwice(t *testing.T, tc smokeProviderCase, secondArgs ...string) {
 	t.Helper()
 	continuing := slices.Contains(secondArgs, "--continue")
-	runtime, repoDir, deps, issue, gh := prepareSmokeProvider(t, tc, continuing)
+	runtime, repoDir, deps, issue, gh := prepareSmokeProvider(t, tc, continuing, slices.Contains(secondArgs, "--reuse-session"))
 	out, err := executeSmokeRun(t, deps, runtime, issue.Number)
 	if err != nil {
 		t.Fatalf("first smoke run failed: %v\noutput:\n%s", err, out)
@@ -324,6 +355,23 @@ func runSmokeProviderTwice(t *testing.T, tc smokeProviderCase, secondArgs ...str
 		t.Fatalf("second smoke run failed: %v\noutput:\n%s", err, out)
 	}
 	assertSmokeProviderRun(t, out, tc, repoDir, issue)
+	if tc.name == "opencode" && !localLiveProvider("opencode") {
+		logs, err := filepath.Glob(filepath.Join(repoDir, ".sandman", "batches", "*", "runs", "*", "run.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		verified := 0
+		for _, path := range logs {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			verified += bytes.Count(data, []byte("SANDMAN_SCRIPTED_EXCHANGES_VERIFIED"))
+		}
+		if verified != 2 {
+			t.Fatalf("got %d verified scripted exchanges, want one per run", verified)
+		}
+	}
 	if slices.Contains(secondArgs, "--reuse-session") {
 		assertReusedAgentSession(t, first, recordedAgentSessions(t, repoDir))
 	}
@@ -391,6 +439,14 @@ func requireSmokeE2E(t *testing.T) {
 	}
 }
 
+func TestSmoke_ScriptedOpenCode(t *testing.T) {
+	requireSmokeE2E(t)
+	if localLiveProvider("opencode") {
+		t.Skip("scripted-only smoke test")
+	}
+	runSmokeProvider(t, smokeProviderCases[0])
+}
+
 func parseSmokeProviders(cases []smokeProviderCase) (map[string]bool, error) {
 	return testenv.ResolveProviderAllowlist(smokeProviderNames(cases))
 }
@@ -407,6 +463,9 @@ func runSmokeProviderCases(t *testing.T, cases []smokeProviderCase) {
 	}
 
 	for _, tc := range cases {
+		if tc.name == "claude" && !localLiveProvider("claude") {
+			continue
+		}
 		tc := tc
 		if !allowed[tc.name] {
 			continue

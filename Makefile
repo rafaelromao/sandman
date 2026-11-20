@@ -58,6 +58,7 @@ test-browser:
 # makes contracts independently visible without relying on an exclusion list.
 contracts:
 	python3 scripts/opencode_canary_test.py
+	python3 scripts/test_opencode_fixture.py
 	python3 scripts/publication_test.py
 	python3 scripts/release_report_test.py
 	go test -tags smoke -json ./internal/cmd -run '^TestReleasePresetBuildsMissingPrewarmImage$$'
