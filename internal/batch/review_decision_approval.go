@@ -9,11 +9,15 @@ import (
 
 // Allow only bounded adverbs, direct objects, merge targets and ", but"
 // between a merge/approval word and its condition, not an unrelated
-// intervening clause (#2995).
+// intervening clause (#2995). Spacing within this machinery is horizontal
+// only: reviewJoinSoftLines deliberately keeps a "\n" at every preserved
+// paragraph, list and heading boundary, and a merge/approval word ending one
+// paragraph must not be read as governing a conjunction that opens the next
+// one (PR #3002 review on head 3db98555).
 const (
-	reviewConditionObject      = `(?:(?:this|the(?:\s+current)?)\s+)?(?:pr|pull\s+request)\s+#[0-9]+|#[0-9]+|(?:this|the(?:\s+current)?)\s+(?:pr|pull\s+request|change|branch)`
-	reviewConditionTarget      = `(?:in|into|to|onto)\s+(?:the\s+)?(?:main|master|trunk|base|(?:(?:default|base|target)\s+)?branch)`
-	reviewConditionModifiers   = `\b(?:\s+(?:it|this|that|safely|now|only|` + reviewConditionObject + `|` + reviewConditionTarget + `)|\s*,\s*but\b)*`
+	reviewConditionObject      = `(?:(?:this|the(?:[ \t]+current)?)[ \t]+)?(?:pr|pull[ \t]+request)[ \t]+#[0-9]+|#[0-9]+|(?:this|the(?:[ \t]+current)?)[ \t]+(?:pr|pull[ \t]+request|change|branch)`
+	reviewConditionTarget      = `(?:in|into|to|onto)[ \t]+(?:the[ \t]+)?(?:main|master|trunk|base|(?:(?:default|base|target)[ \t]+)?branch|[A-Za-z][\w./-]*)`
+	reviewConditionModifiers   = `\b(?:[ \t]+(?:it|this|that|safely|now|only|` + reviewConditionObject + `|` + reviewConditionTarget + `)|[ \t]*,[ \t]*but\b)*`
 	reviewConditionSubject     = `\b(?:merg(?:e|ed|ing)|approv(?:e|ed|al)|lgtm)` + reviewConditionModifiers
 	reviewConditionConjunction = `(?:after|once|until|if|when)\b`
 )
@@ -28,7 +32,7 @@ var (
 	// A condition contradicts approval only when it governs the approval or
 	// merge ("merge only after ...", "only if X is fixed is this approved").
 	// Third-person "the workflow merges ... when" describes code behavior.
-	reviewApprovalContradiction = regexp.MustCompile(`(?i)\b(?:not\s+(?:yet\s+)?(?:approved|lgtm)|no\s+approval|changes\s+requested|subject\s+to|contingent\b|only\s+(?:if|after|once)\b[^\n.!?]*\b(?:approv(?:e|ed|al)|merg(?:e|ed|ing)|lgtm)\b|before\s+merging|` + reviewConditionSubject + `\s*[,:]?\s+` + reviewConditionConjunction + `)`)
+	reviewApprovalContradiction = regexp.MustCompile(`(?i)\b(?:not\s+(?:yet\s+)?(?:approved|lgtm)|no\s+approval|changes\s+requested|subject\s+to|contingent\b|only\s+(?:if|after|once)\b[^\n.!?]*\b(?:approv(?:e|ed|al)|merg(?:e|ed|ing)|lgtm)\b|before\s+merging|` + reviewConditionSubject + `[ \t]*[,:]?[ \t]+` + reviewConditionConjunction + `)`)
 	// A semicolon normally separates statements. Cross it for a direct
 	// command ("Merge; after ...") or an explicit restriction ("only; after").
 	reviewSemicolonCondition     = regexp.MustCompile(`(?im)(?:(?:^|[.!?;][ \t]+)[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?(?:merge|approve|lgtm)` + reviewConditionModifiers + `|` + reviewConditionSubject + `[ \t]+only)[ \t]*;[ \t]+` + reviewConditionConjunction)
