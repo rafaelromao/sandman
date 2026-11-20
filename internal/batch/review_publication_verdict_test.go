@@ -204,8 +204,8 @@ func TestReviewPublicationVerdict_MergeConditionsInSuggestedNextSteps(t *testing
 		{"merge to target", "None. Merge to main after the race in worker.go is fixed."},
 		{"generic object", "None. Merge the branch after the race in worker.go is fixed."},
 		{"but only", "None. Merge, but only after the race in worker.go is fixed."},
-		// PR #3002 review (comment on head 3db98555): a configured, non-generic
-		// merge target is still part of the merge phrase it governs.
+		// A configured, non-generic merge target is still part of the merge
+		// phrase it governs.
 		{"configured merge target", "None. Can be merged into `release/next` once the race in worker.go is fixed."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -227,10 +227,10 @@ func TestReviewPublicationVerdict_MergeConditionsInSuggestedNextSteps(t *testing
 	}
 }
 
-// PR #3002 review (comment on head 3db98555): a merge word ending one Summary
-// paragraph and a conjunction opening the next paragraph are two separate
-// statements, not one governing condition. reviewJoinSoftLines deliberately
-// preserves the paragraph break; the condition-spacing regex must not cross it.
+// A merge word ending one Summary paragraph and a conjunction opening the
+// next paragraph are two separate statements, not one governing condition.
+// reviewJoinSoftLines deliberately preserves the paragraph break; the
+// condition-spacing regex must not cross it.
 func TestReviewPublicationVerdict_SummaryParagraphBoundaryDoesNotGovern(t *testing.T) {
 	prose := "## Summary\nThe earlier PR was already merged\n\nWhen an issue is closed, its dependents become eligible.\n\n" +
 		"## Findings\nNone.\n\n## Suggested next steps\nNone.\n\n## Decision\n**APPROVED**\n"

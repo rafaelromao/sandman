@@ -13,7 +13,7 @@ import (
 // only: reviewJoinSoftLines deliberately keeps a "\n" at every preserved
 // paragraph, list and heading boundary, and a merge/approval word ending one
 // paragraph must not be read as governing a conjunction that opens the next
-// one (PR #3002 review on head 3db98555).
+// one.
 const (
 	reviewConditionObject      = `(?:(?:this|the(?:[ \t]+current)?)[ \t]+)?(?:pr|pull[ \t]+request)[ \t]+#[0-9]+|#[0-9]+|(?:this|the(?:[ \t]+current)?)[ \t]+(?:pr|pull[ \t]+request|change|branch)`
 	reviewConditionTarget      = `(?:in|into|to|onto)[ \t]+(?:the[ \t]+)?(?:main|master|trunk|base|(?:(?:default|base|target)[ \t]+)?branch|[A-Za-z][\w./-]*)`
