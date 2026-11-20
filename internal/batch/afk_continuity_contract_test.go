@@ -2094,11 +2094,11 @@ func lifecycleContinuityRowReasonInitializers(source string) lifecycleFailureRef
 		return seen
 	}
 	for _, declaration := range file.Decls {
-		function, ok := declaration.(*ast.FuncDecl)
-		if !ok || function.Body == nil {
-			continue
+		owner := "package"
+		if function, ok := declaration.(*ast.FuncDecl); ok {
+			owner = function.Name.Name
 		}
-		ast.Inspect(function.Body, func(node ast.Node) bool {
+		ast.Inspect(declaration, func(node ast.Node) bool {
 			composite, ok := node.(*ast.CompositeLit)
 			if !ok {
 				return true
@@ -2129,7 +2129,7 @@ func lifecycleContinuityRowReasonInitializers(source string) lifecycleFailureRef
 					seen.dynamic["<unprintable-continuity-row-reason>"] = true
 					continue
 				}
-				seen.dynamic[function.Name.Name+":continuityRow.reason="+strings.TrimSpace(expression.String())] = true
+				seen.dynamic[owner+":continuityRow.reason="+strings.TrimSpace(expression.String())] = true
 			}
 			return true
 		})
@@ -2357,6 +2357,18 @@ func applyExpiredReviewOutcome(evidence map[string]any, candidate string) {
 	if !dynamicInitializer.dynamic["applyExpiredReviewOutcome:continuityRow.reason=candidate"] ||
 		lifecycleReasonAssignmentClassified("applyExpiredReviewOutcome:continuityRow.reason=candidate") {
 		t.Fatalf("dynamic keyed reason initializer escaped classification: %v", dynamicInitializer.dynamic)
+	}
+	packageInitializer := lifecycleFailureReasonReferences(`package batch
+var packageRow = continuityRow{reason: "UNCLASSIFIED_PACKAGE_PROBE"}`)
+	if !packageInitializer.literals["UNCLASSIFIED_PACKAGE_PROBE"] {
+		t.Fatalf("unclassified package-level keyed reason initializer was not scanned: %#v", packageInitializer)
+	}
+	dynamicPackageInitializer := lifecycleFailureReasonReferences(`package batch
+var packageCandidate string
+var packageRow = continuityRow{reason: packageCandidate}`)
+	if !dynamicPackageInitializer.dynamic["package:continuityRow.reason=packageCandidate"] ||
+		lifecycleReasonAssignmentClassified("package:continuityRow.reason=packageCandidate") {
+		t.Fatalf("dynamic package-level keyed reason initializer escaped classification: %v", dynamicPackageInitializer.dynamic)
 	}
 }
 
