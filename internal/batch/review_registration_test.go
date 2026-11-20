@@ -1182,7 +1182,7 @@ func TestReviewRegistration_StaleEvidenceDoesNotAuthorizeWaitWithoutResolver(t *
 	livePR.HeadRefOid = "current-sha"
 	client.comments = nil
 	options := gateTestRunOptions()
-	options.currentHead = func(string) (string, error) { return "current-sha", nil }
+	options.currentHead = nil // Exercise the no-resolver fallback.
 	request := lifecycleObservationRequest{
 		Branch: gateTestBranch, RunID: "run-no-resolver", HostPathsReady: true, AttemptStatus: "success",
 	}
