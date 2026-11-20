@@ -7,8 +7,8 @@ on:
 permissions:
   contents: read
 
-# Maintainers can validate a release repair before merging it. Fork PRs never
-# receive provider credentials, and ordinary PRs do not run these tiers.
+# Maintainers can validate a release repair before merging it. Ordinary PRs
+# do not run these tiers; none require model-provider credentials.
 concurrency:
   group: pr-release-validation-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -17,5 +17,3 @@ jobs:
   regression:
     if: github.event.pull_request.head.repo.full_name == github.repository && contains(github.event.pull_request.labels.*.name, 'release-validation')
     uses: ./.github/workflows/full-regression-linux.yml
-    secrets:
-      OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}

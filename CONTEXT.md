@@ -622,7 +622,7 @@ Missing prerequisites, absent scenarios, duplicate results and unexpected skips
 mean incomplete release validation. Only named negative-control or retired-test
 skips with matching reasons are permitted. Release evidence binds counts,
 reasons, tool/model versions and timeout classification to the tested SHA.
-Independent unit/browser, smoke, credential-free integration and live-provider
+Independent unit/browser, smoke, credential-free integration and scripted OpenCode host/container
 jobs retain evidence despite sibling failures; native boundary reports cover
 Linux/macOS amd64/arm64. Ordinary PR checks retain their existing budget.
 
@@ -634,25 +634,12 @@ checksum verification. Release PR maintenance runs independently. See
 `docs/development/releasing.md` for safe reruns and `docs/development/testing.md`
 for strict main-protection setup and live verification limits.
 
-Claude provider E2Es run only through the manual `run_claude` workflow input.
-The automatic live release tier validates OpenCode; Claude is not a publication gate.
+Hosted OpenCode and Claude tests are explicit local diagnostics. They do not
+run in Actions, are not release evidence, and do not gate publication.
 
-Regular CI runs one tool-free `opencode run` invocation for its OpenCode canary on
-Linux (60-second provider deadline, three-minute job, no containers, and no retry
-loop inside that job), using the release manifest's exact CLI/model. The invocation
-names its session and pins OpenCode's small model to that model, so the release model
-is the only model requested, and the real-agent regression scenarios do the same. If
-the deadline expires the job reports the provider's own logged error. This process
-contract does not claim to count physical HTTP requests made internally by the CLI.
-After diagnosing a transient provider/network timeout on the identified current-head
-execution, the implementation agent may initiate one authorized, bounded GitHub
-rerun; this is a new job invocation, not an in-job retry. Rerunning the existing
-execution does not require `workflow_dispatch`. A provider deprecation failure
-instructs the implementor to update the scaffold fallback, release manifest and
-release workflow pin together.
-The canary is mandatory in the aggregate quality gate; full provider E2Es remain
-release-only, and Claude provider E2Es remain manual-only. The existing OPENCODE_API_KEY repository secret is required and is forwarded
-by the Release reusable-CI caller.
+The required OpenCode canary is a credential-free CLI compatibility check.
+It runs the pinned CLI once against a scripted loopback model rather than
+testing whether a hosted model currently accepts that CLI.
 
 The regular Linux build also selects the credential-free fake subagent permission
 container scenario. Its image must expose the fake gh on the image PATH for
@@ -669,5 +656,4 @@ subsequent layers, runtime environment, and image history.
 
 Maintainers can add the `release-validation` label to a same-repository PR to
 run the full Linux release regression tiers before merging a release repair.
-New commits rerun that opt-in validation. Fork PRs receive no provider secrets;
-Claude remains excluded and requires the existing manual workflow input.
+New commits rerun that opt-in validation. No test tier receives provider secrets.

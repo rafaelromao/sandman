@@ -22,14 +22,18 @@ import (
 // rerun and hands CI observation to the runtime; production composition must
 // override that historical instruction and cause a real helper mutation.
 func TestCIRemediationPoisonedTaskRealAgent(t *testing.T) {
-	requireSandmanAgentE2E(t)
+	requireScriptedOpenCodeE2E(t)
+	live := localLiveProvider("opencode")
+	if !live && !runInLoopbackNamespace(t) {
+		return
+	}
 	if _, err := exec.LookPath("opencode"); err != nil {
 		t.Skipf("OpenCode CLI unavailable: %v", err)
 	}
 	if _, err := exec.LookPath("jq"); err != nil {
-		t.Skipf("jq is required by the installed CI recovery helper: %v", err)
+		t.Fatalf("jq is required by the installed CI recovery helper: %v", err)
 	}
-	preparePresetMatrixAgentHome(t) // Preserve isolated credentials and container-storage setup.
+	preparePresetMatrixHome(t, live)
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatalf("resolve isolated agent home: %v", err)
@@ -83,6 +87,37 @@ Do not edit source files or create commits.
 	}
 	defer cancel()
 	command := ciRemediationAgentCommand(ctx, repo, ghDir, fixturePath, actionPath, promptText)
+	verifyModel := func() error { return nil }
+	if !live {
+		helper := filepath.Join(home, ".agents", "skills", "sandman", "implement", "ci-rerun-v1.sh")
+		config, verify := startScriptedOpenCode(t, map[string]string{"bash": "allow"}, []scriptedOpenCodeTurn{
+			{"user", []string{
+				"source-head-sha", "tested-merge-sha", "12345", "987654321",
+				"CI_PROVIDER_TIMEOUT_NO_RETRY_BUDGET",
+				"overrides persisted blocker and next-action text",
+				"Re-check its authoritative live source now",
+				"A failed required check on the current pull request head remains implementation work you own",
+				"use the authorized helper in the shared Sandman skill to rerun the identified failed execution",
+			}, scriptedOpenCodeBash("gh api repos/owner/repo/pulls/17 && gh api repos/owner/repo/actions/runs/12345" +
+				" && gh api repos/owner/repo/actions/runs/12345/jobs")},
+			{"tool", []string{"source-head-sha", "tested-merge-sha", "987654321"}, scriptedOpenCodeBash("sh " + shellQuote(helper) +
+				" --repository owner/repo --pull-request 17 --head-sha source-head-sha --tested-sha tested-merge-sha" +
+				" --run-id 12345 --job-id 987654321 --diagnosis transient-provider-timeout | tee recovery-report.txt")},
+			{"tool", `"confirmed"`, "Recorded the confirmed recovery."},
+		})
+		verifyModel = verify
+		for i, arg := range command.Args {
+			if arg == ciRemediationAgentModel {
+				command.Args[i] = scriptedOpenCodeModel
+			}
+		}
+		command.Env = append(command.Env, testenv.OpenCodeConfigEnv+"="+config,
+			"XDG_DATA_HOME="+filepath.Join(home, ".local", "share"),
+			"XDG_CACHE_HOME="+filepath.Join(home, ".cache"),
+			"XDG_STATE_HOME="+filepath.Join(home, ".local", "state"),
+			"OPENCODE_DISABLE_AUTOUPDATE=true", "OPENCODE_DISABLE_MODELS_FETCH=true",
+			"OPENCODE_API_KEY=", "OPENCODE_CONFIG=", "OPENCODE_CONFIG_DIR=", "OPENCODE_DB=")
+	}
 	output, runErr := command.CombinedOutput()
 	t.Logf("OpenCode poisoned-task acceptance returned err=%v\n%s", runErr, output)
 	if ctx.Err() == context.DeadlineExceeded {
@@ -90,6 +125,9 @@ Do not edit source files or create commits.
 	}
 	if runErr != nil {
 		t.Fatalf("real agent failed: %v\n%s", runErr, output)
+	}
+	if err := verifyModel(); err != nil {
+		t.Fatal(err)
 	}
 
 	actions, err := os.ReadFile(actionPath)

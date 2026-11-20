@@ -12,8 +12,8 @@
 #
 # The preset names are the same as those accepted by `sandman init --build-tools`.
 #
-# The real-agent sub-tests (*RunExecutesRealTask) need a live opencode
-# install with auth; without SANDMAN_RUN_AGENT_E2E=1 they skip cleanly and
+# The execution sub-tests (*RunExecutesRealTask) use the pinned OpenCode CLI
+# and a local scripted model; without SANDMAN_RUN_AGENT_E2E=1 they skip and
 # only the build-only tests run.
 
 set -euo pipefail
@@ -35,7 +35,7 @@ Valid presets: ${VALID_PRESETS}
 Env vars:
   SANDMAN_TEST_TIMEOUT   Per-test timeout passed to go test as -timeout.
                          Defaults to ${DEFAULT_TIMEOUT}.
-  SANDMAN_RUN_AGENT_E2E  Set to 1 to opt the real-agent sub-tests in.
+  SANDMAN_RUN_AGENT_E2E  Set to 1 to opt into scripted OpenCode executions.
 " >&2
     exit 1
 }
