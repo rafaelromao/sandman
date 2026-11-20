@@ -178,19 +178,11 @@ func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifec
 				if verdict.Action != lifecycleAwait {
 					return verdict
 				}
-				otherOperationActive := false
-				switch gate {
-				case gateReviewTimeout:
-					otherOperationActive = hasUnexpiredCIWait(verdict.Evidence, o.runtimeNow())
-				case gateCIWaitTimeout:
-					otherOperationActive = hasUnexpiredReviewRequest(verdict.Evidence, o.runtimeNow())
-				}
-				switch {
-				case otherOperationActive && gate == gateReviewTimeout:
+				otherCIActive := gate == gateReviewTimeout &&
+					hasUnexpiredCIWait(verdict.Evidence, o.runtimeNow())
+				if otherCIActive {
 					delete(verdict.Evidence, "review_request")
-				case otherOperationActive && gate == gateCIWaitTimeout:
-					delete(verdict.Evidence, "ci_wait")
-				default:
+				} else {
 					// The refreshed observation selected a hold and no other
 					// operation is still active. Drop expired bounds so the
 					// continuity hold can keep observing without a busy loop.
@@ -255,11 +247,6 @@ func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifec
 
 func hasUnexpiredCIWait(evidence map[string]any, now time.Time) bool {
 	deadline, ok := lifecycleCIWaitDeadline(evidence)
-	return ok && now.Before(deadline)
-}
-
-func hasUnexpiredReviewRequest(evidence map[string]any, now time.Time) bool {
-	deadline, ok := lifecycleReviewRequestDeadline(evidence)
 	return ok && now.Before(deadline)
 }
 

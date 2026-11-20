@@ -945,11 +945,8 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 					deferExpiredOperation = false
 				}
 			case gateCIWaitTimeout:
-				// An expired CI operation cannot override a confirmed review
-				// request that is still resolving. Keep the request under its
-				// original deadline and re-evaluate CI when that resolver ends.
-				deferExpiredOperation = decision.action == lifecycleAwait &&
-					hasUnexpiredReviewRequest(deadlines, s.runtimeNow())
+				// A current-head review does not extend CI's bounded operation.
+				// Apply CI_WAIT_TIMEOUT when CI expires first.
 			}
 			if deferExpiredOperation {
 				extras := cloneLifecycleExtras(decision.extras)
@@ -963,9 +960,6 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 				case gateReviewTimeout:
 					deferredDeadlineEvidence, _ = deadlines["review_request"].(map[string]any)
 					delete(extras, "review_request")
-				case gateCIWaitTimeout:
-					deferredDeadlineEvidence, _ = deadlines["ci_wait"].(map[string]any)
-					delete(extras, "ci_wait")
 				}
 				deferredDeadlineGate = expiredGate
 				if stringEvidence(extras, "gate") == "" {
@@ -1033,14 +1027,10 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 		extras = map[string]any{"gate": string(decision.gate), "await": true}
 	}
 	if deferredDeadlineGate != "" {
-		key := "review_request"
-		if deferredDeadlineGate == gateCIWaitTimeout {
-			key = "ci_wait"
-		}
 		diagnostic := map[string]any{"gate": deferredDeadlineGate}
-		if refreshed, ok := extras[key]; ok {
+		if refreshed, ok := extras["review_request"]; ok {
 			diagnostic["evidence"] = refreshed
-			delete(extras, key)
+			delete(extras, "review_request")
 		} else if deferredDeadlineEvidence != nil {
 			diagnostic["evidence"] = cloneLifecycleExtras(deferredDeadlineEvidence)
 		}

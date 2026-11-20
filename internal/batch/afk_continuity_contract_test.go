@@ -2022,14 +2022,22 @@ type lifecycleFailureReferences struct {
 }
 
 var lifecycleReasonAssignmentSources = map[string]bool{
-	"lifecycleRemediationDecision:reason":                            true, // Call sites supply classified reason literals/constants.
-	"applyExpiredReviewOutcome:row.reason":                           true, // This preserves the selected, classified expiry reason.
-	"applyExpiredReviewOutcome:field:row.reason=reviewTimeoutReason": true, // The fallback is the classified timeout reason.
-	"waitForTransition:lifecycleDeadlineReason(gate)":                true, // The closed deadline-gate switch returns classified reasons.
-	"decideLifecycleForAttempt:lifecycleDeadlineReason(gate)":        true,
-	"stalledAwaitExtras:resumeStalledReason":                         true,
-	"githubRecoveryAwait:githubUnavailableReason":                    true,
-	"recordGitHubLookupFailure:githubUnavailableReason":              true,
+	"lifecycleRemediationDecision:reason":                                                         true, // Call sites supply classified reason literals/constants.
+	"lifecycleFailureRecoverable:continuityRow.reason=reason":                                     true,
+	"failureContinuity:continuityRow.reason=stringEvidence(failure, \"reason\")":                  true, // The selected failure reason is classified by its caller.
+	"applyContinuity:continuityRow.reason=continuityOutcomeReason(verdict.Evidence, causeStall)":  true, // Resume-signature reasons flow from lifecycle evidence.
+	"applyContinuity:continuityRow.reason=continuityOutcomeReason(verdict.Evidence, cause)":       true,
+	"finalOwnedWorkContinuityRow:continuityRow.reason=reason":                                     true,
+	"applyExpiredReviewOutcome:row.reason":                                                        true, // This preserves the selected, classified expiry reason.
+	"applyExpiredReviewOutcome:field:row.reason=reviewTimeoutReason":                              true, // The fallback is the classified timeout reason.
+	"applyExpiredReviewOutcome:continuityRow.reason=stringEvidence(verdict.Evidence, \"reason\")": true,
+	"githubRecoveryDisposition:continuityRow.reason=githubUnavailableReason":                      true,
+	"recordGitHubLookupFailure:continuityRow.reason=githubUnavailableReason":                      true,
+	"waitForTransition:lifecycleDeadlineReason(gate)":                                             true, // The closed deadline-gate switch returns classified reasons.
+	"decideLifecycleForAttempt:lifecycleDeadlineReason(gate)":                                     true,
+	"stalledAwaitExtras:resumeStalledReason":                                                      true,
+	"githubRecoveryAwait:githubUnavailableReason":                                                 true,
+	"recordGitHubLookupFailure:githubUnavailableReason":                                           true,
 }
 
 func lifecycleReasonAssignmentClassified(expression string) bool {
@@ -2057,6 +2065,13 @@ func lifecycleFailureReasonReferences(source string) lifecycleFailureReferences 
 	for expression := range fieldAssignments.dynamic {
 		seen.dynamic[expression] = true
 	}
+	rowInitializers := lifecycleContinuityRowReasonInitializers(source)
+	for reason := range rowInitializers.literals {
+		seen.literals[reason] = true
+	}
+	for expression := range rowInitializers.dynamic {
+		seen.dynamic[expression] = true
+	}
 	for reference := range lifecycleDynamicReasonAssignments(source) {
 		seen.dynamic[reference] = true
 	}
@@ -2066,6 +2081,58 @@ func lifecycleFailureReasonReferences(source string) lifecycleFailureReferences 
 				seen.literals[match[1]] = true
 			}
 		}
+	}
+	return seen
+}
+
+func lifecycleContinuityRowReasonInitializers(source string) lifecycleFailureReferences {
+	seen := lifecycleFailureReferences{literals: map[string]bool{}, dynamic: map[string]bool{}}
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "lifecycle.go", source, 0)
+	if err != nil {
+		seen.dynamic["<unparseable-continuity-row-source>"] = true
+		return seen
+	}
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || function.Body == nil {
+			continue
+		}
+		ast.Inspect(function.Body, func(node ast.Node) bool {
+			composite, ok := node.(*ast.CompositeLit)
+			if !ok {
+				return true
+			}
+			typeName, ok := composite.Type.(*ast.Ident)
+			if !ok || typeName.Name != "continuityRow" {
+				return true
+			}
+			for _, element := range composite.Elts {
+				field, ok := element.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				key, ok := field.Key.(*ast.Ident)
+				if !ok || key.Name != "reason" {
+					continue
+				}
+				if literal, ok := field.Value.(*ast.BasicLit); ok && literal.Kind == token.STRING {
+					if value, err := strconv.Unquote(literal.Value); err == nil {
+						seen.literals[value] = true
+					} else {
+						seen.dynamic["<invalid-continuity-row-reason-literal>"] = true
+					}
+					continue
+				}
+				var expression bytes.Buffer
+				if err := format.Node(&expression, fset, field.Value); err != nil {
+					seen.dynamic["<unprintable-continuity-row-reason>"] = true
+					continue
+				}
+				seen.dynamic[function.Name.Name+":continuityRow.reason="+strings.TrimSpace(expression.String())] = true
+			}
+			return true
+		})
 	}
 	return seen
 }
@@ -2273,6 +2340,23 @@ func applyExpiredReviewOutcome(evidence map[string]any, candidate struct{ reason
 	if !dynamicField.dynamic["applyExpiredReviewOutcome:field:row.reason=candidate.reason"] ||
 		lifecycleReasonAssignmentClassified("applyExpiredReviewOutcome:field:row.reason=candidate.reason") {
 		t.Fatalf("dynamic reason field source escaped classification: %v", dynamicField.dynamic)
+	}
+	keyedInitializer := lifecycleFailureReasonReferences(`package batch
+func applyExpiredReviewOutcome(evidence map[string]any) {
+	row := continuityRow{reason: "UNCLASSIFIED_LIFECYCLE_PROBE"}
+	evidence["reason"] = row.reason
+}`)
+	if !keyedInitializer.literals["UNCLASSIFIED_LIFECYCLE_PROBE"] {
+		t.Fatalf("unclassified keyed reason initializer was not scanned: %#v", keyedInitializer)
+	}
+	dynamicInitializer := lifecycleFailureReasonReferences(`package batch
+func applyExpiredReviewOutcome(evidence map[string]any, candidate string) {
+	row := continuityRow{reason: candidate}
+	evidence["reason"] = row.reason
+}`)
+	if !dynamicInitializer.dynamic["applyExpiredReviewOutcome:continuityRow.reason=candidate"] ||
+		lifecycleReasonAssignmentClassified("applyExpiredReviewOutcome:continuityRow.reason=candidate") {
+		t.Fatalf("dynamic keyed reason initializer escaped classification: %v", dynamicInitializer.dynamic)
 	}
 }
 

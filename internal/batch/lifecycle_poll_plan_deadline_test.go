@@ -410,7 +410,7 @@ func TestDecideLifecycleForAttempt_ExpiredCanonicalReviewUsesContinuityOutcome(t
 	}
 }
 
-func TestWaitForTransition_ExpiredCIWaitYieldsToInDeadlineReview(t *testing.T) {
+func TestExpiredCIWaitPrecedesInDeadlineReview(t *testing.T) {
 	now := time.Unix(2000, 0)
 	currentNow := now
 	ciDeadline := now.Add(time.Second)
@@ -463,9 +463,19 @@ func TestWaitForTransition_ExpiredCIWaitYieldsToInDeadlineReview(t *testing.T) {
 		WorkDir: workDir, Branch: continuityBranch, RunID: "run-expired-ci",
 		HostPathsReady: true,
 	}
+	currentNow = ciDeadline.Add(time.Second)
+	expired := newLifecycleObserver(session).Observe(context.Background(), request)
+	if expired.Action != lifecycleResume ||
+		stringEvidence(expired.Evidence, "gate") != gateCIWaitTimeout ||
+		stringEvidence(expired.Evidence, "reason") != "CI_WAIT_TIMEOUT" {
+		t.Fatalf("batch observation of expired CI with an in-deadline review = %s/%v, want resume/CI_WAIT_TIMEOUT",
+			expired.status(), expired.Evidence)
+	}
+
+	currentNow = now
 	initial := observer.Observe(context.Background(), request)
 	if initial.Action != lifecycleAwait {
-		t.Fatalf("expired CI with an in-deadline review = %s, evidence=%v, want review wait", initial.status(), initial.Evidence)
+		t.Fatalf("CI with an in-deadline review = %s, evidence=%v, want review wait before CI expiry", initial.status(), initial.Evidence)
 	}
 	ciEvidence, hasCIWait := initial.Evidence["ci_wait"].(map[string]any)
 	if !hasCIWait {
@@ -488,17 +498,10 @@ func TestWaitForTransition_ExpiredCIWaitYieldsToInDeadlineReview(t *testing.T) {
 	}
 
 	waited := observer.waitForTransition(context.Background(), request, AgentRunResult{}, initial)
-	if waited.Action != lifecycleAwait {
-		t.Fatalf("foreground expiry of CI with an in-deadline review = %s, want review wait", waited.status())
-	}
-	if _, ok := waited.Evidence["review_request"].(map[string]any); !ok {
-		t.Fatalf("expired CI wait discarded the active review request: %v", waited.Evidence)
-	}
-	if _, ok := waited.Evidence["ci_wait"]; ok {
-		t.Fatalf("expired CI wait remained the scheduler deadline while review is active: %v", waited.Evidence)
-	}
-	if deadline, gate, ok := lifecycleDeadline(waited.Evidence); !ok || gate != gateReviewTimeout ||
-		!deadline.After(currentNow) || !deadline.Equal(reviewDeadline) {
-		t.Fatalf("wait after CI expiry = (%v, %q, %t), want the original review deadline", deadline, gate, ok)
+	if waited.Action != lifecycleResume ||
+		stringEvidence(waited.Evidence, "gate") != gateCIWaitTimeout ||
+		stringEvidence(waited.Evidence, "reason") != "CI_WAIT_TIMEOUT" {
+		t.Fatalf("foreground expiry of CI with an in-deadline review = %s/%v, want resume/CI_WAIT_TIMEOUT",
+			waited.status(), waited.Evidence)
 	}
 }
