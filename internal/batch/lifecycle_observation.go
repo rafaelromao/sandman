@@ -158,10 +158,10 @@ func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifec
 	for index := 0; ; index++ {
 		_, githubWait := githubRecoveryNextAttempt(verdict.Evidence)
 		if deadline, gate, ok := lifecycleDeadline(verdict.Evidence); ok && !githubWait && !o.runtimeNow().Before(deadline) {
-			if gate == gateReviewTimeout && o.deps.githubClient != nil {
-				// Review expiry can end only when no other live operation is
-				// resolving the gate. Reobserve at the foreground boundary so
-				// a newly active or still-running current-head CI wait wins.
+			if (gate == gateReviewTimeout || gate == gateCIWaitTimeout) && o.deps.githubClient != nil {
+				// Operation expiry cannot override another live resolver.
+				// Reobserve at the foreground boundary, then continue under
+				// that resolver's original deadline when it remains active.
 				if !freshlyObserved {
 					verdict = o.Observe(ctx, request)
 					freshlyObserved = true
@@ -178,10 +178,22 @@ func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifec
 				if verdict.Action != lifecycleAwait {
 					return verdict
 				}
-				if !hasUnexpiredCIWait(verdict.Evidence, o.runtimeNow()) {
-					// The refreshed observation already selected the expiry
-					// row. Preserve a hold without repeatedly reopening its
-					// expired operation deadline.
+				otherOperationActive := false
+				switch gate {
+				case gateReviewTimeout:
+					otherOperationActive = hasUnexpiredCIWait(verdict.Evidence, o.runtimeNow())
+				case gateCIWaitTimeout:
+					otherOperationActive = hasUnexpiredReviewRequest(verdict.Evidence, o.runtimeNow())
+				}
+				switch {
+				case otherOperationActive && gate == gateReviewTimeout:
+					delete(verdict.Evidence, "review_request")
+				case otherOperationActive && gate == gateCIWaitTimeout:
+					delete(verdict.Evidence, "ci_wait")
+				default:
+					// The refreshed observation selected a hold and no other
+					// operation is still active. Drop expired bounds so the
+					// continuity hold can keep observing without a busy loop.
 					delete(verdict.Evidence, "review_request")
 					delete(verdict.Evidence, "ci_wait")
 				}
@@ -242,11 +254,12 @@ func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifec
 }
 
 func hasUnexpiredCIWait(evidence map[string]any, now time.Time) bool {
-	if stringEvidence(evidence, "gate") == gateCIWaitTimeout ||
-		stringEvidence(evidence, "reason") == "CI_WAIT_TIMEOUT" {
-		return false
-	}
 	deadline, ok := lifecycleCIWaitDeadline(evidence)
+	return ok && now.Before(deadline)
+}
+
+func hasUnexpiredReviewRequest(evidence map[string]any, now time.Time) bool {
+	deadline, ok := lifecycleReviewRequestDeadline(evidence)
 	return ok && now.Before(deadline)
 }
 

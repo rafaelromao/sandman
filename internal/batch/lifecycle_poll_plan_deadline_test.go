@@ -2,10 +2,13 @@ package batch
 
 import (
 	"context"
+	"io"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
@@ -404,5 +407,98 @@ func TestDecideLifecycleForAttempt_ExpiredCanonicalReviewUsesContinuityOutcome(t
 	}
 	if _, ok := activeWait.Evidence["ci_wait"].(map[string]any); !ok {
 		t.Fatalf("expired review discarded active CI evidence: %v", activeWait.Evidence)
+	}
+}
+
+func TestWaitForTransition_ExpiredCIWaitYieldsToInDeadlineReview(t *testing.T) {
+	now := time.Unix(2000, 0)
+	currentNow := now
+	ciDeadline := now.Add(time.Second)
+	waitCalls := 0
+	workDir := t.TempDir()
+	writeTimedOutReviewRequest(t, workDir)
+	writeCanonicalRegistrationForTest(t, workDir)
+	setCanonicalRegistrationDeadlineForTest(t, workDir, int(now.Add(10*time.Minute).Unix()))
+
+	pr := continuityProbePR()
+	pr.HeadRefOid = "current-sha"
+	pr.StatusCheckRollup = "pending"
+	client := &fakeGitHubClient{prs: map[string]*github.PR{continuityBranch: pr}}
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: client,
+			layout:       paths.NewLayout(nil, workDir),
+			errorLog:     io.Discard,
+		},
+		renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 600},
+		opts: runSessionOptions{
+			now:         func() time.Time { return currentNow },
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+			lifecycleWait: func(context.Context, time.Duration) error {
+				waitCalls++
+				if waitCalls == 1 {
+					currentNow = ciDeadline.Add(time.Second)
+					return nil
+				}
+				return errLifecycleObservationTestStop
+			},
+		},
+	}
+	ciPath := filepath.Join(paths.NewLayout(nil, workDir).StateDir, "17.ci_wait.json")
+	ciRegistration := ciWaitRegistration{
+		Protocol:             ciWaitProtocol,
+		PullRequest:          17,
+		HeadSHA:              pr.HeadRefOid,
+		StartedUnixSeconds:   now.Unix() - int64(ciWaitTimeout/time.Second) + 1,
+		DeadlineUnixSeconds:  ciDeadline.Unix(),
+		EffectiveTimeoutSecs: int64(ciWaitTimeout / time.Second),
+	}
+	if err := atomicfs.WriteAtomicJSON(ciPath, ciRegistration, 0o600); err != nil {
+		t.Fatalf("write expired CI operation: %v", err)
+	}
+
+	observer := newLifecycleObserver(session)
+	request := lifecycleObservationRequest{
+		WorkDir: workDir, Branch: continuityBranch, RunID: "run-expired-ci",
+		HostPathsReady: true,
+	}
+	initial := observer.Observe(context.Background(), request)
+	if initial.Action != lifecycleAwait {
+		t.Fatalf("expired CI with an in-deadline review = %s, evidence=%v, want review wait", initial.status(), initial.Evidence)
+	}
+	ciEvidence, hasCIWait := initial.Evidence["ci_wait"].(map[string]any)
+	if !hasCIWait {
+		t.Fatalf("initial CI evidence = %v, want the operation before its deadline", initial.Evidence)
+	}
+	initialCIDeadline, ok := lifecycleDeadlineSeconds(ciEvidence["deadline_unix_seconds"])
+	if !ok || !currentNow.Before(time.Unix(initialCIDeadline, 0)) {
+		t.Fatalf("initial CI deadline = %d, want it still in the future at %v", initialCIDeadline, currentNow)
+	}
+	reviewRequest, ok := initial.Evidence["review_request"].(map[string]any)
+	reviewSeconds, hasReviewDeadline := lifecycleDeadlineSeconds(reviewRequest["deadline_unix_seconds"])
+	reviewDeadline := time.Unix(reviewSeconds, 0)
+	if !ok || !hasReviewDeadline || !currentNow.Before(reviewDeadline) ||
+		!time.Unix(initialCIDeadline, 0).Before(reviewDeadline) {
+		t.Fatalf("review deadline = %v, present=%t; want it still in the future", reviewDeadline, hasReviewDeadline)
+	}
+	if deadline, gate, ok := lifecycleDeadline(initial.Evidence); !ok || gate != gateCIWaitTimeout ||
+		!deadline.Equal(time.Unix(initialCIDeadline, 0)) {
+		t.Fatalf("combined deadline = (%v, %q, %t), want the earlier CI deadline", deadline, gate, ok)
+	}
+
+	waited := observer.waitForTransition(context.Background(), request, AgentRunResult{}, initial)
+	if waited.Action != lifecycleAwait {
+		t.Fatalf("foreground expiry of CI with an in-deadline review = %s, want review wait", waited.status())
+	}
+	if _, ok := waited.Evidence["review_request"].(map[string]any); !ok {
+		t.Fatalf("expired CI wait discarded the active review request: %v", waited.Evidence)
+	}
+	if _, ok := waited.Evidence["ci_wait"]; ok {
+		t.Fatalf("expired CI wait remained the scheduler deadline while review is active: %v", waited.Evidence)
+	}
+	if deadline, gate, ok := lifecycleDeadline(waited.Evidence); !ok || gate != gateReviewTimeout ||
+		!deadline.After(currentNow) || !deadline.Equal(reviewDeadline) {
+		t.Fatalf("wait after CI expiry = (%v, %q, %t), want the original review deadline", deadline, gate, ok)
 	}
 }

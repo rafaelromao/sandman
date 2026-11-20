@@ -930,18 +930,45 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 			delete(deadlines, "review_request")
 		}
 		if deadline, gate, bounded := lifecycleDeadline(deadlines); bounded && !s.runtimeNow().Before(deadline) {
-			deferExpiredReview := gate == gateReviewTimeout &&
-				decision.action == lifecycleAwait && ciActive(pr, headSHA)
-			if deferExpiredReview {
+			expiredGate := gate
+			deferExpiredOperation := false
+			switch gate {
+			case gateReviewTimeout:
+				deferExpiredOperation = decision.action == lifecycleAwait && ciActive(pr, headSHA)
 				if ciDeadline, ok := lifecycleCIWaitDeadline(deadlines); ok && !s.runtimeNow().Before(ciDeadline) {
 					// The CI operation has reached its own bound. Apply its
 					// unchanged timeout row rather than letting review expiry
 					// override it.
 					gate = gateCIWaitTimeout
-					deferExpiredReview = false
+					deferExpiredOperation = false
 				}
+			case gateCIWaitTimeout:
+				// An expired CI operation cannot override a confirmed review
+				// request that is still resolving. Keep the request under its
+				// original deadline and re-evaluate CI when that resolver ends.
+				deferExpiredOperation = decision.action == lifecycleAwait &&
+					hasUnexpiredReviewRequest(deadlines, s.runtimeNow())
 			}
-			if !deferExpiredReview {
+			if deferExpiredOperation {
+				extras := cloneLifecycleExtras(decision.extras)
+				if extras == nil {
+					extras = cloneLifecycleExtras(deadlines)
+				}
+				if extras == nil {
+					extras = map[string]any{}
+				}
+				switch expiredGate {
+				case gateReviewTimeout:
+					delete(extras, "review_request")
+				case gateCIWaitTimeout:
+					delete(extras, "ci_wait")
+				}
+				if stringEvidence(extras, "gate") == "" {
+					extras["gate"] = string(decision.gate)
+				}
+				extras["await"] = true
+				decision.extras = extras
+			} else {
 				deadlines["gate"] = gate
 				deadlines["reason"] = lifecycleDeadlineReason(gate)
 				deadlines["next_action"] = lifecycleDeadlineNextAction(gate)
@@ -1211,12 +1238,8 @@ func (s *runSession) waitForLifecyclePoll(ctx context.Context, interval time.Dur
 func lifecycleDeadline(extras map[string]any) (time.Time, string, bool) {
 	var deadline time.Time
 	var gate string
-	request, ok := extras["review_request"].(map[string]any)
-	resolved, _ := request["operation_resolved"].(bool)
-	if ok && !resolved {
-		if seconds, ok := lifecycleDeadlineSeconds(request["deadline_unix_seconds"]); ok {
-			deadline, gate = time.Unix(seconds, 0), gateReviewTimeout
-		}
+	if reviewDeadline, ok := lifecycleReviewRequestDeadline(extras); ok {
+		deadline, gate = reviewDeadline, gateReviewTimeout
 	}
 	if ciDeadline, ok := lifecycleCIWaitDeadline(extras); ok {
 		if deadline.IsZero() || ciDeadline.Before(deadline) {
@@ -1224,6 +1247,22 @@ func lifecycleDeadline(extras map[string]any) (time.Time, string, bool) {
 		}
 	}
 	return deadline, gate, !deadline.IsZero()
+}
+
+func lifecycleReviewRequestDeadline(extras map[string]any) (time.Time, bool) {
+	request, ok := extras["review_request"].(map[string]any)
+	if !ok {
+		return time.Time{}, false
+	}
+	resolved, _ := request["operation_resolved"].(bool)
+	if resolved {
+		return time.Time{}, false
+	}
+	seconds, ok := lifecycleDeadlineSeconds(request["deadline_unix_seconds"])
+	if !ok {
+		return time.Time{}, false
+	}
+	return time.Unix(seconds, 0), true
 }
 
 func lifecycleCIWaitDeadline(extras map[string]any) (time.Time, bool) {
