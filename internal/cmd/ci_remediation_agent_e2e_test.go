@@ -87,7 +87,7 @@ Do not edit source files or create commits.
 	}
 	defer cancel()
 	command := ciRemediationAgentCommand(ctx, repo, ghDir, fixturePath, actionPath, promptText)
-	verifyModel := func() {}
+	verifyModel := func() error { return nil }
 	if !live {
 		helper := filepath.Join(home, ".agents", "skills", "sandman", "implement", "ci-rerun-v1.sh")
 		config, verify := startScriptedOpenCode(t, map[string]string{"bash": "allow"}, []scriptedOpenCodeTurn{
@@ -126,7 +126,9 @@ Do not edit source files or create commits.
 	if runErr != nil {
 		t.Fatalf("real agent failed: %v\n%s", runErr, output)
 	}
-	verifyModel()
+	if err := verifyModel(); err != nil {
+		t.Fatal(err)
+	}
 
 	actions, err := os.ReadFile(actionPath)
 	if err != nil {

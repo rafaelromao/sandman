@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -79,12 +80,13 @@ func runBlindReviewManagedScenario(t *testing.T, home, reviewCommand string) {
 	args := " --repository owner/repo --pull-request 17"
 	headArg := ` "$(git rev-parse HEAD)"`
 	var turns []scriptedOpenCodeTurn
+	expectCommand := expectedManagedReviewCommand(reviewCommand)
 	if reviewCommand == "" {
 		promptPath := filepath.Join(roundDir, "prompt.md")
 		decisionPath := filepath.Join(roundDir, "decision.md")
 		pointer := blindReviewFileHandoff(filepath.Join(repo, ".sandman", "worktrees", "42-review-fixture"), promptPath)
 		turns = []scriptedOpenCodeTurn{
-			{"user", "load sandman-blind-review", scriptedOpenCodeBash("sh " + shellQuote(filepath.Join(skillRoot, "blind-review", "review-prompt-v1.sh")) +
+			{"user", expectCommand, scriptedOpenCodeBash("sh " + shellQuote(filepath.Join(skillRoot, "blind-review", "review-prompt-v1.sh")) +
 				args + " --head-sha" + headArg + " --run-dir " + shellQuote(roundDir) + " >" + shellQuote(promptPath) + " && printf 'PROMPT_RENDERED\\n'")},
 			{"tool", "PROMPT_RENDERED", scriptedOpenCodeTool("task", map[string]any{
 				"description": "Review the fixture", "prompt": pointer, "subagent_type": "general",
@@ -99,7 +101,7 @@ func runBlindReviewManagedScenario(t *testing.T, home, reviewCommand string) {
 		}
 	} else {
 		turns = []scriptedOpenCodeTurn{
-			{"user", "load sandman-review-request", scriptedOpenCodeBash("sh " + shellQuote(filepath.Join(skillRoot, "review-request", "review-request-v1.sh")) +
+			{"user", expectCommand, scriptedOpenCodeBash("sh " + shellQuote(filepath.Join(skillRoot, "review-request", "review-request-v1.sh")) +
 				args + " --head-sha" + headArg + " --trigger-prefix " + shellQuote(reviewCommand))},
 			{"tool", `"state":"confirmed"`, "Request confirmed."},
 		}
@@ -206,7 +208,9 @@ Retain the round's prompt and report files for the caller's test verification.
 	if err := cmd.ExecuteContext(ctx); err != nil {
 		t.Fatalf("real managed review: %v\n%s", err, output.String())
 	}
-	verifyModel()
+	if err := verifyModel(); err != nil {
+		t.Fatal(err)
+	}
 	comments, err := client.ListPRComments(ctx, 17)
 	if err != nil {
 		t.Fatal(err)
@@ -513,7 +517,59 @@ func blindReviewOpenCodeCommand(model, variant string) string {
 	return strings.Replace(command, "opencode run ", "opencode run --variant "+shellQuote(variant)+" ", 1)
 }
 
+// Match the full rendered command line, not the instructions for either
+// branch: both sets of instructions are always present in the Task.
+func expectedManagedReviewCommand(command string) string {
+	return "\nThe selected Review command is `" + command + "`.\n"
+}
+
+func assertModelRejectsWrongReviewCommand(t *testing.T, expected, incoming string) {
+	t.Helper()
+	config, verify := startScriptedOpenCode(t, map[string]string{}, []scriptedOpenCodeTurn{
+		{"user", expectedManagedReviewCommand(expected), "Matched"},
+	})
+	var provider struct {
+		Provider map[string]struct {
+			Options struct{ BaseURL string }
+		}
+	}
+	if err := json.Unmarshal([]byte(config), &provider); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"model": "scripted", "stream": true, "messages": []map[string]string{
+			{"role": "user", "content": incoming + "If empty, load sandman-blind-review.\nIf configured, load sandman-review-request.\n"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{}}
+	defer client.CloseIdleConnections()
+	res, err := client.Post(provider.Provider["fixture"].Options.BaseURL+"/chat/completions", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusBadRequest {
+		t.Errorf("wrong or missing Review command accepted: HTTP %d", res.StatusCode)
+	}
+	if err := verify(); err == nil || !strings.Contains(err.Error(), "The selected Review command") {
+		t.Fatalf("want a rendered Review command mismatch, got %v", err)
+	}
+}
+
 func TestBlindReviewFixtureModelAndVariantArePinned(t *testing.T) {
+	for _, tc := range []struct{ name, expected, incoming string }{
+		{"blind/wrong", "", "\nThe selected Review command is `/wrong`.\n"},
+		{"blind/missing", "", "\n"},
+		{"delegated/wrong", "/sandman review", "\nThe selected Review command is ``.\n"},
+		{"delegated/missing", "/sandman review", "\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertModelRejectsWrongReviewCommand(t, tc.expected, tc.incoming)
+		})
+	}
 	for _, tc := range []struct {
 		variant string
 		want    string

@@ -207,7 +207,7 @@ exit 127
 
 // The Python fixture owns scripted model traffic only. The test continues to
 // observe the managed command, GitHub mutations and real OpenCode session data.
-func startScriptedOpenCode(t *testing.T, permissions map[string]string, turns []scriptedOpenCodeTurn) (string, func()) {
+func startScriptedOpenCode(t *testing.T, permissions map[string]string, turns []scriptedOpenCodeTurn) (string, func() error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	cmd := exec.CommandContext(ctx, "python3", "-u", openCodeFixtureSource())
@@ -251,13 +251,13 @@ func startScriptedOpenCode(t *testing.T, permissions map[string]string, turns []
 	if !json.Valid(line) {
 		t.Fatal("scripted OpenCode fixture returned invalid configuration")
 	}
-	return string(bytes.TrimSpace(line)), func() {
-		t.Helper()
+	return string(bytes.TrimSpace(line)), func() error {
 		_, writeErr := fmt.Fprintln(stdin, "verify")
 		_ = stdin.Close()
 		waited = true
 		if err := cmd.Wait(); err != nil || writeErr != nil {
-			t.Fatalf("scripted OpenCode fixture: %v / %v\n%s", writeErr, err, &stderr)
+			return fmt.Errorf("scripted OpenCode fixture: %v / %v\n%s", writeErr, err, &stderr)
 		}
+		return nil
 	}
 }
