@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 )
 
 // lifecycleObservationRequest describes one runtime observation of an
@@ -153,28 +154,58 @@ func ordinaryRetryAfterGitHubRecovery(state ordinaryRetryState, branch string) l
 func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifecycleObservationRequest, result AgentRunResult, initial lifecycleVerdict) lifecycleVerdict {
 	verdict := initial
 	plan := o.lifecyclePollIntervals(verdict.Evidence)
+	freshlyObserved := false
 	for index := 0; ; index++ {
 		_, githubWait := githubRecoveryNextAttempt(verdict.Evidence)
 		if deadline, gate, ok := lifecycleDeadline(verdict.Evidence); ok && !githubWait && !o.runtimeNow().Before(deadline) {
-			evidence := cloneLifecycleExtras(verdict.Evidence)
-			evidence["gate"] = gate
-			evidence["reason"] = lifecycleDeadlineReason(gate)
-			evidence["next_action"] = lifecycleDeadlineNextAction(gate)
-			deadlineVerdict := lifecycleVerdict{Action: lifecycleResume, Evidence: evidence}
-			deadlineVerdict.ImplementorWork = isImplementorOwnedGateFailure(evidence)
-			if gate == gateReviewTimeout {
-				deadlineVerdict = o.applyExpiredReviewOutcome(request.Branch, request.RunID, deadlineVerdict)
+			if gate == gateReviewTimeout && o.deps.githubClient != nil {
+				// Review expiry can end only when no other live operation is
+				// resolving the gate. Reobserve at the foreground boundary so
+				// a newly active or still-running current-head CI wait wins.
+				if !freshlyObserved {
+					verdict = o.Observe(ctx, request)
+					freshlyObserved = true
+					if !verdict.handled() {
+						if ctx.Err() != nil {
+							return lifecycleVerdict{Action: lifecycleAborted}
+						}
+						if attemptNeedsRetry(request.AttemptStatus) && !request.UsageLimitReached {
+							return lifecycleVerdict{Action: lifecycleFailure, Kind: lifecycleVerdictOrdinaryRetry}
+						}
+						verdict = failureForUnhandledObservation(verdict)
+					}
+				}
+				if verdict.Action != lifecycleAwait {
+					return verdict
+				}
+				if !hasUnexpiredCIWait(verdict.Evidence, o.runtimeNow()) {
+					// The refreshed observation already selected the expiry
+					// row. Preserve a hold without repeatedly reopening its
+					// expired operation deadline.
+					delete(verdict.Evidence, "review_request")
+					delete(verdict.Evidence, "ci_wait")
+				}
 			} else {
-				deadlineVerdict = o.applyContinuity(request.Branch, request.RunID, deadlineVerdict)
+				evidence := cloneLifecycleExtras(verdict.Evidence)
+				evidence["gate"] = gate
+				evidence["reason"] = lifecycleDeadlineReason(gate)
+				evidence["next_action"] = lifecycleDeadlineNextAction(gate)
+				deadlineVerdict := lifecycleVerdict{Action: lifecycleResume, Evidence: evidence}
+				deadlineVerdict.ImplementorWork = isImplementorOwnedGateFailure(evidence)
+				if gate == gateReviewTimeout {
+					deadlineVerdict = o.applyExpiredReviewOutcome(request.Branch, request.RunID, deadlineVerdict)
+				} else {
+					deadlineVerdict = o.applyContinuity(request.Branch, request.RunID, deadlineVerdict)
+				}
+				if deadlineVerdict.Action != lifecycleAwait {
+					return deadlineVerdict
+				}
+				// A stalled or exhausted remediation keeps observing the gate
+				// without the expired deadline.
+				verdict = deadlineVerdict
+				delete(verdict.Evidence, "review_request")
+				delete(verdict.Evidence, "ci_wait")
 			}
-			if deadlineVerdict.Action != lifecycleAwait {
-				return deadlineVerdict
-			}
-			// A stalled or exhausted remediation keeps observing the gate
-			// without the expired deadline.
-			verdict = deadlineVerdict
-			delete(verdict.Evidence, "review_request")
-			delete(verdict.Evidence, "ci_wait")
 		}
 		interval := plan[len(plan)-1]
 		if index < len(plan) {
@@ -192,6 +223,7 @@ func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifec
 			return lifecycleVerdict{Action: lifecycleAborted}
 		}
 		verdict = o.Observe(ctx, request)
+		freshlyObserved = true
 		if !verdict.handled() {
 			if ctx.Err() != nil {
 				return lifecycleVerdict{Action: lifecycleAborted}
@@ -207,6 +239,15 @@ func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifec
 		}
 		return verdict
 	}
+}
+
+func hasUnexpiredCIWait(evidence map[string]any, now time.Time) bool {
+	if stringEvidence(evidence, "gate") == gateCIWaitTimeout ||
+		stringEvidence(evidence, "reason") == "CI_WAIT_TIMEOUT" {
+		return false
+	}
+	deadline, ok := lifecycleCIWaitDeadline(evidence)
+	return ok && now.Before(deadline)
 }
 
 func isImplementorOwnedGateFailure(evidence map[string]any) bool {

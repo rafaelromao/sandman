@@ -335,9 +335,11 @@ returns immediately, without redundant verification or agent-side polling, and
 reports live or timestamped observations rather than stale CI/review statements.
 See [ADR-0060](../adr/0060-managed-handoff-boundary-and-thirty-second-observation.md).
 
-CI and review retain independent hard deadlines. The earlier expired operation
-selects bounded remediation even if another operation remains active. The
-historical in-session relaunch cap and ordinary retries bound owned work;
+CI and review retain independent hard deadlines. At expiry, the runtime
+revalidates current-head operations: an expired review request cannot override
+CI that is still resolving. If another operation remains active, wait under
+that operation's original deadline; otherwise the expired operation selects
+bounded remediation. The historical in-session relaunch cap and ordinary retries bound owned work;
 persisted same-head remediation counts are diagnostic, not cumulative launch
 reservations. Obsolete implementation, reviewer-launch, and standalone CI budget
 files cannot veto executable work. Standalone same-head polling preserves its

@@ -930,17 +930,30 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 			delete(deadlines, "review_request")
 		}
 		if deadline, gate, bounded := lifecycleDeadline(deadlines); bounded && !s.runtimeNow().Before(deadline) {
-			deadlines["gate"] = gate
-			deadlines["reason"] = lifecycleDeadlineReason(gate)
-			deadlines["next_action"] = lifecycleDeadlineNextAction(gate)
-			deadlines["pull_request"] = pr.Number
-			deadlines["head_sha"] = headSHA
-			deadlines = mergeLifecycleDiagnostics(deadlines, s.retainedReviewDiagnostics(ctx, workDir, branch, pr, headSHA))
-			deadlineVerdict := lifecycleVerdict{Action: lifecycleResume, Evidence: deadlines}
-			if gate == gateReviewTimeout {
-				return s.applyExpiredReviewOutcome(branch, runID, deadlineVerdict)
+			deferExpiredReview := gate == gateReviewTimeout &&
+				decision.action == lifecycleAwait && ciActive(pr, headSHA)
+			if deferExpiredReview {
+				if ciDeadline, ok := lifecycleCIWaitDeadline(deadlines); ok && !s.runtimeNow().Before(ciDeadline) {
+					// The CI operation has reached its own bound. Apply its
+					// unchanged timeout row rather than letting review expiry
+					// override it.
+					gate = gateCIWaitTimeout
+					deferExpiredReview = false
+				}
 			}
-			return deadlineVerdict
+			if !deferExpiredReview {
+				deadlines["gate"] = gate
+				deadlines["reason"] = lifecycleDeadlineReason(gate)
+				deadlines["next_action"] = lifecycleDeadlineNextAction(gate)
+				deadlines["pull_request"] = pr.Number
+				deadlines["head_sha"] = headSHA
+				deadlines = mergeLifecycleDiagnostics(deadlines, s.retainedReviewDiagnostics(ctx, workDir, branch, pr, headSHA))
+				deadlineVerdict := lifecycleVerdict{Action: lifecycleResume, Evidence: deadlines}
+				if gate == gateReviewTimeout {
+					return s.applyExpiredReviewOutcome(branch, runID, deadlineVerdict)
+				}
+				return deadlineVerdict
+			}
 		}
 	}
 	if decision.action == lifecycleFailure && isImplementorOwnedGateFailure(decision.failureExtras) && !evidence.stateError && strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) {
@@ -1205,16 +1218,24 @@ func lifecycleDeadline(extras map[string]any) (time.Time, string, bool) {
 			deadline, gate = time.Unix(seconds, 0), gateReviewTimeout
 		}
 	}
-	ciWait, ok := extras["ci_wait"].(map[string]any)
-	if ok {
-		if seconds, ok := lifecycleDeadlineSeconds(ciWait["deadline_unix_seconds"]); ok {
-			ciDeadline := time.Unix(seconds, 0)
-			if deadline.IsZero() || ciDeadline.Before(deadline) {
-				deadline, gate = ciDeadline, gateCIWaitTimeout
-			}
+	if ciDeadline, ok := lifecycleCIWaitDeadline(extras); ok {
+		if deadline.IsZero() || ciDeadline.Before(deadline) {
+			deadline, gate = ciDeadline, gateCIWaitTimeout
 		}
 	}
 	return deadline, gate, !deadline.IsZero()
+}
+
+func lifecycleCIWaitDeadline(extras map[string]any) (time.Time, bool) {
+	ciWait, ok := extras["ci_wait"].(map[string]any)
+	if !ok {
+		return time.Time{}, false
+	}
+	seconds, ok := lifecycleDeadlineSeconds(ciWait["deadline_unix_seconds"])
+	if !ok {
+		return time.Time{}, false
+	}
+	return time.Unix(seconds, 0), true
 }
 
 func lifecycleDeadlineSeconds(value any) (int64, bool) {

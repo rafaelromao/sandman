@@ -360,4 +360,49 @@ func TestDecideLifecycleForAttempt_ExpiredCanonicalReviewUsesContinuityOutcome(t
 	if got := canonical.Request.DeadlineUnixSeconds; int64(got) >= now.Unix() {
 		t.Fatalf("test request deadline = %d, want it before now %d", got, now.Unix())
 	}
+
+	// A foreground wait must revalidate the active resolver at the expired
+	// review boundary: a current-head CI operation keeps resolving the gate.
+	pr.StatusCheckRollup = "pending"
+	pr.CIHasActiveChecks = true
+	ciWait, err := session.ciWaitEvidence(context.Background(), workDir, pr, pr.HeadRefOid)
+	if err != nil {
+		t.Fatalf("record active current-head CI wait: %v", err)
+	}
+	ciWaitState, ok := ciWait["ci_wait"].(map[string]any)
+	if !ok {
+		t.Fatalf("CI wait evidence = %v, want a bounded current-head operation", ciWait)
+	}
+	ciDeadlineSeconds, ok := lifecycleDeadlineSeconds(ciWaitState["deadline_unix_seconds"])
+	if !ok || !now.After(time.Unix(int64(canonical.Request.DeadlineUnixSeconds), 0)) ||
+		!now.Before(time.Unix(ciDeadlineSeconds, 0)) ||
+		!time.Unix(int64(canonical.Request.DeadlineUnixSeconds), 0).Before(time.Unix(ciDeadlineSeconds, 0)) {
+		t.Fatalf("test must place the expired review deadline before a still-active CI deadline: review=%d ci=%d now=%d",
+			canonical.Request.DeadlineUnixSeconds, ciDeadlineSeconds, now.Unix())
+	}
+	activeEvidence := (&reviewTimeoutHandoff{
+		Request: canonical.Request,
+		State:   reviewWaitState{Protocol: "review-wait/v1", State: "pending"},
+	}).payloadFor(gateReviewRequestRequired, reviewTimeoutReason, reviewTimeoutNextAction)
+	activeEvidence["gate"] = gateReviewRequestRequired
+	activeEvidence["await"] = true
+	activeEvidence["ci_wait"] = ciWait
+	session.opts.lifecycleWait = func(context.Context, time.Duration) error {
+		return errLifecycleObservationTestStop
+	}
+	activeWait := observer.waitForTransition(
+		context.Background(),
+		lifecycleObservationRequest{
+			WorkDir: workDir, Branch: continuityBranch, RunID: "run-expired-review",
+			HostPathsReady: true,
+		},
+		AgentRunResult{},
+		lifecycleVerdict{Action: lifecycleAwait, Evidence: activeEvidence},
+	)
+	if activeWait.Action != lifecycleAwait {
+		t.Fatalf("expired review with active current-head CI = %s, want CI wait", activeWait.status())
+	}
+	if _, ok := activeWait.Evidence["ci_wait"].(map[string]any); !ok {
+		t.Fatalf("expired review discarded active CI evidence: %v", activeWait.Evidence)
+	}
 }

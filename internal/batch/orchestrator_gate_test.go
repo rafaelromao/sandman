@@ -1028,7 +1028,7 @@ func TestExternalGate_RetainedRecordDiagnosticDoesNotChangeLiveGate(t *testing.T
 	}
 }
 
-func TestExternalGate_ValidRetainedRequestIsEvidenceOnly(t *testing.T) {
+func TestExternalGate_ExpiredReviewWaitsForActiveCI(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	writeTimedOutReviewRequest(t, workDir)
 	opts := gateTestRunOptions()
@@ -1050,11 +1050,11 @@ func TestExternalGate_ValidRetainedRequestIsEvidenceOnly(t *testing.T) {
 
 	observedLifecycle1071 := session.observeLifecycleForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
 	status, extras, handled := observedLifecycle1071.status(), observedLifecycle1071.Evidence, observedLifecycle1071.handled()
-	if !handled || status != "resume" || extras["gate"] != gateReviewTimeout {
-		t.Fatalf("retained evidence gate = (%q, %#v, %t), want bounded recovery of the earlier review deadline", status, extras, handled)
+	if !handled || status != "await" {
+		t.Fatalf("expired review with active current-head CI = (%q, %#v, %t), want the CI operation to keep resolving", status, extras, handled)
 	}
-	if _, ok := extras["review_request"].(map[string]any); !ok {
-		t.Fatalf("retained request evidence = %#v, want request-scoped payload", extras["review_request"])
+	if _, ok := extras["ci_wait"].(map[string]any); !ok {
+		t.Fatalf("active CI evidence = %#v, want retained current-head CI wait", extras["ci_wait"])
 	}
 	diagnostic, ok := extras["review_diagnostic"].(map[string]any)
 	if !ok || diagnostic["status"] != "valid" || diagnostic["outcome"] != string(retainedReviewTimeout) {

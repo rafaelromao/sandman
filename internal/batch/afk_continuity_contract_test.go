@@ -1951,18 +1951,14 @@ func TestAFKContinuityContract_StallSurvivesGitHubOutageAndRestart(t *testing.T)
 // permanent or recoverable for the AFK-continuity guard. A new terminal reason
 // must be classified before it can end a Run whose pull request is open.
 func TestAFKContinuityContract_LifecycleFailureReasonsAreClassified(t *testing.T) {
-	// Reasons that never end a Run: they select a wait, a relaunch or merge
-	// work, or describe the non-lifecycle retry and quota paths.
+	// Reasons handled outside lifecycle-continuity classification: they select
+	// waits, relaunch or merge work, or belong to the ordinary retry path.
 	nonTerminal := map[string]bool{
 		"PULL_REQUEST_READY": true, "REVIEW_APPROVED": true,
 		informalFeedbackReason: true, resumeStalledReason: true, "CI_FAILURE": true, "MERGE_CONFLICT": true,
 		"PR_HEAD_RECONCILE_REQUIRED": true, "AGENT_USAGE_LIMIT": true,
 		ownedWorkRetryReason: true, contextExhaustedRetryReason: true,
-	}
-	reasonLiteral := regexp.MustCompile(`(?:"reason":\s*|Reason\s*=\s*|lifecycleGateFailureEvidence\(|lifecycleRemediationDecision\([^,]+,\s*|classifiedLifecycleFailureEvidence\([^,]+,\s*[^,]+,\s*)"([A-Z][A-Z_]+)"`)
-	reasonConstants := []*regexp.Regexp{
-		regexp.MustCompile(`\b[A-Za-z_][A-Za-z0-9_]*Reason\s*=\s*"([^"]*)"`),
-		regexp.MustCompile(`\b[A-Za-z_][A-Za-z0-9_]*Reason\s+[A-Za-z_][A-Za-z0-9_]*\s*=\s*"([^"]*)"`),
+		"AGENT_FAILED": true, "agent-failed": true,
 	}
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -1977,15 +1973,8 @@ func TestAFKContinuityContract_LifecycleFailureReasonsAreClassified(t *testing.T
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, match := range reasonLiteral.FindAllStringSubmatch(string(data), -1) {
-			seen[match[1]] = true
-		}
-		for _, pattern := range reasonConstants {
-			for _, match := range pattern.FindAllStringSubmatch(string(data), -1) {
-				if match[1] != "" {
-					seen[match[1]] = true
-				}
-			}
+		for reason := range lifecycleFailureReasonReferences(string(data)) {
+			seen[reason] = true
 		}
 	}
 	if !seen[idleGateReason] || !seen["PULL_REQUEST_CLOSED"] || !seen["REMEDIATION_BUDGET_EXHAUSTED"] {
@@ -2008,6 +1997,41 @@ func TestAFKContinuityContract_LifecycleFailureReasonsAreClassified(t *testing.T
 		if lifecycleFailureRecoverable(reason) {
 			t.Errorf("%s must stay terminal", reason)
 		}
+	}
+}
+
+func lifecycleFailureReasonReferences(source string) map[string]bool {
+	reasonLiteral := regexp.MustCompile(`(?:"reason":\s*|Reason\s*=\s*|lifecycleGateFailureEvidence\(|lifecycleRemediationDecision\([^,]+,\s*|classifiedLifecycleFailureEvidence\([^,]+,\s*[^,]+,\s*)"([A-Z][A-Z_]+)"`)
+	reasonAssignment := regexp.MustCompile(`\b[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*\s*\[\s*"reason"\s*\]\s*=\s*"([^"]+)"`)
+	reasonConstants := []*regexp.Regexp{
+		regexp.MustCompile(`\b[A-Za-z_][A-Za-z0-9_]*Reason\s*=\s*"([^"]*)"`),
+		regexp.MustCompile(`\b[A-Za-z_][A-Za-z0-9_]*Reason\s+[A-Za-z_][A-Za-z0-9_]*\s*=\s*"([^"]*)"`),
+	}
+	seen := map[string]bool{}
+	for _, match := range reasonLiteral.FindAllStringSubmatch(source, -1) {
+		seen[match[1]] = true
+	}
+	for _, match := range reasonAssignment.FindAllStringSubmatch(source, -1) {
+		seen[match[2]] = true
+	}
+	for _, pattern := range reasonConstants {
+		for _, match := range pattern.FindAllStringSubmatch(source, -1) {
+			if match[1] != "" {
+				seen[match[1]] = true
+			}
+		}
+	}
+	return seen
+}
+
+func TestAFKContinuityContract_DirectFailureReasonAssignmentsAreScanned(t *testing.T) {
+	const probe = "UNCLASSIFIED_LIFECYCLE_PROBE"
+	seen := lifecycleFailureReasonReferences(`evidence["reason"] = "` + probe + `"`)
+	if !seen[probe] {
+		t.Fatalf("direct failure-reason assignment was not scanned: %v", seen)
+	}
+	if _, classified := lifecycleFailureReasons[probe]; classified {
+		t.Fatalf("test probe %q unexpectedly appears in the outcome table", probe)
 	}
 }
 
