@@ -54,6 +54,30 @@ func TestDefaultPromptRequiresMeaningfulImplementationPRDescription(t *testing.T
 	}
 }
 
+// The closing reference stays mandatory in the pull-request body, but Sandman
+// never closes work items: it only links the implemented work item, and the
+// repository decides whether the tracker closes it on merge. Closing keywords
+// stay out of commit messages so that an issue does not close later when a
+// feature branch lands on the default branch through a merge commit or rebase.
+func TestDefaultPromptDescribesClosingReferenceAsALink(t *testing.T) {
+	data, err := os.ReadFile("default-task-prompt.md")
+	if err != nil {
+		t.Fatalf("read default task prompt: %v", err)
+	}
+	text := strings.Join(strings.Fields(string(data)), " ")
+	for _, required := range []string{
+		"the closing-reference body requirement (one of `Closes #<issue_number>`, `Fixes #<issue_number>`, `Resolves #<issue_number>`)",
+		"The closing reference links the pull request to the work item it implements",
+		"the repository decides whether the tracker closes it when the pull request merges",
+		"Closing keywords (`Closes`, `Fixes`, `Resolves`) belong only in the pull-request body, never in commit messages",
+		"through a merge commit or a rebase",
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("default task prompt is missing closing-reference contract %q", required)
+		}
+	}
+}
+
 func extractPromptBlock(doc string) (string, error) {
 	lines := strings.Split(doc, "\n")
 	start := -1
