@@ -299,7 +299,7 @@ func (o *lifecycleObserver) observeGitHubRecovery(ctx context.Context, request l
 	if now.Before(recovery.NextAttempt) {
 		// Not yet time: no lookup and no status check, and the evidence is
 		// unchanged so the wait is not re-recorded.
-		return githubRecoveryAwait(base, request.Branch, *recovery), true
+		return o.githubRecoveryDisposition(base, request.Branch, *recovery, causeResolving), true
 	}
 	attempt := o.checkGitHubStatus(ctx, recovery, now)
 	if ctx.Err() != nil {
@@ -309,10 +309,20 @@ func (o *lifecycleObserver) observeGitHubRecovery(ctx context.Context, request l
 		return lifecycleVerdict{}, false
 	}
 	if !now.Before(recovery.bound()) {
-		return githubRecoveryFailure(request.Branch, *recovery), true
+		return o.githubRecoveryDisposition(base, request.Branch, *recovery, causeExpired), true
 	}
 	recovery.NextAttempt = now.Add(githubRecoveryInterval)
-	return githubRecoveryAwait(base, request.Branch, *recovery), true
+	return o.githubRecoveryDisposition(base, request.Branch, *recovery, causeResolving), true
+}
+
+func (o *lifecycleObserver) githubRecoveryDisposition(base map[string]any, branch string, recovery githubRecovery, cause continuityCause) lifecycleVerdict {
+	wait := githubRecoveryAwait(base, branch, recovery)
+	row := continuityRow{gate: gateGitHubUnavailable, reason: githubUnavailableReason, cause: cause}
+	terminal := githubRecoveryFailure(branch, recovery)
+	if cause != causeExpired {
+		terminal = lifecycleVerdict{}
+	}
+	return o.applyContinuityDisposition(row, wait, terminal)
 }
 
 // recordGitHubLookupFailure extends (or opens) the recovery window after a
@@ -331,7 +341,11 @@ func (o *lifecycleObserver) recordGitHubLookupFailure(request lifecycleObservati
 		evidence["reason"] = githubUnavailableReason
 		evidence["branch"] = request.Branch
 		evidence["observation_error"] = "event log unreadable; GitHub recovery window unknown"
-		return lifecycleVerdict{Action: lifecycleAwait, Evidence: evidence, Kind: lifecycleVerdictGitHubUnavailable}
+		wait := lifecycleVerdict{Action: lifecycleAwait, Evidence: evidence, Kind: lifecycleVerdictGitHubUnavailable}
+		return o.applyContinuityDisposition(
+			continuityRow{gate: gateGitHubUnavailable, reason: githubUnavailableReason, cause: causeResolving},
+			wait, lifecycleVerdict{},
+		)
 	}
 	now := o.runtimeNow()
 	if !open {
@@ -340,8 +354,8 @@ func (o *lifecycleObserver) recordGitHubLookupFailure(request lifecycleObservati
 	recovery.LookupAttempts++
 	recovery.LookupError, _ = verdict.Evidence["lookup_error"].(string)
 	if !now.Before(recovery.bound()) {
-		return githubRecoveryFailure(request.Branch, recovery)
+		return o.githubRecoveryDisposition(verdict.Evidence, request.Branch, recovery, causeExpired)
 	}
 	recovery.NextAttempt = now.Add(githubRecoveryInterval)
-	return githubRecoveryAwait(verdict.Evidence, request.Branch, recovery)
+	return o.githubRecoveryDisposition(verdict.Evidence, request.Branch, recovery, causeResolving)
 }
