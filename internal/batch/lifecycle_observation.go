@@ -162,6 +162,7 @@ func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifec
 				// Operation expiry cannot override another live resolver.
 				// Reobserve at the foreground boundary, then continue under
 				// that resolver's original deadline when it remains active.
+				recovering := false
 				if !freshlyObserved {
 					verdict = o.Observe(ctx, request)
 					freshlyObserved = true
@@ -174,22 +175,25 @@ func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifec
 						}
 						verdict = failureForUnhandledObservation(verdict)
 					}
+					if verdict.Action == lifecycleAwait {
+						_, recovering = githubRecoveryNextAttempt(verdict.Evidence)
+					}
+					if recovering {
+						// A GitHub recovery wait selected here has not been
+						// persisted: record its window before the hourly
+						// sleep, so a restart cannot reopen the 24-hour
+						// bound. Persist it as observed, with the retained
+						// operation and its original deadline. Every other
+						// verdict is persisted by the poll below, once.
+						o.emitAwait(ctx, request.RunID, result, verdict.Evidence)
+					}
 				}
 				if verdict.Action != lifecycleAwait {
 					return verdict
 				}
-				otherCIActive := gate == gateReviewTimeout &&
-					hasUnexpiredCIWait(verdict.Evidence, o.runtimeNow())
-				if otherCIActive {
-					delete(verdict.Evidence, "review_request")
-				} else {
-					// The refreshed observation selected a hold and no other
-					// operation is still active. Drop expired bounds so the
-					// continuity hold can keep observing without a busy loop.
-					delete(verdict.Evidence, "review_request")
-					delete(verdict.Evidence, "ci_wait")
+				if !recovering {
+					o.dropExpiredOperationBounds(verdict.Evidence, gate)
 				}
-				o.emitAwait(ctx, request.RunID, result, verdict.Evidence)
 			} else {
 				evidence := cloneLifecycleExtras(verdict.Evidence)
 				evidence["gate"] = gate
@@ -244,6 +248,19 @@ func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifec
 		}
 		return verdict
 	}
+}
+
+// dropExpiredOperationBounds removes the expired operation's bounds from a
+// continuity hold's evidence so the hold can keep observing without a busy
+// loop. An expired review leaves current-head CI that is still within its own
+// deadline untouched. A GitHub recovery wait never passes through here: it
+// retains its operation and original deadline until GitHub recovers.
+func (o *lifecycleObserver) dropExpiredOperationBounds(evidence map[string]any, gate string) {
+	delete(evidence, "review_request")
+	if gate == gateReviewTimeout && hasUnexpiredCIWait(evidence, o.runtimeNow()) {
+		return
+	}
+	delete(evidence, "ci_wait")
 }
 
 func hasUnexpiredCIWait(evidence map[string]any, now time.Time) bool {
