@@ -107,7 +107,10 @@ blind publication is owned work selected as `BLIND_REVIEW_REQUIRED`, not a
 terminal or external-review failure. Every lifecycle failure
 reason is classified once as permanent or recoverable; the AFK-continuity
 contract suite fails on an unclassified reason and replays the real incidents
-that motivated the rule.
+that motivated the rule. One gate/reason/cause outcome table centralizes
+failure, stall, exhausted-allowance, expired-operation, and unreadable-ledger
+decisions; the contract enumerates its current rows. ADR-0063 records the
+staged policy and the sibling-owned rows that will change.
 
 One continuity decision applies these rules to every lifecycle decision;
 the attempt loop, entry continuation and runtime observation consume its
@@ -332,9 +335,11 @@ returns immediately, without redundant verification or agent-side polling, and
 reports live or timestamped observations rather than stale CI/review statements.
 See [ADR-0060](../adr/0060-managed-handoff-boundary-and-thirty-second-observation.md).
 
-CI and review retain independent hard deadlines. The earlier expired operation
-selects bounded remediation even if another operation remains active. The
-historical in-session relaunch cap and ordinary retries bound owned work;
+CI and review retain independent hard deadlines. At expiry, the runtime
+revalidates current-head operations: an expired review request cannot override
+CI that is still resolving. If another operation remains active, wait under
+that operation's original deadline; otherwise the expired operation selects
+bounded remediation. The historical in-session relaunch cap and ordinary retries bound owned work;
 persisted same-head remediation counts are diagnostic, not cumulative launch
 reservations. Obsolete implementation, reviewer-launch, and standalone CI budget
 files cannot veto executable work. Standalone same-head polling preserves its

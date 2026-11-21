@@ -265,6 +265,50 @@ func TestGitHubRecovery_ForegroundNoopReturnsRetryableNonSuccess(t *testing.T) {
 	}
 }
 
+func TestGitHubRecovery_ForegroundDeadlineReobservationPersistsRecoveryWindow(t *testing.T) {
+	f := newGitHubRecoveryFixture(t)
+	session := f.session()
+	reviewDeadline := f.now.Add(-time.Second)
+	request := lifecycleObservationRequest{
+		WorkDir: t.TempDir(), Branch: gateTestBranch, RunID: f.runID,
+		HostPathsReady: true, AttemptStatus: "success",
+	}
+	var recoveryAtSleep githubRecovery
+	var windowOpenAtSleep bool
+	session.opts.lifecycleWait = func(context.Context, time.Duration) error {
+		recoveryAtSleep, _, windowOpenAtSleep, _ = newLifecycleObserver(session).githubRecoveryWindow(f.runID)
+		return errLifecycleObservationTestStop
+	}
+	initial := lifecycleVerdict{
+		Action: lifecycleAwait,
+		Evidence: map[string]any{
+			"gate":   gateReviewTimeout,
+			"reason": reviewTimeoutReason,
+			"review_request": map[string]any{
+				"deadline_unix_seconds": reviewDeadline.Unix(),
+			},
+		},
+	}
+
+	verdict := newLifecycleObserver(session).waitForTransition(t.Context(), request, AgentRunResult{Branch: gateTestBranch}, initial)
+	if verdict.Action != lifecycleAwait || verdict.Evidence["gate"] != gateGitHubUnavailable {
+		t.Fatalf("foreground observation = %s/%v, want a GitHub recovery wait", verdict.status(), verdict.Evidence)
+	}
+	if !windowOpenAtSleep {
+		t.Fatal("GitHub recovery window was not persisted before the first hourly sleep")
+	}
+	if !recoveryAtSleep.WindowStarted.Equal(f.now) || !recoveryAtSleep.NextAttempt.Equal(f.now.Add(githubRecoveryInterval)) {
+		t.Fatalf("recovery at first sleep = %+v, want window start %v and next attempt %v",
+			recoveryAtSleep, f.now, f.now.Add(githubRecoveryInterval))
+	}
+
+	restarted, _, open, unknown := newLifecycleObserver(f.session()).githubRecoveryWindow(f.runID)
+	if unknown || !open || restarted != recoveryAtSleep {
+		t.Fatalf("restarted recovery = %+v, open=%t unknown=%t; want persisted window %+v",
+			restarted, open, unknown, recoveryAtSleep)
+	}
+}
+
 // Before the next hourly attempt, observation neither looks up the pull
 // request nor checks GitHub's status, and the wait evidence is unchanged.
 func TestGitHubRecovery_NoAttemptBeforeNextHour(t *testing.T) {

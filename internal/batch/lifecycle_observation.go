@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 )
 
 // lifecycleObservationRequest describes one runtime observation of an
@@ -54,6 +55,7 @@ type lifecycleObservation interface {
 
 type lifecycleObserver struct {
 	*runSession
+	outcomes continuityTable
 }
 
 func newLifecycleObserver(session *runSession) *lifecycleObserver {
@@ -152,24 +154,63 @@ func ordinaryRetryAfterGitHubRecovery(state ordinaryRetryState, branch string) l
 func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifecycleObservationRequest, result AgentRunResult, initial lifecycleVerdict) lifecycleVerdict {
 	verdict := initial
 	plan := o.lifecyclePollIntervals(verdict.Evidence)
+	freshlyObserved := false
 	for index := 0; ; index++ {
 		_, githubWait := githubRecoveryNextAttempt(verdict.Evidence)
 		if deadline, gate, ok := lifecycleDeadline(verdict.Evidence); ok && !githubWait && !o.runtimeNow().Before(deadline) {
-			evidence := cloneLifecycleExtras(verdict.Evidence)
-			evidence["gate"] = gate
-			evidence["reason"] = lifecycleDeadlineReason(gate)
-			evidence["next_action"] = lifecycleDeadlineNextAction(gate)
-			deadlineVerdict := lifecycleVerdict{Action: lifecycleResume, Evidence: evidence}
-			deadlineVerdict.ImplementorWork = isImplementorOwnedGateFailure(evidence)
-			deadlineVerdict = o.applyContinuity(request.Branch, request.RunID, deadlineVerdict)
-			if deadlineVerdict.Action != lifecycleAwait {
-				return deadlineVerdict
+			if (gate == gateReviewTimeout || gate == gateCIWaitTimeout) && o.deps.githubClient != nil {
+				// Operation expiry cannot override another live resolver.
+				// Reobserve at the foreground boundary, then continue under
+				// that resolver's original deadline when it remains active.
+				if !freshlyObserved {
+					verdict = o.Observe(ctx, request)
+					freshlyObserved = true
+					if !verdict.handled() {
+						if ctx.Err() != nil {
+							return lifecycleVerdict{Action: lifecycleAborted}
+						}
+						if attemptNeedsRetry(request.AttemptStatus) && !request.UsageLimitReached {
+							return lifecycleVerdict{Action: lifecycleFailure, Kind: lifecycleVerdictOrdinaryRetry}
+						}
+						verdict = failureForUnhandledObservation(verdict)
+					}
+				}
+				if verdict.Action != lifecycleAwait {
+					return verdict
+				}
+				otherCIActive := gate == gateReviewTimeout &&
+					hasUnexpiredCIWait(verdict.Evidence, o.runtimeNow())
+				if otherCIActive {
+					delete(verdict.Evidence, "review_request")
+				} else {
+					// The refreshed observation selected a hold and no other
+					// operation is still active. Drop expired bounds so the
+					// continuity hold can keep observing without a busy loop.
+					delete(verdict.Evidence, "review_request")
+					delete(verdict.Evidence, "ci_wait")
+				}
+				o.emitAwait(ctx, request.RunID, result, verdict.Evidence)
+			} else {
+				evidence := cloneLifecycleExtras(verdict.Evidence)
+				evidence["gate"] = gate
+				evidence["reason"] = lifecycleDeadlineReason(gate)
+				evidence["next_action"] = lifecycleDeadlineNextAction(gate)
+				deadlineVerdict := lifecycleVerdict{Action: lifecycleResume, Evidence: evidence}
+				deadlineVerdict.ImplementorWork = isImplementorOwnedGateFailure(evidence)
+				if gate == gateReviewTimeout {
+					deadlineVerdict = o.applyExpiredReviewOutcome(request.Branch, request.RunID, deadlineVerdict)
+				} else {
+					deadlineVerdict = o.applyContinuity(request.Branch, request.RunID, deadlineVerdict)
+				}
+				if deadlineVerdict.Action != lifecycleAwait {
+					return deadlineVerdict
+				}
+				// A stalled or exhausted remediation keeps observing the gate
+				// without the expired deadline.
+				verdict = deadlineVerdict
+				delete(verdict.Evidence, "review_request")
+				delete(verdict.Evidence, "ci_wait")
 			}
-			// A stalled or exhausted remediation keeps observing the gate
-			// without the expired deadline.
-			verdict = deadlineVerdict
-			delete(verdict.Evidence, "review_request")
-			delete(verdict.Evidence, "ci_wait")
 		}
 		interval := plan[len(plan)-1]
 		if index < len(plan) {
@@ -187,6 +228,7 @@ func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifec
 			return lifecycleVerdict{Action: lifecycleAborted}
 		}
 		verdict = o.Observe(ctx, request)
+		freshlyObserved = true
 		if !verdict.handled() {
 			if ctx.Err() != nil {
 				return lifecycleVerdict{Action: lifecycleAborted}
@@ -204,6 +246,11 @@ func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifec
 	}
 }
 
+func hasUnexpiredCIWait(evidence map[string]any, now time.Time) bool {
+	deadline, ok := lifecycleCIWaitDeadline(evidence)
+	return ok && now.Before(deadline)
+}
+
 func isImplementorOwnedGateFailure(evidence map[string]any) bool {
 	reason, _ := evidence["reason"].(string)
 	// Blind rounds use lifecycle relaunch allowances, not the ordinary
@@ -215,6 +262,7 @@ func (o *lifecycleObserver) applyContinuity(branch, runID string, verdict lifecy
 	if verdict.Action != lifecycleResume && verdict.Action != lifecycleAwait {
 		return verdict
 	}
+	outcomes := o.continuityTable()
 	stalled, readErr := latestStalledResumes(o.deps.eventLog, runID)
 	if verdict.Action == lifecycleAwait {
 		if len(stalled) == 0 {
@@ -245,26 +293,69 @@ func (o *lifecycleObserver) applyContinuity(branch, runID string, verdict lifecy
 	o.pendingResumeRound = allowanceRound
 	if readErr != nil {
 		prior := stalledResumes(verdict.Evidence)
+		row := continuityRow{cause: causeUnreadable}
 		if verdict.ImplementorWork {
+			row.gate = gateOwnedWorkRequired
+		}
+		if outcomes.outcome(row) == outcomeHold && verdict.ImplementorWork {
 			verdict.Action = lifecycleAwait
 			verdict.Evidence = o.ownedWorkHold(verdict.Evidence, signature, prior)
-		} else {
+		} else if outcomes.outcome(row) == outcomeHold {
 			verdict.Action = lifecycleAwait
 			verdict.Evidence = stalledAwaitExtras(verdict.Evidence, signature, prior)
 		}
 		return verdict
 	}
 	if verdict.ImplementorWork {
-		if containsSignature(stalled, signature) ||
-			(o.finalOwnedWorkAttempt && strings.TrimSpace(o.renderCfg.ReviewCommand) == "" && idleGateAwaitsReview(verdict.Evidence)) {
-			verdict.Action = lifecycleAwait
-			verdict.Evidence = o.ownedWorkHold(verdict.Evidence, signature, stalled)
+		gate := gateOwnedWorkRequired
+		if containsSignature(stalled, signature) {
+			row := continuityRow{
+				gate: gate, reason: continuityOutcomeReason(verdict.Evidence, causeStall), cause: causeStall,
+			}
+			if outcomes.outcome(row) == outcomeHold {
+				verdict.Action = lifecycleAwait
+				verdict.Evidence = o.ownedWorkHold(verdict.Evidence, signature, stalled)
+			} else if outcomes.outcome(row) == outcomeTerminal {
+				verdict.Action = lifecycleFailure
+				verdict.Evidence = remediationBudgetFailureEvidence(gate, verdict.Evidence,
+					"inspect the current pull-request remediation evidence and continue in a fresh session")
+				verdict.ImplementorWork = false
+			}
+			return verdict
+		}
+		if o.finalOwnedWorkAttempt {
+			row := finalOwnedWorkContinuityRow(verdict.Evidence, o.renderCfg.ReviewCommand)
+			outcome := outcomes.outcome(row)
+			if outcome == outcomeHold {
+				verdict.Action = lifecycleAwait
+				verdict.Evidence = o.ownedWorkHold(verdict.Evidence, signature, stalled)
+			} else if outcome == outcomeTerminal {
+				verdict.Action = lifecycleFailure
+				terminalEvidence := cloneLifecycleExtras(verdict.Evidence)
+				delete(terminalEvidence, "gate")
+				delete(terminalEvidence, "await")
+				delete(terminalEvidence, "continuity_hold")
+				verdict.Evidence = terminalEvidence
+				verdict.ImplementorWork = false
+			}
 		}
 		return verdict
 	}
 	if containsSignature(stalled, signature) {
-		verdict.Action = lifecycleAwait
-		verdict.Evidence = stalledAwaitExtras(verdict.Evidence, signature, stalled)
+		row := continuityRow{
+			gate:   stringEvidence(verdict.Evidence, "gate"),
+			reason: continuityOutcomeReason(verdict.Evidence, causeStall),
+			cause:  causeStall,
+		}
+		switch outcomes.outcome(row) {
+		case outcomeHold:
+			verdict.Action = lifecycleAwait
+			verdict.Evidence = stalledAwaitExtras(verdict.Evidence, signature, stalled)
+		case outcomeTerminal:
+			verdict.Action = lifecycleFailure
+			verdict.Evidence = remediationBudgetFailureEvidence(row.gate, verdict.Evidence,
+				"inspect the current pull-request remediation evidence and continue in a fresh session")
+		}
 		return verdict
 	}
 	gate := stringEvidence(verdict.Evidence, "gate")
@@ -279,16 +370,121 @@ func (o *lifecycleObserver) applyContinuity(branch, runID string, verdict lifecy
 	if !repeated && used < o.resumeCapFor() {
 		return verdict
 	}
-	if formalChangesRequested(verdict.Evidence) || exhaustionTerminal(verdict.Evidence) {
-		verdict.Action = lifecycleFailure
-		verdict.Evidence = remediationBudgetFailureEvidence(gate, verdict.Evidence,
-			"inspect the current pull-request remediation evidence and continue in a fresh session")
-		verdict.ImplementorWork = false
-		return verdict
+	cause := causeExhausted
+	reason := stringEvidence(verdict.Evidence, "reason")
+	permanentEvidence := formalChangesRequested(verdict.Evidence) || reason == "CI_WAIT_STATE_ERROR"
+	if repeated && used < o.resumeCapFor() {
+		if permanentEvidence {
+			// The blocker itself is terminal; the relaunch allowance has not
+			// been used up.
+			cause = causeFailure
+		} else {
+			cause = causeStall
+		}
 	}
-	verdict.Action = lifecycleAwait
-	verdict.Evidence = stalledAwaitExtras(verdict.Evidence, signature, stalled)
+	row := continuityRow{
+		gate:   gate,
+		reason: continuityOutcomeReason(verdict.Evidence, cause),
+		cause:  cause,
+	}
+	switch outcomes.outcome(row) {
+	case outcomeTerminal:
+		verdict.Action = lifecycleFailure
+		if row.cause == causeFailure {
+			nextAction := stringEvidence(verdict.Evidence, "next_action")
+			if nextAction == "" {
+				nextAction = "inspect the current pull-request evidence and continue in a fresh session"
+			}
+			verdict.Evidence = classifiedLifecycleFailureEvidence(gate, verdict.Evidence, row.reason, nextAction)
+		} else {
+			verdict.Evidence = remediationBudgetFailureEvidence(gate, verdict.Evidence,
+				"inspect the current pull-request remediation evidence and continue in a fresh session")
+		}
+		verdict.ImplementorWork = false
+	case outcomeHold:
+		verdict.Action = lifecycleAwait
+		verdict.Evidence = stalledAwaitExtras(verdict.Evidence, signature, stalled)
+	}
 	return verdict
+}
+
+func finalOwnedWorkContinuityRow(evidence map[string]any, reviewCommand string) continuityRow {
+	reason := continuityOutcomeReason(evidence, causeExhausted)
+	if reason == idleGateReason &&
+		(strings.TrimSpace(reviewCommand) != "" || !idleGateAwaitsReview(evidence)) {
+		reason = implementorActionRequiredReason
+	}
+	return continuityRow{gate: gateOwnedWorkRequired, reason: reason, cause: causeExhausted}
+}
+
+func continuityOutcomeReason(evidence map[string]any, cause continuityCause) string {
+	gate := stringEvidence(evidence, "gate")
+	reason := stringEvidence(evidence, "reason")
+	ownedFormalChanges := gate == gateOwnedWorkRequired && reason == idleGateReason &&
+		strings.EqualFold(strings.TrimSpace(stringEvidence(evidence, "review_decision")), "CHANGES_REQUESTED")
+	if (cause == causeExhausted || cause == causeFailure) && (formalChangesRequested(evidence) || ownedFormalChanges) {
+		return actionableFeedbackReason
+	}
+	return reason
+}
+
+func (o *lifecycleObserver) continuityTable() continuityTable {
+	if o != nil && o.outcomes != nil {
+		return o.outcomes
+	}
+	return continuityOutcomes
+}
+
+func (o *lifecycleObserver) applyContinuityDisposition(row continuityRow, wait, terminal lifecycleVerdict) lifecycleVerdict {
+	switch o.continuityTable().outcome(row) {
+	case outcomeWait:
+		return wait
+	case outcomeHold:
+		wait.Action = lifecycleAwait
+		wait.Evidence = continuityHold(wait.Evidence, row.gate)
+		return wait
+	default:
+		if terminal.Action == lifecycleFailure {
+			return terminal
+		}
+		return lifecycleVerdict{
+			Action: lifecycleFailure,
+			Evidence: remediationBudgetFailureEvidence(row.gate, wait.Evidence,
+				"inspect the current pull-request evidence; the external operation is no longer authorized to keep this Run waiting"),
+		}
+	}
+}
+
+// applyExpiredReviewOutcome uses the expiry row to decide whether the
+// previously authorized, bounded recovery attempt remains available. A hold
+// retains the existing timeout recovery path; a terminal row ends it before
+// another implementation attempt can launch.
+func (o *lifecycleObserver) applyExpiredReviewOutcome(branch, runID string, verdict lifecycleVerdict) lifecycleVerdict {
+	originalGate := stringEvidence(verdict.Evidence, "gate")
+	row := continuityRow{
+		gate:   gateReviewTimeout,
+		reason: stringEvidence(verdict.Evidence, "reason"),
+		cause:  causeExpired,
+	}
+	if row.reason == "" {
+		row.reason = reviewTimeoutReason
+	}
+	if o.continuityTable().outcome(row) == outcomeHold {
+		return o.applyContinuity(branch, runID, verdict)
+	}
+	evidence := cloneLifecycleExtras(verdict.Evidence)
+	if evidence == nil {
+		evidence = map[string]any{}
+	}
+	delete(evidence, "gate")
+	delete(evidence, "await")
+	delete(evidence, "continuity_hold")
+	evidence["reason"] = row.reason
+	if originalGate == "" {
+		originalGate = row.gate
+	}
+	evidence["external_gate"] = originalGate
+	return lifecycleVerdict{Action: lifecycleFailure, Evidence: evidence}
 }
 
 func stringEvidence(evidence map[string]any, key string) string {
