@@ -3331,8 +3331,9 @@ const (
 )
 
 // repairOpenPRClosingReference repairs closing intent only while the PR is
-// open. It rechecks after the edit because an edit that races a merge no longer
-// repairs the reference; completion verification handles that case.
+// open. It rechecks after the edit because an edit that lands after the merge
+// arrives too late to repair the reference; completion verification handles
+// that case.
 func repairOpenPRClosingReference(ctx context.Context, client github.Client, branch string, issueNumber int, errorLog io.Writer) closingGuardOutcome {
 	outcome, _ := repairOpenPRClosingReferenceWithSnapshot(ctx, client, branch, issueNumber, errorLog)
 	return outcome

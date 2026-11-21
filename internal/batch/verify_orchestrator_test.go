@@ -12,9 +12,10 @@ import (
 
 // alreadyResolvedRun drives one issue-driven Run whose Task carries
 // `## Status: already resolved` through the executor in mode. It returns the
-// Run's result, its terminal `run.finished` payload and the fake tracker, so a
-// test can assert both the Run's outcome and the state of the work item.
-func alreadyResolvedRun(t *testing.T, mode IssueMode, openPR bool, outcome VerifyOutcome, checks []OracleCheck) (AgentRunResult, map[string]any, *fakeGitHubClient) {
+// Run's result, its terminal `run.finished` payload, the fake tracker and how
+// many times the verify path ran, so a test can assert the Run's outcome, that
+// the already-resolved branch was really reached, and the work item's state.
+func alreadyResolvedRun(t *testing.T, mode IssueMode, openPR bool, outcome VerifyOutcome, checks []OracleCheck) (AgentRunResult, map[string]any, *fakeGitHubClient, int) {
 	t.Helper()
 	workDir := t.TempDir()
 	t.Chdir(workDir)
@@ -47,6 +48,7 @@ func alreadyResolvedRun(t *testing.T, mode IssueMode, openPR bool, outcome Verif
 		prs:    map[string]*github.PR{branch: pr},
 	}
 	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
+	verifyCalls := 0
 	o := NewOrchestrator(
 		client,
 		&retryRenderer{result: "rendered prompt"},
@@ -60,6 +62,7 @@ func alreadyResolvedRun(t *testing.T, mode IssueMode, openPR bool, outcome Verif
 			taskContent: "## Status: already resolved",
 		}),
 		WithVerifyPath(VerifyPathFunc(func(in VerifyInput) (VerifyOutcome, []OracleCheck) {
+			verifyCalls++
 			return outcome, checks
 		})),
 	)
@@ -98,11 +101,14 @@ func alreadyResolvedRun(t *testing.T, mode IssueMode, openPR bool, outcome Verif
 	if payload == nil {
 		t.Fatalf("run.finished event not found")
 	}
-	return result, payload, client
+	return result, payload, client, verifyCalls
 }
 
-// assertWorkItemStillOpen pins that Sandman never writes the work item's
-// state: the tracker still reports it open after the Run finished.
+// assertWorkItemStillOpen is a regression pin: the tracker still reports the
+// work item open after the Run finished. The fake tracker has no way to close
+// an issue, so the structural guarantee lives in the github package
+// (TestClientHasNoWayToCloseAnIssue); this keeps a future fake or client from
+// reintroducing a state write unnoticed.
 func assertWorkItemStillOpen(t *testing.T, client *fakeGitHubClient, number int) {
 	t.Helper()
 	issue, err := client.FetchIssue(t.Context(), number)
@@ -160,7 +166,10 @@ func TestRunSingle_AlreadyResolved_KeepsOutcomeAndLeavesWorkItemOpen(t *testing.
 	for _, oc := range outcomes {
 		for _, m := range modes {
 			t.Run(oc.name+"/"+m.name, func(t *testing.T) {
-				result, payload, client := alreadyResolvedRun(t, m.mode, oc.openPR, oc.verify, oc.checks)
+				result, payload, client, verifyCalls := alreadyResolvedRun(t, m.mode, oc.openPR, oc.verify, oc.checks)
+				if verifyCalls != 1 {
+					t.Fatalf("verify path ran %d times, want exactly once: the already-resolved branch was not reached", verifyCalls)
+				}
 				if result.Status != oc.wantStatus {
 					t.Fatalf("status = %q, want %q", result.Status, oc.wantStatus)
 				}

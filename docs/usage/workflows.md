@@ -131,11 +131,6 @@ in the pull-request body, never in commit messages, so an issue does not close
 later when a feature branch lands on the default branch through a merge commit
 or a rebase.
 
-The BlockedBy gate described in [BlockedBy-aware
-execution](#blockedby-aware-execution) still waits for a blocker to be closed, so
-close a blocker through your own flow, or let GitHub close it, before its
-dependents need to run.
-
 ## Cleaning up
 
 ```bash
