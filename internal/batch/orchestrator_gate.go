@@ -204,6 +204,9 @@ func (s *runSession) retainedLifecycleEvidence(ctx context.Context, workDir stri
 				evidence.payload = handoff.payloadFor(gateActionableFeedback, informalFeedbackReason, informalFeedbackNextAction)
 				if request, ok := evidence.payload["review_request"].(map[string]any); ok {
 					request["informal_feedback"] = evidence.informalFeedback
+					if approvalOverridden(evidence.informalFeedback) {
+						request[approvalOverrideKey] = approvalOverrideStatement
+					}
 				}
 			} else {
 				return evidence

@@ -13,6 +13,14 @@ const informalFeedbackReason = "REVIEW_INFORMAL_FEEDBACK"
 
 const informalFeedbackNextAction = "inspect the retained informal review feedback, address the concrete requested changes, and continue after pushing a new current head"
 
+// approvalOverrideKey is the retained review_request field that records an
+// approval override: a daemon APPROVED report whose own Findings, Suggested
+// next steps or Decision contradict it was treated as requested changes.
+// It is evidence only; the decision is derived from the feedback bodies.
+const approvalOverrideKey = "approval_override"
+
+const approvalOverrideStatement = "a contradicted daemon approval was treated as requested changes"
+
 // informalFeedbackEvidence is the request-scoped evidence record produced for
 // a concrete current-head informal review response (a top-level comment or an
 // inline comment) retained in the active review-classification/v1 object.
@@ -77,15 +85,28 @@ func (c *reviewClassification) informalFeedbackEvidenceFor(request reviewRequest
 	return evidence
 }
 
+// approvalOverridden reports whether any retained informal feedback is a
+// contradicted daemon approval that was treated as requested changes.
+func approvalOverridden(feedback []informalFeedbackEvidence) bool {
+	for _, record := range feedback {
+		if contradictedDaemonApproval(record.Body) {
+			return true
+		}
+	}
+	return false
+}
+
 // A structured report's scope table and metrics are not repair evidence. If
 // approval cannot be established, look for feedback in its actual assessment
 // sections instead of turning every backtick in the report into a finding.
 func informalReviewFeedbackConcrete(body string) bool {
 	// A daemon publication is feedback exactly when its verdict requests
-	// changes. An unknown daemon verdict is never repair evidence: when unsure,
-	// the run waits instead of relaunching the implementor.
+	// changes, or when it approves while its own verdict sections contradict
+	// the approval (an approval override, #2998). An unknown daemon verdict is
+	// never repair evidence: when unsure, the run waits instead of relaunching
+	// the implementor.
 	if verdict, published := reviewpub.PublishedVerdict(body); published {
-		return verdict == reviewpub.ChangesRequested
+		return verdict == reviewpub.ChangesRequested || contradictedDaemonApproval(body)
 	}
 	sections := collectReviewApprovalSections(body)
 	structured := false

@@ -546,10 +546,19 @@ func TestInformalApprovalClassifier_CapturedReportsAndContradictions(t *testing.
 			if reviewDecisionApprovedBody(contradictory) {
 				t.Fatal("an APPROVED report with an Important finding established approval")
 			}
-			if reviewpub.Published(contradictory) == informalReviewFeedbackConcrete(contradictory) {
-				// A daemon publication that contradicts itself is unsure, so it
-				// waits; an unpublished report keeps the prose feedback rules.
-				t.Fatalf("contradictory report feedback = %t for a published=%t body, want feedback only without publication", informalReviewFeedbackConcrete(contradictory), reviewpub.Published(contradictory))
+			published := reviewpub.Published(contradictory)
+			marked := strings.Contains(contradictory, reviewpub.Marker(reviewpub.Approved))
+			// An unpublished report keeps the prose feedback rules. A daemon
+			// publication stamped APPROVED that contradicts itself is an
+			// approval override: requested changes (#2998). A publication with
+			// no verdict (an APPROVED decision beside a labelled severity
+			// finding) is unknown, never repair evidence, so it waits.
+			wantFeedback := !published || marked
+			if got := informalReviewFeedbackConcrete(contradictory); got != wantFeedback {
+				t.Fatalf("contradictory report feedback = %t for published=%t marked=%t, want %t", got, published, marked, wantFeedback)
+			}
+			if got := contradictedDaemonApproval(contradictory); got != (published && marked) {
+				t.Fatalf("approval override = %t for published=%t marked=%t, want %t", got, published, marked, published && marked)
 			}
 		})
 	}

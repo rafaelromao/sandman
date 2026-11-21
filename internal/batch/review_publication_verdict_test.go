@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -352,40 +353,84 @@ func TestReviewPublicationVerdict_ProseVariantsAndContradictions(t *testing.T) {
 }
 
 // A daemon approval whose author-facing prose contradicts it is not an
-// approval, even though the daemon stamped its APPROVED verdict. It is unsure,
-// so the Run waits instead of merging or relaunching for feedback.
-func TestReviewPublicationVerdict_ContradictedDaemonApprovalWaits(t *testing.T) {
+// approval, even though the daemon stamped its APPROVED verdict (#2998). The
+// runtime logs an approval override and treats the report as requested
+// changes: the implementor is relaunched with the report as feedback, also
+// while CI is pending, exactly as for informal feedback.
+func TestReviewPublicationVerdict_ContradictedDaemonApprovalIsRequestedChanges(t *testing.T) {
 	for _, tc := range []struct{ name, decision string }{
 		{"runtime merge prohibition", "## Suggested next steps\nThe surrounding workflow must not merge until the race in worker.go:12 is fixed.\n\n## Decision\n**APPROVED**\n"},
 		{"direct imperative", "## Suggested next steps\nFix the race in `worker.go:12`.\n\n## Decision\n**APPROVED**\n"},
 		{"decision condition", "## Decision\n**APPROVED**\nOnly after the race is fixed.\n"},
+		{"merge only after, no code anchor", "## Suggested next steps\nMerge only after the race is fixed.\n\n## Decision\n**APPROVED**\n"},
 		{"unmet criterion finding", "## Findings\nThe timeout criterion is unmet.\n\n## Decision\n**APPROVED**\n"},
 		{"author directive", "## Summary\nReviewed head abc.\n\n## Suggested next steps\nAuthor should fix worker.go before merging.\n\n## Decision\n**APPROVED**\n"},
 		{"not approved yet in next steps", "## Summary\nReviewed head abc.\n\n## Suggested next steps\nThis is not approved yet.\n\n## Decision\n**APPROVED**\n"},
-		{"nested important finding", "## Summary\nReviewed head abc.\n\n## Findings\n### Spec\n- Important: the timeout criterion is unmet in worker.go.\n\n## Decision\n**APPROVED**\n"},
-		{"blocking finding", "## Findings\n- Blocking: `worker.go:12` drops the request on retry.\n\n## Decision\n**APPROVED**\n"},
 		{"changes requested finding", "## Findings\nChanges requested for the retry loop.\n\n## Decision\n**APPROVED**\n"},
 		{"opposing verdict state in summary", "## Summary\nVerdict: CHANGES_REQUESTED.\n\n## Decision\n**APPROVED**\n"},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			published := reviewpub.Body(tc.decision, "request", "current-sha")
-			if reviewDecisionApprovedBody(published) {
-				t.Fatal("contradicted daemon approval was accepted")
+		marked := reviewpub.Body(tc.decision, "request", "current-sha")
+		legacy := strings.TrimRight(reviewpub.StripMarkers(marked), "\n") + "\n\n" + reviewpub.Identity("request", "current-sha")
+		for form, published := range map[string]string{"marked": marked, "legacy": legacy} {
+			for _, checks := range []string{"pending", "success"} {
+				t.Run(tc.name+"/"+form+"/CI "+checks, func(t *testing.T) {
+					if verdict, ok := reviewpub.PublishedVerdict(published); !ok || verdict != reviewpub.Approved {
+						t.Fatalf("published verdict = %q/%t, want a daemon APPROVED verdict", verdict, ok)
+					}
+					if reviewDecisionApprovedBody(published) {
+						t.Fatal("contradicted daemon approval was accepted")
+					}
+					s, client, pr, workDir, _ := informalApprovalLifecycleFixture(t, "placeholder")
+					client.comments[1].Body = published
+					pr.StatusCheckRollup = checks
+					observed := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+					status, extras, handled := observed.status(), observed.Evidence, observed.handled()
+					if !handled || status != "resume" || extras["gate"] != gateActionableFeedback || extras["reason"] != informalFeedbackReason {
+						t.Fatalf("contradicted daemon approval = %s/%v, want a feedback relaunch", status, extras)
+					}
+					request, _ := extras["review_request"].(map[string]any)
+					if request[approvalOverrideKey] != approvalOverrideStatement {
+						t.Fatalf("review_request = %v, want %s", request, approvalOverrideKey)
+					}
+					if feedback, _ := request["informal_feedback"].([]informalFeedbackEvidence); len(feedback) != 1 || feedback[0].Body != strings.TrimSpace(published) {
+						t.Fatalf("informal_feedback = %v, want the contradicted report", request["informal_feedback"])
+					}
+				})
 			}
-			s, client, pr, workDir, _ := informalApprovalLifecycleFixture(t, "placeholder")
-			client.comments[1].Body = published
-			pr.StatusCheckRollup = "success"
-			observedLifecycle153 := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
-			status, extras, handled := observedLifecycle153.status(), observedLifecycle153.Evidence, observedLifecycle153.handled()
-			if handled && status == "resume" && (extras["reason"] == "REVIEW_APPROVED" || extras["gate"] == gateActionableFeedback) {
-				t.Fatalf("contradicted daemon approval = %s/%v, want neither merge work nor a feedback relaunch", status, extras)
-			}
-		})
+		}
 	}
 	// Harmless runtime and publication remarks do not contradict it.
 	for name, body := range capturedApprovingReports(t) {
 		if publishedApprovalContradicted(body) {
 			t.Errorf("captured approval %s reads as contradicted", name)
 		}
+	}
+}
+
+// An APPROVED decision beside a labelled Blocking or Important finding is an
+// unknown daemon verdict: the daemon stamps no verdict, and an unknown verdict
+// is never repair evidence, so the Run keeps waiting on its request.
+func TestReviewPublicationVerdict_UnknownVerdictBesideSeverityFindingWaits(t *testing.T) {
+	for _, tc := range []struct{ name, decision string }{
+		{"nested important finding", "## Summary\nReviewed head abc.\n\n## Findings\n### Spec\n- Important: the timeout criterion is unmet in worker.go.\n\n## Decision\n**APPROVED**\n"},
+		{"blocking finding", "## Findings\n- Blocking: `worker.go:12` drops the request on retry.\n\n## Decision\n**APPROVED**\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			published := reviewpub.Body(tc.decision, "request", "current-sha")
+			if verdict, ok := reviewpub.PublishedVerdict(published); !ok || verdict != reviewpub.Unknown {
+				t.Fatalf("published verdict = %q/%t, want an unknown daemon verdict", verdict, ok)
+			}
+			if reviewDecisionApprovedBody(published) {
+				t.Fatal("contradicted daemon approval was accepted")
+			}
+			s, client, pr, workDir, _ := informalApprovalLifecycleFixture(t, "placeholder")
+			client.comments[1].Body = published
+			pr.StatusCheckRollup = "success"
+			observed := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+			status, extras, handled := observed.status(), observed.Evidence, observed.handled()
+			if handled && status == "resume" && (extras["reason"] == "REVIEW_APPROVED" || extras["gate"] == gateActionableFeedback) {
+				t.Fatalf("unknown daemon verdict = %s/%v, want neither merge work nor a feedback relaunch", status, extras)
+			}
+		})
 	}
 }

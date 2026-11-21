@@ -119,15 +119,12 @@ func (c *reviewClassification) reviewDecisionApprovalEvidenceFor(request reviewR
 
 func reviewDecisionApprovedBody(body string) bool {
 	// Sandman's own review daemon publishes a closed-set verdict. Trust it;
-	// prose rules remain for every other body and for unknown verdicts.
+	// prose rules remain for every other body and for unknown verdicts. An
+	// approved verdict that its own verdict sections contradict is never an
+	// approval and never judged by the prose rules: it is requested changes
+	// (contradictedDaemonApproval), so approval and override cannot both apply.
 	if verdict, published := reviewpub.PublishedVerdict(body); published && verdict != reviewpub.Unknown {
-		if verdict != reviewpub.Approved {
-			return false
-		}
-		if !publishedApprovalContradicted(body) {
-			return true
-		}
-		// A contradicted daemon approval is judged by the prose rules below.
+		return verdict == reviewpub.Approved && !publishedApprovalContradicted(body)
 	}
 	body = reviewpub.StripMarkers(body)
 	structured := false
@@ -140,6 +137,18 @@ func reviewDecisionApprovedBody(body string) bool {
 	// Ordinary informal approval needs no Decision heading. Keep its stricter
 	// affirmative-prose boundary; section exceptions require a structured verdict.
 	return structured || unambiguousReviewApproval(body)
+}
+
+// contradictedDaemonApproval reports a review daemon publication whose verdict
+// is APPROVED while its Findings, Suggested next steps or Decision contradict
+// it (#2998), for example "Merge only after the race in worker.go is fixed."
+// The runtime logs an approval override and treats the report as requested
+// changes. Reports without a daemon publication, and an unknown daemon
+// verdict, are never overridden: they keep the prose rules and are never
+// repair evidence on this path.
+func contradictedDaemonApproval(body string) bool {
+	verdict, published := reviewpub.PublishedVerdict(body)
+	return published && verdict == reviewpub.Approved && publishedApprovalContradicted(body)
 }
 
 // publishedApprovalContradicted reports author-facing verdict prose that
