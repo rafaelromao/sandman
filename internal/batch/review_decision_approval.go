@@ -7,6 +7,21 @@ import (
 	"github.com/rafaelromao/sandman/internal/reviewpub"
 )
 
+// Allow only bounded adverbs, direct objects, merge targets and ", but"
+// between a merge/approval word and its condition, not an unrelated
+// intervening clause (#2995). Spacing within this machinery is horizontal
+// only: reviewJoinSoftLines deliberately keeps a "\n" at every preserved
+// paragraph, list and heading boundary, and a merge/approval word ending one
+// paragraph must not be read as governing a conjunction that opens the next
+// one.
+const (
+	reviewConditionObject      = `(?:(?:this|the(?:[ \t]+current)?)[ \t]+)?(?:pr|pull[ \t]+request)[ \t]+#[0-9]+|#[0-9]+|(?:this|the(?:[ \t]+current)?)[ \t]+(?:pr|pull[ \t]+request|change|branch)`
+	reviewConditionTarget      = `(?:in|into|to|onto)[ \t]+(?:the[ \t]+)?(?:main|master|trunk|base|(?:(?:default|base|target)[ \t]+)?branch|[A-Za-z][\w./-]*)`
+	reviewConditionModifiers   = `\b(?:[ \t]+(?:it|this|that|safely|now|only|` + reviewConditionObject + `|` + reviewConditionTarget + `)|[ \t]*,[ \t]*but\b)*`
+	reviewConditionSubject     = `\b(?:merg(?:e|ed|ing)|approv(?:e|ed|al)|lgtm)` + reviewConditionModifiers
+	reviewConditionConjunction = `(?:after|once|until|if|when)\b`
+)
+
 var (
 	reviewDecisionApprovalPhrase   = regexp.MustCompile(`(?i)(?:\bapproved\b|\blgtm\b|\blooks?\s+(?:good|great)\b|\b(?:nice|good)\s+work\b|\bthumbs\s+up\b|\+1(?:\s|$)|\bship\s+it\b|\ball\s+(?:good|set)\b|\bgood\s+to\s+go\b|\bno\s+major\s+issues\b|\bminor\s+issues\s+only\b)`)
 	reviewDecisionApprovalNegation = regexp.MustCompile(`(?i)\b(?:not\b|no\s+(?:approval|approved|lgtm)|changes\s+requested|if\b|when\b|once\b|before\b|after\b|provided\b|pending\b|unless\b|until\b|but\b|previous(?:ly)?\b|prior\b|formerly\b|denied\b|rejected\b)`)
@@ -16,15 +31,20 @@ var (
 	reviewFindingMetadata          = regexp.MustCompile(`(?i)^(?:scope|metrics?|files?|cognitive complexity|cyclomatic complexity|coverage|tools used)\s*:`)
 	// A condition contradicts approval only when it governs the approval or
 	// merge ("merge only after ...", "only if X is fixed is this approved").
-	// "Keeps them only if they are http(s)" describes code behaviour (#2939).
-	reviewApprovalContradiction  = regexp.MustCompile(`(?i)\b(?:not\s+(?:yet\s+)?(?:approved|lgtm)|no\s+approval|changes\s+requested|subject\s+to|contingent\b|only\s+(?:if|after|once)\b[^\n.!?]*\b(?:approv(?:e|ed|al)|merg(?:e|ed|ing)|lgtm)\b|before\s+merging|(?:merge|approv(?:e|al)|lgtm)[^\n.!?]*(?:after|once|until|if|when)\b)`)
+	// Third-person "the workflow merges ... when" describes code behavior.
+	reviewApprovalContradiction = regexp.MustCompile(`(?i)\b(?:not\s+(?:yet\s+)?(?:approved|lgtm)|no\s+approval|changes\s+requested|subject\s+to|contingent\b|only\s+(?:if|after|once)\b[^\n.!?]*\b(?:approv(?:e|ed|al)|merg(?:e|ed|ing)|lgtm)\b|before\s+merging|` + reviewConditionSubject + `[ \t]*[,:]?[ \t]+` + reviewConditionConjunction + `)`)
+	// A semicolon normally separates statements. Cross it for a direct
+	// command ("Merge; after ...") or an explicit restriction ("only; after").
+	reviewSemicolonCondition     = regexp.MustCompile(`(?im)(?:(?:^|[.!?;][ \t]+)[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?(?:merge|approve|lgtm)` + reviewConditionModifiers + `|` + reviewConditionSubject + `[ \t]+only)[ \t]*;[ \t]+` + reviewConditionConjunction)
 	reviewMetadataRepair         = regexp.MustCompile(`(?i)\b(?:fix(?:ing)?|address(?:ing)?|repair(?:ing)?|resolve|correct|replace|remove|add|change|use|ensure|update|must|please|needs?|should)\b`)
 	reviewMetricNoConcern        = regexp.MustCompile(`(?i)^(?:the\s+)?metrics?(?:\s+signals?)?\s+(?:do(?:es)?\s+not|did\s+not)\s+(?:demonstrate|show|indicate|establish)\s+(?:(?:a|an|any|new|separate|additional|construct-specific|readability|or|change-risk|correctness|maintainability)\s+)*(?:concerns?|issues?|findings?|risks?)(?:\s+(?:in|for)\s+(?:this|the)\s+(?:diff|change|pull request))?[.!]?$`)
 	reviewMetricScopeExplanation = regexp.MustCompile(`(?i)^(?:the\s+)?metric\s+increase\s+is\s+limited\s+to\s+(?:the\s+)?(?:adapter|changed|existing|new)\s+(?:branch|function|code|scope|path)(?:\s+in\s+this\s+diff)?[.!]?$`)
 	reviewNoFollowup             = regexp.MustCompile(`(?i)^no\s+(?:(?:author\s+)?follow[- ]up|further\s+action)\s+(?:is\s+)?(?:required|needed|necessary)[.!]?$`)
 	reviewCIWaitAdvice           = regexp.MustCompile(`(?i)^(?:await|wait\s+for)\s+(?:the\s+)?(?:(?:pending|required|remaining|current-head)\s+)*(?:ci(?:\s+checks?)?|(?:required\s+)?checks?)(?:\s+to\s+(?:pass|finish|complete|turn\s+green))?(?:\s+before\s+merging)?[.!]?$`)
 	reviewQualityTag             = regexp.MustCompile("`\\[(?:control-flow|functional|OOP|public-api)\\]`")
-	reviewNoChangeStep           = regexp.MustCompile(`(?i)^(?:none(?:\s+required)?|no\s+(?:(?:author|code|implementation|further|additional)\s+)*changes\s+(?:are\s+)?(?:requested|required|needed))[.!]?$`)
+	// "None needed for this PR" is a real daemon paraphrase (#2985) of the
+	// canonical "None required"/"No ... changes requested" no-change openers.
+	reviewNoChangeStep = regexp.MustCompile(`(?i)^(?:none(?:\s+(?:required|needed(?:\s+for\s+this\s+(?:pr|pull\s+request|change))?))?|no\s+(?:(?:author|code|implementation|further|additional)\s+)*changes\s+(?:are\s+)?(?:requested|required|needed))[.!]?$`)
 	// "`[OOP]` rules do not apply" after construct tags are replaced, with an
 	// optional qualifier such as "Stateful".
 	reviewInapplicableRules = regexp.MustCompile(`(?i)^(?:[a-z-]+\s+)?rule\s+rules\s+do\s+not\s+apply\.?$`)
@@ -158,6 +178,11 @@ func publishedApprovalContradicted(body string) bool {
 			continue
 		}
 		text := reviewNegatedChangeRequest.ReplaceAllString(reviewJoinSoftLines(section.text), "no repair declared")
+		// Clause splitting is needed for advice exemptions, but must not hide
+		// a direct condition joined by a semicolon: "Merge only; after ...".
+		if reviewSemicolonCondition.MatchString(reviewDirectiveProse(text)) {
+			return true
+		}
 		for _, clause := range reviewFindingClauses.Split(text, -1) {
 			if strings.TrimSpace(clause) == "" || reviewRuntimeAdvice(clause) || reviewNextStepAdvice(clause) {
 				continue
@@ -189,12 +214,13 @@ func (section reviewApprovalTextSection) permitsApproval() bool {
 	}
 }
 
-// Collect sections independently of their meaning. Nested headings stay inside
-// decision/findings/history sections so they cannot hide a condition or promote
-// a historical verdict into a current approval.
+// Nested headings stay inside governing sections so they cannot hide a
+// condition or promote a historical verdict. A heading inside a descriptive
+// section such as Quality check remains descriptive even if named Findings.
 func collectReviewApprovalSections(body string) []reviewApprovalTextSection {
 	var sections []reviewApprovalTextSection
 	kind, level := "other", 0
+	descriptiveLevel := 0
 	var text strings.Builder
 	flush := func() {
 		sections = append(sections, reviewApprovalTextSection{kind: kind, text: text.String()})
@@ -211,7 +237,17 @@ func collectReviewApprovalSections(body string) []reviewApprovalTextSection {
 			flush()
 			heading := strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
 			var inline string
-			kind, inline = reviewApprovalSection(heading)
+			kind = ""
+			if descriptiveLevel == 0 || nextLevel <= descriptiveLevel {
+				descriptiveLevel = 0
+				kind, inline = reviewApprovalSection(heading)
+				// Only a documented descriptive section below the document
+				// title hides its subheadings; any other title, such as
+				// "Automated code review", may wrap governing sections.
+				if kind == "" && nextLevel > 1 && reviewDescriptiveSection(heading) {
+					descriptiveLevel = nextLevel
+				}
+			}
 			if kind == "" {
 				kind, inline = "other", heading
 			}
@@ -230,15 +266,35 @@ func reviewApprovalSection(heading string) (string, string) {
 		{"Decision", "decision"}, {"Findings", "findings"},
 		{"Suggested next steps", "next-steps"}, {"Previous review progress", "history"},
 	} {
-		if len(heading) < len(named.heading) || !strings.EqualFold(heading[:len(named.heading)], named.heading) {
-			continue
-		}
-		inline := heading[len(named.heading):]
-		if inline == "" || strings.ContainsAny(inline[:1], " :\t-") {
-			return named.section, strings.TrimSpace(strings.TrimLeft(inline, ": \t-"))
+		if inline, ok := reviewHeadingNamed(heading, named.heading); ok {
+			return named.section, inline
 		}
 	}
 	return "", ""
+}
+
+// reviewDescriptiveSection reports the descriptive sections that never veto a
+// published approval (CONTEXT.md, Publication verdict).
+func reviewDescriptiveSection(heading string) bool {
+	for _, name := range []string{"Summary", "Standards", "Spec", "Quality check"} {
+		if _, ok := reviewHeadingNamed(heading, name); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// reviewHeadingNamed matches a case-insensitive section name followed by the
+// end of the heading or a separator, and returns any inline remainder.
+func reviewHeadingNamed(heading, name string) (string, bool) {
+	if len(heading) < len(name) || !strings.EqualFold(heading[:len(name)], name) {
+		return "", false
+	}
+	inline := heading[len(name):]
+	if inline != "" && !strings.ContainsAny(inline[:1], " :\t-") {
+		return "", false
+	}
+	return strings.TrimSpace(strings.TrimLeft(inline, ": \t-")), true
 }
 
 func unambiguousReviewApproval(text string) bool {
@@ -290,8 +346,9 @@ func noReviewFindings(text string) bool {
 	}
 	// Examine the entire section: a leading "None" cannot hide another finding.
 	// Descriptive metric commentary may follow a no-findings statement, but
-	// code-anchored feedback, nested finding headings, and repair directives may not.
-	if strings.Contains(text, "#") || reviewFindingDirective.MatchString(reviewDirectiveProse(text)) {
+	// code-anchored feedback, nested finding headings, and repair directives may
+	// not. An inline issue/PR reference such as "#2976" is not a heading (#2995).
+	if reviewFindingHeading.MatchString(text) || reviewFindingDirective.MatchString(reviewDirectiveProse(text)) {
 		return false
 	}
 	for _, clause := range reviewFindingClauses.Split(text, -1) {
@@ -318,6 +375,7 @@ func reviewProsePermitsApproval(text string) bool {
 	visible := reviewDirectiveProse(reviewJoinSoftLines(text))
 	return !reviewFindingDirective.MatchString(visible) &&
 		!reviewApprovalContradiction.MatchString(visible) &&
+		!reviewSemicolonCondition.MatchString(visible) &&
 		!reviewFindingSeverity.MatchString(visible) &&
 		!reviewHasUnresolvedAssessment(text) &&
 		!reviewOpposingVerdict.MatchString(prose)
