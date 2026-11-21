@@ -480,6 +480,9 @@ func TestInformalApprovalLifecycle_CapturedReports(t *testing.T) {
 			if !handled || status != "resume" || extras["gate"] != gateReadyToMerge || extras["reason"] != "REVIEW_APPROVED" {
 				t.Fatalf("green CI = %s/%v, want approved merge work", status, extras)
 			}
+			if request, _ := extras["review_request"].(map[string]any); request[approvalOverrideKey] != nil {
+				t.Fatalf("an uncontradicted approval carries an approval override: %v", request)
+			}
 		})
 	}
 }

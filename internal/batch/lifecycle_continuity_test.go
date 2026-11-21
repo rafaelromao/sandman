@@ -100,6 +100,26 @@ func TestContinuityDecision_AllowanceIsPerRepairRound(t *testing.T) {
 	}
 }
 
+// continuityFeedbackExtras is the actionable-feedback evidence of one retained
+// informal response, JSON-round-tripped as it is read back from run events.
+func continuityFeedbackExtras(t *testing.T, body string, override bool) map[string]any {
+	t.Helper()
+	request := map[string]any{"trigger_id": "request", "informal_feedback": []informalFeedbackEvidence{{Source: "top_level", ID: "response", Body: body}}}
+	if override {
+		request[approvalOverrideKey] = approvalOverrideStatement
+	}
+	extras := map[string]any{"gate": gateActionableFeedback, "reason": informalFeedbackReason, "head_sha": "head-1", "review_request": request}
+	data, err := json.Marshal(extras)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	return decoded
+}
+
 // A contradicted daemon approval is genuine requested changes (#2998): it
 // keeps the full per-head relaunch allowance instead of stalling on a repeat,
 // and an unresolved head ends the Run with the override as terminal evidence.
@@ -108,23 +128,7 @@ func TestContinuityDecision_AllowanceIsPerRepairRound(t *testing.T) {
 func TestContinuityDecision_ContradictedApprovalIsGenuineRequestedChanges(t *testing.T) {
 	report := reviewpub.Body("## Suggested next steps\nMerge only after the race is fixed.\n\n## Decision\n**APPROVED**\n", "request", "head-1")
 	plain := "Please make the retry loop in `worker.go:12` keep the request."
-	feedback := func(t *testing.T, body string, override bool) map[string]any {
-		t.Helper()
-		request := map[string]any{"trigger_id": "request", "informal_feedback": []informalFeedbackEvidence{{Source: "top_level", ID: "response", Body: body}}}
-		if override {
-			request[approvalOverrideKey] = approvalOverrideStatement
-		}
-		extras := map[string]any{"gate": gateActionableFeedback, "reason": informalFeedbackReason, "head_sha": "head-1", "review_request": request}
-		data, err := json.Marshal(extras)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var decoded map[string]any
-		if err := json.Unmarshal(data, &decoded); err != nil {
-			t.Fatal(err)
-		}
-		return decoded
-	}
+	feedback := continuityFeedbackExtras
 	session := func(extras map[string]any, used int) *runSession {
 		s := &runSession{decisionPRHead: "head-1"}
 		s.lastResumeSignature = resumeSignature(extras, "head-1")
@@ -175,6 +179,49 @@ func TestContinuityDecision_ContradictedApprovalIsGenuineRequestedChanges(t *tes
 		verdict := applyContinuityForTest(session(extras, 1), "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: extras})
 		if verdict.Action != lifecycleAwait {
 			t.Fatalf("flag-only evidence = %v, want evidence derived from the report to decide", verdict.Action)
+		}
+	})
+}
+
+// The approval override stays on the retained review request through every
+// wait that carries it (#2998): an unreadable event log fails closed into a
+// stalled wait, and a restart that finds a recorded stalled signature keeps
+// waiting on that evidence instead of relaunching on it again.
+func TestContinuityDecision_ApprovalOverrideSurvivesLaterWaits(t *testing.T) {
+	report := reviewpub.Body("## Suggested next steps\nMerge only after the race is fixed.\n\n## Decision\n**APPROVED**\n", "request", "head-1")
+	overridden := func(t *testing.T, verdict lifecycleVerdict) {
+		t.Helper()
+		request, _ := verdict.Evidence["review_request"].(map[string]any)
+		if verdict.Action != lifecycleAwait || request[approvalOverrideKey] != approvalOverrideStatement {
+			t.Fatalf("wait = %v/%v, want an await that keeps the approval override", verdict.Action, verdict.Evidence)
+		}
+	}
+	t.Run("unreadable event log", func(t *testing.T) {
+		extras := continuityFeedbackExtras(t, report, true)
+		s := &runSession{deps: runDeps{eventLog: unreadableEventLog{}}, decisionPRHead: "head-1"}
+		overridden(t, applyContinuityForTest(s, "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: extras}))
+	})
+	t.Run("restart with a recorded stalled signature", func(t *testing.T) {
+		extras := continuityFeedbackExtras(t, report, true)
+		log := &spyEventLog{events: []events.Event{
+			{Type: "run.started", RunID: "run", Payload: map[string]any{"branch": "b"}},
+			{Type: "run.await", RunID: "run", Payload: map[string]any{
+				"await": true, "resume_stalled": true, stalledResumesKey: []any{resumeSignature(extras, "head-1")},
+			}},
+		}}
+		s := &runSession{deps: runDeps{eventLog: log}, decisionPRHead: "head-1"}
+		overridden(t, applyContinuityForTest(s, "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: extras}))
+	})
+	t.Run("a pending wait for a new request carries the new request only", func(t *testing.T) {
+		pending := map[string]any{"gate": "pending", "review_request": map[string]any{"trigger_id": "request-2"}}
+		log := &spyEventLog{events: []events.Event{
+			{Type: "run.started", RunID: "run", Payload: map[string]any{"branch": "b"}},
+			{Type: "run.await", RunID: "run", Payload: map[string]any{"await": true, "resume_stalled": true, stalledResumesKey: []any{"earlier"}}},
+		}}
+		s := &runSession{deps: runDeps{eventLog: log}, decisionPRHead: "head-1"}
+		verdict := applyContinuityForTest(s, "b", "run", lifecycleVerdict{Action: lifecycleAwait, Evidence: pending})
+		if request, _ := verdict.Evidence["review_request"].(map[string]any); verdict.Action != lifecycleAwait || request[approvalOverrideKey] != nil {
+			t.Fatalf("wait for a re-request = %v/%v, want the new request without an override", verdict.Action, verdict.Evidence)
 		}
 	})
 }

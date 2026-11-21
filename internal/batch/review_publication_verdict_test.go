@@ -352,23 +352,27 @@ func TestReviewPublicationVerdict_ProseVariantsAndContradictions(t *testing.T) {
 	}
 }
 
+// contradictedDaemonDecisions are daemon decisions that carry the closed-set
+// APPROVED token while their own verdict sections contradict it (#2998).
+var contradictedDaemonDecisions = []struct{ name, decision string }{
+	{"runtime merge prohibition", "## Suggested next steps\nThe surrounding workflow must not merge until the race in worker.go:12 is fixed.\n\n## Decision\n**APPROVED**\n"},
+	{"direct imperative", "## Suggested next steps\nFix the race in `worker.go:12`.\n\n## Decision\n**APPROVED**\n"},
+	{"decision condition", "## Decision\n**APPROVED**\nOnly after the race is fixed.\n"},
+	{"merge only after, no code anchor", "## Suggested next steps\nMerge only after the race is fixed.\n\n## Decision\n**APPROVED**\n"},
+	{"unmet criterion finding", "## Findings\nThe timeout criterion is unmet.\n\n## Decision\n**APPROVED**\n"},
+	{"author directive", "## Summary\nReviewed head abc.\n\n## Suggested next steps\nAuthor should fix worker.go before merging.\n\n## Decision\n**APPROVED**\n"},
+	{"not approved yet in next steps", "## Summary\nReviewed head abc.\n\n## Suggested next steps\nThis is not approved yet.\n\n## Decision\n**APPROVED**\n"},
+	{"changes requested finding", "## Findings\nChanges requested for the retry loop.\n\n## Decision\n**APPROVED**\n"},
+	{"opposing verdict state in summary", "## Summary\nVerdict: CHANGES_REQUESTED.\n\n## Decision\n**APPROVED**\n"},
+}
+
 // A daemon approval whose author-facing prose contradicts it is not an
 // approval, even though the daemon stamped its APPROVED verdict (#2998). The
 // runtime logs an approval override and treats the report as requested
 // changes: the implementor is relaunched with the report as feedback, also
 // while CI is pending, exactly as for informal feedback.
 func TestReviewPublicationVerdict_ContradictedDaemonApprovalIsRequestedChanges(t *testing.T) {
-	for _, tc := range []struct{ name, decision string }{
-		{"runtime merge prohibition", "## Suggested next steps\nThe surrounding workflow must not merge until the race in worker.go:12 is fixed.\n\n## Decision\n**APPROVED**\n"},
-		{"direct imperative", "## Suggested next steps\nFix the race in `worker.go:12`.\n\n## Decision\n**APPROVED**\n"},
-		{"decision condition", "## Decision\n**APPROVED**\nOnly after the race is fixed.\n"},
-		{"merge only after, no code anchor", "## Suggested next steps\nMerge only after the race is fixed.\n\n## Decision\n**APPROVED**\n"},
-		{"unmet criterion finding", "## Findings\nThe timeout criterion is unmet.\n\n## Decision\n**APPROVED**\n"},
-		{"author directive", "## Summary\nReviewed head abc.\n\n## Suggested next steps\nAuthor should fix worker.go before merging.\n\n## Decision\n**APPROVED**\n"},
-		{"not approved yet in next steps", "## Summary\nReviewed head abc.\n\n## Suggested next steps\nThis is not approved yet.\n\n## Decision\n**APPROVED**\n"},
-		{"changes requested finding", "## Findings\nChanges requested for the retry loop.\n\n## Decision\n**APPROVED**\n"},
-		{"opposing verdict state in summary", "## Summary\nVerdict: CHANGES_REQUESTED.\n\n## Decision\n**APPROVED**\n"},
-	} {
+	for _, tc := range contradictedDaemonDecisions {
 		marked := reviewpub.Body(tc.decision, "request", "current-sha")
 		legacy := strings.TrimRight(reviewpub.StripMarkers(marked), "\n") + "\n\n" + reviewpub.Identity("request", "current-sha")
 		for form, published := range map[string]string{"marked": marked, "legacy": legacy} {
@@ -432,5 +436,47 @@ func TestReviewPublicationVerdict_UnknownVerdictBesideSeverityFindingWaits(t *te
 				t.Fatalf("unknown daemon verdict = %s/%v, want neither merge work nor a feedback relaunch", status, extras)
 			}
 		})
+	}
+}
+
+// A daemon APPROVED report is exactly one of an approval and an approval
+// override (#2998): its verdict sections either permit the approval or
+// contradict it, so the runtime never both merges and relaunches on one report,
+// and never judges the contradicted one by the prose rules. Anything that is
+// not a daemon APPROVED (unknown verdicts, changes requested, prose bodies)
+// is never an override.
+func TestReviewPublicationVerdict_ApprovalAndOverrideAreExclusive(t *testing.T) {
+	var bodies []string
+	for _, report := range capturedApprovingReports(t) {
+		prose := reviewpub.StripMarkers(report)
+		bodies = append(bodies, reviewpub.Body(prose, "request", "current-sha"), prose+"\n\n"+reviewpub.Identity("request", "current-sha"), prose)
+	}
+	for _, tc := range contradictedDaemonDecisions {
+		marked := reviewpub.Body(tc.decision, "request", "current-sha")
+		bodies = append(bodies, marked, strings.TrimRight(reviewpub.StripMarkers(marked), "\n")+"\n\n"+reviewpub.Identity("request", "current-sha"), reviewpub.StripMarkers(marked))
+	}
+	for _, decision := range []string{
+		"## Decision\n**CHANGES_REQUESTED**\n",
+		"## Findings\n- Blocking: `worker.go:12` drops the request on retry.\n\n## Decision\n**APPROVED**\n",
+		"## Suggested next steps\nNone needed for this PR. As the PR body says, dependents of issues merged into a non-default base finish `blocked` again until those issues are closed by hand.\n\n## Decision\n**APPROVED**\n",
+		"## Summary\nWrites the shard only if every fetch succeeds.\n\n## Findings\nNone.\n\n## Suggested next steps\nNone.\n\n## Decision\n**APPROVED**\n",
+	} {
+		bodies = append(bodies, reviewpub.Body(decision, "request", "current-sha"), decision)
+	}
+	for _, body := range bodies {
+		verdict, published := reviewpub.PublishedVerdict(body)
+		approved, overridden := reviewDecisionApprovedBody(body), contradictedDaemonApproval(body)
+		if published && verdict == reviewpub.Approved {
+			if approved == overridden {
+				t.Errorf("daemon APPROVED report: approved=%t override=%t, want exactly one:\n%s", approved, overridden, body)
+			}
+			if overridden != publishedApprovalContradicted(body) {
+				t.Errorf("override = %t disagrees with the published contradiction:\n%s", overridden, body)
+			}
+			continue
+		}
+		if overridden {
+			t.Errorf("a body that is not a daemon APPROVED was overridden (verdict %q, published %t):\n%s", verdict, published, body)
+		}
 	}
 }
