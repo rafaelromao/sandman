@@ -96,6 +96,15 @@ func approvalOverridden(feedback []informalFeedbackEvidence) bool {
 	return false
 }
 
+// approvalOverrideInEvidence reports whether resume evidence carries a retained
+// review request that records an approval override. The runtime selects the
+// resume prompt's override directive from it; the prompt never infers it.
+func approvalOverrideInEvidence(evidence map[string]any) bool {
+	request, _ := evidence["review_request"].(map[string]any)
+	statement, _ := request[approvalOverrideKey].(string)
+	return statement != ""
+}
+
 // A structured report's scope table and metrics are not repair evidence. If
 // approval cannot be established, look for feedback in its actual assessment
 // sections instead of turning every backtick in the report into a finding.

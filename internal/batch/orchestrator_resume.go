@@ -95,8 +95,11 @@ func setDefaultEvidence(evidence map[string]any, key string, value any) {
 // byte-identical to today's continuation.
 func (s *runSession) resumePromptFor(taskContent string, evidence map[string]any, reviewTimeout int, ciRepairRequired bool) string {
 	directive := prompt.TaskDirectiveNone
-	if ciRepairRequired {
+	switch {
+	case ciRepairRequired:
 		directive = prompt.TaskDirectiveCIRemediation
+	case approvalOverrideInEvidence(evidence):
+		directive = prompt.TaskDirectiveApprovalOverride
 	}
 	return prompt.ContinuationTaskPromptWithReviewSettings(
 		prompt.TaskWithReviewEvidenceAndDirective(taskContent, evidence, directive),

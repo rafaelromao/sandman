@@ -1645,3 +1645,33 @@ func TestResumePromptFor_CIRepairInstructionsRequireSelectedLifecycleDirective(t
 		t.Fatal("selected CI remediation action did not add corrective prompt instructions")
 	}
 }
+
+// The runtime, not the evidence strings, selects the approval override
+// directive (#2998): a retained request carrying the override relaunches the
+// implementor for requested changes, while plain informal feedback keeps its
+// informal-approval guidance and CI remediation keeps precedence.
+func TestResumePromptFor_ApprovalOverrideSelectsItsOwnDirective(t *testing.T) {
+	s := &runSession{}
+	task := "# Task\n\nDo the work.\n"
+	overridden := map[string]any{
+		"reason": informalFeedbackReason, "gate": gateActionableFeedback,
+		"review_request": map[string]any{"trigger_id": "request", approvalOverrideKey: approvalOverrideStatement},
+	}
+	plain := map[string]any{
+		"reason": informalFeedbackReason, "gate": gateActionableFeedback,
+		"review_request": map[string]any{"trigger_id": "request"},
+	}
+	got := s.resumePromptFor(task, overridden, 0, false)
+	if !strings.Contains(got, "must not be merged on") || strings.Contains(got, "is an eligible informal approval, not feedback") {
+		t.Fatalf("approval override resume prompt:\n%s", got)
+	}
+	got = s.resumePromptFor(task, plain, 0, false)
+	if strings.Contains(got, "must not be merged on") || !strings.Contains(got, "is an eligible informal approval, not feedback") {
+		t.Fatalf("plain informal feedback resume prompt:\n%s", got)
+	}
+	ci := map[string]any{"reason": "CI_FAILURE", "gate": "ci-failure", "review_request": overridden["review_request"]}
+	got = s.resumePromptFor(task, ci, 0, true)
+	if !strings.Contains(got, "Diagnose the concrete failure") || strings.Contains(got, "must not be merged on") {
+		t.Fatalf("CI remediation with a retained override lost precedence:\n%s", got)
+	}
+}
