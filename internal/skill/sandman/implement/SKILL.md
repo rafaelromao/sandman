@@ -39,7 +39,9 @@ You need to follow all steps in this workflow. Make sure you have gone through a
 
 3. **You must reach the PR-created state in every run, even with partial implementation.** Only a merged PR counts as success; an open PR is the durable artifact that lets the next run pick up where this one left off. If you cannot complete all vertical slices in the plan within the run's context window, that is not a reason to keep iterating on TDD — it is a reason to commit what you have, create the PR with the platform's exact closing-reference body for the implementor's open work item, and let the review loop surface the gaps. An open PR with partial implementation is recoverable: the next run continues from the same branch. No PR at all means the work lives only in the local working tree, and the next run starts over from a clean branch.
 
-**Closing-reference body is mandatory.** The PR body MUST contain the platform's exact closing-reference line for the selected work item so the work item closes when the change request merges. A reference buried in prose or using a non-closing keyword is not acceptable and must not be created.
+**Closing-reference body is mandatory.** The PR body MUST contain the platform's exact closing-reference line for the selected work item. The reference links the implemented work item to the change request; whether the tracker closes the work item when the change request merges is the repository's own setting, not this workflow's job. A reference buried in prose or using a non-closing keyword is not acceptable and must not be created.
+
+**Closing keywords belong only in the pull-request body.** Never put a closing keyword (`Closes`, `Fixes`, `Resolves`, or any variant) in a commit message, including merge and self-review fix commits. A closing keyword in a commit message can close the work item later than intended, for example when a feature branch lands on the default branch through a merge commit or a rebase.
 
 **A closing reference and footer are not a description.** Before publication, the body MUST contain a meaningful Summary and actual Verification evidence: explain what changed and why, and report what was actually checked. A body containing only the closing reference and footer, headings with no content, or unfilled placeholders is not publishable. Honor the target repository's pull-request template and conventions: retain and complete every required section, use its equivalent headings where available, and include applicable risks or merge-danger guidance. Do not impose Sandman's example headings on another repository.
 
@@ -113,7 +115,7 @@ git fetch origin "$base_branch"
 
 After setting up the branch, determine whether the issue's work is already complete before running `sandman-plan` or `sandman-tdd`.
 
-A merged change request will, by the tracker's merge rules, automatically close its work item — so there is no need to search for a closing change request separately.
+The tracker's merge rules, not Sandman, decide whether a merged change request also closes its work item, so an open work item does not prove that the work is missing. Compare its acceptance criteria with the fetched base branch below instead of relying on the work item's tracker state alone.
 
 1. Run the platform's "view work item" CLI to read the current state of the open work item.
 2. Run branch freshness check:
@@ -160,6 +162,8 @@ Writing `## Status: already resolved` while a PR is open without a verification 
 Once all tests pass and formatting is clean, derive a subject that the PR title and the commit will share.
 
 Follow the repository's documented commit and title conventions. When none are documented, use Conventional Commits. Pick the most accurate type for the change. Default types: `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`. Append `!` to the type for breaking changes (for example, `feat!:`). Keep the subject to one imperative sentence with no trailing period.
+
+Commit messages never contain closing keywords: the closing reference belongs only in the pull-request body (Hard Rule 3).
 
 For literal shell text, use single quotes and replace each apostrophe with `'\''`; alternatively write the commit message with a file-writing tool and use `git commit -F`. The example below uses the fallback format.
 
@@ -250,7 +254,7 @@ git commit -m "refactor: self-review fixes"
    )
    ```
 
-   Replace every illustrative example and placeholder with facts from this change; the sample is not evidence and must never be copied as a claim. The Summary must say what this change actually does and why, not merely restate its title. Verification must report the actual checks and results, plus known failures/skips and the current-head CI observation (or state that CI is not yet observed). A "not run" entry is an honest status, not a passing check. Include applicable risks or merge-danger guidance and complete any template-required checklist items truthfully. Use the platform's accepted closing-reference form. Do not use a non-closing reference or explanatory prose in its place; a change request that does not auto-close its work item is not acceptable.
+   Replace every illustrative example and placeholder with facts from this change; the sample is not evidence and must never be copied as a claim. The Summary must say what this change actually does and why, not merely restate its title. Verification must report the actual checks and results, plus known failures/skips and the current-head CI observation (or state that CI is not yet observed). A "not run" entry is an honest status, not a passing check. Include applicable risks or merge-danger guidance and complete any template-required checklist items truthfully. Use the platform's accepted closing-reference form. Do not use a non-closing reference or explanatory prose in its place. The reference identifies the implemented work item; the repository decides whether the tracker closes it when the change request merges.
 3. Create the change request with that body. The PR title follows the repository conventions selected in step 4; for the fallback, use the same Conventional Commits header and subject. Apply the repository's title requirements rather than assuming a particular CI check exists.
 
    ```bash

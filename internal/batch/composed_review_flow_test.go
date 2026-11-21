@@ -269,11 +269,6 @@ func (g *composedGitHub) RemoveCommentReaction(context.Context, string, string) 
 
 func (g *composedGitHub) RemoveIssueReaction(context.Context, int, string) error { return nil }
 
-func (g *composedGitHub) CloseIssue(_ context.Context, number int, _ string) error {
-	g.closeIssue(number)
-	return nil
-}
-
 func (g *composedGitHub) ClosePR(context.Context, int) error { return nil }
 
 // composedPoster lands the daemon's publication on the shared PR as the
