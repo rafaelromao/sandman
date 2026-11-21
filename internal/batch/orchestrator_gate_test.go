@@ -3042,8 +3042,8 @@ func TestExternalGate_LateCurrentHeadApprovalResumesMergeWorkBeforeWaiting(t *te
 	if len(factory.created) != 2 {
 		t.Fatalf("agent launches = %d, want 2 (entry resume + in-session resume)", len(factory.created))
 	}
-	if client.editPRBodyCalls != 0 || client.closeIssueCalls != 0 {
-		t.Fatalf("GitHub mutations = edit body %d, close issue %d, want none", client.editPRBodyCalls, client.closeIssueCalls)
+	if client.editPRBodyCalls != 0 || github.IsIssueClosed(client.issues[42]) {
+		t.Fatalf("GitHub mutations = edit body %d, issue state %q, want none and an open work item", client.editPRBodyCalls, client.issues[42].State)
 	}
 	logs, err := eventLog.Read()
 	if err != nil {

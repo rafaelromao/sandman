@@ -3273,7 +3273,7 @@ func (s *runSession) withHeartbeat(ctx context.Context, runID string, attempt in
 // withClosingReferenceGuard repairs an open PR as soon as it becomes visible
 // during an issue run. This keeps an agent from merging a body that only uses
 // a non-closing reference such as "Refs #42". A merged PR is never edited:
-// at that point GitHub cannot apply its auto-close behavior retroactively.
+// its closing reference is verified at completion, not repaired after the fact.
 func (s *runSession) withClosingReferenceGuard(ctx context.Context, branch string, fn func() AgentRunResult) AgentRunResult {
 	if s.issueNumber <= 0 || s.deps.githubClient == nil || strings.TrimSpace(branch) == "" {
 		return fn()
@@ -3331,8 +3331,8 @@ const (
 )
 
 // repairOpenPRClosingReference repairs closing intent only while the PR is
-// open. It rechecks after the edit because an edit that races a merge cannot
-// make GitHub auto-close the issue retroactively.
+// open. It rechecks after the edit because an edit that races a merge no longer
+// repairs the reference; completion verification handles that case.
 func repairOpenPRClosingReference(ctx context.Context, client github.Client, branch string, issueNumber int, errorLog io.Writer) closingGuardOutcome {
 	outcome, _ := repairOpenPRClosingReferenceWithSnapshot(ctx, client, branch, issueNumber, errorLog)
 	return outcome
@@ -4117,12 +4117,9 @@ loop:
 						}
 						// VerifyVerified: drop the conservative backstop;
 						// the oracle proved the issue is already resolved.
+						// The work item itself is left as the team's delivery
+						// flow found it.
 						result.Status = "success"
-						if issue != nil && !github.IsIssueClosed(issue) && s.deps.githubClient != nil {
-							if err := s.deps.githubClient.CloseIssue(ctx, issue.Number, "Closed by sandman — issue already completed."); err != nil {
-								fmt.Fprintf(s.deps.errorLog, "error: close issue %d: %v\n", issue.Number, err)
-							}
-						}
 						break
 					}
 					// VerifyNoSignal: record the chain's checks (if any)
@@ -4140,11 +4137,6 @@ loop:
 					}
 				}
 				result.Status = "success"
-				if alreadyResolved && issue != nil && !github.IsIssueClosed(issue) && s.deps.githubClient != nil {
-					if err := s.deps.githubClient.CloseIssue(ctx, issue.Number, "Closed by sandman — issue already completed."); err != nil {
-						fmt.Fprintf(s.deps.errorLog, "error: close issue %d: %v\n", issue.Number, err)
-					}
-				}
 				break
 			}
 			if github.IsIssueClosed(issue) {
@@ -4154,11 +4146,6 @@ loop:
 			}
 			result.Status = "failure"
 		} else {
-			if alreadyResolved && issue != nil && !github.IsIssueClosed(issue) && s.deps.githubClient != nil {
-				if err := s.deps.githubClient.CloseIssue(ctx, issue.Number, "Closed by sandman — issue already completed."); err != nil {
-					fmt.Fprintf(s.deps.errorLog, "error: close issue %d: %v\n", issue.Number, err)
-				}
-			}
 			if events.RunStatusFromPayload(result.Status).IsSuccess() || alreadyResolved {
 				if issue != nil && s.deps.githubClient != nil {
 					prMerged := checkPRMergedForIssue(ctx, s.deps.githubClient, branch, s.issueNumber)

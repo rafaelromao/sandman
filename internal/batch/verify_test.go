@@ -49,10 +49,10 @@ func TestDefaultVerifyPath_ComparesAgainstTheRunBaseBranch(t *testing.T) {
 	}
 }
 
-// TestRunVerifyPath_DecisionVerifiedTriggersAutoClose pins the only
-// path that auto-closes the orphan PR + issue: Decision returns
-// `Verified`. The PreFilter / CheapGate oracles' abstains are ignored.
-func TestRunVerifyPath_DecisionVerifiedTriggersAutoClose(t *testing.T) {
+// TestRunVerifyPath_DecisionVerifiedReturnsVerified pins the only path
+// that yields VerifyVerified: Decision returns `Verified`. The PreFilter /
+// CheapGate oracles' abstains are ignored.
+func TestRunVerifyPath_DecisionVerifiedReturnsVerified(t *testing.T) {
 	t.Parallel()
 	out, checks := RunVerifyPath(VerifyInput{
 		Issue:     &github.Issue{Number: 42, Body: "## Acceptance criteria\n\n- [ ] go test -run TestX ./internal/x/...\n"},

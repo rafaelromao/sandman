@@ -294,10 +294,6 @@ func (c *fetchIssueErrorClient) RemoveIssueReaction(ctx context.Context, issueNu
 	return nil
 }
 
-func (c *fetchIssueErrorClient) CloseIssue(ctx context.Context, issueNumber int, comment string) error {
-	return nil
-}
-
 func (c *fetchIssueErrorClient) ClosePR(ctx context.Context, prNumber int) error {
 	return nil
 }

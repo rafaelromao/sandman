@@ -107,9 +107,6 @@ func (badgeE2EIssueGitHubClient) RemoveCommentReaction(_ context.Context, _, _ s
 func (badgeE2EIssueGitHubClient) RemoveIssueReaction(_ context.Context, _ int, _ string) error {
 	return nil
 }
-func (badgeE2EIssueGitHubClient) CloseIssue(_ context.Context, _ int, _ string) error {
-	return nil
-}
 func (badgeE2EIssueGitHubClient) ClosePR(_ context.Context, _ int) error {
 	return nil
 }

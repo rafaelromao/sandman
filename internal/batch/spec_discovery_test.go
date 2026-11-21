@@ -161,10 +161,6 @@ func (c *discoveryClient) RemoveIssueReaction(ctx context.Context, issueNumber i
 	return nil
 }
 
-func (c *discoveryClient) CloseIssue(ctx context.Context, issueNumber int, comment string) error {
-	return nil
-}
-
 func (c *discoveryClient) ClosePR(ctx context.Context, prNumber int) error {
 	return nil
 }
@@ -586,10 +582,6 @@ func (b *bareClient) RemoveCommentReaction(ctx context.Context, commentID, react
 }
 
 func (b *bareClient) RemoveIssueReaction(ctx context.Context, issueNumber int, reactionID string) error {
-	return nil
-}
-
-func (b *bareClient) CloseIssue(ctx context.Context, issueNumber int, comment string) error {
 	return nil
 }
 
