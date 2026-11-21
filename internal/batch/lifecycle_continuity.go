@@ -118,24 +118,8 @@ func formalChangesRequested(extras map[string]any) bool {
 	if reason != informalFeedbackReason {
 		return false
 	}
-	request, ok := extras["review_request"]
-	if !ok {
-		return false
-	}
-	data, err := json.Marshal(request)
-	if err != nil {
-		return false
-	}
-	var decoded struct {
-		InformalFeedback []struct {
-			Body string `json:"body"`
-		} `json:"informal_feedback"`
-	}
-	if json.Unmarshal(data, &decoded) != nil {
-		return false
-	}
-	for _, feedback := range decoded.InformalFeedback {
-		if daemonRequestedChanges(feedback.Body) {
+	for _, body := range retainedFeedbackBodies(extras) {
+		if daemonRequestedChanges(body) {
 			return true
 		}
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/reviewpub"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
@@ -1646,31 +1647,39 @@ func TestResumePromptFor_CIRepairInstructionsRequireSelectedLifecycleDirective(t
 	}
 }
 
-// The runtime, not the evidence strings, selects the approval override
-// directive (#2998): a retained request carrying the override relaunches the
-// implementor for requested changes, while plain informal feedback keeps its
-// informal-approval guidance and CI remediation keeps precedence.
+// The runtime selects the approval override directive from the retained
+// report, as the continuity decision does (#2998), not from the
+// approval_override flag next to it: a contradicted daemon approval relaunches
+// the implementor for requested changes, while plain informal feedback keeps
+// its informal-approval guidance and CI remediation keeps precedence.
 func TestResumePromptFor_ApprovalOverrideSelectsItsOwnDirective(t *testing.T) {
 	s := &runSession{}
 	task := "# Task\n\nDo the work.\n"
-	overridden := map[string]any{
-		"reason": informalFeedbackReason, "gate": gateActionableFeedback,
-		"review_request": map[string]any{"trigger_id": "request", approvalOverrideKey: approvalOverrideStatement},
+	contradicted := reviewpub.Body("## Suggested next steps\nMerge only after the race is fixed.\n\n## Decision\n**APPROVED**\n", "request", "head-1")
+	plain := "Please make the retry loop in `worker.go:12` keep the request."
+	for _, tc := range []struct {
+		name         string
+		body         string
+		flag         bool
+		wantOverride bool
+	}{
+		{"contradicted report with the flag", contradicted, true, true},
+		{"contradicted report without the flag", contradicted, false, true},
+		{"plain feedback with a stray flag", plain, true, false},
+		{"plain feedback", plain, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := s.resumePromptFor(task, continuityFeedbackExtras(t, tc.body, tc.flag), 0, false)
+			override := strings.Contains(got, "must not be merged on")
+			informal := strings.Contains(got, "is an eligible informal approval, not feedback")
+			if override != tc.wantOverride || informal == tc.wantOverride {
+				t.Fatalf("override guidance = %t, informal approval guidance = %t, want override %t:\n%s", override, informal, tc.wantOverride, got)
+			}
+		})
 	}
-	plain := map[string]any{
-		"reason": informalFeedbackReason, "gate": gateActionableFeedback,
-		"review_request": map[string]any{"trigger_id": "request"},
-	}
-	got := s.resumePromptFor(task, overridden, 0, false)
-	if !strings.Contains(got, "must not be merged on") || strings.Contains(got, "is an eligible informal approval, not feedback") {
-		t.Fatalf("approval override resume prompt:\n%s", got)
-	}
-	got = s.resumePromptFor(task, plain, 0, false)
-	if strings.Contains(got, "must not be merged on") || !strings.Contains(got, "is an eligible informal approval, not feedback") {
-		t.Fatalf("plain informal feedback resume prompt:\n%s", got)
-	}
-	ci := map[string]any{"reason": "CI_FAILURE", "gate": "ci-failure", "review_request": overridden["review_request"]}
-	got = s.resumePromptFor(task, ci, 0, true)
+	ci := continuityFeedbackExtras(t, contradicted, true)
+	ci["reason"], ci["gate"] = "CI_FAILURE", "ci-failure"
+	got := s.resumePromptFor(task, ci, 0, true)
 	if !strings.Contains(got, "Diagnose the concrete failure") || strings.Contains(got, "must not be merged on") {
 		t.Fatalf("CI remediation with a retained override lost precedence:\n%s", got)
 	}

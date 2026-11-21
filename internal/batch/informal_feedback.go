@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"regexp"
@@ -96,13 +97,44 @@ func approvalOverridden(feedback []informalFeedbackEvidence) bool {
 	return false
 }
 
-// approvalOverrideInEvidence reports whether resume evidence carries a retained
-// review request that records an approval override. The runtime selects the
-// resume prompt's override directive from it; the prompt never infers it.
+// retainedFeedbackBodies decodes the informal feedback bodies of the review
+// request retained in evidence, whether the evidence is in-process or was read
+// back from run events.
+func retainedFeedbackBodies(evidence map[string]any) []string {
+	request, ok := evidence["review_request"]
+	if !ok {
+		return nil
+	}
+	data, err := json.Marshal(request)
+	if err != nil {
+		return nil
+	}
+	var decoded struct {
+		InformalFeedback []struct {
+			Body string `json:"body"`
+		} `json:"informal_feedback"`
+	}
+	if json.Unmarshal(data, &decoded) != nil {
+		return nil
+	}
+	bodies := make([]string, 0, len(decoded.InformalFeedback))
+	for _, feedback := range decoded.InformalFeedback {
+		bodies = append(bodies, feedback.Body)
+	}
+	return bodies
+}
+
+// approvalOverrideInEvidence reports whether resume evidence retains a
+// contradicted daemon approval. The runtime selects the resume prompt's
+// override directive from it. Like the continuity decision, it derives the
+// override from the retained report and never from the approval_override flag.
 func approvalOverrideInEvidence(evidence map[string]any) bool {
-	request, _ := evidence["review_request"].(map[string]any)
-	statement, _ := request[approvalOverrideKey].(string)
-	return statement != ""
+	for _, body := range retainedFeedbackBodies(evidence) {
+		if contradictedDaemonApproval(body) {
+			return true
+		}
+	}
+	return false
 }
 
 // A structured report's scope table and metrics are not repair evidence. If

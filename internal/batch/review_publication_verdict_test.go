@@ -419,23 +419,26 @@ func TestReviewPublicationVerdict_UnknownVerdictBesideSeverityFindingWaits(t *te
 		{"nested important finding", "## Summary\nReviewed head abc.\n\n## Findings\n### Spec\n- Important: the timeout criterion is unmet in worker.go.\n\n## Decision\n**APPROVED**\n"},
 		{"blocking finding", "## Findings\n- Blocking: `worker.go:12` drops the request on retry.\n\n## Decision\n**APPROVED**\n"},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			published := reviewpub.Body(tc.decision, "request", "current-sha")
-			if verdict, ok := reviewpub.PublishedVerdict(published); !ok || verdict != reviewpub.Unknown {
-				t.Fatalf("published verdict = %q/%t, want an unknown daemon verdict", verdict, ok)
-			}
-			if reviewDecisionApprovedBody(published) {
-				t.Fatal("contradicted daemon approval was accepted")
-			}
-			s, client, pr, workDir, _ := informalApprovalLifecycleFixture(t, "placeholder")
-			client.comments[1].Body = published
-			pr.StatusCheckRollup = "success"
-			observed := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
-			status, extras, handled := observed.status(), observed.Evidence, observed.handled()
-			if handled && status == "resume" && (extras["reason"] == "REVIEW_APPROVED" || extras["gate"] == gateActionableFeedback) {
-				t.Fatalf("unknown daemon verdict = %s/%v, want neither merge work nor a feedback relaunch", status, extras)
-			}
-		})
+		marked := reviewpub.Body(tc.decision, "request", "current-sha")
+		legacy := strings.TrimRight(reviewpub.StripMarkers(marked), "\n") + "\n\n" + reviewpub.Identity("request", "current-sha")
+		for form, published := range map[string]string{"marked": marked, "legacy": legacy} {
+			t.Run(tc.name+"/"+form, func(t *testing.T) {
+				if verdict, ok := reviewpub.PublishedVerdict(published); !ok || verdict != reviewpub.Unknown {
+					t.Fatalf("published verdict = %q/%t, want an unknown daemon verdict", verdict, ok)
+				}
+				if reviewDecisionApprovedBody(published) || contradictedDaemonApproval(published) {
+					t.Fatal("an unknown daemon verdict was approved or overridden")
+				}
+				s, client, pr, workDir, _ := informalApprovalLifecycleFixture(t, "placeholder")
+				client.comments[1].Body = published
+				pr.StatusCheckRollup = "success"
+				observed := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
+				status, extras, handled := observed.status(), observed.Evidence, observed.handled()
+				if handled && status == "resume" && (extras["reason"] == "REVIEW_APPROVED" || extras["gate"] == gateActionableFeedback) {
+					t.Fatalf("unknown daemon verdict = %s/%v, want neither merge work nor a feedback relaunch", status, extras)
+				}
+			})
+		}
 	}
 }
 
@@ -461,7 +464,9 @@ func TestReviewPublicationVerdict_ApprovalAndOverrideAreExclusive(t *testing.T) 
 		"## Suggested next steps\nNone needed for this PR. As the PR body says, dependents of issues merged into a non-default base finish `blocked` again until those issues are closed by hand.\n\n## Decision\n**APPROVED**\n",
 		"## Summary\nWrites the shard only if every fetch succeeds.\n\n## Findings\nNone.\n\n## Suggested next steps\nNone.\n\n## Decision\n**APPROVED**\n",
 	} {
-		bodies = append(bodies, reviewpub.Body(decision, "request", "current-sha"), decision)
+		marked := reviewpub.Body(decision, "request", "current-sha")
+		legacy := strings.TrimRight(reviewpub.StripMarkers(marked), "\n") + "\n\n" + reviewpub.Identity("request", "current-sha")
+		bodies = append(bodies, marked, legacy, decision)
 	}
 	for _, body := range bodies {
 		verdict, published := reviewpub.PublishedVerdict(body)

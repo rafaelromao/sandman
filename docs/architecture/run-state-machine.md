@@ -198,7 +198,8 @@ the report as requested changes instead of waiting for a request that cannot
 resolve. It is never an approval, and the prose rules never overrule it, so a
 daemon APPROVED report is exactly one of approved and overridden. The report is
 retained as `informal_feedback`, and the retained `review_request` carries
-`approval_override`, so the Run resumes the same RunID with actionable feedback
+`approval_override` as evidence (the continuity decision and the resume prompt
+derive the override from the retained report, never from the flag), so the Run resumes the same RunID with actionable feedback
 (gate `actionable-feedback`, reason `REVIEW_INFORMAL_FEEDBACK`) while CI is
 pending or green. `run.resumed` (or, when the relaunch happens at scheduler
 re-entry, the ready continuation's `run.capacity_queued`), any wait that
