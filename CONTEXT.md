@@ -169,8 +169,13 @@ GitHub unavailable for a whole
 identities, or blind publication identity) in the wait so observation does not
 relaunch on unchanged evidence;
 a recoverable failure becomes a **continuity hold**.
+One gate/reason/cause table and the AFK-continuity contract enumerate every
+current outcome. ADR-0063 records which sibling changes replace selected holds
+with terminal outcomes; other waits, including in-deadline CI/review, GitHub
+recovery, quota, capacity, `CI_WAIT_TIMEOUT`, and the idle gate without a review
+command, remain unchanged.
 _Avoid_: remediation exhaustion as failure, idle failure.
-_See_: Managed review lifecycle, Publication verdict.
+_See_: Managed review lifecycle, Publication verdict, ADR-0063.
 
 **GitHub recovery window**:
 The bounded wait (`await_reason: github-unavailable`) a Run enters when a

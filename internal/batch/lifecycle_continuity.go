@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/github"
 )
 
 // AFK continuity (issue #2916). A started Run whose pull request is open at
@@ -249,14 +250,6 @@ func (a *reviewFeedbackAllowance) charge(head string) {
 	a.usedByHead[head]++
 }
 
-// exhaustionTerminal reports resume reasons whose exhausted remediation is a
-// permanent failure rather than a wait: unusable CI wait state has no external
-// operation that could resolve it.
-func exhaustionTerminal(extras map[string]any) bool {
-	reason, _ := extras["reason"].(string)
-	return reason == "CI_WAIT_STATE_ERROR"
-}
-
 // continuityHoldPayload reports a wait entered by the AFK-continuity rules
 // (a stalled relaunch or a continuity hold). Such a wait has no operation
 // deadline: its recovery identity is the Run itself.
@@ -316,33 +309,44 @@ func resumeSignaturesEquivalent(left, right string) bool {
 	return a.CIExecutionID == "" || b.CIExecutionID == "" || a.CIExecutionID == b.CIExecutionID
 }
 
-// Lifecycle failure reasons, classified for the AFK-continuity guard. A
-// permanent reason may end a Run whose pull request is open; a recoverable
-// one waits for external recovery instead.
-var lifecycleFailureReasons = map[string]bool{
-	"PULL_REQUEST_CLOSED":                 true,  // closed without merge
-	"PULL_REQUEST_MISSING":                true,  // the implementor never published
-	"REVIEW_REQUEST_REQUIRED":             true,  // no review request was delivered
-	blindReviewRequiredReason:             false, // owned blind review; exhaustion holds
-	"merged-pr-missing-closing-reference": true,  // merged without verifiable completion
-	"CI_WAIT_STATE_ERROR":                 true,  // corrupt CI wait state
-	stateErrorReason:                      true,  // corrupt review state, nothing resolving
-	lookupGateReason:                      true,  // GitHub stayed unavailable for 24 hours
-	githubUnavailableReason:               false, // waits for GitHub to recover
-	"IMPLEMENTOR_ACTION_REQUIRED":         true,  // legacy verification fallback
-	"REMEDIATION_BUDGET_EXHAUSTED":        true,  // requested changes left unrepaired (formal, daemon verdict or approval override)
-	idleGateReason:                        false, // nothing resolving yet; waits like rc2
-	reviewTimeoutReason:                   false, // expired request; waits like rc2
-	"CI_WAIT_TIMEOUT":                     false, // bounded CI wait expired; waits like rc2
-}
+// lifecycleFailureReasons is the failure-reason view of the continuity
+// outcome table: reason -> permanent. A permanent reason may end a Run whose
+// pull request is open; a recoverable one holds instead.
+var lifecycleFailureReasons = continuityOutcomes.failureReasons()
 
 // lifecycleFailureRecoverable reports whether a lifecycle failure reason
-// must wait instead of terminating a Run whose pull request is open at its
+// holds instead of terminating a Run whose pull request is open at its
 // current head. Unknown reasons are permanent: a new terminal reason must be
-// classified here, and the continuity contract test enforces that.
+// classified in the outcome table, and the continuity contract enforces that.
 func lifecycleFailureRecoverable(reason string) bool {
-	permanent, known := lifecycleFailureReasons[reason]
-	return known && !permanent
+	return continuityOutcomes.outcome(continuityRow{reason: reason, cause: causeFailure}) != outcomeTerminal
+}
+
+// failureContinuity applies the classified failure outcome only when the
+// failure belongs to the current open pull-request head. Completion failures,
+// closed/stale pull requests and unknown reasons remain terminal.
+func failureContinuity(table continuityTable, decision lifecycleDecision, failure map[string]any, pr *github.PR, head string) (lifecycleVerdict, bool) {
+	if decision.action != lifecycleFailure || decision.completionFailure ||
+		pr == nil || !strings.EqualFold(strings.TrimSpace(pr.State), "open") ||
+		strings.TrimSpace(head) == "" ||
+		!strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(head)) {
+		return lifecycleVerdict{}, false
+	}
+	cause := decision.cause
+	if cause == "" {
+		cause = causeFailure
+	}
+	row := continuityRow{reason: stringEvidence(failure, "reason"), cause: cause}
+	if cause != causeFailure {
+		row.gate = string(decision.gate)
+	}
+	if table.outcome(row) != outcomeHold {
+		return lifecycleVerdict{}, false
+	}
+	return lifecycleVerdict{
+		Action:   lifecycleAwait,
+		Evidence: continuityHold(failure, string(decision.gate)),
+	}, true
 }
 
 // idleGateAwaitsReview reports an idle-gate owned-work outcome whose only

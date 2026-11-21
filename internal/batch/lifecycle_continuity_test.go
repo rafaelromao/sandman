@@ -9,6 +9,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/paths"
+	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/reviewpub"
 )
 
@@ -224,6 +225,85 @@ func TestContinuityDecision_ApprovalOverrideSurvivesLaterWaits(t *testing.T) {
 			t.Fatalf("wait for a re-request = %v/%v, want the new request without an override", verdict.Action, verdict.Evidence)
 		}
 	})
+}
+
+func TestContinuityRepeatedFormalChangesUsesFailureReasonNotExhaustion(t *testing.T) {
+	evidence := map[string]any{
+		"gate": gateBlindReviewRequired, "reason": actionableFeedbackReason,
+		"next_action":  actionableFeedbackNextAction,
+		"pull_request": continuityPR, "head_sha": continuityProbeHead,
+	}
+	signature := resumeSignature(evidence, continuityProbeHead)
+	session := &runSession{decisionPRHead: continuityProbeHead, lastResumeSignature: signature}
+	verdict := (&lifecycleObserver{runSession: session}).applyContinuity(
+		continuityBranch, "run-formal-feedback", lifecycleVerdict{
+			Action: lifecycleResume, Evidence: cloneLifecycleExtras(evidence),
+		},
+	)
+	if verdict.Action != lifecycleFailure {
+		t.Fatalf("repeated formal changes = %s, want terminal failure", verdict.status())
+	}
+	if got := stringEvidence(verdict.Evidence, "reason"); got != actionableFeedbackReason {
+		t.Fatalf("terminal reason = %q, want %q", got, actionableFeedbackReason)
+	}
+	if got := stringEvidence(verdict.Evidence, "next_action"); got != actionableFeedbackNextAction {
+		t.Fatalf("terminal next action = %q, want %q", got, actionableFeedbackNextAction)
+	}
+	if session.resumeCount >= session.resumeCapFor() {
+		t.Fatalf("fixture exhausted allowance (%d) unexpectedly", session.resumeCount)
+	}
+}
+
+func TestFinalOwnedWorkOutcomeTableIncludesIdleReviewEligibility(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		head          string
+		reviewCommand string
+		wantRowReason string
+		wantAction    lifecycleAction
+	}{
+		{
+			name: "unrequested review with a current head holds",
+			head: "head-1", wantRowReason: idleGateReason, wantAction: lifecycleAwait,
+		},
+		{
+			name: "configured review command is owned work and terminal",
+			head: "head-1", reviewCommand: "/sandman review",
+			wantRowReason: implementorActionRequiredReason, wantAction: lifecycleFailure,
+		},
+		{
+			name:          "unknown head cannot authorize an idle hold",
+			wantRowReason: implementorActionRequiredReason, wantAction: lifecycleFailure,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			evidence := map[string]any{
+				"gate": gateReviewRequestRequired, "reason": idleGateReason,
+				"expected_head_sha": tc.head, "pull_request": continuityPR,
+			}
+			row := finalOwnedWorkContinuityRow(evidence, tc.reviewCommand)
+			if row.reason != tc.wantRowReason {
+				t.Fatalf("final owned-work table reason = %q, want %q", row.reason, tc.wantRowReason)
+			}
+			session := &runSession{
+				decisionPRHead:        tc.head,
+				finalOwnedWorkAttempt: true,
+				renderCfg:             prompt.RenderConfig{ReviewCommand: tc.reviewCommand},
+			}
+			verdict := (&lifecycleObserver{runSession: session}).applyContinuity(
+				continuityBranch, "run-final-owned-work", lifecycleVerdict{
+					Action: lifecycleResume, Evidence: evidence, ImplementorWork: true,
+				},
+			)
+			if verdict.Action != tc.wantAction {
+				t.Fatalf("final owned-work disposition = %s, want action %v", verdict.status(), tc.wantAction)
+			}
+			if tc.wantAction == lifecycleFailure &&
+				(verdict.Evidence["reason"] != idleGateReason || verdict.Evidence["gate"] != nil) {
+				t.Fatalf("terminal owned-work evidence = %v, want original failure reason without gate", verdict.Evidence)
+			}
+		})
+	}
 }
 
 func TestContinuityDecision_AllowanceDoesNotResetAcrossGatesForSameRequest(t *testing.T) {

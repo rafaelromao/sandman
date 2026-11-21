@@ -103,7 +103,9 @@ corpus test. Review-feedback relaunches share one allowance per head across
 waits in the active Run; re-requesting review does not reset it. Other gates
 keep request-and-head rounds. Holds recover under the `hold:<RunID>` identity.
 Every lifecycle reason is classified in one place and
-`TestAFKContinuityContract_*` replays the incidents.
+`TestAFKContinuityContract_*` replays the incidents. ADR-0063 centralizes the
+gate/reason/cause outcomes and names the sibling-owned rows; preserve all other
+rows, including waits for resolving operations and the unchanged CI/idle holds.
 
 - **Event-sourced state**: Run status is a projection over the append-only `.sandman/events.jsonl`, not mutable records. `events.RunState` folds events into current state. If a status looks wrong, start by tracing the relevant event types and the fold/projection logic rather than searching for mutable status fields.
 - **Lifecycle versus artifacts**: `events.RunState.IsTerminal()` is the shared lifecycle predicate for status/history/Portal, archive, cleanup and recovery. Initial `run.queued` admissions tagged `initial_admission: true` are non-terminal; untagged historical records and explicit `terminal_placeholder` skipped records remain terminal. `run.capacity_queued` is non-terminal readiness evidence: started rows remain waiting. Index status and `run.json.status` describe artifacts/compatibility only and cannot authorize terminal operations. Read failures fail closed; missing events remain unknown. Preserve manifest/path validation and terminal outcomes during reclamation.

@@ -820,6 +820,10 @@ func (g *batchStartGate) acquire(ctx context.Context, waiter *batchStartWaiter) 
 // A selected lifecycle action is returned as typed data, separate from gate
 // operation errors; callers do not smuggle observations through sentinels.
 func (g *batchStartGate) acquireObserved(ctx context.Context, waiter *batchStartWaiter, observe func() (rowObservationOutcome, error), interval time.Duration) (awaitOpportunity, rowObservationOutcome, error) {
+	return g.acquireObservedWithBlocked(ctx, waiter, observe, interval, nil)
+}
+
+func (g *batchStartGate) acquireObservedWithBlocked(ctx context.Context, waiter *batchStartWaiter, observe func() (rowObservationOutcome, error), interval time.Duration, blocked func() (rowObservationOutcome, error)) (awaitOpportunity, rowObservationOutcome, error) {
 	acquired := false
 	defer func() {
 		if !acquired {
@@ -843,6 +847,15 @@ func (g *batchStartGate) acquireObserved(ctx context.Context, waiter *batchStart
 		if ok {
 			acquired = true
 			return opportunity, rowObservationOutcome{}, nil
+		}
+		if blocked != nil {
+			outcome, err := blocked()
+			if err != nil {
+				return awaitOpportunity{}, rowObservationOutcome{}, err
+			}
+			if outcome.Kind != rowObservationNone {
+				return awaitOpportunity{}, outcome, nil
+			}
 		}
 		if observe != nil && (wait <= 0 || wait > interval) {
 			wait = interval
@@ -2880,6 +2893,7 @@ type runSession struct {
 	previousRunBatchIDs       map[int]string
 	reuseSession              bool
 	quotaAllowance            usageLimitAllowance
+	outcomeTable              continuityTable
 	identityResolver          *gitIdentityResolver
 	branches                  map[int]string
 	renderCfg                 prompt.RenderConfig
@@ -4206,7 +4220,7 @@ loop:
 				}
 			}
 		}
-		if s.shouldAwaitUsageLimit(result) {
+		if s.usageLimitLifecycleDecision(result).Action != lifecycleNone {
 			// An admitted quota wait preserves ordinary retries. Once the
 			// polling allowance is consumed, those fresh attempts remain usable.
 			break loop
@@ -4274,12 +4288,27 @@ func (s *runSession) finishOperatorStop(result *AgentRunResult, extras map[strin
 }
 
 func (s *runSession) shouldAwaitUsageLimit(result AgentRunResult) bool {
-	return s.isIssueDriven() &&
+	return s.usageLimitLifecycleDecision(result).Action == lifecycleAwait
+}
+
+func (s *runSession) usageLimitLifecycleDecision(result AgentRunResult) lifecycleVerdict {
+	eligible := s.isIssueDriven() &&
 		strategyFor(s.agentCfg.Preset, s.agentCfg.Command).AwaitsUsageLimit() &&
 		result.UsageLimitReached &&
 		!result.ContextExhausted &&
 		!events.RunStatusFromPayload(result.Status).IsSuccess() &&
 		s.quotaAllowance.canWait()
+	if !eligible {
+		return lifecycleVerdict{}
+	}
+	return quotaLifecycleDecision(s.continuityOutcomeTable())
+}
+
+func (s *runSession) continuityOutcomeTable() continuityTable {
+	if s != nil && s.outcomeTable != nil {
+		return s.outcomeTable
+	}
+	return continuityOutcomes
 }
 
 func (s *runSession) restoreHostPathsBeforeExternalGate(wt sandbox.Sandbox) bool {
