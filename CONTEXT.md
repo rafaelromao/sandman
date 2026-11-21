@@ -46,8 +46,9 @@ _Avoid_: synthetic issue run.
 
 **Lifecycle relaunch allowance**:
 The bound on implementation recovery: three relaunches in addition to entry.
-For review feedback, only a previously unseen pull-request head starts a fresh
-repair round. An earlier head keeps its allowance across waits and requests
+For review feedback (formal requested changes, a daemon `changes_requested`
+verdict, informal feedback and an approval override), only a previously unseen
+pull-request head starts a fresh repair round. An earlier head keeps its allowance across waits and requests
 in the active Run. Other gates retain their request-and-head rounds within one
 executor session. Restart recovery and manual continuation start with fresh allowances.
 Ordinary agent retries and the ten-pass review loop retain their separate bounds.
@@ -159,8 +160,9 @@ becomes terminal-failed when the only missing evidence is review, CI, or a revie
 request the runtime did not observe: it waits for external recovery or proceeds
 to merge, wherever v1.0.0-rc.2 would have merged or kept waiting. Terminal
 failure is reserved for classified permanent reasons (closed pull request,
-explicit abort, unverifiable completion, formal requested changes left
-unrepaired, no review request delivered when a review command is configured,
+explicit abort, unverifiable completion, requested changes left unrepaired
+(formal, a daemon `changes_requested` verdict or an approval override), no
+review request delivered when a review command is configured,
 GitHub unavailable for a whole
 **GitHub recovery window**). A stalled relaunch records a
 **resume signature** (gate, reason, live head, request trigger and response
@@ -195,7 +197,14 @@ head; a report bound to another request or head is stale. The runtime trusts
 the verdict additively: reports without it keep the prose approval rules, and an
 unknown verdict is never repair evidence. Only the Findings, Suggested next steps
 and Decision sections may contradict a published approval; descriptive sections
-(Summary, Standards, Spec, Quality check) never veto it.
+(Summary, Standards, Spec, Quality check) never veto it. A contradicted daemon
+approval ("Merge only after X") is an **approval override**: never an approval,
+it is treated as requested changes. The Run resumes with the report as
+`informal_feedback` and `approval_override` on the retained `review_request`
+(recorded in `run.resumed`, in waits carrying that request and in the terminal
+failure evidence), bounded per head, and ends with `REMEDIATION_BUDGET_EXHAUSTED`
+when the implementor cannot resolve it. Eligible approval is still evaluated
+first.
 _See_: Informal approval, AFK continuity.
 
 **Informal approval**:
@@ -212,7 +221,7 @@ blocking.
 _See_: Managed review lifecycle, Informal feedback, Review decision.
 
 **Informal feedback**:
-A retained top-level or inline review response with concrete code feedback that is classified mechanically (code anchor: backtick span, file path, file+line, line reference, or diff hunk line, after boilerplate-only phrasing is excluded) as request-scoped lifecycle evidence. Informal feedback is request-scoped: only current-head responses inside the active request window, without the trigger prefix, produce it; stale, unknown, superseded, trigger, and formal-precedence-bearing responses do not. It is handed to a resumed run as `informal_feedback` inside the retained `review_request` and can only turn a recoverable pending lifecycle into the shared `actionable-feedback` await (bounded by the per-session resume cap) — it never authorizes a merge, approves a request, overrides formal review decisions, or consumes retry budget. References ADR-0052.
+A retained top-level or inline review response with concrete code feedback that is classified mechanically (code anchor: backtick span, file path, file+line, line reference, or diff hunk line, after boilerplate-only phrasing is excluded) as request-scoped lifecycle evidence. Informal feedback is request-scoped: only current-head responses inside the active request window, without the trigger prefix, produce it; stale, unknown, superseded, trigger, and formal-precedence-bearing responses do not. A daemon approval contradicted by its own verdict sections is also retained as informal feedback, with `approval_override`, instead of being classified by code anchor. It is handed to a resumed run as `informal_feedback` inside the retained `review_request` and can only turn a recoverable pending lifecycle into the shared `actionable-feedback` await (bounded by the per-session resume cap) — it never authorizes a merge, approves a request, overrides formal review decisions, or consumes retry budget. References ADR-0052.
 _Avoid_: informal approval, comment classification.
 _See_: Implementation pull-request lifecycle, Review decision.
 

@@ -330,7 +330,7 @@ var lifecycleFailureReasons = map[string]bool{
 	lookupGateReason:                      true,  // GitHub stayed unavailable for 24 hours
 	githubUnavailableReason:               false, // waits for GitHub to recover
 	"IMPLEMENTOR_ACTION_REQUIRED":         true,  // legacy verification fallback
-	"REMEDIATION_BUDGET_EXHAUSTED":        true,  // formal CHANGES_REQUESTED left unrepaired
+	"REMEDIATION_BUDGET_EXHAUSTED":        true,  // requested changes left unrepaired (formal, daemon verdict or approval override)
 	idleGateReason:                        false, // nothing resolving yet; waits like rc2
 	reviewTimeoutReason:                   false, // expired request; waits like rc2
 	"CI_WAIT_TIMEOUT":                     false, // bounded CI wait expired; waits like rc2
