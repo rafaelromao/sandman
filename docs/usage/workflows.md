@@ -107,6 +107,30 @@ explicit abort ends the unfinished parent and its dependents and leaves no
 recoverable continuation. Legacy review evidence is imported only when its
 request and head match; the canonical record then becomes authoritative.
 
+## Work item closure
+
+Sandman never closes work items. A Run that finishes leaves the work item exactly
+as your delivery flow left it, and that includes an already-resolved Run whose
+completion was verified: it finishes with its verified outcome and the work item
+stays open. The GitHub client Sandman uses has no way to close an issue.
+
+Every pull request Sandman publishes still starts with a closing reference
+(`Closes #N`, `Fixes #N` or `Resolves #N`). The reference links the pull
+request to the work item it implements; Sandman requires it, repairs it on open
+pull requests and verifies it at completion. Whether GitHub closes the work item
+when the pull request merges into the default branch is the repository's own
+**Auto-close issues with merged linked pull requests** setting, not Sandman's.
+GitHub never closes an issue from a pull request that merges into another
+branch, so a work item delivered through a feature branch stays open until your
+flow closes it.
+
+Teams that keep issues open after merge (until QA signs them off, until a feature
+branch reaches the default branch, or until the change is deployed) turn that
+setting off under Settings → General → Issues. Agents put closing keywords only
+in the pull-request body, never in commit messages, so an issue does not close
+later when a feature branch lands on the default branch through a merge commit
+or a rebase.
+
 ## Cleaning up
 
 ```bash

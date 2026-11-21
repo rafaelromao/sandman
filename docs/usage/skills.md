@@ -82,6 +82,12 @@ pull-request head. Preserve the selected closing reference and existing
 substantive description, and keep exactly one linked Sandman footer as the final
 content.
 
+The closing reference only links the pull request to the work item it
+implements: Sandman never closes work items, and the repository decides whether
+the tracker closes one when the pull request merges. Agents put closing keywords
+only in the pull-request body, never in commit messages. See
+[Work item closure](workflows.md#work-item-closure).
+
 The compatibility `sandman-pr-review` entrypoint delegates to the same
 standalone review-cycle contract. This keeps standalone composition
 implementation-first, review-cycle-second, and merge-last, while managed runs

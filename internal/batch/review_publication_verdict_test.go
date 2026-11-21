@@ -154,12 +154,31 @@ func TestReviewPublicationVerdict_ProseConditionsGoverningApproval(t *testing.T)
 	if !reviewDecisionApprovedBody(report("The worker writes the shard only if every fetch succeeds, then merges all shards.")) {
 		t.Fatal("a description of code behaviour read as a conditional approval")
 	}
+	// Issue #2995: a condition only contradicts approval when it directly
+	// governs the merge/approval word. Describing already-merged work does not.
+	for _, summary := range []string{
+		"Issues merged into main are closed when GitHub sees the closing keyword.",
+		"The approval flow now waits until CI is green.",
+	} {
+		if !reviewDecisionApprovedBody(report(summary)) {
+			t.Fatalf("description of already-merged work %q read as a conditional approval", summary)
+		}
+	}
 	for _, summary := range []string{
 		"Merge only after the race in worker.go is fixed.",
 		"Only if the race is fixed should this be merged.",
 		"Approve only once the timeout test passes.",
 		"LGTM only if the timeout test passes.",
 		"Approval only after the race is fixed.",
+		"Can be merged once the race in worker.go is fixed.",
+		"Merge when the race in worker.go is fixed.",
+		"Merge this PR after the race in worker.go is fixed.",
+		"Approve once the timeout criterion is met.",
+		"Approved if the flaky test is quarantined.",
+		"LGTM, merge after the migration lands.",
+		"Merge only after the race is fixed.",
+		"Safe to merge if CI is green and the race is fixed.",
+		"Merge only; after fixing the race in worker.go.",
 	} {
 		if reviewDecisionApprovedBody(report(summary)) {
 			t.Fatalf("conditional approval %q accepted", summary)
@@ -169,6 +188,119 @@ func TestReviewPublicationVerdict_ProseConditionsGoverningApproval(t *testing.T)
 	published := reviewpub.Body("## Findings\nNone.\n\n## Suggested next steps\nLGTM only if the timeout test passes.\n\n## Decision\n**APPROVED**\n", "request", "current-sha")
 	if reviewDecisionApprovedBody(published) {
 		t.Fatal("published approval with a conditional LGTM accepted")
+	}
+}
+
+func TestReviewPublicationVerdict_MergeConditionsInSuggestedNextSteps(t *testing.T) {
+	for _, tc := range []struct{ name, steps string }{
+		{"current PR", "No author changes requested. Merge the current PR after the race in worker.go is fixed."},
+		{"numbered PR", "None. Merge PR #3002 once the race in worker.go is fixed."},
+		{"numbered pull request", "None. Merge this pull request #3002 once the race in worker.go is fixed."},
+		{"bare PR number", "None. Merge #3002 once the race in worker.go is fixed."},
+		{"semicolon", "None. Merge only; after fixing the race in worker.go."},
+		{"semicolon without no-change opener", "Merge only; after fixing the race in worker.go."},
+		{"semicolon after merge command", "None. Merge; after the race in worker.go is fixed."},
+		{"merge target", "None. Can be merged into main once the race in worker.go is fixed."},
+		{"merge to target", "None. Merge to main after the race in worker.go is fixed."},
+		{"generic object", "None. Merge the branch after the race in worker.go is fixed."},
+		{"but only", "None. Merge, but only after the race in worker.go is fixed."},
+		// A configured, non-generic merge target is still part of the merge
+		// phrase it governs.
+		{"configured merge target", "None. Can be merged into `release/next` once the race in worker.go is fixed."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prose := "## Suggested next steps\n" + tc.steps + "\n\n## Decision\n**APPROVED**\n"
+			published := reviewpub.Body(prose, "request", "current-sha")
+			if !publishedApprovalContradicted(published) {
+				t.Error("condition did not contradict the published verdict")
+			}
+			for form, body := range map[string]string{
+				"published": published,
+				"legacy":    prose + "\n" + reviewpub.Identity("request", "current-sha"),
+				"prose":     prose,
+			} {
+				if reviewDecisionApprovedBody(body) {
+					t.Errorf("%s: conditional report accepted as approval", form)
+				}
+			}
+		})
+	}
+}
+
+// A merge word ending one Summary paragraph and a conjunction opening the
+// next paragraph are two separate statements, not one governing condition.
+// reviewJoinSoftLines deliberately preserves the paragraph break; the
+// condition-spacing regex must not cross it.
+func TestReviewPublicationVerdict_SummaryParagraphBoundaryDoesNotGovern(t *testing.T) {
+	prose := "## Summary\nThe earlier PR was already merged\n\nWhen an issue is closed, its dependents become eligible.\n\n" +
+		"## Findings\nNone.\n\n## Suggested next steps\nNone.\n\n## Decision\n**APPROVED**\n"
+	published := reviewpub.Body(prose, "request", "current-sha")
+	if publishedApprovalContradicted(published) {
+		t.Fatal("paragraph-separated merge/conjunction read as a governing condition")
+	}
+	for form, body := range map[string]string{
+		"published": published,
+		"legacy":    prose + "\n" + reviewpub.Identity("request", "current-sha"),
+		"prose":     prose,
+	} {
+		if !reviewDecisionApprovedBody(body) {
+			t.Errorf("%s: paragraph-separated description rejected", form)
+		}
+	}
+}
+
+func TestReviewPublicationVerdict_StandaloneAndNestedHeadings(t *testing.T) {
+	// Only the documented descriptive sections hide nested headings; any other
+	// title, including one that does not start with "Review", keeps them governing.
+	for _, wrapper := range []string{
+		"", "# Review\n\n", "## Review\n\n", "## Code review: PR #3002 ##\n\n",
+		"## Automated code review\n\n", "## Sandman review\n\n", "## PR #3002 review\n\n", "## Review summary\n\n", "## Test results\n\n",
+	} {
+		t.Run("governing under "+wrapper, func(t *testing.T) {
+			report := wrapper + "### Suggested next steps\nFix the race in worker.go before merging.\n\n## Decision\n**APPROVED**\n"
+			published := reviewpub.Body(report, "request", "current-sha")
+			legacy := report + "\n" + reviewpub.Identity("request", "current-sha")
+			if !publishedApprovalContradicted(published) || reviewDecisionApprovedBody(published) || reviewDecisionApprovedBody(legacy) {
+				t.Error("governing next steps did not veto the approving report")
+			}
+			if !reviewDecisionApprovedBody(wrapper + "### Decision\n**LGTM**\n") {
+				t.Error("governing prose decision rejected")
+			}
+		})
+	}
+	for _, heading := range []string{"Quality check", "Quality check: local metrics", "Quality check ##", "Summary", "Standards", "Spec"} {
+		t.Run(heading, func(t *testing.T) {
+			report := "## " + heading + "\n### Metrics\n#### Findings\nImportant: complexity above the advisory threshold.\n\n" +
+				"### Suggested next steps\nFix the race in a separate effort.\n\n## Decision\n**APPROVED**\n"
+			published := report + "\n" + reviewpub.Marker(reviewpub.Approved) + "\n" + reviewpub.Identity("request", "current-sha")
+			if publishedApprovalContradicted(published) || !reviewDecisionApprovedBody(published) {
+				t.Fatal("nested quality notes vetoed the published approval")
+			}
+		})
+	}
+}
+
+func TestReviewPublicationVerdict_DescribedMergeInSuggestedNextSteps(t *testing.T) {
+	for _, description := range []string{
+		"The existing workflow merges the current PR; when it does, GitHub closes the linked issue.",
+		"The earlier PR was already merged; when GitHub sees the closing keyword, it closes the issue.",
+		"The existing workflow merges the current PR when the simulator emits its completion event.",
+		"Issues merged into main are closed when GitHub sees the closing keyword.",
+	} {
+		prose := "## Suggested next steps\nNone. " + description + "\n\n## Decision\n**APPROVED**\n"
+		published := reviewpub.Body(prose, "request", "current-sha")
+		if publishedApprovalContradicted(published) {
+			t.Errorf("description %q contradicted the published verdict", description)
+		}
+		for form, body := range map[string]string{
+			"published": published,
+			"legacy":    prose + "\n" + reviewpub.Identity("request", "current-sha"),
+			"prose":     prose,
+		} {
+			if !reviewDecisionApprovedBody(body) {
+				t.Errorf("%s: description %q rejected", form, description)
+			}
+		}
 	}
 }
 
@@ -187,6 +319,9 @@ func TestReviewPublicationVerdict_ProseVariantsAndContradictions(t *testing.T) {
 		{"workflow formal review remark", report("Reviewed head abc.", "No author changes requested. The surrounding workflow should publish a formal APPROVED review and verify remote CI before merging.")},
 		{"negated summary", report("Approval is retained; no code changes requested.", "None.")},
 		{"negated implementation summary", report("No implementation changes requested.", "None.")},
+		// Issue #2995 (PR #2985, comment 7005406716): Suggested next steps that
+		// only describe already-merged work do not contradict the approval.
+		{"described merge until closed by hand", report("Reviewed head abc.", "None needed for this PR. As the PR body says, dependents of issues merged into a non-default base finish `blocked` again until those issues are closed by hand.")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if !reviewDecisionApprovedBody(tc.body) {

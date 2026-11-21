@@ -46,6 +46,10 @@ conventions. When none are documented, use Conventional Commits (for example
 the applicable format; do not assume this repository uses a named CI check or
 release automation.
 
+Closing keywords (`Closes`, `Fixes`, `Resolves`) belong only in the pull-request
+body, never in commit messages; `sandman-implement` owns the closing-reference
+rule and explains why.
+
 ## Execution Checklist
 
 - [ ] Create branch
