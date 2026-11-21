@@ -247,7 +247,6 @@ type Client interface {
 	AddIssueReaction(ctx context.Context, issueNumber int, content string) (string, error)
 	RemoveCommentReaction(ctx context.Context, commentID, reactionID string) error
 	RemoveIssueReaction(ctx context.Context, issueNumber int, reactionID string) error
-	CloseIssue(ctx context.Context, issueNumber int, comment string) error
 	ClosePR(ctx context.Context, prNumber int) error
 }
 

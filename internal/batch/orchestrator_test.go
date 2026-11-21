@@ -175,7 +175,6 @@ type fakeGitHubClient struct {
 	listSubIssuesCalls     []int
 	listSubIssuesErr       error
 	editPRBodyCalls        int
-	closeIssueCalls        int
 	closePRCalls           []int
 	closePRErr             error
 	closePRErrByNumber     map[int]error
@@ -328,11 +327,6 @@ func (f *fakeGitHubClient) RemoveCommentReaction(ctx context.Context, commentID,
 }
 
 func (f *fakeGitHubClient) RemoveIssueReaction(ctx context.Context, issueNumber int, reactionID string) error {
-	return nil
-}
-
-func (f *fakeGitHubClient) CloseIssue(ctx context.Context, issueNumber int, comment string) error {
-	f.closeIssueCalls++
 	return nil
 }
 

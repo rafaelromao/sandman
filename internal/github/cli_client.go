@@ -1721,26 +1721,6 @@ func (c *CLIClient) RemoveIssueReaction(ctx context.Context, issueNumber int, re
 	return nil
 }
 
-// CloseIssue closes a GitHub issue with an optional comment.
-func (c *CLIClient) CloseIssue(ctx context.Context, issueNumber int, comment string) error {
-	owner, repo, err := c.resolveRepo(ctx)
-	if err != nil {
-		return err
-	}
-	args := []string{"issue", "close", fmt.Sprintf("%d", issueNumber), "--repo", fmt.Sprintf("%s/%s", owner, repo)}
-	if comment != "" {
-		args = append(args, "--comment", comment)
-	}
-	callCtx, cancel := c.boundContext(ctx)
-	defer cancel()
-	cmd := c.command(callCtx, "gh", args...)
-	_, err = c.runCmd(callCtx, cmd, "gh issue close")
-	if err != nil {
-		return fmt.Errorf("gh issue close: %w", err)
-	}
-	return nil
-}
-
 // ClosePR closes a pull request without merging it.
 func (c *CLIClient) ClosePR(ctx context.Context, prNumber int) error {
 	if prNumber <= 0 {

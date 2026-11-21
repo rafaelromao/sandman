@@ -10,18 +10,21 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 )
 
-// TestRunSingle_AlreadyResolved_DecisionVerifiedAutoClosesAndClosesIssue
-// pins slice 5's headline behaviour: when the verify chain returns
-// VerifyVerified, the orchestrator flips the run to `success`,
-// closes the issue if open (bypassing the `hasBlockingOpenPR`
-// open-PR backstop on verified outcomes), and surfaces the
-// `verification` payload in the run.finished event.
-func TestRunSingle_AlreadyResolved_DecisionVerifiedAutoClosesAndClosesIssue(t *testing.T) {
+// alreadyResolvedRun drives one issue-driven Run whose Task carries
+// `## Status: already resolved` through the executor in mode. It returns the
+// Run's result, its terminal `run.finished` payload, the fake tracker and how
+// many times the verify path ran, so a test can assert the Run's outcome, that
+// the already-resolved branch was really reached, and the work item's state.
+func alreadyResolvedRun(t *testing.T, mode IssueMode, openPR bool, outcome VerifyOutcome, checks []OracleCheck) (AgentRunResult, map[string]any, *fakeGitHubClient, int) {
+	t.Helper()
 	workDir := t.TempDir()
 	t.Chdir(workDir)
 	branch := "42-fix-bug"
 	wtDir := filepath.Join(workDir, "worktree")
 	rtSandbox := &retrySandbox{workDir: wtDir}
+	if mode == ModeContinue {
+		seedContinuationTask(t, wtDir)
+	}
 
 	oldHeadFn := currentBranchHeadFn
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
@@ -29,17 +32,25 @@ func TestRunSingle_AlreadyResolved_DecisionVerifiedAutoClosesAndClosesIssue(t *t
 
 	oldLookup := lookupOpenPRFn
 	lookupOpenPRFn = func(string) (bool, int, string, error) {
-		return true, 17, "MERGEABLE", nil
+		if openPR {
+			return true, 17, "MERGEABLE", nil
+		}
+		return false, 0, "", nil
 	}
 	t.Cleanup(func() { lookupOpenPRFn = oldLookup })
 
-	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
-	eventLog := &events.JSONLLogger{Path: eventsPath}
+	pr := (*github.PR)(nil)
+	if openPR {
+		pr = &github.PR{Number: 17, State: "open", Merged: false, HeadRefName: branch}
+	}
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug", State: "open"}},
+		prs:    map[string]*github.PR{branch: pr},
+	}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
+	verifyCalls := 0
 	o := NewOrchestrator(
-		&fakeGitHubClient{
-			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
-			prs:    map[string]*github.PR{branch: {Number: 17, State: "open", Merged: false, HeadRefName: branch}},
-		},
+		client,
 		&retryRenderer{result: "rendered prompt"},
 		nil,
 		eventLog,
@@ -51,7 +62,8 @@ func TestRunSingle_AlreadyResolved_DecisionVerifiedAutoClosesAndClosesIssue(t *t
 			taskContent: "## Status: already resolved",
 		}),
 		WithVerifyPath(VerifyPathFunc(func(in VerifyInput) (VerifyOutcome, []OracleCheck) {
-			return VerifyVerified, []OracleCheck{{Name: "decision", Details: map[string]any{"ran": 3}}}
+			verifyCalls++
+			return outcome, checks
 		})),
 	)
 
@@ -65,15 +77,16 @@ func TestRunSingle_AlreadyResolved_DecisionVerifiedAutoClosesAndClosesIssue(t *t
 	}
 	row := RowSpec{
 		IssueNumber: 42,
+		Mode:        mode,
 		Branches:    map[int]string{42: branch},
 		BaseBranch:  "main",
+	}
+	if mode == ModeContinue {
+		row.PreviousRunIDs = map[int]string{42: "prior-run"}
 	}
 	result, started := o.newRunExecutor(t.Context(), bc, &retrySandboxFactory{sandbox: rtSandbox}, nil).Execute(t.Context(), row)
 	if !started {
 		t.Fatal("expected run to start")
-	}
-	if result.Status != "success" {
-		t.Fatalf("status = %q, want success (Decision verified → auto-close path)", result.Status)
 	}
 	logs, err := eventLog.Read()
 	if err != nil {
@@ -88,19 +101,104 @@ func TestRunSingle_AlreadyResolved_DecisionVerifiedAutoClosesAndClosesIssue(t *t
 	if payload == nil {
 		t.Fatalf("run.finished event not found")
 	}
-	verification, ok := payload["verification"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected verification payload, got %T: %+v", payload["verification"], payload)
+	return result, payload, client, verifyCalls
+}
+
+// assertWorkItemStillOpen is a regression pin: the tracker still reports the
+// work item open after the Run finished. The fake tracker has no way to close
+// an issue, so the structural guarantee lives in the github package
+// (TestClientHasNoWayToCloseAnIssue); this keeps a future fake or client from
+// reintroducing a state write unnoticed.
+func assertWorkItemStillOpen(t *testing.T, client *fakeGitHubClient, number int) {
+	t.Helper()
+	issue, err := client.FetchIssue(t.Context(), number)
+	if err != nil {
+		t.Fatalf("fetch issue %d: %v", number, err)
 	}
-	if verification["outcome"] != "Verified" {
-		t.Errorf("outcome = %v, want Verified", verification["outcome"])
+	if github.IsIssueClosed(issue) {
+		t.Fatalf("issue #%d state = %q, want the work item left open by Sandman", number, issue.State)
 	}
-	checks, ok := verification["checks"].([]any)
-	if !ok || len(checks) != 1 {
-		t.Fatalf("checks = %+v, want one element", verification["checks"])
+}
+
+// TestRunSingle_AlreadyResolved_KeepsOutcomeAndLeavesWorkItemOpen pins that an
+// already-resolved Run keeps exactly the outcome it has always had (verified
+// success, verification failure, the conservative open-PR backstop, or a clean
+// no-signal success) and never writes the work item's state. Fresh, override
+// and --continue Runs take different branches of the executor, so every
+// outcome is asserted in every mode.
+func TestRunSingle_AlreadyResolved_KeepsOutcomeAndLeavesWorkItemOpen(t *testing.T) {
+	outcomes := []struct {
+		name             string
+		openPR           bool
+		verify           VerifyOutcome
+		checks           []OracleCheck
+		wantStatus       string
+		wantVerification string // "" = no verification payload
+		wantBlocker      string // "" = no blocker
+	}{
+		{
+			name: "verified", openPR: true, verify: VerifyVerified,
+			checks:     []OracleCheck{{Name: "decision", Details: map[string]any{"ran": 3}}},
+			wantStatus: "success", wantVerification: "Verified",
+		},
+		{
+			name: "failed", openPR: true, verify: VerifyFailed,
+			checks:     []OracleCheck{{Name: "decision", Details: map[string]any{"failed": 1}}},
+			wantStatus: "failure", wantVerification: "Failed",
+		},
+		{
+			name: "no signal with open PR", openPR: true, verify: VerifyNoSignal,
+			wantStatus: "failure", wantBlocker: "open-pr-blocks-already-resolved",
+		},
+		{
+			name: "no signal without open PR", openPR: false, verify: VerifyNoSignal,
+			wantStatus: "success",
+		},
 	}
-	if blocker, ok := payload["blocker"]; ok && blocker != nil {
-		t.Errorf("expected no blocker on Verified path, got %v", blocker)
+	modes := []struct {
+		name string
+		mode IssueMode
+	}{
+		{name: "fresh", mode: ModeFresh},
+		{name: "override", mode: ModeOverride},
+		{name: "continue", mode: ModeContinue},
+	}
+	for _, oc := range outcomes {
+		for _, m := range modes {
+			t.Run(oc.name+"/"+m.name, func(t *testing.T) {
+				result, payload, client, verifyCalls := alreadyResolvedRun(t, m.mode, oc.openPR, oc.verify, oc.checks)
+				if verifyCalls != 1 {
+					t.Fatalf("verify path ran %d times, want exactly once: the already-resolved branch was not reached", verifyCalls)
+				}
+				if result.Status != oc.wantStatus {
+					t.Fatalf("status = %q, want %q", result.Status, oc.wantStatus)
+				}
+				verification, hasVerification := payload["verification"].(map[string]any)
+				if oc.wantVerification == "" {
+					if hasVerification {
+						t.Errorf("expected no verification payload, got %+v", payload["verification"])
+					}
+				} else {
+					if !hasVerification {
+						t.Fatalf("expected verification payload, got %T: %+v", payload["verification"], payload)
+					}
+					if verification["outcome"] != oc.wantVerification {
+						t.Errorf("verification outcome = %v, want %s", verification["outcome"], oc.wantVerification)
+					}
+					if checks, ok := verification["checks"].([]any); !ok || len(checks) != len(oc.checks) {
+						t.Fatalf("verification checks = %+v, want %d element(s)", verification["checks"], len(oc.checks))
+					}
+				}
+				if oc.wantBlocker == "" {
+					if blocker, ok := payload["blocker"]; ok && blocker != nil {
+						t.Errorf("expected no blocker, got %v", blocker)
+					}
+				} else if payload["blocker"] != oc.wantBlocker {
+					t.Errorf("blocker = %v, want %s", payload["blocker"], oc.wantBlocker)
+				}
+				assertWorkItemStillOpen(t, client, 42)
+			})
+		}
 	}
 }
 

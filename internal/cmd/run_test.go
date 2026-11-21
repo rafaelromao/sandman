@@ -215,10 +215,6 @@ func (f *fakeGitHubClient) RemoveIssueReaction(ctx context.Context, issueNumber 
 	return nil
 }
 
-func (f *fakeGitHubClient) CloseIssue(ctx context.Context, issueNumber int, comment string) error {
-	return nil
-}
-
 func (f *fakeGitHubClient) ClosePR(ctx context.Context, prNumber int) error {
 	return nil
 }

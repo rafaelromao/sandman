@@ -51,9 +51,9 @@ type OracleCheck struct {
 }
 
 // VerifyOutcome is the aggregate RunVerifyPath verdict. It maps onto
-// the orchestrator's decision: VerifyVerified triggers auto-close;
-// VerifyFailed maps to `failure`; VerifyNoSignal falls through to the
-// conservative backstop.
+// the orchestrator's decision: VerifyVerified maps to `success` and bypasses
+// the open-PR backstop; VerifyFailed maps to `failure`; VerifyNoSignal falls
+// through to the conservative backstop. None of them changes the work item.
 type VerifyOutcome int
 
 const (
