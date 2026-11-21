@@ -5,6 +5,7 @@ import (
 	"io"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -594,5 +595,72 @@ func TestWaitForTransition_ExhaustedCIWaitTimeoutHoldPersistsOneIntactAwaitPerPo
 		if _, ok := event.Payload["ci_wait"].(map[string]any); !ok {
 			t.Errorf("run.await #%d lost the CI operation evidence: %v", i+1, event.Payload)
 		}
+	}
+}
+
+// An expired review's exhausted hold goes through continuity exactly once, so
+// the stalled signature it records survives into the persisted wait. A second
+// application takes the await branch, which overwrites the new signature with
+// the ledger already persisted, and a restarted executor then relaunches on
+// the unchanged evidence.
+func TestObserve_ExpiredReviewHoldRecordsStalledSignatureAndSurvivesRestart(t *testing.T) {
+	const (
+		runID      = "run-expired-review-ledger"
+		priorStall = "prior-signature"
+	)
+	now := time.Unix(3_000, 0).UTC()
+	workDir := t.TempDir()
+	writeTimedOutReviewRequest(t, workDir)
+	log := &spyEventLog{}
+	for _, event := range []events.Event{
+		{Type: "run.started", RunID: runID, Issue: 42, Timestamp: now.Add(-time.Hour), Payload: map[string]any{"branch": gateTestBranch}},
+		{Type: "run.await", RunID: runID, Issue: 42, Timestamp: now.Add(-time.Minute), Payload: map[string]any{
+			"await": true, "branch": gateTestBranch, "gate": "ready-to-merge", stalledResumesKey: []any{priorStall},
+		}},
+	} {
+		if err := log.Log(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	newSession := func() *runSession {
+		return &runSession{
+			issueNumber: 42,
+			deps: runDeps{
+				githubClient: &fakeGitHubClient{
+					issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+					prs: map[string]*github.PR{gateTestBranch: {
+						Number: 17, State: "open", HeadRefOid: "current-sha", StatusCheckRollup: "success",
+						ReviewDecision: "REVIEW_REQUIRED", MergeStateStatus: "BLOCKED",
+					}},
+				},
+				eventLog: log,
+				errorLog: io.Discard,
+			},
+			renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+			opts: runSessionOptions{
+				now:         func() time.Time { return now },
+				currentHead: func(string) (string, error) { return "current-sha", nil },
+			},
+		}
+	}
+	request := lifecycleObservationRequest{
+		WorkDir: workDir, Branch: gateTestBranch, RunID: runID, HostPathsReady: true, AttemptStatus: "success",
+	}
+
+	exhausted := newSession()
+	exhausted.resumeCount = exhausted.resumeCapFor()
+	held := newLifecycleObserver(exhausted).Observe(context.Background(), request)
+	if held.Action != lifecycleAwait || !continuityHoldPayload(held.Evidence) {
+		t.Fatalf("exhausted expired review = %s/%v, want a continuity hold", held.status(), held.Evidence)
+	}
+	ledger := stalledResumes(held.Evidence)
+	if len(ledger) != 2 || ledger[0] != priorStall || !strings.Contains(ledger[1], reviewTimeoutReason) {
+		t.Fatalf("held stalled ledger = %q, want the prior signature followed by this expiry's own signature", ledger)
+	}
+	exhausted.emitAwait(context.Background(), runID, AgentRunResult{Branch: gateTestBranch}, held.Evidence)
+
+	restarted := newLifecycleObserver(newSession()).Observe(context.Background(), request)
+	if restarted.Action != lifecycleAwait || !continuityHoldPayload(restarted.Evidence) {
+		t.Fatalf("restarted observation of the unchanged expiry = %s/%v, want the hold to persist instead of relaunching", restarted.status(), restarted.Evidence)
 	}
 }

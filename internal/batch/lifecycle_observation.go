@@ -477,6 +477,19 @@ func (o *lifecycleObserver) applyContinuityDisposition(row continuityRow, wait, 
 // retains the existing timeout recovery path; a terminal row ends it before
 // another implementation attempt can launch.
 func (o *lifecycleObserver) applyExpiredReviewOutcome(branch, runID string, verdict lifecycleVerdict) lifecycleVerdict {
+	if terminal, ended := o.expiredReviewTerminal(verdict); ended {
+		return terminal
+	}
+	return o.applyContinuity(branch, runID, verdict)
+}
+
+// expiredReviewTerminal consults the expiry row for an expired review request.
+// It returns the terminal failure when the row ends the Run, and false when the
+// row holds. A hold leaves continuity to the caller: Observe applies it once to
+// the verdict the decision returns, so a decision site that observes through it
+// must not apply it first. A second application takes the await branch and
+// overwrites the stalled signature the first one recorded.
+func (o *lifecycleObserver) expiredReviewTerminal(verdict lifecycleVerdict) (lifecycleVerdict, bool) {
 	originalGate := stringEvidence(verdict.Evidence, "gate")
 	row := continuityRow{
 		gate:   gateReviewTimeout,
@@ -487,7 +500,7 @@ func (o *lifecycleObserver) applyExpiredReviewOutcome(branch, runID string, verd
 		row.reason = reviewTimeoutReason
 	}
 	if o.continuityTable().outcome(row) == outcomeHold {
-		return o.applyContinuity(branch, runID, verdict)
+		return lifecycleVerdict{}, false
 	}
 	evidence := cloneLifecycleExtras(verdict.Evidence)
 	if evidence == nil {
@@ -501,7 +514,7 @@ func (o *lifecycleObserver) applyExpiredReviewOutcome(branch, runID string, verd
 		originalGate = row.gate
 	}
 	evidence["external_gate"] = originalGate
-	return lifecycleVerdict{Action: lifecycleFailure, Evidence: evidence}
+	return lifecycleVerdict{Action: lifecycleFailure, Evidence: evidence}, true
 }
 
 func stringEvidence(evidence map[string]any, key string) string {

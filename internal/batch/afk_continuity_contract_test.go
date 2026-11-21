@@ -2031,22 +2031,22 @@ type lifecycleFailureReferences struct {
 }
 
 var lifecycleReasonAssignmentSources = map[string]bool{
-	"lifecycleRemediationDecision:reason":                                                         true, // Call sites supply classified reason literals/constants.
-	"lifecycleFailureRecoverable:continuityRow.reason=reason":                                     true,
-	"failureContinuity:continuityRow.reason=stringEvidence(failure, \"reason\")":                  true, // The selected failure reason is classified by its caller.
-	"applyContinuity:continuityRow.reason=continuityOutcomeReason(verdict.Evidence, causeStall)":  true, // Resume-signature reasons flow from lifecycle evidence.
-	"applyContinuity:continuityRow.reason=continuityOutcomeReason(verdict.Evidence, cause)":       true,
-	"finalOwnedWorkContinuityRow:continuityRow.reason=reason":                                     true,
-	"applyExpiredReviewOutcome:row.reason":                                                        true, // This preserves the selected, classified expiry reason.
-	"applyExpiredReviewOutcome:field:row.reason=reviewTimeoutReason":                              true, // The fallback is the classified timeout reason.
-	"applyExpiredReviewOutcome:continuityRow.reason=stringEvidence(verdict.Evidence, \"reason\")": true,
-	"githubRecoveryDisposition:continuityRow.reason=githubUnavailableReason":                      true,
-	"recordGitHubLookupFailure:continuityRow.reason=githubUnavailableReason":                      true,
-	"waitForTransition:lifecycleDeadlineReason(gate)":                                             true, // The closed deadline-gate switch returns classified reasons.
-	"decideLifecycleForAttempt:lifecycleDeadlineReason(gate)":                                     true,
-	"stalledAwaitExtras:resumeStalledReason":                                                      true,
-	"githubRecoveryAwait:githubUnavailableReason":                                                 true,
-	"recordGitHubLookupFailure:githubUnavailableReason":                                           true,
+	"lifecycleRemediationDecision:reason":                                                        true, // Call sites supply classified reason literals/constants.
+	"lifecycleFailureRecoverable:continuityRow.reason=reason":                                    true,
+	"failureContinuity:continuityRow.reason=stringEvidence(failure, \"reason\")":                 true, // The selected failure reason is classified by its caller.
+	"applyContinuity:continuityRow.reason=continuityOutcomeReason(verdict.Evidence, causeStall)": true, // Resume-signature reasons flow from lifecycle evidence.
+	"applyContinuity:continuityRow.reason=continuityOutcomeReason(verdict.Evidence, cause)":      true,
+	"finalOwnedWorkContinuityRow:continuityRow.reason=reason":                                    true,
+	"expiredReviewTerminal:row.reason":                                                           true, // This preserves the selected, classified expiry reason.
+	"expiredReviewTerminal:field:row.reason=reviewTimeoutReason":                                 true, // The fallback is the classified timeout reason.
+	"expiredReviewTerminal:continuityRow.reason=stringEvidence(verdict.Evidence, \"reason\")":    true,
+	"githubRecoveryDisposition:continuityRow.reason=githubUnavailableReason":                     true,
+	"recordGitHubLookupFailure:continuityRow.reason=githubUnavailableReason":                     true,
+	"waitForTransition:lifecycleDeadlineReason(gate)":                                            true, // The closed deadline-gate switch returns classified reasons.
+	"decideLifecycleForAttempt:lifecycleDeadlineReason(gate)":                                    true,
+	"stalledAwaitExtras:resumeStalledReason":                                                     true,
+	"githubRecoveryAwait:githubUnavailableReason":                                                true,
+	"recordGitHubLookupFailure:githubUnavailableReason":                                          true,
 }
 
 func lifecycleReasonAssignmentClassified(expression string) bool {
@@ -2293,28 +2293,28 @@ func TestAFKContinuityContract_DirectFailureReasonAssignmentsAreScanned(t *testi
 		t.Fatalf("test probe %q unexpectedly appears in the outcome table", probe)
 	}
 	dynamic := lifecycleFailureReasonReferences(`package batch
-func applyExpiredReviewOutcome(evidence map[string]any, row struct{ reason string }) {
+func expiredReviewTerminal(evidence map[string]any, row struct{ reason string }) {
 	evidence["reason"] = row.reason
 }`)
-	if !dynamic.dynamic["applyExpiredReviewOutcome:row.reason"] ||
-		!lifecycleReasonAssignmentClassified("applyExpiredReviewOutcome:row.reason") {
+	if !dynamic.dynamic["expiredReviewTerminal:row.reason"] ||
+		!lifecycleReasonAssignmentClassified("expiredReviewTerminal:row.reason") {
 		t.Fatalf("table-backed dynamic failure-reason assignment was not scanned and classified: %v", dynamic.dynamic)
 	}
 	unclassifiedDynamic := lifecycleFailureReasonReferences(`package batch
-func applyExpiredReviewOutcome(evidence map[string]any, candidate struct{ reason string }) {
+func expiredReviewTerminal(evidence map[string]any, candidate struct{ reason string }) {
 	evidence["reason"] = candidate.reason
 }`)
-	if !unclassifiedDynamic.dynamic["applyExpiredReviewOutcome:candidate.reason"] ||
-		lifecycleReasonAssignmentClassified("applyExpiredReviewOutcome:candidate.reason") {
+	if !unclassifiedDynamic.dynamic["expiredReviewTerminal:candidate.reason"] ||
+		lifecycleReasonAssignmentClassified("expiredReviewTerminal:candidate.reason") {
 		t.Fatalf("unclassified dynamic reason assignment was not rejected: %v", unclassifiedDynamic.dynamic)
 	}
 	localAlias := lifecycleFailureReasonReferences(`package batch
-func applyExpiredReviewOutcome(evidence map[string]any) {
+func expiredReviewTerminal(evidence map[string]any) {
 	reason := "REVIEW_REQUEST_EXPIRED"
 	evidence["reason"] = reason
 }`)
-	if !localAlias.dynamic["applyExpiredReviewOutcome:reason"] ||
-		lifecycleReasonAssignmentClassified("applyExpiredReviewOutcome:reason") {
+	if !localAlias.dynamic["expiredReviewTerminal:reason"] ||
+		lifecycleReasonAssignmentClassified("expiredReviewTerminal:reason") {
 		t.Fatalf("local reason alias escaped classification: %v", localAlias.dynamic)
 	}
 	shadowedParameter := lifecycleFailureReasonReferences(`package batch
@@ -2329,7 +2329,7 @@ func lifecycleRemediationDecision(reason string, evidence map[string]any) {
 		t.Fatalf("shadowed producer parameter escaped classification: %v", shadowedParameter.dynamic)
 	}
 	mutatedField := lifecycleFailureReasonReferences(`package batch
-func applyExpiredReviewOutcome(evidence map[string]any) {
+func expiredReviewTerminal(evidence map[string]any) {
 	row := continuityRow{reason: reviewTimeoutReason}
 	row.reason = "UNCLASSIFIED_LIFECYCLE_PROBE"
 	evidence["reason"] = row.reason
@@ -2341,17 +2341,17 @@ func applyExpiredReviewOutcome(evidence map[string]any) {
 		t.Fatal("test probe unexpectedly appears in the outcome table")
 	}
 	dynamicField := lifecycleFailureReasonReferences(`package batch
-func applyExpiredReviewOutcome(evidence map[string]any, candidate struct{ reason string }) {
+func expiredReviewTerminal(evidence map[string]any, candidate struct{ reason string }) {
 	row := continuityRow{reason: reviewTimeoutReason}
 	row.reason = candidate.reason
 	evidence["reason"] = row.reason
 }`)
-	if !dynamicField.dynamic["applyExpiredReviewOutcome:field:row.reason=candidate.reason"] ||
-		lifecycleReasonAssignmentClassified("applyExpiredReviewOutcome:field:row.reason=candidate.reason") {
+	if !dynamicField.dynamic["expiredReviewTerminal:field:row.reason=candidate.reason"] ||
+		lifecycleReasonAssignmentClassified("expiredReviewTerminal:field:row.reason=candidate.reason") {
 		t.Fatalf("dynamic reason field source escaped classification: %v", dynamicField.dynamic)
 	}
 	keyedInitializer := lifecycleFailureReasonReferences(`package batch
-func applyExpiredReviewOutcome(evidence map[string]any) {
+func expiredReviewTerminal(evidence map[string]any) {
 	row := continuityRow{reason: "UNCLASSIFIED_LIFECYCLE_PROBE"}
 	evidence["reason"] = row.reason
 }`)
@@ -2359,12 +2359,12 @@ func applyExpiredReviewOutcome(evidence map[string]any) {
 		t.Fatalf("unclassified keyed reason initializer was not scanned: %#v", keyedInitializer)
 	}
 	dynamicInitializer := lifecycleFailureReasonReferences(`package batch
-func applyExpiredReviewOutcome(evidence map[string]any, candidate string) {
+func expiredReviewTerminal(evidence map[string]any, candidate string) {
 	row := continuityRow{reason: candidate}
 	evidence["reason"] = row.reason
 }`)
-	if !dynamicInitializer.dynamic["applyExpiredReviewOutcome:continuityRow.reason=candidate"] ||
-		lifecycleReasonAssignmentClassified("applyExpiredReviewOutcome:continuityRow.reason=candidate") {
+	if !dynamicInitializer.dynamic["expiredReviewTerminal:continuityRow.reason=candidate"] ||
+		lifecycleReasonAssignmentClassified("expiredReviewTerminal:continuityRow.reason=candidate") {
 		t.Fatalf("dynamic keyed reason initializer escaped classification: %v", dynamicInitializer.dynamic)
 	}
 	packageInitializer := lifecycleFailureReasonReferences(`package batch

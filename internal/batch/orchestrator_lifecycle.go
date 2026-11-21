@@ -976,7 +976,11 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 				deadlines = mergeLifecycleDiagnostics(deadlines, s.retainedReviewDiagnostics(ctx, workDir, branch, pr, headSHA))
 				deadlineVerdict := lifecycleVerdict{Action: lifecycleResume, Evidence: deadlines}
 				if gate == gateReviewTimeout {
-					return s.applyExpiredReviewOutcome(branch, runID, deadlineVerdict)
+					// Only the terminal outcome is decided here; on a hold,
+					// Observe applies continuity once to the returned resume.
+					if terminal, ended := s.expiredReviewTerminal(deadlineVerdict); ended {
+						return terminal
+					}
 				}
 				return deadlineVerdict
 			}
