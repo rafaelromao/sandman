@@ -474,7 +474,7 @@ func TestSyncUpgradesUnmanifestedSelfReviewTreeToCodeReview(t *testing.T) {
 	}
 }
 
-func TestSyncInstallsIssueClosingGuardInImplementSkill(t *testing.T) {
+func TestSyncInstallsClosingReferenceGuardInImplementSkill(t *testing.T) {
 	home := t.TempDir()
 
 	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
