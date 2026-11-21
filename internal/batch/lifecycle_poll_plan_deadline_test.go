@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
+	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
@@ -503,5 +504,95 @@ func TestExpiredCIWaitPrecedesInDeadlineReview(t *testing.T) {
 		stringEvidence(waited.Evidence, "reason") != "CI_WAIT_TIMEOUT" {
 		t.Fatalf("foreground expiry of CI with an in-deadline review = %s/%v, want resume/CI_WAIT_TIMEOUT",
 			waited.status(), waited.Evidence)
+	}
+}
+
+// A foreground continuity hold that keeps observing an expired CI operation
+// persists exactly one wait per completed poll, and every persisted wait keeps
+// the operation evidence. The deadline branch must not re-persist a verdict the
+// loop already wrote, and must not write it back without its bounds.
+func TestWaitForTransition_ExhaustedCIWaitTimeoutHoldPersistsOneIntactAwaitPerPoll(t *testing.T) {
+	const (
+		runID = "run-expired-ci-hold"
+		polls = 4
+	)
+	now := time.Unix(2000, 0)
+	workDir := t.TempDir()
+	layout := paths.NewLayout(nil, workDir)
+	pr := continuityProbePR()
+	pr.HeadRefOid = "current-sha"
+	pr.StatusCheckRollup = "pending"
+	log := &spyEventLog{}
+	if err := log.Log(events.Event{
+		Type: "run.started", RunID: runID, Issue: 42, Timestamp: now.Add(-time.Hour),
+		Payload: map[string]any{"branch": continuityBranch},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waits := 0
+	session := &runSession{
+		issueNumber: 42,
+		runID:       runID,
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{continuityBranch: pr}},
+			layout:       layout,
+			eventLog:     log,
+			errorLog:     io.Discard,
+		},
+		opts: runSessionOptions{
+			now:         func() time.Time { return now },
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+			lifecycleWait: func(context.Context, time.Duration) error {
+				waits++
+				if waits == polls {
+					return errLifecycleObservationTestStop
+				}
+				return nil
+			},
+		},
+	}
+	timeoutSeconds := int64(ciWaitTimeout / time.Second)
+	if err := atomicfs.WriteAtomicJSON(filepath.Join(layout.StateDir, "17.ci_wait.json"), ciWaitRegistration{
+		Protocol:             ciWaitProtocol,
+		PullRequest:          pr.Number,
+		HeadSHA:              pr.HeadRefOid,
+		StartedUnixSeconds:   now.Unix() - 2*timeoutSeconds,
+		DeadlineUnixSeconds:  now.Unix() - timeoutSeconds,
+		EffectiveTimeoutSecs: timeoutSeconds,
+	}, 0o600); err != nil {
+		t.Fatalf("write expired CI operation: %v", err)
+	}
+	session.resumeCount = session.resumeCapFor()
+	observer := newLifecycleObserver(session)
+	request := lifecycleObservationRequest{
+		WorkDir: workDir, Branch: continuityBranch, RunID: runID,
+		HostPathsReady: true, AttemptStatus: "success",
+	}
+
+	initial := observer.Observe(context.Background(), request)
+	if initial.Action != lifecycleAwait || !continuityHoldPayload(initial.Evidence) {
+		t.Fatalf("exhausted expired CI = %s/%v, want a continuity hold", initial.status(), initial.Evidence)
+	}
+	session.emitAwait(context.Background(), runID, AgentRunResult{Branch: continuityBranch}, initial.Evidence)
+	before := len(log.snapshot())
+
+	waited := observer.waitForTransition(context.Background(), request, AgentRunResult{Branch: continuityBranch}, initial)
+	if waited.Action != lifecycleAwait || !continuityHoldPayload(waited.Evidence) {
+		t.Fatalf("foreground hold = %s/%v, want it to keep holding", waited.status(), waited.Evidence)
+	}
+
+	var awaits []events.Event
+	for _, event := range log.snapshot()[before:] {
+		if event.Type == "run.await" {
+			awaits = append(awaits, event)
+		}
+	}
+	if want := polls - 1; len(awaits) != want {
+		t.Fatalf("foreground hold persisted %d run.await events over %d polls, want %d (one per completed poll)", len(awaits), polls, want)
+	}
+	for i, event := range awaits {
+		if _, ok := event.Payload["ci_wait"].(map[string]any); !ok {
+			t.Errorf("run.await #%d lost the CI operation evidence: %v", i+1, event.Payload)
+		}
 	}
 }

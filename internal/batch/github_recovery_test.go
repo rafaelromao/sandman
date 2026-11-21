@@ -309,6 +309,99 @@ func TestGitHubRecovery_ForegroundDeadlineReobservationPersistsRecoveryWindow(t 
 	}
 }
 
+// A foreground deadline re-observation that selects a GitHub recovery wait
+// persists it with the retained review or CI operation intact: the wait keeps
+// the prior identity-valid operation and its original deadline, which are
+// judged only after GitHub recovers.
+func TestGitHubRecovery_ForegroundDeadlineReobservationRetainsOperation(t *testing.T) {
+	const head = "current-sha"
+	for _, tc := range []struct {
+		name, key string
+		operation func(now time.Time) map[string]any
+	}{
+		{"expired review request", "review_request", func(now time.Time) map[string]any {
+			deadline := now.Add(-time.Second)
+			return map[string]any{"review_request": map[string]any{
+				"protocol": "review-wait/v1", "repository": "owner/repo", "pull_request": 33,
+				"head_sha": head, "trigger_id": "1001", "trigger_prefix": "/sandman review",
+				"trigger_created_at":    deadline.Add(-10 * time.Minute).Format(time.RFC3339Nano),
+				"confirmed_at":          deadline.Add(-10 * time.Minute).Format(time.RFC3339Nano),
+				"started_unix_seconds":  int(deadline.Unix()) - 600,
+				"deadline_unix_seconds": int(deadline.Unix()), "effective_timeout_seconds": 600,
+				"poll_plan": []int{30},
+			}}
+		}},
+		{"expired CI wait", "ci_wait", func(now time.Time) map[string]any {
+			timeout := int64(ciWaitTimeout / time.Second)
+			evidence, err := ciWaitEvidenceFromRegistration(ciWaitRegistration{
+				Protocol: ciWaitProtocol, PullRequest: 33, HeadSHA: head,
+				StartedUnixSeconds:   now.Unix() - 2*timeout,
+				DeadlineUnixSeconds:  now.Unix() - timeout,
+				EffectiveTimeoutSecs: timeout,
+			}, 33)
+			if err != nil {
+				t.Fatalf("build CI operation: %v", err)
+			}
+			return evidence
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newGitHubRecoveryFixture(t)
+			session := f.session()
+			operation := tc.operation(f.now)
+			session.emitAwait(t.Context(), f.runID, AgentRunResult{Branch: gateTestBranch}, cloneLifecycleExtras(operation))
+			if _, established := newLifecycleObserver(session).priorOperationEvidence(f.runID, gateTestBranch, head); !established {
+				t.Fatal("fixture operation is not identity-valid, so it could never be retained")
+			}
+			persisted := len(f.log.snapshot())
+			sleeps := 0
+			session.opts.lifecycleWait = func(context.Context, time.Duration) error {
+				sleeps++
+				return errLifecycleObservationTestStop
+			}
+			request := lifecycleObservationRequest{
+				WorkDir: t.TempDir(), Branch: gateTestBranch, RunID: f.runID,
+				HostPathsReady: true, AttemptStatus: "success",
+			}
+
+			verdict := newLifecycleObserver(session).waitForTransition(t.Context(), request, AgentRunResult{Branch: gateTestBranch},
+				lifecycleVerdict{Action: lifecycleAwait, Evidence: cloneLifecycleExtras(operation)})
+			if verdict.Action != lifecycleAwait || verdict.Evidence["gate"] != gateGitHubUnavailable {
+				t.Fatalf("foreground observation = %s/%v, want a GitHub recovery wait", verdict.status(), verdict.Evidence)
+			}
+			if _, ok := verdict.Evidence[tc.key]; !ok {
+				t.Fatalf("GitHub recovery wait dropped the retained %s: %v", tc.key, verdict.Evidence)
+			}
+			if sleeps != 1 {
+				t.Fatalf("lifecycle sleeps = %d, want the single hourly sleep", sleeps)
+			}
+
+			var awaits []events.Event
+			for _, event := range f.log.snapshot()[persisted:] {
+				if event.Type == "run.await" {
+					awaits = append(awaits, event)
+				}
+			}
+			if len(awaits) != 1 {
+				t.Fatalf("persisted %d run.await events before the hourly sleep, want exactly the recovery wait", len(awaits))
+			}
+			payload := awaits[0].Payload
+			if payload["gate"] != gateGitHubUnavailable {
+				t.Fatalf("persisted wait gate = %v, want %s", payload["gate"], gateGitHubUnavailable)
+			}
+			if _, ok := payload[tc.key]; !ok {
+				t.Fatalf("persisted recovery wait lost the retained %s: %v", tc.key, payload)
+			}
+			if _, ok := githubRecoveryFromEvidence(payload); !ok {
+				t.Fatalf("persisted recovery wait carries no recovery window: %v", payload)
+			}
+			if retained, established := newLifecycleObserver(f.session()).priorOperationEvidence(f.runID, gateTestBranch, head); !established || retained[tc.key] == nil {
+				t.Fatalf("after restart the established %s is gone: %v established=%t", tc.key, retained, established)
+			}
+		})
+	}
+}
+
 // Before the next hourly attempt, observation neither looks up the pull
 // request nor checks GitHub's status, and the wait evidence is unchanged.
 func TestGitHubRecovery_NoAttemptBeforeNextHour(t *testing.T) {
