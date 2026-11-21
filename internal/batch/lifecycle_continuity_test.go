@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/paths"
+	"github.com/rafaelromao/sandman/internal/reviewpub"
 )
 
 type unreadableEventLog struct{}
@@ -96,6 +98,85 @@ func TestContinuityDecision_AllowanceIsPerRepairRound(t *testing.T) {
 	if verdict.Action != lifecycleResume {
 		t.Fatalf("formal changes on a new head = %v, want a fresh repair round", verdict.Action)
 	}
+}
+
+// A contradicted daemon approval is genuine requested changes (#2998): it
+// keeps the full per-head relaunch allowance instead of stalling on a repeat,
+// and an unresolved head ends the Run with the override as terminal evidence.
+// The decision is derived from the retained report, so it survives evidence
+// that was read back from the event log.
+func TestContinuityDecision_ContradictedApprovalIsGenuineRequestedChanges(t *testing.T) {
+	report := reviewpub.Body("## Suggested next steps\nMerge only after the race is fixed.\n\n## Decision\n**APPROVED**\n", "request", "head-1")
+	plain := "Please make the retry loop in `worker.go:12` keep the request."
+	feedback := func(t *testing.T, body string, override bool) map[string]any {
+		t.Helper()
+		request := map[string]any{"trigger_id": "request", "informal_feedback": []informalFeedbackEvidence{{Source: "top_level", ID: "response", Body: body}}}
+		if override {
+			request[approvalOverrideKey] = approvalOverrideStatement
+		}
+		extras := map[string]any{"gate": gateActionableFeedback, "reason": informalFeedbackReason, "head_sha": "head-1", "review_request": request}
+		data, err := json.Marshal(extras)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		return decoded
+	}
+	session := func(extras map[string]any, used int) *runSession {
+		s := &runSession{decisionPRHead: "head-1"}
+		s.lastResumeSignature = resumeSignature(extras, "head-1")
+		s.feedbackAllowance = &reviewFeedbackAllowance{usedByHead: map[string]int{"head-1": used}}
+		return s
+	}
+
+	t.Run("an unchanged relaunch does not stall", func(t *testing.T) {
+		extras := feedback(t, report, true)
+		verdict := applyContinuityForTest(session(extras, 1), "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: extras})
+		if verdict.Action != lifecycleResume {
+			t.Fatalf("contradicted approval after one unchanged relaunch = %v/%v, want another relaunch", verdict.Action, verdict.Evidence)
+		}
+	})
+	t.Run("an exhausted head ends the Run with the override", func(t *testing.T) {
+		extras := feedback(t, report, true)
+		s := session(extras, defaultAwaitResumeMax)
+		verdict := applyContinuityForTest(s, "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: extras})
+		if verdict.Action != lifecycleFailure || verdict.Evidence["reason"] != "REMEDIATION_BUDGET_EXHAUSTED" {
+			t.Fatalf("exhausted contradicted approval = %v/%v, want the terminal budget failure", verdict.Action, verdict.Evidence)
+		}
+		request, _ := verdict.Evidence["review_request"].(map[string]any)
+		if request[approvalOverrideKey] != approvalOverrideStatement {
+			t.Fatalf("terminal evidence = %v, want %s", verdict.Evidence, approvalOverrideKey)
+		}
+		s.decisionPRHead = "head-2"
+		fresh := applyContinuityForTest(s, "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: extras})
+		if fresh.Action != lifecycleResume {
+			t.Fatalf("contradicted approval on a new head = %v, want a fresh allowance", fresh.Action)
+		}
+	})
+	t.Run("the decision does not depend on the flag", func(t *testing.T) {
+		extras := feedback(t, report, false)
+		verdict := applyContinuityForTest(session(extras, defaultAwaitResumeMax), "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: extras})
+		if verdict.Action != lifecycleFailure {
+			t.Fatalf("contradicted approval evidence = %v, want the terminal budget failure", verdict.Action)
+		}
+	})
+	t.Run("ordinary informal feedback still stalls", func(t *testing.T) {
+		extras := feedback(t, plain, false)
+		verdict := applyContinuityForTest(session(extras, 1), "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: extras})
+		if verdict.Action != lifecycleAwait || verdict.Evidence["reason"] != resumeStalledReason {
+			t.Fatalf("informal feedback after an unchanged relaunch = %v/%v, want a stalled wait", verdict.Action, verdict.Evidence)
+		}
+	})
+	t.Run("a flag without a contradicted report is not requested changes", func(t *testing.T) {
+		extras := feedback(t, plain, true)
+		verdict := applyContinuityForTest(session(extras, 1), "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: extras})
+		if verdict.Action != lifecycleAwait {
+			t.Fatalf("flag-only evidence = %v, want evidence derived from the report to decide", verdict.Action)
+		}
+	})
 }
 
 func TestContinuityDecision_AllowanceDoesNotResetAcrossGatesForSameRequest(t *testing.T) {

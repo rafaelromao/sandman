@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/events"
-	"github.com/rafaelromao/sandman/internal/reviewpub"
 )
 
 // AFK continuity (issue #2916). A started Run whose pull request is open at
@@ -104,9 +103,12 @@ func stallsOnRepeat(extras map[string]any) bool {
 }
 
 // formalChangesRequested reports genuine repair evidence: a formal
-// CHANGES_REQUESTED review, or a review daemon publication whose
-// machine-readable verdict requests changes. Only genuine requested changes
-// keep a terminal outcome once the relaunch allowance cannot address them.
+// CHANGES_REQUESTED review, a review daemon publication whose
+// machine-readable verdict requests changes, or a daemon approval its own
+// verdict sections contradict (an approval override, #2998). Only genuine
+// requested changes keep a terminal outcome once the relaunch allowance cannot
+// address them. The override is derived from the retained report; the
+// approval_override flag next to it is evidence only.
 func formalChangesRequested(extras map[string]any) bool {
 	reason, _ := extras["reason"].(string)
 	if reason == actionableFeedbackReason {
@@ -132,7 +134,7 @@ func formalChangesRequested(extras map[string]any) bool {
 		return false
 	}
 	for _, feedback := range decoded.InformalFeedback {
-		if verdict, published := reviewpub.PublishedVerdict(feedback.Body); published && verdict == reviewpub.ChangesRequested {
+		if daemonRequestedChanges(feedback.Body) {
 			return true
 		}
 	}

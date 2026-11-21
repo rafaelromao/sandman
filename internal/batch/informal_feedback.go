@@ -105,8 +105,8 @@ func informalReviewFeedbackConcrete(body string) bool {
 	// the approval (an approval override, #2998). An unknown daemon verdict is
 	// never repair evidence: when unsure, the run waits instead of relaunching
 	// the implementor.
-	if verdict, published := reviewpub.PublishedVerdict(body); published {
-		return verdict == reviewpub.ChangesRequested || contradictedDaemonApproval(body)
+	if reviewpub.Published(body) {
+		return daemonRequestedChanges(body)
 	}
 	sections := collectReviewApprovalSections(body)
 	structured := false

@@ -151,6 +151,15 @@ func contradictedDaemonApproval(body string) bool {
 	return published && verdict == reviewpub.Approved && publishedApprovalContradicted(body)
 }
 
+// daemonRequestedChanges reports a review daemon publication that requests
+// changes: its verdict says so, or it approves while contradicting itself
+// (contradictedDaemonApproval). It is genuine repair evidence, unlike an
+// unknown daemon verdict.
+func daemonRequestedChanges(body string) bool {
+	verdict, published := reviewpub.PublishedVerdict(body)
+	return published && (verdict == reviewpub.ChangesRequested || contradictedDaemonApproval(body))
+}
+
 // publishedApprovalContradicted reports author-facing verdict prose that
 // contradicts a daemon APPROVED verdict: an opposing verdict ("not approved",
 // "changes requested", CHANGES_REQUESTED), a labelled Blocking or Important
