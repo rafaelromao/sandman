@@ -80,6 +80,72 @@ func TestCIRerunHelperRecordsOneDatabaseIDActionAndConfirmsNewAttempt(t *testing
 	}
 }
 
+func TestCIRerunHelperAcceptsEveryTransientDiagnosisWithOneBoundedRerun(t *testing.T) {
+	for _, diagnosis := range []string{"transient-provider-timeout", "transient-network-timeout", "transient-provider-quota"} {
+		t.Run(diagnosis+" confirms one rerun", func(t *testing.T) {
+			fixture := validCIRerunFixture()
+			got := runCIRerunHelperWithDiagnosis(t, &fixture, diagnosis)
+			if got.exitCode != 0 {
+				t.Fatalf("helper exit=%d stdout=%s stderr=%s", got.exitCode, got.stdout, got.stderr)
+			}
+			var result map[string]any
+			if err := json.Unmarshal([]byte(got.stdout), &result); err != nil {
+				t.Fatalf("parse helper result %q: %v", got.stdout, err)
+			}
+			if result["state"] != "confirmed" || result["diagnosis"] != diagnosis {
+				t.Fatalf("typed result = %#v, want confirmed with diagnosis %q", result, diagnosis)
+			}
+			if len(fixture.Actions) != 1 || !strings.Contains(fixture.Actions[0], "POST") || !strings.Contains(fixture.Actions[0], "/actions/jobs/987654321/rerun") {
+				t.Fatalf("actions=%v, want exactly one POST to the selected job's rerun endpoint", fixture.Actions)
+			}
+			if !strings.Contains(fixture.Calls[len(fixture.Calls)-1], "/actions/runs/12345/jobs") && !strings.Contains(fixture.Calls[len(fixture.Calls)-1], "/actions/runs/12345") {
+				t.Fatalf("rerun was not read back from the workflow run: calls=%v", fixture.Calls)
+			}
+		})
+		t.Run(diagnosis+" waits without mutating while a sibling is active", func(t *testing.T) {
+			fixture := validCIRerunFixture()
+			fixture.Run["status"] = "in_progress"
+			fixture.Jobs = append(fixture.Jobs, map[string]any{
+				"id": 987654322, "run_id": 12345, "run_attempt": 1,
+				"name": "build-macos", "status": "in_progress", "conclusion": nil,
+			})
+			got := runCIRerunHelperWithDiagnosis(t, &fixture, diagnosis)
+			var result map[string]any
+			if err := json.Unmarshal([]byte(got.stdout), &result); err != nil {
+				t.Fatalf("parse helper result %q: %v (stderr %s)", got.stdout, err, got.stderr)
+			}
+			if got.exitCode != 0 || result["state"] != "waiting" || result["diagnosis"] != diagnosis {
+				t.Fatalf("exit=%d result=%#v, want waiting with diagnosis %q", got.exitCode, result, diagnosis)
+			}
+			if len(fixture.Actions) != 0 {
+				t.Fatalf("active workflow was mutated: %v", fixture.Actions)
+			}
+		})
+	}
+}
+
+func TestCIRerunHelperRefusesUnknownAndNonTransientDiagnosesBeforeAnyGitHubCall(t *testing.T) {
+	for _, diagnosis := range []string{
+		"transient-quota", "transient-provider-quotas", "TRANSIENT-PROVIDER-QUOTA",
+		"deterministic-failure", "source-failure", "",
+	} {
+		t.Run("diagnosis="+diagnosis, func(t *testing.T) {
+			fixture := validCIRerunFixture()
+			got := runCIRerunHelperWithDiagnosis(t, &fixture, diagnosis)
+			var result map[string]any
+			if err := json.Unmarshal([]byte(got.stdout), &result); err != nil {
+				t.Fatalf("parse helper result %q: %v (stderr %s)", got.stdout, err, got.stderr)
+			}
+			if got.exitCode != 1 || result["state"] != "refused" || result["reason"] != "transient-diagnosis-required" {
+				t.Fatalf("exit=%d result=%#v, want refused with transient-diagnosis-required", got.exitCode, result)
+			}
+			if len(fixture.Actions) != 0 || len(fixture.Calls) != 0 {
+				t.Fatalf("refused diagnosis reached GitHub: calls=%v actions=%v", fixture.Calls, fixture.Actions)
+			}
+		})
+	}
+}
+
 func TestSyncInstallsCIRecoveryHelperAndImplementationGuidance(t *testing.T) {
 	home := t.TempDir()
 	if err := Sync(SyncOptions{HomeDir: home}); err != nil {
@@ -215,6 +281,11 @@ type ciRerunHelperResult struct {
 
 func runCIRerunHelper(t *testing.T, fixture *ciRerunFixture) ciRerunHelperResult {
 	t.Helper()
+	return runCIRerunHelperWithDiagnosis(t, fixture, "transient-provider-timeout")
+}
+
+func runCIRerunHelperWithDiagnosis(t *testing.T, fixture *ciRerunFixture, diagnosis string) ciRerunHelperResult {
+	t.Helper()
 	root, err := os.MkdirTemp(".", "ci-rerun-test-")
 	if err != nil {
 		t.Fatal(err)
@@ -244,7 +315,7 @@ func runCIRerunHelper(t *testing.T, fixture *ciRerunFixture) ciRerunHelperResult
 	args := []string{
 		"--repository", "owner/repo", "--pull-request", "17", "--head-sha", "source-head-sha",
 		"--tested-sha", "tested-merge-sha", "--run-id", "12345", "--job-id", "987654321",
-		"--diagnosis", "transient-provider-timeout",
+		"--diagnosis", diagnosis,
 	}
 	cmd := exec.Command("sh", append([]string{script}, args...)...)
 	for _, item := range os.Environ() {
