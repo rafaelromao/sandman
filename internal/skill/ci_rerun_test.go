@@ -175,6 +175,7 @@ func TestSyncInstallsCIRecoveryHelperAndImplementationGuidance(t *testing.T) {
 		"transient-provider-quota",
 		"usage-limit or quota error in the failed job's log",
 		"Do not rerun deterministic failures",
+		"the runtime reruns the diagnosed job itself, once an hour, while the Run waits",
 	} {
 		if !strings.Contains(string(skillText), required) {
 			t.Errorf("installed implementation guidance missing %q", required)

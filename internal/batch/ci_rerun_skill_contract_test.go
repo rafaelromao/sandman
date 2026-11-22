@@ -37,3 +37,31 @@ func TestCIRerunDocumentedInvocationProducesRecognizableReceipt(t *testing.T) {
 		}
 	}
 }
+
+// The implement skill tells a managed implementor what the CI recovery window
+// expects of it: after its single diagnosed rerun fails again it returns and
+// leaves later reruns to the runtime. The wording stays behavioral (no
+// internals, no tracker coordinates) and scoped to managed runs.
+func TestCIRerunSkillHandsLaterRerunsToTheRuntime(t *testing.T) {
+	data, err := os.ReadFile("../skill/sandman/implement/SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, required := range []string{
+		"In a Sandman-managed run, the rerun you spend through the helper is your only one for that failed execution.",
+		"If it fails the same way and nothing else needs repair, return at once",
+		"Do not invoke the helper again for that failure, do not look for another way to rerun it, and do not stop the Run:",
+		"the runtime reruns the diagnosed job itself, once an hour, while the Run waits",
+		"A new head or a different failing check is a new failure",
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("implement skill missing the hand-off wording %q", required)
+		}
+	}
+	for _, forbidden := range []string{"CI recovery window", "ci-recovery", "CI_RECOVERY", "ADR-"} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("implement skill names an internal %q", forbidden)
+		}
+	}
+}

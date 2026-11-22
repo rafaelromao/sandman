@@ -75,6 +75,10 @@ type continuityGitHub struct {
 	lookupErr error
 	// runtimeOffset advances the Run's runtime clock.
 	runtimeOffset time.Duration
+	// reruns records the workflow job reruns the runtime submitted.
+	reruns []github.WorkflowRerunRequest
+	// onRerun changes the world as a submitted rerun would.
+	onRerun func(g *continuityGitHub)
 }
 
 func newContinuityGitHub(pr github.PR) *continuityGitHub {
@@ -302,6 +306,9 @@ type continuityScenario struct {
 	// expireAfterFirstAwait advances the managed review clock beyond the
 	// confirmed request's deadline without sleeping.
 	expireAfterFirstAwait bool
+	// launchReceipts[i] is the CI rerun receipt the i-th agent launch reports,
+	// as the implementor's helper call does when it diagnoses a transient failure.
+	launchReceipts map[int]ciRerunActionEvidence
 	// noReviewCommand runs without a delegated review command.
 	noReviewCommand bool
 	// blindReview selects the explicitly empty-command capability, rather than
@@ -433,7 +440,11 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 		} else if g.mergeable() {
 			g.merge()
 		}
-		return AgentRunResult{IssueNumber: issue.Number, Status: status, Branch: branch}
+		result := AgentRunResult{IssueNumber: issue.Number, Status: status, Branch: branch}
+		if receipt, ok := sc.launchReceipts[index]; ok {
+			result.ciRerunAction = &receipt
+		}
+		return result
 	}}
 	errStop := errors.New("operator stopped the scenario")
 	log := &spyEventLog{}
