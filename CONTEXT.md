@@ -161,13 +161,17 @@ request the runtime did not observe: it waits for external recovery or proceeds
 to merge, wherever v1.0.0-rc.2 would have merged or kept waiting. Terminal
 failure is reserved for classified permanent reasons (closed pull request,
 explicit abort, unverifiable completion, requested changes left unrepaired
-(formal, a daemon `changes_requested` verdict or an approval override), no
-review request delivered when a review command is configured,
+(formal, a daemon `changes_requested` verdict or an approval override),
+informal review feedback a relaunch left unchanged (`REVIEW_FEEDBACK_STALLED`),
+no review request delivered when a review command is configured,
 GitHub unavailable for a whole
 **GitHub recovery window**). A stalled relaunch records a
 **resume signature** (gate, reason, live head, request trigger and response
-identities, or blind publication identity) in the wait so observation does not
-relaunch on unchanged evidence;
+identities, or blind publication identity) so observation does not relaunch on
+unchanged evidence: it waits in the wait's `stalled_resumes`, except informal
+review feedback, whose stall ends the Run (the terminal evidence carries the
+signature as `stalled_resume`, and a Run an earlier binary parked on that hold
+ends the same way on its next observation);
 a recoverable failure becomes a **continuity hold**.
 One gate/reason/cause table and the AFK-continuity contract enumerate every
 current outcome. ADR-0063 records which sibling changes replace selected holds
@@ -242,7 +246,7 @@ blocking.
 _See_: Managed review lifecycle, Informal feedback, Review decision.
 
 **Informal feedback**:
-A retained top-level or inline review response with concrete code feedback that is classified mechanically (code anchor: backtick span, file path, file+line, line reference, or diff hunk line, after boilerplate-only phrasing is excluded) as request-scoped lifecycle evidence. Informal feedback is request-scoped: only current-head responses inside the active request window, without the trigger prefix, produce it; stale, unknown, superseded, trigger, and formal-precedence-bearing responses do not. A daemon approval contradicted by its own verdict sections is also retained as informal feedback, with `approval_override`, instead of being classified by code anchor. It is handed to a resumed run as `informal_feedback` inside the retained `review_request` and can only turn a recoverable pending lifecycle into the shared `actionable-feedback` await (bounded by the per-session resume cap; an approval override is bounded per head instead, see Publication verdict) — it never authorizes a merge, approves a request, overrides formal review decisions, or consumes retry budget. References ADR-0052.
+A retained top-level or inline review response with concrete code feedback that is classified mechanically (code anchor: backtick span, file path, file+line, line reference, or diff hunk line, after boilerplate-only phrasing is excluded) as request-scoped lifecycle evidence. Informal feedback is request-scoped: only current-head responses inside the active request window, without the trigger prefix, produce it; stale, unknown, superseded, trigger, and formal-precedence-bearing responses do not. A daemon approval contradicted by its own verdict sections is also retained as informal feedback, with `approval_override`, instead of being classified by code anchor. It is handed to a resumed run as `informal_feedback` inside the retained `review_request` and can only turn a recoverable pending lifecycle into the shared `actionable-feedback` await (bounded by the per-session resume cap; an approval override is bounded per head instead, see Publication verdict) — it never authorizes a merge, approves a request, overrides formal review decisions, or consumes retry budget. A feedback relaunch that leaves the head, the review request and its responses unchanged found nothing the implementor could do: the Run ends with `REVIEW_FEEDBACK_STALLED` instead of waiting. Its evidence names the feedback (source, locator, body) and the stalled resume signature (`stalled_resume`), and its next action tells the operator to inspect the feedback, address or answer it, and continue with `sandman run --continue`. A Run an earlier binary parked on a stalled-feedback hold ends the same way on its next observation, because its recorded stalled signatures prove the stall. Genuine requested changes (formal, a daemon `changes_requested` verdict, an approval override) are not stalled feedback and keep their per-head allowance. References ADR-0052, ADR-0063.
 _Avoid_: informal approval, comment classification.
 _See_: Implementation pull-request lifecycle, Review decision.
 

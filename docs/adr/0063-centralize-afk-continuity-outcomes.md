@@ -43,13 +43,27 @@ change can flip only its assigned row.
 | #2995 | No continuity-row flip: descriptive merge prose no longer contradicts an otherwise approving daemon verdict | Existing approval classification | Keep approval eligible for merge |
 | #2997 | `actionable-feedback` / `REVIEW_CHANGES_REQUESTED` / allowance used | Terminal after the configured round is exhausted | Keep terminal; scope review-feedback rounds to the head |
 | #2998 | `actionable-feedback` / `REVIEW_CHANGES_REQUESTED` / allowance used for a contradicted daemon approval | Terminal after the configured round is exhausted | Treat the approval as requested changes and keep terminal after the bound |
-| #2999 | `actionable-feedback` / `REVIEW_INFORMAL_FEEDBACK` / stall | Hold | Terminal (`REVIEW_FEEDBACK_STALLED`) |
+| #2999 (landed) | `actionable-feedback` / `REVIEW_INFORMAL_FEEDBACK` / stall | Hold | Terminal (`REVIEW_FEEDBACK_STALLED`, classified permanent as a failure reason) |
 | #3000 | `review-timeout` / `REVIEW_TIMEOUT` / expired operation with no active resolver | Hold | Terminal (`REVIEW_REQUEST_EXPIRED`) |
 | #3001 | `ready-to-merge` / any merge reason / stall or allowance used | Hold | Terminal with the exhausted-work reason |
 | #3001 | `ci-failure` / `CI_FAILURE` / stall or allowance used | Hold | Terminal with the exhausted-work reason |
 | #3001 | `implementor-work-required` / `REVIEW_REQUEST_REQUIRED` / stall | Hold | Terminal with the exhausted-work reason |
 | #3001 | `blind-review-required` / `BLIND_REVIEW_REQUIRED` / stall or allowance used | Hold | Terminal with the exhausted-work reason |
 | #3001 | `actionable-feedback` / `REVIEW_INFORMAL_FEEDBACK` / allowance used | Hold | Terminal with the exhausted-work reason |
+
+The #2999 row ends a Run whose informal-feedback relaunch left the head, the
+review request and its responses unchanged. Its terminal evidence carries the
+retained feedback (source, locator, body), the stalled resume signature
+(`stalled_resume`) and the next action `sandman run --continue`. A Run an earlier
+binary parked on that hold ends with the same reason on its next observation,
+because its recorded stalled signatures prove the stall. The #3001 row for used-up
+informal-feedback allowance keeps its hold, but that hold records its signature
+like any stalled wait, and a recorded signature cannot be told apart from one an
+earlier binary wrote. Until #3001 flips that row, the hold therefore ends with
+`REVIEW_FEEDBACK_STALLED` on its next observation. Genuine requested changes
+carried as informal feedback (a daemon `changes_requested` verdict, an approval
+override) are keyed as `REVIEW_CHANGES_REQUESTED` for the stall decision, so they
+keep their row and their per-head allowance.
 
 These changes do not alter waits for resolving operations or the unrelated
 current holds: in-deadline CI and review, active review execution, the

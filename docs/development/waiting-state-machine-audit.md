@@ -535,7 +535,10 @@ governing rule is now AFK continuity, documented in
   registered and awaited. Owned-work retries record `lifecycle-owned-work`
   rather than `agent-failed`.
 - A stalled relaunch persists its resume signature in `run.await`, so the
-  observer and restarts do not relaunch on unchanged evidence.
+  observer and restarts do not relaunch on unchanged evidence. An
+  informal-feedback relaunch that leaves head, request and responses unchanged
+  no longer waits: it ends with `REVIEW_FEEDBACK_STALLED` (#2999), and a Run an
+  earlier binary parked on that hold ends the same way on its next observation.
 - Every lifecycle failure reason is classified as permanent or recoverable in
   one table. `TestAFKContinuityContract_*` replays the real incidents, and the
   `contracts` target runs it.

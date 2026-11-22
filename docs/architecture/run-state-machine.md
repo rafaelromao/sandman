@@ -51,8 +51,8 @@ queued → running ⇄ waiting → success / failure / aborted
 | CI failure or merge conflict | Resume bounded repair; when the relaunch allowance leaves the head unchanged, stay **waiting** for external recovery (rc2 behaviour) |
 | Missing PR, or an undelivered review request when a review command is configured | Perform bounded owned-work remediation (`run.retry` reason `lifecycle-owned-work`), then failure; never invent external waiting |
 | Review request delivered by an attempt that exited non-success | Register it and stay **waiting**; spend no ordinary retry |
-| Feedback relaunch leaves head, request and responses unchanged | Stay **waiting** (`RESUME_STALLED`); do not relaunch on the same evidence |
-| Relaunch allowance exhausted on review, CI (including an expired CI wait), request or merge work | Stay **waiting** (`RESUME_STALLED`); genuine requested changes (formal `CHANGES_REQUESTED` or the review daemon's `changes_requested` verdict) left unrepaired finish **failure** |
+| Informal-feedback relaunch leaves head, request and responses unchanged | Finish **failure** (`REVIEW_FEEDBACK_STALLED`): the evidence names the feedback (source, locator, body) and the stalled resume signature, and the next action is `sandman run --continue`; never relaunch on the same evidence |
+| Relaunch allowance exhausted on review, CI (including an expired CI wait), request or merge work | Stay **waiting** (`RESUME_STALLED`); genuine requested changes (formal `CHANGES_REQUESTED` or the review daemon's `changes_requested` verdict) left unrepaired finish **failure**. The wait of used-up informal feedback records its signature, so its next observation finishes `REVIEW_FEEDBACK_STALLED` |
 | Review request expired with nothing else resolving, or an idle gate after owned work | Stay **waiting** (continuity hold) on an open current-head PR |
 | Recognized provider usage limit | Wait and probe; do not spend ordinary retries immediately |
 | Quota recovers | Resume limited run and reopen sibling admission |
@@ -99,7 +99,8 @@ explicit abort, a merged pull request without verifiable completion, genuine
 requested changes (formal `CHANGES_REQUESTED`, the review daemon's
 `changes_requested` verdict, or a daemon approval its own verdict sections
 contradict) the implementor cannot address within its relaunch
-allowance, no review request delivered at all when a review command is
+allowance, informal review feedback that an unchanged relaunch could not act
+on (`REVIEW_FEEDBACK_STALLED`), no review request delivered at all when a review command is
 configured (`REVIEW_REQUEST_REQUIRED`), corrupt review state with nothing
 resolving, GitHub unavailable for a full
 24-hour recovery window (`GATE_LOOKUP_FAILED`), and agent authentication,
@@ -124,7 +125,19 @@ because a relaunch stalled records its
 signatures in `run.await` (`stalled_resumes`). Observation reads them through
 the event fold, so a restart keeps waiting instead of relaunching on the same
 evidence; a changed CI execution is new evidence and may resume within the
-existing request/head relaunch allowance. Newly actionable merge
+existing request/head relaunch allowance. A stall of informal review feedback
+does not wait: a relaunch that leaves the head, the review request and its
+responses unchanged found nothing the implementor could do, so the Run finishes
+`failure` with `REVIEW_FEEDBACK_STALLED`. The terminal evidence keeps the
+retained `review_request` with its informal feedback (source, locator, body),
+the stalled resume signature (`stalled_resume`) and a next action to inspect the
+feedback, address or answer it, and run `sandman run --continue`. The recorded
+`stalled_resumes` of a Run that an earlier binary parked on such a hold prove the
+stall, so it finishes with the same reason on its next observation, without a
+relaunch; a recorded hold for used-up informal feedback cannot be told apart
+and ends the same way. A new head, a new review request or a new response is
+new evidence and still resumes the implementor. Genuine requested changes are
+never stalled feedback: they keep their stall row and their per-head allowance. Newly actionable merge
 conflicts must not be hidden behind unchanged failed CI: conflict remediation
 takes priority, allowing integration to produce a new head
 whose checks and review must be revalidated. A continuity hold
@@ -136,7 +149,9 @@ addition to entry. This allowance carries across waits in the active Run.
 Neither re-requesting review nor returning to an earlier head resets it.
 Genuine requested changes (formal `CHANGES_REQUESTED`, a daemon
 `changes_requested` verdict, or an approval override) end the Run when the
-allowance is spent; other informal feedback still holds. Approval can resume
+allowance is spent; other informal feedback holds when its allowance is spent
+and finishes `REVIEW_FEEDBACK_STALLED` as soon as a relaunch leaves its
+evidence unchanged. Approval can resume
 merge work under its own round.
 Other gates retain the in-session request-and-head rule; a changed CI
 execution does not reset that allowance. An unreadable event log

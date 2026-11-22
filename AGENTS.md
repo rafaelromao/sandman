@@ -85,10 +85,14 @@ merge work, expired requests and (without a review command) idle gates after own
 (`RESUME_STALLED`, `continuity_hold`); only requested changes left unrepaired
 (formal CHANGES_REQUESTED, a daemon `changes_requested` verdict or an approval
 override), a closed PR, abort, unverifiable completion, no delivered request
-and other classified permanent reasons stay terminal. A feedback relaunch that
-leaves head, request and responses unchanged stops relaunching; `run.await`
-`stalled_resumes` keeps observation from relaunching on that evidence after
-restart. A closed unmerged PR is terminal only when proven to be the Run's (same
+and other classified permanent reasons stay terminal. An informal-feedback
+relaunch that leaves head, request and responses unchanged ends the Run with
+`REVIEW_FEEDBACK_STALLED` (evidence: the retained feedback with source, locator
+and body, plus `stalled_resume`; next action `sandman run --continue`); a Run an
+earlier binary parked on that hold ends the same way on its next observation,
+because its recorded `stalled_resumes` prove the stall. Other stalled relaunches
+stop relaunching, and `run.await` `stalled_resumes` keeps observation from
+relaunching on that evidence after restart. A closed unmerged PR is terminal only when proven to be the Run's (same
 head, or `closedAt` at/after the original admission found through `run.continued`
 `previous_run_id`); an unplaced closure continues owned work while the issue is
 open. A trigger delivered by any attempt of a session (including a failed
