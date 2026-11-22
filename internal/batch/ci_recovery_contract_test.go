@@ -69,13 +69,21 @@ func settledFailure(executionID string) func(*github.PR) {
 // It now waits in a CI recovery window, the runtime reruns the job at an hour,
 // the rerun turns green and the Run goes on to deliver the review request.
 func TestAFKContinuityContract_TransientCIFailureRecoversInTheWindowAndMerges(t *testing.T) {
+	for name, foreground := range map[string]bool{"batch observation": false, "foreground observation": true} {
+		t.Run(name, func(t *testing.T) { replayTransientCIFailure(t, foreground) })
+	}
+}
+
+func replayTransientCIFailure(t *testing.T, foreground bool) {
+	t.Helper()
 	receipt := ciTestReceipt()
 	receipt.PullRequest, receipt.SourceHeadSHA = continuityPR, "head-1"
 	var live *continuityGitHub
 	outcome := runContinuityScenario(t, continuityScenario{
-		name:    "transient CI failure recovers in the CI recovery window",
-		pr:      github.PR{StatusCheckRollup: "failure", MergeStateStatus: "CLEAN"},
-		retries: 3,
+		name:                "transient CI failure recovers in the CI recovery window",
+		pr:                  github.PR{StatusCheckRollup: "failure", MergeStateStatus: "CLEAN"},
+		retries:             3,
+		foregroundLifecycle: foreground,
 		setup: func(g *continuityGitHub) {
 			live = g
 			g.update(settledFailure("exec-1"))
@@ -150,7 +158,9 @@ func TestAFKContinuityContract_TransientCIFailureRecoversInTheWindowAndMerges(t 
 		switch {
 		case event.Type == "run.await" && event.Payload["await_reason"] == gateCIRecovery:
 			order = append(order, "ci-recovery")
-		case event.Type == "run.capacity_queued" && event.Payload["reason"] == "REVIEW_REQUEST_REQUIRED":
+		case (event.Type == "run.capacity_queued" || event.Type == "run.resumed") && event.Payload["gate"] == gateReviewRequestRequired:
+			// The batch scheduler queues the continuation; the foreground
+			// observer resumes the session in place.
 			order = append(order, "review-request")
 		}
 	}

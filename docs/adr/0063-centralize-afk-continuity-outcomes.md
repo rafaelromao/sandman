@@ -50,6 +50,7 @@ change can flip only its assigned row.
 | #3001 | `implementor-work-required` / `REVIEW_REQUEST_REQUIRED` / stall | Hold | Terminal with the exhausted-work reason |
 | #3001 | `blind-review-required` / `BLIND_REVIEW_REQUIRED` / stall or allowance used | Hold | Terminal with the exhausted-work reason |
 | #3001 | `actionable-feedback` / `REVIEW_INFORMAL_FEEDBACK` / allowance used | Hold (until #3001, the hold ends `REVIEW_FEEDBACK_STALLED` on its next observation; see below) | Terminal with the exhausted-work reason |
+| #3011 | `ci-failure` / `CI_FAILURE` / stall or allowance used, only when matching typed transient rerun evidence backs it | The row's outcome | A `ci-recovery` wait in front of the row (ADR-0064); every other stalled CI repair keeps the row, whatever #3001 makes it |
 
 The #2999 row ends a Run whose informal-feedback relaunch left the head, the
 review request and its responses unchanged. Its terminal evidence carries the

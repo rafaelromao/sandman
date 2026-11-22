@@ -190,6 +190,39 @@ approved ready PR follows the normal merge path, and a no-op observation returns
 the failed attempt to its bounded retry path. Recognized usage-limit failures
 without an established operation remain owned by quota recovery instead.
 
+A CI repair that can no longer be relaunched (its lifecycle relaunch allowance is
+used up, or a relaunch would repeat a stalled signature) waits in a CI recovery
+window instead of a hold when the implementor diagnosed the current-head failure
+as transient and the typed rerun receipt recorded for the logical Run matches the
+live settled failure: repository, pull request, head, workflow run and diagnosed
+job, with every failed check covered by that job and its quality gate (ADR-0064).
+The Run waits with `await_reason: ci-recovery` (reason `CI_RECOVERY`) and
+`ci_recovery` evidence: window start, next attempt, bound, last status, attempts,
+last rerun outcome and the diagnosed target. The window is a reusable recovery
+window like the GitHub one, with Actions as its health component. A fresh window
+attempts at once, then every hour: the runtime reads githubstatus.com first (a
+degraded Actions component or a major or critical incident skips the attempt; an
+unreachable status page attempts anyway), looks the pull request up, and reruns
+the diagnosed job and its quality gate on the identified workflow run through the
+GitHub client when that job is still the failure. Observation before the next
+attempt makes no GitHub call and does not re-record the wait, so a green rerun is
+noticed at the next attempt. Green CI returns the Run to the normal lifecycle
+(review-request delivery, review, merge); a rerun failing again on the same job
+keeps the window open; CI of the same head still running keeps it open without a
+rerun; a new head, a different failing check or any other outcome ends the window
+and the ordinary rules decide, which returns CI failures to implementor repair. A
+failed lookup is a failed attempt of the window itself. Only 24 hours from the
+window's start, skipped hours included, finish the Run `failure` with the
+permanent `CI_RECOVERY_EXHAUSTED`, carrying the `ci_recovery` evidence; no rerun is
+submitted at or after the bound. The 30-minute CI bound is not enforced for a
+runtime rerun inside the window. Restart rehydrates the window and its next
+attempt from the event fold and the scheduler treats the bound as the wait's
+operation deadline; `sandman run <n> --continue` is a new RunID that finds the
+rerun receipt through its predecessors, opens a fresh window and attempts at once;
+explicit abort ends the wait with no rerun. An unreadable event log opens no
+window and submits no rerun. Every other stalled CI repair keeps its table
+outcome.
+
 A closed, unmerged pull request ends a Run (`PULL_REQUEST_CLOSED`) only when it
 is proven to belong to the logical Run: its head equals the Run's head, or it
 closed (`closedAt`) at or after the Run's original fresh admission. The original

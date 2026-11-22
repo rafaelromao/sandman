@@ -57,6 +57,19 @@ non-success agent attempt without an established current-head CI/review wait doe
 not consume ordinary retries while the lookup/refresh is unavailable; normal
 bounded retry handling resumes after recovery. Recognized usage-limit attempts
 remain on quota recovery.
+A CI repair that can no longer be relaunched on a current-head failure the
+implementor diagnosed as transient (typed rerun receipt matching repository, PR,
+head, workflow run and job) waits in a CI recovery window (`ci-recovery`, ADR-0064)
+instead of a hold: the runtime reruns the diagnosed job and its quality gate
+itself, first at once and then hourly, each attempt skipped while githubstatus.com
+reports an Actions outage (unreachable status page = attempt); observation between
+attempts makes no GitHub call. Green CI resumes the normal lifecycle, the same job
+failing again keeps the window, a new head or different failing check ends it, and
+terminal `CI_RECOVERY_EXHAUSTED` comes only after 24 hours from the window's start
+(the wait's operation deadline; no rerun at the bound; the 30-minute CI bound is
+not enforced for a runtime rerun). Restart keeps window and next attempt;
+`--continue` (new RunID) attempts at once in a fresh window; abort ends it with no
+rerun. Every other stalled CI repair keeps its continuity-table outcome.
 Managed merge work requires confirmed current-request/current-head delegated
 approval, including eligible informal approval; a pending request on a CLEAN PR
 stays waiting. Accepted informal approval waits for pending CI and resumes merge
@@ -111,6 +124,9 @@ check, ...) never veto the approval. Every `testdata/approved-*.md` report is a
 corpus test. Review-feedback relaunches share one allowance per head across
 waits in the active Run; re-requesting review does not reset it. Other gates
 keep request-and-head rounds. Holds recover under the `hold:<RunID>` identity.
+A transient CI failure the implementor diagnosed (typed rerun receipt) whose repair
+stalls waits in the CI recovery window (`CI_RECOVERY`, `ci-recovery`) and ends only
+with `CI_RECOVERY_EXHAUSTED` after 24 hours; the runtime reruns the job itself.
 Every lifecycle reason is classified in one place and
 `TestAFKContinuityContract_*` replays the incidents. ADR-0063 centralizes the
 gate/reason/cause outcomes and names the sibling-owned rows; preserve all other

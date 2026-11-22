@@ -22,7 +22,10 @@ Persist `NextPollAt` and reconstruct it from current event evidence only when th
 checkpoint is missing. Reviewer quota recovery remains daemon-wide and fixed at
 ten minutes. A failed pull-request lookup waits (`github-unavailable`)
 with hourly, githubstatus.com-gated attempts and a 24-hour per-RunID bound before
-`GATE_LOOKUP_FAILED`; `--continue` opens a fresh window. Failed agent attempts
+`GATE_LOOKUP_FAILED`; `--continue` opens a fresh window. A stalled CI repair on a
+current-head failure the implementor diagnosed as transient waits in a CI recovery
+window (`ci-recovery`): the runtime reruns the diagnosed job hourly, gated by
+Actions health, and fails `CI_RECOVERY_EXHAUSTED` only after 24 hours (ADR-0064). Failed agent attempts
 without an established CI/review wait do not consume ordinary retries while
 GitHub is unavailable; normal retry handling resumes after recovery. Recognized
 usage-limit failures remain on quota recovery. Keep the historical three in-session relaunches (entry

@@ -165,7 +165,8 @@ explicit abort, unverifiable completion, requested changes left unrepaired
 informal review feedback a relaunch left unchanged (`REVIEW_FEEDBACK_STALLED`),
 no review request delivered when a review command is configured,
 GitHub unavailable for a whole
-**GitHub recovery window**). A stalled relaunch records a
+**GitHub recovery window**, a transient CI failure that stays red for a whole
+**CI recovery window**). A stalled relaunch records a
 **resume signature** (gate, reason, live head, request trigger and response
 identities, or blind publication identity) so observation does not relaunch on
 unchanged evidence: it waits in the wait's `stalled_resumes`, except informal
@@ -191,9 +192,9 @@ rehydrates it from the event fold and a new RunID starts a fresh one. An
 unreadable event log reports the window as unknown, so the recovery fails closed
 into a wait without opening a new window. Each recovery supplies its own wait
 and failure verdicts, including that fail-closed wait. The GitHub recovery
-window is its first user.
+window and the CI recovery window are its users.
 _Avoid_: GitHub-only window.
-_See_: GitHub recovery window.
+_See_: GitHub recovery window, CI recovery window.
 
 **GitHub recovery window**:
 The bounded wait (`await_reason: github-unavailable`) a Run enters when a
@@ -211,6 +212,27 @@ recovers, normal lifecycle and bounded retry handling resume; recognized
 provider usage limits remain on quota recovery.
 _Avoid_: lookup failure as a permanent outcome.
 _See_: AFK continuity.
+
+**CI recovery window**:
+The bounded wait (`await_reason: ci-recovery`) a Run enters when a CI repair
+cannot be relaunched any more (its lifecycle relaunch allowance is used up, or a
+relaunch would repeat a stalled signature) on a current-head failure the
+implementor diagnosed as transient through the CI rerun helper, whose single
+rerun failed the same way. It runs on the **Recovery window** with GitHub
+Actions as its health component and attempts at once, then hourly, each attempt
+skipped while githubstatus.com reports an Actions outage (an unreachable status
+page attempts anyway). An attempt reruns the diagnosed job and its quality gate
+on the identified workflow run through the GitHub client; the runtime performs
+this one mutation (ADR-0064) and never classifies CI logs. Green CI returns the
+Run to the normal lifecycle, a rerun failing again on the same job keeps the
+window open, and a new head or a different failing check ends it. The window
+survives restart in the `run.await` evidence (`ci_recovery`) and ends the Run with
+`CI_RECOVERY_EXHAUSTED` only after 24 hours from its start; `sandman run
+--continue` opens a fresh window that attempts at once, and explicit abort ends
+it. Only a failure backed by a typed transient rerun receipt that matches the
+failed execution qualifies; every other stalled CI repair keeps its table outcome.
+_Avoid_: runtime log classification, repeated implementor reruns.
+_See_: Recovery window, GitHub recovery window, AFK continuity.
 
 **Publication verdict**:
 The closed-set decision (`approved` or `changes_requested`) a review publication

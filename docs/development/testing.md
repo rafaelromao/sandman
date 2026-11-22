@@ -69,13 +69,16 @@ tests assert approval precedes informal feedback; executor tests cover ordinary
 For GitHub outage recovery after a failed agent attempt, run:
 
 ```bash
-go test ./internal/batch -run 'AFKContinuityContract|GitHubRecovery|UsageLimit' -count=1
+go test ./internal/batch -run 'AFKContinuityContract|GitHubRecovery|CIRecovery|UsageLimit' -count=1
 ```
 
 This covers waiting without spending ordinary retries, merge after recovery,
 bounded retries when recovery resolves nothing (including foreground waits),
 and preserves hourly status gating, the 24-hour recovery window, `--continue`,
-abort, retained operation evidence, and quota ownership.
+abort, retained operation evidence, and quota ownership. The `CIRecovery`
+tests cover the CI recovery window for a diagnosed transient CI failure: its
+qualification, the hourly Actions-gated rerun through the GitHub client seam, the
+exit rules, the 24-hour bound, restart, `--continue` and abort.
 
 For the AFK continuity outcome table and its per-row behavior contract, run:
 
