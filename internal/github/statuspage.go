@@ -17,22 +17,63 @@ const GitHubStatusSummaryURL = "https://www.githubstatus.com/api/v2/summary.json
 // can never delay a recovery attempt or an abort.
 const statusPageTimeout = 15 * time.Second
 
-// StatusReport is GitHub's reported health. Outage is true when GitHub
-// reports a major or critical incident, or when a component Sandman depends
-// on (API Requests, Git Operations, Pull Requests, Actions) is degraded or
-// unavailable. Unrelated components never make it an outage.
+// StatusComponent names a githubstatus.com component. Names compare
+// case-insensitively.
+type StatusComponent string
+
+// The githubstatus.com components Sandman's recoveries depend on.
+const (
+	ComponentAPIRequests   StatusComponent = "API Requests"
+	ComponentGitOperations StatusComponent = "Git Operations"
+	ComponentPullRequests  StatusComponent = "Pull Requests"
+	ComponentActions       StatusComponent = "Actions"
+)
+
+// PullRequestLookupComponents are the components whose degradation makes
+// Sandman's pull-request lookups fail. GitHub recovery judges health by this
+// set, and a plain GitHubStatus call does too.
+var PullRequestLookupComponents = []StatusComponent{
+	ComponentAPIRequests,
+	ComponentGitOperations,
+	ComponentPullRequests,
+	ComponentActions,
+}
+
+// StatusReport is GitHub's reported health, judged by a set of components.
+// Outage is true when GitHub reports a major or critical incident, or when a
+// component in the requested set is degraded or unavailable. Components
+// outside the set never make it an outage.
 type StatusReport struct {
 	Indicator   string
 	Description string
 	Outage      bool
-	// Components names the relevant components that are not operational.
+	// Components names the requested components that are not operational, in
+	// the status page's order.
 	Components []string
 }
 
-// StatusChecker reports GitHub's health. An error means the status page
-// itself could not be read; callers treat that as unknown health.
+// StatusChecker reports GitHub's health judged by the pull-request lookup
+// components. An error means the status page itself could not be read; callers
+// treat that as unknown health.
 type StatusChecker interface {
 	GitHubStatus(ctx context.Context) (StatusReport, error)
+}
+
+// ComponentStatusChecker is a StatusChecker that can also judge health by the
+// components that matter to a given recovery.
+type ComponentStatusChecker interface {
+	StatusChecker
+	GitHubComponentStatus(ctx context.Context, components []StatusComponent) (StatusReport, error)
+}
+
+// CheckStatus asks checker for GitHub's health judged by components. A checker
+// that cannot scope its judgement answers with its plain GitHubStatus, which
+// keeps checkers written against StatusChecker working unchanged.
+func CheckStatus(ctx context.Context, checker StatusChecker, components []StatusComponent) (StatusReport, error) {
+	if scoped, ok := checker.(ComponentStatusChecker); ok {
+		return scoped.GitHubComponentStatus(ctx, components)
+	}
+	return checker.GitHubStatus(ctx)
 }
 
 // StatusPageClient reads GitHub's health from the public Statuspage API.
@@ -46,15 +87,6 @@ func NewStatusPageClient() *StatusPageClient {
 	return &StatusPageClient{URL: GitHubStatusSummaryURL, Client: &http.Client{Timeout: statusPageTimeout}}
 }
 
-// relevantStatusComponents are the githubstatus.com components whose
-// degradation makes Sandman's pull-request lookups fail.
-var relevantStatusComponents = map[string]bool{
-	"api requests":   true,
-	"git operations": true,
-	"pull requests":  true,
-	"actions":        true,
-}
-
 type statusPageSummary struct {
 	Status struct {
 		Indicator   string `json:"indicator"`
@@ -66,8 +98,15 @@ type statusPageSummary struct {
 	} `json:"components"`
 }
 
-// GitHubStatus fetches and classifies the Statuspage summary.
+// GitHubStatus fetches and classifies the Statuspage summary by the
+// pull-request lookup components.
 func (c *StatusPageClient) GitHubStatus(ctx context.Context) (StatusReport, error) {
+	return c.GitHubComponentStatus(ctx, PullRequestLookupComponents)
+}
+
+// GitHubComponentStatus fetches and classifies the Statuspage summary by the
+// requested components. An empty set judges by GitHub-wide incidents only.
+func (c *StatusPageClient) GitHubComponentStatus(ctx context.Context, components []StatusComponent) (StatusReport, error) {
 	if c == nil {
 		return StatusReport{}, fmt.Errorf("githubstatus.com: no status client")
 	}
@@ -104,9 +143,13 @@ func (c *StatusPageClient) GitHubStatus(ctx context.Context) (StatusReport, erro
 	}
 	report := StatusReport{Indicator: indicator, Description: strings.TrimSpace(summary.Status.Description)}
 	report.Outage = indicator == "major" || indicator == "critical"
+	requested := make(map[string]bool, len(components))
+	for _, component := range components {
+		requested[strings.ToLower(strings.TrimSpace(string(component)))] = true
+	}
 	for _, component := range summary.Components {
 		status := strings.ToLower(strings.TrimSpace(component.Status))
-		if !relevantStatusComponents[strings.ToLower(strings.TrimSpace(component.Name))] || status == "" || status == "operational" {
+		if !requested[strings.ToLower(strings.TrimSpace(component.Name))] || status == "" || status == "operational" {
 			continue
 		}
 		report.Outage = true

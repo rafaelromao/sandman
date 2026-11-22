@@ -177,11 +177,25 @@ command, remain unchanged.
 _Avoid_: remediation exhaustion as failure, idle failure.
 _See_: Managed review lifecycle, Publication verdict, ADR-0063.
 
+**Recovery window**:
+The reusable mechanics of a bounded external-recovery wait. A window starts at
+its first failure, attempts recovery on a fixed interval, judges githubstatus.com
+health by the components that matter to that recovery before each attempt, and
+expires only after its bound, which is also the wait's scheduler operation
+deadline. It is kept per RunID in the `run.await` evidence, so restart
+rehydrates it from the event fold and a new RunID starts a fresh one; an
+unreadable event log fails closed into a wait without opening a new window. Each
+recovery supplies its own wait and failure verdicts. The GitHub recovery window
+is its first user.
+_Avoid_: per-recovery copies of the window mechanics.
+_See_: GitHub recovery window.
+
 **GitHub recovery window**:
 The bounded wait (`await_reason: github-unavailable`) a Run enters when a
-pull-request lookup or refresh fails. Recovery is attempted hourly, each attempt
-skipped while githubstatus.com reports a GitHub outage; an unreachable status
-page attempts anyway. The window starts at its first failure, survives restart
+pull-request lookup or refresh fails, run on the **Recovery window**. Recovery is
+attempted hourly, each attempt skipped while githubstatus.com reports a GitHub
+outage in a pull-request lookup component (API Requests, Git Operations, Pull
+Requests or Actions); an unreachable status page attempts anyway. The window starts at its first failure, survives restart
 in the `run.await` evidence (`github_recovery`), and ends the Run with
 `GATE_LOOKUP_FAILED` only after 24 hours. `sandman run --continue` starts a new
 RunID and therefore a fresh window; explicit abort ends it.
