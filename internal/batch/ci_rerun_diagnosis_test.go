@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -46,8 +49,8 @@ func TestCIRerunEvidenceRejectsUnknownAndNonTransientDiagnoses(t *testing.T) {
 }
 
 // feedCompletedHelperInvocation writes one completed helper tool invocation in
-// the structured stream format of the given agent preset.
-func feedCompletedHelperInvocation(t *testing.T, preset string, parser outputParser, command, output string) {
+// the structured stream format of Claude Code (claudeStream) or OpenCode.
+func feedCompletedHelperInvocation(t *testing.T, claudeStream bool, parser outputParser, command, output string) {
 	t.Helper()
 	write := func(record map[string]any) {
 		t.Helper()
@@ -59,7 +62,7 @@ func feedCompletedHelperInvocation(t *testing.T, preset string, parser outputPar
 			t.Fatal(err)
 		}
 	}
-	if preset == "claude" {
+	if claudeStream {
 		write(map[string]any{"type": "assistant", "message": map[string]any{"content": []any{
 			map[string]any{"type": "tool_use", "id": "rerun-1", "name": "Bash", "input": map[string]any{"command": command}},
 		}}})
@@ -76,7 +79,7 @@ func feedCompletedHelperInvocation(t *testing.T, preset string, parser outputPar
 	})
 }
 
-func capturedCIRerunEvidence(t *testing.T, preset, command, output string) *ciRerunActionEvidence {
+func capturedCIRerunEvidence(t *testing.T, preset string, claudeStream bool, command, output string) *ciRerunActionEvidence {
 	t.Helper()
 	strategy := strategyForPreset(preset)
 	stdout, stderr := strategy.NewOutputParsers(io.Discard)
@@ -84,7 +87,7 @@ func capturedCIRerunEvidence(t *testing.T, preset, command, output string) *ciRe
 		t.Fatalf("%s strategy has no structured output parser", preset)
 	}
 	stdout.setDestination(io.Discard)
-	feedCompletedHelperInvocation(t, preset, stdout, command, output)
+	feedCompletedHelperInvocation(t, claudeStream, stdout, command, output)
 	return strategy.CIRerunAction(stdout, stderr)
 }
 
@@ -92,7 +95,11 @@ func capturedCIRerunEvidence(t *testing.T, preset, command, output string) *ciRe
 // diagnosis from the real installed helper through to lifecycle selection, and
 // the helper must accept every diagnosis the runtime does.
 func TestCIRerunEveryStrategyCapturesEveryTransientDiagnosisFromTheInstalledHelper(t *testing.T) {
-	for _, preset := range []string{"opencode", "opencode-v2", "claude"} {
+	for _, agent := range []struct {
+		preset       string
+		claudeStream bool
+	}{{"opencode", false}, {"opencode-v2", false}, {"claude", true}} {
+		preset := agent.preset
 		for index, diagnosis := range ciRerunTransientDiagnoses {
 			t.Run(preset+"/"+diagnosis, func(t *testing.T) {
 				root := t.TempDir()
@@ -106,16 +113,43 @@ func TestCIRerunEveryStrategyCapturesEveryTransientDiagnosisFromTheInstalledHelp
 				if actions := gh.actions(t); len(actions) != 1 || actions[0] != "POST repos/owner/repo/actions/jobs/987654321/rerun" {
 					t.Fatalf("helper actions = %v, want one rerun of the selected job", actions)
 				}
-				evidence := capturedCIRerunEvidence(t, preset, command, output)
+				evidence := capturedCIRerunEvidence(t, preset, agent.claudeStream, command, output)
 				if evidence == nil || evidence.Diagnosis != diagnosis || !evidence.matchesPullRequest(17, "owner/repo", "head") {
 					t.Fatalf("%s did not carry %s evidence into lifecycle selection: %+v", preset, diagnosis, evidence)
 				}
 				other := ciRerunTransientDiagnoses[(index+1)%len(ciRerunTransientDiagnoses)]
 				forged := strings.Replace(output, `"diagnosis":"`+diagnosis+`"`, `"diagnosis":"`+other+`"`, 1)
-				if got := capturedCIRerunEvidence(t, preset, command, forged); got != nil {
+				if got := capturedCIRerunEvidence(t, preset, agent.claudeStream, command, forged); got != nil {
 					t.Fatalf("%s accepted a receipt whose diagnosis differs from the invoked command: %+v", preset, got)
 				}
 			})
+		}
+	}
+}
+
+// The helper script cannot import the runtime's accept-list, so both its
+// accepted set and its usage text must list exactly the diagnoses the runtime
+// accepts. The helper-per-diagnosis test catches a runtime entry the script
+// lacks; this one catches a script entry the runtime lacks.
+func TestCIRerunHelperAcceptsExactlyTheRuntimeDiagnoses(t *testing.T) {
+	data, err := os.ReadFile("../skill/sandman/implement/ci-rerun-v1.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := slices.Clone(ciRerunTransientDiagnoses)
+	slices.Sort(want)
+	for name, pattern := range map[string]string{
+		"accepted set": `case "\$diagnosis" in\s*\n\s*([a-z-]+(?:\|[a-z-]+)*)\) ;;`,
+		"usage text":   `--diagnosis ([a-z-]+(?:\|[a-z-]+)*)\nEOF`,
+	} {
+		match := regexp.MustCompile(pattern).FindSubmatch(data)
+		if match == nil {
+			t.Fatalf("helper %s not found", name)
+		}
+		got := strings.Split(string(match[1]), "|")
+		slices.Sort(got)
+		if !slices.Equal(got, want) {
+			t.Errorf("helper %s = %v, want exactly the runtime's %v", name, got, want)
 		}
 	}
 }

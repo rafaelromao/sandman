@@ -98,8 +98,8 @@ func TestCIRerunHelperAcceptsEveryTransientDiagnosisWithOneBoundedRerun(t *testi
 			if len(fixture.Actions) != 1 || !strings.Contains(fixture.Actions[0], "POST") || !strings.Contains(fixture.Actions[0], "/actions/jobs/987654321/rerun") {
 				t.Fatalf("actions=%v, want exactly one POST to the selected job's rerun endpoint", fixture.Actions)
 			}
-			if !strings.Contains(fixture.Calls[len(fixture.Calls)-1], "/actions/runs/12345/jobs") && !strings.Contains(fixture.Calls[len(fixture.Calls)-1], "/actions/runs/12345") {
-				t.Fatalf("rerun was not read back from the workflow run: calls=%v", fixture.Calls)
+			if !strings.Contains(fixture.Calls[len(fixture.Calls)-1], "/actions/runs/12345/jobs") {
+				t.Fatalf("rerun was not read back from the workflow run's jobs: calls=%v", fixture.Calls)
 			}
 		})
 		t.Run(diagnosis+" waits without mutating while a sibling is active", func(t *testing.T) {

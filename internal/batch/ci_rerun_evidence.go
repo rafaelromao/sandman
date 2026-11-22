@@ -15,8 +15,9 @@ const ciRerunActionKey = "ci_rerun_action"
 // the runtime honors in typed rerun evidence: a transient provider timeout, a
 // transient network timeout, and a provider usage limit reached inside a CI
 // job. Deterministic failures are never reruns and have no entry here. The
-// helper script keeps its own copy of this set because it cannot import Go; a
-// test runs the helper for every entry to keep the two in step.
+// helper script keeps its own copy of this set because it cannot import Go;
+// tests run the helper for every entry and compare the script's accepted set
+// and usage text with this list to keep the two in step.
 var ciRerunTransientDiagnoses = []string{
 	"transient-provider-timeout",
 	"transient-network-timeout",
