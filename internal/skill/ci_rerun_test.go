@@ -172,6 +172,9 @@ func TestSyncInstallsCIRecoveryHelperAndImplementationGuidance(t *testing.T) {
 		"ci-rerun-v1.sh",
 		"workflow_dispatch` is not required",
 		"A `confirmed` result means a new attempt was observed",
+		"transient-provider-quota",
+		"usage-limit or quota error in the failed job's log",
+		"Do not rerun deterministic failures",
 	} {
 		if !strings.Contains(string(skillText), required) {
 			t.Errorf("installed implementation guidance missing %q", required)
