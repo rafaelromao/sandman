@@ -1008,8 +1008,9 @@ func TestReviewRegistration_RejectsSameTriggerFromStaleCanonicalHead(t *testing.
 			CreatedAt: now.Add(-time.Minute),
 		}},
 	}
+	var warningLog strings.Builder
 	session := &runSession{
-		deps: runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		deps: runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir), errorLog: &warningLog},
 		renderCfg: prompt.RenderConfig{
 			ReviewCommand: "/sandman review",
 			ReviewTimeout: 600,
@@ -1021,11 +1022,27 @@ func TestReviewRegistration_RejectsSameTriggerFromStaleCanonicalHead(t *testing.
 	if err := session.registerReviewRequest(context.Background(), workDir, &oldPR, "old-sha"); err != nil {
 		t.Fatalf("register old generation: %v", err)
 	}
+	registrationPath := paths.NewLayout(nil, workDir).PRReviewRegistrationPath(oldPR.Number)
 
 	livePR.HeadRefOid = "current-sha"
 	currentPR := *livePR
-	if err := session.ensureReviewRegistrationForPR(context.Background(), workDir, &currentPR, "current-sha", "run-registration-test"); err == nil {
-		t.Fatal("same trigger from stale canonical head was accepted as a duplicate")
+	// The newest request still belongs to the earlier head. That is stale
+	// evidence, not a failure: it is a quiet duplicate that is never rebound.
+	if err := session.ensureReviewRegistrationForPR(context.Background(), workDir, &currentPR, "current-sha", "run-registration-test"); err != nil {
+		t.Fatalf("stale canonical duplicate = %v, want a quiet duplicate", err)
+	}
+	if session.reviewRegistrationObserved {
+		t.Fatal("stale canonical duplicate reported an observation that would refresh the live gate")
+	}
+	if warningLog.Len() != 0 {
+		t.Fatalf("stale canonical duplicate wrote warnings: %q", warningLog.String())
+	}
+	stale, err := readFileReviewRegistration(registrationPath)
+	if err != nil {
+		t.Fatalf("read stale registration: %v", err)
+	}
+	if stale.Request.TriggerID != "trigger-stale-canonical" || stale.Request.HeadSHA != "old-sha" {
+		t.Fatalf("stale registration = %#v, want it left bound to the earlier head", stale.Request)
 	}
 
 	client.comments = append(client.comments, github.PRComment{
@@ -1036,12 +1053,7 @@ func TestReviewRegistration_RejectsSameTriggerFromStaleCanonicalHead(t *testing.
 	if err := session.ensureReviewRegistrationForPR(context.Background(), workDir, &currentPR, "current-sha", "run-registration-test"); err != nil {
 		t.Fatalf("register newer current-head generation: %v", err)
 	}
-	registration, err := readReviewRegistration(
-		paths.NewLayout(nil, workDir).PRReviewRegistrationPath(currentPR.Number),
-		"owner/repo",
-		&currentPR,
-		"current-sha",
-	)
+	registration, err := readReviewRegistration(registrationPath, "owner/repo", &currentPR, "current-sha")
 	if err != nil {
 		t.Fatalf("read newer current-head generation: %v", err)
 	}
@@ -1050,20 +1062,17 @@ func TestReviewRegistration_RejectsSameTriggerFromStaleCanonicalHead(t *testing.
 	}
 }
 
-func TestReviewRegistration_StaleCanonicalHeadRefreshesLiveGate(t *testing.T) {
-	workDir := testenv.MkdirShort(t, "sm-review-registration-")
-	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
-	trigger := github.PRComment{
-		ID:        "trigger-stale-gate",
-		Body:      "/sandman review",
-		CreatedAt: now.Add(-time.Minute),
-	}
+// seedStaleReviewRegistration persists a canonical registration for trigger,
+// bound to staleHead, so later observations see a newest request that belongs
+// to an earlier pull-request head.
+func seedStaleReviewRegistration(t *testing.T, workDir string, now time.Time, prNumber int, staleHead string, trigger github.PRComment) {
+	t.Helper()
 	seedClient := &registrationGitHubClient{
 		fakeGitHubClient: fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
-			Number:      40,
+			Number:      prNumber,
 			State:       "open",
 			HeadRefName: gateTestBranch,
-			HeadRefOid:  "stale-sha",
+			HeadRefOid:  staleHead,
 		}}},
 		comments: []github.PRComment{trigger},
 	}
@@ -1077,38 +1086,39 @@ func TestReviewRegistration_StaleCanonicalHeadRefreshesLiveGate(t *testing.T) {
 		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
 	}
 	if err := seedSession.registerReviewRequest(context.Background(), workDir, &github.PR{
-		Number:      40,
+		Number:      prNumber,
 		State:       "open",
 		HeadRefName: gateTestBranch,
-		HeadRefOid:  "stale-sha",
-	}, "stale-sha"); err != nil {
+		HeadRefOid:  staleHead,
+	}, staleHead); err != nil {
 		t.Fatalf("seed stale generation: %v", err)
 	}
+}
 
+func TestReviewRegistration_StaleRequestObservationsStayQuiet(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	trigger := github.PRComment{
+		ID:        "trigger-stale-quiet",
+		Body:      "/sandman review",
+		CreatedAt: now.Add(-time.Minute),
+	}
+	seedStaleReviewRegistration(t, workDir, now, 41, "stale-sha", trigger)
+
+	var warningLog strings.Builder
 	client := &registrationGateSnapshotClient{
 		comments: []github.PRComment{trigger},
-		responses: []*github.PR{
-			{
-				Number:            40,
-				State:             "open",
-				HeadRefName:       gateTestBranch,
-				HeadRefOid:        "current-sha",
-				StatusCheckRollup: "success",
-				ReviewDecision:    "APPROVED",
-				MergeStateStatus:  "CLEAN",
-			},
-			{
-				Number:            40,
-				State:             "open",
-				HeadRefName:       gateTestBranch,
-				HeadRefOid:        "current-sha",
-				StatusCheckRollup: "pending",
-				MergeStateStatus:  "BLOCKED",
-			},
-		},
+		responses: []*github.PR{{
+			Number:            41,
+			State:             "open",
+			HeadRefName:       gateTestBranch,
+			HeadRefOid:        "current-sha",
+			StatusCheckRollup: "pending",
+			MergeStateStatus:  "BLOCKED",
+		}},
 	}
 	session := &runSession{
-		deps: runDeps{githubClient: client, errorLog: io.Discard},
+		deps: runDeps{githubClient: client, errorLog: &warningLog},
 		renderCfg: prompt.RenderConfig{
 			ReviewCommand: "/sandman review",
 			ReviewTimeout: 600,
@@ -1120,13 +1130,142 @@ func TestReviewRegistration_StaleCanonicalHeadRefreshesLiveGate(t *testing.T) {
 		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
 	}
 
-	observedLifecycle1123 := session.observeLifecycleForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
-	status, extras, handled := observedLifecycle1123.status(), observedLifecycle1123.Evidence, observedLifecycle1123.handled()
-	if !handled || status != "await" || extras["gate"] != "pending" {
-		t.Fatalf("stale canonical gate = (%q, %#v, %t), want await/pending", status, extras, handled)
+	for observation := 1; observation <= 2; observation++ {
+		verdict := session.observeLifecycleForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+		if !verdict.handled() || verdict.status() != "await" || verdict.Evidence["gate"] != "pending" {
+			t.Fatalf("observation %d = (%q, %#v, %t), want the CI-authorized await/pending", observation, verdict.status(), verdict.Evidence, verdict.handled())
+		}
+		diagnostic, ok := verdict.Evidence["review_diagnostic"].(map[string]any)
+		if !ok || diagnostic["status"] != "invalid" || diagnostic["reason"] != gateReviewTimeoutError ||
+			diagnostic["error"] != "review registration head does not match the current pull request" {
+			t.Fatalf("observation %d review_diagnostic = %#v, want the unchanged stale-head diagnostic", observation, verdict.Evidence["review_diagnostic"])
+		}
 	}
-	if client.calls < 2 {
-		t.Fatalf("PR lookups = %d, want initial and refreshed live snapshots", client.calls)
+
+	if log := warningLog.String(); strings.Contains(log, "warning:") {
+		t.Fatalf("stale request wrote warning lines on repeated observations: %q", log)
+	}
+	if client.calls != 2 {
+		t.Fatalf("PR lookups = %d, want only the ordinary lookup per observation (2), no stale-request refresh", client.calls)
+	}
+}
+
+func TestReviewRegistration_StaleRequestNeverAuthorizesWait(t *testing.T) {
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	trigger := github.PRComment{
+		ID:        "trigger-stale-gate",
+		Body:      "/sandman review",
+		CreatedAt: now.Add(-time.Minute),
+	}
+	// Current-head checks and approval are settled, so only a delegated review
+	// request authorized for this head could justify another wait.
+	observe := func(t *testing.T, withStaleRequest bool) lifecycleVerdict {
+		t.Helper()
+		workDir := testenv.MkdirShort(t, "sm-review-registration-")
+		var comments []github.PRComment
+		if withStaleRequest {
+			seedStaleReviewRegistration(t, workDir, now, 40, "stale-sha", trigger)
+			comments = []github.PRComment{trigger}
+		}
+		client := &registrationGateSnapshotClient{
+			comments: comments,
+			responses: []*github.PR{{
+				Number:            40,
+				State:             "open",
+				HeadRefName:       gateTestBranch,
+				HeadRefOid:        "current-sha",
+				StatusCheckRollup: "success",
+				ReviewDecision:    "APPROVED",
+				MergeStateStatus:  "CLEAN",
+			}},
+		}
+		session := &runSession{
+			deps: runDeps{githubClient: client, errorLog: io.Discard},
+			renderCfg: prompt.RenderConfig{
+				ReviewCommand: "/sandman review",
+				ReviewTimeout: 600,
+			},
+			opts: runSessionOptions{
+				currentHead: func(string) (string, error) { return "current-sha", nil },
+			},
+			reviewRegistrationNow:  func() time.Time { return now },
+			reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+		}
+		verdict := session.observeLifecycleForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+		if client.calls != 1 {
+			t.Fatalf("PR lookups = %d, want only the ordinary lookup (stale evidence=%t)", client.calls, withStaleRequest)
+		}
+		return verdict
+	}
+
+	stale := observe(t, true)
+	control := observe(t, false)
+
+	if stale.status() == "await" {
+		t.Fatalf("stale request authorized a wait: %#v", stale.Evidence)
+	}
+	if stale.Action != control.Action || stale.Evidence["gate"] != control.Evidence["gate"] || stale.Evidence["reason"] != control.Evidence["reason"] {
+		t.Fatalf("stale request changed the lifecycle decision: stale=(%q, %#v) control=(%q, %#v)",
+			stale.status(), stale.Evidence, control.status(), control.Evidence)
+	}
+}
+
+func TestReviewRegistration_HeadChangeDuringRegistrationWarnsAndRefreshesLiveGate(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	trigger := github.PRComment{
+		ID:        "trigger-head-race",
+		Body:      "/sandman review",
+		CreatedAt: now.Add(-time.Minute),
+	}
+	var warningLog strings.Builder
+	client := &registrationGateSnapshotClient{
+		comments: []github.PRComment{trigger},
+		responses: []*github.PR{
+			{
+				// The snapshot the observation starts from: settled and approved.
+				Number:            43,
+				State:             "open",
+				HeadRefName:       gateTestBranch,
+				HeadRefOid:        "current-sha",
+				StatusCheckRollup: "success",
+				ReviewDecision:    "APPROVED",
+				MergeStateStatus:  "CLEAN",
+			},
+			{
+				// A push lands while the request is being registered.
+				Number:            43,
+				State:             "open",
+				HeadRefName:       gateTestBranch,
+				HeadRefOid:        "newer-sha",
+				StatusCheckRollup: "pending",
+				MergeStateStatus:  "BLOCKED",
+			},
+		},
+	}
+	session := &runSession{
+		deps: runDeps{githubClient: client, errorLog: &warningLog},
+		renderCfg: prompt.RenderConfig{
+			ReviewCommand: "/sandman review",
+			ReviewTimeout: 600,
+		},
+		opts: runSessionOptions{
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
+		reviewRegistrationNow:  func() time.Time { return now },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+
+	verdict := session.observeLifecycleForTest(context.Background(), workDir, gateTestBranch, "", "run-test")
+
+	if !strings.Contains(warningLog.String(), "implementation review registration for PR #43: write review registration: review registration head changed: pull-request head changed during registration") {
+		t.Fatalf("head change during registration did not warn: %q", warningLog.String())
+	}
+	if client.calls < 3 {
+		t.Fatalf("PR lookups = %d, want the initial lookup, the registration head check and the refresh", client.calls)
+	}
+	if verdict.Evidence["head_sha"] != "newer-sha" || verdict.Evidence["external_gate"] == "ready-to-merge" {
+		t.Fatalf("gate was decided from the pre-race snapshot: (%q, %#v), want the refreshed newer-sha snapshot", verdict.status(), verdict.Evidence)
 	}
 }
 

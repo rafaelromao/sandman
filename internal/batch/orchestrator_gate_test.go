@@ -829,6 +829,118 @@ func TestRunSingle_OpenPRPersistsCIWaitForActiveCurrentHeadRollups(t *testing.T)
 	}
 }
 
+// lockedLogBuffer collects run-log lines written from the executor's goroutines.
+type lockedLogBuffer struct {
+	mu   sync.Mutex
+	text strings.Builder
+}
+
+func (b *lockedLogBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.text.Write(p)
+}
+
+func (b *lockedLogBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.text.String()
+}
+
+func TestRunSingle_StaleReviewRequestKeepsCIWaitAndRecordsDiagnosticQuietly(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(workDir)
+	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0o755); err != nil {
+		t.Fatalf("create worktree task directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("# Task\n"), 0o644); err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+	// The newest review request belongs to an earlier head; the current head
+	// has no request yet and its checks are still running.
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	seedStaleReviewRegistration(t, worktreePath, now, 17, "stale-sha", github.PRComment{
+		ID:        "trigger-stale-executor",
+		Body:      "/sandman review",
+		CreatedAt: now.Add(-time.Minute),
+	})
+
+	branch := gateTestBranch
+	sb := &retrySandbox{workDir: worktreePath}
+	sbFactory := &retrySandboxFactory{sandbox: sb}
+	factory := &fakeRunnableFactory{results: []AgentRunResult{{
+		IssueNumber: 42,
+		Status:      "success",
+		Branch:      branch,
+	}}}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}},
+		prs: map[string]*github.PR{branch: {
+			Number:            17,
+			State:             "open",
+			HeadRefName:       branch,
+			HeadRefOid:        "current-sha",
+			StatusCheckRollup: "pending",
+			MergeStateStatus:  "BLOCKED",
+		}},
+	}
+	var runLog lockedLogBuffer
+	o := NewOrchestrator(
+		client,
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(&runLog),
+		WithSandboxFactory(sbFactory),
+		WithRunnableFactory(factory),
+		WithRunSessionOpts(gateTestRunOptions()),
+	)
+
+	bc := BatchConfig{
+		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          3,
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+	})
+	if !started {
+		t.Fatalf("expected run to start, status=%q", result.Status)
+	}
+	if result.Status != "await" {
+		t.Fatalf("status = %q, want await for active current-head CI", result.Status)
+	}
+	logs, err := eventLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	awaitEvt := findEvent(logs, "run.await")
+	if awaitEvt == nil {
+		t.Fatalf("run.await event not found: %v", logs)
+	}
+	if awaitEvt.Payload["gate"] != string(lifecycleGatePending) {
+		t.Fatalf("open PR gate = %v, want the CI-authorized pending gate", awaitEvt.Payload["gate"])
+	}
+	if ciWait, ok := awaitEvt.Payload["ci_wait"].(map[string]any); !ok || ciWait["head_sha"] != "current-sha" {
+		t.Fatalf("await payload lacks current-head CI evidence: %#v", awaitEvt.Payload)
+	}
+	diagnostic, ok := awaitEvt.Payload["review_diagnostic"].(map[string]any)
+	if !ok || diagnostic["status"] != "invalid" || diagnostic["reason"] != gateReviewTimeoutError ||
+		diagnostic["error"] != "review registration head does not match the current pull request" {
+		t.Fatalf("run.await review_diagnostic = %#v, want the unchanged stale-head diagnostic", awaitEvt.Payload["review_diagnostic"])
+	}
+	if log := runLog.String(); strings.Contains(log, "retained review artifacts ignored") ||
+		strings.Contains(log, "review registration") {
+		t.Fatalf("stale request wrote registration or retained-artifact warnings: %q", log)
+	}
+}
+
 func TestLifecycleObservationCancellationWhileCIWaitLockContendedAborts(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-ci-abort-")
 	path := filepath.Join(workDir, ".sandman", "state", "17.ci_wait.json")
