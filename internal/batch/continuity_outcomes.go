@@ -110,18 +110,19 @@ var continuityOutcomes = continuityTable{
 	{reason: githubUnavailableReason, cause: causeFailure}:               outcomeHold,     // waits for GitHub to recover
 	{reason: implementorActionRequiredReason, cause: causeFailure}:       outcomeTerminal, // legacy verification fallback
 	{reason: "REMEDIATION_BUDGET_EXHAUSTED", cause: causeFailure}:        outcomeTerminal, // genuine requested changes left unrepaired (formal, daemon verdict or approval override)
+	{reason: reviewFeedbackStalledReason, cause: causeFailure}:           outcomeTerminal, // informal review feedback an unchanged relaunch could not act on
 	{reason: idleGateReason, cause: causeFailure}:                        outcomeHold,     // nothing resolving yet; waits like rc2
 	{reason: reviewTimeoutReason, cause: causeFailure}:                   outcomeHold,     // expired request; agrees with the expired row
 	{reason: "CI_WAIT_TIMEOUT", cause: causeFailure}:                     outcomeHold,     // bounded CI wait expired; waits like rc2
 	{reason: "CAPACITY_WAIT", cause: causeFailure}:                       outcomeTerminal, // fail closed if capacity admission is ever terminalized
-	{cause: causeFailure}:                                                outcomeTerminal, // unknown reasons are permanent
+	{cause: causeFailure}: outcomeTerminal, // unknown reasons are permanent
 
 	// Bounded operations that expired with nothing else resolving them.
 	{gate: gateReviewTimeout, reason: reviewTimeoutReason, cause: causeExpired}:         outcomeHold,     // expired delegated-review request
 	{gate: gateGitHubUnavailable, reason: githubUnavailableReason, cause: causeExpired}: outcomeTerminal, // 24-hour window: GATE_LOOKUP_FAILED
 
 	// Stalls: a relaunch that would act on an unchanged resume signature.
-	{gate: gateActionableFeedback, reason: informalFeedbackReason, cause: causeStall}:     outcomeHold,
+	{gate: gateActionableFeedback, reason: informalFeedbackReason, cause: causeStall}:     outcomeTerminal, // REVIEW_FEEDBACK_STALLED (#2999)
 	{gate: gateActionableFeedback, reason: actionableFeedbackReason, cause: causeStall}:   outcomeHold,
 	{gate: gateCIWaitTimeout, reason: "CI_WAIT_STATE_ERROR", cause: causeStall}:           outcomeHold,
 	{gate: gateBlindReviewRequired, reason: blindReviewRequiredReason, cause: causeStall}: outcomeHold,

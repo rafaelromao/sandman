@@ -26,6 +26,16 @@ const (
 	resumeStalledNextAction = "the last implementation relaunch produced no new pull-request head or review request; waiting for a new head, a new review response or request, or a resolved gate"
 	stalledResumesKey       = "stalled_resumes"
 	maxStalledResumes       = 16
+
+	// reviewFeedbackStalledReason ends a Run whose informal review feedback
+	// relaunch left the head, the review request and its responses unchanged
+	// (#2999): the implementor found nothing it could do, and no operation is
+	// resolving the feedback. The evidence names the feedback in the retained
+	// review request and the stalled resume signature under stalledResumeKey.
+	reviewFeedbackStalledReason     = "REVIEW_FEEDBACK_STALLED"
+	reviewFeedbackStalledNextAction = "inspect the stalled review feedback, address or answer it, then continue with `sandman run --continue`"
+	stalledResumeKey                = "stalled_resume"
+	stallRemediationNextAction      = "inspect the current pull-request remediation evidence and continue in a fresh session"
 )
 
 // resumeSignature identifies what a lifecycle relaunch is asked to act on:
@@ -139,6 +149,21 @@ func stalledAwaitExtras(extras map[string]any, signature string, prior []string)
 	wait["next_action"] = resumeStalledNextAction
 	wait[stalledResumesKey] = appendStalledResume(prior, signature)
 	return wait
+}
+
+// stalledTerminalEvidence renders the terminal failure of a relaunch that
+// stopped on a terminal row of the outcome table, the one place that chooses
+// its reason. A stalled informal-feedback relaunch ends as
+// REVIEW_FEEDBACK_STALLED and records the signature that stalled; every other
+// row ends as the exhausted remediation budget. The result carries no wait
+// marker, so the Run finishes instead of waiting.
+func stalledTerminalEvidence(row continuityRow, evidence map[string]any, signature string) map[string]any {
+	if row.cause == causeStall && row.gate == gateActionableFeedback && row.reason == informalFeedbackReason {
+		failure := classifiedLifecycleFailureEvidence(row.gate, evidence, reviewFeedbackStalledReason, reviewFeedbackStalledNextAction)
+		failure[stalledResumeKey] = signature
+		return failure
+	}
+	return remediationBudgetFailureEvidence(row.gate, evidence, stallRemediationNextAction)
 }
 
 func appendStalledResume(prior []string, signature string) []any {

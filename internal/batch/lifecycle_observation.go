@@ -370,8 +370,7 @@ func (o *lifecycleObserver) applyContinuity(branch, runID string, verdict lifecy
 			verdict.Evidence = stalledAwaitExtras(verdict.Evidence, signature, stalled)
 		case outcomeTerminal:
 			verdict.Action = lifecycleFailure
-			verdict.Evidence = remediationBudgetFailureEvidence(row.gate, verdict.Evidence,
-				"inspect the current pull-request remediation evidence and continue in a fresh session")
+			verdict.Evidence = stalledTerminalEvidence(row, verdict.Evidence, signature)
 		}
 		return verdict
 	}
@@ -414,8 +413,7 @@ func (o *lifecycleObserver) applyContinuity(branch, runID string, verdict lifecy
 			}
 			verdict.Evidence = classifiedLifecycleFailureEvidence(gate, verdict.Evidence, row.reason, nextAction)
 		} else {
-			verdict.Evidence = remediationBudgetFailureEvidence(gate, verdict.Evidence,
-				"inspect the current pull-request remediation evidence and continue in a fresh session")
+			verdict.Evidence = stalledTerminalEvidence(row, verdict.Evidence, signature)
 		}
 		verdict.ImplementorWork = false
 	case outcomeHold:
@@ -440,6 +438,12 @@ func continuityOutcomeReason(evidence map[string]any, cause continuityCause) str
 	ownedFormalChanges := gate == gateOwnedWorkRequired && reason == idleGateReason &&
 		strings.EqualFold(strings.TrimSpace(stringEvidence(evidence, "review_decision")), "CHANGES_REQUESTED")
 	if (cause == causeExhausted || cause == causeFailure) && (formalChangesRequested(evidence) || ownedFormalChanges) {
+		return actionableFeedbackReason
+	}
+	// Genuine requested changes carried as informal feedback (a daemon
+	// changes_requested verdict, an approval override) are not stalled
+	// feedback: their stall keeps the requested-changes row.
+	if cause == causeStall && reason == informalFeedbackReason && formalChangesRequested(evidence) {
 		return actionableFeedbackReason
 	}
 	return reason
