@@ -991,7 +991,7 @@ func TestReviewRegistration_RepeatsWarningAfterMultiWriteLogEntry(t *testing.T) 
 	}
 }
 
-func TestReviewRegistration_RejectsSameTriggerFromStaleCanonicalHead(t *testing.T) {
+func TestReviewRegistration_IgnoresSameTriggerFromStaleCanonicalHead(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-review-registration-")
 	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
 	livePR := &github.PR{
@@ -1207,6 +1207,43 @@ func TestReviewRegistration_StaleRequestNeverAuthorizesWait(t *testing.T) {
 	if stale.Action != control.Action || stale.Evidence["gate"] != control.Evidence["gate"] || stale.Evidence["reason"] != control.Evidence["reason"] {
 		t.Fatalf("stale request changed the lifecycle decision: stale=(%q, %#v) control=(%q, %#v)",
 			stale.status(), stale.Evidence, control.status(), control.Evidence)
+	}
+}
+
+func TestReviewRegistration_HeadChangeStillWarnsWhenStaleRequestIsRetained(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	trigger := github.PRComment{
+		ID:        "trigger-stale-head-race",
+		Body:      "/sandman review",
+		CreatedAt: now.Add(-time.Minute),
+	}
+	seedStaleReviewRegistration(t, workDir, now, 44, "stale-sha", trigger)
+
+	var warningLog strings.Builder
+	session := &runSession{
+		deps: runDeps{
+			githubClient: &registrationGitHubClient{fakeGitHubClient: fakeGitHubClient{}, comments: []github.PRComment{trigger}},
+			errorLog:     &warningLog,
+		},
+		renderCfg: prompt.RenderConfig{
+			ReviewCommand: "/sandman review",
+			ReviewTimeout: 600,
+		},
+		reviewRegistrationNow:  func() time.Time { return now },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	// The head under observation is no longer the live head: a genuine head
+	// change outranks the retained stale request and is never mistaken for it.
+	livePR := &github.PR{Number: 44, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "newer-sha"}
+
+	err := session.ensureReviewRegistrationForPR(context.Background(), workDir, livePR, "current-sha", "run-registration-test")
+
+	if !errors.Is(err, errReviewRegistrationHeadChanged) {
+		t.Fatalf("registration error = %v, want a head change", err)
+	}
+	if !strings.Contains(warningLog.String(), "implementation review registration for PR #44: review registration head changed: current pull-request head changed during registration") {
+		t.Fatalf("head change over a retained stale request did not warn: %q", warningLog.String())
 	}
 }
 

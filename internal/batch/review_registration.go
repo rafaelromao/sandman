@@ -362,11 +362,12 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 			strings.EqualFold(strings.TrimSpace(existing.Request.HeadSHA), strings.TrimSpace(pr.HeadRefOid))
 		if reviewTriggerMatchesRequest(existing.Request, trigger) {
 			if !currentGeneration {
-				// The head was verified against the live pull request above, so a
-				// request bound to another head is stale evidence from an earlier
-				// head, not a head change in progress. It is a duplicate that is
-				// never rebound, and it observed and persisted nothing, so there is
-				// no warning to write and no live snapshot to refresh. Its
+				// currentHead equals the live pull-request head here (a mismatch
+				// returned errReviewRegistrationHeadChanged above), so a request
+				// bound to another head matches neither: stale evidence from an
+				// earlier head, not a head change in progress. It is a duplicate
+				// that is never rebound, and it observed and persisted nothing, so
+				// there is no warning to write and no live snapshot to refresh. Its
 				// diagnostic stays with the retained-evidence readers.
 				s.reviewRegistrationObserved = false
 				return nil

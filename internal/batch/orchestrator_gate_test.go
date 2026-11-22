@@ -858,7 +858,10 @@ func TestRunSingle_StaleReviewRequestKeepsCIWaitAndRecordsDiagnosticQuietly(t *t
 		t.Fatalf("seed task: %v", err)
 	}
 	// The newest review request belongs to an earlier head; the current head
-	// has no request yet and its checks are still running.
+	// has no request yet and its checks are still running. This drives the
+	// executor's event path through the retained-evidence reader; the
+	// registration path and lookup counts are asserted at the lifecycle seam in
+	// review_registration_test.go.
 	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
 	seedStaleReviewRegistration(t, worktreePath, now, 17, "stale-sha", github.PRComment{
 		ID:        "trigger-stale-executor",
