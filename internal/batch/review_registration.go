@@ -24,6 +24,15 @@ const reviewRegistrationProtocol = "review-registration/v1"
 
 var errReviewRegistrationHeadChanged = errors.New("review registration head changed")
 
+// reviewRegistrationHeadMismatch is the diagnostic recorded when a registration
+// is not bound to the current head. Keep it stable: it is persisted evidence.
+const reviewRegistrationHeadMismatch = "review registration head does not match the current pull request"
+
+// errReviewRegistrationStaleHead marks a registration bound to a head that is
+// neither the live pull-request head nor the head being observed: stale
+// evidence from an earlier head, not a corrupt record.
+var errReviewRegistrationStaleHead = errors.New(reviewRegistrationHeadMismatch)
+
 // managedObservationPollPlan is the plan recorded for new managed
 // review-request registrations: one interval, in seconds, that applies from the
 // first poll and repeats. A registration retained from an earlier version keeps
@@ -180,8 +189,18 @@ func validateReviewRegistration(registration reviewRequestRegistration, reposito
 	if pr == nil || pr.Number <= 0 || strings.TrimSpace(repository) == "" || request.Repository != repository || request.PullRequest != pr.Number {
 		return fmt.Errorf("review registration identity does not match")
 	}
-	if strings.TrimSpace(request.HeadSHA) == "" || !strings.EqualFold(request.HeadSHA, strings.TrimSpace(currentHead)) || !strings.EqualFold(request.HeadSHA, strings.TrimSpace(pr.HeadRefOid)) {
-		return fmt.Errorf("review registration head does not match the current pull request")
+	matchesCurrentHead := strings.EqualFold(request.HeadSHA, strings.TrimSpace(currentHead))
+	matchesLiveHead := strings.EqualFold(request.HeadSHA, strings.TrimSpace(pr.HeadRefOid))
+	switch {
+	case strings.TrimSpace(request.HeadSHA) == "":
+		return errors.New(reviewRegistrationHeadMismatch)
+	case !matchesCurrentHead && !matchesLiveHead:
+		// Matching neither head means an earlier head owns the request.
+		return errReviewRegistrationStaleHead
+	case !matchesCurrentHead || !matchesLiveHead:
+		// Matching only one of them is a disagreement between the local and
+		// live heads, which stays an ordinary mismatch.
+		return errors.New(reviewRegistrationHeadMismatch)
 	}
 	if strings.TrimSpace(request.TriggerID) == "" || request.TriggerIdentity != reviewTriggerIdentity(request.TriggerID) || strings.TrimSpace(request.TriggerPrefix) == "" || strings.TrimSpace(request.TriggerCreatedAt) == "" || strings.TrimSpace(request.ConfirmedAt) == "" || strings.TrimSpace(request.StartedAt) == "" || strings.TrimSpace(request.DeadlineAt) == "" {
 		return fmt.Errorf("review registration identity or timing is incomplete")
@@ -343,7 +362,15 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 			strings.EqualFold(strings.TrimSpace(existing.Request.HeadSHA), strings.TrimSpace(pr.HeadRefOid))
 		if reviewTriggerMatchesRequest(existing.Request, trigger) {
 			if !currentGeneration {
-				return fmt.Errorf("%w: existing review registration is bound to a different pull-request head", errReviewRegistrationHeadChanged)
+				// currentHead equals the live pull-request head here (a mismatch
+				// returned errReviewRegistrationHeadChanged above), so a request
+				// bound to another head matches neither: stale evidence from an
+				// earlier head, not a head change in progress. It is a duplicate
+				// that is never rebound, and it observed and persisted nothing, so
+				// there is no warning to write and no live snapshot to refresh. Its
+				// diagnostic stays with the retained-evidence readers.
+				s.reviewRegistrationObserved = false
+				return nil
 			}
 			return s.importLegacyReviewEvidence(ctx, workDir, repository, pr, currentHead, registrationPath, &existing)
 		}
