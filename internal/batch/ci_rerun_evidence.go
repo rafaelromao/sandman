@@ -2,6 +2,7 @@ package batch
 
 import (
 	"encoding/json"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -9,6 +10,22 @@ import (
 )
 
 const ciRerunActionKey = "ci_rerun_action"
+
+// ciRerunTransientDiagnoses are the diagnoses the CI rerun helper accepts and
+// the runtime honors in typed rerun evidence: a transient provider timeout, a
+// transient network timeout, and a provider usage limit reached inside a CI
+// job. Deterministic failures are never reruns and have no entry here. The
+// helper script keeps its own copy of this set because it cannot import Go; a
+// test runs the helper for every entry to keep the two in step.
+var ciRerunTransientDiagnoses = []string{
+	"transient-provider-timeout",
+	"transient-network-timeout",
+	"transient-provider-quota",
+}
+
+func ciRerunDiagnosisIsTransient(diagnosis string) bool {
+	return slices.Contains(ciRerunTransientDiagnoses, diagnosis)
+}
 
 // ciRerunActionEvidence is the typed, agent-invoked helper result that proves
 // the current workflow is a prerequisite of a diagnosed recovery. It is
@@ -292,7 +309,7 @@ func (e ciRerunActionEvidence) matchesPullRequest(pullRequest int, repository, h
 	confirmedRerun := e.State == "confirmed" &&
 		e.Reason == "selected-job-and-quality-gate-rerun-observed" && e.ObservedAttempt >= 2
 	if e.Protocol != "ci-rerun/v1" || (!waiting && !confirmedRerun) ||
-		(e.Diagnosis != "transient-provider-timeout" && e.Diagnosis != "transient-network-timeout") ||
+		!ciRerunDiagnosisIsTransient(e.Diagnosis) ||
 		strings.TrimSpace(e.TestedSHA) == "" {
 		return false
 	}
