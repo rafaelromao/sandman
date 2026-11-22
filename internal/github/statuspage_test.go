@@ -81,6 +81,35 @@ func TestStatusPageClient_JudgesHealthByRequestedComponents(t *testing.T) {
 	}
 }
 
+// A CI rerun only needs GitHub Actions: a Git Operations or Pull Requests
+// degradation never skips the rerun, but a degraded Actions component or a
+// major incident does. Each call returns a fresh slice.
+func TestCIRerunComponentsAreGitHubActionsOnly(t *testing.T) {
+	if got := CIRerunComponents(); !slices.Equal(got, []StatusComponent{ComponentActions}) {
+		t.Fatalf("CIRerunComponents() = %v, want only the Actions component", got)
+	}
+	CIRerunComponents()[0] = "Mutated"
+	if got := CIRerunComponents(); got[0] != ComponentActions {
+		t.Fatalf("a caller changed another's judgement: %v", got)
+	}
+	for _, tc := range []struct {
+		name   string
+		body   string
+		outage bool
+	}{
+		{"degraded actions skips", `{"status":{"indicator":"minor"},"components":[{"name":"Actions","status":"degraded_performance"}]}`, true},
+		{"degraded pull requests does not", `{"status":{"indicator":"minor"},"components":[{"name":"Pull Requests","status":"partial_outage"},{"name":"Actions","status":"operational"}]}`, false},
+		{"major incident skips", `{"status":{"indicator":"major"},"components":[{"name":"Actions","status":"operational"}]}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			report, err := statusPageServer(t, http.StatusOK, tc.body).GitHubComponentStatus(context.Background(), CIRerunComponents())
+			if err != nil || report.Outage != tc.outage {
+				t.Fatalf("report = %+v, err = %v, want outage=%v", report, err, tc.outage)
+			}
+		})
+	}
+}
+
 // The plain call keeps the pull-request lookup set GitHub recovery has always
 // used, and an unreadable status page is unknown health for a scoped check too.
 func TestStatusPageClient_PlainCallJudgesByPullRequestLookupComponents(t *testing.T) {

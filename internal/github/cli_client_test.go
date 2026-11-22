@@ -543,6 +543,63 @@ func TestCLIClient_FindPRByBranch_DoesNotSelectRerunPrerequisiteOverSeparateFail
 	}
 }
 
+// A completed CI failure has no active sibling, yet the runtime must still
+// identify the one workflow run holding every failure so it can rerun the
+// diagnosed job (the CI recovery window).
+func TestCLIClient_FindPRByBranch_IdentifiesTheSoleCompletedFailedWorkflowRun(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":18,"state":"open","headRefName":"failure-branch","headRefOid":"source-head","statusCheckRollup":[` +
+		`{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS","name":"build-macos","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"},` +
+		`{"__typename":"CheckRun","status":"COMPLETED","conclusion":"FAILURE","name":"opencode-canary","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},` +
+		`{"__typename":"CheckRun","status":"COMPLETED","conclusion":"FAILURE","name":"quality-gate","detailsUrl":"https://github.com/o/r/actions/runs/101/job/15"}]}]`}}}
+	client := &CLIClient{runner: runner}
+	pr, err := client.FindPRByBranch(context.Background(), "failure-branch")
+	if err != nil || pr == nil {
+		t.Fatalf("FindPRByBranch() = (%+v, %v)", pr, err)
+	}
+	if pr.StatusCheckRollup != "failure" || pr.CIHasActiveChecks || pr.CIActiveFailedWorkflowRunID != "" {
+		t.Fatalf("settled failure = (%q, active=%t, activeRun=%q), want a failure with no rerun prerequisite", pr.StatusCheckRollup, pr.CIHasActiveChecks, pr.CIActiveFailedWorkflowRunID)
+	}
+	if pr.CIFailedWorkflowRunID != "101" {
+		t.Fatalf("failed workflow run = %q, want 101", pr.CIFailedWorkflowRunID)
+	}
+	wantFailed := []CIFailedCheck{
+		{Name: "opencode-canary", DetailsURL: "https://github.com/o/r/actions/runs/101/job/11"},
+		{Name: "quality-gate", DetailsURL: "https://github.com/o/r/actions/runs/101/job/15"},
+	}
+	if !reflect.DeepEqual(pr.CIFailedWorkflowRunFailedChecks, wantFailed) {
+		t.Fatalf("failed checks = %+v, want %+v", pr.CIFailedWorkflowRunFailedChecks, wantFailed)
+	}
+	wantNames := []string{"build-macos", "opencode-canary", "quality-gate"}
+	if !reflect.DeepEqual(pr.CIFailedWorkflowRunCheckNames, wantNames) {
+		t.Fatalf("workflow check names = %v, want %v", pr.CIFailedWorkflowRunCheckNames, wantNames)
+	}
+}
+
+// Failures that cannot be pinned to one workflow run identify nothing: the
+// runtime never reruns on a guess.
+func TestCLIClient_FindPRByBranch_LeavesAmbiguousCompletedFailuresUnidentified(t *testing.T) {
+	for name, raw := range map[string]string{
+		"two failed workflow runs": `[{"status":"COMPLETED","conclusion":"FAILURE","name":"opencode-canary","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},` +
+			`{"status":"COMPLETED","conclusion":"FAILURE","name":"source-tests","detailsUrl":"https://github.com/o/r/actions/runs/202/job/21"}]`,
+		"failure without an execution link": `[{"status":"COMPLETED","conclusion":"FAILURE","name":"opencode-canary","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},` +
+			`{"status":"COMPLETED","conclusion":"FAILURE","name":"external-check","detailsUrl":"https://ci.example.com/build/9"}]`,
+		"unnamed execution in the failed run": `[{"status":"COMPLETED","conclusion":"FAILURE","name":"opencode-canary","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},` +
+			`{"status":"COMPLETED","conclusion":"SUCCESS","name":"","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"}]`,
+		"no failure": `[{"status":"COMPLETED","conclusion":"SUCCESS","name":"build","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":18,"state":"open","headRefName":"b","headRefOid":"h","statusCheckRollup":` + raw + `}]`}}}
+			pr, err := (&CLIClient{runner: runner}).FindPRByBranch(context.Background(), "b")
+			if err != nil || pr == nil {
+				t.Fatalf("FindPRByBranch() = (%+v, %v)", pr, err)
+			}
+			if pr.CIFailedWorkflowRunID != "" || len(pr.CIFailedWorkflowRunFailedChecks) != 0 || len(pr.CIFailedWorkflowRunCheckNames) != 0 {
+				t.Fatalf("identified a failed workflow from ambiguous evidence: %+v", pr)
+			}
+		})
+	}
+}
+
 func TestCIRerunBlockedWorkflowRunIDRequiresFailedAndActiveJobsInSameRun(t *testing.T) {
 	tests := []struct {
 		name string

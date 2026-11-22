@@ -42,6 +42,13 @@ func PullRequestLookupComponents() []StatusComponent {
 	}
 }
 
+// CIRerunComponents returns the components whose degradation makes a workflow
+// rerun pointless: GitHub Actions itself. The CI recovery window judges its
+// attempts by this set. Each call returns a fresh slice.
+func CIRerunComponents() []StatusComponent {
+	return []StatusComponent{ComponentActions}
+}
+
 // StatusReport is GitHub's reported health, judged by a set of components.
 // Outage is true when GitHub reports a major or critical incident, or when a
 // component in the requested set is degraded or unavailable. Components

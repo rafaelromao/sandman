@@ -64,6 +64,18 @@ type PR struct {
 	// from the identified workflow run, including active siblings. A rerun wait
 	// must reject a selected job name that is ambiguous across that full set.
 	CIActiveFailedWorkflowRunCheckNames []string
+	// CIFailedWorkflowRunID identifies the one workflow run holding every failed
+	// check, with or without an active sibling. It is empty when failures span
+	// several runs, lack an execution link or sit beside an unnamed execution.
+	// The CI recovery window reruns the diagnosed job of this run once the
+	// workflow has settled.
+	CIFailedWorkflowRunID string
+	// CIFailedWorkflowRunFailedChecks preserves each failed check's name and
+	// execution link in that run, in link order.
+	CIFailedWorkflowRunFailedChecks []CIFailedCheck
+	// CIFailedWorkflowRunCheckNames preserves every named check execution of
+	// that run, sorted, so a selected job name can be proven unique.
+	CIFailedWorkflowRunCheckNames []string
 	// CIExecutionID identifies the observed check executions independently of
 	// their status. A rerun can change this identity without changing the head.
 	CIExecutionID      string
