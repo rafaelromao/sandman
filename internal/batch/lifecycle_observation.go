@@ -30,6 +30,8 @@ type lifecycleVerdict struct {
 	ImplementorWork  bool
 	ciRepairRequired bool
 	ciExecutionID    string
+	// ciPrerequisite is the settled failed workflow run behind a CI repair.
+	ciPrerequisite map[string]any
 }
 
 type lifecycleVerdictKind uint8
@@ -44,6 +46,9 @@ const (
 	// lifecycleVerdictOrdinaryRetry returns a no-op recovery observation to the
 	// ordinary retry loop for the non-success attempt being observed.
 	lifecycleVerdictOrdinaryRetry
+	// lifecycleVerdictCIRecovery is a wait in the CI recovery window: the
+	// runtime reruns a diagnosed transient CI failure itself (issue #3011).
+	lifecycleVerdictCIRecovery
 )
 
 // lifecycleObservation is the single operation callers use to observe an
@@ -81,6 +86,12 @@ func (o *lifecycleObserver) Observe(ctx context.Context, request lifecycleObserv
 			return verdict
 		}
 	}
+	ciRecovery, ciBase, ciOpen := o.ciRecoveryWindow(request.RunID)
+	if ciOpen {
+		if verdict, handled := o.observeCIRecoveryGate(ctx, request, &ciRecovery, ciBase); handled {
+			return verdict
+		}
+	}
 	verdict := o.decideLifecycleForAttempt(
 		ctx,
 		request.WorkDir,
@@ -92,6 +103,11 @@ func (o *lifecycleObserver) Observe(ctx context.Context, request lifecycleObserv
 		request.AfterAgentAttempt,
 		request.CIRerunAction,
 	)
+	if ciOpen {
+		if recoveryVerdict, handled := o.attemptCIRecovery(ctx, request, &ciRecovery, ciBase, verdict); handled {
+			return recoveryVerdict
+		}
+	}
 	if recovering && request.OrdinaryRetry != nil && !request.UsageLimitReached && ordinaryRetryNoOp(verdict) {
 		return ordinaryRetryAfterGitHubRecovery(*request.OrdinaryRetry, request.Branch)
 	}
@@ -109,7 +125,7 @@ func (o *lifecycleObserver) Observe(ctx context.Context, request lifecycleObserv
 }
 
 func ordinaryRetryNoOp(verdict lifecycleVerdict) bool {
-	if verdict.Kind == lifecycleVerdictGitHubUnavailable || verdict.Action == lifecycleSuccess || verdict.Action == lifecycleAborted {
+	if verdict.Kind == lifecycleVerdictGitHubUnavailable || verdict.Kind == lifecycleVerdictCIRecovery || verdict.Action == lifecycleSuccess || verdict.Action == lifecycleAborted {
 		return false
 	}
 	if _, ok := verdict.Evidence["ci_wait"]; ok {
@@ -364,6 +380,9 @@ func (o *lifecycleObserver) applyContinuity(branch, runID string, verdict lifecy
 			reason: continuityOutcomeReason(verdict.Evidence, causeStall),
 			cause:  causeStall,
 		}
+		if wait, entered := o.enterCIRecovery(branch, runID, verdict, stalled, signature); entered {
+			return wait
+		}
 		switch outcomes.outcome(row) {
 		case outcomeHold:
 			verdict.Action = lifecycleAwait
@@ -402,6 +421,9 @@ func (o *lifecycleObserver) applyContinuity(branch, runID string, verdict lifecy
 		gate:   gate,
 		reason: continuityOutcomeReason(verdict.Evidence, cause),
 		cause:  cause,
+	}
+	if wait, entered := o.enterCIRecovery(branch, runID, verdict, stalled, signature); entered {
+		return wait
 	}
 	switch outcomes.outcome(row) {
 	case outcomeTerminal:

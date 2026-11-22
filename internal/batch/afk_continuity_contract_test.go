@@ -2164,12 +2164,12 @@ func TestAFKContinuityContract_LifecycleFailureReasonsAreClassified(t *testing.T
 			t.Errorf("dynamic lifecycle reason assignment %q is not classified", expression)
 		}
 	}
-	for _, reason := range []string{idleGateReason, reviewTimeoutReason, "CI_WAIT_TIMEOUT", githubUnavailableReason, blindReviewRequiredReason} {
+	for _, reason := range []string{idleGateReason, reviewTimeoutReason, "CI_WAIT_TIMEOUT", githubUnavailableReason, ciRecoveryReason, blindReviewRequiredReason} {
 		if !lifecycleFailureRecoverable(reason) {
 			t.Errorf("%s must wait for external recovery, as rc2 did", reason)
 		}
 	}
-	for _, reason := range []string{"PULL_REQUEST_CLOSED", "REVIEW_REQUEST_REQUIRED", "REMEDIATION_BUDGET_EXHAUSTED", reviewFeedbackStalledReason, "merged-pr-missing-closing-reference", "SOMETHING_NEW"} {
+	for _, reason := range []string{"PULL_REQUEST_CLOSED", "REVIEW_REQUEST_REQUIRED", "REMEDIATION_BUDGET_EXHAUSTED", ciRecoveryExhaustedReason, reviewFeedbackStalledReason, "merged-pr-missing-closing-reference", "SOMETHING_NEW"} {
 		if lifecycleFailureRecoverable(reason) {
 			t.Errorf("%s must stay terminal", reason)
 		}
@@ -2201,6 +2201,7 @@ var lifecycleReasonAssignmentSources = map[string]bool{
 	"expiredReviewTerminal:field:row.reason=reviewTimeoutReason":                                 true, // The fallback is the classified timeout reason.
 	"expiredReviewTerminal:continuityRow.reason=stringEvidence(verdict.Evidence, \"reason\")":    true,
 	"githubRecoveryDisposition:continuityRow.reason=githubUnavailableReason":                     true,
+	"ciRecoveryDisposition:continuityRow.reason=ciRecoveryReason":                                true,
 	"recordGitHubLookupFailure:continuityRow.reason=githubUnavailableReason":                     true,
 	"waitForTransition:lifecycleDeadlineReason(gate)":                                            true, // The closed deadline-gate switch returns classified reasons.
 	"decideLifecycleForAttempt:lifecycleDeadlineReason(gate)":                                    true,

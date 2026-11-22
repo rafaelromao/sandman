@@ -140,7 +140,7 @@ func (spec recoverySpec) signature(evidence map[string]any) (string, bool) {
 // the row driver, the foreground wait and the persistence dedupe must treat as
 // a bounded, scheduled recovery. A recovery registers its spec here once; the
 // consumers below never name a recovery's own helpers.
-var recoveryWaitSpecs = []recoverySpec{githubRecoverySpec}
+var recoveryWaitSpecs = []recoverySpec{githubRecoverySpec, ciRecoverySpec}
 
 // recoveryNextAttempt reports when a wait on any registered window next
 // attempts recovery, so pollers sleep until then instead of polling.

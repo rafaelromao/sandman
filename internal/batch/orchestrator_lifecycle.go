@@ -109,7 +109,11 @@ type lifecycleDecision struct {
 	needMergeFacts    bool
 	ciRepairRequired  bool
 	ciExecutionID     string
-	extras            map[string]any
+	// ciPrerequisite identifies the one settled failed workflow run behind a
+	// CI repair (same shape as the rerun prerequisite). It is nil when the
+	// failure cannot be pinned to one run, which no rerun may act on.
+	ciPrerequisite map[string]any
+	extras         map[string]any
 	// failureExtras carries structured terminal-failure evidence (reason,
 	// next_action) for policy failures. It never carries "gate" or "await":
 	// terminal run.finished events must not look like waits.
@@ -285,17 +289,38 @@ func classifiedLifecycleFailureEvidence(gate string, evidence map[string]any, re
 const ciRerunPrerequisiteKey = "ci_rerun_prerequisite"
 
 func ciRerunPrerequisiteFor(pr *github.PR, headSHA, repository string) map[string]any {
+	if pr == nil {
+		return nil
+	}
+	return ciRerunPrerequisiteFrom(pr, headSHA, repository, pr.CIActiveFailedWorkflowRunID,
+		pr.CIActiveFailedWorkflowRunFailedChecks, pr.CIActiveFailedWorkflowRunCheckNames)
+}
+
+// ciSettledFailurePrerequisiteFor identifies the one workflow run holding every
+// failed check of a settled current-head failure, in the same shape as the
+// rerun prerequisite, so typed rerun evidence can be matched against it. The
+// CI recovery window uses it to prove that a later failure is the one the
+// implementor diagnosed.
+func ciSettledFailurePrerequisiteFor(pr *github.PR, headSHA, repository string) map[string]any {
+	if pr == nil {
+		return nil
+	}
+	return ciRerunPrerequisiteFrom(pr, headSHA, repository, pr.CIFailedWorkflowRunID,
+		pr.CIFailedWorkflowRunFailedChecks, pr.CIFailedWorkflowRunCheckNames)
+}
+
+func ciRerunPrerequisiteFrom(pr *github.PR, headSHA, repository, workflowRunID string, failed []github.CIFailedCheck, names []string) map[string]any {
 	if pr == nil || pr.Number <= 0 || strings.TrimSpace(headSHA) == "" ||
 		strings.TrimSpace(repository) == "" ||
 		!strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) {
 		return nil
 	}
-	workflowRunID := strings.TrimSpace(pr.CIActiveFailedWorkflowRunID)
-	if workflowRunID == "" || len(pr.CIActiveFailedWorkflowRunFailedChecks) == 0 {
+	workflowRunID = strings.TrimSpace(workflowRunID)
+	if workflowRunID == "" || len(failed) == 0 {
 		return nil
 	}
-	failedChecks := append([]github.CIFailedCheck(nil), pr.CIActiveFailedWorkflowRunFailedChecks...)
-	checkNames := append([]string(nil), pr.CIActiveFailedWorkflowRunCheckNames...)
+	failedChecks := append([]github.CIFailedCheck(nil), failed...)
+	checkNames := append([]string(nil), names...)
 	if len(checkNames) == 0 {
 		return nil
 	}
@@ -371,6 +396,7 @@ func decideRecoverableLifecycleWithOutcomes(outcomes continuityTable, gate lifec
 		decision := lifecycleRemediationDecision("ci-failure", "CI_FAILURE", "inspect current-head CI with gh pr checks and repair the failing checks", pr, evidence.payload)
 		decision.ciRepairRequired = true
 		decision.ciExecutionID = strings.TrimSpace(pr.CIExecutionID)
+		decision.ciPrerequisite = ciSettledFailurePrerequisiteFor(pr, headSHA, repository)
 		return decision
 	}
 	if attemptNeedsRetry(attemptStatus) &&
@@ -664,7 +690,7 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 	if err == nil && pr != nil {
 		gate = lifecycleGate(checkPRExternalGateForPR(pr, headSHA, true))
 	}
-	if err == nil && pr != nil && (strings.TrimSpace(pr.CIActiveFailedWorkflowRunID) != "" || (afterAgentAttempt && ciRerunAction != nil)) {
+	if err == nil && pr != nil && (strings.TrimSpace(pr.CIActiveFailedWorkflowRunID) != "" || strings.TrimSpace(pr.CIFailedWorkflowRunID) != "" || (afterAgentAttempt && ciRerunAction != nil)) {
 		if name, repoErr := s.deps.githubClient.RepoName(ctx); repoErr == nil {
 			repository = strings.TrimSpace(name)
 		}
@@ -1064,6 +1090,7 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 	return lifecycleVerdict{
 		Action: decision.action, Evidence: extras,
 		ciRepairRequired: decision.ciRepairRequired, ciExecutionID: decision.ciExecutionID,
+		ciPrerequisite: decision.ciPrerequisite,
 	}
 }
 

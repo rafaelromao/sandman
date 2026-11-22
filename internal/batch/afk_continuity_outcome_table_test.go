@@ -60,6 +60,7 @@ func continuityContractRows() []continuityContractRow {
 		{continuityRow{gate: continuityGateCurrentHeadCI, cause: causeResolving}, outcomeWait, activeOperationProbe(true, false)},
 		{continuityRow{gate: continuityGateReviewRequest, cause: causeResolving}, outcomeWait, activeOperationProbe(false, true)},
 		{continuityRow{gate: gateGitHubUnavailable, reason: githubUnavailableReason, cause: causeResolving}, outcomeWait, githubWindowProbe(false)},
+		{continuityRow{gate: gateCIRecovery, reason: ciRecoveryReason, cause: causeResolving}, outcomeWait, ciRecoveryWindowProbe(false)},
 		{continuityRow{gate: continuityGateQuota, reason: "AGENT_USAGE_LIMIT", cause: causeResolving}, outcomeWait, quotaWaitProbe(TestUsageLimitDuringPRRemediationRetainsQuotaRecovery)},
 		{continuityRow{gate: continuityGateCapacity, cause: causeResolving}, outcomeWait, capacityWaitProbe(TestFindReadyContinuationsUsesLatestDurableCapacityPhase)},
 
@@ -74,6 +75,8 @@ func continuityContractRows() []continuityContractRow {
 		{continuityRow{reason: stateErrorReason, cause: causeFailure}, outcomeTerminal, failureReasonProbe(stateErrorReason)},
 		{continuityRow{reason: lookupGateReason, cause: causeFailure}, outcomeTerminal, failureReasonProbe(lookupGateReason)},
 		{continuityRow{reason: githubUnavailableReason, cause: causeFailure}, outcomeHold, failureReasonProbe(githubUnavailableReason)},
+		{continuityRow{reason: ciRecoveryReason, cause: causeFailure}, outcomeHold, failureReasonProbe(ciRecoveryReason)},
+		{continuityRow{reason: ciRecoveryExhaustedReason, cause: causeFailure}, outcomeTerminal, failureReasonProbe(ciRecoveryExhaustedReason)},
 		{continuityRow{reason: "IMPLEMENTOR_ACTION_REQUIRED", cause: causeFailure}, outcomeTerminal, failureReasonProbe("IMPLEMENTOR_ACTION_REQUIRED")},
 		{continuityRow{reason: "REMEDIATION_BUDGET_EXHAUSTED", cause: causeFailure}, outcomeTerminal, failureReasonProbe("REMEDIATION_BUDGET_EXHAUSTED")},
 		{continuityRow{reason: reviewFeedbackStalledReason, cause: causeFailure}, outcomeTerminal, failureReasonProbe(reviewFeedbackStalledReason)},
@@ -86,6 +89,7 @@ func continuityContractRows() []continuityContractRow {
 		// Bounded operations that expired with nothing else resolving them.
 		{continuityRow{gate: gateReviewTimeout, reason: reviewTimeoutReason, cause: causeExpired}, outcomeHold, expiredRequestProbe()},
 		{continuityRow{gate: gateGitHubUnavailable, reason: githubUnavailableReason, cause: causeExpired}, outcomeTerminal, githubWindowProbe(true)},
+		{continuityRow{gate: gateCIRecovery, reason: ciRecoveryReason, cause: causeExpired}, outcomeTerminal, ciRecoveryWindowProbe(true)},
 
 		// A relaunch that would act on an unchanged resume signature.
 		// #2999: an unchanged informal-feedback relaunch ends the Run.
@@ -209,6 +213,28 @@ func githubWindowProbe(expired bool) continuityProbe {
 		if expired && table.outcome(continuityRow{gate: gateGitHubUnavailable, reason: githubUnavailableReason, cause: causeExpired}) == outcomeTerminal &&
 			verdict.Evidence["reason"] != lookupGateReason {
 			t.Fatalf("expired GitHub recovery window = %v, want %s", verdict.Evidence, lookupGateReason)
+		}
+		return probedOutcome(t, verdict)
+	}}
+}
+
+// ciRecoveryWindowProbe observes the CI recovery window: it waits while open
+// and ends with CI_RECOVERY_EXHAUSTED once 24 hours have passed since its
+// start. Both decisions go through the window's own disposition.
+func ciRecoveryWindowProbe(expired bool) continuityProbe {
+	return continuityProbe{consultsTable: true, observe: func(t *testing.T, table continuityTable) continuityOutcomeKind {
+		now := time.Date(2026, time.November, 19, 12, 0, 0, 0, time.UTC)
+		session := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+		observer := &lifecycleObserver{runSession: session, outcomes: table}
+		window, open := recoveryWindow{}, false
+		if expired {
+			window, open = recoveryWindow{WindowStarted: now.Add(-ciRecoveryBound - time.Minute)}, true
+		}
+		window, cause := observer.extendRecoveryWindow(ciRecoverySpec, window, open, "rerun-submission-not-confirmed")
+		verdict := observer.ciRecoveryDisposition(nil, continuityBranch, ciRecovery{recoveryWindow: window, Target: ciTestReceipt()}, cause)
+		if expired && table.outcome(continuityRow{gate: gateCIRecovery, reason: ciRecoveryReason, cause: causeExpired}) == outcomeTerminal &&
+			verdict.Evidence["reason"] != ciRecoveryExhaustedReason {
+			t.Fatalf("expired CI recovery window = %v, want %s", verdict.Evidence, ciRecoveryExhaustedReason)
 		}
 		return probedOutcome(t, verdict)
 	}}

@@ -93,6 +93,7 @@ var continuityOutcomes = continuityTable{
 	{gate: gateGitHubUnavailable, reason: githubUnavailableReason, cause: causeResolving}: outcomeWait,
 	{gate: continuityGateQuota, reason: "AGENT_USAGE_LIMIT", cause: causeResolving}:       outcomeWait,
 	{gate: continuityGateCapacity, cause: causeResolving}:                                 outcomeWait,
+	{gate: gateCIRecovery, reason: ciRecoveryReason, cause: causeResolving}:               outcomeWait, // CI recovery window (#3011)
 
 	// Lifecycle failure reasons. A permanent reason may end a Run whose pull
 	// request is open; a recoverable one holds instead. Unknown reasons are
@@ -108,6 +109,8 @@ var continuityOutcomes = continuityTable{
 	{reason: stateErrorReason, cause: causeFailure}:                      outcomeTerminal, // corrupt review state, nothing resolving
 	{reason: lookupGateReason, cause: causeFailure}:                      outcomeTerminal, // GitHub stayed unavailable for 24 hours
 	{reason: githubUnavailableReason, cause: causeFailure}:               outcomeHold,     // waits for GitHub to recover
+	{reason: ciRecoveryReason, cause: causeFailure}:                      outcomeHold,     // waits for the runtime to rerun a transient CI failure
+	{reason: ciRecoveryExhaustedReason, cause: causeFailure}:             outcomeTerminal, // the CI recovery window passed 24 hours
 	{reason: implementorActionRequiredReason, cause: causeFailure}:       outcomeTerminal, // legacy verification fallback
 	{reason: "REMEDIATION_BUDGET_EXHAUSTED", cause: causeFailure}:        outcomeTerminal, // genuine requested changes left unrepaired (formal, daemon verdict or approval override)
 	{reason: reviewFeedbackStalledReason, cause: causeFailure}:           outcomeTerminal, // informal review feedback an unchanged relaunch could not act on
@@ -120,6 +123,7 @@ var continuityOutcomes = continuityTable{
 	// Bounded operations that expired with nothing else resolving them.
 	{gate: gateReviewTimeout, reason: reviewTimeoutReason, cause: causeExpired}:         outcomeHold,     // expired delegated-review request
 	{gate: gateGitHubUnavailable, reason: githubUnavailableReason, cause: causeExpired}: outcomeTerminal, // 24-hour window: GATE_LOOKUP_FAILED
+	{gate: gateCIRecovery, reason: ciRecoveryReason, cause: causeExpired}:               outcomeTerminal, // 24-hour window: CI_RECOVERY_EXHAUSTED
 
 	// Stalls: a relaunch that would act on an unchanged resume signature.
 	{gate: gateActionableFeedback, reason: informalFeedbackReason, cause: causeStall}:     outcomeTerminal, // REVIEW_FEEDBACK_STALLED (#2999)

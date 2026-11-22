@@ -45,11 +45,18 @@ type fakeGitHubStatus struct {
 	report github.StatusReport
 	err    error
 	calls  int
+	scopes [][]github.StatusComponent
 }
 
 func (f *fakeGitHubStatus) GitHubStatus(context.Context) (github.StatusReport, error) {
 	f.calls++
 	return f.report, f.err
+}
+
+// GitHubComponentStatus records the components a recovery judges health by.
+func (f *fakeGitHubStatus) GitHubComponentStatus(ctx context.Context, components []github.StatusComponent) (github.StatusReport, error) {
+	f.scopes = append(f.scopes, components)
+	return f.GitHubStatus(ctx)
 }
 
 type githubRecoveryFixture struct {
