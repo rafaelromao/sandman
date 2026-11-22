@@ -52,7 +52,7 @@ queued → running ⇄ waiting → success / failure / aborted
 | Missing PR, or an undelivered review request when a review command is configured | Perform bounded owned-work remediation (`run.retry` reason `lifecycle-owned-work`), then failure; never invent external waiting |
 | Review request delivered by an attempt that exited non-success | Register it and stay **waiting**; spend no ordinary retry |
 | Informal-feedback relaunch leaves head, request and responses unchanged | Finish **failure** (`REVIEW_FEEDBACK_STALLED`): the evidence names the feedback (source, locator, body) and the stalled resume signature, and the next action is `sandman run --continue`; never relaunch on the same evidence |
-| Relaunch allowance exhausted on review, CI (including an expired CI wait), request or merge work | Stay **waiting** (`RESUME_STALLED`); genuine requested changes (formal `CHANGES_REQUESTED` or the review daemon's `changes_requested` verdict) left unrepaired finish **failure**. The wait of used-up informal feedback records its signature, so its next observation finishes `REVIEW_FEEDBACK_STALLED` |
+| Relaunch allowance exhausted on review, CI (including an expired CI wait), request or merge work | Stay **waiting** (`RESUME_STALLED`), except that the wait of used-up informal feedback records its signature and finishes `REVIEW_FEEDBACK_STALLED` on its next observation; genuine requested changes (formal `CHANGES_REQUESTED` or the review daemon's `changes_requested` verdict) left unrepaired finish **failure** |
 | Review request expired with nothing else resolving, or an idle gate after owned work | Stay **waiting** (continuity hold) on an open current-head PR |
 | Recognized provider usage limit | Wait and probe; do not spend ordinary retries immediately |
 | Quota recovers | Resume limited run and reopen sibling admission |
@@ -100,8 +100,9 @@ requested changes (formal `CHANGES_REQUESTED`, the review daemon's
 `changes_requested` verdict, or a daemon approval its own verdict sections
 contradict) the implementor cannot address within its relaunch
 allowance, informal review feedback that an unchanged relaunch could not act
-on (`REVIEW_FEEDBACK_STALLED`), no review request delivered at all when a review command is
-configured (`REVIEW_REQUEST_REQUIRED`), corrupt review state with nothing
+on (`REVIEW_FEEDBACK_STALLED`), no review request delivered at all when a
+review command is configured (`REVIEW_REQUEST_REQUIRED`), corrupt review state
+with nothing
 resolving, GitHub unavailable for a full
 24-hour recovery window (`GATE_LOOKUP_FAILED`), and agent authentication,
 usage-limit or operator stops. With no configured review command, a missing
@@ -137,7 +138,8 @@ stall, so it finishes with the same reason on its next observation, without a
 relaunch; a recorded hold for used-up informal feedback cannot be told apart
 and ends the same way. A new head, a new review request or a new response is
 new evidence and still resumes the implementor. Genuine requested changes are
-never stalled feedback: they keep their stall row and their per-head allowance. Newly actionable merge
+never stalled feedback: they keep their stall row and their per-head
+allowance. Newly actionable merge
 conflicts must not be hidden behind unchanged failed CI: conflict remediation
 takes priority, allowing integration to produce a new head
 whose checks and review must be revalidated. A continuity hold
@@ -150,7 +152,8 @@ Neither re-requesting review nor returning to an earlier head resets it.
 Genuine requested changes (formal `CHANGES_REQUESTED`, a daemon
 `changes_requested` verdict, or an approval override) end the Run when the
 allowance is spent; other informal feedback holds when its allowance is spent
-and finishes `REVIEW_FEEDBACK_STALLED` as soon as a relaunch leaves its
+(that hold ends `REVIEW_FEEDBACK_STALLED` on its next observation, as described
+above) and finishes `REVIEW_FEEDBACK_STALLED` as soon as a relaunch leaves its
 evidence unchanged. Approval can resume
 merge work under its own round.
 Other gates retain the in-session request-and-head rule; a changed CI

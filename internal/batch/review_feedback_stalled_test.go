@@ -127,6 +127,14 @@ func TestReviewFeedbackStalled_GenuineChangesKeepTheirStallHold(t *testing.T) {
 			if verdict.Action != lifecycleAwait || verdict.Evidence["reason"] != resumeStalledReason {
 				t.Fatalf("recorded stall of genuine requested changes = %v/%v, want the unchanged stalled wait", verdict.Action, verdict.Evidence)
 			}
+
+			// The same evidence relaunched on the unchanged signature does not
+			// stall at all: genuine requested changes keep their allowance.
+			repeated := &runSession{decisionPRHead: "head-1", lastResumeSignature: resumeSignature(extras, "head-1")}
+			verdict = applyContinuityForTest(repeated, "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: extras})
+			if verdict.Action != lifecycleResume {
+				t.Fatalf("repeated relaunch of genuine requested changes = %v/%v, want another relaunch within the allowance", verdict.Action, verdict.Evidence)
+			}
 		})
 	}
 }
@@ -157,7 +165,7 @@ func TestReviewFeedbackStalled_RecordedStallEndsTheRun(t *testing.T) {
 // A Run that an earlier binary parked on a stalled-feedback hold ends on its
 // next observation instead of waiting for evidence that cannot arrive: its
 // recorded signature proves the stall, and the implementor is not relaunched.
-func TestReviewFeedbackStalled_RunParkedByEarlierBinaryEndsWithoutRelaunch(t *testing.T) {
+func TestAFKContinuityContract_ParkedStalledFeedbackEndsOnNextObservation(t *testing.T) {
 	extras := stalledFeedbackExtras(t, stalledFeedbackBody)
 	session := &runSession{
 		deps:           runDeps{eventLog: stalledLedgerLog(resumeSignature(extras, "head-1"))},
@@ -230,11 +238,14 @@ func TestReviewFeedbackStalled_FinishRecordsFeedbackAndNextAction(t *testing.T) 
 	}
 }
 
-// An informal hold recorded for a used-up relaunch allowance (a row #3001
-// owns) keeps its signature in the Run's ledger, like a ledger an earlier
-// binary wrote. Its next observation therefore reaches the stall row and ends
-// the Run: the two cannot be told apart.
-func TestReviewFeedbackStalled_ExhaustedInformalHoldEndsOnReobservation(t *testing.T) {
+// An informal hold recorded for a used-up relaunch allowance (the
+// `actionable-feedback` / `REVIEW_INFORMAL_FEEDBACK` / allowance-used row, which
+// #3001 owns and which stays a hold in the outcome table) keeps its signature in
+// the Run's ledger, like a ledger an earlier binary wrote. Re-observing the same
+// evidence is an unchanged relaunch, so the next observation reaches the stall
+// row and ends the Run: the two cannot be told apart. This pins that transitional
+// consequence in the contract (see ADR-0063) until #3001 flips the row.
+func TestAFKContinuityContract_ExhaustedInformalHoldEndsOnReobservation(t *testing.T) {
 	extras := stalledFeedbackExtras(t, stalledFeedbackBody)
 	log := &spyEventLog{events: []events.Event{
 		{Type: "run.started", RunID: "run", Payload: map[string]any{"branch": "b"}},

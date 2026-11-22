@@ -43,13 +43,13 @@ change can flip only its assigned row.
 | #2995 | No continuity-row flip: descriptive merge prose no longer contradicts an otherwise approving daemon verdict | Existing approval classification | Keep approval eligible for merge |
 | #2997 | `actionable-feedback` / `REVIEW_CHANGES_REQUESTED` / allowance used | Terminal after the configured round is exhausted | Keep terminal; scope review-feedback rounds to the head |
 | #2998 | `actionable-feedback` / `REVIEW_CHANGES_REQUESTED` / allowance used for a contradicted daemon approval | Terminal after the configured round is exhausted | Treat the approval as requested changes and keep terminal after the bound |
-| #2999 (landed) | `actionable-feedback` / `REVIEW_INFORMAL_FEEDBACK` / stall | Hold | Terminal (`REVIEW_FEEDBACK_STALLED`, classified permanent as a failure reason) |
+| #2999 | `actionable-feedback` / `REVIEW_INFORMAL_FEEDBACK` / stall | Hold before #2999; terminal since it landed | Terminal (`REVIEW_FEEDBACK_STALLED`, classified permanent as a failure reason) |
 | #3000 | `review-timeout` / `REVIEW_TIMEOUT` / expired operation with no active resolver | Hold | Terminal (`REVIEW_REQUEST_EXPIRED`) |
 | #3001 | `ready-to-merge` / any merge reason / stall or allowance used | Hold | Terminal with the exhausted-work reason |
 | #3001 | `ci-failure` / `CI_FAILURE` / stall or allowance used | Hold | Terminal with the exhausted-work reason |
 | #3001 | `implementor-work-required` / `REVIEW_REQUEST_REQUIRED` / stall | Hold | Terminal with the exhausted-work reason |
 | #3001 | `blind-review-required` / `BLIND_REVIEW_REQUIRED` / stall or allowance used | Hold | Terminal with the exhausted-work reason |
-| #3001 | `actionable-feedback` / `REVIEW_INFORMAL_FEEDBACK` / allowance used | Hold | Terminal with the exhausted-work reason |
+| #3001 | `actionable-feedback` / `REVIEW_INFORMAL_FEEDBACK` / allowance used | Hold (until #3001, the hold ends `REVIEW_FEEDBACK_STALLED` on its next observation; see below) | Terminal with the exhausted-work reason |
 
 The #2999 row ends a Run whose informal-feedback relaunch left the head, the
 review request and its responses unchanged. Its terminal evidence carries the

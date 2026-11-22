@@ -108,6 +108,9 @@ func continuityContractRows() []continuityContractRow {
 		// ordinary attempt).
 		{continuityRow{reason: actionableFeedbackReason, cause: causeExhausted}, outcomeTerminal, relaunchProbe(causeExhausted, relaunch(gateActionableFeedback, actionableFeedbackReason), false)},
 		{continuityRow{reason: "CI_WAIT_STATE_ERROR", cause: causeExhausted}, outcomeTerminal, relaunchProbe(causeExhausted, relaunch(gateCIWaitTimeout, "CI_WAIT_STATE_ERROR"), false)},
+		// Still a hold until #3001 flips it. The hold records its signature, so its
+		// next observation ends REVIEW_FEEDBACK_STALLED (#2999); that transitional
+		// consequence is pinned by TestAFKContinuityContract_ExhaustedInformalHoldEndsOnReobservation.
 		{continuityRow{gate: gateActionableFeedback, reason: informalFeedbackReason, cause: causeExhausted}, outcomeHold, relaunchProbe(causeExhausted, relaunch(gateActionableFeedback, informalFeedbackReason), false)},
 		{continuityRow{gate: gateReadyToMerge, cause: causeExhausted}, outcomeHold, relaunchProbe(causeExhausted, relaunch(gateReadyToMerge, "REVIEW_APPROVED"), false)},
 		{continuityRow{gate: "ci-failure", reason: "CI_FAILURE", cause: causeExhausted}, outcomeHold, relaunchProbe(causeExhausted, relaunch("ci-failure", "CI_FAILURE"), false)},
