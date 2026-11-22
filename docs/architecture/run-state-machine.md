@@ -96,8 +96,9 @@ a review request the runtime did not observe: it waits or proceeds to merge.
 
 Permanent outcomes remain terminal: a closed or merged-elsewhere pull request,
 explicit abort, a merged pull request without verifiable completion, genuine
-requested changes (formal `CHANGES_REQUESTED` or the review daemon's
-`changes_requested` verdict) the implementor cannot address within its relaunch
+requested changes (formal `CHANGES_REQUESTED`, the review daemon's
+`changes_requested` verdict, or a daemon approval its own verdict sections
+contradict) the implementor cannot address within its relaunch
 allowance, no review request delivered at all when a review command is
 configured (`REVIEW_REQUEST_REQUIRED`), corrupt review state with nothing
 resolving, GitHub unavailable for a full
@@ -133,8 +134,10 @@ resumes when the gate changes, and its schedule checkpoint uses the stable
 ordinary ownerless grace. Review feedback has three relaunches per head in
 addition to entry. This allowance carries across waits in the active Run.
 Neither re-requesting review nor returning to an earlier head resets it.
-Genuine requested changes end the Run when the allowance is spent; informal
-feedback still holds. Approval can resume merge work under its own round.
+Genuine requested changes (formal `CHANGES_REQUESTED`, a daemon
+`changes_requested` verdict, or an approval override) end the Run when the
+allowance is spent; other informal feedback still holds. Approval can resume
+merge work under its own round.
 Other gates retain the in-session request-and-head rule; a changed CI
 execution does not reset that allowance. An unreadable event log
 fails closed into a wait. Exhausted remediation of unusable CI wait state
@@ -181,14 +184,37 @@ reviewed head. The runtime trusts that verdict (or, for older publications,
 the closed-set `## Decision` token) and treats a publication bound to another
 trigger or head as stale. Only the verdict sections (Findings, Suggested next
 steps and Decision) may contradict a published APPROVED verdict: an opposing
-verdict, a labelled Blocking or Important finding, or a repair directive
-addressed to the author there makes the report unsure, and it waits. Summary,
-Standards, Spec, Quality check, Scope, Metrics, Tools used and review history
-describe the change and never veto it; an explicit `CHANGES_REQUESTED` or
-`NOT_APPROVED` state still contradicts it anywhere. Every captured real
-approving report (`internal/batch/testdata/approved-*.md`) is a corpus test. The verdict is additive: human, third-party and
-paraphrased approvals keep the prose rules, and an unknown daemon verdict is
-never repair evidence.
+verdict, a repair directive, an unresolved assessment, or a merge or approval
+condition addressed to the author there ("Merge only after the race in
+`worker.go` is fixed."). Summary, Standards, Spec, Quality check, Scope,
+Metrics, Tools used and review history describe the change and never veto it;
+an explicit `CHANGES_REQUESTED` or `NOT_APPROVED` state still contradicts it
+anywhere. Every captured real approving report
+(`internal/batch/testdata/approved-*.md`) is a corpus test. The verdict is
+additive: human, third-party and paraphrased approvals keep the prose rules.
+
+A contradicted daemon APPROVED is an **approval override**: the runtime treats
+the report as requested changes instead of waiting for a request that cannot
+resolve. It is never an approval, and the prose rules never overrule it, so a
+daemon APPROVED report is exactly one of approved and overridden. The report is
+retained as `informal_feedback`, and the retained `review_request` carries
+`approval_override` as evidence (the continuity decision and the resume prompt
+derive the override from the retained report, never from the flag), so the Run resumes the same RunID with actionable feedback
+(gate `actionable-feedback`, reason `REVIEW_INFORMAL_FEEDBACK`) while CI is
+pending or green. `run.resumed` (or, when the relaunch happens at scheduler
+re-entry, the ready continuation's `run.capacity_queued`), any wait that
+carries that retained request, and the terminal failure evidence all record
+`approval_override`; a pending wait for a new re-request carries the new request
+without it. The resume prompt names the override and tells the implementor not
+to merge on the report. An override counts as genuine requested changes under
+the per-head allowance: three relaunches on one head, however many review
+requests it makes, then `REMEDIATION_BUDGET_EXHAUSTED`. A new head starts a
+fresh allowance and goes through the normal review flow. Eligible approval is
+evaluated first: when an approval and a contradicted approval answer the same
+request, the approval wins and no override is recorded. A labelled Blocking or
+Important finding beside an APPROVED decision never reaches the trailer as
+APPROVED (the daemon stamps no verdict), and an unknown daemon verdict is never
+repair evidence, so those still wait. Blind review keeps its own evidence path.
 
 ## Blind review
 

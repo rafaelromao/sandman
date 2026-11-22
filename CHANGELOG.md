@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A review daemon approval whose own Findings, Suggested next steps or Decision contradict it (for example "Merge only after the race in `worker.go` is fixed.") is now treated as requested changes instead of waiting and parking the run. The implementor is relaunched with the report and an `approval_override` note, and the run ends with `REMEDIATION_BUDGET_EXHAUSTED` after three relaunches on the same head. Uncontradicted approvals and unknown verdicts are unchanged.
 - Re-requesting review on an unchanged pull-request head no longer resets the three-relaunch feedback allowance. Unrepaired requested changes end the run, but approval of the new request can still resume merge work.
 - Implementation publication guidance now requires meaningful descriptions and truthful verification while preserving repository pull-request templates.
 - Shared skill examples now stop on delivery refusals, locate failed CI logs from PR checks, pass literal plan and commit text safely, and follow each repository's commit, review-base and merge-method policy.

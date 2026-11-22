@@ -80,8 +80,9 @@ where rc2 would not have resolved it. An open current-head PR whose only
 missing evidence is review, CI or an unobserved request waits or merges; it
 never terminal-fails. Exhausted relaunch allowances on review, CI, request or
 merge work, expired requests and (without a review command) idle gates after owned work wait
-(`RESUME_STALLED`, `continuity_hold`); only formal CHANGES_REQUESTED left
-unrepaired, a closed PR, abort, unverifiable completion, no delivered request
+(`RESUME_STALLED`, `continuity_hold`); only requested changes left unrepaired
+(formal CHANGES_REQUESTED, a daemon `changes_requested` verdict or an approval
+override), a closed PR, abort, unverifiable completion, no delivered request
 and other classified permanent reasons stay terminal. A feedback relaunch that
 leaves head, request and responses unchanged stops relaunching; `run.await`
 `stalled_resumes` keeps observation from relaunching on that evidence after
@@ -92,8 +93,12 @@ open. A trigger delivered by any attempt of a session (including a failed
 one) is registered; owned-work retries log `lifecycle-owned-work`. The review
 daemon stamps a verdict trailer before its publication identity; the runtime
 trusts it additively (prose approvals stay accepted) unless its Findings, Suggested
-next steps or Decision section contradicts it; descriptive sections (Summary, Spec,
-Quality check, ...) never veto it. Every `testdata/approved-*.md` report is a
+next steps or Decision section contradicts it. A contradicted daemon approval is an
+approval override: Sandman records `approval_override` on the retained review
+request and treats it as requested changes (relaunch with the report, three per
+head, then `REMEDIATION_BUDGET_EXHAUSTED`) instead of waiting; an unknown verdict is
+still never repair evidence, and descriptive sections (Summary, Spec, Quality
+check, ...) never veto the approval. Every `testdata/approved-*.md` report is a
 corpus test. Review-feedback relaunches share one allowance per head across
 waits in the active Run; re-requesting review does not reset it. Other gates
 keep request-and-head rounds. Holds recover under the `hold:<RunID>` identity.

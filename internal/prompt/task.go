@@ -289,6 +289,10 @@ type TaskDirective uint8
 const (
 	TaskDirectiveNone TaskDirective = iota
 	TaskDirectiveCIRemediation
+	// TaskDirectiveApprovalOverride marks a relaunch for a daemon APPROVED
+	// report that its own verdict sections contradict: the runtime treated it
+	// as requested changes, so it is not an eligible informal approval.
+	TaskDirectiveApprovalOverride
 )
 
 // TaskWithReviewEvidence appends a canonical "## Review Evidence" section to
@@ -321,7 +325,9 @@ func TaskWithReviewEvidenceAndDirective(content string, evidence map[string]any,
 		b.WriteString("The canary's no-retry rule applies within one job invocation; it does not prohibit a bounded rerun of the existing failed execution. A transient provider or network timeout may justify rerunning that identified execution after verifying its repository, pull request, source head, workflow run, and failed job. Do not blindly rerun deterministic source failures, use workflow_dispatch as a replacement for the existing run, or invent credentials or permissions.\n\n")
 		b.WriteString("The runtime owns asynchronous observation and admission, not CI repair. After the failure has been diagnosed and the corrective action is actually complete, verify the current head and live check execution. Only when no implementor-owned work remains and required checks are queued or running should you checkpoint and yield for runtime observation.\n\n")
 	}
-	if reason, _ := evidence["reason"].(string); reason == "REVIEW_INFORMAL_FEEDBACK" || reason == "REVIEW_CHANGES_REQUESTED" {
+	if directive == TaskDirectiveApprovalOverride {
+		b.WriteString("The review daemon's APPROVED decision for this request is contradicted by its own Findings, Suggested next steps or Decision, so the runtime treated the report as requested changes (see `approval_override` below). It is not an approval and must not be merged on: address every condition and finding the report names, complete the required local verification, push a new head, and request review for that head. Do not ask the reviewer or a maintainer to confirm the approval, and do not run the merge gate on this request.\n\n")
+	} else if reason, _ := evidence["reason"].(string); reason == "REVIEW_INFORMAL_FEEDBACK" || reason == "REVIEW_CHANGES_REQUESTED" {
 		b.WriteString("Address only concrete author changes the response requests. A current-head APPROVED report with no Blocking or Important findings and no author changes requested is an eligible informal approval, not feedback: formal GitHub approval is never required, so do not ask the reviewer or a maintainer for a formal approval, a reviewDecision, or publication work, and do not re-request review for it. Revalidate green CI and mergeability, then execute the normal merge gate.\n\n")
 	}
 	for _, key := range []string{"outcome", "reason", "next_action", "pull_request", "head_sha", "repository"} {
