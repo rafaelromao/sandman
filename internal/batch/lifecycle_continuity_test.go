@@ -171,15 +171,15 @@ func TestContinuityDecision_ContradictedApprovalIsGenuineRequestedChanges(t *tes
 	t.Run("ordinary informal feedback still stalls", func(t *testing.T) {
 		extras := feedback(t, plain, false)
 		verdict := applyContinuityForTest(session(extras, 1), "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: extras})
-		if verdict.Action != lifecycleAwait || verdict.Evidence["reason"] != resumeStalledReason {
-			t.Fatalf("informal feedback after an unchanged relaunch = %v/%v, want a stalled wait", verdict.Action, verdict.Evidence)
+		if verdict.Action != lifecycleFailure || verdict.Evidence["reason"] != reviewFeedbackStalledReason {
+			t.Fatalf("informal feedback after an unchanged relaunch = %v/%v, want the terminal %s failure", verdict.Action, verdict.Evidence, reviewFeedbackStalledReason)
 		}
 	})
 	t.Run("a flag without a contradicted report is not requested changes", func(t *testing.T) {
 		extras := feedback(t, plain, true)
 		verdict := applyContinuityForTest(session(extras, 1), "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: extras})
-		if verdict.Action != lifecycleAwait {
-			t.Fatalf("flag-only evidence = %v, want evidence derived from the report to decide", verdict.Action)
+		if verdict.Action != lifecycleFailure || verdict.Evidence["reason"] != reviewFeedbackStalledReason {
+			t.Fatalf("flag-only evidence = %v/%v, want evidence derived from the report to decide: plain feedback stalls", verdict.Action, verdict.Evidence)
 		}
 	})
 }

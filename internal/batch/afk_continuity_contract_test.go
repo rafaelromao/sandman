@@ -880,33 +880,35 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 			},
 			want: "merged", maxLaunches: 1,
 		},
-		// #2914 / #2744: a feedback relaunch that produces no new head and no
-		// new request is evidence there is nothing to fix. After the entry
-		// launch and one unchanged in-session relaunch the Run waits instead
-		// of burning its allowance into REMEDIATION_BUDGET_EXHAUSTED, does not
-		// relaunch on the same evidence while waiting, and merges once the
-		// reviewer approves.
+		// #2914 / #2744 / #2999: a feedback relaunch that produces no new head
+		// and no new request is evidence there is nothing to fix. After the
+		// entry launch and one unchanged in-session relaunch the Run ends with
+		// REVIEW_FEEDBACK_STALLED instead of burning its allowance into
+		// REMEDIATION_BUDGET_EXHAUSTED or parking in a wait that nothing
+		// resolves. It never relaunches on the same evidence.
 		continuityScenario{
-			name: "stall/informal feedback without progress", pr: greenCleanPR(), retries: 3,
-			launches: []func(*continuityGitHub) string{requestReview},
+			name: "stall/informal feedback without progress ends the Run", pr: greenCleanPR(), retries: 3,
+			forbidRetry: true,
+			launches:    []func(*continuityGitHub) string{requestReview},
 			polls: []func(*continuityGitHub){
 				postContinuityInformalFeedback,
 				nil,
 				nil,
-				func(g *continuityGitHub) { g.post("LGTM, approved.") },
 			},
-			want: "merged", maxLaunches: 4,
+			want: "failed:REVIEW_FEEDBACK_STALLED", wantLaunches: 2,
 		},
-		// The same stall ends in a wait when nothing external changes.
+		// The implementor that addresses the feedback with a new head and a new
+		// request is not stalled: the new head goes through the normal review
+		// flow and its approval merges.
 		continuityScenario{
-			name: "stall/informal feedback waits", pr: greenCleanPR(), retries: 3,
-			launches: []func(*continuityGitHub) string{requestReview},
+			name: "stall/informal feedback addressed with a new head continues", pr: greenCleanPR(), retries: 3,
+			forbidRetry: true,
+			launches:    []func(*continuityGitHub) string{requestReview, requestReviewOnHead("head-2")},
 			polls: []func(*continuityGitHub){
 				postContinuityInformalFeedback,
-				nil,
-				nil,
+				func(g *continuityGitHub) { g.publish(reports["approved-daemon-30.md"]) },
 			},
-			want: "waiting", maxLaunches: 3,
+			want: "merged", wantLaunches: 3,
 		},
 		// rc2 awaited an unrepaired CI failure. Once the in-session relaunch
 		// allowance (three relaunches) leaves the head unchanged, the Run waits
@@ -925,6 +927,17 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 				},
 			},
 			want: "merged", maxLaunches: 5,
+		},
+		// The same stall ends in a wait when nothing external changes.
+		continuityScenario{
+			name: "stall/CI failure waits", pr: github.PR{StatusCheckRollup: "failure", MergeStateStatus: "BLOCKED"}, retries: 3,
+			setup: func(g *continuityGitHub) {
+				g.trigger()
+				g.publish(reports["approved-daemon-30.md"])
+			},
+			launches: []func(*continuityGitHub) string{nil, nil},
+			polls:    []func(*continuityGitHub){nil, nil},
+			want:     "waiting", maxLaunches: 5,
 		},
 		// Negative control: a formal CHANGES_REQUESTED review the implementor
 		// cannot address stays terminal once its repair allowance is spent.
@@ -1257,10 +1270,14 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 		// ledger: after recovery on unchanged evidence the Run keeps waiting
 		// instead of relaunching the implementor.
 		continuityScenario{
-			name: "stall survives a GitHub outage", pr: greenCleanPR(), retries: 3, githubWait: true,
-			launches: []func(*continuityGitHub) string{requestReview},
+			name: "stall survives a GitHub outage", pr: github.PR{StatusCheckRollup: "failure", MergeStateStatus: "BLOCKED"}, retries: 3, githubWait: true,
+			setup: func(g *continuityGitHub) {
+				g.trigger()
+				g.publish(reports["approved-daemon-30.md"])
+			},
+			launches: []func(*continuityGitHub) string{nil, nil},
 			polls: []func(*continuityGitHub){
-				func(g *continuityGitHub) { g.post("Please make the retry loop in `worker.go:12` keep the request.") },
+				nil,
 				nil,
 				nil,
 				func(g *continuityGitHub) {
@@ -1276,7 +1293,7 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 				},
 				nil,
 			},
-			want: "waiting", maxLaunches: 2,
+			want: "waiting", maxLaunches: 5,
 		},
 		// Negative control for #2940 (the rc2 bar's second side): a closure the
 		// runtime cannot place continues owned publication work, but an
@@ -2054,7 +2071,7 @@ func TestAFKContinuityContract_StalledCIConflictRecoverySurvivesRestart(t *testi
 func TestAFKContinuityContract_StalledWaitSurvivesRestart(t *testing.T) {
 	var stall continuityScenario
 	for _, sc := range continuityScenarios(t) {
-		if sc.name == "stall/informal feedback waits" {
+		if sc.name == "stall/CI failure waits" {
 			stall = sc
 		}
 	}
@@ -2087,8 +2104,8 @@ func TestAFKContinuityContract_StallSurvivesGitHubOutageAndRestart(t *testing.T)
 		}
 	}
 	outcome := runContinuityScenario(t, outage)
-	if outcome.verdict() != "waiting" || outcome.launches > 2 {
-		t.Fatalf("outage stall = %s after %d launches, want waiting after at most 2", outcome.verdict(), outcome.launches)
+	if outcome.verdict() != "waiting" || outcome.launches > 5 {
+		t.Fatalf("outage stall = %s after %d launches, want waiting after at most 5", outcome.verdict(), outcome.launches)
 	}
 	verdict := outcome.observeAfterRestart()
 	if verdict.Action != lifecycleAwait || verdict.Evidence[stalledResumesKey] == nil {
@@ -2152,7 +2169,7 @@ func TestAFKContinuityContract_LifecycleFailureReasonsAreClassified(t *testing.T
 			t.Errorf("%s must wait for external recovery, as rc2 did", reason)
 		}
 	}
-	for _, reason := range []string{"PULL_REQUEST_CLOSED", "REVIEW_REQUEST_REQUIRED", "REMEDIATION_BUDGET_EXHAUSTED", "merged-pr-missing-closing-reference", "SOMETHING_NEW"} {
+	for _, reason := range []string{"PULL_REQUEST_CLOSED", "REVIEW_REQUEST_REQUIRED", "REMEDIATION_BUDGET_EXHAUSTED", reviewFeedbackStalledReason, "merged-pr-missing-closing-reference", "SOMETHING_NEW"} {
 		if lifecycleFailureRecoverable(reason) {
 			t.Errorf("%s must stay terminal", reason)
 		}

@@ -76,6 +76,7 @@ func continuityContractRows() []continuityContractRow {
 		{continuityRow{reason: githubUnavailableReason, cause: causeFailure}, outcomeHold, failureReasonProbe(githubUnavailableReason)},
 		{continuityRow{reason: "IMPLEMENTOR_ACTION_REQUIRED", cause: causeFailure}, outcomeTerminal, failureReasonProbe("IMPLEMENTOR_ACTION_REQUIRED")},
 		{continuityRow{reason: "REMEDIATION_BUDGET_EXHAUSTED", cause: causeFailure}, outcomeTerminal, failureReasonProbe("REMEDIATION_BUDGET_EXHAUSTED")},
+		{continuityRow{reason: reviewFeedbackStalledReason, cause: causeFailure}, outcomeTerminal, failureReasonProbe(reviewFeedbackStalledReason)},
 		{continuityRow{reason: idleGateReason, cause: causeFailure}, outcomeHold, failureReasonProbe(idleGateReason)},
 		{continuityRow{reason: reviewTimeoutReason, cause: causeFailure}, outcomeHold, failureReasonProbe(reviewTimeoutReason)},
 		{continuityRow{reason: "CI_WAIT_TIMEOUT", cause: causeFailure}, outcomeHold, failureReasonProbe("CI_WAIT_TIMEOUT")},
@@ -87,7 +88,8 @@ func continuityContractRows() []continuityContractRow {
 		{continuityRow{gate: gateGitHubUnavailable, reason: githubUnavailableReason, cause: causeExpired}, outcomeTerminal, githubWindowProbe(true)},
 
 		// A relaunch that would act on an unchanged resume signature.
-		{continuityRow{gate: gateActionableFeedback, reason: informalFeedbackReason, cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch(gateActionableFeedback, informalFeedbackReason), false)},
+		// #2999: an unchanged informal-feedback relaunch ends the Run.
+		{continuityRow{gate: gateActionableFeedback, reason: informalFeedbackReason, cause: causeStall}, outcomeTerminal, relaunchProbe(causeStall, relaunch(gateActionableFeedback, informalFeedbackReason), false)},
 		{continuityRow{gate: gateActionableFeedback, reason: actionableFeedbackReason, cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch(gateActionableFeedback, actionableFeedbackReason), false)},
 		{continuityRow{gate: gateCIWaitTimeout, reason: "CI_WAIT_STATE_ERROR", cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch(gateCIWaitTimeout, "CI_WAIT_STATE_ERROR"), false)},
 		{continuityRow{gate: gateBlindReviewRequired, reason: blindReviewRequiredReason, cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch(gateBlindReviewRequired, blindReviewRequiredReason), false)},
@@ -106,6 +108,9 @@ func continuityContractRows() []continuityContractRow {
 		// ordinary attempt).
 		{continuityRow{reason: actionableFeedbackReason, cause: causeExhausted}, outcomeTerminal, relaunchProbe(causeExhausted, relaunch(gateActionableFeedback, actionableFeedbackReason), false)},
 		{continuityRow{reason: "CI_WAIT_STATE_ERROR", cause: causeExhausted}, outcomeTerminal, relaunchProbe(causeExhausted, relaunch(gateCIWaitTimeout, "CI_WAIT_STATE_ERROR"), false)},
+		// Still a hold until #3001 flips it. The hold records its signature, so its
+		// next observation ends REVIEW_FEEDBACK_STALLED (#2999); that transitional
+		// consequence is pinned by TestAFKContinuityContract_ExhaustedInformalHoldEndsOnReobservation.
 		{continuityRow{gate: gateActionableFeedback, reason: informalFeedbackReason, cause: causeExhausted}, outcomeHold, relaunchProbe(causeExhausted, relaunch(gateActionableFeedback, informalFeedbackReason), false)},
 		{continuityRow{gate: gateReadyToMerge, cause: causeExhausted}, outcomeHold, relaunchProbe(causeExhausted, relaunch(gateReadyToMerge, "REVIEW_APPROVED"), false)},
 		{continuityRow{gate: "ci-failure", reason: "CI_FAILURE", cause: causeExhausted}, outcomeHold, relaunchProbe(causeExhausted, relaunch("ci-failure", "CI_FAILURE"), false)},

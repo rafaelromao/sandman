@@ -977,7 +977,8 @@ func TestRunSingle_CIFailurePrecedesActionableEvidenceAndExhaustsBudget(t *testi
 // Retained concrete informal feedback resumes a continuation session at entry
 // (gate actionable-feedback, REVIEW_INFORMAL_FEEDBACK). When the entry launch
 // leaves head, request and responses unchanged, the feedback found nothing to
-// fix: the Run waits (RESUME_STALLED) instead of relaunching or failing.
+// fix: the Run ends with REVIEW_FEEDBACK_STALLED (#2999) instead of
+// relaunching or parking in a RESUME_STALLED wait.
 func TestEntryReevaluation_ModeContinueInformalFeedbackResumesAgentWithEvidence(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
@@ -1037,8 +1038,8 @@ func TestEntryReevaluation_ModeContinueInformalFeedbackResumesAgentWithEvidence(
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "await" {
-		t.Fatalf("status = %q, want an rc2 wait after actionable-feedback resume budget is exhausted", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want the terminal stalled-feedback failure", result.Status)
 	}
 	if got := len(resultFactory.created); got != 1 {
 		t.Fatalf("agent launches = %d, want 1: an unchanged feedback relaunch after the entry launch stalls", got)
@@ -1072,12 +1073,18 @@ func TestEntryReevaluation_ModeContinueInformalFeedbackResumesAgentWithEvidence(
 	if got := countEventsByType(logs, "run.resumed"); got != 0 {
 		t.Fatalf("run.resumed events = %d, want 0: the feedback left nothing new to act on", got)
 	}
-	waiting := lastEvent(logs, "run.await")
-	if waiting == nil || waiting.Payload["reason"] != resumeStalledReason || waiting.Payload["stalled_reason"] != informalFeedbackReason {
-		t.Fatalf("await event = %#v, want the stalled informal-feedback wait", waiting)
+	if awaited := lastEvent(logs, "run.await"); awaited != nil {
+		t.Fatalf("await event = %#v, want no wait: a stalled feedback relaunch ends the Run", awaited)
 	}
-	if request, ok := waiting.Payload["review_request"].(map[string]any); !ok || request["informal_feedback"] == nil {
-		t.Fatalf("stalled wait lost the informal feedback evidence: %#v", waiting.Payload["review_request"])
+	finished := findEvent(logs, "run.finished")
+	if finished == nil || finished.Payload["reason"] != reviewFeedbackStalledReason || finished.Payload["external_gate"] != gateActionableFeedback {
+		t.Fatalf("finish event = %#v, want %s on the actionable-feedback gate", finished, reviewFeedbackStalledReason)
+	}
+	if request, ok := finished.Payload["review_request"].(map[string]any); !ok || request["informal_feedback"] == nil {
+		t.Fatalf("stalled finish lost the informal feedback evidence: %#v", finished.Payload["review_request"])
+	}
+	if finished.Payload["stalled_resume"] == nil {
+		t.Fatalf("stalled finish lost the stalled resume signature: %#v", finished.Payload)
 	}
 }
 
@@ -1304,8 +1311,8 @@ func TestRunSingle_InformalFeedbackResumesWithinSameAttempt(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "await" {
-		t.Fatalf("status = %q, want an rc2 wait after informal-feedback remediation budget is exhausted", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want the terminal stalled-feedback failure", result.Status)
 	}
 	if got := len(resultFactory.created); got != 1 {
 		t.Fatalf("agent launches = %d, want 1: an unchanged feedback relaunch after the entry launch stalls", got)
@@ -1326,12 +1333,18 @@ func TestRunSingle_InformalFeedbackResumesWithinSameAttempt(t *testing.T) {
 	if got := countEventsByType(logs, "run.resumed"); got != 0 {
 		t.Fatalf("run.resumed events = %d, want 0: the feedback left nothing new to act on", got)
 	}
-	waiting := lastEvent(logs, "run.await")
-	if waiting == nil || waiting.Payload["reason"] != resumeStalledReason || waiting.Payload["stalled_reason"] != informalFeedbackReason {
-		t.Fatalf("await event = %#v, want the stalled informal-feedback wait", waiting)
+	if awaited := lastEvent(logs, "run.await"); awaited != nil {
+		t.Fatalf("await event = %#v, want no wait: a stalled feedback relaunch ends the Run", awaited)
 	}
-	if request, ok := waiting.Payload["review_request"].(map[string]any); !ok || request["informal_feedback"] == nil {
-		t.Fatalf("stalled wait lost the informal feedback evidence: %#v", waiting.Payload["review_request"])
+	finished := findEvent(logs, "run.finished")
+	if finished == nil || finished.Payload["reason"] != reviewFeedbackStalledReason || finished.Payload["external_gate"] != gateActionableFeedback {
+		t.Fatalf("finish event = %#v, want %s on the actionable-feedback gate", finished, reviewFeedbackStalledReason)
+	}
+	if request, ok := finished.Payload["review_request"].(map[string]any); !ok || request["informal_feedback"] == nil {
+		t.Fatalf("stalled finish lost the informal feedback evidence: %#v", finished.Payload["review_request"])
+	}
+	if finished.Payload["stalled_resume"] == nil {
+		t.Fatalf("stalled finish lost the stalled resume signature: %#v", finished.Payload)
 	}
 }
 
