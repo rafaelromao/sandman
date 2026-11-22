@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -361,7 +362,10 @@ func retainedEvidenceIsStale(err error) bool {
 }
 
 func (s *runSession) invalidRetainedReviewDiagnostic(branch string, err error) map[string]any {
-	if s.deps.errorLog != nil {
+	// A request bound to an earlier head is expected after a push until the
+	// current head is requested. The diagnostic below reports it on every wait;
+	// a warning per poll would only drown the run log (issue #3008).
+	if s.deps.errorLog != nil && !errors.Is(err, errReviewRegistrationStaleHead) {
 		fmt.Fprintf(s.deps.errorLog, "warning: retained review artifacts ignored for live gate on branch %q: %v\n", branch, err)
 	}
 	return map[string]any{
