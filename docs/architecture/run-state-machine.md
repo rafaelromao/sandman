@@ -160,7 +160,10 @@ does the Run finish `failure` with `GATE_LOOKUP_FAILED`. Restart rehydrates the
 window and its next attempt from the event fold; the scheduler treats the
 24-hour bound as the wait's operation deadline. `sandman run <n> --continue`
 is a new RunID: it attempts observation immediately and opens a fresh 24-hour
-window. Explicit abort ends the wait at once. A non-success agent attempt with
+window. Explicit abort ends the wait at once. The window, its hourly cadence,
+the 24-hour bound, the health gate and the restart rehydration are a reusable
+recovery window; GitHub recovery is its first user and judges health by the
+pull-request lookup components above. A non-success agent attempt with
 no established operation also waits when the PR lookup or refresh fails; it
 consumes no ordinary retry while GitHub is unavailable. The failed attempt and
 its remaining configured retry allowance survive scheduler re-entry; a retry

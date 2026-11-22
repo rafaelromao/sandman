@@ -16,7 +16,7 @@ job_name=
 
 usage() {
 	cat >&2 <<'EOF'
-usage: ci-rerun-v1.sh --repository OWNER/REPO --pull-request N --head-sha SHA --tested-sha SHA --run-id ID --job-id DATABASE_ID --diagnosis transient-provider-timeout|transient-network-timeout
+usage: ci-rerun-v1.sh --repository OWNER/REPO --pull-request N --head-sha SHA --tested-sha SHA --run-id ID --job-id DATABASE_ID --diagnosis transient-provider-timeout|transient-network-timeout|transient-provider-quota
 EOF
 }
 
@@ -81,7 +81,7 @@ for numeric_id in "$pull_request" "$run_id" "$job_id"; do
 done
 [ -n "$head_sha" ] && [ -n "$tested_sha" ] || { usage; exit 2; }
 case "$diagnosis" in
-	transient-provider-timeout|transient-network-timeout) ;;
+	transient-provider-timeout|transient-network-timeout|transient-provider-quota) ;;
 	*) refuse "transient-diagnosis-required" ;;
 esac
 
