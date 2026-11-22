@@ -142,6 +142,46 @@ func TestRecoveryWindow_WaitIsABoundedSchedulerOperation(t *testing.T) {
 	}
 }
 
+// Every consumer of a recovery wait (row driver, foreground wait, scheduler,
+// persistence) asks the registry of recovery waits, not one recovery's own
+// helper, so a wait of any registered window is bounded, scheduled and
+// de-duplicated alike.
+func TestRecoveryWaits_RegistryRecognisesEveryRegisteredWindow(t *testing.T) {
+	started := time.Unix(1_800_000_000, 0).UTC()
+	window := probeWindow(started)
+	wait := probeWait(t, window)
+
+	if _, ok := recoveryNextAttempt(wait); ok {
+		t.Fatal("an unregistered window was recognised as a recovery wait")
+	}
+	t.Cleanup(func() { recoveryWaitSpecs = recoveryWaitSpecs[:len(recoveryWaitSpecs)-1] })
+	recoveryWaitSpecs = append(recoveryWaitSpecs, probeRecoverySpec)
+
+	if next, ok := recoveryNextAttempt(wait); !ok || !next.Equal(window.NextAttempt) {
+		t.Fatalf("next attempt = %v (ok=%v), want %v", next, ok, window.NextAttempt)
+	}
+	if id, deadline, ok := recoveryOperation(wait); !ok || id != "probe:1800000000" || !deadline.Equal(started.Add(probeRecoverySpec.Bound)) {
+		t.Fatalf("operation = %q until %v (ok=%v), want the probe window's bounded operation", id, deadline, ok)
+	}
+	first, ok := recoverySignature(wait)
+	if again, _ := recoverySignature(probeWait(t, window)); !ok || first != again {
+		t.Fatalf("signature of an unchanged window changed: %q vs %q", first, again)
+	}
+	if awaitOperationChanged(wait, probeWait(t, window)) {
+		t.Fatal("an unchanged recovery wait was re-recorded")
+	}
+	advanced := window
+	advanced.NextAttempt = advanced.NextAttempt.Add(probeRecoverySpec.Interval)
+	if !awaitOperationChanged(wait, probeWait(t, advanced)) {
+		t.Fatal("a recovery wait whose next attempt moved was not re-recorded")
+	}
+	// The GitHub window is registered from the start.
+	githubWait := map[string]any{"gate": gateGitHubUnavailable, githubRecoveryKey: githubRecoverySpec.payload(recoveryWindow{WindowStarted: started, NextAttempt: started})}
+	if _, _, ok := recoveryOperation(githubWait); !ok {
+		t.Fatal("the GitHub recovery wait is not a registered recovery wait")
+	}
+}
+
 func probeObserver(log events.EventLog) *lifecycleObserver {
 	return newLifecycleObserver(&runSession{deps: runDeps{eventLog: log, errorLog: io.Discard}})
 }

@@ -136,6 +136,46 @@ func (spec recoverySpec) signature(evidence map[string]any) (string, bool) {
 	return string(data), err == nil
 }
 
+// recoveryWaitSpecs registers every recovery window whose wait the scheduler,
+// the row driver, the foreground wait and the persistence dedupe must treat as
+// a bounded, scheduled recovery. A recovery registers its spec here once; the
+// consumers below never name a recovery's own helpers.
+var recoveryWaitSpecs = []recoverySpec{githubRecoverySpec}
+
+// recoveryNextAttempt reports when a wait on any registered window next
+// attempts recovery, so pollers sleep until then instead of polling.
+func recoveryNextAttempt(evidence map[string]any) (time.Time, bool) {
+	for _, spec := range recoveryWaitSpecs {
+		if next, ok := spec.nextAttempt(evidence); ok {
+			return next, true
+		}
+	}
+	return time.Time{}, false
+}
+
+// recoveryOperation identifies a wait on any registered window as a bounded
+// scheduler operation: the window's bound is its deadline.
+func recoveryOperation(evidence map[string]any) (string, time.Time, bool) {
+	for _, spec := range recoveryWaitSpecs {
+		if id, deadline, ok := spec.operation(evidence); ok {
+			return id, deadline, true
+		}
+	}
+	return "", time.Time{}, false
+}
+
+// recoverySignature identifies the recorded state of a wait on any registered
+// window, so an observation that returns the identical window is not
+// re-recorded.
+func recoverySignature(evidence map[string]any) (string, bool) {
+	for _, spec := range recoveryWaitSpecs {
+		if signature, ok := spec.signature(evidence); ok {
+			return spec.Key + signature, true
+		}
+	}
+	return "", false
+}
+
 // openRecoveryWindow returns the Run's open window: its latest event is a wait
 // on the spec's gate. A later resume, continuation, capacity admission or any
 // other wait has superseded it. base is a top-level copy of that wait's evidence,

@@ -125,10 +125,10 @@ func mergeRetainedAwaitEvidence(previous, observed map[string]any) map[string]an
 }
 
 func awaitOperationChanged(previous, observed map[string]any) bool {
-	// A GitHub recovery wait changes only at a status check or lookup
-	// attempt; a skipped observation returns the identical window.
-	previousRecovery, previousRecovering := githubRecoverySignature(previous)
-	observedRecovery, observedRecovering := githubRecoverySignature(observed)
+	// A recovery-window wait changes only at a status check or attempt; a
+	// skipped observation returns the identical window.
+	previousRecovery, previousRecovering := recoverySignature(previous)
+	observedRecovery, observedRecovering := recoverySignature(observed)
 	if previousRecovering || observedRecovering {
 		return previousRecovering != observedRecovering || previousRecovery != observedRecovery
 	}

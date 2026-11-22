@@ -127,23 +127,9 @@ func githubRecoveryFromEvidence(evidence map[string]any) (githubRecovery, bool) 
 	return githubRecovery(window), ok
 }
 
-// githubRecoveryNextAttempt reports when a github-unavailable wait next
-// attempts recovery, so pollers sleep until then instead of polling.
-func githubRecoveryNextAttempt(evidence map[string]any) (time.Time, bool) {
-	return githubRecoverySpec.nextAttempt(evidence)
-}
-
-// githubRecoveryOperation identifies a github-unavailable wait as a bounded
-// scheduler operation: the window's 24-hour bound is its deadline. Retained
-// review or CI deadlines inside the wait are not enforced while GitHub cannot
-// be observed.
-func githubRecoveryOperation(evidence map[string]any) (string, time.Time, bool) {
-	return githubRecoverySpec.operation(evidence)
-}
-
-func githubRecoverySignature(evidence map[string]any) (string, bool) {
-	return githubRecoverySpec.signature(evidence)
-}
+// A github-unavailable wait is a registered recovery wait (recoveryWaitSpecs):
+// its 24-hour bound is its scheduler operation deadline and retained review or
+// CI deadlines inside it are not enforced while GitHub cannot be observed.
 
 // githubRecoveryWindow returns the Run's open GitHub recovery window: its
 // latest event is a github-unavailable wait. unknown reports an unreadable

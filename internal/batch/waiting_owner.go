@@ -141,12 +141,13 @@ func (o *waitOwner) checkpoint(row RowSpec, ready bool, nextPoll time.Duration) 
 			record.OperationDeadline = deadline
 			record.OperationID = fmt.Sprintf("%s:%d", gate, deadline.Unix())
 		}
-		if id, deadline, ok := githubRecoveryOperation(state.AwaitEvent.Payload); ok {
-			// A GitHub recovery wait is bounded by its 24-hour window; retained
-			// review or CI deadlines are not enforced while GitHub is down.
+		id, deadline, recoveryWait := recoveryOperation(state.AwaitEvent.Payload)
+		if recoveryWait {
+			// A recovery-window wait is bounded by its 24-hour window; retained
+			// review or CI deadlines are not enforced while it recovers.
 			record.OperationID, record.OperationDeadline = id, deadline
 		}
-		if continuityHoldPayload(state.AwaitEvent.Payload) {
+		if !recoveryWait && continuityHoldPayload(state.AwaitEvent.Payload) {
 			// A continuity hold waits for external recovery without an
 			// operation deadline; it keeps the ordinary ownerless grace.
 			record.OperationID, record.OperationDeadline = continuityHoldOperation(row.RunID), time.Time{}

@@ -156,8 +156,8 @@ func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifec
 	plan := o.lifecyclePollIntervals(verdict.Evidence)
 	freshlyObserved := false
 	for index := 0; ; index++ {
-		_, githubWait := githubRecoveryNextAttempt(verdict.Evidence)
-		if deadline, gate, ok := lifecycleDeadline(verdict.Evidence); ok && !githubWait && !o.runtimeNow().Before(deadline) {
+		_, recoveryWait := recoveryNextAttempt(verdict.Evidence)
+		if deadline, gate, ok := lifecycleDeadline(verdict.Evidence); ok && !recoveryWait && !o.runtimeNow().Before(deadline) {
 			if (gate == gateReviewTimeout || gate == gateCIWaitTimeout) && o.deps.githubClient != nil {
 				// Operation expiry cannot override another live resolver.
 				// Reobserve at the foreground boundary, then continue under
@@ -176,7 +176,7 @@ func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifec
 						verdict = failureForUnhandledObservation(verdict)
 					}
 					if verdict.Action == lifecycleAwait {
-						_, recovering = githubRecoveryNextAttempt(verdict.Evidence)
+						_, recovering = recoveryNextAttempt(verdict.Evidence)
 					}
 					if recovering {
 						// A GitHub recovery wait selected here has not been
@@ -220,7 +220,7 @@ func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifec
 		if index < len(plan) {
 			interval = plan[index]
 		}
-		if next, ok := githubRecoveryNextAttempt(verdict.Evidence); ok {
+		if next, ok := recoveryNextAttempt(verdict.Evidence); ok {
 			// Sleep until the next hourly recovery attempt.
 			interval = max(next.Sub(o.runtimeNow()), 0)
 		}

@@ -624,7 +624,7 @@ func TestGitHubRecovery_PersistenceAndRestart(t *testing.T) {
 	if !restarted.WindowStarted.Equal(first.WindowStarted) || awaits() != 2 {
 		t.Fatalf("restart recovery = %+v (awaits %d), want the preserved window and a recorded check", restarted, awaits())
 	}
-	if next, ok := githubRecoveryNextAttempt(map[string]any{"gate": gateGitHubUnavailable, githubRecoveryKey: restarted.payload()}); !ok || !next.Equal(restarted.NextAttempt) {
+	if next, ok := recoveryNextAttempt(map[string]any{"gate": gateGitHubUnavailable, githubRecoveryKey: restarted.payload()}); !ok || !next.Equal(restarted.NextAttempt) {
 		t.Fatalf("next attempt = %v, want %v for the row driver's poll", next, restarted.NextAttempt)
 	}
 }
