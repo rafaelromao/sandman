@@ -50,7 +50,9 @@ attempts, each skipped while githubstatus.com reports a GitHub outage (unreachab
 status page = attempt), terminal `GATE_LOOKUP_FAILED` only after 24 hours from the
 window's first failure. The bound is the wait's operation deadline; restart keeps
 window and next attempt; `--continue` (new RunID) attempts at once in a fresh window;
-abort ends it. Retained review/CI deadlines are judged only after recovery. A
+abort ends it. The window is the reusable recovery window (`recovery_window.go`):
+a recovery supplies its spec, component set for the status gate and verdicts.
+Retained review/CI deadlines are judged only after recovery. A
 non-success agent attempt without an established current-head CI/review wait does
 not consume ordinary retries while the lookup/refresh is unavailable; normal
 bounded retry handling resumes after recovery. Recognized usage-limit attempts

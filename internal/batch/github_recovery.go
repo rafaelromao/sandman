@@ -109,7 +109,7 @@ var githubRecoverySpec = recoverySpec{
 	Operation:  "github",
 	Interval:   githubRecoveryInterval,
 	Bound:      githubRecoveryBound,
-	Components: github.PullRequestLookupComponents,
+	Components: github.PullRequestLookupComponents(),
 }
 
 // githubRecovery is one GitHub recovery window: the reusable window's data,

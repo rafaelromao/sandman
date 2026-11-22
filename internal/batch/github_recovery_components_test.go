@@ -31,9 +31,9 @@ func TestGitHubRecovery_AsksTheStatusCheckerForPullRequestLookupComponents(t *te
 	}
 	f.now = f.now.Add(githubRecoveryInterval)
 	githubRecoveryOf(t, observe())
-	if len(status.requested) != 1 || !slices.Equal(status.requested[0], github.PullRequestLookupComponents) || status.plainCalls != 0 {
+	if len(status.requested) != 1 || !slices.Equal(status.requested[0], github.PullRequestLookupComponents()) || status.plainCalls != 0 {
 		t.Fatalf("status requests = %v (plain calls %d), want one request for the pull-request lookup components %v",
-			status.requested, status.plainCalls, github.PullRequestLookupComponents)
+			status.requested, status.plainCalls, github.PullRequestLookupComponents())
 	}
 
 	// A degraded pull-request lookup component, as the status page client

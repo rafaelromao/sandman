@@ -29,14 +29,17 @@ const (
 	ComponentActions       StatusComponent = "Actions"
 )
 
-// PullRequestLookupComponents are the components whose degradation makes
+// PullRequestLookupComponents returns the components whose degradation makes
 // Sandman's pull-request lookups fail. GitHub recovery judges health by this
-// set, and a plain GitHubStatus call does too.
-var PullRequestLookupComponents = []StatusComponent{
-	ComponentAPIRequests,
-	ComponentGitOperations,
-	ComponentPullRequests,
-	ComponentActions,
+// set, and a plain GitHubStatus call does too. Each call returns a fresh slice,
+// so no caller can change another's judgement.
+func PullRequestLookupComponents() []StatusComponent {
+	return []StatusComponent{
+		ComponentAPIRequests,
+		ComponentGitOperations,
+		ComponentPullRequests,
+		ComponentActions,
+	}
 }
 
 // StatusReport is GitHub's reported health, judged by a set of components.
@@ -82,6 +85,10 @@ type StatusPageClient struct {
 	Client *http.Client
 }
 
+// The production client judges health by requested components, which is what
+// lets each recovery scope its status gate.
+var _ ComponentStatusChecker = (*StatusPageClient)(nil)
+
 // NewStatusPageClient returns a client for githubstatus.com.
 func NewStatusPageClient() *StatusPageClient {
 	return &StatusPageClient{URL: GitHubStatusSummaryURL, Client: &http.Client{Timeout: statusPageTimeout}}
@@ -101,7 +108,7 @@ type statusPageSummary struct {
 // GitHubStatus fetches and classifies the Statuspage summary by the
 // pull-request lookup components.
 func (c *StatusPageClient) GitHubStatus(ctx context.Context) (StatusReport, error) {
-	return c.GitHubComponentStatus(ctx, PullRequestLookupComponents)
+	return c.GitHubComponentStatus(ctx, PullRequestLookupComponents())
 }
 
 // GitHubComponentStatus fetches and classifies the Statuspage summary by the

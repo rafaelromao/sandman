@@ -64,7 +64,7 @@ func TestStatusPageClient_JudgesHealthByRequestedComponents(t *testing.T) {
 		{"pull request set sees a pull request outage", pullRequestsDown, []StatusComponent{ComponentPullRequests}, true, []string{"Pull Requests: partial_outage"}},
 		{"component names match case-insensitively", pullRequestsDown, []StatusComponent{"pull requests"}, true, []string{"Pull Requests: partial_outage"}},
 		{"lookup set sees both in status page order", `{"status":{"indicator":"minor"},"components":[{"name":"Pull Requests","status":"partial_outage"},{"name":"Actions","status":"major_outage"}]}`,
-			PullRequestLookupComponents, true, []string{"Pull Requests: partial_outage", "Actions: major_outage"}},
+			PullRequestLookupComponents(), true, []string{"Pull Requests: partial_outage", "Actions: major_outage"}},
 		{"a major incident is an outage for any set", majorIncident, actionsOnly, true, nil},
 		{"an empty set judges by incidents only", pullRequestsDown, nil, false, nil},
 		{"an empty set still sees a major incident", majorIncident, nil, true, nil},
@@ -90,10 +90,10 @@ func TestStatusPageClient_PlainCallJudgesByPullRequestLookupComponents(t *testin
 		t.Fatalf("report = %+v, err = %v, want a Git Operations outage", report, err)
 	}
 	var nilClient *StatusPageClient
-	if _, err := nilClient.GitHubComponentStatus(context.Background(), PullRequestLookupComponents); err == nil {
+	if _, err := nilClient.GitHubComponentStatus(context.Background(), PullRequestLookupComponents()); err == nil {
 		t.Error("nil status client reported scoped health")
 	}
-	if _, err := statusPageServer(t, http.StatusServiceUnavailable, `{}`).GitHubComponentStatus(context.Background(), PullRequestLookupComponents); err == nil {
+	if _, err := statusPageServer(t, http.StatusServiceUnavailable, `{}`).GitHubComponentStatus(context.Background(), PullRequestLookupComponents()); err == nil {
 		t.Error("unreadable status page reported scoped health")
 	}
 }
