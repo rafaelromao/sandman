@@ -29,6 +29,12 @@ const (
 	// causeUnreadable: the Run's stalled signatures cannot be read, so a
 	// relaunch cannot be proven to act on new evidence.
 	causeUnreadable continuityCause = "unreadable-ledger"
+	// causeTransientStall: a CI repair that stalled (or used up its relaunch
+	// allowance) on a failure the implementor diagnosed as transient, whose
+	// typed rerun receipt matches the live failed execution. It has its own
+	// row so the CI recovery window is a table decision, not a predicate that
+	// sits in front of the generic stall rows.
+	causeTransientStall continuityCause = "transient-stall"
 )
 
 // continuityOutcomeKind is what a lifecycle exit does to the Run.
@@ -140,6 +146,11 @@ var continuityOutcomes = continuityTable{
 	{gate: gateOwnedWorkRequired, reason: "REVIEW_REQUEST_REQUIRED", cause: causeStall}:   outcomeHold,
 	{gate: gateOwnedWorkRequired, reason: missingPRReason, cause: causeStall}:             outcomeHold,
 	{cause: causeStall}: outcomeHold,
+
+	// A stalled CI repair backed by matching typed transient rerun evidence
+	// waits in the CI recovery window (ADR-0064) in front of the generic CI
+	// stall and allowance rows above and below, whatever those become.
+	{gate: "ci-failure", reason: "CI_FAILURE", cause: causeTransientStall}: outcomeWait,
 
 	// A used-up relaunch allowance. Genuine requested changes (formal
 	// CHANGES_REQUESTED, the review daemon's changes_requested verdict, or a

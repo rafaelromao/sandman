@@ -154,8 +154,9 @@ func TestRecoveryWaits_RegistryRecognisesEveryRegisteredWindow(t *testing.T) {
 	if _, ok := recoveryNextAttempt(wait); ok {
 		t.Fatal("an unregistered window was recognised as a recovery wait")
 	}
-	t.Cleanup(func() { recoveryWaitSpecs = recoveryWaitSpecs[:len(recoveryWaitSpecs)-1] })
-	recoveryWaitSpecs = append(recoveryWaitSpecs, probeRecoverySpec)
+	registered := slices.Clone(recoveryWaitSpecs)
+	t.Cleanup(func() { recoveryWaitSpecs = registered })
+	recoveryWaitSpecs = append(slices.Clone(registered), probeRecoverySpec)
 
 	if next, ok := recoveryNextAttempt(wait); !ok || !next.Equal(window.NextAttempt) {
 		t.Fatalf("next attempt = %v (ok=%v), want %v", next, ok, window.NextAttempt)

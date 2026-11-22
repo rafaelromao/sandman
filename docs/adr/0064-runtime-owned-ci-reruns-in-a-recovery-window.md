@@ -57,8 +57,11 @@ when both of these hold:
 - the GitHub client can rerun a workflow job.
 
 Every other stalled CI repair keeps the outcome the continuity table gives it.
-The diversion sits in front of those stall rows, so it behaves the same whether
-or not the rows have flipped from a hold to the exhausted-work terminal.
+The qualifying stall has its own table row (`ci-failure` / `CI_FAILURE` /
+transient stall, outcome wait) that is consulted in front of the generic stall and
+allowance rows, so it behaves the same whether or not those rows have flipped from
+a hold to the exhausted-work terminal; a table that does not wait there renders
+the ordinary stall.
 
 **Window rules.** The wait is `run.await` with `await_reason: ci-recovery` and
 `ci_recovery` evidence (window start, next attempt, bound, last status, attempts,
@@ -99,6 +102,12 @@ its record therefore finds the new attempt running and waits. An unreadable
 event log proves neither a window nor a receipt, so it opens no window and
 submits no rerun: the Run fails closed into the stalled-ledger hold.
 
+**A superseded window resumes.** Another wait of the same Run can become its latest
+event (a hold written while the event log could not be read, a GitHub outage). A
+later qualifying stall of the same failure resumes the window with its original
+start, attempts and schedule, or ends the Run when its bound has passed; it never
+restarts the 24 hours.
+
 **Restart, continue, abort.** Restart rehydrates the window and its next attempt
 from the event fold. `sandman run <n> --continue` is a new RunID: it finds the
 rerun receipt through the `run.continued` chain, opens a fresh window with a new
@@ -136,5 +145,8 @@ no lookup and no rerun.
   workflow run per attempt and to 24 hours per window.
 - A green rerun can wait up to an hour before the Run resumes the normal
   lifecycle.
-- Several `await_reason` values now have a bounded recovery meaning; consumers
-  must treat `ci-recovery` like `github-unavailable`.
+- `ci-recovery` is a second bounded recovery `await_reason`. Only the batch
+  scheduler and persistence special-case a recovery wait, and they now do so
+  through one registry of recovery windows; the event fold and the Portal,
+  status and history projections treat it as an ordinary waiting Run, which a
+  projection test pins.

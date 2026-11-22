@@ -99,6 +99,9 @@ func continuityContractRows() []continuityContractRow {
 		{continuityRow{gate: gateBlindReviewRequired, reason: blindReviewRequiredReason, cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch(gateBlindReviewRequired, blindReviewRequiredReason), false)},
 		{continuityRow{gate: gateReadyToMerge, cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch(gateReadyToMerge, "REVIEW_APPROVED"), false)},
 		{continuityRow{gate: "ci-failure", reason: "CI_FAILURE", cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch("ci-failure", "CI_FAILURE"), false)},
+		// A stall backed by matching typed transient rerun evidence waits in the
+		// CI recovery window, in front of the generic ci-failure rows (#3011).
+		{continuityRow{gate: "ci-failure", reason: "CI_FAILURE", cause: causeTransientStall}, outcomeWait, ciTransientStallProbe()},
 		{continuityRow{gate: "merge-conflict", reason: "MERGE_CONFLICT", cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch("merge-conflict", "MERGE_CONFLICT"), false)},
 		{continuityRow{gate: gateCIWaitTimeout, reason: "CI_WAIT_TIMEOUT", cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch(gateCIWaitTimeout, "CI_WAIT_TIMEOUT"), false)},
 		{continuityRow{gate: gateReviewTimeout, reason: reviewTimeoutReason, cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch(gateReviewTimeout, reviewTimeoutReason), false)},
@@ -236,6 +239,40 @@ func ciRecoveryWindowProbe(expired bool) continuityProbe {
 			verdict.Evidence["reason"] != ciRecoveryExhaustedReason {
 			t.Fatalf("expired CI recovery window = %v, want %s", verdict.Evidence, ciRecoveryExhaustedReason)
 		}
+		return probedOutcome(t, verdict)
+	}}
+}
+
+// ciTransientStallProbe observes a CI repair whose allowance is used up on a
+// failure backed by a matching typed transient rerun receipt: the row decides
+// whether it waits in the CI recovery window or renders the ordinary stall.
+func ciTransientStallProbe() continuityProbe {
+	return continuityProbe{consultsTable: true, observe: func(t *testing.T, table continuityTable) continuityOutcomeKind {
+		receipt := ciTestReceipt()
+		receipt.PullRequest, receipt.SourceHeadSHA = continuityPR, continuityProbeHead
+		pr := ciFailedPR("exec-probe")
+		pr.Number, pr.HeadRefOid = continuityPR, continuityProbeHead
+		prerequisite := ciSettledFailurePrerequisiteFor(pr, continuityProbeHead, ciTestRepo)
+		if prerequisite == nil {
+			t.Fatal("probe failure carries no settled failed workflow")
+		}
+		session := &runSession{
+			decisionPRHead: continuityProbeHead,
+			deps: runDeps{
+				githubClient: &fakeRerunClient{},
+				eventLog: &spyEventLog{events: []events.Event{
+					{Type: "run.started", RunID: "run-probe", Payload: map[string]any{"branch": continuityBranch}},
+					{Type: "run.await", RunID: "run-probe", Payload: map[string]any{"await": true, "gate": "pending", ciRerunActionKey: receipt.payload()}},
+				}},
+			},
+		}
+		session.resumeCount = session.resumeCapFor()
+		observer := &lifecycleObserver{runSession: session, outcomes: table}
+		verdict := observer.applyContinuity(continuityBranch, "run-probe", lifecycleVerdict{
+			Action:           lifecycleResume,
+			Evidence:         map[string]any{"gate": "ci-failure", "reason": "CI_FAILURE", "pull_request": continuityPR, "head_sha": continuityProbeHead},
+			ciRepairRequired: true, ciExecutionID: "exec-probe", ciPrerequisite: prerequisite,
+		})
 		return probedOutcome(t, verdict)
 	}}
 }
@@ -569,6 +606,9 @@ func TestAFKContinuityContract_OutcomeTableShape(t *testing.T) {
 		causeStall:      {outcomeHold, outcomeTerminal},
 		causeExhausted:  {outcomeHold, outcomeTerminal},
 		causeUnreadable: {outcomeHold},
+		// A qualifying CI stall renders any of the three outcomes: the window
+		// (wait), or the ordinary stall hold or terminal.
+		causeTransientStall: {outcomeWait, outcomeHold, outcomeTerminal},
 	}
 	for row, outcome := range continuityOutcomes {
 		permitted := false

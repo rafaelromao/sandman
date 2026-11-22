@@ -87,7 +87,8 @@ schedule. GitHub recovery (hourly) and standalone schedules are unchanged. The
 implementor owns local verification and
 publication, the runtime owns external observation: a ready CI/review result
 never preempts an executing attempt, and the agent returns at once when owned
-work is done (ADR-0060).
+work is done (ADR-0060); the one exception is the runtime's rerun of a diagnosed
+transient CI failure in the CI recovery window (ADR-0064).
 
 AFK continuity (rule since v1.0.0-rc.2): a started Run may stop only for a
 permanent failure it cannot handle or wait for external recovery, and only

@@ -220,8 +220,9 @@ attempt from the event fold and the scheduler treats the bound as the wait's
 operation deadline; `sandman run <n> --continue` is a new RunID that finds the
 rerun receipt through its predecessors, opens a fresh window and attempts at once;
 explicit abort ends the wait with no rerun. An unreadable event log opens no
-window and submits no rerun. Every other stalled CI repair keeps its table
-outcome.
+window and submits no rerun; a window another wait of the same Run superseded
+resumes with its original start and bound, never restarted. Every other stalled
+CI repair keeps its table outcome.
 
 A closed, unmerged pull request ends a Run (`PULL_REQUEST_CLOSED`) only when it
 is proven to belong to the logical Run: its head equals the Run's head, or it

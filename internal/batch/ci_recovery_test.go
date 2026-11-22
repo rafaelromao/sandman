@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -299,9 +300,15 @@ func TestCIRecovery_ContinuedRunFindsItsPredecessorsReceipt(t *testing.T) {
 	f.now = f.now.Add(48 * time.Hour)
 	f.runID = "261101010000-ci-42"
 	_ = f.log.Log(events.Event{Type: "run.continued", RunID: f.runID, Issue: 42, Timestamp: f.now, Payload: map[string]any{"branch": gateTestBranch, "previous_run_id": previous}})
+	// The new RunID starts with a fresh allowance, so its window opens at the
+	// first stall of its own relaunches; the fixture models that stall.
 	recovery := ciRecoveryOf(t, f.observe(t.Context()))
 	if !recovery.WindowStarted.Equal(f.now) || !recovery.NextAttempt.Equal(f.now) {
 		t.Fatalf("continued window = %+v, want a fresh window whose first attempt is due at once", recovery)
+	}
+	attempted := ciRecoveryOf(t, f.poll(t.Context()))
+	if len(f.client.requests) != 1 || attempted.LookupAttempts != 1 || !attempted.WindowStarted.Equal(f.now) {
+		t.Fatalf("reruns=%d window=%+v, want the next observation to attempt at once in the fresh window", len(f.client.requests), attempted)
 	}
 }
 
@@ -464,7 +471,13 @@ func TestCIRecovery_AGreenRerunResumesTheNormalLifecycle(t *testing.T) {
 func TestCIRecovery_TheSameJobFailingAgainKeepsTheWindow(t *testing.T) {
 	f := newCIRecoveryFixture(t)
 	first := f.settle()
-	f.pr().CIExecutionID = "exec-2" // the rerun's execution failed the same way
+	// The rerun's execution failed the same way, in new job executions: a rerun
+	// mints new job IDs and links, so only the names identify the diagnosed job.
+	f.pr().CIExecutionID = "exec-2"
+	f.pr().CIFailedWorkflowRunFailedChecks = []github.CIFailedCheck{
+		{Name: ciTestJob, DetailsURL: "https://github.com/owner/repo/actions/runs/101/job/31"},
+		{Name: "quality-gate", DetailsURL: "https://github.com/owner/repo/actions/runs/101/job/35"},
+	}
 	verdict := f.attempt()
 	recovery := ciRecoveryOf(t, verdict)
 	if len(f.client.requests) != 2 || recovery.LookupAttempts != 2 || !recovery.WindowStarted.Equal(first.WindowStarted) {
@@ -710,5 +723,103 @@ func TestCIRecovery_SchedulerBoundsTheWaitByTheWindow(t *testing.T) {
 	ready := FindReadyContinuations(log.snapshot(), layout)
 	if len(ready) != 1 || ready[0].Wait == nil || ready[0].Wait.OperationID != wantOperation || !ready[0].Wait.OperationDeadline.Equal(recovery.bound()) {
 		t.Fatalf("checkpointed wait = %+v, want the window's operation, not a hold or a retained deadline", ready)
+	}
+}
+
+// A receipt the helper answered with `waiting` (the workflow was still running,
+// so nothing was submitted) is still typed transient evidence: the runtime's
+// rerun is then the first real one.
+func TestCIRecovery_AWaitingReceiptQualifies(t *testing.T) {
+	f := newCIRecoveryFixture(t)
+	f.replaceReceipt(func(r *ciRerunActionEvidence) {
+		r.State, r.Reason, r.ObservedAttempt = "waiting", "workflow-still-running", 1
+	})
+	recovery := ciRecoveryOf(t, f.observe(t.Context()))
+	if recovery.Target.State != "waiting" {
+		t.Fatalf("target = %+v, want the waiting receipt", recovery.Target)
+	}
+}
+
+// A new head resets the relaunch allowance round, so the window's exit does not
+// leave the implementor stranded behind a used-up allowance: CI repair resumes
+// on the new head even in the session that exhausted the old one.
+func TestCIRecovery_ANewHeadResumesRepairEvenWithAUsedUpAllowance(t *testing.T) {
+	f := newCIRecoveryFixture(t)
+	f.settle()
+	if !f.exhausted {
+		t.Fatal("fixture must keep the allowance used up")
+	}
+	f.head = "new-head"
+	f.pr().HeadRefOid = "new-head"
+	f.now = f.now.Add(time.Hour) // the next attempt is due and sees the new head
+	session := f.session()
+	session.lastResumeRound = repairRound(map[string]any{"gate": "ci-failure", "head_sha": ciTestHead}, ciTestHead)
+	verdict := newLifecycleObserver(session).Observe(t.Context(), lifecycleObservationRequest{
+		WorkDir: t.TempDir(), Branch: gateTestBranch, RunID: f.runID, HostPathsReady: true, AttemptStatus: "success",
+	})
+	if verdict.Action != lifecycleResume || verdict.Evidence["gate"] != "ci-failure" {
+		t.Fatalf("verdict = %s/%v, want implementor CI repair on the new head", verdict.status(), verdict.Evidence)
+	}
+}
+
+// Another wait of the Run can supersede the window: a hold written while the
+// event log could not be read, or a GitHub outage. The window must resume with
+// its original start and schedule, never restart its 24-hour bound.
+func TestCIRecovery_ASupersededWindowResumesWithItsOriginalBound(t *testing.T) {
+	f := newCIRecoveryFixture(t)
+	first := f.settle()
+	_ = f.log.Log(events.Event{Type: "run.await", RunID: f.runID, Issue: 42, Timestamp: f.now.Add(10 * time.Minute), Payload: map[string]any{
+		"await": true, "gate": "ci-failure", "await_reason": "ci-failure", "reason": resumeStalledReason, "resume_stalled": true, "branch": gateTestBranch,
+	}})
+	f.now = f.now.Add(30 * time.Minute)
+	resumed := ciRecoveryOf(t, f.observe(t.Context()))
+	if !resumed.WindowStarted.Equal(first.WindowStarted) || !resumed.bound().Equal(first.bound()) ||
+		resumed.LookupAttempts != first.LookupAttempts || !resumed.NextAttempt.Equal(first.NextAttempt) {
+		t.Fatalf("resumed window = %+v, want the superseded window %+v", resumed, first)
+	}
+	if len(f.client.requests) != 1 {
+		t.Fatalf("reruns = %d, want none for the resumed window before its next attempt", len(f.client.requests))
+	}
+	// A superseded window that is past its bound ends the Run instead of
+	// restarting.
+	f.now = first.bound().Add(time.Minute)
+	if verdict := f.observe(t.Context()); verdict.Action != lifecycleFailure || verdict.Evidence["reason"] != ciRecoveryExhaustedReason {
+		t.Fatalf("expired superseded window = %s/%v, want CI_RECOVERY_EXHAUSTED", verdict.status(), verdict.Evidence)
+	}
+}
+
+// The wait records the window's own evidence keys and a next action naming the
+// next attempt and the bound.
+func TestCIRecovery_WaitEvidenceNamesTheScheduleAndTheBound(t *testing.T) {
+	f := newCIRecoveryFixture(t)
+	f.open()
+	verdict := f.poll(t.Context())
+	recovery := ciRecoveryOf(t, verdict)
+	raw, _ := verdict.Evidence[ciRecoveryKey].(map[string]any)
+	for _, key := range []string{
+		"window_started_unix_seconds", "next_attempt_unix_seconds", "bound_unix_seconds", "last_status", "last_status_check_unix_seconds",
+		"attempts", "last_rerun", "target", "status_checks",
+	} {
+		if _, ok := raw[key]; !ok {
+			t.Errorf("ci_recovery evidence lacks %q: %v", key, raw)
+		}
+	}
+	next := verdict.Evidence["next_action"].(string)
+	for _, want := range []string{recovery.NextAttempt.UTC().Format(time.RFC3339), recovery.bound().UTC().Format(time.RFC3339), ciRecoveryExhaustedReason} {
+		if !strings.Contains(next, want) {
+			t.Errorf("next action %q does not name %q", next, want)
+		}
+	}
+	if verdict.Evidence["await_reason"] != gateCIRecovery {
+		t.Errorf("await_reason = %v, want %s", verdict.Evidence["await_reason"], gateCIRecovery)
+	}
+}
+
+// The batch runner receives the bare CLI client, so the type assertion that
+// finds the rerun capability keeps working in production.
+func TestProductionGitHubClientCanRerunWorkflowJobs(t *testing.T) {
+	var client github.Client = github.NewCLIClient()
+	if _, ok := client.(github.WorkflowJobRerunner); !ok {
+		t.Fatal("the production GitHub client cannot rerun workflow jobs; the CI recovery window would be inert")
 	}
 }

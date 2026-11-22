@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -166,7 +167,7 @@ func (o *lifecycleObserver) ciRecoveryDisposition(base map[string]any, branch st
 // at once, so a fresh window (including the one `--continue` opens) attempts
 // immediately.
 func (o *lifecycleObserver) enterCIRecovery(branch, runID string, verdict lifecycleVerdict, stalled []string, signature string) (lifecycleVerdict, bool) {
-	if !verdict.ciRepairRequired || stringEvidence(verdict.Evidence, "reason") != "CI_FAILURE" || verdict.ciPrerequisite == nil {
+	if !verdict.ciRepairRequired || verdict.ciPrerequisite == nil {
 		return lifecycleVerdict{}, false
 	}
 	if _, ok := o.deps.githubClient.(github.WorkflowJobRerunner); !ok {
@@ -176,10 +177,63 @@ func (o *lifecycleObserver) enterCIRecovery(branch, runID string, verdict lifecy
 	if !ok {
 		return lifecycleVerdict{}, false
 	}
-	now := o.runtimeNow()
-	recovery := ciRecovery{recoveryWindow: recoveryWindow{WindowStarted: now, NextAttempt: now}, Target: receipt}
-	base := map[string]any{stalledResumesKey: appendStalledResume(stalled, signature)}
-	return o.ciRecoveryDisposition(base, branch, recovery, causeResolving), true
+	// The qualifying stall has its own table row: the window is that row's wait
+	// outcome, and a hold or terminal outcome renders the ordinary stall.
+	row := continuityRow{gate: "ci-failure", reason: "CI_FAILURE", cause: causeTransientStall}
+	switch o.continuityTable().outcome(row) {
+	case outcomeWait:
+		now := o.runtimeNow()
+		recovery := ciRecovery{recoveryWindow: recoveryWindow{WindowStarted: now, NextAttempt: now}, Target: receipt}
+		cause := causeResolving
+		if retained, ok := o.retainedCIRecovery(runID, verdict.ciPrerequisite); ok {
+			// Another wait of this Run superseded the window (a hold written
+			// while the event log could not be read, a GitHub outage). The
+			// window resumes with its original start, attempts and schedule, so
+			// its 24-hour bound is never restarted.
+			recovery = retained
+			if !now.Before(recovery.bound()) {
+				cause = causeExpired
+			}
+		}
+		base := map[string]any{stalledResumesKey: appendStalledResume(stalled, signature)}
+		return o.ciRecoveryDisposition(base, branch, recovery, cause), true
+	case outcomeHold:
+		verdict.Action = lifecycleAwait
+		verdict.Evidence = stalledAwaitExtras(verdict.Evidence, signature, stalled)
+	default:
+		verdict.Action = lifecycleFailure
+		verdict.Evidence = stalledTerminalEvidence(row, verdict.Evidence, signature)
+	}
+	verdict.ImplementorWork = false
+	return verdict, true
+}
+
+// retainedCIRecovery returns the latest CI recovery window this Run recorded for
+// the same failure (its diagnosed target matches the live settled failure). Only
+// this RunID's window is retained: `--continue` is a new RunID and opens a fresh
+// one.
+func (o *lifecycleObserver) retainedCIRecovery(runID string, prerequisite map[string]any) (ciRecovery, bool) {
+	if o.deps.eventLog == nil || strings.TrimSpace(runID) == "" {
+		return ciRecovery{}, false
+	}
+	history, err := o.deps.eventLog.Read()
+	if err != nil {
+		return ciRecovery{}, false
+	}
+	for index := len(history) - 1; index >= 0; index-- {
+		event := history[index]
+		if event.RunID != runID {
+			continue
+		}
+		value, ok := event.Payload[ciRecoveryKey]
+		if !ok {
+			continue
+		}
+		if recovery, ok := ciRecoveryFromEvidence(map[string]any{ciRecoveryKey: value}); ok && recovery.Target.matchesPrerequisite(prerequisite) {
+			return recovery, true
+		}
+	}
+	return ciRecovery{}, false
 }
 
 // matchingCIRerunReceipt returns the latest typed transient rerun receipt of
@@ -226,7 +280,10 @@ func ciRerunReceiptsIn(payload map[string]any) []ciRerunActionEvidence {
 }
 
 // logicalRunChain is the set of RunIDs of one logical Run: runID and every Run
-// it continued, followed through run.continued previous_run_id links.
+// it continued, followed through run.continued previous_run_id links. It walks
+// the same links as originalAdmission, which stops at the first run.started to
+// find a timestamp; a receipt may sit in any Run of the chain, so this one
+// returns them all.
 func logicalRunChain(history []events.Event, runID string) map[string]bool {
 	chain := map[string]bool{}
 	for runID != "" && !chain[runID] {
@@ -295,7 +352,11 @@ func (o *lifecycleObserver) attemptCIRecovery(ctx context.Context, request lifec
 	case verdict.Kind == lifecycleVerdictGitHubUnavailable:
 		// The lookup failed: a failed attempt of this window, not another
 		// wait that would supersede it and restart its bound.
-		return o.recordCIAttempt(base, request.Branch, recovery, stringEvidence(verdict.Evidence, "lookup_error")), true
+		failure := stringEvidence(verdict.Evidence, "lookup_error")
+		if failure == "" {
+			failure = "lookup-failed" // a failed lookup is never recorded as a clean attempt
+		}
+		return o.recordCIAttempt(base, request.Branch, recovery, failure), true
 	case ciSameFailure(verdict, recovery.Target):
 		if !now.Before(recovery.bound()) {
 			return o.ciRecoveryDisposition(base, request.Branch, *recovery, causeExpired), true
@@ -355,12 +416,12 @@ func (o *lifecycleObserver) rerunDiagnosedJob(ctx context.Context, target ciReru
 // implementor.
 func ciSameFailure(verdict lifecycleVerdict, target ciRerunActionEvidence) bool {
 	return verdict.Action == lifecycleResume && verdict.ciRepairRequired &&
-		stringEvidence(verdict.Evidence, "reason") == "CI_FAILURE" &&
 		verdict.ciPrerequisite != nil && target.matchesPrerequisite(verdict.ciPrerequisite)
 }
 
 // ciStillRunning reports that the head's CI is still resolving: the rerun the
-// window submitted has not finished, so there is nothing to rerun yet.
+// window submitted has not finished, so there is nothing to rerun yet. The
+// evidence is the lifecycle's typed CI wait registration for the diagnosed head.
 func ciStillRunning(verdict lifecycleVerdict, target ciRerunActionEvidence) bool {
 	if verdict.Action != lifecycleAwait {
 		return false
@@ -369,6 +430,14 @@ func ciStillRunning(verdict lifecycleVerdict, target ciRerunActionEvidence) bool
 	if !ok {
 		return false
 	}
-	head, _ := wait["head_sha"].(string)
-	return strings.EqualFold(strings.TrimSpace(head), strings.TrimSpace(target.SourceHeadSHA))
+	data, err := json.Marshal(wait)
+	if err != nil {
+		return false
+	}
+	var registration ciWaitRegistration
+	if json.Unmarshal(data, &registration) != nil || registration.Protocol != ciWaitProtocol {
+		return false
+	}
+	return registration.PullRequest == target.PullRequest &&
+		strings.EqualFold(strings.TrimSpace(registration.HeadSHA), strings.TrimSpace(target.SourceHeadSHA))
 }

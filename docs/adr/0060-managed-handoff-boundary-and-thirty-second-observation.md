@@ -65,6 +65,13 @@ unchanged.
 > available, capped by the remaining five-hour completed-wait allowance; see
 > [ADR-0062](0062-provider-reset-aware-quota-recovery.md).
 
+> **Later change (annotated 2026-11-22, #3011):** the runtime observes external
+> work and changes none of it, with one exception. A diagnosed transient CI
+> failure whose single implementor rerun failed the same way is rerun by the
+> runtime itself, hourly, in a bounded CI recovery window; see
+> [ADR-0064](0064-runtime-owned-ci-reruns-in-a-recovery-window.md). The
+> implementor's allowance and every other handoff rule here are unchanged.
+
 **No new controller.** One runtime-owned lifecycle decision-maker remains. Events
 stay the authority for lifecycle and terminality; no event schema, mutable
 status or merge-on-green shortcut is introduced. A ready CI or review result

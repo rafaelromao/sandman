@@ -52,7 +52,7 @@ func TestCIRerunSkillHandsLaterRerunsToTheRuntime(t *testing.T) {
 		"In a Sandman-managed run, the rerun you spend through the helper is your only one for that failed execution.",
 		"If it fails the same way and nothing else needs repair, return at once",
 		"Do not invoke the helper again for that failure, do not look for another way to rerun it, and do not stop the Run:",
-		"the runtime reruns the diagnosed job itself, once an hour, while the Run waits",
+		"the runtime reruns the diagnosed job itself, periodically, while the Run waits",
 		"A new head or a different failing check is a new failure",
 	} {
 		if !strings.Contains(text, required) {

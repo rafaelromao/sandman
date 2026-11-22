@@ -910,6 +910,34 @@ func TestProjectRunStates_RetainsRetryEvents(t *testing.T) {
 	}
 }
 
+// A CI recovery wait (issue #3011) is an ordinary non-terminal await to every
+// projection: the Run stays active and waiting, its reason is the gate, and the
+// window evidence rides in the payload. Nothing outside the batch scheduler
+// enumerates await reasons, so no projection needs to know the gate.
+func TestProjectRunStates_CIRecoveryAwaitKeepsRunWaiting(t *testing.T) {
+	t.Parallel()
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	runs := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-ci", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
+		{Type: "run.await", Timestamp: startedAt.Add(time.Hour), RunID: "run-ci", Issue: 42, Payload: map[string]any{
+			"await": true, "await_reason": "ci-recovery", "gate": "ci-recovery", "reason": "CI_RECOVERY",
+			"branch": "42-fix", "base_branch": "main",
+			"ci_recovery": map[string]any{"protocol": "ci-recovery/v1", "attempts": 1},
+		}},
+	})
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+	run := runs[0]
+	if !run.IsActive() || run.IsTerminal() || !run.IsAwaiting() || run.Status() != "waiting" {
+		t.Fatalf("CI recovery wait = active %v terminal %v awaiting %v status %q, want an active waiting Run",
+			run.IsActive(), run.IsTerminal(), run.IsAwaiting(), run.Status())
+	}
+	if run.AwaitReason() != "ci-recovery" {
+		t.Fatalf("await reason = %q, want ci-recovery", run.AwaitReason())
+	}
+}
+
 func TestProjectRunStates_AwaitEventKeepsRunActive(t *testing.T) {
 	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)

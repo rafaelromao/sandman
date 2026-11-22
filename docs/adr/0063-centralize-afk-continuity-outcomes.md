@@ -24,7 +24,8 @@ change can flip only its assigned row.
 - One outcome table, keyed by gate, reason, and cause, decides whether a
   lifecycle exit waits for an external operation, enters a continuity hold, or
   ends terminally. Causes are resolving operation, failure reason, stall,
-  exhausted relaunch allowance, expired operation, and unreadable stall ledger.
+  exhausted relaunch allowance, expired operation, unreadable stall ledger, and
+  (ADR-0064) a stalled CI repair backed by matching transient rerun evidence.
 - Failure reasons are classified in that table. Unknown reasons remain
   terminal, and the contract test requires every emitted failure reason to be
   classified.
@@ -50,7 +51,7 @@ change can flip only its assigned row.
 | #3001 | `implementor-work-required` / `REVIEW_REQUEST_REQUIRED` / stall | Hold | Terminal with the exhausted-work reason |
 | #3001 | `blind-review-required` / `BLIND_REVIEW_REQUIRED` / stall or allowance used | Hold | Terminal with the exhausted-work reason |
 | #3001 | `actionable-feedback` / `REVIEW_INFORMAL_FEEDBACK` / allowance used | Hold (until #3001, the hold ends `REVIEW_FEEDBACK_STALLED` on its next observation; see below) | Terminal with the exhausted-work reason |
-| #3011 | `ci-failure` / `CI_FAILURE` / stall or allowance used, only when matching typed transient rerun evidence backs it | The row's outcome | A `ci-recovery` wait in front of the row (ADR-0064); every other stalled CI repair keeps the row, whatever #3001 makes it |
+| #3011 | `ci-failure` / `CI_FAILURE` / transient stall (stall or allowance used, backed by matching typed transient rerun evidence) | The generic `ci-failure` stall or allowance row | Its own row, outcome wait (the `ci-recovery` window, ADR-0064), consulted in front of the generic rows; every other stalled CI repair keeps the generic row, whatever #3001 makes it |
 
 The #2999 row ends a Run whose informal-feedback relaunch left the head, the
 review request and its responses unchanged. Its terminal evidence carries the
@@ -68,7 +69,8 @@ keep their row and their per-head allowance.
 
 These changes do not alter waits for resolving operations or the unrelated
 current holds: in-deadline CI and review, active review execution, the
-GitHub-recovery window before its bound, provider quota, capacity, expired CI
+GitHub-recovery window before its bound, the CI recovery window before its bound
+(ADR-0064), provider quota, capacity, expired CI
 wait (`CI_WAIT_TIMEOUT`), and the idle gate when no review command is configured.
 Formal requested changes left unrepaired remain terminal.
 
