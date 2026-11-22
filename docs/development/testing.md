@@ -309,7 +309,10 @@ The suite also pins failure for absent PRs, idle/generic
 gates, stale heads, lookup/state errors, and the historical exhausted in-session
 relaunch allowance. The AFK continuity contract replays same-head review
 re-requests through scheduler waits: three feedback relaunches exhaust the
-allowance, but a current-head approval still resumes merge work.
+allowance, but a current-head approval still resumes merge work. It also replays
+the approval override: a contradicted daemon approval is relaunched and ended
+like requested changes, a pushed fix is reviewed on its new head, and the #2985
+report still merges.
 Scheduler coverage must show that legitimate awaits release execution
 capacity, keep dependents queued, and resume automatically when external work
 resolves and a slot is available. Portal aggregation remains `Reviewing` while

@@ -94,6 +94,27 @@ func TestBlindReviewNewestUnusablePublicationRevokesOlderApproval(t *testing.T) 
 	}
 }
 
+// A blind publication keeps its own evidence path (#2998): a contradicted
+// blind APPROVED is neither an approval nor requested changes, so the
+// implementor-owned blind round repeats. Only a delegated daemon approval is
+// turned into requested changes (the approval override).
+func TestBlindReviewContradictedApprovalIsNeitherApprovalNorFeedback(t *testing.T) {
+	decision := "## Suggested next steps\nMerge only after the race is fixed.\n\n## Decision\n**APPROVED**\n"
+	body := reviewpub.BlindBody(decision, "head")
+	if verdict, ok := reviewpub.PublishedVerdict(body); !ok || verdict != reviewpub.Approved || !contradictedDaemonApproval(body) {
+		t.Fatalf("fixture is not a contradicted APPROVED publication: %q/%t", verdict, ok)
+	}
+	got := blindReviewEvidenceFromComments([]github.PRComment{{Body: body}}, 17, "head")
+	if got.present || got.actionable || got.outcome == retainedReviewApproval || len(got.informalFeedback) > 0 {
+		t.Fatalf("contradicted blind approval = %+v, want no approval and no requested changes", got)
+	}
+	pr := &github.PR{Number: 17, State: "open", HeadRefOid: "head", StatusCheckRollup: "success", MergeStateStatus: "CLEAN"}
+	decided := decideImplementationPRLifecycle(implementationPRFacts{pr: pr, headSHA: "head", blindReview: true, retainedEvidence: got})
+	if decided.action != lifecycleResume || decided.extras["reason"] != blindReviewRequiredReason {
+		t.Fatalf("contradicted blind approval decision = %+v, want another blind review round", decided)
+	}
+}
+
 func TestBlindReviewApprovalRespectsLiveGates(t *testing.T) {
 	approval := blindReviewEvidenceFromComments([]github.PRComment{
 		{Body: reviewpub.BlindBody("## Decision\nAPPROVED", "head")},

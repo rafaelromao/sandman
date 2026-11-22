@@ -18,6 +18,7 @@ package batch
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -316,6 +317,17 @@ type continuityScenario struct {
 	priorFailure string
 	// worktreeHead overrides the Run's local head; by default it is the PR's.
 	worktreeHead func(g *continuityGitHub) string
+	// wantOverrideRelaunches asserts the exact number of relaunches whose
+	// retained review request carries an approval override (#2998) when
+	// nonzero: an in-session relaunch is recorded by run.resumed, a relaunch
+	// at scheduler re-entry by the ready continuation's run.capacity_queued.
+	// wantOverrideInResumed asserts that a run.resumed carries it;
+	// forbidOverride asserts that no event of the Run mentions one;
+	// wantTerminalOverride asserts the terminal failure evidence carries it.
+	wantOverrideRelaunches int
+	wantOverrideInResumed  bool
+	forbidOverride         bool
+	wantTerminalOverride   bool
 	// githubWait asserts the Run waited for GitHub to recover.
 	githubWait          bool
 	foregroundLifecycle bool
@@ -731,6 +743,33 @@ func publishContinuityFormalChanges(g *continuityGitHub) {
 	g.formalReview("CHANGES_REQUESTED")
 }
 
+// contradictedContinuityDecision is a daemon APPROVED whose own Suggested
+// next steps contradict it (#2998). The marked form carries the daemon's
+// verdict trailer; the legacy form carries only the Decision token.
+const contradictedContinuityDecision = "## Suggested next steps\nMerge only after the race in worker.go is fixed.\n\n## Decision\n**APPROVED**\n"
+
+func publishContinuityContradictedApproval(g *continuityGitHub) {
+	g.publish(contradictedContinuityDecision)
+}
+
+func publishContinuityContradictedApprovalLegacy(g *continuityGitHub) {
+	g.publishLegacy(contradictedContinuityDecision)
+}
+
+// eventCarriesApprovalOverride reports whether an event's retained
+// review_request records an approval override.
+func eventCarriesApprovalOverride(event events.Event) bool {
+	data, err := json.Marshal(event.Payload["review_request"])
+	if err != nil {
+		return false
+	}
+	var request map[string]any
+	if json.Unmarshal(data, &request) != nil {
+		return false
+	}
+	return request[approvalOverrideKey] == approvalOverrideStatement
+}
+
 func postContinuityInformalFeedback(g *continuityGitHub) {
 	g.post("Please make the retry loop in `worker.go:12` keep the request.")
 }
@@ -740,7 +779,7 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 	for _, name := range []string{
 		"approved-daemon-28-final.md", "approved-sandman-2818.md", "approved-with-ci-advice.md",
 		"approved-daemon-29-first.md", "approved-daemon-29-fifth.md", "approved-daemon-29-final.md", "approved-daemon-30.md",
-		"approved-sandman-tests-33.md",
+		"approved-sandman-tests-33.md", "approved-sandman-2985.md",
 	} {
 		reports[name] = approvalReport(t, name)
 	}
@@ -750,7 +789,10 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 	// daemon would publish them with one today, and both forms must merge.
 	// approved-sandman-tests-33.md is the #19 / PR #33 report (comment
 	// 6514897469) whose descriptive Summary vetoed its own published verdict.
-	for _, name := range []string{"approved-sandman-2818.md", "approved-with-ci-advice.md", "approved-daemon-28-final.md", "approved-daemon-29-first.md", "approved-daemon-29-fifth.md", "approved-daemon-29-final.md", "approved-sandman-tests-33.md"} {
+	// approved-sandman-2985.md is the #2985 report (comment 7005406716) whose
+	// descriptive next steps once read as a merge condition; a contradiction
+	// false positive now costs relaunches (#2998), so it must keep merging.
+	for _, name := range []string{"approved-sandman-2818.md", "approved-with-ci-advice.md", "approved-daemon-28-final.md", "approved-daemon-29-first.md", "approved-daemon-29-fifth.md", "approved-daemon-29-final.md", "approved-sandman-tests-33.md", "approved-sandman-2985.md"} {
 		report := reports[name]
 		for _, form := range []struct {
 			name    string
@@ -768,7 +810,7 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 					form.publish,
 					func(g *continuityGitHub) { g.update(func(pr *github.PR) { pr.StatusCheckRollup = "success" }) },
 				},
-				want: "merged", maxLaunches: 2,
+				want: "merged", maxLaunches: 2, forbidOverride: true,
 			})
 		}
 	}
@@ -978,6 +1020,76 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 			launches: []func(*continuityGitHub) string{requestReview},
 			polls:    []func(*continuityGitHub){publishContinuityChangesRequested, nil, nil, nil},
 			want:     "failed:REMEDIATION_BUDGET_EXHAUSTED",
+		},
+		// #2998: a daemon APPROVED whose own next steps say "Merge only after X"
+		// is requested changes with an approval override. Nothing is fixed, so
+		// the Run is relaunched three times and then ends terminally with the
+		// override in its evidence, rather than waiting and parking.
+		continuityScenario{
+			name: "#2998 contradicted daemon approval unrepaired/marked", pr: greenCleanPR(), retries: 3,
+			forbidRetry: true,
+			launches:    []func(*continuityGitHub) string{requestReview},
+			polls:       []func(*continuityGitHub){publishContinuityContradictedApproval, nil, nil, nil},
+			want:        "failed:REMEDIATION_BUDGET_EXHAUSTED", wantLaunches: 4,
+			wantOverrideRelaunches: 3, wantOverrideInResumed: true, wantTerminalOverride: true,
+		},
+		continuityScenario{
+			name: "#2998 contradicted daemon approval unrepaired/legacy", pr: greenCleanPR(), retries: 3,
+			forbidRetry: true,
+			launches:    []func(*continuityGitHub) string{requestReview},
+			polls:       []func(*continuityGitHub){publishContinuityContradictedApprovalLegacy, nil, nil, nil},
+			want:        "failed:REMEDIATION_BUDGET_EXHAUSTED", wantLaunches: 4,
+			wantOverrideRelaunches: 3, wantOverrideInResumed: true, wantTerminalOverride: true,
+		},
+		// The same, while CI is still pending: feedback never waits for CI.
+		continuityScenario{
+			name: "#2998 contradicted daemon approval with pending CI", pr: github.PR{StatusCheckRollup: "pending", MergeStateStatus: "CLEAN"}, retries: 3,
+			forbidRetry: true,
+			launches:    []func(*continuityGitHub) string{requestReview},
+			polls:       []func(*continuityGitHub){publishContinuityContradictedApproval, nil, nil, nil},
+			want:        "failed:REMEDIATION_BUDGET_EXHAUSTED", wantLaunches: 4,
+			wantOverrideRelaunches: 3, wantOverrideInResumed: true, wantTerminalOverride: true,
+		},
+		// The implementor keeps re-requesting review on the unchanged head, and
+		// the daemon contradicts its own approval every time. Re-requesting is
+		// not progress: the per-head allowance still ends the Run.
+		continuityScenario{
+			name: "#2998 same-head rerequests of a contradicted approval end terminally", pr: greenCleanPR(), retries: 3,
+			forbidRetry: true,
+			launches:    []func(*continuityGitHub) string{requestReview, requestReview, requestReview, requestReview, requestReview},
+			polls: []func(*continuityGitHub){
+				publishContinuityContradictedApproval, publishContinuityContradictedApproval,
+				publishContinuityContradictedApproval, publishContinuityContradictedApproval,
+			},
+			want: "failed:REMEDIATION_BUDGET_EXHAUSTED", wantLaunches: 4,
+			wantOverrideRelaunches: 3, wantTerminalOverride: true,
+		},
+		// When the implementor pushes a fix, the new head goes through the
+		// normal review flow: its approval merges, and the approving request
+		// carries no override.
+		continuityScenario{
+			name: "#2998 a pushed fix is reviewed on the new head and merges", pr: greenCleanPR(), retries: 3,
+			forbidRetry: true,
+			launches:    []func(*continuityGitHub) string{requestReview, requestReviewOnHead("head-2")},
+			polls: []func(*continuityGitHub){
+				publishContinuityContradictedApproval,
+				func(g *continuityGitHub) { g.publish(reports["approved-daemon-30.md"]) },
+			},
+			want: "merged", wantLaunches: 3, wantOverrideRelaunches: 1,
+		},
+		// An approval that settles the request wins over a contradicted one
+		// answering the same request: approval is evaluated before feedback.
+		continuityScenario{
+			name: "#2998 an approval of the same request wins over a contradicted one", pr: greenCleanPR(), retries: 3,
+			forbidRetry: true,
+			launches:    []func(*continuityGitHub) string{requestReview},
+			polls: []func(*continuityGitHub){
+				func(g *continuityGitHub) {
+					publishContinuityContradictedApproval(g)
+					g.publish(reports["approved-daemon-30.md"])
+				},
+			},
+			want: "merged", maxLaunches: 2, forbidOverride: true,
 		},
 		// #2997: the implementor posts fresh triggers without pushing, and
 		// the daemon returns the same finding for every request.
@@ -1270,6 +1382,37 @@ func TestAFKContinuityContract_RealIncidentsMergeOrWait(t *testing.T) {
 				if !priorFailureRetained {
 					t.Fatalf("continuation rewrote or lost prior terminal evidence %q", sc.priorFailure)
 				}
+			}
+			relaunches, resumed, terminalOverride := 0, 0, false
+			for _, event := range outcome.current() {
+				if !eventCarriesApprovalOverride(event) {
+					continue
+				}
+				switch event.Type {
+				case "run.resumed":
+					resumed++
+					relaunches++
+				case "run.capacity_queued":
+					relaunches++
+				case "run.finished":
+					terminalOverride = true
+				}
+			}
+			if sc.wantOverrideRelaunches > 0 && relaunches != sc.wantOverrideRelaunches {
+				t.Fatalf("relaunches carrying an approval override = %d, want %d\nevents: %s", relaunches, sc.wantOverrideRelaunches, continuityEventSummary(outcome.events))
+			}
+			if sc.wantOverrideInResumed && resumed == 0 {
+				t.Fatalf("no run.resumed event carries the approval override\nevents: %s", continuityEventSummary(outcome.events))
+			}
+			if sc.forbidOverride {
+				for _, event := range outcome.current() {
+					if eventCarriesApprovalOverride(event) {
+						t.Fatalf("%s carried an approval override for an uncontradicted approval\nevents: %s", event.Type, continuityEventSummary(outcome.events))
+					}
+				}
+			}
+			if sc.wantTerminalOverride && !terminalOverride {
+				t.Fatalf("terminal failure evidence carries no approval override\nevents: %s", continuityEventSummary(outcome.events))
 			}
 			if sc.expectOneTrigger && outcome.triggers != 1 {
 				t.Fatalf("recovery caused a replacement review trigger: got %d triggers\nevents: %s", outcome.triggers, continuityEventSummary(outcome.events))

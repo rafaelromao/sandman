@@ -109,7 +109,7 @@ var continuityOutcomes = continuityTable{
 	{reason: lookupGateReason, cause: causeFailure}:                      outcomeTerminal, // GitHub stayed unavailable for 24 hours
 	{reason: githubUnavailableReason, cause: causeFailure}:               outcomeHold,     // waits for GitHub to recover
 	{reason: implementorActionRequiredReason, cause: causeFailure}:       outcomeTerminal, // legacy verification fallback
-	{reason: "REMEDIATION_BUDGET_EXHAUSTED", cause: causeFailure}:        outcomeTerminal, // genuine requested changes left unrepaired
+	{reason: "REMEDIATION_BUDGET_EXHAUSTED", cause: causeFailure}:        outcomeTerminal, // genuine requested changes left unrepaired (formal, daemon verdict or approval override)
 	{reason: idleGateReason, cause: causeFailure}:                        outcomeHold,     // nothing resolving yet; waits like rc2
 	{reason: reviewTimeoutReason, cause: causeFailure}:                   outcomeHold,     // expired request; agrees with the expired row
 	{reason: "CI_WAIT_TIMEOUT", cause: causeFailure}:                     outcomeHold,     // bounded CI wait expired; waits like rc2
@@ -137,8 +137,9 @@ var continuityOutcomes = continuityTable{
 	{cause: causeStall}: outcomeHold,
 
 	// A used-up relaunch allowance. Genuine requested changes (formal
-	// CHANGES_REQUESTED or the review daemon's changes_requested verdict)
-	// and unusable CI wait state end the Run on any gate. Owned work ends
+	// CHANGES_REQUESTED, the review daemon's changes_requested verdict, or a
+	// daemon approval its own verdict sections contradict) and unusable CI wait
+	// state end the Run on any gate. Owned work ends
 	// through its final ordinary attempt, except the idle gate whose only
 	// missing evidence is a review nobody requested.
 	{reason: actionableFeedbackReason, cause: causeExhausted}:                                     outcomeTerminal,
