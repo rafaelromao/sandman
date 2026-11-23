@@ -58,6 +58,58 @@ func (f *fakeRunner) Run(ctx context.Context, name string, arg ...string) *exec.
 	return exec.CommandContext(ctx, "echo")
 }
 
+func TestCLIClient_CIWorkflowRerunCapabilityUsesCurrentJobAPIEndpoints(t *testing.T) {
+	t.Run("lists latest-attempt jobs", func(t *testing.T) {
+		runner := &fakeRunner{responses: []fakeResponse{
+			{output: `{"name":"sandman","owner":{"login":"owner"}}`},
+			{output: `{"total_count":2,"jobs":[{"id":11,"run_id":101,"run_attempt":3,"name":"opencode-canary","status":"completed","conclusion":"failure"},{"id":12,"run_id":101,"run_attempt":3,"name":"quality-gate","status":"completed","conclusion":"failure"}]}`},
+		}}
+		client := &CLIClient{runner: runner}
+		jobs, err := client.ListWorkflowJobs(context.Background(), "101")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(jobs) != 2 || jobs[0].ID != 11 || jobs[0].RunAttempt != 3 || jobs[1].Name != "quality-gate" {
+			t.Fatalf("jobs = %+v, want both current-attempt jobs", jobs)
+		}
+		if got := strings.Join(runner.calls[1].args, " "); got != "api repos/owner/sandman/actions/runs/101/jobs?filter=latest&per_page=100" {
+			t.Fatalf("jobs command = %q", got)
+		}
+	})
+
+	t.Run("posts one targeted job rerun without retry", func(t *testing.T) {
+		runner := &fakeRunner{responses: []fakeResponse{
+			{output: `{"name":"sandman","owner":{"login":"owner"}}`},
+			{},
+		}}
+		client := &CLIClient{runner: runner}
+		if err := client.RerunWorkflowJob(context.Background(), 11); err != nil {
+			t.Fatal(err)
+		}
+		if len(runner.calls) != 2 {
+			t.Fatalf("API calls = %d, want repository lookup and one mutation", len(runner.calls))
+		}
+		got := strings.Join(runner.calls[1].args, " ")
+		if !strings.Contains(got, "--method POST") || !strings.HasSuffix(got, "repos/owner/sandman/actions/jobs/11/rerun") {
+			t.Fatalf("rerun command = %q", got)
+		}
+	})
+
+	t.Run("rejects invalid IDs before API calls", func(t *testing.T) {
+		runner := &fakeRunner{}
+		client := &CLIClient{runner: runner}
+		if _, err := client.ListWorkflowJobs(context.Background(), "not-a-run"); err == nil {
+			t.Fatal("invalid run ID was accepted")
+		}
+		if err := client.RerunWorkflowJob(context.Background(), 0); err == nil {
+			t.Fatal("invalid job ID was accepted")
+		}
+		if len(runner.calls) != 0 {
+			t.Fatalf("invalid IDs made %d API calls", len(runner.calls))
+		}
+	})
+}
+
 // blockingFakeRunner blocks the supplied *exec.Cmd on ctx cancellation.
 // Used to prove that CLIClient honours the caller's ctx and the
 // configured per-call Timeout.
@@ -503,6 +555,15 @@ func TestCLIClient_FindPRByBranch_PreservesMultipleFailedChecksInRerunWorkflow(t
 	}
 }
 
+func TestCLIClient_FindPRByBranch_DistinguishesCompletedFailureFromActiveRerun(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":18,"state":"open","headRefOid":"source-head","statusCheckRollup":[{"status":"COMPLETED","conclusion":"TIMED_OUT","name":"opencode-canary","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},{"status":"COMPLETED","conclusion":"FAILURE","name":"quality-gate","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"}]}]`}}}
+	pr, err := (&CLIClient{runner: runner}).FindPRByBranch(t.Context(), "failure-branch")
+	if err != nil || pr == nil || pr.CIFailedWorkflow == nil || pr.CIFailedWorkflow.RunID != "101" ||
+		pr.CIActiveFailedWorkflowRunID != "" || pr.CIHasActiveChecks {
+		t.Fatalf("FindPRByBranch = (%+v, %v), want a failed workflow with no active rerun", pr, err)
+	}
+}
+
 func TestCLIClient_FindPRByBranch_PreservesDuplicateFailedCheckNamesInRerunWorkflow(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":18,"state":"open","headRefName":"failure-branch","headRefOid":"source-head","statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"FAILURE","name":"opencode-canary","detailsUrl":"https://github.com/o/r/actions/runs/101/job/11"},{"__typename":"CheckRun","status":"COMPLETED","conclusion":"TIMED_OUT","name":"opencode-canary","detailsUrl":"https://github.com/o/r/actions/runs/101/job/14"},{"__typename":"CheckRun","status":"IN_PROGRESS","name":"build-macos","detailsUrl":"https://github.com/o/r/actions/runs/101/job/12"}]}]`}}}
 	client := &CLIClient{runner: runner}
@@ -540,6 +601,9 @@ func TestCLIClient_FindPRByBranch_DoesNotSelectRerunPrerequisiteOverSeparateFail
 	}
 	if pr.CIActiveFailedWorkflowRunID != "" {
 		t.Fatalf("selected rerun prerequisite %q despite independent failed workflow 202", pr.CIActiveFailedWorkflowRunID)
+	}
+	if !pr.CIMultipleFailedWorkflows {
+		t.Fatal("lost positive evidence of failures in separate workflows")
 	}
 }
 

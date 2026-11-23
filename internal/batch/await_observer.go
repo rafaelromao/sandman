@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 )
 
@@ -52,18 +53,42 @@ func (e *runExecutor) lifecycleObserverForRow(ctx context.Context, row RowSpec) 
 	if branch == "" {
 		return nil, lifecycleObservationRequest{}, false
 	}
-	if issue, err := e.deps.githubClient.FetchIssue(ctx, row.IssueNumber); err == nil && issue != nil {
-		session.issueState = issue.State
-	}
 	runID := row.RunID
 	if runID == "" {
 		runID = buildRunID(row.IssueNumber, row.RunTS, row.RunShortID)
 	}
+	observer := newLifecycleObserver(session)
+	_, _, recovering, recoveryUnknown := observer.ciRecoveryWindow(runID)
+	ciRecoveryRequired := recovering
+	if recoveryUnknown && !ciRecoveryRequired {
+		ciRecoveryRequired = e.ciRecoveryWaitFromSidecar(row, runID)
+	}
+	if !recovering && !recoveryUnknown {
+		if issue, err := e.deps.githubClient.FetchIssue(ctx, row.IssueNumber); err == nil && issue != nil {
+			session.issueState = issue.State
+		}
+	}
 	workDir := filepath.Join(e.deps.layout.WorktreeDir, branch)
-	return newLifecycleObserver(session), lifecycleObservationRequest{
+	return observer, lifecycleObservationRequest{
 		WorkDir: workDir, Branch: branch, RunID: runID,
-		HostPathsReady: true, AttemptStatus: "success",
+		HostPathsReady: true, AttemptStatus: "success", CIRecoveryRequired: ciRecoveryRequired,
 	}, true
+}
+
+func (e *runExecutor) ciRecoveryWaitFromSidecar(row RowSpec, runID string) bool {
+	if e == nil || e.deps.layout.StateDir == "" {
+		return false
+	}
+	batchID := strings.TrimSpace(row.BatchID)
+	if batchID == "" {
+		batchID = batchIDFromRunID(runID)
+	}
+	if batchID == "" {
+		return false
+	}
+	location := e.deps.layout.LocateBatch(batchID, row.BatchDir)
+	wait, err := daemon.ReadRunWaitAt(e.deps.layout, location, runID)
+	return err == nil && strings.HasPrefix(wait.OperationID, ciRecoverySpec.Operation+":")
 }
 
 func (e *runExecutor) observeRowLifecycle(ctx context.Context, row RowSpec) lifecycleVerdict {
@@ -125,6 +150,11 @@ func mergeRetainedAwaitEvidence(previous, observed map[string]any) map[string]an
 }
 
 func awaitOperationChanged(previous, observed map[string]any) bool {
+	previousCIRecovery, previousCIRecovering := ciRecoverySignature(previous)
+	observedCIRecovery, observedCIRecovering := ciRecoverySignature(observed)
+	if previousCIRecovering || observedCIRecovering {
+		return previousCIRecovering != observedCIRecovering || previousCIRecovery != observedCIRecovery
+	}
 	// A GitHub recovery wait changes only at a status check or lookup
 	// attempt; a skipped observation returns the identical window.
 	previousRecovery, previousRecovering := githubRecoverySignature(previous)

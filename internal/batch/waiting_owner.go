@@ -146,6 +146,10 @@ func (o *waitOwner) checkpoint(row RowSpec, ready bool, nextPoll time.Duration) 
 			// review or CI deadlines are not enforced while GitHub is down.
 			record.OperationID, record.OperationDeadline = id, deadline
 		}
+		if id, deadline, ok := ciRecoveryOperation(state.AwaitEvent.Payload); ok {
+			record.OperationID, record.OperationDeadline = id, deadline
+			record.NextPollAt, _ = ciRecoveryNextAttempt(state.AwaitEvent.Payload)
+		}
 		if continuityHoldPayload(state.AwaitEvent.Payload) {
 			// A continuity hold waits for external recovery without an
 			// operation deadline; it keeps the ordinary ownerless grace.

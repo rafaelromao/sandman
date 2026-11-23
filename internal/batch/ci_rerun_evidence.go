@@ -198,6 +198,16 @@ func (e ciRerunActionEvidence) matchesPrerequisite(prerequisite map[string]any) 
 	return ciRerunFailuresCoveredBySelectedJob(failedChecks, workflowCheckNames, e.JobName)
 }
 
+// confirmsRecoveryFor is deliberately narrower than matchesPrerequisite:
+// waiting means the helper observed an in-progress workflow, not that its
+// authorized rerun completed. Only a confirmed transient rerun of the exact
+// current workflow failure can authorize runtime-owned recovery.
+func (e ciRerunActionEvidence) confirmsRecoveryFor(prerequisite map[string]any) bool {
+	return e.State == "confirmed" &&
+		e.Reason == "selected-job-and-quality-gate-rerun-observed" &&
+		e.matchesPrerequisite(prerequisite)
+}
+
 func ciRerunFailedChecks(value any) ([]github.CIFailedCheck, bool) {
 	var checks []github.CIFailedCheck
 	switch values := value.(type) {

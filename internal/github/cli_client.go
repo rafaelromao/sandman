@@ -302,21 +302,19 @@ func ciHasActiveChecksFromJSON(raw json.RawMessage) bool {
 	return false
 }
 
-type ciRerunWorkflowEvidence struct {
+// CIFailedWorkflow identifies the only workflow responsible for failed CI.
+type CIFailedWorkflow struct {
 	RunID        string
 	FailedChecks []CIFailedCheck
 	CheckNames   []string
 }
 
-// ciRerunBlockedWorkflowFromJSON identifies the containing workflow run that
-// prevents a targeted job rerun: exactly one run must contain failed and active
-// checks, it must be the only source of failed CI, and every failed check must
-// retain its own execution link so selected-job matching can reject ambiguous
-// display names.
-func ciRerunBlockedWorkflowFromJSON(raw json.RawMessage) *ciRerunWorkflowEvidence {
+// ciFailedWorkflowFromJSON identifies the sole failing workflow and reports
+// whether it still has active checks. Unlinked failures cannot qualify.
+func ciFailedWorkflowFromJSON(raw json.RawMessage) (*CIFailedWorkflow, bool, bool) {
 	var checks []statusCheckRun
 	if err := json.Unmarshal(raw, &checks); err != nil || len(checks) == 0 {
-		return nil
+		return nil, false, false
 	}
 	type runState struct {
 		failedChecks []CIFailedCheck
@@ -367,44 +365,38 @@ func ciRerunBlockedWorkflowFromJSON(raw json.RawMessage) *ciRerunWorkflowEvidenc
 		runs[match[1]] = state
 	}
 	if unidentifiedFailure {
-		return nil
+		return nil, false, false
 	}
-	var blocked *ciRerunWorkflowEvidence
+	var blocked *CIFailedWorkflow
+	active := false
 	for runID, state := range runs {
-		if len(state.failedChecks) == 0 || !state.active {
+		if len(state.failedChecks) == 0 {
 			continue
 		}
 		if blocked != nil {
-			return nil
+			return nil, false, true
 		}
 		if state.unknownName {
 			// The selected job name cannot be proven unique when another
 			// execution in this workflow has no name in the rollup.
-			return nil
+			return nil, false, false
 		}
-		blocked = &ciRerunWorkflowEvidence{RunID: runID, FailedChecks: state.failedChecks, CheckNames: state.checkNames}
+		blocked = &CIFailedWorkflow{RunID: runID, FailedChecks: state.failedChecks, CheckNames: state.checkNames}
+		active = state.active
 	}
 	if blocked == nil {
-		return nil
-	}
-	for runID, state := range runs {
-		if runID != blocked.RunID && len(state.failedChecks) > 0 {
-			// The special wait is valid only when the containing workflow is
-			// the sole source of failed CI. A separate completed failure is
-			// actionable and must remain implementation-owned immediately.
-			return nil
-		}
+		return nil, false, false
 	}
 	sort.Slice(blocked.FailedChecks, func(i, j int) bool {
 		return blocked.FailedChecks[i].DetailsURL < blocked.FailedChecks[j].DetailsURL
 	})
 	sort.Strings(blocked.CheckNames)
-	return blocked
+	return blocked, active, false
 }
 
 func ciRerunBlockedWorkflowRunIDFromJSON(raw json.RawMessage) string {
-	evidence := ciRerunBlockedWorkflowFromJSON(raw)
-	if evidence == nil {
+	evidence, active, _ := ciFailedWorkflowFromJSON(raw)
+	if !active {
 		return ""
 	}
 	return evidence.RunID
@@ -613,6 +605,62 @@ func (c *CLIClient) RepoName(ctx context.Context) (string, error) {
 	return fmt.Sprintf("%s/%s", owner, name), nil
 }
 
+// ListWorkflowJobs returns jobs for the latest attempt of one workflow run.
+// Callers must still validate each job's run identity and attempt before
+// selecting a database ID for mutation.
+func (c *CLIClient) ListWorkflowJobs(ctx context.Context, runID string) ([]CIWorkflowJob, error) {
+	id, err := strconv.ParseUint(strings.TrimSpace(runID), 10, 64)
+	if err != nil || id == 0 {
+		return nil, fmt.Errorf("list workflow jobs: invalid workflow run ID %q", runID)
+	}
+	owner, repo, err := c.resolveRepo(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list workflow jobs: resolve repository: %w", err)
+	}
+	path := fmt.Sprintf("repos/%s/%s/actions/runs/%d/jobs?filter=latest&per_page=100", owner, repo, id)
+	out, err := c.readCommand(ctx, "gh api workflow jobs", "api", path)
+	if err != nil {
+		return nil, fmt.Errorf("gh api workflow jobs: %w", err)
+	}
+	var response struct {
+		TotalCount int             `json:"total_count"`
+		Jobs       []CIWorkflowJob `json:"jobs"`
+	}
+	if err := json.Unmarshal(out, &response); err != nil {
+		return nil, fmt.Errorf("parse workflow jobs: %w", err)
+	}
+	if response.TotalCount != len(response.Jobs) {
+		return nil, fmt.Errorf("parse workflow jobs: incomplete latest-attempt job list")
+	}
+	for _, job := range response.Jobs {
+		if job.ID <= 0 || job.RunID <= 0 || uint64(job.RunID) != id || job.RunAttempt <= 0 || strings.TrimSpace(job.Name) == "" {
+			return nil, fmt.Errorf("parse workflow jobs: incomplete or foreign job identity")
+		}
+	}
+	return response.Jobs, nil
+}
+
+// RerunWorkflowJob requests a rerun of one Actions job. This mutation is not
+// retried after transport ambiguity; callers must reconcile the workflow
+// attempt before deciding whether another mutation is safe.
+func (c *CLIClient) RerunWorkflowJob(ctx context.Context, jobID int64) error {
+	if jobID <= 0 {
+		return fmt.Errorf("rerun workflow job: invalid job database ID %d", jobID)
+	}
+	owner, repo, err := c.resolveRepo(ctx)
+	if err != nil {
+		return fmt.Errorf("rerun workflow job: resolve repository: %w", err)
+	}
+	callCtx, cancel := c.boundContext(ctx)
+	defer cancel()
+	endpoint := fmt.Sprintf("repos/%s/%s/actions/jobs/%d/rerun", owner, repo, jobID)
+	_, err = c.runCmd(callCtx, c.command(callCtx, "gh", "api", "--method", "POST", "-H", "Accept: application/vnd.github+json", endpoint), "gh api rerun workflow job")
+	if err != nil {
+		return fmt.Errorf("gh api rerun workflow job: %w", err)
+	}
+	return nil
+}
+
 // FetchIssue fetches issue metadata via gh CLI.
 func (c *CLIClient) FetchIssue(ctx context.Context, number int) (*Issue, error) {
 	owner, repo, err := c.resolveRepo(ctx)
@@ -777,12 +825,12 @@ func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, err
 		return nil, nil
 	}
 	payload := payloads[0]
-	rerunEvidence := ciRerunBlockedWorkflowFromJSON(payload.StatusCheckRollup)
+	rerunEvidence, active, multipleFailures := ciFailedWorkflowFromJSON(payload.StatusCheckRollup)
 	var activeFailedWorkflowRunID string
 	var activeFailedWorkflowFailedCheckNames []string
 	var activeFailedWorkflowFailedChecks []CIFailedCheck
 	var activeFailedWorkflowCheckNames []string
-	if rerunEvidence != nil {
+	if active {
 		activeFailedWorkflowRunID = rerunEvidence.RunID
 		activeFailedWorkflowFailedChecks = append([]CIFailedCheck(nil), rerunEvidence.FailedChecks...)
 		activeFailedWorkflowCheckNames = append([]string(nil), rerunEvidence.CheckNames...)
@@ -812,6 +860,8 @@ func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, err
 		MergeStateStatus:            payload.MergeStateStatus,
 		StatusCheckRollup:           rollupStateFromJSON(payload.StatusCheckRollup),
 		CIHasActiveChecks:           ciHasActiveChecksFromJSON(payload.StatusCheckRollup),
+		CIFailedWorkflow:            rerunEvidence,
+		CIMultipleFailedWorkflows:   multipleFailures,
 		CIActiveFailedWorkflowRunID: activeFailedWorkflowRunID,
 		CIActiveFailedWorkflowRunFailedCheckNames: activeFailedWorkflowFailedCheckNames,
 		CIActiveFailedWorkflowRunFailedChecks:     activeFailedWorkflowFailedChecks,

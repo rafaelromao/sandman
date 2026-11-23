@@ -88,6 +88,16 @@ site; operation-owned waits are additionally pinned to their existing lifecycle
 and event-fold scenarios. See [ADR-0063](../adr/0063-centralize-afk-continuity-outcomes.md)
 for the staged policy and sibling-owned rows.
 
+For diagnosed CI recovery, run:
+
+```bash
+go test ./internal/batch ./internal/github -run 'CIRerun|RowDriverCIRecovery|AFKContinuityContract' -count=1
+```
+
+The slice covers the stalled-rerun incident, receipt lineage, quiet until due,
+Actions outage gating, durable mutation intent, read-back reconciliation,
+restart, abort and expiry.
+
 For OpenCode context rollover changes, the hermetic production-path coverage is:
 
 ```bash
