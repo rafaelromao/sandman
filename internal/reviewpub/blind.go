@@ -42,7 +42,9 @@ func BlindBody(decision, head string) string {
 // comment (TrimHostSuffix); the publication is judged without it. Nothing else
 // is tolerated: the identity must still be the last non-blank line of what
 // remains, so text between the identity and the block, or a second block, is
-// not a blind publication.
+// not a blind publication. Like the unsuffixed form, this judges the shape and
+// the head binding only; that the report text itself is unmodified can be
+// checked only against the intended body, which the publication helper holds.
 func AnswersBlind(body, head string) bool {
 	body, _ = TrimHostSuffix(body)
 	lines := nonEmptyLines(body)

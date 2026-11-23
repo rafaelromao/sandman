@@ -82,6 +82,11 @@ func TestHostSuffixPredicateOutcomes(t *testing.T) {
 		// The block is not last, so nothing is trimmed: the final (stale) identity
 		// binds the body, and the verdict is the strict Decision-token fallback.
 		"stale identity after the block": {core + hostBlock + Identity(BlindTriggerKey, "other"), false, Approved, true},
+		// With a block, nothing may sit between the verdict trailer and the
+		// identity line: only the stamped trailer is trusted, so the Decision
+		// token cannot stand in for it and the publication carries no verdict.
+		"text between trailer and identity, with a block": {"## Decision\nAPPROVED\n" + Marker(Approved) + "\nnote\n" + strings.TrimRight(Identity(BlindTriggerKey, head), "\n") + hostBlock, true, Unknown, true},
+		"no trailer at all, with a block":                 {"## Decision\nAPPROVED\n" + strings.TrimRight(Identity(BlindTriggerKey, head), "\n") + hostBlock, true, Unknown, true},
 		// The strict rule is unchanged when no block is present.
 		"text between trailer and identity": {"## Decision\nAPPROVED\n" + Marker(Approved) + "\nnote\n" + Identity(BlindTriggerKey, head), true, Approved, true},
 	} {

@@ -107,9 +107,20 @@ func Answers(body, triggerKey, head string) bool {
 // A host-appended footer block (TrimHostSuffix) is not part of the
 // publication: the verdict is read from what precedes it, so a managed sandbox
 // that rewrites published comments does not turn an approval into an unknown
-// verdict. The footer can never supply a trailer or identity of its own.
+// verdict. The footer can never supply a trailer or identity of its own, and a
+// host-rewritten publication is trusted only through its stamped trailer: the
+// marker must sit directly before the identity line, with nothing between the
+// trailer, the identity line and the block. Without the trailer the verdict is
+// Unknown; the Decision-token fallback below is for bodies exactly as the
+// daemon wrote them.
+//
+// Only the publication helper, which holds the intended body, can tell that the
+// text before the trailer is unmodified. These predicates judge the shape.
 func PublishedVerdict(body string) (Verdict, bool) {
-	body, _ = TrimHostSuffix(body)
+	trimmed, hostFooter := TrimHostSuffix(body)
+	if hostFooter {
+		return trailerVerdict(trimmed)
+	}
 	return publishedVerdict(body)
 }
 
@@ -124,18 +135,27 @@ func PublishedVerdictExact(body string) (Verdict, bool) {
 
 // publishedVerdict is PublishedVerdict without host-footer tolerance.
 func publishedVerdict(body string) (Verdict, bool) {
+	verdict, published := trailerVerdict(body)
+	if !published || verdict != Unknown {
+		return verdict, published
+	}
+	return DecisionVerdict(StripMarkers(body)), true
+}
+
+// trailerVerdict reads only the daemon's trailer: the marker line directly
+// before the final identity line. A marker anywhere else is quoted or forged
+// text. A publication without the trailer has the Unknown verdict.
+func trailerVerdict(body string) (Verdict, bool) {
 	lines := nonEmptyLines(body)
 	if len(lines) == 0 || !identityLine.MatchString(lines[len(lines)-1]) {
 		return Unknown, false
 	}
-	// Only the daemon's trailer is trusted: the marker line directly before
-	// the identity line. A marker anywhere else is quoted or forged text.
 	if len(lines) >= 2 {
 		if match := verdictLine.FindStringSubmatch(lines[len(lines)-2]); match != nil {
 			return Verdict(match[1]), true
 		}
 	}
-	return DecisionVerdict(StripMarkers(body)), true
+	return Unknown, true
 }
 
 func nonEmptyLines(body string) []string {
