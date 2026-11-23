@@ -100,7 +100,7 @@ func continuityContractRows() []continuityContractRow {
 		{continuityRow{gate: gateReviewTimeout, reason: reviewTimeoutReason, cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch(gateReviewTimeout, reviewTimeoutReason), false)},
 		{continuityRow{gate: gatePRHeadChanged, reason: "PR_HEAD_RECONCILE_REQUIRED", cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch(gatePRHeadChanged, "PR_HEAD_RECONCILE_REQUIRED"), false)},
 		{continuityRow{gate: owned, reason: idleGateReason, cause: causeStall}, outcomeHold, relaunchProbe(causeStall, ownedWork(owned, idleGateReason, ""), true)},
-		{continuityRow{gate: owned, reason: "REVIEW_REQUEST_REQUIRED", cause: causeStall}, outcomeHold, relaunchProbe(causeStall, ownedWork(gateReviewRequestRequired, "REVIEW_REQUEST_REQUIRED", ""), true)},
+		{continuityRow{gate: owned, reason: "REVIEW_REQUEST_REQUIRED", cause: causeStall}, outcomeTerminal, relaunchProbe(causeStall, ownedWork(gateReviewRequestRequired, "REVIEW_REQUEST_REQUIRED", ""), true)},
 		{continuityRow{gate: owned, reason: missingPRReason, cause: causeStall}, outcomeHold, relaunchProbe(causeStall, ownedWork(owned, missingPRReason, ""), true)},
 		{continuityRow{cause: causeStall}, outcomeHold, relaunchProbe(causeStall, other, false)},
 
@@ -366,13 +366,10 @@ func TestContinuityTerminalOwnedStallDoesNotRelaunch(t *testing.T) {
 			}},
 		}}},
 	}
-	table := cloneContinuityTable(continuityOutcomes)
-	row := continuityRow{gate: gateOwnedWorkRequired, reason: "REVIEW_REQUEST_REQUIRED", cause: causeStall}
-	table[row] = outcomeTerminal
 	eventsSeen := []string{}
 	executor := &continuityStallRowDriverExecutor{
 		rowDriverExecutorFake: &rowDriverExecutorFake{events: &eventsSeen},
-		observer:              &lifecycleObserver{runSession: session, outcomes: table},
+		observer:              &lifecycleObserver{runSession: session},
 		branch:                continuityBranch,
 		runID:                 "run-probe",
 		verdict: lifecycleVerdict{
@@ -389,9 +386,7 @@ func TestContinuityTerminalOwnedStallDoesNotRelaunch(t *testing.T) {
 	if verdict.Action != lifecycleFailure {
 		t.Fatalf("persisted request-delivery stall with retries left = %s, want terminal failure", verdict.status())
 	}
-	if verdict.Evidence["await"] != nil || verdict.Evidence["gate"] != nil {
-		t.Fatalf("terminal stalled request-delivery verdict carries wait markers: %v", verdict.Evidence)
-	}
+	requireOwnedWorkExhausted(t, verdict, gateOwnedWorkRequired, "REVIEW_REQUEST_REQUIRED", signature)
 	if executor.executeCalls != 0 || outcome.Result.Status != "failure" || !reflect.DeepEqual(eventsSeen, []string{"finish"}) {
 		t.Fatalf("persisted request-delivery stall relaunched: execute calls=%d result=%+v events=%v", executor.executeCalls, outcome.Result, eventsSeen)
 	}

@@ -315,3 +315,71 @@ func TestOwnedWorkExhausted_InformalFeedbackUsedUpAllowanceEndsTheRun(t *testing
 		}
 	})
 }
+
+// Review-request delivery is owned work: with a review command configured the
+// implementor must deliver a confirmed current-head request. A relaunch that
+// leaves that evidence unchanged ends the Run naming the owned-work gate; a Run
+// an earlier binary parked on the stall ends on its next observation without a
+// relaunch. Exhausted delivery (the final ordinary attempt) is already terminal
+// with its own reason and is unchanged.
+func TestOwnedWorkExhausted_StalledReviewRequestDeliveryEndsTheRun(t *testing.T) {
+	evidence := map[string]any{
+		"gate": gateReviewRequestRequired, "reason": "REVIEW_REQUEST_REQUIRED",
+		"pull_request": 17, "head_sha": "head-1", "expected_head_sha": "head-1",
+		"next_action": "deliver a confirmed current-head delegated-review request before yielding or attempting merge work",
+	}
+	signatureEvidence := cloneLifecycleExtras(evidence)
+	signatureEvidence["gate"] = gateOwnedWorkRequired
+	signature := resumeSignature(signatureEvidence, "head-1")
+
+	observed := observeParkedHold(t, lifecycleVerdict{Action: lifecycleResume, Evidence: evidence, ImplementorWork: true}, signature)
+	requireParkedHoldEnded(t, observed, gateOwnedWorkRequired, "REVIEW_REQUEST_REQUIRED", signature)
+
+	t.Run("exhausted delivery keeps its own terminal reason", func(t *testing.T) {
+		s := &runSession{decisionPRHead: "head-1", finalOwnedWorkAttempt: true}
+		verdict := applyContinuityForTest(s, "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: cloneLifecycleExtras(evidence), ImplementorWork: true})
+		if verdict.Action != lifecycleFailure || verdict.Evidence["reason"] != "REVIEW_REQUEST_REQUIRED" {
+			t.Fatalf("exhausted request delivery = %v/%v, want the terminal REVIEW_REQUEST_REQUIRED failure", verdict.Action, verdict.Evidence)
+		}
+	})
+}
+
+// A Run an earlier binary parked on a merge-work hold ends on its next
+// observation: its recorded stalled signature proves the stall, and the
+// implementor is not relaunched.
+func TestOwnedWorkExhausted_ParkedMergeHoldEndsOnNextObservation(t *testing.T) {
+	extras := map[string]any{
+		"gate": gateReadyToMerge, "reason": "REVIEW_APPROVED", "await": true,
+		"pull_request": 17, "head_sha": "head-1",
+		"review_request": map[string]any{"trigger_id": "request"},
+	}
+	signature := resumeSignature(extras, "head-1")
+	observed := observeParkedHold(t, lifecycleVerdict{Action: lifecycleResume, Evidence: extras}, signature)
+	requireParkedHoldEnded(t, observed, gateReadyToMerge, "REVIEW_APPROVED", signature)
+}
+
+// A transient failure to read the Run's stalled signatures holds the relaunch
+// and records its signature, like any stalled wait. Once the ledger is readable
+// again, unchanged evidence on a gate that ends the Run is a recorded stall: the
+// next observation ends the Run instead of relaunching on it.
+func TestOwnedWorkExhausted_UnreadableLedgerHoldEndsOnceReadable(t *testing.T) {
+	extras := map[string]any{
+		"gate": gateReadyToMerge, "reason": "REVIEW_APPROVED", "await": true,
+		"pull_request": 17, "head_sha": "head-1",
+	}
+	signature := resumeSignature(extras, "head-1")
+
+	unreadable := &runSession{deps: runDeps{eventLog: unreadableEventLog{}}, decisionPRHead: "head-1"}
+	held := applyContinuityForTest(unreadable, "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: cloneLifecycleExtras(extras)})
+	if held.Action != lifecycleAwait || !containsSignature(stalledResumes(held.Evidence), signature) {
+		t.Fatalf("unreadable ledger = %v/%v, want a hold that records the relaunch signature", held.Action, held.Evidence)
+	}
+
+	log := &spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run", Payload: map[string]any{"branch": "b"}},
+		{Type: "run.await", RunID: "run", Payload: held.Evidence},
+	}}
+	ended := applyContinuityForTest(&runSession{deps: runDeps{eventLog: log}, decisionPRHead: "head-1"}, "b", "run",
+		lifecycleVerdict{Action: lifecycleResume, Evidence: cloneLifecycleExtras(extras)})
+	requireOwnedWorkExhausted(t, ended, gateReadyToMerge, "REVIEW_APPROVED", signature)
+}

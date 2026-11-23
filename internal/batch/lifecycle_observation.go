@@ -123,7 +123,7 @@ func ordinaryRetryNoOp(verdict lifecycleVerdict) bool {
 	}
 	reason := stringEvidence(verdict.Evidence, "reason")
 	if reason == "" {
-		reason = stringEvidence(verdict.Evidence, "stalled_reason")
+		reason = stringEvidence(verdict.Evidence, stalledReasonKey)
 	}
 	if verdict.Action == lifecycleNone {
 		return true
@@ -334,8 +334,7 @@ func (o *lifecycleObserver) applyContinuity(branch, runID string, verdict lifecy
 				verdict.Evidence = o.ownedWorkHold(verdict.Evidence, signature, stalled)
 			} else if outcomes.outcome(row) == outcomeTerminal {
 				verdict.Action = lifecycleFailure
-				verdict.Evidence = remediationBudgetFailureEvidence(gate, verdict.Evidence,
-					"inspect the current pull-request remediation evidence and continue in a fresh session")
+				verdict.Evidence = stalledTerminalEvidence(row, verdict.Evidence, signature)
 				verdict.ImplementorWork = false
 			}
 			return verdict
