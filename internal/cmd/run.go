@@ -431,6 +431,9 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				baseBranch = strings.TrimSpace(cfg.Git.BaseBranch)
 			}
 			if baseBranch == "" {
+				baseBranch = strings.TrimSpace(scaffold.NewDefaultGitOps().DefaultBranch(repoRoot))
+			}
+			if baseBranch == "" {
 				baseBranch = "main"
 			}
 

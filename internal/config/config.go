@@ -461,10 +461,6 @@ func Load(path string) (*Config, error) {
 	if cfg.Sandbox == "" {
 		cfg.Sandbox = DefaultSandbox
 	}
-	if cfg.Git.BaseBranch == "" {
-		cfg.Git.BaseBranch = "main"
-	}
-
 	if strings.TrimSpace(cfg.DefaultAgent) == "" {
 		cfg.DefaultAgent = DefaultAgent
 	}

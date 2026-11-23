@@ -3427,6 +3427,26 @@ func TestRun_BaseBranchDefaultsToConfig(t *testing.T) {
 	}
 }
 
+func TestRun_BaseBranchDefaultsToRepositoryDefaultWhenUnset(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(t, spy)
+	configPath := filepath.Join(deps.RepoRoot, ".sandman", "config.yaml")
+	if err := os.WriteFile(configPath, []byte("agent: opencode\nreview_command: /oc review\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	deps.ConfigStore = &config.FileStore{Path: configPath}
+	runGit(t, deps.RepoRoot, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk")
+
+	cmd := NewRunCmd(deps)
+	cmd.SetArgs([]string{"42"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute run command: %v", err)
+	}
+	if spy.req.BaseBranch != "trunk" {
+		t.Fatalf("request base branch = %q, want repository default trunk", spy.req.BaseBranch)
+	}
+}
+
 func TestRun_InteractiveFlagRejected(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(t, spy)

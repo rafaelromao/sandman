@@ -533,8 +533,8 @@ func TestLoad_MissingOptionalFields_AppliesDefaults(t *testing.T) {
 	if cfg.Sandbox != "podman" {
 		t.Errorf("sandbox: got %q, want %q", cfg.Sandbox, "podman")
 	}
-	if cfg.Git.BaseBranch != "main" {
-		t.Errorf("git.base_branch: got %q, want %q", cfg.Git.BaseBranch, "main")
+	if cfg.Git.BaseBranch != "" {
+		t.Errorf("git.base_branch: got %q, want empty until the repository default is resolved", cfg.Git.BaseBranch)
 	}
 	if cfg.ReviewCommand != "" {
 		t.Errorf("review_command: got %q, want empty (blind review)", cfg.ReviewCommand)
