@@ -608,8 +608,13 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 				hasContinuationReq = true
 			}
-			if baseBranch == "" && hasContinuationReq {
-				baseBranch = strings.TrimSpace(continuationReq.BaseBranch)
+			if baseBranch == "" && continueFlag && hasContinuationReq {
+				switch {
+				case runID != "" && len(resolvedBatch.Issues) == 0:
+					baseBranch = strings.TrimSpace(continuationReq.BaseBranch)
+				case len(continueIssues) == len(resolvedBatch.Issues):
+					baseBranch = strings.TrimSpace(continuationReq.BaseBranch)
+				}
 			}
 			if baseBranch == "" && continueFlag && len(resolvedBatch.Issues) > 0 {
 				// A promoted continuation may have no continuation request,

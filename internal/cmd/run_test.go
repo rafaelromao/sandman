@@ -2309,6 +2309,7 @@ func TestRun_ContinueFlag_UsesOverridesAndEmptyTemplateFallback(t *testing.T) {
 func TestRun_ContinueFlag_MixedBatchResolvesPerIssueModes(t *testing.T) {
 	repoDir := testenv.MkdirShort(t, "sm-run-")
 	initRunIntegrationRepo(t, repoDir)
+	runGit(t, repoDir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk")
 	t.Chdir(repoDir)
 
 	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
@@ -2368,6 +2369,9 @@ func TestRun_ContinueFlag_MixedBatchResolvesPerIssueModes(t *testing.T) {
 	}
 	if got := spy.req.IssueMode(43); got != batch.ModeOverride {
 		t.Fatalf("expected issue 43 promoted override mode, got %v", got)
+	}
+	if got := spy.req.BaseBranch; got != "main" {
+		t.Fatalf("expected original Base for promoted continuation, got %q", got)
 	}
 	if got := spy.req.PreviousRunIDs[42]; got != testRunID42Prev {
 		t.Fatalf("expected issue 42 previous run replay, got %q", got)
@@ -2445,6 +2449,35 @@ func TestRun_ContinueFlag_MissingRegistrationPromotesToOverride(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected promotion output to contain %q, got:\n%s", want, output)
 		}
+	}
+}
+
+func TestRun_ContinueFlagUsesRepositoryDefaultForFreshRows(t *testing.T) {
+	fixture := newContinuationRunFixture(t)
+	runGit(t, fixture.repoDir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk")
+	fixture.deps.GitHubClient = &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug", State: "open"},
+			43: {Number: 43, Title: "New issue", State: "open"},
+		},
+	}
+
+	var output bytes.Buffer
+	cmd := NewRunCmd(fixture.deps)
+	cmd.SetOut(&output)
+	cmd.SetErr(&output)
+	cmd.SetArgs([]string{"--continue", "42", "43"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute mixed continuation: %v\noutput:\n%s", err, output.String())
+	}
+	if got := fixture.spy.req.BaseBranches[42]; got != "main" {
+		t.Fatalf("continued issue Base = %q, want pinned main", got)
+	}
+	if got := fixture.spy.req.BaseBranch; got != "trunk" {
+		t.Fatalf("fresh issue Base = %q, want repository default trunk", got)
+	}
+	if got := fixture.spy.req.IssueMode(43); got != batch.ModeOverride {
+		t.Fatalf("fresh issue mode = %v, want ModeOverride", got)
 	}
 }
 
