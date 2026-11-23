@@ -128,6 +128,7 @@ type rowDriverState struct {
 	ready                bool
 	releaseAwaitCapacity bool
 	recovering           bool
+	ciRecoveryScheduled  bool
 	nextPollAt           time.Time
 	opportunity          awaitOpportunity
 	started              bool
@@ -148,8 +149,11 @@ func (d *rowDriver) drive(ctx context.Context, run RunSpec, state *rowDriverStat
 		if state.cursor.quotaAllowance.probing() {
 			return state.cursor.quotaAllowance.nextWait(now)
 		}
-		if state.recovering && !state.nextPollAt.IsZero() {
+		if state.ciRecoveryScheduled {
 			return max(time.Duration(0), state.nextPollAt.Sub(now))
+		}
+		if state.recovering && state.nextPollAt.After(now) {
+			return state.nextPollAt.Sub(now)
 		}
 		return opts.PollInterval(state.awaitPoll)
 	}
@@ -161,6 +165,7 @@ func (d *rowDriver) drive(ctx context.Context, run RunSpec, state *rowDriverStat
 				// and mutation evidence needed when history is readable again.
 				state.awaiting, state.ready = true, false
 				state.recovering, state.nextPollAt = false, time.Time{}
+				state.ciRecoveryScheduled = false
 				return nil
 			}
 			if verdict.Evidence != nil {
@@ -169,13 +174,16 @@ func (d *rowDriver) drive(ctx context.Context, run RunSpec, state *rowDriverStat
 				}
 			}
 			state.awaiting, state.ready = true, false
-			state.recovering, state.nextPollAt = false, time.Time{}
+			if state.ciRecoveryScheduled {
+				state.ciRecoveryScheduled, state.recovering, state.nextPollAt = false, false, time.Time{}
+			}
 			if next, ok := githubRecoveryNextAttempt(verdict.Evidence); ok && next.After(d.clock.Now()) {
 				// A GitHub recovery wait sleeps until its next hourly attempt
 				// instead of re-observing every poll interval.
 				state.recovering, state.nextPollAt = true, next
 			} else if next, ok := ciRecoveryNextAttempt(verdict.Evidence); ok {
 				state.recovering, state.nextPollAt = true, next
+				state.ciRecoveryScheduled = true
 			}
 		case lifecycleResume:
 			var selectedRetry *ordinaryRetryState

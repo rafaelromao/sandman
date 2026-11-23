@@ -1319,13 +1319,11 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 		},
 		// A GitHub outage during a stalled wait keeps the stalled-resume
 		// ledger: after recovery on unchanged evidence the Run keeps waiting
-		// instead of relaunching the implementor.
+		// instead of relaunching the implementor. Leave review absent so a
+		// request that is discovered during the wait cannot change the
+		// merge-conflict resume signature before the outage.
 		continuityScenario{
 			name: "stall survives a GitHub outage", pr: github.PR{StatusCheckRollup: "success", MergeStateStatus: "DIRTY"}, retries: 3, githubWait: true,
-			setup: func(g *continuityGitHub) {
-				g.trigger()
-				g.publish(reports["approved-daemon-30.md"])
-			},
 			launches: []func(*continuityGitHub) string{nil, nil},
 			polls: []func(*continuityGitHub){
 				nil,
@@ -2093,7 +2091,8 @@ func TestAFKContinuityContract_StallSurvivesGitHubOutageAndRestart(t *testing.T)
 	}
 	outcome := runContinuityScenario(t, outage)
 	if outcome.verdict() != "waiting" || outcome.launches > 5 {
-		t.Fatalf("outage stall = %s after %d launches, want waiting after at most 5", outcome.verdict(), outcome.launches)
+		t.Fatalf("outage stall = %s after %d launches, want waiting after at most 5\nevents: %s",
+			outcome.verdict(), outcome.launches, continuityEventSummary(outcome.events))
 	}
 	verdict := outcome.observeAfterRestart()
 	if verdict.Action != lifecycleAwait || verdict.Evidence[stalledResumesKey] == nil {
