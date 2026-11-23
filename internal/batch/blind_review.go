@@ -78,7 +78,10 @@ func blindReviewEvidenceFromComments(comments []github.PRComment, pullRequest in
 		}
 		newest = comment
 		newestBody, _ = reviewpub.TrimHostSuffix(comment.Body)
-		verdict, _ = reviewpub.PublishedVerdict(newestBody)
+		// The verdict is read from the raw body: PublishedVerdict applies its
+		// trailer-only rule when it sees the host block itself, which the
+		// trimmed body no longer carries.
+		verdict, _ = reviewpub.PublishedVerdict(comment.Body)
 	}
 	if newest == nil {
 		return retainedReviewEvidence{}
