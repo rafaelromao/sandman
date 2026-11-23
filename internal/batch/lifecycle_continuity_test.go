@@ -313,9 +313,10 @@ func TestContinuityDecision_AllowanceDoesNotResetAcrossGatesForSameRequest(t *te
 	for _, tc := range []struct {
 		name, priorGate string
 		prior, current  map[string]any
+		want            lifecycleAction
 	}{
-		{name: "CI to merge", priorGate: "ci-failure", prior: ci, current: merge},
-		{name: "merge to CI", priorGate: gateReadyToMerge, prior: merge, current: ci},
+		{name: "CI to merge", priorGate: "ci-failure", prior: ci, current: merge, want: lifecycleFailure},
+		{name: "merge to CI", priorGate: gateReadyToMerge, prior: merge, current: ci, want: lifecycleAwait},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			session := &runSession{
@@ -327,7 +328,9 @@ func TestContinuityDecision_AllowanceDoesNotResetAcrossGatesForSameRequest(t *te
 			verdict := applyContinuityForTest(session, "42-work", "run-gate-transition", lifecycleVerdict{
 				Action: lifecycleResume, Evidence: cloneLifecycleExtras(tc.current),
 			})
-			if verdict.Action != lifecycleAwait || session.resumeCount != defaultAwaitResumeMax {
+			// The used-up allowance carries across the gate change: the
+			// exhausted gate ends the Run (merge, #3001) or holds (CI).
+			if verdict.Action != tc.want || session.resumeCount != defaultAwaitResumeMax {
 				t.Fatalf("same request/head transition reset the exhausted relaunch allowance: verdict=%+v count=%d", verdict, session.resumeCount)
 			}
 		})

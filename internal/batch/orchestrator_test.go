@@ -1081,7 +1081,7 @@ func TestCheckPRMergedAtHead(t *testing.T) {
 	}
 }
 
-func TestRunSingle_RetryLifecycleWaitsAfterRetry(t *testing.T) {
+func TestRunSingle_RetryLifecycleEndsWhenMergeWorkIsExhausted(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -1125,8 +1125,8 @@ func TestRunSingle_RetryLifecycleWaitsAfterRetry(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "await" {
-		t.Fatalf("status = %q, want an rc2 wait after lifecycle-owned gate handling", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want a terminal failure after lifecycle-owned merge work is exhausted", result.Status)
 	}
 	if result.RetriesTotal != 2 {
 		t.Fatalf("RetriesTotal = %d, want 2", result.RetriesTotal)
@@ -2034,7 +2034,7 @@ func TestRunSingle_PreRetryGuardShortCircuitsOnMergedPR(t *testing.T) {
 	}
 }
 
-func TestRunSingle_RetryWithoutVerifiedMergeWaits(t *testing.T) {
+func TestRunSingle_RetryWithoutVerifiedMergeEndsWhenMergeWorkIsExhausted(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -2080,8 +2080,8 @@ func TestRunSingle_RetryWithoutVerifiedMergeWaits(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "await" {
-		t.Fatalf("status = %q, want an rc2 wait without verified closing reference", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want a terminal failure when merge work is exhausted without a verified closing reference", result.Status)
 	}
 	if resetCalls != 0 {
 		t.Fatalf("reset calls = %d, want 0 after lifecycle terminalization", resetCalls)

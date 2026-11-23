@@ -126,7 +126,7 @@ var continuityOutcomes = continuityTable{
 	{gate: gateActionableFeedback, reason: actionableFeedbackReason, cause: causeStall}:   outcomeHold,
 	{gate: gateCIWaitTimeout, reason: "CI_WAIT_STATE_ERROR", cause: causeStall}:           outcomeHold,
 	{gate: gateBlindReviewRequired, reason: blindReviewRequiredReason, cause: causeStall}: outcomeHold,
-	{gate: gateReadyToMerge, cause: causeStall}:                                           outcomeHold,
+	{gate: gateReadyToMerge, cause: causeStall}:                                           outcomeTerminal, // merge work an unchanged relaunch could not finish (#3001)
 	{gate: "ci-failure", reason: "CI_FAILURE", cause: causeStall}:                         outcomeHold,
 	{gate: "merge-conflict", reason: "MERGE_CONFLICT", cause: causeStall}:                 outcomeHold,
 	{gate: gateCIWaitTimeout, reason: "CI_WAIT_TIMEOUT", cause: causeStall}:               outcomeHold,
@@ -147,7 +147,7 @@ var continuityOutcomes = continuityTable{
 	{reason: "CI_WAIT_STATE_ERROR", cause: causeExhausted}:                                        outcomeTerminal,
 	{gate: gateOwnedWorkRequired, reason: actionableFeedbackReason, cause: causeExhausted}:        outcomeTerminal,
 	{gate: gateActionableFeedback, reason: informalFeedbackReason, cause: causeExhausted}:         outcomeHold,
-	{gate: gateReadyToMerge, cause: causeExhausted}:                                               outcomeHold,
+	{gate: gateReadyToMerge, cause: causeExhausted}:                                               outcomeTerminal, // merge work that used up its allowance (#3001)
 	{gate: "ci-failure", reason: "CI_FAILURE", cause: causeExhausted}:                             outcomeHold,
 	{gate: "merge-conflict", reason: "MERGE_CONFLICT", cause: causeExhausted}:                     outcomeHold,
 	{gate: gateBlindReviewRequired, reason: blindReviewRequiredReason, cause: causeExhausted}:     outcomeHold,

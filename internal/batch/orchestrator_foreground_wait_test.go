@@ -399,7 +399,7 @@ func TestRunBatch_ForegroundWaitRetainsCapacityForIndependentSibling(t *testing.
 	}
 }
 
-func TestRunExecutor_ResumeCapFallsBackToForegroundObservation(t *testing.T) {
+func TestRunExecutor_ExhaustedMergeResumeEndsInsteadOfObserving(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 
@@ -448,14 +448,14 @@ func TestRunExecutor_ResumeCapFallsBackToForegroundObservation(t *testing.T) {
 		Branches:    map[int]string{42: branch},
 		BaseBranch:  "main",
 	})
-	if !started || result.Status != "success" {
-		t.Fatalf("run = (%t, %q), want the exhausted merge resume to wait and observe the merge", started, result.Status)
+	if !started || result.Status != "failure" {
+		t.Fatalf("run = (%t, %q), want the exhausted merge resume to end the Run instead of waiting to observe a merge", started, result.Status)
 	}
 	if len(factory.created) != 2 {
 		t.Fatalf("agent launches = %d, want initial plus one resume", len(factory.created))
 	}
-	if len(waits) != 1 || waits[0] != 5*time.Second {
-		t.Fatalf("lifecycle waits = %v, want one foreground observation after the ready gate exhausts its resume budget", waits)
+	if len(waits) != 0 {
+		t.Fatalf("lifecycle waits = %v, want none: exhausted merge work ends the Run without a foreground observation", waits)
 	}
 	logs, err := eventLog.Read()
 	if err != nil {
@@ -467,9 +467,7 @@ func TestRunExecutor_ResumeCapFallsBackToForegroundObservation(t *testing.T) {
 	if countEventsByType(logs, "run.resumed") != 1 {
 		t.Fatalf("run.resumed events = %d, want 1", countEventsByType(logs, "run.resumed"))
 	}
-	if waiting := lastEvent(logs, "run.await"); countEventsByType(logs, "run.await") != 1 || waiting.Payload["reason"] != resumeStalledReason {
-		t.Fatalf("run.await events = %d, want the one stalled rc2 wait before the merge is observed", countEventsByType(logs, "run.await"))
-	}
+	requireExhaustedFinish(t, logs, gateReadyToMerge)
 }
 
 func TestRunExecutor_ForegroundWaitCoversPullRequestPublication(t *testing.T) {

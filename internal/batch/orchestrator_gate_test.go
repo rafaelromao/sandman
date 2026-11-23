@@ -553,8 +553,8 @@ func TestExternalGate_RequestScopedApprovalResumesAfterReview(t *testing.T) {
 	if !started {
 		t.Fatalf("expected run to start, status=%q", result.Status)
 	}
-	if result.Status != "await" {
-		t.Fatalf("status = %q, want an rc2 wait after the resumed agent leaves merge work incomplete", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want a terminal failure after the resumed agent leaves merge work incomplete", result.Status)
 	}
 	if len(factory.created) != 2 {
 		t.Fatalf("agent launches = %d, want 2 (initial + in-session resume)", len(factory.created))
@@ -577,9 +577,7 @@ func TestExternalGate_RequestScopedApprovalResumesAfterReview(t *testing.T) {
 	if got := resumedEvt.Payload["reason"]; got != "approval" {
 		t.Fatalf("resumed reason = %v, want approval", got)
 	}
-	if got := countEventsByType(logs, "run.await"); got != 1 {
-		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
-	}
+	requireExhaustedFinish(t, logs, gateReadyToMerge)
 
 	task, err := os.ReadFile(filepath.Join(worktreePath, ".sandman", "task.md"))
 	if err != nil {
@@ -2496,8 +2494,8 @@ func TestExternalGate_AgentFailureRetryPrecedesReadyGateWait(t *testing.T) {
 	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
 		IssueNumber: 42, Branches: map[int]string{42: branch}, BaseBranch: "main",
 	})
-	if !started || result.Status != "await" {
-		t.Fatalf("idle ready gate after retry = (%t, %q), want an rc2 wait", started, result.Status)
+	if !started || result.Status != "failure" {
+		t.Fatalf("idle ready gate after retry = (%t, %q), want the exhausted merge work to end the Run", started, result.Status)
 	}
 	if len(factory.created) != 3 {
 		t.Fatalf("agent launches = %d, want 3 (failure retry, implementation success, merge resume)", len(factory.created))
@@ -2512,13 +2510,7 @@ func TestExternalGate_AgentFailureRetryPrecedesReadyGateWait(t *testing.T) {
 	if findEvent(logs, "run.resumed") == nil {
 		t.Fatal("ready pull-request gate did not resume implementor-owned merge work")
 	}
-	if findEvent(logs, "run.await") == nil {
-		t.Fatal("exhausted relaunch allowance did not wait")
-	}
-	waiting := lastEvent(logs, "run.await")
-	if waiting == nil || waiting.Payload["reason"] != resumeStalledReason || findEvent(logs, "run.finished") != nil {
-		t.Fatalf("await event = %#v, want the stalled rc2 wait instead of a remediation-budget failure", waiting)
-	}
+	requireExhaustedFinish(t, logs, gateReadyToMerge)
 }
 
 func TestExternalGate_MergedCompletionIgnoresStaleOrMalformedState(t *testing.T) {
@@ -2865,8 +2857,8 @@ func TestExternalGate_HeadSidecarWithoutRequestCannotAuthorizeRequestWait(t *tes
 	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
 		IssueNumber: 42, Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main",
 	})
-	if !started || result.Status != "await" {
-		t.Fatalf("head-only state result = (%t, %q), want an rc2 wait", started, result.Status)
+	if !started || result.Status != "failure" {
+		t.Fatalf("head-only state result = (%t, %q), want the exhausted merge work to end the Run", started, result.Status)
 	}
 	if len(factory.created) != 2 {
 		t.Fatalf("agent launches = %d, want initial launch plus ready-gate merge work", len(factory.created))
@@ -2881,13 +2873,7 @@ func TestExternalGate_HeadSidecarWithoutRequestCannotAuthorizeRequestWait(t *tes
 	if findEvent(logs, "run.resumed") == nil {
 		t.Fatal("ready gate did not resume implementor-owned merge work")
 	}
-	if findEvent(logs, "run.await") == nil {
-		t.Fatal("exhausted relaunch allowance did not wait")
-	}
-	waiting := lastEvent(logs, "run.await")
-	if waiting == nil || waiting.Payload["reason"] != resumeStalledReason || findEvent(logs, "run.finished") != nil {
-		t.Fatalf("head-only wait event = %#v, want the stalled rc2 wait instead of a merge-resume budget failure", waiting)
-	}
+	requireExhaustedFinish(t, logs, gateReadyToMerge)
 }
 
 func TestExternalGate_IncompleteLegacyProposalFallsThroughToLiveGate(t *testing.T) {
@@ -3173,8 +3159,8 @@ func TestExternalGate_LateCurrentHeadApprovalResumesMergeWorkBeforeWaiting(t *te
 		PreviousRunIDs: map[int]string{42: "prior-run"},
 		BaseBranch:     "main",
 	})
-	if !started || result.Status != "await" {
-		t.Fatalf("late approval result = (%t, %q), want an rc2 wait after fake merge work remains incomplete", started, result.Status)
+	if !started || result.Status != "failure" {
+		t.Fatalf("late approval result = (%t, %q), want the exhausted merge work to end the Run", started, result.Status)
 	}
 	if len(factory.created) != 2 {
 		t.Fatalf("agent launches = %d, want 2 (entry resume + in-session resume)", len(factory.created))
@@ -3196,9 +3182,7 @@ func TestExternalGate_LateCurrentHeadApprovalResumesMergeWorkBeforeWaiting(t *te
 	if resumedEvt == nil || resumedEvt.Payload["gate"] != gateReadyToMerge {
 		t.Fatalf("resumed event = %#v, want %q gate", resumedEvt, gateReadyToMerge)
 	}
-	if got := countEventsByType(logs, "run.await"); got != 1 {
-		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
-	}
+	requireExhaustedFinish(t, logs, gateReadyToMerge)
 	request, ok := resumedEvt.Payload["review_request"].(map[string]any)
 	if !ok {
 		t.Fatalf("resumed review request = %#v, want object", resumedEvt.Payload["review_request"])
@@ -3208,8 +3192,8 @@ func TestExternalGate_LateCurrentHeadApprovalResumesMergeWorkBeforeWaiting(t *te
 		t.Fatalf("resumed classification = %#v, want retained classification", request["classification"])
 	}
 	states := events.ProjectRunStates(logs)
-	if len(states) != 1 || !states[0].IsAwaiting() || states[0].IsTerminal() {
-		t.Fatalf("projected state = %#v, want the rc2 wait after merge work stays incomplete", states)
+	if len(states) != 1 || states[0].IsAwaiting() || !states[0].IsTerminal() {
+		t.Fatalf("projected state = %#v, want a terminal Run after merge work stays incomplete", states)
 	}
 }
 
@@ -3879,8 +3863,8 @@ func TestRunSingle_ApprovedCleanOpenPRIsReadyToMergeWithoutRetry(t *testing.T) {
 		MergeStateStatus:  "CLEAN",
 	})
 
-	if result.Status != "await" {
-		t.Fatalf("status = %q, want an rc2 wait after bounded merge work", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want a terminal failure after bounded merge work", result.Status)
 	}
 	if result.RetriesTotal != 1 {
 		t.Fatalf("retries total = %d, want 1", result.RetriesTotal)
@@ -3888,9 +3872,7 @@ func TestRunSingle_ApprovedCleanOpenPRIsReadyToMergeWithoutRetry(t *testing.T) {
 	if launches != 2 {
 		t.Fatalf("agent launches = %d, want 2 (initial plus ready-gate resume)", launches)
 	}
-	if got := countEventsByType(logs, "run.await"); got != 1 {
-		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
-	}
+	requireExhaustedFinish(t, logs, gateReadyToMerge)
 	if findEvent(logs, "run.resumed") == nil {
 		t.Fatal("ready gate did not resume the implementor for merge work")
 	}
@@ -3905,15 +3887,13 @@ func TestRunSingle_ApprovedCleanOpenPRWithoutChecksIsReadyToMerge(t *testing.T) 
 		MergeStateStatus: "CLEAN",
 	})
 
-	if result.Status != "await" {
-		t.Fatalf("status = %q, want an rc2 wait after bounded merge work", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want a terminal failure after bounded merge work", result.Status)
 	}
 	if launches != 2 {
 		t.Fatalf("agent launches = %d, want 2 (initial plus ready-gate resume)", launches)
 	}
-	if got := countEventsByType(logs, "run.await"); got != 1 {
-		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
-	}
+	requireExhaustedFinish(t, logs, gateReadyToMerge)
 	if findEvent(logs, "run.resumed") == nil {
 		t.Fatal("ready gate did not resume the implementor for merge work")
 	}
@@ -3987,8 +3967,8 @@ func TestRunSingle_RestoresHostPathsBeforeExternalGateHeadCheck(t *testing.T) {
 	if !started {
 		t.Fatalf("expected run to start, status=%q", result.Status)
 	}
-	if result.Status != "await" {
-		t.Fatalf("status = %q, want an rc2 wait after bounded merge work", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want a terminal failure after bounded merge work", result.Status)
 	}
 	if !sb.restoreHostPathsCalled {
 		t.Fatal("expected RestoreHostPaths before external gate check")
@@ -3997,9 +3977,7 @@ func TestRunSingle_RestoresHostPathsBeforeExternalGateHeadCheck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
-	if got := countEventsByType(logs, "run.await"); got != 1 {
-		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
-	}
+	requireExhaustedFinish(t, logs, gateReadyToMerge)
 }
 
 type perRunGateSequenceClient struct {
@@ -4017,7 +3995,7 @@ func (c *perRunGateSequenceClient) FindPRByBranch(context.Context, string) (*git
 	return c.responses[index], nil
 }
 
-func TestRunSingle_ReadyGateResumesAndExhaustsBudgetThenWaits(t *testing.T) {
+func TestRunSingle_ReadyGateResumesAndExhaustsBudgetThenEnds(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 
@@ -4064,16 +4042,14 @@ func TestRunSingle_ReadyGateResumesAndExhaustsBudgetThenWaits(t *testing.T) {
 	if !started {
 		t.Fatalf("expected run to start, status=%q", result.Status)
 	}
-	if result.Status != "await" {
-		t.Fatalf("status = %q, want an rc2 wait after the ready-gate resume leaves merge work incomplete", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want a terminal failure after the ready-gate resume leaves merge work incomplete", result.Status)
 	}
 	logs, err := eventLog.Read()
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
-	if got := countEventsByType(logs, "run.await"); got != 1 {
-		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
-	}
+	requireExhaustedFinish(t, logs, gateReadyToMerge)
 	if findEvent(logs, "run.resumed") == nil {
 		t.Fatalf("ready poll transition did not resume the agent in-session")
 	}

@@ -35,6 +35,7 @@ const (
 	reviewFeedbackStalledReason     = "REVIEW_FEEDBACK_STALLED"
 	reviewFeedbackStalledNextAction = "inspect the stalled review feedback, address or answer it, then continue with `sandman run --continue`"
 	stalledResumeKey                = "stalled_resume"
+	stalledReasonKey                = "stalled_reason"
 	stallRemediationNextAction      = "inspect the current pull-request remediation evidence and continue in a fresh session"
 )
 
@@ -163,7 +164,24 @@ func stalledTerminalEvidence(row continuityRow, evidence map[string]any, signatu
 		failure[stalledResumeKey] = signature
 		return failure
 	}
+	if next, owned := exhaustedWorkNextActions[row.gate]; owned && row.reason != actionableFeedbackReason {
+		failure := remediationBudgetFailureEvidence(row.gate, evidence, next)
+		failure[stalledReasonKey] = stringEvidence(evidence, "reason")
+		failure[stalledResumeKey] = signature
+		if blind, ok := evidence[blindReviewKey]; ok {
+			failure[blindReviewKey] = blind
+		}
+		return failure
+	}
 	return remediationBudgetFailureEvidence(row.gate, evidence, stallRemediationNextAction)
+}
+
+// exhaustedWorkNextActions names, for each owned-work gate that ends the Run
+// when it stalls or uses up its relaunch allowance (#3001), what the operator
+// fixes before continuing. A gate absent from the map ends with the generic
+// remediation next action.
+var exhaustedWorkNextActions = map[string]string{
+	gateReadyToMerge: "merge work could not finish: inspect why the approved current head is not merged (required checks, mergeability, branch protection), fix it, then continue with `sandman run --continue`",
 }
 
 func appendStalledResume(prior []string, signature string) []any {

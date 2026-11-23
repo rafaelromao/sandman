@@ -514,8 +514,8 @@ func TestEntryReevaluation_ModeContinueTopLevelApprovalResumesAgentWithEvidence(
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "await" {
-		t.Fatalf("status = %q, want an rc2 wait after ready-gate resume budget is exhausted", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want a terminal failure after the ready-gate resume budget is exhausted", result.Status)
 	}
 	if got := len(resultFactory.created); got != 2 {
 		t.Fatalf("agent launches = %d, want 2 (entry resume + in-session resume)", got)
@@ -549,15 +549,14 @@ func TestEntryReevaluation_ModeContinueTopLevelApprovalResumesAgentWithEvidence(
 	if !ok || request["outcome"] != "approved" || request["review_decision_approval"] == nil {
 		t.Fatalf("run.resumed omitted current-head top-level approval evidence: %#v", resumedEvt.Payload)
 	}
-	if got := countEventsByType(logs, "run.await"); got != 1 {
-		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
-	}
+	requireExhaustedFinish(t, logs, gateReadyToMerge)
 }
 
 // In-session resume: after the agent completes cleanly and the gate is
 // ready-to-merge, the run relaunches the agent in the same attempt (no
 // run.retry) with the merge evidence attached, bounded by the resume cap;
-// if the agent leaves merge work incomplete, the run waits as rc2 did.
+// if the agent leaves merge work incomplete, the run ends with
+// REMEDIATION_BUDGET_EXHAUSTED naming the gate (#3001).
 func TestRunSingle_ReadyToMergeResumesWithinSameAttempt(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
@@ -605,8 +604,8 @@ func TestRunSingle_ReadyToMergeResumesWithinSameAttempt(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "await" {
-		t.Fatalf("status = %q, want an rc2 wait after ready-gate resume budget is exhausted", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want a terminal failure after the ready-gate resume budget is exhausted", result.Status)
 	}
 	if got := len(resultFactory.created); got != 2 {
 		t.Fatalf("agent launches = %d, want 2 (initial + one resumed relaunch)", got)
@@ -634,9 +633,7 @@ func TestRunSingle_ReadyToMergeResumesWithinSameAttempt(t *testing.T) {
 	if resumedEvt == nil || resumedEvt.Payload["reason"] != "approval" {
 		t.Fatalf("run.resumed reason = %v, want approval", resumedEvt.Payload["reason"])
 	}
-	if got := countEventsByType(logs, "run.await"); got != 1 {
-		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
-	}
+	requireExhaustedFinish(t, logs, gateReadyToMerge)
 }
 
 // Non-foreground execution yields on active current-head CI. The batch
