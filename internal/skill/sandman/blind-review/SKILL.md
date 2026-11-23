@@ -33,7 +33,8 @@ or silently post a delegated-review trigger.
 ## Workflow
 
 1. Resolve the installed helper directory alongside this skill. The helpers
-   require POSIX `sh`, `jq`, `gh`, and `sha256sum` or `shasum`. The generated
+   require POSIX `sh`, `jq`, `gh`, and `sha256sum` or `shasum`, and read the
+   sibling `github-v1.sh` they share. The generated
    Debian bookworm container supports GitHub CLI `2.23.0` and jq `1.6`; these
    helpers do not require newer versions.
 2. Record the checkout's HEAD and `git status --porcelain=v1 --untracked-files=all`.
@@ -87,12 +88,39 @@ or silently post a delegated-review trigger.
    the worktree, return `REVIEW_READ_ONLY_VIOLATION`, preserving the changes and
    report for diagnosis. Never publish or accept that review.
 6. Run `publish-v1.sh` with `--repository`, `--pull-request`, `--head-sha`
-   and `--decision-file`. It publishes once and confirms the exact comment.
-   Return its `blind-review/v1` envelope without reinterpreting its verdict.
-   On uncertain publication, preserve the report and diagnostic; re-observe
-   the live pull request before any later mutation.
+   and `--decision-file`. It publishes once and confirms the posted comment:
+   the live body must equal what was posted, or equal it followed by exactly
+   one recognised host footer block. Return its `blind-review/v1` envelope
+   without reinterpreting its verdict. On uncertain publication, preserve the
+   report and diagnostic; re-observe the live pull request before any later
+   mutation. An uncertain publication never posts a replacement.
 7. Remove only this round's temporary files after confirmed publication, unless
    the caller requested their retention for diagnostics or test verification.
+
+### Hosts that alter or restrict GitHub access
+
+A managed sandbox (a hosted agent session, for example) can restrict GitHub in
+two ways. The round still completes in both, without weakening what it
+requires.
+
+- **GraphQL unavailable.** Each helper tries its GraphQL-backed call first.
+  Only when that call fails does it probe a minimal GraphQL query. When GraphQL
+  itself is unavailable, the helper uses the REST equivalents of the same
+  reads, takes the closing reference from the pull request body alone, posts
+  the publication once and confirms the posted comment by its identifier.
+  Selection is by that probe, never from the host or product name. A failure
+  while GraphQL works is still a refusal, the choice is fixed before any
+  post, and a failed post is never retried or replaced through the other
+  route. The envelope and the prompt are the same in both modes; only a notice
+  on standard error differs.
+- **Footer appended to comments.** A host may append a separator line and a
+  known footer line to every comment it publishes. That one recognised host
+  footer block is not part of the report: the confirmation, the approving
+  verdict and the head binding are judged without it. Nothing may sit between
+  the verdict trailer, the identity line and the block, and a second block,
+  added text, an altered identity or verdict, an unknown footer or another head
+  keep the publication unconfirmed. The identity still binds the head only; it
+  is not authentication.
 
 Every round is published, including requested changes. The next round reads
 the prior reports from the pull request just like a daemon reviewer.

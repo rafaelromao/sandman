@@ -72,6 +72,17 @@ A blind review round works as follows.
   is actionable feedback and resumes the same RunID. A publication for another
   head, an unknown verdict, or no publication yields no evidence. A configured
   command ignores blind publications.
+
+  > **Later change (annotated 2026-11-23, #3021):** a managed sandbox host can
+  > restrict GitHub to REST and append a footer to every published comment. The
+  > blind round now probes the GraphQL capability and falls back to REST
+  > equivalents for its prompt, post and read-back, never by host name. The
+  > publication is confirmed, and read as evidence, when its live body is the
+  > intended body plus exactly one recognised host footer block (a separator
+  > line and a known footer line); the trailer, identity line and block must be
+  > adjacent. Any other difference stays uncertain, no replacement is posted,
+  > and the head binding and the merge gates are unchanged. The delegated
+  > review rules and the daemon's publication format are untouched.
 - **Fail closed.** A harness that cannot spawn a fresh, context-free subagent
   returns `REVIEW_SUBAGENT_UNAVAILABLE` and the next action to configure
   `review_command`. The implementor never reviews its own change in its own

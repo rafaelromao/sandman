@@ -29,8 +29,18 @@ of these is full approval on its own:
   for the current head whose verdict is approved, with no Blocking or Important
   findings or outstanding formal requested changes. The newest current-head
   blind report supersedes earlier rounds; a trigger or daemon author is not
-  required. With a configured command, blind publications do not satisfy its
-  delegated-review gate.
+  required. A publication that a managed sandbox host followed with exactly one
+  recognised host footer block (a separator line and a known footer line) is
+  that same confirmed publication; any other alteration is not, and a stale head
+  still invalidates it. Every other gate is unchanged: required checks green,
+  a mergeable head and no outstanding formal requested changes. With a
+  configured command, blind publications do not satisfy its delegated-review
+  gate.
+
+When GraphQL-backed calls are unavailable in a managed sandbox (a probe of a
+minimal GraphQL query fails), read the approval evidence, required checks and
+mergeability, and perform the merge, through the REST equivalents of the same
+calls. The gates are identical.
 
 A formal review is never required. The author and the reviewer may share one
 account, and the tracker does not let an author formally approve their own
