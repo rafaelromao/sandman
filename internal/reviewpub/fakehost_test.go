@@ -19,8 +19,12 @@ import (
 //     (pr view/comment, issue view, api graphql) with the sandbox's 403.
 //   - readback: when present, the exact body every read-back returns for the
 //     posted comment (a host that rewrote it); otherwise the posted body.
-//   - FIXTURE_PROBE_OK=1: with GraphQL blocked for pr view only, the minimal
-//     probe query still succeeds.
+//   - FIXTURE_PROBE_OK=1: with GraphQL-backed reads blocked, the minimal probe
+//     query still succeeds (a failure that is not a missing capability).
+//   - FIXTURE_REST=down: every REST call fails (the host is unreachable).
+//   - FIXTURE_POST_FAIL=1: the REST comment post fails; FIXTURE_DUPLICATE_COMMENT=1
+//     returns the posted comment twice on read-back.
+//   - pr-body: the pull request body (default: empty, null over REST).
 //
 // Every mutation is appended to FIXTURE_DIR/mutations.
 const fakeGH = `#!/bin/sh
@@ -28,29 +32,40 @@ set -eu
 log() { printf '%s\n' "$*" >>"$FIXTURE_DIR/calls"; }
 blocked() { printf 'HTTP 403: GitHub GraphQL is not available (https://api.github.com/graphql)\n' >&2; exit 1; }
 graphql_off() { [ "${FIXTURE_GRAPHQL:-ok}" = blocked ]; }
+rest_down() { [ "${FIXTURE_REST:-ok}" = down ] && { printf 'HTTP 500: server error\n' >&2; exit 1; }; return 0; }
 state=open; head=abc
 [ "${FIXTURE_STATE:-open}" != closed ] || state=closed
 [ "${FIXTURE_STATE:-open}" != stale ] || head=other
 live_body() {
   if [ -f "$FIXTURE_DIR/readback" ]; then cat "$FIXTURE_DIR/readback"; elif [ -f "$FIXTURE_DIR/published" ]; then cat "$FIXTURE_DIR/published"; fi
 }
+pr_body() { if [ -f "$FIXTURE_DIR/pr-body" ]; then cat "$FIXTURE_DIR/pr-body"; fi; }
+copies() { if [ "${FIXTURE_DUPLICATE_COMMENT:-0}" = 1 ]; then printf '2'; else printf '1'; fi; }
 comments_json() {
   [ -f "$FIXTURE_DIR/published" ] || { printf '[]\n'; return; }
   live_body >"$FIXTURE_DIR/live.tmp"
-  jq -cn --rawfile body "$FIXTURE_DIR/live.tmp" '[{id:7099011765,html_url:"https://example.test/comment/1",created_at:"2026-11-15T00:00:00Z",body:$body}]'
+  jq -cn --argjson copies "$(copies)" --rawfile body "$FIXTURE_DIR/live.tmp" \
+    '[range($copies) | {id:7099011765,html_url:"https://example.test/comment/1",created_at:"2026-11-15T00:00:00Z",body:$body}]'
 }
 log "$*"
 case "$1 $2" in
   "pr view")
     graphql_off && blocked
     UP=$(printf '%s' "$state" | tr a-z A-Z)
-    if [ -f "$FIXTURE_DIR/published" ]; then
-      live_body >"$FIXTURE_DIR/live.tmp"
-      jq -cn --arg state "$UP" --arg head "$head" --rawfile body "$FIXTURE_DIR/live.tmp" \
-        '{state:$state,headRefOid:$head,comments:[{url:"https://example.test/comment/1",createdAt:"2026-11-15T00:00:00Z",body:$body}]}'
-    else
-      jq -cn --arg state "$UP" --arg head "$head" '{state:$state,headRefOid:$head}'
-    fi ;;
+    case "$*" in
+      *baseRefName*)
+        pr_body >"$FIXTURE_DIR/pr-body.tmp"
+        jq -cn --arg state "$UP" --arg head "$head" --rawfile body "$FIXTURE_DIR/pr-body.tmp" \
+          '{number:17,title:"Container compatibility",body:$body,state:$state,headRefOid:$head,baseRefName:"main"}' ;;
+      *)
+        if [ -f "$FIXTURE_DIR/published" ]; then
+          live_body >"$FIXTURE_DIR/live.tmp"
+          jq -cn --arg state "$UP" --arg head "$head" --argjson copies "$(copies)" --rawfile body "$FIXTURE_DIR/live.tmp" \
+            '{state:$state,headRefOid:$head,comments:[range($copies) | {url:"https://example.test/comment/1",createdAt:"2026-11-15T00:00:00Z",body:$body}]}'
+        else
+          jq -cn --arg state "$UP" --arg head "$head" '{state:$state,headRefOid:$head}'
+        fi ;;
+    esac ;;
   "pr comment")
     graphql_off && blocked
     shift 2
@@ -62,8 +77,13 @@ case "$1 $2" in
     printf 'https://example.test/comment/1\n' ;;
   "api graphql")
     graphql_off && { [ "${FIXTURE_PROBE_OK:-0}" = 1 ] || blocked; }
-    printf '{"data":{"__typename":"Query"}}\n' ;;
+    case "$*" in
+      *closingIssuesReferences*)
+        printf '{"data":{"repository":{"pullRequest":{"closingIssuesReferences":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}\n' ;;
+      *) printf '{"data":{"__typename":"Query"}}\n' ;;
+    esac ;;
   "api --paginate")
+    rest_down
     case "$3" in
       repos/*/issues/*/comments) comments_json ;;
       repos/*/pulls/*/reviews|repos/*/pulls/*/comments) printf '[]\n' ;;
@@ -71,6 +91,7 @@ case "$1 $2" in
     esac ;;
   "api -X")
     # api -X POST repos/OWNER/REPO/issues/N/comments -F body=@FILE
+    rest_down
     [ "$3" = POST ] || exit 10
     case "$4" in repos/*/issues/*/comments) ;; *) exit 10 ;; esac
     file=''
@@ -81,15 +102,23 @@ case "$1 $2" in
     printf 'post\n' >>"$FIXTURE_DIR/mutations"
     printf '{"id":7099011765,"html_url":"https://example.test/comment/1"}\n' ;;
   "api repos/"*)
+    rest_down
     case "$2" in
-      repos/*/pulls/*) jq -cn --arg state "$state" --arg head "$head" \
-        '{number:17,title:"Container compatibility",body:null,state:$state,head:{sha:$head},base:{ref:"main"}}' ;;
-      repos/*/issues/*) jq -cn '{number:42,body:"REST acceptance criterion"}' ;;
+      repos/*/pulls/*)
+        if [ -f "$FIXTURE_DIR/pr-body" ]; then pr_body >"$FIXTURE_DIR/pr-body.tmp"; else : >"$FIXTURE_DIR/pr-body.tmp"; fi
+        if [ -f "$FIXTURE_DIR/pr-body" ]; then
+          jq -cn --arg state "$state" --arg head "$head" --rawfile body "$FIXTURE_DIR/pr-body.tmp" \
+            '{number:17,title:"Container compatibility",body:$body,state:$state,head:{sha:$head},base:{ref:"main"}}'
+        else
+          jq -cn --arg state "$state" --arg head "$head" \
+            '{number:17,title:"Container compatibility",body:null,state:$state,head:{sha:$head},base:{ref:"main"}}'
+        fi ;;
+      repos/*/issues/*) jq -cn '{number:42,body:"Acceptance criterion from issue 42"}' ;;
       *) exit 10 ;;
     esac ;;
   "issue view")
     graphql_off && blocked
-    printf '{"body":"GraphQL acceptance criterion"}\n' ;;
+    printf '{"body":"Acceptance criterion from issue 42"}\n' ;;
   *) exit 10 ;;
 esac
 `
@@ -113,8 +142,11 @@ func (r hostRun) envelope(t *testing.T) map[string]any {
 
 func (r hostRun) refusal(t *testing.T) map[string]any {
 	t.Helper()
+	// gh's own diagnostics may precede the helper's refusal envelope, which is
+	// always the last line.
+	lines := strings.Split(strings.TrimSpace(r.stderr), "\n")
 	var out map[string]any
-	if err := json.Unmarshal([]byte(strings.TrimSpace(r.stderr)), &out); err != nil {
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &out); err != nil {
 		t.Fatalf("stderr is not a refusal envelope: %v\nstderr=%q", err, r.stderr)
 	}
 	return out
@@ -158,4 +190,62 @@ func runPublishHelper(t *testing.T, readback *string, env ...string) hostRun {
 		mutations: strings.Count(string(mutations), "post\n"),
 		calls:     strings.Split(strings.TrimSpace(string(calls)), "\n"),
 	}
+}
+
+// runPromptHelper runs review-prompt-v1.sh in a fresh git worktree against
+// fakeGH. prBody, when not empty, is the pull request body the host returns.
+func runPromptHelper(t *testing.T, prBody string, env ...string) hostRun {
+	t.Helper()
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq unavailable")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	helper, err := filepath.Abs("../skill/sandman/blind-review/review-prompt-v1.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	worktree := filepath.Join(dir, "worktree")
+	if out, err := exec.Command("git", "init", worktree).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	bin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(fakeGH), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fixture := filepath.Join(dir, "fixture")
+	if err := os.MkdirAll(fixture, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if prBody != "" {
+		if err := os.WriteFile(filepath.Join(fixture, "pr-body"), []byte(prBody), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cmd := exec.Command("sh", helper, "--repository", "owner/repo", "--pull-request", "17",
+		"--head-sha", "abc", "--run-dir", "/tmp/blind-review-round")
+	cmd.Dir = worktree
+	cmd.Env = append(append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"FIXTURE_DIR="+fixture), env...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	runErr := cmd.Run()
+	calls, _ := os.ReadFile(filepath.Join(fixture, "calls"))
+	return hostRun{stdout: stdout.String(), stderr: stderr.String(), err: runErr,
+		calls: strings.Split(strings.TrimSpace(string(calls)), "\n")}
+}
+
+// called reports whether any recorded gh invocation starts with prefix.
+func (r hostRun) called(prefix string) bool {
+	for _, call := range r.calls {
+		if strings.HasPrefix(call, prefix) {
+			return true
+		}
+	}
+	return false
 }
