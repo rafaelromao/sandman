@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -270,6 +271,47 @@ func TestOwnedWorkExhausted_BlindReviewRoundEndsTheRun(t *testing.T) {
 		verdict := applyContinuityForTest(s, "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: next})
 		if verdict.Action != lifecycleResume {
 			t.Fatalf("blind round on a new head = %v/%v, want another blind round", verdict.Action, verdict.Evidence)
+		}
+	})
+}
+
+// Informal feedback is bounded per head. Used up, the allowance ends the Run
+// with the exhausted-budget reason and the retained feedback; an unchanged
+// relaunch keeps ending REVIEW_FEEDBACK_STALLED, and a new head starts a fresh
+// allowance.
+func TestOwnedWorkExhausted_InformalFeedbackUsedUpAllowanceEndsTheRun(t *testing.T) {
+	extras := stalledFeedbackExtras(t, stalledFeedbackBody)
+	signature := resumeSignature(extras, "head-1")
+	session := func(head string, used int) *runSession {
+		s := &runSession{decisionPRHead: head, feedbackAllowance: &reviewFeedbackAllowance{}}
+		for i := 0; i < used; i++ {
+			s.feedbackAllowance.charge(head)
+		}
+		return s
+	}
+	used := (&runSession{}).resumeCapFor()
+
+	verdict := applyContinuityForTest(session("head-1", used), "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: cloneLifecycleExtras(extras)})
+	requireOwnedWorkExhausted(t, verdict, gateActionableFeedback, informalFeedbackReason, signature)
+	request, _ := verdict.Evidence["review_request"].(map[string]any)
+	if feedback, _ := json.Marshal(request["informal_feedback"]); !strings.Contains(string(feedback), "retry loop") {
+		t.Errorf("terminal evidence lost the retained feedback: %s", feedback)
+	}
+
+	t.Run("an unchanged relaunch still ends as stalled feedback", func(t *testing.T) {
+		s := session("head-1", 1)
+		s.lastResumeSignature = signature
+		got := applyContinuityForTest(s, "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: cloneLifecycleExtras(extras)})
+		if got.Evidence["reason"] != reviewFeedbackStalledReason {
+			t.Fatalf("unchanged informal-feedback relaunch = %v/%v, want %s", got.Action, got.Evidence, reviewFeedbackStalledReason)
+		}
+	})
+	t.Run("a new head starts a fresh allowance", func(t *testing.T) {
+		next := stalledFeedbackExtras(t, stalledFeedbackBody)
+		next["head_sha"] = "head-2"
+		got := applyContinuityForTest(session("head-2", 0), "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: next})
+		if got.Action != lifecycleResume {
+			t.Fatalf("informal feedback on a new head = %v/%v, want a relaunch", got.Action, got.Evidence)
 		}
 	})
 }

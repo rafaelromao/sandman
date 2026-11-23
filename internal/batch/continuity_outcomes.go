@@ -146,7 +146,7 @@ var continuityOutcomes = continuityTable{
 	{reason: actionableFeedbackReason, cause: causeExhausted}:                                     outcomeTerminal,
 	{reason: "CI_WAIT_STATE_ERROR", cause: causeExhausted}:                                        outcomeTerminal,
 	{gate: gateOwnedWorkRequired, reason: actionableFeedbackReason, cause: causeExhausted}:        outcomeTerminal,
-	{gate: gateActionableFeedback, reason: informalFeedbackReason, cause: causeExhausted}:         outcomeHold,
+	{gate: gateActionableFeedback, reason: informalFeedbackReason, cause: causeExhausted}:         outcomeTerminal, // informal feedback that used up its per-head allowance (#3001)
 	{gate: gateReadyToMerge, cause: causeExhausted}:                                               outcomeTerminal, // merge work that used up its allowance (#3001)
 	{gate: "ci-failure", reason: "CI_FAILURE", cause: causeExhausted}:                             outcomeTerminal, // CI repair that used up its allowance (#3001)
 	{gate: "merge-conflict", reason: "MERGE_CONFLICT", cause: causeExhausted}:                     outcomeHold,

@@ -108,10 +108,10 @@ func continuityContractRows() []continuityContractRow {
 		// ordinary attempt).
 		{continuityRow{reason: actionableFeedbackReason, cause: causeExhausted}, outcomeTerminal, relaunchProbe(causeExhausted, relaunch(gateActionableFeedback, actionableFeedbackReason), false)},
 		{continuityRow{reason: "CI_WAIT_STATE_ERROR", cause: causeExhausted}, outcomeTerminal, relaunchProbe(causeExhausted, relaunch(gateCIWaitTimeout, "CI_WAIT_STATE_ERROR"), false)},
-		// Still a hold until #3001 flips it. The hold records its signature, so its
-		// next observation ends REVIEW_FEEDBACK_STALLED (#2999); that transitional
-		// consequence is pinned by TestAFKContinuityContract_ExhaustedInformalHoldEndsOnReobservation.
-		{continuityRow{gate: gateActionableFeedback, reason: informalFeedbackReason, cause: causeExhausted}, outcomeHold, relaunchProbe(causeExhausted, relaunch(gateActionableFeedback, informalFeedbackReason), false)},
+		// #3001: informal feedback that used up its per-head allowance ends the
+		// Run. A hold an earlier binary parked on it ends REVIEW_FEEDBACK_STALLED
+		// on its next observation (TestAFKContinuityContract_ParkedUsedUpInformalHoldEndsOnReobservation).
+		{continuityRow{gate: gateActionableFeedback, reason: informalFeedbackReason, cause: causeExhausted}, outcomeTerminal, relaunchProbe(causeExhausted, relaunch(gateActionableFeedback, informalFeedbackReason), false)},
 		{continuityRow{gate: gateReadyToMerge, cause: causeExhausted}, outcomeTerminal, relaunchProbe(causeExhausted, relaunch(gateReadyToMerge, "REVIEW_APPROVED"), false)},
 		{continuityRow{gate: "ci-failure", reason: "CI_FAILURE", cause: causeExhausted}, outcomeTerminal, relaunchProbe(causeExhausted, relaunch("ci-failure", "CI_FAILURE"), false)},
 		{continuityRow{gate: "merge-conflict", reason: "MERGE_CONFLICT", cause: causeExhausted}, outcomeHold, relaunchProbe(causeExhausted, relaunch("merge-conflict", "MERGE_CONFLICT"), false)},

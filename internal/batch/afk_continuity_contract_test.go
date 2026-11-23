@@ -1178,14 +1178,14 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 			want: "merged", wantLaunches: 5,
 		},
 		continuityScenario{
-			name: "#2997 same-head informal feedback holds after three relaunches", pr: greenCleanPR(), retries: 3,
+			name: "#2997 same-head informal feedback ends the Run after three relaunches", pr: greenCleanPR(), retries: 3,
 			forbidRetry: true,
 			launches:    []func(*continuityGitHub) string{requestReview, requestReview, requestReview, requestReview, requestReview},
 			polls: []func(*continuityGitHub){
 				postContinuityInformalFeedback, postContinuityInformalFeedback,
 				postContinuityInformalFeedback, postContinuityInformalFeedback,
 			},
-			want: "waiting", wantLaunches: 4,
+			want: "failed:REMEDIATION_BUDGET_EXHAUSTED", wantGate: gateActionableFeedback, wantLaunches: 4,
 		},
 		// Productive multi-round review (rc2 kept going): four rounds of formal
 		// CHANGES_REQUESTED, each addressed with a new head and a new request.
