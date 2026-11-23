@@ -14,6 +14,7 @@ remains historical evidence.
 | --- | --- | --- |
 | Implementation recovery | Three in-session lifecycle relaunches, entry excluded; fresh executor gets a fresh allowance; configured ordinary retries | Durable per-head/request repair exhaustion and entry-launch reservation; obsolete `lifecycle-budget.json` cannot veto execution |
 | Reviewer recovery | 10/20/40/60-second capped launch backoff, request/head advisory artifact claims, durable single decision publication; parent's configured request deadline | Cumulative three-launch gate, including unknown-head preparation failures; no new reviewer request-age cutoff |
+| Parent review-request expiry | Configured deadline is a bound; current-head CI, a matching active review Run with a live daemon, or a live-daemon quota pause may keep the expired request waiting; eligible late current-head approval/actionable feedback can resolve it before terminal observation | Waiting indefinitely on the expired request alone; unanswered expiry without an active resolver now ends `REVIEW_REQUEST_EXPIRED` |
 | Managed CI | Durable 30-minute hard deadline per current-head check execution; new head or verified rerun starts a new CI generation; same-execution observation/restart preserves its deadline | Cumulative remediation count as a launch prerequisite; expired prior execution forcing repeated repair of an actively resolving rerun |
 | Standalone CI | 60 minutes and three fixes per current head within an invocation; same-head polling preserves both; new head or fresh invocation resets | 30-minute tightening and persisted standalone reservation ledgers |
 | Implementation quota | Five hours of accumulated completed scheduled waits (validated provider reset or ten-minute fallback), final boundary probe, configured fresh-session ordinary retries | Absolute wall-clock expiry consuming downtime/capacity delay or preempting ordinary retries; sibling failure inherited solely from another quota owner |
@@ -42,3 +43,7 @@ waiting, capacity release, cumulative RunID duration, exclusive ownership and
 atomic persistence, five-minute ownerless grace, durable publication recovery,
 verified merged completion precedence, and explicit-abort fencing. Terminal
 payloads strip active await/gate markers, preserving diagnostics as `external_gate`.
+Review expiry is request-specific: stale CI, unrelated or terminal review Runs,
+orphan Runs after daemon shutdown, stale quota pauses and unknown verdicts do not
+extend the wait. A parked expiry from an earlier binary is revalidated on
+observation rather than preserved as an indefinite hold.

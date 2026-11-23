@@ -67,6 +67,40 @@ func TestObserveCurrentReviewEvidence_IgnoresMismatchedDaemonPublication(t *test
 	}
 }
 
+func TestObserveCurrentReviewEvidence_RetainsLateActionableFeedback(t *testing.T) {
+	triggeredAt := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	deadline := triggeredAt.Add(time.Minute)
+	trigger := github.PRComment{ID: "1001", Body: "/sandman review", CreatedAt: triggeredAt, UpdatedAt: triggeredAt}
+	feedback := github.PRComment{
+		ID: "1002", Body: "Please fix `worker.go:12` before merging.",
+		CreatedAt: deadline.Add(time.Minute), UpdatedAt: deadline.Add(time.Minute),
+	}
+	acknowledgement := github.PRComment{ID: "1003", Body: "Thanks.", CreatedAt: feedback.CreatedAt}
+	client := &registrationGitHubClient{comments: []github.PRComment{trigger, feedback, acknowledgement}}
+	session := &runSession{
+		deps: runDeps{githubClient: client},
+		opts: runSessionOptions{reviewRegistrationNow: func() time.Time { return deadline.Add(2 * time.Minute) }},
+	}
+	request := reviewRequestEnvelope{
+		Protocol: "review-wait/v1", Repository: "owner/repo", PullRequest: 17, HeadSHA: "head-1",
+		TriggerID: trigger.ID, TriggerPrefix: "/sandman review",
+		TriggerCreatedAt:    triggeredAt.Format(time.RFC3339Nano),
+		DeadlineUnixSeconds: int(deadline.Unix()),
+	}
+
+	handoff, err := session.observeCurrentReviewEvidence(context.Background(), request, &github.PR{Number: 17, HeadRefOid: "head-1"}, client.comments)
+	if err != nil {
+		t.Fatalf("observe late feedback: %v", err)
+	}
+	if handoff == nil || handoff.Classification == nil {
+		t.Fatalf("late handoff = %+v, want retained feedback classification", handoff)
+	}
+	feedbackEvidence := handoff.Classification.informalFeedbackEvidenceFor(request, handoff.Classification.WindowEnd)
+	if len(feedbackEvidence) != 1 || feedbackEvidence[0].ID != feedback.ID {
+		t.Fatalf("late informal feedback = %+v, want current response %q", feedbackEvidence, feedback.ID)
+	}
+}
+
 func TestReviewRequestTriggerKeyMatchesRetainedCommentURL(t *testing.T) {
 	triggeredAt := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
 	trigger := github.PRComment{

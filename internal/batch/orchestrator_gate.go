@@ -182,6 +182,12 @@ func (s *runSession) retainedLifecycleEvidence(ctx context.Context, workDir stri
 		}
 		evidence.outcome = handoff.Outcome
 		if !reviewEvidenceWithinCanonicalDeadline(handoff, registration.Request) {
+			if handoff.Outcome == retainedReviewTimeout {
+				// Timeout evidence still carries the canonical request identity
+				// needed to decide whether a different live resolver is keeping
+				// this expired request actionable.
+				evidence.payload = handoff.payload()
+			}
 			return evidence
 		}
 		// Confirmed approval settles this request before feedback heuristics.
@@ -210,7 +216,11 @@ func (s *runSession) retainedLifecycleEvidence(ctx context.Context, workDir stri
 					}
 				}
 			} else {
-				return evidence
+				if handoff.Outcome == retainedReviewTimeout {
+					evidence.payload = handoff.payload()
+				} else {
+					return evidence
+				}
 			}
 		default:
 			if handoff.Outcome == retainedReviewTimeout {
@@ -262,6 +272,12 @@ func (s *runSession) confirmedReviewRequestActive(ctx context.Context, workDir s
 	if registration, err := s.loadCanonicalReviewRegistration(ctx, workDir, repository, pr, currentHead); err == nil && registration != nil {
 		if registration.State.State != "pending" || int64(registration.Request.DeadlineUnixSeconds) <= now {
 			return false
+		}
+		if registration.State.ObservedState == "timed_out" &&
+			int64(registration.Request.DeadlineUnixSeconds) > now {
+			// A stale timeout observation cannot shorten the canonical request
+			// deadline. Keep the confirmed operation active until its own bound.
+			return true
 		}
 		if registration.State.ObservedState != "" {
 			handoff, handoffErr := canonicalReviewHandoff(registration, currentHead)

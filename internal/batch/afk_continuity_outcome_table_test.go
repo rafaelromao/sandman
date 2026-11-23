@@ -77,6 +77,7 @@ func continuityContractRows() []continuityContractRow {
 		{continuityRow{reason: "IMPLEMENTOR_ACTION_REQUIRED", cause: causeFailure}, outcomeTerminal, failureReasonProbe("IMPLEMENTOR_ACTION_REQUIRED")},
 		{continuityRow{reason: "REMEDIATION_BUDGET_EXHAUSTED", cause: causeFailure}, outcomeTerminal, failureReasonProbe("REMEDIATION_BUDGET_EXHAUSTED")},
 		{continuityRow{reason: reviewFeedbackStalledReason, cause: causeFailure}, outcomeTerminal, failureReasonProbe(reviewFeedbackStalledReason)},
+		{continuityRow{reason: reviewRequestExpiredReason, cause: causeFailure}, outcomeTerminal, failureReasonProbe(reviewRequestExpiredReason)},
 		{continuityRow{reason: idleGateReason, cause: causeFailure}, outcomeHold, failureReasonProbe(idleGateReason)},
 		{continuityRow{reason: reviewTimeoutReason, cause: causeFailure}, outcomeHold, failureReasonProbe(reviewTimeoutReason)},
 		{continuityRow{reason: "CI_WAIT_TIMEOUT", cause: causeFailure}, outcomeHold, failureReasonProbe("CI_WAIT_TIMEOUT")},
@@ -84,7 +85,7 @@ func continuityContractRows() []continuityContractRow {
 		{continuityRow{cause: causeFailure}, outcomeTerminal, failureReasonProbe("SOMETHING_NEW")},
 
 		// Bounded operations that expired with nothing else resolving them.
-		{continuityRow{gate: gateReviewTimeout, reason: reviewTimeoutReason, cause: causeExpired}, outcomeHold, expiredRequestProbe()},
+		{continuityRow{gate: gateReviewTimeout, reason: reviewTimeoutReason, cause: causeExpired}, outcomeTerminal, expiredRequestProbe()},
 		{continuityRow{gate: gateGitHubUnavailable, reason: githubUnavailableReason, cause: causeExpired}, outcomeTerminal, githubWindowProbe(true)},
 
 		// A relaunch that would act on an unchanged resume signature.
@@ -272,13 +273,21 @@ func failureReasonProbe(reason string) continuityProbe {
 // expired while nothing else (running CI, a confirmed request) resolves it.
 func expiredRequestProbe() continuityProbe {
 	return continuityProbe{consultsTable: true, observe: func(t *testing.T, table continuityTable) continuityOutcomeKind {
-		pr := continuityProbePR()
-		decision := decideRecoverableLifecycle(lifecycleGatePending, pr, continuityProbeHead, "",
-			retainedReviewEvidence{present: true, outcome: retainedReviewTimeout}, false, "success", true)
-		if decision.action != lifecycleFailure {
-			t.Fatalf("expired request decision = %v, want the expired-request failure", decision.action)
+		verdict, ended := (&lifecycleObserver{outcomes: table}).expiredReviewTerminal(
+			lifecycleVerdict{Action: lifecycleResume, Evidence: map[string]any{
+				"gate": gateReviewRequestRequired, "reason": reviewTimeoutReason,
+			}},
+		)
+		if ended {
+			if verdict.Action != lifecycleFailure {
+				t.Fatalf("expired request decision = %s, want terminal failure", verdict.status())
+			}
+			if verdict.Evidence["reason"] != reviewRequestExpiredReason {
+				t.Fatalf("expired request reason = %v, want %s", verdict.Evidence["reason"], reviewRequestExpiredReason)
+			}
+			return outcomeTerminal
 		}
-		return failureContinuityOutcome(t, table, decision, pr)
+		return outcomeHold
 	}}
 }
 

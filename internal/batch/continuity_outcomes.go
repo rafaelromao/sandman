@@ -111,14 +111,15 @@ var continuityOutcomes = continuityTable{
 	{reason: implementorActionRequiredReason, cause: causeFailure}:       outcomeTerminal, // legacy verification fallback
 	{reason: "REMEDIATION_BUDGET_EXHAUSTED", cause: causeFailure}:        outcomeTerminal, // requested changes left unrepaired (formal, daemon verdict, approval override) and owned work that stalls or uses up its allowance: merge, CI repair, request delivery, blind round, informal feedback (#3001)
 	{reason: reviewFeedbackStalledReason, cause: causeFailure}:           outcomeTerminal, // informal review feedback an unchanged relaunch could not act on
+	{reason: reviewRequestExpiredReason, cause: causeFailure}:            outcomeTerminal, // expired delegated-review request has no active resolver
 	{reason: idleGateReason, cause: causeFailure}:                        outcomeHold,     // nothing resolving yet; waits like rc2
-	{reason: reviewTimeoutReason, cause: causeFailure}:                   outcomeHold,     // expired request; agrees with the expired row
+	{reason: reviewTimeoutReason, cause: causeFailure}:                   outcomeHold,     // legacy timeout evidence still rehydrates through the expiry decision
 	{reason: "CI_WAIT_TIMEOUT", cause: causeFailure}:                     outcomeHold,     // bounded CI wait expired; waits like rc2
 	{reason: "CAPACITY_WAIT", cause: causeFailure}:                       outcomeTerminal, // fail closed if capacity admission is ever terminalized
 	{cause: causeFailure}: outcomeTerminal, // unknown reasons are permanent
 
 	// Bounded operations that expired with nothing else resolving them.
-	{gate: gateReviewTimeout, reason: reviewTimeoutReason, cause: causeExpired}:         outcomeHold,     // expired delegated-review request
+	{gate: gateReviewTimeout, reason: reviewTimeoutReason, cause: causeExpired}:         outcomeTerminal, // expired delegated-review request with no active resolver
 	{gate: gateGitHubUnavailable, reason: githubUnavailableReason, cause: causeExpired}: outcomeTerminal, // 24-hour window: GATE_LOOKUP_FAILED
 
 	// Stalls: a relaunch that would act on an unchanged resume signature.

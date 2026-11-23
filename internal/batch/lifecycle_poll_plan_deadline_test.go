@@ -5,7 +5,6 @@ import (
 	"io"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -193,21 +192,17 @@ func TestObserveLifecycleUsesInjectedClockForDeadline(t *testing.T) {
 	verdict := newLifecycleObserver(s).waitForTransition(context.Background(), lifecycleObservationRequest{RunID: "run"}, AgentRunResult{}, lifecycleVerdict{Action: lifecycleAwait, Evidence: map[string]any{
 		"review_request": map[string]any{"deadline_unix_seconds": deadline.Unix()},
 	}})
-	if verdict.Action != lifecycleResume {
-		t.Fatalf("observation = (%v, %#v), want injected-clock deadline resume", verdict.Action, verdict.Evidence)
+	if verdict.Action != lifecycleFailure || verdict.Evidence["reason"] != reviewRequestExpiredReason {
+		t.Fatalf("observation = (%v, %#v), want expired-request terminal failure", verdict.Action, verdict.Evidence)
 	}
 	if waits != 0 {
 		t.Fatalf("lifecycle waits = %d, want no wait after injected deadline", waits)
 	}
 }
 
-func TestWaitForTransition_ExpiredCanonicalReviewUsesContinuityOutcome(t *testing.T) {
+func TestWaitForTransition_ExpiredCanonicalReviewWithoutResolverTerminates(t *testing.T) {
 	now := time.Date(2026, time.November, 19, 21, 0, 0, 0, time.UTC)
 	deadline := now.Add(-time.Minute)
-	table := cloneContinuityTable(continuityOutcomes)
-	row := continuityRow{gate: gateReviewTimeout, reason: reviewTimeoutReason, cause: causeExpired}
-	table[continuityRow{cause: causeExpired}] = outcomeHold
-	table[row] = outcomeTerminal
 	session := &runSession{opts: runSessionOptions{
 		now:               func() time.Time { return now },
 		lifecyclePollPlan: []time.Duration{time.Minute},
@@ -215,7 +210,7 @@ func TestWaitForTransition_ExpiredCanonicalReviewUsesContinuityOutcome(t *testin
 			return errLifecycleObservationTestStop
 		},
 	}}
-	observer := &lifecycleObserver{runSession: session, outcomes: table}
+	observer := &lifecycleObserver{runSession: session}
 	request := reviewRequestEnvelope{
 		Protocol:            "review-wait/v1",
 		Repository:          "owner/repo",
@@ -238,41 +233,21 @@ func TestWaitForTransition_ExpiredCanonicalReviewUsesContinuityOutcome(t *testin
 	evidence["gate"] = gateReviewRequestRequired
 	evidence["await"] = true
 
-	recovery := newLifecycleObserver(session).waitForTransition(
+	verdict := observer.waitForTransition(
 		context.Background(),
 		lifecycleObservationRequest{RunID: "run-expired-review", Branch: continuityBranch},
 		AgentRunResult{},
 		lifecycleVerdict{Action: lifecycleAwait, Evidence: cloneLifecycleExtras(evidence)},
 	)
-	if recovery.Action != lifecycleResume {
-		t.Fatalf("expired review request with recovery allowance = %s, want bounded resume", recovery.status())
-	}
-	session.resumeCount = session.resumeCapFor()
-	exhausted := newLifecycleObserver(session).waitForTransition(
-		context.Background(),
-		lifecycleObservationRequest{RunID: "run-expired-review", Branch: continuityBranch},
-		AgentRunResult{},
-		lifecycleVerdict{Action: lifecycleAwait, Evidence: cloneLifecycleExtras(evidence)},
-	)
-	if exhausted.Action != lifecycleAwait || !continuityHoldPayload(exhausted.Evidence) {
-		t.Fatalf("expired review request after recovery allowance = %s/%v, want continuity hold", exhausted.status(), exhausted.Evidence)
-	}
-
-	verdict := observer.waitForTransition(context.Background(),
-		lifecycleObservationRequest{RunID: "run-expired-review", Branch: continuityBranch},
-		AgentRunResult{},
-		lifecycleVerdict{Action: lifecycleAwait, Evidence: evidence},
-	)
-
 	if verdict.Action != lifecycleFailure {
-		t.Fatalf("expired canonical request = %s, want table-selected terminal failure", verdict.status())
+		t.Fatalf("expired canonical request = %s, want terminal failure", verdict.status())
 	}
-	if verdict.Evidence["reason"] != reviewTimeoutReason || verdict.Evidence["gate"] != nil || verdict.Evidence["await"] != nil {
-		t.Fatalf("terminal expiry evidence = %v, want REVIEW_TIMEOUT without wait markers", verdict.Evidence)
+	if verdict.Evidence["reason"] != reviewRequestExpiredReason || verdict.Evidence["gate"] != nil || verdict.Evidence["await"] != nil {
+		t.Fatalf("terminal expiry evidence = %v, want REVIEW_REQUEST_EXPIRED without wait markers", verdict.Evidence)
 	}
 }
 
-func TestApplyExpiredReviewOutcomeUsesOperationGateAndPreservesInputGate(t *testing.T) {
+func TestApplyExpiredReviewOutcomeUsesRequestExpiryReasonAndGate(t *testing.T) {
 	table := cloneContinuityTable(continuityOutcomes)
 	table[continuityRow{cause: causeExpired}] = outcomeHold
 	table[continuityRow{gate: gateReviewTimeout, reason: reviewTimeoutReason, cause: causeExpired}] = outcomeTerminal
@@ -290,10 +265,11 @@ func TestApplyExpiredReviewOutcomeUsesOperationGateAndPreservesInputGate(t *test
 	if verdict.Action != lifecycleFailure {
 		t.Fatalf("expiry with review-request gate = %s, want terminal operation-gate outcome", verdict.status())
 	}
-	if verdict.Evidence["reason"] != reviewTimeoutReason ||
-		verdict.Evidence["external_gate"] != gateReviewRequestRequired ||
+	if verdict.Evidence["reason"] != reviewRequestExpiredReason ||
+		verdict.Evidence["external_gate"] != gateReviewTimeout ||
+		verdict.Evidence["next_action"] != reviewRequestExpiredNextAction ||
 		verdict.Evidence["gate"] != nil || verdict.Evidence["await"] != nil {
-		t.Fatalf("terminal expiry evidence = %v, want operation reason and original external gate without wait markers", verdict.Evidence)
+		t.Fatalf("terminal expiry evidence = %v, want request-expiry reason and gate without wait markers", verdict.Evidence)
 	}
 }
 
@@ -359,8 +335,8 @@ func TestDecideLifecycleForAttempt_ExpiredCanonicalReviewUsesContinuityOutcome(t
 	if verdict.Action != lifecycleFailure {
 		t.Fatalf("expired canonical registration with terminal table row = %+v, want failure", verdict)
 	}
-	if verdict.Evidence["reason"] != reviewTimeoutReason || verdict.Evidence["gate"] != nil || verdict.Evidence["await"] != nil {
-		t.Fatalf("terminal canonical expiry evidence = %v, want REVIEW_TIMEOUT without wait markers", verdict.Evidence)
+	if verdict.Evidence["reason"] != reviewRequestExpiredReason || verdict.Evidence["gate"] != nil || verdict.Evidence["await"] != nil {
+		t.Fatalf("terminal canonical expiry evidence = %v, want REVIEW_REQUEST_EXPIRED without wait markers", verdict.Evidence)
 	}
 	if got := canonical.Request.DeadlineUnixSeconds; int64(got) >= now.Unix() {
 		t.Fatalf("test request deadline = %d, want it before now %d", got, now.Unix())
@@ -598,16 +574,11 @@ func TestWaitForTransition_ExhaustedCIWaitTimeoutHoldPersistsOneIntactAwaitPerPo
 	}
 }
 
-// An expired review's exhausted hold goes through continuity exactly once, so
-// the stalled signature it records survives into the persisted wait. A second
-// application takes the await branch, which overwrites the new signature with
-// the ledger already persisted, and a restarted executor then relaunches on
-// the unchanged evidence.
-func TestObserve_ExpiredReviewHoldRecordsStalledSignatureAndSurvivesRestart(t *testing.T) {
-	const (
-		runID      = "run-expired-review-ledger"
-		priorStall = "prior-signature"
-	)
+// An earlier binary may have parked an expired review request. A fresh
+// observation ends that Run when no resolver remains, regardless of its
+// previous stalled-resume ledger.
+func TestObserve_ExpiredReviewHoldRechecksResolversOnRestart(t *testing.T) {
+	const runID = "run-expired-review-ledger"
 	now := time.Unix(3_000, 0).UTC()
 	workDir := t.TempDir()
 	writeTimedOutReviewRequest(t, workDir)
@@ -615,21 +586,27 @@ func TestObserve_ExpiredReviewHoldRecordsStalledSignatureAndSurvivesRestart(t *t
 	for _, event := range []events.Event{
 		{Type: "run.started", RunID: runID, Issue: 42, Timestamp: now.Add(-time.Hour), Payload: map[string]any{"branch": gateTestBranch}},
 		{Type: "run.await", RunID: runID, Issue: 42, Timestamp: now.Add(-time.Minute), Payload: map[string]any{
-			"await": true, "branch": gateTestBranch, "gate": "ready-to-merge", stalledResumesKey: []any{priorStall},
+			"await": true, "branch": gateTestBranch, "gate": gateReviewTimeout, "reason": reviewTimeoutReason,
+			"external_gate": gateReviewTimeout, "continuity_hold": true,
+			"review_request": map[string]any{
+				"protocol": "review-wait/v1", "repository": "owner/repo", "pull_request": 17,
+				"head_sha": "current-sha", "trigger_id": "https://github.com/owner/repo/pull/17#issuecomment-1001",
+				"deadline_unix_seconds": 2800,
+			},
 		}},
 	} {
 		if err := log.Log(event); err != nil {
 			t.Fatal(err)
 		}
 	}
-	newSession := func() *runSession {
+	newSession := func(rollup string) *runSession {
 		return &runSession{
 			issueNumber: 42,
 			deps: runDeps{
 				githubClient: &fakeGitHubClient{
 					issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
 					prs: map[string]*github.PR{gateTestBranch: {
-						Number: 17, State: "open", HeadRefOid: "current-sha", StatusCheckRollup: "success",
+						Number: 17, State: "open", HeadRefOid: "current-sha", StatusCheckRollup: rollup,
 						ReviewDecision: "REVIEW_REQUIRED", MergeStateStatus: "BLOCKED",
 					}},
 				},
@@ -647,20 +624,20 @@ func TestObserve_ExpiredReviewHoldRecordsStalledSignatureAndSurvivesRestart(t *t
 		WorkDir: workDir, Branch: gateTestBranch, RunID: runID, HostPathsReady: true, AttemptStatus: "success",
 	}
 
-	exhausted := newSession()
+	exhausted := newSession("success")
 	exhausted.resumeCount = exhausted.resumeCapFor()
-	held := newLifecycleObserver(exhausted).Observe(context.Background(), request)
-	if held.Action != lifecycleAwait || !continuityHoldPayload(held.Evidence) {
-		t.Fatalf("exhausted expired review = %s/%v, want a continuity hold", held.status(), held.Evidence)
+	ended := newLifecycleObserver(exhausted).Observe(context.Background(), request)
+	if ended.Action != lifecycleFailure || stringEvidence(ended.Evidence, "reason") != reviewRequestExpiredReason {
+		t.Fatalf("exhausted expired review = %s/%v, want terminal request expiry", ended.status(), ended.Evidence)
 	}
-	ledger := stalledResumes(held.Evidence)
-	if len(ledger) != 2 || ledger[0] != priorStall || !strings.Contains(ledger[1], reviewTimeoutReason) {
-		t.Fatalf("held stalled ledger = %q, want the prior signature followed by this expiry's own signature", ledger)
-	}
-	exhausted.emitAwait(context.Background(), runID, AgentRunResult{Branch: gateTestBranch}, held.Evidence)
 
-	restarted := newLifecycleObserver(newSession()).Observe(context.Background(), request)
-	if restarted.Action != lifecycleAwait || !continuityHoldPayload(restarted.Evidence) {
-		t.Fatalf("restarted observation of the unchanged expiry = %s/%v, want the hold to persist instead of relaunching", restarted.status(), restarted.Evidence)
+	waiting := newLifecycleObserver(newSession("queued")).Observe(context.Background(), request)
+	if waiting.Action != lifecycleAwait {
+		t.Fatalf("restarted observation with queued current-head CI = %s/%v, want a wait", waiting.status(), waiting.Evidence)
+	}
+
+	restarted := newLifecycleObserver(newSession("success")).Observe(context.Background(), request)
+	if restarted.Action != lifecycleFailure || stringEvidence(restarted.Evidence, "reason") != reviewRequestExpiredReason {
+		t.Fatalf("restarted observation of the unchanged expiry = %s/%v, want terminal request expiry", restarted.status(), restarted.Evidence)
 	}
 }

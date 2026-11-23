@@ -26,6 +26,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -276,8 +277,18 @@ type continuityScenario struct {
 	boilerplateResponse bool
 	// expiredWithoutTimeoutSidecar leaves only the confirmed request record;
 	// the first live observation discovers that its deadline already elapsed.
-	expiredWithoutTimeoutSidecar bool
-	lateApproval                 string
+	expiredWithoutTimeoutSidecar    bool
+	unknownVerdict                  bool
+	lateApproval                    string
+	reviewRunActive                 bool
+	reviewRunTerminal               bool
+	reviewRunOtherTrigger           bool
+	reviewRunEndsAfterFirstPoll     bool
+	reviewRunEndsAfterSecondPoll    bool
+	reviewDaemonLive                bool
+	quotaPaused                     bool
+	quotaPauseClearsAfterPoll       bool
+	quotaPauseClearsAfterSecondPoll bool
 	// launches[i] is the effect and exit status of the i-th agent launch. A
 	// nil or unscripted launch is a well-behaved implementor: it merges once a
 	// review response approves the request, and otherwise exits cleanly.
@@ -287,6 +298,10 @@ type continuityScenario struct {
 	polls []func(g *continuityGitHub)
 	// want is "merged", "waiting" or "failed:<reason>".
 	want string
+	// wantExpiredEvidence checks the terminal request-expiry payload.
+	wantExpiredEvidence   bool
+	wantReviewRunObserved bool
+	wantFeedbackRelaunch  bool
 	// wantGate asserts the gate a terminal failure names in its evidence
 	// (external_gate) when nonzero.
 	wantGate string
@@ -302,8 +317,8 @@ type continuityScenario struct {
 	ownedWorkRetries bool
 	// reviewTimeout overrides the request deadline in seconds.
 	reviewTimeout int
-	// expireAfterFirstAwait advances the managed review clock beyond the
-	// confirmed request's deadline without sleeping.
+	// expireAfterFirstAwait advances the operation and provider clocks beyond
+	// the confirmed request's deadline without sleeping.
 	expireAfterFirstAwait bool
 	// noReviewCommand runs without a delegated review command.
 	noReviewCommand bool
@@ -421,6 +436,9 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 		if sc.lateApproval != "" {
 			g.publish(sc.lateApproval)
 		}
+		if sc.unknownVerdict {
+			g.publish("## Findings\nPlease fix `worker.go:12` before merging.\n\n## Decision\n**MAYBE**")
+		}
 	}
 	var mu sync.Mutex
 	launches, polls := 0, 0
@@ -442,6 +460,92 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 	log := &spyEventLog{}
 	var eventLog events.EventLog = log
 	const priorRunID = continuityPriorRunID
+	layout := paths.NewLayout(cfg, root)
+	if err := os.MkdirAll(layout.ReviewsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	quotaPath := filepath.Join(layout.ReviewsDir(), "quota-pause.json")
+	if sc.quotaPaused {
+		if err := atomicfs.WriteAtomicJSON(quotaPath, map[string]any{"paused": true}, 0o600); err != nil {
+			t.Fatalf("write quota pause: %v", err)
+		}
+	}
+	var reviewListener net.Listener
+	if sc.reviewDaemonLive {
+		var err error
+		reviewListener, err = net.Listen("unix", layout.ReviewSocketPath())
+		if err != nil {
+			t.Fatalf("listen on review daemon socket: %v", err)
+		}
+		defer reviewListener.Close()
+		go func() {
+			for {
+				connection, err := reviewListener.Accept()
+				if err != nil {
+					return
+				}
+				_ = connection.Close()
+			}
+		}()
+	}
+	reviewRunID := ""
+	reviewRunBranch := ""
+	if sc.reviewRunActive || sc.reviewRunTerminal {
+		if !sc.expiredRequest {
+			t.Fatal("review resolver fixture requires an expired confirmed request")
+		}
+		registration, err := readFileReviewRegistration(paths.NewLayout(cfg, worktree).PRReviewRegistrationPath(continuityPR))
+		if err != nil {
+			t.Fatalf("read request for review-run fixture: %v", err)
+		}
+		var classification map[string]any
+		if registration.State.Evidence == nil || json.Unmarshal(registration.State.Evidence.Classification, &classification) != nil {
+			t.Fatal("expired request has no classification identity for review-run fixture")
+		}
+		triggerKey := stringEvidence(classification, "trigger_key")
+		if triggerKey == "" {
+			t.Fatalf("expired request classification has no trigger key: %v", classification)
+		}
+		if sc.reviewRunOtherTrigger {
+			triggerKey += "0" // Same comment, different revision.
+		}
+		reviewRunID = "review-run-fixture"
+		reviewRunBranch = fmt.Sprintf("review-%d-%s", continuityPR, triggerKey)
+		if err := log.Log(events.Event{
+			Type: "run.started", RunID: reviewRunID, Issue: 42, Timestamp: time.Now().Add(-time.Minute),
+			Payload: map[string]any{"review": true, "pr_number": continuityPR, "branch": reviewRunBranch, "batch_id": "review-fixture"},
+		}); err != nil {
+			t.Fatalf("record review-run start: %v", err)
+		}
+		if sc.reviewRunTerminal {
+			if err := log.Log(events.Event{
+				Type: "run.finished", RunID: reviewRunID, Issue: 42, Timestamp: time.Now(),
+				Payload: map[string]any{"status": "success", "review": true, "pr_number": continuityPR, "branch": reviewRunBranch},
+			}); err != nil {
+				t.Fatalf("record terminal review run: %v", err)
+			}
+		}
+	}
+	applyExternalPoll := func(index int) {
+		if index < len(sc.polls) && sc.polls[index] != nil {
+			sc.polls[index](g)
+		}
+		if ((index == 0 && sc.reviewRunEndsAfterFirstPoll) ||
+			(index == 1 && sc.reviewRunEndsAfterSecondPoll)) && reviewRunID != "" {
+			if err := log.Log(events.Event{
+				Type: "run.finished", RunID: reviewRunID, Issue: 42, Timestamp: time.Now(),
+				Payload: map[string]any{"status": "success", "review": true, "pr_number": continuityPR, "branch": reviewRunBranch},
+			}); err != nil {
+				t.Fatalf("finish review run: %v", err)
+			}
+		}
+		if (index == 0 && sc.quotaPauseClearsAfterPoll) ||
+			(index == 1 && sc.quotaPauseClearsAfterSecondPoll) {
+			if err := atomicfs.WriteAtomicJSON(quotaPath, map[string]any{"paused": false}, 0o600); err != nil {
+				t.Fatalf("clear quota pause: %v", err)
+			}
+		}
+	}
 	if sc.priorFailure != "" {
 		seedFailedRun(log, priorRunID, sc.priorFailure)
 	}
@@ -482,15 +586,14 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 				if index >= len(sc.polls) {
 					return errStop
 				}
-				if sc.polls[index] != nil {
-					sc.polls[index](g)
-				}
+				applyExternalPoll(index)
 				if sc.expireAfterFirstAwait && index == 0 {
 					mu.Lock()
 					reviewClockOffset += 2 * time.Hour
 					mu.Unlock()
 					g.mu.Lock()
 					g.clockOffset += 2 * time.Hour
+					g.runtimeOffset += 2 * time.Hour
 					g.mu.Unlock()
 				}
 				return ctx.Err()
@@ -503,15 +606,14 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 				if index >= len(sc.polls) {
 					return errLifecycleObservationTestStop
 				}
-				if sc.polls[index] != nil {
-					sc.polls[index](g)
-				}
+				applyExternalPoll(index)
 				if sc.expireAfterFirstAwait && index == 0 {
 					mu.Lock()
 					reviewClockOffset += 2 * time.Hour
 					mu.Unlock()
 					g.mu.Lock()
 					g.clockOffset += 2 * time.Hour
+					g.runtimeOffset += 2 * time.Hour
 					g.mu.Unlock()
 				}
 				return ctx.Err()
@@ -657,6 +759,9 @@ func seedFailedRun(log *spyEventLog, runID, reason string) {
 func (o continuityOutcome) verdict() string {
 	for _, event := range o.events {
 		if event.RunID == continuityPriorRunID {
+			continue
+		}
+		if payloadBoolValue(event.Payload, "review") {
 			continue
 		}
 		if event.Type != "run.finished" {
@@ -1004,51 +1109,128 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 			polls: []func(*continuityGitHub){nil, nil, nil},
 			want:  "failed:REMEDIATION_BUDGET_EXHAUSTED",
 		},
-		// A request that expires without a response is recovered with the
-		// configured minimum deadline, advanced deterministically in the test
-		// clock. Unchanged implementation retries exhaust into a wait, not a
-		// REVIEW_REQUEST_REQUIRED terminal failure.
+		// A request that expires without a response and no active resolver
+		// ends with a permanent request-expiry outcome.
 		continuityScenario{
-			name: "expired request without a response waits after unchanged implementation retries", pr: greenCleanPR(), retries: 3, reviewTimeout: 240,
+			name: "expired request without a resolver ends after its deadline", pr: greenCleanPR(), retries: 3, reviewTimeout: 240,
 			expireAfterFirstAwait: true,
 			launches:              []func(*continuityGitHub) string{requestReview, nil, nil, nil},
 			polls:                 []func(*continuityGitHub){nil, nil, nil, nil},
-			want:                  "waiting", maxLaunches: 4, requireAwait: true, expectOneTrigger: true,
+			want:                  "failed:REVIEW_REQUEST_EXPIRED", maxLaunches: 1, requireAwait: true, expectOneTrigger: true,
 		},
-		// A confirmed delivered request remains external review work after its
-		// deadline, even when unchanged implementation attempts exhaust their
-		// in-session relaunch allowance. It must not become a missing-request
-		// terminal failure.
+		// A confirmed request does not remain resolving after its deadline
+		// unless a concrete external resolver is still active.
 		continuityScenario{
-			name: "expired delivered request with timeout evidence waits after unchanged launch exhaustion", pr: greenCleanPR(), retries: 3,
+			name: "expired delivered request without a resolver ends with request evidence", pr: greenCleanPR(), retries: 3,
 			expiredRequest: true, launches: []func(*continuityGitHub) string{nil, nil, nil, nil},
-			polls: []func(*continuityGitHub){nil, nil, nil, nil},
-			want:  "waiting", maxLaunches: 4, requireAwait: true, expectOneTrigger: true,
+			want: "failed:REVIEW_REQUEST_EXPIRED", wantExpiredEvidence: true, expectOneTrigger: true,
 		},
 		continuityScenario{
-			name: "expired delivered request with boilerplate acknowledgement waits after unchanged launch exhaustion", pr: greenCleanPR(), retries: 3,
+			name: "expired request with boilerplate acknowledgement ends without a resolver", pr: greenCleanPR(), retries: 3,
 			expiredRequest: true, boilerplateResponse: true,
 			launches: []func(*continuityGitHub) string{nil, nil, nil, nil},
 			polls:    []func(*continuityGitHub){nil, nil, nil, nil},
-			want:     "waiting", maxLaunches: 4, requireAwait: true, expectOneTrigger: true,
+			want:     "failed:REVIEW_REQUEST_EXPIRED", expectOneTrigger: true,
 		},
 		continuityScenario{
-			name: "expired delivered request without timeout sidecar waits after unchanged launch exhaustion", pr: greenCleanPR(), retries: 3,
+			name: "expired request without timeout sidecar ends without a resolver", pr: greenCleanPR(), retries: 3,
 			expiredRequest: true, expiredWithoutTimeoutSidecar: true,
-			want: "waiting", maxLaunches: 4, requireAwait: true, expectOneTrigger: true,
+			want: "failed:REVIEW_REQUEST_EXPIRED", expectOneTrigger: true,
 		},
-		// A timeout followed by unchanged implementation work must stay
-		// recoverable; once the same reviewer eventually approves, the Run
-		// resumes ordinary merge work without a replacement request.
 		continuityScenario{
-			name: "expired request late approval after unchanged implementation", pr: greenCleanPR(), retries: 3, reviewTimeout: 240,
+			name: "expired request with unknown daemon verdict ends without a resolver", pr: greenCleanPR(), retries: 3,
+			expiredRequest: true, unknownVerdict: true,
+			want: "failed:REVIEW_REQUEST_EXPIRED", wantExpiredEvidence: true, expectOneTrigger: true,
+		},
+		continuityScenario{
+			name: "expired request waits for matching active review run then ends", pr: greenCleanPR(), retries: 3,
+			expiredRequest: true, reviewRunActive: true, reviewDaemonLive: true, reviewRunEndsAfterFirstPoll: true,
+			polls: []func(*continuityGitHub){nil},
+			want:  "failed:REVIEW_REQUEST_EXPIRED", wantExpiredEvidence: true, wantReviewRunObserved: true, requireAwait: true,
+		},
+		continuityScenario{
+			name: "expired request ignores active review run for another trigger revision", pr: greenCleanPR(), retries: 3,
+			expiredRequest: true, reviewRunActive: true, reviewRunOtherTrigger: true, reviewDaemonLive: true,
+			want: "failed:REVIEW_REQUEST_EXPIRED", wantExpiredEvidence: true,
+		},
+		continuityScenario{
+			name: "expired request ignores terminal review run", pr: greenCleanPR(), retries: 3,
+			expiredRequest: true, reviewRunTerminal: true, reviewDaemonLive: true,
+			want: "failed:REVIEW_REQUEST_EXPIRED", wantExpiredEvidence: true, wantReviewRunObserved: true,
+		},
+		continuityScenario{
+			name: "expired request ignores orphan review run after daemon stops", pr: greenCleanPR(), retries: 3,
+			expiredRequest: true, reviewRunActive: true,
+			want: "failed:REVIEW_REQUEST_EXPIRED", wantExpiredEvidence: true, wantReviewRunObserved: true,
+		},
+		continuityScenario{
+			name: "expired request waits for live daemon quota pause then ends", pr: greenCleanPR(), retries: 3,
+			expiredRequest: true, reviewDaemonLive: true, quotaPaused: true, quotaPauseClearsAfterPoll: true,
+			polls: []func(*continuityGitHub){nil},
+			want:  "failed:REVIEW_REQUEST_EXPIRED", wantExpiredEvidence: true, requireAwait: true,
+		},
+		continuityScenario{
+			name: "expired request ignores stale quota pause after daemon stops", pr: greenCleanPR(), retries: 3,
+			expiredRequest: true, quotaPaused: true,
+			want: "failed:REVIEW_REQUEST_EXPIRED", wantExpiredEvidence: true,
+		},
+		continuityScenario{
+			name: "late approval during active review remains accepted until review exits", pr: greenCleanPR(), retries: 3,
+			expiredRequest: true, reviewRunActive: true, reviewDaemonLive: true, reviewRunEndsAfterSecondPoll: true,
+			polls: []func(*continuityGitHub){
+				func(g *continuityGitHub) { g.publish(reports["approved-daemon-30.md"]) },
+				nil,
+			},
+			want: "merged", requireAwait: true, expectOneTrigger: true,
+		},
+		continuityScenario{
+			name: "late approval during quota pause remains accepted until quota recovery", pr: greenCleanPR(), retries: 3,
+			expiredRequest: true, reviewDaemonLive: true, quotaPaused: true, quotaPauseClearsAfterSecondPoll: true,
+			polls: []func(*continuityGitHub){
+				func(g *continuityGitHub) { g.publish(reports["approved-daemon-30.md"]) },
+				nil,
+			},
+			want: "merged", requireAwait: true, expectOneTrigger: true,
+		},
+		continuityScenario{
+			name: "current-head queued CI keeps expired request waiting until it clears", pr: github.PR{StatusCheckRollup: "queued", MergeStateStatus: "CLEAN"}, retries: 3,
+			expiredRequest: true,
+			polls: []func(*continuityGitHub){
+				func(g *continuityGitHub) { g.update(func(pr *github.PR) { pr.StatusCheckRollup = "success" }) },
+			},
+			want: "failed:REVIEW_REQUEST_EXPIRED", wantExpiredEvidence: true, requireAwait: true,
+		},
+		continuityScenario{
+			name: "current-head running CI keeps expired request waiting and accepts late approval", pr: github.PR{StatusCheckRollup: "in_progress", CIHasActiveChecks: true, MergeStateStatus: "CLEAN"}, retries: 3,
+			expiredRequest: true,
+			polls: []func(*continuityGitHub){
+				func(g *continuityGitHub) { g.publish(reports["approved-daemon-30.md"]) },
+				func(g *continuityGitHub) {
+					g.update(func(pr *github.PR) { pr.StatusCheckRollup, pr.CIHasActiveChecks = "success", false })
+				},
+			},
+			want: "merged", requireAwait: true, expectOneTrigger: true,
+		},
+		continuityScenario{
+			name: "actionable feedback during active review relaunches after resolver exits", pr: greenCleanPR(), retries: 3,
+			expiredRequest: true, reviewRunActive: true, reviewDaemonLive: true, reviewRunEndsAfterSecondPoll: true,
+			polls: []func(*continuityGitHub){
+				postContinuityInformalFeedback,
+				nil,
+			},
+			want: "failed:REVIEW_FEEDBACK_STALLED", requireAwait: true, wantFeedbackRelaunch: true,
+		},
+		// Once the request expires without another active resolver, a later
+		// response cannot revive this Run after its terminal observation.
+		continuityScenario{
+			name: "expired request ends before a later unguarded approval", pr: greenCleanPR(), retries: 3, reviewTimeout: 240,
 			expireAfterFirstAwait: true,
 			launches:              []func(*continuityGitHub) string{requestReview, nil, nil},
 			polls: []func(*continuityGitHub){
 				nil,
 				func(g *continuityGitHub) { g.publish(reports["approved-daemon-30.md"]) },
 			},
-			want: "merged", maxLaunches: 4, requireAwait: true, expectOneTrigger: true,
+			want: "failed:REVIEW_REQUEST_EXPIRED", maxLaunches: 1, requireAwait: true, expectOneTrigger: true,
 		},
 		// Without a delegated review command, a pull request blocked on a
 		// human review has nothing resolving it yet. rc2 waited; the Run
@@ -1405,8 +1587,33 @@ func TestAFKContinuityContract_RealIncidentsMergeOrWait(t *testing.T) {
 					t.Fatalf("terminal evidence = %+v, want it to name gate %s\nevents: %s", finished, sc.wantGate, continuityEventSummary(outcome.events))
 				}
 			}
+			if sc.wantExpiredEvidence {
+				var finished *events.Event
+				for _, event := range outcome.current() {
+					if event.Type == "run.finished" && event.Payload["reason"] == reviewRequestExpiredReason {
+						finished = &event
+						break
+					}
+				}
+				if finished == nil ||
+					finished.Payload["external_gate"] != gateReviewTimeout ||
+					finished.Payload["pull_request"] != continuityPR ||
+					finished.Payload["head_sha"] != "head-1" ||
+					finished.Payload["review_run_observed"] != sc.wantReviewRunObserved ||
+					finished.Payload["next_action"] != reviewRequestExpiredNextAction {
+					t.Fatalf("terminal expiry evidence = %+v, want request expiry, review-timeout gate, PR/head, observation flag and next action", finished)
+				}
+				request, ok := finished.Payload["review_request"].(map[string]any)
+				if !ok || request["trigger_id"] == "" || request["deadline_unix_seconds"] == nil {
+					t.Fatalf("terminal expiry request evidence = %v, want trigger and deadline", finished.Payload["review_request"])
+				}
+			}
 			if sc.requireAwait && outcome.count("run.await") == 0 {
 				t.Fatalf("the Run never waited\nevents: %s", continuityEventSummary(outcome.events))
+			}
+			if sc.wantFeedbackRelaunch && outcome.count("run.resumed")+outcome.count("run.continued") == 0 {
+				t.Fatalf("actionable feedback did not relaunch implementation after the resolver cleared (resumed=%d continued=%d)\nevents: %s",
+					outcome.count("run.resumed"), outcome.count("run.continued"), continuityEventSummary(outcome.events))
 			}
 			if sc.githubWait {
 				waited := false
@@ -2157,7 +2364,7 @@ func TestAFKContinuityContract_LifecycleFailureReasonsAreClassified(t *testing.T
 			t.Errorf("%s must wait for external recovery, as rc2 did", reason)
 		}
 	}
-	for _, reason := range []string{"PULL_REQUEST_CLOSED", "REVIEW_REQUEST_REQUIRED", "REMEDIATION_BUDGET_EXHAUSTED", reviewFeedbackStalledReason, "merged-pr-missing-closing-reference", "SOMETHING_NEW"} {
+	for _, reason := range []string{"PULL_REQUEST_CLOSED", "REVIEW_REQUEST_REQUIRED", "REMEDIATION_BUDGET_EXHAUSTED", reviewFeedbackStalledReason, reviewRequestExpiredReason, "merged-pr-missing-closing-reference", "SOMETHING_NEW"} {
 		if lifecycleFailureRecoverable(reason) {
 			t.Errorf("%s must stay terminal", reason)
 		}
@@ -2185,7 +2392,8 @@ var lifecycleReasonAssignmentSources = map[string]bool{
 	"applyContinuity:continuityRow.reason=continuityOutcomeReason(verdict.Evidence, causeStall)": true, // Resume-signature reasons flow from lifecycle evidence.
 	"applyContinuity:continuityRow.reason=continuityOutcomeReason(verdict.Evidence, cause)":      true,
 	"finalOwnedWorkContinuityRow:continuityRow.reason=reason":                                    true,
-	"expiredReviewTerminal:row.reason":                                                           true, // This preserves the selected, classified expiry reason.
+	"expiredReviewTerminal:row.reason":                                                           true, // The expiry row is keyed by its classified timeout reason.
+	"expiredReviewTerminal:reviewRequestExpiredReason":                                           true, // Expiry terminalizes under its dedicated permanent reason.
 	"expiredReviewTerminal:field:row.reason=reviewTimeoutReason":                                 true, // The fallback is the classified timeout reason.
 	"expiredReviewTerminal:continuityRow.reason=stringEvidence(verdict.Evidence, \"reason\")":    true,
 	"githubRecoveryDisposition:continuityRow.reason=githubUnavailableReason":                     true,

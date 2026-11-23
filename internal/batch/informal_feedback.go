@@ -70,7 +70,8 @@ func (c *reviewClassification) informalFeedbackEvidenceFor(request reviewRequest
 				continue
 			}
 			timestamp := stringValue(record, "response_timestamp")
-			if !classificationTimestampInWindow(timestamp, request, windowEnd) {
+			if !classificationTimestampInWindow(timestamp, request, windowEnd) &&
+				!validateLateRequestEvidence(record, source, request, windowEnd, c.TriggerKey) {
 				continue
 			}
 			evidence = append(evidence, informalFeedbackEvidence{

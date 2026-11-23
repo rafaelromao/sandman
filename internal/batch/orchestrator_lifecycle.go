@@ -78,17 +78,18 @@ type mergedMergeFacts struct {
 // whose wait state is still pending. A requested review counts as an ongoing
 // external operation even before the review run starts (issue #2743).
 type implementationPRFacts struct {
-	pr                *github.PR
-	headSHA           string
-	repository        string
-	mergeFacts        *mergedMergeFacts
-	retainedEvidence  retainedReviewEvidence
-	reviewRequested   bool
-	attemptStatus     string
-	afterAgentAttempt bool
-	requireReview     bool
-	blindReview       bool
-	outcomes          continuityTable
+	pr                 *github.PR
+	headSHA            string
+	repository         string
+	mergeFacts         *mergedMergeFacts
+	retainedEvidence   retainedReviewEvidence
+	reviewRequested    bool
+	reviewResolverLive bool
+	attemptStatus      string
+	afterAgentAttempt  bool
+	requireReview      bool
+	blindReview        bool
+	outcomes           continuityTable
 }
 
 // lifecycleDecision is the outcome of decideImplementationPRLifecycle. The
@@ -186,6 +187,12 @@ func decideImplementationPRLifecycle(in implementationPRFacts) lifecycleDecision
 			completionFailure: true,
 		}
 	case lifecycleGateFailed, lifecycleGatePending, lifecycleGateReady:
+		if in.reviewResolverLive && gate != lifecycleGateFailed {
+			return resolvingLifecycleDecision(outcomes,
+				[]continuityRow{{gate: continuityGateReviewRequest, cause: causeResolving}},
+				lifecycleGatePending, in.retainedEvidence,
+				reviewChangesRequestedFor(in.pr), hardFailureFor(in.pr))
+		}
 		decision := decideRecoverableLifecycleWithOutcomes(outcomes, gate, in.pr, in.headSHA, in.repository, in.retainedEvidence, in.reviewRequested, in.attemptStatus, in.afterAgentAttempt)
 		if in.blindReview && !in.retainedEvidence.stateError &&
 			strings.EqualFold(in.pr.HeadRefOid, in.headSHA) && in.headSHA != "" &&
@@ -852,6 +859,11 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 	if s.blindReviewMode() {
 		evidence = blindEvidence
 	}
+	reviewResolution := s.expiredReviewRequestResolution(pr.Number, headSHA, evidence.payload)
+	if reviewResolution.expired {
+		evidence.payload = cloneLifecycleExtras(evidence.payload)
+		evidence.payload["review_run_observed"] = reviewResolution.reviewRunObserved
+	}
 	if afterAgentAttempt && repository != "" && ciRerunAction != nil && pr != nil &&
 		ciRerunAction.matchesPullRequest(pr.Number, repository, headSHA) {
 		evidence.payload = mergeLifecycleDiagnostics(evidence.payload, map[string]any{ciRerunActionKey: ciRerunAction.payload()})
@@ -905,17 +917,18 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 	}
 	s.decisionPRHead = strings.TrimSpace(pr.HeadRefOid)
 	decision = decideImplementationPRLifecycle(implementationPRFacts{
-		pr:                pr,
-		headSHA:           headSHA,
-		repository:        repository,
-		mergeFacts:        mergeFacts,
-		retainedEvidence:  evidence,
-		reviewRequested:   reviewRequested,
-		attemptStatus:     attemptStatus,
-		afterAgentAttempt: afterAgentAttempt,
-		requireReview:     strings.TrimSpace(s.renderCfg.ReviewCommand) != "",
-		blindReview:       s.blindReviewMode(),
-		outcomes:          s.continuityTable(),
+		pr:                 pr,
+		headSHA:            headSHA,
+		repository:         repository,
+		mergeFacts:         mergeFacts,
+		retainedEvidence:   evidence,
+		reviewRequested:    reviewRequested,
+		reviewResolverLive: reviewResolution.reviewResolverLive,
+		attemptStatus:      attemptStatus,
+		afterAgentAttempt:  afterAgentAttempt,
+		requireReview:      strings.TrimSpace(s.renderCfg.ReviewCommand) != "",
+		blindReview:        s.blindReviewMode(),
+		outcomes:           s.continuityTable(),
 	})
 	deferredDeadlineGate := ""
 	deferredDeadlineEvidence := map[string]any(nil)
@@ -936,7 +949,8 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 			deferExpiredOperation := false
 			switch gate {
 			case gateReviewTimeout:
-				deferExpiredOperation = decision.action == lifecycleAwait && ciActive(pr, headSHA)
+				deferExpiredOperation = decision.action == lifecycleAwait &&
+					(ciActive(pr, headSHA) || reviewResolution.reviewResolverLive)
 				if ciDeadline, ok := lifecycleCIWaitDeadline(deadlines); ok && !s.runtimeNow().Before(ciDeadline) {
 					// The CI operation has reached its own bound. Apply its
 					// unchanged timeout row rather than letting review expiry
@@ -978,8 +992,10 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 				if gate == gateReviewTimeout {
 					// Only the terminal outcome is decided here; on a hold,
 					// Observe applies continuity once to the returned resume.
-					if terminal, ended := s.expiredReviewTerminal(deadlineVerdict); ended {
-						return terminal
+					if reviewResolution.expired {
+						if terminal, ended := s.expiredReviewTerminal(deadlineVerdict); ended {
+							return terminal
+						}
 					}
 				}
 				return deadlineVerdict
@@ -1007,6 +1023,16 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 			// cannot look like a wait.
 			if diagnostics := s.retainedReviewDiagnostics(ctx, workDir, branch, pr, headSHA); len(diagnostics) > 0 {
 				failureExtras = mergeLifecycleDiagnostics(failureExtras, diagnostics)
+			}
+			if decision.cause == causeExpired && decision.gate == lifecycleGate(gateReviewTimeout) {
+				if reviewResolution.expired {
+					failureExtras["review_run_observed"] = reviewResolution.reviewRunObserved
+					if terminal, ended := s.expiredReviewTerminal(lifecycleVerdict{
+						Action: lifecycleResume, Evidence: failureExtras,
+					}); ended {
+						return terminal
+					}
+				}
 			}
 			// AFK continuity: the shared outcome table decides whether an
 			// open current-head pull-request failure becomes a continuity hold.

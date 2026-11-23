@@ -145,7 +145,7 @@ func TestInformalApprovalLifecycle_LateCurrentHeadApprovalResumesWithoutNewReque
 	}
 }
 
-func TestInformalApprovalLifecycle_ExpiredDeliveredRequestRemainsTimeoutWithoutApproval(t *testing.T) {
+func TestInformalApprovalLifecycle_ExpiredDeliveredRequestTerminatesWithoutApproval(t *testing.T) {
 	s, client, pr, workDir, now := informalApprovalLifecycleFixture(t, "")
 	markInformalApprovalRequestTimedOut(t, workDir)
 	client.comments = client.comments[:1]
@@ -156,8 +156,8 @@ func TestInformalApprovalLifecycle_ExpiredDeliveredRequestRemainsTimeoutWithoutA
 
 	verdict := s.observeLifecycleForTest(t.Context(), workDir, gateTestBranch, "", "same-run")
 	status, extras, handled := verdict.status(), verdict.Evidence, verdict.handled()
-	if !handled || status != "resume" || extras["gate"] != gateReviewTimeout || extras["reason"] != reviewTimeoutReason {
-		t.Fatalf("expired delivered request = (%s, %v, %t), want recoverable timeout evidence", status, extras, handled)
+	if !handled || status != "failure" || extras["reason"] != reviewRequestExpiredReason {
+		t.Fatalf("expired delivered request = (%s, %v, %t), want terminal request-expiry evidence", status, extras, handled)
 	}
 	if extras["reason"] == "REVIEW_REQUEST_REQUIRED" {
 		t.Fatalf("delivered expired request was conflated with an undelivered request: %v", extras)
@@ -371,7 +371,7 @@ func TestInformalApprovalLifecycle_LateCommentedReviewApprovalResumes(t *testing
 	}
 }
 
-func TestInformalApprovalLifecycle_LateFeedbackDoesNotQualifyAsApproval(t *testing.T) {
+func TestInformalApprovalLifecycle_LateFeedbackIsActionableButNotApproval(t *testing.T) {
 	s, client, pr, workDir, now := informalApprovalLifecycleFixture(t, "Fix the race in worker.go before merging.")
 	markInformalApprovalRequestTimedOut(t, workDir)
 	client.comments[1].CreatedAt = now.Add(31 * time.Minute)
@@ -385,9 +385,9 @@ func TestInformalApprovalLifecycle_LateFeedbackDoesNotQualifyAsApproval(t *testi
 	if err != nil || handoff == nil || handoff.Classification == nil {
 		t.Fatalf("observe late feedback = (%+v, %v), want a valid request-scoped observation", handoff, err)
 	}
-	if handoff.Outcome == retainedReviewApproval || handoff.hasActionableFeedback() ||
-		len(handoff.Classification.informalFeedbackEvidenceFor(handoff.Request, handoff.Classification.WindowEnd)) != 0 {
-		t.Fatalf("late non-approval response changed lifecycle outcome: outcome=%q feedback=%+v", handoff.Outcome, handoff.Classification.informalFeedbackEvidenceFor(handoff.Request, handoff.Classification.WindowEnd))
+	feedback := handoff.Classification.informalFeedbackEvidenceFor(handoff.Request, handoff.Classification.WindowEnd)
+	if handoff.Outcome == retainedReviewApproval || handoff.hasActionableFeedback() || len(feedback) != 1 {
+		t.Fatalf("late non-approval response = outcome %q feedback %+v, want actionable feedback without approval", handoff.Outcome, feedback)
 	}
 }
 
