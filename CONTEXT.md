@@ -54,7 +54,7 @@ executor session. Restart recovery and manual continuation start with fresh allo
 A used-up allowance on work the implementor owns (merge work, CI repair, a
 blind-review round, informal feedback bounded per head) ends the Run with
 `REMEDIATION_BUDGET_EXHAUSTED` naming the gate; merge-conflict repair and the
-expired CI wait keep waiting.
+expired CI wait keep waiting. A qualified CI repair enters the **CI recovery window**.
 Ordinary agent retries and the ten-pass review loop retain their separate bounds.
 _Avoid_: durable repair budget, cumulative remediation exhaustion.
 
@@ -170,8 +170,8 @@ informal review feedback a relaunch left unchanged (`REVIEW_FEEDBACK_STALLED`),
 owned work the implementor cannot resolve (`REMEDIATION_BUDGET_EXHAUSTED`),
 no review request delivered when a review command is configured,
 GitHub unavailable for a whole
-**GitHub recovery window**). Owned work is merge work (ready to merge), CI
-repair, review-request delivery, a blind-review round and informal feedback
+**GitHub recovery window**, or exhausted **CI recovery window**). Owned work is
+merge work (ready to merge), unqualified CI repair, review-request delivery, a blind-review round and informal feedback
 bounded per head: when its relaunch stalls on an unchanged resume signature or
 its relaunch allowance is used up, the Run ends instead of parking. The
 evidence names the gate (`external_gate`), its last reason (`stalled_reason`),
@@ -206,7 +206,7 @@ into a wait without opening a new window. Each recovery supplies its own wait
 and failure verdicts, including that fail-closed wait. The GitHub recovery
 window is its first user.
 _Avoid_: GitHub-only window.
-_See_: GitHub recovery window.
+_See_: GitHub recovery window, CI recovery window.
 
 **GitHub recovery window**:
 The bounded wait (`await_reason: github-unavailable`) a Run enters when a
@@ -224,6 +224,16 @@ recovers, normal lifecycle and bounded retry handling resume; recognized
 provider usage limits remain on quota recovery.
 _Avoid_: lookup failure as a permanent outcome.
 _See_: AFK continuity.
+
+**CI recovery window**:
+A runtime-owned wait (`await_reason: ci-recovery`) for stalled CI repair with a
+confirmed transient rerun receipt matching the current PR head, workflow and
+job. Its hourly attempts skip Actions outages and revalidate the target before
+recording intent and requesting a rerun. Restart retains the 24-hour bound and
+next attempt in `ci_recovery`; manual continuation needs matching lineage
+evidence. A green result, new head or different failure returns to ordinary
+lifecycle selection; unresolved expiry finishes `CI_RECOVERY_EXHAUSTED`.
+_See_: Recovery window, CI wait generation, ADR-0064.
 
 **Publication verdict**:
 The closed-set decision (`approved` or `changes_requested`) a review publication

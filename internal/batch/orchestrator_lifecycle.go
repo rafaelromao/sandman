@@ -285,17 +285,34 @@ func classifiedLifecycleFailureEvidence(gate string, evidence map[string]any, re
 const ciRerunPrerequisiteKey = "ci_rerun_prerequisite"
 
 func ciRerunPrerequisiteFor(pr *github.PR, headSHA, repository string) map[string]any {
+	if pr == nil {
+		return nil
+	}
+	return ciWorkflowPrerequisite(pr, headSHA, repository, github.CIFailedWorkflow{
+		RunID: pr.CIActiveFailedWorkflowRunID, FailedChecks: pr.CIActiveFailedWorkflowRunFailedChecks,
+		CheckNames: pr.CIActiveFailedWorkflowRunCheckNames,
+	})
+}
+
+func ciRecoveryPrerequisiteFor(pr *github.PR, headSHA, repository string) map[string]any {
+	if pr == nil || pr.CIFailedWorkflow == nil {
+		return ciRerunPrerequisiteFor(pr, headSHA, repository)
+	}
+	return ciWorkflowPrerequisite(pr, headSHA, repository, *pr.CIFailedWorkflow)
+}
+
+func ciWorkflowPrerequisite(pr *github.PR, headSHA, repository string, workflow github.CIFailedWorkflow) map[string]any {
 	if pr == nil || pr.Number <= 0 || strings.TrimSpace(headSHA) == "" ||
 		strings.TrimSpace(repository) == "" ||
 		!strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) {
 		return nil
 	}
-	workflowRunID := strings.TrimSpace(pr.CIActiveFailedWorkflowRunID)
-	if workflowRunID == "" || len(pr.CIActiveFailedWorkflowRunFailedChecks) == 0 {
+	workflowRunID := strings.TrimSpace(workflow.RunID)
+	if workflowRunID == "" || len(workflow.FailedChecks) == 0 {
 		return nil
 	}
-	failedChecks := append([]github.CIFailedCheck(nil), pr.CIActiveFailedWorkflowRunFailedChecks...)
-	checkNames := append([]string(nil), pr.CIActiveFailedWorkflowRunCheckNames...)
+	failedChecks := append([]github.CIFailedCheck(nil), workflow.FailedChecks...)
+	checkNames := append([]string(nil), workflow.CheckNames...)
 	if len(checkNames) == 0 {
 		return nil
 	}
@@ -642,7 +659,13 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 		headSHA = ""
 	}
 	var headReconcileErr error
-	pr, err := s.lifecyclePRForBranch(ctx, branch)
+	pr := s.ciRecoveryPR
+	usedRecoverySnapshot := pr != nil
+	s.ciRecoveryPR = nil
+	var err error
+	if pr == nil {
+		pr, err = s.lifecyclePRForBranch(ctx, branch)
+	}
 	knownHead := ""
 	if currentHeadErr == nil && hostPathsReady {
 		knownHead = worktreeHeadSHA
@@ -664,7 +687,7 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 	if err == nil && pr != nil {
 		gate = lifecycleGate(checkPRExternalGateForPR(pr, headSHA, true))
 	}
-	if err == nil && pr != nil && (strings.TrimSpace(pr.CIActiveFailedWorkflowRunID) != "" || (afterAgentAttempt && ciRerunAction != nil)) {
+	if err == nil && pr != nil && (pr.CIFailedWorkflow != nil || strings.TrimSpace(pr.CIActiveFailedWorkflowRunID) != "" || (afterAgentAttempt && ciRerunAction != nil)) {
 		if name, repoErr := s.deps.githubClient.RepoName(ctx); repoErr == nil {
 			repository = strings.TrimSpace(name)
 		}
@@ -712,7 +735,7 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 		reviewRegistrationFailure = registrationErr != nil && !headChanged
 		refreshLivePR := headChanged ||
 			(registrationErr == nil && s.reviewRegistrationObserved)
-		if refreshLivePR {
+		if refreshLivePR && !usedRecoverySnapshot {
 			// Registration may observe comments and persist while the live PR
 			// changes. Refresh after a confirmed head change or successful
 			// observation before allowing the gate to terminalize.
@@ -852,6 +875,9 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 	if s.blindReviewMode() {
 		evidence = blindEvidence
 	}
+	if evidence.payload == nil {
+		evidence.payload = map[string]any{}
+	}
 	if afterAgentAttempt && repository != "" && ciRerunAction != nil && pr != nil &&
 		ciRerunAction.matchesPullRequest(pr.Number, repository, headSHA) {
 		evidence.payload = mergeLifecycleDiagnostics(evidence.payload, map[string]any{ciRerunActionKey: ciRerunAction.payload()})
@@ -860,6 +886,11 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 		pr.CIActiveFailedWorkflowRunID, repository, pr.CIActiveFailedWorkflowRunFailedChecks,
 		pr.CIActiveFailedWorkflowRunCheckNames); ciRerunEvidence != nil {
 		evidence.payload = mergeLifecycleDiagnostics(evidence.payload, ciRerunEvidence)
+	}
+	if strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "failure") {
+		if prerequisite := ciRecoveryPrerequisiteFor(pr, headSHA, repository); prerequisite != nil {
+			evidence.payload[ciRecoveryPrerequisiteKey] = prerequisite
+		}
 	}
 	if reviewRegistrationFailure {
 		// A delivered trigger whose durable identity could not be recorded is

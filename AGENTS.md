@@ -57,6 +57,14 @@ non-success agent attempt without an established current-head CI/review wait doe
 not consume ordinary retries while the lookup/refresh is unavailable; normal
 bounded retry handling resumes after recovery. Recognized usage-limit attempts
 remain on quota recovery.
+Diagnosed CI repair that stalls or exhausts its relaunch allowance enters
+`ci-recovery` only with a matching confirmed transient rerun receipt. The
+runtime attempts hourly for 24 hours, skipping reported Actions outages and
+staying quiet until due. Persist intent before a targeted rerun; reconcile an
+ambiguous result without replay. Restart retains the bound and next attempt;
+`--continue` uses matching continuation-lineage evidence for a fresh window.
+At the bound only read-only observation is allowed; unresolved recovery ends
+`CI_RECOVERY_EXHAUSTED` (ADR-0064).
 Managed merge work requires confirmed current-request/current-head delegated
 approval, including eligible informal approval; a pending request on a CLEAN PR
 stays waiting. Accepted informal approval waits for pending CI and resumes merge
@@ -82,7 +90,7 @@ where rc2 would not have resolved it. An open current-head PR whose only
 missing evidence is review, CI or an unobserved request waits or merges; it
 never terminal-fails for evidence an external operation can still supply.
 Work the implementor owns and cannot resolve does end the Run instead of parking
-it: merge work (ready to merge), CI repair, review-request delivery and
+it: merge work (ready to merge), unqualified CI repair, review-request delivery and
 blind-review rounds finish `REMEDIATION_BUDGET_EXHAUSTED` when a relaunch stalls
 or the relaunch allowance is used up, and informal feedback does so when its
 per-head allowance is used up (its unchanged relaunch ends

@@ -160,6 +160,21 @@ func FindReadyContinuationsAt(eventLog []events.Event, layout paths.Layout, now 
 			}
 			continue
 		}
+		if state.AwaitEvent != nil && !state.IsCapacityQueued() {
+			if ciWait, valid := ciRecoveryAwaitWait(state); valid && ciWait.RecoverableAt(now) {
+				ready = append(ready, ReadyContinuation{
+					IssueNumber:        issue,
+					RunID:              state.RunID,
+					PreviousRunID:      state.RunID,
+					PreviousRunBatchID: ciWait.BatchID,
+					BatchID:            ciWait.BatchID,
+					Branch:             ciWait.Branch,
+					BaseBranch:         ciWait.BaseBranch,
+					Wait:               &ciWait,
+				})
+			}
+			continue
+		}
 		if !state.IsCapacityQueued() || event == nil || !payloadBoolValue(event.Payload, "ready_continuation") {
 			continue
 		}
@@ -203,6 +218,7 @@ func reconcileRecoveryWait(record daemon.RunWait, state events.RunState) (daemon
 	record.Ready, record.UsageLimitProbe = state.IsCapacityQueued(), false
 	record.OperationID, record.OperationDeadline = "capacity", time.Time{}
 	quotaScheduleChanged := false
+	recoveryScheduleChanged := false
 	if record.Ready && state.CapacityQueuedEvent != nil && (previous.InitialAdmission || !previous.Ready) {
 		record.LeaseExpiresAt = state.CapacityQueuedEvent.Timestamp.Add(daemon.RunRecoveryGrace)
 	}
@@ -230,6 +246,11 @@ func reconcileRecoveryWait(record daemon.RunWait, state events.RunState) (daemon
 			// hourly attempt across restart.
 			record.OperationID, record.OperationDeadline = id, deadline
 			record.NextPollAt, _ = githubRecoveryNextAttempt(state.AwaitEvent.Payload)
+			recoveryScheduleChanged = !quotaSchedulesMatch(previous.NextPollAt, record.NextPollAt)
+		} else if id, deadline, ok := ciRecoveryOperation(state.AwaitEvent.Payload); ok {
+			record.OperationID, record.OperationDeadline = id, deadline
+			record.NextPollAt, _ = ciRecoveryNextAttempt(state.AwaitEvent.Payload)
+			recoveryScheduleChanged = !quotaSchedulesMatch(previous.NextPollAt, record.NextPollAt)
 		} else if continuityHoldPayload(state.AwaitEvent.Payload) {
 			// A continuity hold has no operation deadline. It stays
 			// recoverable within the ordinary ownerless grace.
@@ -244,7 +265,7 @@ func reconcileRecoveryWait(record daemon.RunWait, state events.RunState) (daemon
 	if !record.OperationDeadline.IsZero() && record.OperationDeadline.Before(record.LeaseExpiresAt) {
 		record.LeaseExpiresAt = record.OperationDeadline
 	}
-	changed := previous.InitialAdmission || previous.Ready != record.Ready || previous.UsageLimitProbe != record.UsageLimitProbe || previous.OperationID != record.OperationID || !previous.OperationDeadline.Equal(record.OperationDeadline) || quotaScheduleChanged
+	changed := previous.InitialAdmission || previous.Ready != record.Ready || previous.UsageLimitProbe != record.UsageLimitProbe || previous.OperationID != record.OperationID || !previous.OperationDeadline.Equal(record.OperationDeadline) || quotaScheduleChanged || recoveryScheduleChanged
 	if !changed {
 		record.NextPollAt = previous.NextPollAt
 	}
@@ -276,6 +297,43 @@ func quotaAwaitRecoveryWait(state events.RunState, evidence map[string]any) (dae
 		LeaseExpiresAt:  event.Timestamp.Add(daemon.RunRecoveryGrace),
 		NextPollAt:      quotaWaitDueAt(evidence, quotaWaitScheduleStartedAt(event)),
 		RecoveryEventAt: event.Timestamp,
+	}, true
+}
+
+func ciRecoveryAwaitWait(state events.RunState) (daemon.RunWait, bool) {
+	event := state.AwaitEvent
+	if event == nil || event.Timestamp.IsZero() || state.RunID == "" || state.IssueNumber() <= 0 {
+		return daemon.RunWait{}, false
+	}
+	id, deadline, ok := ciRecoveryOperation(event.Payload)
+	if !ok {
+		return daemon.RunWait{}, false
+	}
+	batchID := state.BatchID()
+	branch := state.Branch()
+	baseBranch := strings.TrimSpace(payloadStringValue(event.Payload, "base_branch"))
+	if batchID == "" || branch == "" || baseBranch == "" {
+		return daemon.RunWait{}, false
+	}
+	leaseExpiresAt := event.Timestamp.Add(daemon.RunRecoveryGrace)
+	if deadline.Before(leaseExpiresAt) {
+		leaseExpiresAt = deadline
+	}
+	nextPollAt, _ := ciRecoveryNextAttempt(event.Payload)
+	return daemon.RunWait{
+		Protocol:          "run-wait/v1",
+		RunID:             state.RunID,
+		BatchID:           batchID,
+		Issue:             state.IssueNumber(),
+		Branch:            branch,
+		BaseBranch:        baseBranch,
+		AdmissionMode:     int(ModeContinue),
+		ReuseSession:      true,
+		OperationID:       id,
+		OperationDeadline: deadline,
+		LeaseExpiresAt:    leaseExpiresAt,
+		NextPollAt:        nextPollAt,
+		RecoveryEventAt:   event.Timestamp,
 	}, true
 }
 

@@ -51,6 +51,7 @@ const (
 	continuityGateReviewRequest = "review-request"
 	continuityGateQuota         = "usage-limit"
 	continuityGateCapacity      = "capacity"
+	continuityGateCIRecovery    = ciRecoveryGate
 )
 
 // continuityRow keys one outcome by gate, reason and cause. An empty gate or
@@ -89,6 +90,7 @@ var continuityOutcomes = continuityTable{
 	// disposition: current-head CI, a confirmed in-deadline review request,
 	// the GitHub recovery window, quota admission and the batch scheduler.
 	{gate: continuityGateCurrentHeadCI, cause: causeResolving}:                            outcomeWait,
+	{gate: continuityGateCIRecovery, cause: causeResolving}:                               outcomeWait,
 	{gate: continuityGateReviewRequest, cause: causeResolving}:                            outcomeWait,
 	{gate: gateGitHubUnavailable, reason: githubUnavailableReason, cause: causeResolving}: outcomeWait,
 	{gate: continuityGateQuota, reason: "AGENT_USAGE_LIMIT", cause: causeResolving}:       outcomeWait,
@@ -105,6 +107,8 @@ var continuityOutcomes = continuityTable{
 	{reason: blindReviewRequiredReason, cause: causeFailure}:             outcomeHold,     // relaunched through its gate rows, never failed directly; its stall and exhaustion end the Run (#3001)
 	{reason: "merged-pr-missing-closing-reference", cause: causeFailure}: outcomeTerminal, // merged without verifiable completion
 	{reason: "CI_WAIT_STATE_ERROR", cause: causeFailure}:                 outcomeTerminal, // corrupt CI wait state
+	{reason: ciRecoveryExhaustedReason, cause: causeFailure}:             outcomeTerminal, // the diagnosed CI recovery window expired
+	{reason: ciRecoveryStateUnavailableReason, cause: causeFailure}:      outcomeHold,     // recovery evidence cannot be read or validated
 	{reason: stateErrorReason, cause: causeFailure}:                      outcomeTerminal, // corrupt review state, nothing resolving
 	{reason: lookupGateReason, cause: causeFailure}:                      outcomeTerminal, // GitHub stayed unavailable for 24 hours
 	{reason: githubUnavailableReason, cause: causeFailure}:               outcomeHold,     // waits for GitHub to recover

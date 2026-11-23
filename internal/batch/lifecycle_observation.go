@@ -5,20 +5,23 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/rafaelromao/sandman/internal/github"
 )
 
 // lifecycleObservationRequest describes one runtime observation of an
 // implementation pull request.
 type lifecycleObservationRequest struct {
-	WorkDir           string
-	Branch            string
-	RunID             string
-	HostPathsReady    bool
-	AttemptStatus     string
-	AfterAgentAttempt bool
-	UsageLimitReached bool
-	CIRerunAction     *ciRerunActionEvidence
-	OrdinaryRetry     *ordinaryRetryState
+	WorkDir            string
+	Branch             string
+	RunID              string
+	HostPathsReady     bool
+	AttemptStatus      string
+	AfterAgentAttempt  bool
+	UsageLimitReached  bool
+	CIRerunAction      *ciRerunActionEvidence
+	OrdinaryRetry      *ordinaryRetryState
+	CIRecoveryRequired bool
 }
 
 // lifecycleVerdict is the selected lifecycle action and the evidence used to
@@ -55,7 +58,8 @@ type lifecycleObservation interface {
 
 type lifecycleObserver struct {
 	*runSession
-	outcomes continuityTable
+	outcomes     continuityTable
+	ciRecoveryPR *github.PR
 }
 
 func newLifecycleObserver(session *runSession) *lifecycleObserver {
@@ -63,6 +67,18 @@ func newLifecycleObserver(session *runSession) *lifecycleObserver {
 }
 
 func (o *lifecycleObserver) Observe(ctx context.Context, request lifecycleObservationRequest) lifecycleVerdict {
+	if ctx.Err() != nil {
+		return lifecycleVerdict{Action: lifecycleAborted}
+	}
+	ciRecovery, ciBase, ciRecovering, ciUnknown := o.ciRecoveryWindow(request.RunID)
+	if ciUnknown && (request.CIRecoveryRequired || ciBase != nil) {
+		return o.ciRecoveryUnavailable(request.Branch)
+	}
+	if ciRecovering {
+		if verdict, handled := o.observeCIRecovery(ctx, request, &ciRecovery, ciBase); handled {
+			return verdict
+		}
+	}
 	if request.OrdinaryRetry == nil {
 		// Capacity admission observes the still-unconsumed retry handoff before
 		// a new executor starts. Restore it here so an admission lookup outage
@@ -103,6 +119,12 @@ func (o *lifecycleObserver) Observe(ctx context.Context, request lifecycleObserv
 	}
 	if !verdict.handled() || ctx.Err() != nil {
 		return verdict
+	}
+	if !ciRecovering && !ciUnknown && !request.AfterAgentAttempt && verdict.ciRepairRequired &&
+		verdict.Action == lifecycleResume {
+		if wait, ok := o.beginCIRerunRecovery(request.Branch, request.RunID, verdict.Evidence, true); ok {
+			return wait
+		}
 	}
 	verdict.ImplementorWork = isImplementorOwnedGateFailure(verdict.Evidence)
 	return o.applyContinuity(request.Branch, request.RunID, verdict)
@@ -153,11 +175,15 @@ func ordinaryRetryAfterGitHubRecovery(state ordinaryRetryState, branch string) l
 // override as every other observed action.
 func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifecycleObservationRequest, result AgentRunResult, initial lifecycleVerdict) lifecycleVerdict {
 	verdict := initial
+	if stringEvidence(initial.Evidence, "gate") == ciRecoveryGate {
+		request.CIRecoveryRequired = true
+	}
 	plan := o.lifecyclePollIntervals(verdict.Evidence)
 	freshlyObserved := false
 	for index := 0; ; index++ {
 		_, githubWait := githubRecoveryNextAttempt(verdict.Evidence)
-		if deadline, gate, ok := lifecycleDeadline(verdict.Evidence); ok && !githubWait && !o.runtimeNow().Before(deadline) {
+		_, ciRecoveryWait := ciRecoveryNextAttempt(verdict.Evidence)
+		if deadline, gate, ok := lifecycleDeadline(verdict.Evidence); ok && !githubWait && !ciRecoveryWait && !o.runtimeNow().Before(deadline) {
 			if (gate == gateReviewTimeout || gate == gateCIWaitTimeout) && o.deps.githubClient != nil {
 				// Operation expiry cannot override another live resolver.
 				// Reobserve at the foreground boundary, then continue under
@@ -223,6 +249,8 @@ func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifec
 		if next, ok := githubRecoveryNextAttempt(verdict.Evidence); ok {
 			// Sleep until the next hourly recovery attempt.
 			interval = max(next.Sub(o.runtimeNow()), 0)
+		} else if next, ok := ciRecoveryNextAttempt(verdict.Evidence); ok {
+			interval = max(next.Sub(o.runtimeNow()), 0)
 		}
 		if err := o.waitForLifecyclePoll(ctx, interval); err != nil {
 			if errors.Is(err, errLifecycleObservationTestStop) {
@@ -231,6 +259,7 @@ func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifec
 			}
 			return lifecycleVerdict{Action: lifecycleAborted}
 		}
+		previousEvidence := verdict.Evidence
 		verdict = o.Observe(ctx, request)
 		freshlyObserved = true
 		if !verdict.handled() {
@@ -243,7 +272,11 @@ func (o *lifecycleObserver) waitForTransition(ctx context.Context, request lifec
 			verdict = failureForUnhandledObservation(verdict)
 		}
 		if verdict.Action == lifecycleAwait {
-			o.emitAwait(ctx, request.RunID, result, verdict.Evidence)
+			request.CIRecoveryRequired = stringEvidence(verdict.Evidence, "gate") == ciRecoveryGate
+			if stringEvidence(verdict.Evidence, "reason") != ciRecoveryStateUnavailableReason &&
+				(!ciRecoveryWait || awaitOperationChanged(previousEvidence, verdict.Evidence)) {
+				o.emitAwait(ctx, request.RunID, result, verdict.Evidence)
+			}
 			continue
 		}
 		return verdict
@@ -363,6 +396,9 @@ func (o *lifecycleObserver) applyContinuity(branch, runID string, verdict lifecy
 			reason: continuityOutcomeReason(verdict.Evidence, causeStall),
 			cause:  causeStall,
 		}
+		if recovery, started := o.beginCIRerunRecoveryIfQualified(branch, runID, verdict, row); started {
+			return recovery
+		}
 		switch outcomes.outcome(row) {
 		case outcomeHold:
 			verdict.Action = lifecycleAwait
@@ -401,6 +437,9 @@ func (o *lifecycleObserver) applyContinuity(branch, runID string, verdict lifecy
 		gate:   gate,
 		reason: continuityOutcomeReason(verdict.Evidence, cause),
 		cause:  cause,
+	}
+	if recovery, started := o.beginCIRerunRecoveryIfQualified(branch, runID, verdict, row); started {
+		return recovery
 	}
 	switch outcomes.outcome(row) {
 	case outcomeTerminal:

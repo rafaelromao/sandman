@@ -48,6 +48,49 @@ func TestCIRerunEvidenceRejectsUnknownAndNonTransientDiagnoses(t *testing.T) {
 	}
 }
 
+func TestCIRerunRecoveryRequiresConfirmedMatchingReceipt(t *testing.T) {
+	prerequisite := map[string]any{
+		"pull_request":         17,
+		"repository":           "owner/repo",
+		"head_sha":             "current-sha",
+		"workflow_run_id":      "101",
+		"failed_checks":        []any{map[string]any{"name": "opencode-canary", "details_url": "https://github.com/owner/repo/actions/runs/101/job/11"}, map[string]any{"name": "quality-gate", "details_url": "https://github.com/owner/repo/actions/runs/101/job/12"}},
+		"workflow_check_names": []string{"opencode-canary", "quality-gate"},
+	}
+	valid := ciRerunEvidenceForDiagnosis("confirmed", "transient-provider-timeout")
+	if !valid.confirmsRecoveryFor(prerequisite) {
+		t.Fatal("matching confirmed transient rerun should qualify for runtime recovery")
+	}
+
+	for name, mutate := range map[string]func(*ciRerunActionEvidence){
+		"waiting is not confirmation": func(e *ciRerunActionEvidence) {
+			*e = ciRerunEvidenceForDiagnosis("waiting", "transient-provider-timeout")
+		},
+		"uncertain state": func(e *ciRerunActionEvidence) { e.State = "uncertain" },
+		"refused state":   func(e *ciRerunActionEvidence) { e.State = "refused" },
+		"wrong run":       func(e *ciRerunActionEvidence) { e.RunID = "102" },
+		"wrong head":      func(e *ciRerunActionEvidence) { e.SourceHeadSHA = "old-head" },
+		"non-transient":   func(e *ciRerunActionEvidence) { e.Diagnosis = "deterministic-source-failure" },
+		"wrong job":       func(e *ciRerunActionEvidence) { e.JobName = "build-linux" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			evidence := valid
+			mutate(&evidence)
+			if evidence.confirmsRecoveryFor(prerequisite) {
+				t.Fatalf("receipt incorrectly qualified: %+v", evidence)
+			}
+		})
+	}
+
+	extraFailure := cloneLifecycleExtras(prerequisite)
+	extraFailure["failed_checks"] = append(extraFailure["failed_checks"].([]any), map[string]any{
+		"name": "unrelated-check", "details_url": "https://github.com/owner/repo/actions/runs/101/job/13",
+	})
+	if valid.confirmsRecoveryFor(extraFailure) {
+		t.Fatal("receipt qualified despite an independent failed check")
+	}
+}
+
 // feedCompletedHelperInvocation writes one completed helper tool invocation in
 // the structured stream format of Claude Code (claudeStream) or OpenCode.
 func feedCompletedHelperInvocation(t *testing.T, claudeStream bool, parser outputParser, command, output string) {

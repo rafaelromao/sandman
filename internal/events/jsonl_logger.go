@@ -31,6 +31,16 @@ type jsonlLoggerHooks struct {
 }
 
 func (l *JSONLLogger) Log(event Event) error {
+	return l.append(event, false)
+}
+
+// LogDurable syncs an event before returning, for write-ahead records that
+// fence external mutations.
+func (l *JSONLLogger) LogDurable(event Event) error {
+	return l.append(event, true)
+}
+
+func (l *JSONLLogger) append(event Event, durable bool) error {
 	data, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("marshal event: %w", err)
@@ -44,6 +54,9 @@ func (l *JSONLLogger) Log(event Event) error {
 		}
 		if _, err := f.Write(data); err != nil {
 			return fmt.Errorf("write event: %w", err)
+		}
+		if durable {
+			return f.Sync()
 		}
 		return nil
 	})

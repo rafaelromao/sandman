@@ -48,7 +48,8 @@ queued → running ⇄ waiting → success / failure / aborted
 | Blind round leaves head and evidence unchanged, or its relaunch allowance is exhausted | Finish **failure** (`REMEDIATION_BUDGET_EXHAUSTED`) naming the `blind-review-required` gate, with a next action of `sandman run --continue`; never treat the missing publication as an expired delegated request |
 | Blind reviewer cannot be spawned | Fail closed with `REVIEW_SUBAGENT_UNAVAILABLE`; never self-approve or post a delegated trigger |
 | Next action ready, capacity occupied | Stay **waiting**, reason capacity |
-| CI failure | Resume bounded repair; when the relaunch allowance is used up, or a relaunch leaves the same failing check execution unchanged, finish **failure** (`REMEDIATION_BUDGET_EXHAUSTED`) naming the `ci-failure` gate |
+| CI failure | Resume bounded repair; on stall or exhaustion, enter `ci-recovery` only with a matching confirmed transient rerun receipt, otherwise finish **failure** (`REMEDIATION_BUDGET_EXHAUSTED`) naming `ci-failure` |
+| Diagnosed CI recovery reaches its bound without conclusive changed evidence | Finish **failure** (`CI_RECOVERY_EXHAUSTED`) with retained `ci_recovery` evidence |
 | Merge conflict | Resume bounded repair; when the relaunch allowance leaves the head unchanged, stay **waiting** for external recovery (rc2 behaviour) |
 | Missing PR, or an undelivered review request when a review command is configured | Perform bounded owned-work remediation (`run.retry` reason `lifecycle-owned-work`), then failure; never invent external waiting |
 | Review request delivered by an attempt that exited non-success | Register it and stay **waiting**; spend no ordinary retry |
@@ -91,6 +92,25 @@ duration, abort fencing, or event-sourced lifecycle decisions.
 
 ## AFK continuity
 
+### Diagnosed CI recovery
+
+A qualified CI repair stall releases execution capacity into `ci-recovery`.
+The runtime stays quiet until its next hourly attempt. Reported Actions outages
+skip the attempt; healthy or unreachable status allows live PR and job
+revalidation. Sandman records mutation intent before rerunning the failed job
+and confirms the replacement job and dependent quality gate by read-back.
+Ambiguous intent is reconciled, never blindly replayed.
+
+Green CI, a new head or a different failure returns to ordinary lifecycle
+selection. After 24 hours, including skipped hours, at most one read-only
+PR/check observation can establish progress; no status check or rerun may
+start at the bound. Restart restores the deadline and due time. Manual
+`--continue` can attempt immediately in a fresh window using a matching
+confirmed receipt from its continuation lineage. Abort prevents further work.
+See [ADR-0064](../adr/0064-bound-runtime-ci-recovery.md).
+
+### Continuity outcomes
+
 After v1.0.0-rc.2 a started Run may stop only for a permanent failure it
 cannot handle, or wait for external recovery, and only where rc2 would not
 have resolved it. If rc2 would have merged or kept waiting, the Run must not
@@ -113,7 +133,8 @@ allowance (`REMEDIATION_BUDGET_EXHAUSTED`), no review request delivered at all
 when a review command is configured (`REVIEW_REQUEST_REQUIRED`), corrupt review state
 with nothing
 resolving, GitHub unavailable for a full
-24-hour recovery window (`GATE_LOOKUP_FAILED`), and agent authentication,
+24-hour recovery window (`GATE_LOOKUP_FAILED`), exhausted diagnosed CI recovery
+(`CI_RECOVERY_EXHAUSTED`), and agent authentication,
 usage-limit or operator stops. With no configured review command, a missing
 blind publication is owned work selected as `BLIND_REVIEW_REQUIRED`, not a
 terminal or external-review failure. Every lifecycle failure
@@ -151,7 +172,7 @@ never stalled feedback: they keep their stall row and their per-head
 allowance.
 
 The other work the implementor owns ends the Run in the same way when it cannot
-be resolved (#3001). Merge work (`ready-to-merge`), CI repair (`ci-failure`),
+be resolved (#3001). Merge work (`ready-to-merge`), unqualified CI repair (`ci-failure`),
 review-request delivery (`implementor-work-required` /
 `REVIEW_REQUEST_REQUIRED`) and a blind-review round (`blind-review-required`)
 finish `failure` with `REMEDIATION_BUDGET_EXHAUSTED` when a relaunch stalls on an

@@ -52,6 +52,11 @@ type PR struct {
 	// identify exactly one workflow run containing both a failed job and an
 	// active sibling. It is empty for unrelated, missing, or ambiguous links.
 	CIActiveFailedWorkflowRunID string
+	// CIFailedWorkflow identifies the sole failed workflow, even after all
+	// its checks have completed. It is not evidence of an active rerun.
+	CIFailedWorkflow *CIFailedWorkflow
+	// CIMultipleFailedWorkflows is positive evidence of independent failures.
+	CIMultipleFailedWorkflows bool
 	// CIActiveFailedWorkflowRunFailedCheckNames preserves the failed check names
 	// from that identified run so a recovery receipt for one job cannot defer
 	// independent failures in the same workflow.
@@ -213,6 +218,25 @@ type PRReviewLister interface {
 // inline review history without widening the core Client interface.
 type PRReviewCommentLister interface {
 	ListPRReviewComments(ctx context.Context, number int) ([]PRReviewComment, error)
+}
+
+// CIWorkflowJob is a job in the latest attempt of a GitHub Actions workflow
+// run. Database IDs are used by the rerun endpoint; browser URLs are not.
+type CIWorkflowJob struct {
+	ID         int64  `json:"id"`
+	RunID      int64  `json:"run_id"`
+	RunAttempt int    `json:"run_attempt"`
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	Conclusion string `json:"conclusion"`
+}
+
+// CIRerunClient is an optional capability for observing and rerunning one
+// current-attempt Actions job. It is intentionally separate from Client so
+// clients without this mutation surface remain valid and fail closed.
+type CIRerunClient interface {
+	ListWorkflowJobs(ctx context.Context, runID string) ([]CIWorkflowJob, error)
+	RerunWorkflowJob(ctx context.Context, jobID int64) error
 }
 
 // IssueComment holds an issue conversation comment fetched from the GitHub

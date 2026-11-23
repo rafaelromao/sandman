@@ -83,7 +83,12 @@ Run the helper exactly as shown in a Sandman-managed run. In a standalone sessio
 
 Use `transient-network-timeout` only for a verified network timeout. Use `transient-provider-quota` only for an explicit hosted-provider usage-limit or quota error in the failed job's log (for example, a message that a free usage limit was reached); that failure is external and transient even though it is not a timeout. Judge the log, not the job's name or a guess: any other failure of a job that merely calls a provider stays deterministic and is never rerun. A usage limit may still be in effect when the rerun starts, so rerun once per failed execution and do not invoke the helper again for the same failure. The helper performs at most one mutation attempt and checks GitHub read-back. A `confirmed` result means a new attempt was observed; `waiting` means the workflow/recovery is already active and should be left to runtime observation in a managed run; `uncertain` or `refused` is not permission to submit again. Resolve ambiguous evidence by re-reading live GitHub state before any further action. Never invent credentials or permissions, rerun a source failure, dispatch a replacement workflow, or weaken a required check.
 
-Only after the failure is diagnosed and the corrective action has actually completed may you yield to runtime observation. A saved blocker or a promise to repair is not a corrective action.
+In a managed run, if your confirmed transient rerun still fails on the same
+job and you have no remaining corrective work, checkpoint the diagnosis and
+rerun result, then return. Sandman decides whether the stalled repair qualifies
+for hourly runtime recovery. Leave further reruns and polling to Sandman.
+Continue to own a different failure or a changed head. A saved blocker or a
+promise to repair is not a corrective action.
 
 ### 1. Setup branch
 

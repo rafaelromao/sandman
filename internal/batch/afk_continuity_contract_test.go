@@ -2101,6 +2101,93 @@ func TestAFKContinuityContract_StallSurvivesGitHubOutageAndRestart(t *testing.T)
 	}
 }
 
+// A confirmed helper rerun that still fails remains implementation-owned work
+// until its unchanged repair stalls. That qualified stall enters the bounded
+// runtime recovery window; a later hourly rerun that turns green returns to
+// ordinary lifecycle selection so review-request delivery can continue.
+func TestAFKContinuityContract_StalledConfirmedCIRerunResumesAfterRuntimeRecovery(t *testing.T) {
+	now := time.Date(2026, time.November, 23, 12, 0, 0, 0, time.UTC)
+	status := &scopedProbeStatus{report: github.StatusReport{Indicator: "none"}}
+	pr := &github.PR{
+		Number: 17, State: "open", HeadRefOid: "head", StatusCheckRollup: "failure",
+		ReviewDecision: "REVIEW_REQUIRED", MergeStateStatus: "BLOCKED",
+		CIExecutionID: "checks-rerun",
+		CIFailedWorkflow: &github.CIFailedWorkflow{
+			RunID: "101",
+			FailedChecks: []github.CIFailedCheck{
+				{Name: "opencode-canary", DetailsURL: "https://github.com/owner/repo/actions/runs/101/job/11"},
+				{Name: "quality-gate", DetailsURL: "https://github.com/owner/repo/actions/runs/101/job/12"},
+			},
+			CheckNames: []string{"opencode-canary", "quality-gate"},
+		},
+	}
+	client := &ciRecoveryFakeClient{
+		fakeGitHubClient: &fakeGitHubClient{prs: map[string]*github.PR{"42-work": pr}},
+		jobs: []github.CIWorkflowJob{
+			{RunID: 101, RunAttempt: 2, ID: 21, Name: "opencode-canary", Status: "completed", Conclusion: "failure"},
+			{RunID: 101, RunAttempt: 2, ID: 22, Name: "quality-gate", Status: "completed", Conclusion: "failure"},
+		},
+		rerunJobs: []github.CIWorkflowJob{
+			{RunID: 101, RunAttempt: 3, ID: 31, Name: "opencode-canary", Status: "in_progress"},
+			{RunID: 101, RunAttempt: 3, ID: 32, Name: "quality-gate", Status: "queued"},
+		},
+	}
+	log := &spyEventLog{}
+	e, row := ciRecoveryFixture(t, now, client, log, status)
+	row.RenderCfg = prompt.RenderConfig{ReviewCommand: continuityTrigger, ReviewCommandSet: true}
+
+	action := ciRerunEvidenceForDiagnosis("confirmed", "transient-provider-timeout")
+	action.SourceHeadSHA, action.TestedSHA, action.RunID, action.JobName = "head", "tested", "101", "opencode-canary"
+	failedCI := map[string]any{
+		"gate": "ci-failure", "reason": "CI_FAILURE", "branch": "42-work",
+		"head_sha": "head", "ci_execution_id": "checks-rerun",
+	}
+	signature := resumeSignature(failedCI, "head")
+	log.events = []events.Event{
+		{Type: "run.started", RunID: row.RunID, Issue: 42, Timestamp: now.Add(-2 * time.Hour),
+			Payload: map[string]any{"branch": "42-work", "batch_id": "batch", "base_branch": "main"}},
+		{Type: "run.resumed", RunID: row.RunID, Issue: 42, Timestamp: now.Add(-time.Hour),
+			Payload: map[string]any{"branch": "42-work", ciRerunActionKey: action.payload()}},
+		{Type: "run.await", RunID: row.RunID, Issue: 42, Timestamp: now.Add(-time.Minute),
+			Payload: map[string]any{
+				"await": true, "await_reason": "ci-failure", "gate": "ci-failure",
+				"reason": "CI_FAILURE", "branch": "42-work", "head_sha": "head",
+				"ci_execution_id": "checks-rerun", stalledResumesKey: []any{signature},
+			}},
+	}
+	client.eventLog = log
+	stalled := e.observeAwaitingRowLifecycle(t.Context(), row)
+	if stalled.Action != lifecycleAwait || stringEvidence(stalled.Evidence, "gate") != ciRecoveryGate {
+		t.Fatalf("confirmed rerun stall = %s/%v, want qualified CI recovery wait", stalled.status(), stalled.Evidence)
+	}
+	if err := e.persistObservedAwait(context.Background(), row, stalled.Evidence); err != nil {
+		t.Fatal(err)
+	}
+
+	now = now.Add(time.Hour)
+	e.deps.runSessionOpts.now = func() time.Time { return now }
+	recovered := e.observeAwaitingRowLifecycle(context.Background(), row)
+	state, valid := ciRecoveryFromEvidence(recovered.Evidence)
+	if recovered.Action != lifecycleAwait || !valid || state.LastRerunOutcome != "confirmed" ||
+		state.Window.StatusChecks != 1 || len(client.rerunCalls) != 1 {
+		t.Fatalf("hourly runtime rerun = %s/%v reruns=%v, want one confirmed recovery attempt", recovered.status(), recovered.Evidence, client.rerunCalls)
+	}
+	if err := e.persistObservedAwait(context.Background(), row, recovered.Evidence); err != nil {
+		t.Fatal(err)
+	}
+
+	now = now.Add(time.Hour)
+	pr.StatusCheckRollup = "success"
+	e.deps.runSessionOpts.now = func() time.Time { return now }
+	next := e.observeAwaitingRowLifecycle(context.Background(), row)
+	if next.Action != lifecycleResume || stringEvidence(next.Evidence, "reason") != "REVIEW_REQUEST_REQUIRED" {
+		t.Fatalf("green recovery did not resume review-request delivery: %s/%v", next.status(), next.Evidence)
+	}
+	if len(client.rerunCalls) != 1 {
+		t.Fatalf("green head caused another runtime rerun: %v", client.rerunCalls)
+	}
+}
+
 // Every lifecycle failure reason the batch package can emit is classified as
 // permanent or recoverable for the AFK-continuity guard. A new terminal reason
 // must be classified before it can end a Run whose pull request is open.
@@ -2195,6 +2282,8 @@ var lifecycleReasonAssignmentSources = map[string]bool{
 	"stalledAwaitExtras:resumeStalledReason":                                                     true,
 	"githubRecoveryAwait:githubUnavailableReason":                                                true,
 	"recordGitHubLookupFailure:githubUnavailableReason":                                          true,
+	"ciRecoveryFailure:continuityRow.reason=ciRecoveryExhaustedReason":                           true,
+	"ciRecoveryUnavailable:continuityRow.reason=ciRecoveryStateUnavailableReason":                true,
 }
 
 func lifecycleReasonAssignmentClassified(expression string) bool {
