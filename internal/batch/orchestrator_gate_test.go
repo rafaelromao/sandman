@@ -1674,16 +1674,15 @@ func TestExternalGate_CanonicalRegistrationRejectsDifferentTriggerEvidence(t *te
 	}
 	observedLifecycle1555 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
 	status, extras, handled := observedLifecycle1555.status(), observedLifecycle1555.Evidence, observedLifecycle1555.handled()
-	// Issue #2743: rejected evidence authorizes nothing, and the failed
-	// gate has no other active resolver, so the run fails instead of
-	// waiting — while still carrying the valid diagnostic as evidence.
-	if !handled || status != "resume" {
-		t.Fatalf("different-trigger evidence = (%q, %#v, %t), want bounded timeout recovery", status, extras, handled)
+	// Rejected evidence authorizes nothing; with no active resolver the
+	// expired request ends instead of entering a continuity hold.
+	if !handled || status != "failure" {
+		t.Fatalf("different-trigger evidence = (%q, %#v, %t), want terminal expiry", status, extras, handled)
 	}
-	if extras["reason"] != reviewTimeoutReason {
-		t.Fatalf("different-trigger reason = %v, want timeout rather than feedback", extras["reason"])
+	if extras["reason"] != reviewRequestExpiredReason {
+		t.Fatalf("different-trigger reason = %v, want request expiry rather than feedback", extras["reason"])
 	}
-	if extras["gate"] != gateReviewTimeout {
+	if extras["external_gate"] != gateReviewTimeout {
 		t.Fatalf("different-trigger evidence authorized feedback/merge: %#v", extras)
 	}
 	diagnostic, ok := extras["review_diagnostic"].(map[string]any)
@@ -1712,15 +1711,15 @@ func TestExternalGate_CanonicalRegistrationRejectsEvidenceAfterTrustedDeadline(t
 	}
 	observedLifecycle1592 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
 	status, extras, handled := observedLifecycle1592.status(), observedLifecycle1592.Evidence, observedLifecycle1592.handled()
-	// Issue #2743: post-deadline feedback authorizes nothing, and the failed
-	// gate has no other active resolver, so the run fails instead of waiting.
-	if !handled || status != "resume" {
-		t.Fatalf("post-deadline feedback = (%q, %#v, %t), want bounded timeout recovery", status, extras, handled)
+	// Post-deadline feedback authorizes nothing; with no active resolver the
+	// expired request ends instead of entering a continuity hold.
+	if !handled || status != "failure" {
+		t.Fatalf("post-deadline feedback = (%q, %#v, %t), want terminal expiry", status, extras, handled)
 	}
-	if extras["reason"] != reviewTimeoutReason {
-		t.Fatalf("post-deadline reason = %v, want timeout rather than feedback", extras["reason"])
+	if extras["reason"] != reviewRequestExpiredReason {
+		t.Fatalf("post-deadline reason = %v, want request expiry rather than feedback", extras["reason"])
 	}
-	if extras["gate"] != gateReviewTimeout {
+	if extras["external_gate"] != gateReviewTimeout {
 		t.Fatalf("post-deadline evidence authorized feedback: %#v", extras)
 	}
 }
@@ -3349,8 +3348,8 @@ func TestExternalGate_LateApprovalRejectsMissingClassification(t *testing.T) {
 	}
 	observedLifecycle3218 := session.observeLifecycleAtHeadForTest(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
 	status, extras, handled := observedLifecycle3218.status(), observedLifecycle3218.Evidence, observedLifecycle3218.handled()
-	if !handled || status != "resume" || extras["gate"] != gateReviewTimeout {
-		t.Fatalf("missing classification result = (%q, %#v, %t), want bounded timeout recovery without approval", status, extras, handled)
+	if !handled || status != "failure" || extras["reason"] != reviewRequestExpiredReason {
+		t.Fatalf("missing classification result = (%q, %#v, %t), want terminal expiry without trusting the unclassified approval", status, extras, handled)
 	}
 }
 

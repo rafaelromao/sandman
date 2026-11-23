@@ -33,7 +33,7 @@ func (s *runSession) observeCurrentReviewEvidence(ctx context.Context, request r
 		}
 		return windowEnd.IsZero() || at.Before(windowEnd)
 	}
-	lateApprovalWindow := func(at time.Time) bool {
+	lateResponseWindow := func(at time.Time) bool {
 		if at.IsZero() || !at.After(deadline) || at.After(now) {
 			return false
 		}
@@ -57,13 +57,17 @@ func (s *runSession) observeCurrentReviewEvidence(ctx context.Context, request r
 			// invalidating the whole classification with a stale top-level source.
 			continue
 		}
-		lateApproval := !withinWindow(comment.CreatedAt) && lateApprovalWindow(comment.CreatedAt) && reviewDecisionApprovedBody(comment.Body)
-		if !withinWindow(comment.CreatedAt) && !lateApproval {
+		lateResponse := !withinWindow(comment.CreatedAt) && lateResponseWindow(comment.CreatedAt)
+		if !withinWindow(comment.CreatedAt) && !lateResponse {
 			continue
 		}
 		source := reviewObservationSource(comment.ID, "top_level", "", comment.Body, comment.CreatedAt, "", request.HeadSHA)
-		if lateApproval {
+		if lateResponse {
 			source["late_request_evidence"] = true
+			windowEndText, _ := reviewObservationTimestamp(nextTrigger).(string)
+			if !validateLateRequestEvidence(source, "top_level", request, windowEndText, triggerKey) {
+				continue
+			}
 		}
 		topLevel = append(topLevel, source)
 	}
@@ -80,7 +84,7 @@ func (s *runSession) observeCurrentReviewEvidence(ctx context.Context, request r
 			if strings.TrimSpace(review.ID) == "" {
 				continue
 			}
-			lateReview := !withinWindow(review.CreatedAt) && lateApprovalWindow(review.CreatedAt) && lateReviewObservationEvidence(review, request.HeadSHA)
+			lateReview := !withinWindow(review.CreatedAt) && lateResponseWindow(review.CreatedAt) && lateReviewObservationEvidence(review, request.HeadSHA)
 			if !withinWindow(review.CreatedAt) && !lateReview {
 				continue
 			}
@@ -101,8 +105,17 @@ func (s *runSession) observeCurrentReviewEvidence(ctx context.Context, request r
 			return nil, listErr
 		}
 		for _, comment := range inline {
-			if strings.TrimSpace(comment.ID) != "" && withinWindow(comment.CreatedAt) {
-				inlineComments = append(inlineComments, reviewObservationSource(comment.ID, "inline_comment", "", comment.Body, comment.CreatedAt, comment.CommitID, request.HeadSHA))
+			if strings.TrimSpace(comment.ID) == "" {
+				continue
+			}
+			lateComment := !withinWindow(comment.CreatedAt) && lateResponseWindow(comment.CreatedAt) &&
+				strings.EqualFold(strings.TrimSpace(comment.CommitID), strings.TrimSpace(request.HeadSHA))
+			if withinWindow(comment.CreatedAt) || lateComment {
+				source := reviewObservationSource(comment.ID, "inline_comment", "", comment.Body, comment.CreatedAt, comment.CommitID, request.HeadSHA)
+				if lateComment {
+					source["late_request_evidence"] = true
+				}
+				inlineComments = append(inlineComments, source)
 			}
 		}
 	}
@@ -226,13 +239,21 @@ func lateReviewApproval(review github.PRReview, expectedHead string) bool {
 }
 
 func lateReviewObservationEvidence(review github.PRReview, expectedHead string) bool {
-	if strings.EqualFold(strings.TrimSpace(review.State), "CHANGES_REQUESTED") {
+	switch strings.ToUpper(strings.TrimSpace(review.State)) {
+	case "CHANGES_REQUESTED":
 		// Formal requested changes remain blocking even when they arrive after
 		// the observation deadline. They are retained as response evidence, not
 		// treated as an approval.
 		return true
+	case "APPROVED":
+		return lateReviewApproval(review, expectedHead)
+	case "COMMENTED":
+		commitID := strings.TrimSpace(review.CommitID)
+		return strings.TrimSpace(review.Body) != "" &&
+			(commitID == "" || strings.EqualFold(commitID, strings.TrimSpace(expectedHead)))
+	default:
+		return false
 	}
-	return lateReviewApproval(review, expectedHead)
 }
 
 func reviewObservationSource(id, source, state, body string, at time.Time, commitID, head string) map[string]any {
