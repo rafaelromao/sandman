@@ -77,8 +77,14 @@ func Marker(verdict Verdict) string {
 }
 
 // Published reports whether body ends with a daemon publication identity.
+//
+// It is deliberately strict: unlike PublishedVerdict it does not tolerate a
+// host-appended footer block. The delegated-review gates that call it
+// (request-scoped response classification, the review timeout evidence and
+// informal feedback) keep their evidence rules byte-for-byte; only blind
+// review reads publications through the tolerant predicates.
 func Published(body string) bool {
-	_, ok := PublishedVerdict(body)
+	_, ok := publishedVerdict(body)
 	return ok
 }
 
@@ -97,19 +103,59 @@ func Answers(body, triggerKey, head string) bool {
 // PublishedVerdict returns the verdict of a daemon publication: its verdict
 // marker when present, otherwise its closed-set Decision token. ok is false
 // for a body that is not a daemon publication.
+//
+// A host-appended footer block (TrimHostSuffix) is not part of the
+// publication: the verdict is read from what precedes it, so a managed sandbox
+// that rewrites published comments does not turn an approval into an unknown
+// verdict. The footer can never supply a trailer or identity of its own, and a
+// host-rewritten publication is trusted only through its stamped trailer: the
+// marker must sit directly before the identity line, with nothing between the
+// trailer, the identity line and the block. Without the trailer the verdict is
+// Unknown; the Decision-token fallback below is for bodies exactly as the
+// daemon wrote them.
+//
+// Only the publication helper, which holds the intended body, can tell that the
+// text before the trailer is unmodified. These predicates judge the shape.
 func PublishedVerdict(body string) (Verdict, bool) {
+	trimmed, hostFooter := TrimHostSuffix(body)
+	if hostFooter {
+		return trailerVerdict(trimmed)
+	}
+	return publishedVerdict(body)
+}
+
+// PublishedVerdictExact is PublishedVerdict without host-footer tolerance: the
+// verdict of a publication exactly as stored. The delegated-review gates read
+// daemon publications through it, so a footer a host appended to a daemon
+// report neither turns it into a published verdict nor into an approval
+// override; the delegated evidence rules do not change with this tolerance.
+func PublishedVerdictExact(body string) (Verdict, bool) {
+	return publishedVerdict(body)
+}
+
+// publishedVerdict is PublishedVerdict without host-footer tolerance.
+func publishedVerdict(body string) (Verdict, bool) {
+	verdict, published := trailerVerdict(body)
+	if !published || verdict != Unknown {
+		return verdict, published
+	}
+	return DecisionVerdict(StripMarkers(body)), true
+}
+
+// trailerVerdict reads only the daemon's trailer: the marker line directly
+// before the final identity line. A marker anywhere else is quoted or forged
+// text. A publication without the trailer has the Unknown verdict.
+func trailerVerdict(body string) (Verdict, bool) {
 	lines := nonEmptyLines(body)
 	if len(lines) == 0 || !identityLine.MatchString(lines[len(lines)-1]) {
 		return Unknown, false
 	}
-	// Only the daemon's trailer is trusted: the marker line directly before
-	// the identity line. A marker anywhere else is quoted or forged text.
 	if len(lines) >= 2 {
 		if match := verdictLine.FindStringSubmatch(lines[len(lines)-2]); match != nil {
 			return Verdict(match[1]), true
 		}
 	}
-	return DecisionVerdict(StripMarkers(body)), true
+	return Unknown, true
 }
 
 func nonEmptyLines(body string) []string {

@@ -453,6 +453,17 @@ Credential-free skill contracts cover both delivery forms, native delegation
 without an agent CLI/service, and refusal when fresh isolated delegation is
 unavailable. Legacy transport fixtures alone do not establish harness portability.
 
+The `internal/reviewpub` host tests run the shipped prompt and publication helpers
+against a credential-free fake `gh` that models a managed sandbox: one that blocks
+every GraphQL-backed call (REST only) and one that appends a separator and a known
+footer line to each published comment, alone and combined. They pin the REST
+fallback (selected by a lazy probe, never by host name), the single-post rule, the
+one tolerated host footer block against a table of rejected mutations (a Go and
+helper parity check keeps the two footer lists identical), and that the delegated
+review gates keep reading daemon publications strictly. The approving-report
+corpus is re-asserted with and without the footer. Run helper changes through
+`shellcheck --severity=warning`, as `make workflow-check` does for every `.sh`.
+
 
 ## Cleanup after interrupted tests
 

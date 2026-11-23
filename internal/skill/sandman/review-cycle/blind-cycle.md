@@ -36,6 +36,16 @@ pull request, never from managed lifecycle files.
    - **Unavailable, refused or uncertain:** preserve the exact diagnostic and
      next executable action; fail closed. An uncertain publication requires
      live read-back before another post, never a replacement post.
+
+   A managed sandbox host may append a separator line and a known footer line
+   to every comment it publishes. A report followed by exactly one recognised
+   host footer block is still the confirmed report, and the footer is not one
+   of its findings; every other alteration of the published body stays
+   uncertain. When GraphQL-backed calls are unavailable in such a sandbox, the
+   round's helpers already use REST equivalents, and the cycle's own reads
+   (live head, required checks, mergeability, formal reviews and the published
+   report) use the REST equivalents of the same calls once a probe shows that
+   GraphQL itself is unavailable, never merely because one call failed.
 6. Repeat through ten passes per head. With unresolved feedback at the
    unchanged head after ten passes, record `REVIEW_PASSES_EXHAUSTED`, the head,
    report identity, remaining blockers and next executable action. Leave
