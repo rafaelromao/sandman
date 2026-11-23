@@ -514,8 +514,8 @@ func TestEntryReevaluation_ModeContinueTopLevelApprovalResumesAgentWithEvidence(
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "await" {
-		t.Fatalf("status = %q, want an rc2 wait after ready-gate resume budget is exhausted", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want a terminal failure after the ready-gate resume budget is exhausted", result.Status)
 	}
 	if got := len(resultFactory.created); got != 2 {
 		t.Fatalf("agent launches = %d, want 2 (entry resume + in-session resume)", got)
@@ -549,15 +549,14 @@ func TestEntryReevaluation_ModeContinueTopLevelApprovalResumesAgentWithEvidence(
 	if !ok || request["outcome"] != "approved" || request["review_decision_approval"] == nil {
 		t.Fatalf("run.resumed omitted current-head top-level approval evidence: %#v", resumedEvt.Payload)
 	}
-	if got := countEventsByType(logs, "run.await"); got != 1 {
-		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
-	}
+	requireExhaustedFinish(t, logs, gateReadyToMerge)
 }
 
 // In-session resume: after the agent completes cleanly and the gate is
 // ready-to-merge, the run relaunches the agent in the same attempt (no
 // run.retry) with the merge evidence attached, bounded by the resume cap;
-// if the agent leaves merge work incomplete, the run waits as rc2 did.
+// if the agent leaves merge work incomplete, the run ends with
+// REMEDIATION_BUDGET_EXHAUSTED naming the gate (#3001).
 func TestRunSingle_ReadyToMergeResumesWithinSameAttempt(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
@@ -605,8 +604,8 @@ func TestRunSingle_ReadyToMergeResumesWithinSameAttempt(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "await" {
-		t.Fatalf("status = %q, want an rc2 wait after ready-gate resume budget is exhausted", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want a terminal failure after the ready-gate resume budget is exhausted", result.Status)
 	}
 	if got := len(resultFactory.created); got != 2 {
 		t.Fatalf("agent launches = %d, want 2 (initial + one resumed relaunch)", got)
@@ -634,9 +633,7 @@ func TestRunSingle_ReadyToMergeResumesWithinSameAttempt(t *testing.T) {
 	if resumedEvt == nil || resumedEvt.Payload["reason"] != "approval" {
 		t.Fatalf("run.resumed reason = %v, want approval", resumedEvt.Payload["reason"])
 	}
-	if got := countEventsByType(logs, "run.await"); got != 1 {
-		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
-	}
+	requireExhaustedFinish(t, logs, gateReadyToMerge)
 }
 
 // Non-foreground execution yields on active current-head CI. The batch
@@ -952,8 +949,8 @@ func TestRunSingle_CIFailurePrecedesActionableEvidenceAndExhaustsBudget(t *testi
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "await" {
-		t.Fatalf("status = %q, want an rc2 wait after CI remediation budget is exhausted", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want a terminal failure after CI remediation budget is exhausted", result.Status)
 	}
 	if got := len(resultFactory.created); got != 2 {
 		t.Fatalf("agent launches = %d, want entry launch plus remediation resume", got)
@@ -965,13 +962,7 @@ func TestRunSingle_CIFailurePrecedesActionableEvidenceAndExhaustsBudget(t *testi
 	if got := countEventsByType(logs, "run.resumed"); got != 1 {
 		t.Fatalf("run.resumed events = %d, want 1 remediation relaunch", got)
 	}
-	if got := countEventsByType(logs, "run.await"); got != 1 {
-		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
-	}
-	waiting := lastEvent(logs, "run.await")
-	if waiting == nil || waiting.Payload["reason"] != resumeStalledReason || findEvent(logs, "run.finished") != nil {
-		t.Fatalf("await event = %#v, want the stalled rc2 wait instead of a remediation-budget failure", waiting)
-	}
+	requireExhaustedFinish(t, logs, "ci-failure")
 }
 
 // Retained concrete informal feedback resumes a continuation session at entry

@@ -102,14 +102,14 @@ var continuityOutcomes = continuityTable{
 	{reason: missingPRReason, cause: causeFailure}:                       outcomeTerminal, // the implementor never published
 	{reason: "REVIEW_REQUEST_REQUIRED", cause: causeFailure}:             outcomeTerminal, // no review request was delivered
 	{reason: actionableFeedbackReason, cause: causeFailure}:              outcomeTerminal, // formal requested changes remain blocking
-	{reason: blindReviewRequiredReason, cause: causeFailure}:             outcomeHold,     // owned blind review; exhaustion holds
+	{reason: blindReviewRequiredReason, cause: causeFailure}:             outcomeHold,     // relaunched through its gate rows, never failed directly; its stall and exhaustion end the Run (#3001)
 	{reason: "merged-pr-missing-closing-reference", cause: causeFailure}: outcomeTerminal, // merged without verifiable completion
 	{reason: "CI_WAIT_STATE_ERROR", cause: causeFailure}:                 outcomeTerminal, // corrupt CI wait state
 	{reason: stateErrorReason, cause: causeFailure}:                      outcomeTerminal, // corrupt review state, nothing resolving
 	{reason: lookupGateReason, cause: causeFailure}:                      outcomeTerminal, // GitHub stayed unavailable for 24 hours
 	{reason: githubUnavailableReason, cause: causeFailure}:               outcomeHold,     // waits for GitHub to recover
 	{reason: implementorActionRequiredReason, cause: causeFailure}:       outcomeTerminal, // legacy verification fallback
-	{reason: "REMEDIATION_BUDGET_EXHAUSTED", cause: causeFailure}:        outcomeTerminal, // genuine requested changes left unrepaired (formal, daemon verdict or approval override)
+	{reason: "REMEDIATION_BUDGET_EXHAUSTED", cause: causeFailure}:        outcomeTerminal, // requested changes left unrepaired (formal, daemon verdict, approval override) and owned work that stalls or uses up its allowance: merge, CI repair, request delivery, blind round, informal feedback (#3001)
 	{reason: reviewFeedbackStalledReason, cause: causeFailure}:           outcomeTerminal, // informal review feedback an unchanged relaunch could not act on
 	{reason: idleGateReason, cause: causeFailure}:                        outcomeHold,     // nothing resolving yet; waits like rc2
 	{reason: reviewTimeoutReason, cause: causeFailure}:                   outcomeHold,     // expired request; agrees with the expired row
@@ -125,32 +125,36 @@ var continuityOutcomes = continuityTable{
 	{gate: gateActionableFeedback, reason: informalFeedbackReason, cause: causeStall}:     outcomeTerminal, // REVIEW_FEEDBACK_STALLED (#2999)
 	{gate: gateActionableFeedback, reason: actionableFeedbackReason, cause: causeStall}:   outcomeHold,
 	{gate: gateCIWaitTimeout, reason: "CI_WAIT_STATE_ERROR", cause: causeStall}:           outcomeHold,
-	{gate: gateBlindReviewRequired, reason: blindReviewRequiredReason, cause: causeStall}: outcomeHold,
-	{gate: gateReadyToMerge, cause: causeStall}:                                           outcomeHold,
-	{gate: "ci-failure", reason: "CI_FAILURE", cause: causeStall}:                         outcomeHold,
+	{gate: gateBlindReviewRequired, reason: blindReviewRequiredReason, cause: causeStall}: outcomeTerminal, // a blind round an unchanged relaunch could not finish (#3001)
+	{gate: gateReadyToMerge, cause: causeStall}:                                           outcomeTerminal, // merge work an unchanged relaunch could not finish (#3001)
+	{gate: "ci-failure", reason: "CI_FAILURE", cause: causeStall}:                         outcomeTerminal, // CI repair an unchanged relaunch could not finish (#3001)
 	{gate: "merge-conflict", reason: "MERGE_CONFLICT", cause: causeStall}:                 outcomeHold,
 	{gate: gateCIWaitTimeout, reason: "CI_WAIT_TIMEOUT", cause: causeStall}:               outcomeHold,
 	{gate: gateReviewTimeout, reason: reviewTimeoutReason, cause: causeStall}:             outcomeHold,
 	{gate: gatePRHeadChanged, reason: "PR_HEAD_RECONCILE_REQUIRED", cause: causeStall}:    outcomeHold,
 	{gate: gateOwnedWorkRequired, reason: idleGateReason, cause: causeStall}:              outcomeHold,
-	{gate: gateOwnedWorkRequired, reason: "REVIEW_REQUEST_REQUIRED", cause: causeStall}:   outcomeHold,
+	{gate: gateOwnedWorkRequired, reason: "REVIEW_REQUEST_REQUIRED", cause: causeStall}:   outcomeTerminal, // request delivery an unchanged relaunch could not finish (#3001)
 	{gate: gateOwnedWorkRequired, reason: missingPRReason, cause: causeStall}:             outcomeHold,
 	{cause: causeStall}: outcomeHold,
 
 	// A used-up relaunch allowance. Genuine requested changes (formal
 	// CHANGES_REQUESTED, the review daemon's changes_requested verdict, or a
 	// daemon approval its own verdict sections contradict) and unusable CI wait
-	// state end the Run on any gate. Owned work ends
-	// through its final ordinary attempt, except the idle gate whose only
-	// missing evidence is a review nobody requested.
+	// state end the Run on any gate. So does owned work the implementor could
+	// not resolve (#3001): merge work, CI repair, a blind-review round and
+	// informal feedback bounded per head end as REMEDIATION_BUDGET_EXHAUSTED
+	// naming the gate. Owned work otherwise ends through its final ordinary
+	// attempt, except the idle gate whose only missing evidence is a review
+	// nobody requested, and merge-conflict repair and the expired CI wait, which
+	// keep waiting.
 	{reason: actionableFeedbackReason, cause: causeExhausted}:                                     outcomeTerminal,
 	{reason: "CI_WAIT_STATE_ERROR", cause: causeExhausted}:                                        outcomeTerminal,
 	{gate: gateOwnedWorkRequired, reason: actionableFeedbackReason, cause: causeExhausted}:        outcomeTerminal,
-	{gate: gateActionableFeedback, reason: informalFeedbackReason, cause: causeExhausted}:         outcomeHold,
-	{gate: gateReadyToMerge, cause: causeExhausted}:                                               outcomeHold,
-	{gate: "ci-failure", reason: "CI_FAILURE", cause: causeExhausted}:                             outcomeHold,
+	{gate: gateActionableFeedback, reason: informalFeedbackReason, cause: causeExhausted}:         outcomeTerminal, // informal feedback that used up its per-head allowance (#3001)
+	{gate: gateReadyToMerge, cause: causeExhausted}:                                               outcomeTerminal, // merge work that used up its allowance (#3001)
+	{gate: "ci-failure", reason: "CI_FAILURE", cause: causeExhausted}:                             outcomeTerminal, // CI repair that used up its allowance (#3001)
 	{gate: "merge-conflict", reason: "MERGE_CONFLICT", cause: causeExhausted}:                     outcomeHold,
-	{gate: gateBlindReviewRequired, reason: blindReviewRequiredReason, cause: causeExhausted}:     outcomeHold,
+	{gate: gateBlindReviewRequired, reason: blindReviewRequiredReason, cause: causeExhausted}:     outcomeTerminal, // a blind round that used up its allowance (#3001)
 	{gate: gateCIWaitTimeout, reason: "CI_WAIT_TIMEOUT", cause: causeExhausted}:                   outcomeHold,
 	{gate: gateReviewTimeout, reason: reviewTimeoutReason, cause: causeExhausted}:                 outcomeHold,
 	{gate: gatePRHeadChanged, reason: "PR_HEAD_RECONCILE_REQUIRED", cause: causeExhausted}:        outcomeHold,

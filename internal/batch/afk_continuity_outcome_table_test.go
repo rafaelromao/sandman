@@ -92,15 +92,15 @@ func continuityContractRows() []continuityContractRow {
 		{continuityRow{gate: gateActionableFeedback, reason: informalFeedbackReason, cause: causeStall}, outcomeTerminal, relaunchProbe(causeStall, relaunch(gateActionableFeedback, informalFeedbackReason), false)},
 		{continuityRow{gate: gateActionableFeedback, reason: actionableFeedbackReason, cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch(gateActionableFeedback, actionableFeedbackReason), false)},
 		{continuityRow{gate: gateCIWaitTimeout, reason: "CI_WAIT_STATE_ERROR", cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch(gateCIWaitTimeout, "CI_WAIT_STATE_ERROR"), false)},
-		{continuityRow{gate: gateBlindReviewRequired, reason: blindReviewRequiredReason, cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch(gateBlindReviewRequired, blindReviewRequiredReason), false)},
-		{continuityRow{gate: gateReadyToMerge, cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch(gateReadyToMerge, "REVIEW_APPROVED"), false)},
-		{continuityRow{gate: "ci-failure", reason: "CI_FAILURE", cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch("ci-failure", "CI_FAILURE"), false)},
+		{continuityRow{gate: gateBlindReviewRequired, reason: blindReviewRequiredReason, cause: causeStall}, outcomeTerminal, relaunchProbe(causeStall, relaunch(gateBlindReviewRequired, blindReviewRequiredReason), false)},
+		{continuityRow{gate: gateReadyToMerge, cause: causeStall}, outcomeTerminal, relaunchProbe(causeStall, relaunch(gateReadyToMerge, "REVIEW_APPROVED"), false)},
+		{continuityRow{gate: "ci-failure", reason: "CI_FAILURE", cause: causeStall}, outcomeTerminal, relaunchProbe(causeStall, relaunch("ci-failure", "CI_FAILURE"), false)},
 		{continuityRow{gate: "merge-conflict", reason: "MERGE_CONFLICT", cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch("merge-conflict", "MERGE_CONFLICT"), false)},
 		{continuityRow{gate: gateCIWaitTimeout, reason: "CI_WAIT_TIMEOUT", cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch(gateCIWaitTimeout, "CI_WAIT_TIMEOUT"), false)},
 		{continuityRow{gate: gateReviewTimeout, reason: reviewTimeoutReason, cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch(gateReviewTimeout, reviewTimeoutReason), false)},
 		{continuityRow{gate: gatePRHeadChanged, reason: "PR_HEAD_RECONCILE_REQUIRED", cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch(gatePRHeadChanged, "PR_HEAD_RECONCILE_REQUIRED"), false)},
 		{continuityRow{gate: owned, reason: idleGateReason, cause: causeStall}, outcomeHold, relaunchProbe(causeStall, ownedWork(owned, idleGateReason, ""), true)},
-		{continuityRow{gate: owned, reason: "REVIEW_REQUEST_REQUIRED", cause: causeStall}, outcomeHold, relaunchProbe(causeStall, ownedWork(gateReviewRequestRequired, "REVIEW_REQUEST_REQUIRED", ""), true)},
+		{continuityRow{gate: owned, reason: "REVIEW_REQUEST_REQUIRED", cause: causeStall}, outcomeTerminal, relaunchProbe(causeStall, ownedWork(gateReviewRequestRequired, "REVIEW_REQUEST_REQUIRED", ""), true)},
 		{continuityRow{gate: owned, reason: missingPRReason, cause: causeStall}, outcomeHold, relaunchProbe(causeStall, ownedWork(owned, missingPRReason, ""), true)},
 		{continuityRow{cause: causeStall}, outcomeHold, relaunchProbe(causeStall, other, false)},
 
@@ -108,14 +108,14 @@ func continuityContractRows() []continuityContractRow {
 		// ordinary attempt).
 		{continuityRow{reason: actionableFeedbackReason, cause: causeExhausted}, outcomeTerminal, relaunchProbe(causeExhausted, relaunch(gateActionableFeedback, actionableFeedbackReason), false)},
 		{continuityRow{reason: "CI_WAIT_STATE_ERROR", cause: causeExhausted}, outcomeTerminal, relaunchProbe(causeExhausted, relaunch(gateCIWaitTimeout, "CI_WAIT_STATE_ERROR"), false)},
-		// Still a hold until #3001 flips it. The hold records its signature, so its
-		// next observation ends REVIEW_FEEDBACK_STALLED (#2999); that transitional
-		// consequence is pinned by TestAFKContinuityContract_ExhaustedInformalHoldEndsOnReobservation.
-		{continuityRow{gate: gateActionableFeedback, reason: informalFeedbackReason, cause: causeExhausted}, outcomeHold, relaunchProbe(causeExhausted, relaunch(gateActionableFeedback, informalFeedbackReason), false)},
-		{continuityRow{gate: gateReadyToMerge, cause: causeExhausted}, outcomeHold, relaunchProbe(causeExhausted, relaunch(gateReadyToMerge, "REVIEW_APPROVED"), false)},
-		{continuityRow{gate: "ci-failure", reason: "CI_FAILURE", cause: causeExhausted}, outcomeHold, relaunchProbe(causeExhausted, relaunch("ci-failure", "CI_FAILURE"), false)},
+		// #3001: informal feedback that used up its per-head allowance ends the
+		// Run. A hold an earlier binary parked on it ends REVIEW_FEEDBACK_STALLED
+		// on its next observation (TestAFKContinuityContract_ParkedUsedUpInformalHoldEndsOnReobservation).
+		{continuityRow{gate: gateActionableFeedback, reason: informalFeedbackReason, cause: causeExhausted}, outcomeTerminal, relaunchProbe(causeExhausted, relaunch(gateActionableFeedback, informalFeedbackReason), false)},
+		{continuityRow{gate: gateReadyToMerge, cause: causeExhausted}, outcomeTerminal, relaunchProbe(causeExhausted, relaunch(gateReadyToMerge, "REVIEW_APPROVED"), false)},
+		{continuityRow{gate: "ci-failure", reason: "CI_FAILURE", cause: causeExhausted}, outcomeTerminal, relaunchProbe(causeExhausted, relaunch("ci-failure", "CI_FAILURE"), false)},
 		{continuityRow{gate: "merge-conflict", reason: "MERGE_CONFLICT", cause: causeExhausted}, outcomeHold, relaunchProbe(causeExhausted, relaunch("merge-conflict", "MERGE_CONFLICT"), false)},
-		{continuityRow{gate: gateBlindReviewRequired, reason: blindReviewRequiredReason, cause: causeExhausted}, outcomeHold, relaunchProbe(causeExhausted, relaunch(gateBlindReviewRequired, blindReviewRequiredReason), false)},
+		{continuityRow{gate: gateBlindReviewRequired, reason: blindReviewRequiredReason, cause: causeExhausted}, outcomeTerminal, relaunchProbe(causeExhausted, relaunch(gateBlindReviewRequired, blindReviewRequiredReason), false)},
 		{continuityRow{gate: gateCIWaitTimeout, reason: "CI_WAIT_TIMEOUT", cause: causeExhausted}, outcomeHold, relaunchProbe(causeExhausted, relaunch(gateCIWaitTimeout, "CI_WAIT_TIMEOUT"), false)},
 		{continuityRow{gate: gateReviewTimeout, reason: reviewTimeoutReason, cause: causeExhausted}, outcomeHold, relaunchProbe(causeExhausted, relaunch(gateReviewTimeout, reviewTimeoutReason), false)},
 		{continuityRow{gate: gatePRHeadChanged, reason: "PR_HEAD_RECONCILE_REQUIRED", cause: causeExhausted}, outcomeHold, relaunchProbe(causeExhausted, relaunch(gatePRHeadChanged, "PR_HEAD_RECONCILE_REQUIRED"), false)},
@@ -366,13 +366,10 @@ func TestContinuityTerminalOwnedStallDoesNotRelaunch(t *testing.T) {
 			}},
 		}}},
 	}
-	table := cloneContinuityTable(continuityOutcomes)
-	row := continuityRow{gate: gateOwnedWorkRequired, reason: "REVIEW_REQUEST_REQUIRED", cause: causeStall}
-	table[row] = outcomeTerminal
 	eventsSeen := []string{}
 	executor := &continuityStallRowDriverExecutor{
 		rowDriverExecutorFake: &rowDriverExecutorFake{events: &eventsSeen},
-		observer:              &lifecycleObserver{runSession: session, outcomes: table},
+		observer:              &lifecycleObserver{runSession: session},
 		branch:                continuityBranch,
 		runID:                 "run-probe",
 		verdict: lifecycleVerdict{
@@ -389,9 +386,7 @@ func TestContinuityTerminalOwnedStallDoesNotRelaunch(t *testing.T) {
 	if verdict.Action != lifecycleFailure {
 		t.Fatalf("persisted request-delivery stall with retries left = %s, want terminal failure", verdict.status())
 	}
-	if verdict.Evidence["await"] != nil || verdict.Evidence["gate"] != nil {
-		t.Fatalf("terminal stalled request-delivery verdict carries wait markers: %v", verdict.Evidence)
-	}
+	requireOwnedWorkExhausted(t, verdict, gateOwnedWorkRequired, "REVIEW_REQUEST_REQUIRED", signature)
 	if executor.executeCalls != 0 || outcome.Result.Status != "failure" || !reflect.DeepEqual(eventsSeen, []string{"finish"}) {
 		t.Fatalf("persisted request-delivery stall relaunched: execute calls=%d result=%+v events=%v", executor.executeCalls, outcome.Result, eventsSeen)
 	}

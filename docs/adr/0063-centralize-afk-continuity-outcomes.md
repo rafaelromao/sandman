@@ -45,31 +45,51 @@ change can flip only its assigned row.
 | #2998 | `actionable-feedback` / `REVIEW_CHANGES_REQUESTED` / allowance used for a contradicted daemon approval | Terminal after the configured round is exhausted | Treat the approval as requested changes and keep terminal after the bound |
 | #2999 | `actionable-feedback` / `REVIEW_INFORMAL_FEEDBACK` / stall | Hold before #2999; terminal since it landed | Terminal (`REVIEW_FEEDBACK_STALLED`, classified permanent as a failure reason) |
 | #3000 | `review-timeout` / `REVIEW_TIMEOUT` / expired operation with no active resolver | Hold | Terminal (`REVIEW_REQUEST_EXPIRED`) |
-| #3001 | `ready-to-merge` / any merge reason / stall or allowance used | Hold | Terminal with the exhausted-work reason |
-| #3001 | `ci-failure` / `CI_FAILURE` / stall or allowance used | Hold | Terminal with the exhausted-work reason |
-| #3001 | `implementor-work-required` / `REVIEW_REQUEST_REQUIRED` / stall | Hold | Terminal with the exhausted-work reason |
-| #3001 | `blind-review-required` / `BLIND_REVIEW_REQUIRED` / stall or allowance used | Hold | Terminal with the exhausted-work reason |
-| #3001 | `actionable-feedback` / `REVIEW_INFORMAL_FEEDBACK` / allowance used | Hold (until #3001, the hold ends `REVIEW_FEEDBACK_STALLED` on its next observation; see below) | Terminal with the exhausted-work reason |
+| #3001 | `ready-to-merge` / any merge reason / stall or allowance used | Hold before #3001; terminal since it landed | Terminal (`REMEDIATION_BUDGET_EXHAUSTED`) |
+| #3001 | `ci-failure` / `CI_FAILURE` / stall or allowance used | Hold before #3001; terminal since it landed | Terminal (`REMEDIATION_BUDGET_EXHAUSTED`) |
+| #3001 | `implementor-work-required` / `REVIEW_REQUEST_REQUIRED` / stall | Hold before #3001; terminal since it landed | Terminal (`REMEDIATION_BUDGET_EXHAUSTED`) |
+| #3001 | `blind-review-required` / `BLIND_REVIEW_REQUIRED` / stall or allowance used | Hold before #3001; terminal since it landed | Terminal (`REMEDIATION_BUDGET_EXHAUSTED`) |
+| #3001 | `actionable-feedback` / `REVIEW_INFORMAL_FEEDBACK` / allowance used | Hold before #3001 (the parked hold ends `REVIEW_FEEDBACK_STALLED` on its next observation; see below); terminal since it landed | Terminal (`REMEDIATION_BUDGET_EXHAUSTED`) |
 
 The #2999 row ends a Run whose informal-feedback relaunch left the head, the
 review request and its responses unchanged. Its terminal evidence carries the
 retained feedback (source, locator, body), the stalled resume signature
 (`stalled_resume`) and the next action `sandman run --continue`. A Run an earlier
 binary parked on that hold ends with the same reason on its next observation,
-because its recorded stalled signatures prove the stall. The #3001 row for used-up
-informal-feedback allowance keeps its hold, but that hold records its signature
-like any stalled wait, and a recorded signature cannot be told apart from one an
-earlier binary wrote. Until #3001 flips that row, the hold therefore ends with
+because its recorded stalled signatures prove the stall. The #3001 row for
+used-up informal-feedback allowance now ends the Run itself with
+`REMEDIATION_BUDGET_EXHAUSTED`; a hold an earlier binary wrote for that allowance
+carries its signature like any stalled wait, and a recorded signature cannot be
+told apart from one for a stalled relaunch, so such a parked hold ends with
 `REVIEW_FEEDBACK_STALLED` on its next observation. Genuine requested changes
 carried as informal feedback (a daemon `changes_requested` verdict, an approval
 override) are keyed as `REVIEW_CHANGES_REQUESTED` for the stall decision, so they
 keep their row and their per-head allowance.
 
+The #3001 rows end the Run with `REMEDIATION_BUDGET_EXHAUSTED`, rendered by the
+one builder of stopped-relaunch evidence. The evidence names the gate
+(`external_gate`), the gate's last reason (`stalled_reason`), the used-up resume
+signature (`stalled_resume`, which names the CI execution where there is one) and
+the retained pull request, head, `ci_wait`, `review_request` and blind
+publication, with a next action that ends in `sandman run --continue`. A Run an
+earlier binary parked in one of these holds ends on its next observation without
+a relaunch: every earlier hold writer recorded the resume signature, and
+`containsSignature` runs before the allowance check. A hold recorded after a
+transient stalled-ledger read failure records its signature too, so unchanged
+evidence on one of these gates ends the Run on the next observation once the
+ledger is readable. Exhausted review-request delivery (the final ordinary
+owned-work attempt) was already terminal as `REVIEW_REQUEST_REQUIRED` and is
+unchanged: ADR-0063 owns only its stall row. The `BLIND_REVIEW_REQUIRED` failure
+reason stays a classification only, because the lifecycle relaunches blind rounds
+and never fails with that reason; its stall and exhaustion end the Run through
+the gate rows above.
+
 These changes do not alter waits for resolving operations or the unrelated
 current holds: in-deadline CI and review, active review execution, the
 GitHub-recovery window before its bound, provider quota, capacity, expired CI
-wait (`CI_WAIT_TIMEOUT`), and the idle gate when no review command is configured.
-Formal requested changes left unrepaired remain terminal.
+wait (`CI_WAIT_TIMEOUT`), merge-conflict repair, the missing-publication owned
+stall, and the idle gate when no review command is configured. Formal requested
+changes left unrepaired remain terminal.
 
 ## Consequences
 

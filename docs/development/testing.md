@@ -312,7 +312,12 @@ re-requests through scheduler waits: three feedback relaunches exhaust the
 allowance, but a current-head approval still resumes merge work. It also replays
 the approval override: a contradicted daemon approval is relaunched and ended
 like requested changes, a pushed fix is reviewed on its new head, and the #2985
-report still merges.
+report still merges. It replays owned work the implementor cannot resolve (merge
+work, CI repair, a blind round, same-head informal feedback): each ends
+`REMEDIATION_BUDGET_EXHAUSTED` naming its gate, while a repaired CI head still
+merges and merge-conflict repair still waits. Runs an earlier binary parked in
+those holds are seeded through the row driver's awaiting observation and must end
+without a relaunch.
 Scheduler coverage must show that legitimate awaits release execution
 capacity, keep dependents queued, and resume automatically when external work
 resolves and a slot is available. Portal aggregation remains `Reviewing` while

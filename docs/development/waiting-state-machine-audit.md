@@ -528,9 +528,13 @@ governing rule is now AFK continuity, documented in
 `docs/architecture/run-state-machine.md`:
 
 - B6 and C3/C4: owned work and repair keep their bounded attempts. When those
-  leave an open, current-head pull request unchanged, the Run waits
-  (`continuity_hold` or `RESUME_STALLED`) instead of failing. Formal
-  CHANGES_REQUESTED left unrepaired stays terminal.
+  leave an open, current-head pull request unchanged, the Run waited
+  (`continuity_hold` or `RESUME_STALLED`) instead of failing. #3001 ended that for
+  work the implementor owns and cannot resolve (merge work, CI repair,
+  review-request delivery, blind rounds, informal feedback bounded per head): it
+  now finishes `REMEDIATION_BUDGET_EXHAUSTED` naming the gate. Merge-conflict
+  repair and the expired CI wait still wait. Formal CHANGES_REQUESTED left
+  unrepaired stays terminal.
 - A review request delivered by an attempt that exited non-success is
   registered and awaited. Owned-work retries record `lifecycle-owned-work`
   rather than `agent-failed`.

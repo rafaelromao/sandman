@@ -61,10 +61,13 @@ With no review command configured, green CI and no current-head blind approval
 resume the same RunID with reason `BLIND_REVIEW_REQUIRED` (gate
 `blind-review-required`). It is recoverable, implementor-owned work, not
 `REVIEW_REQUEST_REQUIRED`, an expired request, or the old idle hold. Pending CI
-still yields. A relaunch that leaves the head and blind evidence unchanged
-records its signature in `stalled_resumes` and waits; an exhausted relaunch
-allowance holds under `hold:<RunID>`. Explicit abort revokes the resume, and
-restart rehydrates the evidence from events.
+still yields. A relaunch that leaves the head and blind evidence unchanged, or
+an exhausted relaunch allowance, ends the Run with
+`REMEDIATION_BUDGET_EXHAUSTED` naming the `blind-review-required` gate; the next
+action is to fix what blocks the round and run `sandman run --continue`. A Run
+an earlier version parked on that hold ends the same way on its next
+observation. Explicit abort revokes the resume, and restart rehydrates the
+evidence from events.
 
 The publication author is deliberately not filtered, consistent with informal
 approval. The identity binds the report to one reviewed head, but it is not

@@ -92,6 +92,12 @@ A blind review round works as follows.
   records its signature in `stalled_resumes` and holds; an exhausted relaunch
   allowance holds under `hold:<RunID>`. Explicit abort revokes the resume, and
   restart rehydrates the evidence from events.
+
+  > **Later change (annotated 2026-11-23, #3001):** a relaunch that leaves the
+  > head and blind evidence unchanged, or an exhausted relaunch allowance, no
+  > longer holds. The Run ends with `REMEDIATION_BUDGET_EXHAUSTED` naming the
+  > `blind-review-required` gate, and a Run an earlier version parked on that hold
+  > ends on its next observation; see ADR-0063.
 - **Daemon unchanged.** The review daemon still answers comments that begin with
   `/sandman`, whether or not a review command is configured. A blind default
   posts no trigger; delegated review adds the configured trigger on top of the

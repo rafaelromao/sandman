@@ -17,8 +17,11 @@ import (
 // two rules that enforce it where lifecycle decisions become results:
 //
 //   - a lifecycle relaunch that leaves the resume signature unchanged (no new
-//     head, request, or response) is a stall, and a stall or an exhausted
-//     relaunch allowance waits instead of failing;
+//     head, request, or response) is a stall. A stall or an exhausted relaunch
+//     allowance on work the implementor owns and cannot resolve (merge work,
+//     CI repair, review-request delivery, a blind round, informal feedback)
+//     ends the Run with REMEDIATION_BUDGET_EXHAUSTED (#3001); on merge-conflict
+//     repair, the expired CI wait and the idle gate it waits instead of failing;
 //   - a lifecycle failure is terminal only when its reason is permanent.
 
 const (
@@ -35,6 +38,7 @@ const (
 	reviewFeedbackStalledReason     = "REVIEW_FEEDBACK_STALLED"
 	reviewFeedbackStalledNextAction = "inspect the stalled review feedback, address or answer it, then continue with `sandman run --continue`"
 	stalledResumeKey                = "stalled_resume"
+	stalledReasonKey                = "stalled_reason"
 	stallRemediationNextAction      = "inspect the current pull-request remediation evidence and continue in a fresh session"
 )
 
@@ -144,7 +148,7 @@ func stalledAwaitExtras(extras map[string]any, signature string, prior []string)
 	wait := cloneLifecycleExtras(extras)
 	wait["await"] = true
 	wait["resume_stalled"] = true
-	wait["stalled_reason"] = wait["reason"]
+	wait[stalledReasonKey] = wait["reason"]
 	wait["reason"] = resumeStalledReason
 	wait["next_action"] = resumeStalledNextAction
 	wait[stalledResumesKey] = appendStalledResume(prior, signature)
@@ -163,7 +167,28 @@ func stalledTerminalEvidence(row continuityRow, evidence map[string]any, signatu
 		failure[stalledResumeKey] = signature
 		return failure
 	}
+	if next, owned := exhaustedWorkNextActions[row.gate]; owned && row.reason != actionableFeedbackReason {
+		failure := remediationBudgetFailureEvidence(row.gate, evidence, next)
+		failure[stalledReasonKey] = stringEvidence(evidence, "reason")
+		failure[stalledResumeKey] = signature
+		if blind, ok := evidence[blindReviewKey]; ok {
+			failure[blindReviewKey] = blind
+		}
+		return failure
+	}
 	return remediationBudgetFailureEvidence(row.gate, evidence, stallRemediationNextAction)
+}
+
+// exhaustedWorkNextActions names, for each owned-work gate that ends the Run
+// when it stalls or uses up its relaunch allowance (#3001), what the operator
+// fixes before continuing. A gate absent from the map ends with the generic
+// remediation next action.
+var exhaustedWorkNextActions = map[string]string{
+	gateOwnedWorkRequired:   "no confirmed current-head review request was delivered: deliver one or fix what blocks its delivery, then continue with `sandman run --continue`",
+	gateActionableFeedback:  "review feedback could not be addressed within the per-head relaunch allowance: inspect it, address or answer it, then continue with `sandman run --continue`",
+	gateBlindReviewRequired: "the blind review round could not publish a current-head verdict: inspect the round and its publication, fix what blocks it, then continue with `sandman run --continue`",
+	"ci-failure":            "CI repair could not make the current-head checks pass: inspect them with `gh pr checks`, fix the failure, then continue with `sandman run --continue`",
+	gateReadyToMerge:        "merge work could not finish: inspect why the approved current head is not merged (required checks, mergeability, branch protection), fix it, then continue with `sandman run --continue`",
 }
 
 func appendStalledResume(prior []string, signature string) []any {

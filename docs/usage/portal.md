@@ -55,9 +55,9 @@ The row folder under `.sandman/batches/<batch-id>/runs/<runID>/` is named after 
 
 A blind review round is implementor-owned work, not a review run. It adds no
 separate row, `reviewCount`, or `reviewVerdict`; the implementation row shows
-**running** while the round executes and **waiting** for a capacity delay, a
-stalled relaunch, a continuity hold, or
-`BLIND_REVIEW_REQUIRED` when green CI has no current-head blind approval. The
+**running** while the round executes and **waiting** for a capacity delay or
+`BLIND_REVIEW_REQUIRED` when green CI has no current-head blind approval. A
+round that stalls or exhausts its relaunch allowance finishes as a failure. The
 same RunID resumes the round or merge work after a current-head blind approval
 with green CI and a mergeable head. A blind wait has no saved delegated review
 request; restart rehydrates its gate and evidence from events.

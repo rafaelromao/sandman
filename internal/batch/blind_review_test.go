@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/reviewpub"
@@ -226,15 +225,13 @@ func TestBlindReviewRequiredIsOwnedWorkNotADelegatedWait(t *testing.T) {
 	}
 }
 
-func TestAFKContinuityContract_BlindReviewStallHoldsAndNewHeadResumes(t *testing.T) {
+func TestAFKContinuityContract_BlindReviewStallEndsTheRunAndNewHeadResumes(t *testing.T) {
 	evidence := map[string]any{"gate": gateBlindReviewRequired, "reason": blindReviewRequiredReason}
 	s := &runSession{decisionPRHead: "head"}
 	s.lastResumeSignature = resumeSignature(evidence, "head")
 	s.lastResumeRound = repairRound(evidence, "head")
 	got := applyContinuityForTest(s, "branch", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: evidence})
-	if got.Action != lifecycleAwait || len(stalledResumes(got.Evidence)) == 0 {
-		t.Fatalf("unchanged blind relaunch must hold with a stalled signature: %+v", got)
-	}
+	requireOwnedWorkExhausted(t, got, gateBlindReviewRequired, blindReviewRequiredReason, s.lastResumeSignature)
 	s.decisionPRHead = "new-head"
 	got = applyContinuityForTest(s, "branch", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: evidence})
 	if got.Action != lifecycleResume {
@@ -270,33 +267,28 @@ func TestAFKContinuityContract_BlindReviewPublishesAndMergesSameRun(t *testing.T
 	}
 }
 
-func TestAFKContinuityContract_BlindReviewStallSurvivesRestart(t *testing.T) {
+// A blind round that leaves the head and its evidence unchanged ends the Run
+// instead of parking it (#3001). The Run's terminal evidence names the gate,
+// and a Run an earlier binary parked on that hold ends on its next
+// observation: its recorded stalled signature proves the stall.
+func TestAFKContinuityContract_BlindReviewStallEndsTheRun(t *testing.T) {
 	result := runContinuityScenario(t, continuityScenario{
 		pr: greenCleanPR(), retries: 3, blindReview: true,
 	})
 	if result.launches > 2 {
 		t.Fatalf("unchanged blind review kept relaunching: %d", result.launches)
 	}
-	held := false
-	for _, event := range result.events {
-		if event.Type == "run.await" && len(stalledResumes(event.Payload)) > 0 {
-			held = true
+	requireExhaustedFinish(t, result.events, gateBlindReviewRequired)
+
+	t.Run("a Run an earlier binary parked on the hold", func(t *testing.T) {
+		evidence := map[string]any{
+			"gate": gateBlindReviewRequired, "reason": blindReviewRequiredReason,
+			"pull_request": continuityPR, "head_sha": "head-1", "await": true,
 		}
-	}
-	if !held {
-		t.Fatal("missing durable stalled blind review wait")
-	}
-	if got := result.observeAfterRestart(); got.Action != lifecycleAwait || len(stalledResumes(got.Evidence)) == 0 {
-		t.Fatalf("restart must retain the stalled blind review wait: %+v", got)
-	}
-	beforeAbort := events.ProjectRunStates(result.events[:len(result.events)-1])
-	if len(beforeAbort) != 1 || !beforeAbort[0].IsAwaiting() || beforeAbort[0].IsTerminal() {
-		t.Fatalf("blind hold must remain nonterminal until abort: %+v", beforeAbort)
-	}
-	final := events.ProjectRunStates(result.events)
-	if len(final) != 1 || !final[0].IsTerminal() || final[0].Status() != "aborted" {
-		t.Fatalf("abort must end the blind hold: %+v", final)
-	}
+		signature := resumeSignature(evidence, "head-1")
+		observed := observeParkedHold(t, lifecycleVerdict{Action: lifecycleResume, Evidence: evidence}, signature)
+		requireParkedHoldEnded(t, observed, gateBlindReviewRequired, blindReviewRequiredReason, signature)
+	})
 }
 
 func TestAFKContinuityContract_BlindFeedbackRepairsThenWaitsForCI(t *testing.T) {

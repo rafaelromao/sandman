@@ -238,33 +238,30 @@ func TestReviewFeedbackStalled_FinishRecordsFeedbackAndNextAction(t *testing.T) 
 	}
 }
 
-// An informal hold recorded for a used-up relaunch allowance (the
-// `actionable-feedback` / `REVIEW_INFORMAL_FEEDBACK` / allowance-used row, which
-// #3001 owns and which stays a hold in the outcome table) keeps its signature in
-// the Run's ledger, like a ledger an earlier binary wrote. Re-observing the same
-// evidence is an unchanged relaunch, so the next observation reaches the stall
-// row and ends the Run: the two cannot be told apart. This pins that transitional
-// consequence in the contract (see ADR-0063) until #3001 flips the row.
-func TestAFKContinuityContract_ExhaustedInformalHoldEndsOnReobservation(t *testing.T) {
+// A Run an earlier binary parked on an informal-feedback hold for a used-up
+// relaunch allowance keeps its signature in the Run's ledger. That hold cannot
+// be told apart from a stalled one, so the next observation of the same
+// evidence is an unchanged relaunch that reaches the stall row and ends the Run
+// as REVIEW_FEEDBACK_STALLED (ADR-0063). The allowance itself no longer holds
+// (#3001): the used-up row ends the Run with REMEDIATION_BUDGET_EXHAUSTED.
+func TestAFKContinuityContract_ParkedUsedUpInformalHoldEndsOnReobservation(t *testing.T) {
 	extras := stalledFeedbackExtras(t, stalledFeedbackBody)
+	signature := resumeSignature(extras, "head-1")
+
+	session := &runSession{decisionPRHead: "head-1"}
+	session.feedbackAllowance = &reviewFeedbackAllowance{usedByHead: map[string]int{"head-1": session.resumeCapFor()}}
+	exhausted := applyContinuityForTest(session, "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: cloneLifecycleExtras(extras)})
+	requireOwnedWorkExhausted(t, exhausted, gateActionableFeedback, informalFeedbackReason, signature)
+
+	// The hold an earlier binary wrote for that used-up allowance.
 	log := &spyEventLog{events: []events.Event{
 		{Type: "run.started", RunID: "run", Payload: map[string]any{"branch": "b"}},
+		{Type: "run.await", RunID: "run", Payload: stalledAwaitExtras(extras, signature, nil)},
 	}}
-	session := &runSession{deps: runDeps{eventLog: log}, decisionPRHead: "head-1"}
-	session.feedbackAllowance = &reviewFeedbackAllowance{usedByHead: map[string]int{"head-1": session.resumeCapFor()}}
-
-	held := applyContinuityForTest(session, "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: extras})
-	if held.Action != lifecycleAwait || held.Evidence["reason"] != resumeStalledReason {
-		t.Fatalf("used-up allowance = %v/%v, want the hold the exhausted row keeps", held.Action, held.Evidence)
-	}
-	if err := log.Log(events.Event{Type: "run.await", RunID: "run", Payload: held.Evidence}); err != nil {
-		t.Fatal(err)
-	}
-
 	ended := applyContinuityForTest(&runSession{deps: runDeps{eventLog: log}, decisionPRHead: "head-1"}, "b", "run",
 		lifecycleVerdict{Action: lifecycleResume, Evidence: extras})
 	if ended.Action != lifecycleFailure || ended.Evidence["reason"] != reviewFeedbackStalledReason {
-		t.Fatalf("re-observed exhausted hold = %v/%v, want the terminal %s failure", ended.Action, ended.Evidence, reviewFeedbackStalledReason)
+		t.Fatalf("re-observed parked hold = %v/%v, want the terminal %s failure", ended.Action, ended.Evidence, reviewFeedbackStalledReason)
 	}
 }
 
