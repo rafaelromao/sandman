@@ -504,9 +504,9 @@ if [ "${1:-}" = "pr" ] && [ "${2:-}" = "list" ]; then
     previous="$arg"
   done
   if case "$head" in 43-*) true ;; *) false ;; esac; then
-    printf '[{"number":43,"title":"dependent","body":"Closes #43","state":"MERGED","mergedAt":"2026-08-21T00:00:00Z","headRefName":"%s","headRefOid":"dependent-sha","reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","statusCheckRollup":"success"}]\n' "$head"
+    printf '[{"number":43,"title":"dependent","body":"Closes #43","state":"MERGED","mergedAt":"2026-08-21T00:00:00Z","headRefName":"%s","headRefOid":"dependent-sha","baseRefName":"main","reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","statusCheckRollup":"success"}]\n' "$head"
   elif [ -f "$state_file" ] && [ "$(tr -d '\n' < "$state_file")" = "merged" ]; then
-    printf '[{"number":42,"title":"parent","body":"Closes #42","state":"MERGED","mergedAt":"2026-08-21T00:00:00Z","headRefName":"%s","headRefOid":"__HEAD__","reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","statusCheckRollup":"success"}]\n' "$head"
+    printf '[{"number":42,"title":"parent","body":"Closes #42","state":"MERGED","mergedAt":"2026-08-21T00:00:00Z","headRefName":"%s","headRefOid":"__HEAD__","baseRefName":"main","reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","statusCheckRollup":"success"}]\n' "$head"
   else
     printf '[{"number":42,"title":"parent","body":"Closes #42","state":"OPEN","mergedAt":null,"headRefName":"%s","headRefOid":"__HEAD__","reviewDecision":"","mergeStateStatus":"BLOCKED","statusCheckRollup":"pending"}]\n' "$head"
   fi
@@ -608,7 +608,7 @@ if [ "${1:-}" = "pr" ] && [ "${2:-}" = "list" ]; then
   done
   case "$state" in
     merged)
-      printf '[{"number":42,"title":"parent","body":"Closes #42","state":"MERGED","mergedAt":"2026-08-21T00:00:00Z","headRefName":"%s","headRefOid":"__HEAD__","reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","statusCheckRollup":"success"}]\n' "$head" ;;
+      printf '[{"number":42,"title":"parent","body":"Closes #42","state":"MERGED","mergedAt":"2026-08-21T00:00:00Z","headRefName":"%s","headRefOid":"__HEAD__","baseRefName":"main","reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","statusCheckRollup":"success"}]\n' "$head" ;;
     review-pending)
       printf '[{"number":42,"title":"parent","body":"Closes #42","state":"OPEN","mergedAt":null,"headRefName":"%s","headRefOid":"__HEAD__","reviewDecision":"REVIEW_REQUIRED","mergeStateStatus":"BLOCKED","statusCheckRollup":"success"}]\n' "$head" ;;
     *)
@@ -618,7 +618,7 @@ if [ "${1:-}" = "pr" ] && [ "${2:-}" = "list" ]; then
 fi
 if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
   if [ "$state" = "merged" ]; then
-     printf '{"number":42,"title":"parent","body":"Closes #42","state":"MERGED","mergedAt":"2026-08-21T00:00:00Z","headRefName":"42-parent","headRefOid":"__HEAD__","closingIssuesReferences":[{"number":42}]}\n'
+     printf '{"number":42,"title":"parent","body":"Closes #42","state":"MERGED","mergedAt":"2026-08-21T00:00:00Z","headRefName":"42-parent","headRefOid":"__HEAD__","baseRefName":"main","closingIssuesReferences":[{"number":42}]}\n'
   else
      printf '{"number":42,"title":"parent","body":"Closes #42","state":"OPEN","mergedAt":null,"headRefName":"42-parent","headRefOid":"__HEAD__","closingIssuesReferences":[{"number":42}]}\n'
   fi

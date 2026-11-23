@@ -763,7 +763,7 @@ JSON
       fi
       head_ref_oid="$(git rev-parse HEAD)"
       cat <<JSON
-[{"number":1,"state":"merged","mergedAt":"2026-06-05T00:00:00Z","body":"$body","headRefName":"$head","headRefOid":"$head_ref_oid"}]
+[{"number":1,"state":"merged","mergedAt":"2026-06-05T00:00:00Z","body":"$body","headRefName":"$head","headRefOid":"$head_ref_oid","baseRefName":"main"}]
 JSON
       exit 0
     fi
@@ -1030,7 +1030,7 @@ JSON
       fi
       head_ref_oid="$(git rev-parse HEAD)"
       cat <<JSON
-[{"number":1,"state":"merged","mergedAt":"2026-06-05T00:00:00Z","body":"$body","headRefName":"$head","headRefOid":"$head_ref_oid"}]
+[{"number":1,"state":"merged","mergedAt":"2026-06-05T00:00:00Z","body":"$body","headRefName":"$head","headRefOid":"$head_ref_oid","baseRefName":"main"}]
 JSON
       exit 0
     fi

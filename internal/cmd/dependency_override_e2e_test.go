@@ -238,9 +238,9 @@ case "${1:-}" in
       done
       case "$head" in
         42-blocker)
-          printf '%s\n' '[{"number":420,"state":"MERGED","body":"Closes #42","mergedAt":"2026-08-27T00:00:00Z","headRefName":"42-blocker","headRefOid":"fixture-42","updatedAt":"2026-08-27T00:00:00Z"}]' ; exit 0 ;;
+          printf '%s\n' '[{"number":420,"state":"MERGED","body":"Closes #42","mergedAt":"2026-08-27T00:00:00Z","headRefName":"42-blocker","headRefOid":"fixture-42","baseRefName":"main","updatedAt":"2026-08-27T00:00:00Z"}]' ; exit 0 ;;
         100-dependent)
-          if [ "$phase" = "ready" ]; then printf '%s\n' '[{"number":1000,"state":"MERGED","body":"Closes #100","mergedAt":"2026-08-27T00:00:00Z","headRefName":"100-dependent","headRefOid":"fixture-100","updatedAt":"2026-08-27T00:00:00Z"}]'; else printf '%s\n' '[]'; fi
+          if [ "$phase" = "ready" ]; then printf '%s\n' '[{"number":1000,"state":"MERGED","body":"Closes #100","mergedAt":"2026-08-27T00:00:00Z","headRefName":"100-dependent","headRefOid":"fixture-100","baseRefName":"main","updatedAt":"2026-08-27T00:00:00Z"}]'; else printf '%s\n' '[]'; fi
           exit 0 ;;
       esac
       printf '%s\n' '[]'
