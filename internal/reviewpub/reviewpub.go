@@ -77,8 +77,14 @@ func Marker(verdict Verdict) string {
 }
 
 // Published reports whether body ends with a daemon publication identity.
+//
+// It is deliberately strict: unlike PublishedVerdict it does not tolerate a
+// host-appended footer block. The delegated-review gates that call it
+// (request-scoped response classification, the review timeout evidence and
+// informal feedback) keep their evidence rules byte-for-byte; only blind
+// review reads publications through the tolerant predicates.
 func Published(body string) bool {
-	_, ok := PublishedVerdict(body)
+	_, ok := publishedVerdict(body)
 	return ok
 }
 
@@ -97,7 +103,27 @@ func Answers(body, triggerKey, head string) bool {
 // PublishedVerdict returns the verdict of a daemon publication: its verdict
 // marker when present, otherwise its closed-set Decision token. ok is false
 // for a body that is not a daemon publication.
+//
+// A host-appended footer block (TrimHostSuffix) is not part of the
+// publication: the verdict is read from what precedes it, so a managed sandbox
+// that rewrites published comments does not turn an approval into an unknown
+// verdict. The footer can never supply a trailer or identity of its own.
 func PublishedVerdict(body string) (Verdict, bool) {
+	body, _ = TrimHostSuffix(body)
+	return publishedVerdict(body)
+}
+
+// PublishedVerdictExact is PublishedVerdict without host-footer tolerance: the
+// verdict of a publication exactly as stored. The delegated-review gates read
+// daemon publications through it, so a footer a host appended to a daemon
+// report neither turns it into a published verdict nor into an approval
+// override; the delegated evidence rules do not change with this tolerance.
+func PublishedVerdictExact(body string) (Verdict, bool) {
+	return publishedVerdict(body)
+}
+
+// publishedVerdict is PublishedVerdict without host-footer tolerance.
+func publishedVerdict(body string) (Verdict, bool) {
 	lines := nonEmptyLines(body)
 	if len(lines) == 0 || !identityLine.MatchString(lines[len(lines)-1]) {
 		return Unknown, false
