@@ -431,7 +431,9 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				baseBranch = strings.TrimSpace(cfg.Git.BaseBranch)
 			}
 			if baseBranch == "" && !continueFlag {
-				baseBranch = strings.TrimSpace(scaffold.NewDefaultGitOps().DefaultBranch(repoRoot))
+				if deps.DefaultBranch != nil {
+					baseBranch = strings.TrimSpace(deps.DefaultBranch(repoRoot))
+				}
 			}
 
 			resolvedBatch, err := batch.NewPreparer(githubClient, liveGitHubClient, cmd.ErrOrStderr()).Prepare(cmd.Context(), batch.Preparation{
@@ -642,7 +644,9 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				baseBranch = strings.TrimSpace(cfg.Git.BaseBranch)
 			}
 			if baseBranch == "" {
-				baseBranch = strings.TrimSpace(scaffold.NewDefaultGitOps().DefaultBranch(repoRoot))
+				if deps.DefaultBranch != nil {
+					baseBranch = strings.TrimSpace(deps.DefaultBranch(repoRoot))
+				}
 			}
 			if baseBranch == "" {
 				return fmt.Errorf("repository default branch is unknown; set git.base_branch or pass --base-branch")

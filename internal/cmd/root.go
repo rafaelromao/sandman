@@ -44,6 +44,10 @@ type Dependencies struct {
 	// empty, commands fall back to the current working directory, matching
 	// the pre-Layout behaviour for callers that have not migrated.
 	RepoRoot string
+	// DefaultBranch resolves the repository's configured default branch.
+	// Production wires the Git-backed resolver; tests can supply a deterministic
+	// value without invoking Git.
+	DefaultBranch func(repoRoot string) string
 }
 
 // NewRootCmd constructs the command tree with injected dependencies.

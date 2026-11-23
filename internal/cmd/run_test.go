@@ -250,6 +250,9 @@ func newRunDeps(t *testing.T, runner batch.Runner) Dependencies {
 		EventLog:     &fakeEventLog{},
 		GitHubClient: &fakeGitHubClient{},
 		RepoRoot:     ".",
+		DefaultBranch: func(string) string {
+			return "main"
+		},
 	}
 }
 
@@ -2309,7 +2312,6 @@ func TestRun_ContinueFlag_UsesOverridesAndEmptyTemplateFallback(t *testing.T) {
 func TestRun_ContinueFlag_MixedBatchResolvesPerIssueModes(t *testing.T) {
 	repoDir := testenv.MkdirShort(t, "sm-run-")
 	initRunIntegrationRepo(t, repoDir)
-	runGit(t, repoDir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk")
 	t.Chdir(repoDir)
 
 	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
@@ -2353,6 +2355,10 @@ func TestRun_ContinueFlag_MixedBatchResolvesPerIssueModes(t *testing.T) {
 			43: {Number: 43, Title: "Broken worktree", State: "open"},
 		}},
 		RepoRoot: repoDir,
+		DefaultBranch: func(string) string {
+			t.Fatal("default branch resolver should not replace pinned continuation Base")
+			return ""
+		},
 	}
 
 	var output bytes.Buffer
@@ -2421,7 +2427,10 @@ func TestRun_ContinueFlagRoutesMergedPRThroughLifecycle(t *testing.T) {
 
 func TestRun_ContinueFlag_MissingRegistrationPromotesToOverride(t *testing.T) {
 	fixture := newContinuationRunFixture(t)
-	runGit(t, fixture.repoDir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk")
+	fixture.deps.DefaultBranch = func(string) string {
+		t.Fatal("default branch resolver should not replace pinned continuation Base")
+		return ""
+	}
 	if err := os.RemoveAll(filepath.Join(fixture.repoDir, ".git", "worktrees", filepath.Base(fixture.worktreePath))); err != nil {
 		t.Fatalf("remove worktree registration: %v", err)
 	}
@@ -2454,7 +2463,12 @@ func TestRun_ContinueFlag_MissingRegistrationPromotesToOverride(t *testing.T) {
 
 func TestRun_ContinueFlagUsesRepositoryDefaultForFreshRows(t *testing.T) {
 	fixture := newContinuationRunFixture(t)
-	runGit(t, fixture.repoDir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk")
+	fixture.deps.DefaultBranch = func(repoRoot string) string {
+		if repoRoot != fixture.repoDir {
+			t.Fatalf("default branch resolver got repo root %q, want %q", repoRoot, fixture.repoDir)
+		}
+		return "trunk"
+	}
 	fixture.deps.GitHubClient = &fakeGitHubClient{
 		issues: map[int]*github.Issue{
 			42: {Number: 42, Title: "Fix bug", State: "open"},
@@ -3496,13 +3510,13 @@ func TestRun_BaseBranchDefaultsToConfig(t *testing.T) {
 func TestRun_BaseBranchDefaultsToRepositoryDefaultWhenUnset(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(t, spy)
-	configPath := filepath.Join(deps.RepoRoot, ".sandman", "config.yaml")
-	if err := os.WriteFile(configPath, []byte("agent: opencode\nreview_command: /oc review\n"), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
+	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}}
+	deps.DefaultBranch = func(repoRoot string) string {
+		if repoRoot != deps.RepoRoot {
+			t.Fatalf("default branch resolver got repo root %q, want %q", repoRoot, deps.RepoRoot)
+		}
+		return "trunk"
 	}
-	deps.ConfigStore = &config.FileStore{Path: configPath}
-	runGit(t, deps.RepoRoot, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
-	runGit(t, deps.RepoRoot, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk")
 
 	cmd := NewRunCmd(deps)
 	cmd.SetArgs([]string{"42"})
@@ -3517,7 +3531,7 @@ func TestRun_BaseBranchDefaultsToRepositoryDefaultWhenUnset(t *testing.T) {
 func TestRun_UnsetBaseBranchFailsWhenRepositoryDefaultIsUnknown(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(t, spy)
-	runGit(t, deps.RepoRoot, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
+	deps.DefaultBranch = func(string) string { return "" }
 
 	cmd := NewRunCmd(deps)
 	cmd.SetArgs([]string{"42"})
