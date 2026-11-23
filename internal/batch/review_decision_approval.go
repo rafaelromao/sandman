@@ -123,7 +123,7 @@ func reviewDecisionApprovedBody(body string) bool {
 	// approved verdict that its own verdict sections contradict is never an
 	// approval and never judged by the prose rules: it is requested changes
 	// (contradictedDaemonApproval), so approval and override cannot both apply.
-	if verdict, published := reviewpub.PublishedVerdict(body); published && verdict != reviewpub.Unknown {
+	if verdict, published := reviewpub.PublishedVerdictExact(body); published && verdict != reviewpub.Unknown {
 		return verdict == reviewpub.Approved && !publishedApprovalContradicted(body)
 	}
 	body = reviewpub.StripMarkers(body)
@@ -147,7 +147,7 @@ func reviewDecisionApprovedBody(body string) bool {
 // verdict, are never overridden: they keep the prose rules and are never
 // repair evidence on this path.
 func contradictedDaemonApproval(body string) bool {
-	verdict, published := reviewpub.PublishedVerdict(body)
+	verdict, published := reviewpub.PublishedVerdictExact(body)
 	return published && verdict == reviewpub.Approved && publishedApprovalContradicted(body)
 }
 
@@ -156,7 +156,7 @@ func contradictedDaemonApproval(body string) bool {
 // (contradictedDaemonApproval). It is genuine repair evidence, unlike an
 // unknown daemon verdict.
 func daemonRequestedChanges(body string) bool {
-	verdict, published := reviewpub.PublishedVerdict(body)
+	verdict, published := reviewpub.PublishedVerdictExact(body)
 	return published && (verdict == reviewpub.ChangesRequested || contradictedDaemonApproval(body))
 }
 

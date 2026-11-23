@@ -57,8 +57,16 @@ func (s *runSession) blindReviewEvidence(ctx context.Context, pr *github.PR, cur
 // blindReviewEvidenceFromComments is the pure selection behind
 // blindReviewEvidence: the newest comment that answers the blind key at head
 // decides the outcome. An unusable verdict never revives an older approval.
+//
+// A managed sandbox host may append one recognised footer block to a published
+// comment. The publication is judged, classified and retained without it, so
+// the footer never reaches the approval classifier's sections or the feedback
+// handed to the implementor. AnswersBlind judges the raw body, so a second
+// block or text between the identity line and the block is still rejected
+// before any trimming.
 func blindReviewEvidenceFromComments(comments []github.PRComment, pullRequest int, head string) retainedReviewEvidence {
 	var newest *github.PRComment
+	var newestBody string
 	var verdict reviewpub.Verdict
 	for i := range comments {
 		comment := &comments[i]
@@ -69,6 +77,10 @@ func blindReviewEvidenceFromComments(comments []github.PRComment, pullRequest in
 			continue
 		}
 		newest = comment
+		newestBody, _ = reviewpub.TrimHostSuffix(comment.Body)
+		// The verdict is read from the raw body: PublishedVerdict applies its
+		// trailer-only rule when it sees the host block itself, which the
+		// trimmed body no longer carries.
 		verdict, _ = reviewpub.PublishedVerdict(comment.Body)
 	}
 	if newest == nil {
@@ -88,7 +100,7 @@ func blindReviewEvidenceFromComments(comments []github.PRComment, pullRequest in
 	}
 	switch verdict {
 	case reviewpub.Approved:
-		if !reviewDecisionApprovedBody(newest.Body) {
+		if !reviewDecisionApprovedBody(newestBody) {
 			// The shared approval classifier retains its contradiction guard;
 			// a marker beside unresolved author changes is not approval.
 			return retainedReviewEvidence{}
@@ -107,7 +119,7 @@ func blindReviewEvidenceFromComments(comments []github.PRComment, pullRequest in
 			},
 		}
 	case reviewpub.ChangesRequested:
-		record["body"] = newest.Body
+		record["body"] = newestBody
 		return retainedReviewEvidence{
 			present:    true,
 			actionable: true,

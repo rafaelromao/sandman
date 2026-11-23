@@ -327,7 +327,13 @@ the implementor publishes with the operator's account. A green current-head pull
 request with no blind approval resumes the same RunID with
 `BLIND_REVIEW_REQUIRED`, which is recoverable implementor-owned work; an
 unchanged round or an exhausted allowance ends the Run with
-`REMEDIATION_BUDGET_EXHAUSTED` naming the gate.
+`REMEDIATION_BUDGET_EXHAUSTED` naming the gate. A managed sandbox host may
+append one recognised host footer block (a separator line and a known footer
+line) to a published comment; the publication is judged without it, and any
+other difference (added text, a second block, an altered identity or verdict,
+another head) leaves it unconfirmed. When GraphQL-backed GitHub calls are
+unavailable, the blind round's prompt, publication and confirmation use REST
+equivalents, selected by probing the capability, never by host or product name.
 _Avoid_: blind approval as a standing approval, self-approval.
 _See_: Blind review, Publication verdict, Current-head approval.
 

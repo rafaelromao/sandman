@@ -2,7 +2,9 @@
 # GitHub calls: pr view --json number,title,body,state,headRefOid,baseRefName;
 # api graphql --paginate for native closing references; issue view --json body;
 # api --paginate for issue comments, pull reviews and pull inline comments.
-# Every lookup fails closed.
+# When GraphQL is unavailable (see github-v1.sh) the pull request and work item
+# are read over REST and the closing reference comes from the pull request body
+# alone. Every lookup fails closed.
 set -eu
 repository='' pull_request='' head='' run_dir=''
 fail() { printf '%s\n' "$1" >&2; exit 1; }
@@ -30,43 +32,51 @@ if [ -s "$root/.sandman/reviews/review-prompt.md" ] &&
   jq -Rse 'test("[^\\s]")' "$root/.sandman/reviews/review-prompt.md" >/dev/null; then
   template=$root/.sandman/reviews/review-prompt.md
 fi
+# shellcheck source=github-v1.sh
+. "$helper_dir/github-v1.sh"
+gh_mode=graphql # github-v1.sh switches it to rest only when GraphQL is unavailable
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/sandman-blind-prompt.XXXXXX")
-trap 'rm -f "$tmp/pr" "$tmp/links" "$tmp/issue" "$tmp/comments" "$tmp/reviews" "$tmp/inline"; rmdir "$tmp"' EXIT HUP INT TERM
-gh pr view "$pull_request" --repo "$repository" \
-  --json number,title,body,state,headRefOid,baseRefName >"$tmp/pr" ||
-  fail REVIEW_PROMPT_LOOKUP_FAILED
+trap 'rm -f "$tmp"/*; rmdir "$tmp"' EXIT HUP INT TERM
+if ! gh pr view "$pull_request" --repo "$repository" \
+  --json number,title,body,state,headRefOid,baseRefName >"$tmp/pr"; then
+  gh_select_rest || fail REVIEW_PROMPT_LOOKUP_FAILED
+  gh_rest_pr "$repository" "$pull_request" "$tmp/pr" "$tmp" || fail REVIEW_PROMPT_LOOKUP_FAILED
+fi
 jq -e --arg head "$head" '
   .state == "OPEN" and .headRefOid == $head and (.baseRefName | type == "string")
 ' "$tmp/pr" >/dev/null || fail REVIEW_PROMPT_STALE_HEAD
-gh api graphql --paginate \
-  -f "owner=$owner" -f "repo=$repository_name" -F "number=$pull_request" \
-  -f query='query($owner:String!,$repo:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$number){closingIssuesReferences(first:100,after:$endCursor){nodes{number} pageInfo{hasNextPage endCursor}}}}}' \
-  >"$tmp/links" || fail REVIEW_PROMPT_LINKAGE_LOOKUP_FAILED
-linked=$(jq -ser '
-  def refs: .data.repository.pullRequest.closingIssuesReferences;
-  def valid_page:
-    type == "object" and
-    ((.errors // []) | type == "array" and length == 0) and
-    (refs as $r |
-      ($r | type == "object") and
-      ($r.nodes | type == "array") and
-      all($r.nodes[]; (.number | type == "number" and . > 0)) and
-      ($r.pageInfo | type == "object") and
-      ($r.pageInfo.hasNextPage | type == "boolean") and
-      (if $r.pageInfo.hasNextPage then
-         ($r.pageInfo.endCursor | type == "string" and length > 0)
-       else
-         ($r.pageInfo.endCursor == null or ($r.pageInfo.endCursor | type == "string"))
-       end));
-  if type != "array" or length == 0 then error("missing GraphQL pages")
-  elif any(.[]; valid_page | not) then error("invalid GraphQL page")
-  elif any(.[0:-1][]; .data.repository.pullRequest.closingIssuesReferences.pageInfo.hasNextPage != true)
-    then error("incomplete GraphQL pagination")
-  elif (last | .data.repository.pullRequest.closingIssuesReferences.pageInfo.hasNextPage) != false
-    then error("incomplete GraphQL pagination")
-  else [.[].data.repository.pullRequest.closingIssuesReferences.nodes[].number][0] // 0
-  end
-' "$tmp/links") || fail REVIEW_PROMPT_LINKAGE_INVALID
+linked=0
+if [ "$gh_mode" = graphql ]; then
+  gh api graphql --paginate \
+    -f "owner=$owner" -f "repo=$repository_name" -F "number=$pull_request" \
+    -f query='query($owner:String!,$repo:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$number){closingIssuesReferences(first:100,after:$endCursor){nodes{number} pageInfo{hasNextPage endCursor}}}}}' \
+    >"$tmp/links" || fail REVIEW_PROMPT_LINKAGE_LOOKUP_FAILED
+  linked=$(jq -ser '
+    def refs: .data.repository.pullRequest.closingIssuesReferences;
+    def valid_page:
+      type == "object" and
+      ((.errors // []) | type == "array" and length == 0) and
+      (refs as $r |
+        ($r | type == "object") and
+        ($r.nodes | type == "array") and
+        all($r.nodes[]; (.number | type == "number" and . > 0)) and
+        ($r.pageInfo | type == "object") and
+        ($r.pageInfo.hasNextPage | type == "boolean") and
+        (if $r.pageInfo.hasNextPage then
+           ($r.pageInfo.endCursor | type == "string" and length > 0)
+         else
+           ($r.pageInfo.endCursor == null or ($r.pageInfo.endCursor | type == "string"))
+         end));
+    if type != "array" or length == 0 then error("missing GraphQL pages")
+    elif any(.[]; valid_page | not) then error("invalid GraphQL page")
+    elif any(.[0:-1][]; .data.repository.pullRequest.closingIssuesReferences.pageInfo.hasNextPage != true)
+      then error("incomplete GraphQL pagination")
+    elif (last | .data.repository.pullRequest.closingIssuesReferences.pageInfo.hasNextPage) != false
+      then error("incomplete GraphQL pagination")
+    else [.[].data.repository.pullRequest.closingIssuesReferences.nodes[].number][0] // 0
+    end
+  ' "$tmp/links") || fail REVIEW_PROMPT_LINKAGE_INVALID
+fi
 if [ "$linked" -eq 0 ]; then
   linked=$(jq -r '
     ((try (.body | capture("\\bimplements\\s+#(?<n>[0-9]+)"; "i").n | tonumber) catch null) //
@@ -76,8 +86,13 @@ if [ "$linked" -eq 0 ]; then
 fi
 printf '{"body":""}\n' >"$tmp/issue"
 if [ "$linked" -gt 0 ]; then
-  gh issue view "$linked" --repo "$repository" --json body >"$tmp/issue" ||
-    fail REVIEW_PROMPT_ISSUE_LOOKUP_FAILED
+  if [ "$gh_mode" = rest ]; then
+    gh_rest_issue_body "$repository" "$linked" "$tmp/issue" "$tmp" ||
+      fail REVIEW_PROMPT_ISSUE_LOOKUP_FAILED
+  else
+    gh issue view "$linked" --repo "$repository" --json body >"$tmp/issue" ||
+      fail REVIEW_PROMPT_ISSUE_LOOKUP_FAILED
+  fi
 fi
 gh api --paginate "repos/$repository/issues/$pull_request/comments" >"$tmp/comments" ||
   fail REVIEW_PROMPT_HISTORY_LOOKUP_FAILED
