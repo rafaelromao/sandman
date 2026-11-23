@@ -275,7 +275,7 @@ func expiredRequestProbe() continuityProbe {
 	return continuityProbe{consultsTable: true, observe: func(t *testing.T, table continuityTable) continuityOutcomeKind {
 		verdict, ended := (&lifecycleObserver{outcomes: table}).expiredReviewTerminal(
 			lifecycleVerdict{Action: lifecycleResume, Evidence: map[string]any{
-				"gate": gateReviewRequestRequired, "reason": reviewTimeoutReason,
+				"gate": gateReviewRequestRequired, "reason": reviewTimeoutReason, "review_request": confirmedExpiryProbeRequest(),
 			}},
 		)
 		if ended {

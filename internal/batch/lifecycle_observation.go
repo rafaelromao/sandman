@@ -491,6 +491,10 @@ func (o *lifecycleObserver) applyExpiredReviewOutcome(branch, runID string, verd
 // must not apply it first. A second application takes the await branch and
 // overwrites the stalled signature the first one recorded.
 func (o *lifecycleObserver) expiredReviewTerminal(verdict lifecycleVerdict) (lifecycleVerdict, bool) {
+	request, ok := verdict.Evidence["review_request"].(map[string]any)
+	if !ok || !confirmedReviewExpiryEvidence(request) {
+		return lifecycleVerdict{}, false
+	}
 	row := continuityRow{
 		gate:   gateReviewTimeout,
 		reason: stringEvidence(verdict.Evidence, "reason"),
@@ -509,6 +513,8 @@ func (o *lifecycleObserver) expiredReviewTerminal(verdict lifecycleVerdict) (lif
 	delete(evidence, "gate")
 	delete(evidence, "await")
 	delete(evidence, "continuity_hold")
+	evidence["pull_request"] = request["pull_request"]
+	evidence["head_sha"] = request["head_sha"]
 	evidence["reason"] = reviewRequestExpiredReason
 	evidence["external_gate"] = row.gate
 	evidence["next_action"] = reviewRequestExpiredNextAction

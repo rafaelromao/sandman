@@ -374,10 +374,11 @@ func (l *continuityHookEventLog) Read() ([]events.Event, error) {
 }
 
 type continuityOutcome struct {
-	events   []events.Event
-	launches int
-	status   string
-	triggers int
+	events          []events.Event
+	launches        int
+	prematureLaunch bool
+	status          string
+	triggers        int
 	// observeAfterRestart observes the Run from a fresh executor over the
 	// same event log and worktree, as a restarted Sandman process would.
 	observeAfterRestart func() lifecycleVerdict
@@ -442,11 +443,15 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 	}
 	var mu sync.Mutex
 	launches, polls := 0, 0
+	prematureLaunch := false
 	reviewClockOffset := time.Duration(0)
 	factory := &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
 		mu.Lock()
 		index := launches
 		launches++
+		if (sc.reviewRunEndsAfterSecondPoll || sc.quotaPauseClearsAfterSecondPoll) && polls < 2 {
+			prematureLaunch = true
+		}
 		mu.Unlock()
 		status := "success"
 		if index < len(sc.launches) && sc.launches[index] != nil {
@@ -675,7 +680,7 @@ func runContinuityScenario(t *testing.T, sc continuityScenario) continuityOutcom
 			RenderCfg: req.PromptConfig,
 		})
 	}
-	return continuityOutcome{events: history, launches: launches, status: result.Runs[0].Status, triggers: g.triggerCount(), observeAfterRestart: restart}
+	return continuityOutcome{events: history, launches: launches, prematureLaunch: prematureLaunch, status: result.Runs[0].Status, triggers: g.triggerCount(), observeAfterRestart: restart}
 }
 
 func seedExpiredContinuityReviewRequest(t *testing.T, g *continuityGitHub, worktree string) {
@@ -1149,6 +1154,13 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 			want:  "failed:REVIEW_REQUEST_EXPIRED", wantExpiredEvidence: true, wantReviewRunObserved: true, requireAwait: true,
 		},
 		continuityScenario{
+			name: "expired request with aggregate changes requested still waits for matching active review",
+			pr:   github.PR{StatusCheckRollup: "success", ReviewDecision: "CHANGES_REQUESTED", MergeStateStatus: "BLOCKED"}, retries: 3,
+			expiredRequest: true, reviewRunActive: true, reviewDaemonLive: true, reviewRunEndsAfterFirstPoll: true,
+			polls: []func(*continuityGitHub){nil},
+			want:  "failed:REVIEW_REQUEST_EXPIRED", wantExpiredEvidence: true, wantReviewRunObserved: true, requireAwait: true,
+		},
+		continuityScenario{
 			name: "expired request ignores active review run for another trigger revision", pr: greenCleanPR(), retries: 3,
 			expiredRequest: true, reviewRunActive: true, reviewRunOtherTrigger: true, reviewDaemonLive: true,
 			want: "failed:REVIEW_REQUEST_EXPIRED", wantExpiredEvidence: true,
@@ -1610,6 +1622,9 @@ func TestAFKContinuityContract_RealIncidentsMergeOrWait(t *testing.T) {
 			}
 			if sc.requireAwait && outcome.count("run.await") == 0 {
 				t.Fatalf("the Run never waited\nevents: %s", continuityEventSummary(outcome.events))
+			}
+			if outcome.prematureLaunch {
+				t.Fatalf("implementation launched before the resolver cleared\nevents: %s", continuityEventSummary(outcome.events))
 			}
 			if sc.wantFeedbackRelaunch && outcome.count("run.resumed")+outcome.count("run.continued") == 0 {
 				t.Fatalf("actionable feedback did not relaunch implementation after the resolver cleared (resumed=%d continued=%d)\nevents: %s",

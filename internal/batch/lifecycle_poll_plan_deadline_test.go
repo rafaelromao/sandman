@@ -192,8 +192,8 @@ func TestObserveLifecycleUsesInjectedClockForDeadline(t *testing.T) {
 	verdict := newLifecycleObserver(s).waitForTransition(context.Background(), lifecycleObservationRequest{RunID: "run"}, AgentRunResult{}, lifecycleVerdict{Action: lifecycleAwait, Evidence: map[string]any{
 		"review_request": map[string]any{"deadline_unix_seconds": deadline.Unix()},
 	}})
-	if verdict.Action != lifecycleFailure || verdict.Evidence["reason"] != reviewRequestExpiredReason {
-		t.Fatalf("observation = (%v, %#v), want expired-request terminal failure", verdict.Action, verdict.Evidence)
+	if verdict.Action != lifecycleResume || verdict.Evidence["reason"] != reviewTimeoutReason {
+		t.Fatalf("observation = (%v, %#v), want deadline resume without confirmed request identity", verdict.Action, verdict.Evidence)
 	}
 	if waits != 0 {
 		t.Fatalf("lifecycle waits = %d, want no wait after injected deadline", waits)
@@ -259,7 +259,7 @@ func TestApplyExpiredReviewOutcomeUsesRequestExpiryReasonAndGate(t *testing.T) {
 		Action: lifecycleResume,
 		Evidence: map[string]any{
 			"gate": gateReviewRequestRequired, "reason": reviewTimeoutReason,
-			"await": true, "review_request": map[string]any{"operation_resolved": true},
+			"await": true, "review_request": confirmedExpiryProbeRequest(),
 		},
 	})
 	if verdict.Action != lifecycleFailure {
@@ -270,6 +270,14 @@ func TestApplyExpiredReviewOutcomeUsesRequestExpiryReasonAndGate(t *testing.T) {
 		verdict.Evidence["next_action"] != reviewRequestExpiredNextAction ||
 		verdict.Evidence["gate"] != nil || verdict.Evidence["await"] != nil {
 		t.Fatalf("terminal expiry evidence = %v, want request-expiry reason and gate without wait markers", verdict.Evidence)
+	}
+}
+
+func confirmedExpiryProbeRequest() map[string]any {
+	return map[string]any{
+		"protocol": "review-wait/v1", "repository": "owner/repo", "pull_request": 17,
+		"head_sha": "current-sha", "trigger_id": "trigger-1001",
+		"confirmed_at": "1970-01-01T00:16:40Z", "deadline_unix_seconds": 2800,
 	}
 }
 

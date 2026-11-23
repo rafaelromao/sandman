@@ -273,8 +273,7 @@ func (s *runSession) confirmedReviewRequestActive(ctx context.Context, workDir s
 		if registration.State.State != "pending" || int64(registration.Request.DeadlineUnixSeconds) <= now {
 			return false
 		}
-		if registration.State.ObservedState == "timed_out" &&
-			int64(registration.Request.DeadlineUnixSeconds) > now {
+		if registration.State.ObservedState == "timed_out" {
 			// A stale timeout observation cannot shorten the canonical request
 			// deadline. Keep the confirmed operation active until its own bound.
 			return true
