@@ -155,7 +155,12 @@ are pushed, resume for current-head approval and green checks, verify the
 merge, then admit dependents. Restart rehydrates the event and wait records;
 explicit abort terminalizes owned work and revokes continuation. Request/head
 validation makes canonical evidence authoritative and keeps stale legacy
-evidence diagnostic-only.
+evidence diagnostic-only. The confirmed request deadline is its own bound:
+after expiry the Run waits only while current-head CI, a matching active review
+Run with a live daemon, or a live-daemon quota pause is resolving. When those
+guards clear, no usable response ends the Run as `REVIEW_REQUEST_EXPIRED`;
+eligible late current-head approval or actionable feedback observed before
+that terminal decision remains usable.
 _Avoid_: review retry loop, approval shortcut, restart reset.
 
 **AFK continuity**:
@@ -168,7 +173,8 @@ explicit abort, unverifiable completion, requested changes left unrepaired
 (formal, a daemon `changes_requested` verdict or an approval override),
 informal review feedback a relaunch left unchanged (`REVIEW_FEEDBACK_STALLED`),
 owned work the implementor cannot resolve (`REMEDIATION_BUDGET_EXHAUSTED`),
-no review request delivered when a review command is configured,
+an expired delegated-review request with no active resolver
+(`REVIEW_REQUEST_EXPIRED`), no review request delivered when a review command is configured,
 GitHub unavailable for a whole
 **GitHub recovery window**). Owned work is merge work (ready to merge), CI
 repair, review-request delivery, a blind-review round and informal feedback
@@ -190,7 +196,13 @@ One gate/reason/cause table and the AFK-continuity contract enumerate every
 current outcome. ADR-0063 records which sibling changes replaced selected holds
 with terminal outcomes; other waits, including in-deadline CI/review, GitHub
 recovery, quota, capacity, `CI_WAIT_TIMEOUT`, merge-conflict repair, and the idle
-gate without a review command, remain unchanged.
+gate without a review command, remain unchanged. An expired review request waits
+only for current-head CI, its matching nonterminal review Run while the daemon
+is live, or a live-daemon quota pause; a request alone cannot keep the Run
+waiting. Eligible late approval and actionable feedback count if observed before
+expiry terminalizes the Run. Unknown verdicts, stale-head evidence, unrelated or
+terminal review Runs, orphan Runs after daemon shutdown, and stale quota pauses
+are not resolvers or usable responses.
 _Avoid_: failing a Run on evidence an external operation can still supply, idle failure.
 _See_: Managed review lifecycle, Publication verdict, ADR-0063.
 
