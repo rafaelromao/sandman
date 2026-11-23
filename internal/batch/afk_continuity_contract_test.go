@@ -80,6 +80,9 @@ type continuityGitHub struct {
 
 func newContinuityGitHub(pr github.PR) *continuityGitHub {
 	pr.Number, pr.HeadRefName = continuityPR, continuityBranch
+	if strings.TrimSpace(pr.BaseRefName) == "" {
+		pr.BaseRefName = "main"
+	}
 	if pr.State == "" {
 		pr.State = "open"
 	}
@@ -298,6 +301,8 @@ type continuityScenario struct {
 	polls []func(g *continuityGitHub)
 	// want is "merged", "waiting" or "failed:<reason>".
 	want string
+	// wantCompletionReason asserts the terminal merged-PR completion diagnostic.
+	wantCompletionReason string
 	// wantExpiredEvidence checks the terminal request-expiry payload.
 	wantExpiredEvidence   bool
 	wantReviewRunObserved bool
@@ -777,6 +782,11 @@ func (o continuityOutcome) verdict() string {
 			return "merged"
 		}
 		if status == "failure" {
+			if completion, ok := event.Payload["completion"].(map[string]any); ok {
+				if reason, _ := completion["reason"].(string); reason != "" {
+					return "failed:" + reason
+				}
+			}
 			reason, _ := event.Payload["reason"].(string)
 			return "failed:" + reason
 		}
@@ -928,6 +938,14 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 		}
 	}
 	scenarios = append(scenarios,
+		continuityScenario{
+			name: "merged implementation PR targets a different Base branch",
+			pr: github.PR{
+				State: "merged", Merged: true, BaseRefName: "release",
+			},
+			retries: 3, forbidRetry: true, wantLaunches: 1,
+			want: "failed:merged-pr-base-mismatch", wantCompletionReason: "merged-pr-base-mismatch",
+		},
 		continuityScenario{
 			name: "approved/human comment", pr: github.PR{StatusCheckRollup: "pending", MergeStateStatus: "CLEAN"}, retries: 3,
 			launches: []func(*continuityGitHub) string{requestReview},
@@ -1595,6 +1613,25 @@ func TestAFKContinuityContract_RealIncidentsMergeOrWait(t *testing.T) {
 				}
 				if finished == nil || finished.Payload["external_gate"] != sc.wantGate {
 					t.Fatalf("terminal evidence = %+v, want it to name gate %s\nevents: %s", finished, sc.wantGate, continuityEventSummary(outcome.events))
+				}
+			}
+			if sc.wantCompletionReason != "" {
+				var finished *events.Event
+				for _, event := range outcome.current() {
+					if event.Type == "run.finished" {
+						finished = &event
+						break
+					}
+				}
+				completion, ok := map[string]any(nil), false
+				if finished != nil {
+					completion, ok = finished.Payload["completion"].(map[string]any)
+				}
+				if !ok || completion["reason"] != sc.wantCompletionReason ||
+					fmt.Sprint(completion["pull_request"]) != fmt.Sprint(continuityPR) ||
+					completion["actual_base"] != "release" || completion["expected_base"] != "main" {
+					t.Fatalf("terminal completion = %+v, want PR %d targeting release instead of main\nevents: %s",
+						finished, continuityPR, continuityEventSummary(outcome.events))
 				}
 			}
 			if sc.wantExpiredEvidence {
@@ -2465,7 +2502,7 @@ func TestAFKContinuityContract_LifecycleFailureReasonsAreClassified(t *testing.T
 			t.Errorf("%s must wait for external recovery, as rc2 did", reason)
 		}
 	}
-	for _, reason := range []string{"PULL_REQUEST_CLOSED", "REVIEW_REQUEST_REQUIRED", "REMEDIATION_BUDGET_EXHAUSTED", reviewFeedbackStalledReason, reviewRequestExpiredReason, "merged-pr-missing-closing-reference", "SOMETHING_NEW"} {
+	for _, reason := range []string{"PULL_REQUEST_CLOSED", "REVIEW_REQUEST_REQUIRED", "REMEDIATION_BUDGET_EXHAUSTED", reviewFeedbackStalledReason, reviewRequestExpiredReason, "merged-pr-missing-closing-reference", "merged-pr-base-mismatch", "SOMETHING_NEW"} {
 		if lifecycleFailureRecoverable(reason) {
 			t.Errorf("%s must stay terminal", reason)
 		}

@@ -35,7 +35,7 @@ func TestRunExecutor_ForegroundLifecycleWaitKeepsSessionUntilMerge(t *testing.T)
 		responses: []*github.PR{
 			{Number: 17, State: "open", Body: "Closes #42", HeadRefName: branch, HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
 			{Number: 17, State: "open", Body: "Closes #42", HeadRefName: branch, HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
-			{Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: branch, HeadRefOid: "current-sha"},
+			{Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: branch, HeadRefOid: "current-sha", BaseRefName: "main"},
 		},
 	}
 	var waits []time.Duration
@@ -121,7 +121,7 @@ func TestRunExecutor_ForegroundLifecycleWaitRepeatsFinalPollInterval(t *testing.
 			pending(), // first observation
 			pending(), // second observation
 			pending(), // third observation
-			{Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: branch, HeadRefOid: "current-sha"},
+			{Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: branch, HeadRefOid: "current-sha", BaseRefName: "main"},
 		},
 	}
 	var waits []time.Duration
@@ -277,7 +277,7 @@ func TestRunBatch_ForegroundWaitRetainsCapacityForIndependentSibling(t *testing.
 		},
 		prs: map[string]*github.PR{
 			"42-parent":  {Number: 17, State: "open", Body: "Closes #42", HeadRefName: "42-parent", HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
-			"44-sibling": {Number: 18, State: "merged", Merged: true, Body: "Closes #44", HeadRefName: "44-sibling", HeadRefOid: "current-sha"},
+			"44-sibling": {Number: 18, State: "merged", Merged: true, Body: "Closes #44", HeadRefName: "44-sibling", HeadRefOid: "current-sha", BaseRefName: "main"},
 		},
 	}
 	results := &byIssueRunnableFactory{results: map[int]AgentRunResult{
@@ -423,7 +423,7 @@ func TestRunExecutor_ExhaustedMergeResumeEndsInsteadOfObserving(t *testing.T) {
 			ready(), // resume evidence
 			ready(), // second closing-reference guard
 			ready(), // second lifecycle decision
-			{Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: branch, HeadRefOid: "current-sha"},
+			{Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: branch, HeadRefOid: "current-sha", BaseRefName: "main"},
 		},
 	}
 	var waits []time.Duration
@@ -480,7 +480,7 @@ func TestRunExecutor_ForegroundWaitCoversPullRequestPublication(t *testing.T) {
 	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
 	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success", Branch: branch}}}
 	pending := &github.PR{Number: 17, State: "open", Body: "Closes #42", HeadRefName: branch, HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"}
-	merged := &github.PR{Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: branch, HeadRefOid: "current-sha"}
+	merged := &github.PR{Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: branch, HeadRefOid: "current-sha", BaseRefName: "main"}
 	client := &perRunGateSequenceClient{
 		fakeGitHubClient: fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}}},
 		responses:        []*github.PR{nil, nil, pending, merged},
@@ -541,7 +541,7 @@ func TestRunExecutor_ContinuationForegroundWaitCoversPullRequestPublication(t *t
 	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
 	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success", Branch: branch}}}
 	pending := &github.PR{Number: 17, State: "open", Body: "Closes #42", HeadRefName: branch, HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"}
-	merged := &github.PR{Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: branch, HeadRefOid: "current-sha"}
+	merged := &github.PR{Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: branch, HeadRefOid: "current-sha", BaseRefName: "main"}
 	client := &perRunGateSequenceClient{
 		fakeGitHubClient: fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}}},
 		responses:        []*github.PR{nil, nil, pending, pending, merged},

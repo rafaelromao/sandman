@@ -27,6 +27,12 @@ func (s *runSession) observeLifecycleWithHostPathsForTest(ctx context.Context, w
 }
 
 func (s *runSession) observeLifecycleAttemptForTest(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool, attemptStatus string) lifecycleVerdict {
+	// Unit fixtures without an explicit run Base model the test repository's
+	// conventional default. Production RunSpecs carry the resolved Base branch;
+	// unknown PR bases are tested with an explicit blank PR BaseRefName.
+	if s.baseBranch == "" {
+		s.baseBranch = "main"
+	}
 	var observer lifecycleObservation = newLifecycleObserver(s)
 	return observer.Observe(ctx, lifecycleObservationRequest{
 		WorkDir: workDir, Branch: branch, RunID: runID,

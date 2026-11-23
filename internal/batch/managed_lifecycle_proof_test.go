@@ -161,6 +161,7 @@ func TestManagedLifecycleProof_AwaitApprovalResumeMergeAndDependentRelease(t *te
 			Merged:           true,
 			HeadRefName:      gateTestBranch,
 			HeadRefOid:       "current-sha",
+			BaseRefName:      "main",
 			Body:             "Closes #42",
 			MergeStateStatus: "CLEAN",
 		},
@@ -322,6 +323,7 @@ func TestManagedLifecycleProof_FeedbackResumeMergesWithoutRetry(t *testing.T) {
 		Merged:           true,
 		HeadRefName:      gateTestBranch,
 		HeadRefOid:       "current-sha",
+		BaseRefName:      "main",
 		Body:             "Closes #42",
 		MergeStateStatus: "CLEAN",
 	}

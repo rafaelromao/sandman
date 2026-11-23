@@ -179,7 +179,7 @@ func TestHistoricalClosedPRObservation_AdmissionBoundaries(t *testing.T) {
 				issueState = "closed"
 			}
 			session := &runSession{
-				issueNumber: 42, issueState: issueState,
+				issueNumber: 42, issueState: issueState, baseBranch: "main",
 				deps: runDeps{
 					githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: pr}},
 					eventLog:     eventLog, errorLog: io.Discard,

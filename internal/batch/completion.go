@@ -66,23 +66,55 @@ func checkPRMerged(ctx context.Context, client github.Client, branch string) boo
 	return err == nil && merged
 }
 
-func checkPRMergedForIssue(ctx context.Context, client github.Client, branch string, issueNumber int) bool {
+func mergedPRBaseMatches(actualBase, expectedBase string) bool {
+	actualBase = strings.TrimSpace(actualBase)
+	expectedBase = strings.TrimSpace(expectedBase)
+	return actualBase != "" && expectedBase != "" && actualBase == expectedBase
+}
+
+func mergedPRBaseMismatchCompletion(pr *github.PR, expectedBase string) map[string]any {
+	actualBase := ""
+	pullRequest := 0
+	if pr != nil {
+		actualBase = strings.TrimSpace(pr.BaseRefName)
+		pullRequest = pr.Number
+	}
+	return map[string]any{
+		"reason":        "merged-pr-base-mismatch",
+		"pull_request":  pullRequest,
+		"actual_base":   actualBase,
+		"expected_base": strings.TrimSpace(expectedBase),
+	}
+}
+
+type mergedPRIssueCheck struct {
+	merged        bool
+	failureExtras map[string]any
+}
+
+func checkMergedPRForIssue(ctx context.Context, client github.Client, branch string, issueNumber int, expectedBase string) mergedPRIssueCheck {
 	if client == nil || strings.TrimSpace(branch) == "" || issueNumber <= 0 {
-		return false
+		return mergedPRIssueCheck{}
 	}
 	pr, err := client.FindPRByBranch(ctx, branch)
 	if err != nil || pr == nil {
-		return false
+		return mergedPRIssueCheck{}
 	}
-	if pr.Merged || strings.EqualFold(pr.State, "merged") {
-		return pr.ClosesIssue(issueNumber)
-	}
-	if body, changed := github.EnsureClosingReference(pr.Body, issueNumber); changed {
-		if err := client.EditPRBody(ctx, pr.Number, body); err != nil {
-			return false
+	if !pr.Merged && !strings.EqualFold(pr.State, "merged") {
+		if body, changed := github.EnsureClosingReference(pr.Body, issueNumber); changed {
+			_ = client.EditPRBody(ctx, pr.Number, body)
 		}
+		return mergedPRIssueCheck{}
 	}
-	return false
+	if !mergedPRBaseMatches(pr.BaseRefName, expectedBase) {
+		return mergedPRIssueCheck{failureExtras: map[string]any{
+			"completion": mergedPRBaseMismatchCompletion(pr, expectedBase),
+		}}
+	}
+	if !pr.ClosesIssue(issueNumber) {
+		return mergedPRIssueCheck{failureExtras: mergeCompletionFailureExtras(nil, issueNumber)}
+	}
+	return mergedPRIssueCheck{merged: true}
 }
 
 func mergedPRMissingClosingReference(ctx context.Context, client github.Client, branch string, issueNumber int) bool {

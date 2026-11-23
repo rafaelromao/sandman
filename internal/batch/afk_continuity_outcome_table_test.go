@@ -71,6 +71,7 @@ func continuityContractRows() []continuityContractRow {
 		{continuityRow{reason: actionableFeedbackReason, cause: causeFailure}, outcomeTerminal, relaunchProbe(causeFailure, relaunch(gateBlindReviewRequired, actionableFeedbackReason), false)},
 		{continuityRow{reason: blindReviewRequiredReason, cause: causeFailure}, outcomeHold, failureReasonProbe(blindReviewRequiredReason)},
 		{continuityRow{reason: "merged-pr-missing-closing-reference", cause: causeFailure}, outcomeTerminal, failureReasonProbe("merged-pr-missing-closing-reference")},
+		{continuityRow{reason: "merged-pr-base-mismatch", cause: causeFailure}, outcomeTerminal, failureReasonProbe("merged-pr-base-mismatch")},
 		{continuityRow{reason: "CI_WAIT_STATE_ERROR", cause: causeFailure}, outcomeTerminal, failureReasonProbe("CI_WAIT_STATE_ERROR")},
 		{continuityRow{reason: ciRecoveryExhaustedReason, cause: causeFailure}, outcomeTerminal, failureReasonProbe(ciRecoveryExhaustedReason)},
 		{continuityRow{reason: ciRecoveryStateUnavailableReason, cause: causeFailure}, outcomeHold, failureReasonProbe(ciRecoveryStateUnavailableReason)},

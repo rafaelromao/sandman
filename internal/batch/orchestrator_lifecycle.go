@@ -80,6 +80,7 @@ type mergedMergeFacts struct {
 type implementationPRFacts struct {
 	pr                 *github.PR
 	headSHA            string
+	baseBranch         string
 	repository         string
 	mergeFacts         *mergedMergeFacts
 	retainedEvidence   retainedReviewEvidence
@@ -154,6 +155,17 @@ func decideImplementationPRLifecycle(in implementationPRFacts) lifecycleDecision
 	}
 	switch gate {
 	case lifecycleGateResolved:
+		if !mergedPRBaseMatches(in.pr.BaseRefName, in.baseBranch) {
+			return lifecycleDecision{
+				action:            lifecycleFailure,
+				gate:              lifecycleGateResolved,
+				handled:           true,
+				completionFailure: true,
+				failureExtras: map[string]any{
+					"completion": mergedPRBaseMismatchCompletion(in.pr, in.baseBranch),
+				},
+			}
+		}
 		if in.mergeFacts == nil {
 			// The PR is merged but the adapter has not supplied the
 			// merge-intent facts yet. Ask for them and recompute.
@@ -647,6 +659,9 @@ func lifecycleRemediationDecision(gate, reason, nextAction string, pr *github.PR
 // terminal run.finished event cannot look like a wait.
 func lifecycleFailureExtras(d lifecycleDecision, issueNumber int) map[string]any {
 	if d.completionFailure {
+		if len(d.failureExtras) > 0 {
+			return cloneLifecycleExtras(d.failureExtras)
+		}
 		return mergeCompletionFailureExtras(nil, issueNumber)
 	}
 	if len(d.failureExtras) == 0 {
@@ -836,6 +851,7 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 	decision := decideImplementationPRLifecycle(implementationPRFacts{
 		pr:                pr,
 		headSHA:           headSHA,
+		baseBranch:        s.baseBranch,
 		repository:        repository,
 		attemptStatus:     attemptStatus,
 		afterAgentAttempt: afterAgentAttempt,
@@ -853,6 +869,7 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 		decision = decideImplementationPRLifecycle(implementationPRFacts{
 			pr:                pr,
 			headSHA:           headSHA,
+			baseBranch:        s.baseBranch,
 			repository:        repository,
 			mergeFacts:        mergeFacts,
 			attemptStatus:     attemptStatus,

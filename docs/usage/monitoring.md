@@ -147,7 +147,7 @@ Emitted when an agent run completes.
 | `run_kind` | Mirrors the `run.started` payload so projection sees a consistent kind on both events. |
 | `reason` | Short string built from the error returned by the selection phase. |
 | `blocker` | Optional dependency blocker classification and upstream issue list. |
-| `completion` | Completion diagnostic used when a merged pull request needs closing-reference repair. |
+| `completion` | Completion verification diagnostic for a merged implementation pull request. A `reason` of `merged-pr-missing-closing-reference` means the PR does not close the issue; `merged-pr-base-mismatch` means its target branch is missing/unreadable or differs from the Run's `base_branch`. The latter includes `pull_request`, `actual_base` (empty when unavailable), and `expected_base`. Either outcome is terminal failure and does not relaunch the agent. |
 | `external_gate` | Retained terminal gate diagnostic; terminal payloads strip active `await`, `await_reason`, and `gate` fields. |
 | `review_request` | Present for retained delegated-review outcomes; retains the confirmed request identity, current head, deadline, budget, elapsed time, response counters, validated request-scoped classification, outcome, and next action. |
 

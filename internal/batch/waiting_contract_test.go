@@ -1438,6 +1438,7 @@ func TestWaitingContract_ExpiredQuotaProbeStillFinishesVerifiedMerge(t *testing.
 			Body:        "Closes #42",
 			HeadRefName: branch,
 			HeadRefOid:  "current-sha",
+			BaseRefName: "main",
 		}},
 	}
 	factory := &controlledRunnableFactory{}
@@ -1448,12 +1449,13 @@ func TestWaitingContract_ExpiredQuotaProbeStillFinishesVerifiedMerge(t *testing.
 		WithRunSessionOpts(runSessionOptions{currentHead: func(string) (string, error) { return "current-sha", nil }}),
 	)
 	e := o.newRunExecutor(context.Background(), BatchConfig{
-		Cfg:      &config.Config{},
+		Cfg:      &config.Config{Git: config.GitConfig{BaseBranch: "main"}},
 		AgentCfg: config.BuiltInAgentPresets["opencode"].Agent("opencode"),
 	}, &freshSandboxFactory{}, nil)
 	result, started := e.Execute(context.Background(), RowSpec{
 		IssueNumber:    42,
 		RunID:          "row",
+		BaseBranch:     "main",
 		Mode:           ModeContinue,
 		quotaAllowance: usageLimitAllowance{probe: true, deadline: now.Add(-time.Minute)},
 		Branches:       map[int]string{42: branch},

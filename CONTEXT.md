@@ -432,6 +432,13 @@ _Avoid_: cancelled, killed, terminated.
 A GitHub issue fetched via `gh` CLI. The unit of work delegated to an agent.
 _Avoid_: Ticket, story.
 
+**Implemented**:
+A work item whose implementation pull request has merged into the AgentRun's Base branch, regardless of the pull request's or issue's current state. The pull request must include a GitHub closing reference for the issue. A missing or unreadable target branch, or a target different from the Base branch, is not Implemented.
+_Avoid_: completed, done, resolved, or closed as synonyms.
+
+**Base branch**:
+The branch an AgentRun's implementation pull request targets. If unset in configuration, the repository's default branch is used.
+
 **Prompt**:
 The instruction content passed to an Agent after template rendering. See `Task` for the on-disk file used for one AgentRun.
 _Avoid_: Instructions, query.

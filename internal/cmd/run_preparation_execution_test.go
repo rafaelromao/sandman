@@ -75,7 +75,7 @@ func (r *planningRunnable) Run(ctx context.Context, _ prompt.IssueRenderer, _ st
 	if f.gh.prs == nil {
 		f.gh.prs = make(map[string]*github.PR)
 	}
-	f.gh.prs[r.branch] = &github.PR{Number: 100 + r.number, State: "merged", Merged: true, HeadRefName: r.branch, Body: fmt.Sprintf("Closes #%d", r.number)}
+	f.gh.prs[r.branch] = &github.PR{Number: 100 + r.number, State: "merged", Merged: true, HeadRefName: r.branch, BaseRefName: "main", Body: fmt.Sprintf("Closes #%d", r.number)}
 	f.gh.mu.Unlock()
 	return batch.AgentRunResult{Status: "success"}
 }

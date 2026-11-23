@@ -115,7 +115,7 @@ func TestRunExecutor_ForegroundLifecycleDefaultCadenceIsThirtySecondsFromFirstPo
 			pending(), // initial lifecycle decision
 			pending(), // first observation
 			pending(), // second observation
-			{Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: branch, HeadRefOid: "current-sha"},
+			{Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: branch, HeadRefOid: "current-sha", BaseRefName: "main"},
 		},
 	}
 	var waits []time.Duration

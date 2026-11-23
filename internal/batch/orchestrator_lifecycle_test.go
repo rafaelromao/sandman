@@ -58,6 +58,9 @@ func runLifecycleCaseForIssueWithAttemptStatusAndUsage(t *testing.T, pr *github.
 	if pr != nil && pr.HeadRefOid == "" {
 		pr.HeadRefOid = "current-sha"
 	}
+	if pr != nil && (pr.Merged || strings.EqualFold(pr.State, "merged")) && pr.BaseRefName == "" {
+		pr.BaseRefName = "main"
+	}
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -177,6 +180,46 @@ func TestLifecycle_MergedWithoutClosingIntentFailsAfterFailedAgentAttempt(t *tes
 	completion, ok := finished.Payload["completion"].(map[string]any)
 	if !ok || completion["reason"] != "merged-pr-missing-closing-reference" {
 		t.Fatalf("completion diagnostic = %#v, want missing-closing-reference", finished.Payload["completion"])
+	}
+}
+
+func TestLifecycle_MergedWrongBaseFailsAcrossFreshAndContinue(t *testing.T) {
+	pr := &github.PR{
+		Number:      42,
+		State:       "merged",
+		Merged:      true,
+		Body:        "Closes #42",
+		HeadRefOid:  "current-sha",
+		HeadRefName: gateTestBranch,
+		BaseRefName: "release",
+	}
+	for _, tc := range []struct {
+		name    string
+		mode    IssueMode
+		priorID string
+		launch  int
+	}{
+		{name: "fresh", mode: ModeFresh, launch: 1},
+		{name: "continue", mode: ModeContinue, priorID: "prior-run", launch: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, logs, launches := runLifecycleCaseForIssue(t, pr, tc.mode, tc.priorID)
+			if result.Status != "failure" || finishedStatus(t, logs) != "failure" {
+				t.Fatalf("run status = %q, finished = %q, want failure", result.Status, finishedStatus(t, logs))
+			}
+			if launches != tc.launch {
+				t.Fatalf("agent launches = %d, want %d (no relaunch)", launches, tc.launch)
+			}
+			if got := countEventsByType(logs, "run.retry"); got != 0 {
+				t.Fatalf("run.retry events = %d, want 0", got)
+			}
+			finished := findEvent(logs, "run.finished")
+			completion, ok := finished.Payload["completion"].(map[string]any)
+			if !ok || completion["reason"] != "merged-pr-base-mismatch" ||
+				completion["pull_request"] != float64(42) || completion["actual_base"] != "release" || completion["expected_base"] != "main" {
+				t.Fatalf("completion diagnostic = %#v, want PR 42 targeting release instead of main", finished.Payload["completion"])
+			}
+		})
 	}
 }
 
@@ -301,8 +344,9 @@ func finishedStatus(t *testing.T, logs []events.Event) string {
 
 func TestDecideImplementationPRLifecycle_MergedWithClosingIntent(t *testing.T) {
 	d := decideImplementationPRLifecycle(implementationPRFacts{
-		pr:      &github.PR{Number: 42, State: "merged", Merged: true, Body: "Closes #42"},
-		headSHA: "current-sha",
+		pr:         &github.PR{Number: 42, State: "merged", Merged: true, Body: "Closes #42", BaseRefName: "main"},
+		headSHA:    "current-sha",
+		baseBranch: "main",
 		mergeFacts: &mergedMergeFacts{
 			mergedWithClosingIntent: true,
 		},
@@ -318,10 +362,45 @@ func TestDecideImplementationPRLifecycle_MergedWithClosingIntent(t *testing.T) {
 	}
 }
 
+func TestDecideImplementationPRLifecycle_MergedWrongBaseFailsBeforeClosingIntent(t *testing.T) {
+	d := decideImplementationPRLifecycle(implementationPRFacts{
+		pr:         &github.PR{Number: 42, State: "merged", Merged: true, Body: "Closes #42", BaseRefName: "release"},
+		headSHA:    "current-sha",
+		baseBranch: "main",
+	})
+	if d.action != lifecycleFailure || !d.handled || !d.completionFailure || d.needMergeFacts {
+		t.Fatalf("decision = %+v, want terminal base-mismatch failure without fetching closing facts", d)
+	}
+	extras := lifecycleFailureExtras(d, 42)
+	completion, ok := extras["completion"].(map[string]any)
+	if !ok || completion["reason"] != "merged-pr-base-mismatch" ||
+		completion["pull_request"] != 42 || completion["actual_base"] != "release" || completion["expected_base"] != "main" {
+		t.Fatalf("completion diagnostic = %#v, want PR 42 base release and expected base main", extras["completion"])
+	}
+}
+
+func TestDecideImplementationPRLifecycle_MergedUnreadableBaseFailsClosed(t *testing.T) {
+	d := decideImplementationPRLifecycle(implementationPRFacts{
+		pr:         &github.PR{Number: 42, State: "merged", Merged: true, Body: "Closes #42"},
+		headSHA:    "current-sha",
+		baseBranch: "main",
+		mergeFacts: &mergedMergeFacts{mergedWithClosingIntent: true},
+	})
+	if d.action != lifecycleFailure || !d.handled || !d.completionFailure {
+		t.Fatalf("decision = %+v, want terminal failure for unreadable PR base", d)
+	}
+	extras := lifecycleFailureExtras(d, 42)
+	completion, ok := extras["completion"].(map[string]any)
+	if !ok || completion["reason"] != "merged-pr-base-mismatch" || completion["actual_base"] != "" || completion["expected_base"] != "main" {
+		t.Fatalf("completion diagnostic = %#v, want unreadable actual base and expected main", extras["completion"])
+	}
+}
+
 func TestDecideImplementationPRLifecycle_MergedStateWithoutMergedFlag(t *testing.T) {
 	d := decideImplementationPRLifecycle(implementationPRFacts{
-		pr:      &github.PR{Number: 42, State: "merged", Merged: false, Body: "Closes #42"},
-		headSHA: "current-sha",
+		pr:         &github.PR{Number: 42, State: "merged", Merged: false, Body: "Closes #42", BaseRefName: "main"},
+		headSHA:    "current-sha",
+		baseBranch: "main",
 		mergeFacts: &mergedMergeFacts{
 			mergedWithClosingIntent: true,
 		},
@@ -333,16 +412,18 @@ func TestDecideImplementationPRLifecycle_MergedStateWithoutMergedFlag(t *testing
 
 func TestDecideImplementationPRLifecycle_MergedMissingClosingRefRequestsFacts(t *testing.T) {
 	d := decideImplementationPRLifecycle(implementationPRFacts{
-		pr:      &github.PR{Number: 42, State: "merged", Merged: true, Body: "Refs #42"},
-		headSHA: "current-sha",
+		pr:         &github.PR{Number: 42, State: "merged", Merged: true, Body: "Refs #42", BaseRefName: "main"},
+		headSHA:    "current-sha",
+		baseBranch: "main",
 	})
 	if !d.needMergeFacts || d.handled {
 		t.Fatalf("decision = %+v, want needMergeFacts without a terminal action", d)
 	}
 
 	withRef := decideImplementationPRLifecycle(implementationPRFacts{
-		pr:      &github.PR{Number: 42, State: "merged", Merged: true, Body: "Refs #42"},
-		headSHA: "current-sha",
+		pr:         &github.PR{Number: 42, State: "merged", Merged: true, Body: "Refs #42", BaseRefName: "main"},
+		headSHA:    "current-sha",
+		baseBranch: "main",
 		mergeFacts: &mergedMergeFacts{
 			mergedWithoutClosingRef: true,
 		},
@@ -359,8 +440,9 @@ func TestDecideImplementationPRLifecycle_MergedMissingClosingRefRequestsFacts(t 
 
 func TestDecideImplementationPRLifecycle_UnverifiableMergedFails(t *testing.T) {
 	d := decideImplementationPRLifecycle(implementationPRFacts{
-		pr:      &github.PR{Number: 42, State: "merged", Merged: true, Body: "Refs #42"},
-		headSHA: "current-sha",
+		pr:         &github.PR{Number: 42, State: "merged", Merged: true, Body: "Refs #42", BaseRefName: "main"},
+		headSHA:    "current-sha",
+		baseBranch: "main",
 		mergeFacts: &mergedMergeFacts{
 			mergedWithClosingIntent: false,
 			mergedWithoutClosingRef: false,
@@ -871,7 +953,7 @@ func TestLifecycle_VerifiedMergedCompletionSurvivesLaterLegacyLookup(t *testing.
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	client := &immutableMergedLookupClient{
 		fakeGitHubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}}},
-		merged:           &github.PR{Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha"},
+		merged:           &github.PR{Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha", BaseRefName: "main"},
 		mergedCalls:      1,
 		legacyErr:        errors.New("legacy lookup unavailable"),
 	}
@@ -914,7 +996,7 @@ func TestLifecycle_FreshRunKeepsVerifiedMergeBeforeLegacyArbitration(t *testing.
 	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success", Branch: gateTestBranch}}}
 	client := &immutableMergedLookupClient{
 		fakeGitHubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}}},
-		merged:           &github.PR{Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha"},
+		merged:           &github.PR{Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha", BaseRefName: "main"},
 		mergedCalls:      1,
 		legacy:           &github.PR{Number: 17, State: "open", Body: "Refs #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
 	}
@@ -985,7 +1067,7 @@ func TestLifecycle_FreshRunKeepsMergedFailureBeforeLegacyArbitration(t *testing.
 	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success", Branch: gateTestBranch}}}
 	client := &immutableMergedLookupClient{
 		fakeGitHubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}}},
-		merged:           &github.PR{Number: 17, State: "merged", Merged: true, Body: "Refs #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha"},
+		merged:           &github.PR{Number: 17, State: "merged", Merged: true, Body: "Refs #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha", BaseRefName: "main"},
 		mergedCalls:      1,
 		legacy:           &github.PR{Number: 17, State: "open", Body: "Closes #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
 	}
@@ -1041,7 +1123,7 @@ func TestLifecycle_EntryTerminalDecisionsSkipLegacyArbitration(t *testing.T) {
 	}{
 		{
 			name: "success",
-			pr:   &github.PR{Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha"},
+			pr:   &github.PR{Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefName: gateTestBranch, HeadRefOid: "current-sha", BaseRefName: "main"},
 			want: "success",
 		},
 		{
@@ -1085,6 +1167,7 @@ func TestLifecycle_EntryTerminalDecisionsSkipLegacyArbitration(t *testing.T) {
 					layout:   paths.NewLayout(&config.Config{}, t.TempDir()),
 				},
 				issueNumber: 42,
+				baseBranch:  "main",
 				mode:        ModeContinue,
 				opts:        gateTestRunOptions(),
 			}

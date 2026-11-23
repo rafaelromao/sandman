@@ -231,7 +231,7 @@ func (f *fakeGitHubClient) FindPRByBranch(ctx context.Context, branch string) (*
 					f.findPRSeqIdx = map[string]int{}
 				}
 				f.findPRSeqIdx[branch] = idx + 1
-				return seq[idx], nil
+				return mainBaseForLegacyMergedFixture(seq[idx]), nil
 			}
 		}
 	}
@@ -253,9 +253,9 @@ func (f *fakeGitHubClient) FindPRByBranch(ctx context.Context, branch string) (*
 					refs = append(refs, fmt.Sprintf("#%d", number))
 				}
 				copy.Body = "Closes " + strings.Join(refs, ", ")
-				return &copy, nil
+				return mainBaseForLegacyMergedFixture(&copy), nil
 			}
-			return pr, nil
+			return mainBaseForLegacyMergedFixture(pr), nil
 		}
 		return nil, nil
 	}
@@ -268,6 +268,20 @@ func (f *fakeGitHubClient) FindPRByBranch(ctx context.Context, branch string) (*
 		}
 	}
 	return nil, nil
+}
+
+// mainBaseForLegacyMergedFixture keeps older tests that predate PR.BaseRefName
+// explicit on the standard test Base branch. Tests for unreadable or alternate
+// bases use an explicit value or a client that returns the raw fixture.
+func mainBaseForLegacyMergedFixture(pr *github.PR) *github.PR {
+	if pr == nil {
+		return nil
+	}
+	copy := *pr
+	if (copy.Merged || strings.EqualFold(strings.TrimSpace(copy.State), "merged")) && strings.TrimSpace(copy.BaseRefName) == "" {
+		copy.BaseRefName = "main"
+	}
+	return &copy
 }
 
 func (f *fakeGitHubClient) ListOpenPRs(ctx context.Context) ([]github.PR, error) {
@@ -360,7 +374,13 @@ func (f *fakeGitHubClient) ClosePR(ctx context.Context, prNumber int) error {
 }
 
 func mergedPR(branch, sha string) *github.PR {
-	return &github.PR{Number: 1, State: "closed", Merged: true, HeadRefName: branch}
+	return &github.PR{Number: 1, State: "closed", Merged: true, HeadRefName: branch, BaseRefName: "main"}
+}
+
+func mergedPRForBase(branch, sha, base string) *github.PR {
+	pr := mergedPR(branch, sha)
+	pr.BaseRefName = base
+	return pr
 }
 
 type fakeRunnable struct {
@@ -2031,6 +2051,63 @@ func TestRunSingle_PreRetryGuardShortCircuitsOnMergedPR(t *testing.T) {
 	}
 	if resetCalls != 0 {
 		t.Fatalf("retry reset calls = %d, want 0 (pre-retry guard must not reset the branch)", resetCalls)
+	}
+}
+
+func TestRunSingle_PreRetryGuardFailsOnMergedWrongBaseWithoutRelaunch(t *testing.T) {
+	workDir := t.TempDir()
+	t.Chdir(workDir)
+
+	branch := "42-fix-bug"
+	worktreePath := filepath.Join(workDir, "worktree")
+	pr := &github.PR{
+		Number: 17, State: "open", Body: "Closes #42", HeadRefName: branch, BaseRefName: "release",
+	}
+	var findPRCalls int
+	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "failure", Branch: branch}}}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs:    map[string]*github.PR{branch: pr},
+			findPRHook: func() {
+				findPRCalls++
+				if findPRCalls >= 2 {
+					pr.Merged = true
+					pr.State = "merged"
+				}
+			},
+		},
+		eventLog:        eventLog,
+		renderer:        &retryRenderer{result: "rendered prompt"},
+		sandboxFactory:  &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}},
+		errorLog:        io.Discard,
+		runnableFactory: factory,
+		runSessionOpts:  runSessionOptions{retryReset: func(context.Context, sandbox.Sandbox, string, string) error { return nil }},
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}, nil, false, "main", nil, 0, 0, 2, 0, "", 0, false, 0, false, false, false, "", "")
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want terminal failure", result.Status)
+	}
+	if len(factory.created) != 1 {
+		t.Fatalf("agent launches = %d, want one initial attempt and no retry", len(factory.created))
+	}
+	rows, err := eventLog.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished := findEvent(rows, "run.finished")
+	if finished == nil || finished.Payload["status"] != "failure" {
+		t.Fatalf("run.finished = %+v, want terminal failure", finished)
+	}
+	completion, ok := finished.Payload["completion"].(map[string]any)
+	if !ok || completion["reason"] != "merged-pr-base-mismatch" || completion["actual_base"] != "release" || completion["expected_base"] != "main" {
+		t.Fatalf("completion diagnostic = %#v, want merged-pr-base-mismatch from release to main", finished.Payload["completion"])
 	}
 }
 
@@ -4572,8 +4649,8 @@ func TestRunBatch_SyncsBaseBranchBeforeEachAgentRunStarts(t *testing.T) {
 			2: {Number: 2, Title: "Two"},
 		},
 		prs: map[string]*github.PR{
-			"1-one": mergedPR("1-one", ""),
-			"2-two": mergedPR("2-two", ""),
+			"1-one": mergedPRForBase("1-one", "", "trunk"),
+			"2-two": mergedPRForBase("2-two", "", "trunk"),
 		},
 	}
 	store := &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}

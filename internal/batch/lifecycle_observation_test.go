@@ -28,6 +28,7 @@ func TestLifecycleObservation_VerifiedMergeWinsOverRetainedReview(t *testing.T) 
 	now := time.Unix(2_000, 0)
 	session := &runSession{
 		issueNumber: 42,
+		baseBranch:  "main",
 		deps: runDeps{
 			githubClient: &fakeGitHubClient{
 				issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
@@ -128,6 +129,7 @@ func TestLifecycleObservation_VerdictTable(t *testing.T) {
 			}
 			session := &runSession{
 				issueNumber: 42,
+				baseBranch:  "main",
 				deps: runDeps{
 					githubClient: &fakeGitHubClient{
 						issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},

@@ -72,13 +72,10 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 			if !ok || strings.TrimSpace(baseBranch) == "" {
 				return batch.Request{}, fmt.Errorf("missing base branch in previous run for issue #%d", num)
 			}
-			merged, err := batch.CheckPRMergedAtHead(ctx, deps.GitHubClient, branch, "")
-			if err != nil {
-				return batch.Request{}, fmt.Errorf("check merged status for issue #%d: %w", num, err)
-			}
-			if merged {
-				return batch.Request{}, fmt.Errorf("cannot continue issue #%d: PR already merged (branch %q)", num, branch)
-			}
+			// A merged PR is resolved by the Run lifecycle, which verifies
+			// both its closing reference and its target Base branch and records
+			// the terminal outcome. Do not short-circuit here: doing so would
+			// bypass that decision and its completion diagnostics.
 
 			worktreePath := filepath.Join(worktreeBase, branch)
 			if info, err := os.Stat(worktreePath); err != nil {

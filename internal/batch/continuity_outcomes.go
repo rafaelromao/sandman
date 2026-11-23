@@ -106,6 +106,7 @@ var continuityOutcomes = continuityTable{
 	{reason: actionableFeedbackReason, cause: causeFailure}:              outcomeTerminal, // formal requested changes remain blocking
 	{reason: blindReviewRequiredReason, cause: causeFailure}:             outcomeHold,     // relaunched through its gate rows, never failed directly; its stall and exhaustion end the Run (#3001)
 	{reason: "merged-pr-missing-closing-reference", cause: causeFailure}: outcomeTerminal, // merged without verifiable completion
+	{reason: "merged-pr-base-mismatch", cause: causeFailure}:             outcomeTerminal, // the merged implementation PR cannot be redirected to the Run's Base branch
 	{reason: "CI_WAIT_STATE_ERROR", cause: causeFailure}:                 outcomeTerminal, // corrupt CI wait state
 	{reason: ciRecoveryExhaustedReason, cause: causeFailure}:             outcomeTerminal, // the diagnosed CI recovery window expired
 	{reason: ciRecoveryStateUnavailableReason, cause: causeFailure}:      outcomeHold,     // recovery evidence cannot be read or validated

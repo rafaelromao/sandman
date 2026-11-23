@@ -112,7 +112,7 @@ func TestPortalLogFlushSameRunAwaitContinuationAppendsBeforeTerminalEvent(t *tes
 	first := newPortalFlushStep(1, nil)
 	second := newPortalFlushStep(2, nil)
 	f := newPortalFlushFixture(t, false, 0, first, second)
-	pr := github.PR{Number: 17, State: "open", Body: "Closes #42", HeadRefName: f.row.Branches[42], HeadRefOid: "head", MergeStateStatus: "BLOCKED", StatusCheckRollup: "pending"}
+	pr := github.PR{Number: 17, State: "open", Body: "Closes #42", HeadRefName: f.row.Branches[42], HeadRefOid: "head", BaseRefName: "main", MergeStateStatus: "BLOCKED", StatusCheckRollup: "pending"}
 	first.beforeReturn = func() { f.client.setPR(pr) }
 	done := f.start(t, f.row)
 	portalFlushWait(t, first.written, "pre-wait execution")

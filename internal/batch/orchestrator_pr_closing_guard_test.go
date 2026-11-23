@@ -137,6 +137,7 @@ func TestRunBatch_RepairsNonClosingPRReferenceBeforeAgentMerges(t *testing.T) {
 		State:       "open",
 		Body:        "Refs #348\n\nAcceptance evidence.",
 		HeadRefName: branch,
+		BaseRefName: "main",
 	}
 	client := &closingReferenceTestClient{
 		fakeGitHubClient: &fakeGitHubClient{
@@ -191,6 +192,7 @@ func TestRunBatch_RefreshesOpenClosingGuardSnapshotAfterFailedAttemptMerge(t *te
 		State:       "open",
 		Body:        "Refs #348\n\nAcceptance evidence.",
 		HeadRefName: branch,
+		BaseRefName: "main",
 	}
 	client := &closingReferenceTestClient{
 		fakeGitHubClient: &fakeGitHubClient{

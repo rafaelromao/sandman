@@ -88,7 +88,7 @@ func (f *githubRecoveryFixture) checker() github.StatusChecker {
 
 func (f *githubRecoveryFixture) session() *runSession {
 	return &runSession{
-		issueNumber: 42, issueState: "open", runID: f.runID,
+		issueNumber: 42, issueState: "open", runID: f.runID, baseBranch: "main",
 		deps: runDeps{githubClient: f.client, eventLog: f.log, errorLog: io.Discard, githubStatus: f.checker()},
 		opts: runSessionOptions{
 			now:         func() time.Time { return f.now },

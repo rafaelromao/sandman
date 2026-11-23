@@ -160,7 +160,14 @@ func (f *fakeGitHubClient) FindPRByBranch(ctx context.Context, branch string) (*
 	}
 	if f.prs != nil {
 		if pr, ok := f.prs[branch]; ok {
-			return pr, nil
+			if pr == nil {
+				return nil, nil
+			}
+			copy := *pr
+			if (copy.Merged || strings.EqualFold(strings.TrimSpace(copy.State), "merged")) && strings.TrimSpace(copy.BaseRefName) == "" {
+				copy.BaseRefName = "main"
+			}
+			return &copy, nil
 		}
 		return nil, nil
 	}
@@ -2383,6 +2390,27 @@ func TestRun_ContinueFlag_MixedBatchResolvesPerIssueModes(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "[--continue] promoting #43 to --override") {
 		t.Fatalf("expected promotion log line for issue 43, got output:\n%s", output.String())
+	}
+}
+
+func TestRun_ContinueFlagRoutesMergedPRThroughLifecycle(t *testing.T) {
+	fixture := newContinuationRunFixture(t)
+	fixture.deps.GitHubClient = &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug", State: "open"}},
+		prs: map[string]*github.PR{
+			fixture.branch: {
+				Number: 17, State: "merged", Merged: true, Body: "Closes #42",
+				HeadRefName: fixture.branch, HeadRefOid: "abc123", BaseRefName: "release",
+			},
+		},
+	}
+
+	fixture.execute(t)
+	if got := fixture.spy.req.IssueMode(42); got != batch.ModeContinue {
+		t.Fatalf("merged pull request continuation mode = %v, want ModeContinue", got)
+	}
+	if got := fixture.spy.req.BaseBranches[42]; got != "main" {
+		t.Fatalf("continued Run Base branch = %q, want pinned main", got)
 	}
 }
 

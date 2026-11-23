@@ -3529,6 +3529,9 @@ func runCleanGateCaseForIssue(t *testing.T, issueState string, pr *github.PR) (A
 	if pr != nil && pr.HeadRefOid == "" {
 		pr.HeadRefOid = "current-sha"
 	}
+	if pr != nil && (pr.Merged || strings.EqualFold(pr.State, "merged")) && pr.BaseRefName == "" {
+		pr.BaseRefName = "main"
+	}
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	oldWD, err := os.Getwd()
 	if err != nil {
