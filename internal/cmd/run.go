@@ -427,10 +427,10 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 			baseBranchFlag, _ := cmd.Flags().GetString("base-branch")
 			baseBranch := strings.TrimSpace(baseBranchFlag)
-			if baseBranch == "" {
+			if baseBranch == "" && !continueFlag {
 				baseBranch = strings.TrimSpace(cfg.Git.BaseBranch)
 			}
-			if baseBranch == "" {
+			if baseBranch == "" && !continueFlag {
 				baseBranch = strings.TrimSpace(scaffold.NewDefaultGitOps().DefaultBranch(repoRoot))
 			}
 
@@ -632,6 +632,12 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				if allPinned {
 					baseBranch = pinnedBase
 				}
+			}
+			if baseBranch == "" {
+				baseBranch = strings.TrimSpace(cfg.Git.BaseBranch)
+			}
+			if baseBranch == "" {
+				baseBranch = strings.TrimSpace(scaffold.NewDefaultGitOps().DefaultBranch(repoRoot))
 			}
 			if baseBranch == "" {
 				return fmt.Errorf("repository default branch is unknown; set git.base_branch or pass --base-branch")

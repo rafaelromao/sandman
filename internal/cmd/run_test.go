@@ -2417,6 +2417,7 @@ func TestRun_ContinueFlagRoutesMergedPRThroughLifecycle(t *testing.T) {
 
 func TestRun_ContinueFlag_MissingRegistrationPromotesToOverride(t *testing.T) {
 	fixture := newContinuationRunFixture(t)
+	runGit(t, fixture.repoDir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk")
 	if err := os.RemoveAll(filepath.Join(fixture.repoDir, ".git", "worktrees", filepath.Base(fixture.worktreePath))); err != nil {
 		t.Fatalf("remove worktree registration: %v", err)
 	}
@@ -2430,6 +2431,9 @@ func TestRun_ContinueFlag_MissingRegistrationPromotesToOverride(t *testing.T) {
 	}
 	if got := fixture.spy.req.BaseBranches[42]; got != "main" {
 		t.Fatalf("expected promoted row base branch main, got %q", got)
+	}
+	if got := fixture.spy.req.BaseBranch; got != "main" {
+		t.Fatalf("expected saved Run Base branch to take precedence over changed repository default, got %q", got)
 	}
 	if _, ok := fixture.spy.req.PreviousRunIDs[42]; ok {
 		t.Fatalf("expected promoted row to omit previous run ID, got %q", fixture.spy.req.PreviousRunIDs[42])
