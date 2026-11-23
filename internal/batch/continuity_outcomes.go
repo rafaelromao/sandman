@@ -125,7 +125,7 @@ var continuityOutcomes = continuityTable{
 	{gate: gateActionableFeedback, reason: informalFeedbackReason, cause: causeStall}:     outcomeTerminal, // REVIEW_FEEDBACK_STALLED (#2999)
 	{gate: gateActionableFeedback, reason: actionableFeedbackReason, cause: causeStall}:   outcomeHold,
 	{gate: gateCIWaitTimeout, reason: "CI_WAIT_STATE_ERROR", cause: causeStall}:           outcomeHold,
-	{gate: gateBlindReviewRequired, reason: blindReviewRequiredReason, cause: causeStall}: outcomeHold,
+	{gate: gateBlindReviewRequired, reason: blindReviewRequiredReason, cause: causeStall}: outcomeTerminal, // a blind round an unchanged relaunch could not finish (#3001)
 	{gate: gateReadyToMerge, cause: causeStall}:                                           outcomeTerminal, // merge work an unchanged relaunch could not finish (#3001)
 	{gate: "ci-failure", reason: "CI_FAILURE", cause: causeStall}:                         outcomeTerminal, // CI repair an unchanged relaunch could not finish (#3001)
 	{gate: "merge-conflict", reason: "MERGE_CONFLICT", cause: causeStall}:                 outcomeHold,
@@ -150,7 +150,7 @@ var continuityOutcomes = continuityTable{
 	{gate: gateReadyToMerge, cause: causeExhausted}:                                               outcomeTerminal, // merge work that used up its allowance (#3001)
 	{gate: "ci-failure", reason: "CI_FAILURE", cause: causeExhausted}:                             outcomeTerminal, // CI repair that used up its allowance (#3001)
 	{gate: "merge-conflict", reason: "MERGE_CONFLICT", cause: causeExhausted}:                     outcomeHold,
-	{gate: gateBlindReviewRequired, reason: blindReviewRequiredReason, cause: causeExhausted}:     outcomeHold,
+	{gate: gateBlindReviewRequired, reason: blindReviewRequiredReason, cause: causeExhausted}:     outcomeTerminal, // a blind round that used up its allowance (#3001)
 	{gate: gateCIWaitTimeout, reason: "CI_WAIT_TIMEOUT", cause: causeExhausted}:                   outcomeHold,
 	{gate: gateReviewTimeout, reason: reviewTimeoutReason, cause: causeExhausted}:                 outcomeHold,
 	{gate: gatePRHeadChanged, reason: "PR_HEAD_RECONCILE_REQUIRED", cause: causeExhausted}:        outcomeHold,

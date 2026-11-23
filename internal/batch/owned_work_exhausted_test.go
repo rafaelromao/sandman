@@ -234,3 +234,42 @@ func TestOwnedWorkExhausted_ParkedCIHoldEndsOnNextObservation(t *testing.T) {
 		}
 	})
 }
+
+// A blind-review round (no review command) that leaves the head and its
+// evidence unchanged, or that uses up its relaunch allowance, ends the Run
+// naming the blind-review gate. The gate's trigger is a missing publication,
+// so the evidence retains the pull request, head and CI state instead.
+func TestOwnedWorkExhausted_BlindReviewRoundEndsTheRun(t *testing.T) {
+	extras := map[string]any{
+		"gate": gateBlindReviewRequired, "reason": blindReviewRequiredReason,
+		"pull_request": 17, "head_sha": "head-1",
+		"next_action": blindReviewRequiredNextAction,
+	}
+	signature := resumeSignature(extras, "head-1")
+	for name, session := range map[string]*runSession{
+		"an unchanged round": {decisionPRHead: "head-1", lastResumeSignature: signature},
+		"a used-up allowance": func() *runSession {
+			s := &runSession{decisionPRHead: "head-1"}
+			s.resumeCount = s.resumeCapFor()
+			return s
+		}(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			verdict := applyContinuityForTest(session, "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: cloneLifecycleExtras(extras)})
+			requireOwnedWorkExhausted(t, verdict, gateBlindReviewRequired, blindReviewRequiredReason, signature)
+			if verdict.Evidence["pull_request"] != 17 || verdict.Evidence["head_sha"] != "head-1" {
+				t.Errorf("terminal evidence lost the pull request or head: %v", verdict.Evidence)
+			}
+		})
+	}
+
+	t.Run("a new head is new evidence", func(t *testing.T) {
+		next := cloneLifecycleExtras(extras)
+		next["head_sha"] = "head-2"
+		s := &runSession{decisionPRHead: "head-2", lastResumeSignature: signature}
+		verdict := applyContinuityForTest(s, "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: next})
+		if verdict.Action != lifecycleResume {
+			t.Fatalf("blind round on a new head = %v/%v, want another blind round", verdict.Action, verdict.Evidence)
+		}
+	})
+}
