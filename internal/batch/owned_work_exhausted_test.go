@@ -45,7 +45,7 @@ func requireOwnedWorkExhausted(t *testing.T, verdict lifecycleVerdict, gate, las
 		t.Errorf("stalled_resume = %v, want the used-up resume signature %s", verdict.Evidence["stalled_resume"], signature)
 	}
 	next, _ := verdict.Evidence["next_action"].(string)
-	if !strings.Contains(next, "sandman run --continue") {
+	if !strings.HasSuffix(next, "`sandman run --continue`") {
 		t.Errorf("next_action = %q, want it to end with `sandman run --continue`", next)
 	}
 }
@@ -93,7 +93,7 @@ func requireExhaustedFinish(t *testing.T, logs []events.Event, gate string) {
 			t.Errorf("run.finished carries the wait marker %q: %+v", marker, finished.Payload)
 		}
 	}
-	if next, _ := finished.Payload["next_action"].(string); !strings.Contains(next, "sandman run --continue") {
+	if next, _ := finished.Payload["next_action"].(string); !strings.HasSuffix(next, "`sandman run --continue`") {
 		t.Errorf("run.finished next_action = %q, want it to end with `sandman run --continue`", next)
 	}
 	if got := countEventsByType(logs, "run.await"); got != 0 {
@@ -383,4 +383,43 @@ func TestOwnedWorkExhausted_UnreadableLedgerHoldEndsOnceReadable(t *testing.T) {
 	ended := applyContinuityForTest(&runSession{deps: runDeps{eventLog: log}, decisionPRHead: "head-1"}, "b", "run",
 		lifecycleVerdict{Action: lifecycleResume, Evidence: cloneLifecycleExtras(extras)})
 	requireOwnedWorkExhausted(t, ended, gateReadyToMerge, "REVIEW_APPROVED", signature)
+}
+
+// Rows that already ended the Run keep their generic evidence: exhausted formal
+// requested changes and unusable CI wait state carry neither the owned-work
+// last reason and signature nor its gate-specific next action.
+func TestOwnedWorkExhausted_EarlierTerminalRowsKeepGenericEvidence(t *testing.T) {
+	cases := map[string]struct {
+		extras map[string]any
+		setup  func(*runSession, map[string]any)
+	}{
+		"formal requested changes": {
+			extras: map[string]any{"gate": gateActionableFeedback, "reason": actionableFeedbackReason, "pull_request": 17, "head_sha": "head-1"},
+			setup: func(s *runSession, extras map[string]any) {
+				s.feedbackAllowance = &reviewFeedbackAllowance{usedByHead: map[string]int{repairRound(extras, "head-1"): s.resumeCapFor()}}
+			},
+		},
+		"unusable CI wait state": {
+			extras: map[string]any{"gate": gateCIWaitTimeout, "reason": "CI_WAIT_STATE_ERROR", "pull_request": 17, "head_sha": "head-1"},
+			setup:  func(s *runSession, _ map[string]any) { s.resumeCount = s.resumeCapFor() },
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			s := &runSession{decisionPRHead: "head-1"}
+			tc.setup(s, tc.extras)
+			verdict := applyContinuityForTest(s, "b", "run", lifecycleVerdict{Action: lifecycleResume, Evidence: cloneLifecycleExtras(tc.extras)})
+			if verdict.Action != lifecycleFailure || verdict.Evidence["reason"] != "REMEDIATION_BUDGET_EXHAUSTED" {
+				t.Fatalf("exhausted %s = %v/%v, want a terminal REMEDIATION_BUDGET_EXHAUSTED failure", name, verdict.Action, verdict.Evidence)
+			}
+			if verdict.Evidence["next_action"] != stallRemediationNextAction {
+				t.Errorf("next_action = %v, want the generic remediation next action", verdict.Evidence["next_action"])
+			}
+			for _, key := range []string{stalledReasonKey, stalledResumeKey} {
+				if _, present := verdict.Evidence[key]; present {
+					t.Errorf("evidence carries %q, which only the owned-work rows record: %v", key, verdict.Evidence)
+				}
+			}
+		})
+	}
 }

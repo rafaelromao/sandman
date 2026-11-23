@@ -153,12 +153,14 @@ allowance.
 The other work the implementor owns ends the Run in the same way when it cannot
 be resolved (#3001). Merge work (`ready-to-merge`), CI repair (`ci-failure`),
 review-request delivery (`implementor-work-required` /
-`REVIEW_REQUEST_REQUIRED`), a blind-review round (`blind-review-required`) and
-informal feedback bounded per head finish `failure` with
-`REMEDIATION_BUDGET_EXHAUSTED` when a relaunch stalls on an unchanged resume
-signature or the lifecycle relaunch allowance is used up. A relaunch stalls on
-its own only for a blind round and non-formal informal feedback; the other gates
-reach their stall row through a recorded signature or a used-up allowance. The
+`REVIEW_REQUEST_REQUIRED`) and a blind-review round (`blind-review-required`)
+finish `failure` with `REMEDIATION_BUDGET_EXHAUSTED` when a relaunch stalls on an
+unchanged resume signature or the lifecycle relaunch allowance is used up, and
+informal feedback bounded per head does so when its allowance is used up (an
+unchanged informal relaunch finishes `REVIEW_FEEDBACK_STALLED`, above). A
+relaunch stalls on its own only for a blind round and non-formal informal
+feedback; the other gates reach their stall row through a recorded signature or a
+used-up allowance. The
 terminal evidence names the gate (`external_gate`), its last reason
 (`stalled_reason`), the used-up resume signature (`stalled_resume`, which names
 the CI execution or the blind publication where there is one) and the retained

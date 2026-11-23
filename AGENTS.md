@@ -82,10 +82,11 @@ where rc2 would not have resolved it. An open current-head PR whose only
 missing evidence is review, CI or an unobserved request waits or merges; it
 never terminal-fails for evidence an external operation can still supply.
 Work the implementor owns and cannot resolve does end the Run instead of parking
-it: merge work (ready to merge), CI repair, review-request delivery, blind-review
-rounds and informal feedback bounded per head finish
-`REMEDIATION_BUDGET_EXHAUSTED` when a relaunch stalls or the relaunch allowance
-is used up. The evidence names the gate (`external_gate`), its last reason
+it: merge work (ready to merge), CI repair, review-request delivery and
+blind-review rounds finish `REMEDIATION_BUDGET_EXHAUSTED` when a relaunch stalls
+or the relaunch allowance is used up, and informal feedback does so when its
+per-head allowance is used up (its unchanged relaunch ends
+`REVIEW_FEEDBACK_STALLED`). The evidence names the gate (`external_gate`), its last reason
 (`stalled_reason`), the used-up resume signature (`stalled_resume`) and the
 retained pull request, head, request and blind publication, and the next action
 is `sandman run --continue`. A Run an earlier binary parked in such a hold ends

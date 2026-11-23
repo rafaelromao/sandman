@@ -953,6 +953,30 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 			}},
 			want: "merged", wantLaunches: 3,
 		},
+		// A new merge conflict is new evidence, not a stalled CI repair: conflict
+		// repair resumes first, and the repaired head merges.
+		continuityScenario{
+			name: "stall/new merge conflict over CI repair is repaired and merges", pr: github.PR{StatusCheckRollup: "failure", MergeStateStatus: "CLEAN"}, retries: 3,
+			setup: func(g *continuityGitHub) {
+				g.trigger()
+				g.publish(reports["approved-daemon-30.md"])
+			},
+			launches: []func(*continuityGitHub) string{nil, func(g *continuityGitHub) string {
+				g.update(func(pr *github.PR) { pr.MergeStateStatus = "DIRTY" })
+				return "success"
+			}, func(g *continuityGitHub) string {
+				g.update(func(pr *github.PR) {
+					pr.HeadRefOid, pr.StatusCheckRollup, pr.MergeStateStatus = "head-2", "success", "CLEAN"
+				})
+				g.trigger()
+				g.publish(reports["approved-daemon-30.md"])
+				if g.mergeable() {
+					g.merge()
+				}
+				return "success"
+			}},
+			want: "merged", wantLaunches: 3,
+		},
 		// A merge conflict the implementor cannot resolve still waits for
 		// external recovery once its allowance leaves the head unchanged: the
 		// conflict row is not part of the owned-work rows that end the Run.
