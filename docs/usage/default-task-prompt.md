@@ -66,8 +66,9 @@ When Review command is empty, once CI is green load `sandman-blind-review` for
 one round. The implementor publishes the report and acts on its verdict.
 Requested changes remain owned work: fix, test and push, then yield only while
 CI is running. Current-head blind approval permits merge when all merge gates
-pass. The runtime can resume this work with `BLIND_REVIEW_REQUIRED`; exhausted
-or unchanged relaunches retain the same RunID in a continuity hold.
+pass. The runtime can resume this work with `BLIND_REVIEW_REQUIRED`; a round
+that leaves the head and evidence unchanged, or exhausts its relaunch allowance,
+ends the Run with `REMEDIATION_BUDGET_EXHAUSTED` naming the gate.
 
 The following trigger-delivery boundary applies only to a configured command.
 Managed implementation runs use `sandman-review-request` only for one guarded,

@@ -51,6 +51,10 @@ verdict, informal feedback and an approval override), only a previously unseen
 pull-request head starts a fresh repair round. An earlier head keeps its allowance across waits and requests
 in the active Run. Other gates retain their request-and-head rounds within one
 executor session. Restart recovery and manual continuation start with fresh allowances.
+A used-up allowance on work the implementor owns (merge work, CI repair, a
+blind-review round, informal feedback bounded per head) ends the Run with
+`REMEDIATION_BUDGET_EXHAUSTED` naming the gate; merge-conflict repair and the
+expired CI wait keep waiting.
 Ordinary agent retries and the ten-pass review loop retain their separate bounds.
 _Avoid_: durable repair budget, cumulative remediation exhaustion.
 
@@ -163,21 +167,30 @@ failure is reserved for classified permanent reasons (closed pull request,
 explicit abort, unverifiable completion, requested changes left unrepaired
 (formal, a daemon `changes_requested` verdict or an approval override),
 informal review feedback a relaunch left unchanged (`REVIEW_FEEDBACK_STALLED`),
+owned work the implementor cannot resolve (`REMEDIATION_BUDGET_EXHAUSTED`),
 no review request delivered when a review command is configured,
 GitHub unavailable for a whole
-**GitHub recovery window**). A stalled relaunch records a
+**GitHub recovery window**). Owned work is merge work (ready to merge), CI
+repair, review-request delivery, a blind-review round and informal feedback
+bounded per head: when its relaunch stalls on an unchanged resume signature or
+its relaunch allowance is used up, the Run ends instead of parking. The
+evidence names the gate (`external_gate`), its last reason (`stalled_reason`),
+the used-up signature (`stalled_resume`) and the retained pull request, head,
+request and blind publication, and the next action is `sandman run --continue`;
+a Run an earlier binary parked in such a hold ends the same way on its next
+observation. A stalled relaunch records a
 **resume signature** (gate, reason, live head, request trigger and response
 identities, or blind publication identity) so observation does not relaunch on
-unchanged evidence: it waits in the wait's `stalled_resumes`, except informal
-review feedback, whose stall ends the Run (the terminal evidence carries the
-signature as `stalled_resume`, and a Run an earlier binary parked on that hold
-ends the same way on its next observation);
+unchanged evidence: where the work is merge-conflict repair or another wait that
+remains, it waits in the wait's `stalled_resumes`; where the work is owned work
+above, the stall ends the Run (informal review feedback ends as
+`REVIEW_FEEDBACK_STALLED`; the other owned work as `REMEDIATION_BUDGET_EXHAUSTED`);
 a recoverable failure becomes a **continuity hold**.
 One gate/reason/cause table and the AFK-continuity contract enumerate every
-current outcome. ADR-0063 records which sibling changes replace selected holds
+current outcome. ADR-0063 records which sibling changes replaced selected holds
 with terminal outcomes; other waits, including in-deadline CI/review, GitHub
-recovery, quota, capacity, `CI_WAIT_TIMEOUT`, and the idle gate without a review
-command, remain unchanged.
+recovery, quota, capacity, `CI_WAIT_TIMEOUT`, merge-conflict repair, and the idle
+gate without a review command, remain unchanged.
 _Avoid_: remediation exhaustion as failure, idle failure.
 _See_: Managed review lifecycle, Publication verdict, ADR-0063.
 
@@ -246,7 +259,7 @@ blocking.
 _See_: Managed review lifecycle, Informal feedback, Review decision.
 
 **Informal feedback**:
-A retained top-level or inline review response with concrete code feedback that is classified mechanically (code anchor: backtick span, file path, file+line, line reference, or diff hunk line, after boilerplate-only phrasing is excluded) as request-scoped lifecycle evidence. Informal feedback is request-scoped: only current-head responses inside the active request window, without the trigger prefix, produce it; stale, unknown, superseded, trigger, and formal-precedence-bearing responses do not. A daemon approval contradicted by its own verdict sections is also retained as informal feedback, with `approval_override`, instead of being classified by code anchor. It is handed to a resumed run as `informal_feedback` inside the retained `review_request` and can only turn a recoverable pending lifecycle into the shared `actionable-feedback` await (bounded by the per-session resume cap; an approval override is bounded per head instead, see Publication verdict) — it never authorizes a merge, approves a request, overrides formal review decisions, or consumes retry budget. A feedback relaunch that leaves the head, the review request and its responses unchanged found nothing the implementor could do: the Run ends with `REVIEW_FEEDBACK_STALLED` instead of waiting. Its evidence names the feedback (source, locator, body) and the stalled resume signature (`stalled_resume`), and its next action tells the operator to inspect the feedback, address or answer it, and continue with `sandman run --continue`. A Run an earlier binary parked on a stalled-feedback hold ends the same way on its next observation, because its recorded stalled signatures prove the stall. Genuine requested changes (formal, a daemon `changes_requested` verdict, an approval override) are not stalled feedback and keep their per-head allowance. References ADR-0052, ADR-0063.
+A retained top-level or inline review response with concrete code feedback that is classified mechanically (code anchor: backtick span, file path, file+line, line reference, or diff hunk line, after boilerplate-only phrasing is excluded) as request-scoped lifecycle evidence. Informal feedback is request-scoped: only current-head responses inside the active request window, without the trigger prefix, produce it; stale, unknown, superseded, trigger, and formal-precedence-bearing responses do not. A daemon approval contradicted by its own verdict sections is also retained as informal feedback, with `approval_override`, instead of being classified by code anchor. It is handed to a resumed run as `informal_feedback` inside the retained `review_request` and can only turn a recoverable pending lifecycle into the shared `actionable-feedback` await (bounded by the per-session resume cap; an approval override is bounded per head instead, see Publication verdict) — it never authorizes a merge, approves a request, overrides formal review decisions, or consumes retry budget. A feedback relaunch that leaves the head, the review request and its responses unchanged found nothing the implementor could do: the Run ends with `REVIEW_FEEDBACK_STALLED` instead of waiting. Its evidence names the feedback (source, locator, body) and the stalled resume signature (`stalled_resume`), and its next action tells the operator to inspect the feedback, address or answer it, and continue with `sandman run --continue`. A Run an earlier binary parked on a stalled-feedback hold ends the same way on its next observation, because its recorded stalled signatures prove the stall. Informal feedback that uses up its per-head relaunch allowance ends the Run with `REMEDIATION_BUDGET_EXHAUSTED` naming the `actionable-feedback` gate and carrying the retained feedback. Genuine requested changes (formal, a daemon `changes_requested` verdict, an approval override) are not stalled feedback and keep their per-head allowance. References ADR-0052, ADR-0063.
 _Avoid_: informal approval, comment classification.
 _See_: Implementation pull-request lifecycle, Review decision.
 
@@ -290,8 +303,9 @@ publications are ignored when a review command is configured. The author is not
 filtered, and the identity binds the reviewed head but is not authentication;
 the implementor publishes with the operator's account. A green current-head pull
 request with no blind approval resumes the same RunID with
-`BLIND_REVIEW_REQUIRED`, which is recoverable implementor-owned work; unchanged
-evidence stalls and an exhausted allowance holds.
+`BLIND_REVIEW_REQUIRED`, which is recoverable implementor-owned work; an
+unchanged round or an exhausted allowance ends the Run with
+`REMEDIATION_BUDGET_EXHAUSTED` naming the gate.
 _Avoid_: blind approval as a standing approval, self-approval.
 _See_: Blind review, Publication verdict, Current-head approval.
 

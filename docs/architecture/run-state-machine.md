@@ -45,14 +45,18 @@ queued → running ⇄ waiting → success / failure / aborted
 | Current-request approval with green CI | Resume merge work when capacity permits |
 | Current-head blind approval with green CI and a mergeable head | Resume merge work when capacity permits |
 | Green current-head PR, no current-head blind approval, no configured review command | Resume one implementor-owned blind round (`BLIND_REVIEW_REQUIRED`) when capacity permits |
-| Blind round leaves head and evidence unchanged, or its relaunch allowance is exhausted | Stay **waiting** (`RESUME_STALLED` / continuity hold); never treat the missing publication as an expired delegated request |
+| Blind round leaves head and evidence unchanged, or its relaunch allowance is exhausted | Finish **failure** (`REMEDIATION_BUDGET_EXHAUSTED`) naming the `blind-review-required` gate, with a next action of `sandman run --continue`; never treat the missing publication as an expired delegated request |
 | Blind reviewer cannot be spawned | Fail closed with `REVIEW_SUBAGENT_UNAVAILABLE`; never self-approve or post a delegated trigger |
 | Next action ready, capacity occupied | Stay **waiting**, reason capacity |
-| CI failure or merge conflict | Resume bounded repair; when the relaunch allowance leaves the head unchanged, stay **waiting** for external recovery (rc2 behaviour) |
+| CI failure | Resume bounded repair; when the relaunch allowance is used up, or a relaunch leaves the same failing check execution unchanged, finish **failure** (`REMEDIATION_BUDGET_EXHAUSTED`) naming the `ci-failure` gate |
+| Merge conflict | Resume bounded repair; when the relaunch allowance leaves the head unchanged, stay **waiting** for external recovery (rc2 behaviour) |
 | Missing PR, or an undelivered review request when a review command is configured | Perform bounded owned-work remediation (`run.retry` reason `lifecycle-owned-work`), then failure; never invent external waiting |
 | Review request delivered by an attempt that exited non-success | Register it and stay **waiting**; spend no ordinary retry |
 | Informal-feedback relaunch leaves head, request and responses unchanged | Finish **failure** (`REVIEW_FEEDBACK_STALLED`): the evidence names the feedback (source, locator, body) and the stalled resume signature, and the next action is `sandman run --continue`; never relaunch on the same evidence |
-| Relaunch allowance exhausted on review, CI (including an expired CI wait), request or merge work | Stay **waiting** (`RESUME_STALLED`), except that the wait of used-up informal feedback records its signature and finishes `REVIEW_FEEDBACK_STALLED` on its next observation; genuine requested changes (formal `CHANGES_REQUESTED` or the review daemon's `changes_requested` verdict) left unrepaired finish **failure** |
+| Merge work (ready to merge) uses up its relaunch allowance, or a relaunch of it stalls | Finish **failure** (`REMEDIATION_BUDGET_EXHAUSTED`) naming the `ready-to-merge` gate, its last reason and the used-up signature; the next action is `sandman run --continue` |
+| Review-request delivery stalls with a review command configured | Finish **failure** (`REMEDIATION_BUDGET_EXHAUSTED`) naming the `implementor-work-required` gate; exhausted delivery (the final ordinary attempt) is already terminal as `REVIEW_REQUEST_REQUIRED` |
+| Informal feedback uses up its per-head relaunch allowance | Finish **failure** (`REMEDIATION_BUDGET_EXHAUSTED`) naming the `actionable-feedback` gate with the retained feedback; an unchanged relaunch finishes `REVIEW_FEEDBACK_STALLED` as above; genuine requested changes (formal `CHANGES_REQUESTED`, the review daemon's `changes_requested` verdict or an approval override) left unrepaired finish **failure** |
+| Relaunch allowance exhausted on an expired CI wait (`CI_WAIT_TIMEOUT`) or merge-conflict repair | Stay **waiting** (`RESUME_STALLED`) |
 | Review request expired with nothing else resolving, or an idle gate after owned work | Stay **waiting** (continuity hold) on an open current-head PR |
 | Recognized provider usage limit | Wait and probe; do not spend ordinary retries immediately |
 | Quota recovers | Resume limited run and reopen sibling admission |
@@ -93,6 +97,9 @@ have resolved it. If rc2 would have merged or kept waiting, the Run must not
 fail. Concretely, a started Run whose pull request is open at its current head
 never becomes terminal-failed when the only missing evidence is review, CI, or
 a review request the runtime did not observe: it waits or proceeds to merge.
+The one exception is work the implementor owns and cannot resolve: after its
+bounded attempts that work ends the Run with a classified permanent reason
+instead of parking it (see below).
 
 Permanent outcomes remain terminal: a closed or merged-elsewhere pull request,
 explicit abort, a merged pull request without verifiable completion, genuine
@@ -100,8 +107,10 @@ requested changes (formal `CHANGES_REQUESTED`, the review daemon's
 `changes_requested` verdict, or a daemon approval its own verdict sections
 contradict) the implementor cannot address within its relaunch
 allowance, informal review feedback that an unchanged relaunch could not act
-on (`REVIEW_FEEDBACK_STALLED`), no review request delivered at all when a
-review command is configured (`REVIEW_REQUEST_REQUIRED`), corrupt review state
+on (`REVIEW_FEEDBACK_STALLED`), owned work (merge, CI repair, review-request
+delivery, a blind round, informal feedback) that stalls or uses up its relaunch
+allowance (`REMEDIATION_BUDGET_EXHAUSTED`), no review request delivered at all
+when a review command is configured (`REVIEW_REQUEST_REQUIRED`), corrupt review state
 with nothing
 resolving, GitHub unavailable for a full
 24-hour recovery window (`GATE_LOOKUP_FAILED`), and agent authentication,
@@ -139,7 +148,30 @@ relaunch; a recorded hold for used-up informal feedback cannot be told apart
 and ends the same way. A new head, a new review request or a new response is
 new evidence and still resumes the implementor. Genuine requested changes are
 never stalled feedback: they keep their stall row and their per-head
-allowance. Newly actionable merge
+allowance.
+
+The other work the implementor owns ends the Run in the same way when it cannot
+be resolved (#3001). Merge work (`ready-to-merge`), CI repair (`ci-failure`),
+review-request delivery (`implementor-work-required` /
+`REVIEW_REQUEST_REQUIRED`), a blind-review round (`blind-review-required`) and
+informal feedback bounded per head finish `failure` with
+`REMEDIATION_BUDGET_EXHAUSTED` when a relaunch stalls on an unchanged resume
+signature or the lifecycle relaunch allowance is used up. A relaunch stalls on
+its own only for a blind round and non-formal informal feedback; the other gates
+reach their stall row through a recorded signature or a used-up allowance. The
+terminal evidence names the gate (`external_gate`), its last reason
+(`stalled_reason`), the used-up resume signature (`stalled_resume`, which names
+the CI execution or the blind publication where there is one) and the retained
+pull request, head, `ci_wait`, `review_request` and blind publication, and its
+next action tells the operator to fix what blocks the gate and run
+`sandman run --continue`. A Run an earlier binary parked in one of these holds
+ends on its next observation, without a relaunch, because its recorded
+`stalled_resumes` prove the stall; a hold recorded after a transient stalled-ledger
+read failure ends the same way once the ledger is readable again. Exhausted
+review-request delivery (the final ordinary owned-work attempt) is already
+terminal as `REVIEW_REQUEST_REQUIRED`. Merge-conflict repair, the expired CI wait
+(`CI_WAIT_TIMEOUT`) and the idle gate without a review command keep their
+waits. Newly actionable merge
 conflicts must not be hidden behind unchanged failed CI: conflict remediation
 takes priority, allowing integration to produce a new head
 whose checks and review must be revalidated. A continuity hold
@@ -150,12 +182,13 @@ ordinary ownerless grace. Review feedback has three relaunches per head in
 addition to entry. This allowance carries across waits in the active Run.
 Neither re-requesting review nor returning to an earlier head resets it.
 Genuine requested changes (formal `CHANGES_REQUESTED`, a daemon
-`changes_requested` verdict, or an approval override) end the Run when the
-allowance is spent; other informal feedback holds when its allowance is spent
-(that hold ends `REVIEW_FEEDBACK_STALLED` on its next observation, as described
-above) and finishes `REVIEW_FEEDBACK_STALLED` as soon as a relaunch leaves its
-evidence unchanged. Approval can resume
-merge work under its own round.
+`changes_requested` verdict, or an approval override) and other informal
+feedback end the Run when the allowance is spent
+(`REMEDIATION_BUDGET_EXHAUSTED`); informal feedback also finishes
+`REVIEW_FEEDBACK_STALLED` as soon as a relaunch leaves its evidence unchanged.
+A hold an earlier binary recorded for used-up informal feedback ends
+`REVIEW_FEEDBACK_STALLED` on its next observation, as described above. Approval
+can resume merge work under its own round.
 Other gates retain the in-session request-and-head rule; a changed CI
 execution does not reset that allowance. An unreadable event log
 fails closed into a wait. Exhausted remediation of unusable CI wait state
@@ -254,9 +287,10 @@ approval and no pending CI, a green open PR resumes with
 `BLIND_REVIEW_REQUIRED` (`blind-review-required`). That reason is recoverable and
 classified once as implementor-owned, never `REVIEW_REQUEST_REQUIRED`, an expired
 delegated request, or the old idle hold. A relaunch that leaves the head and
-blind evidence unchanged records its signature in `run.await`
-(`stalled_resumes`), and an exhausted relaunch allowance holds under
-`hold:<RunID>`; restart rehydrates both, and explicit abort revokes the resume.
+blind evidence unchanged, or an exhausted relaunch allowance, finishes the Run
+with `REMEDIATION_BUDGET_EXHAUSTED` naming the `blind-review-required` gate; a
+Run an earlier binary parked on that hold ends on its next observation, restart
+rehydrates the evidence from events, and explicit abort revokes the resume.
 A harness that cannot spawn a fresh subagent fails closed with
 `REVIEW_SUBAGENT_UNAVAILABLE`; it must never review in the implementor's own
 context or post a delegated trigger instead.
@@ -358,7 +392,7 @@ remains terminal even when local commits have not been pushed.
 | Delegated review | Configured `review_timeout`; default 1,800 seconds, minimum 240 seconds; applies only when a review command is configured | New confirmed request |
 | Blind review round | Synchronous implementor round; no `review_timeout`, trigger envelope, or polling window | New head or fresh cycle/relaunch round |
 | Implementation provider quota | **Five hours of accumulated completed scheduled waits**, at a trustworthy provider reset when available or ten-minute fallback intervals, then final boundary probe and configured ordinary retries | Verified recovery followed by a new quota episode; re-entry/restart preserves consumed polling |
-| Implementation lifecycle relaunch | Default **three in-session relaunches**, entry excluded; a feedback relaunch that changes nothing ends the allowance; exhaustion waits | Fresh executor session with a new resume signature |
+| Implementation lifecycle relaunch | Default **three in-session relaunches**, entry excluded; a feedback relaunch that changes nothing ends the allowance; exhaustion ends the Run for owned work (merge, CI repair, blind round, feedback) and waits for merge-conflict repair and the expired CI wait | Fresh executor session with a new resume signature |
 | Ordinary execution retry | Configured retry budget, including owned publication/review delivery recovery | Ordinary retry policy |
 | Ownerless recovery | **Five minutes**, capped by an existing operation deadline | Live owner renewal, never repeated discovery |
 
