@@ -94,6 +94,11 @@ func TestRequireReviewDaemon_PassesWhenLiveSocketExists(t *testing.T) {
 // The provided cfg is the config the test wants the command to load.
 func runGuardDeps(t testing.TB, runner batch.Runner, cfg *config.Config) Dependencies {
 	t.Helper()
+	if strings.TrimSpace(cfg.Git.BaseBranch) == "" {
+		// These tests exercise the review-daemon guard, not repository-default
+		// discovery, so pin their expected Base explicitly.
+		cfg.Git.BaseBranch = "main"
+	}
 	dir, err := os.MkdirTemp("/tmp", "sm-guard-")
 	if err != nil {
 		t.Fatal(err)

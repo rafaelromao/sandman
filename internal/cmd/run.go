@@ -433,9 +433,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			if baseBranch == "" {
 				baseBranch = strings.TrimSpace(scaffold.NewDefaultGitOps().DefaultBranch(repoRoot))
 			}
-			if baseBranch == "" {
-				baseBranch = "main"
-			}
 
 			resolvedBatch, err := batch.NewPreparer(githubClient, liveGitHubClient, cmd.ErrOrStderr()).Prepare(cmd.Context(), batch.Preparation{
 				Issues: issues, ReadyIssues: readyIssues, IncludeDependencies: includeDependencies,
@@ -610,6 +607,34 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					return err
 				}
 				hasContinuationReq = true
+			}
+			if baseBranch == "" && hasContinuationReq {
+				baseBranch = strings.TrimSpace(continuationReq.BaseBranch)
+			}
+			if baseBranch == "" && continueFlag && len(resolvedBatch.Issues) > 0 {
+				// A promoted continuation may have no continuation request,
+				// but its rows still carry the original Base in their event
+				// identity. Reuse that Base only when every selected row is
+				// already pinned; fresh rows still require the repository
+				// default to be resolvable.
+				pinnedBase := ""
+				allPinned := true
+				for _, issue := range resolvedBatch.Issues {
+					issueBase := strings.TrimSpace(baseBranches[issue])
+					if issueBase == "" {
+						allPinned = false
+						break
+					}
+					if pinnedBase == "" {
+						pinnedBase = issueBase
+					}
+				}
+				if allPinned {
+					baseBranch = pinnedBase
+				}
+			}
+			if baseBranch == "" {
+				return fmt.Errorf("repository default branch is unknown; set git.base_branch or pass --base-branch")
 			}
 			if overrideFlag {
 				modes = make(map[int]batch.IssueMode, len(resolvedBatch.Issues))

@@ -88,8 +88,7 @@ func mergedPRBaseMismatchCompletion(pr *github.PR, expectedBase string) map[stri
 }
 
 type mergedPRIssueCheck struct {
-	merged        bool
-	failureExtras map[string]any
+	decision lifecycleDecision
 }
 
 func checkMergedPRForIssue(ctx context.Context, client github.Client, branch string, issueNumber int, expectedBase string) mergedPRIssueCheck {
@@ -106,15 +105,13 @@ func checkMergedPRForIssue(ctx context.Context, client github.Client, branch str
 		}
 		return mergedPRIssueCheck{}
 	}
-	if !mergedPRBaseMatches(pr.BaseRefName, expectedBase) {
-		return mergedPRIssueCheck{failureExtras: map[string]any{
-			"completion": mergedPRBaseMismatchCompletion(pr, expectedBase),
-		}}
-	}
-	if !pr.ClosesIssue(issueNumber) {
-		return mergedPRIssueCheck{failureExtras: mergeCompletionFailureExtras(nil, issueNumber)}
-	}
-	return mergedPRIssueCheck{merged: true}
+	closesIssue := pr.ClosesIssue(issueNumber)
+	decision := decideImplementationPRLifecycle(implementationPRFacts{
+		pr:         pr,
+		baseBranch: expectedBase,
+		mergeFacts: &mergedMergeFacts{mergedWithClosingIntent: closesIssue, mergedWithoutClosingRef: !closesIssue},
+	})
+	return mergedPRIssueCheck{decision: decision}
 }
 
 func mergedPRMissingClosingReference(ctx context.Context, client github.Client, branch string, issueNumber int) bool {

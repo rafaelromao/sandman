@@ -242,6 +242,7 @@ func newRunDeps(t *testing.T, runner batch.Runner) Dependencies {
 	if out, err := initCmd.CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
+	runGit(t, dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
 	t.Chdir(dir)
 	return Dependencies{
 		BatchRunner:  runner,
@@ -363,7 +364,7 @@ func newRunDepsInDir(t testing.TB, runner batch.Runner) (string, Dependencies) {
 	t.Chdir(dir)
 	return dir, Dependencies{
 		BatchRunner:  runner,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", Git: config.GitConfig{BaseBranch: "main"}}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: &fakeGitHubClient{},
 		RepoRoot:     ".",
@@ -3463,6 +3464,7 @@ func TestRun_BaseBranchDefaultsToRepositoryDefaultWhenUnset(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	deps.ConfigStore = &config.FileStore{Path: configPath}
+	runGit(t, deps.RepoRoot, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
 	runGit(t, deps.RepoRoot, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk")
 
 	cmd := NewRunCmd(deps)
@@ -3472,6 +3474,22 @@ func TestRun_BaseBranchDefaultsToRepositoryDefaultWhenUnset(t *testing.T) {
 	}
 	if spy.req.BaseBranch != "trunk" {
 		t.Fatalf("request base branch = %q, want repository default trunk", spy.req.BaseBranch)
+	}
+}
+
+func TestRun_UnsetBaseBranchFailsWhenRepositoryDefaultIsUnknown(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(t, spy)
+	runGit(t, deps.RepoRoot, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
+
+	cmd := NewRunCmd(deps)
+	cmd.SetArgs([]string{"42"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "repository default branch is unknown") {
+		t.Fatalf("execute run error = %v, want unknown repository default error", err)
+	}
+	if spy.called {
+		t.Fatal("batch runner was called without a resolvable Base branch")
 	}
 }
 

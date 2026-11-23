@@ -90,7 +90,7 @@ func chdirToShortSandmanDir(t testing.TB) string {
 func depsWithSocket(runner batch.Runner) Dependencies {
 	return Dependencies{
 		BatchRunner:  runner,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review", Git: config.GitConfig{BaseBranch: "main"}}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: &fakeGitHubClient{},
 		RepoRoot:     ".",

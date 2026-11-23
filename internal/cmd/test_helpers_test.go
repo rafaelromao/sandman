@@ -30,7 +30,7 @@ func newRunDepsAuto(t *testing.T, runner batch.Runner) Dependencies {
 	t.Chdir(dir)
 	return Dependencies{
 		BatchRunner:  runner,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review", Git: config.GitConfig{BaseBranch: "main"}}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: &fakeGitHubClient{},
 		RepoRoot:     ".",
