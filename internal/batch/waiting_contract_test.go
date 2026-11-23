@@ -292,20 +292,25 @@ func TestWaitingContract_FreshRepairAllowanceAcrossExecutorReentry(t *testing.T)
 			IssueNumber: 42, Mode: ModeContinue, RunID: runID,
 			Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main",
 		})
-		if result.Status != "await" {
-			t.Fatalf("exhausted repair status=%q", result.Status)
+		if result.Status != "failure" {
+			t.Fatalf("exhausted repair status=%q, want a terminal failure", result.Status)
 		}
 	}
 	if len(factory.created) != 4 {
 		t.Fatalf("same-head repair launches across executor re-entry=%d, want entry plus one legacy relaunch per session", len(factory.created))
 	}
+	finishes := 0
 	for _, event := range log.snapshot() {
 		if event.Type != "run.finished" {
 			continue
 		}
+		finishes++
 		if event.Payload["reason"] != "REMEDIATION_BUDGET_EXHAUSTED" || event.Payload["await"] != nil || event.Payload["gate"] != nil {
 			t.Fatalf("legacy exhausted-session failure lost terminal semantics: %+v", event)
 		}
+	}
+	if finishes != 2 {
+		t.Fatalf("run.finished events = %d, want one terminal failure per executor session", finishes)
 	}
 }
 

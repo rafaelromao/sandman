@@ -4099,7 +4099,7 @@ func TestRunSingle_ClosedUnmergedPRDoesNotConsumeRetries(t *testing.T) {
 	assertExternalGateTerminal(t, logs, "failure", "")
 }
 
-func TestRunSingle_FailedExternalGateAwaitsWithoutRetry(t *testing.T) {
+func TestRunSingle_FailedExternalGateEndsWithoutRetry(t *testing.T) {
 	tests := []struct {
 		name string
 		pr   *github.PR
@@ -4141,33 +4141,22 @@ func TestRunSingle_FailedExternalGateAwaitsWithoutRetry(t *testing.T) {
 				}
 				return
 			}
-			if result.Status != "await" {
-				t.Fatalf("status = %q, want an rc2 wait after bounded CI remediation", result.Status)
+			// Failed CI is repair work the implementor owns: once its relaunch
+			// allowance is used up the Run ends naming the ci-failure gate
+			// (#3001) instead of parking in a wait.
+			if result.Status != "failure" {
+				t.Fatalf("status = %q, want a terminal failure after bounded CI remediation", result.Status)
 			}
 			if result.RetriesTotal != 1 {
 				t.Fatalf("retries total = %d, want 1", result.RetriesTotal)
 			}
-			wantLaunches := 1
-			wantGate := "failed"
-			if tt.name == "failed CI" {
-				wantLaunches = 2
-				wantGate = "ci-failure"
+			if launches != 2 {
+				t.Fatalf("agent launches = %d, want 2", launches)
 			}
-			if launches != wantLaunches {
-				t.Fatalf("agent launches = %d, want %d", launches, wantLaunches)
-			}
-			if got := countEventsByType(logs, "run.await"); got != 1 {
-				t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
-			}
-			waiting := lastEvent(logs, "run.await")
-			if waiting == nil || waiting.Payload["reason"] != resumeStalledReason || findEvent(logs, "run.finished") != nil {
-				t.Fatalf("await event = %#v, want the stalled rc2 wait instead of a remediation-budget failure", waiting)
-			}
-			if tt.name == "failed CI" {
-				resumed := findEvent(logs, "run.resumed")
-				if resumed == nil || resumed.Payload["gate"] != wantGate {
-					t.Fatalf("run.resumed event = %#v, want %q", resumed, wantGate)
-				}
+			requireExhaustedFinish(t, logs, "ci-failure")
+			resumed := findEvent(logs, "run.resumed")
+			if resumed == nil || resumed.Payload["gate"] != "ci-failure" {
+				t.Fatalf("run.resumed event = %#v, want %q", resumed, "ci-failure")
 			}
 		})
 	}

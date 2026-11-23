@@ -949,8 +949,8 @@ func TestRunSingle_CIFailurePrecedesActionableEvidenceAndExhaustsBudget(t *testi
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "await" {
-		t.Fatalf("status = %q, want an rc2 wait after CI remediation budget is exhausted", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want a terminal failure after CI remediation budget is exhausted", result.Status)
 	}
 	if got := len(resultFactory.created); got != 2 {
 		t.Fatalf("agent launches = %d, want entry launch plus remediation resume", got)
@@ -962,13 +962,7 @@ func TestRunSingle_CIFailurePrecedesActionableEvidenceAndExhaustsBudget(t *testi
 	if got := countEventsByType(logs, "run.resumed"); got != 1 {
 		t.Fatalf("run.resumed events = %d, want 1 remediation relaunch", got)
 	}
-	if got := countEventsByType(logs, "run.await"); got != 1 {
-		t.Fatalf("run.await events = %d, want the rc2 wait after the relaunch allowance", got)
-	}
-	waiting := lastEvent(logs, "run.await")
-	if waiting == nil || waiting.Payload["reason"] != resumeStalledReason || findEvent(logs, "run.finished") != nil {
-		t.Fatalf("await event = %#v, want the stalled rc2 wait instead of a remediation-budget failure", waiting)
-	}
+	requireExhaustedFinish(t, logs, "ci-failure")
 }
 
 // Retained concrete informal feedback resumes a continuation session at entry

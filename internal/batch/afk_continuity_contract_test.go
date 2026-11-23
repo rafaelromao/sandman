@@ -287,6 +287,9 @@ type continuityScenario struct {
 	polls []func(g *continuityGitHub)
 	// want is "merged", "waiting" or "failed:<reason>".
 	want string
+	// wantGate asserts the gate a terminal failure names in its evidence
+	// (external_gate) when nonzero.
+	wantGate string
 	// maxLaunches bounds the agent launches the outcome may take.
 	maxLaunches int
 	// wantLaunches asserts an exact count, including entry, when nonzero.
@@ -911,10 +914,11 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 			want: "merged", wantLaunches: 3,
 		},
 		// rc2 awaited an unrepaired CI failure. Once the in-session relaunch
-		// allowance (three relaunches) leaves the head unchanged, the Run waits
-		// for external recovery (a rerun) without relaunching, then merges.
+		// allowance (three relaunches) leaves the head unchanged, CI repair is
+		// work the implementor cannot resolve: the Run ends naming the
+		// ci-failure gate (#3001) instead of parking in a wait.
 		continuityScenario{
-			name: "stall/CI failure without progress", pr: github.PR{StatusCheckRollup: "failure", MergeStateStatus: "BLOCKED"}, retries: 3,
+			name: "stall/CI failure without progress ends the Run", pr: github.PR{StatusCheckRollup: "failure", MergeStateStatus: "BLOCKED"}, retries: 3,
 			setup: func(g *continuityGitHub) {
 				g.trigger()
 				g.publish(reports["approved-daemon-30.md"])
@@ -926,11 +930,34 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 					g.update(func(pr *github.PR) { pr.StatusCheckRollup, pr.MergeStateStatus = "success", "CLEAN" })
 				},
 			},
-			want: "merged", maxLaunches: 5,
+			want: "failed:REMEDIATION_BUDGET_EXHAUSTED", wantGate: "ci-failure", maxLaunches: 5,
 		},
-		// The same stall ends in a wait when nothing external changes.
+		// Positive control: CI repair that pushes a new head inside its
+		// allowance is progress, not a stall, and the repaired head merges.
 		continuityScenario{
-			name: "stall/CI failure waits", pr: github.PR{StatusCheckRollup: "failure", MergeStateStatus: "BLOCKED"}, retries: 3,
+			name: "stall/CI failure repaired within the allowance merges", pr: github.PR{StatusCheckRollup: "failure", MergeStateStatus: "BLOCKED"}, retries: 3,
+			setup: func(g *continuityGitHub) {
+				g.trigger()
+				g.publish(reports["approved-daemon-30.md"])
+			},
+			launches: []func(*continuityGitHub) string{nil, nil, func(g *continuityGitHub) string {
+				g.update(func(pr *github.PR) {
+					pr.HeadRefOid, pr.StatusCheckRollup, pr.MergeStateStatus = "head-2", "success", "CLEAN"
+				})
+				g.trigger()
+				g.publish(reports["approved-daemon-30.md"])
+				if g.mergeable() {
+					g.merge()
+				}
+				return "success"
+			}},
+			want: "merged", wantLaunches: 3,
+		},
+		// A merge conflict the implementor cannot resolve still waits for
+		// external recovery once its allowance leaves the head unchanged: the
+		// conflict row is not part of the owned-work rows that end the Run.
+		continuityScenario{
+			name: "stall/merge conflict waits", pr: github.PR{StatusCheckRollup: "success", MergeStateStatus: "DIRTY"}, retries: 3,
 			setup: func(g *continuityGitHub) {
 				g.trigger()
 				g.publish(reports["approved-daemon-30.md"])
@@ -1270,7 +1297,7 @@ func continuityScenarios(t *testing.T) []continuityScenario {
 		// ledger: after recovery on unchanged evidence the Run keeps waiting
 		// instead of relaunching the implementor.
 		continuityScenario{
-			name: "stall survives a GitHub outage", pr: github.PR{StatusCheckRollup: "failure", MergeStateStatus: "BLOCKED"}, retries: 3, githubWait: true,
+			name: "stall survives a GitHub outage", pr: github.PR{StatusCheckRollup: "success", MergeStateStatus: "DIRTY"}, retries: 3, githubWait: true,
 			setup: func(g *continuityGitHub) {
 				g.trigger()
 				g.publish(reports["approved-daemon-30.md"])
@@ -1341,6 +1368,18 @@ func TestAFKContinuityContract_RealIncidentsMergeOrWait(t *testing.T) {
 			outcome := runContinuityScenario(t, sc)
 			if got := outcome.verdict(); got != sc.want {
 				t.Fatalf("outcome = %s (status %q, launches %d), want %s\nevents: %s", got, outcome.status, outcome.launches, sc.want, continuityEventSummary(outcome.events))
+			}
+			if sc.wantGate != "" {
+				var finished *events.Event
+				for _, event := range outcome.current() {
+					if event.Type == "run.finished" {
+						finished = &event
+						break
+					}
+				}
+				if finished == nil || finished.Payload["external_gate"] != sc.wantGate {
+					t.Fatalf("terminal evidence = %+v, want it to name gate %s\nevents: %s", finished, sc.wantGate, continuityEventSummary(outcome.events))
+				}
 			}
 			if sc.requireAwait && outcome.count("run.await") == 0 {
 				t.Fatalf("the Run never waited\nevents: %s", continuityEventSummary(outcome.events))
@@ -1992,86 +2031,13 @@ func TestAFKContinuityContract_QuotaPausedAdmissionOutagePreservesRetryBudget(t 
 
 // A failed security check can require external disposition. Once unchanged CI
 // repair stalls, a new merge conflict is still actionable even on the same head.
-func TestAFKContinuityContract_StalledCIRecoversForNewMergeConflict(t *testing.T) {
-	noChange := func(*continuityGitHub) string { return "success" }
-	outcome := runContinuityScenario(t, continuityScenario{
-		name:    "stalled CI does not hide a new merge conflict",
-		pr:      github.PR{StatusCheckRollup: "failure", MergeStateStatus: "CLEAN"},
-		retries: 3,
-		setup: func(g *continuityGitHub) {
-			g.trigger()
-			g.publish("APPROVED")
-		},
-		launches: []func(*continuityGitHub) string{
-			noChange, noChange, noChange, noChange,
-			func(g *continuityGitHub) string {
-				g.update(func(pr *github.PR) {
-					pr.HeadRefOid = "head-2"
-					pr.MergeStateStatus = "CLEAN"
-					pr.StatusCheckRollup = "success"
-				})
-				g.trigger()
-				g.publish("APPROVED")
-				if g.mergeable() {
-					g.merge()
-				}
-				return "success"
-			},
-		},
-		polls: []func(*continuityGitHub){
-			nil, // Unchanged failed CI must not relaunch forever.
-			func(g *continuityGitHub) { g.update(func(pr *github.PR) { pr.MergeStateStatus = "DIRTY" }) },
-		},
-	})
-	if got := outcome.verdict(); got != "merged" || outcome.launches != 5 {
-		t.Fatalf("new merge conflict after stalled CI = %s (%d launches), want merged (5 launches)\nevents: %s", got, outcome.launches, continuityEventSummary(outcome.events))
-	}
-	if outcome.count("run.await") == 0 {
-		t.Fatal("expected a stalled CI wait before the conflict appeared")
-	}
-	resumedConflict := false
-	for _, event := range outcome.current() {
-		if (event.Type == "run.resumed" || event.Type == "run.capacity_queued") && event.Payload["reason"] == "MERGE_CONFLICT" {
-			resumedConflict = true
-		}
-	}
-	if !resumedConflict {
-		t.Fatalf("new merge conflict did not select conflict remediation\nevents: %s", continuityEventSummary(outcome.events))
-	}
-}
-
-func TestAFKContinuityContract_StalledCIConflictRecoverySurvivesRestart(t *testing.T) {
-	var live *continuityGitHub
-	outcome := runContinuityScenario(t, continuityScenario{
-		pr:      github.PR{StatusCheckRollup: "failure", MergeStateStatus: "CLEAN"},
-		retries: 3,
-		setup: func(g *continuityGitHub) {
-			live = g
-			g.trigger()
-			g.publish("APPROVED")
-		},
-	})
-	if got := outcome.verdict(); got != "waiting" || outcome.launches != 4 {
-		t.Fatalf("unchanged CI = %s (%d launches), want waiting after 4 launches", got, outcome.launches)
-	}
-	verdict := outcome.observeAfterRestart()
-	if !verdict.handled() || verdict.Action != lifecycleAwait {
-		t.Fatalf("unchanged CI after restart = %s, want await", verdict.status())
-	}
-	live.update(func(pr *github.PR) { pr.MergeStateStatus = "CONFLICTING" })
-	verdict = outcome.observeAfterRestart()
-	if !verdict.handled() || verdict.Action != lifecycleResume || verdict.Evidence["reason"] != "MERGE_CONFLICT" {
-		t.Fatalf("new conflict after restart = %s/%v, want conflict repair resume", verdict.status(), verdict.Evidence)
-	}
-}
-
 // A stalled wait survives a process restart: a fresh executor reads the
 // stalled signature through the event fold and keeps waiting instead of
 // relaunching the implementor on the same evidence. New evidence proceeds.
 func TestAFKContinuityContract_StalledWaitSurvivesRestart(t *testing.T) {
 	var stall continuityScenario
 	for _, sc := range continuityScenarios(t) {
-		if sc.name == "stall/CI failure waits" {
+		if sc.name == "stall/merge conflict waits" {
 			stall = sc
 		}
 	}

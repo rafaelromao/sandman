@@ -181,6 +181,7 @@ func stalledTerminalEvidence(row continuityRow, evidence map[string]any, signatu
 // fixes before continuing. A gate absent from the map ends with the generic
 // remediation next action.
 var exhaustedWorkNextActions = map[string]string{
+	"ci-failure":     "CI repair could not make the current-head checks pass: inspect them with `gh pr checks`, fix the failure, then continue with `sandman run --continue`",
 	gateReadyToMerge: "merge work could not finish: inspect why the approved current head is not merged (required checks, mergeability, branch protection), fix it, then continue with `sandman run --continue`",
 }
 

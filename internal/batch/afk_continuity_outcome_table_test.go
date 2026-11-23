@@ -94,7 +94,7 @@ func continuityContractRows() []continuityContractRow {
 		{continuityRow{gate: gateCIWaitTimeout, reason: "CI_WAIT_STATE_ERROR", cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch(gateCIWaitTimeout, "CI_WAIT_STATE_ERROR"), false)},
 		{continuityRow{gate: gateBlindReviewRequired, reason: blindReviewRequiredReason, cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch(gateBlindReviewRequired, blindReviewRequiredReason), false)},
 		{continuityRow{gate: gateReadyToMerge, cause: causeStall}, outcomeTerminal, relaunchProbe(causeStall, relaunch(gateReadyToMerge, "REVIEW_APPROVED"), false)},
-		{continuityRow{gate: "ci-failure", reason: "CI_FAILURE", cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch("ci-failure", "CI_FAILURE"), false)},
+		{continuityRow{gate: "ci-failure", reason: "CI_FAILURE", cause: causeStall}, outcomeTerminal, relaunchProbe(causeStall, relaunch("ci-failure", "CI_FAILURE"), false)},
 		{continuityRow{gate: "merge-conflict", reason: "MERGE_CONFLICT", cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch("merge-conflict", "MERGE_CONFLICT"), false)},
 		{continuityRow{gate: gateCIWaitTimeout, reason: "CI_WAIT_TIMEOUT", cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch(gateCIWaitTimeout, "CI_WAIT_TIMEOUT"), false)},
 		{continuityRow{gate: gateReviewTimeout, reason: reviewTimeoutReason, cause: causeStall}, outcomeHold, relaunchProbe(causeStall, relaunch(gateReviewTimeout, reviewTimeoutReason), false)},
@@ -113,7 +113,7 @@ func continuityContractRows() []continuityContractRow {
 		// consequence is pinned by TestAFKContinuityContract_ExhaustedInformalHoldEndsOnReobservation.
 		{continuityRow{gate: gateActionableFeedback, reason: informalFeedbackReason, cause: causeExhausted}, outcomeHold, relaunchProbe(causeExhausted, relaunch(gateActionableFeedback, informalFeedbackReason), false)},
 		{continuityRow{gate: gateReadyToMerge, cause: causeExhausted}, outcomeTerminal, relaunchProbe(causeExhausted, relaunch(gateReadyToMerge, "REVIEW_APPROVED"), false)},
-		{continuityRow{gate: "ci-failure", reason: "CI_FAILURE", cause: causeExhausted}, outcomeHold, relaunchProbe(causeExhausted, relaunch("ci-failure", "CI_FAILURE"), false)},
+		{continuityRow{gate: "ci-failure", reason: "CI_FAILURE", cause: causeExhausted}, outcomeTerminal, relaunchProbe(causeExhausted, relaunch("ci-failure", "CI_FAILURE"), false)},
 		{continuityRow{gate: "merge-conflict", reason: "MERGE_CONFLICT", cause: causeExhausted}, outcomeHold, relaunchProbe(causeExhausted, relaunch("merge-conflict", "MERGE_CONFLICT"), false)},
 		{continuityRow{gate: gateBlindReviewRequired, reason: blindReviewRequiredReason, cause: causeExhausted}, outcomeHold, relaunchProbe(causeExhausted, relaunch(gateBlindReviewRequired, blindReviewRequiredReason), false)},
 		{continuityRow{gate: gateCIWaitTimeout, reason: "CI_WAIT_TIMEOUT", cause: causeExhausted}, outcomeHold, relaunchProbe(causeExhausted, relaunch(gateCIWaitTimeout, "CI_WAIT_TIMEOUT"), false)},

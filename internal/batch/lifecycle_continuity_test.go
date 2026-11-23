@@ -316,7 +316,7 @@ func TestContinuityDecision_AllowanceDoesNotResetAcrossGatesForSameRequest(t *te
 		want            lifecycleAction
 	}{
 		{name: "CI to merge", priorGate: "ci-failure", prior: ci, current: merge, want: lifecycleFailure},
-		{name: "merge to CI", priorGate: gateReadyToMerge, prior: merge, current: ci, want: lifecycleAwait},
+		{name: "merge to CI", priorGate: gateReadyToMerge, prior: merge, current: ci, want: lifecycleFailure},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			session := &runSession{
@@ -329,7 +329,7 @@ func TestContinuityDecision_AllowanceDoesNotResetAcrossGatesForSameRequest(t *te
 				Action: lifecycleResume, Evidence: cloneLifecycleExtras(tc.current),
 			})
 			// The used-up allowance carries across the gate change: the
-			// exhausted gate ends the Run (merge, #3001) or holds (CI).
+			// exhausted gate (merge or CI repair) ends the Run (#3001).
 			if verdict.Action != tc.want || session.resumeCount != defaultAwaitResumeMax {
 				t.Fatalf("same request/head transition reset the exhausted relaunch allowance: verdict=%+v count=%d", verdict, session.resumeCount)
 			}
@@ -367,8 +367,8 @@ func TestContinuityDecision_StalledCIFailureTracksExecutionNotReviewResponse(t *
 	unchangedExecution := applyContinuityForTest(session, "42-work", "run-ci", lifecycleVerdict{
 		Action: lifecycleResume, Evidence: current, ciRepairRequired: true, ciExecutionID: "checks-1",
 	})
-	if unchangedExecution.Action != lifecycleAwait {
-		t.Fatalf("approval appearing on the same failed CI execution = %s, want await", unchangedExecution.status())
+	if unchangedExecution.Action != lifecycleFailure || unchangedExecution.Evidence["reason"] != "REMEDIATION_BUDGET_EXHAUSTED" {
+		t.Fatalf("approval appearing on the same failed CI execution = %s/%v, want the stalled CI repair to end the Run", unchangedExecution.status(), unchangedExecution.Evidence)
 	}
 
 	newExecutionSession := &runSession{
@@ -392,8 +392,8 @@ func TestContinuityDecision_StalledCIFailureTracksExecutionNotReviewResponse(t *
 	exhaustedExecution := applyContinuityForTest(exhaustedSession, "42-work", "run-ci", lifecycleVerdict{
 		Action: lifecycleResume, Evidence: cloneLifecycleExtras(current), ciRepairRequired: true, ciExecutionID: "checks-2",
 	})
-	if exhaustedExecution.Action != lifecycleAwait || exhaustedSession.resumeCount != defaultAwaitResumeMax {
-		t.Fatalf("new failed CI execution after allowance exhaustion = %s (resume count %d), want await without resetting the request/head allowance", exhaustedExecution.status(), exhaustedSession.resumeCount)
+	if exhaustedExecution.Action != lifecycleFailure || exhaustedExecution.Evidence["reason"] != "REMEDIATION_BUDGET_EXHAUSTED" || exhaustedSession.resumeCount != defaultAwaitResumeMax {
+		t.Fatalf("new failed CI execution after allowance exhaustion = %s/%v (resume count %d), want the Run to end without resetting the request/head allowance", exhaustedExecution.status(), exhaustedExecution.Evidence, exhaustedSession.resumeCount)
 	}
 }
 
