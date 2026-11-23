@@ -39,6 +39,7 @@ func hostRows() []struct {
 		{"one block after the final newline, as the live host appends it", intended + strings.TrimRight(liveHostBlock, "\n"), true, true},
 		{"one block after the final newline, with a trailing newline", intended + liveHostBlock, true, true},
 		{"separator directly after the final newline", intended + strings.TrimLeft(liveHostBlock, "\n"), false, false},
+		{"six newlines before the rule", core + "\n\n\n\n\n\n---\n" + liveHostFooter, false, true},
 		{"one block, CRLF", strings.ReplaceAll(core+liveHostBlock, "\n", "\r\n"), false, true},
 		{"second block", core + liveHostBlock + liveHostBlock, false, false},
 		{"text between identity and block", core + "\nEdited by a host.\n" + liveHostBlock, false, false},

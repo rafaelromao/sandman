@@ -76,25 +76,21 @@ jq -ce --arg repository "$repository" --argjson pull_request "$pull_request" \
   --rawfile body "$tmp/body" --argjson footers "$host_footers" '
   # A managed sandbox host may append one recognised footer block to a comment
   # it publishes. The live body must be the intended body, or the intended body
-  # (trailing whitespace ignored) followed by newlines only (at least two, so a
-  # blank line precedes the rule), "---", a newline and one known footer line.
-  # The host appends to the untrimmed body, so the final newline of the intended
-  # body counts among those newlines, and a host that drops the trailing newline
-  # of the footer is accepted too. Nothing else is tolerated, so the block
-  # cannot carry text, a verdict or an identity.
+  # (trailing whitespace ignored) followed by two to five newlines (a blank line
+  # precedes the rule), "---", a newline and one known footer line. The host
+  # appends to the untrimmed body, so the final newline of the intended body
+  # counts among those newlines, and a host that drops the trailing newline of
+  # the footer is accepted too. Nothing else is tolerated, so the block cannot
+  # carry text, a verdict or an identity. The comparison is against exactly
+  # constructed strings, with no slicing or substring search, so it behaves the
+  # same on every supported jq.
   def rtrim: sub("[ \\t\\r\\n]+$"; "");
-  def block($rest; $footer):
-    ("---\n" + $footer) as $tail |
-    ($rest | endswith($tail)) and
-    (($rest | length) - ($tail | length)) as $gap |
-    $gap >= 2 and ($rest[0:$gap] | test("^\\n+$"));
   def published($live; $intended):
     $live == $intended or
     (($live | rtrim) as $trimmed |
      ($intended | rtrim) as $base |
-     ($trimmed | startswith($base)) and
-     ($trimmed[($base | length):]) as $rest |
-     any($footers[]; block($rest; .)));
+     any($footers[]; . as $footer |
+       any(range(2; 6); $trimmed == $base + ("\n" * .) + "---\n" + $footer)));
   select((.state | ascii_downcase) == "open" and (.headRefOid | ascii_downcase) == $head) |
   # The posted comment is identified by the id the REST post returned, or by the
   # URL the GraphQL-backed post printed; exactly one live comment must match.
