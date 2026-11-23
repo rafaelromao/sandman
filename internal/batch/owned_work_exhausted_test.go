@@ -202,10 +202,11 @@ func ciRepairVerdict(t *testing.T, pr github.PR) (lifecycleVerdict, string) {
 	}, resumeSignature(signatureEvidence, pr.HeadRefOid)
 }
 
-// A Run an earlier binary parked on a stalled CI repair ends on its next
-// observation, because its recorded signature proves the stall. New evidence
-// is not a stall: a new merge conflict selects conflict repair first, and a
-// changed CI execution is repaired within the allowance.
+// A failed security check can require external disposition. A Run an earlier
+// binary parked on a stalled CI repair ends on its next observation, because its
+// recorded signature proves the stall. New evidence is not a stall: a new merge
+// conflict is still actionable even on the same head and selects conflict repair
+// first, and a changed CI execution is repaired within the allowance.
 func TestOwnedWorkExhausted_ParkedCIHoldEndsOnNextObservation(t *testing.T) {
 	failing := github.PR{
 		Number: continuityPR, State: "open", HeadRefName: continuityBranch, HeadRefOid: "head-1",

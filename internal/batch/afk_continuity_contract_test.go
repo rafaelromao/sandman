@@ -2029,8 +2029,6 @@ func TestAFKContinuityContract_QuotaPausedAdmissionOutagePreservesRetryBudget(t 
 	}
 }
 
-// A failed security check can require external disposition. Once unchanged CI
-// repair stalls, a new merge conflict is still actionable even on the same head.
 // A stalled wait survives a process restart: a fresh executor reads the
 // stalled signature through the event fold and keeps waiting instead of
 // relaunching the implementor on the same evidence. New evidence proceeds.

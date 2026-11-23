@@ -2457,7 +2457,7 @@ func TestExternalGate_LateFormalChangesRequestedRejectsStaleEvidence(t *testing.
 	}
 }
 
-func TestExternalGate_AgentFailureRetryPrecedesReadyGateWait(t *testing.T) {
+func TestExternalGate_AgentFailureRetryPrecedesReadyGateEnd(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 	branch := gateTestBranch
@@ -3100,7 +3100,7 @@ func writeRetainedCurrentHeadApproval(t *testing.T, workDir string) {
 	}
 }
 
-func TestExternalGate_LateCurrentHeadApprovalResumesMergeWorkBeforeWaiting(t *testing.T) {
+func TestExternalGate_LateCurrentHeadApprovalResumesMergeWorkBeforeEnding(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 	worktreePath := filepath.Join(workDir, "worktree")

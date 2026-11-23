@@ -191,7 +191,7 @@ current outcome. ADR-0063 records which sibling changes replaced selected holds
 with terminal outcomes; other waits, including in-deadline CI/review, GitHub
 recovery, quota, capacity, `CI_WAIT_TIMEOUT`, merge-conflict repair, and the idle
 gate without a review command, remain unchanged.
-_Avoid_: remediation exhaustion as failure, idle failure.
+_Avoid_: failing a Run on evidence an external operation can still supply, idle failure.
 _See_: Managed review lifecycle, Publication verdict, ADR-0063.
 
 **Recovery window**:
