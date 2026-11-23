@@ -44,7 +44,7 @@ change can flip only its assigned row.
 | #2997 | `actionable-feedback` / `REVIEW_CHANGES_REQUESTED` / allowance used | Terminal after the configured round is exhausted | Keep terminal; scope review-feedback rounds to the head |
 | #2998 | `actionable-feedback` / `REVIEW_CHANGES_REQUESTED` / allowance used for a contradicted daemon approval | Terminal after the configured round is exhausted | Treat the approval as requested changes and keep terminal after the bound |
 | #2999 | `actionable-feedback` / `REVIEW_INFORMAL_FEEDBACK` / stall | Hold before #2999; terminal since it landed | Terminal (`REVIEW_FEEDBACK_STALLED`, classified permanent as a failure reason) |
-| #3000 | `review-timeout` / `REVIEW_TIMEOUT` / expired operation with no active resolver | Hold | Terminal (`REVIEW_REQUEST_EXPIRED`) |
+| #3000 | `review-timeout` / `REVIEW_TIMEOUT` / expired operation with no active resolver | Hold before #3000; terminal since it landed | Terminal (`REVIEW_REQUEST_EXPIRED`) |
 | #3001 | `ready-to-merge` / any merge reason / stall or allowance used | Hold before #3001; terminal since it landed | Terminal (`REMEDIATION_BUDGET_EXHAUSTED`) |
 | #3001 | `ci-failure` / `CI_FAILURE` / stall or allowance used | Hold before #3001; terminal since it landed | Terminal (`REMEDIATION_BUDGET_EXHAUSTED`) |
 | #3001 | `implementor-work-required` / `REVIEW_REQUEST_REQUIRED` / stall | Hold before #3001; terminal since it landed | Terminal (`REMEDIATION_BUDGET_EXHAUSTED`) |
@@ -66,6 +66,17 @@ carried as informal feedback (a daemon `changes_requested` verdict, an approval
 override) are keyed as `REVIEW_CHANGES_REQUESTED` for the stall decision, so they
 keep their row and their per-head allowance.
 
+The #3000 row ends an expired confirmed request with `REVIEW_REQUEST_EXPIRED`
+only after current-head CI, a matching nonterminal review Run with a live daemon,
+and a live-daemon quota pause have all stopped resolving. The confirmed request
+alone cannot authorize waiting after its deadline. Eligible late current-head
+approval or actionable feedback remains usable when observed before the
+terminal decision; stale-head evidence and unknown verdicts do not. A matching
+review Run is request-scoped by its PR and trigger branch identity, and its
+historical observation is retained as `review_run_observed`, not treated as
+proof that a resolver is still active. An earlier binary's parked timeout hold
+is rechecked by the same rule on the next observation.
+
 The #3001 rows end the Run with `REMEDIATION_BUDGET_EXHAUSTED`, rendered by the
 one builder of stopped-relaunch evidence. The evidence names the gate
 (`external_gate`), the gate's last reason (`stalled_reason`), the used-up resume
@@ -85,11 +96,12 @@ and never fails with that reason; its stall and exhaustion end the Run through
 the gate rows above.
 
 These changes do not alter waits for resolving operations or the unrelated
-current holds: in-deadline CI and review, active review execution, the
-GitHub-recovery window before its bound, provider quota, capacity, expired CI
-wait (`CI_WAIT_TIMEOUT`), merge-conflict repair, the missing-publication owned
-stall, and the idle gate when no review command is configured. Formal requested
-changes left unrepaired remain terminal.
+current holds: in-deadline CI and review, current-head CI after review expiry,
+matching active review execution and daemon quota pause after review expiry,
+the GitHub-recovery window before its bound, provider quota, capacity, expired
+CI wait (`CI_WAIT_TIMEOUT`), merge-conflict repair, the missing-publication
+owned stall, and the idle gate when no review command is configured. Formal
+requested changes left unrepaired remain terminal.
 
 ## Consequences
 
@@ -110,8 +122,8 @@ changes left unrepaired remain terminal.
 
 ### Neutral
 
-- This ADR's refactor introduces no behavior change, mutable lifecycle state,
-  or new event type.
+- The centralization refactor introduces no mutable lifecycle state or new
+  event type; the #3000 row is the explicit policy change for request expiry.
 - Existing external-operation owners continue to decide their own deadlines;
   the table documents and tests those waits without duplicating their runtime
   scheduling decisions.

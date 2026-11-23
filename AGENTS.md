@@ -99,9 +99,15 @@ per-head allowance is used up (its unchanged relaunch ends
 retained pull request, head, request and blind publication, and the next action
 is `sandman run --continue`. A Run an earlier binary parked in such a hold ends
 the same way on its next observation (a used-up informal-feedback hold ends
-`REVIEW_FEEDBACK_STALLED`; ADR-0063). Expired requests, the expired CI wait
-(`CI_WAIT_TIMEOUT`), merge-conflict repair and (without a review command) idle
-gates after owned work still wait (`RESUME_STALLED`, `continuity_hold`); requested
+`REVIEW_FEEDBACK_STALLED`; ADR-0063). An expired delegated-review request ends
+`REVIEW_REQUEST_EXPIRED` once no current-head CI, matching nonterminal review Run
+with a live review daemon, or live-daemon quota pause remains. The request itself
+never authorizes waiting past its deadline. Eligible late current-head approval
+or actionable feedback is accepted while the Run is still observing; unknown or
+stale evidence is not. Earlier binaries' expired-request holds are rechecked
+under the same rule. The expired CI wait (`CI_WAIT_TIMEOUT`), merge-conflict
+repair and (without a review command) idle gates after owned work still wait
+(`RESUME_STALLED`, `continuity_hold`); requested
 changes left unrepaired
 (formal CHANGES_REQUESTED, a daemon `changes_requested` verdict or an approval
 override), a closed PR, abort, unverifiable completion, no delivered request

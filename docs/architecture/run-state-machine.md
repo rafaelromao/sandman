@@ -58,7 +58,10 @@ queued → running ⇄ waiting → success / failure / aborted
 | Review-request delivery stalls with a review command configured | Finish **failure** (`REMEDIATION_BUDGET_EXHAUSTED`) naming the `implementor-work-required` gate; exhausted delivery (the final ordinary attempt) is already terminal as `REVIEW_REQUEST_REQUIRED` |
 | Informal feedback uses up its per-head relaunch allowance | Finish **failure** (`REMEDIATION_BUDGET_EXHAUSTED`) naming the `actionable-feedback` gate with the retained feedback; an unchanged relaunch finishes `REVIEW_FEEDBACK_STALLED` as above; genuine requested changes (formal `CHANGES_REQUESTED`, the review daemon's `changes_requested` verdict or an approval override) left unrepaired finish **failure** |
 | Relaunch allowance exhausted on an expired CI wait (`CI_WAIT_TIMEOUT`) or merge-conflict repair | Stay **waiting** (`RESUME_STALLED`) |
-| Review request expired with nothing else resolving, or an idle gate after owned work | Stay **waiting** (continuity hold) on an open current-head PR |
+| Review request expires with no usable response and no active resolver | Finish **failure** (`REVIEW_REQUEST_EXPIRED`) with the retained request identity; do not spend another implementation attempt |
+| Review request expires while current-head CI, its matching active review Run with a live daemon, or a live-daemon quota pause is resolving | Stay **waiting**; accept eligible late current-head approval or actionable feedback before terminal expiry |
+| An earlier binary parked an expired-request hold | Reobserve it; keep waiting only while one of the same resolvers is active, otherwise finish `REVIEW_REQUEST_EXPIRED` |
+| An idle gate after owned work | Stay **waiting** (continuity hold) on an open current-head PR |
 | Recognized provider usage limit | Wait and probe; do not spend ordinary retries immediately |
 | Quota recovers | Resume limited run and reopen sibling admission |
 | Quota recovers, then CI becomes pending | Restore ordinary CI observation without another agent launch |
@@ -115,11 +118,10 @@ After v1.0.0-rc.2 a started Run may stop only for a permanent failure it
 cannot handle, or wait for external recovery, and only where rc2 would not
 have resolved it. If rc2 would have merged or kept waiting, the Run must not
 fail. Concretely, a started Run whose pull request is open at its current head
-never becomes terminal-failed when the only missing evidence is review, CI, or
-a review request the runtime did not observe: it waits or proceeds to merge.
-The one exception is work the implementor owns and cannot resolve: after its
-bounded attempts that work ends the Run with a classified permanent reason
-instead of parking it (see below).
+does not fail for missing evidence an external operation can still supply: it
+waits or proceeds to merge. Work the implementor owns and cannot resolve ends
+the Run after its bounded attempts; an expired review request ends the Run
+when no active resolver or usable response remains.
 
 Permanent outcomes remain terminal: a closed or merged-elsewhere pull request,
 explicit abort, a merged pull request without verifiable completion, genuine
@@ -134,7 +136,8 @@ when a review command is configured (`REVIEW_REQUEST_REQUIRED`), corrupt review 
 with nothing
 resolving, GitHub unavailable for a full
 24-hour recovery window (`GATE_LOOKUP_FAILED`), exhausted diagnosed CI recovery
-(`CI_RECOVERY_EXHAUSTED`), and agent authentication,
+(`CI_RECOVERY_EXHAUSTED`), an expired delegated-review
+request with no active resolver (`REVIEW_REQUEST_EXPIRED`), and agent authentication,
 usage-limit or operator stops. With no configured review command, a missing
 blind publication is owned work selected as `BLIND_REVIEW_REQUIRED`, not a
 terminal or external-review failure. Every lifecycle failure
@@ -144,6 +147,14 @@ that motivated the rule. One gate/reason/cause outcome table centralizes
 failure, stall, exhausted-allowance, expired-operation, and unreadable-ledger
 decisions; the contract enumerates its current rows. ADR-0063 records the
 staged policy and the sibling-owned rows that will change.
+
+An expired delegated-review request does not authorize its own continued wait.
+The runtime retains the wait only while current-head CI is active, the event log
+shows a matching nonterminal review Run and the review daemon is live, or the
+daemon is live with a quota pause. It then reobserves the request: current-head
+approval or actionable feedback remains usable if seen before terminalization;
+unknown verdicts and stale-head evidence do not. When no resolver remains and
+there is no usable response, it finishes with `REVIEW_REQUEST_EXPIRED`.
 
 One continuity decision applies these rules to every lifecycle decision;
 the attempt loop, entry continuation and runtime observation consume its
@@ -441,9 +452,14 @@ See [ADR-0060](../adr/0060-managed-handoff-boundary-and-thirty-second-observatio
 
 CI and review retain independent hard deadlines. At expiry, the runtime
 revalidates current-head operations: an expired review request cannot override
-CI that is still resolving. If another operation remains active, wait under
-that operation's original deadline; otherwise the expired operation selects
-bounded remediation. The historical in-session relaunch cap and ordinary retries bound owned work;
+CI that is still resolving. The request also stays waiting while its matching
+review Run is nonterminal and the daemon is live, or while a quota pause is
+active with that daemon. A confirmed request alone is not a resolver beyond its
+deadline. If those guards clear without usable current-head approval or
+actionable feedback, the Run ends with `REVIEW_REQUEST_EXPIRED`; an eligible
+late response observed before that terminal decision still resolves the request.
+CI expiry remains governed by its own deadline and `CI_WAIT_TIMEOUT` row. The
+historical in-session relaunch cap and ordinary retries bound owned work;
 persisted same-head remediation counts are diagnostic, not cumulative launch
 reservations. Obsolete implementation, reviewer-launch, and standalone CI budget
 files cannot veto executable work. Standalone same-head polling preserves its

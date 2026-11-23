@@ -515,9 +515,8 @@ func (o *lifecycleObserver) applyContinuityDisposition(row continuityRow, wait, 
 }
 
 // applyExpiredReviewOutcome uses the expiry row to decide whether the
-// previously authorized, bounded recovery attempt remains available. A hold
-// retains the existing timeout recovery path; a terminal row ends it before
-// another implementation attempt can launch.
+// previously authorized, bounded recovery attempt remains available. A
+// terminal row ends it before another implementation attempt can launch.
 func (o *lifecycleObserver) applyExpiredReviewOutcome(branch, runID string, verdict lifecycleVerdict) lifecycleVerdict {
 	if terminal, ended := o.expiredReviewTerminal(verdict); ended {
 		return terminal
@@ -526,13 +525,15 @@ func (o *lifecycleObserver) applyExpiredReviewOutcome(branch, runID string, verd
 }
 
 // expiredReviewTerminal consults the expiry row for an expired review request.
-// It returns the terminal failure when the row ends the Run, and false when the
-// row holds. A hold leaves continuity to the caller: Observe applies it once to
-// the verdict the decision returns, so a decision site that observes through it
+// A hold leaves continuity to the caller: Observe applies it once to the
+// verdict the decision returns, so a decision site that observes through it
 // must not apply it first. A second application takes the await branch and
 // overwrites the stalled signature the first one recorded.
 func (o *lifecycleObserver) expiredReviewTerminal(verdict lifecycleVerdict) (lifecycleVerdict, bool) {
-	originalGate := stringEvidence(verdict.Evidence, "gate")
+	request, ok := verdict.Evidence["review_request"].(map[string]any)
+	if !ok || !confirmedReviewExpiryEvidence(request) {
+		return lifecycleVerdict{}, false
+	}
 	row := continuityRow{
 		gate:   gateReviewTimeout,
 		reason: stringEvidence(verdict.Evidence, "reason"),
@@ -551,11 +552,14 @@ func (o *lifecycleObserver) expiredReviewTerminal(verdict lifecycleVerdict) (lif
 	delete(evidence, "gate")
 	delete(evidence, "await")
 	delete(evidence, "continuity_hold")
-	evidence["reason"] = row.reason
-	if originalGate == "" {
-		originalGate = row.gate
+	evidence["pull_request"] = request["pull_request"]
+	evidence["head_sha"] = request["head_sha"]
+	evidence["reason"] = reviewRequestExpiredReason
+	evidence["external_gate"] = row.gate
+	evidence["next_action"] = reviewRequestExpiredNextAction
+	if _, observed := evidence["review_run_observed"]; !observed {
+		evidence["review_run_observed"] = false
 	}
-	evidence["external_gate"] = originalGate
 	return lifecycleVerdict{Action: lifecycleFailure, Evidence: evidence}, true
 }
 

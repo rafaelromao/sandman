@@ -17,14 +17,17 @@ import (
 )
 
 const (
-	gateReviewTimeout        = "review-timeout"
-	gateReviewTimeoutError   = "review-timeout-state-error"
-	gateActionableFeedback   = "actionable-feedback"
-	reviewTimeoutReason      = "REVIEW_TIMEOUT"
-	actionableFeedbackReason = "REVIEW_CHANGES_REQUESTED"
+	gateReviewTimeout          = "review-timeout"
+	gateReviewTimeoutError     = "review-timeout-state-error"
+	gateActionableFeedback     = "actionable-feedback"
+	reviewTimeoutReason        = "REVIEW_TIMEOUT"
+	reviewRequestExpiredReason = "REVIEW_REQUEST_EXPIRED"
+	actionableFeedbackReason   = "REVIEW_CHANGES_REQUESTED"
 )
 
 const reviewTimeoutNextAction = "inspect the retained delegated-review request and continue after a new confirmed review trigger or a resolved pull-request gate"
+
+const reviewRequestExpiredNextAction = "check that `sandman review` is running, then continue with `sandman run --continue`"
 
 const actionableFeedbackNextAction = "inspect the requested review changes, address them, and continue the run after pushing a new current head"
 
@@ -715,13 +718,13 @@ func validateLateRequestEvidence(evidence map[string]any, source string, request
 	switch source {
 	case "top_level":
 		body, ok := evidence["body"].(string)
-		if !ok || stringValue(evidence, "head_status") != "current" || strings.HasPrefix(body, request.TriggerPrefix) || !reviewDecisionApprovedBody(body) {
+		if !ok || stringValue(evidence, "head_status") != "current" || strings.HasPrefix(body, request.TriggerPrefix) {
 			return false
 		}
 		if reviewpub.Published(body) {
 			return reviewTriggerKeyMatchesRequest(triggerKey, request) && reviewpub.Answers(body, triggerKey, request.HeadSHA)
 		}
-		return true
+		return reviewDecisionApprovedBody(body) || informalReviewFeedbackConcrete(body)
 	case "formal_reviews":
 		commitID, validCommitID := evidenceCommitID(evidence)
 		switch strings.ToUpper(stringValue(evidence, "state")) {
@@ -731,10 +734,14 @@ func validateLateRequestEvidence(evidence map[string]any, source string, request
 			return stringValue(evidence, "head_status") == "current" && validCommitID && strings.EqualFold(commitID, request.HeadSHA)
 		case "COMMENTED":
 			body, bodyOK := evidence["body"].(string)
-			return bodyOK && stringValue(evidence, "head_status") != "stale" && reviewDecisionApprovedBody(body)
+			return bodyOK && strings.TrimSpace(body) != "" && stringValue(evidence, "head_status") != "stale"
 		default:
 			return false
 		}
+	case "inline_comments":
+		commitID, validCommitID := evidenceCommitID(evidence)
+		return stringValue(evidence, "head_status") == "current" &&
+			validCommitID && strings.EqualFold(commitID, request.HeadSHA)
 	default:
 		return false
 	}
