@@ -110,6 +110,7 @@ selected -> queued -> running <-> waiting
 | Waiting reason | External operation still pending? | Agent may execute now? |
 | --- | --- | --- |
 | Current-head CI | Yes | No, unless a separate repair action is required. |
+| Diagnosed CI recovery | Yes, within the 24-hour window | No; the runtime owns hourly targeted attempts under [ADR-0064](../adr/0064-bound-runtime-ci-recovery.md). |
 | Confirmed review request | Yes | No, unless a separate repair action is required. |
 | Recognized quota reset | Yes | Only a scheduled recovery attempt/probe. |
 | Capacity/start-delay | No; next action is ready | Once admission allows it. |
@@ -169,7 +170,7 @@ shipped baseline, not a promise that every policy below is already correct.
 | --- | --- | --- | --- |
 | C1 | Current-head CI queued/running | Admit `run.await`, release execution capacity, observe automatically. | Keep `waiting`. |
 | C2 | CI passes; review must be requested or merge work is ready | Observer obtains a lifecycle action, then scheduler acquires a slot and executor revalidates. | Resume the specific owned action when a slot is available; remain waiting while admission is pending. |
-| C3 | CI fails | `resume/ci-failure`; bounded in-session relaunch. | Resume repair, not an external CI wait. |
+| C3 | CI fails | `resume/ci-failure`; bounded in-session relaunch. | Resume repair. A stall with a matching confirmed transient rerun receipt can enter `ci-recovery`; other stalls retain their existing disposition. |
 | C4 | Merge conflict | `resume/merge-conflict`; bounded in-session relaunch. | Resume reconciliation/repair. |
 | C5 | Confirmed current-head review request; reviewer not started | Request counts as active until its deadline. | Keep `waiting`; delivery is enough to establish an external operation. |
 | C6 | Same pending request, PR aggregate is clean/ready | Pure decision says await, but adapters can relaunch because gate is `ready-to-merge`. | Remain waiting until request-scoped feedback/approval or a separately justified action. **Reproduced defect F7.** |

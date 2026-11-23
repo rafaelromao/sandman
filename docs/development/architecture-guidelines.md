@@ -35,6 +35,10 @@ A live owner retries transient renewal I/O failures while its last renewal's
 uncapped recovery grace outlasts the next renewal; invalid ownership fails
 closed at once. Claim files may be unlinked only while held and only for
 event-terminal Runs; claimants revalidate the locked inode against the path.
+Diagnosed CI recovery is separate from PR lookup recovery. Follow
+[ADR-0064](../adr/0064-bound-runtime-ci-recovery.md): qualify from matching
+confirmed receipts, preserve the hourly schedule and hard bound on restart,
+and append intent before mutation. Unreadable history authorizes no rerun.
 Tests must cover composed quota → recovery → CI/review and wait → restart/abort
 paths, including reset/fallback schedules, completed and interrupted waits,
 missing/stale checkpoints, reviewer cadence/scope, and concurrent launch-boundary

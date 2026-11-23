@@ -159,8 +159,9 @@ The run timer pauses for every suspension, including ready-but-capacity-delayed 
 | Field | Description |
 |-------|-------------|
 | `await` | Always `true` |
-| `await_reason` | Lifecycle reason such as `"pending"`, `"failed"`, `"review-timeout"`, `"ready-to-merge"`, `"actionable-feedback"`, `"usage-limit"` (a built-in OpenCode or Claude Code attempt stopped at a provider usage limit and polls for the reset), or `"github-unavailable"` (a pull-request lookup failed; the Run retries hourly when githubstatus.com reports GitHub healthy and fails with `GATE_LOOKUP_FAILED` after 24 hours; `github_recovery` records the window start, next attempt and last status check, and `sandman run <n> --continue` starts a fresh window) |
+| `await_reason` | Lifecycle reason such as `"pending"`, `"failed"`, `"review-timeout"`, `"ready-to-merge"`, `"actionable-feedback"`, `"usage-limit"` (provider reset), `"ci-recovery"` (diagnosed transient CI repair stalled), or `"github-unavailable"` (PR lookup failed; see `github_recovery` for its hourly schedule and 24-hour bound) |
 | `gate` | Lifecycle state at await time |
+| `ci_recovery` | Present when `await_reason` is `"ci-recovery"`: a matching confirmed transient rerun qualified stalled CI repair for hourly runtime recovery. Records the window start, deadline, next attempt, status checks and rerun evidence. Unresolved recovery ends with `CI_RECOVERY_EXHAUSTED` after 24 hours. |
 | `branch` | Branch name |
 | `base_branch` | Base branch name |
 | `retries_total` | Total retry attempts configured |

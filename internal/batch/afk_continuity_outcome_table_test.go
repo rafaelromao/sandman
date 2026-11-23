@@ -58,6 +58,7 @@ func continuityContractRows() []continuityContractRow {
 	return []continuityContractRow{
 		// External operations that are still resolving keep waiting.
 		{continuityRow{gate: continuityGateCurrentHeadCI, cause: causeResolving}, outcomeWait, activeOperationProbe(true, false)},
+		{continuityRow{gate: continuityGateCIRecovery, cause: causeResolving}, outcomeWait, ciRecoveryResolvingProbe()},
 		{continuityRow{gate: continuityGateReviewRequest, cause: causeResolving}, outcomeWait, activeOperationProbe(false, true)},
 		{continuityRow{gate: gateGitHubUnavailable, reason: githubUnavailableReason, cause: causeResolving}, outcomeWait, githubWindowProbe(false)},
 		{continuityRow{gate: continuityGateQuota, reason: "AGENT_USAGE_LIMIT", cause: causeResolving}, outcomeWait, quotaWaitProbe(TestUsageLimitDuringPRRemediationRetainsQuotaRecovery)},
@@ -71,6 +72,8 @@ func continuityContractRows() []continuityContractRow {
 		{continuityRow{reason: blindReviewRequiredReason, cause: causeFailure}, outcomeHold, failureReasonProbe(blindReviewRequiredReason)},
 		{continuityRow{reason: "merged-pr-missing-closing-reference", cause: causeFailure}, outcomeTerminal, failureReasonProbe("merged-pr-missing-closing-reference")},
 		{continuityRow{reason: "CI_WAIT_STATE_ERROR", cause: causeFailure}, outcomeTerminal, failureReasonProbe("CI_WAIT_STATE_ERROR")},
+		{continuityRow{reason: ciRecoveryExhaustedReason, cause: causeFailure}, outcomeTerminal, failureReasonProbe(ciRecoveryExhaustedReason)},
+		{continuityRow{reason: ciRecoveryStateUnavailableReason, cause: causeFailure}, outcomeHold, failureReasonProbe(ciRecoveryStateUnavailableReason)},
 		{continuityRow{reason: stateErrorReason, cause: causeFailure}, outcomeTerminal, failureReasonProbe(stateErrorReason)},
 		{continuityRow{reason: lookupGateReason, cause: causeFailure}, outcomeTerminal, failureReasonProbe(lookupGateReason)},
 		{continuityRow{reason: githubUnavailableReason, cause: causeFailure}, outcomeHold, failureReasonProbe(githubUnavailableReason)},
@@ -187,6 +190,16 @@ func activeOperationProbe(ciRunning, reviewRequested bool) continuityProbe {
 			row.gate = continuityGateCurrentHeadCI
 		}
 		return table.outcome(row)
+	}}
+}
+
+func ciRecoveryResolvingProbe() continuityProbe {
+	return continuityProbe{consultsTable: true, observe: func(t *testing.T, table continuityTable) continuityOutcomeKind {
+		observer := &lifecycleObserver{runSession: &runSession{}, outcomes: table}
+		row := continuityRow{gate: continuityGateCIRecovery, reason: "CI_FAILURE", cause: causeResolving}
+		wait := lifecycleVerdict{Action: lifecycleAwait, Evidence: map[string]any{"gate": ciRecoveryGate}}
+		verdict := observer.applyContinuityDisposition(row, wait, lifecycleVerdict{})
+		return probedOutcome(t, verdict)
 	}}
 }
 
