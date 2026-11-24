@@ -661,8 +661,14 @@ func managedCIReplacementStillResolves(evidence map[string]any, pr *github.PR, r
 		} else if failedRunID := managedCIFailedRunID(pr); failedRunID != "" &&
 			!managedCIWaitExecutionLinkedToPR(pr, execution, wait) {
 			return false
-		} else if failedRunID == "" && !ciActive(pr, pr.HeadRefOid) {
-			return false
+		} else if failedRunID == "" {
+			if !ciActive(pr, pr.HeadRefOid) {
+				return false
+			}
+			if managedCIHasVisibleActionsJobChecks(pr) &&
+				!managedCIVisibleReplacementChecksPending(pr, execution) {
+				return false
+			}
 		}
 	}
 	status := strings.ToLower(strings.TrimSpace(stringEvidence(execution, "status")))
@@ -916,14 +922,29 @@ func managedCIVisibleReplacementChecksPending(pr *github.PR, execution map[strin
 	if !ok || runID <= 0 {
 		return false
 	}
-	currentFailedRunID := ""
-	if pr.CIFailedWorkflow != nil {
-		currentFailedRunID = strings.TrimSpace(pr.CIFailedWorkflow.RunID)
+	if managedCIFailedRunID(pr) == fmt.Sprint(runID) {
+		return true
 	}
-	if currentFailedRunID == "" {
-		currentFailedRunID = strings.TrimSpace(pr.CIActiveFailedWorkflowRunID)
+	repository := strings.TrimSpace(stringEvidence(execution, "repository"))
+	for _, check := range pr.CIActiveWorkflowChecks {
+		if check.RunID == runID && repository != "" &&
+			strings.EqualFold(strings.TrimSpace(check.Repository), repository) {
+			return true
+		}
 	}
-	return currentFailedRunID != "" && currentFailedRunID == fmt.Sprint(runID)
+	return false
+}
+
+func managedCIHasVisibleActionsJobChecks(pr *github.PR) bool {
+	if pr == nil {
+		return false
+	}
+	for _, check := range pr.CIActiveWorkflowChecks {
+		if check.RunID > 0 && strings.TrimSpace(check.Repository) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func managedCIReplacementWait(evidence map[string]any) (map[string]any, bool) {

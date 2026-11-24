@@ -302,6 +302,35 @@ func ciHasActiveChecksFromJSON(raw json.RawMessage) bool {
 	return false
 }
 
+func ciActiveWorkflowChecksFromJSON(raw json.RawMessage) []CIWorkflowCheck {
+	var checks []statusCheckRun
+	if err := json.Unmarshal(raw, &checks); err != nil || len(checks) == 0 {
+		return nil
+	}
+	active := make([]CIWorkflowCheck, 0)
+	for _, check := range checks {
+		status := strings.ToUpper(strings.TrimSpace(check.Status))
+		isActive := false
+		switch status {
+		case "QUEUED", "IN_PROGRESS", "WAITING", "PENDING", "REQUESTED", "CANCEL_REQUESTED":
+			isActive = true
+		case "":
+			switch strings.ToUpper(strings.TrimSpace(check.State)) {
+			case "PENDING", "QUEUED", "IN_PROGRESS":
+				isActive = true
+			}
+		}
+		if isActive {
+			repository, identity, _ := managedActionsJobURLIdentity(strings.TrimSpace(check.DetailsURL))
+			active = append(active, CIWorkflowCheck{
+				Name: strings.TrimSpace(check.Name), DetailsURL: strings.TrimSpace(check.DetailsURL),
+				Repository: repository, RunID: identity.RunID,
+			})
+		}
+	}
+	return active
+}
+
 // CIFailedWorkflow identifies the only workflow responsible for failed CI.
 type CIFailedWorkflow struct {
 	RunID        string
@@ -861,6 +890,7 @@ func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, err
 		MergeStateStatus:            payload.MergeStateStatus,
 		StatusCheckRollup:           rollupStateFromJSON(payload.StatusCheckRollup),
 		CIHasActiveChecks:           ciHasActiveChecksFromJSON(payload.StatusCheckRollup),
+		CIActiveWorkflowChecks:      ciActiveWorkflowChecksFromJSON(payload.StatusCheckRollup),
 		CIFailedWorkflow:            rerunEvidence,
 		CIMultipleFailedWorkflows:   multipleFailures,
 		CIActiveFailedWorkflowRunID: activeFailedWorkflowRunID,

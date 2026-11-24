@@ -49,6 +49,9 @@ type PR struct {
 	// CIHasActiveChecks remains true when a failed check coexists with queued or
 	// running siblings in the same current-head check rollup.
 	CIHasActiveChecks bool
+	// CIActiveWorkflowChecks preserves links for queued or running Actions jobs,
+	// including rollups with no failed-check entry to identify their workflow.
+	CIActiveWorkflowChecks []CIWorkflowCheck
 	// CIActiveFailedWorkflowRunID is populated only when check execution links
 	// identify exactly one workflow run containing both a failed job and an
 	// active sibling. It is empty for unrelated, missing, or ambiguous links.
@@ -83,6 +86,14 @@ type PR struct {
 type CIFailedCheck struct {
 	Name       string `json:"name"`
 	DetailsURL string `json:"details_url"`
+}
+
+// CIWorkflowCheck identifies a workflow job check visible in the PR rollup.
+type CIWorkflowCheck struct {
+	Name       string
+	DetailsURL string
+	Repository string
+	RunID      int64
 }
 
 var prClosingIssueRe = regexp.MustCompile(`\b(?i)(?:close(?:s|d)?|fix(?:es|ed)?|resolve(?:s|d)?)\s*:?\s*((?:#\d+)(?:(?:\s*,\s*(?:and\s+)?|\s+and\s+)#\d+)*)`)

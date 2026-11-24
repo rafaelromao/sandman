@@ -434,23 +434,30 @@ func ValidManagedCIExecutionStatus(status, conclusion string) bool {
 }
 
 func parseManagedActionsJobURL(value, repository string) (actionsWorkflowJobDetails, bool) {
+	actualRepository, identity, ok := managedActionsJobURLIdentity(value)
+	if !ok || !strings.EqualFold(actualRepository, repository) {
+		return actionsWorkflowJobDetails{}, false
+	}
+	return identity, true
+}
+
+func managedActionsJobURLIdentity(value string) (string, actionsWorkflowJobDetails, bool) {
 	parsed, err := url.Parse(strings.TrimSpace(value))
 	if err != nil || !strings.EqualFold(parsed.Scheme, "https") || !strings.EqualFold(parsed.Host, "github.com") ||
 		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return actionsWorkflowJobDetails{}, false
+		return "", actionsWorkflowJobDetails{}, false
 	}
 	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
-	repoParts := strings.Split(repository, "/")
-	if len(parts) != 7 || len(repoParts) != 2 || !strings.EqualFold(parts[0], repoParts[0]) ||
-		!strings.EqualFold(parts[1], repoParts[1]) || parts[2] != "actions" || parts[3] != "runs" || parts[5] != "job" {
-		return actionsWorkflowJobDetails{}, false
+	if len(parts) != 7 || parts[0] == "" || parts[1] == "" ||
+		parts[2] != "actions" || parts[3] != "runs" || parts[5] != "job" {
+		return "", actionsWorkflowJobDetails{}, false
 	}
 	runID, runErr := strconv.ParseInt(parts[4], 10, 64)
 	jobID, jobErr := strconv.ParseInt(parts[6], 10, 64)
 	if runErr != nil || jobErr != nil || runID <= 0 || jobID <= 0 {
-		return actionsWorkflowJobDetails{}, false
+		return "", actionsWorkflowJobDetails{}, false
 	}
-	return actionsWorkflowJobDetails{RunID: runID, JobID: jobID}, true
+	return parts[0] + "/" + parts[1], actionsWorkflowJobDetails{RunID: runID, JobID: jobID}, true
 }
 
 type actionsWorkflowJobDetails struct {

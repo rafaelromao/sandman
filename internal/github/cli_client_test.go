@@ -513,6 +513,27 @@ func TestCLIClient_FindPRByBranch_PreservesActiveSiblingsAlongsideFailure(t *tes
 	if len(pr.CIActiveFailedWorkflowRunFailedCheckNames) != 1 || pr.CIActiveFailedWorkflowRunFailedCheckNames[0] != "opencode-canary" {
 		t.Fatalf("failed check identities = %v, want the failed canary", pr.CIActiveFailedWorkflowRunFailedCheckNames)
 	}
+	if !reflect.DeepEqual(pr.CIActiveWorkflowChecks, []CIWorkflowCheck{
+		{Name: "build-macos", DetailsURL: "https://github.com/o/r/actions/runs/101/job/12", Repository: "o/r", RunID: 101},
+		{Name: "portal-browser", DetailsURL: "https://github.com/o/r/actions/runs/202/job/21", Repository: "o/r", RunID: 202},
+	}) {
+		t.Fatalf("active workflow check links = %+v, want links for every queued/running Actions job", pr.CIActiveWorkflowChecks)
+	}
+}
+
+func TestCLIClient_FindPRByBranch_PreservesPendingOnlyWorkflowLinks(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":18,"state":"open","headRefOid":"source-head","statusCheckRollup":[{"__typename":"CheckRun","status":"IN_PROGRESS","name":"build-macos","detailsUrl":"https://github.com/o/r/actions/runs/102/job/21"},{"__typename":"CheckRun","status":"QUEUED","name":"quality-gate","detailsUrl":"https://github.com/o/r/actions/runs/102/job/22"}]}]`}}}
+	pr, err := (&CLIClient{runner: runner}).FindPRByBranch(t.Context(), "pending-only")
+	if err != nil || pr == nil {
+		t.Fatalf("FindPRByBranch() = (%+v, %v)", pr, err)
+	}
+	if pr.StatusCheckRollup != "pending" || !pr.CIHasActiveChecks ||
+		!reflect.DeepEqual(pr.CIActiveWorkflowChecks, []CIWorkflowCheck{
+			{Name: "build-macos", DetailsURL: "https://github.com/o/r/actions/runs/102/job/21", Repository: "o/r", RunID: 102},
+			{Name: "quality-gate", DetailsURL: "https://github.com/o/r/actions/runs/102/job/22", Repository: "o/r", RunID: 102},
+		}) {
+		t.Fatalf("pending-only rollup lost its linked current Actions jobs: %+v", pr)
+	}
 }
 
 func TestCIHasActiveChecksFromJSONRequiresRecognizedActiveEvidence(t *testing.T) {
