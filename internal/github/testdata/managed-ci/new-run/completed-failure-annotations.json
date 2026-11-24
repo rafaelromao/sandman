@@ -1,0 +1,8 @@
+[
+  {
+    "annotation_level": "failure",
+    "message": "TestExample failed.",
+    "path": "internal/example_test.go",
+    "start_line": 42
+  }
+]

@@ -223,12 +223,24 @@ type PRReviewCommentLister interface {
 // CIWorkflowJob is a job in the latest attempt of a GitHub Actions workflow
 // run. Database IDs are used by the rerun endpoint; browser URLs are not.
 type CIWorkflowJob struct {
-	ID         int64  `json:"id"`
-	RunID      int64  `json:"run_id"`
-	RunAttempt int    `json:"run_attempt"`
+	ID          int64            `json:"id"`
+	RunID       int64            `json:"run_id"`
+	RunAttempt  int              `json:"run_attempt"`
+	Name        string           `json:"name"`
+	Status      string           `json:"status"`
+	Conclusion  string           `json:"conclusion"`
+	RunnerID    int64            `json:"runner_id"`
+	RunnerName  string           `json:"runner_name"`
+	CheckRunURL string           `json:"check_run_url"`
+	Steps       []CIWorkflowStep `json:"steps"`
+}
+
+// CIWorkflowStep is one executed or skipped step in a workflow job.
+type CIWorkflowStep struct {
 	Name       string `json:"name"`
 	Status     string `json:"status"`
 	Conclusion string `json:"conclusion"`
+	Number     int    `json:"number"`
 }
 
 // CIRerunClient is an optional capability for observing and rerunning one
@@ -237,6 +249,70 @@ type CIWorkflowJob struct {
 type CIRerunClient interface {
 	ListWorkflowJobs(ctx context.Context, runID string) ([]CIWorkflowJob, error)
 	RerunWorkflowJob(ctx context.Context, jobID int64) error
+}
+
+// ManagedCIRequest binds a managed-CI evidence lookup to the live pull request
+// identity and the failed workflow/check execution observed in its rollup.
+type ManagedCIRequest struct {
+	Repository          string
+	PullRequest         int
+	BaseRefName         string
+	HeadSHA             string
+	FailedWorkflowRunID string
+	FailedChecks        []CIFailedCheck
+}
+
+// ManagedCIFailureClassification distinguishes explicit hosted-runner
+// acquisition failures from confirmed source failures and unexplained ones.
+type ManagedCIFailureClassification string
+
+const (
+	ManagedCIRunnerShortage           ManagedCIFailureClassification = "runner-shortage"
+	ManagedCIConfirmedCodeTestFailure ManagedCIFailureClassification = "confirmed-code-test-failure"
+	ManagedCIDependentFailure         ManagedCIFailureClassification = "explicitly-dependent-failure"
+	ManagedCIUnexplainedFailure       ManagedCIFailureClassification = "unexplained"
+)
+
+// ManagedCIExecution is the identity of one Actions workflow execution.
+type ManagedCIExecution struct {
+	Repository  string
+	PullRequest int
+	BaseRefName string
+	HeadSHA     string
+	WorkflowID  int64
+	Event       string
+	RunID       int64
+	RunNumber   int64
+	Attempt     int
+	Status      string
+	Conclusion  string
+}
+
+// ManagedCIFailureEvidence classifies one failed check execution by its
+// provider job identity, never by a display name alone.
+type ManagedCIFailureEvidence struct {
+	JobID          int64
+	RunID          int64
+	Attempt        int
+	CheckName      string
+	DetailsURL     string
+	Classification ManagedCIFailureClassification
+	CausedByChecks []string
+}
+
+// ManagedCIObservation contains read-only evidence for the observed workflow
+// and any verified newer execution.
+type ManagedCIObservation struct {
+	Source              ManagedCIExecution
+	Failures            []ManagedCIFailureEvidence
+	Replacement         *ManagedCIExecution
+	ReplacementFailures []ManagedCIFailureEvidence
+}
+
+// ManagedCIObserver is an optional read-only Actions evidence capability.
+// Clients without it preserve ordinary CI lifecycle behavior.
+type ManagedCIObserver interface {
+	ObserveManagedCI(ctx context.Context, request ManagedCIRequest) (ManagedCIObservation, error)
 }
 
 // IssueComment holds an issue conversation comment fetched from the GitHub

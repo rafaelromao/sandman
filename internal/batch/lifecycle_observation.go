@@ -3,6 +3,7 @@ package batch
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -60,6 +61,174 @@ type lifecycleObserver struct {
 	*runSession
 	outcomes     continuityTable
 	ciRecoveryPR *github.PR
+}
+
+func (s *runSession) observeManagedCIFailure(
+	ctx context.Context,
+	pr *github.PR,
+	headSHA string,
+	repository string,
+) (string, *github.ManagedCIExecution, bool) {
+	if s == nil || s.deps.githubClient == nil || pr == nil || ctx.Err() != nil ||
+		!strings.EqualFold(strings.TrimSpace(pr.State), "open") ||
+		!strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "failure") ||
+		strings.TrimSpace(headSHA) == "" ||
+		!strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) ||
+		strings.TrimSpace(pr.BaseRefName) == "" || pr.CIFailedWorkflow == nil ||
+		strings.TrimSpace(pr.CIFailedWorkflow.RunID) == "" || len(pr.CIFailedWorkflow.FailedChecks) == 0 {
+		return repository, nil, false
+	}
+	observer, ok := s.deps.githubClient.(github.ManagedCIObserver)
+	if !ok {
+		return repository, nil, false
+	}
+	if strings.TrimSpace(repository) == "" {
+		name, err := s.deps.githubClient.RepoName(ctx)
+		if err != nil {
+			return repository, nil, false
+		}
+		repository = strings.TrimSpace(name)
+	}
+	if repository == "" || ctx.Err() != nil {
+		return repository, nil, false
+	}
+	request := github.ManagedCIRequest{
+		Repository: repository, PullRequest: pr.Number, BaseRefName: pr.BaseRefName,
+		HeadSHA: headSHA, FailedWorkflowRunID: pr.CIFailedWorkflow.RunID,
+		FailedChecks: append([]github.CIFailedCheck(nil), pr.CIFailedWorkflow.FailedChecks...),
+	}
+	observation, err := observer.ObserveManagedCI(ctx, request)
+	if err != nil || !managedCIObservationMatchesRequest(observation, request) {
+		return repository, nil, false
+	}
+	independentFailure := false
+	shortageOnly := len(observation.Failures) > 0
+	shortageChecks := make(map[string]struct{}, len(observation.Failures))
+	for _, failure := range observation.Failures {
+		switch failure.Classification {
+		case github.ManagedCIRunnerShortage:
+			shortageChecks[managedCICheckName(failure.CheckName)] = struct{}{}
+		case github.ManagedCIConfirmedCodeTestFailure:
+			independentFailure = true
+			shortageOnly = false
+		case github.ManagedCIDependentFailure:
+		default:
+			shortageOnly = false
+		}
+	}
+	for _, failure := range observation.Failures {
+		if failure.Classification != github.ManagedCIDependentFailure {
+			continue
+		}
+		if len(failure.CausedByChecks) == 0 {
+			shortageOnly = false
+			continue
+		}
+		for _, cause := range failure.CausedByChecks {
+			if _, verifiedShortageCause := shortageChecks[managedCICheckName(cause)]; !verifiedShortageCause {
+				shortageOnly = false
+			}
+		}
+	}
+	if len(observation.ReplacementFailures) > 0 {
+		if observation.Replacement == nil {
+			return repository, nil, independentFailure
+		}
+		for _, failure := range observation.ReplacementFailures {
+			if failure.JobID <= 0 || failure.RunID != observation.Replacement.RunID ||
+				failure.Attempt != observation.Replacement.Attempt {
+				return repository, nil, independentFailure
+			}
+			switch failure.Classification {
+			case github.ManagedCIRunnerShortage, github.ManagedCIUnexplainedFailure:
+			case github.ManagedCIConfirmedCodeTestFailure:
+				independentFailure = true
+			default:
+				return repository, nil, independentFailure
+			}
+		}
+	}
+	if !shortageOnly || observation.Replacement == nil ||
+		!managedCIReplacementFollows(observation.Source, *observation.Replacement) {
+		return repository, nil, independentFailure
+	}
+	replacement := *observation.Replacement
+	return repository, &replacement, independentFailure
+}
+
+func managedCICheckName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if separator := strings.LastIndex(name, "/"); separator >= 0 {
+		name = strings.TrimSpace(name[separator+1:])
+	}
+	return name
+}
+
+func managedCIObservationMatchesRequest(observation github.ManagedCIObservation, request github.ManagedCIRequest) bool {
+	source := observation.Source
+	runID, err := strconv.ParseInt(strings.TrimSpace(request.FailedWorkflowRunID), 10, 64)
+	if err != nil || source.RunID != runID || source.RunNumber <= 0 || source.Attempt <= 0 ||
+		source.WorkflowID <= 0 || !strings.EqualFold(strings.TrimSpace(source.Event), "pull_request") ||
+		!strings.EqualFold(strings.TrimSpace(source.Status), "completed") ||
+		!strings.EqualFold(strings.TrimSpace(source.Repository), strings.TrimSpace(request.Repository)) ||
+		source.PullRequest != request.PullRequest ||
+		!strings.EqualFold(strings.TrimSpace(source.BaseRefName), strings.TrimSpace(request.BaseRefName)) ||
+		!strings.EqualFold(strings.TrimSpace(source.HeadSHA), strings.TrimSpace(request.HeadSHA)) ||
+		len(observation.Failures) != len(request.FailedChecks) {
+		return false
+	}
+	pending := make(map[string]int, len(request.FailedChecks))
+	for _, check := range request.FailedChecks {
+		key := strings.TrimSpace(check.Name) + "\x00" + strings.TrimSpace(check.DetailsURL)
+		pending[key]++
+	}
+	for _, failure := range observation.Failures {
+		if failure.JobID <= 0 || failure.RunID != source.RunID || failure.Attempt != source.Attempt {
+			return false
+		}
+		key := strings.TrimSpace(failure.CheckName) + "\x00" + strings.TrimSpace(failure.DetailsURL)
+		if pending[key] == 0 {
+			return false
+		}
+		pending[key]--
+	}
+	for _, count := range pending {
+		if count != 0 {
+			return false
+		}
+	}
+	if len(observation.ReplacementFailures) > 0 {
+		if observation.Replacement == nil || !managedCIReplacementFollows(source, *observation.Replacement) {
+			return false
+		}
+		for _, failure := range observation.ReplacementFailures {
+			if failure.JobID <= 0 || failure.RunID != observation.Replacement.RunID ||
+				failure.Attempt != observation.Replacement.Attempt {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func managedCIReplacementFollows(source, replacement github.ManagedCIExecution) bool {
+	if source.Repository == "" || replacement.Repository == "" ||
+		!strings.EqualFold(strings.TrimSpace(source.Repository), strings.TrimSpace(replacement.Repository)) ||
+		source.PullRequest <= 0 || source.PullRequest != replacement.PullRequest ||
+		!strings.EqualFold(strings.TrimSpace(source.BaseRefName), strings.TrimSpace(replacement.BaseRefName)) ||
+		!strings.EqualFold(strings.TrimSpace(source.HeadSHA), strings.TrimSpace(replacement.HeadSHA)) ||
+		source.WorkflowID <= 0 || source.WorkflowID != replacement.WorkflowID ||
+		!strings.EqualFold(strings.TrimSpace(source.Event), "pull_request") ||
+		!strings.EqualFold(strings.TrimSpace(replacement.Event), "pull_request") ||
+		source.RunID <= 0 || source.RunNumber <= 0 || source.Attempt <= 0 ||
+		replacement.RunID <= 0 || replacement.RunNumber <= 0 || replacement.Attempt <= 0 ||
+		strings.TrimSpace(replacement.Status) == "" {
+		return false
+	}
+	if replacement.RunID == source.RunID {
+		return replacement.RunNumber == source.RunNumber && replacement.Attempt > source.Attempt
+	}
+	return replacement.RunNumber > source.RunNumber
 }
 
 func newLifecycleObserver(session *runSession) *lifecycleObserver {

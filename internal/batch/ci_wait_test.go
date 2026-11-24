@@ -50,6 +50,157 @@ func TestCIWaitEvidencePersistsDeadlinePerHead(t *testing.T) {
 	}
 }
 
+func TestCIWaitEvidenceKeepsVerifiedActionsGenerationMonotonicAcrossRestart(t *testing.T) {
+	workDir := t.TempDir()
+	now := time.Unix(20_000, 0).UTC()
+	session := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+	pr := &github.PR{
+		Number: 17, HeadRefOid: "current-head", BaseRefName: "main",
+		StatusCheckRollup: "failure", CIExecutionID: "stale-rollup-identity",
+	}
+	execution := func(runID, runNumber int64, attempt int, status, conclusion string) *github.ManagedCIExecution {
+		return &github.ManagedCIExecution{
+			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "current-head",
+			WorkflowID: 273743359, Event: "pull_request", RunID: runID, RunNumber: runNumber, Attempt: attempt,
+			Status: status, Conclusion: conclusion,
+		}
+	}
+
+	first, err := session.ciWaitEvidence(context.Background(), workDir, pr, pr.HeadRefOid, execution(100, 5288, 1, "queued", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstWait := first["ci_wait"].(map[string]any)
+	if firstWait["execution_id"] != "actions:273743359:100:1" {
+		t.Fatalf("first execution identity = %#v", firstWait["execution_id"])
+	}
+	firstDeadline := firstWait["deadline_unix_seconds"]
+	now = now.Add(5 * time.Minute)
+	restarted := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+	same, err := restarted.ciWaitEvidence(context.Background(), workDir, pr, pr.HeadRefOid, execution(100, 5288, 1, "in_progress", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := same["ci_wait"].(map[string]any)["deadline_unix_seconds"]; got != firstDeadline {
+		t.Fatalf("restart renewed the same Actions execution deadline: first=%v got=%v", firstDeadline, got)
+	}
+
+	stale, err := restarted.ciWaitEvidence(context.Background(), workDir, pr, pr.HeadRefOid, execution(99, 5287, 1, "completed", "success"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleWait := stale["ci_wait"].(map[string]any)
+	if staleWait["execution_id"] != "actions:273743359:100:1" || staleWait["deadline_unix_seconds"] != firstDeadline {
+		t.Fatalf("stale Actions observation rolled back the retained generation: %#v", staleWait)
+	}
+
+	now = now.Add(2 * time.Minute)
+	higherAttempt, err := restarted.ciWaitEvidence(context.Background(), workDir, pr, pr.HeadRefOid, execution(100, 5288, 2, "queued", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	higherAttemptWait := higherAttempt["ci_wait"].(map[string]any)
+	if higherAttemptWait["execution_id"] != "actions:273743359:100:2" ||
+		higherAttemptWait["deadline_unix_seconds"] != now.Add(ciWaitTimeout).Unix() {
+		t.Fatalf("verified higher attempt did not start a new bounded generation: %#v", higherAttemptWait)
+	}
+
+	now = now.Add(3 * time.Minute)
+	newer, err := restarted.ciWaitEvidence(context.Background(), workDir, pr, pr.HeadRefOid, execution(101, 5289, 1, "queued", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	newerWait := newer["ci_wait"].(map[string]any)
+	if newerWait["execution_id"] != "actions:273743359:101:1" ||
+		newerWait["deadline_unix_seconds"] != now.Add(ciWaitTimeout).Unix() {
+		t.Fatalf("verified newer execution did not start its own bounded generation: %#v", newerWait)
+	}
+	registration, err := readCIWaitRegistration(filepath.Join(workDir, ".sandman", "state", "17.ci_wait.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if registration.ActionsExecution == nil || registration.ActionsExecution.Repository != "owner/repo" ||
+		registration.ActionsExecution.PullRequest != 17 || registration.ActionsExecution.BaseRefName != "main" ||
+		registration.ActionsExecution.HeadSHA != "current-head" || registration.ActionsExecution.WorkflowID != 273743359 ||
+		registration.ActionsExecution.Event != "pull_request" ||
+		registration.ActionsExecution.RunID != 101 || registration.ActionsExecution.RunNumber != 5289 ||
+		registration.ActionsExecution.Attempt != 1 {
+		t.Fatalf("persisted Actions identity is incomplete: %+v", registration.ActionsExecution)
+	}
+}
+
+func TestCIWaitEvidenceDoesNotUseReplacementForDifferentUnverifiedRollup(t *testing.T) {
+	workDir := t.TempDir()
+	now := time.Unix(30_000, 0).UTC()
+	session := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+	pr := &github.PR{
+		Number: 17, HeadRefOid: "head", BaseRefName: "main", StatusCheckRollup: "failure",
+		CIExecutionID: "source-rollup-1",
+	}
+	execution := &github.ManagedCIExecution{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "head",
+		WorkflowID: 9, Event: "pull_request", RunID: 101, RunNumber: 51, Attempt: 1, Status: "queued",
+	}
+	if _, err := session.ciWaitEvidence(context.Background(), workDir, pr, "head", execution); err != nil {
+		t.Fatal(err)
+	}
+	pr.CIExecutionID = "source-rollup-2"
+	pr.CIFailedWorkflow = &github.CIFailedWorkflow{RunID: "202"}
+	now = now.Add(4 * time.Minute)
+	evidence, err := session.ciWaitEvidence(context.Background(), workDir, pr, "head")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wait, ok := evidence["ci_wait"].(map[string]any)
+	if !ok || wait["execution_id"] != "actions:9:101:1" ||
+		managedCIReplacementStillResolves(evidence, pr, "owner/repo") {
+		t.Fatalf("older replacement authorized a different unverified failing rollup: %#v", evidence)
+	}
+	registration, err := readCIWaitRegistration(filepath.Join(workDir, ".sandman", "state", "17.ci_wait.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if registration.ActionsExecution == nil || registration.ActionsExecution.RunID != 101 ||
+		registration.DeadlineUnixSeconds != now.Add(-4*time.Minute).Add(ciWaitTimeout).Unix() {
+		t.Fatalf("unverified rollup changed the retained Actions generation: %+v", registration)
+	}
+}
+
+func TestCIWaitEvidenceDoesNotRegressCompletedExecutionOnStaleRead(t *testing.T) {
+	workDir := t.TempDir()
+	now := time.Unix(40_000, 0).UTC()
+	session := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+	pr := &github.PR{Number: 17, HeadRefOid: "head", BaseRefName: "main"}
+	execution := func(status, conclusion string) *github.ManagedCIExecution {
+		return &github.ManagedCIExecution{
+			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "head",
+			WorkflowID: 9, Event: "pull_request", RunID: 101, RunNumber: 51, Attempt: 1,
+			Status: status, Conclusion: conclusion,
+		}
+	}
+	if _, err := session.ciWaitEvidence(context.Background(), workDir, pr, "head", execution("queued", "")); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(5 * time.Minute)
+	completed, err := session.ciWaitEvidence(context.Background(), workDir, pr, "head", execution("completed", "failure"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	completedWait := completed["ci_wait"].(map[string]any)
+	deadline := completedWait["deadline_unix_seconds"]
+	now = now.Add(time.Minute)
+	stale, err := session.ciWaitEvidence(context.Background(), workDir, pr, "head", execution("in_progress", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleWait := stale["ci_wait"].(map[string]any)
+	observed := staleWait["actions_execution"].(map[string]any)
+	if observed["status"] != "completed" || observed["conclusion"] != "failure" ||
+		staleWait["deadline_unix_seconds"] != deadline {
+		t.Fatalf("stale same-attempt read regressed the terminal observation: %#v", staleWait)
+	}
+}
+
 func TestCIWaitEvidenceCancellationWhileLockContendedDoesNotPersist(t *testing.T) {
 	workDir := t.TempDir()
 	path := filepath.Join(workDir, ".sandman", "state", "17.ci_wait.json")

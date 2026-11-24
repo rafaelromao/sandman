@@ -1,0 +1,38 @@
+{
+  "total_count": 2,
+  "workflow_runs": [
+    {
+      "id": 45270155099,
+      "run_number": 5288,
+      "run_attempt": 1,
+      "workflow_id": 273743359,
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "head_sha": "incident-source-head",
+      "pull_requests": [
+        {
+          "number": 17,
+          "base": {"ref": "main"},
+          "head": {"sha": "incident-source-head"}
+        }
+      ]
+    },
+    {
+      "id": 45276896986,
+      "run_number": 5289,
+      "run_attempt": 1,
+      "workflow_id": 273743359,
+      "event": "pull_request",
+      "status": "queued",
+      "head_sha": "incident-source-head",
+      "pull_requests": [
+        {
+          "number": 17,
+          "base": {"ref": "main"},
+          "head": {"sha": "incident-source-head"}
+        }
+      ]
+    }
+  ]
+}
