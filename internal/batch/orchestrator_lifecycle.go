@@ -1172,50 +1172,19 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 		gate = lifecycleGate(checkPRExternalGateForPR(pr, headSHA, true))
 	}
 	if err == nil && pr != nil {
-		observation := s.observeManagedCIFailure(ctx, pr, headSHA, repository)
-		repository = observation.Repository
-		managedCISource = observation.Source
-		managedCIReplacement = observation.Replacement
-		managedCIReplacementFailures = observation.ReplacementFailures
-		confirmedIndependentCI = observation.IndependentFailure
-		managedCIObservationUnknown = observation.Unknown
-		if !confirmedIndependentCI && managedCIReplacement == nil &&
-			!strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "failure") &&
-			ciActive(pr, headSHA) {
-			retained, established := s.priorOperationEvidence(runID, branch, worktreeHeadSHA)
-			if established {
-				retainedExecution := managedCICompletedReplacementForDiagnosis(retained, pr, repository)
-				if retainedExecution != nil {
-					if repository == "" {
-						name, repoErr := s.deps.githubClient.RepoName(ctx)
-						if repoErr != nil || strings.TrimSpace(name) == "" {
-							managedCIObservationUnknown = true
-						} else {
-							repository = strings.TrimSpace(name)
-						}
-					}
-					if !managedCIObservationUnknown &&
-						strings.EqualFold(retainedExecution.Repository, repository) {
-						diagnosis := s.observeRetainedManagedCIExecutionFailure(ctx, *retainedExecution)
-						if diagnosis.Unknown {
-							managedCIObservationUnknown = true
-						} else if diagnosis.IndependentFailure {
-							repository = diagnosis.Repository
-							managedCIReplacement = diagnosis.Replacement
-							managedCIReplacementFailures = diagnosis.ReplacementFailures
-							pr, managedCIReplacementFailure = managedCIReplacementFailurePR(
-								pr, managedCIReplacement, managedCIReplacementFailures,
-							)
-							confirmedIndependentCI = true
-						}
-					} else if !managedCIObservationUnknown {
-						managedCIObservationUnknown = true
-					}
-				}
-			}
-		}
+		managedCI := s.observeManagedCIFailureForAttempt(
+			ctx, pr, headSHA, repository, runID, branch, worktreeHeadSHA,
+		)
+		pr = managedCI.PR
+		repository = managedCI.Failure.Repository
+		managedCISource = managedCI.Failure.Source
+		managedCIReplacement = managedCI.Failure.Replacement
+		managedCIReplacementFailures = managedCI.Failure.ReplacementFailures
+		confirmedIndependentCI = managedCI.Failure.IndependentFailure
+		managedCIObservationUnknown = managedCI.Failure.Unknown
+		managedCIReplacementFailure = managedCI.ReplacementFailure
 		if managedCIObservationUnknown && !confirmedIndependentCI && ctx.Err() == nil {
-			err = errors.New("managed CI observation is inconclusive")
+			err = managedCI.Error
 		}
 	}
 

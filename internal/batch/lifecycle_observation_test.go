@@ -344,7 +344,7 @@ func TestLifecycleObservation_ConfirmedFailureFromSupersededSourceCannotTriggerR
 	}
 }
 
-func TestLifecycleObservation_FollowsReplacementAlongsideUnexplainedSourceFailure(t *testing.T) {
+func TestLifecycleObservation_UnexplainedSourceFailureDoesNotAuthorizeReplacementWait(t *testing.T) {
 	now := time.Unix(3_500, 0).UTC()
 	failedChecks := []github.CIFailedCheck{
 		{Name: "build (macos-latest)", DetailsURL: "https://github.com/owner/repo/actions/runs/100/job/10"},
@@ -396,10 +396,15 @@ func TestLifecycleObservation_FollowsReplacementAlongsideUnexplainedSourceFailur
 		WorkDir: t.TempDir(), Branch: gateTestBranch, RunID: "run-shortage-plus-unexplained",
 		HostPathsReady: true, AttemptStatus: "success",
 	})
-	wait, ok := verdict.Evidence["ci_wait"].(map[string]any)
-	if verdict.Action != lifecycleAwait || verdict.Evidence["gate"] != string(lifecycleGatePending) ||
-		!ok || wait["execution_id"] != "actions:9:101:1" {
-		t.Fatalf("verified replacement was blocked by another unexplained source check: %+v", verdict)
+	if verdict.Action != lifecycleAwait || verdict.Kind != lifecycleVerdictGitHubUnavailable ||
+		verdict.Evidence["gate"] != string(gateGitHubUnavailable) {
+		t.Fatalf("unexplained source failure did not enter GitHub recovery: %+v", verdict)
+	}
+	if _, ok := verdict.Evidence[githubRecoveryKey].(map[string]any); !ok {
+		t.Fatalf("inconclusive source evidence did not retain GitHub recovery: %#v", verdict.Evidence)
+	}
+	if _, ok := verdict.Evidence["ci_wait"]; ok {
+		t.Fatalf("unexplained source failure established a replacement wait: %#v", verdict.Evidence)
 	}
 }
 
@@ -1237,6 +1242,24 @@ func TestLifecycleObservation_UnknownManagedCILookupWaitsForGitHubRecovery(t *te
 			wantGate:   gateGitHubUnavailable,
 		},
 		{
+			name: "dependent failure without confirmed shortage cause",
+			observation: github.ManagedCIObservation{
+				Source: github.ManagedCIExecution{
+					Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "current-sha",
+					WorkflowID: 273743359, Event: "pull_request", RunID: 101, RunNumber: 5288, Attempt: 1,
+					Status: "completed", Conclusion: "failure",
+				},
+				Failures: []github.ManagedCIFailureEvidence{{
+					JobID: 138, RunID: 101, Attempt: 1, CheckName: "build-macos",
+					DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/11",
+					Classification: github.ManagedCIDependentFailure,
+					CausedByChecks: []string{"unit-tests"}, CausedByResults: []string{"failure"},
+				}},
+			},
+			wantAction: lifecycleAwait,
+			wantGate:   gateGitHubUnavailable,
+		},
+		{
 			name:         "confirmed independent source failure survives unknown classification",
 			failedChecks: failedCIChecks("101", "build-macos", "unit-tests"),
 			observation: github.ManagedCIObservation{
@@ -1372,8 +1395,8 @@ func TestLifecycleObservation_UnknownManagedCILookupWaitsForGitHubRecovery(t *te
 					WorkflowID: 273743359, Event: "pull_request", RunID: 102, RunNumber: 5289, Attempt: 1, Status: "queued",
 				},
 			},
-			wantAction: lifecycleResume,
-			wantGate:   "ci-failure",
+			wantAction: lifecycleAwait,
+			wantGate:   gateGitHubUnavailable,
 		},
 	}
 	for _, test := range tests {

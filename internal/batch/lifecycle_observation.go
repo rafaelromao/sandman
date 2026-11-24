@@ -73,6 +73,65 @@ type managedCIFailureObservation struct {
 	ReplacementFailures []github.ManagedCIFailureEvidence
 }
 
+type managedCILifecycleObservation struct {
+	PR                 *github.PR
+	Failure            managedCIFailureObservation
+	ReplacementFailure map[string]any
+	Error              error
+}
+
+func (s *lifecycleObserver) observeManagedCIFailureForAttempt(
+	ctx context.Context,
+	pr *github.PR,
+	headSHA, repository, runID, branch, worktreeHeadSHA string,
+) managedCILifecycleObservation {
+	result := managedCILifecycleObservation{
+		PR: pr, Failure: s.observeManagedCIFailure(ctx, pr, headSHA, repository),
+	}
+	if !result.Failure.IndependentFailure && result.Failure.Replacement == nil &&
+		!strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "failure") &&
+		ciActive(pr, headSHA) {
+		retained, established := s.priorOperationEvidence(runID, branch, worktreeHeadSHA)
+		if established {
+			retainedExecution := managedCICompletedReplacementForDiagnosis(retained, pr, result.Failure.Repository)
+			if retainedExecution != nil {
+				if result.Failure.Repository == "" {
+					name, repoErr := s.deps.githubClient.RepoName(ctx)
+					if repoErr != nil || strings.TrimSpace(name) == "" {
+						result.Failure.Unknown = true
+					} else {
+						result.Failure.Repository = strings.TrimSpace(name)
+					}
+				}
+				if !result.Failure.Unknown &&
+					strings.EqualFold(retainedExecution.Repository, result.Failure.Repository) {
+					diagnosis := s.observeRetainedManagedCIExecutionFailure(ctx, *retainedExecution)
+					if diagnosis.Unknown {
+						result.Failure.Unknown = true
+					} else if diagnosis.IndependentFailure {
+						result.Failure.Repository = diagnosis.Repository
+						result.Failure.Replacement = diagnosis.Replacement
+						result.Failure.ReplacementFailures = diagnosis.ReplacementFailures
+						result.PR, result.ReplacementFailure = managedCIReplacementFailurePR(
+							pr, diagnosis.Replacement, diagnosis.ReplacementFailures,
+						)
+						result.Failure.IndependentFailure = true
+					}
+				} else if !result.Failure.Unknown {
+					result.Failure.Unknown = true
+				}
+			}
+		}
+	}
+	if result.Failure.Unknown && !result.Failure.IndependentFailure && ctx.Err() == nil {
+		retained, established := s.priorOperationEvidence(runID, branch, worktreeHeadSHA)
+		if !established || !managedCIWaitIncludesExecution(retained, result.Failure.Source) {
+			result.Error = errors.New("managed CI observation is inconclusive")
+		}
+	}
+	return result
+}
+
 // observeManagedCIFailure returns identity-checked source/replacement evidence
 // from one read-only Actions observation. Only confirmed code/test failures
 // from a verified replacement are promoted as current repair evidence.
@@ -172,7 +231,7 @@ func classifyManagedCIFailureObservation(
 		return managedCIUncertainFailureObservation(repository, request, observation)
 	}
 	source := observation.Source
-	independentFailure, verifiedShortage, unexplainedClassification :=
+	independentFailure, verifiedShortage, dependentClassification, unexplainedClassification :=
 		managedCISourceFailureKinds(observation.Failures)
 	confirmedReplacementFailures, replacementHasConfirmedFailure, replacementEvidenceValid :=
 		managedCIConfirmedReplacementFailures(observation)
@@ -181,12 +240,18 @@ func classifyManagedCIFailureObservation(
 			Repository: repository, Source: &source, IndependentFailure: independentFailure, Unknown: true,
 		}
 	}
-	if unexplainedClassification && !independentFailure {
-		return managedCIFailureObservation{Repository: repository, Source: &source, Unknown: true}
+	replacementFollows := observation.Replacement != nil &&
+		managedCIReplacementFollows(observation.Source, *observation.Replacement)
+	if unexplainedClassification {
+		return managedCIUncertainFailureObservation(repository, request, observation)
 	}
-	if !verifiedShortage || observation.Replacement == nil ||
-		!managedCIReplacementFollows(observation.Source, *observation.Replacement) ||
-		!managedCIDependentFailuresMatchShortage(observation.Failures, observation.SourceJobs) {
+	dependentFailuresMatchShortage := managedCIDependentFailuresMatchShortage(
+		observation.Failures, observation.SourceJobs,
+	)
+	if dependentClassification && !dependentFailuresMatchShortage {
+		return managedCIUncertainFailureObservation(repository, request, observation)
+	}
+	if !verifiedShortage || !replacementFollows || !dependentFailuresMatchShortage {
 		return managedCIFailureObservation{
 			Repository: repository, Source: &source, IndependentFailure: independentFailure,
 		}
@@ -225,19 +290,22 @@ func managedCIUncertainFailureObservation(
 
 func managedCISourceFailureKinds(
 	failures []github.ManagedCIFailureEvidence,
-) (independent, shortage, unexplained bool) {
+) (independent, shortage, dependent, unexplained bool) {
 	for _, failure := range failures {
 		switch failure.Classification {
 		case github.ManagedCIRunnerShortage:
 			shortage = true
 		case github.ManagedCIConfirmedCodeTestFailure:
 			independent = true
-		case github.ManagedCIDependentFailure, github.ManagedCIUnexplainedFailure:
+		case github.ManagedCIDependentFailure:
+			dependent = true
+		case github.ManagedCIUnexplainedFailure:
+			unexplained = true
 		default:
 			unexplained = true
 		}
 	}
-	return independent, shortage, unexplained
+	return independent, shortage, dependent, unexplained
 }
 
 func managedCIConfirmedReplacementFailures(
