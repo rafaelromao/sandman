@@ -294,6 +294,18 @@ type ManagedCIRequest struct {
 	FailedChecks        []CIFailedCheck
 }
 
+// ManagedCIActiveExecutionRequest binds active PR check links to one same-run
+// Actions execution so a higher attempt can supersede retained failure evidence.
+type ManagedCIActiveExecutionRequest struct {
+	Repository  string
+	PullRequest int
+	BaseRefName string
+	HeadSHA     string
+	WorkflowID  int64
+	RunID       int64
+	Checks      []CIWorkflowCheck
+}
+
 // ManagedCIFailureClassification distinguishes explicit hosted-runner
 // acquisition failures from confirmed source failures and unexplained ones.
 type ManagedCIFailureClassification string
@@ -362,6 +374,15 @@ type ManagedCIObservation struct {
 // inconclusive.
 type ManagedCIObserver interface {
 	ObserveManagedCI(ctx context.Context, request ManagedCIRequest) (ManagedCIObservation, error)
+}
+
+// ManagedCIActiveExecutionObserver resolves visible active Actions job links
+// to their verified workflow attempt without requiring a failed-check rollup.
+type ManagedCIActiveExecutionObserver interface {
+	ObserveManagedCIActiveExecution(
+		ctx context.Context,
+		request ManagedCIActiveExecutionRequest,
+	) (ManagedCIExecution, error)
 }
 
 // ManagedCIExecutionFailureObserver diagnoses the failed jobs for one

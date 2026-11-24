@@ -1087,6 +1087,7 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 	var managedCIReplacement *github.ManagedCIExecution
 	var managedCIReplacementFailures []github.ManagedCIFailureEvidence
 	var managedCIReplacementFailure map[string]any
+	var managedCISourceFailure map[string]any
 	confirmedIndependentCI := false
 	managedCIObservationUnknown := false
 	gate := lifecycleGateNone
@@ -1186,6 +1187,7 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 		managedCISource = managedCI.Failure.Source
 		managedCIReplacement = managedCI.Failure.Replacement
 		managedCIReplacementFailures = managedCI.Failure.ReplacementFailures
+		managedCISourceFailure = managedCI.SourceFailure
 		confirmedIndependentCI = managedCI.Failure.IndependentFailure
 		managedCIObservationUnknown = managedCI.Failure.Unknown
 		managedCIReplacementFailure = managedCI.ReplacementFailure
@@ -1433,6 +1435,11 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 			}
 		}
 		evidence.payload = mergeLifecycleDiagnostics(evidence.payload, ciEvidence)
+		if managedCISourceFailure != nil {
+			evidence.payload = mergeLifecycleDiagnostics(evidence.payload, map[string]any{
+				"managed_ci_source_failure": managedCISourceFailure,
+			})
+		}
 		if confirmedIndependentCI {
 			// A confirmed source or current replacement failure is actionable
 			// even when older lifecycle evidence retained a replacement wait.

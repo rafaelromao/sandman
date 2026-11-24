@@ -38,8 +38,6 @@ var managedCITestDiagnostic = regexp.MustCompile(
 	`(?i)(?:^|\b)---\s*fail:\s*test\w*\b|` +
 		`\btest[A-Z]\w*\b.{0,160}\b(?:fail|error|panic)\w*\b|` +
 		`\bassert(?:ion)?\s+(?:failed|error)\b|` +
-		`\bexpected\b.{1,120}\b(?:got|actual)\b|` +
-		`\b(?:got|actual)\b.{1,120}\bwant\b|` +
 		`\b(?:undefined:|cannot use|syntax error|declared and not used|imported and not used|` +
 		`not enough arguments|too many arguments|cannot find module|failed to compile|compilation failed)\b`,
 )
@@ -144,6 +142,99 @@ func (c *CLIClient) ObserveManagedCI(ctx context.Context, request ManagedCIReque
 		return observation, nil
 	}
 	return c.observeManagedCIReplacement(ctx, scope, request, source, observation)
+}
+
+// ObserveManagedCIActiveExecution binds visible active PR job links to their
+// exact Actions attempt. It is used when a retained completed attempt may have
+// been superseded by a same-run rerun that is already visible in the PR rollup.
+func (c *CLIClient) ObserveManagedCIActiveExecution(
+	ctx context.Context,
+	request ManagedCIActiveExecutionRequest,
+) (ManagedCIExecution, error) {
+	request.Repository = strings.TrimSpace(request.Repository)
+	request.BaseRefName = strings.TrimSpace(request.BaseRefName)
+	request.HeadSHA = strings.TrimSpace(request.HeadSHA)
+	if request.Repository == "" || request.PullRequest <= 0 || request.BaseRefName == "" ||
+		request.HeadSHA == "" || request.WorkflowID <= 0 || request.RunID <= 0 ||
+		len(request.Checks) == 0 {
+		return ManagedCIExecution{}, fmt.Errorf("managed CI active execution: incomplete request identity")
+	}
+	owner, repo, err := c.resolveRepo(ctx)
+	if err != nil {
+		return ManagedCIExecution{}, fmt.Errorf("managed CI active execution: resolve repository: %w", err)
+	}
+	repository := owner + "/" + repo
+	if !strings.EqualFold(request.Repository, repository) {
+		return ManagedCIExecution{}, fmt.Errorf("managed CI active execution: repository mismatch")
+	}
+
+	jobIDs := make(map[int64]struct{}, len(request.Checks))
+	for _, check := range request.Checks {
+		identity, ok := parseManagedActionsJobURL(check.DetailsURL, repository)
+		if !ok || identity.RunID != request.RunID || check.RunID != request.RunID ||
+			!strings.EqualFold(strings.TrimSpace(check.Repository), repository) ||
+			strings.TrimSpace(check.Name) == "" {
+			return ManagedCIExecution{}, fmt.Errorf("managed CI active execution: check link identity is incomplete or conflicting")
+		}
+		if _, duplicate := jobIDs[identity.JobID]; duplicate {
+			return ManagedCIExecution{}, fmt.Errorf("managed CI active execution: duplicate active job link")
+		}
+		jobIDs[identity.JobID] = struct{}{}
+	}
+
+	jobs, err := c.listManagedWorkflowJobs(ctx, owner, repo, request.RunID)
+	if err != nil {
+		return ManagedCIExecution{}, fmt.Errorf("managed CI active execution: list workflow jobs: %w", err)
+	}
+	jobsByID := make(map[int64]CIWorkflowJob, len(jobs))
+	for _, job := range jobs {
+		if _, duplicate := jobsByID[job.ID]; duplicate {
+			return ManagedCIExecution{}, fmt.Errorf("managed CI active execution: duplicate workflow job identity")
+		}
+		jobsByID[job.ID] = job
+	}
+	activeAttempt := 0
+	for _, check := range request.Checks {
+		identity, _ := parseManagedActionsJobURL(check.DetailsURL, repository)
+		job, exists := jobsByID[identity.JobID]
+		if !exists || job.RunID != request.RunID ||
+			!strings.EqualFold(strings.TrimSpace(job.Name), strings.TrimSpace(check.Name)) ||
+			!managedCIJobIsActive(job) || job.RunAttempt <= 0 {
+			return ManagedCIExecution{}, fmt.Errorf("managed CI active execution: visible check has no matching active job")
+		}
+		if activeAttempt == 0 {
+			activeAttempt = job.RunAttempt
+		} else if activeAttempt != job.RunAttempt {
+			return ManagedCIExecution{}, fmt.Errorf("managed CI active execution: visible checks identify conflicting attempts")
+		}
+	}
+	attempt, err := c.fetchManagedWorkflowRunAttempt(ctx, owner, repo, request.RunID, activeAttempt)
+	if err != nil {
+		return ManagedCIExecution{}, err
+	}
+	execution, ok := managedCIExecution(attempt, repository, ManagedCIRequest{
+		Repository: request.Repository, PullRequest: request.PullRequest,
+		BaseRefName: request.BaseRefName, HeadSHA: request.HeadSHA,
+	})
+	if !ok || execution.RunID != request.RunID || execution.WorkflowID != request.WorkflowID ||
+		execution.Attempt != activeAttempt ||
+		!strings.EqualFold(strings.TrimSpace(execution.Event), "pull_request") ||
+		!managedCIExecutionIsActive(execution) {
+		return ManagedCIExecution{}, fmt.Errorf("managed CI active execution: workflow attempt identity is incomplete or conflicting")
+	}
+	return execution, nil
+}
+
+func managedCIJobIsActive(job CIWorkflowJob) bool {
+	if strings.TrimSpace(job.Conclusion) != "" {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(job.Status)) {
+	case "queued", "in_progress":
+		return true
+	default:
+		return false
+	}
 }
 
 type managedCIObservationScope struct {
@@ -381,6 +472,7 @@ func (c *CLIClient) diagnoseManagedCIExecutionFailure(
 	verified, ok := managedCIExecution(run, execution.Repository, request)
 	if !ok || verified.RunID != execution.RunID || verified.RunNumber != execution.RunNumber ||
 		verified.WorkflowID != execution.WorkflowID || verified.Attempt != execution.Attempt ||
+		!strings.EqualFold(strings.TrimSpace(verified.Event), strings.TrimSpace(execution.Event)) ||
 		!strings.EqualFold(verified.Status, execution.Status) ||
 		!strings.EqualFold(verified.Conclusion, execution.Conclusion) {
 		return nil, fmt.Errorf("managed CI observation: completed replacement identity changed during diagnosis")
@@ -445,6 +537,18 @@ func (c *CLIClient) DiagnoseManagedCIExecutionFailure(
 		BaseRefName: execution.BaseRefName, HeadSHA: execution.HeadSHA,
 	}
 	return c.diagnoseManagedCIExecutionFailure(ctx, owner, repo, request, execution)
+}
+
+func managedCIExecutionIsActive(execution ManagedCIExecution) bool {
+	if !ValidManagedCIExecutionStatus(execution.Status, execution.Conclusion) {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(execution.Status)) {
+	case "queued", "in_progress", "waiting", "requested", "pending":
+		return true
+	default:
+		return false
+	}
 }
 
 func managedCIExecution(run actionsWorkflowRun, repository string, request ManagedCIRequest) (ManagedCIExecution, bool) {
