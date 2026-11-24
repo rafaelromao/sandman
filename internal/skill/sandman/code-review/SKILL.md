@@ -61,7 +61,11 @@ Reviews are acceptance-criteria-first, then documented-standards-only, then corr
 
 The supplied prior-review context is authoritative. Do not fetch pull-request history to reconstruct it. When prior-review state exists, report each prior finding as **resolved**, **partially addressed**, or **still outstanding**. When it does not exist, omit the `## Previous review progress` section entirely.
 
-### 1. Review the supplied change
+### 1. Establish the expected behavior
+
+Read the authoritative task and referenced design material before using the implementation to infer intent. Identify the required behaviors, the invariants that must hold across entry points, and the decisions the specification leaves open. Use documented contracts and established behavior to resolve gaps where the evidence supports doing so. If a consequential choice remains unspecified, state the choice and its impact in the Spec assessment. When that choice prevents verification of a required behavior, state what the specification needs to clarify in the review report. Keep optional enhancements advisory.
+
+### 2. Review the supplied change
 
 Read the current worktree diff end to end. Evaluate every changed file against:
 
@@ -74,7 +78,17 @@ Keep the review inside the supplied scope. Do not raise Blocking or Important fi
 
 Apply local quality rules from `.sandman/reviews/quality-rules.md` when present. Apply only rules whose construct tags match the changed code, use their stated severity, and never make a quality finding Blocking. When the file is absent, record `Quality rules unavailable in this repository; no built-in quality-rule evaluation was applied.`
 
-### 2. Preserve the two axes
+For changes that affect shared behavior, trace the affected contract beyond the edited lines. Identify its owner and the relevant producers, consumers, and entry points, including unchanged callers in the current worktree. Follow state through initialization, transitions, persistence or serialization, and asynchronous completion where applicable. Check that the same invariant holds on each path. Compare against the base to identify added state, branches, or duplicate enforcement. Cite the concrete maintenance or correctness impact of any complexity regression and apply the existing severity rules.
+
+For changed stateful behavior, look for regression coverage at the shared boundary and through affected entry points. Check the relevant transitions, including defaults, missing or conflicting persisted values, and stale or out-of-order completion when applicable. Identify the initial state, event, expected result, and specific coverage gaps. Distinguish observed test results from coverage inferred by reading tests.
+
+### 3. Escalate recurring defects
+
+Compare current findings with the substantive evidence in the supplied prior reviews. Escalate when a current actionable defect recurs after an attempted fix, or a new symptom exposes the same underlying invariant or design boundary implicated by an earlier finding. Cite the prior finding, the current evidence, and the shared cause. Count independent review rounds with evidence of recurrence, regardless of how many comments repeat a finding. When history is missing or inconclusive, report the current defect on its own merits.
+
+Group related symptoms under the root cause. In `## Findings`, explain the violated contract, where the defect originates, and which paths it affects. Distinguish a shared implementation defect from a specification decision that requires clarification. In `## Suggested next steps`, give the implementer an ordered change request: audit the affected paths, define the invariant and expected transitions, correct the owning boundary, and verify the fix across the affected paths. For stateful defects, request a transition matrix for the relevant cases. Before re-review, ask for the root-cause explanation, the paths audited, the change made, and the regression checks and their results. Keep the existing verdict criteria and decision format.
+
+### 4. Preserve the two axes
 
 Record both assessments independently:
 
@@ -83,6 +97,6 @@ Record both assessments independently:
 
 Correctness and safety findings are reported in addition to the two axes. Each finding cites a file and line range, the concrete concern, and the smallest useful fix.
 
-### 3. Write the reviewer decision
+### 5. Write the reviewer decision
 
 The invoking pull-request review prompt defines the decision output contract — the required sections, the quality-check rendering, the verdict rule, and the conditional `## Previous review progress` slot. Follow that contract. Write the full Markdown decision to the supplied `decision.md` path using an atomic temp-file-and-rename write. The surrounding workflow reads and posts that file; do not post it yourself.
