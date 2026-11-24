@@ -1,0 +1,8 @@
+[
+  {
+    "annotation_level": "failure",
+    "message": "failed to upload artifact.",
+    "path": "internal/example_test.go",
+    "start_line": 42
+  }
+]

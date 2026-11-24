@@ -14,6 +14,19 @@ const managedCIPageSize = 100
 
 var runnerAcquisitionAnnotation = regexp.MustCompile(`(?i)\bthe job was not acquired by a runner\b|\bjob was not acquired by a runner\b`)
 var failedPrerequisiteAnnotation = regexp.MustCompile(`(?i)^([a-z0-9][a-z0-9_.-]*) must succeed \(result: ([^)]+)\)$`)
+var managedCITestStepName = regexp.MustCompile(
+	`(?i)^(?:(?:run|execute)\s+)?` +
+		`(?:go\s+test|pytest|python(?:3(?:\.\d+)?)?\s+-m\s+(?:pytest|unittest)|` +
+		`(?:npm|pnpm|yarn)\s+(?:run\s+)?test|bun\s+test|cargo\s+test|dotnet\s+test|` +
+		`mvn\s+test|gradlew?\s+test|make\s+test)(?:\s|$)|` +
+		`^(?:(?:run|execute)\s+)?(?:(?:unit|integration|smoke|e2e|acceptance|regression)\s+)?tests?(?:\s|$)`,
+)
+var managedCITestDiagnostic = regexp.MustCompile(
+	`(?i)\btest\w*\b.*\b(?:fail|error|panic)\w*\b|` +
+		`\b(?:assert(?:ion)?|expected|actual|got|want)\b|` +
+		`\b(?:undefined:|cannot use|syntax error|declared and not used|imported and not used|` +
+		`not enough arguments|too many arguments|cannot find module|failed to compile|compilation failed)\b`,
+)
 
 type actionsWorkflowRun struct {
 	ID           int64  `json:"id"`
@@ -423,19 +436,22 @@ func classifyManagedCIFailureEvidence(job CIWorkflowJob, annotations []checkRunA
 	}
 	if strings.EqualFold(strings.TrimSpace(job.Status), "completed") &&
 		strings.EqualFold(strings.TrimSpace(job.Conclusion), "failure") {
-		failedStep := false
+		// A source annotation alone does not prove a code/test failure: tie it
+		// to a failed test step and a diagnostic that describes that failure.
+		failedTestStep := false
 		for _, step := range job.Steps {
 			if strings.EqualFold(strings.TrimSpace(step.Status), "completed") &&
-				strings.EqualFold(strings.TrimSpace(step.Conclusion), "failure") {
-				failedStep = true
+				strings.EqualFold(strings.TrimSpace(step.Conclusion), "failure") &&
+				managedCITestStepName.MatchString(strings.TrimSpace(step.Name)) {
+				failedTestStep = true
 				break
 			}
 		}
-		if failedStep {
+		if failedTestStep {
 			for _, annotation := range annotations {
 				if strings.EqualFold(strings.TrimSpace(annotation.Level), "failure") &&
 					strings.TrimSpace(annotation.Path) != "" && annotation.StartLine > 0 &&
-					strings.TrimSpace(annotation.Message) != "" {
+					managedCITestDiagnostic.MatchString(strings.TrimSpace(annotation.Message)) {
 					return ManagedCIConfirmedCodeTestFailure, nil
 				}
 			}

@@ -1,0 +1,24 @@
+{
+  "total_count": 1,
+  "jobs": [
+    {
+      "id": 138027527160,
+      "run_id": 45270155099,
+      "run_attempt": 1,
+      "name": "unit-tests",
+      "status": "completed",
+      "conclusion": "failure",
+      "runner_id": 42,
+      "runner_name": "GitHub Actions 12",
+      "steps": [
+        {
+          "name": "Upload coverage artifact",
+          "status": "completed",
+          "conclusion": "failure",
+          "number": 6
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/owner/repo/check-runs/733"
+    }
+  ]
+}

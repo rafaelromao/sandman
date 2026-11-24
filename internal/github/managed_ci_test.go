@@ -88,6 +88,35 @@ func TestCLIClient_ManagedCIConfirmsIncidentRunnerShortage(t *testing.T) {
 	}
 }
 
+func TestCLIClient_ManagedCILeavesUnrelatedAnnotatedActionFailureUnexplained(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"repo","owner":{"login":"owner"}}`},
+		{output: fixtureAt(t, "unrelated-annotation", "jobs.json")},
+		{output: fixtureAt(t, "unrelated-annotation", "workflow-run.json")},
+		{output: fixtureAt(t, "unrelated-annotation", "annotations.json")},
+	}}
+	observation, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "incident-source-head",
+		FailedWorkflowRunID: "45270155099",
+		FailedChecks: []CIFailedCheck{{
+			Name: "unit-tests", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527160",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(observation.Failures) != 1 ||
+		observation.Failures[0].Classification != ManagedCIUnexplainedFailure {
+		t.Fatalf("failed-check evidence = %+v, want one unexplained action failure", observation.Failures)
+	}
+	if observation.Replacement != nil {
+		t.Fatalf("replacement = %+v, want none without verified runner shortage", observation.Replacement)
+	}
+	if len(runner.calls) != 4 {
+		t.Fatalf("API calls = %d, want repository, source run, jobs and annotations only", len(runner.calls))
+	}
+}
+
 func TestCLIClient_ManagedCIReplacementLookupErrorPreservesSourceEvidence(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"repo","owner":{"login":"owner"}}`},
@@ -207,6 +236,26 @@ func TestClassifyManagedCIFailureRequiresCorroboratedRunnerAcquisitionEvidence(t
 				Level: "failure", Path: "internal/example_test.go", StartLine: 42, Message: "TestExample failed.",
 			}},
 			want: ManagedCIConfirmedCodeTestFailure,
+		},
+		{
+			name: "file annotation on unrelated failed step is unexplained",
+			job: CIWorkflowJob{Status: "completed", Conclusion: "failure", RunnerID: 42, Steps: []CIWorkflowStep{
+				{Name: "Upload coverage artifact", Status: "completed", Conclusion: "failure"},
+			}},
+			annotations: []checkRunAnnotation{{
+				Level: "failure", Path: "internal/example_test.go", StartLine: 42, Message: "failed to upload artifact.",
+			}},
+			want: ManagedCIUnexplainedFailure,
+		},
+		{
+			name: "artifact annotation on failed test step is unexplained",
+			job: CIWorkflowJob{Status: "completed", Conclusion: "failure", RunnerID: 42, Steps: []CIWorkflowStep{
+				{Name: "go test ./...", Status: "completed", Conclusion: "failure"},
+			}},
+			annotations: []checkRunAnnotation{{
+				Level: "failure", Path: "internal/example_test.go", StartLine: 42, Message: "failed to upload artifact.",
+			}},
+			want: ManagedCIUnexplainedFailure,
 		},
 	}
 	for _, test := range tests {
