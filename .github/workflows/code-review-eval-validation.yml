@@ -12,10 +12,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Install the pinned OpenCode CLI
+        run: npm install -g opencode-ai@1.19.3
       - name: Run reviewer and grader
-        env:
-          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         run: python3 scripts/review_skill_eval.py --output review-eval-results
       - name: Upload validation results
         if: always()
