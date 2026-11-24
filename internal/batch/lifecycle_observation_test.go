@@ -177,9 +177,9 @@ func TestLifecycleObservation_ReplacementStatusDoesNotManufactureGreenCI(t *test
 		{name: "running", status: "in_progress", wantAction: lifecycleAwait},
 		{name: "passed but required rollup is stale failure", status: "completed", conclusion: "success", wantAction: lifecycleAwait},
 		{name: "completed failure is actionable", status: "completed", conclusion: "failure", wantAction: lifecycleResume},
-		{name: "unknown replacement status is inconclusive", status: "mystery", wantAction: lifecycleResume},
-		{name: "unknown completed conclusion is inconclusive", status: "completed", conclusion: "mystery", wantAction: lifecycleResume},
-		{name: "active replacement with conclusion is contradictory", status: "queued", conclusion: "success", wantAction: lifecycleResume},
+		{name: "unknown replacement status is inconclusive", status: "mystery", wantAction: lifecycleAwait},
+		{name: "unknown completed conclusion is inconclusive", status: "completed", conclusion: "mystery", wantAction: lifecycleAwait},
+		{name: "active replacement with conclusion is contradictory", status: "queued", conclusion: "success", wantAction: lifecycleAwait},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -305,13 +305,119 @@ func TestLifecycleObservation_ConfirmedCodeFailureIsNotHiddenByRunnerShortage(t 
 	}
 }
 
-func TestLifecycleObservation_UnknownOrUnreplacedShortageKeepsExistingFailureHandling(t *testing.T) {
+func TestLifecycleObservation_UnknownManagedCILookupWaitsForGitHubRecovery(t *testing.T) {
 	tests := []struct {
-		name        string
-		observation github.ManagedCIObservation
-		err         error
+		name         string
+		failedChecks []github.CIFailedCheck
+		observation  github.ManagedCIObservation
+		err          error
+		wantAction   lifecycleAction
+		wantGate     string
 	}{
-		{name: "optional lookup failed", err: errors.New("Actions read unavailable")},
+		{
+			name:       "optional lookup failed",
+			err:        errors.New("Actions read unavailable"),
+			wantAction: lifecycleAwait,
+			wantGate:   gateGitHubUnavailable,
+		},
+		{
+			name:        "incomplete response",
+			observation: github.ManagedCIObservation{},
+			wantAction:  lifecycleAwait,
+			wantGate:    gateGitHubUnavailable,
+		},
+		{
+			name: "unknown failure classification",
+			observation: github.ManagedCIObservation{
+				Source: github.ManagedCIExecution{
+					Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "current-sha",
+					WorkflowID: 273743359, Event: "pull_request", RunID: 101, RunNumber: 5288, Attempt: 1,
+					Status: "completed", Conclusion: "cancelled",
+				},
+				Failures: []github.ManagedCIFailureEvidence{{
+					JobID: 138, RunID: 101, Attempt: 1, CheckName: "build-macos",
+					DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/11",
+					Classification: "unrecognized",
+				}},
+			},
+			wantAction: lifecycleAwait,
+			wantGate:   gateGitHubUnavailable,
+		},
+		{
+			name:         "confirmed independent source failure survives unknown classification",
+			failedChecks: failedCIChecks("101", "build-macos", "unit-tests"),
+			observation: github.ManagedCIObservation{
+				Source: github.ManagedCIExecution{
+					Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "current-sha",
+					WorkflowID: 273743359, Event: "pull_request", RunID: 101, RunNumber: 5288, Attempt: 1,
+					Status: "completed", Conclusion: "cancelled",
+				},
+				Failures: []github.ManagedCIFailureEvidence{
+					{
+						JobID: 138, RunID: 101, Attempt: 1, CheckName: "build-macos",
+						DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/11",
+						Classification: "unrecognized",
+					},
+					{
+						JobID: 139, RunID: 101, Attempt: 1, CheckName: "unit-tests",
+						DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/12",
+						Classification: github.ManagedCIConfirmedCodeTestFailure,
+					},
+				},
+			},
+			wantAction: lifecycleResume,
+			wantGate:   "ci-failure",
+		},
+		{
+			name:         "confirmed independent source failure survives contradictory replacement",
+			failedChecks: failedCIChecks("101", "build-macos", "unit-tests"),
+			observation: github.ManagedCIObservation{
+				Source: github.ManagedCIExecution{
+					Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "current-sha",
+					WorkflowID: 273743359, Event: "pull_request", RunID: 101, RunNumber: 5288, Attempt: 1,
+					Status: "completed", Conclusion: "cancelled",
+				},
+				Failures: []github.ManagedCIFailureEvidence{
+					{
+						JobID: 138, RunID: 101, Attempt: 1, CheckName: "build-macos",
+						DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/11",
+						Classification: github.ManagedCIRunnerShortage,
+					},
+					{
+						JobID: 139, RunID: 101, Attempt: 1, CheckName: "unit-tests",
+						DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/12",
+						Classification: github.ManagedCIConfirmedCodeTestFailure,
+					},
+				},
+				Replacement: &github.ManagedCIExecution{
+					Repository: "owner/repo", PullRequest: 17, BaseRefName: "release", HeadSHA: "current-sha",
+					WorkflowID: 273743359, Event: "pull_request", RunID: 102, RunNumber: 5289, Attempt: 1, Status: "queued",
+				},
+			},
+			wantAction: lifecycleResume,
+			wantGate:   "ci-failure",
+		},
+		{
+			name: "contradictory replacement identity",
+			observation: github.ManagedCIObservation{
+				Source: github.ManagedCIExecution{
+					Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "current-sha",
+					WorkflowID: 273743359, Event: "pull_request", RunID: 101, RunNumber: 5288, Attempt: 1,
+					Status: "completed", Conclusion: "cancelled",
+				},
+				Failures: []github.ManagedCIFailureEvidence{{
+					JobID: 138, RunID: 101, Attempt: 1, CheckName: "build-macos",
+					DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/11",
+					Classification: github.ManagedCIRunnerShortage,
+				}},
+				Replacement: &github.ManagedCIExecution{
+					Repository: "owner/repo", PullRequest: 17, BaseRefName: "release", HeadSHA: "current-sha",
+					WorkflowID: 273743359, Event: "pull_request", RunID: 102, RunNumber: 5289, Attempt: 1, Status: "queued",
+				},
+			},
+			wantAction: lifecycleAwait,
+			wantGate:   gateGitHubUnavailable,
+		},
 		{
 			name: "shortage has no verified replacement",
 			observation: github.ManagedCIObservation{
@@ -326,6 +432,8 @@ func TestLifecycleObservation_UnknownOrUnreplacedShortageKeepsExistingFailureHan
 					Classification: github.ManagedCIRunnerShortage,
 				}},
 			},
+			wantAction: lifecycleResume,
+			wantGate:   "ci-failure",
 		},
 		{
 			name: "unexplained cancellation cannot start replacement wait",
@@ -345,11 +453,17 @@ func TestLifecycleObservation_UnknownOrUnreplacedShortageKeepsExistingFailureHan
 					WorkflowID: 273743359, Event: "pull_request", RunID: 102, RunNumber: 5289, Attempt: 1, Status: "queued",
 				},
 			},
+			wantAction: lifecycleResume,
+			wantGate:   "ci-failure",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			now := time.Unix(5_500, 0).UTC()
+			failedChecks := test.failedChecks
+			if failedChecks == nil {
+				failedChecks = failedCIChecks("101", "build-macos")
+			}
 			client := &managedCILifecycleClient{
 				fakeGitHubClient: &fakeGitHubClient{
 					issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
@@ -357,7 +471,7 @@ func TestLifecycleObservation_UnknownOrUnreplacedShortageKeepsExistingFailureHan
 						Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main",
 						StatusCheckRollup: "failure", CIExecutionID: "old-failed-checks",
 						CIFailedWorkflow: &github.CIFailedWorkflow{
-							RunID: "101", FailedChecks: failedCIChecks("101", "build-macos"), CheckNames: []string{"build-macos"},
+							RunID: "101", FailedChecks: failedChecks, CheckNames: []string{"build-macos"},
 						},
 					}},
 				},
@@ -376,10 +490,17 @@ func TestLifecycleObservation_UnknownOrUnreplacedShortageKeepsExistingFailureHan
 				WorkDir: t.TempDir(), Branch: gateTestBranch, RunID: "run-unverified-replacement",
 				HostPathsReady: true, AttemptStatus: "success",
 			})
-			if verdict.Action != lifecycleResume || verdict.Evidence["gate"] != "ci-failure" {
-				t.Fatalf("unverified replacement changed existing CI failure handling: %+v", verdict)
+			if verdict.Action != test.wantAction || verdict.Evidence["gate"] != test.wantGate {
+				t.Fatalf("managed CI lookup verdict = %+v, want action %v and gate %q", verdict, test.wantAction, test.wantGate)
 			}
-			if wait, ok := verdict.Evidence["ci_wait"].(map[string]any); ok {
+			if test.wantGate == gateGitHubUnavailable {
+				if _, ok := verdict.Evidence[githubRecoveryKey].(map[string]any); !ok {
+					t.Fatalf("inconclusive managed CI observation did not enter bounded GitHub recovery: %#v", verdict.Evidence)
+				}
+				if _, ok := verdict.Evidence["ci_wait"]; ok {
+					t.Fatalf("inconclusive evidence established a CI execution wait: %#v", verdict.Evidence)
+				}
+			} else if wait, ok := verdict.Evidence["ci_wait"].(map[string]any); ok {
 				if _, replacement := wait["actions_execution"]; replacement {
 					t.Fatalf("unverified evidence established a replacement wait: %#v", wait)
 				}

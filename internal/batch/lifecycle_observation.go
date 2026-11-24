@@ -63,12 +63,16 @@ type lifecycleObserver struct {
 	ciRecoveryPR *github.PR
 }
 
+// observeManagedCIFailure returns the verified replacement, whether an
+// independent source failure is confirmed, and whether an attempted
+// observation was inconclusive. A complete observation with no verified
+// replacement is conclusive and leaves the last result false.
 func (s *runSession) observeManagedCIFailure(
 	ctx context.Context,
 	pr *github.PR,
 	headSHA string,
 	repository string,
-) (string, *github.ManagedCIExecution, bool) {
+) (string, *github.ManagedCIExecution, bool, bool) {
 	if s == nil || s.deps.githubClient == nil || pr == nil || ctx.Err() != nil ||
 		!strings.EqualFold(strings.TrimSpace(pr.State), "open") ||
 		!strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "failure") ||
@@ -76,21 +80,24 @@ func (s *runSession) observeManagedCIFailure(
 		!strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) ||
 		strings.TrimSpace(pr.BaseRefName) == "" || pr.CIFailedWorkflow == nil ||
 		strings.TrimSpace(pr.CIFailedWorkflow.RunID) == "" || len(pr.CIFailedWorkflow.FailedChecks) == 0 {
-		return repository, nil, false
+		return repository, nil, false, false
 	}
 	observer, ok := s.deps.githubClient.(github.ManagedCIObserver)
 	if !ok {
-		return repository, nil, false
+		return repository, nil, false, false
 	}
 	if strings.TrimSpace(repository) == "" {
 		name, err := s.deps.githubClient.RepoName(ctx)
 		if err != nil {
-			return repository, nil, false
+			return repository, nil, false, ctx.Err() == nil
 		}
 		repository = strings.TrimSpace(name)
 	}
-	if repository == "" || ctx.Err() != nil {
-		return repository, nil, false
+	if ctx.Err() != nil {
+		return repository, nil, false, false
+	}
+	if repository == "" {
+		return repository, nil, false, true
 	}
 	request := github.ManagedCIRequest{
 		Repository: repository, PullRequest: pr.Number, BaseRefName: pr.BaseRefName,
@@ -98,14 +105,14 @@ func (s *runSession) observeManagedCIFailure(
 		FailedChecks: append([]github.CIFailedCheck(nil), pr.CIFailedWorkflow.FailedChecks...),
 	}
 	observation, err := observer.ObserveManagedCI(ctx, request)
-	if err != nil || !managedCIObservationMatchesRequest(observation, request) {
-		return repository, nil, false
+	if err != nil {
+		return repository, nil, false, ctx.Err() == nil
 	}
-	if observation.Replacement != nil &&
-		!managedCIReplacementFollows(observation.Source, *observation.Replacement) {
-		return repository, nil, false
+	if !managedCIObservationMatchesRequest(observation, request) {
+		return repository, nil, managedCIConfirmedIndependentSourceFailure(observation, request), true
 	}
 	independentFailure := false
+	unexplainedClassification := false
 	shortageOnly := len(observation.Failures) > 0
 	shortageChecks := make(map[string]struct{}, len(observation.Failures))
 	for _, failure := range observation.Failures {
@@ -116,9 +123,15 @@ func (s *runSession) observeManagedCIFailure(
 			independentFailure = true
 			shortageOnly = false
 		case github.ManagedCIDependentFailure:
+		case github.ManagedCIUnexplainedFailure:
+			shortageOnly = false
 		default:
 			shortageOnly = false
+			unexplainedClassification = true
 		}
+	}
+	if unexplainedClassification && !independentFailure {
+		return repository, nil, false, true
 	}
 	for _, failure := range observation.Failures {
 		if failure.Classification != github.ManagedCIDependentFailure {
@@ -135,29 +148,30 @@ func (s *runSession) observeManagedCIFailure(
 		}
 	}
 	if len(observation.ReplacementFailures) > 0 {
-		if observation.Replacement == nil {
-			return repository, nil, independentFailure
-		}
+		replacementFailureUnknown := false
 		for _, failure := range observation.ReplacementFailures {
 			if failure.JobID <= 0 || failure.RunID != observation.Replacement.RunID ||
 				failure.Attempt != observation.Replacement.Attempt {
-				return repository, nil, independentFailure
+				return repository, nil, independentFailure, true
 			}
 			switch failure.Classification {
 			case github.ManagedCIRunnerShortage, github.ManagedCIUnexplainedFailure:
 			case github.ManagedCIConfirmedCodeTestFailure:
 				independentFailure = true
 			default:
-				return repository, nil, independentFailure
+				replacementFailureUnknown = true
 			}
+		}
+		if replacementFailureUnknown && !independentFailure {
+			return repository, nil, false, true
 		}
 	}
 	if !shortageOnly || observation.Replacement == nil ||
 		!managedCIReplacementFollows(observation.Source, *observation.Replacement) {
-		return repository, nil, independentFailure
+		return repository, nil, independentFailure, false
 	}
 	replacement := *observation.Replacement
-	return repository, &replacement, independentFailure
+	return repository, &replacement, independentFailure, false
 }
 
 func managedCICheckName(name string) string {
@@ -170,6 +184,41 @@ func managedCICheckName(name string) string {
 
 func managedCIObservationMatchesRequest(observation github.ManagedCIObservation, request github.ManagedCIRequest) bool {
 	source := observation.Source
+	if !managedCISourceFailuresMatchRequest(observation, request) {
+		return false
+	}
+	if observation.Replacement != nil &&
+		!managedCIReplacementFollows(source, *observation.Replacement) {
+		return false
+	}
+	if len(observation.ReplacementFailures) > 0 {
+		if observation.Replacement == nil {
+			return false
+		}
+		for _, failure := range observation.ReplacementFailures {
+			if failure.JobID <= 0 || failure.RunID != observation.Replacement.RunID ||
+				failure.Attempt != observation.Replacement.Attempt {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func managedCIConfirmedIndependentSourceFailure(observation github.ManagedCIObservation, request github.ManagedCIRequest) bool {
+	if !managedCISourceFailuresMatchRequest(observation, request) {
+		return false
+	}
+	for _, failure := range observation.Failures {
+		if failure.Classification == github.ManagedCIConfirmedCodeTestFailure {
+			return true
+		}
+	}
+	return false
+}
+
+func managedCISourceFailuresMatchRequest(observation github.ManagedCIObservation, request github.ManagedCIRequest) bool {
+	source := observation.Source
 	runID, err := strconv.ParseInt(strings.TrimSpace(request.FailedWorkflowRunID), 10, 64)
 	if err != nil || source.RunID != runID || source.RunNumber <= 0 || source.Attempt <= 0 ||
 		source.WorkflowID <= 0 || !strings.EqualFold(strings.TrimSpace(source.Event), "pull_request") ||
@@ -180,13 +229,6 @@ func managedCIObservationMatchesRequest(observation github.ManagedCIObservation,
 		!strings.EqualFold(strings.TrimSpace(source.HeadSHA), strings.TrimSpace(request.HeadSHA)) ||
 		!github.ValidManagedCIExecutionStatus(source.Status, source.Conclusion) ||
 		len(observation.Failures) != len(request.FailedChecks) {
-		return false
-	}
-	if observation.Replacement != nil &&
-		!managedCIReplacementFollows(source, *observation.Replacement) {
-		return false
-	}
-	if len(observation.ReplacementFailures) > 0 && observation.Replacement == nil {
 		return false
 	}
 	pending := make(map[string]int, len(request.FailedChecks))
@@ -207,17 +249,6 @@ func managedCIObservationMatchesRequest(observation github.ManagedCIObservation,
 	for _, count := range pending {
 		if count != 0 {
 			return false
-		}
-	}
-	if len(observation.ReplacementFailures) > 0 {
-		if observation.Replacement == nil || !managedCIReplacementFollows(source, *observation.Replacement) {
-			return false
-		}
-		for _, failure := range observation.ReplacementFailures {
-			if failure.JobID <= 0 || failure.RunID != observation.Replacement.RunID ||
-				failure.Attempt != observation.Replacement.Attempt {
-				return false
-			}
 		}
 	}
 	return true

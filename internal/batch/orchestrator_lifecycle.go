@@ -773,6 +773,7 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 	repository := ""
 	var managedCIReplacement *github.ManagedCIExecution
 	confirmedIndependentCI := false
+	managedCIObservationUnknown := false
 	gate := lifecycleGateNone
 	refreshUnavailable := false
 	reviewRegistrationFailure := false
@@ -862,8 +863,11 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 		gate = lifecycleGate(checkPRExternalGateForPR(pr, headSHA, true))
 	}
 	if err == nil && pr != nil {
-		repository, managedCIReplacement, confirmedIndependentCI =
+		repository, managedCIReplacement, confirmedIndependentCI, managedCIObservationUnknown =
 			s.observeManagedCIFailure(ctx, pr, headSHA, repository)
+		if managedCIObservationUnknown && !confirmedIndependentCI && ctx.Err() == nil {
+			err = errors.New("managed CI observation is inconclusive")
+		}
 	}
 
 	if gate == lifecycleGateNone {
