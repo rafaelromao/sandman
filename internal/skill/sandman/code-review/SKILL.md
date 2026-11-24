@@ -61,6 +61,17 @@ Reviews are acceptance-criteria-first, then documented-standards-only, then corr
 
 The supplied prior-review context is authoritative. Do not fetch pull-request history to reconstruct it. When prior-review state exists, report each prior finding as **resolved**, **partially addressed**, or **still outstanding**. When it does not exist, omit the `## Previous review progress` section entirely.
 
+### Architectural escalation
+
+Use the supplied prior-review context to determine whether the implementation is converging toward correctness or repeatedly addressing symptoms. Group current and previous findings by root cause across files, functions, and reproduction scenarios. Apply the highest level supported by the evidence:
+
+- **Level 0 — Normal review.** Evaluate acceptance criteria, documented standards, correctness, safety, and applicable quality rules.
+- **Level 1 — Root cause remediation.** When a finding recurs or appears in an adjacent execution path, identify the underlying cause, inspect related callers and consumers, and request a correction for the defect family.
+- **Level 2 — Architectural remediation.** When a defect family persists across two reviewed revisions or survives root-cause remediation, reassess the design assumptions, boundaries, state ownership, transitions, and verification gaps. Provide a coherent remediation strategy and, when applicable, explain why the earlier fix failed. Apply this level immediately when multiple current findings expose the same broken invariant or a single finding demonstrates a systemic correctness or safety defect, even on the first review.
+- **Level 3 — Design reconsideration.** When architectural remediation fails to eliminate the defect family, evaluate viable alternative approaches against the existing architecture and acceptance criteria. Recommend the smallest structural change that enforces the invariant and prevents related regressions.
+
+Escalation follows the evidence across revisions, including when the reviewed commit changes. Cite the current evidence and any relevant prior findings. Use substantiated recurrence even when comments cannot be assigned to distinct rounds. Count rounds only when the supplied context independently identifies them, and omit the count when it is ambiguous. State material history gaps and do not fetch additional history. Review history alone does not justify a change request. Reopen a resolved finding only when the current change shows a remaining defect or regression.
+
 ### 1. Establish the expected behavior
 
 Read the authoritative task and referenced design material before using the implementation to infer intent. Identify the required behaviors, the invariants that must hold across entry points, and the decisions the specification leaves open. Use documented contracts and established behavior to resolve gaps where the evidence supports doing so. If a consequential choice remains unspecified, state the choice and its impact in the Spec assessment. When that choice prevents verification of a required behavior, state what the specification needs to clarify in the review report. Keep optional enhancements advisory.
@@ -78,15 +89,19 @@ Keep the review inside the supplied scope. Do not raise Blocking or Important fi
 
 Apply local quality rules from `.sandman/reviews/quality-rules.md` when present. Apply only rules whose construct tags match the changed code, use their stated severity, and never make a quality finding Blocking. When the file is absent, record `Quality rules unavailable in this repository; no built-in quality-rule evaluation was applied.`
 
-For changes that affect shared behavior, trace the affected contract beyond the edited lines. Identify its owner and the relevant producers, consumers, and entry points, including unchanged callers in the current worktree. Follow state through initialization, transitions, persistence or serialization, and asynchronous completion where applicable. Check that the same invariant holds on each path. Compare against the base to identify added state, branches, or duplicate enforcement. Cite the concrete maintenance or correctness impact of any complexity regression and apply the existing severity rules.
+### 3. Analyse architectural invariants and blast radius
 
-For changed stateful behavior, look for regression coverage at the shared boundary and through affected entry points. Check the relevant transitions, including defaults, missing or conflicting persisted values, and stale or out-of-order completion when applicable. Identify the initial state, event, expected result, and specific coverage gaps. Distinguish observed test results from coverage inferred by reading tests.
+For cross-cutting changes, shared abstractions, public contracts, stateful workflows, or escalated findings, perform targeted architectural analysis before finalizing findings. Identify:
 
-### 3. Escalate recurring defects
+- Architectural and behavioral invariants implied by the acceptance criteria, documented decisions, and existing behavior.
+- Ownership and lifecycle of affected state, resources, and responsibilities.
+- Affected producers, consumers, callers, and boundaries, including relevant unchanged code.
+- Duplicated or inconsistent validation, transformation, resolution, and state-transition logic.
+- Invalid state combinations permitted by the current representation.
+- Applicable failure modes involving asynchronous execution, cancellation, concurrency, ordering, retries, and stale state.
+- Compatibility and regression risks introduced by the change.
 
-Compare current findings with the substantive evidence in the supplied prior reviews. Escalate when a current actionable defect recurs after an attempted fix, or a new symptom exposes the same underlying invariant or design boundary implicated by an earlier finding. Cite the prior finding, the current evidence, and the shared cause. Count independent review rounds with evidence of recurrence, regardless of how many comments repeat a finding. When history is missing or inconclusive, report the current defect on its own merits.
-
-Group related symptoms under the root cause. In `## Findings`, explain the violated contract, where the defect originates, and which paths it affects. Distinguish a shared implementation defect from a specification decision that requires clarification. In `## Suggested next steps`, give the implementer an ordered change request: audit the affected paths, define the invariant and expected transitions, correct the owning boundary, and verify the fix across the affected paths. For stateful defects, request a transition matrix for the relevant cases. Before re-review, ask for the root-cause explanation, the paths audited, the change made, and the regression checks and their results. Keep the existing verdict criteria and decision format.
+Trace representative paths end to end across the affected boundaries. Compare against the base where added state, branches, or duplicate responsibilities contribute to a defect. Consolidate findings sharing a root cause into one actionable finding with representative evidence and affected paths. Recommend the smallest coherent correction that enforces the invariant across those paths, using existing abstractions where they fit. Scope the analysis to the requested change and apply the existing severity rules to unrelated technical debt, complexity metrics, and architectural preferences.
 
 ### 4. Preserve the two axes
 
@@ -97,6 +112,30 @@ Record both assessments independently:
 
 Correctness and safety findings are reported in addition to the two axes. Each finding cites a file and line range, the concrete concern, and the smallest useful fix.
 
-### 5. Write the reviewer decision
+### 5. Verify invariants independently
+
+Derive verification scenarios from the acceptance criteria, documented behavior, invariants, and affected paths before relying on existing tests. For each material invariant, evaluate whether the current tests would detect a violation. Passing tests, aggregate coverage, green CI, and implementor self-review are insufficient evidence on their own. Where applicable, inspect or exercise:
+
+- Round trips across serialization, persistence, or public API boundaries.
+- State transitions, including combinations and sequences of valid operations.
+- Invalid, missing, conflicting, oversized, and boundary-value inputs.
+- Existing workflows and supported deployment configurations.
+- Asynchronous completion after cancellation, navigation, replacement, or retries.
+- Previously corrected defect families and adjacent paths.
+
+For escalated findings, provide a minimal regression-test matrix covering the invariant and its affected paths. Identify the initial conditions, event or input, expected behavior, and missing evidence for each case. Prefer behavior-level assertions at stable boundaries. Distinguish reproduced failures, defects established by code inspection, and unverified hypotheses. State execution limitations and request tests needed to demonstrate required behavior or prevent a material regression.
+
+### 6. Write the reviewer decision
 
 The invoking pull-request review prompt defines the decision output contract — the required sections, the quality-check rendering, the verdict rule, and the conditional `## Previous review progress` slot. Follow that contract. Write the full Markdown decision to the supplied `decision.md` path using an atomic temp-file-and-rename write. The surrounding workflow reads and posts that file; do not post it yourself.
+
+For escalated defect families, the reviewer owns the diagnosis and remediation strategy. Perform the relevant analysis in the review worktree. Use the existing `## Findings` and `## Suggested next steps` sections to provide the implementor with:
+
+1. **Root cause.** Explain why the defects occur, distinguishing observed evidence from hypotheses.
+2. **Violated invariant.** State the required behavior and cite its authoritative source.
+3. **Affected blast radius.** Identify the relevant files, components, callers, consumers, and execution paths.
+4. **Remediation strategy.** Recommend the boundary or shared mechanism that should enforce the invariant and identify its ownership and compatibility constraints.
+5. **Verification matrix.** Specify the minimum behavior-level scenarios that demonstrate the correction across the affected paths.
+6. **Completion evidence.** Request the audited paths, remediation decisions, verification results, and unresolved limitations before re-review.
+
+Supply concrete findings and a proposed strategy wherever the evidence supports them. The implementor validates and executes the strategy and chooses among viable designs. Prescribe implementation details only when required to resolve the demonstrated defect. Preserve the existing severity, finding counts, decision format, and approval criteria.
