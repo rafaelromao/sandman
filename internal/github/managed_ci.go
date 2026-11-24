@@ -122,113 +122,176 @@ type actionsJobDetailsURL struct {
 // annotations, and same-head executions of the same workflow. It has no
 // Actions mutation calls; any missing or contradictory identity fails closed.
 func (c *CLIClient) ObserveManagedCI(ctx context.Context, request ManagedCIRequest) (ManagedCIObservation, error) {
+	request, scope, err := c.prepareManagedCIObservation(ctx, request)
+	if err != nil {
+		return ManagedCIObservation{}, err
+	}
+	source, sourceJobs, selectedJobs, err := c.readManagedCISource(ctx, scope, request)
+	if err != nil {
+		return ManagedCIObservation{}, err
+	}
+	failures, verifiedShortage, err := c.classifyManagedCISourceFailures(
+		ctx, scope, request, selectedJobs,
+	)
+	if err != nil {
+		return ManagedCIObservation{}, err
+	}
+	observation := ManagedCIObservation{
+		Source: source, SourceJobs: managedCIJobsForAttempt(sourceJobs, source.Attempt),
+		Failures: failures,
+	}
+	if !verifiedShortage {
+		return observation, nil
+	}
+	return c.observeManagedCIReplacement(ctx, scope, request, source, observation)
+}
+
+type managedCIObservationScope struct {
+	owner      string
+	repo       string
+	repository string
+	runID      int64
+}
+
+func (c *CLIClient) prepareManagedCIObservation(
+	ctx context.Context,
+	request ManagedCIRequest,
+) (ManagedCIRequest, managedCIObservationScope, error) {
 	request.Repository = strings.TrimSpace(request.Repository)
 	request.BaseRefName = strings.TrimSpace(request.BaseRefName)
 	request.HeadSHA = strings.TrimSpace(request.HeadSHA)
 	request.FailedWorkflowRunID = strings.TrimSpace(request.FailedWorkflowRunID)
 	if request.PullRequest <= 0 || request.Repository == "" || request.BaseRefName == "" ||
 		request.HeadSHA == "" || len(request.FailedChecks) == 0 {
-		return ManagedCIObservation{}, fmt.Errorf("managed CI observation: incomplete pull request or failed-check identity")
+		return ManagedCIRequest{}, managedCIObservationScope{},
+			fmt.Errorf("managed CI observation: incomplete pull request or failed-check identity")
 	}
 	runID, err := strconv.ParseInt(request.FailedWorkflowRunID, 10, 64)
 	if err != nil || runID <= 0 {
-		return ManagedCIObservation{}, fmt.Errorf("managed CI observation: invalid workflow run ID %q", request.FailedWorkflowRunID)
+		return ManagedCIRequest{}, managedCIObservationScope{},
+			fmt.Errorf("managed CI observation: invalid workflow run ID %q", request.FailedWorkflowRunID)
 	}
 	owner, repo, err := c.resolveRepo(ctx)
 	if err != nil {
-		return ManagedCIObservation{}, fmt.Errorf("managed CI observation: resolve repository: %w", err)
+		return ManagedCIRequest{}, managedCIObservationScope{},
+			fmt.Errorf("managed CI observation: resolve repository: %w", err)
 	}
 	repository := owner + "/" + repo
 	if !strings.EqualFold(request.Repository, repository) {
-		return ManagedCIObservation{}, fmt.Errorf("managed CI observation: repository mismatch")
+		return ManagedCIRequest{}, managedCIObservationScope{},
+			fmt.Errorf("managed CI observation: repository mismatch")
 	}
+	return request, managedCIObservationScope{
+		owner: owner, repo: repo, repository: repository, runID: runID,
+	}, nil
+}
 
-	jobs, err := c.listManagedWorkflowJobs(ctx, owner, repo, runID)
+func (c *CLIClient) readManagedCISource(
+	ctx context.Context,
+	scope managedCIObservationScope,
+	request ManagedCIRequest,
+) (ManagedCIExecution, []CIWorkflowJob, []CIWorkflowJob, error) {
+	jobs, err := c.listManagedWorkflowJobs(ctx, scope.owner, scope.repo, scope.runID)
 	if err != nil {
-		return ManagedCIObservation{}, fmt.Errorf("managed CI observation: list source jobs: %w", err)
+		return ManagedCIExecution{}, nil, nil, fmt.Errorf("managed CI observation: list source jobs: %w", err)
 	}
 	jobsByID := make(map[int64]CIWorkflowJob, len(jobs))
 	for _, job := range jobs {
 		if _, duplicate := jobsByID[job.ID]; duplicate {
-			return ManagedCIObservation{}, fmt.Errorf("managed CI observation: duplicate source job identity")
+			return ManagedCIExecution{}, nil, nil,
+				fmt.Errorf("managed CI observation: duplicate source job identity")
 		}
 		jobsByID[job.ID] = job
 	}
-
 	selectedJobs := make([]CIWorkflowJob, 0, len(request.FailedChecks))
 	sourceAttempt := 0
 	for _, check := range request.FailedChecks {
 		identity, ok := parseManagedActionsJobURL(check.DetailsURL, request.Repository)
-		if !ok || identity.RunID != runID {
-			return ManagedCIObservation{}, fmt.Errorf("managed CI observation: failed check link is not bound to the source run")
+		if !ok || identity.RunID != scope.runID {
+			return ManagedCIExecution{}, nil, nil,
+				fmt.Errorf("managed CI observation: failed check link is not bound to the source run")
 		}
 		job, exists := jobsByID[identity.JobID]
 		if !exists || !strings.EqualFold(strings.TrimSpace(job.Name), strings.TrimSpace(check.Name)) ||
-			job.RunID != runID || job.RunAttempt <= 0 || strings.TrimSpace(job.CheckRunURL) == "" {
-			return ManagedCIObservation{}, fmt.Errorf("managed CI observation: failed check has no matching current-attempt job")
+			job.RunID != scope.runID || job.RunAttempt <= 0 || strings.TrimSpace(job.CheckRunURL) == "" {
+			return ManagedCIExecution{}, nil, nil,
+				fmt.Errorf("managed CI observation: failed check has no matching current-attempt job")
 		}
 		if sourceAttempt == 0 {
 			sourceAttempt = job.RunAttempt
 		} else if sourceAttempt != job.RunAttempt {
-			return ManagedCIObservation{}, fmt.Errorf("managed CI observation: failed checks identify conflicting workflow attempts")
+			return ManagedCIExecution{}, nil, nil,
+				fmt.Errorf("managed CI observation: failed checks identify conflicting workflow attempts")
 		}
 		selectedJobs = append(selectedJobs, job)
 	}
-	sourceRun, err := c.fetchManagedWorkflowRunAttempt(ctx, owner, repo, runID, sourceAttempt)
+	sourceRun, err := c.fetchManagedWorkflowRunAttempt(ctx, scope.owner, scope.repo, scope.runID, sourceAttempt)
 	if err != nil {
-		return ManagedCIObservation{}, err
+		return ManagedCIExecution{}, nil, nil, err
 	}
-	source, identityOK := managedCIExecution(sourceRun, repository, request)
-	if !identityOK || source.RunID != runID || source.Attempt != sourceAttempt ||
+	source, identityOK := managedCIExecution(sourceRun, scope.repository, request)
+	if !identityOK || source.RunID != scope.runID || source.Attempt != sourceAttempt ||
 		!strings.EqualFold(strings.TrimSpace(sourceRun.Event), "pull_request") {
-		return ManagedCIObservation{}, fmt.Errorf("managed CI observation: source workflow identity is incomplete or conflicting")
+		return ManagedCIExecution{}, nil, nil,
+			fmt.Errorf("managed CI observation: source workflow identity is incomplete or conflicting")
 	}
+	return source, jobs, selectedJobs, nil
+}
 
-	observation := ManagedCIObservation{
-		Source: source, SourceJobs: managedCIJobsForAttempt(jobs, sourceAttempt),
-		Failures: make([]ManagedCIFailureEvidence, 0, len(request.FailedChecks)),
-	}
+func (c *CLIClient) classifyManagedCISourceFailures(
+	ctx context.Context,
+	scope managedCIObservationScope,
+	request ManagedCIRequest,
+	selectedJobs []CIWorkflowJob,
+) ([]ManagedCIFailureEvidence, bool, error) {
+	failures := make([]ManagedCIFailureEvidence, 0, len(request.FailedChecks))
 	verifiedShortage := false
 	for index, check := range request.FailedChecks {
 		job := selectedJobs[index]
 		checkRunID, ok := managedCheckRunID(job.CheckRunURL, request.Repository)
 		if !ok {
-			return ManagedCIObservation{}, fmt.Errorf("managed CI observation: job check-run identity is invalid")
+			return nil, false, fmt.Errorf("managed CI observation: job check-run identity is invalid")
 		}
-		annotations, err := c.listManagedCheckRunAnnotations(ctx, owner, repo, checkRunID)
+		annotations, err := c.listManagedCheckRunAnnotations(ctx, scope.owner, scope.repo, checkRunID)
 		if err != nil {
-			return ManagedCIObservation{}, fmt.Errorf("managed CI observation: list check-run annotations: %w", err)
+			return nil, false, fmt.Errorf("managed CI observation: list check-run annotations: %w", err)
 		}
 		classification, causedByChecks, causedByResults := classifyManagedCIFailureEvidenceDetailed(job, annotations)
 		if classification == ManagedCIRunnerShortage {
 			verifiedShortage = true
 		}
-		observation.Failures = append(observation.Failures, ManagedCIFailureEvidence{
+		failures = append(failures, ManagedCIFailureEvidence{
 			JobID: job.ID, RunID: job.RunID, Attempt: job.RunAttempt,
 			CheckName: strings.TrimSpace(check.Name), DetailsURL: strings.TrimSpace(check.DetailsURL),
 			Classification: classification, CausedByChecks: causedByChecks, CausedByResults: causedByResults,
 		})
 	}
-	if verifiedShortage {
-		replacement, err := c.findManagedCIReplacement(ctx, owner, repo, source)
+	return failures, verifiedShortage, nil
+}
+
+func (c *CLIClient) observeManagedCIReplacement(
+	ctx context.Context,
+	scope managedCIObservationScope,
+	request ManagedCIRequest,
+	source ManagedCIExecution,
+	observation ManagedCIObservation,
+) (ManagedCIObservation, error) {
+	replacement, err := c.findManagedCIReplacement(ctx, scope.owner, scope.repo, source)
+	if err != nil {
+		// The source identity and failures are fully validated even though the
+		// replacement identity is not. Preserve source failures; lifecycle treats
+		// replacement selection as unknown.
+		return observation, err
+	}
+	observation.Replacement = replacement
+	if replacement != nil && replacement.Status == "completed" && replacement.Conclusion != "success" {
+		failures, err := c.diagnoseManagedCIExecutionFailure(ctx, scope.owner, scope.repo, request, *replacement)
 		if err != nil {
-			// The source identity and failures above are fully validated even
-			// though replacement identity is not. Preserve them so a confirmed
-			// independent source failure remains actionable while replacement
-			// selection is treated as unknown by the lifecycle.
+			// Keep the verified source evidence and replacement identity; only
+			// the replacement's failure diagnosis is inconclusive.
 			return observation, err
 		}
-		observation.Replacement = replacement
-		if replacement != nil && replacement.Status == "completed" && replacement.Conclusion != "success" {
-			failures, err := c.diagnoseManagedCIExecutionFailure(ctx, owner, repo, request, *replacement)
-			if err != nil {
-				// Keep the verified source evidence and replacement identity;
-				// only the replacement's failure diagnosis is inconclusive.
-				observation.Replacement = replacement
-				return observation, err
-			}
-			observation.ReplacementFailures = failures
-		}
+		observation.ReplacementFailures = failures
 	}
 	return observation, nil
 }
@@ -520,80 +583,97 @@ func classifyManagedCIFailureEvidenceDetailed(
 	job CIWorkflowJob,
 	annotations []checkRunAnnotation,
 ) (ManagedCIFailureClassification, []string, []string) {
-	if strings.EqualFold(strings.TrimSpace(job.Status), "completed") &&
-		strings.EqualFold(strings.TrimSpace(job.Conclusion), "cancelled") &&
-		job.runnerIDObserved && job.runnerNameObserved && job.stepsObserved && job.Steps != nil &&
-		job.RunnerID == 0 && strings.TrimSpace(job.RunnerName) == "" && len(job.Steps) == 0 {
-		for _, annotation := range annotations {
-			message := strings.TrimSpace(annotation.Message)
-			if strings.EqualFold(strings.TrimSpace(annotation.Level), "failure") &&
-				runnerAcquisitionAnnotation.MatchString(message) &&
-				!selfHostedRunnerAnnotation.MatchString(message) {
-				return ManagedCIRunnerShortage, nil, nil
-			}
-		}
+	if managedCIRunnerShortageEvidence(job, annotations) {
+		return ManagedCIRunnerShortage, nil, nil
 	}
-	if strings.EqualFold(strings.TrimSpace(job.Status), "completed") &&
-		strings.EqualFold(strings.TrimSpace(job.Conclusion), "failure") {
-		var causes []string
-		var results []string
-		dependentAnnotationsOnly := true
-		for _, annotation := range annotations {
-			if !strings.EqualFold(strings.TrimSpace(annotation.Level), "failure") {
-				continue
-			}
-			match := failedPrerequisiteAnnotation.FindStringSubmatch(strings.TrimSpace(annotation.Message))
-			if len(match) != 3 {
-				if aggregateExitWrapperAnnotation.MatchString(strings.TrimSpace(annotation.Message)) {
-					continue
-				}
-				dependentAnnotationsOnly = false
-				break
-			}
-			if strings.EqualFold(strings.TrimSpace(match[2]), "success") {
-				dependentAnnotationsOnly = false
-				break
-			}
-			causes = append(causes, strings.TrimSpace(match[1]))
-			results = append(results, strings.TrimSpace(match[2]))
-		}
-		if dependentAnnotationsOnly && len(causes) > 0 {
-			return ManagedCIDependentFailure, causes, results
-		}
+	if causes, results, ok := managedCIDependentFailureEvidence(job, annotations); ok {
+		return ManagedCIDependentFailure, causes, results
 	}
-	if strings.EqualFold(strings.TrimSpace(job.Status), "completed") &&
-		strings.EqualFold(strings.TrimSpace(job.Conclusion), "failure") {
-		// A source annotation alone does not prove a code/test failure: tie it
-		// to a failed test or compilation step and its diagnostic.
-		failedTestStep := false
-		failedCompilerStep := false
-		for _, step := range job.Steps {
-			if !strings.EqualFold(strings.TrimSpace(step.Status), "completed") ||
-				!strings.EqualFold(strings.TrimSpace(step.Conclusion), "failure") {
-				continue
-			}
-			stepName := strings.TrimSpace(step.Name)
-			if managedCITestStepName.MatchString(stepName) {
-				failedTestStep = true
-			}
-			if managedCICompilerStepName.MatchString(stepName) {
-				failedCompilerStep = true
-			}
-		}
-		if failedTestStep || failedCompilerStep {
-			for _, annotation := range annotations {
-				message := strings.TrimSpace(annotation.Message)
-				if strings.EqualFold(strings.TrimSpace(annotation.Level), "failure") &&
-					managedCITestSourcePath(annotation.Path) && annotation.StartLine > 0 &&
-					!managedCIInfrastructureDiagnostic.MatchString(message) &&
-					(failedTestStep && managedCITestDiagnostic.MatchString(message) ||
-						failedCompilerStep && managedCICompilerDiagnostic.MatchString(message)) {
-					return ManagedCIConfirmedCodeTestFailure, nil, nil
-				}
-			}
-		}
+	if managedCIConfirmedCodeTestFailureEvidence(job, annotations) {
+		return ManagedCIConfirmedCodeTestFailure, nil, nil
 	}
 	return ManagedCIUnexplainedFailure, nil, nil
+}
+
+func managedCIRunnerShortageEvidence(job CIWorkflowJob, annotations []checkRunAnnotation) bool {
+	if !managedCIJobConclusion(job, "cancelled") || !job.runnerIDObserved || !job.runnerNameObserved ||
+		!job.stepsObserved || job.Steps == nil || job.RunnerID != 0 ||
+		strings.TrimSpace(job.RunnerName) != "" || len(job.Steps) != 0 {
+		return false
+	}
+	for _, annotation := range annotations {
+		message := strings.TrimSpace(annotation.Message)
+		if strings.EqualFold(strings.TrimSpace(annotation.Level), "failure") &&
+			runnerAcquisitionAnnotation.MatchString(message) &&
+			!selfHostedRunnerAnnotation.MatchString(message) {
+			return true
+		}
+	}
+	return false
+}
+
+func managedCIDependentFailureEvidence(job CIWorkflowJob, annotations []checkRunAnnotation) ([]string, []string, bool) {
+	if !managedCIJobConclusion(job, "failure") {
+		return nil, nil, false
+	}
+	var causes []string
+	var results []string
+	for _, annotation := range annotations {
+		if !strings.EqualFold(strings.TrimSpace(annotation.Level), "failure") {
+			continue
+		}
+		message := strings.TrimSpace(annotation.Message)
+		match := failedPrerequisiteAnnotation.FindStringSubmatch(message)
+		if len(match) != 3 {
+			if aggregateExitWrapperAnnotation.MatchString(message) {
+				continue
+			}
+			return nil, nil, false
+		}
+		if strings.EqualFold(strings.TrimSpace(match[2]), "success") {
+			return nil, nil, false
+		}
+		causes = append(causes, strings.TrimSpace(match[1]))
+		results = append(results, strings.TrimSpace(match[2]))
+	}
+	return causes, results, len(causes) > 0
+}
+
+func managedCIConfirmedCodeTestFailureEvidence(job CIWorkflowJob, annotations []checkRunAnnotation) bool {
+	if !managedCIJobConclusion(job, "failure") {
+		return false
+	}
+	failedTestStep, failedCompilerStep := false, false
+	for _, step := range job.Steps {
+		if !strings.EqualFold(strings.TrimSpace(step.Status), "completed") ||
+			!strings.EqualFold(strings.TrimSpace(step.Conclusion), "failure") {
+			continue
+		}
+		stepName := strings.TrimSpace(step.Name)
+		failedTestStep = failedTestStep || managedCITestStepName.MatchString(stepName)
+		failedCompilerStep = failedCompilerStep || managedCICompilerStepName.MatchString(stepName)
+	}
+	if !failedTestStep && !failedCompilerStep {
+		return false
+	}
+	for _, annotation := range annotations {
+		message := strings.TrimSpace(annotation.Message)
+		if !strings.EqualFold(strings.TrimSpace(annotation.Level), "failure") ||
+			!managedCITestSourcePath(annotation.Path) || annotation.StartLine <= 0 ||
+			managedCIInfrastructureDiagnostic.MatchString(message) {
+			continue
+		}
+		if failedTestStep && managedCITestDiagnostic.MatchString(message) ||
+			failedCompilerStep && managedCICompilerDiagnostic.MatchString(message) {
+			return true
+		}
+	}
+	return false
+}
+
+func managedCIJobConclusion(job CIWorkflowJob, conclusion string) bool {
+	return strings.EqualFold(strings.TrimSpace(job.Status), "completed") &&
+		strings.EqualFold(strings.TrimSpace(job.Conclusion), conclusion)
 }
 
 func managedCITestSourcePath(path string) bool {

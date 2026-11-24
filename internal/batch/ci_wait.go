@@ -74,111 +74,173 @@ func (s *runSession) ciWaitEvidence(ctx context.Context, workDir string, pr *git
 		if err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("read CI wait state: %w", err)
 		}
+		missing := os.IsNotExist(err)
 		if err == nil {
 			if _, validationErr := ciWaitEvidenceFromRegistration(registration, pr.Number); validationErr != nil {
 				return validationErr
 			}
 		}
-		newHead := !os.IsNotExist(err) && !strings.EqualFold(registration.HeadSHA, headSHA)
-		newExecution := false
-		selectedActions := candidate
-		if !newHead {
-			if candidate != nil && registration.ActionsExecution != nil {
-				switch compareCIWaitActionsExecution(candidate, registration.ActionsExecution) {
-				case 1:
-					newExecution = true
-				case 0:
-					// Re-observation of the same verified Actions execution keeps
-					// its original bound.
-				case -1:
-					// A stale provider listing cannot roll a durable wait back.
-					selectedActions = registration.ActionsExecution
-				case 2:
-					return fmt.Errorf("CI wait state: verified Actions execution conflicts with the retained workflow identity")
-				}
-			} else if candidate != nil {
-				newExecution = registration.ActionsExecution == nil
-			}
-			if candidate == nil && registration.ActionsExecution != nil {
-				// Once a read-only Actions identity has established the current
-				// wait generation, the PR rollup's check links may lag or remain
-				// stale. Only another verified Actions identity may advance it.
-				selectedActions = registration.ActionsExecution
-			}
-			if selectedActions == nil && registration.ActionsExecution == nil {
-				// Preserve the legacy current-head check identity behavior until
-				// a verified Actions execution has bound this wait.
-				newExecution = ciActive(pr, headSHA) && pr.CIExecutionID != "" && registration.ExecutionID != pr.CIExecutionID
-			}
+		registration, writeReason, err := nextCIWaitRegistration(
+			registration, missing, candidate, pr, headSHA, s.runtimeNow,
+		)
+		if err != nil {
+			return err
 		}
-		if os.IsNotExist(err) || newHead || newExecution {
-			now := s.runtimeNow()
-			var sourceRunID int64
-			if pr.CIFailedWorkflow != nil {
-				sourceRunID, _ = strconv.ParseInt(strings.TrimSpace(pr.CIFailedWorkflow.RunID), 10, 64)
-			}
-			sourceRunIDs := []int64(nil)
-			if !os.IsNotExist(err) && !newHead {
-				sourceRunIDs = append(sourceRunIDs, registration.SourceWorkflowRunIDs...)
-				sourceRunIDs = appendWorkflowRunID(sourceRunIDs, registration.SourceWorkflowRunID)
-			}
-			sourceRunIDs = appendWorkflowRunID(sourceRunIDs, sourceRunID)
-			registration = ciWaitRegistration{
-				Protocol:             ciWaitProtocol,
-				PullRequest:          pr.Number,
-				HeadSHA:              headSHA,
-				ExecutionID:          pr.CIExecutionID,
-				SourceExecutionID:    pr.CIExecutionID,
-				SourceWorkflowRunID:  sourceRunID,
-				SourceWorkflowRunIDs: sourceRunIDs,
-				ActionsExecution:     selectedActions,
-				StartedUnixSeconds:   now.Unix(),
-				DeadlineUnixSeconds:  now.Add(ciWaitTimeout).Unix(),
-				EffectiveTimeoutSecs: int64(ciWaitTimeout / time.Second),
-			}
-			if selectedActions != nil {
-				registration.ExecutionID = managedCIExecutionID(selectedActions)
-			}
-			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-				return fmt.Errorf("create CI wait state directory: %w", err)
+		if writeReason != "" {
+			if writeReason == "write CI wait state" {
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					return fmt.Errorf("create CI wait state directory: %w", err)
+				}
 			}
 			if err := atomicfs.WriteAtomicJSON(path, registration, 0o600); err != nil {
-				return fmt.Errorf("write CI wait state: %w", err)
-			}
-		} else if selectedActions != nil && registration.ActionsExecution == nil {
-			// A verified replacement binds an existing legacy/head-only wait
-			// to a new bounded operation exactly once.
-			now := s.runtimeNow()
-			registration.ExecutionID = managedCIExecutionID(selectedActions)
-			registration.SourceExecutionID = pr.CIExecutionID
-			if pr.CIFailedWorkflow != nil {
-				registration.SourceWorkflowRunID, _ = strconv.ParseInt(strings.TrimSpace(pr.CIFailedWorkflow.RunID), 10, 64)
-			}
-			registration.SourceWorkflowRunIDs = appendWorkflowRunID(
-				registration.SourceWorkflowRunIDs, registration.SourceWorkflowRunID,
-			)
-			registration.ActionsExecution = selectedActions
-			registration.StartedUnixSeconds = now.Unix()
-			registration.DeadlineUnixSeconds = now.Add(ciWaitTimeout).Unix()
-			registration.EffectiveTimeoutSecs = int64(ciWaitTimeout / time.Second)
-			if err := atomicfs.WriteAtomicJSON(path, registration, 0o600); err != nil {
-				return fmt.Errorf("write CI wait state: %w", err)
-			}
-		} else if candidate != nil && registration.ActionsExecution != nil &&
-			compareCIWaitActionsExecution(candidate, registration.ActionsExecution) == 0 &&
-			managedCIExecutionStatusAdvances(candidate, registration.ActionsExecution) {
-			// Status can advance while the execution identity and its deadline
-			// remain fixed. A delayed provider read cannot regress a retained
-			// execution or replace its terminal conclusion.
-			registration.ActionsExecution = candidate
-			if err := atomicfs.WriteAtomicJSON(path, registration, 0o600); err != nil {
-				return fmt.Errorf("update CI wait observation: %w", err)
+				return fmt.Errorf("%s: %w", writeReason, err)
 			}
 		}
 		evidence, err = ciWaitEvidenceFromRegistration(registration, pr.Number)
 		return err
 	})
 	return evidence, err
+}
+
+func nextCIWaitRegistration(
+	registration ciWaitRegistration,
+	missing bool,
+	candidate *ciWaitActionsExecution,
+	pr *github.PR,
+	headSHA string,
+	now func() time.Time,
+) (ciWaitRegistration, string, error) {
+	selection, err := selectCIWaitActions(registration, missing, candidate, pr, headSHA)
+	if err != nil {
+		return ciWaitRegistration{}, "", err
+	}
+	if selection.missing || selection.newHead || selection.newExecution {
+		return newCIWaitRegistration(
+			registration, selection.missing, selection.newHead, selection.selected, pr, headSHA, now(),
+		), "write CI wait state", nil
+	}
+	if selection.selected != nil && registration.ActionsExecution == nil {
+		return bindCIWaitActionsExecution(registration, selection.selected, pr, now()), "write CI wait state", nil
+	}
+	if candidate != nil && registration.ActionsExecution != nil &&
+		compareCIWaitActionsExecution(candidate, registration.ActionsExecution) == 0 &&
+		managedCIExecutionStatusAdvances(candidate, registration.ActionsExecution) {
+		// Status can advance while identity and deadline remain fixed.
+		registration.ActionsExecution = candidate
+		return registration, "update CI wait observation", nil
+	}
+	return registration, "", nil
+}
+
+type ciWaitActionsSelection struct {
+	selected     *ciWaitActionsExecution
+	missing      bool
+	newHead      bool
+	newExecution bool
+}
+
+func selectCIWaitActions(
+	registration ciWaitRegistration,
+	missing bool,
+	candidate *ciWaitActionsExecution,
+	pr *github.PR,
+	headSHA string,
+) (ciWaitActionsSelection, error) {
+	selection := ciWaitActionsSelection{
+		selected: candidate, missing: missing,
+		newHead: !missing && !strings.EqualFold(registration.HeadSHA, headSHA),
+	}
+	if selection.newHead {
+		return selection, nil
+	}
+	if candidate != nil && registration.ActionsExecution != nil {
+		switch compareCIWaitActionsExecution(candidate, registration.ActionsExecution) {
+		case 1:
+			selection.newExecution = true
+		case 0:
+			// Re-observation of the same verified Actions execution keeps
+			// its original bound.
+		case -1:
+			// A stale provider listing cannot roll a durable wait back.
+			selection.selected = registration.ActionsExecution
+		case 2:
+			return ciWaitActionsSelection{}, fmt.Errorf("CI wait state: verified Actions execution conflicts with the retained workflow identity")
+		}
+	} else if candidate != nil {
+		selection.newExecution = registration.ActionsExecution == nil
+	}
+	if candidate == nil && registration.ActionsExecution != nil {
+		// Once a read-only Actions identity has established the current
+		// wait generation, the PR rollup's check links may lag or remain
+		// stale. Only another verified Actions identity may advance it.
+		selection.selected = registration.ActionsExecution
+	}
+	if selection.selected == nil && registration.ActionsExecution == nil {
+		// Preserve legacy current-head check identity behavior until a
+		// verified Actions execution has bound this wait.
+		selection.newExecution = ciActive(pr, headSHA) && pr.CIExecutionID != "" &&
+			registration.ExecutionID != pr.CIExecutionID
+	}
+	return selection, nil
+}
+
+func newCIWaitRegistration(
+	registration ciWaitRegistration,
+	missing bool,
+	newHead bool,
+	selectedActions *ciWaitActionsExecution,
+	pr *github.PR,
+	headSHA string,
+	now time.Time,
+) ciWaitRegistration {
+	var sourceRunID int64
+	if pr.CIFailedWorkflow != nil {
+		sourceRunID, _ = strconv.ParseInt(strings.TrimSpace(pr.CIFailedWorkflow.RunID), 10, 64)
+	}
+	sourceRunIDs := []int64(nil)
+	if !missing && !newHead {
+		sourceRunIDs = append(sourceRunIDs, registration.SourceWorkflowRunIDs...)
+		sourceRunIDs = appendWorkflowRunID(sourceRunIDs, registration.SourceWorkflowRunID)
+	}
+	sourceRunIDs = appendWorkflowRunID(sourceRunIDs, sourceRunID)
+	registration = ciWaitRegistration{
+		Protocol:             ciWaitProtocol,
+		PullRequest:          pr.Number,
+		HeadSHA:              headSHA,
+		ExecutionID:          pr.CIExecutionID,
+		SourceExecutionID:    pr.CIExecutionID,
+		SourceWorkflowRunID:  sourceRunID,
+		SourceWorkflowRunIDs: sourceRunIDs,
+		ActionsExecution:     selectedActions,
+		StartedUnixSeconds:   now.Unix(),
+		DeadlineUnixSeconds:  now.Add(ciWaitTimeout).Unix(),
+		EffectiveTimeoutSecs: int64(ciWaitTimeout / time.Second),
+	}
+	if selectedActions != nil {
+		registration.ExecutionID = managedCIExecutionID(selectedActions)
+	}
+	return registration
+}
+
+func bindCIWaitActionsExecution(
+	registration ciWaitRegistration,
+	selectedActions *ciWaitActionsExecution,
+	pr *github.PR,
+	now time.Time,
+) ciWaitRegistration {
+	registration.ExecutionID = managedCIExecutionID(selectedActions)
+	registration.SourceExecutionID = pr.CIExecutionID
+	if pr.CIFailedWorkflow != nil {
+		registration.SourceWorkflowRunID, _ = strconv.ParseInt(strings.TrimSpace(pr.CIFailedWorkflow.RunID), 10, 64)
+	}
+	registration.SourceWorkflowRunIDs = appendWorkflowRunID(
+		registration.SourceWorkflowRunIDs, registration.SourceWorkflowRunID,
+	)
+	registration.ActionsExecution = selectedActions
+	registration.StartedUnixSeconds = now.Unix()
+	registration.DeadlineUnixSeconds = now.Add(ciWaitTimeout).Unix()
+	registration.EffectiveTimeoutSecs = int64(ciWaitTimeout / time.Second)
+	return registration
 }
 
 func ciWaitActionsExecutionFromExecution(execution *github.ManagedCIExecution, pr *github.PR, headSHA string) *ciWaitActionsExecution {
