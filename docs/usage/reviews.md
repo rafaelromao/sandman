@@ -96,14 +96,19 @@ The CLI value wins when supplied. Both configured and CLI values are trimmed
 but otherwise treated as opaque provider-specific text. Empty values do not
 add a variant flag to the OpenCode command.
 
-The daemon is unchanged by the blind-review default. It watches open pull
-requests for comments that begin with the `/sandman` command, whether or not a
-`review_command` is configured. Blind review posts no trigger, so the daemon is
-part of the automatic loop only when you configure a review command and the
-implementor requests it. A typical delegated command is:
+The daemon watches open pull requests for `/sandman` commands whether or not
+the project has a `review_command`. From the GitHub account authenticated to
+the daemon, post this comment on a pull request to request a review:
 
 ```text
 /sandman review
+```
+
+To have implementation runs request daemon reviews automatically, configure
+the project to use delegated review:
+
+```bash
+sandman config set review_command "/sandman review"
 ```
 
 The daemon answers any comment that starts with the `/sandman` command,
@@ -169,6 +174,36 @@ disappears without a decision being posted, the stderr line for that request
 says why. `sandman attach` streams the same daemon lines from another terminal.
 Errors remain visible on stderr. Locally repairable failures are also kept in
 `.sandman/reviews/health-repair.json`.
+
+### Architectural review and escalation
+
+The reviewer reads the current diff in its review worktree. The daemon supplies
+the linked work item's acceptance criteria, any focus supplied in the request,
+and prior review feedback. The default prompt loads `sandman-code-review` for
+both daemon and blind reviews. The skill assesses the specification and
+repository standards separately and checks correctness and safety.
+
+The reviewer traces the behavior that must hold across affected paths,
+including unchanged callers. It checks state ownership, validation boundaries,
+and relevant failure modes. It derives verification scenarios independently
+from the specification and identifies which failures it reproduced, which it
+established by reading the code, and where evidence is incomplete.
+
+| Review level | When it applies | What the reviewer does |
+| --- | --- | --- |
+| Normal review | A localized finding or a routine change | Checks the change against the specification and reports concrete findings. |
+| Root-cause remediation | A finding recurs or appears in a related path | Groups symptoms by shared cause and identifies which callers and consumers need the correction. |
+| Architectural remediation | A defect persists across two reviewed revisions, survives root-cause remediation, or is already systemic on the first review | Reassesses the design assumptions and recommends where to enforce the required behavior. |
+| Design reconsideration | Architectural remediation leaves the defect unresolved | Evaluates viable alternatives and recommends the smallest structural change that would prevent recurrence. |
+
+The reviewer uses the evidence across revisions and leaves uncertain round
+counts unspecified. For an escalated finding, the posted report explains the
+root cause, the violated invariant, the affected paths, and the proposed fix.
+Its **Suggested next steps** give the implementer a minimal regression-test
+matrix and specify what to report before requesting another review. The
+implementer owns the code changes and verification. The daemon publishes the
+reviewer's decision. The delivery workflow checks current-head approval, CI,
+and mergeability before merging.
 
 ## Review command guard
 
