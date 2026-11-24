@@ -11,8 +11,8 @@ import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-ENDPOINT = "https://api.fireworks.ai/inference/v1/chat/completions"
-MODEL = "accounts/fireworks/models/glm-5p3"
+ENDPOINT = "https://opencode.ai/zen/go/v1/chat/completions"
+MODEL = "glm-5.3"
 SKILL_DIR = Path(__file__).resolve().parents[1] / "internal/skill/sandman/code-review"
 
 
@@ -47,16 +47,16 @@ def complete(api_key, system, prompt, *, grade=False):
             break
         except HTTPError as exc:
             if attempt or exc.code not in {429, 500, 502, 503, 504}:
-                raise RuntimeError(f"Fireworks returned HTTP {exc.code}") from None
+                raise RuntimeError(f"OpenCode Go returned HTTP {exc.code}") from None
         except (TimeoutError, URLError):
             if attempt:
-                raise RuntimeError("Fireworks connection failed or timed out") from None
+                raise RuntimeError("OpenCode Go connection failed or timed out") from None
         time.sleep(3)
 
     choice = result["choices"][0]
     content = choice["message"]["content"]
     if choice["finish_reason"] != "stop" or not isinstance(content, str) or not content.strip():
-        raise RuntimeError("Fireworks returned an incomplete response")
+        raise RuntimeError("OpenCode Go returned an incomplete response")
     return content.strip()
 
 
@@ -96,9 +96,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
-    api_key = os.getenv("FIREWORKS_API_KEY")
+    api_key = os.getenv("OPENCODE_API_KEY")
     if not api_key:
-        parser.error("FIREWORKS_API_KEY is required")
+        parser.error("OPENCODE_API_KEY is required")
     cases = sorted(path.parent for path in (SKILL_DIR / "evals").glob("*/case.yaml"))
     if not cases or any(not re.fullmatch(r"[a-z0-9-]+", case.name) for case in cases):
         parser.error("expected named evaluation cases under the code-review skill")
