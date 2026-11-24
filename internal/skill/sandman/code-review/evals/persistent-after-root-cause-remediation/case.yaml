@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: persistent-after-root-cause-remediation
+expected_outcome: |
+  The reviewer reassesses the enforcement boundary after root-cause remediation fails.

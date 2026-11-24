@@ -1,0 +1,17 @@
+SKILL.md
+agents_md_test.go
+back-merge/SKILL.md
+implement/SKILL.md
+plan/SKILL.md
+pr-merge/SKILL.md
+pr-review/SKILL.md
+pr_review_skill_test.go
+self-review/SKILL.md
+skill_gitignore_prohibition_test.go
+skill_hygiene_test.go
+tdd/SKILL.md
+tdd/deep-modules.md
+tdd/interface-design.md
+tdd/mocking.md
+tdd/refactoring.md
+tdd/tests.md

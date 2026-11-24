@@ -537,20 +537,22 @@
           <p class="lead handoff-line">Use Portal for run status, logs, review gates, and merge readiness. Use your agent's native transcript for deeper inspection. See <a class="text-link" href="documentation.html#/usage/agent-compatibility.md">agent compatibility and setup</a> for authentication and session details.</p>
         </section>
 
-        <section id="sandman-review">
-          <div class="kicker">Sandman Review</div>
-          <h2>Review stays inside the AFK gate.</h2>
-          <p class="lead">Sandman Review is the local review module for PR feedback. It follows the same idea as OpenCode's GitHub <a class="text-link" href="https://opencode.ai/docs/github/">/oc</a> integration: a PR comment triggers agent work. In Sandman, the trigger is <code>/sandman review</code> and the review runs locally.</p>
+        <section id="sandman-review" aria-labelledby="review-daemon-heading">
+          <h2 id="review-daemon-heading">Sandman review daemon</h2>
+          <p class="lead">Run an independent code review from a GitHub pull request. The daemon checks the change against the specification, traces the affected code paths, and posts a review decision with evidence.</p>
           <div class="grid-2">
             <div class="note-card">
-              <h3>Comment-driven review.</h3>
-              <p>Sandman Review listens for review request comments in repository PRs, reviews it, and posts feedback requesting changes or approving.</p>
+              <h3>Request a review</h3>
+              <p>Start the daemon with <code>sandman review</code>. From the GitHub account the daemon uses, comment <code>/sandman review</code> on a pull request.</p>
+              <p>Configure delegated review to make implementation runs request reviews automatically. Choose a reviewer model independently of the implementation model.</p>
             </div>
             <div class="note-card">
-              <h3>Not an afterthought.</h3>
-              <p>The implementation agent builds and self-reviews first. Sandman Review then handles feedback, repair, green checks, and merge readiness as part of the gate.</p>
+              <h3>Escalate systemic defects</h3>
+              <p>The reviewer can escalate on the first pass when a defect affects a shared contract. If a defect recurs after a fix, it can reassess the architecture and propose a design change.</p>
+              <p>The review report ties related findings to their root cause and gives the implementation agent a repair strategy and regression scenarios to verify.</p>
             </div>
           </div>
+          <div class="cta"><a class="btn ghost" href="documentation.html#/usage/reviews.md">Read the review daemon guide</a></div>
         </section>
 
         <section class="final">

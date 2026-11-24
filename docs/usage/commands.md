@@ -256,7 +256,7 @@ Run the Sandman pull-request review daemon.
 sandman review
 ```
 
-The daemon polls open PRs every 30s for comments that begin with the `/sandman` command and launches review agents. It does not accept positional arguments. It is unchanged by blind review: a repository using the default blind path posts no trigger, while delegated review posts the configured command for the daemon to answer.
+The daemon polls open PRs every 30s for `/sandman` commands and launches review agents. It does not accept positional arguments. The default blind path posts no trigger. To have the daemon review implementation runs, configure delegated review with a `review_command` such as `/sandman review`. See [Review daemon](reviews.md) for setup and architectural escalation.
 
 The daemon's review path is **daemon-as-poster**: the reviewer agent writes its body to the review worktree's `decision.md`, and the daemon reads the file, runs it through the `RedactBody` redactor (`(?i)/sandman` → `sandman`) to strip every leading-slash `sandman` substring, and posts the redacted body via `gh pr comment`. The redactor is the load-bearing safety net for the no-self-loop invariant — it runs out-of-band of the LLM, so the bot's body can never contain the trigger substring regardless of what the prompt rule says. The `LooksLikeBotReviewBody` structural sniff is defence-in-depth: a body that structurally looks like a previous bot review is dropped before `ParseTrigger` runs.
 

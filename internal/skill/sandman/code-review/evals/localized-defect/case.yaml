@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: localized-defect
+expected_outcome: |
+  The reviewer requests a local correction without escalating one isolated defect.
