@@ -276,6 +276,14 @@ func TestClassifyManagedCIFailureRequiresCorroboratedRunnerAcquisitionEvidence(t
 			want: ManagedCIUnexplainedFailure,
 		},
 		{
+			name: "generic runner acquisition wording",
+			job:  observedUnassignedRunnerJob(),
+			annotations: []checkRunAnnotation{{
+				Level: "failure", Message: "The job was not acquired by a runner because workflow access was denied.",
+			}},
+			want: ManagedCIUnexplainedFailure,
+		},
+		{
 			name: "aggregate name is not runner shortage evidence",
 			job:  CIWorkflowJob{Name: "quality-gate", Status: "completed", Conclusion: "failure"},
 			annotations: []checkRunAnnotation{{
@@ -350,6 +358,39 @@ func TestClassifyManagedCIFailureRequiresCorroboratedRunnerAcquisitionEvidence(t
 			annotations: []checkRunAnnotation{{
 				Level: "failure", Path: "internal/dependency_test.go", StartLine: 42,
 				Message: "Expected HTTP 200, got 503 from the dependency mirror.",
+			}},
+			want: ManagedCIUnexplainedFailure,
+		},
+		{
+			name: "artifact diagnostic on a failed test step",
+			job: CIWorkflowJob{Status: "completed", Conclusion: "failure", RunnerID: 42, Steps: []CIWorkflowStep{
+				{Name: "go test ./...", Status: "completed", Conclusion: "failure"},
+			}},
+			annotations: []checkRunAnnotation{{
+				Level: "failure", Path: "internal/example_test.go", StartLine: 42,
+				Message: "Expected an artifact cache entry, got none.",
+			}},
+			want: ManagedCIUnexplainedFailure,
+		},
+		{
+			name: "workflow configuration annotation is not source evidence",
+			job: CIWorkflowJob{Status: "completed", Conclusion: "failure", RunnerID: 42, Steps: []CIWorkflowStep{
+				{Name: "go test ./...", Status: "completed", Conclusion: "failure"},
+			}},
+			annotations: []checkRunAnnotation{{
+				Level: "failure", Path: ".github/workflows/go.yml", StartLine: 42,
+				Message: "TestExample failed.",
+			}},
+			want: ManagedCIUnexplainedFailure,
+		},
+		{
+			name: "test setup step is not a test execution",
+			job: CIWorkflowJob{Status: "completed", Conclusion: "failure", RunnerID: 42, Steps: []CIWorkflowStep{
+				{Name: "Test setup credentials", Status: "completed", Conclusion: "failure"},
+			}},
+			annotations: []checkRunAnnotation{{
+				Level: "failure", Path: "internal/example_test.go", StartLine: 42,
+				Message: "TestExample failed.",
 			}},
 			want: ManagedCIUnexplainedFailure,
 		},
@@ -507,6 +548,28 @@ func TestCLIClient_ManagedCIRejectsContradictorySameRunNumber(t *testing.T) {
 	}
 }
 
+func TestCLIClient_ManagedCIRejectsContradictorySameAttemptConclusion(t *testing.T) {
+	runs := fixtureAt(t, "same-run-attempt", "workflow-runs.json")
+	runs = strings.Replace(runs, `"conclusion": "cancelled"`, `"conclusion": "success"`, 1)
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"repo","owner":{"login":"owner"}}`},
+		{output: fixtureText(t, "jobs.json")},
+		{output: fixtureText(t, "workflow-run.json")},
+		{output: fixtureText(t, "annotations.json")},
+		{output: runs},
+	}}
+	_, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "incident-source-head",
+		FailedWorkflowRunID: "45270155099",
+		FailedChecks: []CIFailedCheck{{
+			Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527159",
+		}},
+	})
+	if err == nil {
+		t.Fatal("same-attempt workflow listing with a contradictory terminal conclusion was accepted")
+	}
+}
+
 func TestCLIClient_ManagedCIUsesFailedJobAttemptWhenRunHasReplacement(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"repo","owner":{"login":"owner"}}`},
@@ -611,6 +674,13 @@ func TestCLIClient_ManagedCIRequiresEveryReplacementIdentityField(t *testing.T) 
 			wantUnknown: true,
 			mutate: func(candidate map[string]any) {
 				candidate["pull_requests"].([]any)[0].(map[string]any)["base"].(map[string]any)["ref"] = "release"
+			},
+		},
+		{
+			name:        "base ref differs only by case",
+			wantUnknown: true,
+			mutate: func(candidate map[string]any) {
+				candidate["pull_requests"].([]any)[0].(map[string]any)["base"].(map[string]any)["ref"] = "Main"
 			},
 		},
 		{

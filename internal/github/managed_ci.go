@@ -12,7 +12,10 @@ import (
 
 const managedCIPageSize = 100
 
-var runnerAcquisitionAnnotation = regexp.MustCompile(`(?i)\bthe job was not acquired by (?:a\s+)?runner\b|\bjob was not acquired by (?:a\s+)?runner\b`)
+var runnerAcquisitionAnnotation = regexp.MustCompile(
+	`(?i)\bthe job was not acquired by a runner within 10 minutes of the request\b|` +
+		`\bthe job was not acquired by runner of type hosted even after multiple attempts\b`,
+)
 var failedPrerequisiteAnnotation = regexp.MustCompile(`(?i)^([a-z0-9][a-z0-9_.-]*) must succeed \(result: ([^)]+)\)$`)
 var aggregateExitWrapperAnnotation = regexp.MustCompile(`(?i)^process completed with exit code \d+\.?$`)
 var managedCITestStepName = regexp.MustCompile(
@@ -20,7 +23,8 @@ var managedCITestStepName = regexp.MustCompile(
 		`(?:go\s+test|pytest|python(?:3(?:\.\d+)?)?\s+-m\s+(?:pytest|unittest)|` +
 		`(?:npm|pnpm|yarn)\s+(?:run\s+)?test|bun\s+test|cargo\s+test|dotnet\s+test|` +
 		`mvn\s+test|gradlew?\s+test|make\s+test)(?:\s|$)|` +
-		`^(?:(?:run|execute)\s+)?(?:(?:unit|integration|smoke|e2e|acceptance|regression)\s+)?tests?(?:\s|$)`,
+		`^(?:(?:run|execute)\s+)?(?:(?:unit|integration|smoke|e2e|acceptance|regression)\s+)?tests?` +
+		`(?:\s+(?:suite|all|only))?$`,
 )
 var managedCITestDiagnostic = regexp.MustCompile(
 	`(?i)(?:^|\b)---\s*fail:\s*test\w*\b|` +
@@ -33,7 +37,8 @@ var managedCITestDiagnostic = regexp.MustCompile(
 )
 var managedCIInfrastructureDiagnostic = regexp.MustCompile(
 	`(?i)\b(?:dependency mirror|connection refused|connection reset|network timeout|timed out|` +
-		`rate limit|service unavailable|HTTP\s+[45]\d{2}\b|DNS lookup|TLS handshake|proxy error)\b`,
+		`rate limit|service unavailable|HTTP\s+[45]\d{2}\b|DNS lookup|TLS handshake|proxy error|` +
+		`artifact|cache|runner|checkout|download|upload|provision|install|registry|container image)\b`,
 )
 
 type actionsWorkflowRun struct {
@@ -330,7 +335,7 @@ func managedCIExecution(run actionsWorkflowRun, repository string, request Manag
 	matches := 0
 	for _, pr := range run.PullRequests {
 		if pr.Number == request.PullRequest &&
-			strings.EqualFold(strings.TrimSpace(pr.Base.Ref), request.BaseRefName) &&
+			strings.TrimSpace(pr.Base.Ref) == strings.TrimSpace(request.BaseRefName) &&
 			strings.EqualFold(strings.TrimSpace(pr.Head.SHA), request.HeadSHA) {
 			matches++
 			continue
@@ -494,7 +499,7 @@ func classifyManagedCIFailureEvidence(job CIWorkflowJob, annotations []checkRunA
 			for _, annotation := range annotations {
 				message := strings.TrimSpace(annotation.Message)
 				if strings.EqualFold(strings.TrimSpace(annotation.Level), "failure") &&
-					strings.TrimSpace(annotation.Path) != "" && annotation.StartLine > 0 &&
+					managedCITestSourcePath(annotation.Path) && annotation.StartLine > 0 &&
 					!managedCIInfrastructureDiagnostic.MatchString(message) &&
 					managedCITestDiagnostic.MatchString(message) {
 					return ManagedCIConfirmedCodeTestFailure, nil
@@ -503,6 +508,21 @@ func classifyManagedCIFailureEvidence(job CIWorkflowJob, annotations []checkRunA
 		}
 	}
 	return ManagedCIUnexplainedFailure, nil
+}
+
+func managedCITestSourcePath(path string) bool {
+	path = strings.ToLower(strings.TrimSpace(path))
+	switch {
+	case strings.HasSuffix(path, ".go"), strings.HasSuffix(path, ".py"),
+		strings.HasSuffix(path, ".js"), strings.HasSuffix(path, ".jsx"),
+		strings.HasSuffix(path, ".ts"), strings.HasSuffix(path, ".tsx"),
+		strings.HasSuffix(path, ".rs"), strings.HasSuffix(path, ".cs"),
+		strings.HasSuffix(path, ".java"), strings.HasSuffix(path, ".kt"),
+		strings.HasSuffix(path, ".sh"):
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *CLIClient) findManagedCIReplacement(ctx context.Context, owner, repo string, source ManagedCIExecution) (*ManagedCIExecution, error) {
@@ -578,6 +598,12 @@ func (c *CLIClient) findManagedCIReplacement(ctx context.Context, owner, repo st
 			})
 			if !ok || sourceExecution.Attempt < source.Attempt {
 				return nil, fmt.Errorf("workflow-run list does not confirm the source pull request execution")
+			}
+			if sourceExecution.Attempt == source.Attempt &&
+				strings.EqualFold(sourceExecution.Status, "completed") &&
+				strings.EqualFold(source.Status, "completed") &&
+				!strings.EqualFold(sourceExecution.Conclusion, source.Conclusion) {
+				return nil, fmt.Errorf("workflow-run list contradicts the source execution conclusion for the same attempt")
 			}
 			sourceListed = true
 		}

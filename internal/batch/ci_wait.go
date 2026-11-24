@@ -186,7 +186,7 @@ func ciWaitActionsExecutionFromExecution(execution *github.ManagedCIExecution, p
 		execution.WorkflowID <= 0 || execution.Attempt <= 0 || strings.TrimSpace(execution.Repository) == "" ||
 		!strings.EqualFold(strings.TrimSpace(execution.Event), "pull_request") ||
 		!validCIWaitActionsStatus(execution.Status, execution.Conclusion) ||
-		pr.Number != execution.PullRequest || !strings.EqualFold(strings.TrimSpace(pr.BaseRefName), strings.TrimSpace(execution.BaseRefName)) ||
+		pr.Number != execution.PullRequest || strings.TrimSpace(pr.BaseRefName) != strings.TrimSpace(execution.BaseRefName) ||
 		!strings.EqualFold(strings.TrimSpace(execution.HeadSHA), strings.TrimSpace(headSHA)) ||
 		!strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) {
 		return nil
@@ -232,7 +232,7 @@ func compareCIWaitActionsExecution(candidate, retained *ciWaitActionsExecution) 
 	if !strings.EqualFold(candidate.Event, "pull_request") || !strings.EqualFold(retained.Event, "pull_request") {
 		return 2
 	}
-	if !strings.EqualFold(candidate.BaseRefName, retained.BaseRefName) {
+	if strings.TrimSpace(candidate.BaseRefName) != strings.TrimSpace(retained.BaseRefName) {
 		// A changed PR base is a distinct identity, but a higher numbered run
 		// in the same workflow/PR/head can still prove the new operation. A
 		// rerun of the same run cannot retroactively change its base binding.

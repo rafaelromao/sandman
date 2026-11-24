@@ -66,6 +66,7 @@ type lifecycleObserver struct {
 
 type managedCIFailureObservation struct {
 	Repository          string
+	Source              *github.ManagedCIExecution
 	Replacement         *github.ManagedCIExecution
 	IndependentFailure  bool
 	Unknown             bool
@@ -117,91 +118,129 @@ func (s *runSession) observeManagedCIFailure(
 		if ctx.Err() != nil {
 			return managedCIFailureObservation{Repository: repository}
 		}
+		var source *github.ManagedCIExecution
+		if managedCISourceFailuresMatchRequest(observation, request) {
+			copy := observation.Source
+			source = &copy
+		}
 		return managedCIFailureObservation{
-			Repository: repository, IndependentFailure: managedCIConfirmedIndependentSourceFailure(observation, request), Unknown: true,
+			Repository: repository, Source: source,
+			IndependentFailure: managedCIConfirmedIndependentSourceFailure(observation, request), Unknown: true,
 		}
 	}
 	if !managedCIObservationMatchesRequest(observation, request) {
+		var source *github.ManagedCIExecution
+		if managedCISourceFailuresMatchRequest(observation, request) {
+			copy := observation.Source
+			source = &copy
+		}
 		return managedCIFailureObservation{
-			Repository: repository, IndependentFailure: managedCIConfirmedIndependentSourceFailure(observation, request), Unknown: true,
+			Repository: repository, Source: source,
+			IndependentFailure: managedCIConfirmedIndependentSourceFailure(observation, request), Unknown: true,
 		}
 	}
+	source := observation.Source
 	independentFailure := false
 	unexplainedClassification := false
-	shortageOnly := len(observation.Failures) > 0
-	shortageChecks := make(map[string]int, len(observation.Failures))
+	verifiedShortage := false
 	for _, failure := range observation.Failures {
 		switch failure.Classification {
 		case github.ManagedCIRunnerShortage:
-			shortageChecks[managedCICheckName(failure.CheckName)]++
+			verifiedShortage = true
 		case github.ManagedCIConfirmedCodeTestFailure:
 			independentFailure = true
-			shortageOnly = false
-		case github.ManagedCIDependentFailure:
-		case github.ManagedCIUnexplainedFailure:
-			shortageOnly = false
+		case github.ManagedCIDependentFailure, github.ManagedCIUnexplainedFailure:
 		default:
-			shortageOnly = false
 			unexplainedClassification = true
 		}
 	}
-	for _, failure := range observation.Failures {
+	if len(observation.ReplacementFailures) > 0 {
+		if observation.Replacement == nil ||
+			!strings.EqualFold(strings.TrimSpace(observation.Replacement.Status), "completed") ||
+			strings.EqualFold(strings.TrimSpace(observation.Replacement.Conclusion), "success") {
+			return managedCIFailureObservation{
+				Repository: repository, Source: &source, IndependentFailure: independentFailure, Unknown: true,
+			}
+		}
+		for _, failure := range observation.ReplacementFailures {
+			if failure.JobID <= 0 || failure.RunID != observation.Replacement.RunID ||
+				failure.Attempt != observation.Replacement.Attempt ||
+				!managedCIKnownFailureClassification(failure.Classification) {
+				return managedCIFailureObservation{
+					Repository: repository, Source: &source, IndependentFailure: independentFailure, Unknown: true,
+				}
+			}
+		}
+	}
+	if unexplainedClassification && !independentFailure {
+		return managedCIFailureObservation{Repository: repository, Source: &source, Unknown: true}
+	}
+	if !verifiedShortage || observation.Replacement == nil ||
+		!managedCIReplacementFollows(observation.Source, *observation.Replacement) ||
+		!managedCIDependentFailuresMatchShortage(observation.Failures) {
+		return managedCIFailureObservation{
+			Repository: repository, Source: &source, IndependentFailure: independentFailure,
+		}
+	}
+	confirmedReplacementFailures := make([]github.ManagedCIFailureEvidence, 0, len(observation.ReplacementFailures))
+	replacementHasConfirmedFailure := false
+	for _, failure := range observation.ReplacementFailures {
+		if failure.Classification == github.ManagedCIConfirmedCodeTestFailure {
+			confirmedReplacementFailures = append(confirmedReplacementFailures, failure)
+			replacementHasConfirmedFailure = true
+		}
+	}
+	replacementFailed := strings.EqualFold(strings.TrimSpace(observation.Replacement.Status), "completed") &&
+		!strings.EqualFold(strings.TrimSpace(observation.Replacement.Conclusion), "success")
+	if replacementFailed && !replacementHasConfirmedFailure {
+		// A terminal but unexplained replacement cannot authorize repair from
+		// the source workflow's stale failed-check rollup.
+		return managedCIFailureObservation{
+			Repository: repository, Source: &source, IndependentFailure: independentFailure, Unknown: true,
+		}
+	}
+	replacement := *observation.Replacement
+	return managedCIFailureObservation{
+		Repository: repository, Source: &source, Replacement: &replacement, IndependentFailure: independentFailure,
+		ReplacementFailures: confirmedReplacementFailures,
+	}
+}
+
+func managedCIKnownFailureClassification(classification github.ManagedCIFailureClassification) bool {
+	switch classification {
+	case github.ManagedCIRunnerShortage, github.ManagedCIConfirmedCodeTestFailure,
+		github.ManagedCIDependentFailure, github.ManagedCIUnexplainedFailure:
+		return true
+	default:
+		return false
+	}
+}
+
+func managedCIDependentFailuresMatchShortage(failures []github.ManagedCIFailureEvidence) bool {
+	checkCounts := make(map[string]int, len(failures))
+	shortageCounts := make(map[string]int, len(failures))
+	for _, failure := range failures {
+		name := managedCICheckName(failure.CheckName)
+		checkCounts[name]++
+		if failure.Classification == github.ManagedCIRunnerShortage {
+			shortageCounts[name]++
+		}
+	}
+	for _, failure := range failures {
 		if failure.Classification != github.ManagedCIDependentFailure {
 			continue
 		}
 		if len(failure.CausedByChecks) == 0 {
-			shortageOnly = false
-			continue
+			return false
 		}
 		for _, cause := range failure.CausedByChecks {
-			if shortageChecks[managedCICheckName(cause)] != 1 {
-				shortageOnly = false
+			name := managedCICheckName(cause)
+			if checkCounts[name] != 1 || shortageCounts[name] != 1 {
+				return false
 			}
 		}
 	}
-	if len(observation.ReplacementFailures) > 0 {
-		replacementFailureUnknown := false
-		var confirmedReplacementFailures []github.ManagedCIFailureEvidence
-		for _, failure := range observation.ReplacementFailures {
-			if failure.JobID <= 0 || failure.RunID != observation.Replacement.RunID ||
-				failure.Attempt != observation.Replacement.Attempt {
-				return managedCIFailureObservation{
-					Repository: repository, IndependentFailure: independentFailure, Unknown: true,
-				}
-			}
-			switch failure.Classification {
-			case github.ManagedCIRunnerShortage, github.ManagedCIUnexplainedFailure:
-			case github.ManagedCIConfirmedCodeTestFailure:
-				independentFailure = true
-				confirmedReplacementFailures = append(confirmedReplacementFailures, failure)
-			default:
-				replacementFailureUnknown = true
-			}
-		}
-		if replacementFailureUnknown && !independentFailure {
-			return managedCIFailureObservation{Repository: repository, Unknown: true}
-		}
-		observation.ReplacementFailures = confirmedReplacementFailures
-	}
-	if observation.Replacement != nil && len(observation.ReplacementFailures) > 0 {
-		replacement := *observation.Replacement
-		return managedCIFailureObservation{
-			Repository: repository, Replacement: &replacement, IndependentFailure: true,
-			ReplacementFailures: append([]github.ManagedCIFailureEvidence(nil), observation.ReplacementFailures...),
-		}
-	}
-	if unexplainedClassification && !independentFailure {
-		return managedCIFailureObservation{Repository: repository, Unknown: true}
-	}
-	if !shortageOnly || observation.Replacement == nil ||
-		!managedCIReplacementFollows(observation.Source, *observation.Replacement) {
-		return managedCIFailureObservation{Repository: repository, IndependentFailure: independentFailure}
-	}
-	replacement := *observation.Replacement
-	return managedCIFailureObservation{
-		Repository: repository, Replacement: &replacement, IndependentFailure: independentFailure,
-		ReplacementFailures: append([]github.ManagedCIFailureEvidence(nil), observation.ReplacementFailures...),
-	}
+	return true
 }
 
 func managedCICheckName(name string) string {
@@ -228,12 +267,15 @@ func managedCIObservationMatchesRequest(observation github.ManagedCIObservation,
 		return false
 	}
 	if len(observation.ReplacementFailures) > 0 {
-		if observation.Replacement == nil {
+		if observation.Replacement == nil ||
+			!strings.EqualFold(strings.TrimSpace(observation.Replacement.Status), "completed") ||
+			strings.EqualFold(strings.TrimSpace(observation.Replacement.Conclusion), "success") {
 			return false
 		}
 		for _, failure := range observation.ReplacementFailures {
 			if failure.JobID <= 0 || failure.RunID != observation.Replacement.RunID ||
-				failure.Attempt != observation.Replacement.Attempt {
+				failure.Attempt != observation.Replacement.Attempt ||
+				!managedCIKnownFailureClassification(failure.Classification) {
 				return false
 			}
 		}
@@ -260,7 +302,7 @@ func managedCISourceFailuresMatchRequest(observation github.ManagedCIObservation
 		source.WorkflowID <= 0 || !strings.EqualFold(strings.TrimSpace(source.Event), "pull_request") ||
 		!strings.EqualFold(strings.TrimSpace(source.Repository), strings.TrimSpace(request.Repository)) ||
 		source.PullRequest != request.PullRequest ||
-		!strings.EqualFold(strings.TrimSpace(source.BaseRefName), strings.TrimSpace(request.BaseRefName)) ||
+		strings.TrimSpace(source.BaseRefName) != strings.TrimSpace(request.BaseRefName) ||
 		!strings.EqualFold(strings.TrimSpace(source.HeadSHA), strings.TrimSpace(request.HeadSHA)) ||
 		!github.ValidManagedCIExecutionStatus(source.Status, source.Conclusion) ||
 		len(observation.Failures) != len(request.FailedChecks) {
@@ -330,7 +372,7 @@ func managedCIReplacementFollows(source, replacement github.ManagedCIExecution) 
 	if source.Repository == "" || replacement.Repository == "" ||
 		!strings.EqualFold(strings.TrimSpace(source.Repository), strings.TrimSpace(replacement.Repository)) ||
 		source.PullRequest <= 0 || source.PullRequest != replacement.PullRequest ||
-		!strings.EqualFold(strings.TrimSpace(source.BaseRefName), strings.TrimSpace(replacement.BaseRefName)) ||
+		strings.TrimSpace(source.BaseRefName) != strings.TrimSpace(replacement.BaseRefName) ||
 		!strings.EqualFold(strings.TrimSpace(source.HeadSHA), strings.TrimSpace(replacement.HeadSHA)) ||
 		source.WorkflowID <= 0 || source.WorkflowID != replacement.WorkflowID ||
 		!strings.EqualFold(strings.TrimSpace(source.Event), "pull_request") ||
