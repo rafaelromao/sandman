@@ -30,6 +30,7 @@ type ciWaitRegistration struct {
 	ExecutionID          string                  `json:"execution_id,omitempty"`
 	SourceExecutionID    string                  `json:"source_execution_id,omitempty"`
 	SourceWorkflowRunID  int64                   `json:"source_workflow_run_id,omitempty"`
+	SourceWorkflowRunIDs []int64                 `json:"source_workflow_run_ids,omitempty"`
 	ActionsExecution     *ciWaitActionsExecution `json:"actions_execution,omitempty"`
 	StartedUnixSeconds   int64                   `json:"started_unix_seconds"`
 	DeadlineUnixSeconds  int64                   `json:"deadline_unix_seconds"`
@@ -49,6 +50,7 @@ type ciWaitActionsExecution struct {
 	Attempt     int    `json:"attempt"`
 	Status      string `json:"status"`
 	Conclusion  string `json:"conclusion"`
+	Replacement bool   `json:"replacement,omitempty"`
 }
 
 func (s *runSession) ciWaitEvidence(ctx context.Context, workDir string, pr *github.PR, headSHA string, verified ...*github.ManagedCIExecution) (map[string]any, error) {
@@ -115,6 +117,12 @@ func (s *runSession) ciWaitEvidence(ctx context.Context, workDir string, pr *git
 			if pr.CIFailedWorkflow != nil {
 				sourceRunID, _ = strconv.ParseInt(strings.TrimSpace(pr.CIFailedWorkflow.RunID), 10, 64)
 			}
+			sourceRunIDs := []int64(nil)
+			if !os.IsNotExist(err) && !newHead {
+				sourceRunIDs = append(sourceRunIDs, registration.SourceWorkflowRunIDs...)
+				sourceRunIDs = appendWorkflowRunID(sourceRunIDs, registration.SourceWorkflowRunID)
+			}
+			sourceRunIDs = appendWorkflowRunID(sourceRunIDs, sourceRunID)
 			registration = ciWaitRegistration{
 				Protocol:             ciWaitProtocol,
 				PullRequest:          pr.Number,
@@ -122,6 +130,7 @@ func (s *runSession) ciWaitEvidence(ctx context.Context, workDir string, pr *git
 				ExecutionID:          pr.CIExecutionID,
 				SourceExecutionID:    pr.CIExecutionID,
 				SourceWorkflowRunID:  sourceRunID,
+				SourceWorkflowRunIDs: sourceRunIDs,
 				ActionsExecution:     selectedActions,
 				StartedUnixSeconds:   now.Unix(),
 				DeadlineUnixSeconds:  now.Add(ciWaitTimeout).Unix(),
@@ -145,6 +154,9 @@ func (s *runSession) ciWaitEvidence(ctx context.Context, workDir string, pr *git
 			if pr.CIFailedWorkflow != nil {
 				registration.SourceWorkflowRunID, _ = strconv.ParseInt(strings.TrimSpace(pr.CIFailedWorkflow.RunID), 10, 64)
 			}
+			registration.SourceWorkflowRunIDs = appendWorkflowRunID(
+				registration.SourceWorkflowRunIDs, registration.SourceWorkflowRunID,
+			)
 			registration.ActionsExecution = selectedActions
 			registration.StartedUnixSeconds = now.Unix()
 			registration.DeadlineUnixSeconds = now.Add(ciWaitTimeout).Unix()
@@ -185,7 +197,7 @@ func ciWaitActionsExecutionFromExecution(execution *github.ManagedCIExecution, p
 		WorkflowID: execution.WorkflowID, Event: strings.ToLower(strings.TrimSpace(execution.Event)),
 		RunID: execution.RunID, RunNumber: execution.RunNumber, Attempt: execution.Attempt,
 		Status:     strings.ToLower(strings.TrimSpace(execution.Status)),
-		Conclusion: strings.ToLower(strings.TrimSpace(execution.Conclusion)),
+		Conclusion: strings.ToLower(strings.TrimSpace(execution.Conclusion)), Replacement: true,
 	}
 }
 
@@ -262,8 +274,20 @@ func managedCIExecutionID(execution *ciWaitActionsExecution) string {
 	return fmt.Sprintf("actions:%d:%d:%d", execution.WorkflowID, execution.RunID, execution.Attempt)
 }
 
+func appendWorkflowRunID(runIDs []int64, runID int64) []int64 {
+	if runID <= 0 {
+		return runIDs
+	}
+	for _, existing := range runIDs {
+		if existing == runID {
+			return runIDs
+		}
+	}
+	return append(runIDs, runID)
+}
+
 func ciWaitEvidenceFromRegistration(registration ciWaitRegistration, prNumber int) (map[string]any, error) {
-	if registration.Protocol != ciWaitProtocol || registration.PullRequest != prNumber || registration.HeadSHA == "" || registration.SourceWorkflowRunID < 0 || registration.DeadlineUnixSeconds <= registration.StartedUnixSeconds || registration.EffectiveTimeoutSecs <= 0 || registration.DeadlineUnixSeconds-registration.StartedUnixSeconds != registration.EffectiveTimeoutSecs ||
+	if registration.Protocol != ciWaitProtocol || registration.PullRequest != prNumber || registration.HeadSHA == "" || registration.SourceWorkflowRunID < 0 || !validCIWaitSourceWorkflowRunIDs(registration.SourceWorkflowRunIDs) || registration.DeadlineUnixSeconds <= registration.StartedUnixSeconds || registration.EffectiveTimeoutSecs <= 0 || registration.DeadlineUnixSeconds-registration.StartedUnixSeconds != registration.EffectiveTimeoutSecs ||
 		(registration.ActionsExecution != nil && (registration.ActionsExecution.PullRequest != prNumber ||
 			!strings.EqualFold(registration.ActionsExecution.HeadSHA, registration.HeadSHA) ||
 			registration.ActionsExecution.Repository == "" || registration.ActionsExecution.BaseRefName == "" ||
@@ -283,6 +307,9 @@ func ciWaitEvidenceFromRegistration(registration ciWaitRegistration, prNumber in
 		"effective_timeout_seconds": registration.EffectiveTimeoutSecs,
 		"remediation_attempts":      registration.RemediationAttempts,
 	}
+	if len(registration.SourceWorkflowRunIDs) > 0 {
+		wait["source_workflow_run_ids"] = append([]int64(nil), registration.SourceWorkflowRunIDs...)
+	}
 	if registration.ExecutionID != "" {
 		wait["execution_id"] = registration.ExecutionID
 	}
@@ -300,9 +327,24 @@ func ciWaitEvidenceFromRegistration(registration ciWaitRegistration, prNumber in
 			"run_id":     registration.ActionsExecution.RunID,
 			"run_number": registration.ActionsExecution.RunNumber, "attempt": registration.ActionsExecution.Attempt,
 			"status": registration.ActionsExecution.Status, "conclusion": registration.ActionsExecution.Conclusion,
+			"replacement": registration.ActionsExecution.Replacement,
 		}
 	}
 	return map[string]any{"ci_wait": wait}, nil
+}
+
+func validCIWaitSourceWorkflowRunIDs(runIDs []int64) bool {
+	seen := make(map[int64]struct{}, len(runIDs))
+	for _, runID := range runIDs {
+		if runID <= 0 {
+			return false
+		}
+		if _, duplicate := seen[runID]; duplicate {
+			return false
+		}
+		seen[runID] = struct{}{}
+	}
+	return true
 }
 
 func readCIWaitRegistration(path string) (ciWaitRegistration, error) {

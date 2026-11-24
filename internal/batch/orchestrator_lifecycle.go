@@ -672,6 +672,19 @@ func managedCIReplacementStillResolves(evidence map[string]any, pr *github.PR, r
 	}
 }
 
+func managedCIReplacementWait(evidence map[string]any) (map[string]any, bool) {
+	wait, ok := evidence["ci_wait"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	execution, ok := wait["actions_execution"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	replacement, _ := execution["replacement"].(bool)
+	return execution, replacement
+}
+
 func managedCIWaitExecutionLinkedToPR(pr *github.PR, execution, wait map[string]any) bool {
 	if pr == nil {
 		return false
@@ -688,7 +701,25 @@ func managedCIWaitExecutionLinkedToPR(pr *github.PR, execution, wait map[string]
 	if currentFailedRunID == "" {
 		return false
 	}
-	return currentFailedRunID == runID || sourceRunID != "" && currentFailedRunID == sourceRunID
+	if currentFailedRunID == runID || sourceRunID != "" && currentFailedRunID == sourceRunID {
+		return true
+	}
+	switch runIDs := wait["source_workflow_run_ids"].(type) {
+	case []int64:
+		for _, id := range runIDs {
+			if currentFailedRunID == fmt.Sprint(id) {
+				return true
+			}
+		}
+	case []any:
+		for _, value := range runIDs {
+			id, ok := lifecycleDeadlineSeconds(value)
+			if ok && currentFailedRunID == fmt.Sprint(id) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ciActive reports whether CI is currently resolving on the pull request:
@@ -772,6 +803,7 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 	}
 	repository := ""
 	var managedCIReplacement *github.ManagedCIExecution
+	var managedCIReplacementFailure map[string]any
 	confirmedIndependentCI := false
 	managedCIObservationUnknown := false
 	gate := lifecycleGateNone
@@ -863,8 +895,16 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 		gate = lifecycleGate(checkPRExternalGateForPR(pr, headSHA, true))
 	}
 	if err == nil && pr != nil {
-		repository, managedCIReplacement, confirmedIndependentCI, managedCIObservationUnknown =
-			s.observeManagedCIFailure(ctx, pr, headSHA, repository)
+		observation := s.observeManagedCIFailure(ctx, pr, headSHA, repository)
+		repository = observation.Repository
+		managedCIReplacement = observation.Replacement
+		confirmedIndependentCI = observation.IndependentFailure
+		managedCIObservationUnknown = observation.Unknown
+		if observation.Replacement != nil && len(observation.ReplacementFailures) > 0 {
+			pr, managedCIReplacementFailure = managedCIReplacementFailurePR(
+				pr, observation.Replacement, observation.ReplacementFailures,
+			)
+		}
 		if managedCIObservationUnknown && !confirmedIndependentCI && ctx.Err() == nil {
 			err = errors.New("managed CI observation is inconclusive")
 		}
@@ -984,6 +1024,11 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 	}
 	if evidence.payload == nil {
 		evidence.payload = map[string]any{}
+	}
+	if managedCIReplacementFailure != nil {
+		evidence.payload = mergeLifecycleDiagnostics(evidence.payload, map[string]any{
+			"managed_ci_replacement_failure": managedCIReplacementFailure,
+		})
 	}
 	reviewResolution := s.expiredReviewRequestResolution(ctx, pr.Number, headSHA, evidence.payload)
 	if reviewResolution.expired {
@@ -1105,6 +1150,27 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 			case gateCIWaitTimeout:
 				// A current-head review does not extend CI's bounded operation.
 				// Apply CI_WAIT_TIMEOUT when CI expires first.
+			}
+			if gate == gateCIWaitTimeout && managedCIReplacementStillResolves(evidence.payload, pr, repository) {
+				if execution, isReplacement := managedCIReplacementWait(evidence.payload); isReplacement {
+					deadlineEvidence := cloneLifecycleExtras(deadlines)
+					deadlineEvidence["gate"] = gateCIWaitTimeout
+					deadlineEvidence["reason"] = "CI_WAIT_TIMEOUT"
+					deadlineEvidence["next_action"] = lifecycleDeadlineNextAction(gateCIWaitTimeout)
+					deadlineEvidence["pull_request"] = pr.Number
+					deadlineEvidence["head_sha"] = headSHA
+					switch {
+					case strings.EqualFold(stringEvidence(execution, "status"), "completed") &&
+						strings.EqualFold(stringEvidence(execution, "conclusion"), "success"):
+						deadlineEvidence["replacement_ci_outcome"] = "passed_required_check_rollup_stale"
+					default:
+						deadlineEvidence["replacement_ci_outcome"] = "pending_past_deadline"
+					}
+					return lifecycleVerdict{
+						Action:   lifecycleAwait,
+						Evidence: continuityHold(deadlineEvidence, gateCIWaitTimeout),
+					}
+				}
 			}
 			if deferExpiredOperation {
 				extras := cloneLifecycleExtras(decision.extras)

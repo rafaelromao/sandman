@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/config"
@@ -595,21 +594,8 @@ func fastForwardUnheldBaseBranch(repoPath, sourceBranch, remoteRef string) error
 }
 
 func worktreePathsForBranch(repoPath, branchRef string) ([]string, error) {
-	var out []byte
-	for attempt := 0; ; attempt++ {
-		var err error
-		out, err = runGitCommand(repoPath, "worktree", "list", "--porcelain")
-		if err == nil {
-			break
-		}
-		if attempt == 0 && isConcurrentWorktreeRemoval(out) {
-			// Git may observe the metadata directory between the removal of
-			// the last worktree record and a concurrent worktree add. Retry
-			// only this specific filesystem race; persistent or unrelated
-			// failures remain errors.
-			time.Sleep(10 * time.Millisecond)
-			continue
-		}
+	out, err := runGitCommand(repoPath, "worktree", "list", "--porcelain")
+	if err != nil {
 		return nil, fmt.Errorf("git worktree list --porcelain: %w\n%s", err, out)
 	}
 	var paths []string
@@ -624,12 +610,6 @@ func worktreePathsForBranch(repoPath, branchRef string) ([]string, error) {
 		}
 	}
 	return paths, nil
-}
-
-func isConcurrentWorktreeRemoval(out []byte) bool {
-	const missingWorktreeMetadata = "/.git/worktrees': No such file or directory"
-	return strings.Contains(string(out), "fatal: Invalid path '") &&
-		strings.Contains(string(out), missingWorktreeMetadata)
 }
 
 func gitMergeBaseIsAncestor(dir, a, b string) (bool, error) {

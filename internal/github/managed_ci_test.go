@@ -88,6 +88,50 @@ func TestCLIClient_ManagedCIConfirmsIncidentRunnerShortage(t *testing.T) {
 	}
 }
 
+func TestCLIClient_ManagedCIReplaysIncidentAndFindsReplacementOutsideRollup(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: fixtureAt(t, "incident-replay", "jobs.json")},
+		{output: fixtureAt(t, "incident-replay", "source-run.json")},
+		{output: fixtureAt(t, "incident-replay", "shortage-annotations.json")},
+		{output: fixtureAt(t, "incident-replay", "aggregate-annotations.json")},
+		{output: fixtureAt(t, "incident-replay", "workflow-runs.json")},
+	}}
+	observation, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
+		Repository: "rafaelromao/sandman", PullRequest: 3029, BaseRefName: "main",
+		HeadSHA: "f454c9077c0c41046fe8429e57777795b66e46a7", FailedWorkflowRunID: "45270155099",
+		FailedChecks: []CIFailedCheck{
+			{
+				Name:       "build (macos-latest)",
+				DetailsURL: "https://github.com/rafaelromao/sandman/actions/runs/45270155099/job/138027527159",
+			},
+			{
+				Name:       "quality-gate",
+				DetailsURL: "https://github.com/rafaelromao/sandman/actions/runs/45270155099/job/138036364100",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(observation.Failures) != 2 ||
+		observation.Failures[0].Classification != ManagedCIRunnerShortage ||
+		observation.Failures[1].Classification != ManagedCIDependentFailure ||
+		len(observation.Failures[1].CausedByChecks) != 1 ||
+		observation.Failures[1].CausedByChecks[0] != "build-macos" {
+		t.Fatalf("incident failures = %+v, want shortage plus its explicitly dependent quality gate", observation.Failures)
+	}
+	if observation.Replacement == nil || observation.Replacement.RunID != 45276896986 ||
+		observation.Replacement.RunNumber != 5289 || observation.Replacement.Conclusion != "success" {
+		t.Fatalf("replacement = %+v, want verified same-PR/head/workflow run 45276896986", observation.Replacement)
+	}
+	for _, call := range runner.calls {
+		if strings.Contains(strings.ToUpper(strings.Join(call.args, " ")), "POST") {
+			t.Fatalf("managed CI observation attempted a mutation: %v", call.args)
+		}
+	}
+}
+
 func TestCLIClient_ManagedCILeavesUnrelatedAnnotatedActionFailureUnexplained(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"repo","owner":{"login":"owner"}}`},
@@ -182,11 +226,41 @@ func TestClassifyManagedCIFailureRequiresCorroboratedRunnerAcquisitionEvidence(t
 	}{
 		{
 			name: "explicit runner acquisition failure",
-			job:  CIWorkflowJob{Status: "completed", Conclusion: "cancelled"},
+			job:  observedUnassignedRunnerJob(),
 			annotations: []checkRunAnnotation{{
 				Level: "failure", Message: "The job was not acquired by a runner within 10 minutes of the request.",
 			}},
 			want: ManagedCIRunnerShortage,
+		},
+		{
+			name: "GitHub hosted runner incident annotation",
+			job:  observedUnassignedRunnerJob(),
+			annotations: []checkRunAnnotation{{
+				Level: "failure", Message: "The job was not acquired by Runner of type hosted even after multiple attempts",
+			}},
+			want: ManagedCIRunnerShortage,
+		},
+		{
+			name: "missing runner assignment fields are inconclusive",
+			job: CIWorkflowJob{
+				Status: "completed", Conclusion: "cancelled", Steps: []CIWorkflowStep{},
+				runnerNameObserved: true, stepsObserved: true,
+			},
+			annotations: []checkRunAnnotation{{
+				Level: "failure", Message: "The job was not acquired by Runner of type hosted even after multiple attempts",
+			}},
+			want: ManagedCIUnexplainedFailure,
+		},
+		{
+			name: "missing steps field is inconclusive",
+			job: CIWorkflowJob{
+				Status: "completed", Conclusion: "cancelled",
+				runnerIDObserved: true, runnerNameObserved: true,
+			},
+			annotations: []checkRunAnnotation{{
+				Level: "failure", Message: "The job was not acquired by Runner of type hosted even after multiple attempts",
+			}},
+			want: ManagedCIUnexplainedFailure,
 		},
 		{
 			name: "generic cancellation",
@@ -238,6 +312,17 @@ func TestClassifyManagedCIFailureRequiresCorroboratedRunnerAcquisitionEvidence(t
 			want: ManagedCIConfirmedCodeTestFailure,
 		},
 		{
+			name: "go test failure output",
+			job: CIWorkflowJob{Status: "completed", Conclusion: "failure", RunnerID: 42, Steps: []CIWorkflowStep{
+				{Name: "go test ./...", Status: "completed", Conclusion: "failure"},
+			}},
+			annotations: []checkRunAnnotation{{
+				Level: "failure", Path: "internal/example_test.go", StartLine: 42,
+				Message: "--- FAIL: TestExample (0.00s)",
+			}},
+			want: ManagedCIConfirmedCodeTestFailure,
+		},
+		{
 			name: "file annotation on unrelated failed step is unexplained",
 			job: CIWorkflowJob{Status: "completed", Conclusion: "failure", RunnerID: 42, Steps: []CIWorkflowStep{
 				{Name: "Upload coverage artifact", Status: "completed", Conclusion: "failure"},
@@ -257,10 +342,76 @@ func TestClassifyManagedCIFailureRequiresCorroboratedRunnerAcquisitionEvidence(t
 			}},
 			want: ManagedCIUnexplainedFailure,
 		},
+		{
+			name: "infrastructure status annotation is not a code test failure",
+			job: CIWorkflowJob{Status: "completed", Conclusion: "failure", RunnerID: 42, Steps: []CIWorkflowStep{
+				{Name: "go test ./...", Status: "completed", Conclusion: "failure"},
+			}},
+			annotations: []checkRunAnnotation{{
+				Level: "failure", Path: "internal/dependency_test.go", StartLine: 42,
+				Message: "Expected HTTP 200, got 503 from the dependency mirror.",
+			}},
+			want: ManagedCIUnexplainedFailure,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			if got := classifyManagedCIFailure(test.job, test.annotations); got != test.want {
+				t.Fatalf("classification = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func observedUnassignedRunnerJob() CIWorkflowJob {
+	return CIWorkflowJob{
+		Status: "completed", Conclusion: "cancelled", Steps: []CIWorkflowStep{},
+		runnerIDObserved: true, runnerNameObserved: true, stepsObserved: true,
+	}
+}
+
+func TestCIWorkflowJobJSONTracksExplicitMissingRunnerAndStepEvidence(t *testing.T) {
+	annotation := []checkRunAnnotation{{
+		Level: "failure", Message: "The job was not acquired by Runner of type hosted even after multiple attempts",
+	}}
+	tests := []struct {
+		name string
+		json string
+		want ManagedCIFailureClassification
+	}{
+		{
+			name: "explicit null runner and empty steps",
+			json: `{"status":"completed","conclusion":"cancelled","runner_id":null,"runner_name":null,"steps":[]}`,
+			want: ManagedCIRunnerShortage,
+		},
+		{
+			name: "omitted runner id",
+			json: `{"status":"completed","conclusion":"cancelled","runner_name":null,"steps":[]}`,
+			want: ManagedCIUnexplainedFailure,
+		},
+		{
+			name: "omitted runner name",
+			json: `{"status":"completed","conclusion":"cancelled","runner_id":null,"steps":[]}`,
+			want: ManagedCIUnexplainedFailure,
+		},
+		{
+			name: "omitted steps",
+			json: `{"status":"completed","conclusion":"cancelled","runner_id":null,"runner_name":null}`,
+			want: ManagedCIUnexplainedFailure,
+		},
+		{
+			name: "null steps",
+			json: `{"status":"completed","conclusion":"cancelled","runner_id":null,"runner_name":null,"steps":null}`,
+			want: ManagedCIUnexplainedFailure,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var job CIWorkflowJob
+			if err := json.Unmarshal([]byte(test.json), &job); err != nil {
+				t.Fatal(err)
+			}
+			if got := classifyManagedCIFailure(job, annotation); got != test.want {
 				t.Fatalf("classification = %q, want %q", got, test.want)
 			}
 		})
@@ -291,6 +442,15 @@ func TestClassifyManagedCIFailureUsesExplicitAggregateCauseNotJobName(t *testing
 	})
 	if classification != ManagedCIUnexplainedFailure || len(causes) != 0 {
 		t.Fatalf("mixed aggregate annotations = (%q, %v), want unexplained", classification, causes)
+	}
+
+	classification, causes = classifyManagedCIFailureEvidence(job, []checkRunAnnotation{
+		{Level: "failure", Message: "Process completed with exit code 1."},
+		{Level: "failure", Message: "build-macos must succeed (result: abandoned)"},
+	})
+	if classification != ManagedCIDependentFailure || len(causes) != 1 || causes[0] != "build-macos" {
+		t.Fatalf("incident aggregate wrapper and prerequisite = (%q, %v), want only build-macos dependency",
+			classification, causes)
 	}
 }
 
@@ -421,7 +581,9 @@ func TestCLIClient_ManagedCIDiagnosesCompletedReplacementFailure(t *testing.T) {
 		len(observation.ReplacementFailures) != 1 ||
 		observation.ReplacementFailures[0].Classification != ManagedCIConfirmedCodeTestFailure ||
 		observation.ReplacementFailures[0].RunID != observation.Replacement.RunID ||
-		observation.ReplacementFailures[0].Attempt != observation.Replacement.Attempt {
+		observation.ReplacementFailures[0].Attempt != observation.Replacement.Attempt ||
+		observation.ReplacementFailures[0].DetailsURL !=
+			"https://github.com/owner/repo/actions/runs/45276896986/job/138027527160" {
 		t.Fatalf("completed replacement diagnosis = %+v; want its independently confirmed test failure", observation)
 	}
 	for _, call := range runner.calls {
@@ -517,23 +679,70 @@ func TestCLIClient_ManagedCIRequiresEveryReplacementIdentityField(t *testing.T) 
 	}
 }
 
-func TestCLIClient_ManagedCIReportsIncompleteReplacementLookup(t *testing.T) {
+func TestCLIClient_ManagedCIConfirmsFailedJobInActiveWorkflow(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"repo","owner":{"login":"owner"}}`},
-		{output: fixtureText(t, "jobs.json")},
-		{output: fixtureText(t, "workflow-run.json")},
-		{output: fixtureText(t, "annotations.json")},
-		{output: fixtureAt(t, "incomplete", "workflow-runs.json")},
+		{output: `{"total_count":1,"jobs":[{"id":11,"run_id":101,"run_attempt":1,"name":"unit-tests","status":"completed","conclusion":"failure","runner_id":42,"runner_name":"GitHub Actions 42","steps":[{"name":"go test ./...","status":"completed","conclusion":"failure","number":5}],"check_run_url":"https://api.github.com/repos/owner/repo/check-runs/201"}]}`},
+		{output: `{"id":101,"run_number":5288,"run_attempt":1,"workflow_id":9,"event":"pull_request","status":"in_progress","head_sha":"head","pull_requests":[{"number":17,"base":{"ref":"main"},"head":{"sha":"head"}}]}`},
+		{output: `[{"annotation_level":"failure","message":"TestExample failed.","path":"internal/example_test.go","start_line":42}]`},
 	}}
-	_, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
-		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "incident-source-head",
-		FailedWorkflowRunID: "45270155099",
+	observation, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "head",
+		FailedWorkflowRunID: "101",
 		FailedChecks: []CIFailedCheck{{
-			Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527159",
+			Name: "unit-tests", DetailsURL: "https://github.com/owner/repo/actions/runs/101/job/11",
 		}},
 	})
-	if err == nil {
-		t.Fatal("incomplete workflow-run list was treated as proof that no replacement exists")
+	if err != nil {
+		t.Fatalf("active workflow with a completed failed job was inconclusive: %v", err)
+	}
+	if observation.Source.Status != "in_progress" || len(observation.Failures) != 1 ||
+		observation.Failures[0].Classification != ManagedCIConfirmedCodeTestFailure {
+		t.Fatalf("active-workflow observation = %+v, want a confirmed failed job in the current execution", observation)
+	}
+	if len(runner.calls) != 4 {
+		t.Fatalf("active workflow unexpectedly queried replacement runs: calls=%d", len(runner.calls))
+	}
+}
+
+func TestCLIClient_ManagedCIReportsIncompleteReplacementLookup(t *testing.T) {
+	tests := []struct {
+		name string
+		runs string
+	}{
+		{name: "truncated positive count", runs: fixtureAt(t, "incomplete", "workflow-runs.json")},
+		{name: "empty object", runs: `{}`},
+		{name: "zero count without the source execution", runs: `{"total_count":0,"workflow_runs":[]}`},
+		{name: "missing run array", runs: `{"total_count":1}`},
+		{name: "missing count", runs: `{"workflow_runs":[]}`},
+		{name: "source omitted from a complete empty listing", runs: `{"total_count":0,"workflow_runs":[]}`},
+		{name: "duplicate source rows", runs: `{"total_count":2,"workflow_runs":[{"id":45270155099,"run_number":5288,"run_attempt":1,"workflow_id":273743359,"event":"pull_request","status":"completed","conclusion":"cancelled","head_sha":"incident-source-head","pull_requests":[{"number":17,"base":{"ref":"main"},"head":{"sha":"incident-source-head"}}]},{"id":45270155099,"run_number":5288,"run_attempt":1,"workflow_id":273743359,"event":"pull_request","status":"completed","conclusion":"cancelled","head_sha":"incident-source-head","pull_requests":[{"number":17,"base":{"ref":"main"},"head":{"sha":"incident-source-head"}}]}]}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			runner := &fakeRunner{responses: []fakeResponse{
+				{output: `{"name":"repo","owner":{"login":"owner"}}`},
+				{output: fixtureText(t, "jobs.json")},
+				{output: fixtureText(t, "workflow-run.json")},
+				{output: fixtureText(t, "annotations.json")},
+				{output: test.runs},
+			}}
+			observation, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
+				Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "incident-source-head",
+				FailedWorkflowRunID: "45270155099",
+				FailedChecks: []CIFailedCheck{{
+					Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527159",
+				}},
+			})
+			if err == nil {
+				t.Fatal("incomplete or source-less workflow-run list was treated as proof that no replacement exists")
+			}
+			if observation.Source.RunID != 45270155099 ||
+				len(observation.Failures) != 1 ||
+				observation.Failures[0].Classification != ManagedCIRunnerShortage {
+				t.Fatalf("partial observation = %+v, want validated source evidence preserved with lookup error", observation)
+			}
+		})
 	}
 }
 

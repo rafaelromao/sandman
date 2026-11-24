@@ -1,0 +1,14 @@
+[
+  {
+    "annotation_level": "failure",
+    "message": "Process completed with exit code 1.",
+    "path": ".github",
+    "start_line": 18
+  },
+  {
+    "annotation_level": "failure",
+    "message": "build-macos must succeed (result: abandoned)",
+    "path": ".github",
+    "start_line": 17
+  }
+]

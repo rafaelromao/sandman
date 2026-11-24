@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -223,16 +224,36 @@ type PRReviewCommentLister interface {
 // CIWorkflowJob is a job in the latest attempt of a GitHub Actions workflow
 // run. Database IDs are used by the rerun endpoint; browser URLs are not.
 type CIWorkflowJob struct {
-	ID          int64            `json:"id"`
-	RunID       int64            `json:"run_id"`
-	RunAttempt  int              `json:"run_attempt"`
-	Name        string           `json:"name"`
-	Status      string           `json:"status"`
-	Conclusion  string           `json:"conclusion"`
-	RunnerID    int64            `json:"runner_id"`
-	RunnerName  string           `json:"runner_name"`
-	CheckRunURL string           `json:"check_run_url"`
-	Steps       []CIWorkflowStep `json:"steps"`
+	ID                 int64            `json:"id"`
+	RunID              int64            `json:"run_id"`
+	RunAttempt         int              `json:"run_attempt"`
+	Name               string           `json:"name"`
+	Status             string           `json:"status"`
+	Conclusion         string           `json:"conclusion"`
+	RunnerID           int64            `json:"runner_id"`
+	RunnerName         string           `json:"runner_name"`
+	CheckRunURL        string           `json:"check_run_url"`
+	Steps              []CIWorkflowStep `json:"steps"`
+	runnerIDObserved   bool
+	runnerNameObserved bool
+	stepsObserved      bool
+}
+
+func (j *CIWorkflowJob) UnmarshalJSON(data []byte) error {
+	type workflowJobAlias CIWorkflowJob
+	var decoded workflowJobAlias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*j = CIWorkflowJob(decoded)
+	_, j.runnerIDObserved = fields["runner_id"]
+	_, j.runnerNameObserved = fields["runner_name"]
+	_, j.stepsObserved = fields["steps"]
+	return nil
 }
 
 // CIWorkflowStep is one executed or skipped step in a workflow job.

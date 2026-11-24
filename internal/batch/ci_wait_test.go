@@ -130,6 +130,53 @@ func TestCIWaitEvidenceKeepsVerifiedActionsGenerationMonotonicAcrossRestart(t *t
 	}
 }
 
+func TestCIWaitEvidenceLinksStaleAncestorAfterTwoVerifiedReplacementsAndRestart(t *testing.T) {
+	workDir := t.TempDir()
+	now := time.Unix(25_000, 0).UTC()
+	session := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+	pr := &github.PR{
+		Number: 17, HeadRefOid: "head", BaseRefName: "main", StatusCheckRollup: "failure",
+		CIExecutionID: "rollup-a", CIFailedWorkflow: &github.CIFailedWorkflow{RunID: "100"},
+	}
+	execution := func(runID, runNumber int64) *github.ManagedCIExecution {
+		return &github.ManagedCIExecution{
+			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "head",
+			WorkflowID: 9, Event: "pull_request", RunID: runID, RunNumber: runNumber, Attempt: 1,
+			Status: "queued",
+		}
+	}
+	if _, err := session.ciWaitEvidence(context.Background(), workDir, pr, "head", execution(101, 51)); err != nil {
+		t.Fatal(err)
+	}
+	pr.CIExecutionID = "rollup-b"
+	pr.CIFailedWorkflow = &github.CIFailedWorkflow{RunID: "101"}
+	now = now.Add(5 * time.Minute)
+	if _, err := session.ciWaitEvidence(context.Background(), workDir, pr, "head", execution(102, 52)); err != nil {
+		t.Fatal(err)
+	}
+
+	pr.CIExecutionID = "rollup-a"
+	pr.CIFailedWorkflow = &github.CIFailedWorkflow{RunID: "100"}
+	restarted := &runSession{opts: runSessionOptions{now: func() time.Time { return now.Add(time.Minute) }}}
+	evidence, err := restarted.ciWaitEvidence(context.Background(), workDir, pr, "head")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wait := evidence["ci_wait"].(map[string]any)
+	if wait["execution_id"] != "actions:9:102:1" ||
+		!managedCIReplacementStillResolves(evidence, pr, "owner/repo") {
+		t.Fatalf("stale ancestor read lost the verified A→B→C replacement chain: %#v", evidence)
+	}
+	registration, err := readCIWaitRegistration(filepath.Join(workDir, ".sandman", "state", "17.ci_wait.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(registration.SourceWorkflowRunIDs) != 2 ||
+		registration.SourceWorkflowRunIDs[0] != 100 || registration.SourceWorkflowRunIDs[1] != 101 {
+		t.Fatalf("persisted replacement ancestry = %v, want [100 101]", registration.SourceWorkflowRunIDs)
+	}
+}
+
 func TestCIWaitEvidenceDoesNotUseReplacementForDifferentUnverifiedRollup(t *testing.T) {
 	workDir := t.TempDir()
 	now := time.Unix(30_000, 0).UTC()

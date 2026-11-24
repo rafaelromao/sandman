@@ -1,0 +1,36 @@
+{
+  "total_count": 2,
+  "jobs": [
+    {
+      "id": 138027527159,
+      "run_id": 45270155099,
+      "run_attempt": 1,
+      "name": "build (macos-latest)",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "runner_id": 0,
+      "runner_name": "",
+      "steps": [],
+      "check_run_url": "https://api.github.com/repos/rafaelromao/sandman/check-runs/138027527159"
+    },
+    {
+      "id": 138036364100,
+      "run_id": 45270155099,
+      "run_attempt": 1,
+      "name": "quality-gate",
+      "status": "completed",
+      "conclusion": "failure",
+      "runner_id": 1000027661,
+      "runner_name": "GitHub Actions 1000027661",
+      "steps": [
+        {
+          "name": "Require mandatory checks",
+          "status": "completed",
+          "conclusion": "failure",
+          "number": 3
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/rafaelromao/sandman/check-runs/138036364100"
+    }
+  ]
+}

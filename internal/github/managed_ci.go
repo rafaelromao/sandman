@@ -12,8 +12,9 @@ import (
 
 const managedCIPageSize = 100
 
-var runnerAcquisitionAnnotation = regexp.MustCompile(`(?i)\bthe job was not acquired by a runner\b|\bjob was not acquired by a runner\b`)
+var runnerAcquisitionAnnotation = regexp.MustCompile(`(?i)\bthe job was not acquired by (?:a\s+)?runner\b|\bjob was not acquired by (?:a\s+)?runner\b`)
 var failedPrerequisiteAnnotation = regexp.MustCompile(`(?i)^([a-z0-9][a-z0-9_.-]*) must succeed \(result: ([^)]+)\)$`)
+var aggregateExitWrapperAnnotation = regexp.MustCompile(`(?i)^process completed with exit code \d+\.?$`)
 var managedCITestStepName = regexp.MustCompile(
 	`(?i)^(?:(?:run|execute)\s+)?` +
 		`(?:go\s+test|pytest|python(?:3(?:\.\d+)?)?\s+-m\s+(?:pytest|unittest)|` +
@@ -22,10 +23,17 @@ var managedCITestStepName = regexp.MustCompile(
 		`^(?:(?:run|execute)\s+)?(?:(?:unit|integration|smoke|e2e|acceptance|regression)\s+)?tests?(?:\s|$)`,
 )
 var managedCITestDiagnostic = regexp.MustCompile(
-	`(?i)\btest\w*\b.*\b(?:fail|error|panic)\w*\b|` +
-		`\b(?:assert(?:ion)?|expected|actual|got|want)\b|` +
+	`(?i)(?:^|\b)---\s*fail:\s*test\w*\b|` +
+		`\btest[A-Z]\w*\b.{0,160}\b(?:fail|error|panic)\w*\b|` +
+		`\bassert(?:ion)?\s+(?:failed|error)\b|` +
+		`\bexpected\b.{1,120}\b(?:got|actual)\b|` +
+		`\b(?:got|actual)\b.{1,120}\bwant\b|` +
 		`\b(?:undefined:|cannot use|syntax error|declared and not used|imported and not used|` +
 		`not enough arguments|too many arguments|cannot find module|failed to compile|compilation failed)\b`,
+)
+var managedCIInfrastructureDiagnostic = regexp.MustCompile(
+	`(?i)\b(?:dependency mirror|connection refused|connection reset|network timeout|timed out|` +
+		`rate limit|service unavailable|HTTP\s+[45]\d{2}\b|DNS lookup|TLS handshake|proxy error)\b`,
 )
 
 type actionsWorkflowRun struct {
@@ -51,6 +59,31 @@ type actionsWorkflowRun struct {
 type actionsWorkflowRunsPage struct {
 	TotalCount   int                  `json:"total_count"`
 	WorkflowRuns []actionsWorkflowRun `json:"workflow_runs"`
+}
+
+func (p *actionsWorkflowRunsPage) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	totalCountJSON, hasTotalCount := fields["total_count"]
+	runsJSON, hasRuns := fields["workflow_runs"]
+	if !hasTotalCount || len(totalCountJSON) == 0 || string(totalCountJSON) == "null" ||
+		!hasRuns || len(runsJSON) == 0 || string(runsJSON) == "null" {
+		return fmt.Errorf("workflow-run page is missing required fields")
+	}
+	var decoded struct {
+		TotalCount   int                  `json:"total_count"`
+		WorkflowRuns []actionsWorkflowRun `json:"workflow_runs"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if decoded.TotalCount < 0 || decoded.WorkflowRuns == nil {
+		return fmt.Errorf("workflow-run page has invalid count or run list")
+	}
+	*p = actionsWorkflowRunsPage(decoded)
+	return nil
 }
 
 type checkRunAnnotation struct {
@@ -275,6 +308,8 @@ func (c *CLIClient) diagnoseManagedCIExecutionFailure(
 		classification, causedByChecks := classifyManagedCIFailureEvidence(job, annotations)
 		failures = append(failures, ManagedCIFailureEvidence{
 			JobID: job.ID, RunID: job.RunID, Attempt: job.RunAttempt, CheckName: strings.TrimSpace(job.Name),
+			DetailsURL: fmt.Sprintf("https://github.com/%s/%s/actions/runs/%d/job/%d",
+				owner, repo, execution.RunID, job.ID),
 			Classification: classification, CausedByChecks: causedByChecks,
 		})
 	}
@@ -407,6 +442,7 @@ func classifyManagedCIFailure(job CIWorkflowJob, annotations []checkRunAnnotatio
 func classifyManagedCIFailureEvidence(job CIWorkflowJob, annotations []checkRunAnnotation) (ManagedCIFailureClassification, []string) {
 	if strings.EqualFold(strings.TrimSpace(job.Status), "completed") &&
 		strings.EqualFold(strings.TrimSpace(job.Conclusion), "cancelled") &&
+		job.runnerIDObserved && job.runnerNameObserved && job.stepsObserved && job.Steps != nil &&
 		job.RunnerID == 0 && strings.TrimSpace(job.RunnerName) == "" && len(job.Steps) == 0 {
 		for _, annotation := range annotations {
 			if strings.EqualFold(strings.TrimSpace(annotation.Level), "failure") &&
@@ -424,7 +460,14 @@ func classifyManagedCIFailureEvidence(job CIWorkflowJob, annotations []checkRunA
 				continue
 			}
 			match := failedPrerequisiteAnnotation.FindStringSubmatch(strings.TrimSpace(annotation.Message))
-			if len(match) != 3 || strings.EqualFold(strings.TrimSpace(match[2]), "success") {
+			if len(match) != 3 {
+				if aggregateExitWrapperAnnotation.MatchString(strings.TrimSpace(annotation.Message)) {
+					continue
+				}
+				dependentAnnotationsOnly = false
+				break
+			}
+			if strings.EqualFold(strings.TrimSpace(match[2]), "success") {
 				dependentAnnotationsOnly = false
 				break
 			}
@@ -449,9 +492,11 @@ func classifyManagedCIFailureEvidence(job CIWorkflowJob, annotations []checkRunA
 		}
 		if failedTestStep {
 			for _, annotation := range annotations {
+				message := strings.TrimSpace(annotation.Message)
 				if strings.EqualFold(strings.TrimSpace(annotation.Level), "failure") &&
 					strings.TrimSpace(annotation.Path) != "" && annotation.StartLine > 0 &&
-					managedCITestDiagnostic.MatchString(strings.TrimSpace(annotation.Message)) {
+					!managedCIInfrastructureDiagnostic.MatchString(message) &&
+					managedCITestDiagnostic.MatchString(message) {
 					return ManagedCIConfirmedCodeTestFailure, nil
 				}
 			}
@@ -493,6 +538,12 @@ func (c *CLIClient) findManagedCIReplacement(ctx context.Context, owner, repo st
 	var selected *ManagedCIExecution
 	runNumbers := make(map[int64]int64, len(runs))
 	runIDs := make(map[int64]int64, len(runs))
+	type workflowRunIdentity struct {
+		runID   int64
+		attempt int
+	}
+	seenExecutions := make(map[workflowRunIdentity]struct{}, len(runs))
+	sourceListed := false
 	for _, run := range runs {
 		if run.ID <= 0 || run.RunNumber <= 0 || run.RunAttempt <= 0 ||
 			strings.TrimSpace(run.Event) == "" || !ValidManagedCIExecutionStatus(run.Status, run.Conclusion) ||
@@ -508,12 +559,27 @@ func (c *CLIClient) findManagedCIReplacement(ctx context.Context, owner, repo st
 			return nil, fmt.Errorf("workflow-run list reuses a run number for different run IDs")
 		}
 		runNumbers[run.RunNumber] = run.ID
+		identity := workflowRunIdentity{runID: run.ID, attempt: run.RunAttempt}
+		if _, duplicate := seenExecutions[identity]; duplicate {
+			return nil, fmt.Errorf("workflow-run list duplicates an execution identity")
+		}
+		seenExecutions[identity] = struct{}{}
 		if previous, exists := runIDs[run.ID]; exists && previous != run.RunNumber {
 			return nil, fmt.Errorf("workflow-run list assigns conflicting run numbers to one run ID")
 		}
 		runIDs[run.ID] = run.RunNumber
 		if run.ID == source.RunID && run.RunNumber != source.RunNumber {
 			return nil, fmt.Errorf("workflow-run list contains a contradictory attempt identity")
+		}
+		if run.ID == source.RunID {
+			sourceExecution, ok := managedCIExecution(run, source.Repository, ManagedCIRequest{
+				Repository: source.Repository, PullRequest: source.PullRequest,
+				BaseRefName: source.BaseRefName, HeadSHA: source.HeadSHA,
+			})
+			if !ok || sourceExecution.Attempt < source.Attempt {
+				return nil, fmt.Errorf("workflow-run list does not confirm the source pull request execution")
+			}
+			sourceListed = true
 		}
 		isNewer := run.ID == source.RunID && run.RunAttempt > source.Attempt
 		if run.ID != source.RunID && run.RunNumber > source.RunNumber {
@@ -542,6 +608,9 @@ func (c *CLIClient) findManagedCIReplacement(ctx context.Context, owner, repo st
 		}
 		copy := candidate
 		selected = &copy
+	}
+	if !sourceListed && selected == nil {
+		return nil, fmt.Errorf("workflow-run list omits the verified source and contains no verified replacement")
 	}
 	return selected, nil
 }
