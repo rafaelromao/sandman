@@ -312,19 +312,33 @@ type ManagedCIExecution struct {
 // ManagedCIFailureEvidence classifies one failed check execution by its
 // provider job identity, never by a display name alone.
 type ManagedCIFailureEvidence struct {
-	JobID          int64
-	RunID          int64
-	Attempt        int
-	CheckName      string
-	DetailsURL     string
-	Classification ManagedCIFailureClassification
-	CausedByChecks []string
+	JobID           int64
+	RunID           int64
+	Attempt         int
+	CheckName       string
+	DetailsURL      string
+	Classification  ManagedCIFailureClassification
+	CausedByChecks  []string
+	CausedByResults []string
+}
+
+// ManagedCIJobEvidence identifies every job in the observed workflow attempt.
+// It lets aggregate prerequisites bind against the full attempt, not only the
+// failed checks currently visible in the PR rollup.
+type ManagedCIJobEvidence struct {
+	JobID      int64
+	RunID      int64
+	Attempt    int
+	Name       string
+	Status     string
+	Conclusion string
 }
 
 // ManagedCIObservation contains read-only evidence for the observed workflow
 // and any verified newer execution.
 type ManagedCIObservation struct {
 	Source              ManagedCIExecution
+	SourceJobs          []ManagedCIJobEvidence
 	Failures            []ManagedCIFailureEvidence
 	Replacement         *ManagedCIExecution
 	ReplacementFailures []ManagedCIFailureEvidence

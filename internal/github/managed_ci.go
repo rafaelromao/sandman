@@ -13,9 +13,11 @@ import (
 const managedCIPageSize = 100
 
 var runnerAcquisitionAnnotation = regexp.MustCompile(
-	`(?i)\bthe job was not acquired by a runner within 10 minutes of the request\b|` +
-		`\bthe job was not acquired by runner of type hosted even after multiple attempts\b`,
+	`(?i)^the job was not acquired by a runner within 10 minutes of the request\.?` +
+		`(?:\s*job was cancelled\.?)?$|` +
+		`^the job was not acquired by runner of type hosted even after multiple attempts\.?$`,
 )
+var selfHostedRunnerAnnotation = regexp.MustCompile(`(?i)\bself[- ]hosted\b`)
 var failedPrerequisiteAnnotation = regexp.MustCompile(`(?i)^([a-z0-9][a-z0-9_.-]*) must succeed \(result: ([^)]+)\)$`)
 var aggregateExitWrapperAnnotation = regexp.MustCompile(`(?i)^process completed with exit code \d+\.?$`)
 var managedCITestStepName = regexp.MustCompile(
@@ -38,7 +40,8 @@ var managedCITestDiagnostic = regexp.MustCompile(
 var managedCIInfrastructureDiagnostic = regexp.MustCompile(
 	`(?i)\b(?:dependency mirror|connection refused|connection reset|network timeout|timed out|` +
 		`rate limit|service unavailable|HTTP\s+[45]\d{2}\b|DNS lookup|TLS handshake|proxy error|` +
-		`artifact|cache|runner|checkout|download|upload|provision|install|registry|container image)\b`,
+		`artifact|cache|runner|checkout|download|upload|provision(?:ing)?|install|registry|container image|` +
+		`fixture|writable volume|read-only filesystem)\b`,
 )
 
 type actionsWorkflowRun struct {
@@ -171,7 +174,10 @@ func (c *CLIClient) ObserveManagedCI(ctx context.Context, request ManagedCIReque
 		return ManagedCIObservation{}, fmt.Errorf("managed CI observation: source workflow identity is incomplete or conflicting")
 	}
 
-	observation := ManagedCIObservation{Source: source, Failures: make([]ManagedCIFailureEvidence, 0, len(request.FailedChecks))}
+	observation := ManagedCIObservation{
+		Source: source, SourceJobs: managedCIJobsForAttempt(jobs, sourceAttempt),
+		Failures: make([]ManagedCIFailureEvidence, 0, len(request.FailedChecks)),
+	}
 	verifiedShortage := false
 	for index, check := range request.FailedChecks {
 		job := selectedJobs[index]
@@ -183,14 +189,14 @@ func (c *CLIClient) ObserveManagedCI(ctx context.Context, request ManagedCIReque
 		if err != nil {
 			return ManagedCIObservation{}, fmt.Errorf("managed CI observation: list check-run annotations: %w", err)
 		}
-		classification, causedByChecks := classifyManagedCIFailureEvidence(job, annotations)
+		classification, causedByChecks, causedByResults := classifyManagedCIFailureEvidenceDetailed(job, annotations)
 		if classification == ManagedCIRunnerShortage {
 			verifiedShortage = true
 		}
 		observation.Failures = append(observation.Failures, ManagedCIFailureEvidence{
 			JobID: job.ID, RunID: job.RunID, Attempt: job.RunAttempt,
 			CheckName: strings.TrimSpace(check.Name), DetailsURL: strings.TrimSpace(check.DetailsURL),
-			Classification: classification, CausedByChecks: causedByChecks,
+			Classification: classification, CausedByChecks: causedByChecks, CausedByResults: causedByResults,
 		})
 	}
 	if verifiedShortage {
@@ -274,6 +280,21 @@ func (c *CLIClient) listManagedWorkflowJobs(ctx context.Context, owner, repo str
 	return jobs, nil
 }
 
+func managedCIJobsForAttempt(jobs []CIWorkflowJob, attempt int) []ManagedCIJobEvidence {
+	out := make([]ManagedCIJobEvidence, 0, len(jobs))
+	for _, job := range jobs {
+		if job.RunAttempt != attempt {
+			continue
+		}
+		out = append(out, ManagedCIJobEvidence{
+			JobID: job.ID, RunID: job.RunID, Attempt: job.RunAttempt, Name: strings.TrimSpace(job.Name),
+			Status:     strings.ToLower(strings.TrimSpace(job.Status)),
+			Conclusion: strings.ToLower(strings.TrimSpace(job.Conclusion)),
+		})
+	}
+	return out
+}
+
 func (c *CLIClient) diagnoseManagedCIExecutionFailure(
 	ctx context.Context,
 	owner, repo string,
@@ -286,7 +307,9 @@ func (c *CLIClient) diagnoseManagedCIExecutionFailure(
 	}
 	verified, ok := managedCIExecution(run, execution.Repository, request)
 	if !ok || verified.RunID != execution.RunID || verified.RunNumber != execution.RunNumber ||
-		verified.WorkflowID != execution.WorkflowID || verified.Attempt != execution.Attempt {
+		verified.WorkflowID != execution.WorkflowID || verified.Attempt != execution.Attempt ||
+		!strings.EqualFold(verified.Status, execution.Status) ||
+		!strings.EqualFold(verified.Conclusion, execution.Conclusion) {
 		return nil, fmt.Errorf("managed CI observation: completed replacement identity changed during diagnosis")
 	}
 	jobs, err := c.listManagedWorkflowJobs(ctx, owner, repo, execution.RunID)
@@ -310,12 +333,12 @@ func (c *CLIClient) diagnoseManagedCIExecutionFailure(
 		if err != nil {
 			return nil, fmt.Errorf("managed CI observation: list replacement annotations: %w", err)
 		}
-		classification, causedByChecks := classifyManagedCIFailureEvidence(job, annotations)
+		classification, causedByChecks, causedByResults := classifyManagedCIFailureEvidenceDetailed(job, annotations)
 		failures = append(failures, ManagedCIFailureEvidence{
 			JobID: job.ID, RunID: job.RunID, Attempt: job.RunAttempt, CheckName: strings.TrimSpace(job.Name),
 			DetailsURL: fmt.Sprintf("https://github.com/%s/%s/actions/runs/%d/job/%d",
 				owner, repo, execution.RunID, job.ID),
-			Classification: classification, CausedByChecks: causedByChecks,
+			Classification: classification, CausedByChecks: causedByChecks, CausedByResults: causedByResults,
 		})
 	}
 	if len(failures) == 0 {
@@ -445,20 +468,31 @@ func classifyManagedCIFailure(job CIWorkflowJob, annotations []checkRunAnnotatio
 }
 
 func classifyManagedCIFailureEvidence(job CIWorkflowJob, annotations []checkRunAnnotation) (ManagedCIFailureClassification, []string) {
+	classification, causes, _ := classifyManagedCIFailureEvidenceDetailed(job, annotations)
+	return classification, causes
+}
+
+func classifyManagedCIFailureEvidenceDetailed(
+	job CIWorkflowJob,
+	annotations []checkRunAnnotation,
+) (ManagedCIFailureClassification, []string, []string) {
 	if strings.EqualFold(strings.TrimSpace(job.Status), "completed") &&
 		strings.EqualFold(strings.TrimSpace(job.Conclusion), "cancelled") &&
 		job.runnerIDObserved && job.runnerNameObserved && job.stepsObserved && job.Steps != nil &&
 		job.RunnerID == 0 && strings.TrimSpace(job.RunnerName) == "" && len(job.Steps) == 0 {
 		for _, annotation := range annotations {
+			message := strings.TrimSpace(annotation.Message)
 			if strings.EqualFold(strings.TrimSpace(annotation.Level), "failure") &&
-				runnerAcquisitionAnnotation.MatchString(strings.TrimSpace(annotation.Message)) {
-				return ManagedCIRunnerShortage, nil
+				runnerAcquisitionAnnotation.MatchString(message) &&
+				!selfHostedRunnerAnnotation.MatchString(message) {
+				return ManagedCIRunnerShortage, nil, nil
 			}
 		}
 	}
 	if strings.EqualFold(strings.TrimSpace(job.Status), "completed") &&
 		strings.EqualFold(strings.TrimSpace(job.Conclusion), "failure") {
 		var causes []string
+		var results []string
 		dependentAnnotationsOnly := true
 		for _, annotation := range annotations {
 			if !strings.EqualFold(strings.TrimSpace(annotation.Level), "failure") {
@@ -477,9 +511,10 @@ func classifyManagedCIFailureEvidence(job CIWorkflowJob, annotations []checkRunA
 				break
 			}
 			causes = append(causes, strings.TrimSpace(match[1]))
+			results = append(results, strings.TrimSpace(match[2]))
 		}
 		if dependentAnnotationsOnly && len(causes) > 0 {
-			return ManagedCIDependentFailure, causes
+			return ManagedCIDependentFailure, causes, results
 		}
 	}
 	if strings.EqualFold(strings.TrimSpace(job.Status), "completed") &&
@@ -502,12 +537,12 @@ func classifyManagedCIFailureEvidence(job CIWorkflowJob, annotations []checkRunA
 					managedCITestSourcePath(annotation.Path) && annotation.StartLine > 0 &&
 					!managedCIInfrastructureDiagnostic.MatchString(message) &&
 					managedCITestDiagnostic.MatchString(message) {
-					return ManagedCIConfirmedCodeTestFailure, nil
+					return ManagedCIConfirmedCodeTestFailure, nil, nil
 				}
 			}
 		}
 	}
-	return ManagedCIUnexplainedFailure, nil
+	return ManagedCIUnexplainedFailure, nil, nil
 }
 
 func managedCITestSourcePath(path string) bool {

@@ -620,7 +620,7 @@ func activeWaitAuthorized(gate lifecycleGate, pr *github.PR, headSHA string, rev
 
 func managedCIReplacementStillResolves(evidence map[string]any, pr *github.PR, repository string) bool {
 	if pr == nil || pr.Number <= 0 || pr.CIMultipleFailedWorkflows ||
-		strings.TrimSpace(repository) == "" || strings.TrimSpace(pr.BaseRefName) == "" ||
+		strings.TrimSpace(pr.BaseRefName) == "" ||
 		strings.TrimSpace(pr.HeadRefOid) == "" {
 		return false
 	}
@@ -638,10 +638,12 @@ func managedCIReplacementStillResolves(evidence map[string]any, pr *github.PR, r
 	runID, runOK := lifecycleDeadlineSeconds(execution["run_id"])
 	runNumber, numberOK := lifecycleDeadlineSeconds(execution["run_number"])
 	attempt, attemptOK := lifecycleDeadlineSeconds(execution["attempt"])
+	executionRepository := strings.TrimSpace(stringEvidence(execution, "repository"))
 	expectedExecutionID := fmt.Sprintf("actions:%d:%d:%d", workflowID, runID, attempt)
 	if !prOK || executionPR != int64(pr.Number) || !workflowOK || !runOK || !numberOK || !attemptOK ||
 		workflowID <= 0 || runID <= 0 || runNumber <= 0 || attempt <= 0 ||
-		!strings.EqualFold(strings.TrimSpace(stringEvidence(execution, "repository")), strings.TrimSpace(repository)) ||
+		executionRepository == "" || strings.TrimSpace(repository) != "" &&
+		!strings.EqualFold(executionRepository, strings.TrimSpace(repository)) ||
 		!strings.EqualFold(strings.TrimSpace(stringEvidence(execution, "event")), "pull_request") ||
 		!strings.EqualFold(strings.TrimSpace(stringEvidence(execution, "head_sha")), strings.TrimSpace(pr.HeadRefOid)) ||
 		strings.TrimSpace(stringEvidence(execution, "base_ref_name")) != strings.TrimSpace(pr.BaseRefName) ||
@@ -654,7 +656,10 @@ func managedCIReplacementStillResolves(evidence map[string]any, pr *github.PR, r
 		if strings.TrimSpace(pr.CIExecutionID) == "" {
 			// An incomplete rollup identity is not contradictory; retain the
 			// already bounded operation while GitHub's read catches up.
-		} else if !managedCIWaitExecutionLinkedToPR(pr, execution, wait) {
+		} else if failedRunID := managedCIFailedRunID(pr); failedRunID != "" &&
+			!managedCIWaitExecutionLinkedToPR(pr, execution, wait) {
+			return false
+		} else if failedRunID == "" && !ciActive(pr, pr.HeadRefOid) {
 			return false
 		}
 	}
@@ -672,6 +677,16 @@ func managedCIReplacementStillResolves(evidence map[string]any, pr *github.PR, r
 	default:
 		return false
 	}
+}
+
+func managedCIFailedRunID(pr *github.PR) string {
+	if pr == nil {
+		return ""
+	}
+	if pr.CIFailedWorkflow != nil {
+		return strings.TrimSpace(pr.CIFailedWorkflow.RunID)
+	}
+	return strings.TrimSpace(pr.CIActiveFailedWorkflowRunID)
 }
 
 func managedCIReplacementRollupIsStale(
@@ -742,6 +757,15 @@ func managedCIWaitMatchesReplacement(evidence map[string]any, replacement *githu
 		strings.EqualFold(stringEvidence(execution, "conclusion"), strings.TrimSpace(replacement.Conclusion))
 }
 
+func managedCIWaitIncludesExecution(evidence map[string]any, candidate *github.ManagedCIExecution) bool {
+	wait, ok := evidence["ci_wait"].(map[string]any)
+	if !ok || candidate == nil {
+		return false
+	}
+	execution, ok := wait["actions_execution"].(map[string]any)
+	return ok && managedCIWaitExecutionIdentityMatches(execution, candidate)
+}
+
 func managedCIReplacementOutcomeConflicts(evidence map[string]any, candidate *github.ManagedCIExecution) bool {
 	wait, ok := evidence["ci_wait"].(map[string]any)
 	if !ok || candidate == nil {
@@ -757,6 +781,50 @@ func managedCIReplacementOutcomeConflicts(evidence map[string]any, candidate *gi
 	candidateConclusion := strings.ToLower(strings.TrimSpace(candidate.Conclusion))
 	return retainedStatus == "completed" && candidateStatus == "completed" &&
 		retainedConclusion != "" && candidateConclusion != "" && retainedConclusion != candidateConclusion
+}
+
+func managedCISourceSupersededByWait(
+	evidence map[string]any,
+	pr *github.PR,
+	source *github.ManagedCIExecution,
+) bool {
+	if pr == nil || source == nil {
+		return false
+	}
+	wait, ok := evidence["ci_wait"].(map[string]any)
+	if !ok {
+		return false
+	}
+	execution, ok := wait["actions_execution"].(map[string]any)
+	if !ok {
+		return false
+	}
+	retained, ok := ciWaitActionsExecutionFromEvidence(execution)
+	if !ok {
+		return false
+	}
+	candidate := ciWaitActionsExecutionFromExecution(source, pr, pr.HeadRefOid)
+	return candidate != nil && compareCIWaitActionsExecution(candidate, retained) == -1
+}
+
+func ciWaitActionsExecutionFromEvidence(evidence map[string]any) (*ciWaitActionsExecution, bool) {
+	pullRequest, prOK := lifecycleDeadlineSeconds(evidence["pull_request"])
+	workflowID, workflowOK := lifecycleDeadlineSeconds(evidence["workflow_id"])
+	runID, runOK := lifecycleDeadlineSeconds(evidence["run_id"])
+	runNumber, runNumberOK := lifecycleDeadlineSeconds(evidence["run_number"])
+	attempt, attemptOK := lifecycleDeadlineSeconds(evidence["attempt"])
+	if !prOK || !workflowOK || !runOK || !runNumberOK || !attemptOK {
+		return nil, false
+	}
+	return &ciWaitActionsExecution{
+		Repository:  strings.TrimSpace(stringEvidence(evidence, "repository")),
+		PullRequest: int(pullRequest), BaseRefName: strings.TrimSpace(stringEvidence(evidence, "base_ref_name")),
+		HeadSHA:    strings.TrimSpace(stringEvidence(evidence, "head_sha")),
+		WorkflowID: workflowID, Event: strings.ToLower(strings.TrimSpace(stringEvidence(evidence, "event"))),
+		RunID: runID, RunNumber: runNumber, Attempt: int(attempt),
+		Status:     strings.ToLower(strings.TrimSpace(stringEvidence(evidence, "status"))),
+		Conclusion: strings.ToLower(strings.TrimSpace(stringEvidence(evidence, "conclusion"))),
+	}, true
 }
 
 func managedCIWaitExecutionIdentityMatches(execution map[string]any, candidate *github.ManagedCIExecution) bool {
@@ -1147,6 +1215,9 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 	if evidence.payload == nil {
 		evidence.payload = map[string]any{}
 	}
+	if retained, established := s.priorOperationEvidence(runID, branch, worktreeHeadSHA); established {
+		evidence.payload = mergeLifecycleDiagnostics(retained, evidence.payload)
+	}
 	reviewResolution := s.expiredReviewRequestResolution(ctx, pr.Number, headSHA, evidence.payload)
 	if reviewResolution.expired {
 		evidence.payload = cloneLifecycleExtras(evidence.payload)
@@ -1180,10 +1251,30 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 		strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) {
 		var ciEvidence map[string]any
 		var ciErr error
-		if !confirmedIndependentCI {
+		if confirmedIndependentCI {
+			if managedCISourceSupersededByWait(evidence.payload, pr, managedCISource) {
+				// A confirmed failure from an older attempt cannot spend repair
+				// budget after a newer verified replacement generation was retained.
+				confirmedIndependentCI = false
+			}
+		}
+		waitExecution := managedCIReplacement
+		sourceIsRetainedExecution := waitExecution == nil &&
+			managedCIWaitIncludesExecution(evidence.payload, managedCISource)
+		if sourceIsRetainedExecution {
+			// The replacement may move from Replacement to Source once its jobs
+			// appear in the PR rollup. Reconcile its status without changing the
+			// bounded execution identity or deadline.
+			waitExecution = managedCISource
+		}
+		if !confirmedIndependentCI || waitExecution != nil {
 			switch strings.ToLower(strings.TrimSpace(pr.StatusCheckRollup)) {
 			case "pending", "in_progress", "queued", "failure":
-				ciEvidence, ciErr = s.ciWaitEvidence(ctx, workDir, pr, headSHA, managedCIReplacement)
+				if waitExecution != nil {
+					ciEvidence, ciErr = s.ciWaitEvidence(ctx, workDir, pr, headSHA, waitExecution)
+				} else {
+					ciEvidence, ciErr = s.ciWaitEvidence(ctx, workDir, pr, headSHA)
+				}
 			default:
 				if strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "DIRTY") ||
 					strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "CONFLICTING") {
@@ -1201,20 +1292,34 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 				"next_action": "inspect the persisted CI wait state and repair the current pull-request checks",
 			}}
 		}
-		if !confirmedIndependentCI && managedCIReplacement != nil {
-			if managedCIReplacementOutcomeConflicts(ciEvidence, managedCIReplacement) {
+		if !confirmedIndependentCI && waitExecution != nil {
+			if managedCIReplacementOutcomeConflicts(ciEvidence, waitExecution) {
 				retained, _ := s.priorOperationEvidence(runID, branch, worktreeHeadSHA)
 				retained["lookup_error"] = "contradictory-managed-ci-replacement-outcome"
 				return lifecycleVerdict{
 					Action: lifecycleAwait, Evidence: retained, Kind: lifecycleVerdictGitHubUnavailable,
 				}
 			}
-			if managedCIWaitMatchesReplacement(ciEvidence, managedCIReplacement) &&
+			if managedCIReplacement != nil && managedCIWaitMatchesReplacement(ciEvidence, managedCIReplacement) &&
 				len(managedCIReplacementFailures) > 0 {
 				pr, managedCIReplacementFailure = managedCIReplacementFailurePR(
 					pr, managedCIReplacement, managedCIReplacementFailures,
 				)
 				confirmedIndependentCI = managedCIReplacementFailure != nil
+			}
+		}
+		if !confirmedIndependentCI && sourceIsRetainedExecution && managedCISource != nil &&
+			strings.EqualFold(strings.TrimSpace(managedCISource.Status), "completed") &&
+			!strings.EqualFold(strings.TrimSpace(managedCISource.Conclusion), "success") {
+			retained, established := s.priorOperationEvidence(runID, branch, worktreeHeadSHA)
+			if !established {
+				retained = cloneLifecycleExtras(ciEvidence)
+			} else {
+				retained = mergeLifecycleDiagnostics(retained, ciEvidence)
+			}
+			retained["lookup_error"] = "current-replacement-source-failure-unclassified"
+			return lifecycleVerdict{
+				Action: lifecycleAwait, Evidence: retained, Kind: lifecycleVerdictGitHubUnavailable,
 			}
 		}
 		if !confirmedIndependentCI &&

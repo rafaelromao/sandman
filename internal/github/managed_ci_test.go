@@ -118,7 +118,10 @@ func TestCLIClient_ManagedCIReplaysIncidentAndFindsReplacementOutsideRollup(t *t
 		observation.Failures[0].Classification != ManagedCIRunnerShortage ||
 		observation.Failures[1].Classification != ManagedCIDependentFailure ||
 		len(observation.Failures[1].CausedByChecks) != 1 ||
-		observation.Failures[1].CausedByChecks[0] != "build-macos" {
+		observation.Failures[1].CausedByChecks[0] != "build-macos" ||
+		len(observation.Failures[1].CausedByResults) != 1 ||
+		observation.Failures[1].CausedByResults[0] != "abandoned" ||
+		len(observation.SourceJobs) != 2 {
 		t.Fatalf("incident failures = %+v, want shortage plus its explicitly dependent quality gate", observation.Failures)
 	}
 	if observation.Replacement == nil || observation.Replacement.RunID != 45276896986 ||
@@ -284,6 +287,16 @@ func TestClassifyManagedCIFailureRequiresCorroboratedRunnerAcquisitionEvidence(t
 			want: ManagedCIUnexplainedFailure,
 		},
 		{
+			name: "runner acquisition annotation identifies a self-hosted pool",
+			job:  observedUnassignedRunnerJob(),
+			annotations: []checkRunAnnotation{{
+				Level: "failure",
+				Message: "The job was not acquired by a runner within 10 minutes of the request " +
+					"for the self-hosted pool.",
+			}},
+			want: ManagedCIUnexplainedFailure,
+		},
+		{
 			name: "aggregate name is not runner shortage evidence",
 			job:  CIWorkflowJob{Name: "quality-gate", Status: "completed", Conclusion: "failure"},
 			annotations: []checkRunAnnotation{{
@@ -369,6 +382,17 @@ func TestClassifyManagedCIFailureRequiresCorroboratedRunnerAcquisitionEvidence(t
 			annotations: []checkRunAnnotation{{
 				Level: "failure", Path: "internal/example_test.go", StartLine: 42,
 				Message: "Expected an artifact cache entry, got none.",
+			}},
+			want: ManagedCIUnexplainedFailure,
+		},
+		{
+			name: "fixture provisioning diagnostic on a failed test step",
+			job: CIWorkflowJob{Status: "completed", Conclusion: "failure", RunnerID: 42, Steps: []CIWorkflowStep{
+				{Name: "go test ./...", Status: "completed", Conclusion: "failure"},
+			}},
+			annotations: []checkRunAnnotation{{
+				Level: "failure", Path: "internal/example_test.go", StartLine: 42,
+				Message: "Test fixture provisioning: expected a writable volume, got a read-only filesystem.",
 			}},
 			want: ManagedCIUnexplainedFailure,
 		},
@@ -653,6 +677,31 @@ func TestCLIClient_ManagedCIDiagnosesCompletedReplacementFailure(t *testing.T) {
 		if strings.Contains(strings.ToUpper(strings.Join(call.args, " ")), "POST") {
 			t.Fatalf("managed CI diagnosis attempted a mutation: %v", call.args)
 		}
+	}
+}
+
+func TestCLIClient_ManagedCIRejectsContradictoryReplacementAttemptConclusion(t *testing.T) {
+	attempt := fixtureAt(t, "new-run", "completed-failure-attempt.json")
+	attempt = strings.Replace(attempt, `"conclusion": "failure"`, `"conclusion": "success"`, 1)
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"repo","owner":{"login":"owner"}}`},
+		{output: fixtureText(t, "jobs.json")},
+		{output: fixtureText(t, "workflow-run.json")},
+		{output: fixtureText(t, "annotations.json")},
+		{output: fixtureAt(t, "new-run", "completed-failure-runs.json")},
+		{output: attempt},
+		{output: fixtureAt(t, "new-run", "completed-failure-jobs.json")},
+		{output: fixtureAt(t, "new-run", "completed-failure-annotations.json")},
+	}}
+	_, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "incident-source-head",
+		FailedWorkflowRunID: "45270155099",
+		FailedChecks: []CIFailedCheck{{
+			Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527159",
+		}},
+	})
+	if err == nil {
+		t.Fatal("contradictory replacement attempt conclusion was accepted for job diagnosis")
 	}
 }
 

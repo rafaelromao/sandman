@@ -177,7 +177,7 @@ func (s *runSession) observeManagedCIFailure(
 	}
 	if !verifiedShortage || observation.Replacement == nil ||
 		!managedCIReplacementFollows(observation.Source, *observation.Replacement) ||
-		!managedCIDependentFailuresMatchShortage(observation.Failures) {
+		!managedCIDependentFailuresMatchShortage(observation.Failures, observation.SourceJobs) {
 		return managedCIFailureObservation{
 			Repository: repository, Source: &source, IndependentFailure: independentFailure,
 		}
@@ -216,31 +216,69 @@ func managedCIKnownFailureClassification(classification github.ManagedCIFailureC
 	}
 }
 
-func managedCIDependentFailuresMatchShortage(failures []github.ManagedCIFailureEvidence) bool {
-	checkCounts := make(map[string]int, len(failures))
-	shortageCounts := make(map[string]int, len(failures))
+func managedCIDependentFailuresMatchShortage(
+	failures []github.ManagedCIFailureEvidence,
+	jobs []github.ManagedCIJobEvidence,
+) bool {
+	jobsByID := make(map[int64]github.ManagedCIJobEvidence, len(jobs))
+	jobsByName := make(map[string][]github.ManagedCIJobEvidence, len(jobs))
+	for _, job := range jobs {
+		if job.JobID <= 0 || job.RunID <= 0 || job.Attempt <= 0 || strings.TrimSpace(job.Name) == "" {
+			return false
+		}
+		if _, exists := jobsByID[job.JobID]; exists {
+			return false
+		}
+		jobsByID[job.JobID] = job
+		name := managedCICheckName(job.Name)
+		if name == "" {
+			return false
+		}
+		jobsByName[name] = append(jobsByName[name], job)
+	}
+	shortageByJob := make(map[int64]int, len(failures))
 	for _, failure := range failures {
-		name := managedCICheckName(failure.CheckName)
-		checkCounts[name]++
 		if failure.Classification == github.ManagedCIRunnerShortage {
-			shortageCounts[name]++
+			shortageByJob[failure.JobID]++
 		}
 	}
 	for _, failure := range failures {
 		if failure.Classification != github.ManagedCIDependentFailure {
 			continue
 		}
-		if len(failure.CausedByChecks) == 0 {
+		dependentJob, exists := jobsByID[failure.JobID]
+		if !exists || dependentJob.RunID != failure.RunID || dependentJob.Attempt != failure.Attempt ||
+			!strings.EqualFold(dependentJob.Name, failure.CheckName) ||
+			!strings.EqualFold(strings.TrimSpace(dependentJob.Status), "completed") ||
+			!strings.EqualFold(strings.TrimSpace(dependentJob.Conclusion), "failure") ||
+			len(failure.CausedByChecks) == 0 || len(failure.CausedByChecks) != len(failure.CausedByResults) {
 			return false
 		}
-		for _, cause := range failure.CausedByChecks {
+		for index, cause := range failure.CausedByChecks {
 			name := managedCICheckName(cause)
-			if checkCounts[name] != 1 || shortageCounts[name] != 1 {
+			matches := jobsByName[name]
+			if name == "" || len(matches) != 1 {
+				return false
+			}
+			causeJob := matches[0]
+			if causeJob.RunID != failure.RunID || causeJob.Attempt != failure.Attempt ||
+				!strings.EqualFold(strings.TrimSpace(causeJob.Status), "completed") ||
+				!managedCIPrerequisiteOutcomeCompatible(failure.CausedByResults[index], causeJob.Conclusion) ||
+				shortageByJob[causeJob.JobID] != 1 {
 				return false
 			}
 		}
 	}
 	return true
+}
+
+func managedCIPrerequisiteOutcomeCompatible(annotationResult, jobConclusion string) bool {
+	annotationResult = strings.ToLower(strings.TrimSpace(annotationResult))
+	jobConclusion = strings.ToLower(strings.TrimSpace(jobConclusion))
+	if annotationResult == "abandoned" {
+		return jobConclusion == "cancelled" || jobConclusion == "skipped" || jobConclusion == "abandoned"
+	}
+	return annotationResult != "" && annotationResult == jobConclusion && annotationResult != "success"
 }
 
 func managedCICheckName(name string) string {
@@ -261,6 +299,17 @@ func managedCIObservationMatchesRequest(observation github.ManagedCIObservation,
 	source := observation.Source
 	if !managedCISourceFailuresMatchRequest(observation, request) {
 		return false
+	}
+	sourceJobIDs := make(map[int64]struct{}, len(observation.SourceJobs))
+	for _, job := range observation.SourceJobs {
+		if job.JobID <= 0 || job.RunID != source.RunID || job.Attempt != source.Attempt ||
+			strings.TrimSpace(job.Name) == "" {
+			return false
+		}
+		if _, duplicate := sourceJobIDs[job.JobID]; duplicate {
+			return false
+		}
+		sourceJobIDs[job.JobID] = struct{}{}
 	}
 	if observation.Replacement != nil &&
 		!managedCIReplacementFollows(source, *observation.Replacement) {
