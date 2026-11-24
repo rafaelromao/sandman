@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -198,6 +199,59 @@ func TestCIWaitEvidenceDoesNotRegressCompletedExecutionOnStaleRead(t *testing.T)
 	if observed["status"] != "completed" || observed["conclusion"] != "failure" ||
 		staleWait["deadline_unix_seconds"] != deadline {
 		t.Fatalf("stale same-attempt read regressed the terminal observation: %#v", staleWait)
+	}
+}
+
+func TestCIWaitEvidenceRejectsContradictoryPersistedActionsStatus(t *testing.T) {
+	workDir := t.TempDir()
+	timeout := int64(ciWaitTimeout / time.Second)
+	registration := ciWaitRegistration{
+		Protocol: ciWaitProtocol, PullRequest: 17, HeadSHA: "head",
+		ExecutionID: "actions:9:101:1",
+		ActionsExecution: &ciWaitActionsExecution{
+			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "head",
+			WorkflowID: 9, Event: "pull_request", RunID: 101, RunNumber: 51, Attempt: 1,
+			Status: "queued", Conclusion: "success",
+		},
+		StartedUnixSeconds: 100, DeadlineUnixSeconds: 100 + timeout, EffectiveTimeoutSecs: timeout,
+	}
+	data, err := json.Marshal(registration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(workDir, ".sandman", "state", "17.ci_wait.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	evidence, err := (&runSession{}).ciWaitEvidence(
+		context.Background(), workDir,
+		&github.PR{Number: 17, HeadRefOid: "head", BaseRefName: "main"},
+		"head",
+	)
+	if err == nil || evidence != nil {
+		t.Fatalf("contradictory persisted status authorized CI wait: evidence=%#v err=%v", evidence, err)
+	}
+}
+
+func TestManagedCIReplacementStillResolvesRejectsContradictoryActionsStatus(t *testing.T) {
+	pr := &github.PR{Number: 17, HeadRefOid: "head", BaseRefName: "main"}
+	evidence := map[string]any{
+		"ci_wait": map[string]any{
+			"protocol": ciWaitProtocol, "head_sha": "head", "execution_id": "actions:9:101:1",
+			"actions_execution": map[string]any{
+				"repository": "owner/repo", "pull_request": 17, "base_ref_name": "main",
+				"head_sha": "head", "workflow_id": 9, "event": "pull_request",
+				"run_id": 101, "run_number": 51, "attempt": 1,
+				"status": "queued", "conclusion": "success",
+			},
+		},
+	}
+	if managedCIReplacementStillResolves(evidence, pr, "owner/repo") {
+		t.Fatalf("contradictory retained status authorized replacement wait")
 	}
 }
 

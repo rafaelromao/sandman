@@ -190,14 +190,7 @@ func ciWaitActionsExecutionFromExecution(execution *github.ManagedCIExecution, p
 }
 
 func validCIWaitActionsStatus(status, conclusion string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "queued", "in_progress", "waiting", "requested", "pending":
-		return true
-	case "completed":
-		return strings.TrimSpace(conclusion) != ""
-	default:
-		return false
-	}
+	return github.ValidManagedCIExecutionStatus(status, conclusion)
 }
 
 func managedCIExecutionStatusAdvances(candidate, retained *ciWaitActionsExecution) bool {
