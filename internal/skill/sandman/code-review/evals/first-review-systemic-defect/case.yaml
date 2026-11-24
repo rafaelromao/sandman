@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: first-review-systemic-defect
+expected_outcome: |
+  A single evidenced systemic defect triggers architectural escalation on the first review.

@@ -17,3 +17,22 @@ jobs:
   regression:
     if: github.event.pull_request.head.repo.full_name == github.repository && contains(github.event.pull_request.labels.*.name, 'release-validation')
     uses: ./.github/workflows/full-regression-linux.yml
+
+  code-review-evals:
+    if: github.event.pull_request.head.repo.full_name == github.repository && contains(github.event.pull_request.labels.*.name, 'release-validation')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned OpenCode CLI
+        run: npm install -g "opencode-ai@$(jq -r '.providers.opencode.cli' scripts/release_scenarios.json)"
+      - name: Run reviewer and grader
+        run: python3 scripts/review_skill_eval.py --output review-eval-results
+      - name: Upload decisions and grades
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: code-review-eval-results
+          path: review-eval-results

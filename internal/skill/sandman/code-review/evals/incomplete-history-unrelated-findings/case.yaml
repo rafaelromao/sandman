@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: incomplete-history-unrelated-findings
+expected_outcome: |
+  The reviewer reports the current defect without inferring recurrence from inconclusive history.

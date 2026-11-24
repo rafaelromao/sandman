@@ -24,6 +24,16 @@ const manifestFileName = ".sandman-sync-manifest.json"
 //go:embed sandman/**
 var embeddedSkills embed.FS
 
+// These inventories record complete file sets from before the review skill
+// rename (00ee6c44419a) and before the code-review evals (10761840bbd4).
+// Legacy installs may contain rendered settings, so only paths are compared.
+//
+//go:embed legacy-layouts/pre-code-review.txt
+var preCodeReviewLayout string
+
+//go:embed legacy-layouts/pre-code-review-evals.txt
+var preCodeReviewEvalsLayout string
+
 // DefaultSkill returns the embedded Sandman skill definition.
 func DefaultSkill() string {
 	data, err := fs.ReadFile(embeddedSkills, embeddedSkillRoot+"/SKILL.md")
@@ -158,21 +168,36 @@ func matchesLegacyManagedTree(targetDir string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("walk installed skill tree: %w", err)
 	}
-	if len(expectedFiles) != len(actualFiles) {
-		return false, nil
+	layouts := [][]string{
+		expectedFiles,
+		strings.Fields(preCodeReviewEvalsLayout),
+		strings.Fields(preCodeReviewLayout),
 	}
-	for _, rel := range expectedFiles {
-		if _, ok := actualFiles[rel]; ok {
-			continue
+	for _, layout := range layouts {
+		if matchesLegacyLayout(actualFiles, layout, false) || matchesLegacyLayout(actualFiles, layout, true) {
+			return true, nil
 		}
-		if rel == filepath.Join("code-review", "SKILL.md") {
-			if _, ok := actualFiles[filepath.Join("self-review", "SKILL.md")]; ok {
-				continue
+	}
+	return false, nil
+}
+
+func matchesLegacyLayout(actualFiles map[string]struct{}, layout []string, useSelfReview bool) bool {
+	if len(actualFiles) != len(layout) {
+		return false
+	}
+	for _, path := range layout {
+		// Apply the old name to the entire directory so the tree cannot
+		// mix files from both names.
+		if useSelfReview {
+			if rest, ok := strings.CutPrefix(filepath.ToSlash(path), "code-review/"); ok {
+				path = "self-review/" + rest
 			}
 		}
-		return false, nil
+		if _, ok := actualFiles[filepath.FromSlash(path)]; !ok {
+			return false
+		}
 	}
-	return true, nil
+	return true
 }
 
 func embeddedFileSet() ([]string, error) {
