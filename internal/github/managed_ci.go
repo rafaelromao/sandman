@@ -266,7 +266,7 @@ func (c *CLIClient) diagnoseManagedCIExecutionFailure(
 
 func managedCIExecution(run actionsWorkflowRun, repository string, request ManagedCIRequest) (ManagedCIExecution, bool) {
 	if run.ID <= 0 || run.RunNumber <= 0 || run.RunAttempt <= 0 || run.WorkflowID <= 0 ||
-		strings.TrimSpace(run.HeadSHA) == "" || !validManagedCIExecutionStatus(run.Status, run.Conclusion) {
+		strings.TrimSpace(run.HeadSHA) == "" || !ValidManagedCIExecutionStatus(run.Status, run.Conclusion) {
 		return ManagedCIExecution{}, false
 	}
 	if !strings.EqualFold(strings.TrimSpace(run.HeadSHA), request.HeadSHA) {
@@ -296,15 +296,21 @@ func managedCIExecution(run actionsWorkflowRun, repository string, request Manag
 	}, true
 }
 
-func validManagedCIExecutionStatus(status, conclusion string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
+// ValidManagedCIExecutionStatus reports whether an Actions execution status
+// and conclusion are a recognized, internally consistent pair.
+func ValidManagedCIExecutionStatus(status, conclusion string) bool {
+	status = strings.ToLower(strings.TrimSpace(status))
+	conclusion = strings.ToLower(strings.TrimSpace(conclusion))
+	switch status {
 	case "queued", "in_progress", "waiting", "requested", "pending":
-		return true
+		return conclusion == ""
 	case "completed":
-		return strings.TrimSpace(conclusion) != ""
-	default:
-		return false
+		switch conclusion {
+		case "action_required", "cancelled", "failure", "neutral", "success", "skipped", "stale", "startup_failure", "timed_out":
+			return true
+		}
 	}
+	return false
 }
 
 func parseManagedActionsJobURL(value, repository string) (actionsWorkflowJobDetails, bool) {
@@ -466,7 +472,7 @@ func (c *CLIClient) findManagedCIReplacement(ctx context.Context, owner, repo st
 	runIDs := make(map[int64]int64, len(runs))
 	for _, run := range runs {
 		if run.ID <= 0 || run.RunNumber <= 0 || run.RunAttempt <= 0 ||
-			strings.TrimSpace(run.Event) == "" || !validManagedCIExecutionStatus(run.Status, run.Conclusion) ||
+			strings.TrimSpace(run.Event) == "" || !ValidManagedCIExecutionStatus(run.Status, run.Conclusion) ||
 			strings.TrimSpace(run.HeadSHA) == "" || run.WorkflowID <= 0 {
 			return nil, fmt.Errorf("workflow-run list contains incomplete execution identity")
 		}

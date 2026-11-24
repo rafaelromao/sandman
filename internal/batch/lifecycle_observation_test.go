@@ -177,6 +177,9 @@ func TestLifecycleObservation_ReplacementStatusDoesNotManufactureGreenCI(t *test
 		{name: "running", status: "in_progress", wantAction: lifecycleAwait},
 		{name: "passed but required rollup is stale failure", status: "completed", conclusion: "success", wantAction: lifecycleAwait},
 		{name: "completed failure is actionable", status: "completed", conclusion: "failure", wantAction: lifecycleResume},
+		{name: "unknown replacement status is inconclusive", status: "mystery", wantAction: lifecycleResume},
+		{name: "unknown completed conclusion is inconclusive", status: "completed", conclusion: "mystery", wantAction: lifecycleResume},
+		{name: "active replacement with conclusion is contradictory", status: "queued", conclusion: "success", wantAction: lifecycleResume},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

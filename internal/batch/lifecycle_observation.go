@@ -101,6 +101,10 @@ func (s *runSession) observeManagedCIFailure(
 	if err != nil || !managedCIObservationMatchesRequest(observation, request) {
 		return repository, nil, false
 	}
+	if observation.Replacement != nil &&
+		!managedCIReplacementFollows(observation.Source, *observation.Replacement) {
+		return repository, nil, false
+	}
 	independentFailure := false
 	shortageOnly := len(observation.Failures) > 0
 	shortageChecks := make(map[string]struct{}, len(observation.Failures))
@@ -174,7 +178,15 @@ func managedCIObservationMatchesRequest(observation github.ManagedCIObservation,
 		source.PullRequest != request.PullRequest ||
 		!strings.EqualFold(strings.TrimSpace(source.BaseRefName), strings.TrimSpace(request.BaseRefName)) ||
 		!strings.EqualFold(strings.TrimSpace(source.HeadSHA), strings.TrimSpace(request.HeadSHA)) ||
+		!github.ValidManagedCIExecutionStatus(source.Status, source.Conclusion) ||
 		len(observation.Failures) != len(request.FailedChecks) {
+		return false
+	}
+	if observation.Replacement != nil &&
+		!managedCIReplacementFollows(source, *observation.Replacement) {
+		return false
+	}
+	if len(observation.ReplacementFailures) > 0 && observation.Replacement == nil {
 		return false
 	}
 	pending := make(map[string]int, len(request.FailedChecks))
@@ -222,7 +234,8 @@ func managedCIReplacementFollows(source, replacement github.ManagedCIExecution) 
 		!strings.EqualFold(strings.TrimSpace(replacement.Event), "pull_request") ||
 		source.RunID <= 0 || source.RunNumber <= 0 || source.Attempt <= 0 ||
 		replacement.RunID <= 0 || replacement.RunNumber <= 0 || replacement.Attempt <= 0 ||
-		strings.TrimSpace(replacement.Status) == "" {
+		!github.ValidManagedCIExecutionStatus(source.Status, source.Conclusion) ||
+		!github.ValidManagedCIExecutionStatus(replacement.Status, replacement.Conclusion) {
 		return false
 	}
 	if replacement.RunID == source.RunID {

@@ -9,6 +9,33 @@ import (
 	"testing"
 )
 
+func TestValidManagedCIExecutionStatusRequiresKnownConsistentPair(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     string
+		conclusion string
+		valid      bool
+	}{
+		{name: "queued", status: "queued", valid: true},
+		{name: "running", status: "in_progress", valid: true},
+		{name: "completed success", status: "completed", conclusion: "success", valid: true},
+		{name: "completed startup failure", status: "completed", conclusion: "startup_failure", valid: true},
+		{name: "unknown status", status: "mystery"},
+		{name: "unknown conclusion", status: "completed", conclusion: "mystery"},
+		{name: "completed without conclusion", status: "completed"},
+		{name: "queued with conclusion", status: "queued", conclusion: "success"},
+		{name: "running with conclusion", status: "in_progress", conclusion: "failure"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := ValidManagedCIExecutionStatus(test.status, test.conclusion); got != test.valid {
+				t.Fatalf("ValidManagedCIExecutionStatus(%q, %q) = %t, want %t",
+					test.status, test.conclusion, got, test.valid)
+			}
+		})
+	}
+}
+
 func TestCLIClient_ManagedCIConfirmsIncidentRunnerShortage(t *testing.T) {
 	fixture := func(name string) string {
 		t.Helper()
