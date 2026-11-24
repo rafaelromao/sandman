@@ -50,7 +50,7 @@ type ciWaitActionsExecution struct {
 	Attempt     int    `json:"attempt"`
 	Status      string `json:"status"`
 	Conclusion  string `json:"conclusion"`
-	Replacement bool   `json:"replacement,omitempty"`
+	Replacement bool   `json:"replacement"`
 }
 
 func (s *runSession) ciWaitEvidence(ctx context.Context, workDir string, pr *github.PR, headSHA string, verified ...*github.ManagedCIExecution) (map[string]any, error) {
@@ -294,6 +294,7 @@ func ciWaitEvidenceFromRegistration(registration ciWaitRegistration, prNumber in
 			registration.ActionsExecution.WorkflowID <= 0 || !strings.EqualFold(registration.ActionsExecution.Event, "pull_request") ||
 			registration.ActionsExecution.RunID <= 0 ||
 			registration.ActionsExecution.RunNumber <= 0 || registration.ActionsExecution.Attempt <= 0 ||
+			!registration.ActionsExecution.Replacement ||
 			!validCIWaitActionsStatus(registration.ActionsExecution.Status, registration.ActionsExecution.Conclusion) ||
 			registration.ExecutionID != managedCIExecutionID(registration.ActionsExecution))) {
 		return nil, fmt.Errorf("CI wait state is invalid")

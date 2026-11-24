@@ -633,6 +633,7 @@ func managedCIReplacementStillResolves(evidence map[string]any, pr *github.PR, r
 	if !ok {
 		return false
 	}
+	replacement, replacementOK := execution["replacement"].(bool)
 	executionPR, prOK := lifecycleDeadlineSeconds(execution["pull_request"])
 	workflowID, workflowOK := lifecycleDeadlineSeconds(execution["workflow_id"])
 	runID, runOK := lifecycleDeadlineSeconds(execution["run_id"])
@@ -640,7 +641,8 @@ func managedCIReplacementStillResolves(evidence map[string]any, pr *github.PR, r
 	attempt, attemptOK := lifecycleDeadlineSeconds(execution["attempt"])
 	executionRepository := strings.TrimSpace(stringEvidence(execution, "repository"))
 	expectedExecutionID := fmt.Sprintf("actions:%d:%d:%d", workflowID, runID, attempt)
-	if !prOK || executionPR != int64(pr.Number) || !workflowOK || !runOK || !numberOK || !attemptOK ||
+	if !replacementOK || !replacement ||
+		!prOK || executionPR != int64(pr.Number) || !workflowOK || !runOK || !numberOK || !attemptOK ||
 		workflowID <= 0 || runID <= 0 || runNumber <= 0 || attempt <= 0 ||
 		executionRepository == "" || strings.TrimSpace(repository) != "" &&
 		!strings.EqualFold(executionRepository, strings.TrimSpace(repository)) ||
@@ -666,16 +668,66 @@ func managedCIReplacementStillResolves(evidence map[string]any, pr *github.PR, r
 	status := strings.ToLower(strings.TrimSpace(stringEvidence(execution, "status")))
 	conclusion := strings.ToLower(strings.TrimSpace(stringEvidence(execution, "conclusion")))
 	switch status {
-	case "queued", "in_progress", "waiting", "requested", "pending":
+	case "queued", "in_progress":
 		return true
 	case "completed":
 		// A passing Actions run does not manufacture a green required-check
 		// rollup. Keep observing until the PR's authoritative rollup catches up.
-		// A failure conclusion may also lag visible pending checks linked to
-		// this exact replacement execution; those checks remain resolving work.
-		return conclusion == "success" || managedCIVisibleReplacementChecksPending(pr, execution)
+		// A completed failure must be diagnosed afresh; pending PR checks do
+		// not override the terminal conclusion of this exact execution.
+		return conclusion == "success"
 	default:
 		return false
+	}
+}
+
+func managedCICompletedReplacementForDiagnosis(
+	evidence map[string]any,
+	pr *github.PR,
+	repository string,
+) *github.ManagedCIExecution {
+	if pr == nil || pr.Number <= 0 ||
+		!strings.EqualFold(strings.TrimSpace(pr.State), "open") ||
+		strings.TrimSpace(pr.BaseRefName) == "" ||
+		strings.TrimSpace(pr.HeadRefOid) == "" {
+		return nil
+	}
+	wait, ok := evidence["ci_wait"].(map[string]any)
+	if !ok || wait["protocol"] != ciWaitProtocol ||
+		!strings.EqualFold(stringEvidence(wait, "head_sha"), strings.TrimSpace(pr.HeadRefOid)) {
+		return nil
+	}
+	execution, ok := wait["actions_execution"].(map[string]any)
+	if !ok || !managedCIWaitExecutionIsReplacement(execution) {
+		return nil
+	}
+	pullRequest, prOK := lifecycleDeadlineSeconds(execution["pull_request"])
+	workflowID, workflowOK := lifecycleDeadlineSeconds(execution["workflow_id"])
+	runID, runOK := lifecycleDeadlineSeconds(execution["run_id"])
+	runNumber, runNumberOK := lifecycleDeadlineSeconds(execution["run_number"])
+	attempt, attemptOK := lifecycleDeadlineSeconds(execution["attempt"])
+	executionRepository := strings.TrimSpace(stringEvidence(execution, "repository"))
+	status := strings.ToLower(strings.TrimSpace(stringEvidence(execution, "status")))
+	conclusion := strings.ToLower(strings.TrimSpace(stringEvidence(execution, "conclusion")))
+	if !prOK || pullRequest != int64(pr.Number) || !workflowOK || !runOK ||
+		!runNumberOK || !attemptOK || workflowID <= 0 || runID <= 0 ||
+		runNumber <= 0 || attempt <= 0 || executionRepository == "" ||
+		strings.TrimSpace(repository) != "" &&
+			!strings.EqualFold(executionRepository, strings.TrimSpace(repository)) ||
+		!strings.EqualFold(stringEvidence(execution, "event"), "pull_request") ||
+		!strings.EqualFold(stringEvidence(execution, "head_sha"), strings.TrimSpace(pr.HeadRefOid)) ||
+		strings.TrimSpace(stringEvidence(execution, "base_ref_name")) != strings.TrimSpace(pr.BaseRefName) ||
+		stringEvidence(wait, "execution_id") != fmt.Sprintf("actions:%d:%d:%d", workflowID, runID, attempt) ||
+		status != "completed" || conclusion == "" || conclusion == "success" ||
+		!validCIWaitActionsStatus(status, conclusion) {
+		return nil
+	}
+	return &github.ManagedCIExecution{
+		Repository: executionRepository, PullRequest: int(pullRequest),
+		BaseRefName: strings.TrimSpace(stringEvidence(execution, "base_ref_name")),
+		HeadSHA:     strings.TrimSpace(stringEvidence(execution, "head_sha")),
+		WorkflowID:  workflowID, Event: "pull_request", RunID: runID,
+		RunNumber: runNumber, Attempt: int(attempt), Status: status, Conclusion: conclusion,
 	}
 }
 
@@ -763,7 +815,8 @@ func managedCIWaitIncludesExecution(evidence map[string]any, candidate *github.M
 		return false
 	}
 	execution, ok := wait["actions_execution"].(map[string]any)
-	return ok && managedCIWaitExecutionIdentityMatches(execution, candidate)
+	return ok && managedCIWaitExecutionIsReplacement(execution) &&
+		managedCIWaitExecutionIdentityMatches(execution, candidate)
 }
 
 func managedCIReplacementOutcomeConflicts(evidence map[string]any, candidate *github.ManagedCIExecution) bool {
@@ -808,6 +861,10 @@ func managedCISourceSupersededByWait(
 }
 
 func ciWaitActionsExecutionFromEvidence(evidence map[string]any) (*ciWaitActionsExecution, bool) {
+	replacement, ok := evidence["replacement"].(bool)
+	if !ok || !replacement {
+		return nil, false
+	}
 	pullRequest, prOK := lifecycleDeadlineSeconds(evidence["pull_request"])
 	workflowID, workflowOK := lifecycleDeadlineSeconds(evidence["workflow_id"])
 	runID, runOK := lifecycleDeadlineSeconds(evidence["run_id"])
@@ -822,9 +879,15 @@ func ciWaitActionsExecutionFromEvidence(evidence map[string]any) (*ciWaitActions
 		HeadSHA:    strings.TrimSpace(stringEvidence(evidence, "head_sha")),
 		WorkflowID: workflowID, Event: strings.ToLower(strings.TrimSpace(stringEvidence(evidence, "event"))),
 		RunID: runID, RunNumber: runNumber, Attempt: int(attempt),
-		Status:     strings.ToLower(strings.TrimSpace(stringEvidence(evidence, "status"))),
-		Conclusion: strings.ToLower(strings.TrimSpace(stringEvidence(evidence, "conclusion"))),
+		Status:      strings.ToLower(strings.TrimSpace(stringEvidence(evidence, "status"))),
+		Conclusion:  strings.ToLower(strings.TrimSpace(stringEvidence(evidence, "conclusion"))),
+		Replacement: true,
 	}, true
+}
+
+func managedCIWaitExecutionIsReplacement(execution map[string]any) bool {
+	replacement, ok := execution["replacement"].(bool)
+	return ok && replacement
 }
 
 func managedCIWaitExecutionIdentityMatches(execution map[string]any, candidate *github.ManagedCIExecution) bool {
@@ -1095,6 +1158,41 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 		managedCIReplacementFailures = observation.ReplacementFailures
 		confirmedIndependentCI = observation.IndependentFailure
 		managedCIObservationUnknown = observation.Unknown
+		if !confirmedIndependentCI && managedCIReplacement == nil &&
+			!strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "failure") &&
+			ciActive(pr, headSHA) {
+			retained, established := s.priorOperationEvidence(runID, branch, worktreeHeadSHA)
+			if established {
+				retainedExecution := managedCICompletedReplacementForDiagnosis(retained, pr, repository)
+				if retainedExecution != nil {
+					if repository == "" {
+						name, repoErr := s.deps.githubClient.RepoName(ctx)
+						if repoErr != nil || strings.TrimSpace(name) == "" {
+							managedCIObservationUnknown = true
+						} else {
+							repository = strings.TrimSpace(name)
+						}
+					}
+					if !managedCIObservationUnknown &&
+						strings.EqualFold(retainedExecution.Repository, repository) {
+						diagnosis := s.observeRetainedManagedCIExecutionFailure(ctx, *retainedExecution)
+						if diagnosis.Unknown {
+							managedCIObservationUnknown = true
+						} else if diagnosis.IndependentFailure {
+							repository = diagnosis.Repository
+							managedCIReplacement = diagnosis.Replacement
+							managedCIReplacementFailures = diagnosis.ReplacementFailures
+							pr, managedCIReplacementFailure = managedCIReplacementFailurePR(
+								pr, managedCIReplacement, managedCIReplacementFailures,
+							)
+							confirmedIndependentCI = true
+						}
+					} else if !managedCIObservationUnknown {
+						managedCIObservationUnknown = true
+					}
+				}
+			}
+		}
 		if managedCIObservationUnknown && !confirmedIndependentCI && ctx.Err() == nil {
 			err = errors.New("managed CI observation is inconclusive")
 		}
@@ -1380,9 +1478,17 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 	deferredDeadlineEvidence := map[string]any(nil)
 	if strings.EqualFold(pr.State, "open") && !evidence.stateError {
 		deadlines := cloneLifecycleExtras(evidence.payload)
-		// A completed CI operation cannot time out unrelated review/merge work.
-		// Only currently resolving checks carry a CI wait deadline.
-		if !ciActive(pr, headSHA) && !managedCIReplacementStillResolves(evidence.payload, pr, repository) {
+		// A replacement wait is authorized by its exact execution status,
+		// not by a stale rollup that still says some check is pending. A
+		// completed failure must be diagnosed afresh and cannot consume the
+		// replacement's old CI deadline.
+		if _, isReplacement := managedCIReplacementWait(evidence.payload); isReplacement {
+			if !managedCIReplacementStillResolves(evidence.payload, pr, repository) {
+				delete(deadlines, "ci_wait")
+			}
+		} else if !ciActive(pr, headSHA) {
+			// A completed ordinary CI operation cannot time out unrelated
+			// review or merge work.
 			delete(deadlines, "ci_wait")
 		}
 		// A timely response resolves its request lifetime. Capacity latency

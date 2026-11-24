@@ -353,6 +353,16 @@ type ManagedCIObserver interface {
 	ObserveManagedCI(ctx context.Context, request ManagedCIRequest) (ManagedCIObservation, error)
 }
 
+// ManagedCIExecutionFailureObserver diagnoses the failed jobs for one
+// identity-verified, completed Actions execution without relying on the PR
+// check rollup to expose those jobs.
+type ManagedCIExecutionFailureObserver interface {
+	DiagnoseManagedCIExecutionFailure(
+		ctx context.Context,
+		execution ManagedCIExecution,
+	) ([]ManagedCIFailureEvidence, error)
+}
+
 // IssueComment holds an issue conversation comment fetched from the GitHub
 // REST API. These are the comments posted on an issue (not a PR), used by
 // Specification expansion to discover child references that live in the conversation

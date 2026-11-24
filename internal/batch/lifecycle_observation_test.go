@@ -27,9 +27,24 @@ type managedCILifecycleClient struct {
 	requests    []github.ManagedCIRequest
 }
 
+type retainedManagedCIFailureClient struct {
+	*fakeGitHubClient
+	failures     []github.ManagedCIFailureEvidence
+	diagnosisErr error
+	executions   []github.ManagedCIExecution
+}
+
 func (c *managedCILifecycleClient) ObserveManagedCI(_ context.Context, request github.ManagedCIRequest) (github.ManagedCIObservation, error) {
 	c.requests = append(c.requests, request)
 	return c.observation, c.err
+}
+
+func (c *retainedManagedCIFailureClient) DiagnoseManagedCIExecutionFailure(
+	_ context.Context,
+	execution github.ManagedCIExecution,
+) ([]github.ManagedCIFailureEvidence, error) {
+	c.executions = append(c.executions, execution)
+	return c.failures, c.diagnosisErr
 }
 
 func (r lifecycleCLIResultRunner) Run(ctx context.Context, _ string, _ ...string) *exec.Cmd {
@@ -628,7 +643,7 @@ func TestManagedCIReplacementFailureDoesNotReuseOlderPRRollup(t *testing.T) {
 	}
 }
 
-func TestLifecycleObservation_VisiblePendingReplacementChecksHoldAtExpiry(t *testing.T) {
+func TestLifecycleObservation_CompletedFailedReplacementDoesNotHoldAtExpiry(t *testing.T) {
 	now := time.Unix(4_250, 0).UTC()
 	workDir := t.TempDir()
 	pr := &github.PR{
@@ -664,10 +679,9 @@ func TestLifecycleObservation_VisiblePendingReplacementChecksHoldAtExpiry(t *tes
 		WorkDir: workDir, Branch: gateTestBranch, RunID: "run-pending-replacement-expired",
 		HostPathsReady: true, AttemptStatus: "success",
 	})
-	wait, ok := verdict.Evidence["ci_wait"].(map[string]any)
-	if verdict.Action != lifecycleAwait || verdict.Evidence["reason"] != "CI_WAIT_TIMEOUT" ||
-		!ok || wait["execution_id"] != "actions:9:102:1" {
-		t.Fatalf("visible pending replacement checks did not retain the timeout hold: %+v", verdict)
+	if verdict.Action != lifecycleResume || verdict.Evidence["reason"] != "CI_FAILURE" ||
+		!verdict.ciRepairRequired {
+		t.Fatalf("completed failed replacement remained in the timeout hold instead of current CI repair: %+v", verdict)
 	}
 }
 
@@ -714,6 +728,112 @@ func TestLifecycleObservation_PendingOnlyRollupKeepsReplacementTimeoutHold(t *te
 	if verdict.Action != lifecycleAwait || verdict.Evidence["reason"] != "CI_WAIT_TIMEOUT" ||
 		!ok || wait["execution_id"] != "actions:9:102:1" {
 		t.Fatalf("pending-only rollup did not retain the replacement timeout hold: %+v", verdict)
+	}
+}
+
+func TestLifecycleObservation_RediagnosesRetainedFailureUnderPendingRollup(t *testing.T) {
+	tests := []struct {
+		name         string
+		failures     []github.ManagedCIFailureEvidence
+		diagnosisErr error
+		wantAction   lifecycleAction
+		wantKind     lifecycleVerdictKind
+		wantRepair   bool
+	}{
+		{
+			name: "confirmed completed replacement failure resumes repair",
+			failures: []github.ManagedCIFailureEvidence{{
+				JobID: 991, RunID: 102, Attempt: 1, CheckName: "unit-tests",
+				DetailsURL:     "https://github.com/owner/repo/actions/runs/102/job/991",
+				Classification: github.ManagedCIConfirmedCodeTestFailure,
+			}},
+			wantAction: lifecycleResume, wantRepair: true,
+		},
+		{
+			name:         "inconclusive exact-attempt lookup uses GitHub recovery",
+			diagnosisErr: errors.New("workflow attempt lookup unavailable"),
+			wantAction:   lifecycleAwait, wantKind: lifecycleVerdictGitHubUnavailable,
+		},
+		{
+			name: "unexplained exact-attempt failure uses GitHub recovery",
+			failures: []github.ManagedCIFailureEvidence{{
+				JobID: 991, RunID: 102, Attempt: 1, CheckName: "build",
+				DetailsURL:     "https://github.com/owner/repo/actions/runs/102/job/991",
+				Classification: github.ManagedCIUnexplainedFailure,
+			}},
+			wantAction: lifecycleAwait, wantKind: lifecycleVerdictGitHubUnavailable,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Unix(4_800, 0).UTC()
+			workDir := t.TempDir()
+			seedPR := &github.PR{
+				Number: 17, HeadRefOid: "current-sha", BaseRefName: "main",
+				StatusCheckRollup: "failure", CIExecutionID: "old-rollup",
+				CIFailedWorkflow: &github.CIFailedWorkflow{RunID: "101"},
+			}
+			replacement := &github.ManagedCIExecution{
+				Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "current-sha",
+				WorkflowID: 9, Event: "pull_request", RunID: 102, RunNumber: 52, Attempt: 1,
+				Status: "completed", Conclusion: "failure",
+			}
+			seed := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+			waitEvidence, err := seed.ciWaitEvidence(t.Context(), workDir, seedPR, "current-sha", replacement)
+			if err != nil {
+				t.Fatalf("seed completed replacement wait: %v", err)
+			}
+			runID := "run-retained-failure-pending-rollup"
+			eventLog := &spyEventLog{events: []events.Event{
+				{Type: "run.started", RunID: runID, Issue: 42, Payload: map[string]any{"branch": gateTestBranch}},
+				{Type: "run.await", RunID: runID, Issue: 42, Payload: map[string]any{
+					"await_reason": "pending", "branch": gateTestBranch, "ci_wait": waitEvidence["ci_wait"],
+				}},
+			}}
+			pendingPR := &github.PR{
+				Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main",
+				StatusCheckRollup: "pending", CIExecutionID: "pending-rollup",
+				CIHasActiveChecks: true, CIActiveFailedWorkflowRunID: "102",
+				MergeStateStatus: "BLOCKED",
+			}
+			client := &retainedManagedCIFailureClient{
+				fakeGitHubClient: &fakeGitHubClient{
+					issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+					prs:    map[string]*github.PR{gateTestBranch: pendingPR},
+				},
+				failures: test.failures, diagnosisErr: test.diagnosisErr,
+			}
+			e := &runExecutor{deps: runDeps{
+				githubClient: client, eventLog: eventLog,
+				layout: paths.NewLayout(nil, t.TempDir()), errorLog: io.Discard,
+				runSessionOpts: runSessionOptions{
+					now:         func() time.Time { return now.Add(time.Minute) },
+					currentHead: func(string) (string, error) { return "current-sha", nil },
+				},
+			}}
+			row := RowSpec{IssueNumber: 42, RunID: runID, Branches: map[int]string{42: gateTestBranch}}
+			verdict := e.observeAwaitingRowLifecycle(t.Context(), row)
+			if verdict.Action != test.wantAction || verdict.Kind != test.wantKind ||
+				verdict.ciRepairRequired != test.wantRepair {
+				t.Fatalf("pending-rollup replacement verdict = %+v, want action %v, kind %v, repair %t",
+					verdict, test.wantAction, test.wantKind, test.wantRepair)
+			}
+			if len(client.executions) != 1 || client.executions[0] != *replacement {
+				t.Fatalf("diagnosed executions = %+v, want exactly retained replacement %+v",
+					client.executions, *replacement)
+			}
+			if test.wantRepair {
+				if verdict.ciExecutionID != "actions:9:102:1" ||
+					verdict.Evidence["reason"] != "CI_FAILURE" ||
+					verdict.Evidence["managed_ci_replacement_failure"] == nil {
+					t.Fatalf("confirmed replacement failure did not target its current execution: %+v", verdict)
+				}
+			} else if verdict.Evidence["lookup_error"] == nil ||
+				verdict.Evidence["reason"] == "CI_WAIT_TIMEOUT" ||
+				verdict.Evidence["gate"] == string(lifecycleGatePending) {
+				t.Fatalf("inconclusive replacement diagnosis fell back to stale pending CI: %+v", verdict.Evidence)
+			}
+		})
 	}
 }
 

@@ -13,9 +13,9 @@ import (
 const managedCIPageSize = 100
 
 var runnerAcquisitionAnnotation = regexp.MustCompile(
-	`(?i)^the job was not acquired by a runner within 10 minutes of the request\.?` +
-		`(?:\s*job was cancelled\.?)?$|` +
-		`^the job was not acquired by runner of type hosted even after multiple attempts\.?$`,
+	`(?i)^(?:the job was not acquired by runner of type hosted even after multiple attempts|` +
+		`the job was not acquired by (?:a )?github[- ]hosted runner within 10 minutes of the request)\.?` +
+		`(?:\s*job was cancelled\.?)?$`,
 )
 var selfHostedRunnerAnnotation = regexp.MustCompile(`(?i)\bself[- ]hosted\b`)
 var failedPrerequisiteAnnotation = regexp.MustCompile(`(?i)^([a-z0-9][a-z0-9_.-]*) must succeed \(result: ([^)]+)\)$`)
@@ -28,6 +28,12 @@ var managedCITestStepName = regexp.MustCompile(
 		`^(?:(?:run|execute)\s+)?(?:(?:unit|integration|smoke|e2e|acceptance|regression)\s+)?tests?` +
 		`(?:\s+(?:suite|all|only))?$`,
 )
+var managedCICompilerStepName = regexp.MustCompile(
+	`(?i)^(?:(?:run|execute)\s+)?(?:go\s+(?:build|vet)|cargo\s+(?:build|check)|` +
+		`dotnet\s+build|msbuild|mvn\s+(?:compile|package)|gradlew?\s+(?:build|compile|assemble)|` +
+		`(?:npm|pnpm|yarn)\s+(?:run\s+)?build|bun\s+build|tsc|javac|make\s+(?:build|compile)|` +
+		`(?:build|compile)(?:\s+(?:project|application|package|source))?)(?:\s|$)`,
+)
 var managedCITestDiagnostic = regexp.MustCompile(
 	`(?i)(?:^|\b)---\s*fail:\s*test\w*\b|` +
 		`\btest[A-Z]\w*\b.{0,160}\b(?:fail|error|panic)\w*\b|` +
@@ -36,6 +42,10 @@ var managedCITestDiagnostic = regexp.MustCompile(
 		`\b(?:got|actual)\b.{1,120}\bwant\b|` +
 		`\b(?:undefined:|cannot use|syntax error|declared and not used|imported and not used|` +
 		`not enough arguments|too many arguments|cannot find module|failed to compile|compilation failed)\b`,
+)
+var managedCICompilerDiagnostic = regexp.MustCompile(
+	`(?i)\b(?:undefined:|cannot use\b|syntax error\b|declared and not used\b|imported and not used\b|` +
+		`not enough arguments\b|too many arguments\b|cannot find module\b|failed to compile\b|compilation failed\b)`,
 )
 var managedCIInfrastructureDiagnostic = regexp.MustCompile(
 	`(?i)\b(?:dependency mirror|connection refused|connection reset|network timeout|timed out|` +
@@ -347,6 +357,33 @@ func (c *CLIClient) diagnoseManagedCIExecutionFailure(
 	return failures, nil
 }
 
+func (c *CLIClient) DiagnoseManagedCIExecutionFailure(
+	ctx context.Context,
+	execution ManagedCIExecution,
+) ([]ManagedCIFailureEvidence, error) {
+	if execution.PullRequest <= 0 || strings.TrimSpace(execution.BaseRefName) == "" ||
+		strings.TrimSpace(execution.HeadSHA) == "" || execution.WorkflowID <= 0 ||
+		execution.RunID <= 0 || execution.RunNumber <= 0 || execution.Attempt <= 0 ||
+		!strings.EqualFold(strings.TrimSpace(execution.Event), "pull_request") ||
+		!strings.EqualFold(strings.TrimSpace(execution.Status), "completed") ||
+		strings.EqualFold(strings.TrimSpace(execution.Conclusion), "success") ||
+		!ValidManagedCIExecutionStatus(execution.Status, execution.Conclusion) {
+		return nil, fmt.Errorf("managed CI diagnosis: execution is not a valid completed failure")
+	}
+	owner, repo, err := c.resolveRepo(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("managed CI diagnosis: resolve repository: %w", err)
+	}
+	if !strings.EqualFold(strings.TrimSpace(execution.Repository), owner+"/"+repo) {
+		return nil, fmt.Errorf("managed CI diagnosis: execution repository does not match the current repository")
+	}
+	request := ManagedCIRequest{
+		Repository: execution.Repository, PullRequest: execution.PullRequest,
+		BaseRefName: execution.BaseRefName, HeadSHA: execution.HeadSHA,
+	}
+	return c.diagnoseManagedCIExecutionFailure(ctx, owner, repo, request, execution)
+}
+
 func managedCIExecution(run actionsWorkflowRun, repository string, request ManagedCIRequest) (ManagedCIExecution, bool) {
 	if run.ID <= 0 || run.RunNumber <= 0 || run.RunAttempt <= 0 || run.WorkflowID <= 0 ||
 		strings.TrimSpace(run.HeadSHA) == "" || !ValidManagedCIExecutionStatus(run.Status, run.Conclusion) {
@@ -520,23 +557,30 @@ func classifyManagedCIFailureEvidenceDetailed(
 	if strings.EqualFold(strings.TrimSpace(job.Status), "completed") &&
 		strings.EqualFold(strings.TrimSpace(job.Conclusion), "failure") {
 		// A source annotation alone does not prove a code/test failure: tie it
-		// to a failed test step and a diagnostic that describes that failure.
+		// to a failed test or compilation step and its diagnostic.
 		failedTestStep := false
+		failedCompilerStep := false
 		for _, step := range job.Steps {
-			if strings.EqualFold(strings.TrimSpace(step.Status), "completed") &&
-				strings.EqualFold(strings.TrimSpace(step.Conclusion), "failure") &&
-				managedCITestStepName.MatchString(strings.TrimSpace(step.Name)) {
+			if !strings.EqualFold(strings.TrimSpace(step.Status), "completed") ||
+				!strings.EqualFold(strings.TrimSpace(step.Conclusion), "failure") {
+				continue
+			}
+			stepName := strings.TrimSpace(step.Name)
+			if managedCITestStepName.MatchString(stepName) {
 				failedTestStep = true
-				break
+			}
+			if managedCICompilerStepName.MatchString(stepName) {
+				failedCompilerStep = true
 			}
 		}
-		if failedTestStep {
+		if failedTestStep || failedCompilerStep {
 			for _, annotation := range annotations {
 				message := strings.TrimSpace(annotation.Message)
 				if strings.EqualFold(strings.TrimSpace(annotation.Level), "failure") &&
 					managedCITestSourcePath(annotation.Path) && annotation.StartLine > 0 &&
 					!managedCIInfrastructureDiagnostic.MatchString(message) &&
-					managedCITestDiagnostic.MatchString(message) {
+					(failedTestStep && managedCITestDiagnostic.MatchString(message) ||
+						failedCompilerStep && managedCICompilerDiagnostic.MatchString(message)) {
 					return ManagedCIConfirmedCodeTestFailure, nil, nil
 				}
 			}
@@ -561,6 +605,33 @@ func managedCITestSourcePath(path string) bool {
 }
 
 func (c *CLIClient) findManagedCIReplacement(ctx context.Context, owner, repo string, source ManagedCIExecution) (*ManagedCIExecution, error) {
+	runs, err := c.listManagedCIWorkflowRuns(ctx, owner, repo, source)
+	if err != nil {
+		return nil, err
+	}
+	sourceListed, err := validateManagedCIWorkflowRunList(runs, source)
+	if err != nil {
+		return nil, err
+	}
+	candidates, err := managedCIReplacementCandidates(runs, source)
+	if err != nil {
+		return nil, err
+	}
+	selected, err := selectManagedCIReplacement(candidates)
+	if err != nil {
+		return nil, err
+	}
+	if !sourceListed && selected == nil {
+		return nil, fmt.Errorf("workflow-run list omits the verified source and contains no verified replacement")
+	}
+	return selected, nil
+}
+
+func (c *CLIClient) listManagedCIWorkflowRuns(
+	ctx context.Context,
+	owner, repo string,
+	source ManagedCIExecution,
+) ([]actionsWorkflowRun, error) {
 	const maxPages = 10
 	var runs []actionsWorkflowRun
 	totalCount := -1
@@ -590,7 +661,10 @@ func (c *CLIClient) findManagedCIReplacement(ctx context.Context, owner, repo st
 	if totalCount < 0 || len(runs) != totalCount {
 		return nil, fmt.Errorf("workflow-run list is incomplete")
 	}
-	var selected *ManagedCIExecution
+	return runs, nil
+}
+
+func validateManagedCIWorkflowRunList(runs []actionsWorkflowRun, source ManagedCIExecution) (bool, error) {
 	runNumbers := make(map[int64]int64, len(runs))
 	runIDs := make(map[int64]int64, len(runs))
 	type workflowRunIdentity struct {
@@ -603,28 +677,28 @@ func (c *CLIClient) findManagedCIReplacement(ctx context.Context, owner, repo st
 		if run.ID <= 0 || run.RunNumber <= 0 || run.RunAttempt <= 0 ||
 			strings.TrimSpace(run.Event) == "" || !ValidManagedCIExecutionStatus(run.Status, run.Conclusion) ||
 			strings.TrimSpace(run.HeadSHA) == "" || run.WorkflowID <= 0 {
-			return nil, fmt.Errorf("workflow-run list contains incomplete execution identity")
+			return false, fmt.Errorf("workflow-run list contains incomplete execution identity")
 		}
 		if run.WorkflowID != source.WorkflowID ||
 			!strings.EqualFold(strings.TrimSpace(run.Event), "pull_request") ||
 			!strings.EqualFold(strings.TrimSpace(run.HeadSHA), source.HeadSHA) {
-			return nil, fmt.Errorf("workflow-run list contradicts its workflow, event, or head filter")
+			return false, fmt.Errorf("workflow-run list contradicts its workflow, event, or head filter")
 		}
 		if previous, exists := runNumbers[run.RunNumber]; exists && previous != run.ID {
-			return nil, fmt.Errorf("workflow-run list reuses a run number for different run IDs")
+			return false, fmt.Errorf("workflow-run list reuses a run number for different run IDs")
 		}
 		runNumbers[run.RunNumber] = run.ID
 		identity := workflowRunIdentity{runID: run.ID, attempt: run.RunAttempt}
 		if _, duplicate := seenExecutions[identity]; duplicate {
-			return nil, fmt.Errorf("workflow-run list duplicates an execution identity")
+			return false, fmt.Errorf("workflow-run list duplicates an execution identity")
 		}
 		seenExecutions[identity] = struct{}{}
 		if previous, exists := runIDs[run.ID]; exists && previous != run.RunNumber {
-			return nil, fmt.Errorf("workflow-run list assigns conflicting run numbers to one run ID")
+			return false, fmt.Errorf("workflow-run list assigns conflicting run numbers to one run ID")
 		}
 		runIDs[run.ID] = run.RunNumber
 		if run.ID == source.RunID && run.RunNumber != source.RunNumber {
-			return nil, fmt.Errorf("workflow-run list contains a contradictory attempt identity")
+			return false, fmt.Errorf("workflow-run list contains a contradictory attempt identity")
 		}
 		if run.ID == source.RunID {
 			sourceExecution, ok := managedCIExecution(run, source.Repository, ManagedCIRequest{
@@ -632,16 +706,56 @@ func (c *CLIClient) findManagedCIReplacement(ctx context.Context, owner, repo st
 				BaseRefName: source.BaseRefName, HeadSHA: source.HeadSHA,
 			})
 			if !ok || sourceExecution.Attempt < source.Attempt {
-				return nil, fmt.Errorf("workflow-run list does not confirm the source pull request execution")
+				return false, fmt.Errorf("workflow-run list does not confirm the source pull request execution")
 			}
 			if sourceExecution.Attempt == source.Attempt &&
-				strings.EqualFold(sourceExecution.Status, "completed") &&
-				strings.EqualFold(source.Status, "completed") &&
-				!strings.EqualFold(sourceExecution.Conclusion, source.Conclusion) {
-				return nil, fmt.Errorf("workflow-run list contradicts the source execution conclusion for the same attempt")
+				!managedCIExecutionReadsCompatible(source, sourceExecution) {
+				return false, fmt.Errorf("workflow-run list contradicts the source execution status or conclusion for the same attempt")
 			}
 			sourceListed = true
 		}
+	}
+	return sourceListed, nil
+}
+
+// The workflow-run listing is read after the exact source attempt. Its status
+// may advance, but it cannot regress or contradict a completed conclusion.
+func managedCIExecutionReadsCompatible(earlier, later ManagedCIExecution) bool {
+	earlierStatus := strings.ToLower(strings.TrimSpace(earlier.Status))
+	laterStatus := strings.ToLower(strings.TrimSpace(later.Status))
+	earlierStage, earlierOK := managedCIExecutionStatusStage(earlierStatus)
+	laterStage, laterOK := managedCIExecutionStatusStage(laterStatus)
+	if !earlierOK || !laterOK || laterStage < earlierStage {
+		return false
+	}
+	if earlierStatus == "completed" {
+		return laterStatus == "completed" &&
+			strings.EqualFold(strings.TrimSpace(earlier.Conclusion), strings.TrimSpace(later.Conclusion))
+	}
+	if laterStatus == "completed" {
+		return ValidManagedCIExecutionStatus(later.Status, later.Conclusion)
+	}
+	return true
+}
+
+func managedCIExecutionStatusStage(status string) (int, bool) {
+	switch status {
+	case "requested", "waiting", "pending":
+		return 0, true
+	case "queued":
+		return 1, true
+	case "in_progress":
+		return 2, true
+	case "completed":
+		return 3, true
+	default:
+		return 0, false
+	}
+}
+
+func managedCIReplacementCandidates(runs []actionsWorkflowRun, source ManagedCIExecution) ([]ManagedCIExecution, error) {
+	var candidates []ManagedCIExecution
+	for _, run := range runs {
 		isNewer := run.ID == source.RunID && run.RunAttempt > source.Attempt
 		if run.ID != source.RunID && run.RunNumber > source.RunNumber {
 			isNewer = true
@@ -658,20 +772,27 @@ func (c *CLIClient) findManagedCIReplacement(ctx context.Context, owner, repo st
 		if !ok {
 			return nil, fmt.Errorf("newer workflow run has a conflicting pull request identity")
 		}
-		if selected != nil {
-			if candidate.RunNumber == selected.RunNumber && candidate.Attempt == selected.Attempt && candidate.RunID != selected.RunID {
-				return nil, fmt.Errorf("workflow-run list contains contradictory replacement identity")
-			}
-			if candidate.RunNumber < selected.RunNumber ||
-				(candidate.RunNumber == selected.RunNumber && candidate.Attempt <= selected.Attempt) {
-				continue
-			}
+		candidates = append(candidates, candidate)
+	}
+	return candidates, nil
+}
+
+func selectManagedCIReplacement(candidates []ManagedCIExecution) (*ManagedCIExecution, error) {
+	var selected *ManagedCIExecution
+	for _, candidate := range candidates {
+		if selected != nil &&
+			candidate.RunNumber == selected.RunNumber &&
+			candidate.Attempt == selected.Attempt &&
+			candidate.RunID != selected.RunID {
+			return nil, fmt.Errorf("workflow-run list contains contradictory replacement identity")
+		}
+		if selected != nil &&
+			(candidate.RunNumber < selected.RunNumber ||
+				(candidate.RunNumber == selected.RunNumber && candidate.Attempt <= selected.Attempt)) {
+			continue
 		}
 		copy := candidate
 		selected = &copy
-	}
-	if !sourceListed && selected == nil {
-		return nil, fmt.Errorf("workflow-run list omits the verified source and contains no verified replacement")
 	}
 	return selected, nil
 }

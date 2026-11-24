@@ -258,7 +258,7 @@ func TestCIWaitEvidenceRejectsContradictoryPersistedActionsStatus(t *testing.T) 
 		ActionsExecution: &ciWaitActionsExecution{
 			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "head",
 			WorkflowID: 9, Event: "pull_request", RunID: 101, RunNumber: 51, Attempt: 1,
-			Status: "queued", Conclusion: "success",
+			Status: "queued", Conclusion: "success", Replacement: true,
 		},
 		StartedUnixSeconds: 100, DeadlineUnixSeconds: 100 + timeout, EffectiveTimeoutSecs: timeout,
 	}
@@ -284,6 +284,41 @@ func TestCIWaitEvidenceRejectsContradictoryPersistedActionsStatus(t *testing.T) 
 	}
 }
 
+func TestCIWaitEvidenceRejectsPersistedNonReplacementActionsExecution(t *testing.T) {
+	workDir := t.TempDir()
+	timeout := int64(ciWaitTimeout / time.Second)
+	registration := ciWaitRegistration{
+		Protocol: ciWaitProtocol, PullRequest: 17, HeadSHA: "head",
+		ExecutionID: "actions:9:101:1",
+		ActionsExecution: &ciWaitActionsExecution{
+			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "head",
+			WorkflowID: 9, Event: "pull_request", RunID: 101, RunNumber: 51, Attempt: 1,
+			Status: "queued", Replacement: false,
+		},
+		StartedUnixSeconds: 100, DeadlineUnixSeconds: 100 + timeout, EffectiveTimeoutSecs: timeout,
+	}
+	data, err := json.Marshal(registration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(workDir, ".sandman", "state", "17.ci_wait.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	evidence, err := (&runSession{}).ciWaitEvidence(
+		context.Background(), workDir,
+		&github.PR{Number: 17, HeadRefOid: "head", BaseRefName: "main"},
+		"head",
+	)
+	if err == nil || evidence != nil {
+		t.Fatalf("persisted non-replacement Actions execution authorized CI wait: evidence=%#v err=%v", evidence, err)
+	}
+}
+
 func TestManagedCIReplacementStillResolvesRejectsContradictoryActionsStatus(t *testing.T) {
 	pr := &github.PR{Number: 17, HeadRefOid: "head", BaseRefName: "main"}
 	evidence := map[string]any{
@@ -293,12 +328,62 @@ func TestManagedCIReplacementStillResolvesRejectsContradictoryActionsStatus(t *t
 				"repository": "owner/repo", "pull_request": 17, "base_ref_name": "main",
 				"head_sha": "head", "workflow_id": 9, "event": "pull_request",
 				"run_id": 101, "run_number": 51, "attempt": 1,
-				"status": "queued", "conclusion": "success",
+				"status": "queued", "conclusion": "success", "replacement": true,
 			},
 		},
 	}
 	if managedCIReplacementStillResolves(evidence, pr, "owner/repo") {
 		t.Fatalf("contradictory retained status authorized replacement wait")
+	}
+}
+
+func TestManagedCIReplacementStillResolvesRequiresReplacementAndActiveStatus(t *testing.T) {
+	tests := []struct {
+		name          string
+		replacement   bool
+		status        string
+		conclusion    string
+		pendingChecks bool
+		want          bool
+	}{
+		{name: "queued replacement", replacement: true, status: "queued", want: true},
+		{name: "running replacement", replacement: true, status: "in_progress", want: true},
+		{name: "waiting replacement", replacement: true, status: "waiting"},
+		{name: "requested replacement", replacement: true, status: "requested"},
+		{name: "pending replacement", replacement: true, status: "pending"},
+		{name: "passed replacement with stale rollup", replacement: true, status: "completed", conclusion: "success", want: true},
+		{name: "failed replacement", replacement: true, status: "completed", conclusion: "failure"},
+		{name: "failed replacement with visible pending checks", replacement: true, status: "completed", conclusion: "failure", pendingChecks: true},
+		{name: "non-replacement queued execution", status: "queued"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			failedRunID := "100"
+			if test.pendingChecks {
+				failedRunID = "101"
+			}
+			pr := &github.PR{
+				Number: 17, HeadRefOid: "head", BaseRefName: "main", StatusCheckRollup: "failure",
+				CIExecutionID:     "source-rollup",
+				CIHasActiveChecks: test.pendingChecks,
+				CIFailedWorkflow:  &github.CIFailedWorkflow{RunID: failedRunID},
+			}
+			evidence := map[string]any{
+				"ci_wait": map[string]any{
+					"protocol": ciWaitProtocol, "head_sha": "head", "execution_id": "actions:9:101:1",
+					"source_execution_id": "source-rollup", "source_workflow_run_id": int64(100),
+					"actions_execution": map[string]any{
+						"repository": "owner/repo", "pull_request": 17, "base_ref_name": "main",
+						"head_sha": "head", "workflow_id": 9, "event": "pull_request",
+						"run_id": 101, "run_number": 51, "attempt": 1, "status": test.status,
+						"conclusion": test.conclusion, "replacement": test.replacement,
+					},
+				},
+			}
+			if got := managedCIReplacementStillResolves(evidence, pr, "owner/repo"); got != test.want {
+				t.Fatalf("replacement wait authorization = %t, want %t", got, test.want)
+			}
+		})
 	}
 }
 

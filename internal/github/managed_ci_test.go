@@ -37,7 +37,7 @@ func TestValidManagedCIExecutionStatusRequiresKnownConsistentPair(t *testing.T) 
 	}
 }
 
-func TestCLIClient_ManagedCIConfirmsIncidentRunnerShortage(t *testing.T) {
+func TestCLIClient_ManagedCIRequiresHostedRunnerTypeEvidenceForIncident(t *testing.T) {
 	fixture := func(name string) string {
 		t.Helper()
 		data, err := os.ReadFile(filepath.Join("testdata", "managed-ci", "incident", name))
@@ -68,8 +68,8 @@ func TestCLIClient_ManagedCIConfirmsIncidentRunnerShortage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(observation.Failures) != 1 || observation.Failures[0].Classification != ManagedCIRunnerShortage {
-		t.Fatalf("failed-check evidence = %+v, want one verified runner shortage", observation.Failures)
+	if len(observation.Failures) != 1 || observation.Failures[0].Classification != ManagedCIUnexplainedFailure {
+		t.Fatalf("failed-check evidence = %+v, want unexplained without explicit hosted-runner evidence", observation.Failures)
 	}
 	if observation.Source.WorkflowID != 273743359 || observation.Source.RunID != 45270155099 ||
 		observation.Source.RunNumber != 5288 || observation.Source.Attempt != 1 {
@@ -83,8 +83,8 @@ func TestCLIClient_ManagedCIConfirmsIncidentRunnerShortage(t *testing.T) {
 			t.Fatalf("managed CI observation attempted a mutation: %v", call.args)
 		}
 	}
-	if len(runner.calls) != 5 {
-		t.Fatalf("API calls = %d, want repository, source run, jobs, annotations and workflow runs", len(runner.calls))
+	if len(runner.calls) != 4 {
+		t.Fatalf("API calls = %d, want no replacement lookup without explicit hosted-runner evidence", len(runner.calls))
 	}
 }
 
@@ -228,10 +228,18 @@ func TestClassifyManagedCIFailureRequiresCorroboratedRunnerAcquisitionEvidence(t
 		want        ManagedCIFailureClassification
 	}{
 		{
-			name: "explicit runner acquisition failure",
+			name: "runner acquisition without hosted type is unexplained",
 			job:  observedUnassignedRunnerJob(),
 			annotations: []checkRunAnnotation{{
 				Level: "failure", Message: "The job was not acquired by a runner within 10 minutes of the request.",
+			}},
+			want: ManagedCIUnexplainedFailure,
+		},
+		{
+			name: "explicit GitHub-hosted runner acquisition failure",
+			job:  observedUnassignedRunnerJob(),
+			annotations: []checkRunAnnotation{{
+				Level: "failure", Message: "The job was not acquired by a GitHub-hosted runner within 10 minutes of the request. Job was cancelled.",
 			}},
 			want: ManagedCIRunnerShortage,
 		},
@@ -342,6 +350,50 @@ func TestClassifyManagedCIFailureRequiresCorroboratedRunnerAcquisitionEvidence(t
 				Message: "--- FAIL: TestExample (0.00s)",
 			}},
 			want: ManagedCIConfirmedCodeTestFailure,
+		},
+		{
+			name: "source-linked go compiler error in build step",
+			job: CIWorkflowJob{Status: "completed", Conclusion: "failure", RunnerID: 42, Steps: []CIWorkflowStep{
+				{Name: "Run go build ./...", Status: "completed", Conclusion: "failure"},
+			}},
+			annotations: []checkRunAnnotation{{
+				Level: "failure", Path: "internal/example.go", StartLine: 42,
+				Message: "undefined: missingSymbol",
+			}},
+			want: ManagedCIConfirmedCodeTestFailure,
+		},
+		{
+			name: "source-linked compiler error in package build step",
+			job: CIWorkflowJob{Status: "completed", Conclusion: "failure", RunnerID: 42, Steps: []CIWorkflowStep{
+				{Name: "npm run build", Status: "completed", Conclusion: "failure"},
+			}},
+			annotations: []checkRunAnnotation{{
+				Level: "failure", Path: "src/app.ts", StartLine: 42,
+				Message: "Cannot use type 'number' as type 'string'.",
+			}},
+			want: ManagedCIConfirmedCodeTestFailure,
+		},
+		{
+			name: "compiler diagnostic on unrelated step is unexplained",
+			job: CIWorkflowJob{Status: "completed", Conclusion: "failure", RunnerID: 42, Steps: []CIWorkflowStep{
+				{Name: "Upload coverage artifact", Status: "completed", Conclusion: "failure"},
+			}},
+			annotations: []checkRunAnnotation{{
+				Level: "failure", Path: "internal/example.go", StartLine: 42,
+				Message: "undefined: missingSymbol",
+			}},
+			want: ManagedCIUnexplainedFailure,
+		},
+		{
+			name: "infrastructure diagnostic in build step is unexplained",
+			job: CIWorkflowJob{Status: "completed", Conclusion: "failure", RunnerID: 42, Steps: []CIWorkflowStep{
+				{Name: "go build ./...", Status: "completed", Conclusion: "failure"},
+			}},
+			annotations: []checkRunAnnotation{{
+				Level: "failure", Path: "internal/example.go", StartLine: 42,
+				Message: "Compiler dependency download failed: connection refused by dependency mirror.",
+			}},
+			want: ManagedCIUnexplainedFailure,
 		},
 		{
 			name: "file annotation on unrelated failed step is unexplained",
@@ -594,6 +646,80 @@ func TestCLIClient_ManagedCIRejectsContradictorySameAttemptConclusion(t *testing
 	}
 }
 
+func TestManagedCIExecutionReadsCompatibleRequiresForwardStatusProgression(t *testing.T) {
+	tests := []struct {
+		name              string
+		earlierStatus     string
+		earlierConclusion string
+		laterStatus       string
+		laterConclusion   string
+		want              bool
+	}{
+		{name: "same queued status", earlierStatus: "queued", laterStatus: "queued", want: true},
+		{name: "queued advances to running", earlierStatus: "queued", laterStatus: "in_progress", want: true},
+		{name: "running advances to completed", earlierStatus: "in_progress", laterStatus: "completed", laterConclusion: "cancelled", want: true},
+		{name: "waiting advances to queued", earlierStatus: "waiting", laterStatus: "queued", want: true},
+		{name: "running regresses to queued", earlierStatus: "in_progress", laterStatus: "queued"},
+		{name: "queued regresses to pending", earlierStatus: "queued", laterStatus: "pending"},
+		{name: "completed keeps its conclusion", earlierStatus: "completed", earlierConclusion: "cancelled", laterStatus: "completed", laterConclusion: "cancelled", want: true},
+		{name: "completed changes its conclusion", earlierStatus: "completed", earlierConclusion: "cancelled", laterStatus: "completed", laterConclusion: "success"},
+		{name: "unknown status", earlierStatus: "in_progress", laterStatus: "unknown"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			earlier := ManagedCIExecution{Status: test.earlierStatus, Conclusion: test.earlierConclusion}
+			later := ManagedCIExecution{Status: test.laterStatus, Conclusion: test.laterConclusion}
+			if got := managedCIExecutionReadsCompatible(earlier, later); got != test.want {
+				t.Fatalf("status compatibility = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestCLIClient_ManagedCIRejectsRegressedSameAttemptStatus(t *testing.T) {
+	source := actionsWorkflowRun{}
+	if err := json.Unmarshal([]byte(fixtureText(t, "workflow-run.json")), &source); err != nil {
+		t.Fatal(err)
+	}
+	source.Status = "in_progress"
+	source.Conclusion = ""
+	sourceJSON, err := json.Marshal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runs := struct {
+		TotalCount   int                  `json:"total_count"`
+		WorkflowRuns []actionsWorkflowRun `json:"workflow_runs"`
+	}{}
+	if err := json.Unmarshal([]byte(fixtureAt(t, "same-run-attempt", "workflow-runs.json")), &runs); err != nil {
+		t.Fatal(err)
+	}
+	runs.WorkflowRuns[0].Status = "queued"
+	runs.WorkflowRuns[0].Conclusion = ""
+	runsJSON, err := json.Marshal(runs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"repo","owner":{"login":"owner"}}`},
+		{output: fixtureText(t, "jobs.json")},
+		{output: string(sourceJSON)},
+		{output: fixtureText(t, "annotations.json")},
+		{output: string(runsJSON)},
+	}}
+	_, err = (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "incident-source-head",
+		FailedWorkflowRunID: "45270155099",
+		FailedChecks: []CIFailedCheck{{
+			Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527159",
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "contradicts the source execution status") {
+		t.Fatalf("same-attempt in-progress-to-queued regression was accepted: %v", err)
+	}
+}
+
 func TestCLIClient_ManagedCIUsesFailedJobAttemptWhenRunHasReplacement(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"repo","owner":{"login":"owner"}}`},
@@ -680,6 +806,35 @@ func TestCLIClient_ManagedCIDiagnosesCompletedReplacementFailure(t *testing.T) {
 	}
 }
 
+func TestCLIClient_DiagnosesRetainedCompletedExecutionFailure(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"repo","owner":{"login":"owner"}}`},
+		{output: fixtureAt(t, "new-run", "completed-failure-attempt.json")},
+		{output: fixtureAt(t, "new-run", "completed-failure-jobs.json")},
+		{output: fixtureAt(t, "new-run", "completed-failure-annotations.json")},
+	}}
+	failures, err := (&CLIClient{runner: runner}).DiagnoseManagedCIExecutionFailure(
+		context.Background(),
+		ManagedCIExecution{
+			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main",
+			HeadSHA: "incident-source-head", WorkflowID: 273743359, Event: "pull_request",
+			RunID: 45276896986, RunNumber: 5289, Attempt: 1, Status: "completed", Conclusion: "failure",
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(failures) != 1 || failures[0].Classification != ManagedCIConfirmedCodeTestFailure ||
+		failures[0].RunID != 45276896986 || failures[0].Attempt != 1 {
+		t.Fatalf("retained execution diagnosis = %+v; want exact attempt's confirmed test failure", failures)
+	}
+	for _, call := range runner.calls {
+		if strings.Contains(strings.ToUpper(strings.Join(call.args, " ")), "POST") {
+			t.Fatalf("retained execution diagnosis attempted a mutation: %v", call.args)
+		}
+	}
+}
+
 func TestCLIClient_ManagedCIRejectsContradictoryReplacementAttemptConclusion(t *testing.T) {
 	attempt := fixtureAt(t, "new-run", "completed-failure-attempt.json")
 	attempt = strings.Replace(attempt, `"conclusion": "failure"`, `"conclusion": "success"`, 1)
@@ -702,6 +857,70 @@ func TestCLIClient_ManagedCIRejectsContradictoryReplacementAttemptConclusion(t *
 	})
 	if err == nil {
 		t.Fatal("contradictory replacement attempt conclusion was accepted for job diagnosis")
+	}
+}
+
+func TestCLIClient_ManagedCIRejectsContradictorySourceAttemptStatus(t *testing.T) {
+	var workflowRuns map[string]any
+	if err := json.Unmarshal([]byte(fixtureAt(t, "incident", "workflow-runs.json")), &workflowRuns); err != nil {
+		t.Fatal(err)
+	}
+	run := workflowRuns["workflow_runs"].([]any)[0].(map[string]any)
+	run["status"] = "in_progress"
+	delete(run, "conclusion")
+	contradictoryRuns, err := json.Marshal(workflowRuns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"repo","owner":{"login":"owner"}}`},
+		{output: fixtureText(t, "jobs.json")},
+		{output: fixtureText(t, "workflow-run.json")},
+		{output: fixtureText(t, "annotations.json")},
+		{output: string(contradictoryRuns)},
+	}}
+	_, err = (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "incident-source-head",
+		FailedWorkflowRunID: "45270155099",
+		FailedChecks: []CIFailedCheck{{
+			Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527159",
+		}},
+	})
+	if err == nil {
+		t.Fatal("workflow-run listing with a conflicting source-attempt status was accepted")
+	}
+}
+
+func TestCLIClient_ManagedCIAcceptsSourceAttemptProgression(t *testing.T) {
+	var sourceRun map[string]any
+	if err := json.Unmarshal([]byte(fixtureAt(t, "incident", "workflow-run.json")), &sourceRun); err != nil {
+		t.Fatal(err)
+	}
+	sourceRun["status"] = "in_progress"
+	delete(sourceRun, "conclusion")
+	progressingSource, err := json.Marshal(sourceRun)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"repo","owner":{"login":"owner"}}`},
+		{output: fixtureText(t, "jobs.json")},
+		{output: string(progressingSource)},
+		{output: fixtureText(t, "annotations.json")},
+		{output: fixtureAt(t, "incident", "workflow-runs.json")},
+	}}
+	observation, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "incident-source-head",
+		FailedWorkflowRunID: "45270155099",
+		FailedChecks: []CIFailedCheck{{
+			Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527159",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("later completed workflow-run read contradicted an earlier in-progress source read: %v", err)
+	}
+	if observation.Source.Status != "in_progress" {
+		t.Fatalf("source status = %q, want original exact-attempt observation", observation.Source.Status)
 	}
 }
 
@@ -897,6 +1116,11 @@ func TestCLIClient_ManagedCIReportsUnlinkedNewerRunAsUnknown(t *testing.T) {
 
 func fixtureText(t *testing.T, name string) string {
 	t.Helper()
+	if name == "annotations.json" {
+		// Most callers exercise positive shortage evidence; keep the raw
+		// incident's generic annotation in its direct regression above.
+		return fixtureAt(t, "incident-replay", "shortage-annotations.json")
+	}
 	data, err := os.ReadFile(filepath.Join("testdata", "managed-ci", "incident", name))
 	if err != nil {
 		t.Fatal(err)
