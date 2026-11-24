@@ -653,6 +653,12 @@ func managedCIReplacementStillResolves(evidence map[string]any, pr *github.PR, r
 		!validCIWaitActionsStatus(stringEvidence(execution, "status"), stringEvidence(execution, "conclusion")) {
 		return false
 	}
+	if strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "success") {
+		// The current PR-head rollup is authoritative. A previously observed
+		// replacement cannot keep its CI deadline alive after required checks
+		// have turned green.
+		return false
+	}
 	sourceExecutionID := stringEvidence(wait, "source_execution_id")
 	if sourceExecutionID != strings.TrimSpace(pr.CIExecutionID) {
 		if strings.TrimSpace(pr.CIExecutionID) == "" {
@@ -674,7 +680,7 @@ func managedCIReplacementStillResolves(evidence map[string]any, pr *github.PR, r
 	status := strings.ToLower(strings.TrimSpace(stringEvidence(execution, "status")))
 	conclusion := strings.ToLower(strings.TrimSpace(stringEvidence(execution, "conclusion")))
 	switch status {
-	case "queued", "in_progress":
+	case "queued", "in_progress", "waiting", "requested", "pending":
 		return true
 	case "completed":
 		// A passing Actions run does not manufacture a green required-check

@@ -348,9 +348,9 @@ func TestManagedCIReplacementStillResolvesRequiresReplacementAndActiveStatus(t *
 	}{
 		{name: "queued replacement", replacement: true, status: "queued", want: true},
 		{name: "running replacement", replacement: true, status: "in_progress", want: true},
-		{name: "waiting replacement", replacement: true, status: "waiting"},
-		{name: "requested replacement", replacement: true, status: "requested"},
-		{name: "pending replacement", replacement: true, status: "pending"},
+		{name: "waiting replacement", replacement: true, status: "waiting", want: true},
+		{name: "requested replacement", replacement: true, status: "requested", want: true},
+		{name: "pending replacement", replacement: true, status: "pending", want: true},
 		{name: "passed replacement with stale rollup", replacement: true, status: "completed", conclusion: "success", want: true},
 		{name: "failed replacement", replacement: true, status: "completed", conclusion: "failure"},
 		{name: "failed replacement with visible pending checks", replacement: true, status: "completed", conclusion: "failure", pendingChecks: true},
