@@ -311,6 +311,9 @@ type ManagedCIObservation struct {
 
 // ManagedCIObserver is an optional read-only Actions evidence capability.
 // Clients without it preserve ordinary CI lifecycle behavior.
+// Implementations may return validated source evidence with an error when a
+// later replacement lookup fails; the error leaves replacement evidence
+// inconclusive.
 type ManagedCIObserver interface {
 	ObserveManagedCI(ctx context.Context, request ManagedCIRequest) (ManagedCIObservation, error)
 }

@@ -145,13 +145,20 @@ func (c *CLIClient) ObserveManagedCI(ctx context.Context, request ManagedCIReque
 	if verifiedShortage {
 		replacement, err := c.findManagedCIReplacement(ctx, owner, repo, source)
 		if err != nil {
-			return ManagedCIObservation{}, err
+			// The source identity and failures above are fully validated even
+			// though replacement identity is not. Preserve them so a confirmed
+			// independent source failure remains actionable while replacement
+			// selection is treated as unknown by the lifecycle.
+			return observation, err
 		}
 		observation.Replacement = replacement
 		if replacement != nil && replacement.Status == "completed" && replacement.Conclusion != "success" {
 			failures, err := c.diagnoseManagedCIExecutionFailure(ctx, owner, repo, request, *replacement)
 			if err != nil {
-				return ManagedCIObservation{}, err
+				// Keep the verified source evidence and replacement identity;
+				// only the replacement's failure diagnosis is inconclusive.
+				observation.Replacement = replacement
+				return observation, err
 			}
 			observation.ReplacementFailures = failures
 		}

@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -84,6 +85,33 @@ func TestCLIClient_ManagedCIConfirmsIncidentRunnerShortage(t *testing.T) {
 	}
 	if len(runner.calls) != 5 {
 		t.Fatalf("API calls = %d, want repository, source run, jobs, annotations and workflow runs", len(runner.calls))
+	}
+}
+
+func TestCLIClient_ManagedCIReplacementLookupErrorPreservesSourceEvidence(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"repo","owner":{"login":"owner"}}`},
+		{output: fixtureText(t, "jobs.json")},
+		{output: fixtureText(t, "workflow-run.json")},
+		{output: fixtureText(t, "annotations.json")},
+		{err: errors.New("workflow run listing unavailable")},
+	}}
+	observation, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "incident-source-head",
+		FailedWorkflowRunID: "45270155099",
+		FailedChecks: []CIFailedCheck{{
+			Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527159",
+		}},
+	})
+	if err == nil {
+		t.Fatal("replacement lookup error = nil, want inconclusive result")
+	}
+	if observation.Source.RunID != 45270155099 || len(observation.Failures) != 1 ||
+		observation.Failures[0].Classification != ManagedCIRunnerShortage {
+		t.Fatalf("partial observation = %+v, want validated source and shortage evidence alongside error", observation)
+	}
+	if observation.Replacement != nil {
+		t.Fatalf("replacement = %+v, want unknown after lookup error", observation.Replacement)
 	}
 }
 

@@ -106,7 +106,10 @@ func (s *runSession) observeManagedCIFailure(
 	}
 	observation, err := observer.ObserveManagedCI(ctx, request)
 	if err != nil {
-		return repository, nil, false, ctx.Err() == nil
+		if ctx.Err() != nil {
+			return repository, nil, false, false
+		}
+		return repository, nil, managedCIConfirmedIndependentSourceFailure(observation, request), true
 	}
 	if !managedCIObservationMatchesRequest(observation, request) {
 		return repository, nil, managedCIConfirmedIndependentSourceFailure(observation, request), true

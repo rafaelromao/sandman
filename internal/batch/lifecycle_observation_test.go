@@ -369,6 +369,32 @@ func TestLifecycleObservation_UnknownManagedCILookupWaitsForGitHubRecovery(t *te
 			wantGate:   "ci-failure",
 		},
 		{
+			name:         "confirmed independent source failure survives replacement lookup error",
+			failedChecks: failedCIChecks("101", "build-macos", "unit-tests"),
+			err:          errors.New("replacement workflow list unavailable"),
+			observation: github.ManagedCIObservation{
+				Source: github.ManagedCIExecution{
+					Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "current-sha",
+					WorkflowID: 273743359, Event: "pull_request", RunID: 101, RunNumber: 5288, Attempt: 1,
+					Status: "completed", Conclusion: "cancelled",
+				},
+				Failures: []github.ManagedCIFailureEvidence{
+					{
+						JobID: 138, RunID: 101, Attempt: 1, CheckName: "build-macos",
+						DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/11",
+						Classification: github.ManagedCIRunnerShortage,
+					},
+					{
+						JobID: 139, RunID: 101, Attempt: 1, CheckName: "unit-tests",
+						DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/12",
+						Classification: github.ManagedCIConfirmedCodeTestFailure,
+					},
+				},
+			},
+			wantAction: lifecycleResume,
+			wantGate:   "ci-failure",
+		},
+		{
 			name:         "confirmed independent source failure survives contradictory replacement",
 			failedChecks: failedCIChecks("101", "build-macos", "unit-tests"),
 			observation: github.ManagedCIObservation{
