@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -681,6 +682,50 @@ func TestSyncBaseBranchAtSameCommit(t *testing.T) {
 
 	if err := SyncBaseBranch(localDir, "main"); err != nil {
 		t.Fatalf("expected sync to succeed when local equals remote, got: %v", err)
+	}
+}
+
+func TestSyncBaseBranchRetriesWorktreeListDuringConcurrentRemoval(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a Git wrapper script")
+	}
+
+	localDir := t.TempDir()
+	initGitRepoWithRemote(t, localDir)
+
+	originalPath := os.Getenv("PATH")
+	wrapperDir := t.TempDir()
+	failedMarker := filepath.Join(wrapperDir, "worktree-list-failed")
+	retriedMarker := filepath.Join(wrapperDir, "worktree-list-retried")
+	wrapper := filepath.Join(wrapperDir, "git")
+	script := `#!/bin/sh
+if [ "$1" = "worktree" ] && [ "$2" = "list" ]; then
+  if [ ! -e "$MANAGED_TEST_GIT_FAILED" ]; then
+    : > "$MANAGED_TEST_GIT_FAILED"
+    printf "fatal: Invalid path '%s/.git/worktrees': No such file or directory\n" "$MANAGED_TEST_GIT_REPO" >&2
+    exit 128
+  fi
+  : > "$MANAGED_TEST_GIT_RETRIED"
+fi
+PATH="$MANAGED_TEST_GIT_ORIGINAL_PATH"
+export PATH
+exec git "$@"
+`
+	if err := os.WriteFile(wrapper, []byte(script), 0755); err != nil {
+		t.Fatalf("write Git wrapper: %v", err)
+	}
+	t.Setenv("MANAGED_TEST_GIT_ORIGINAL_PATH", originalPath)
+	t.Setenv("MANAGED_TEST_GIT_REPO", localDir)
+	t.Setenv("MANAGED_TEST_GIT_FAILED", failedMarker)
+	t.Setenv("MANAGED_TEST_GIT_RETRIED", retriedMarker)
+	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+originalPath)
+
+	var warning bytes.Buffer
+	if err := SyncBaseBranchWithLog(localDir, "main", &warning); err != nil {
+		t.Fatalf("sync after transient worktree-list failure: %v", err)
+	}
+	if _, err := os.Stat(retriedMarker); err != nil {
+		t.Fatalf("worktree list was not retried: %v", err)
 	}
 }
 
